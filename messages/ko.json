@@ -1,0 +1,20 @@
+{
+  "layout.title": "AICE 웹",
+  "languageSwitcher.label": "언어",
+  "languageSwitcher.option.en": "영어",
+  "languageSwitcher.option.ko": "한국어",
+  "home.title": "AICE 웹에 오신 것을 환영합니다",
+  "home.description": "REview 기반 협업 편집 기능을 사용하려면 로그인하세요.",
+  "home.cta": "로그인 페이지로 이동",
+  "signin.title": "REview에 로그인",
+  "signin.description": "계속하려면 REview 자격 증명을 입력하세요.",
+  "signin.username.label": "사용자 이름",
+  "signin.password.label": "비밀번호",
+  "signin.submit": "로그인",
+  "signin.success": "성공적으로 로그인했습니다.",
+  "signin.error": "로그인할 수 없습니다. 자격 증명을 확인한 후 다시 시도하세요.",
+  "signin.validation.username.required": "사용자 이름은 필수입니다.",
+  "signin.validation.password.required": "비밀번호는 필수입니다.",
+  "signin.token.label": "세션 토큰",
+  "signin.token.expires": "토큰 만료 시간: {expiration, date, ::yyyyMMdd} {expiration, time, ::HHmm}"
+}

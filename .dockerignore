@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+Dockerfile.dev
+infra/nginx-logs
+certs
+.git
+.gitignore
+.env
+.env.local
+.env.*.local
+*.pem
