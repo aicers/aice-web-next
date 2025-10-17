@@ -1,0 +1,18 @@
+# Directories and outputs to exclude from lint/format runs
+old_version/
+node_modules/
+.next/
+out/
+build/
+coverage/
+certs/
+.vercel
+test-results/
+test-results/**
+
+# Logs and temp artifacts
+.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*

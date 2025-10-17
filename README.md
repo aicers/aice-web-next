@@ -1,2 +1,260 @@
-# aice-web-next
-Next.js-based AICE Web
+# AICE Web (Next.js)
+
+Next.js App Router implementation of the AICE web client with REview
+authentication, localized routing, and a hybrid SSR/CSR architecture prepared
+for persistent connections.
+
+## Prerequisites
+
+- Node.js 22.x
+- npm 10+
+- Biome CLI 2.x (Rust binary) available on your `PATH` – download a release
+  build and place `biome` somewhere executable, or compile it yourself via Cargo
+  following the Biome documentation.
+
+## Setup
+
+```bash
+npm ci
+cp .env.example .env.local
+# update the endpoints inside .env.local as needed
+```
+
+## Available scripts
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Start the development server (Turbopack). |
+| `npm run build` | Create a production build. |
+| `npm run start` | Run the production server. |
+| `npm run lint` | Lint and format with Biome. |
+| `npm run typecheck` | Run TypeScript in `--noEmit` mode. |
+| `npm run test` | Execute Vitest unit/component tests. |
+| `npm run test:e2e` | Run Playwright end-to-end tests. |
+
+## Internationalisation
+
+- URL-based routing under `/[locale]/…` with default redirect handled in `middleware.ts`.
+- Messages live in flat JSON files at `messages/en.json` and `messages/ko.json`;
+  they are converted to nested structures at runtime for Next Intl 4.
+- `LanguageSwitcher` updates the locale in-place using shared navigation helpers.
+
+## Authentication flow
+
+- `SignInForm` uses React Hook Form + Zod validation and calls REview’s `signIn`
+  GraphQL mutation via `graphql-request`.
+- Sign-in requests are proxied through `/api/review/sign-in`, which supports
+  trusting self-signed certificates via `REVIEW_ALLOW_SELF_SIGNED=true` or a CA
+  path (`REVIEW_CA_CERT_PATH`).
+- Tokens are stored in-memory through `AuthProvider`, keeping sensitive data out
+  of persistent storage.
+- `createPersistentConnection` (SSE helper) is scaffolded for future real-time features.
+
+## Tooling & Testing
+
+- Styling: Tailwind CSS v4 + shadcn/ui components.
+- Linting/formatting: Biome (`biome.json`).
+- Unit/Component tests: Vitest + Testing Library (`vitest.config.ts`).
+- E2E tests: Playwright (`playwright.config.ts`, `e2e/sign-in.spec.ts`).
+
+Run the full verification suite locally:
+
+```bash
+biome --version
+npm run lint
+npm run typecheck
+npm run test
+npx playwright install --with-deps
+npm run test:e2e
+```
+
+## Biome Commands
+
+Biome CLI commands follow `biome <command> [flags] [paths...]`. Each trailing
+path can be a directory (Biome walks it recursively and respects
+`.biomeignore`/VCS ignore files) or a single file for targeted checks. Use `.`
+to cover the project root or enumerate specific paths to narrow the run.
+
+### Checking vs. fixing
+
+- Run commands without `--write` to only report problems (exit status reflects success/failure).
+- Add `--write` to apply Biome’s safe fixes (formatting, autofixable lint
+  rules). Combine with `--unsafe` if you intentionally want riskier rewrites.
+
+### Lint
+
+```bash
+# Report lint issues without modifying files
+biome lint src e2e infra messages middleware.ts next.config.ts
+
+# Apply autofixes just like `npm run lint`
+biome lint --write src e2e infra messages middleware.ts next.config.ts
+
+# Fail the run whenever a warning is emitted
+biome lint --error-on-warnings src e2e infra messages middleware.ts
+```
+
+### Format
+
+```bash
+# Check formatting (read-only) for the whole repo
+biome format --check .
+
+# Rewrite files with Biome’s formatter
+biome format --write .
+
+# Limit formatting changes to specific paths
+biome format --write src middleware.ts README.md
+```
+
+### Lint + format together
+
+```bash
+# Run lint + format diagnostics without modifying files
+biome check .
+
+# Apply all available safe fixes in one pass
+biome check --write .
+```
+
+### CI automation
+
+In continuous integration workflows, prefer `biome ci` for a single read-only
+pass that surfaces every diagnostic (lint + format + import ordering) while
+failing the build if anything is off.
+
+```bash
+# Check the whole repo with GitHub-friendly output
+biome ci --reporter=github .
+
+# Restrict the run to files changed against the default branch
+biome ci --changed --since origin/main
+
+# Treat warnings as failures in CI
+biome ci --error-on-warnings .
+```
+
+Tune performance with `--threads=<number>` (or `BIOME_THREADS`) when the CI
+runner offers limited cores. Combine any of the flags above with explicit path
+lists if you only want to validate certain directories.
+
+## Local Development
+
+```bash
+# Ensure `.env.local` is populated for dev secrets
+# Run Next.js in dev mode (hot reload)
+npm run dev
+
+# Launch Nginx proxy for HTTPS (required)
+docker compose up nginx
+
+# Tear down the proxy when done
+docker compose down
+```
+
+- Next.js runs on `http://localhost:3000`.
+- Nginx proxy exposes the app over HTTPS at `https://localhost/...`. Ensure
+  certificates and dev keys exist under `./certs`.
+
+## Production Deployment
+
+```bash
+# Ensure `.env` is prepared (production secrets) and ./certs contains the TLS certificate/key
+docker compose up --build nginx
+
+# Stop and remove the stack when needed
+docker compose down
+```
+
+- Compose builds both the Next.js and Nginx images on first run.
+- Add `--no-build` to reuse previously exported images.
+- Next.js listens internally on `next-app:3000`; Nginx terminates TLS on port
+  443 only.
+
+## Docker
+
+Production stack is composed of two containers:
+
+- Next.js application (`Dockerfile`, based on `node:22-bookworm`)
+- Nginx reverse proxy (`infra/nginx/Dockerfile`)
+
+To build and run the full stack with HTTPS handled by Nginx:
+
+```bash
+# Ensure `.env.local` exists and TLS certs/keys are placed under ./certs
+docker compose up --build nginx
+```
+
+This builds both images, starts the Next.js app on the internal network, and
+exposes HTTPS on port 443 through Nginx.
+
+### Offline Image Bundle
+
+Run the helper script to build the required images, save them as tarballs, and
+collect `docker-compose.yml` and `.env` into a single deployment bundle.
+By default the script targets `linux/amd64`, which is suitable for typical Linux
+hosts even when you run the script from Apple Silicon macOS. Override `ENV_FILE`
+to package a different env file, `IMAGE_TAG` to re-tag the exported images, and
+`PLATFORM` to build for another architecture.
+
+```bash
+bash infra/scripts/package-deployment.sh dist/deployment
+# Example: override defaults
+#   ENV_FILE=/path/to/prod.env IMAGE_TAG=prod \
+#   bash infra/scripts/package-deployment.sh /tmp/aice-bundle
+# Apple Silicon → build for arm64 instead
+#   PLATFORM=linux/arm64 \
+#   bash infra/scripts/package-deployment.sh
+```
+
+The default output directory (`dist/deployment`) contains:
+
+- `aice-web-next.tar`, `aice-nginx.tar`: exported Docker images
+- `docker-compose.yml`: Compose stack definition
+- `.env`: environment variables (defaults to the repo’s `.env`; override with `ENV_FILE`)
+- `README_PACKAGING.md`: quick-start guide for the target host
+
+On the destination host:
+
+1. Load the images.
+
+   ```bash
+   docker load -i aice-web-next.tar
+   docker load -i aice-nginx.tar
+   ```
+
+1. Provide the required supporting files (Nginx config, TLS certs under
+   `./certs`, etc.).
+1. Start the stack without rebuilding: `docker compose up --no-build nginx`.
+
+## Environment Variables
+
+- `NEXT_PUBLIC_REVIEW_GRAPHQL_ENDPOINT` / `REVIEW_GRAPHQL_ENDPOINT`: REview
+  GraphQL endpoint (public vs. server-only).
+- `REVIEW_ALLOW_SELF_SIGNED`: Set to `true` to skip TLS verification when using
+  self-signed certificates (dev only).
+- `REVIEW_CA_CERT_PATH`: Absolute path to a CA bundle that should be trusted
+  when contacting REview.
+- `REVIEW_TLS_SERVERNAME`: Override the TLS SNI/hostname sent when connecting to
+  REview (useful when certificates do not include `localhost`).
+- `NEXT_PUBLIC_REVIEW_STREAM_ENDPOINT`: (future use) streaming endpoint for
+  persistent connections.
+
+## Reverse Proxy (Nginx)
+
+- Configuration: `infra/nginx/nginx.conf` (upstream points to the
+  `next-app:3000` service used by Compose).
+- `infra/nginx/Dockerfile` builds the proxy image; Compose handles building and
+  running it alongside the app.
+- Replace `server_name` and TLS certificate paths to match your deployment.
+- Ensure `./certs` contains the certificate/key pair referenced in the config;
+  Compose mounts it into `/etc/nginx/ssl`.
+- Generate local self-signed certs (dev only) via
+  `infra/scripts/generate-self-signed-cert.sh <hostname> <output-dir>` and store
+  them under `./certs`.
+
+## Continuous Integration
+
+GitHub Actions workflow `.github/workflows/ci.yml` runs lint, typecheck, unit
+tests, installs Playwright browsers, and executes E2E tests on every push and
+pull request.

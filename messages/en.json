@@ -1,0 +1,20 @@
+{
+  "layout.title": "AICE Web",
+  "languageSwitcher.label": "Language",
+  "languageSwitcher.option.en": "English",
+  "languageSwitcher.option.ko": "Korean",
+  "home.title": "Welcome to AICE Web",
+  "home.description": "Sign in to access REview-powered collaborative editing built on Next.js.",
+  "home.cta": "Go to sign-in",
+  "signin.title": "Sign in to REview",
+  "signin.description": "Enter your REview credentials to continue.",
+  "signin.username.label": "Username",
+  "signin.password.label": "Password",
+  "signin.submit": "Sign in",
+  "signin.success": "Signed in successfully.",
+  "signin.error": "We couldn’t sign you in. Check your credentials and try again.",
+  "signin.validation.username.required": "Username is required.",
+  "signin.validation.password.required": "Password is required.",
+  "signin.token.label": "Session token",
+  "signin.token.expires": "Token expires at {expiration, date, ::yyyyMMdd} {expiration, time, ::HHmm}"
+}
