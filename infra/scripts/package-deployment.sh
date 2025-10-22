@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUTPUT_DIR="${1:-"$ROOT_DIR/dist/deployment"}"
 ENV_FILE="${ENV_FILE:-"$ROOT_DIR/.env"}"
 COMPOSE_FILE="${COMPOSE_FILE:-"$ROOT_DIR/docker-compose.yml"}"
+COMPOSE_PROFILES_FILE="${COMPOSE_PROFILES_FILE:-"$ROOT_DIR/docker-compose.profiles.yml"}"
 
 NEXT_IMAGE_NAME="${NEXT_IMAGE_NAME:-aice-web-next}"
 NGINX_IMAGE_NAME="${NGINX_IMAGE_NAME:-aice-nginx}"
@@ -67,6 +68,9 @@ fi
 echo "[package] Copying compose file and environment configuration..."
 cp "$COMPOSE_FILE" "$OUTPUT_DIR/docker-compose.yml"
 cp "$ENV_FILE" "$OUTPUT_DIR/.env"
+if [[ -f "$COMPOSE_PROFILES_FILE" ]]; then
+  cp "$COMPOSE_PROFILES_FILE" "$OUTPUT_DIR/docker-compose.profiles.yml"
+fi
 
 cat <<'EOF' >"$OUTPUT_DIR/README_PACKAGING.md"
 Loaded artifacts:
@@ -74,6 +78,8 @@ Loaded artifacts:
 - .env
 - aice-web-next.tar
 - aice-nginx.tar
+Optional (present when supplied):
+- docker-compose.profiles.yml
 
 To use on the target host:
 1. Copy all files to the destination directory.
