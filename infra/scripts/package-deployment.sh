@@ -73,23 +73,32 @@ if [[ -f "$COMPOSE_PROFILES_FILE" ]]; then
 fi
 
 cat <<'EOF' >"$OUTPUT_DIR/README_PACKAGING.md"
+# Offline Image Bundle
+
 Loaded artifacts:
+
 - docker-compose.yml
 - .env
 - aice-web-next.tar
 - aice-nginx.tar
-Optional (present when supplied):
-- docker-compose.profiles.yml
 
 To use on the target host:
+
 1. Copy all files to the destination directory.
 2. Load the images:
-   docker load -i aice-web-next.tar
-   docker load -i aice-nginx.tar
+   `docker load -i aice-web-next.tar`
+   `docker load -i aice-nginx.tar`
 3. Launch the stack without rebuilding:
-   docker compose up --no-build nginx
+   `docker compose up --no-build nginx`
 
-Ensure TLS certificates (./certs) and Nginx configuration files are also present as required.
+Ensure the supporting directories are copied over as well:
+
+- `./certs/`: TLS certificates expected by `docker-compose.yml`.
+- `./infra/nginx/`: Nginx configuration referenced by the proxy service.
+
+These paths are omitted from the bundle because they typically contain
+environment-specific secrets—bring them alongside the exported images before
+running `docker compose`.
 EOF
 
 echo "[package] Deployment bundle created at $OUTPUT_DIR"
