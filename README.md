@@ -99,9 +99,6 @@ biome lint --error-on-warnings src e2e infra messages middleware.ts
 
 ```bash
 # Check formatting (read-only) for the whole repo
-biome format --check .
-
-# Rewrite files with Biome’s formatter
 biome format --write .
 
 # Limit formatting changes to specific paths
