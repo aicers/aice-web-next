@@ -1,0 +1,27 @@
+services:
+  next-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aice-web-next
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+    volumes:
+      # Update host path with your certificate location
+      - ./certs/cert.pem:/etc/review/cert.pem:ro
+    restart: unless-stopped
+  nginx:
+    build:
+      context: infra/nginx
+      dockerfile: Dockerfile
+    image: aice-nginx
+    depends_on:
+      - next-app
+    ports:
+      - "443:443"
+    volumes:
+      - ./certs:/etc/nginx/ssl:ro
+      - ./infra/nginx-logs:/var/log/nginx
+    restart: unless-stopped
