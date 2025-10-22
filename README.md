@@ -20,6 +20,13 @@ cp .env.example .env.local
 # update the endpoints inside .env.local as needed
 ```
 
+## Docker Compose Template
+
+- Copy the sample stack before running Docker: `cp docker-compose.yml.sample docker-compose.yml`.
+- Update the `next-app` certificate volume in `docker-compose.yml` so the host
+  path points to your local cert.
+- Keep the personalized file out of git; only commit `docker-compose.yml.sample`.
+
 ## Available scripts
 
 | Command | Description |
@@ -99,6 +106,9 @@ biome lint --error-on-warnings src e2e infra messages middleware.ts
 
 ```bash
 # Check formatting (read-only) for the whole repo
+biome format .
+
+# Rewrite files with Biome's formatter
 biome format --write .
 
 # Limit formatting changes to specific paths
