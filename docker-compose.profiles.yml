@@ -1,0 +1,25 @@
+services:
+  next-app:
+    profiles:
+      - prod
+
+  nginx:
+    profiles:
+      - prod
+
+  nginx-dev:
+    build:
+      context: infra/nginx
+      dockerfile: Dockerfile
+    image: aice-nginx
+    profiles:
+      - dev
+    ports:
+      - "443:443"
+    volumes:
+      - ./certs:/etc/nginx/ssl:ro
+      - ./infra/nginx-logs:/var/log/nginx
+      - ./infra/nginx/nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: unless-stopped

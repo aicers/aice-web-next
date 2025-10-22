@@ -61,9 +61,10 @@ Run the full verification suite locally:
 
 ```bash
 biome --version
-npm run lint
+biome ci --error-on-warnings .
 npm run typecheck
 npm run test
+# One-time before running Playwright locally
 npx playwright install --with-deps
 npm run test:e2e
 ```
@@ -142,48 +143,59 @@ lists if you only want to validate certain directories.
 
 ```bash
 # Ensure `.env.local` is populated for dev secrets
-# Run Next.js in dev mode (hot reload)
 npm run dev
-
-# Launch Nginx proxy for HTTPS (required)
-docker compose up nginx
-
-# Tear down the proxy when done
-docker compose down
 ```
 
-- Next.js runs on `http://localhost:3000`.
-- Nginx proxy exposes the app over HTTPS at `https://localhost/...`. Ensure
-  certificates and dev keys exist under `./certs`.
+- The dev server listens on `http://localhost:3000` with hot reload.
+- To expose HTTPS through Docker, the repo ships with:
+  - `infra/nginx/nginx.dev.conf`: Nginx reverse proxy pointing to `host.docker.internal:3000`.
+  - `docker-compose.profiles.yml`: Adds a `nginx-dev` service (profile `dev`) and
+    restricts the production stack to profile `prod`.
+- Start or stop the proxy as needed (after `npm run dev` is running):
 
-## Production Deployment
+<!-- markdownlint-disable MD013 -->
+  ```bash
+  docker compose -f docker-compose.yml -f docker-compose.profiles.yml --profile dev up -d nginx-dev
+  docker compose -f docker-compose.yml -f docker-compose.profiles.yml --profile dev down
+  ```
+<!-- markdownlint-enable MD013 -->
 
+- On Linux, confirm your Docker engine is 20.10+ (or otherwise configured) so
+  containers can resolve `host.docker.internal` back to the host loopback. Older
+  versions do not expose that hostname by default; if you cannot upgrade, edit
+  `infra/nginx/nginx.dev.conf` to point at an alternate host such as the Docker
+  bridge gateway (`172.17.0.1`) or add your own mapping via
+  `extra_hosts: ["my-hostname:127.0.0.1"]` and reference that name instead.
+
+## Production Deployment (Docker)
+
+### Bring the stack online
+
+- Populate `.env` with production secrets and place server certificates under
+  `./certs/`.
+- Build and start both containers (proxy + Next.js app):
+
+<!-- markdownlint-disable MD013 -->
+  ```bash
+  docker compose -f docker-compose.yml -f docker-compose.profiles.yml --profile prod up --build -d nginx
+  ```
+<!-- markdownlint-enable MD013 -->
+
+- Reuse previously built images with `--no-build`.
+- Tail logs as needed: `docker compose ... --profile prod logs -f nginx next-app`.
+
+### Tear down
+
+<!-- markdownlint-disable MD013 -->
 ```bash
-# Ensure `.env` is prepared (production secrets) and ./certs contains the TLS certificate/key
-docker compose up --build nginx
-
-# Stop and remove the stack when needed
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.profiles.yml --profile prod down
 ```
+<!-- markdownlint-enable MD013 -->
 
-- Compose builds both the Next.js and Nginx images on first run.
-- Add `--no-build` to reuse previously exported images.
-- Next.js listens internally on `next-app:3000`; Nginx terminates TLS on port
-  443 only.
-
-## Docker
-
-Production stack is composed of two containers:
+### Stack components
 
 - Next.js application (`Dockerfile`, based on `node:22-bookworm`)
 - Nginx reverse proxy (`infra/nginx/Dockerfile`)
-
-To build and run the full stack with HTTPS handled by Nginx:
-
-```bash
-# Ensure `.env.local` exists and TLS certs/keys are placed under ./certs
-docker compose up --build nginx
-```
 
 This builds both images, starts the Next.js app on the internal network, and
 exposes HTTPS on port 443 through Nginx.
@@ -191,7 +203,8 @@ exposes HTTPS on port 443 through Nginx.
 ### Offline Image Bundle
 
 Run the helper script to build the required images, save them as tarballs, and
-collect `docker-compose.yml` and `.env` into a single deployment bundle.
+collect the compose files and environment configuration into a single
+deployment bundle.
 By default the script targets `linux/amd64`, which is suitable for typical Linux
 hosts even when you run the script from Apple Silicon macOS. Override `ENV_FILE`
 to package a different env file, `IMAGE_TAG` to re-tag the exported images, and
@@ -210,7 +223,8 @@ bash infra/scripts/package-deployment.sh dist/deployment
 The default output directory (`dist/deployment`) contains:
 
 - `aice-web-next.tar`, `aice-nginx.tar`: exported Docker images
-- `docker-compose.yml`: Compose stack definition
+- `docker-compose.yml`: base Compose stack definition
+- `docker-compose.profiles.yml` (if present): profile overrides used in this repo
 - `.env`: environment variables (defaults to the repo’s `.env`; override with `ENV_FILE`)
 - `README_PACKAGING.md`: quick-start guide for the target host
 
@@ -224,8 +238,15 @@ On the destination host:
    ```
 
 1. Provide the required supporting files (Nginx config, TLS certs under
-   `./certs`, etc.).
-1. Start the stack without rebuilding: `docker compose up --no-build nginx`.
+   `./certs`, `docker-compose.profiles.yml`, etc.).
+1. Start the stack without rebuilding:
+
+   ```bash
+   docker compose \
+     -f docker-compose.yml \
+     -f docker-compose.profiles.yml \
+     --profile prod up --no-build -d nginx
+   ```
 
 ## Environment Variables
 
@@ -244,6 +265,8 @@ On the destination host:
 
 - Configuration: `infra/nginx/nginx.conf` (upstream points to the
   `next-app:3000` service used by Compose).
+- Development override: `infra/nginx/nginx.dev.conf` proxies to
+  `host.docker.internal:3000` when the app runs on the host.
 - `infra/nginx/Dockerfile` builds the proxy image; Compose handles building and
   running it alongside the app.
 - Replace `server_name` and TLS certificate paths to match your deployment.
