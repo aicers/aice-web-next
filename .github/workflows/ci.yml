@@ -37,7 +37,9 @@ jobs:
         run: npm run typecheck
 
       - name: markdownlint
-        uses: articulate/actions-markdownlint@v1
+        uses: DavidAnson/markdownlint-cli2-action@v21
+        with:
+          globs: '**/*.md'
 
   test:
     runs-on: ubuntu-latest
