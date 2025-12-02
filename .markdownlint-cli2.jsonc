@@ -1,0 +1,17 @@
+{
+  "ignores": [
+    "old_version/**",
+    "node_modules/**",
+    ".next/**",
+    "out/**",
+    "build/**",
+    "coverage/**",
+    "certs/**",
+    "public/**",
+    ".vercel/**",
+    "npm-debug.log*",
+    "yarn-debug.log*",
+    "yarn-error.log*",
+    ".pnpm-debug.log*"
+  ]
+}
