@@ -31,6 +31,12 @@ for persistent connections.
 
 ## Setup
 
+1. Use a shared pnpm store across repos:
+
+   ```bash
+   pnpm config set store-dir ~/.pnpm-store --global
+   ```
+
 1. Install dependencies:
 
    ```bash
