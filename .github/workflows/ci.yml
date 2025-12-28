@@ -42,7 +42,7 @@ jobs:
         run: pnpm run typecheck
 
       - name: markdownlint
-        uses: DavidAnson/markdownlint-cli2-action@v21
+        uses: DavidAnson/markdownlint-cli2-action@v22
         with:
           globs: "**/*.md"
 
