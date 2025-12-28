@@ -248,7 +248,7 @@ docker compose -f docker-compose.yml -f docker-compose.profiles.yml --profile pr
 
 ### Stack components
 
-- Next.js application (`Dockerfile`, based on `node:22-bookworm`)
+- Next.js application (`Dockerfile`, based on `node:22-bookworm` with digest pinning)
 - Nginx reverse proxy (`infra/nginx/Dockerfile`)
 
 This builds both images, starts the Next.js app on the internal network, and
