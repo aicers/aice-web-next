@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS builder
+FROM node:22.21.1-bookworm-slim@sha256:773413f36941ce1e4baf74b4a6110c03dcc4f968daffc389d4caef3f01412d2a AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY . .
 RUN pnpm run build
 RUN pnpm prune --prod
 
-FROM node:22-bookworm-slim AS runner
+FROM node:22.21.1-bookworm-slim@sha256:773413f36941ce1e4baf74b4a6110c03dcc4f968daffc389d4caef3f01412d2a AS runner
 
 WORKDIR /app
 
