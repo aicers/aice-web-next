@@ -6,19 +6,62 @@ for persistent connections.
 
 ## Prerequisites
 
-- Node.js 22.x
-- npm 10+
+- Node 22: Use Node.js 22.x. **Do not use Node 24.**
+  - nvm example: `nvm install 22 && nvm use 22`
+  - macOS (Homebrew):
+    - `brew update && brew install node@22`
+    - Unlink the previous version: `brew unlink node`
+    - Link 22: `brew link --overwrite --force node@22`
+    - Verify: `node -v` should print v22.x.y
+- pnpm: Use pnpm 10+.
+  - macOS (Homebrew):
+    - `brew install pnpm`
+  - Linux (Corepack with Node 22):
+    - `corepack enable`
+    - `corepack prepare pnpm@10 --activate`
+  - Windows (Corepack with Node 22):
+    - `corepack enable`
+    - `corepack prepare pnpm@10 --activate`
+- Next.js: Use 15 (latest patch) for Node 22 compatibility; **do not use 16.**
+  Installed via `pnpm install`.
+- Docker: Install Docker (Docker Desktop or Docker Engine).
 - Biome CLI 2.x (Rust binary) available on your `PATH` – download a release
   build and place `biome` somewhere executable, or compile it yourself via Cargo
   following the Biome documentation.
 
 ## Setup
 
-```bash
-npm ci
-cp .env.example .env.local
-# update the endpoints inside .env.local as needed
-```
+1. Install dependencies:
+
+   ```bash
+   pnpm install
+   ```
+
+1. **(Important)** Approve build scripts (required for pnpm v9+):
+
+   ```bash
+   pnpm approve-builds
+   ```
+
+1. Install Playwright browsers (one-time per machine):
+
+   ```bash
+   pnpm exec playwright install --with-deps
+   ```
+
+   - Linux (e.g., CI runners): `--with-deps` also installs required system
+     packages so browsers run out of the box.
+   - macOS: the flag is effectively a no-op; it only downloads the browser
+     binaries, so leaving it on is harmless.
+
+1. Provide environment variables (`pnpm run dev` reads from `.env.local` or the
+   current shell). Copy `.env.example` to `.env.local` and replace the
+   placeholders:
+
+   ```bash
+   cp .env.example .env.local
+   # update the endpoints inside .env.local as needed
+   ```
 
 ## Docker Compose Template
 
@@ -31,13 +74,13 @@ cp .env.example .env.local
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Start the development server (Turbopack). |
-| `npm run build` | Create a production build. |
-| `npm run start` | Run the production server. |
-| `npm run lint` | Lint and format with Biome. |
-| `npm run typecheck` | Run TypeScript in `--noEmit` mode. |
-| `npm run test` | Execute Vitest unit/component tests. |
-| `npm run test:e2e` | Run Playwright end-to-end tests. |
+| `pnpm run dev` | Start the development server (Turbopack). |
+| `pnpm run build` | Create a production build. |
+| `pnpm run start` | Run the production server. |
+| `pnpm run lint` | Lint and format with Biome. |
+| `pnpm run typecheck` | Run TypeScript in `--noEmit` mode. |
+| `pnpm run test` | Execute Vitest unit/component tests. |
+| `pnpm run test:e2e` | Run Playwright end-to-end tests. |
 
 ## Internationalisation
 
@@ -64,16 +107,20 @@ cp .env.example .env.local
 - Unit/Component tests: Vitest + Testing Library (`vitest.config.ts`).
 - E2E tests: Playwright (`playwright.config.ts`, `e2e/sign-in.spec.ts`).
 
-Run the full verification suite locally:
+For local tooling:
+
+- Use `pnpm dlx <tool>` when the tool is not installed in `package.json`.
+- Use `pnpm exec <tool>` when the tool is in `dependencies`/`devDependencies`.
+
+Run the full verification suite locally (assumes Playwright browsers are already
+installed; see Setup):
 
 ```bash
 biome --version
 biome ci --error-on-warnings .
-npm run typecheck
-npm run test
-# One-time before running Playwright locally
-npx playwright install --with-deps
-npm run test:e2e
+pnpm run typecheck
+pnpm run test
+pnpm run test:e2e
 ```
 
 ## Biome Commands
@@ -95,7 +142,7 @@ to cover the project root or enumerate specific paths to narrow the run.
 # Report lint issues without modifying files
 biome lint src e2e infra messages middleware.ts next.config.ts
 
-# Apply autofixes just like `npm run lint`
+# Apply autofixes just like `pnpm run lint`
 biome lint --write src e2e infra messages middleware.ts next.config.ts
 
 # Fail the run whenever a warning is emitted
@@ -150,7 +197,7 @@ lists if you only want to validate certain directories.
 
 ```bash
 # Ensure `.env.local` is populated for dev secrets
-npm run dev
+pnpm run dev
 ```
 
 - The dev server listens on `http://localhost:3000` with hot reload.
@@ -158,7 +205,7 @@ npm run dev
   - `infra/nginx/nginx.dev.conf`: Nginx reverse proxy pointing to `host.docker.internal:3000`.
   - `docker-compose.profiles.yml`: Adds a `nginx-dev` service (profile `dev`) and
     restricts the production stack to profile `prod`.
-- Start or stop the proxy as needed (after `npm run dev` is running):
+- Start or stop the proxy as needed (after `pnpm run dev` is running):
 
 <!-- markdownlint-disable MD013 -->
   ```bash
