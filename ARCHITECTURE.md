@@ -6,7 +6,7 @@ communication between the browser and `review-web` (the GraphQL backend).
 
 ## System overview
 
-```
+```text
 Browser ──► Next.js (aice-web-next) ──► review-web (GraphQL)
               │                            │
               ├─ Route Handlers            ├─ mTLS handshake
@@ -90,7 +90,7 @@ All mTLS and JWT signing logic is encapsulated in `lib/mtls.ts`:
 
 ## Directory structure
 
-```
+```text
 src/
   app/
     [locale]/              # next-intl locale segment (/en/, /ko/)
