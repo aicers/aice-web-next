@@ -32,6 +32,11 @@ updates:
           - version-update:semver-major
         versions:
           - ">= 17"
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
+        versions:
+          - ">= 25"
 
   - package-ecosystem: github-actions
     directory: /
