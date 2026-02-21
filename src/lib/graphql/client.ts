@@ -1,14 +1,8 @@
 import "server-only";
 
 import { GraphQLClient, type RequestDocument } from "graphql-request";
-import type { Dispatcher } from "undici";
 
 import { getAgent, signContextJwt } from "@/lib/mtls";
-
-function createFetchWithMtls(dispatcher: Dispatcher): typeof globalThis.fetch {
-  return (input, init) =>
-    globalThis.fetch(input, { ...init, dispatcher } as RequestInit);
-}
 
 let client: GraphQLClient | null = null;
 
@@ -20,7 +14,15 @@ function getClient(): GraphQLClient {
     throw new Error("Missing environment variable: REVIEW_GRAPHQL_ENDPOINT");
   }
 
-  client = new GraphQLClient(endpoint);
+  client = new GraphQLClient(endpoint, {
+    fetch: async (input, init) => {
+      const agent = await getAgent();
+      return globalThis.fetch(input, {
+        ...init,
+        dispatcher: agent,
+      } as RequestInit);
+    },
+  });
   return client;
 }
 
@@ -37,11 +39,7 @@ export async function graphqlRequest<
   variables: TVars | undefined,
   context: RequestContext,
 ): Promise<TData> {
-  const [token, agent] = await Promise.all([
-    signContextJwt(context.role, context.customerIds),
-    getAgent(),
-  ]);
-
+  const token = await signContextJwt(context.role, context.customerIds);
   const gqlClient = getClient();
 
   return gqlClient.request<TData>({
@@ -50,8 +48,7 @@ export async function graphqlRequest<
     requestHeaders: {
       Authorization: `Bearer ${token}`,
     },
-    fetch: createFetchWithMtls(agent),
-  } as Parameters<typeof gqlClient.request>[0]);
+  });
 }
 
 export function resetClient(): void {
