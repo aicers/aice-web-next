@@ -27,7 +27,7 @@ jobs:
           version: latest
       - run: pnpm check
       - run: pnpm typecheck
-      - uses: DavidAnson/markdownlint-cli2-action@v19
+      - uses: DavidAnson/markdownlint-cli2-action@v22
 
   test:
     name: Test
