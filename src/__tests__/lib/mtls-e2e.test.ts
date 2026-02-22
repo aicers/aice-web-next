@@ -16,7 +16,7 @@ import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:https";
 
-import { importSPKI, jwtVerify } from "jose";
+import { importPKCS8, importSPKI, jwtVerify, SignJWT } from "jose";
 import { Agent } from "undici";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -24,6 +24,7 @@ describe("mTLS + Context JWT E2E", () => {
   // Generate a fresh CA + client cert for the test
   let caCertPem: string;
   let caKeyPem: string;
+  let clientKeyPem: string;
   let serverCertPem: string;
   let serverKeyPem: string;
   let tmpDir: string;
@@ -73,6 +74,7 @@ describe("mTLS + Context JWT E2E", () => {
 
     caCertPem = readFileSync(`${tmpDir}/ca-cert.pem`, "utf8");
     caKeyPem = readFileSync(`${tmpDir}/ca-key.pem`, "utf8");
+    clientKeyPem = readFileSync(`${tmpDir}/client-key.pem`, "utf8");
     serverCertPem = readFileSync(`${tmpDir}/srv-cert.pem`, "utf8");
     serverKeyPem = readFileSync(`${tmpDir}/srv-key.pem`, "utf8");
 
@@ -201,6 +203,116 @@ describe("mTLS + Context JWT E2E", () => {
     expect(body.data.auth.role).toBe("System Administrator");
     expect(body.data.auth.customerIds).toEqual([42, 99]);
     expect(body.data.auth.verified).toBe(true);
+  });
+
+  it("server receives null when customer_ids is omitted", async () => {
+    const { signContextJwt, getAgent } = await import("@/lib/mtls");
+
+    const agent = await getAgent();
+    const token = await signContextJwt("Security Administrator");
+
+    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "{ auth { role customerIds } }" }),
+      dispatcher: agent,
+    } as RequestInit);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.auth.role).toBe("Security Administrator");
+    expect(body.data.auth.customerIds).toBeNull();
+  });
+
+  it("server receives empty array when customer_ids is []", async () => {
+    const { signContextJwt, getAgent } = await import("@/lib/mtls");
+
+    const agent = await getAgent();
+    const token = await signContextJwt("System Administrator", []);
+
+    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "{ auth { role customerIds } }" }),
+      dispatcher: agent,
+    } as RequestInit);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.auth.customerIds).toEqual([]);
+  });
+
+  it("request without Bearer token is rejected", async () => {
+    const { getAgent } = await import("@/lib/mtls");
+    const agent = await getAgent();
+
+    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "{ auth { role } }" }),
+      dispatcher: agent,
+    } as RequestInit);
+
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.errors[0].message).toBe("Bearer token required");
+  });
+
+  it("expired JWT is rejected", async () => {
+    const { getAgent } = await import("@/lib/mtls");
+    const agent = await getAgent();
+
+    // Forge an already-expired token with the correct client key
+    const key = await importPKCS8(clientKeyPem, "ES256");
+    const expiredToken = await new SignJWT({ role: "System Administrator" })
+      .setProtectedHeader({ alg: "ES256" })
+      .setExpirationTime("0s")
+      .sign(key);
+
+    // Small delay to ensure the token is past expiration
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${expiredToken}`,
+      },
+      body: JSON.stringify({ query: "{ auth { role } }" }),
+      dispatcher: agent,
+    } as RequestInit);
+
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.errors[0].message).toContain("exp");
+  });
+
+  it("sequential requests with different roles succeed", async () => {
+    const { signContextJwt, getAgent } = await import("@/lib/mtls");
+    const agent = await getAgent();
+
+    for (const role of ["System Administrator", "Security Administrator"]) {
+      const token = await signContextJwt(role, [1]);
+      const response = await fetch(`https://localhost:${serverPort}/graphql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ query: "{ auth { role } }" }),
+        dispatcher: agent,
+      } as RequestInit);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.auth.role).toBe(role);
+    }
   });
 
   it("request without client cert is rejected", async () => {
