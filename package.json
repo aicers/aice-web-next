@@ -12,7 +12,7 @@
     "start": "next start",
     "lint": "biome check",
     "format": "biome format --write",
-    "check": "biome check src",
+    "check": "biome ci --error-on-warnings .",
     "fix": "biome check --write src",
     "markdownlint": "markdownlint-cli2 '**/*.md'",
     "test": "vitest run",
