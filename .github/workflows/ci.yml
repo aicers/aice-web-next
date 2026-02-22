@@ -28,6 +28,35 @@ jobs:
       - run: pnpm check
       - run: pnpm typecheck
       - uses: DavidAnson/markdownlint-cli2-action@v22
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+
+  nginx-config:
+    name: Nginx Config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Generate dummy TLS certs
+        run: |
+          mkdir -p infra/certs
+          openssl req -x509 -nodes -newkey rsa:2048 \
+            -keyout infra/certs/dev.key -out infra/certs/dev.crt \
+            -days 1 -subj '/CN=localhost'
+          cp infra/certs/dev.key infra/certs/prod.key
+          cp infra/certs/dev.crt infra/certs/prod.crt
+      - name: Validate dev config
+        run: |
+          docker run --rm \
+            -v "$PWD/infra/nginx/nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro" \
+            -v "$PWD/infra/certs:/etc/nginx/certs:ro" \
+            nginx:alpine nginx -t
+      - name: Validate prod config
+        run: |
+          docker run --rm \
+            -v "$PWD/infra/nginx/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro" \
+            -v "$PWD/infra/certs:/etc/nginx/certs:ro" \
+            nginx:alpine nginx -t
 
   test:
     name: Test
