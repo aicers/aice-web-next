@@ -6,6 +6,8 @@ import {
   EC256_KEY,
   EC384_CERT,
   EC384_KEY,
+  EC521_CERT,
+  ED25519_CERT,
   RSA_CERT,
   RSA_KEY,
   RSA3072_CERT,
@@ -80,6 +82,18 @@ describe("mtls", () => {
 
     it("returns ES384 for EC P-384 certificate", () => {
       expect(mtls.detectAlgorithm(EC384_CERT)).toBe("ES384");
+    });
+
+    it("throws for unsupported EC curve (P-521)", () => {
+      expect(() => mtls.detectAlgorithm(EC521_CERT)).toThrow(
+        "Unsupported EC curve: secp521r1",
+      );
+    });
+
+    it("throws for unsupported key type (Ed25519)", () => {
+      expect(() => mtls.detectAlgorithm(ED25519_CERT)).toThrow(
+        "Unsupported key type: ed25519",
+      );
     });
   });
 
@@ -188,6 +202,24 @@ describe("mtls", () => {
       expect(payload.role).toBe("System Administrator");
     });
 
+    it("JWT verifiable with RSA 3072 certificate public key", async () => {
+      setEnv(RSA3072_CERT, RSA3072_KEY);
+      const token = await mtls.signContextJwt("System Administrator");
+      const pubKey = await importSPKI(publicKeyFromCert(RSA3072_CERT), "RS384");
+      const { payload } = await jwtVerify(token, pubKey);
+
+      expect(payload.role).toBe("System Administrator");
+    });
+
+    it("JWT verifiable with RSA 4096 certificate public key", async () => {
+      setEnv(RSA4096_CERT, RSA4096_KEY);
+      const token = await mtls.signContextJwt("System Administrator");
+      const pubKey = await importSPKI(publicKeyFromCert(RSA4096_CERT), "RS512");
+      const { payload } = await jwtVerify(token, pubKey);
+
+      expect(payload.role).toBe("System Administrator");
+    });
+
     it("JWT verifiable with RSA 2048 certificate public key", async () => {
       setEnv(RSA_CERT, RSA_KEY);
       const token = await mtls.signContextJwt("System Administrator");
@@ -252,6 +284,17 @@ describe("mtls", () => {
       const reloaded = await mtls.reload();
       const current = await mtls.getAgent();
       expect(current).toBe(reloaded);
+    });
+
+    it("closes the previous Agent on reload", async () => {
+      setEnv(EC256_CERT, EC256_KEY);
+      const agent = await mtls.getAgent();
+      const closeSpy = vi.spyOn(agent, "close").mockResolvedValue();
+
+      await mtls.reload();
+
+      expect(closeSpy).toHaveBeenCalledOnce();
+      closeSpy.mockRestore();
     });
 
     it("uses new key material after reload", async () => {
