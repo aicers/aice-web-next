@@ -17,9 +17,8 @@ Browser ──► Next.js (aice-web-next) ──► review-web (GraphQL)
 ```
 
 The browser never accesses `review-web` directly. Every GraphQL request
-originates from the server side of Next.js. `aice-web-next` connects to
-`auth_db` (PostgreSQL) for account management; it does not connect to
-`customer_db` (see Discussion #32 §3).
+originates from the server side of Next.js. `aice-web-next` is the sole owner
+of both `auth_db` and `customer_db` (see Discussion #32 §3).
 
 ## Authentication flow
 
@@ -120,21 +119,35 @@ aice-web-next defines three built-in roles and supports custom roles
 | Business mutations | Server Action (Next.js built-in CSRF) | `app/`, `lib/` |
 | mTLS + Context JWT | Server-only module | `lib/mtls.ts` |
 
-## Database migrations
+## Database architecture
 
-Raw SQL with `pg` — no ORM. SQL is explicit and fully visible, which aids
-both human and AI-driven debugging. SQL injection is prevented by
-parameterized queries. See Discussion #34 for the full strategy.
+aice-web-next is the sole owner of two PostgreSQL databases:
 
-- Versioned `.sql` (DDL) and `.ts` (DML) files, applied in order by a
-  custom runner.
+```text
+PostgreSQL
+├── auth_db        ← Accounts, roles, sessions, audit logs (single instance)
+└── customer_db ×N ← Per-customer data (one instance per customer)
+```
+
+- **auth_db**: single instance storing all account management and
+  authentication data.
+- **customer_db**: one database per customer for tenant-scoped data. aice-web-next
+  manages the full lifecycle: creation, schema migration, and deletion.
+- Raw SQL with `pg` (no ORM). SQL is explicit and fully visible, which aids
+  both human and AI-driven debugging. SQL injection is prevented by
+  parameterized queries. See Discussion #34 for the full strategy.
+- Schema changes use versioned SQL migration files (`migrations/auth/`,
+  `migrations/customer/`) applied by a custom runner at startup and at runtime
+  when customers are created.
 - Forward-only: rollbacks are new migration files, not reverse operations.
-- Migration files are separated by database (`auth/` for `auth_db`,
-  `customer/` for per-customer databases).
 
 ## Directory structure
 
 ```text
+migrations/
+  auth/                    # auth_db migration files (versioned SQL/TS)
+  customer/                # customer_db migration files (versioned SQL/TS)
+
 src/
   app/
     [locale]/              # next-intl locale segment (/en/, /ko/)
@@ -145,7 +158,9 @@ src/
   lib/
     mtls.ts                # mTLS + Context JWT encapsulation
     graphql/               # graphql-request client setup
-    db/                    # pg client, migration runner
+    db/
+      client.ts            # Connection pool, query<T>(), withTransaction()
+      migrate.ts           # Migration runner
   components/
     ui/                    # shadcn/ui components
   i18n/
@@ -185,7 +200,7 @@ src/
 |------------|---------|---------|
 | TanStack Query | v5.x | Client-side server state |
 | graphql-request | 7.x | Server-side GraphQL client |
-| pg | 8.x | PostgreSQL client (auth_db) |
+| pg | 8.x | PostgreSQL client (raw SQL) |
 | jose | — | Context JWT signing |
 
 ### i18n
