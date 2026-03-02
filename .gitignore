@@ -25,6 +25,9 @@
 *.pem
 .claude
 
+# Bootstrap data directory (consumed marker)
+/data
+
 # TLS certificates (never commit private keys)
 /infra/certs/
 
