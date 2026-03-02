@@ -513,6 +513,7 @@ describe("bootstrap", () => {
             role: "System Administrator",
             source: "bootstrap",
           }),
+          expect.any(String),
         ],
       );
       expect(mockAuditPoolEnd).toHaveBeenCalled();
