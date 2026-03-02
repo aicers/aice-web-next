@@ -27,6 +27,14 @@ function requireDatabaseUrl(): string {
   return url;
 }
 
+function requireAuditDatabaseUrl(): string {
+  const url = process.env.AUDIT_DATABASE_URL;
+  if (!url) {
+    throw new Error("Missing environment variable: AUDIT_DATABASE_URL");
+  }
+  return url;
+}
+
 function scanMigrations(directory: string): MigrationFile[] {
   let entries: string[];
   try {
@@ -115,6 +123,18 @@ export async function migrateAuthDb(): Promise<number> {
   }
 }
 
+export async function migrateAuditDb(): Promise<number> {
+  const migrations = scanMigrations(getMigrationsDir("audit"));
+  if (migrations.length === 0) return 0;
+
+  const pool = connectTo(requireAuditDatabaseUrl());
+  try {
+    return await applyMigrations(pool, migrations);
+  } finally {
+    await pool.end();
+  }
+}
+
 export async function migrateCustomerDb(
   connectionString: string,
 ): Promise<number> {
@@ -156,6 +176,7 @@ export async function dropCustomerDb(dbName: string): Promise<void> {
 
 export async function runStartupMigrations(): Promise<void> {
   await migrateAuthDb();
+  await migrateAuditDb();
 
   const result = await query<{ database_name: string }>(
     "SELECT database_name FROM customers WHERE status = 'active'",

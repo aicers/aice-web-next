@@ -76,6 +76,7 @@ describe("migrate", () => {
 
   afterEach(() => {
     delete process.env.DATABASE_URL;
+    delete process.env.AUDIT_DATABASE_URL;
     vi.restoreAllMocks();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -240,6 +241,112 @@ describe("migrate", () => {
       expect(vi.mocked(clientQuery)).toHaveBeenCalledWith(
         'DROP DATABASE IF EXISTS "customer_42"',
       );
+    });
+  });
+
+  // ── migrateAuditDb ────────────────────────────────────────────────
+
+  describe("migrateAuditDb", () => {
+    it("applies pending audit migrations using AUDIT_DATABASE_URL", async () => {
+      process.env.AUDIT_DATABASE_URL =
+        "postgres://postgres:postgres@localhost:5432/audit_db";
+
+      writeMigration(
+        "audit",
+        "0001_init_audit_logs.sql",
+        "CREATE TABLE audit_logs (id BIGSERIAL)",
+      );
+
+      const count = await migrate.migrateAuditDb();
+
+      expect(count).toBe(1);
+
+      const queries = mockClientQuery.mock.calls.map((c: unknown[]) => c[0]);
+      expect(queries).toContain("CREATE TABLE audit_logs (id BIGSERIAL)");
+    });
+
+    it("throws when AUDIT_DATABASE_URL is missing", async () => {
+      delete process.env.AUDIT_DATABASE_URL;
+
+      writeMigration(
+        "audit",
+        "0001_init_audit_logs.sql",
+        "CREATE TABLE audit_logs (id BIGSERIAL)",
+      );
+
+      await expect(migrate.migrateAuditDb()).rejects.toThrow(
+        "Missing environment variable: AUDIT_DATABASE_URL",
+      );
+    });
+
+    it("returns 0 when no audit migration files exist", async () => {
+      process.env.AUDIT_DATABASE_URL =
+        "postgres://postgres:postgres@localhost:5432/audit_db";
+
+      const count = await migrate.migrateAuditDb();
+
+      expect(count).toBe(0);
+    });
+
+    it("skips already-applied audit migrations (idempotency)", async () => {
+      process.env.AUDIT_DATABASE_URL =
+        "postgres://postgres:postgres@localhost:5432/audit_db";
+
+      writeMigration(
+        "audit",
+        "0001_init_audit_logs.sql",
+        "CREATE TABLE audit_logs (id BIGSERIAL)",
+      );
+
+      mockClientQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
+        .mockResolvedValueOnce({
+          rows: [{ version: "0001" }],
+          rowCount: 1,
+        }); // SELECT versions — already applied
+
+      const count = await migrate.migrateAuditDb();
+
+      expect(count).toBe(0);
+      const queries = mockClientQuery.mock.calls.map((c: unknown[]) => c[0]);
+      expect(queries).not.toContain("CREATE TABLE audit_logs (id BIGSERIAL)");
+    });
+  });
+
+  // ── runStartupMigrations ──────────────────────────────────────────
+
+  describe("runStartupMigrations", () => {
+    it("runs auth → audit → customer migrations in order", async () => {
+      process.env.AUDIT_DATABASE_URL =
+        "postgres://postgres:postgres@localhost:5432/audit_db";
+
+      writeMigration("auth", "0001_init.sql", "SELECT 1");
+      writeMigration("audit", "0001_init.sql", "SELECT 1");
+      writeMigration("customer", "0001_init.sql", "SELECT 1");
+
+      const { connectTo, query: clientQuery } = await import("@/lib/db/client");
+      const callOrder: string[] = [];
+
+      vi.mocked(connectTo).mockImplementation((url: string) => {
+        if (url.includes("auth_db")) callOrder.push("auth");
+        else if (url.includes("audit_db")) callOrder.push("audit");
+        else callOrder.push("customer");
+        return {
+          query: mockPoolQuery,
+          connect: mockPoolConnect,
+          end: mockPoolEnd,
+        } as never;
+      });
+
+      // customers query (called after auth + audit migrations)
+      vi.mocked(clientQuery).mockResolvedValueOnce({
+        rows: [{ database_name: "customer_1" }],
+        rowCount: 1,
+      });
+
+      await migrate.runStartupMigrations();
+
+      expect(callOrder).toEqual(["auth", "audit", "customer"]);
     });
   });
 });
