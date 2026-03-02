@@ -1,5 +1,41 @@
 {
   "common": {
-    "title": "aice-web-next"
+    "title": "aice-web-next",
+    "signIn": "로그인",
+    "signOut": "로그아웃",
+    "cancel": "취소",
+    "save": "저장",
+    "delete": "삭제",
+    "confirm": "확인",
+    "loading": "로딩 중...",
+    "error": "오류가 발생했습니다"
+  },
+  "auth": {
+    "username": "계정 ID",
+    "password": "비밀번호",
+    "showPassword": "비밀번호 표시",
+    "signInHeading": "계정에 로그인",
+    "resetPassword": "비밀번호 재설정",
+    "sessionTimeout": "세션 시간 초과",
+    "sessionEnded": "세션 종료"
+  },
+  "nav": {
+    "home": "홈",
+    "dashboard": "대시보드",
+    "event": "이벤트",
+    "detection": "탐지",
+    "triage": "분류",
+    "report": "보고서",
+    "settings": "설정"
+  },
+  "settings": {
+    "accounts": "계정",
+    "roles": "역할",
+    "profile": "프로필"
+  },
+  "validation": {
+    "required": "{field}은(는) 필수입니다",
+    "passwordMinLength": "비밀번호는 최소 {min}자 이상이어야 합니다",
+    "passwordMismatch": "비밀번호가 일치하지 않습니다"
   }
 }
