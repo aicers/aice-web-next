@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { generateCorrelationId } from "@/lib/audit/correlation";
 import { connectTo, query } from "@/lib/db/client";
 
 import { getDataDir } from "./data-dir";
@@ -109,6 +110,7 @@ function consumeSecretFiles(): void {
 async function writeBootstrapAuditLog(
   accountId: string,
   username: string,
+  correlationId: string,
 ): Promise<void> {
   const auditUrl = process.env.AUDIT_DATABASE_URL;
   if (!auditUrl) {
@@ -122,8 +124,8 @@ async function writeBootstrapAuditLog(
   try {
     await auditPool.query(
       `INSERT INTO audit_logs
-        (actor_id, action, target_type, target_id, details)
-       VALUES ($1, $2, $3, $4, $5)`,
+        (actor_id, action, target_type, target_id, details, correlation_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [
         "system",
         "account.create",
@@ -134,6 +136,7 @@ async function writeBootstrapAuditLog(
           role: SYSTEM_ADMIN_ROLE_NAME,
           source: "bootstrap",
         }),
+        correlationId,
       ],
     );
   } finally {
@@ -208,8 +211,9 @@ export async function bootstrapAdminAccount(): Promise<void> {
   );
 
   // Step 7: Write audit log (non-fatal — account is already created)
+  const correlationId = generateCorrelationId();
   try {
-    await writeBootstrapAuditLog(accountId, username);
+    await writeBootstrapAuditLog(accountId, username, correlationId);
   } catch (error) {
     console.warn(
       "Failed to write bootstrap audit log; admin account was created successfully",
