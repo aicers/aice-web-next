@@ -1,5 +1,41 @@
 {
   "common": {
-    "title": "aice-web-next"
+    "title": "aice-web-next",
+    "signIn": "Sign In",
+    "signOut": "Sign Out",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "loading": "Loading...",
+    "error": "An error occurred"
+  },
+  "auth": {
+    "username": "Account ID",
+    "password": "Password",
+    "showPassword": "Show password",
+    "signInHeading": "Sign into your account",
+    "resetPassword": "Reset your password",
+    "sessionTimeout": "Session timeout",
+    "sessionEnded": "Session ended"
+  },
+  "nav": {
+    "home": "Home",
+    "dashboard": "Dashboard",
+    "event": "Event",
+    "detection": "Detection",
+    "triage": "Triage",
+    "report": "Report",
+    "settings": "Settings"
+  },
+  "settings": {
+    "accounts": "Accounts",
+    "roles": "Roles",
+    "profile": "Profile"
+  },
+  "validation": {
+    "required": "{field} is required",
+    "passwordMinLength": "Password must be at least {min} characters",
+    "passwordMismatch": "Passwords do not match"
   }
 }
