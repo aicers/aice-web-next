@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: postgres:17-bookworm
+    profiles: [dev, prod]
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   nginx-dev:
     image: nginx:alpine
     profiles: [dev]
@@ -20,6 +37,9 @@ services:
       - "3000"
     env_file:
       - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   nginx-prod:
     image: nginx:alpine
@@ -32,3 +52,6 @@ services:
       - ./infra/certs:/etc/nginx/certs:ro
     depends_on:
       - next-app
+
+volumes:
+  pgdata:
