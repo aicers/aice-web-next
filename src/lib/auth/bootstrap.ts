@@ -211,8 +211,15 @@ export async function bootstrapAdminAccount(): Promise<void> {
     [accountId, passwordHash],
   );
 
-  // Step 7: Write audit log
-  await writeBootstrapAuditLog(accountId, username);
+  // Step 7: Write audit log (non-fatal — account is already created)
+  try {
+    await writeBootstrapAuditLog(accountId, username);
+  } catch (error) {
+    console.warn(
+      "Failed to write bootstrap audit log; admin account was created successfully",
+      error,
+    );
+  }
 
   // Step 8: Consume secret files if source was secret_file
   if (source === "secret_file") {

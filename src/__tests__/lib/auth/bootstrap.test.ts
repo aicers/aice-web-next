@@ -547,6 +547,42 @@ describe("bootstrap", () => {
       );
       expect(mockAuditPoolQuery).not.toHaveBeenCalled();
     });
+
+    it("warns but does not fail when audit DB query throws", async () => {
+      process.env.INIT_ADMIN_USERNAME = "admin";
+      process.env.INIT_ADMIN_PASSWORD = "secure-password";
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ count: "0" }],
+        rowCount: 1,
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1 }],
+        rowCount: 1,
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: "audit-fail-uuid" }],
+        rowCount: 1,
+      });
+      mockPoolQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+      // Simulate audit DB connection/query failure
+      mockAuditPoolQuery.mockRejectedValueOnce(
+        new Error("ECONNREFUSED: audit_db unreachable"),
+      );
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      // Should not throw — admin account is already created
+      await bootstrap.bootstrapAdminAccount();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        "Failed to write bootstrap audit log; admin account was created successfully",
+        expect.any(Error),
+      );
+      // Audit pool should still be cleaned up
+      expect(mockAuditPoolEnd).toHaveBeenCalled();
+    });
   });
 
   // ── constants ───────────────────────────────────────────────────
