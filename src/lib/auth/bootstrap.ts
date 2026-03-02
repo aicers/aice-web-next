@@ -12,6 +12,7 @@ import path from "node:path";
 
 import { connectTo, query } from "@/lib/db/client";
 
+import { getDataDir } from "./data-dir";
 import { hashPassword } from "./password";
 
 const SYSTEM_ADMIN_ROLE_NAME = "System Administrator";
@@ -22,11 +23,6 @@ export const MAX_SYSTEM_ADMINISTRATORS = 5;
 const SECRET_USERNAME_PATH = "/run/secrets/init_admin_username";
 const SECRET_PASSWORD_PATH = "/run/secrets/init_admin_password";
 const CONSUMED_MARKER_FILENAME = ".init_admin_consumed";
-
-function getDataDir(): string {
-  const dir = process.env.DATA_DIR || path.join(process.cwd(), "data");
-  return path.resolve(dir);
-}
 
 function isConsumedMarkerPresent(): boolean {
   try {
