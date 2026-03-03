@@ -164,6 +164,8 @@ describe("jwt", () => {
       expect(session.tokenVersion).toBe(0);
       expect(session.mustChangePassword).toBe(false);
       expect(session.iat).toEqual(expect.any(Number));
+      expect(session.exp).toEqual(expect.any(Number));
+      expect(session.exp).toBeGreaterThan(session.iat);
     });
 
     it("includes mustChangePassword from DB", async () => {

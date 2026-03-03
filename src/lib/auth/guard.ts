@@ -14,6 +14,7 @@ import {
 } from "./csrf";
 import type { AuthSession } from "./jwt";
 import { verifyJwtFull } from "./jwt";
+import { rotateTokens, shouldRotate } from "./rotation";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -28,11 +29,22 @@ type AuthenticatedHandler = (
   session: AuthSession,
 ) => Promise<NextResponse | Response>;
 
+// ── Options ─────────────────────────────────────────────────────
+
+interface WithAuthOptions {
+  /**
+   * When `true`, skip the must-change-password check (step 5).
+   * Needed for endpoints like sign-out that must remain accessible
+   * even when a password change is pending.
+   */
+  skipPasswordCheck?: boolean;
+}
+
 // ── Public API ──────────────────────────────────────────────────
 
 /**
  * Higher-order function that wraps Route Handlers with authentication,
- * rate limiting, and CSRF protection.
+ * rate limiting, CSRF protection, and sliding token rotation.
  *
  * 1. Reads the access token from the cookie
  * 2. Verifies the token (stateless + DB checks)
@@ -41,13 +53,19 @@ type AuthenticatedHandler = (
  *    a. Validates Origin/Referer header
  *    b. Validates CSRF token from X-CSRF-Token header
  * 5. Checks must_change_password → 403 with redirect indicator
+ *    (skippable via `options.skipPasswordCheck`)
  * 6. Updates session last_active_at
  * 7. Calls the wrapped handler with the authenticated session
+ * 8. Sliding rotation — re-issues JWT + CSRF when ≤ 1/3 lifetime
+ *    remains
  *
  * Server Actions are naturally exempt — they do not go through Route
  * Handlers and have Next.js built-in CSRF protection.
  */
-export function withAuth(handler: AuthenticatedHandler): RouteHandler {
+export function withAuth(
+  handler: AuthenticatedHandler,
+  options?: WithAuthOptions,
+): RouteHandler {
   return async (request, context) => {
     // Step 1: Read token from cookie
     const token = await getAccessTokenCookie();
@@ -122,8 +140,8 @@ export function withAuth(handler: AuthenticatedHandler): RouteHandler {
       }
     }
 
-    // Step 5: Check must_change_password
-    if (session.mustChangePassword) {
+    // Step 5: Check must_change_password (skippable)
+    if (!options?.skipPasswordCheck && session.mustChangePassword) {
       return NextResponse.json(
         { error: "Password change required", redirect: "/change-password" },
         { status: 403 },
@@ -136,6 +154,13 @@ export function withAuth(handler: AuthenticatedHandler): RouteHandler {
     ]);
 
     // Step 7: Invoke the authenticated handler
-    return handler(request, context, session);
+    const response = await handler(request, context, session);
+
+    // Step 8: Sliding rotation — re-issue tokens when nearing expiry
+    if (shouldRotate(session.iat, session.exp)) {
+      await rotateTokens(session);
+    }
+
+    return response;
   };
 }
