@@ -62,6 +62,11 @@ const ACTION_KEYS = [
 
 const TARGET_TYPE_KEYS = ["account", "session"] as const;
 
+/** Convert a dotted DB action key to an i18n-safe underscore key. */
+function actionToI18nKey(action: string): string {
+  return action.replaceAll(".", "_");
+}
+
 // ── Component ────────────────────────────────────────────────────
 
 export function AuditLogTable() {
@@ -234,7 +239,7 @@ export function AuditLogTable() {
               <SelectContent>
                 {ACTION_KEYS.map((key) => (
                   <SelectItem key={key} value={key}>
-                    {t(`actions.${key}`)}
+                    {t(`actions.${actionToI18nKey(key)}`)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -317,7 +322,11 @@ export function AuditLogTable() {
                   <TableCell className="text-xs">{entry.actor_id}</TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="text-xs">
-                      {t(`actions.${entry.action}` as Parameters<typeof t>[0])}
+                      {t(
+                        `actions.${actionToI18nKey(entry.action)}` as Parameters<
+                          typeof t
+                        >[0],
+                      )}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs">{entry.target_type}</TableCell>

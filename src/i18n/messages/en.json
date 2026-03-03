@@ -63,16 +63,16 @@
     "allActions": "All actions",
     "allTargetTypes": "All target types",
     "actions": {
-      "auth.sign_in.success": "Sign in success",
-      "auth.sign_in.failure": "Sign in failure",
-      "auth.sign_out": "Sign out",
-      "auth.session_extend": "Session extend",
-      "session.ip_mismatch": "IP mismatch",
-      "session.ua_mismatch": "UA mismatch",
-      "session.revoke": "Session revoke",
-      "account.create": "Account create",
-      "account.lock": "Account lock",
-      "account.unlock": "Account unlock"
+      "auth_sign_in_success": "Sign in success",
+      "auth_sign_in_failure": "Sign in failure",
+      "auth_sign_out": "Sign out",
+      "auth_session_extend": "Session extend",
+      "session_ip_mismatch": "IP mismatch",
+      "session_ua_mismatch": "UA mismatch",
+      "session_revoke": "Session revoke",
+      "account_create": "Account create",
+      "account_lock": "Account lock",
+      "account_unlock": "Account unlock"
     },
     "targetTypes": {
       "account": "Account",
