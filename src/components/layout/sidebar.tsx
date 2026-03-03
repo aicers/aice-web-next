@@ -7,6 +7,7 @@ import {
   Home,
   LayoutDashboard,
   Radio,
+  ScrollText,
   Search,
   Settings,
   Shield,
@@ -34,6 +35,7 @@ const NAV_ITEMS = [
   { key: "detection", href: "/detection", icon: Search },
   { key: "triage", href: "/triage", icon: Shield },
   { key: "report", href: "/report", icon: FileText },
+  { key: "audit-logs", href: "/audit-logs", icon: ScrollText },
   { key: "settings", href: "/settings", icon: Settings },
 ] as const;
 

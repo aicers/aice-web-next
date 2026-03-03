@@ -6,6 +6,7 @@ export const NAV_SEGMENTS = new Set([
   "detection",
   "triage",
   "report",
+  "audit-logs",
   "settings",
 ]);
 

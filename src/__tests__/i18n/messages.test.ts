@@ -13,6 +13,15 @@ function getKeys(obj: Record<string, unknown>, prefix = ""): string[] {
   });
 }
 
+function getLeafValues(obj: Record<string, unknown>): string[] {
+  return Object.values(obj).flatMap((value) => {
+    if (typeof value === "object" && value !== null) {
+      return getLeafValues(value as Record<string, unknown>);
+    }
+    return [value as string];
+  });
+}
+
 describe("translation messages", () => {
   it("en.json and ko.json have the same key structure", () => {
     const enKeys = getKeys(en);
@@ -32,15 +41,7 @@ describe("translation messages", () => {
   });
 
   it("has no empty string values in en.json", () => {
-    const values = getKeys(en).map(
-      (key) =>
-        key
-          .split(".")
-          .reduce(
-            (obj, k) => (obj as Record<string, unknown>)[k],
-            en as unknown,
-          ) as string,
-    );
+    const values = getLeafValues(en);
 
     for (const value of values) {
       expect(value).not.toBe("");
@@ -48,15 +49,7 @@ describe("translation messages", () => {
   });
 
   it("has no empty string values in ko.json", () => {
-    const values = getKeys(ko).map(
-      (key) =>
-        key
-          .split(".")
-          .reduce(
-            (obj, k) => (obj as Record<string, unknown>)[k],
-            ko as unknown,
-          ) as string,
-    );
+    const values = getLeafValues(ko);
 
     for (const value of values) {
       expect(value).not.toBe("");
