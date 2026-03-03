@@ -9,6 +9,8 @@ const mockPoolQuery = vi.hoisted(() => vi.fn());
 const mockValidateCsrfToken = vi.hoisted(() => vi.fn());
 const mockValidateOrigin = vi.hoisted(() => vi.fn());
 const mockCheckApiRateLimit = vi.hoisted(() => vi.fn());
+const mockShouldRotate = vi.hoisted(() => vi.fn());
+const mockRotateTokens = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/cookies", () => ({
   getAccessTokenCookie: mockGetAccessTokenCookie,
@@ -26,6 +28,11 @@ vi.mock("@/lib/rate-limit/limiter", () => ({
   checkApiRateLimit: mockCheckApiRateLimit,
 }));
 
+vi.mock("@/lib/auth/rotation", () => ({
+  shouldRotate: mockShouldRotate,
+  rotateTokens: mockRotateTokens,
+}));
+
 vi.mock("@/lib/auth/csrf", () => ({
   CSRF_HEADER_NAME: "x-csrf-token",
   isMutationMethod: vi.fn((method: string) =>
@@ -38,13 +45,16 @@ vi.mock("@/lib/auth/csrf", () => ({
 describe("withAuth", () => {
   let guard: typeof import("@/lib/auth/guard");
 
+  const now = Math.floor(Date.now() / 1000);
+
   const validSession: AuthSession = {
     accountId: "account-1",
     sessionId: "session-1",
     roles: ["admin"],
     tokenVersion: 0,
     mustChangePassword: false,
-    iat: Math.floor(Date.now() / 1000),
+    iat: now,
+    exp: now + 900, // 15 minutes
   };
 
   function makeRequest(
@@ -68,6 +78,8 @@ describe("withAuth", () => {
     mockValidateCsrfToken.mockReset();
     mockValidateOrigin.mockReset();
     mockCheckApiRateLimit.mockReset().mockResolvedValue({ limited: false });
+    mockShouldRotate.mockReset().mockReturnValue(false);
+    mockRotateTokens.mockReset().mockResolvedValue(undefined);
 
     process.env.CSRF_SECRET = "test-csrf-secret";
 
@@ -450,6 +462,124 @@ describe("withAuth", () => {
       await wrapped(makeRequest(), makeContext());
 
       expect(mockCheckApiRateLimit).toHaveBeenCalledWith("account-1");
+    });
+  });
+
+  // ── Sliding rotation ──────────────────────────────────────────
+
+  describe("sliding rotation", () => {
+    it("rotates tokens when shouldRotate returns true", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockShouldRotate.mockReturnValue(true);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler);
+      await wrapped(makeRequest(), makeContext());
+
+      expect(mockShouldRotate).toHaveBeenCalledWith(
+        validSession.iat,
+        validSession.exp,
+      );
+      expect(mockRotateTokens).toHaveBeenCalledWith(validSession);
+    });
+
+    it("does not rotate when shouldRotate returns false", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockShouldRotate.mockReturnValue(false);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler);
+      await wrapped(makeRequest(), makeContext());
+
+      expect(mockShouldRotate).toHaveBeenCalledWith(
+        validSession.iat,
+        validSession.exp,
+      );
+      expect(mockRotateTokens).not.toHaveBeenCalled();
+    });
+
+    it("returns the handler's response after rotation", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockShouldRotate.mockReturnValue(true);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ data: "hello" }));
+      const wrapped = guard.withAuth(handler);
+      const response = await wrapped(makeRequest(), makeContext());
+      const body = await response.json();
+
+      expect(body.data).toBe("hello");
+      expect(mockRotateTokens).toHaveBeenCalled();
+    });
+
+    it("rotation happens after the handler is called", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockShouldRotate.mockReturnValue(true);
+
+      const callOrder: string[] = [];
+
+      mockRotateTokens.mockImplementation(async () => {
+        callOrder.push("rotate");
+      });
+
+      const handler = vi.fn().mockImplementation(async () => {
+        callOrder.push("handler");
+        return NextResponse.json({ ok: true });
+      });
+
+      const wrapped = guard.withAuth(handler);
+      await wrapped(makeRequest(), makeContext());
+
+      expect(callOrder).toEqual(["handler", "rotate"]);
+    });
+  });
+
+  // ── skipPasswordCheck option ──────────────────────────────────
+
+  describe("skipPasswordCheck option", () => {
+    it("allows handler when mustChangePassword is true and skipPasswordCheck is true", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue({
+        ...validSession,
+        mustChangePassword: true,
+      });
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler, { skipPasswordCheck: true });
+      const response = await wrapped(makeRequest(), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it("still blocks when mustChangePassword is true and no options are given", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue({
+        ...validSession,
+        mustChangePassword: true,
+      });
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler);
+      const response = await wrapped(makeRequest(), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe("Password change required");
+      expect(handler).not.toHaveBeenCalled();
     });
   });
 });

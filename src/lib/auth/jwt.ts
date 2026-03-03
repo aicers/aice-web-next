@@ -38,6 +38,8 @@ export interface AuthSession {
   mustChangePassword: boolean;
   /** JWT issued-at timestamp (seconds since epoch). */
   iat: number;
+  /** JWT expiration timestamp (seconds since epoch). */
+  exp: number;
 }
 
 // ── Issuance ────────────────────────────────────────────────────
@@ -148,5 +150,6 @@ export async function verifyJwtFull(token: string): Promise<AuthSession> {
     tokenVersion: payload.token_version,
     mustChangePassword: row.must_change_password,
     iat: payload.iat,
+    exp: payload.exp,
   };
 }
