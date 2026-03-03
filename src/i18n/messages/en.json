@@ -26,7 +26,8 @@
     "detection": "Detection",
     "triage": "Triage",
     "report": "Report",
-    "settings": "Settings"
+    "settings": "Settings",
+    "audit-logs": "Audit Logs"
   },
   "settings": {
     "accounts": "Accounts",
@@ -37,5 +38,45 @@
     "required": "{field} is required",
     "passwordMinLength": "Password must be at least {min} characters",
     "passwordMismatch": "Passwords do not match"
+  },
+  "auditLogs": {
+    "title": "Audit Logs",
+    "filters": "Filters",
+    "from": "From",
+    "to": "To",
+    "actor": "Actor",
+    "action": "Action",
+    "targetType": "Target Type",
+    "targetId": "Target ID",
+    "correlationId": "Correlation ID",
+    "search": "Search",
+    "clear": "Clear",
+    "noResults": "No audit log entries found",
+    "loading": "Loading...",
+    "error": "Failed to load audit logs",
+    "timestamp": "Timestamp",
+    "ipAddress": "IP Address",
+    "details": "Details",
+    "page": "Page {current} of {total}",
+    "previous": "Previous",
+    "next": "Next",
+    "allActions": "All actions",
+    "allTargetTypes": "All target types",
+    "actions": {
+      "auth.sign_in.success": "Sign in success",
+      "auth.sign_in.failure": "Sign in failure",
+      "auth.sign_out": "Sign out",
+      "auth.session_extend": "Session extend",
+      "session.ip_mismatch": "IP mismatch",
+      "session.ua_mismatch": "UA mismatch",
+      "session.revoke": "Session revoke",
+      "account.create": "Account create",
+      "account.lock": "Account lock",
+      "account.unlock": "Account unlock"
+    },
+    "targetTypes": {
+      "account": "Account",
+      "session": "Session"
+    }
   }
 }

@@ -26,7 +26,8 @@
     "detection": "탐지",
     "triage": "분류",
     "report": "보고서",
-    "settings": "설정"
+    "settings": "설정",
+    "audit-logs": "감사 로그"
   },
   "settings": {
     "accounts": "계정",
@@ -37,5 +38,45 @@
     "required": "{field}은(는) 필수입니다",
     "passwordMinLength": "비밀번호는 최소 {min}자 이상이어야 합니다",
     "passwordMismatch": "비밀번호가 일치하지 않습니다"
+  },
+  "auditLogs": {
+    "title": "감사 로그",
+    "filters": "필터",
+    "from": "시작일",
+    "to": "종료일",
+    "actor": "행위자",
+    "action": "작업",
+    "targetType": "대상 유형",
+    "targetId": "대상 ID",
+    "correlationId": "상관 ID",
+    "search": "검색",
+    "clear": "초기화",
+    "noResults": "감사 로그 항목이 없습니다",
+    "loading": "로딩 중...",
+    "error": "감사 로그를 불러오지 못했습니다",
+    "timestamp": "타임스탬프",
+    "ipAddress": "IP 주소",
+    "details": "상세 정보",
+    "page": "페이지 {current} / {total}",
+    "previous": "이전",
+    "next": "다음",
+    "allActions": "모든 작업",
+    "allTargetTypes": "모든 대상 유형",
+    "actions": {
+      "auth.sign_in.success": "로그인 성공",
+      "auth.sign_in.failure": "로그인 실패",
+      "auth.sign_out": "로그아웃",
+      "auth.session_extend": "세션 연장",
+      "session.ip_mismatch": "IP 불일치",
+      "session.ua_mismatch": "UA 불일치",
+      "session.revoke": "세션 해지",
+      "account.create": "계정 생성",
+      "account.lock": "계정 잠금",
+      "account.unlock": "계정 잠금 해제"
+    },
+    "targetTypes": {
+      "account": "계정",
+      "session": "세션"
+    }
   }
 }

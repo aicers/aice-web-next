@@ -80,6 +80,7 @@ describe("NAV_SEGMENTS", () => {
       "detection",
       "triage",
       "report",
+      "audit-logs",
       "settings",
     ];
     for (const key of expected) {
