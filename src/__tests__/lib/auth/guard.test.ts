@@ -8,6 +8,7 @@ const mockVerifyJwtFull = vi.hoisted(() => vi.fn());
 const mockPoolQuery = vi.hoisted(() => vi.fn());
 const mockValidateCsrfToken = vi.hoisted(() => vi.fn());
 const mockValidateOrigin = vi.hoisted(() => vi.fn());
+const mockCheckApiRateLimit = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/cookies", () => ({
   getAccessTokenCookie: mockGetAccessTokenCookie,
@@ -19,6 +20,10 @@ vi.mock("@/lib/auth/jwt", () => ({
 
 vi.mock("@/lib/db/client", () => ({
   query: vi.fn((...args: unknown[]) => mockPoolQuery(...args)),
+}));
+
+vi.mock("@/lib/rate-limit/limiter", () => ({
+  checkApiRateLimit: mockCheckApiRateLimit,
 }));
 
 vi.mock("@/lib/auth/csrf", () => ({
@@ -62,6 +67,7 @@ describe("withAuth", () => {
     mockPoolQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
     mockValidateCsrfToken.mockReset();
     mockValidateOrigin.mockReset();
+    mockCheckApiRateLimit.mockReset().mockResolvedValue({ limited: false });
 
     process.env.CSRF_SECRET = "test-csrf-secret";
 
@@ -366,6 +372,84 @@ describe("withAuth", () => {
       const response = await wrapped(request, makeContext());
       expect(response.status).toBe(403);
       expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Rate limiting ─────────────────────────────────────────────
+
+  describe("rate limiting", () => {
+    it("GET request within rate limit passes", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockCheckApiRateLimit.mockResolvedValue({ limited: false });
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler);
+      const response = await wrapped(makeRequest(), makeContext());
+
+      expect(response.status).toBe(200);
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it("returns 429 with Retry-After when rate limit exceeded", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockCheckApiRateLimit.mockResolvedValue({
+        limited: true,
+        retryAfterSeconds: 42,
+      });
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler);
+      const response = await wrapped(makeRequest(), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(429);
+      expect(body.error).toBe("Too many requests");
+      expect(response.headers.get("Retry-After")).toBe("42");
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("rate limit applies to POST requests as well", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockCheckApiRateLimit.mockResolvedValue({
+        limited: true,
+        retryAfterSeconds: 10,
+      });
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler);
+
+      const request = makeRequest("http://localhost:3000/api/test", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost:3000",
+          "x-csrf-token": "some-token",
+        },
+      });
+
+      const response = await wrapped(request, makeContext());
+
+      expect(response.status).toBe(429);
+      // CSRF should not be checked when rate limited
+      expect(mockValidateCsrfToken).not.toHaveBeenCalled();
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("passes accountId to checkApiRateLimit", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler);
+      await wrapped(makeRequest(), makeContext());
+
+      expect(mockCheckApiRateLimit).toHaveBeenCalledWith("account-1");
     });
   });
 });
