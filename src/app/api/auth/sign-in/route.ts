@@ -1,0 +1,396 @@
+import "server-only";
+
+import { cookies } from "next/headers";
+import { type NextRequest, NextResponse } from "next/server";
+
+import {
+  generateCorrelationId,
+  withCorrelationId,
+} from "@/lib/audit/correlation";
+import { auditLog } from "@/lib/audit/logger";
+import { isIpAllowed } from "@/lib/auth/cidr";
+import { setAccessTokenCookie } from "@/lib/auth/cookies";
+import {
+  CSRF_COOKIE_NAME,
+  CSRF_COOKIE_OPTIONS,
+  generateCsrfToken,
+} from "@/lib/auth/csrf";
+import { extractClientIp } from "@/lib/auth/ip";
+import { issueAccessToken } from "@/lib/auth/jwt";
+import { verifyPassword } from "@/lib/auth/password";
+import { query } from "@/lib/db/client";
+import { checkSignInRateLimit } from "@/lib/rate-limit/limiter";
+
+// ── Constants ───────────────────────────────────────────────────
+
+const TOKEN_MAX_AGE_SECONDS = 15 * 60;
+
+// ── Lockout defaults (matching migration 0007) ─────────────────
+
+interface LockoutPolicy {
+  stage1Threshold: number;
+  stage1DurationMinutes: number;
+  stage2Threshold: number;
+}
+
+const DEFAULT_LOCKOUT: LockoutPolicy = {
+  stage1Threshold: 5,
+  stage1DurationMinutes: 30,
+  stage2Threshold: 3,
+};
+
+interface LockoutPolicyRow {
+  stage1_threshold: number;
+  stage1_duration_minutes: number;
+  stage2_threshold: number;
+}
+
+interface SessionPolicyRow {
+  max_sessions: number | null;
+}
+
+// ── Account row type ────────────────────────────────────────────
+
+interface AccountRow {
+  id: string;
+  password_hash: string;
+  status: string;
+  token_version: number;
+  must_change_password: boolean;
+  failed_sign_in_count: number;
+  locked_until: string | null;
+  max_sessions: number | null;
+  allowed_ips: string[] | null;
+  role_name: string;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────
+
+async function loadLockoutPolicy(): Promise<LockoutPolicy> {
+  try {
+    const result = await query<{ value: LockoutPolicyRow }>(
+      "SELECT value FROM system_settings WHERE key = $1",
+      ["lockout_policy"],
+    );
+    if (result.rows.length > 0) {
+      const db = result.rows[0].value;
+      return {
+        stage1Threshold: db.stage1_threshold ?? DEFAULT_LOCKOUT.stage1Threshold,
+        stage1DurationMinutes:
+          db.stage1_duration_minutes ?? DEFAULT_LOCKOUT.stage1DurationMinutes,
+        stage2Threshold: db.stage2_threshold ?? DEFAULT_LOCKOUT.stage2Threshold,
+      };
+    }
+  } catch {
+    // DB unavailable — use defaults
+  }
+  return { ...DEFAULT_LOCKOUT };
+}
+
+async function loadMaxSessionsDefault(): Promise<number | null> {
+  try {
+    const result = await query<{ value: SessionPolicyRow }>(
+      "SELECT value FROM system_settings WHERE key = $1",
+      ["session_policy"],
+    );
+    if (result.rows.length > 0) {
+      return result.rows[0].value.max_sessions ?? null;
+    }
+  } catch {
+    // DB unavailable — no limit
+  }
+  return null;
+}
+
+// ── Handler ─────────────────────────────────────────────────────
+
+async function handleSignIn(request: NextRequest): Promise<NextResponse> {
+  // Step 1: Parse body
+  let body: { username?: string; password?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid request body" },
+      { status: 400 },
+    );
+  }
+
+  const { username, password } = body;
+  if (!username || !password) {
+    return NextResponse.json(
+      { error: "Username and password are required" },
+      { status: 400 },
+    );
+  }
+
+  // Step 2: Extract client IP
+  const ip = extractClientIp(request);
+  const userAgent = request.headers.get("user-agent") ?? "";
+
+  // Step 3: Rate limit
+  const rateResult = await checkSignInRateLimit(ip, username);
+  if (rateResult.limited) {
+    await auditLog.record({
+      actor: username,
+      action: "auth.sign_in.failure",
+      target: "account",
+      details: { reason: "rate_limited", ip },
+    });
+    return NextResponse.json(
+      { error: "Too many sign-in attempts" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateResult.retryAfterSeconds) },
+      },
+    );
+  }
+
+  // Step 4: Fetch account
+  const { rows: accountRows } = await query<AccountRow>(
+    `SELECT a.id, a.password_hash, a.status, a.token_version,
+            a.must_change_password, a.failed_sign_in_count,
+            a.locked_until, a.max_sessions, a.allowed_ips,
+            r.name AS role_name
+     FROM accounts a
+     JOIN roles r ON a.role_id = r.id
+     WHERE a.username = $1`,
+    [username],
+  );
+
+  if (accountRows.length === 0) {
+    await auditLog.record({
+      actor: username,
+      action: "auth.sign_in.failure",
+      target: "account",
+      details: { reason: "invalid_credentials", ip },
+    });
+    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+  }
+
+  const account = accountRows[0];
+
+  // Step 5: Check lockout and account status
+  if (account.status === "locked") {
+    if (account.locked_until === null) {
+      // Permanent lock
+      await auditLog.record({
+        actor: account.id,
+        action: "auth.sign_in.failure",
+        target: "account",
+        targetId: account.id,
+        details: { reason: "account_locked", ip },
+      });
+      return NextResponse.json({ error: "Account is locked" }, { status: 403 });
+    }
+
+    const lockExpiry = new Date(account.locked_until);
+    if (lockExpiry > new Date()) {
+      // Temporary lock not yet expired
+      await auditLog.record({
+        actor: account.id,
+        action: "auth.sign_in.failure",
+        target: "account",
+        targetId: account.id,
+        details: { reason: "account_locked", ip },
+      });
+      return NextResponse.json({ error: "Account is locked" }, { status: 403 });
+    }
+
+    // Temporary lock expired — auto-unlock
+    await query(
+      `UPDATE accounts
+       SET status = 'active', failed_sign_in_count = 0, locked_until = NULL
+       WHERE id = $1`,
+      [account.id],
+    );
+    account.status = "active";
+    account.failed_sign_in_count = 0;
+    account.locked_until = null;
+  }
+
+  if (account.status !== "active") {
+    await auditLog.record({
+      actor: account.id,
+      action: "auth.sign_in.failure",
+      target: "account",
+      targetId: account.id,
+      details: { reason: "account_inactive", status: account.status, ip },
+    });
+    return NextResponse.json(
+      { error: "Account is not active" },
+      { status: 403 },
+    );
+  }
+
+  // Step 6: CIDR check
+  if (!isIpAllowed(ip, account.allowed_ips ?? [])) {
+    await auditLog.record({
+      actor: account.id,
+      action: "auth.sign_in.failure",
+      target: "account",
+      targetId: account.id,
+      details: { reason: "ip_restricted", ip },
+    });
+    return NextResponse.json(
+      { error: "Access denied from this network" },
+      { status: 403 },
+    );
+  }
+
+  // Step 7: Password verification
+  const passwordValid = await verifyPassword(account.password_hash, password);
+  if (!passwordValid) {
+    const newFailCount = account.failed_sign_in_count + 1;
+    const lockout = await loadLockoutPolicy();
+
+    // Check stage 2 first (permanent lock)
+    if (newFailCount >= lockout.stage1Threshold + lockout.stage2Threshold) {
+      await query(
+        `UPDATE accounts
+         SET failed_sign_in_count = $1, status = 'locked', locked_until = NULL
+         WHERE id = $2`,
+        [newFailCount, account.id],
+      );
+      await auditLog.record({
+        actor: account.id,
+        action: "account.lock",
+        target: "account",
+        targetId: account.id,
+        details: { reason: "stage2_permanent", failedCount: newFailCount, ip },
+      });
+    } else if (newFailCount >= lockout.stage1Threshold) {
+      // Stage 1 — temporary lock
+      await query(
+        `UPDATE accounts
+         SET failed_sign_in_count = $1, status = 'locked',
+             locked_until = NOW() + $2 * INTERVAL '1 minute'
+         WHERE id = $3`,
+        [newFailCount, lockout.stage1DurationMinutes, account.id],
+      );
+      await auditLog.record({
+        actor: account.id,
+        action: "account.lock",
+        target: "account",
+        targetId: account.id,
+        details: {
+          reason: "stage1_temporary",
+          failedCount: newFailCount,
+          durationMinutes: lockout.stage1DurationMinutes,
+          ip,
+        },
+      });
+    } else {
+      // Below threshold — just increment
+      await query(
+        "UPDATE accounts SET failed_sign_in_count = $1 WHERE id = $2",
+        [newFailCount, account.id],
+      );
+    }
+
+    await auditLog.record({
+      actor: account.id,
+      action: "auth.sign_in.failure",
+      target: "account",
+      targetId: account.id,
+      details: { reason: "invalid_credentials", ip },
+    });
+    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+  }
+
+  // Step 8: Max sessions check
+  const effectiveMaxSessions =
+    account.max_sessions ?? (await loadMaxSessionsDefault());
+
+  if (effectiveMaxSessions !== null) {
+    const { rows: countRows } = await query<{ count: string }>(
+      "SELECT COUNT(*) AS count FROM sessions WHERE account_id = $1 AND revoked = false",
+      [account.id],
+    );
+    const activeCount = Number(countRows[0].count);
+    if (activeCount >= effectiveMaxSessions) {
+      await auditLog.record({
+        actor: account.id,
+        action: "auth.sign_in.failure",
+        target: "account",
+        targetId: account.id,
+        details: {
+          reason: "max_sessions",
+          activeCount,
+          limit: effectiveMaxSessions,
+          ip,
+        },
+      });
+      return NextResponse.json(
+        { error: "Maximum number of active sessions reached" },
+        { status: 403 },
+      );
+    }
+  }
+
+  // Step 9: Success
+  // 9a. Reset failed count and update last_sign_in_at
+  await query(
+    `UPDATE accounts
+     SET failed_sign_in_count = 0, last_sign_in_at = NOW()
+     WHERE id = $1`,
+    [account.id],
+  );
+
+  // 9b. Create session
+  const { rows: sessionRows } = await query<{ sid: string }>(
+    `INSERT INTO sessions (sid, account_id, ip_address, user_agent)
+     VALUES (gen_random_uuid(), $1, $2, $3)
+     RETURNING sid`,
+    [account.id, ip, userAgent],
+  );
+  const sessionId = sessionRows[0].sid;
+
+  // 9c. Issue JWT
+  const jwt = await issueAccessToken({
+    accountId: account.id,
+    sessionId,
+    roles: [account.role_name],
+    tokenVersion: account.token_version,
+  });
+
+  // 9d. Issue CSRF token
+  const csrfSecret = process.env.CSRF_SECRET;
+  if (!csrfSecret) {
+    return NextResponse.json(
+      { error: "Server configuration error" },
+      { status: 500 },
+    );
+  }
+  const { token: csrfToken } = generateCsrfToken(sessionId, csrfSecret);
+
+  // 9e. Set cookies
+  await setAccessTokenCookie(jwt, TOKEN_MAX_AGE_SECONDS);
+  const cookieStore = await cookies();
+  cookieStore.set(CSRF_COOKIE_NAME, csrfToken, {
+    ...CSRF_COOKIE_OPTIONS,
+    maxAge: TOKEN_MAX_AGE_SECONDS,
+  });
+
+  // 9f. Audit success
+  await auditLog.record({
+    actor: account.id,
+    action: "auth.sign_in.success",
+    target: "session",
+    targetId: sessionId,
+    ip,
+    sid: sessionId,
+  });
+
+  // 9g. Response
+  return NextResponse.json({
+    mustChangePassword: account.must_change_password,
+  });
+}
+
+// ── Route export ────────────────────────────────────────────────
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  const correlationId = generateCorrelationId();
+  return withCorrelationId(correlationId, () => handleSignIn(request));
+}
