@@ -63,16 +63,16 @@
     "allActions": "모든 작업",
     "allTargetTypes": "모든 대상 유형",
     "actions": {
-      "auth.sign_in.success": "로그인 성공",
-      "auth.sign_in.failure": "로그인 실패",
-      "auth.sign_out": "로그아웃",
-      "auth.session_extend": "세션 연장",
-      "session.ip_mismatch": "IP 불일치",
-      "session.ua_mismatch": "UA 불일치",
-      "session.revoke": "세션 해지",
-      "account.create": "계정 생성",
-      "account.lock": "계정 잠금",
-      "account.unlock": "계정 잠금 해제"
+      "auth_sign_in_success": "로그인 성공",
+      "auth_sign_in_failure": "로그인 실패",
+      "auth_sign_out": "로그아웃",
+      "auth_session_extend": "세션 연장",
+      "session_ip_mismatch": "IP 불일치",
+      "session_ua_mismatch": "UA 불일치",
+      "session_revoke": "세션 해지",
+      "account_create": "계정 생성",
+      "account_lock": "계정 잠금",
+      "account_unlock": "계정 잠금 해제"
     },
     "targetTypes": {
       "account": "계정",
