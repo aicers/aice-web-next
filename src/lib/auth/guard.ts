@@ -5,6 +5,12 @@ import { type NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db/client";
 
 import { getAccessTokenCookie } from "./cookies";
+import {
+  CSRF_HEADER_NAME,
+  isMutationMethod,
+  validateCsrfToken,
+  validateOrigin,
+} from "./csrf";
 import type { AuthSession } from "./jwt";
 import { verifyJwtFull } from "./jwt";
 
@@ -24,13 +30,20 @@ type AuthenticatedHandler = (
 // ── Public API ──────────────────────────────────────────────────
 
 /**
- * Higher-order function that wraps Route Handlers with authentication.
+ * Higher-order function that wraps Route Handlers with authentication
+ * and CSRF protection.
  *
  * 1. Reads the access token from the cookie
  * 2. Verifies the token (stateless + DB checks)
- * 3. Checks must_change_password → 403 with redirect indicator
- * 4. Updates session last_active_at
- * 5. Calls the wrapped handler with the authenticated session
+ * 3. For mutation methods (POST/PUT/PATCH/DELETE):
+ *    a. Validates Origin/Referer header
+ *    b. Validates CSRF token from X-CSRF-Token header
+ * 4. Checks must_change_password → 403 with redirect indicator
+ * 5. Updates session last_active_at
+ * 6. Calls the wrapped handler with the authenticated session
+ *
+ * Server Actions are naturally exempt — they do not go through Route
+ * Handlers and have Next.js built-in CSRF protection.
  */
 export function withAuth(handler: AuthenticatedHandler): RouteHandler {
   return async (request, context) => {
@@ -54,7 +67,46 @@ export function withAuth(handler: AuthenticatedHandler): RouteHandler {
       );
     }
 
-    // Step 3: Check must_change_password
+    // Step 3: CSRF validation for mutation methods
+    if (isMutationMethod(request.method)) {
+      const csrfSecret = process.env.CSRF_SECRET;
+      if (!csrfSecret) {
+        return NextResponse.json(
+          { error: "Server configuration error" },
+          { status: 500 },
+        );
+      }
+
+      // Step 3a: Origin / Referer verification
+      if (
+        !validateOrigin(
+          request.headers.get("origin"),
+          request.headers.get("referer"),
+          request.nextUrl.origin,
+        )
+      ) {
+        return NextResponse.json({ error: "Origin mismatch" }, { status: 403 });
+      }
+
+      // Step 3b: CSRF token verification
+      const csrfToken = request.headers.get(CSRF_HEADER_NAME);
+      if (
+        !csrfToken ||
+        !validateCsrfToken(
+          csrfToken,
+          session.sessionId,
+          csrfSecret,
+          session.iat,
+        )
+      ) {
+        return NextResponse.json(
+          { error: "Invalid CSRF token" },
+          { status: 403 },
+        );
+      }
+    }
+
+    // Step 4: Check must_change_password
     if (session.mustChangePassword) {
       return NextResponse.json(
         { error: "Password change required", redirect: "/change-password" },
@@ -62,12 +114,12 @@ export function withAuth(handler: AuthenticatedHandler): RouteHandler {
       );
     }
 
-    // Step 4: Update last_active_at on the session
+    // Step 5: Update last_active_at on the session
     await query("UPDATE sessions SET last_active_at = NOW() WHERE sid = $1", [
       session.sessionId,
     ]);
 
-    // Step 5: Invoke the authenticated handler
+    // Step 6: Invoke the authenticated handler
     return handler(request, context, session);
   };
 }

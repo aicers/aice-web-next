@@ -163,6 +163,7 @@ describe("jwt", () => {
       expect(session.roles).toEqual(["admin"]);
       expect(session.tokenVersion).toBe(0);
       expect(session.mustChangePassword).toBe(false);
+      expect(session.iat).toEqual(expect.any(Number));
     });
 
     it("includes mustChangePassword from DB", async () => {
