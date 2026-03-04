@@ -9,3 +9,9 @@ CREATE DATABASE audit_db;
 -- Password should be overridden via POSTGRES_INITDB_ARGS or changed
 -- after provisioning for production deployments.
 CREATE ROLE audit_writer WITH LOGIN PASSWORD 'changeme';
+
+-- PostgreSQL 15+ revokes CREATE on the public schema from PUBLIC by
+-- default.  The application runs migrations (CREATE TABLE) as
+-- audit_writer, so it needs CREATE + USAGE on the public schema.
+\c audit_db
+GRANT CREATE, USAGE ON SCHEMA public TO audit_writer;
