@@ -102,19 +102,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install chromium --with-deps
       - name: Generate JWT signing key
-        run: node --input-type=module -e "
-          import { randomUUID } from 'node:crypto';
-          import { mkdirSync, writeFileSync } from 'node:fs';
-          import { exportJWK, generateKeyPair } from 'jose';
-          const { privateKey, publicKey } = await generateKeyPair('ES256', { extractable: true });
-          const kid = randomUUID();
-          const priv = await exportJWK(privateKey);
-          const pub = await exportJWK(publicKey);
-          priv.kid = kid; pub.kid = kid;
-          mkdirSync('data-e2e/keys', { recursive: true });
-          writeFileSync('data-e2e/keys/jwt-signing.json', JSON.stringify({ kid, algorithm: 'ES256', privateKey: priv, publicKey: pub }, null, 2));
-          console.log('JWT signing key generated at data-e2e/keys/jwt-signing.json');
-          "
+        run: node e2e/generate-key.mjs
+        env:
+          DATA_DIR: ./data-e2e
       - name: Run E2E tests
         run: pnpm e2e
         env:
