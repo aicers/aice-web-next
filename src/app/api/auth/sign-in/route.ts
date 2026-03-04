@@ -165,7 +165,10 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
       target: "account",
       details: { reason: "invalid_credentials", ip },
     });
-    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Invalid credentials", code: "INVALID_CREDENTIALS" },
+      { status: 401 },
+    );
   }
 
   const account = accountRows[0];
@@ -181,7 +184,10 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
         targetId: account.id,
         details: { reason: "account_locked", ip },
       });
-      return NextResponse.json({ error: "Account is locked" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Account is locked", code: "ACCOUNT_LOCKED" },
+        { status: 403 },
+      );
     }
 
     const lockExpiry = new Date(account.locked_until);
@@ -194,7 +200,10 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
         targetId: account.id,
         details: { reason: "account_locked", ip },
       });
-      return NextResponse.json({ error: "Account is locked" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Account is locked", code: "ACCOUNT_LOCKED" },
+        { status: 403 },
+      );
     }
 
     // Temporary lock expired — auto-unlock
@@ -218,7 +227,7 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
       details: { reason: "account_inactive", status: account.status, ip },
     });
     return NextResponse.json(
-      { error: "Account is not active" },
+      { error: "Account is not active", code: "ACCOUNT_INACTIVE" },
       { status: 403 },
     );
   }
@@ -233,7 +242,7 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
       details: { reason: "ip_restricted", ip },
     });
     return NextResponse.json(
-      { error: "Access denied from this network" },
+      { error: "Access denied from this network", code: "IP_RESTRICTED" },
       { status: 403 },
     );
   }
@@ -295,7 +304,10 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
       targetId: account.id,
       details: { reason: "invalid_credentials", ip },
     });
-    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Invalid credentials", code: "INVALID_CREDENTIALS" },
+      { status: 401 },
+    );
   }
 
   // Step 8: Max sessions check
@@ -322,7 +334,10 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
         },
       });
       return NextResponse.json(
-        { error: "Maximum number of active sessions reached" },
+        {
+          error: "Maximum number of active sessions reached",
+          code: "MAX_SESSIONS",
+        },
         { status: 403 },
       );
     }
