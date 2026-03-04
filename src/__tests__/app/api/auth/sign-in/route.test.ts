@@ -240,6 +240,7 @@ describe("POST /api/auth/sign-in", () => {
       expect(response.status).toBe(403);
       const body = await response.json();
       expect(body.error).toBe("Account is locked");
+      expect(body.code).toBe("ACCOUNT_LOCKED");
     });
 
     it("returns 403 when temporary lock has not expired", async () => {
@@ -322,6 +323,7 @@ describe("POST /api/auth/sign-in", () => {
       expect(response.status).toBe(403);
       const body = await response.json();
       expect(body.error).toBe("Account is not active");
+      expect(body.code).toBe("ACCOUNT_INACTIVE");
     });
   });
 
@@ -337,6 +339,7 @@ describe("POST /api/auth/sign-in", () => {
       expect(response.status).toBe(403);
       const body = await response.json();
       expect(body.error).toBe("Access denied from this network");
+      expect(body.code).toBe("IP_RESTRICTED");
     });
   });
 

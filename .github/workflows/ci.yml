@@ -72,6 +72,53 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  e2e:
+    name: E2E
+    needs: check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: auth_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Create audit_db and audit_writer role
+        run: psql "postgres://postgres:postgres@localhost:5432/auth_db" -f infra/postgres/init-audit-db.sql
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install chromium --with-deps
+      - name: Run E2E tests
+        run: pnpm e2e
+        env:
+          CI: true
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/auth_db
+          AUDIT_DATABASE_URL: postgres://audit_writer:changeme@localhost:5432/audit_db
+          DATA_DIR: ./data-e2e
+          CSRF_SECRET: ci-e2e-csrf-secret-at-least-32-characters!!
+          INIT_ADMIN_USERNAME: admin
+          INIT_ADMIN_PASSWORD: Admin1234!
+          DEFAULT_LOCALE: en
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
+
   image-build:
     name: Image Build
     needs: test

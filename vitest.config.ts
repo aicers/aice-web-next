@@ -11,4 +11,7 @@ export default defineConfig({
       ),
     },
   },
+  test: {
+    exclude: ["node_modules", "e2e", ".next"],
+  },
 });

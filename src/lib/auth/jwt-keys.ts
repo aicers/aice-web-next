@@ -30,10 +30,15 @@ interface LoadedPublicKey {
   publicKey: CryptoKey;
 }
 
-// ── Module state ────────────────────────────────────────────────
+// ── Global state ────────────────────────────────────────────────
+// Keys are stored on globalThis so they survive module
+// re-instantiation across Next.js server chunks (turbopack HMR
+// and standalone output both create separate module instances).
 
-let currentKey: LoadedKeyPair | null = null;
-let previousKey: LoadedPublicKey | null = null;
+const g = globalThis as unknown as {
+  __jwtCurrentKey?: LoadedKeyPair | null;
+  __jwtPreviousKey?: LoadedPublicKey | null;
+};
 
 // ── File paths ──────────────────────────────────────────────────
 
@@ -74,7 +79,7 @@ export async function loadSigningKeys(): Promise<void> {
     );
   }
 
-  currentKey = {
+  g.__jwtCurrentKey = {
     kid: currentFile.kid,
     algorithm: currentFile.algorithm,
     privateKey: (await importJWK(
@@ -89,7 +94,7 @@ export async function loadSigningKeys(): Promise<void> {
 
   const prevFile = readKeyFile(previousKeyPath());
   if (prevFile) {
-    previousKey = {
+    g.__jwtPreviousKey = {
       kid: prevFile.kid,
       algorithm: prevFile.algorithm,
       publicKey: (await importJWK(
@@ -98,31 +103,34 @@ export async function loadSigningKeys(): Promise<void> {
       )) as CryptoKey,
     };
   } else {
-    previousKey = null;
+    g.__jwtPreviousKey = null;
   }
 }
 
 /** Return the current signing key pair. Throws if not loaded. */
 export function getSigningKey(): LoadedKeyPair {
-  if (!currentKey) {
+  if (!g.__jwtCurrentKey) {
     throw new Error(
       "JWT signing keys not loaded. Call loadSigningKeys() first.",
     );
   }
-  return currentKey;
+  return g.__jwtCurrentKey;
 }
 
 /** Look up a verification key by `kid`. Returns null if unknown. */
 export function getVerificationKey(
   kid: string,
 ): { publicKey: CryptoKey; algorithm: string } | null {
-  if (currentKey?.kid === kid) {
-    return { publicKey: currentKey.publicKey, algorithm: currentKey.algorithm };
-  }
-  if (previousKey?.kid === kid) {
+  if (g.__jwtCurrentKey?.kid === kid) {
     return {
-      publicKey: previousKey.publicKey,
-      algorithm: previousKey.algorithm,
+      publicKey: g.__jwtCurrentKey.publicKey,
+      algorithm: g.__jwtCurrentKey.algorithm,
+    };
+  }
+  if (g.__jwtPreviousKey?.kid === kid) {
+    return {
+      publicKey: g.__jwtPreviousKey.publicKey,
+      algorithm: g.__jwtPreviousKey.algorithm,
     };
   }
   return null;
@@ -197,11 +205,11 @@ export function removePreviousKey(): void {
   } catch {
     // Already absent — no-op
   }
-  previousKey = null;
+  g.__jwtPreviousKey = null;
 }
 
 /** Reset in-memory state. For testing only. */
 export function resetKeyState(): void {
-  currentKey = null;
-  previousKey = null;
+  g.__jwtCurrentKey = null;
+  g.__jwtPreviousKey = null;
 }
