@@ -65,5 +65,12 @@ async function ensureJwtSigningKey(): Promise<void> {
 }
 
 export default async function globalSetup(): Promise<void> {
-  await ensureJwtSigningKey();
+  console.log("[e2e] Running global setup…");
+  try {
+    await ensureJwtSigningKey();
+    console.log("[e2e] Global setup complete.");
+  } catch (error) {
+    console.error("[e2e] Global setup failed:", error);
+    throw error;
+  }
 }
