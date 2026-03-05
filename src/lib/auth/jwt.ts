@@ -40,6 +40,19 @@ export interface AuthSession {
   iat: number;
   /** JWT expiration timestamp (seconds since epoch). */
   exp: number;
+  // ── Session policy fields (populated from DB) ──────────────
+  /** IP address stored at session creation (or last re-auth). */
+  sessionIp: string;
+  /** Full User-Agent string stored at session creation. */
+  sessionUserAgent: string;
+  /** Normalized browser fingerprint (e.g. `"Chrome/131"`). */
+  sessionBrowserFingerprint: string;
+  /** Whether the session requires re-authentication. */
+  needsReauth: boolean;
+  /** When the session was created. */
+  sessionCreatedAt: Date;
+  /** When the session was last active. */
+  sessionLastActiveAt: Date;
 }
 
 // ── Issuance ────────────────────────────────────────────────────
@@ -114,11 +127,20 @@ export async function verifyJwtFull(token: string): Promise<AuthSession> {
   const { rows } = await query<{
     sid: string;
     revoked: boolean;
+    ip_address: string;
+    user_agent: string;
+    browser_fingerprint: string;
+    needs_reauth: boolean;
+    created_at: string;
+    last_active_at: string;
     token_version: number;
     status: string;
     must_change_password: boolean;
   }>(
-    `SELECT s.sid, s.revoked, a.token_version, a.status, a.must_change_password
+    `SELECT s.sid, s.revoked, s.ip_address, s.user_agent,
+            s.browser_fingerprint, s.needs_reauth,
+            s.created_at, s.last_active_at,
+            a.token_version, a.status, a.must_change_password
      FROM sessions s
      JOIN accounts a ON s.account_id = a.id
      WHERE s.sid = $1 AND s.account_id = $2`,
@@ -151,5 +173,11 @@ export async function verifyJwtFull(token: string): Promise<AuthSession> {
     mustChangePassword: row.must_change_password,
     iat: payload.iat,
     exp: payload.exp,
+    sessionIp: row.ip_address,
+    sessionUserAgent: row.user_agent,
+    sessionBrowserFingerprint: row.browser_fingerprint,
+    needsReauth: row.needs_reauth,
+    sessionCreatedAt: new Date(row.created_at),
+    sessionLastActiveAt: new Date(row.last_active_at),
   };
 }
