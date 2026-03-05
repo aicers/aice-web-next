@@ -22,9 +22,18 @@ interface VerificationKeyEntry {
   publicKey: CryptoKey;
 }
 
-// ── Module state ────────────────────────────────────────────────
+// ── Global state ────────────────────────────────────────────────
+// Keys are stored on globalThis so they survive module
+// re-instantiation across Next.js server chunks (the middleware
+// bundle uses a separate module instance from the Node.js runtime).
 
-let verificationKeys: VerificationKeyEntry[] = [];
+const g = globalThis as unknown as {
+  __jwtStatelessVerificationKeys?: VerificationKeyEntry[];
+};
+
+function getVerificationKeys(): VerificationKeyEntry[] {
+  return g.__jwtStatelessVerificationKeys ?? [];
+}
 
 // ── Public API ──────────────────────────────────────────────────
 
@@ -36,7 +45,7 @@ let verificationKeys: VerificationKeyEntry[] = [];
 export async function initStatelessKeys(
   keys: Array<{ kid: string; algorithm: string; publicKey: JWK }>,
 ): Promise<void> {
-  verificationKeys = await Promise.all(
+  g.__jwtStatelessVerificationKeys = await Promise.all(
     keys.map(async (k) => ({
       kid: k.kid,
       algorithm: k.algorithm,
@@ -59,7 +68,7 @@ export async function verifyJwtStateless(
     throw new Error("JWT header missing kid");
   }
 
-  const keyEntry = verificationKeys.find((k) => k.kid === kid);
+  const keyEntry = getVerificationKeys().find((k) => k.kid === kid);
   if (!keyEntry) {
     throw new Error(`No verification key found for kid: ${kid}`);
   }
