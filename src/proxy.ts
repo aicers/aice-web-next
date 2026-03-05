@@ -24,7 +24,8 @@ export default async function proxy(request: NextRequest) {
 
   try {
     await verifyJwtStateless(token);
-  } catch {
+  } catch (err) {
+    console.error("[proxy] JWT verification failed:", (err as Error).message);
     return redirectToSignIn(request);
   }
 

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { resetRateLimits } from "./helpers/auth";
 import { clearMustChangePassword, revokeAllSessions } from "./helpers/setup-db";
 
 const ADMIN_USERNAME = "admin";
@@ -7,6 +8,7 @@ const ADMIN_PASSWORD = "Admin1234!";
 
 test.describe("Authentication E2E", () => {
   test.beforeAll(async () => {
+    await resetRateLimits();
     await clearMustChangePassword(ADMIN_USERNAME);
     await revokeAllSessions(ADMIN_USERNAME);
   });
