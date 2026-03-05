@@ -5,7 +5,6 @@ import { useState } from "react";
 import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { MobileHeader } from "@/components/layout/mobile-header";
 import { Sidebar } from "@/components/layout/sidebar";
-import { SessionExtensionDialog } from "@/components/session/session-extension-dialog";
 import { useSidebar } from "@/hooks/use-sidebar";
 
 export default function DashboardLayout({
@@ -38,8 +37,6 @@ export default function DashboardLayout({
           <div className="flex-1 overflow-y-auto p-6">{children}</div>
         </main>
       </div>
-
-      <SessionExtensionDialog />
     </div>
   );
 }

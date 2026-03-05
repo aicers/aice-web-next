@@ -5,6 +5,7 @@ import { hasLocale, NextIntlClientProvider } from "next-intl";
 import { setRequestLocale } from "next-intl/server";
 import { ThemeProvider } from "next-themes";
 
+import { SessionExtensionDialog } from "@/components/session/session-extension-dialog";
 import { routing } from "@/i18n/routing";
 import { themeConfig } from "@/lib/theme";
 
@@ -43,7 +44,10 @@ export default async function LocaleLayout({
     <html lang={locale} suppressHydrationWarning>
       <body className={roboto.className}>
         <ThemeProvider {...themeConfig}>
-          <NextIntlClientProvider>{children}</NextIntlClientProvider>
+          <NextIntlClientProvider>
+            {children}
+            <SessionExtensionDialog />
+          </NextIntlClientProvider>
         </ThemeProvider>
       </body>
     </html>
