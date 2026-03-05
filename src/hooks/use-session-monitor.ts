@@ -1,0 +1,103 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { useRouter } from "@/i18n/navigation";
+
+// ── Constants ──────────────────────────────────────────────────
+
+/** JWT lifetime in seconds — must match the server-side value. */
+const TOKEN_LIFETIME_SECONDS = 15 * 60; // 900s
+
+/** Show the dialog when remaining ≤ 1/DIALOG_FRACTION of total. */
+const DIALOG_FRACTION = 5; // 1/5 = 180s = 3 minutes
+
+const DIALOG_THRESHOLD_SECONDS = TOKEN_LIFETIME_SECONDS / DIALOG_FRACTION;
+
+const TOKEN_EXP_COOKIE = "token_exp";
+
+// ── Cookie helper ──────────────────────────────────────────────
+
+function readTokenExp(): number | null {
+  const match = document.cookie
+    .split("; ")
+    .find((c) => c.startsWith(`${TOKEN_EXP_COOKIE}=`));
+  if (!match) return null;
+  const value = Number(match.split("=")[1]);
+  return Number.isNaN(value) ? null : value;
+}
+
+// ── Hook ───────────────────────────────────────────────────────
+
+interface SessionMonitorState {
+  /** Seconds remaining until the JWT expires. */
+  remainingSeconds: number;
+  /** Whether the session extension dialog should be shown. */
+  showDialog: boolean;
+  /** Dismiss the dialog (e.g. after a successful extend). */
+  dismiss: () => void;
+}
+
+export function useSessionMonitor(): SessionMonitorState {
+  const router = useRouter();
+  const [remainingSeconds, setRemainingSeconds] = useState(
+    TOKEN_LIFETIME_SECONDS,
+  );
+  const [showDialog, setShowDialog] = useState(false);
+  const dismissedExpRef = useRef<number | null>(null);
+
+  const dismiss = useCallback(() => {
+    setShowDialog(false);
+    // Remember which exp we dismissed for, so we don't re-show
+    // until the cookie updates (i.e. rotation happens).
+    dismissedExpRef.current = readTokenExp();
+  }, []);
+
+  useEffect(() => {
+    const tick = () => {
+      const exp = readTokenExp();
+      if (exp === null) {
+        // No token_exp cookie — user is not authenticated or cookie
+        // was cleared.  Nothing to monitor.
+        setShowDialog(false);
+        return;
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const remaining = exp - now;
+
+      setRemainingSeconds(Math.max(0, remaining));
+
+      if (remaining <= 0) {
+        // JWT has expired — redirect to sign-in
+        setShowDialog(false);
+        router.push("/sign-in");
+        return;
+      }
+
+      // If the token_exp changed (rotation happened), dismiss any
+      // previously shown dialog.
+      if (dismissedExpRef.current !== null && exp !== dismissedExpRef.current) {
+        dismissedExpRef.current = null;
+      }
+
+      // Show dialog when remaining ≤ threshold and we haven't
+      // dismissed for this particular exp value.
+      if (
+        remaining <= DIALOG_THRESHOLD_SECONDS &&
+        dismissedExpRef.current !== exp
+      ) {
+        setShowDialog(true);
+      } else {
+        setShowDialog(false);
+      }
+    };
+
+    // Run immediately, then every second
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [router]);
+
+  return { remainingSeconds, showDialog, dismiss };
+}
