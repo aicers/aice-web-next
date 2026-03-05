@@ -680,6 +680,122 @@ describe("withAuth", () => {
       expect(body.code).toBe("REAUTH_REQUIRED");
       expect(handler).not.toHaveBeenCalled();
     });
+
+    it("passes correct arguments to assessIpUaRisk", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockExtractClientIp.mockReturnValue("10.0.0.99");
+      mockExtractBrowserFingerprint.mockReturnValue("Firefox/133");
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler);
+      await wrapped(makeRequest(), makeContext());
+
+      expect(mockAssessIpUaRisk).toHaveBeenCalledWith({
+        storedIp: "127.0.0.1",
+        currentIp: "10.0.0.99",
+        storedBrowserFingerprint: "Chrome/131",
+        currentBrowserFingerprint: "Firefox/133",
+      });
+    });
+
+    it("skips DB UPDATE when needsReauth is already true", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue({
+        ...validSession,
+        needsReauth: true,
+      });
+      mockAssessIpUaRisk.mockReturnValue({
+        proceed: false,
+        requiresReauth: true,
+        riskLevel: "high",
+        auditActions: ["session.ip_mismatch"],
+      });
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler);
+      await wrapped(makeRequest(), makeContext());
+
+      // Should NOT call UPDATE sessions SET needs_reauth since it's already true
+      const reauthUpdateCalls = mockPoolQuery.mock.calls.filter(
+        (call: unknown[]) =>
+          typeof call[0] === "string" &&
+          (call[0] as string).includes("needs_reauth"),
+      );
+      expect(reauthUpdateCalls).toHaveLength(0);
+    });
+
+    it("absolute timeout takes priority over idle timeout", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockIsAbsoluteTimedOut.mockReturnValue(true);
+      mockIsIdleTimedOut.mockReturnValue(true);
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler);
+      const response = await wrapped(makeRequest(), makeContext());
+      const body = await response.json();
+
+      // Absolute timeout should be reported, not idle
+      expect(response.status).toBe(401);
+      expect(body.code).toBe("SESSION_EXPIRED");
+      expect(mockAuditRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "session.absolute_timeout",
+        }),
+      );
+    });
+
+    it("does not call assessIpUaRisk when session is timed out", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockIsAbsoluteTimedOut.mockReturnValue(true);
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler);
+      await wrapped(makeRequest(), makeContext());
+
+      expect(mockAssessIpUaRisk).not.toHaveBeenCalled();
+    });
+
+    it("re-auth gate blocks before mustChangePassword check", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue({
+        ...validSession,
+        needsReauth: true,
+        mustChangePassword: true,
+      });
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler);
+      const response = await wrapped(makeRequest(), makeContext());
+      const body = await response.json();
+
+      // Re-auth (step 7) should block before password change (step 8)
+      expect(response.status).toBe(401);
+      expect(body.code).toBe("REAUTH_REQUIRED");
+    });
+
+    it("does not record audit when risk has no audit actions", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockAssessIpUaRisk.mockReturnValue({
+        proceed: true,
+        requiresReauth: false,
+        riskLevel: "none",
+        auditActions: [],
+      });
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler);
+      await wrapped(makeRequest(), makeContext());
+
+      expect(mockAuditRecord).not.toHaveBeenCalled();
+    });
   });
 
   // ── skipSessionPolicy option ──────────────────────────────────

@@ -188,3 +188,100 @@ export async function resetAccountDefaults(username: string): Promise<void> {
     await client.end();
   }
 }
+
+/**
+ * Set `last_active_at` to a time in the past to simulate idle timeout.
+ * Only affects non-revoked sessions.
+ */
+export async function expireSessionIdle(
+  username: string,
+  minutesAgo: number,
+): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      `UPDATE sessions
+       SET last_active_at = NOW() - INTERVAL '${minutesAgo} minutes'
+       WHERE account_id = (SELECT id FROM accounts WHERE username = $1)
+         AND revoked = false`,
+      [username],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Flag a session as requiring re-authentication.
+ * Only affects non-revoked sessions.
+ */
+export async function flagSessionReauth(username: string): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      `UPDATE sessions
+       SET needs_reauth = true
+       WHERE account_id = (SELECT id FROM accounts WHERE username = $1)
+         AND revoked = false`,
+      [username],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Change the stored browser fingerprint on a session to simulate a
+ * UA change detection scenario.
+ */
+export async function changeSessionFingerprint(
+  username: string,
+  newFingerprint: string,
+): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      `UPDATE sessions
+       SET browser_fingerprint = $2
+       WHERE account_id = (SELECT id FROM accounts WHERE username = $1)
+         AND revoked = false`,
+      [username, newFingerprint],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Get session status for diagnostic/assertion purposes.
+ */
+export async function getSessionStatus(username: string): Promise<{
+  needsReauth: boolean;
+  revoked: boolean;
+  browserFingerprint: string;
+} | null> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const result = await client.query(
+      `SELECT needs_reauth, revoked, browser_fingerprint
+       FROM sessions
+       WHERE account_id = (SELECT id FROM accounts WHERE username = $1)
+         AND revoked = false
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [username],
+    );
+    if (result.rows.length === 0) return null;
+    return {
+      needsReauth: result.rows[0].needs_reauth,
+      revoked: result.rows[0].revoked,
+      browserFingerprint: result.rows[0].browser_fingerprint,
+    };
+  } finally {
+    await client.end();
+  }
+}

@@ -133,6 +133,65 @@ describe("session-policy", () => {
       expect(policy.idleTimeoutMinutes).toBe(30);
       expect(policy.absoluteTimeoutHours).toBe(8); // default preserved
     });
+
+    it('rejects env var value "0" (must be positive)', async () => {
+      mockPoolQuery.mockResolvedValue({ rows: [] });
+
+      process.env.SESSION_IDLE_TIMEOUT_MINUTES = "0";
+      process.env.SESSION_MAX_SESSIONS = "0";
+
+      const policy = await mod.loadSessionPolicy();
+
+      expect(policy.idleTimeoutMinutes).toBe(30); // default
+      expect(policy.maxSessions).toBeNull(); // default
+    });
+
+    it("accepts fractional env var values", async () => {
+      mockPoolQuery.mockResolvedValue({ rows: [] });
+
+      process.env.SESSION_ABSOLUTE_TIMEOUT_HOURS = "1.5";
+
+      const policy = await mod.loadSessionPolicy();
+
+      expect(policy.absoluteTimeoutHours).toBe(1.5);
+    });
+
+    it("handles DB row with partial fields", async () => {
+      mockPoolQuery.mockResolvedValue({
+        rows: [
+          {
+            value: {
+              idle_timeout_minutes: 45,
+              // absolute_timeout_hours and max_sessions not set
+            },
+          },
+        ],
+      });
+
+      const policy = await mod.loadSessionPolicy();
+
+      expect(policy.idleTimeoutMinutes).toBe(45);
+      expect(policy.absoluteTimeoutHours).toBe(8); // default
+      expect(policy.maxSessions).toBeNull(); // default
+    });
+
+    it("handles DB row with max_sessions explicitly null", async () => {
+      mockPoolQuery.mockResolvedValue({
+        rows: [
+          {
+            value: {
+              idle_timeout_minutes: 20,
+              absolute_timeout_hours: 6,
+              max_sessions: null,
+            },
+          },
+        ],
+      });
+
+      const policy = await mod.loadSessionPolicy();
+
+      expect(policy.maxSessions).toBeNull();
+    });
   });
 
   // ── isIdleTimedOut ─────────────────────────────────────────────

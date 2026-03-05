@@ -45,6 +45,18 @@ describe("extractBrowserFingerprint", () => {
     expect(extractBrowserFingerprint(ua)).toBe("Unknown/0");
   });
 
+  it("extracts Edge Android (EdgA) fingerprint", () => {
+    const ua =
+      "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36 EdgA/131.0.0.0";
+    expect(extractBrowserFingerprint(ua)).toBe("Edge/131");
+  });
+
+  it("extracts Edge iOS (EdgiOS) fingerprint", () => {
+    const ua =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 EdgiOS/131.0.0.0 Mobile/15E148 Safari/604.1";
+    expect(extractBrowserFingerprint(ua)).toBe("Edge/131");
+  });
+
   it("ignores minor/patch version numbers", () => {
     const ua1 =
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36";
@@ -78,5 +90,13 @@ describe("compareBrowserFingerprints", () => {
 
   it('returns "same" for two Unknown fingerprints', () => {
     expect(compareBrowserFingerprints("Unknown/0", "Unknown/0")).toBe("same");
+  });
+
+  it('returns "major" for malformed fingerprint (no slash)', () => {
+    expect(compareBrowserFingerprints("Chrome", "")).toBe("major");
+  });
+
+  it('returns "same" for two empty strings', () => {
+    expect(compareBrowserFingerprints("", "")).toBe("same");
   });
 });
