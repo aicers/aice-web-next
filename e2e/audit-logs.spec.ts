@@ -65,7 +65,16 @@ test.describe("Audit log page", () => {
     // the trigger by its visible placeholder text.
     await page.getByText("All actions").click();
     await page.getByRole("option", { name: "Sign in success" }).click();
+
+    // Wait for the select trigger to reflect the chosen value before
+    // clicking Search (React state must update first).
+    await expect(page.getByText("All actions")).not.toBeVisible();
+
     await page.getByRole("button", { name: "Search" }).click();
+
+    // Wait for the URL to include the action filter, confirming the
+    // request was sent with the correct parameter.
+    await page.waitForURL(/action=/, { timeout: 10_000 });
 
     // All visible rows should have "Sign in success" badge.
     await expect(page.locator("table tbody tr").first()).toBeVisible({
