@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+import { resetRateLimits } from "./helpers/auth";
 import {
-  clearMustChangePassword,
   expireSessionIdle,
   flagSessionReauth,
   getSessionStatus,
+  resetAccountDefaults,
   revokeAllSessions,
 } from "./helpers/setup-db";
 
@@ -33,8 +34,12 @@ async function callProtectedApi(
 
 test.describe("Session Policy E2E", () => {
   test.beforeAll(async () => {
-    await clearMustChangePassword(ADMIN_USERNAME);
-    await revokeAllSessions(ADMIN_USERNAME);
+    await resetRateLimits();
+    await resetAccountDefaults(ADMIN_USERNAME);
+  });
+
+  test.afterAll(async () => {
+    await resetAccountDefaults(ADMIN_USERNAME);
   });
 
   // ── 1. Idle timeout → 401 ──────────────────────────────────────
