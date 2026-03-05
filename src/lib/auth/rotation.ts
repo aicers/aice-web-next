@@ -2,7 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 
-import { setAccessTokenCookie } from "./cookies";
+import { setAccessTokenCookie, setTokenExpCookie } from "./cookies";
 import {
   CSRF_COOKIE_NAME,
   CSRF_COOKIE_OPTIONS,
@@ -69,7 +69,9 @@ export async function rotateTokens(session: AuthSession): Promise<void> {
   );
 
   // Set JWT cookie
+  const tokenExp = Math.floor(Date.now() / 1000) + DEFAULT_MAX_AGE_SECONDS;
   await setAccessTokenCookie(newToken, DEFAULT_MAX_AGE_SECONDS);
+  await setTokenExpCookie(tokenExp, DEFAULT_MAX_AGE_SECONDS);
 
   // Set CSRF cookie
   const cookieStore = await cookies();

@@ -5,6 +5,7 @@ import type { AuthSession } from "@/lib/auth/jwt";
 const mockIssueAccessToken = vi.hoisted(() => vi.fn());
 const mockGenerateCsrfToken = vi.hoisted(() => vi.fn());
 const mockSetAccessTokenCookie = vi.hoisted(() => vi.fn());
+const mockSetTokenExpCookie = vi.hoisted(() => vi.fn());
 const mockCookiesSet = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/jwt", () => ({
@@ -24,6 +25,7 @@ vi.mock("@/lib/auth/csrf", () => ({
 
 vi.mock("@/lib/auth/cookies", () => ({
   setAccessTokenCookie: mockSetAccessTokenCookie,
+  setTokenExpCookie: mockSetTokenExpCookie,
 }));
 
 vi.mock("next/headers", () => ({
@@ -55,6 +57,7 @@ describe("rotation", () => {
     mockIssueAccessToken.mockReset().mockResolvedValue("new-jwt-token");
     mockGenerateCsrfToken.mockReset().mockReturnValue({ token: "new-csrf" });
     mockSetAccessTokenCookie.mockReset().mockResolvedValue(undefined);
+    mockSetTokenExpCookie.mockReset().mockResolvedValue(undefined);
     mockCookiesSet.mockReset();
 
     process.env.CSRF_SECRET = "test-csrf-secret";
@@ -141,6 +144,18 @@ describe("rotation", () => {
       );
     });
 
+    it("sets token_exp cookie with new expiry", async () => {
+      const before = Math.floor(Date.now() / 1000) + 900;
+      await rotation.rotateTokens(validSession);
+      const after = Math.floor(Date.now() / 1000) + 900;
+
+      expect(mockSetTokenExpCookie).toHaveBeenCalledTimes(1);
+      const [expArg, maxAgeArg] = mockSetTokenExpCookie.mock.calls[0];
+      expect(expArg).toBeGreaterThanOrEqual(before);
+      expect(expArg).toBeLessThanOrEqual(after);
+      expect(maxAgeArg).toBe(900);
+    });
+
     it("sets CSRF cookie with correct options", async () => {
       await rotation.rotateTokens(validSession);
 
@@ -160,6 +175,7 @@ describe("rotation", () => {
 
       expect(mockIssueAccessToken).not.toHaveBeenCalled();
       expect(mockGenerateCsrfToken).not.toHaveBeenCalled();
+      expect(mockSetTokenExpCookie).not.toHaveBeenCalled();
     });
   });
 });

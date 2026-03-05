@@ -26,6 +26,11 @@
   If there is no related issue, ask the user how to proceed before creating the
   branch.
 
+## Package manager
+
+- This project uses **pnpm** exclusively. NEVER use `npm`, `bun`, `yarn`, or
+  any other package manager.
+
 ## CI requirements
 
 - Before committing, ensure all CI lint/check steps (e.g., Biome, type checks)

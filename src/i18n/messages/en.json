@@ -27,7 +27,10 @@
     "serverError": "An unexpected error occurred. Please try again.",
     "resetPassword": "Reset your password",
     "sessionTimeout": "Session timeout",
-    "sessionEnded": "Session ended"
+    "sessionEnded": "Session ended",
+    "sessionExpiring": "Session expiring",
+    "sessionExpiringDescription": "Your session will expire in {seconds} seconds. Would you like to extend it?",
+    "extendSession": "Extend session"
   },
   "nav": {
     "home": "Home",

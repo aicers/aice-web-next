@@ -77,4 +77,44 @@ describe("cookies", () => {
       expect(mockDelete).toHaveBeenCalledWith("at");
     });
   });
+
+  // ── token_exp cookie ──────────────────────────────────────────
+
+  describe("TOKEN_EXP_COOKIE", () => {
+    it("is 'token_exp'", () => {
+      expect(cookiesMod.TOKEN_EXP_COOKIE).toBe("token_exp");
+    });
+  });
+
+  describe("setTokenExpCookie", () => {
+    it("sets the cookie with correct name, value, and non-httpOnly options", async () => {
+      await cookiesMod.setTokenExpCookie(1700000000, 900);
+
+      expect(mockSet).toHaveBeenCalledWith("token_exp", "1700000000", {
+        httpOnly: false,
+        secure: false,
+        sameSite: "strict",
+        path: "/",
+        maxAge: 900,
+      });
+    });
+
+    it("converts expSeconds to string", async () => {
+      await cookiesMod.setTokenExpCookie(1700000999, 600);
+
+      expect(mockSet).toHaveBeenCalledWith(
+        "token_exp",
+        "1700000999",
+        expect.objectContaining({ maxAge: 600 }),
+      );
+    });
+  });
+
+  describe("deleteTokenExpCookie", () => {
+    it("calls delete with the correct cookie name", async () => {
+      await cookiesMod.deleteTokenExpCookie();
+
+      expect(mockDelete).toHaveBeenCalledWith("token_exp");
+    });
+  });
 });

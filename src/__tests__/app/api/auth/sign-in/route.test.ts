@@ -9,6 +9,7 @@ const mockVerifyPassword = vi.hoisted(() => vi.fn());
 const mockIssueAccessToken = vi.hoisted(() => vi.fn());
 const mockGenerateCsrfToken = vi.hoisted(() => vi.fn());
 const mockSetAccessTokenCookie = vi.hoisted(() => vi.fn());
+const mockSetTokenExpCookie = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockIsIpAllowed = vi.hoisted(() => vi.fn());
 const mockExtractClientIp = vi.hoisted(() => vi.fn());
@@ -46,6 +47,7 @@ vi.mock("@/lib/auth/csrf", () => ({
 
 vi.mock("@/lib/auth/cookies", () => ({
   setAccessTokenCookie: mockSetAccessTokenCookie,
+  setTokenExpCookie: mockSetTokenExpCookie,
 }));
 
 vi.mock("@/lib/audit/logger", () => ({
@@ -500,6 +502,19 @@ describe("POST /api/auth/sign-in", () => {
         "csrf-token",
         expect.objectContaining({ maxAge: 900 }),
       );
+    });
+
+    it("sets token_exp cookie with expiry timestamp", async () => {
+      const before = Math.floor(Date.now() / 1000) + 900;
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      await POST(makeRequest({ username: "admin", password: "pass" }));
+      const after = Math.floor(Date.now() / 1000) + 900;
+
+      expect(mockSetTokenExpCookie).toHaveBeenCalledTimes(1);
+      const [expArg, maxAgeArg] = mockSetTokenExpCookie.mock.calls[0];
+      expect(expArg).toBeGreaterThanOrEqual(before);
+      expect(expArg).toBeLessThanOrEqual(after);
+      expect(maxAgeArg).toBe(900);
     });
 
     it("records audit success", async () => {
