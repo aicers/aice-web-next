@@ -79,7 +79,13 @@
       "auth_session_extend": "Session extend",
       "session_ip_mismatch": "IP mismatch",
       "session_ua_mismatch": "UA mismatch",
+      "session_ip_ua_mismatch": "IP + UA mismatch",
       "session_revoke": "Session revoke",
+      "session_reauth_required": "Re-auth required",
+      "session_reauth_success": "Re-auth success",
+      "session_reauth_failure": "Re-auth failure",
+      "session_idle_timeout": "Idle timeout",
+      "session_absolute_timeout": "Absolute timeout",
       "account_create": "Account create",
       "account_lock": "Account lock",
       "account_unlock": "Account unlock"

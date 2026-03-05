@@ -66,6 +66,12 @@ describe("POST /api/auth/sign-out-all", () => {
     mustChangePassword: false,
     iat: now,
     exp: now + 900,
+    sessionIp: "127.0.0.1",
+    sessionUserAgent: "Mozilla/5.0 Chrome/131",
+    sessionBrowserFingerprint: "Chrome/131",
+    needsReauth: false,
+    sessionCreatedAt: new Date(),
+    sessionLastActiveAt: new Date(),
   };
 
   function makeRequest() {

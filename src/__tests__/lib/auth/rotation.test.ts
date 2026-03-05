@@ -43,6 +43,12 @@ describe("rotation", () => {
     mustChangePassword: false,
     iat: now - 600, // 10 min ago
     exp: now + 300, // 5 min from now (total 15 min)
+    sessionIp: "127.0.0.1",
+    sessionUserAgent: "Mozilla/5.0 Chrome/131",
+    sessionBrowserFingerprint: "Chrome/131",
+    needsReauth: false,
+    sessionCreatedAt: new Date(),
+    sessionLastActiveAt: new Date(),
   };
 
   beforeEach(async () => {

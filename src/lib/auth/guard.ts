@@ -2,6 +2,7 @@ import "server-only";
 
 import { type NextRequest, NextResponse } from "next/server";
 
+import { auditLog } from "@/lib/audit/logger";
 import { query } from "@/lib/db/client";
 import { checkApiRateLimit } from "@/lib/rate-limit/limiter";
 
@@ -12,9 +13,17 @@ import {
   validateCsrfToken,
   validateOrigin,
 } from "./csrf";
+import { extractClientIp } from "./ip";
 import type { AuthSession } from "./jwt";
 import { verifyJwtFull } from "./jwt";
 import { rotateTokens, shouldRotate } from "./rotation";
+import {
+  isAbsoluteTimedOut,
+  isIdleTimedOut,
+  loadSessionPolicy,
+} from "./session-policy";
+import { assessIpUaRisk } from "./session-validator";
+import { extractBrowserFingerprint } from "./ua-parser";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -33,34 +42,43 @@ type AuthenticatedHandler = (
 
 interface WithAuthOptions {
   /**
-   * When `true`, skip the must-change-password check (step 5).
+   * When `true`, skip the must-change-password check.
    * Needed for endpoints like sign-out that must remain accessible
    * even when a password change is pending.
    */
   skipPasswordCheck?: boolean;
+  /**
+   * When `true`, skip session policy checks (timeouts, IP/UA,
+   * re-auth gate).  Needed for the re-auth endpoint itself to
+   * avoid a deadlock where re-auth is blocked by the re-auth gate.
+   */
+  skipSessionPolicy?: boolean;
 }
 
 // ── Public API ──────────────────────────────────────────────────
 
 /**
  * Higher-order function that wraps Route Handlers with authentication,
- * rate limiting, CSRF protection, and sliding token rotation.
+ * rate limiting, CSRF protection, session policy enforcement, and
+ * sliding token rotation.
  *
- * 1. Reads the access token from the cookie
- * 2. Verifies the token (stateless + DB checks)
- * 3. Per-user API rate limit → 429 with Retry-After
- * 4. For mutation methods (POST/PUT/PATCH/DELETE):
- *    a. Validates Origin/Referer header
- *    b. Validates CSRF token from X-CSRF-Token header
- * 5. Checks must_change_password → 403 with redirect indicator
- *    (skippable via `options.skipPasswordCheck`)
- * 6. Updates session last_active_at
- * 7. Calls the wrapped handler with the authenticated session
- * 8. Sliding rotation — re-issues JWT + CSRF when ≤ 1/3 lifetime
- *    remains
+ *  1. Reads the access token from the cookie
+ *  2. Verifies the token (stateless + DB checks)
+ *  3. Per-user API rate limit → 429 with Retry-After
+ *  4. For mutation methods (POST/PUT/PATCH/DELETE):
+ *     a. Validates Origin/Referer header
+ *     b. Validates CSRF token from X-CSRF-Token header
+ *  5. Session timeout check (idle + absolute)
+ *  6. IP/UA change risk assessment
+ *  7. Re-auth gate (if session.needs_reauth → 401)
+ *  8. Checks must_change_password → 403 with redirect indicator
+ *     (skippable via `options.skipPasswordCheck`)
+ *  9. Updates session last_active_at
+ * 10. Calls the wrapped handler with the authenticated session
+ * 11. Sliding rotation — re-issues JWT + CSRF when ≤ 1/3 lifetime
+ *     remains
  *
- * Server Actions are naturally exempt — they do not go through Route
- * Handlers and have Next.js built-in CSRF protection.
+ * Steps 5-7 are skippable via `options.skipSessionPolicy`.
  */
 export function withAuth(
   handler: AuthenticatedHandler,
@@ -140,7 +158,111 @@ export function withAuth(
       }
     }
 
-    // Step 5: Check must_change_password (skippable)
+    // Steps 5-7: Session policy enforcement (skippable)
+    if (!options?.skipSessionPolicy) {
+      // Step 5: Session timeout check
+      const policy = await loadSessionPolicy();
+
+      // 5a: Absolute timeout (non-negotiable)
+      if (
+        isAbsoluteTimedOut(
+          session.sessionCreatedAt,
+          policy.absoluteTimeoutHours,
+        )
+      ) {
+        await query("UPDATE sessions SET revoked = true WHERE sid = $1", [
+          session.sessionId,
+        ]);
+        await auditLog.record({
+          actor: session.accountId,
+          action: "session.absolute_timeout",
+          target: "session",
+          targetId: session.sessionId,
+          details: { reason: "absolute_timeout" },
+          sid: session.sessionId,
+        });
+        return NextResponse.json(
+          { error: "Session expired", code: "SESSION_EXPIRED" },
+          { status: 401 },
+        );
+      }
+
+      // 5b: Idle timeout
+      if (
+        isIdleTimedOut(session.sessionLastActiveAt, policy.idleTimeoutMinutes)
+      ) {
+        await query("UPDATE sessions SET revoked = true WHERE sid = $1", [
+          session.sessionId,
+        ]);
+        await auditLog.record({
+          actor: session.accountId,
+          action: "session.idle_timeout",
+          target: "session",
+          targetId: session.sessionId,
+          details: { reason: "idle_timeout" },
+          sid: session.sessionId,
+        });
+        return NextResponse.json(
+          {
+            error: "Session expired due to inactivity",
+            code: "SESSION_IDLE_TIMEOUT",
+          },
+          { status: 401 },
+        );
+      }
+
+      // Step 6: IP/UA change risk assessment
+      const currentIp = extractClientIp(request);
+      const currentUa = request.headers.get("user-agent") ?? "";
+      const currentFingerprint = extractBrowserFingerprint(currentUa);
+
+      const risk = assessIpUaRisk({
+        storedIp: session.sessionIp,
+        currentIp,
+        storedBrowserFingerprint: session.sessionBrowserFingerprint,
+        currentBrowserFingerprint: currentFingerprint,
+      });
+
+      // Record audit events for any detected changes
+      for (const action of risk.auditActions) {
+        await auditLog.record({
+          actor: session.accountId,
+          action,
+          target: "session",
+          targetId: session.sessionId,
+          ip: currentIp,
+          sid: session.sessionId,
+          details: {
+            riskLevel: risk.riskLevel,
+            storedIp: session.sessionIp,
+            currentIp,
+            storedFingerprint: session.sessionBrowserFingerprint,
+            currentFingerprint,
+          },
+        });
+      }
+
+      // If re-auth is required, flag the session
+      if (risk.requiresReauth && !session.needsReauth) {
+        await query("UPDATE sessions SET needs_reauth = true WHERE sid = $1", [
+          session.sessionId,
+        ]);
+        session = { ...session, needsReauth: true };
+      }
+
+      // Step 7: Re-auth gate
+      if (session.needsReauth) {
+        return NextResponse.json(
+          {
+            error: "Re-authentication required",
+            code: "REAUTH_REQUIRED",
+          },
+          { status: 401 },
+        );
+      }
+    }
+
+    // Step 8: Check must_change_password (skippable)
     if (!options?.skipPasswordCheck && session.mustChangePassword) {
       return NextResponse.json(
         { error: "Password change required", redirect: "/change-password" },
@@ -148,15 +270,15 @@ export function withAuth(
       );
     }
 
-    // Step 6: Update last_active_at on the session
+    // Step 9: Update last_active_at on the session
     await query("UPDATE sessions SET last_active_at = NOW() WHERE sid = $1", [
       session.sessionId,
     ]);
 
-    // Step 7: Invoke the authenticated handler
+    // Step 10: Invoke the authenticated handler
     const response = await handler(request, context, session);
 
-    // Step 8: Sliding rotation — re-issue tokens when nearing expiry
+    // Step 11: Sliding rotation — re-issue tokens when nearing expiry
     if (shouldRotate(session.iat, session.exp)) {
       await rotateTokens(session);
     }

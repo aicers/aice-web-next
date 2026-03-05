@@ -18,6 +18,8 @@ import {
 import { extractClientIp } from "@/lib/auth/ip";
 import { issueAccessToken } from "@/lib/auth/jwt";
 import { verifyPassword } from "@/lib/auth/password";
+import { loadSessionPolicy } from "@/lib/auth/session-policy";
+import { extractBrowserFingerprint } from "@/lib/auth/ua-parser";
 import { query } from "@/lib/db/client";
 import { checkSignInRateLimit } from "@/lib/rate-limit/limiter";
 
@@ -45,9 +47,7 @@ interface LockoutPolicyRow {
   stage2_threshold: number;
 }
 
-interface SessionPolicyRow {
-  max_sessions: number | null;
-}
+// SessionPolicyRow removed — use shared loadSessionPolicy()
 
 // ── Account row type ────────────────────────────────────────────
 
@@ -88,18 +88,8 @@ async function loadLockoutPolicy(): Promise<LockoutPolicy> {
 }
 
 async function loadMaxSessionsDefault(): Promise<number | null> {
-  try {
-    const result = await query<{ value: SessionPolicyRow }>(
-      "SELECT value FROM system_settings WHERE key = $1",
-      ["session_policy"],
-    );
-    if (result.rows.length > 0) {
-      return result.rows[0].value.max_sessions ?? null;
-    }
-  } catch {
-    // DB unavailable — no limit
-  }
-  return null;
+  const policy = await loadSessionPolicy();
+  return policy.maxSessions;
 }
 
 // ── Handler ─────────────────────────────────────────────────────
@@ -353,11 +343,12 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
   );
 
   // 9b. Create session
+  const browserFingerprint = extractBrowserFingerprint(userAgent);
   const { rows: sessionRows } = await query<{ sid: string }>(
-    `INSERT INTO sessions (sid, account_id, ip_address, user_agent)
-     VALUES (gen_random_uuid(), $1, $2, $3)
+    `INSERT INTO sessions (sid, account_id, ip_address, user_agent, browser_fingerprint)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4)
      RETURNING sid`,
-    [account.id, ip, userAgent],
+    [account.id, ip, userAgent, browserFingerprint],
   );
   const sessionId = sessionRows[0].sid;
 

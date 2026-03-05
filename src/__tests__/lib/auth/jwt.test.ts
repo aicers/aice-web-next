@@ -138,6 +138,12 @@ describe("jwt", () => {
     const validDbRow = {
       sid: "session-1",
       revoked: false,
+      ip_address: "127.0.0.1",
+      user_agent: "Mozilla/5.0 Chrome/131",
+      browser_fingerprint: "Chrome/131",
+      needs_reauth: false,
+      created_at: new Date().toISOString(),
+      last_active_at: new Date().toISOString(),
       token_version: 0,
       status: "active",
       must_change_password: false,

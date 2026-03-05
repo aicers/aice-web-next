@@ -66,7 +66,13 @@ type AuthAction =
 type SessionAction =
   | "session.ip_mismatch"
   | "session.ua_mismatch"
-  | "session.revoke";
+  | "session.ip_ua_mismatch"
+  | "session.revoke"
+  | "session.reauth_required"
+  | "session.reauth_success"
+  | "session.reauth_failure"
+  | "session.idle_timeout"
+  | "session.absolute_timeout";
 
 /** Phase 1 account event actions. */
 type AccountAction = "account.create" | "account.lock" | "account.unlock";
