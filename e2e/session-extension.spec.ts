@@ -38,8 +38,11 @@ async function setTokenExpCookie(
 
 test.describe("Session Extension Dialog", () => {
   test.beforeAll(async () => {
-    await resetRateLimits();
     await resetAccountDefaults(ADMIN_USERNAME);
+  });
+
+  test.beforeEach(async () => {
+    await resetRateLimits();
   });
 
   test.afterAll(async () => {

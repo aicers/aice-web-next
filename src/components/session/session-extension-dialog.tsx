@@ -31,6 +31,12 @@ export function readCsrfToken(): string | null {
   return null;
 }
 
+/** Delete the token_exp cookie client-side to prevent the dialog from re-appearing. */
+function clearTokenExpCookie(): void {
+  // biome-ignore lint/suspicious/noDocumentCookie: Cookie Store API not universally supported
+  document.cookie = "token_exp=; path=/; max-age=0";
+}
+
 export function formatCountdown(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -55,9 +61,11 @@ export function SessionExtensionDialog() {
         dismiss();
       } else {
         // Token already expired or invalid — redirect to sign-in
+        clearTokenExpCookie();
         router.push("/sign-in");
       }
     } catch {
+      clearTokenExpCookie();
       router.push("/sign-in");
     } finally {
       setExtending(false);
@@ -75,6 +83,7 @@ export function SessionExtensionDialog() {
     } catch {
       // Best-effort sign-out; redirect regardless
     } finally {
+      clearTokenExpCookie();
       router.push("/sign-in");
     }
   }, [router]);
