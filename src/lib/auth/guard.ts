@@ -17,6 +17,7 @@ import { extractClientIp } from "./ip";
 import type { AuthSession } from "./jwt";
 import { verifyJwtFull } from "./jwt";
 import { rotateTokens, shouldRotate } from "./rotation";
+import { revokeSession } from "./session";
 import {
   isAbsoluteTimedOut,
   isIdleTimedOut,
@@ -170,9 +171,7 @@ export function withAuth(
           policy.absoluteTimeoutHours,
         )
       ) {
-        await query("UPDATE sessions SET revoked = true WHERE sid = $1", [
-          session.sessionId,
-        ]);
+        await revokeSession(session.sessionId);
         await auditLog.record({
           actor: session.accountId,
           action: "session.absolute_timeout",
@@ -191,9 +190,7 @@ export function withAuth(
       if (
         isIdleTimedOut(session.sessionLastActiveAt, policy.idleTimeoutMinutes)
       ) {
-        await query("UPDATE sessions SET revoked = true WHERE sid = $1", [
-          session.sessionId,
-        ]);
+        await revokeSession(session.sessionId);
         await auditLog.record({
           actor: session.accountId,
           action: "session.idle_timeout",

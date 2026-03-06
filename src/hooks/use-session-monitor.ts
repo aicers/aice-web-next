@@ -3,16 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useRouter } from "@/i18n/navigation";
+import { TOKEN_EXPIRATION_SECONDS } from "@/lib/auth/constants";
 
 // ── Constants ──────────────────────────────────────────────────
-
-/** JWT lifetime in seconds — must match the server-side value. */
-const TOKEN_LIFETIME_SECONDS = 15 * 60; // 900s
 
 /** Show the dialog when remaining ≤ 1/DIALOG_FRACTION of total. */
 const DIALOG_FRACTION = 5; // 1/5 = 180s = 3 minutes
 
-const DIALOG_THRESHOLD_SECONDS = TOKEN_LIFETIME_SECONDS / DIALOG_FRACTION;
+const DIALOG_THRESHOLD_SECONDS = TOKEN_EXPIRATION_SECONDS / DIALOG_FRACTION;
 
 const TOKEN_EXP_COOKIE = "token_exp";
 
@@ -41,7 +39,7 @@ interface SessionMonitorState {
 export function useSessionMonitor(): SessionMonitorState {
   const router = useRouter();
   const [remainingSeconds, setRemainingSeconds] = useState(
-    TOKEN_LIFETIME_SECONDS,
+    TOKEN_EXPIRATION_SECONDS,
   );
   const [showDialog, setShowDialog] = useState(false);
   const dismissedExpRef = useRef<number | null>(null);

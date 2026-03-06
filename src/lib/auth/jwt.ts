@@ -12,7 +12,8 @@ import { getSigningKey, getVerificationKey } from "./jwt-keys";
 const JWT_ISSUER = "aice-web-next";
 const JWT_AUDIENCE = "aice-web-next";
 
-const DEFAULT_EXPIRATION_MINUTES = 15;
+import { TOKEN_EXPIRATION_MINUTES } from "./constants";
+
 const MIN_EXPIRATION_MINUTES = 5;
 const MAX_EXPIRATION_MINUTES = 15;
 
@@ -70,7 +71,7 @@ export async function issueAccessToken(params: {
     MIN_EXPIRATION_MINUTES,
     Math.min(
       MAX_EXPIRATION_MINUTES,
-      params.expirationMinutes ?? DEFAULT_EXPIRATION_MINUTES,
+      params.expirationMinutes ?? TOKEN_EXPIRATION_MINUTES,
     ),
   );
 

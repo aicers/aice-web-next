@@ -9,14 +9,12 @@ import {
 import { CSRF_COOKIE_NAME } from "@/lib/auth/csrf";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
-import { query } from "@/lib/db/client";
+import { revokeSession } from "@/lib/auth/session";
 
 export const POST = withAuth(
   async (request, _context, session) => {
     // Revoke current session
-    await query("UPDATE sessions SET revoked = true WHERE sid = $1", [
-      session.sessionId,
-    ]);
+    await revokeSession(session.sessionId);
 
     // Clear cookies
     await deleteAccessTokenCookie();
