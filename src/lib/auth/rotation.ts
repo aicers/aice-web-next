@@ -2,6 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 
+import { TOKEN_EXPIRATION_SECONDS } from "./constants";
 import { setAccessTokenCookie, setTokenExpCookie } from "./cookies";
 import {
   CSRF_COOKIE_NAME,
@@ -19,9 +20,6 @@ import { issueAccessToken } from "./jwt";
  * minutes remaining.
  */
 const ROTATION_FRACTION = 3;
-
-/** Default token lifetime in seconds (must match JWT issuance). */
-const DEFAULT_MAX_AGE_SECONDS = 15 * 60;
 
 // ── Public API ───────────────────────────────────────────────────
 
@@ -69,14 +67,14 @@ export async function rotateTokens(session: AuthSession): Promise<void> {
   );
 
   // Set JWT cookie
-  const tokenExp = Math.floor(Date.now() / 1000) + DEFAULT_MAX_AGE_SECONDS;
-  await setAccessTokenCookie(newToken, DEFAULT_MAX_AGE_SECONDS);
-  await setTokenExpCookie(tokenExp, DEFAULT_MAX_AGE_SECONDS);
+  const tokenExp = Math.floor(Date.now() / 1000) + TOKEN_EXPIRATION_SECONDS;
+  await setAccessTokenCookie(newToken, TOKEN_EXPIRATION_SECONDS);
+  await setTokenExpCookie(tokenExp, TOKEN_EXPIRATION_SECONDS);
 
   // Set CSRF cookie
   const cookieStore = await cookies();
   cookieStore.set(CSRF_COOKIE_NAME, newCsrfToken, {
     ...CSRF_COOKIE_OPTIONS,
-    maxAge: DEFAULT_MAX_AGE_SECONDS,
+    maxAge: TOKEN_EXPIRATION_SECONDS,
   });
 }
