@@ -30,6 +30,8 @@
 
 - This project uses **pnpm** exclusively. NEVER use `npm`, `bun`, `yarn`, or
   any other package manager.
+- Run CLI tools via `pnpm` (e.g., `pnpm vitest run`, `pnpm tsc --noEmit`,
+  `pnpm biome check`). NEVER use `npx`.
 
 ## CI requirements
 
