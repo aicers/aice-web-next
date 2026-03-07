@@ -217,6 +217,30 @@ export async function checkApiRateLimit(
   return { limited: false };
 }
 
+// ── Sensitive-operation rate limiting ─────────────────────────────
+
+const SENSITIVE_OP_COUNT = 5;
+const SENSITIVE_OP_WINDOW_MINUTES = 15;
+
+/**
+ * Per-account rate limit for sensitive operations (password change, etc.).
+ *
+ * @param accountId The authenticated user's account ID.
+ */
+export async function checkSensitiveOpRateLimit(
+  accountId: string,
+): Promise<RateLimitResult> {
+  const s = getStore();
+  const windowMs = SENSITIVE_OP_WINDOW_MINUTES * 60_000;
+  const result = s.increment(`sensitive:account:${accountId}`, windowMs);
+
+  if (result.count > SENSITIVE_OP_COUNT) {
+    return { limited: true, retryAfterSeconds: retryAfter(result.resetAt) };
+  }
+
+  return { limited: false };
+}
+
 // ── Test utilities ───────────────────────────────────────────────
 
 /** Reset cached configs and destroy the store. For tests only. */

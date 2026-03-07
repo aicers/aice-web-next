@@ -64,6 +64,8 @@ const ACTION_KEYS = [
   "account.create",
   "account.lock",
   "account.unlock",
+  "password.change",
+  "password.reset",
 ] as const;
 
 const TARGET_TYPE_KEYS = ["account", "session"] as const;

@@ -310,6 +310,63 @@ export async function deleteTestAccount(username: string): Promise<void> {
 }
 
 /**
+ * Set the password for an existing account (bypasses policy checks).
+ */
+export async function setPassword(
+  username: string,
+  password: string,
+): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+    await client.query(
+      "UPDATE accounts SET password_hash = $2 WHERE username = $1",
+      [username, passwordHash],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Add a password to the history for an account (for reuse-ban testing).
+ */
+export async function addPasswordHistory(
+  username: string,
+  password: string,
+): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+    await client.query(
+      `INSERT INTO password_history (account_id, password_hash)
+       VALUES ((SELECT id FROM accounts WHERE username = $1), $2)`,
+      [username, passwordHash],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Clear password history for an account (for test setup).
+ */
+export async function clearPasswordHistory(username: string): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      "DELETE FROM password_history WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
  * Get session status for diagnostic/assertion purposes.
  */
 export async function getSessionStatus(username: string): Promise<{

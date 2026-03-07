@@ -91,11 +91,35 @@
       "session_absolute_timeout": "Absolute timeout",
       "account_create": "Account create",
       "account_lock": "Account lock",
-      "account_unlock": "Account unlock"
+      "account_unlock": "Account unlock",
+      "password_change": "Password change",
+      "password_reset": "Password reset"
     },
     "targetTypes": {
       "account": "Account",
       "session": "Session"
+    }
+  },
+  "changePassword": {
+    "heading": "Change Password",
+    "currentPassword": "Current Password",
+    "newPassword": "New Password",
+    "confirmPassword": "Confirm New Password",
+    "submit": "Change Password",
+    "submitting": "Changing password...",
+    "success": "Password changed successfully",
+    "incorrectPassword": "Current password is incorrect",
+    "rateLimited": "Too many attempts. Please wait and try again.",
+    "serverError": "An unexpected error occurred. Please try again.",
+    "errors": {
+      "TOO_SHORT": "Password must be at least {min} characters",
+      "TOO_LONG": "Password exceeds maximum length",
+      "MISSING_UPPERCASE": "Password must contain an uppercase letter",
+      "MISSING_LOWERCASE": "Password must contain a lowercase letter",
+      "MISSING_DIGIT": "Password must contain a digit",
+      "MISSING_SPECIAL": "Password must contain a special character",
+      "BLOCKLISTED": "This password is too common. Please choose a different one.",
+      "RECENTLY_USED": "Cannot reuse a recent password"
     }
   }
 }
