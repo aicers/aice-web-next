@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import argon2 from "argon2";
 import pg from "pg";
 
 /**
@@ -250,6 +251,59 @@ export async function changeSessionFingerprint(
          AND revoked = false`,
       [username, newFingerprint],
     );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Create a test account with the given role.
+ * Skips if an account with the username already exists.
+ */
+export async function createTestAccount(
+  username: string,
+  password: string,
+  roleName: string,
+): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const { rows: roleRows } = await client.query<{ id: number }>(
+      "SELECT id FROM roles WHERE name = $1",
+      [roleName],
+    );
+    if (roleRows.length === 0) {
+      throw new Error(`Role "${roleName}" not found`);
+    }
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+    await client.query(
+      `INSERT INTO accounts (username, display_name, password_hash, role_id, must_change_password)
+       VALUES ($1, $1, $2, $3, false)
+       ON CONFLICT (username) DO NOTHING`,
+      [username, passwordHash, roleRows[0].id],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Delete a test account and its sessions.
+ */
+export async function deleteTestAccount(username: string): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      `DELETE FROM sessions
+       WHERE account_id = (SELECT id FROM accounts WHERE username = $1)`,
+      [username],
+    );
+    await client.query(
+      "DELETE FROM password_history WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    );
+    await client.query("DELETE FROM accounts WHERE username = $1", [username]);
   } finally {
     await client.end();
   }

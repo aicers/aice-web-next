@@ -67,132 +67,133 @@ const UUID_RE =
  *   page, pageSize, from, to, actor, action, targetType, targetId,
  *   correlationId
  */
-export const GET = withAuth(async (request, _context, session) => {
-  // Permission check
-  if (!session.roles.includes("System Administrator")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+export const GET = withAuth(
+  async (request, _context, _session) => {
+    const url = request.nextUrl;
 
-  const url = request.nextUrl;
+    // ── Parse pagination ──────────────────────────────────────────
 
-  // ── Parse pagination ────────────────────────────────────────────
+    const page = Math.max(
+      DEFAULT_PAGE,
+      Number.parseInt(url.searchParams.get("page") ?? "", 10) || DEFAULT_PAGE,
+    );
+    const pageSize = Math.min(
+      MAX_PAGE_SIZE,
+      Math.max(
+        1,
+        Number.parseInt(url.searchParams.get("pageSize") ?? "", 10) ||
+          DEFAULT_PAGE_SIZE,
+      ),
+    );
 
-  const page = Math.max(
-    DEFAULT_PAGE,
-    Number.parseInt(url.searchParams.get("page") ?? "", 10) || DEFAULT_PAGE,
-  );
-  const pageSize = Math.min(
-    MAX_PAGE_SIZE,
-    Math.max(
-      1,
-      Number.parseInt(url.searchParams.get("pageSize") ?? "", 10) ||
-        DEFAULT_PAGE_SIZE,
-    ),
-  );
+    // ── Build dynamic WHERE clause ────────────────────────────────
 
-  // ── Build dynamic WHERE clause ──────────────────────────────────
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let idx = 1;
 
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  let idx = 1;
-
-  // Date range
-  const from = url.searchParams.get("from");
-  if (from) {
-    if (!isValidISODate(from)) {
-      return NextResponse.json(
-        { error: "Invalid 'from' date" },
-        { status: 400 },
-      );
+    // Date range
+    const from = url.searchParams.get("from");
+    if (from) {
+      if (!isValidISODate(from)) {
+        return NextResponse.json(
+          { error: "Invalid 'from' date" },
+          { status: 400 },
+        );
+      }
+      conditions.push(`timestamp >= $${idx++}`);
+      params.push(from);
     }
-    conditions.push(`timestamp >= $${idx++}`);
-    params.push(from);
-  }
 
-  const to = url.searchParams.get("to");
-  if (to) {
-    if (!isValidISODate(to)) {
-      return NextResponse.json({ error: "Invalid 'to' date" }, { status: 400 });
+    const to = url.searchParams.get("to");
+    if (to) {
+      if (!isValidISODate(to)) {
+        return NextResponse.json(
+          { error: "Invalid 'to' date" },
+          { status: 400 },
+        );
+      }
+      conditions.push(`timestamp <= $${idx++}`);
+      params.push(to);
     }
-    conditions.push(`timestamp <= $${idx++}`);
-    params.push(to);
-  }
 
-  // Actor
-  const actor = url.searchParams.get("actor");
-  if (actor) {
-    conditions.push(`actor_id = $${idx++}`);
-    params.push(actor);
-  }
-
-  // Action (validated)
-  const action = url.searchParams.get("action");
-  if (action) {
-    if (!ALLOWED_ACTIONS.has(action)) {
-      return NextResponse.json(
-        { error: "Invalid action type" },
-        { status: 400 },
-      );
+    // Actor
+    const actor = url.searchParams.get("actor");
+    if (actor) {
+      conditions.push(`actor_id = $${idx++}`);
+      params.push(actor);
     }
-    conditions.push(`action = $${idx++}`);
-    params.push(action);
-  }
 
-  // Target type (validated)
-  const targetType = url.searchParams.get("targetType");
-  if (targetType) {
-    if (!ALLOWED_TARGET_TYPES.has(targetType)) {
-      return NextResponse.json(
-        { error: "Invalid target type" },
-        { status: 400 },
-      );
+    // Action (validated)
+    const action = url.searchParams.get("action");
+    if (action) {
+      if (!ALLOWED_ACTIONS.has(action)) {
+        return NextResponse.json(
+          { error: "Invalid action type" },
+          { status: 400 },
+        );
+      }
+      conditions.push(`action = $${idx++}`);
+      params.push(action);
     }
-    conditions.push(`target_type = $${idx++}`);
-    params.push(targetType);
-  }
 
-  // Target ID
-  const targetId = url.searchParams.get("targetId");
-  if (targetId) {
-    conditions.push(`target_id = $${idx++}`);
-    params.push(targetId);
-  }
-
-  // Correlation ID (validated as UUID)
-  const correlationId = url.searchParams.get("correlationId");
-  if (correlationId) {
-    if (!UUID_RE.test(correlationId)) {
-      return NextResponse.json(
-        { error: "Invalid correlation ID format" },
-        { status: 400 },
-      );
+    // Target type (validated)
+    const targetType = url.searchParams.get("targetType");
+    if (targetType) {
+      if (!ALLOWED_TARGET_TYPES.has(targetType)) {
+        return NextResponse.json(
+          { error: "Invalid target type" },
+          { status: 400 },
+        );
+      }
+      conditions.push(`target_type = $${idx++}`);
+      params.push(targetType);
     }
-    conditions.push(`correlation_id = $${idx++}`);
-    params.push(correlationId);
-  }
 
-  // ── Execute queries ─────────────────────────────────────────────
+    // Target ID
+    const targetId = url.searchParams.get("targetId");
+    if (targetId) {
+      conditions.push(`target_id = $${idx++}`);
+      params.push(targetId);
+    }
 
-  const where =
-    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    // Correlation ID (validated as UUID)
+    const correlationId = url.searchParams.get("correlationId");
+    if (correlationId) {
+      if (!UUID_RE.test(correlationId)) {
+        return NextResponse.json(
+          { error: "Invalid correlation ID format" },
+          { status: 400 },
+        );
+      }
+      conditions.push(`correlation_id = $${idx++}`);
+      params.push(correlationId);
+    }
 
-  // Total count (shares the same WHERE + params)
-  const { rows: countRows } = await queryAudit<CountRow>(
-    `SELECT COUNT(*) AS count FROM audit_logs ${where}`,
-    params,
-  );
-  const total = Number.parseInt(countRows[0].count, 10);
+    // ── Execute queries ───────────────────────────────────────────
 
-  // Data page
-  const offset = (page - 1) * pageSize;
-  const { rows } = await queryAudit<AuditLogRow>(
-    `SELECT id, timestamp, actor_id, action, target_type, target_id,
-            details, ip_address, sid, customer_id, correlation_id
-       FROM audit_logs ${where}
-      ORDER BY timestamp DESC
-      LIMIT $${idx++} OFFSET $${idx++}`,
-    [...params, pageSize, offset],
-  );
+    const where =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  return NextResponse.json({ data: rows, total, page, pageSize });
-});
+    // Total count (shares the same WHERE + params)
+    const { rows: countRows } = await queryAudit<CountRow>(
+      `SELECT COUNT(*) AS count FROM audit_logs ${where}`,
+      params,
+    );
+    const total = Number.parseInt(countRows[0].count, 10);
+
+    // Data page
+    const offset = (page - 1) * pageSize;
+    const { rows } = await queryAudit<AuditLogRow>(
+      `SELECT id, timestamp, actor_id, action, target_type, target_id,
+              details, ip_address, sid, customer_id, correlation_id
+         FROM audit_logs ${where}
+        ORDER BY timestamp DESC
+        LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, pageSize, offset],
+    );
+
+    return NextResponse.json({ data: rows, total, page, pageSize });
+  },
+  { requiredPermissions: ["audit-logs:read"] },
+);
