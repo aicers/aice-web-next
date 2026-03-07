@@ -18,6 +18,7 @@ const mockAssessIpUaRisk = vi.hoisted(() => vi.fn());
 const mockExtractBrowserFingerprint = vi.hoisted(() => vi.fn());
 const mockExtractClientIp = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
+const mockHasPermission = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/cookies", () => ({
   getAccessTokenCookie: mockGetAccessTokenCookie,
@@ -71,6 +72,10 @@ vi.mock("@/lib/audit/logger", () => ({
   auditLog: {
     record: mockAuditRecord,
   },
+}));
+
+vi.mock("@/lib/auth/permissions", () => ({
+  hasPermission: mockHasPermission,
 }));
 
 describe("withAuth", () => {
@@ -137,6 +142,7 @@ describe("withAuth", () => {
     mockExtractBrowserFingerprint.mockReset().mockReturnValue("Chrome/131");
     mockExtractClientIp.mockReset().mockReturnValue("127.0.0.1");
     mockAuditRecord.mockReset().mockResolvedValue(undefined);
+    mockHasPermission.mockReset().mockResolvedValue(true);
 
     process.env.CSRF_SECRET = "test-csrf-secret";
 
@@ -940,6 +946,102 @@ describe("withAuth", () => {
       expect(response.status).toBe(403);
       expect(body.error).toBe("Password change required");
       expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Permission check (requiredPermissions) ─────────────────────
+
+  describe("requiredPermissions", () => {
+    it("returns 403 when required permission is missing", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockHasPermission.mockResolvedValue(false);
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler, {
+        requiredPermissions: ["accounts:write"],
+      });
+      const response = await wrapped(makeRequest(), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe("Forbidden");
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("passes when all required permissions are present", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockHasPermission.mockResolvedValue(true);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler, {
+        requiredPermissions: ["accounts:read", "accounts:write"],
+      });
+      const response = await wrapped(makeRequest(), makeContext());
+
+      expect(response.status).toBe(200);
+      expect(handler).toHaveBeenCalled();
+      expect(mockHasPermission).toHaveBeenCalledTimes(2);
+    });
+
+    it("enforces AND semantics — fails if any permission is missing", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      // First permission passes, second fails
+      mockHasPermission
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler, {
+        requiredPermissions: ["accounts:read", "accounts:delete"],
+      });
+      const response = await wrapped(makeRequest(), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe("Forbidden");
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("skips permission check when requiredPermissions is not set", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler);
+      const response = await wrapped(makeRequest(), makeContext());
+
+      expect(response.status).toBe(200);
+      expect(handler).toHaveBeenCalled();
+      expect(mockHasPermission).not.toHaveBeenCalled();
+    });
+
+    it("passes session roles to hasPermission", async () => {
+      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+      mockVerifyJwtFull.mockResolvedValue({
+        ...validSession,
+        roles: ["System Administrator"],
+      });
+      mockHasPermission.mockResolvedValue(true);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler, {
+        requiredPermissions: ["audit-logs:read"],
+      });
+      await wrapped(makeRequest(), makeContext());
+
+      expect(mockHasPermission).toHaveBeenCalledWith(
+        ["System Administrator"],
+        "audit-logs:read",
+      );
     });
   });
 });

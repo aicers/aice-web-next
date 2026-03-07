@@ -16,6 +16,7 @@ import {
 import { extractClientIp } from "./ip";
 import type { AuthSession } from "./jwt";
 import { verifyJwtFull } from "./jwt";
+import { hasPermission } from "./permissions";
 import { rotateTokens, shouldRotate } from "./rotation";
 import { revokeSession } from "./session";
 import {
@@ -54,6 +55,12 @@ interface WithAuthOptions {
    * avoid a deadlock where re-auth is blocked by the re-auth gate.
    */
   skipSessionPolicy?: boolean;
+  /**
+   * Permissions the caller must hold (AND semantics — all listed
+   * permissions must be present).  Checked after CSRF validation,
+   * before session policy enforcement.  Returns 403 on failure.
+   */
+  requiredPermissions?: string[];
 }
 
 // ── Public API ──────────────────────────────────────────────────
@@ -69,6 +76,8 @@ interface WithAuthOptions {
  *  4. For mutation methods (POST/PUT/PATCH/DELETE):
  *     a. Validates Origin/Referer header
  *     b. Validates CSRF token from X-CSRF-Token header
+ *  4.5. Permission check → 403 if any required permission is missing
+ *       (configurable via `options.requiredPermissions`, AND semantics)
  *  5. Session timeout check (idle + absolute)
  *  6. IP/UA change risk assessment
  *  7. Re-auth gate (if session.needs_reauth → 401)
@@ -156,6 +165,15 @@ export function withAuth(
           { error: "Invalid CSRF token" },
           { status: 403 },
         );
+      }
+    }
+
+    // Step 4.5: Permission check (AND semantics)
+    if (options?.requiredPermissions) {
+      for (const perm of options.requiredPermissions) {
+        if (!(await hasPermission(session.roles, perm))) {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
       }
     }
 

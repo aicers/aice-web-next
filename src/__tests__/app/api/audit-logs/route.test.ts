@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthSession } from "@/lib/auth/jwt";
@@ -9,12 +9,28 @@ type HandlerFn = (
   session: AuthSession,
 ) => Promise<Response>;
 
+interface WithAuthOptions {
+  requiredPermissions?: string[];
+}
+
 const mockQueryAudit = vi.hoisted(() => vi.fn());
+const mockHasPermission = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/auth/permissions", () => ({
+  hasPermission: mockHasPermission,
+}));
 
 let currentSession: AuthSession;
 vi.mock("@/lib/auth/guard", () => ({
-  withAuth: vi.fn((handler: HandlerFn) => {
+  withAuth: vi.fn((handler: HandlerFn, options?: WithAuthOptions) => {
     return async (request: NextRequest, context: unknown) => {
+      if (options?.requiredPermissions) {
+        for (const perm of options.requiredPermissions) {
+          if (!(await mockHasPermission(currentSession.roles, perm))) {
+            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+          }
+        }
+      }
       return handler(request, context, currentSession);
     };
   }),
@@ -60,6 +76,7 @@ describe("GET /api/audit-logs", () => {
 
   beforeEach(() => {
     mockQueryAudit.mockReset();
+    mockHasPermission.mockReset().mockResolvedValue(true);
     currentSession = adminSession;
 
     // Default: COUNT returns 0, data returns empty
@@ -71,6 +88,7 @@ describe("GET /api/audit-logs", () => {
   describe("permission", () => {
     it("returns 403 when user lacks System Administrator role", async () => {
       currentSession = viewerSession;
+      mockHasPermission.mockResolvedValue(false);
       const { GET } = await import("@/app/api/audit-logs/route");
       const response = await GET(makeRequest(), makeContext());
       const body = await response.json();
