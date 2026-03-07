@@ -10,6 +10,7 @@ import {
   resetAccountDefaults,
   setAccountStatus,
   setFailedSignInCount,
+  setLockoutCount,
 } from "./helpers/setup-db";
 
 const alert = (page: import("@playwright/test").Page) =>
@@ -84,5 +85,57 @@ test.describe("Account lockout", () => {
     await expect(alert(page)).toContainText(
       "Account is locked. Please try again later.",
     );
+  });
+
+  test("suspended account shows inactive message", async ({ page }) => {
+    await setAccountStatus(ADMIN_USERNAME, "suspended", null);
+
+    await page.goto("/sign-in");
+    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+
+    await expect(alert(page)).toBeVisible();
+    await expect(alert(page)).toContainText(
+      "Account is not active",
+    );
+  });
+
+  test("stage2 triggers suspension when lockout_count >= 1", async ({
+    page,
+  }) => {
+    await resetRateLimits();
+    await resetAccountDefaults(ADMIN_USERNAME);
+    // Simulate: previously locked once, auto-unlocked, now at threshold again
+    await setFailedSignInCount(ADMIN_USERNAME, 4);
+    await setLockoutCount(ADMIN_USERNAME, 1);
+
+    await page.goto("/sign-in");
+    await signIn(page, ADMIN_USERNAME, "WrongPassword!");
+
+    // The 5th failure suspends the account (lockout_count >= 1).
+    await expect(alert(page)).toBeVisible();
+    await expect(alert(page)).toContainText("Invalid account ID or password");
+
+    // The NEXT attempt should see the inactive (suspended) message.
+    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await expect(alert(page)).toContainText(
+      "Account is not active",
+    );
+  });
+
+  test("auto-unlock after stage1 preserves lockout_count for stage2", async ({
+    page,
+  }) => {
+    await resetRateLimits();
+    await resetAccountDefaults(ADMIN_USERNAME);
+    // Simulate: stage1 lock expired (past locked_until), lockout_count = 1
+    const past = new Date(Date.now() - 60_000);
+    await setAccountStatus(ADMIN_USERNAME, "locked", past);
+    await setFailedSignInCount(ADMIN_USERNAME, 0);
+    await setLockoutCount(ADMIN_USERNAME, 1);
+
+    // Auto-unlock should succeed (correct password)
+    await page.goto("/sign-in");
+    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await expect(page).not.toHaveURL(/sign-in/, { timeout: 10_000 });
   });
 });

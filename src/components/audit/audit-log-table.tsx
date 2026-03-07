@@ -64,6 +64,8 @@ const ACTION_KEYS = [
   "account.create",
   "account.lock",
   "account.unlock",
+  "account.suspend",
+  "account.restore",
   "password.change",
   "password.reset",
 ] as const;

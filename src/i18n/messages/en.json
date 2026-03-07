@@ -92,6 +92,8 @@
       "account_create": "Account create",
       "account_lock": "Account lock",
       "account_unlock": "Account unlock",
+      "account_suspend": "Account suspend",
+      "account_restore": "Account restore",
       "password_change": "Password change",
       "password_reset": "Password reset"
     },

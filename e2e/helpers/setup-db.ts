@@ -79,6 +79,25 @@ export async function setFailedSignInCount(
 }
 
 /**
+ * Set `lockout_count` to a specific value.
+ */
+export async function setLockoutCount(
+  username: string,
+  count: number,
+): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      "UPDATE accounts SET lockout_count = $2 WHERE username = $1",
+      [username, count],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
  * Set account status and optionally `locked_until`.
  */
 export async function setAccountStatus(
@@ -174,6 +193,7 @@ export async function resetAccountDefaults(username: string): Promise<void> {
       `UPDATE accounts
        SET status = 'active',
            failed_sign_in_count = 0,
+           lockout_count = 0,
            locked_until = NULL,
            must_change_password = false,
            max_sessions = NULL
@@ -361,6 +381,24 @@ export async function clearPasswordHistory(username: string): Promise<void> {
       "DELETE FROM password_history WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
       [username],
     );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Get the UUID of an account by username.
+ */
+export async function getAccountId(username: string): Promise<string> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ id: string }>(
+      "SELECT id FROM accounts WHERE username = $1",
+      [username],
+    );
+    if (rows.length === 0) throw new Error(`Account "${username}" not found`);
+    return rows[0].id;
   } finally {
     await client.end();
   }

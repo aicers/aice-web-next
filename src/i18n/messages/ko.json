@@ -92,6 +92,8 @@
       "account_create": "계정 생성",
       "account_lock": "계정 잠금",
       "account_unlock": "계정 잠금 해제",
+      "account_suspend": "계정 정지",
+      "account_restore": "계정 복원",
       "password_change": "비밀번호 변경",
       "password_reset": "비밀번호 초기화"
     },

@@ -464,6 +464,8 @@ describe("auditLog", () => {
       "account.create",
       "account.lock",
       "account.unlock",
+      "account.suspend",
+      "account.restore",
     ];
 
     for (const action of PHASE_1_ACTIONS) {
