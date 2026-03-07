@@ -29,19 +29,16 @@ import { checkSignInRateLimit } from "@/lib/rate-limit/limiter";
 interface LockoutPolicy {
   stage1Threshold: number;
   stage1DurationMinutes: number;
-  stage2Threshold: number;
 }
 
 const DEFAULT_LOCKOUT: LockoutPolicy = {
   stage1Threshold: 5,
   stage1DurationMinutes: 30,
-  stage2Threshold: 3,
 };
 
 interface LockoutPolicyRow {
   stage1_threshold: number;
   stage1_duration_minutes: number;
-  stage2_threshold: number;
 }
 
 // ── Account row type ────────────────────────────────────────────
@@ -53,6 +50,7 @@ interface AccountRow {
   token_version: number;
   must_change_password: boolean;
   failed_sign_in_count: number;
+  lockout_count: number;
   locked_until: string | null;
   max_sessions: number | null;
   allowed_ips: string[] | null;
@@ -73,7 +71,6 @@ async function loadLockoutPolicy(): Promise<LockoutPolicy> {
         stage1Threshold: db.stage1_threshold ?? DEFAULT_LOCKOUT.stage1Threshold,
         stage1DurationMinutes:
           db.stage1_duration_minutes ?? DEFAULT_LOCKOUT.stage1DurationMinutes,
-        stage2Threshold: db.stage2_threshold ?? DEFAULT_LOCKOUT.stage2Threshold,
       };
     }
   } catch {
@@ -162,42 +159,51 @@ async function applyFailedLogin(
   const newFailCount = account.failed_sign_in_count + 1;
   const lockout = await loadLockoutPolicy();
 
-  if (newFailCount >= lockout.stage1Threshold + lockout.stage2Threshold) {
-    // Stage 2 — permanent lock
-    await query(
-      `UPDATE accounts
-       SET failed_sign_in_count = $1, status = 'locked', locked_until = NULL
-       WHERE id = $2`,
-      [newFailCount, account.id],
-    );
-    await auditLog.record({
-      actor: account.id,
-      action: "account.lock",
-      target: "account",
-      targetId: account.id,
-      details: { reason: "stage2_permanent", failedCount: newFailCount, ip },
-    });
-  } else if (newFailCount >= lockout.stage1Threshold) {
-    // Stage 1 — temporary lock
-    await query(
-      `UPDATE accounts
-       SET failed_sign_in_count = $1, status = 'locked',
-           locked_until = NOW() + $2 * INTERVAL '1 minute'
-       WHERE id = $3`,
-      [newFailCount, lockout.stage1DurationMinutes, account.id],
-    );
-    await auditLog.record({
-      actor: account.id,
-      action: "account.lock",
-      target: "account",
-      targetId: account.id,
-      details: {
-        reason: "stage1_temporary",
-        failedCount: newFailCount,
-        durationMinutes: lockout.stage1DurationMinutes,
-        ip,
-      },
-    });
+  if (newFailCount >= lockout.stage1Threshold) {
+    if (account.lockout_count >= 1) {
+      // Stage 2 — suspend (no auto-recovery)
+      await query(
+        `UPDATE accounts
+         SET failed_sign_in_count = $1, status = 'suspended',
+             locked_until = NULL
+         WHERE id = $2`,
+        [newFailCount, account.id],
+      );
+      await auditLog.record({
+        actor: account.id,
+        action: "account.suspend",
+        target: "account",
+        targetId: account.id,
+        details: {
+          reason: "stage2_suspended",
+          failedCount: newFailCount,
+          lockoutCount: account.lockout_count,
+          ip,
+        },
+      });
+    } else {
+      // Stage 1 — temporary lock
+      await query(
+        `UPDATE accounts
+         SET failed_sign_in_count = $1, status = 'locked',
+             locked_until = NOW() + $2 * INTERVAL '1 minute',
+             lockout_count = lockout_count + 1
+         WHERE id = $3`,
+        [newFailCount, lockout.stage1DurationMinutes, account.id],
+      );
+      await auditLog.record({
+        actor: account.id,
+        action: "account.lock",
+        target: "account",
+        targetId: account.id,
+        details: {
+          reason: "stage1_temporary",
+          failedCount: newFailCount,
+          durationMinutes: lockout.stage1DurationMinutes,
+          ip,
+        },
+      });
+    }
   } else {
     // Below threshold — just increment
     await query("UPDATE accounts SET failed_sign_in_count = $1 WHERE id = $2", [
@@ -241,10 +247,10 @@ async function createSessionAndIssueTokens(params: {
     userAgent,
   } = params;
 
-  // Reset failed count and update last_sign_in_at
+  // Reset failed count, lockout count, and update last_sign_in_at
   await query(
     `UPDATE accounts
-     SET failed_sign_in_count = 0, last_sign_in_at = NOW()
+     SET failed_sign_in_count = 0, lockout_count = 0, last_sign_in_at = NOW()
      WHERE id = $1`,
     [accountId],
   );
@@ -347,8 +353,8 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
   const { rows: accountRows } = await query<AccountRow>(
     `SELECT a.id, a.password_hash, a.status, a.token_version,
             a.must_change_password, a.failed_sign_in_count,
-            a.locked_until, a.max_sessions, a.allowed_ips,
-            r.name AS role_name
+            a.lockout_count, a.locked_until, a.max_sessions,
+            a.allowed_ips, r.name AS role_name
      FROM accounts a
      JOIN roles r ON a.role_id = r.id
      WHERE a.username = $1`,

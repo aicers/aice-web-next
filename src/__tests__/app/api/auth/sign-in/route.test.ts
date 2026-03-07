@@ -80,6 +80,7 @@ const activeAccount = {
   token_version: 0,
   must_change_password: false,
   failed_sign_in_count: 0,
+  lockout_count: 0,
   locked_until: null,
   max_sessions: null,
   allowed_ips: null,
@@ -90,7 +91,6 @@ const lockoutPolicy = {
   value: {
     stage1_threshold: 5,
     stage1_duration_minutes: 30,
-    stage2_threshold: 3,
   },
 };
 
@@ -306,6 +306,48 @@ describe("POST /api/auth/sign-in", () => {
       expect(response.status).toBe(200);
     });
 
+    it("auto-unlock preserves lockout_count", async () => {
+      const past = new Date(Date.now() - 60_000).toISOString();
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM accounts")) {
+          return {
+            rows: [
+              {
+                ...activeAccount,
+                status: "locked",
+                locked_until: past,
+                lockout_count: 1,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes("SET status = 'active'")) {
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes("INSERT INTO sessions")) {
+          return { rows: [{ sid: "sess-1" }], rowCount: 1 };
+        }
+        if (sql.includes("failed_sign_in_count = 0")) {
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      await POST(makeRequest({ username: "admin", password: "pass" }));
+
+      // Auto-unlock UPDATE should NOT reset lockout_count
+      const autoUnlockCall = mockQuery.mock.calls.find(
+        (args: unknown[]) =>
+          typeof args[0] === "string" &&
+          args[0].includes("SET status = 'active'") &&
+          args[0].includes("failed_sign_in_count = 0"),
+      );
+      expect(autoUnlockCall).toBeDefined();
+      expect(autoUnlockCall?.[0]).not.toContain("lockout_count");
+    });
+
     it("returns 403 for inactive account (suspended)", async () => {
       mockQuery.mockImplementation(async (sql: string) => {
         if (sql.includes("FROM accounts")) {
@@ -387,9 +429,13 @@ describe("POST /api/auth/sign-in", () => {
       const { POST } = await import("@/app/api/auth/sign-in/route");
       await POST(makeRequest({ username: "admin", password: "wrong" }));
 
-      // Should lock with temporary duration (count reaches 5 = stage1_threshold)
+      // Should lock with temporary duration and increment lockout_count
       expect(mockQuery).toHaveBeenCalledWith(
         expect.stringContaining("status = 'locked'"),
+        expect.arrayContaining([5, 30]),
+      );
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining("lockout_count = lockout_count + 1"),
         expect.arrayContaining([5, 30]),
       );
       expect(mockAuditRecord).toHaveBeenCalledWith(
@@ -397,12 +443,18 @@ describe("POST /api/auth/sign-in", () => {
       );
     });
 
-    it("triggers stage2 permanent lock", async () => {
+    it("triggers stage2 suspension when lockout_count >= 1", async () => {
       mockVerifyPassword.mockResolvedValue(false);
       mockQuery.mockImplementation(async (sql: string) => {
         if (sql.includes("FROM accounts")) {
           return {
-            rows: [{ ...activeAccount, failed_sign_in_count: 7 }],
+            rows: [
+              {
+                ...activeAccount,
+                failed_sign_in_count: 4,
+                lockout_count: 1,
+              },
+            ],
             rowCount: 1,
           };
         }
@@ -415,11 +467,120 @@ describe("POST /api/auth/sign-in", () => {
       const { POST } = await import("@/app/api/auth/sign-in/route");
       await POST(makeRequest({ username: "admin", password: "wrong" }));
 
-      // Count reaches 8 = 5 + 3 = stage1 + stage2 threshold
+      // Should suspend (not lock) when lockout_count >= 1
       expect(mockQuery).toHaveBeenCalledWith(
-        expect.stringContaining("locked_until = NULL"),
-        expect.arrayContaining([8]),
+        expect.stringContaining("status = 'suspended'"),
+        expect.arrayContaining([5]),
       );
+      expect(mockAuditRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "account.suspend" }),
+      );
+    });
+
+    it("triggers stage2 suspension with lockout_count > 1", async () => {
+      mockVerifyPassword.mockResolvedValue(false);
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM accounts")) {
+          return {
+            rows: [
+              {
+                ...activeAccount,
+                failed_sign_in_count: 4,
+                lockout_count: 3,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes("system_settings")) {
+          return { rows: [lockoutPolicy], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      await POST(makeRequest({ username: "admin", password: "wrong" }));
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining("status = 'suspended'"),
+        expect.arrayContaining([5]),
+      );
+      expect(mockAuditRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "account.suspend",
+          details: expect.objectContaining({ lockoutCount: 3 }),
+        }),
+      );
+    });
+
+    it("stage1 lock does not suspend when lockout_count is 0", async () => {
+      mockVerifyPassword.mockResolvedValue(false);
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM accounts")) {
+          return {
+            rows: [
+              {
+                ...activeAccount,
+                failed_sign_in_count: 4,
+                lockout_count: 0,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes("system_settings")) {
+          return { rows: [lockoutPolicy], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const response = await POST(
+        makeRequest({ username: "admin", password: "wrong" }),
+      );
+
+      expect(response.status).toBe(401);
+
+      // Should lock, NOT suspend
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining("status = 'locked'"),
+        expect.arrayContaining([5, 30]),
+      );
+      expect(mockQuery).not.toHaveBeenCalledWith(
+        expect.stringContaining("status = 'suspended'"),
+        expect.anything(),
+      );
+    });
+
+    it("returns 401 for wrong password during stage2 suspension", async () => {
+      mockVerifyPassword.mockResolvedValue(false);
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM accounts")) {
+          return {
+            rows: [
+              {
+                ...activeAccount,
+                failed_sign_in_count: 4,
+                lockout_count: 1,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes("system_settings")) {
+          return { rows: [lockoutPolicy], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const response = await POST(
+        makeRequest({ username: "admin", password: "wrong" }),
+      );
+
+      expect(response.status).toBe(401);
+      const body = await response.json();
+      expect(body.code).toBe("INVALID_CREDENTIALS");
     });
   });
 
@@ -529,12 +690,16 @@ describe("POST /api/auth/sign-in", () => {
       );
     });
 
-    it("resets failed_sign_in_count on success", async () => {
+    it("resets failed_sign_in_count and lockout_count on success", async () => {
       const { POST } = await import("@/app/api/auth/sign-in/route");
       await POST(makeRequest({ username: "admin", password: "pass" }));
 
       expect(mockQuery).toHaveBeenCalledWith(
         expect.stringContaining("failed_sign_in_count = 0"),
+        ["acc-1"],
+      );
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining("lockout_count = 0"),
         ["acc-1"],
       );
     });

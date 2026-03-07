@@ -1,0 +1,1 @@
+ALTER TABLE accounts ADD COLUMN lockout_count INTEGER NOT NULL DEFAULT 0;

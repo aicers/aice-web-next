@@ -38,6 +38,8 @@ const ALLOWED_ACTIONS = new Set([
   "account.create",
   "account.lock",
   "account.unlock",
+  "account.suspend",
+  "account.restore",
   "password.change",
   "password.reset",
 ]);

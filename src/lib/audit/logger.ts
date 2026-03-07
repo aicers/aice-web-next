@@ -74,8 +74,13 @@ type SessionAction =
   | "session.idle_timeout"
   | "session.absolute_timeout";
 
-/** Phase 1 account event actions. */
-type AccountAction = "account.create" | "account.lock" | "account.unlock";
+/** Account event actions. */
+type AccountAction =
+  | "account.create"
+  | "account.lock"
+  | "account.unlock"
+  | "account.suspend"
+  | "account.restore";
 
 /** Phase 2 password event actions. */
 type PasswordAction = "password.change" | "password.reset";
