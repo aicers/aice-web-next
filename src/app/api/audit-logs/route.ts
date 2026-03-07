@@ -38,6 +38,8 @@ const ALLOWED_ACTIONS = new Set([
   "account.create",
   "account.lock",
   "account.unlock",
+  "password.change",
+  "password.reset",
 ]);
 
 const ALLOWED_TARGET_TYPES = new Set(["account", "session"]);

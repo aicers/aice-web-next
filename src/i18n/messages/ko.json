@@ -91,11 +91,35 @@
       "session_absolute_timeout": "절대 시간 초과",
       "account_create": "계정 생성",
       "account_lock": "계정 잠금",
-      "account_unlock": "계정 잠금 해제"
+      "account_unlock": "계정 잠금 해제",
+      "password_change": "비밀번호 변경",
+      "password_reset": "비밀번호 초기화"
     },
     "targetTypes": {
       "account": "계정",
       "session": "세션"
+    }
+  },
+  "changePassword": {
+    "heading": "비밀번호 변경",
+    "currentPassword": "현재 비밀번호",
+    "newPassword": "새 비밀번호",
+    "confirmPassword": "새 비밀번호 확인",
+    "submit": "비밀번호 변경",
+    "submitting": "비밀번호 변경 중...",
+    "success": "비밀번호가 변경되었습니다",
+    "incorrectPassword": "현재 비밀번호가 올바르지 않습니다",
+    "rateLimited": "시도 횟수가 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+    "serverError": "예기치 않은 오류가 발생했습니다. 다시 시도해 주세요.",
+    "errors": {
+      "TOO_SHORT": "비밀번호는 최소 {min}자 이상이어야 합니다",
+      "TOO_LONG": "비밀번호가 최대 길이를 초과했습니다",
+      "MISSING_UPPERCASE": "비밀번호에 대문자가 포함되어야 합니다",
+      "MISSING_LOWERCASE": "비밀번호에 소문자가 포함되어야 합니다",
+      "MISSING_DIGIT": "비밀번호에 숫자가 포함되어야 합니다",
+      "MISSING_SPECIAL": "비밀번호에 특수문자가 포함되어야 합니다",
+      "BLOCKLISTED": "너무 흔한 비밀번호입니다. 다른 비밀번호를 선택해 주세요.",
+      "RECENTLY_USED": "최근에 사용한 비밀번호는 다시 사용할 수 없습니다"
     }
   }
 }
