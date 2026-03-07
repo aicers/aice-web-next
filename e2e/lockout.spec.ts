@@ -94,9 +94,7 @@ test.describe("Account lockout", () => {
     await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
 
     await expect(alert(page)).toBeVisible();
-    await expect(alert(page)).toContainText(
-      "Account is not active",
-    );
+    await expect(alert(page)).toContainText("Account is not active");
   });
 
   test("stage2 triggers suspension when lockout_count >= 1", async ({
@@ -117,9 +115,7 @@ test.describe("Account lockout", () => {
 
     // The NEXT attempt should see the inactive (suspended) message.
     await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-    await expect(alert(page)).toContainText(
-      "Account is not active",
-    );
+    await expect(alert(page)).toContainText("Account is not active");
   });
 
   test("auto-unlock after stage1 preserves lockout_count for stage2", async ({
