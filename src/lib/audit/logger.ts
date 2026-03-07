@@ -77,8 +77,15 @@ type SessionAction =
 /** Phase 1 account event actions. */
 type AccountAction = "account.create" | "account.lock" | "account.unlock";
 
-/** All Phase 1 audit event actions (Discussion #46 §4). */
-export type AuditAction = AuthAction | SessionAction | AccountAction;
+/** Phase 2 password event actions. */
+type PasswordAction = "password.change" | "password.reset";
+
+/** All audit event actions. */
+export type AuditAction =
+  | AuthAction
+  | SessionAction
+  | AccountAction
+  | PasswordAction;
 
 /** Target entity types for Phase 1 events. */
 export type AuditTargetType = "account" | "session";
