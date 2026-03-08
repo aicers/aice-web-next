@@ -497,6 +497,22 @@ export async function getCustomerIdByName(
   }
 }
 
+/**
+ * Reset locale and timezone preferences for an account.
+ */
+export async function resetAccountPreferences(username: string): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      "UPDATE accounts SET locale = NULL, timezone = NULL WHERE username = $1",
+      [username],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
 function escapeIdentifier(str: string): string {
   return `"${str.replace(/"/g, '""')}"`;
 }

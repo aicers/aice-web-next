@@ -55,6 +55,7 @@ interface AccountRow {
   max_sessions: number | null;
   allowed_ips: string[] | null;
   role_name: string;
+  locale: string | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -235,6 +236,7 @@ async function createSessionAndIssueTokens(params: {
   roleName: string;
   tokenVersion: number;
   mustChangePassword: boolean;
+  locale: string | null;
   ip: string;
   userAgent: string;
 }): Promise<NextResponse> {
@@ -243,6 +245,7 @@ async function createSessionAndIssueTokens(params: {
     roleName,
     tokenVersion,
     mustChangePassword,
+    locale,
     ip,
     userAgent,
   } = params;
@@ -292,6 +295,14 @@ async function createSessionAndIssueTokens(params: {
     ...CSRF_COOKIE_OPTIONS,
     maxAge: TOKEN_EXPIRATION_SECONDS,
   });
+
+  // Set NEXT_LOCALE cookie for next-intl locale negotiation
+  if (locale) {
+    cookieStore.set("NEXT_LOCALE", locale, {
+      path: "/",
+      maxAge: 365 * 24 * 60 * 60,
+    });
+  }
 
   // Audit success
   await auditLog.record({
@@ -354,7 +365,7 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
     `SELECT a.id, a.password_hash, a.status, a.token_version,
             a.must_change_password, a.failed_sign_in_count,
             a.lockout_count, a.locked_until, a.max_sessions,
-            a.allowed_ips, r.name AS role_name
+            a.allowed_ips, r.name AS role_name, a.locale
      FROM accounts a
      JOIN roles r ON a.role_id = r.id
      WHERE a.username = $1`,
@@ -440,6 +451,7 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
     roleName: account.role_name,
     tokenVersion: account.token_version,
     mustChangePassword: account.must_change_password,
+    locale: account.locale,
     ip,
     userAgent,
   });

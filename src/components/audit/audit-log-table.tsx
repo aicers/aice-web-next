@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 
+import { useTimezone } from "@/components/providers/timezone-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatDateTime } from "@/lib/format-date";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -92,6 +94,7 @@ export function AuditLogTable() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  const tz = useTimezone();
 
   const [result, setResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -335,7 +338,7 @@ export function AuditLogTable() {
               {result.data.map((entry) => (
                 <TableRow key={entry.id}>
                   <TableCell className="whitespace-nowrap text-xs">
-                    {new Date(entry.timestamp).toLocaleString()}
+                    {formatDateTime(entry.timestamp, tz)}
                   </TableCell>
                   <TableCell className="text-xs">{entry.actor_id}</TableCell>
                   <TableCell>

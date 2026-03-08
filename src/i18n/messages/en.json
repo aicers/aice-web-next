@@ -166,6 +166,16 @@
     "previous": "Previous",
     "next": "Next"
   },
+  "profile": {
+    "heading": "Profile",
+    "locale": "Language",
+    "timezone": "Timezone",
+    "timezonePlaceholder": "Select timezone",
+    "browserDefault": "Browser default",
+    "saved": "Preferences saved",
+    "saving": "Saving...",
+    "save": "Save"
+  },
   "changePassword": {
     "heading": "Change Password",
     "currentPassword": "Current Password",
