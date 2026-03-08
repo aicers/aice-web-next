@@ -290,7 +290,7 @@ test.describe("Preferences", () => {
 
     await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
     await expect(page.getByText("Language")).toBeVisible();
-    await expect(page.getByText("Timezone")).toBeVisible();
+    await expect(page.getByLabel("Timezone")).toBeVisible();
     await expect(page.getByRole("button", { name: "Save" })).toBeVisible();
   });
 
@@ -330,9 +330,11 @@ test.describe("Preferences", () => {
 
     // After router.refresh(), the page should switch to Korean
     // Wait for Korean labels to appear
-    await expect(page.getByText("프로필")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("언어")).toBeVisible();
-    await expect(page.getByText("시간대")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "프로필" })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByLabel("언어")).toBeVisible();
+    await expect(page.getByLabel("시간대")).toBeVisible();
   });
 
   test("locale change persists after page reload", async ({ page }) => {
