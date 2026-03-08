@@ -36,7 +36,7 @@ export default defineConfig({
     ? [["html", { open: "never" }], ["github"]]
     : [["html", { open: "on-failure" }]],
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

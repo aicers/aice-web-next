@@ -45,6 +45,8 @@ const ALLOWED_ACTIONS = new Set([
   "customer.create",
   "customer.update",
   "customer.delete",
+  "customer.assign",
+  "customer.unassign",
 ]);
 
 const ALLOWED_TARGET_TYPES = new Set(["account", "session", "customer"]);

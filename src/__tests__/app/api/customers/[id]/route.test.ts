@@ -214,6 +214,29 @@ describe("PATCH /api/customers/[id]", () => {
     expect(response.status).toBe(400);
   });
 
+  it("returns 404 when Tenant Admin updates customer outside their scope", async () => {
+    mockHasPermission.mockImplementation(
+      async (_roles: string[], perm: string) => {
+        if (perm === "customers:access-all") return false;
+        return true;
+      },
+    );
+
+    // Customer exists, but no account_customer link
+    mockQuery
+      .mockResolvedValueOnce({ rows: [sampleCustomer], rowCount: 1 }) // SELECT customer
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // SELECT account_customer
+
+    const { PATCH } = await import("@/app/api/customers/[id]/route");
+    const request = new NextRequest("http://localhost:3000/api/customers/1", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "New Name" }),
+    });
+    const response = await PATCH(request, makeContext());
+
+    expect(response.status).toBe(404);
+  });
+
   it("returns existing customer when no fields to update", async () => {
     mockQuery.mockResolvedValueOnce({
       rows: [sampleCustomer],

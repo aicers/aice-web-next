@@ -320,6 +320,10 @@ export async function deleteTestAccount(username: string): Promise<void> {
       [username],
     );
     await client.query(
+      "DELETE FROM account_customer WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    );
+    await client.query(
       "DELETE FROM password_history WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
       [username],
     );
@@ -433,6 +437,61 @@ export async function deleteCustomersByPrefix(prefix: string): Promise<void> {
         `${prefix}%`,
       ]);
     }
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Assign a customer to an account via direct DB insert.
+ */
+export async function assignCustomerToAccount(
+  accountId: string,
+  customerId: number,
+): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      "INSERT INTO account_customer (account_id, customer_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+      [accountId, customerId],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Remove all customer assignments for an account.
+ */
+export async function removeAccountCustomerAssignments(
+  accountId: string,
+): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query("DELETE FROM account_customer WHERE account_id = $1", [
+      accountId,
+    ]);
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Get customer ID by name.
+ */
+export async function getCustomerIdByName(
+  name: string,
+): Promise<number | null> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ id: number }>(
+      "SELECT id FROM customers WHERE name = $1",
+      [name],
+    );
+    return rows.length > 0 ? rows[0].id : null;
   } finally {
     await client.end();
   }

@@ -71,6 +71,8 @@ const ACTION_KEYS = [
   "customer.create",
   "customer.update",
   "customer.delete",
+  "customer.assign",
+  "customer.unassign",
 ] as const;
 
 const TARGET_TYPE_KEYS = ["account", "session", "customer"] as const;

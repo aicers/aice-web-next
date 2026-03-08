@@ -99,7 +99,9 @@
       "password_reset": "비밀번호 초기화",
       "customer_create": "고객 생성",
       "customer_update": "고객 수정",
-      "customer_delete": "고객 삭제"
+      "customer_delete": "고객 삭제",
+      "customer_assign": "고객 할당",
+      "customer_unassign": "고객 할당 해제"
     },
     "targetTypes": {
       "account": "계정",
