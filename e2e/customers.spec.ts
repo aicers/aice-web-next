@@ -5,7 +5,6 @@ import {
   ADMIN_USERNAME,
   resetRateLimits,
   signInAndWait,
-  signOut,
 } from "./helpers/auth";
 import {
   clearMustChangePassword,
@@ -129,9 +128,7 @@ test.describe("Customer management", () => {
     expect(verifyRes.status()).toBe(404);
   });
 
-  test("POST /api/customers returns 400 for missing name", async ({
-    page,
-  }) => {
+  test("POST /api/customers returns 400 for missing name", async ({ page }) => {
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
 
     const cookies = await page.context().cookies();
