@@ -77,6 +77,9 @@ type SessionAction =
 /** Account event actions. */
 type AccountAction =
   | "account.create"
+  | "account.update"
+  | "account.disable"
+  | "account.delete"
   | "account.lock"
   | "account.unlock"
   | "account.suspend"
