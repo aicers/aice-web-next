@@ -18,6 +18,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+      - name: Restore skills from lock file
+        run: npx -y skills experimental_install -y
       - name: Update skills
         run: npx -y skills update -y
       - name: Check for changes
