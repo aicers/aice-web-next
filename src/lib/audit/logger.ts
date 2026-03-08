@@ -85,15 +85,19 @@ type AccountAction =
 /** Phase 2 password event actions. */
 type PasswordAction = "password.change" | "password.reset";
 
+/** Customer event actions. */
+type CustomerAction = "customer.create" | "customer.update" | "customer.delete";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
   | SessionAction
   | AccountAction
-  | PasswordAction;
+  | PasswordAction
+  | CustomerAction;
 
-/** Target entity types for Phase 1 events. */
-export type AuditTargetType = "account" | "session";
+/** Target entity types for audit events. */
+export type AuditTargetType = "account" | "session" | "customer";
 
 /**
  * Parameters for recording a single audit log entry.

@@ -45,7 +45,8 @@
   "settings": {
     "accounts": "Accounts",
     "roles": "Roles",
-    "profile": "Profile"
+    "profile": "Profile",
+    "customers": "Customers"
   },
   "validation": {
     "required": "{field} is required",
@@ -95,12 +96,37 @@
       "account_suspend": "Account suspend",
       "account_restore": "Account restore",
       "password_change": "Password change",
-      "password_reset": "Password reset"
+      "password_reset": "Password reset",
+      "customer_create": "Customer create",
+      "customer_update": "Customer update",
+      "customer_delete": "Customer delete"
     },
     "targetTypes": {
       "account": "Account",
-      "session": "Session"
+      "session": "Session",
+      "customer": "Customer"
     }
+  },
+  "customers": {
+    "title": "Customers",
+    "name": "Name",
+    "description": "Description",
+    "databaseName": "Database Name",
+    "status": "Status",
+    "active": "Active",
+    "provisioning": "Provisioning",
+    "create": "Create Customer",
+    "edit": "Edit Customer",
+    "delete": "Delete Customer",
+    "cancel": "Cancel",
+    "deleteConfirm": "Are you sure you want to delete this customer? This will permanently remove the customer database.",
+    "deleteLinked": "Cannot delete customer with active account assignments.",
+    "noResults": "No customers found.",
+    "loading": "Loading...",
+    "error": "Failed to load customers",
+    "created": "Customer created successfully",
+    "updated": "Customer updated successfully",
+    "deleted": "Customer deleted successfully"
   },
   "changePassword": {
     "heading": "Change Password",

@@ -11,7 +11,12 @@ export const NAV_SEGMENTS = new Set([
 ]);
 
 /** Segments that map to translation keys in "settings" namespace. */
-export const SETTINGS_SEGMENTS = new Set(["accounts", "roles", "profile"]);
+export const SETTINGS_SEGMENTS = new Set([
+  "accounts",
+  "roles",
+  "profile",
+  "customers",
+]);
 
 export interface BreadcrumbSegment {
   label: string;

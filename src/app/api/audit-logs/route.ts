@@ -42,9 +42,12 @@ const ALLOWED_ACTIONS = new Set([
   "account.restore",
   "password.change",
   "password.reset",
+  "customer.create",
+  "customer.update",
+  "customer.delete",
 ]);
 
-const ALLOWED_TARGET_TYPES = new Set(["account", "session"]);
+const ALLOWED_TARGET_TYPES = new Set(["account", "session", "customer"]);
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;

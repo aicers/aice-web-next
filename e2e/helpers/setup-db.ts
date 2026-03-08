@@ -405,6 +405,44 @@ export async function getAccountId(username: string): Promise<string> {
 }
 
 /**
+ * Delete all customers whose name starts with a given prefix.
+ * Also drops the associated databases.
+ */
+export async function deleteCustomersByPrefix(prefix: string): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{
+      id: number;
+      database_name: string;
+    }>("SELECT id, database_name FROM customers WHERE name LIKE $1", [
+      `${prefix}%`,
+    ]);
+    for (const row of rows) {
+      // Remove account_customer links first (ON DELETE RESTRICT)
+      await client.query(
+        "DELETE FROM account_customer WHERE customer_id = $1",
+        [row.id],
+      );
+      await client.query(
+        `DROP DATABASE IF EXISTS ${escapeIdentifier(row.database_name)}`,
+      );
+    }
+    if (rows.length > 0) {
+      await client.query("DELETE FROM customers WHERE name LIKE $1", [
+        `${prefix}%`,
+      ]);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+function escapeIdentifier(str: string): string {
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
+/**
  * Get session status for diagnostic/assertion purposes.
  */
 export async function getSessionStatus(username: string): Promise<{

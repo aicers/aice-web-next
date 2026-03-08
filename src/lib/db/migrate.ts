@@ -178,6 +178,19 @@ export async function runStartupMigrations(): Promise<void> {
   await migrateAuthDb();
   await migrateAuditDb();
 
+  // Clean up stale provisioning rows (crashed mid-provision)
+  const stale = await query<{ database_name: string }>(
+    "SELECT database_name FROM customers WHERE status = 'provisioning'",
+  );
+  for (const row of stale.rows) {
+    await query(
+      `DROP DATABASE IF EXISTS ${escapeIdentifier(row.database_name)}`,
+    );
+  }
+  if (stale.rows.length > 0) {
+    await query("DELETE FROM customers WHERE status = 'provisioning'");
+  }
+
   const result = await query<{ database_name: string }>(
     "SELECT database_name FROM customers WHERE status = 'active'",
   );
