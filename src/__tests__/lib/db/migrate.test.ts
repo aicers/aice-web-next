@@ -338,7 +338,13 @@ describe("migrate", () => {
         } as never;
       });
 
-      // customers query (called after auth + audit migrations)
+      // Crash recovery: SELECT provisioning customers → empty
+      vi.mocked(clientQuery).mockResolvedValueOnce({
+        rows: [],
+        rowCount: 0,
+      });
+
+      // Active customers query (called after auth + audit migrations)
       vi.mocked(clientQuery).mockResolvedValueOnce({
         rows: [{ database_name: "customer_1" }],
         rowCount: 1,

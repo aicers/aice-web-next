@@ -68,9 +68,12 @@ const ACTION_KEYS = [
   "account.restore",
   "password.change",
   "password.reset",
+  "customer.create",
+  "customer.update",
+  "customer.delete",
 ] as const;
 
-const TARGET_TYPE_KEYS = ["account", "session"] as const;
+const TARGET_TYPE_KEYS = ["account", "session", "customer"] as const;
 
 /** Convert a dotted DB action key to an i18n-safe underscore key. */
 function actionToI18nKey(action: string): string {
