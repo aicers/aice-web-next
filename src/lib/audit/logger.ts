@@ -86,7 +86,12 @@ type AccountAction =
 type PasswordAction = "password.change" | "password.reset";
 
 /** Customer event actions. */
-type CustomerAction = "customer.create" | "customer.update" | "customer.delete";
+type CustomerAction =
+  | "customer.create"
+  | "customer.update"
+  | "customer.delete"
+  | "customer.assign"
+  | "customer.unassign";
 
 /** All audit event actions. */
 export type AuditAction =

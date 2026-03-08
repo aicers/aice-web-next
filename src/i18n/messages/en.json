@@ -99,7 +99,9 @@
       "password_reset": "Password reset",
       "customer_create": "Customer create",
       "customer_update": "Customer update",
-      "customer_delete": "Customer delete"
+      "customer_delete": "Customer delete",
+      "customer_assign": "Customer assign",
+      "customer_unassign": "Customer unassign"
     },
     "targetTypes": {
       "account": "Account",

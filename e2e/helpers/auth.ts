@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 export const ADMIN_USERNAME = "admin";
 export const ADMIN_PASSWORD = "Admin1234!";
 
-const BASE_URL = "http://localhost:3000";
+const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
 
 /**
  * Reset the in-memory rate limiter via the test-only API endpoint.

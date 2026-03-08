@@ -129,6 +129,24 @@ export const PATCH = withAuth(
       );
     }
 
+    // Tenant scope check
+    const accessAll = await hasPermission(
+      session.roles,
+      "customers:access-all",
+    );
+    if (!accessAll) {
+      const { rows: linkRows } = await query<{ customer_id: number }>(
+        "SELECT customer_id FROM account_customer WHERE account_id = $1 AND customer_id = $2",
+        [session.accountId, customerId],
+      );
+      if (linkRows.length === 0) {
+        return NextResponse.json(
+          { error: "Customer not found" },
+          { status: 404 },
+        );
+      }
+    }
+
     // Build update
     const updates: string[] = [];
     const params: unknown[] = [];
