@@ -1,6 +1,7 @@
 "use client";
 
 import { LogOut, User } from "lucide-react";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -51,9 +52,11 @@ export function NavUser({ collapsed = false }: NavUserProps) {
         )}
       </Tooltip>
       <DropdownMenuContent side="right" align="end" className="w-48">
-        <DropdownMenuItem>
-          <User className="mr-2 h-4 w-4" />
-          {t("settings.profile")}
+        <DropdownMenuItem asChild>
+          <Link href="/profile">
+            <User className="mr-2 h-4 w-4" />
+            {t("settings.profile")}
+          </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem>

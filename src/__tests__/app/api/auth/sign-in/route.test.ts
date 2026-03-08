@@ -85,6 +85,7 @@ const activeAccount = {
   max_sessions: null,
   allowed_ips: null,
   role_name: "System Administrator",
+  locale: null,
 };
 
 const lockoutPolicy = {
@@ -713,6 +714,55 @@ describe("POST /api/auth/sign-in", () => {
         "corr-id-1",
         expect.any(Function),
       );
+    });
+
+    it("sets NEXT_LOCALE cookie when account has stored locale", async () => {
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM accounts")) {
+          return {
+            rows: [{ ...activeAccount, locale: "ko" }],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes("system_settings") && sql.includes("lockout_policy")) {
+          return { rows: [lockoutPolicy], rowCount: 1 };
+        }
+        if (sql.includes("system_settings") && sql.includes("session_policy")) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes("COUNT(*)")) {
+          return { rows: [{ count: "0" }], rowCount: 1 };
+        }
+        if (sql.includes("INSERT INTO sessions")) {
+          return { rows: [{ sid: "sess-1" }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const res = await POST(
+        makeRequest({ username: "admin", password: "pass" }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockCookieSet).toHaveBeenCalledWith("NEXT_LOCALE", "ko", {
+        path: "/",
+        maxAge: 365 * 24 * 60 * 60,
+      });
+    });
+
+    it("does not set NEXT_LOCALE cookie when locale is null", async () => {
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const res = await POST(
+        makeRequest({ username: "admin", password: "pass" }),
+      );
+
+      expect(res.status).toBe(200);
+      // NEXT_LOCALE should not be set (activeAccount.locale is null)
+      const nextLocaleCalls = mockCookieSet.mock.calls.filter(
+        (call: unknown[]) => call[0] === "NEXT_LOCALE",
+      );
+      expect(nextLocaleCalls).toHaveLength(0);
     });
   });
 });
