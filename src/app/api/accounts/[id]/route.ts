@@ -3,6 +3,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { auditLog } from "@/lib/audit/logger";
+import { validateManagedAccountTarget } from "@/lib/auth/account-management";
 import { MAX_SYSTEM_ADMINISTRATORS } from "@/lib/auth/bootstrap";
 import { getAccountCustomerIds } from "@/lib/auth/customer-scope";
 import { withAuth } from "@/lib/auth/guard";
@@ -34,19 +35,6 @@ const UUID_RE =
 const SYSTEM_ADMIN_ROLE = "System Administrator";
 const SECURITY_MONITOR_ROLE = "Security Monitor";
 const VALID_STATUSES = new Set(["active", "locked", "suspended", "disabled"]);
-
-// ── Helpers ─────────────────────────────────────────────────────
-
-/** Role hierarchy (higher = more privileged). */
-const ROLE_RANK: Record<string, number> = {
-  "System Administrator": 3,
-  "Tenant Administrator": 2,
-  "Security Monitor": 1,
-};
-
-function getRoleRank(roleName: string): number {
-  return ROLE_RANK[roleName] ?? 0;
-}
 
 // ── Route Handlers ──────────────────────────────────────────────
 
@@ -132,7 +120,6 @@ export const PATCH = withAuth(async (request, context, session) => {
 
   const isSelf = accountId === session.accountId;
   const hasWritePerm = await hasPermission(session.roles, "accounts:write");
-  let accessAll = false;
 
   // Fetch target account
   const { rows: existing } = await query<AccountDetailRow>(
@@ -152,28 +139,14 @@ export const PATCH = withAuth(async (request, context, session) => {
     if (!hasWritePerm) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    accessAll = await hasPermission(session.roles, "customers:access-all");
-    if (!accessAll) {
-      const callerCustomerIds = await getAccountCustomerIds(session.accountId);
-      const targetCustomerIds = await getAccountCustomerIds(accountId);
-      const overlap = targetCustomerIds.some((id) =>
-        callerCustomerIds.includes(id),
-      );
-      if (!overlap) {
-        return NextResponse.json(
-          { error: "Account not found" },
-          { status: 404 },
-        );
-      }
-    }
-
-    if (!accessAll && existing[0].role_name !== SECURITY_MONITOR_ROLE) {
+    const accessError = await validateManagedAccountTarget(
+      session,
+      existing[0],
+    );
+    if (accessError) {
       return NextResponse.json(
-        {
-          error:
-            "Tenant Administrator can only manage Security Monitor accounts",
-        },
-        { status: 403 },
+        { error: accessError.error },
+        { status: accessError.status },
       );
     }
   }
@@ -231,7 +204,11 @@ export const PATCH = withAuth(async (request, context, session) => {
     if (roleRows.length === 0) {
       return NextResponse.json({ error: "Role not found" }, { status: 400 });
     }
-    if (!accessAll && roleRows[0].name !== SECURITY_MONITOR_ROLE) {
+    const callerAccessAll = await hasPermission(
+      session.roles,
+      "customers:access-all",
+    );
+    if (!callerAccessAll && roleRows[0].name !== SECURITY_MONITOR_ROLE) {
       return NextResponse.json(
         { error: "Tenant Administrator can only assign Security Monitor role" },
         { status: 403 },
@@ -359,8 +336,7 @@ export const PATCH = withAuth(async (request, context, session) => {
  * Constraints:
  * - Cannot delete own account
  * - Last System Administrator cannot be deleted
- * - Role hierarchy: caller must outrank or match target
- * - Tenant Admin can only delete within their customer scope
+ * - Tenant-scoped operators can only delete Security Monitor accounts
  */
 export const DELETE = withAuth(
   async (request, context, session) => {
@@ -403,30 +379,13 @@ export const DELETE = withAuth(
       );
     }
 
-    // Role hierarchy check
-    const callerRank = Math.max(...session.roles.map((r) => getRoleRank(r)));
-    const targetRank = getRoleRank(target.role_name);
-    if (callerRank < targetRank) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    // Tenant scope check
-    const accessAll = await hasPermission(
-      session.roles,
-      "customers:access-all",
-    );
-    if (!accessAll) {
-      const callerCustomerIds = await getAccountCustomerIds(session.accountId);
-      const targetCustomerIds = await getAccountCustomerIds(accountId);
-      const overlap = targetCustomerIds.some((id) =>
-        callerCustomerIds.includes(id),
+    // Scope + role boundary check
+    const accessError = await validateManagedAccountTarget(session, target);
+    if (accessError) {
+      return NextResponse.json(
+        { error: accessError.error },
+        { status: accessError.status },
       );
-      if (!overlap) {
-        return NextResponse.json(
-          { error: "Account not found" },
-          { status: 404 },
-        );
-      }
     }
 
     // Last System Administrator check
