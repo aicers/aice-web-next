@@ -16,6 +16,7 @@ interface WithAuthOptions {
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockHasPermission = vi.hoisted(() => vi.fn());
+const mockGetAccountCustomerIds = vi.hoisted(() => vi.fn());
 
 let currentSession: AuthSession;
 vi.mock("@/lib/auth/guard", () => ({
@@ -38,6 +39,12 @@ vi.mock("@/lib/auth/guard", () => ({
 
 vi.mock("@/lib/auth/permissions", () => ({
   hasPermission: mockHasPermission,
+}));
+
+vi.mock("@/lib/auth/customer-scope", () => ({
+  getAccountCustomerIds: vi.fn((...args: unknown[]) =>
+    mockGetAccountCustomerIds(...args),
+  ),
 }));
 
 vi.mock("@/lib/db/client", () => ({
@@ -72,6 +79,11 @@ describe("POST /api/accounts/[id]/unlock", () => {
     sessionCreatedAt: new Date(),
     sessionLastActiveAt: new Date(),
   };
+  const tenantSession: AuthSession = {
+    ...adminSession,
+    accountId: "tenant-1",
+    roles: ["Tenant Administrator"],
+  };
 
   const targetAccountId = "target-account-1";
 
@@ -90,7 +102,22 @@ describe("POST /api/accounts/[id]/unlock", () => {
     currentSession = adminSession;
     mockQuery.mockReset();
     mockAuditRecord.mockReset();
-    mockHasPermission.mockReset().mockResolvedValue(true);
+    mockGetAccountCustomerIds.mockReset();
+    mockHasPermission
+      .mockReset()
+      .mockImplementation(async (roles: string[], perm: string) => {
+        if (perm === "accounts:write") {
+          return (
+            roles.includes("System Administrator") ||
+            roles.includes("Tenant Administrator")
+          );
+        }
+        return (
+          perm === "customers:access-all" &&
+          roles.includes("System Administrator")
+        );
+      });
+    mockGetAccountCustomerIds.mockResolvedValue([1]);
   });
 
   it("returns 403 when user lacks accounts:write permission", async () => {
@@ -113,11 +140,66 @@ describe("POST /api/accounts/[id]/unlock", () => {
     expect(body.error).toBe("Account not found");
   });
 
+  it("returns 404 when Tenant Admin targets an out-of-scope account", async () => {
+    currentSession = tenantSession;
+    mockQuery.mockResolvedValue({
+      rows: [
+        {
+          id: targetAccountId,
+          role_name: "Security Monitor",
+          status: "locked",
+          lockout_count: 1,
+        },
+      ],
+      rowCount: 1,
+    });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2])
+      .mockResolvedValueOnce([3]);
+
+    const { POST } = await import("@/app/api/accounts/[id]/unlock/route");
+    const response = await POST(makeRequest(), makeContext());
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 403 when Tenant Admin targets an in-scope Tenant Administrator", async () => {
+    currentSession = tenantSession;
+    mockQuery.mockResolvedValue({
+      rows: [
+        {
+          id: targetAccountId,
+          role_name: "Tenant Administrator",
+          status: "locked",
+          lockout_count: 1,
+        },
+      ],
+      rowCount: 1,
+    });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2])
+      .mockResolvedValueOnce([1]);
+
+    const { POST } = await import("@/app/api/accounts/[id]/unlock/route");
+    const response = await POST(makeRequest(), makeContext());
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error).toContain("Security Monitor");
+  });
+
   it("unlocks a locked account", async () => {
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("SELECT")) {
         return {
-          rows: [{ id: targetAccountId, status: "locked", lockout_count: 1 }],
+          rows: [
+            {
+              id: targetAccountId,
+              role_name: "Security Monitor",
+              status: "locked",
+              lockout_count: 1,
+            },
+          ],
           rowCount: 1,
         };
       }
@@ -161,7 +243,12 @@ describe("POST /api/accounts/[id]/unlock", () => {
       if (sql.includes("SELECT")) {
         return {
           rows: [
-            { id: targetAccountId, status: "suspended", lockout_count: 2 },
+            {
+              id: targetAccountId,
+              role_name: "Security Monitor",
+              status: "suspended",
+              lockout_count: 2,
+            },
           ],
           rowCount: 1,
         };
@@ -198,7 +285,14 @@ describe("POST /api/accounts/[id]/unlock", () => {
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("SELECT")) {
         return {
-          rows: [{ id: targetAccountId, status: "locked", lockout_count: 0 }],
+          rows: [
+            {
+              id: targetAccountId,
+              role_name: "Security Monitor",
+              status: "locked",
+              lockout_count: 0,
+            },
+          ],
           rowCount: 1,
         };
       }
@@ -223,7 +317,14 @@ describe("POST /api/accounts/[id]/unlock", () => {
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("SELECT")) {
         return {
-          rows: [{ id: targetAccountId, status: "locked", lockout_count: 1 }],
+          rows: [
+            {
+              id: targetAccountId,
+              role_name: "Security Monitor",
+              status: "locked",
+              lockout_count: 1,
+            },
+          ],
           rowCount: 1,
         };
       }
@@ -244,7 +345,12 @@ describe("POST /api/accounts/[id]/unlock", () => {
       if (sql.includes("SELECT")) {
         return {
           rows: [
-            { id: targetAccountId, status: "suspended", lockout_count: 1 },
+            {
+              id: targetAccountId,
+              role_name: "Security Monitor",
+              status: "suspended",
+              lockout_count: 1,
+            },
           ],
           rowCount: 1,
         };
@@ -267,7 +373,14 @@ describe("POST /api/accounts/[id]/unlock", () => {
 
   it("returns 400 for active account", async () => {
     mockQuery.mockResolvedValue({
-      rows: [{ id: targetAccountId, status: "active", lockout_count: 0 }],
+      rows: [
+        {
+          id: targetAccountId,
+          role_name: "Security Monitor",
+          status: "active",
+          lockout_count: 0,
+        },
+      ],
       rowCount: 1,
     });
 
@@ -281,7 +394,14 @@ describe("POST /api/accounts/[id]/unlock", () => {
 
   it("returns 400 for disabled account", async () => {
     mockQuery.mockResolvedValue({
-      rows: [{ id: targetAccountId, status: "disabled", lockout_count: 0 }],
+      rows: [
+        {
+          id: targetAccountId,
+          role_name: "Security Monitor",
+          status: "disabled",
+          lockout_count: 0,
+        },
+      ],
       rowCount: 1,
     });
 
