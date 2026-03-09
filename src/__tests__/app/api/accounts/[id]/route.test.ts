@@ -537,6 +537,31 @@ describe("PATCH /api/accounts/[id]", () => {
     expect(response.status).toBe(200);
   });
 
+  it("allows Tenant Admin to update status for in-scope Security Monitor", async () => {
+    currentSession = tenantSession;
+    const { PATCH } = await import("@/app/api/accounts/[id]/route");
+    const lockedTarget = { ...targetRow, status: "locked" };
+    mockQuery.mockResolvedValueOnce({ rows: [lockedTarget], rowCount: 1 });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2]) // caller customers
+      .mockResolvedValueOnce([1]); // target customers (overlap)
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: TARGET_UUID }], rowCount: 1 }) // update
+      .mockResolvedValueOnce({
+        rows: [{ ...lockedTarget, status: "active" }],
+        rowCount: 1,
+      }); // refetch
+
+    const response = await PATCH(
+      new NextRequest(`http://localhost:3000/api/accounts/${TARGET_UUID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "active" }),
+      }),
+      makeContext(),
+    );
+    expect(response.status).toBe(200);
+  });
+
   it("returns 404 when Tenant Admin tries to update out-of-scope account", async () => {
     currentSession = tenantSession;
     const { PATCH } = await import("@/app/api/accounts/[id]/route");
@@ -553,6 +578,54 @@ describe("PATCH /api/accounts/[id]", () => {
       makeContext(),
     );
     expect(response.status).toBe(404);
+  });
+
+  it("returns 403 when Tenant Admin tries to update in-scope Tenant Administrator account", async () => {
+    currentSession = tenantSession;
+    const { PATCH } = await import("@/app/api/accounts/[id]/route");
+    const tenantAdminTarget = {
+      ...targetRow,
+      role_name: "Tenant Administrator",
+    };
+    mockQuery.mockResolvedValueOnce({ rows: [tenantAdminTarget], rowCount: 1 });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2]) // caller customers
+      .mockResolvedValueOnce([1]); // target customers (overlap)
+
+    const response = await PATCH(
+      new NextRequest(`http://localhost:3000/api/accounts/${TARGET_UUID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ displayName: "Changed" }),
+      }),
+      makeContext(),
+    );
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toContain("Security Monitor");
+  });
+
+  it("returns 403 when Tenant Admin tries to change status of in-scope Tenant Administrator account", async () => {
+    currentSession = tenantSession;
+    const { PATCH } = await import("@/app/api/accounts/[id]/route");
+    const tenantAdminTarget = {
+      ...targetRow,
+      role_name: "Tenant Administrator",
+    };
+    mockQuery.mockResolvedValueOnce({ rows: [tenantAdminTarget], rowCount: 1 });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2]) // caller customers
+      .mockResolvedValueOnce([1]); // target customers (overlap)
+
+    const response = await PATCH(
+      new NextRequest(`http://localhost:3000/api/accounts/${TARGET_UUID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "disabled" }),
+      }),
+      makeContext(),
+    );
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toContain("Security Monitor");
   });
 
   it("updates status and bumps token_version when disabling", async () => {
@@ -593,6 +666,54 @@ describe("PATCH /api/accounts/[id]", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toContain("Invalid status");
+  });
+
+  it("returns 403 when Tenant Admin tries to assign System Administrator role", async () => {
+    currentSession = tenantSession;
+    const { PATCH } = await import("@/app/api/accounts/[id]/route");
+    mockQuery.mockResolvedValueOnce({ rows: [targetRow], rowCount: 1 });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2]) // caller customers
+      .mockResolvedValueOnce([1]); // target customers (overlap)
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: 1, name: "System Administrator" }],
+      rowCount: 1,
+    });
+
+    const response = await PATCH(
+      new NextRequest(`http://localhost:3000/api/accounts/${TARGET_UUID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ roleId: 1 }),
+      }),
+      makeContext(),
+    );
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toContain("Security Monitor");
+  });
+
+  it("returns 403 when Tenant Admin tries to assign Tenant Administrator role", async () => {
+    currentSession = tenantSession;
+    const { PATCH } = await import("@/app/api/accounts/[id]/route");
+    mockQuery.mockResolvedValueOnce({ rows: [targetRow], rowCount: 1 });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2]) // caller customers
+      .mockResolvedValueOnce([1]); // target customers (overlap)
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: 2, name: "Tenant Administrator" }],
+      rowCount: 1,
+    });
+
+    const response = await PATCH(
+      new NextRequest(`http://localhost:3000/api/accounts/${TARGET_UUID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ roleId: 2 }),
+      }),
+      makeContext(),
+    );
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toContain("Security Monitor");
   });
 
   it("returns existing data when no updates provided", async () => {

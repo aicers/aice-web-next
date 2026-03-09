@@ -32,6 +32,7 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SYSTEM_ADMIN_ROLE = "System Administrator";
+const SECURITY_MONITOR_ROLE = "Security Monitor";
 const VALID_STATUSES = new Set(["active", "locked", "suspended", "disabled"]);
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -113,6 +114,7 @@ export const GET = withAuth(
  * - Updating other accounts or changing role/status requires
  *   `accounts:write`.
  * - Cannot change own role or status.
+ * - Tenant-scoped operators can only manage Security Monitor accounts.
  */
 export const PATCH = withAuth(async (request, context, session) => {
   const { id: accountId } = await context.params;
@@ -130,6 +132,7 @@ export const PATCH = withAuth(async (request, context, session) => {
 
   const isSelf = accountId === session.accountId;
   const hasWritePerm = await hasPermission(session.roles, "accounts:write");
+  let accessAll = false;
 
   // Fetch target account
   const { rows: existing } = await query<AccountDetailRow>(
@@ -149,10 +152,7 @@ export const PATCH = withAuth(async (request, context, session) => {
     if (!hasWritePerm) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    const accessAll = await hasPermission(
-      session.roles,
-      "customers:access-all",
-    );
+    accessAll = await hasPermission(session.roles, "customers:access-all");
     if (!accessAll) {
       const callerCustomerIds = await getAccountCustomerIds(session.accountId);
       const targetCustomerIds = await getAccountCustomerIds(accountId);
@@ -165,6 +165,16 @@ export const PATCH = withAuth(async (request, context, session) => {
           { status: 404 },
         );
       }
+    }
+
+    if (!accessAll && existing[0].role_name !== SECURITY_MONITOR_ROLE) {
+      return NextResponse.json(
+        {
+          error:
+            "Tenant Administrator can only manage Security Monitor accounts",
+        },
+        { status: 403 },
+      );
     }
   }
 
@@ -220,6 +230,12 @@ export const PATCH = withAuth(async (request, context, session) => {
     );
     if (roleRows.length === 0) {
       return NextResponse.json({ error: "Role not found" }, { status: 400 });
+    }
+    if (!accessAll && roleRows[0].name !== SECURITY_MONITOR_ROLE) {
+      return NextResponse.json(
+        { error: "Tenant Administrator can only assign Security Monitor role" },
+        { status: 403 },
+      );
     }
     // System Admin count check if changing away from SysAdmin
     if (
