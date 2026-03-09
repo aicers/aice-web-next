@@ -3,6 +3,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { auditLog } from "@/lib/audit/logger";
+import { validateManagedAccountTarget } from "@/lib/auth/account-management";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import { hashPassword } from "@/lib/auth/password";
@@ -38,13 +39,37 @@ export const POST = withAuth(
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
+    if (accountId === session.accountId) {
+      return NextResponse.json(
+        { error: "Cannot reset own password" },
+        { status: 400 },
+      );
+    }
+
     // Step 2: Validate account exists
-    const { rows: accountRows } = await query<{ id: string }>(
-      "SELECT id FROM accounts WHERE id = $1",
+    const { rows: accountRows } = await query<{
+      id: string;
+      role_name: string;
+    }>(
+      `SELECT a.id, r.name AS role_name
+       FROM accounts a
+       JOIN roles r ON a.role_id = r.id
+       WHERE a.id = $1`,
       [accountId],
     );
     if (accountRows.length === 0) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
+    }
+
+    const accessError = await validateManagedAccountTarget(
+      session,
+      accountRows[0],
+    );
+    if (accessError) {
+      return NextResponse.json(
+        { error: accessError.error },
+        { status: accessError.status },
+      );
     }
 
     // Step 3: Validate new password against policy (skip reuse ban)

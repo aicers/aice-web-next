@@ -19,6 +19,7 @@ const mockHashPassword = vi.hoisted(() => vi.fn());
 const mockValidatePassword = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockHasPermission = vi.hoisted(() => vi.fn());
+const mockGetAccountCustomerIds = vi.hoisted(() => vi.fn());
 
 let currentSession: AuthSession;
 vi.mock("@/lib/auth/guard", () => ({
@@ -41,6 +42,12 @@ vi.mock("@/lib/auth/guard", () => ({
 
 vi.mock("@/lib/auth/permissions", () => ({
   hasPermission: mockHasPermission,
+}));
+
+vi.mock("@/lib/auth/customer-scope", () => ({
+  getAccountCustomerIds: vi.fn((...args: unknown[]) =>
+    mockGetAccountCustomerIds(...args),
+  ),
 }));
 
 vi.mock("@/lib/db/client", () => ({
@@ -86,6 +93,11 @@ describe("POST /api/accounts/[id]/password-reset", () => {
     sessionCreatedAt: new Date(),
     sessionLastActiveAt: new Date(),
   };
+  const tenantSession: AuthSession = {
+    ...adminSession,
+    accountId: "tenant-1",
+    roles: ["Tenant Administrator"],
+  };
 
   const targetAccountId = "target-account-1";
   let mockClientQuery: ReturnType<typeof vi.fn>;
@@ -105,6 +117,10 @@ describe("POST /api/accounts/[id]/password-reset", () => {
     return { params: Promise.resolve({ id: targetAccountId }) };
   }
 
+  function makeSelfContext() {
+    return { params: Promise.resolve({ id: currentSession.accountId }) };
+  }
+
   beforeEach(() => {
     currentSession = adminSession;
     mockQuery.mockReset();
@@ -112,13 +128,28 @@ describe("POST /api/accounts/[id]/password-reset", () => {
     mockHashPassword.mockReset();
     mockValidatePassword.mockReset();
     mockAuditRecord.mockReset();
-    mockHasPermission.mockReset().mockResolvedValue(true);
+    mockGetAccountCustomerIds.mockReset();
+    mockHasPermission
+      .mockReset()
+      .mockImplementation(async (roles: string[], perm: string) => {
+        if (perm === "accounts:write") {
+          return (
+            roles.includes("System Administrator") ||
+            roles.includes("Tenant Administrator")
+          );
+        }
+        return (
+          perm === "customers:access-all" &&
+          roles.includes("System Administrator")
+        );
+      });
 
     // Default: account exists
     mockQuery.mockResolvedValue({
-      rows: [{ id: targetAccountId }],
+      rows: [{ id: targetAccountId, role_name: "Security Monitor" }],
       rowCount: 1,
     });
+    mockGetAccountCustomerIds.mockResolvedValue([1]);
     mockValidatePassword.mockResolvedValue({ valid: true, errors: [] });
     mockHashPassword.mockResolvedValue("$argon2id$newhash");
     mockClientQuery = vi.fn();
@@ -154,6 +185,61 @@ describe("POST /api/accounts/[id]/password-reset", () => {
     );
 
     expect(response.status).toBe(404);
+  });
+
+  it("returns 400 when attempting to reset own password", async () => {
+    const { POST } = await import(
+      "@/app/api/accounts/[id]/password-reset/route"
+    );
+    const response = await POST(
+      makeRequest({ newPassword: "TempPass123!abc" }),
+      makeSelfContext(),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe("Cannot reset own password");
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when Tenant Admin targets an out-of-scope account", async () => {
+    currentSession = tenantSession;
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2])
+      .mockResolvedValueOnce([3]);
+
+    const { POST } = await import(
+      "@/app/api/accounts/[id]/password-reset/route"
+    );
+    const response = await POST(
+      makeRequest({ newPassword: "TempPass123!abc" }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 403 when Tenant Admin targets an in-scope Tenant Administrator", async () => {
+    currentSession = tenantSession;
+    mockQuery.mockResolvedValue({
+      rows: [{ id: targetAccountId, role_name: "Tenant Administrator" }],
+      rowCount: 1,
+    });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2])
+      .mockResolvedValueOnce([1]);
+
+    const { POST } = await import(
+      "@/app/api/accounts/[id]/password-reset/route"
+    );
+    const response = await POST(
+      makeRequest({ newPassword: "TempPass123!abc" }),
+      makeContext(),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error).toContain("Security Monitor");
   });
 
   it("returns 400 when password violates policy", async () => {

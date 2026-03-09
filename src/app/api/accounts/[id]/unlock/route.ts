@@ -3,6 +3,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { auditLog } from "@/lib/audit/logger";
+import { validateManagedAccountTarget } from "@/lib/auth/account-management";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import { query } from "@/lib/db/client";
@@ -28,17 +29,29 @@ export const POST = withAuth(
     // Step 1: Fetch account status
     const { rows } = await query<{
       id: string;
+      role_name: string;
       status: string;
       lockout_count: number;
-    }>("SELECT id, status, lockout_count FROM accounts WHERE id = $1", [
-      accountId,
-    ]);
+    }>(
+      `SELECT a.id, r.name AS role_name, a.status, a.lockout_count
+       FROM accounts a
+       JOIN roles r ON a.role_id = r.id
+       WHERE a.id = $1`,
+      [accountId],
+    );
 
     if (rows.length === 0) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
     const account = rows[0];
+    const accessError = await validateManagedAccountTarget(session, account);
+    if (accessError) {
+      return NextResponse.json(
+        { error: accessError.error },
+        { status: accessError.status },
+      );
+    }
     const ip = extractClientIp(request);
 
     // Step 2: Dispatch by status
