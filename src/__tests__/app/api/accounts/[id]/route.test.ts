@@ -881,7 +881,7 @@ describe("DELETE /api/accounts/[id]", () => {
     expect(body.error).toContain("last System Administrator");
   });
 
-  it("returns 403 when lower-rank tries to delete higher-rank", async () => {
+  it("returns 403 when Tenant Admin tries to delete in-scope System Administrator", async () => {
     currentSession = tenantSession;
     const { DELETE } = await import("@/app/api/accounts/[id]/route");
     const sysAdminTarget = {
@@ -892,6 +892,9 @@ describe("DELETE /api/accounts/[id]", () => {
       rows: [sysAdminTarget],
       rowCount: 1,
     });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2]) // caller customers
+      .mockResolvedValueOnce([1]); // target customers (overlap)
 
     const response = await DELETE(
       new NextRequest(`http://localhost:3000/api/accounts/${TARGET_UUID}`, {
@@ -900,6 +903,34 @@ describe("DELETE /api/accounts/[id]", () => {
       makeContext(),
     );
     expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toContain("Security Monitor");
+  });
+
+  it("returns 403 when Tenant Admin tries to delete in-scope Tenant Administrator", async () => {
+    currentSession = tenantSession;
+    const { DELETE } = await import("@/app/api/accounts/[id]/route");
+    const tenantAdminTarget = {
+      ...targetRow,
+      role_name: "Tenant Administrator",
+    };
+    mockQuery.mockResolvedValueOnce({
+      rows: [tenantAdminTarget],
+      rowCount: 1,
+    });
+    mockGetAccountCustomerIds
+      .mockResolvedValueOnce([1, 2]) // caller customers
+      .mockResolvedValueOnce([1]); // target customers (overlap)
+
+    const response = await DELETE(
+      new NextRequest(`http://localhost:3000/api/accounts/${TARGET_UUID}`, {
+        method: "DELETE",
+      }),
+      makeContext(),
+    );
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toContain("Security Monitor");
   });
 
   it("returns 404 when Tenant Admin deletes out-of-scope account", async () => {
