@@ -1,0 +1,90 @@
+/** Phase 1 authentication event actions. */
+type AuthAction =
+  | "auth.sign_in.success"
+  | "auth.sign_in.failure"
+  | "auth.sign_out"
+  | "auth.session_extend";
+
+/** Phase 1 session event actions. */
+type SessionAction =
+  | "session.ip_mismatch"
+  | "session.ua_mismatch"
+  | "session.ip_ua_mismatch"
+  | "session.revoke"
+  | "session.reauth_required"
+  | "session.reauth_success"
+  | "session.reauth_failure"
+  | "session.idle_timeout"
+  | "session.absolute_timeout";
+
+/** Account event actions. */
+type AccountAction =
+  | "account.create"
+  | "account.update"
+  | "account.disable"
+  | "account.delete"
+  | "account.lock"
+  | "account.unlock"
+  | "account.suspend"
+  | "account.restore";
+
+/** Phase 2 password event actions. */
+type PasswordAction = "password.change" | "password.reset";
+
+/** Customer event actions. */
+type CustomerAction =
+  | "customer.create"
+  | "customer.update"
+  | "customer.delete"
+  | "customer.assign"
+  | "customer.unassign";
+
+/** All audit event actions. */
+export type AuditAction =
+  | AuthAction
+  | SessionAction
+  | AccountAction
+  | PasswordAction
+  | CustomerAction;
+
+/** Target entity types for audit events. */
+export type AuditTargetType = "account" | "session" | "customer";
+
+/** Canonical runtime list of supported audit actions. */
+export const AUDIT_ACTIONS = [
+  "auth.sign_in.success",
+  "auth.sign_in.failure",
+  "auth.sign_out",
+  "auth.session_extend",
+  "session.ip_mismatch",
+  "session.ua_mismatch",
+  "session.ip_ua_mismatch",
+  "session.revoke",
+  "session.reauth_required",
+  "session.reauth_success",
+  "session.reauth_failure",
+  "session.idle_timeout",
+  "session.absolute_timeout",
+  "account.create",
+  "account.update",
+  "account.disable",
+  "account.delete",
+  "account.lock",
+  "account.unlock",
+  "account.suspend",
+  "account.restore",
+  "password.change",
+  "password.reset",
+  "customer.create",
+  "customer.update",
+  "customer.delete",
+  "customer.assign",
+  "customer.unassign",
+] as const satisfies readonly AuditAction[];
+
+/** Canonical runtime list of supported audit target types. */
+export const AUDIT_TARGET_TYPES = [
+  "account",
+  "session",
+  "customer",
+] as const satisfies readonly AuditTargetType[];

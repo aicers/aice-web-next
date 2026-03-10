@@ -3,6 +3,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { queryAudit } from "@/lib/audit/client";
+import { AUDIT_ACTIONS, AUDIT_TARGET_TYPES } from "@/lib/audit/schema";
 import { withAuth } from "@/lib/auth/guard";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -27,32 +28,9 @@ interface CountRow {
 
 // ── Constants ────────────────────────────────────────────────────
 
-const ALLOWED_ACTIONS = new Set([
-  "auth.sign_in.success",
-  "auth.sign_in.failure",
-  "auth.sign_out",
-  "auth.session_extend",
-  "session.ip_mismatch",
-  "session.ua_mismatch",
-  "session.revoke",
-  "account.create",
-  "account.update",
-  "account.disable",
-  "account.delete",
-  "account.lock",
-  "account.unlock",
-  "account.suspend",
-  "account.restore",
-  "password.change",
-  "password.reset",
-  "customer.create",
-  "customer.update",
-  "customer.delete",
-  "customer.assign",
-  "customer.unassign",
-]);
+const ALLOWED_ACTIONS = new Set(AUDIT_ACTIONS);
 
-const ALLOWED_TARGET_TYPES = new Set(["account", "session", "customer"]);
+const ALLOWED_TARGET_TYPES = new Set(AUDIT_TARGET_TYPES);
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;
@@ -63,6 +41,18 @@ const MAX_PAGE_SIZE = 100;
 function isValidISODate(value: string): boolean {
   const d = new Date(value);
   return !Number.isNaN(d.getTime());
+}
+
+function isAllowedAction(
+  value: string,
+): value is (typeof AUDIT_ACTIONS)[number] {
+  return ALLOWED_ACTIONS.has(value as (typeof AUDIT_ACTIONS)[number]);
+}
+
+function isAllowedTargetType(
+  value: string,
+): value is (typeof AUDIT_TARGET_TYPES)[number] {
+  return ALLOWED_TARGET_TYPES.has(value as (typeof AUDIT_TARGET_TYPES)[number]);
 }
 
 const UUID_RE =
@@ -139,7 +129,7 @@ export const GET = withAuth(
     // Action (validated)
     const action = url.searchParams.get("action");
     if (action) {
-      if (!ALLOWED_ACTIONS.has(action)) {
+      if (!isAllowedAction(action)) {
         return NextResponse.json(
           { error: "Invalid action type" },
           { status: 400 },
@@ -152,7 +142,7 @@ export const GET = withAuth(
     // Target type (validated)
     const targetType = url.searchParams.get("targetType");
     if (targetType) {
-      if (!ALLOWED_TARGET_TYPES.has(targetType)) {
+      if (!isAllowedTargetType(targetType)) {
         return NextResponse.json(
           { error: "Invalid target type" },
           { status: 400 },
