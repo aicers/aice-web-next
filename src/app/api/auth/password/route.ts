@@ -3,10 +3,12 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { auditLog } from "@/lib/audit/logger";
+import { TOKEN_EXPIRATION_SECONDS } from "@/lib/auth/constants";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { validatePassword } from "@/lib/auth/password-validator";
+import { reissueAuthCookies } from "@/lib/auth/rotation";
 import { query, withTransaction } from "@/lib/db/client";
 import { checkSensitiveOpRateLimit } from "@/lib/rate-limit/limiter";
 
@@ -89,17 +91,22 @@ export const POST = withAuth(
 
     // Step 6: Transaction — update password, history, revoke other sessions
     const newHash = await hashPassword(newPassword);
+    let nextTokenVersion: number | null = null;
     await withTransaction(async (client) => {
       // Update password hash + clear must_change_password + bump token_version
-      await client.query(
+      const { rows: updatedRows } = await client.query<{
+        token_version: number;
+      }>(
         `UPDATE accounts
-         SET password_hash = $2,
-             must_change_password = false,
+           SET password_hash = $2,
+               must_change_password = false,
              password_changed_at = NOW(),
              token_version = token_version + 1
-         WHERE id = $1`,
+         WHERE id = $1
+         RETURNING token_version`,
         [session.accountId, newHash],
       );
+      nextTokenVersion = updatedRows[0]?.token_version ?? null;
 
       // Insert into password_history
       await client.query(
@@ -115,6 +122,12 @@ export const POST = withAuth(
         [session.accountId, session.sessionId],
       );
     });
+    if (nextTokenVersion === null) {
+      return NextResponse.json(
+        { error: "Password change failed" },
+        { status: 500 },
+      );
+    }
 
     // Step 7: Audit log
     await auditLog.record({
@@ -126,7 +139,29 @@ export const POST = withAuth(
       sid: session.sessionId,
     });
 
-    // Step 8: Success
+    // Step 8: Re-issue the current auth state with the new token_version
+    const reissued = await reissueAuthCookies({
+      accountId: session.accountId,
+      sessionId: session.sessionId,
+      roles: session.roles,
+      tokenVersion: nextTokenVersion,
+    });
+    if (!reissued) {
+      return NextResponse.json(
+        { error: "Server configuration error" },
+        { status: 500 },
+      );
+    }
+
+    // Keep the in-request session aligned so any post-handler rotation
+    // uses the new token_version instead of the stale JWT state.
+    const now = Math.floor(Date.now() / 1000);
+    session.tokenVersion = nextTokenVersion;
+    session.mustChangePassword = false;
+    session.iat = now;
+    session.exp = now + TOKEN_EXPIRATION_SECONDS;
+
+    // Step 9: Success
     return NextResponse.json({ success: true });
   },
   { skipPasswordCheck: true },

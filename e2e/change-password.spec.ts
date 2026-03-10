@@ -14,6 +14,7 @@ import {
   setPassword,
 } from "./helpers/setup-db";
 
+const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
 const NEW_PASSWORD = "NewSecurePass123!";
 
 test.describe("Change password flow", () => {
@@ -21,6 +22,10 @@ test.describe("Change password flow", () => {
     await resetRateLimits();
     await resetAccountDefaults(ADMIN_USERNAME);
     await clearPasswordHistory(ADMIN_USERNAME);
+  });
+
+  test.beforeEach(async () => {
+    await resetRateLimits();
   });
 
   test.afterAll(async () => {
@@ -98,9 +103,70 @@ test.describe("Change password flow", () => {
       { timeout: 10_000 },
     );
 
+    const meResponse = await page.request.get("/api/auth/me");
+    expect(meResponse.status()).toBe(200);
+
     // Restore password for subsequent tests
     await setPassword(ADMIN_USERNAME, ADMIN_PASSWORD);
     await clearPasswordHistory(ADMIN_USERNAME);
+  });
+
+  test("password change keeps the current session and revokes others", async ({
+    browser,
+  }) => {
+    await setMustChangePassword(ADMIN_USERNAME, true);
+
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+
+    try {
+      const pageA = await contextA.newPage();
+      const pageB = await contextB.newPage();
+
+      await pageA.goto(`${BASE_URL}/sign-in`);
+      await signIn(pageA, ADMIN_USERNAME, ADMIN_PASSWORD);
+      await pageA.waitForURL("**/change-password", { timeout: 10_000 });
+
+      await pageB.goto(`${BASE_URL}/sign-in`);
+      await signIn(pageB, ADMIN_USERNAME, ADMIN_PASSWORD);
+      await pageB.waitForURL("**/change-password", { timeout: 10_000 });
+
+      await pageA
+        .locator("input[autocomplete='current-password']")
+        .fill(ADMIN_PASSWORD);
+      await pageA
+        .locator("input[autocomplete='new-password']")
+        .first()
+        .fill(NEW_PASSWORD);
+      await pageA
+        .locator("input[autocomplete='new-password']")
+        .nth(1)
+        .fill(NEW_PASSWORD);
+      await pageA.getByRole("button", { name: /change password/i }).click();
+
+      await pageA.waitForURL(
+        (url) =>
+          !url.pathname.includes("/change-password") &&
+          !url.pathname.includes("/sign-in"),
+        { timeout: 10_000 },
+      );
+
+      const currentSessionResponse = await pageA.request.get(
+        `${BASE_URL}/api/auth/me`,
+      );
+      expect(currentSessionResponse.status()).toBe(200);
+
+      const revokedSessionResponse = await pageB.request.get(
+        `${BASE_URL}/api/auth/me`,
+      );
+      expect(revokedSessionResponse.status()).toBe(401);
+    } finally {
+      await contextA.close();
+      await contextB.close();
+      await setPassword(ADMIN_USERNAME, ADMIN_PASSWORD);
+      await clearPasswordHistory(ADMIN_USERNAME);
+      await resetAccountDefaults(ADMIN_USERNAME);
+    }
   });
 
   test("blocklisted password shows error", async ({ page }) => {
