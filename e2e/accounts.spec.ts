@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 import {
   ADMIN_PASSWORD,
@@ -15,6 +15,23 @@ import {
 } from "./helpers/setup-db";
 
 const TEST_PREFIX = "e2e-acct-";
+const UI_CREATE_USERNAME = `${TEST_PREFIX}ui-create`;
+const UI_EDIT_USERNAME = `${TEST_PREFIX}ui-edit`;
+const UI_DELETE_USERNAME = `${TEST_PREFIX}ui-delete`;
+
+async function recreateUiAccount(
+  username: string,
+  password: string,
+): Promise<void> {
+  await deleteTestAccount(username);
+  await createTestAccount(username, password, "System Administrator");
+}
+
+function accountRow(page: Page, username: string): Locator {
+  return page.locator("tbody tr").filter({
+    has: page.locator("td.font-medium", { hasText: username }),
+  });
+}
 
 test.describe("Account management", () => {
   test.beforeAll(async () => {
@@ -23,7 +40,9 @@ test.describe("Account management", () => {
     await resetAccountDefaults(ADMIN_USERNAME);
     // Clean up any leftover test accounts
     await deleteTestAccount(`${TEST_PREFIX}alpha`);
-    await deleteTestAccount(`${TEST_PREFIX}uitest`);
+    await deleteTestAccount(UI_CREATE_USERNAME);
+    await deleteTestAccount(UI_EDIT_USERNAME);
+    await deleteTestAccount(UI_DELETE_USERNAME);
   });
 
   test.beforeEach(async () => {
@@ -33,7 +52,9 @@ test.describe("Account management", () => {
 
   test.afterAll(async () => {
     await deleteTestAccount(`${TEST_PREFIX}alpha`);
-    await deleteTestAccount(`${TEST_PREFIX}uitest`);
+    await deleteTestAccount(UI_CREATE_USERNAME);
+    await deleteTestAccount(UI_EDIT_USERNAME);
+    await deleteTestAccount(UI_DELETE_USERNAME);
   });
 
   // ── API tests ─────────────────────────────────────────────────
@@ -168,7 +189,7 @@ test.describe("Account management", () => {
     page,
   }) => {
     // Clean up first
-    await deleteTestAccount(`${TEST_PREFIX}uitest`);
+    await deleteTestAccount(UI_CREATE_USERNAME);
 
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
     await page.goto("/settings/accounts");
@@ -180,7 +201,7 @@ test.describe("Account management", () => {
     await page.getByRole("button", { name: "Create Account" }).click();
 
     // Fill form
-    await page.getByLabel("Username").fill(`${TEST_PREFIX}uitest`);
+    await page.getByLabel("Username").fill(UI_CREATE_USERNAME);
     await page.getByLabel("Display Name").fill("E2E UI Test");
     await page.getByLabel("Password").fill("UiTestPass1234!");
 
@@ -193,24 +214,22 @@ test.describe("Account management", () => {
     await page.getByRole("button", { name: "Create Account" }).click();
 
     // Wait for dialog to close and table to update
-    await expect(
-      page.getByRole("cell", { name: `${TEST_PREFIX}uitest` }),
-    ).toBeVisible({ timeout: 15_000 });
+    await expect(accountRow(page, UI_CREATE_USERNAME)).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test("edits an account via UI", async ({ page }) => {
+    await recreateUiAccount(UI_EDIT_USERNAME, "UiEditPass1234!");
+
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
     await page.goto("/settings/accounts");
 
     // Wait for table to load
-    await expect(
-      page.getByRole("cell", { name: `${TEST_PREFIX}uitest` }),
-    ).toBeVisible({ timeout: 10_000 });
+    const row = accountRow(page, UI_EDIT_USERNAME);
+    await expect(row).toBeVisible({ timeout: 10_000 });
 
     // Click edit button on the row
-    const row = page.getByRole("row").filter({
-      hasText: `${TEST_PREFIX}uitest`,
-    });
     await row.getByRole("button").first().click();
 
     // Update display name
@@ -222,33 +241,48 @@ test.describe("Account management", () => {
     await page.getByRole("button", { name: "Edit Account" }).click();
 
     // Verify update
-    await expect(page.getByRole("cell", { name: "E2E UI Edited" })).toBeVisible(
-      { timeout: 10_000 },
-    );
+    await expect(row).toContainText("E2E UI Edited", { timeout: 10_000 });
   });
 
   test("deletes an account via UI", async ({ page }) => {
+    await recreateUiAccount(UI_DELETE_USERNAME, "UiDeletePass1234!");
+
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
     await page.goto("/settings/accounts");
 
     // Wait for table to load
-    await expect(
-      page.getByRole("cell", { name: `${TEST_PREFIX}uitest` }),
-    ).toBeVisible({ timeout: 10_000 });
+    const row = accountRow(page, UI_DELETE_USERNAME);
+    await expect(row).toBeVisible({ timeout: 10_000 });
 
     // Click delete button on the row (second button)
-    const row = page.getByRole("row").filter({
-      hasText: `${TEST_PREFIX}uitest`,
-    });
+    const deleteRequest = page.waitForResponse(
+      (response) =>
+        response.request().method() === "DELETE" &&
+        response.url().includes("/api/accounts/"),
+    );
     await row.getByRole("button").nth(1).click();
 
     // Confirm deletion in alert dialog
     await page.getByRole("button", { name: "Delete Account" }).click();
+    const deleteResponse = await deleteRequest;
+    expect(deleteResponse.ok()).toBeTruthy();
 
-    // Verify the row is no longer visible (account is disabled)
-    await expect(
-      page.getByRole("cell", { name: `${TEST_PREFIX}uitest` }),
-    ).not.toBeVisible({ timeout: 10_000 });
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          `/api/accounts?search=${UI_DELETE_USERNAME}`,
+        );
+        if (!response.ok()) return `http-${response.status()}`;
+        const body = await response.json();
+        const account = body.data.find(
+          (entry: { username: string; status: string }) =>
+            entry.username === UI_DELETE_USERNAME,
+        );
+        return account?.status ?? "missing";
+      })
+      .toBe("disabled");
+
+    await expect(row).toContainText("Disabled", { timeout: 10_000 });
   });
 
   // ── RBAC tests ───────────────────────────────────────────────
