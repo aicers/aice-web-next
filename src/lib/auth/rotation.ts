@@ -21,6 +21,11 @@ import { issueAccessToken } from "./jwt";
  */
 const ROTATION_FRACTION = 3;
 
+type SessionTokenContext = Pick<
+  AuthSession,
+  "accountId" | "sessionId" | "roles" | "tokenVersion"
+>;
+
 // ── Public API ───────────────────────────────────────────────────
 
 /**
@@ -40,17 +45,12 @@ export function shouldRotate(iat: number, exp: number): boolean {
   return remaining > 0 && remaining <= total / ROTATION_FRACTION;
 }
 
-/**
- * Issue a new JWT + CSRF token pair and set them as cookies.
- *
- * Called by the `withAuth()` guard after the handler completes when
- * the current token is within the rotation window.  The previous
- * token is **not** revoked — it remains valid until its natural
- * expiration (automatic grace period).
- */
-export async function rotateTokens(session: AuthSession): Promise<void> {
+/** Issue a new JWT + CSRF token pair and set them as cookies. */
+export async function reissueAuthCookies(
+  session: SessionTokenContext,
+): Promise<boolean> {
   const csrfSecret = process.env.CSRF_SECRET;
-  if (!csrfSecret) return; // Cannot rotate without CSRF secret
+  if (!csrfSecret) return false;
 
   // Issue new JWT
   const newToken = await issueAccessToken({
@@ -77,4 +77,18 @@ export async function rotateTokens(session: AuthSession): Promise<void> {
     ...CSRF_COOKIE_OPTIONS,
     maxAge: TOKEN_EXPIRATION_SECONDS,
   });
+
+  return true;
+}
+
+/**
+ * Issue a new JWT + CSRF token pair and set them as cookies.
+ *
+ * Called by the `withAuth()` guard after the handler completes when
+ * the current token is within the rotation window.  The previous
+ * token is **not** revoked — it remains valid until its natural
+ * expiration (automatic grace period).
+ */
+export async function rotateTokens(session: AuthSession): Promise<void> {
+  await reissueAuthCookies(session);
 }

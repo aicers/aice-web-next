@@ -16,6 +16,7 @@ const mockHashPassword = vi.hoisted(() => vi.fn());
 const mockValidatePassword = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockCheckSensitiveOpRateLimit = vi.hoisted(() => vi.fn());
+const mockReissueAuthCookies = vi.hoisted(() => vi.fn());
 
 let currentSession: AuthSession;
 vi.mock("@/lib/auth/guard", () => ({
@@ -58,6 +59,12 @@ vi.mock("@/lib/rate-limit/limiter", () => ({
   ),
 }));
 
+vi.mock("@/lib/auth/rotation", () => ({
+  reissueAuthCookies: vi.fn((...args: unknown[]) =>
+    mockReissueAuthCookies(...args),
+  ),
+}));
+
 describe("POST /api/auth/password", () => {
   const now = Math.floor(Date.now() / 1000);
 
@@ -92,7 +99,7 @@ describe("POST /api/auth/password", () => {
   let mockClientQuery: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    currentSession = session;
+    currentSession = { ...session, roles: [...session.roles] };
     mockQuery.mockReset();
     mockWithTransaction.mockReset();
     mockVerifyPassword.mockReset();
@@ -100,6 +107,7 @@ describe("POST /api/auth/password", () => {
     mockValidatePassword.mockReset();
     mockAuditRecord.mockReset();
     mockCheckSensitiveOpRateLimit.mockReset();
+    mockReissueAuthCookies.mockReset();
 
     // Defaults
     mockCheckSensitiveOpRateLimit.mockResolvedValue({ limited: false });
@@ -110,7 +118,13 @@ describe("POST /api/auth/password", () => {
     mockVerifyPassword.mockResolvedValue(true);
     mockValidatePassword.mockResolvedValue({ valid: true, errors: [] });
     mockHashPassword.mockResolvedValue("$argon2id$newhash");
-    mockClientQuery = vi.fn();
+    mockReissueAuthCookies.mockResolvedValue(true);
+    mockClientQuery = vi.fn(async (sql: string) => {
+      if (sql.includes("UPDATE accounts")) {
+        return { rows: [{ token_version: 1 }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
     mockWithTransaction.mockImplementation(
       async (fn: (client: { query: ReturnType<typeof vi.fn> }) => unknown) =>
         fn({ query: mockClientQuery }),
@@ -185,6 +199,12 @@ describe("POST /api/auth/password", () => {
         targetId: "account-1",
       }),
     );
+    expect(mockReissueAuthCookies).toHaveBeenCalledWith({
+      accountId: "account-1",
+      sessionId: "session-1",
+      roles: ["System Administrator"],
+      tokenVersion: 1,
+    });
   });
 
   it("transaction updates hash, clears must_change_password, bumps token_version", async () => {
@@ -216,6 +236,37 @@ describe("POST /api/auth/password", () => {
     expect(revokeCall[0]).toContain("UPDATE sessions SET revoked = true");
     expect(revokeCall[0]).toContain("sid != $2");
     expect(revokeCall[1]).toEqual(["account-1", "session-1"]);
+  });
+
+  it("updates the in-memory session after re-issuing auth cookies", async () => {
+    const { POST } = await import("@/app/api/auth/password/route");
+    await POST(
+      makeRequest({
+        currentPassword: "OldPass123!",
+        newPassword: "NewPass123!abc",
+      }),
+      makeContext(),
+    );
+
+    expect(currentSession.tokenVersion).toBe(1);
+    expect(currentSession.mustChangePassword).toBe(false);
+  });
+
+  it("returns 500 when auth cookies cannot be re-issued", async () => {
+    mockReissueAuthCookies.mockResolvedValue(false);
+
+    const { POST } = await import("@/app/api/auth/password/route");
+    const response = await POST(
+      makeRequest({
+        currentPassword: "OldPass123!",
+        newPassword: "NewPass123!abc",
+      }),
+      makeContext(),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.error).toBe("Server configuration error");
   });
 
   it("returns 404 when account not found", async () => {

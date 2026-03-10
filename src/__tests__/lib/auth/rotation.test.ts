@@ -114,6 +114,25 @@ describe("rotation", () => {
 
   // ── rotateTokens() ───────────────────────────────────────────
 
+  describe("reissueAuthCookies()", () => {
+    it("returns true after issuing fresh auth cookies", async () => {
+      await expect(rotation.reissueAuthCookies(validSession)).resolves.toBe(
+        true,
+      );
+    });
+
+    it("returns false when CSRF_SECRET is missing", async () => {
+      delete process.env.CSRF_SECRET;
+
+      await expect(rotation.reissueAuthCookies(validSession)).resolves.toBe(
+        false,
+      );
+      expect(mockIssueAccessToken).not.toHaveBeenCalled();
+      expect(mockGenerateCsrfToken).not.toHaveBeenCalled();
+      expect(mockSetTokenExpCookie).not.toHaveBeenCalled();
+    });
+  });
+
   describe("rotateTokens()", () => {
     it("issues new JWT with correct session params", async () => {
       await rotation.rotateTokens(validSession);
