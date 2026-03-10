@@ -89,6 +89,14 @@ export const POST = withAuth(
       );
     }
 
+    // Fail before mutating state if auth cookies cannot be re-issued.
+    if (!process.env.CSRF_SECRET) {
+      return NextResponse.json(
+        { error: "Server configuration error" },
+        { status: 500 },
+      );
+    }
+
     // Step 6: Transaction — update password, history, revoke other sessions
     const newHash = await hashPassword(newPassword);
     let nextTokenVersion: number | null = null;

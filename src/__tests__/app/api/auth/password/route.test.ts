@@ -108,6 +108,7 @@ describe("POST /api/auth/password", () => {
     mockAuditRecord.mockReset();
     mockCheckSensitiveOpRateLimit.mockReset();
     mockReissueAuthCookies.mockReset();
+    process.env.CSRF_SECRET = "test-csrf-secret";
 
     // Defaults
     mockCheckSensitiveOpRateLimit.mockResolvedValue({ limited: false });
@@ -252,8 +253,8 @@ describe("POST /api/auth/password", () => {
     expect(currentSession.mustChangePassword).toBe(false);
   });
 
-  it("returns 500 when auth cookies cannot be re-issued", async () => {
-    mockReissueAuthCookies.mockResolvedValue(false);
+  it("returns 500 before mutating state when auth cookies cannot be re-issued", async () => {
+    delete process.env.CSRF_SECRET;
 
     const { POST } = await import("@/app/api/auth/password/route");
     const response = await POST(
@@ -267,6 +268,8 @@ describe("POST /api/auth/password", () => {
 
     expect(response.status).toBe(500);
     expect(body.error).toBe("Server configuration error");
+    expect(mockWithTransaction).not.toHaveBeenCalled();
+    expect(mockReissueAuthCookies).not.toHaveBeenCalled();
   });
 
   it("returns 404 when account not found", async () => {
