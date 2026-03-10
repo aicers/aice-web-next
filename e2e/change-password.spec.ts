@@ -14,7 +14,6 @@ import {
   setPassword,
 } from "./helpers/setup-db";
 
-const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
 const NEW_PASSWORD = "NewSecurePass123!";
 
 test.describe("Change password flow", () => {
@@ -123,11 +122,11 @@ test.describe("Change password flow", () => {
       const pageA = await contextA.newPage();
       const pageB = await contextB.newPage();
 
-      await pageA.goto(`${BASE_URL}/sign-in`);
+      await pageA.goto("/sign-in");
       await signIn(pageA, ADMIN_USERNAME, ADMIN_PASSWORD);
       await pageA.waitForURL("**/change-password", { timeout: 10_000 });
 
-      await pageB.goto(`${BASE_URL}/sign-in`);
+      await pageB.goto("/sign-in");
       await signIn(pageB, ADMIN_USERNAME, ADMIN_PASSWORD);
       await pageB.waitForURL("**/change-password", { timeout: 10_000 });
 
@@ -151,14 +150,10 @@ test.describe("Change password flow", () => {
         { timeout: 10_000 },
       );
 
-      const currentSessionResponse = await pageA.request.get(
-        `${BASE_URL}/api/auth/me`,
-      );
+      const currentSessionResponse = await pageA.request.get("/api/auth/me");
       expect(currentSessionResponse.status()).toBe(200);
 
-      const revokedSessionResponse = await pageB.request.get(
-        `${BASE_URL}/api/auth/me`,
-      );
+      const revokedSessionResponse = await pageB.request.get("/api/auth/me");
       expect(revokedSessionResponse.status()).toBe(401);
     } finally {
       await contextA.close();
