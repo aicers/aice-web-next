@@ -56,6 +56,11 @@ test.describe("Sign-out-all", () => {
         "http://localhost:3000/api/audit-logs",
       );
       expect(apiResponse.status()).toBe(401);
+
+      // Protected page navigation should also redirect to localized sign-in
+      // because the dashboard layout now rejects invalidated DB sessions.
+      await pageB.goto("http://localhost:3000/ko/audit-logs");
+      await expect(pageB).toHaveURL(/\/ko\/sign-in$/, { timeout: 10_000 });
     } finally {
       await contextA.close();
       await contextB.close();
