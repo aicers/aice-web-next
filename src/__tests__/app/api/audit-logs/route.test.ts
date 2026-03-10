@@ -270,6 +270,24 @@ describe("GET /api/audit-logs", () => {
       );
     });
 
+    it("accepts session actions that the UI exposes", async () => {
+      mockQueryAudit
+        .mockResolvedValueOnce({ rows: [{ count: "1" }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+      const { GET } = await import("@/app/api/audit-logs/route");
+      const response = await GET(
+        makeRequest("action=session.reauth_required"),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockQueryAudit).toHaveBeenCalledWith(
+        expect.stringContaining("action = $1"),
+        ["session.reauth_required"],
+      );
+    });
+
     it("applies correlation ID filter", async () => {
       const uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
       mockQueryAudit

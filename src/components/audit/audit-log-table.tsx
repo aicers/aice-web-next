@@ -24,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AUDIT_ACTIONS, AUDIT_TARGET_TYPES } from "@/lib/audit/schema";
 import { formatDateTime } from "@/lib/format-date";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -49,38 +50,9 @@ interface SearchResult {
 
 // ── Constants ────────────────────────────────────────────────────
 
-const ACTION_KEYS = [
-  "auth.sign_in.success",
-  "auth.sign_in.failure",
-  "auth.sign_out",
-  "auth.session_extend",
-  "session.ip_mismatch",
-  "session.ua_mismatch",
-  "session.ip_ua_mismatch",
-  "session.revoke",
-  "session.reauth_required",
-  "session.reauth_success",
-  "session.reauth_failure",
-  "session.idle_timeout",
-  "session.absolute_timeout",
-  "account.create",
-  "account.update",
-  "account.disable",
-  "account.delete",
-  "account.lock",
-  "account.unlock",
-  "account.suspend",
-  "account.restore",
-  "password.change",
-  "password.reset",
-  "customer.create",
-  "customer.update",
-  "customer.delete",
-  "customer.assign",
-  "customer.unassign",
-] as const;
+const ACTION_KEYS = AUDIT_ACTIONS;
 
-const TARGET_TYPE_KEYS = ["account", "session", "customer"] as const;
+const TARGET_TYPE_KEYS = AUDIT_TARGET_TYPES;
 
 /** Convert a dotted DB action key to an i18n-safe underscore key. */
 function actionToI18nKey(action: string): string {

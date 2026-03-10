@@ -3,7 +3,10 @@ import "server-only";
 import type pg from "pg";
 
 import { getCorrelationId } from "@/lib/audit/correlation";
+import type { AuditAction, AuditTargetType } from "@/lib/audit/schema";
 import { connectTo } from "@/lib/db/client";
+
+export type { AuditAction, AuditTargetType } from "@/lib/audit/schema";
 
 // ── Sensitive Field Redaction ─────────────────────────────────────
 
@@ -54,58 +57,6 @@ function sanitizeDetails(
 }
 
 // ── Types ─────────────────────────────────────────────────────────
-
-/** Phase 1 authentication event actions. */
-type AuthAction =
-  | "auth.sign_in.success"
-  | "auth.sign_in.failure"
-  | "auth.sign_out"
-  | "auth.session_extend";
-
-/** Phase 1 session event actions. */
-type SessionAction =
-  | "session.ip_mismatch"
-  | "session.ua_mismatch"
-  | "session.ip_ua_mismatch"
-  | "session.revoke"
-  | "session.reauth_required"
-  | "session.reauth_success"
-  | "session.reauth_failure"
-  | "session.idle_timeout"
-  | "session.absolute_timeout";
-
-/** Account event actions. */
-type AccountAction =
-  | "account.create"
-  | "account.update"
-  | "account.disable"
-  | "account.delete"
-  | "account.lock"
-  | "account.unlock"
-  | "account.suspend"
-  | "account.restore";
-
-/** Phase 2 password event actions. */
-type PasswordAction = "password.change" | "password.reset";
-
-/** Customer event actions. */
-type CustomerAction =
-  | "customer.create"
-  | "customer.update"
-  | "customer.delete"
-  | "customer.assign"
-  | "customer.unassign";
-
-/** All audit event actions. */
-export type AuditAction =
-  | AuthAction
-  | SessionAction
-  | AccountAction
-  | PasswordAction
-  | CustomerAction;
-
-/** Target entity types for audit events. */
-export type AuditTargetType = "account" | "session" | "customer";
 
 /**
  * Parameters for recording a single audit log entry.
