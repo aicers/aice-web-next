@@ -24,6 +24,7 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { usePathname } from "@/i18n/navigation";
 import { ThemeToggle } from "../theme-toggle";
+import { Logo } from "./logo";
 import { NavUser } from "./nav-user";
 import { SidebarItem } from "./sidebar-item";
 
@@ -54,13 +55,15 @@ export function MobileHeader({ open, onOpenChange }: MobileHeaderProps) {
           <Menu className="h-5 w-5" />
           <span className="sr-only">Open menu</span>
         </Button>
-        <span className="text-foreground ml-3 text-lg font-bold">AICE</span>
+        <Logo className="ml-3" />
       </header>
 
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent side="left" className="w-64 p-0">
           <SheetHeader className="border-b px-4">
-            <SheetTitle className="text-lg font-bold">AICE</SheetTitle>
+            <SheetTitle>
+              <Logo />
+            </SheetTitle>
           </SheetHeader>
           <TooltipProvider>
             <nav className="flex-1 space-y-1 overflow-y-auto p-2">

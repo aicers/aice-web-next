@@ -2,7 +2,6 @@
 
 import {
   ChevronLeft,
-  ChevronRight,
   FileText,
   Home,
   LayoutDashboard,
@@ -20,6 +19,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { usePathname } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "../theme-toggle";
+import { Logo } from "./logo";
 import { NavUser } from "./nav-user";
 import { SidebarItem } from "./sidebar-item";
 
@@ -58,17 +58,24 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             collapsed ? "justify-center" : "justify-between",
           )}
         >
-          {!collapsed && (
-            <span className="text-foreground text-lg font-bold">AICE</span>
+          {collapsed ? (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="flex items-center justify-center"
+            >
+              <Logo collapsed />
+              <span className="sr-only">Toggle sidebar</span>
+            </button>
+          ) : (
+            <>
+              <Logo />
+              <Button variant="ghost" size="icon" onClick={onToggle}>
+                <ChevronLeft className="h-4 w-4" />
+                <span className="sr-only">Toggle sidebar</span>
+              </Button>
+            </>
           )}
-          <Button variant="ghost" size="icon" onClick={onToggle}>
-            {collapsed ? (
-              <ChevronRight className="h-4 w-4" />
-            ) : (
-              <ChevronLeft className="h-4 w-4" />
-            )}
-            <span className="sr-only">Toggle sidebar</span>
-          </Button>
         </div>
 
         {/* Navigation */}
