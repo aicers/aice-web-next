@@ -107,28 +107,30 @@ test.describe("System settings", () => {
 
     // Update to a different value
     const newValue = originalValue === 15 ? 20 : 15;
-    const patchRes = await page.request.patch(
-      "/api/system-settings/jwt_policy",
-      {
+    try {
+      const patchRes = await page.request.patch(
+        "/api/system-settings/jwt_policy",
+        {
+          headers: csrfHeader(csrf),
+          data: { value: { access_token_expiration_minutes: newValue } },
+        },
+      );
+      expect(patchRes.status()).toBe(200);
+
+      // Verify the update persisted
+      const verifyRes = await page.request.get("/api/system-settings");
+      const updated = await verifyRes.json();
+      const updatedJwt = updated.data.find(
+        (s: { key: string }) => s.key === "jwt_policy",
+      );
+      expect(updatedJwt.value.access_token_expiration_minutes).toBe(newValue);
+    } finally {
+      // Restore original value even if assertions fail
+      await page.request.patch("/api/system-settings/jwt_policy", {
         headers: csrfHeader(csrf),
-        data: { value: { access_token_expiration_minutes: newValue } },
-      },
-    );
-    expect(patchRes.status()).toBe(200);
-
-    // Verify the update persisted
-    const verifyRes = await page.request.get("/api/system-settings");
-    const updated = await verifyRes.json();
-    const updatedJwt = updated.data.find(
-      (s: { key: string }) => s.key === "jwt_policy",
-    );
-    expect(updatedJwt.value.access_token_expiration_minutes).toBe(newValue);
-
-    // Restore original value
-    await page.request.patch("/api/system-settings/jwt_policy", {
-      headers: csrfHeader(csrf),
-      data: { value: { access_token_expiration_minutes: originalValue } },
-    });
+        data: { value: { access_token_expiration_minutes: originalValue } },
+      });
+    }
   });
 
   test("PATCH rejects invalid values with 400", async ({ page }) => {
@@ -239,26 +241,28 @@ test.describe("System settings", () => {
     const currentValue = await input.inputValue();
     const newValue = currentValue === "15" ? "20" : "15";
 
-    await input.fill(newValue);
-    // Find the save button within the JWT tab panel
-    await page.getByRole("button", { name: /jwt|save/i }).click();
+    try {
+      await input.fill(newValue);
+      // Find the save button within the JWT tab panel
+      await page.getByRole("button", { name: /jwt|save/i }).click();
 
-    // Wait for success message
-    await expect(page.getByText(/updated successfully/i)).toBeVisible({
-      timeout: 5000,
-    });
+      // Wait for success message
+      await expect(page.getByText(/updated successfully/i)).toBeVisible({
+        timeout: 5000,
+      });
 
-    // Reload and verify persistence
-    await page.reload();
-    await page.getByRole("tab", { name: /jwt/i }).click();
-    await expect(input).toHaveValue(newValue);
-
-    // Restore original
-    await input.fill(currentValue);
-    await page.getByRole("button", { name: /jwt|save/i }).click();
-    await expect(page.getByText(/updated successfully/i)).toBeVisible({
-      timeout: 5000,
-    });
+      // Reload and verify persistence
+      await page.reload();
+      await page.getByRole("tab", { name: /jwt/i }).click();
+      await expect(input).toHaveValue(newValue);
+    } finally {
+      // Restore original value even if assertions fail
+      await input.fill(currentValue);
+      await page.getByRole("button", { name: /jwt|save/i }).click();
+      await expect(page.getByText(/updated successfully/i)).toBeVisible({
+        timeout: 5000,
+      });
+    }
   });
 
   // ── Audit Test ────────────────────────────────────────────────
@@ -267,33 +271,58 @@ test.describe("System settings", () => {
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
     const csrf = await getCsrf(page);
 
-    // Make a settings change via API
+    // Record the newest audit log ID before the change so we can
+    // identify entries created by this test, not by earlier tests.
+    const beforeRes = await page.request.get(
+      "/api/audit-logs?action=system_settings.update&targetId=lockout_policy&pageSize=1",
+    );
+    const beforeBody = await beforeRes.json();
+    const newestIdBefore =
+      beforeBody.data.length > 0 ? beforeBody.data[0].id : null;
+
+    // Make a settings change via API — send the full value object
+    // because the validator requires all fields.
     const getRes = await page.request.get("/api/system-settings");
     const allSettings = await getRes.json();
     const lockoutSetting = allSettings.data.find(
       (s: { key: string }) => s.key === "lockout_policy",
     );
-    const original = lockoutSetting.value.stage1_threshold;
-    const updated = original === 5 ? 6 : 5;
+    const originalValue = { ...lockoutSetting.value };
+    const updatedValue = {
+      ...originalValue,
+      stage1_threshold: originalValue.stage1_threshold === 5 ? 6 : 5,
+    };
 
-    await page.request.patch("/api/system-settings/lockout_policy", {
-      headers: csrfHeader(csrf),
-      data: { value: { stage1_threshold: updated } },
-    });
+    try {
+      const patchRes = await page.request.patch(
+        "/api/system-settings/lockout_policy",
+        {
+          headers: csrfHeader(csrf),
+          data: { value: updatedValue },
+        },
+      );
+      expect(patchRes.status()).toBe(200);
 
-    // Check audit logs
-    const auditRes = await page.request.get(
-      "/api/audit-logs?action=system_settings.update",
-    );
-    expect(auditRes.status()).toBe(200);
-    const auditBody = await auditRes.json();
-    expect(auditBody.data.length).toBeGreaterThan(0);
-    expect(auditBody.data[0].action).toBe("system_settings.update");
+      // The newest audit entry must be different from the one before
+      // and must reference the key we just changed.
+      // Use targetId filter to precisely match our change.
+      const afterRes = await page.request.get(
+        "/api/audit-logs?action=system_settings.update&targetId=lockout_policy&pageSize=1",
+      );
+      expect(afterRes.status()).toBe(200);
+      const afterBody = await afterRes.json();
+      expect(afterBody.data.length).toBeGreaterThan(0);
 
-    // Restore
-    await page.request.patch("/api/system-settings/lockout_policy", {
-      headers: csrfHeader(csrf),
-      data: { value: { stage1_threshold: original } },
-    });
+      const newest = afterBody.data[0];
+      expect(newest.id).not.toBe(newestIdBefore);
+      expect(newest.action).toBe("system_settings.update");
+      expect(newest.target_id).toBe("lockout_policy");
+    } finally {
+      // Restore even if assertions fail
+      await page.request.patch("/api/system-settings/lockout_policy", {
+        headers: csrfHeader(csrf),
+        data: { value: originalValue },
+      });
+    }
   });
 });
