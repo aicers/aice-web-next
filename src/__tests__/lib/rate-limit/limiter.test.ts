@@ -208,6 +208,69 @@ describe("rate limiter", () => {
     });
   });
 
+  // ── invalidateRateLimitConfig ───────────────────────────────
+
+  describe("invalidateRateLimitConfig()", () => {
+    it("invalidates signin config without destroying counters", async () => {
+      // Accumulate some counters
+      await limiter.checkSignInRateLimit("1.2.3.4");
+      await limiter.checkSignInRateLimit("1.2.3.4");
+      expect(mockPoolQuery).toHaveBeenCalledTimes(1);
+
+      // Invalidate config only
+      limiter.invalidateRateLimitConfig("signin_rate_limit");
+      await limiter.checkSignInRateLimit("1.2.3.4");
+
+      // Config was re-queried
+      expect(mockPoolQuery).toHaveBeenCalledTimes(2);
+    });
+
+    it("invalidates all configs when key is omitted", async () => {
+      await limiter.checkSignInRateLimit("1.2.3.4");
+      await limiter.checkApiRateLimit("account-1");
+      expect(mockPoolQuery).toHaveBeenCalledTimes(2);
+
+      limiter.invalidateRateLimitConfig();
+      await limiter.checkSignInRateLimit("1.2.3.4");
+      await limiter.checkApiRateLimit("account-1");
+
+      // Both configs re-queried
+      expect(mockPoolQuery).toHaveBeenCalledTimes(4);
+    });
+
+    it("preserves counters (does not reset rate-limit buckets)", async () => {
+      const customConfig = {
+        rows: [
+          {
+            value: {
+              per_ip_count: 3,
+              per_ip_window_minutes: 5,
+              per_account_ip_count: 5,
+              per_account_ip_window_minutes: 5,
+              global_count: 100,
+              global_window_minutes: 1,
+            },
+          },
+        ],
+      };
+
+      // Use custom config: per-IP limit of 3
+      mockPoolQuery.mockResolvedValueOnce(customConfig);
+
+      await limiter.checkSignInRateLimit("1.2.3.4");
+      await limiter.checkSignInRateLimit("1.2.3.4");
+      await limiter.checkSignInRateLimit("1.2.3.4");
+
+      // Invalidate config (counters stay), provide same config on reload
+      limiter.invalidateRateLimitConfig("signin_rate_limit");
+      mockPoolQuery.mockResolvedValueOnce(customConfig);
+
+      // 4th request should still be blocked because counters survived
+      const result = await limiter.checkSignInRateLimit("1.2.3.4");
+      expect(result.limited).toBe(true);
+    });
+  });
+
   // ── resetRateLimiter ─────────────────────────────────────────
 
   describe("resetRateLimiter()", () => {
