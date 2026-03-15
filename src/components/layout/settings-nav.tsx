@@ -5,21 +5,26 @@ import { Link, usePathname } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 
 interface SettingsNavProps {
+  showAccounts?: boolean;
+  showCustomers?: boolean;
   showSystem?: boolean;
 }
 
-const ITEMS = [
-  { key: "accounts", href: "/settings/accounts" },
-  { key: "customers", href: "/settings/customers" },
-] as const;
-
-export function SettingsNav({ showSystem }: SettingsNavProps) {
+export function SettingsNav({
+  showAccounts,
+  showCustomers,
+  showSystem,
+}: SettingsNavProps) {
   const t = useTranslations("settings");
   const pathname = usePathname();
 
-  const items = showSystem
-    ? [...ITEMS, { key: "system" as const, href: "/settings/system" }]
-    : ITEMS;
+  const items: { key: string; href: string }[] = [];
+  if (showAccounts) items.push({ key: "accounts", href: "/settings/accounts" });
+  if (showCustomers)
+    items.push({ key: "customers", href: "/settings/customers" });
+  if (showSystem) items.push({ key: "system", href: "/settings/system" });
+
+  if (items.length === 0) return null;
 
   return (
     <nav className="flex gap-1 border-b">
