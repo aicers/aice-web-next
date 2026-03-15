@@ -33,6 +33,12 @@ async function loadRolePermissions(roleName: string): Promise<Set<string>> {
   return permissions;
 }
 
+// ── Constants ─────────────────────────────────────────────────
+
+// Re-export from the shared (non-server-only) module so that existing
+// server-side consumers can keep importing from this file.
+export { ALL_PERMISSIONS, VALID_PERMISSIONS } from "./permission-defs";
+
 // ── Public API ─────────────────────────────────────────────────
 
 /**

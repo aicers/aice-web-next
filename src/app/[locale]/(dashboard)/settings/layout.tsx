@@ -12,6 +12,9 @@ export default async function SettingsLayout({
   const showAccounts = session
     ? await hasPermission(session.roles, "accounts:read")
     : false;
+  const showRoles = session
+    ? await hasPermission(session.roles, "roles:read")
+    : false;
   const showCustomers = session
     ? await hasPermission(session.roles, "customers:read")
     : false;
@@ -23,6 +26,7 @@ export default async function SettingsLayout({
     <div className="space-y-6">
       <SettingsNav
         showAccounts={showAccounts}
+        showRoles={showRoles}
         showCustomers={showCustomers}
         showSystem={showSystem}
       />

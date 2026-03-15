@@ -6,12 +6,14 @@ import { cn } from "@/lib/utils";
 
 interface SettingsNavProps {
   showAccounts?: boolean;
+  showRoles?: boolean;
   showCustomers?: boolean;
   showSystem?: boolean;
 }
 
 export function SettingsNav({
   showAccounts,
+  showRoles,
   showCustomers,
   showSystem,
 }: SettingsNavProps) {
@@ -20,6 +22,7 @@ export function SettingsNav({
 
   const items: { key: string; href: string }[] = [];
   if (showAccounts) items.push({ key: "accounts", href: "/settings/accounts" });
+  if (showRoles) items.push({ key: "roles", href: "/settings/roles" });
   if (showCustomers)
     items.push({ key: "customers", href: "/settings/customers" });
   if (showSystem) items.push({ key: "system", href: "/settings/system" });

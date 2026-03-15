@@ -513,6 +513,88 @@ export async function resetAccountPreferences(username: string): Promise<void> {
   }
 }
 
+/**
+ * Create a custom role with the given permissions.
+ * Skips if a role with the name already exists.
+ * Returns the role ID.
+ */
+export async function createTestRole(
+  name: string,
+  permissions: string[],
+  description?: string,
+): Promise<number> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ id: number }>(
+      `INSERT INTO roles (name, description, is_builtin)
+       VALUES ($1, $2, false)
+       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [name, description ?? null],
+    );
+    const roleId = rows[0].id;
+
+    // Replace permissions
+    await client.query("DELETE FROM role_permissions WHERE role_id = $1", [
+      roleId,
+    ]);
+    for (const perm of permissions) {
+      await client.query(
+        "INSERT INTO role_permissions (role_id, permission) VALUES ($1, $2)",
+        [roleId, perm],
+      );
+    }
+
+    return roleId;
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Delete a custom role by name. Silently ignores if not found.
+ */
+export async function deleteTestRole(name: string): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      "DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE name = $1)",
+      [name],
+    );
+    await client.query(
+      "DELETE FROM roles WHERE name = $1 AND is_builtin = false",
+      [name],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Delete all custom roles whose name starts with a given prefix.
+ */
+export async function deleteRolesByPrefix(prefix: string): Promise<void> {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      `DELETE FROM role_permissions
+       WHERE role_id IN (
+         SELECT id FROM roles WHERE name LIKE $1 AND is_builtin = false
+       )`,
+      [`${prefix}%`],
+    );
+    await client.query(
+      "DELETE FROM roles WHERE name LIKE $1 AND is_builtin = false",
+      [`${prefix}%`],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
 function escapeIdentifier(str: string): string {
   return `"${str.replace(/"/g, '""')}"`;
 }
