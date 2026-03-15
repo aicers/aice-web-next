@@ -245,9 +245,25 @@ export async function checkSensitiveOpRateLimit(
   return { limited: false };
 }
 
+// ── Cache invalidation ───────────────────────────────────────────
+
+/**
+ * Invalidate cached rate-limit configs so the next call re-queries
+ * the DB.  Does **not** touch the live counter store — accumulated
+ * buckets remain intact.
+ *
+ * @param key  `"signin_rate_limit"` or `"api_rate_limit"`.
+ *             Omit to invalidate both.
+ */
+export function invalidateRateLimitConfig(
+  key?: "signin_rate_limit" | "api_rate_limit",
+): void {
+  configCache.invalidate(key);
+}
+
 // ── Test utilities ───────────────────────────────────────────────
 
-/** Reset cached configs and destroy the store. For tests only. */
+/** Reset cached configs **and** destroy the counter store. For tests only. */
 export function resetRateLimiter(): void {
   configCache.invalidateAll();
   if (store) {
