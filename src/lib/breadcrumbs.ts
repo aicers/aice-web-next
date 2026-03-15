@@ -16,6 +16,7 @@ export const SETTINGS_SEGMENTS = new Set([
   "roles",
   "profile",
   "customers",
+  "system",
 ]);
 
 export interface BreadcrumbSegment {
