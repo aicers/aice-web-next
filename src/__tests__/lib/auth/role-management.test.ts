@@ -29,7 +29,8 @@ describe("role-management", () => {
     mockWithTransaction.mockClear();
     // Default: withTransaction executes the callback with a fake client
     mockWithTransaction.mockImplementation(
-      async (fn: (...args: never[]) => unknown) => fn(makeFakeClient()),
+      // biome-ignore lint/suspicious/noExplicitAny: test mock accepts any callback shape
+      async (fn: (client: any) => unknown) => fn(makeFakeClient()),
     );
   });
 

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ALL_PERMISSIONS } from "@/lib/auth/permission-defs";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -34,21 +35,7 @@ interface RoleFormDialogProps {
   onSuccess: () => void;
 }
 
-// ── Permission groups (mirrors ALL_PERMISSIONS from server) ────
-
-const PERMISSION_GROUPS = {
-  accounts: ["accounts:read", "accounts:write", "accounts:delete"],
-  roles: ["roles:read", "roles:write", "roles:delete"],
-  customers: [
-    "customers:read",
-    "customers:write",
-    "customers:delete",
-    "customers:access-all",
-  ],
-  "audit-logs": ["audit-logs:read"],
-  dashboard: ["dashboard:read", "dashboard:write"],
-  "system-settings": ["system-settings:read", "system-settings:write"],
-} as const;
+// ── Permission groups ────────────────────────────────────────
 
 // ── Component ───────────────────────────────────────────────────
 
@@ -187,7 +174,7 @@ export function RoleFormDialog({
           <div className="space-y-3">
             <Label>{t("permissions")}</Label>
             <div className="space-y-4 rounded border p-3">
-              {Object.entries(PERMISSION_GROUPS).map(([group, perms]) => (
+              {Object.entries(ALL_PERMISSIONS).map(([group, perms]) => (
                 <div key={group}>
                   <p className="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wider">
                     {t(`permissionGroups.${group}`)}
