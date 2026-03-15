@@ -198,19 +198,29 @@ describe("session-policy", () => {
   // ── isIdleTimedOut ─────────────────────────────────────────────
 
   describe("isIdleTimedOut", () => {
+    const NOW = 1_700_000_000_000;
+
+    beforeEach(() => {
+      vi.spyOn(Date, "now").mockReturnValue(NOW);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     it("returns false when last_active_at is within timeout", () => {
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      const fiveMinutesAgo = new Date(NOW - 5 * 60 * 1000);
       expect(mod.isIdleTimedOut(fiveMinutesAgo, 30)).toBe(false);
     });
 
     it("returns true when last_active_at exceeds timeout", () => {
-      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const twoHoursAgo = new Date(NOW - 2 * 60 * 60 * 1000);
       expect(mod.isIdleTimedOut(twoHoursAgo, 30)).toBe(true);
     });
 
     it("returns false at exactly the boundary", () => {
       // Exactly 30 minutes ago should not be timed out (> vs >=)
-      const exactlyAtBoundary = new Date(Date.now() - 30 * 60 * 1000);
+      const exactlyAtBoundary = new Date(NOW - 30 * 60 * 1000);
       expect(mod.isIdleTimedOut(exactlyAtBoundary, 30)).toBe(false);
     });
   });
@@ -218,18 +228,28 @@ describe("session-policy", () => {
   // ── isAbsoluteTimedOut ─────────────────────────────────────────
 
   describe("isAbsoluteTimedOut", () => {
+    const NOW = 1_700_000_000_000;
+
+    beforeEach(() => {
+      vi.spyOn(Date, "now").mockReturnValue(NOW);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     it("returns false when created_at is within timeout", () => {
-      const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000);
+      const oneHourAgo = new Date(NOW - 1 * 60 * 60 * 1000);
       expect(mod.isAbsoluteTimedOut(oneHourAgo, 8)).toBe(false);
     });
 
     it("returns true when created_at exceeds timeout", () => {
-      const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+      const tenHoursAgo = new Date(NOW - 10 * 60 * 60 * 1000);
       expect(mod.isAbsoluteTimedOut(tenHoursAgo, 8)).toBe(true);
     });
 
     it("returns false at exactly the boundary", () => {
-      const exactlyAtBoundary = new Date(Date.now() - 8 * 60 * 60 * 1000);
+      const exactlyAtBoundary = new Date(NOW - 8 * 60 * 60 * 1000);
       expect(mod.isAbsoluteTimedOut(exactlyAtBoundary, 8)).toBe(false);
     });
   });
