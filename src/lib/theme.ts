@@ -2,7 +2,7 @@ export const THEMES = ["gray-light", "gray-dark"] as const;
 
 export type Theme = (typeof THEMES)[number];
 
-export const DEFAULT_THEME: Theme = "gray-light";
+export const DEFAULT_THEME: Theme = "gray-dark";
 
 export const themeConfig = {
   attribute: "data-theme",

@@ -17,8 +17,8 @@ const roboto = Roboto({
 });
 
 export const metadata: Metadata = {
-  title: "aice-web-next",
-  description: "aice-web-next",
+  title: "Clumit Security",
+  description: "Clumit Security",
 };
 
 export function generateStaticParams() {
