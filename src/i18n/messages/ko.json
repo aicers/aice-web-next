@@ -28,9 +28,14 @@
     "resetPassword": "비밀번호 재설정",
     "sessionTimeout": "세션 시간 초과",
     "sessionEnded": "세션 종료",
-    "sessionExpiring": "세션 만료 임박",
-    "sessionExpiringDescription": "세션이 {seconds}초 후에 만료됩니다. 연장하시겠습니까?",
-    "extendSession": "세션 연장"
+    "signedOutHeading": "로그아웃되었습니다",
+    "signedOutDescription": "성공적으로 로그아웃되었습니다.",
+    "sessionEndedHeading": "세션이 종료되었습니다",
+    "sessionEndedDescription": "비활성으로 인해 세션이 만료되었습니다. 계속하려면 다시 로그인해 주세요.",
+    "signInAgain": "다시 로그인",
+    "sessionExpiring": "잠시 쉬고 계신가요?",
+    "sessionExpiringDescription": "세션이 {seconds}초 후에 만료됩니다. 계속 작업하려면 로그인을 유지하세요.",
+    "extendSession": "로그인 유지"
   },
   "nav": {
     "home": "홈",

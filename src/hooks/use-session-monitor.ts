@@ -80,7 +80,7 @@ export function useSessionMonitor(): SessionMonitorState {
       if (remaining <= 0) {
         // JWT has expired — redirect to sign-in
         setShowDialog(false);
-        router.push("/sign-in");
+        router.push("/sign-in?reason=session-ended");
         return;
       }
 

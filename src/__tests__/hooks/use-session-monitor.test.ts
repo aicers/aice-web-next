@@ -150,7 +150,9 @@ describe("useSessionMonitor", () => {
     useSessionMonitor();
     runEffect();
 
-    expect(mockRouterPush).toHaveBeenCalledWith("/sign-in");
+    expect(mockRouterPush).toHaveBeenCalledWith(
+      "/sign-in?reason=session-ended",
+    );
     expect(setShowDialog).toHaveBeenCalledWith(false);
   });
 

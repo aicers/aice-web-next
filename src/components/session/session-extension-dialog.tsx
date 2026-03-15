@@ -62,11 +62,11 @@ export function SessionExtensionDialog() {
       } else {
         // Token already expired or invalid — redirect to sign-in
         clearTokenExpCookie();
-        router.push("/sign-in");
+        router.push("/sign-in?reason=session-ended");
       }
     } catch {
       clearTokenExpCookie();
-      router.push("/sign-in");
+      router.push("/sign-in?reason=session-ended");
     } finally {
       setExtending(false);
     }
@@ -84,7 +84,7 @@ export function SessionExtensionDialog() {
       // Best-effort sign-out; redirect regardless
     } finally {
       clearTokenExpCookie();
-      router.push("/sign-in");
+      router.push("/sign-in?reason=signed-out");
     }
   }, [router]);
 

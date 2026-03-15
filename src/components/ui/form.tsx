@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertCircle } from "lucide-react";
 import type { Label as LabelPrimitive } from "radix-ui";
 import { Slot } from "radix-ui";
 import * as React from "react";
@@ -88,8 +89,10 @@ function FormItem({ className, ...props }: React.ComponentProps<"div">) {
 
 function FormLabel({
   className,
+  required,
+  children,
   ...props
-}: React.ComponentProps<typeof LabelPrimitive.Root>) {
+}: React.ComponentProps<typeof LabelPrimitive.Root> & { required?: boolean }) {
   const { error, formItemId } = useFormField();
 
   return (
@@ -99,7 +102,14 @@ function FormLabel({
       className={cn("data-[error=true]:text-destructive", className)}
       htmlFor={formItemId}
       {...props}
-    />
+    >
+      {children}
+      {required && (
+        <span aria-hidden="true" className="text-destructive ml-0.5">
+          *
+        </span>
+      )}
+    </Label>
   );
 }
 
@@ -147,9 +157,13 @@ function FormMessage({ className, ...props }: React.ComponentProps<"p">) {
     <p
       data-slot="form-message"
       id={formMessageId}
-      className={cn("text-destructive text-sm", className)}
+      className={cn(
+        "text-destructive flex items-center gap-1 text-sm",
+        className,
+      )}
       {...props}
     >
+      <AlertCircle className="size-3.5 shrink-0" />
       {body}
     </p>
   );
