@@ -6,14 +6,6 @@
   --btn-primary-bg: #156ef2;
   --btn-primary-fg: #ffffff;
 
-  /* Sidebar — always dark regardless of theme */
-  --sidebar-bg: #212428;
-  --sidebar-account-bg: #2f333a;
-  --sidebar-text: #fafafa;
-  --sidebar-text-muted: #7c8492;
-  --sidebar-divider: rgba(97, 105, 116, 0.24);
-  --sidebar-active-border: #156ef2;
-
   /* shadcn/ui semantic aliases */
   --background: var(--bg-canvas);
   --foreground: var(--text-primary);
@@ -84,12 +76,13 @@
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
-  --color-sidebar: var(--sidebar-bg);
-  --color-sidebar-foreground: var(--sidebar-text);
-  --color-sidebar-muted: var(--sidebar-text-muted);
-  --color-sidebar-active: var(--sidebar-active-border);
-  --color-sidebar-account: var(--sidebar-account-bg);
-  --color-sidebar-divider: var(--sidebar-divider);
+  /* Sidebar — always dark regardless of theme */
+  --color-sidebar: #212428;
+  --color-sidebar-foreground: #fafafa;
+  --color-sidebar-muted: #7c8492;
+  --color-sidebar-active: #156ef2;
+  --color-sidebar-account: #2f333a;
+  --color-sidebar-divider: rgba(97, 105, 116, 0.24);
   --breakpoint-desktop: 1280px;
   --breakpoint-wide: 2000px;
 }
