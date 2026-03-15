@@ -66,7 +66,7 @@ test.describe("Session Extension Dialog", () => {
     await expect(dialog).toBeVisible({ timeout: 5_000 });
 
     // Verify dialog content
-    await expect(dialog.getByText(/taking a break|쉬고 계신/i)).toBeVisible();
+    await expect(dialog.getByText(/session is about to expire|세션이 곧 만료/i)).toBeVisible();
 
     // Verify both buttons are present
     await expect(
@@ -293,7 +293,7 @@ test.describe("Session Extension Dialog", () => {
     await expect(dialog).toBeVisible({ timeout: 5_000 });
 
     // Verify Korean text
-    await expect(dialog.getByText(/쉬고 계신/)).toBeVisible();
+    await expect(dialog.getByText(/세션이 곧 만료/)).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: /로그인 유지/ }),
     ).toBeVisible();

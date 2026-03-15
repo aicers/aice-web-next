@@ -33,8 +33,8 @@
     "sessionEndedHeading": "세션이 종료되었습니다",
     "sessionEndedDescription": "비활성으로 인해 세션이 만료되었습니다. 계속하려면 다시 로그인해 주세요.",
     "signInAgain": "다시 로그인",
-    "sessionExpiring": "잠시 쉬고 계신가요?",
-    "sessionExpiringDescription": "세션이 {seconds}초 후에 만료됩니다. 계속 작업하려면 로그인을 유지하세요.",
+    "sessionExpiring": "세션이 곧 만료됩니다",
+    "sessionExpiringDescription": "세션이 {seconds}초 후에 만료됩니다. 로그인을 유지하시겠습니까?",
     "extendSession": "로그인 유지"
   },
   "nav": {
