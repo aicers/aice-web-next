@@ -39,8 +39,14 @@ interface RoleFormDialogProps {
 const PERMISSION_GROUPS = {
   accounts: ["accounts:read", "accounts:write", "accounts:delete"],
   roles: ["roles:read", "roles:write", "roles:delete"],
-  customers: ["customers:read", "customers:write", "customers:access-all"],
+  customers: [
+    "customers:read",
+    "customers:write",
+    "customers:delete",
+    "customers:access-all",
+  ],
   "audit-logs": ["audit-logs:read"],
+  dashboard: ["dashboard:read", "dashboard:write"],
   "system-settings": ["system-settings:read", "system-settings:write"],
 } as const;
 

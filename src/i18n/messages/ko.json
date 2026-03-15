@@ -290,6 +290,7 @@
       "roles": "역할",
       "customers": "고객",
       "audit-logs": "감사 로그",
+      "dashboard": "대시보드",
       "system-settings": "시스템 설정"
     },
     "permissionActions": {

@@ -45,8 +45,14 @@ async function loadRolePermissions(roleName: string): Promise<Set<string>> {
 export const ALL_PERMISSIONS = {
   accounts: ["accounts:read", "accounts:write", "accounts:delete"],
   roles: ["roles:read", "roles:write", "roles:delete"],
-  customers: ["customers:read", "customers:write", "customers:access-all"],
+  customers: [
+    "customers:read",
+    "customers:write",
+    "customers:delete",
+    "customers:access-all",
+  ],
   "audit-logs": ["audit-logs:read"],
+  dashboard: ["dashboard:read", "dashboard:write"],
   "system-settings": ["system-settings:read", "system-settings:write"],
 } as const;
 

@@ -290,6 +290,7 @@
       "roles": "Roles",
       "customers": "Customers",
       "audit-logs": "Audit Logs",
+      "dashboard": "Dashboard",
       "system-settings": "System Settings"
     },
     "permissionActions": {
