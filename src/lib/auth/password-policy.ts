@@ -2,6 +2,8 @@ import "server-only";
 
 import { query } from "@/lib/db/client";
 
+import { SettingsCache } from "./settings-cache";
+
 // ── Types ────────────────────────────────────────────────────────
 
 export interface PasswordPolicy {
@@ -30,10 +32,12 @@ const DEFAULT_POLICY: PasswordPolicy = {
 
 // ── Cache ────────────────────────────────────────────────────────
 
-let cachedPolicy: PasswordPolicy | null = null;
+const cache = new SettingsCache<PasswordPolicy>();
+const CACHE_KEY = "password_policy";
 
 export async function loadPasswordPolicy(): Promise<PasswordPolicy> {
-  if (cachedPolicy) return cachedPolicy;
+  const cached = cache.get(CACHE_KEY);
+  if (cached) return cached;
 
   const base = { ...DEFAULT_POLICY };
 
@@ -56,11 +60,16 @@ export async function loadPasswordPolicy(): Promise<PasswordPolicy> {
     // DB unavailable — use defaults
   }
 
-  cachedPolicy = base;
+  cache.set(CACHE_KEY, base);
   return base;
 }
 
-/** Reset cached policy. For tests only. */
+/** Invalidate the cached policy so the next call re-queries the DB. */
+export function invalidatePasswordPolicy(): void {
+  cache.invalidate(CACHE_KEY);
+}
+
+/** @deprecated Use `invalidatePasswordPolicy()` instead. Kept for test compatibility. */
 export function resetPasswordPolicyCache(): void {
-  cachedPolicy = null;
+  cache.invalidate(CACHE_KEY);
 }

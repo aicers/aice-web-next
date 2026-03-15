@@ -2,7 +2,6 @@ import "server-only";
 
 import { cookies } from "next/headers";
 
-import { TOKEN_EXPIRATION_SECONDS } from "./constants";
 import { setAccessTokenCookie, setTokenExpCookie } from "./cookies";
 import {
   CSRF_COOKIE_NAME,
@@ -11,6 +10,7 @@ import {
 } from "./csrf";
 import type { AuthSession } from "./jwt";
 import { issueAccessToken } from "./jwt";
+import { loadJwtPolicy } from "./jwt-policy";
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -52,6 +52,9 @@ export async function reissueAuthCookies(
   const csrfSecret = process.env.CSRF_SECRET;
   if (!csrfSecret) return false;
 
+  const jwtPolicy = await loadJwtPolicy();
+  const maxAge = jwtPolicy.accessTokenExpirationMinutes * 60;
+
   // Issue new JWT
   const newToken = await issueAccessToken({
     accountId: session.accountId,
@@ -67,15 +70,15 @@ export async function reissueAuthCookies(
   );
 
   // Set JWT cookie
-  const tokenExp = Math.floor(Date.now() / 1000) + TOKEN_EXPIRATION_SECONDS;
-  await setAccessTokenCookie(newToken, TOKEN_EXPIRATION_SECONDS);
-  await setTokenExpCookie(tokenExp, TOKEN_EXPIRATION_SECONDS);
+  const tokenExp = Math.floor(Date.now() / 1000) + maxAge;
+  await setAccessTokenCookie(newToken, maxAge);
+  await setTokenExpCookie(tokenExp, maxAge);
 
   // Set CSRF cookie
   const cookieStore = await cookies();
   cookieStore.set(CSRF_COOKIE_NAME, newCsrfToken, {
     ...CSRF_COOKIE_OPTIONS,
-    maxAge: TOKEN_EXPIRATION_SECONDS,
+    maxAge,
   });
 
   return true;

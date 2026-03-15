@@ -9,6 +9,10 @@ vi.mock("@/lib/db/client", () => ({
   query: vi.fn((...args: unknown[]) => mockPoolQuery(...args)),
 }));
 
+vi.mock("@/lib/auth/jwt-policy", () => ({
+  loadJwtPolicy: vi.fn(async () => ({ accessTokenExpirationMinutes: 15 })),
+}));
+
 const tmpDir = path.join(__dirname, ".tmp-jwt");
 const dataDir = path.join(tmpDir, "data");
 
@@ -84,39 +88,23 @@ describe("jwt", () => {
       expect(header.alg).toBe("ES256");
     });
 
-    it("clamps expiration to min 5 minutes", async () => {
+    it("uses explicit expirationMinutes when provided", async () => {
       const token = await jwt.issueAccessToken({
         accountId: "account-1",
         sessionId: "session-1",
         roles: ["admin"],
         tokenVersion: 0,
-        expirationMinutes: 1,
+        expirationMinutes: 30,
       });
 
       const payload = decodeJwt(token);
       const iat = payload.iat as number;
       const exp = payload.exp as number;
       const diffMinutes = (exp - iat) / 60;
-      expect(diffMinutes).toBeCloseTo(5, 0);
+      expect(diffMinutes).toBeCloseTo(30, 0);
     });
 
-    it("clamps expiration to max 15 minutes", async () => {
-      const token = await jwt.issueAccessToken({
-        accountId: "account-1",
-        sessionId: "session-1",
-        roles: ["admin"],
-        tokenVersion: 0,
-        expirationMinutes: 60,
-      });
-
-      const payload = decodeJwt(token);
-      const iat = payload.iat as number;
-      const exp = payload.exp as number;
-      const diffMinutes = (exp - iat) / 60;
-      expect(diffMinutes).toBeCloseTo(15, 0);
-    });
-
-    it("uses default 15 minute expiration", async () => {
+    it("uses jwt_policy default when expirationMinutes omitted", async () => {
       const token = await jwt.issueAccessToken({
         accountId: "account-1",
         sessionId: "session-1",

@@ -3,9 +3,9 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { auditLog } from "@/lib/audit/logger";
-import { TOKEN_EXPIRATION_SECONDS } from "@/lib/auth/constants";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
+import { loadJwtPolicy } from "@/lib/auth/jwt-policy";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { validatePassword } from "@/lib/auth/password-validator";
 import { reissueAuthCookies } from "@/lib/auth/rotation";
@@ -163,11 +163,12 @@ export const POST = withAuth(
 
     // Keep the in-request session aligned so any post-handler rotation
     // uses the new token_version instead of the stale JWT state.
+    const jwtPolicy = await loadJwtPolicy();
     const now = Math.floor(Date.now() / 1000);
     session.tokenVersion = nextTokenVersion;
     session.mustChangePassword = false;
     session.iat = now;
-    session.exp = now + TOKEN_EXPIRATION_SECONDS;
+    session.exp = now + jwtPolicy.accessTokenExpirationMinutes * 60;
 
     // Step 9: Success
     return NextResponse.json({ success: true });

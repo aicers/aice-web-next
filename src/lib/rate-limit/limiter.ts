@@ -1,5 +1,6 @@
 import "server-only";
 
+import { SettingsCache } from "@/lib/auth/settings-cache";
 import { query } from "@/lib/db/client";
 
 import { InMemoryRateLimitStore } from "./store";
@@ -60,11 +61,13 @@ const DEFAULT_API_CONFIG: ApiRateLimitConfig = {
 
 // ── Config cache ─────────────────────────────────────────────────
 
-let cachedSignInConfig: SignInRateLimitConfig | null = null;
-let cachedApiConfig: ApiRateLimitConfig | null = null;
+const configCache = new SettingsCache<
+  SignInRateLimitConfig | ApiRateLimitConfig
+>();
 
 async function loadSignInConfig(): Promise<SignInRateLimitConfig> {
-  if (cachedSignInConfig) return cachedSignInConfig;
+  const cached = configCache.get("signin_rate_limit");
+  if (cached) return cached as SignInRateLimitConfig;
 
   const base = { ...DEFAULT_SIGNIN_CONFIG };
 
@@ -93,12 +96,13 @@ async function loadSignInConfig(): Promise<SignInRateLimitConfig> {
     // DB unavailable — use defaults
   }
 
-  cachedSignInConfig = base;
+  configCache.set("signin_rate_limit", base);
   return base;
 }
 
 async function loadApiConfig(): Promise<ApiRateLimitConfig> {
-  if (cachedApiConfig) return cachedApiConfig;
+  const cached = configCache.get("api_rate_limit");
+  if (cached) return cached as ApiRateLimitConfig;
 
   const base = { ...DEFAULT_API_CONFIG };
 
@@ -119,7 +123,7 @@ async function loadApiConfig(): Promise<ApiRateLimitConfig> {
     // DB unavailable — use defaults
   }
 
-  cachedApiConfig = base;
+  configCache.set("api_rate_limit", base);
   return base;
 }
 
@@ -245,8 +249,7 @@ export async function checkSensitiveOpRateLimit(
 
 /** Reset cached configs and destroy the store. For tests only. */
 export function resetRateLimiter(): void {
-  cachedSignInConfig = null;
-  cachedApiConfig = null;
+  configCache.invalidateAll();
   if (store) {
     store.destroy();
     store = null;

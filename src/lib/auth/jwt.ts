@@ -6,16 +6,12 @@ import { decodeProtectedHeader, jwtVerify, SignJWT } from "jose";
 import { query } from "@/lib/db/client";
 
 import { getSigningKey, getVerificationKey } from "./jwt-keys";
+import { loadJwtPolicy } from "./jwt-policy";
 
 // ── Constants ───────────────────────────────────────────────────
 
 const JWT_ISSUER = "aice-web-next";
 const JWT_AUDIENCE = "aice-web-next";
-
-import { TOKEN_EXPIRATION_MINUTES } from "./constants";
-
-const MIN_EXPIRATION_MINUTES = 5;
-const MAX_EXPIRATION_MINUTES = 15;
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -67,13 +63,13 @@ export async function issueAccessToken(params: {
 }): Promise<string> {
   const { accountId, sessionId, roles, tokenVersion } = params;
 
-  const expMinutes = Math.max(
-    MIN_EXPIRATION_MINUTES,
-    Math.min(
-      MAX_EXPIRATION_MINUTES,
-      params.expirationMinutes ?? TOKEN_EXPIRATION_MINUTES,
-    ),
-  );
+  let expMinutes: number;
+  if (params.expirationMinutes !== undefined) {
+    expMinutes = params.expirationMinutes;
+  } else {
+    const jwtPolicy = await loadJwtPolicy();
+    expMinutes = jwtPolicy.accessTokenExpirationMinutes;
+  }
 
   const key = getSigningKey();
 

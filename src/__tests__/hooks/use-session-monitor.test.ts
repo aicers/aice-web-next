@@ -15,7 +15,7 @@ vi.stubGlobal("document", {
 
 // ── React hooks mock ─────────────────────────────
 
-let remainingState = 900;
+let remainingState = 181;
 const setRemaining = vi.fn((v: number | ((p: number) => number)) => {
   remainingState = typeof v === "function" ? v(remainingState) : v;
 });
@@ -36,13 +36,16 @@ vi.mock("react", () => {
   return {
     useState: (initial: unknown) => {
       const idx = stateCallIndex++;
+      // Support lazy initializer (function) form
+      const resolved =
+        typeof initial === "function" ? (initial as () => unknown)() : initial;
       if (idx % 2 === 0) {
         // First useState = remainingSeconds
-        remainingState = initial as number;
+        remainingState = resolved as number;
         return [remainingState, setRemaining] as const;
       }
       // Second useState = showDialog
-      showDialogState = initial as boolean;
+      showDialogState = resolved as boolean;
       return [showDialogState, setShowDialog] as const;
     },
     useRef: (initial: unknown) => {
@@ -67,7 +70,7 @@ describe("useSessionMonitor", () => {
 
   beforeEach(() => {
     fakeCookie = "";
-    remainingState = 900;
+    remainingState = 181;
     showDialogState = false;
     refObject.current = null;
     useEffectCallbacks.length = 0;
@@ -91,7 +94,7 @@ describe("useSessionMonitor", () => {
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     const result = useSessionMonitor();
 
-    expect(result.remainingSeconds).toBe(900);
+    expect(result.remainingSeconds).toBe(181);
     expect(result.showDialog).toBe(false);
     expect(typeof result.dismiss).toBe("function");
   });

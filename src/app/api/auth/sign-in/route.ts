@@ -9,7 +9,6 @@ import {
 } from "@/lib/audit/correlation";
 import { auditLog } from "@/lib/audit/logger";
 import { isIpAllowed } from "@/lib/auth/cidr";
-import { TOKEN_EXPIRATION_SECONDS } from "@/lib/auth/constants";
 import { setAccessTokenCookie, setTokenExpCookie } from "@/lib/auth/cookies";
 import {
   CSRF_COOKIE_NAME,
@@ -18,28 +17,13 @@ import {
 } from "@/lib/auth/csrf";
 import { extractClientIp } from "@/lib/auth/ip";
 import { issueAccessToken } from "@/lib/auth/jwt";
+import { loadJwtPolicy } from "@/lib/auth/jwt-policy";
+import { loadLockoutPolicy } from "@/lib/auth/lockout-policy";
 import { verifyPassword } from "@/lib/auth/password";
 import { loadSessionPolicy } from "@/lib/auth/session-policy";
 import { extractBrowserFingerprint } from "@/lib/auth/ua-parser";
 import { query } from "@/lib/db/client";
 import { checkSignInRateLimit } from "@/lib/rate-limit/limiter";
-
-// ── Lockout defaults (matching migration 0007) ─────────────────
-
-interface LockoutPolicy {
-  stage1Threshold: number;
-  stage1DurationMinutes: number;
-}
-
-const DEFAULT_LOCKOUT: LockoutPolicy = {
-  stage1Threshold: 5,
-  stage1DurationMinutes: 30,
-};
-
-interface LockoutPolicyRow {
-  stage1_threshold: number;
-  stage1_duration_minutes: number;
-}
 
 // ── Account row type ────────────────────────────────────────────
 
@@ -59,26 +43,6 @@ interface AccountRow {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
-
-async function loadLockoutPolicy(): Promise<LockoutPolicy> {
-  try {
-    const result = await query<{ value: LockoutPolicyRow }>(
-      "SELECT value FROM system_settings WHERE key = $1",
-      ["lockout_policy"],
-    );
-    if (result.rows.length > 0) {
-      const db = result.rows[0].value;
-      return {
-        stage1Threshold: db.stage1_threshold ?? DEFAULT_LOCKOUT.stage1Threshold,
-        stage1DurationMinutes:
-          db.stage1_duration_minutes ?? DEFAULT_LOCKOUT.stage1DurationMinutes,
-      };
-    }
-  } catch {
-    // DB unavailable — use defaults
-  }
-  return { ...DEFAULT_LOCKOUT };
-}
 
 /**
  * Validate account lockout and status. Auto-unlocks expired temporary locks.
@@ -286,14 +250,18 @@ async function createSessionAndIssueTokens(params: {
   }
   const { token: csrfToken } = generateCsrfToken(sessionId, csrfSecret);
 
+  // Read JWT policy for cookie maxAge
+  const jwtPolicy = await loadJwtPolicy();
+  const maxAge = jwtPolicy.accessTokenExpirationMinutes * 60;
+
   // Set cookies
-  const tokenExp = Math.floor(Date.now() / 1000) + TOKEN_EXPIRATION_SECONDS;
-  await setAccessTokenCookie(jwt, TOKEN_EXPIRATION_SECONDS);
-  await setTokenExpCookie(tokenExp, TOKEN_EXPIRATION_SECONDS);
+  const tokenExp = Math.floor(Date.now() / 1000) + maxAge;
+  await setAccessTokenCookie(jwt, maxAge);
+  await setTokenExpCookie(tokenExp, maxAge);
   const cookieStore = await cookies();
   cookieStore.set(CSRF_COOKIE_NAME, csrfToken, {
     ...CSRF_COOKIE_OPTIONS,
-    maxAge: TOKEN_EXPIRATION_SECONDS,
+    maxAge,
   });
 
   // Set NEXT_LOCALE cookie for next-intl locale negotiation
