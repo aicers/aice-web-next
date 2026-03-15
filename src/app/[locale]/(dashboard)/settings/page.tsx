@@ -10,6 +10,9 @@ export default async function SettingsPage() {
     if (await hasPermission(session.roles, "accounts:read")) {
       redirect("/settings/accounts");
     }
+    if (await hasPermission(session.roles, "roles:read")) {
+      redirect("/settings/roles");
+    }
     if (await hasPermission(session.roles, "customers:read")) {
       redirect("/settings/customers");
     }
