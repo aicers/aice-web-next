@@ -51,7 +51,8 @@
     "accounts": "계정",
     "roles": "역할",
     "profile": "프로필",
-    "customers": "고객"
+    "customers": "고객",
+    "system": "시스템"
   },
   "validation": {
     "required": "{field}은(는) 필수입니다",
@@ -109,12 +110,18 @@
       "customer_update": "고객 수정",
       "customer_delete": "고객 삭제",
       "customer_assign": "고객 할당",
-      "customer_unassign": "고객 할당 해제"
+      "customer_unassign": "고객 할당 해제",
+      "system_settings_update": "설정 변경",
+      "role_create": "역할 생성",
+      "role_update": "역할 수정",
+      "role_delete": "역할 삭제"
     },
     "targetTypes": {
       "account": "계정",
       "session": "세션",
-      "customer": "고객"
+      "customer": "고객",
+      "system_settings": "시스템 설정",
+      "role": "역할"
     }
   },
   "customers": {
@@ -180,6 +187,86 @@
     "saved": "환경설정이 저장되었습니다",
     "saving": "저장 중...",
     "save": "저장"
+  },
+  "systemSettings": {
+    "title": "시스템 설정",
+    "readOnlyNotice": "이 설정을 수정할 권한이 없습니다.",
+    "saved": "설정이 업데이트되었습니다.",
+    "saving": "저장 중...",
+    "error": "설정 업데이트에 실패했습니다.",
+    "tabs": {
+      "password": "비밀번호",
+      "session": "세션",
+      "lockout": "잠금",
+      "jwt": "JWT",
+      "mfa": "MFA",
+      "rateLimits": "속도 제한"
+    },
+    "passwordPolicy": {
+      "title": "비밀번호 정책",
+      "description": "모든 계정의 비밀번호 요구사항을 설정합니다.",
+      "minLength": "최소 길이",
+      "minLengthDescription": "최소 문자 수 (8–128)",
+      "maxLength": "최대 길이",
+      "maxLengthDescription": "최대 문자 수 (최대 256)",
+      "complexityEnabled": "복잡성 요구",
+      "complexityEnabledDescription": "대문자, 소문자, 숫자, 특수문자 필수",
+      "reuseBanCount": "비밀번호 이력",
+      "reuseBanCountDescription": "재사용할 수 없는 이전 비밀번호 수 (0–24)"
+    },
+    "sessionPolicy": {
+      "title": "세션 정책",
+      "description": "세션 시간 초과 및 제한을 설정합니다.",
+      "idleTimeoutMinutes": "유휴 시간 초과 (분)",
+      "idleTimeoutMinutesDescription": "세션이 만료되기 전 비활성 시간 (1–1440)",
+      "absoluteTimeoutHours": "절대 시간 초과 (시간)",
+      "absoluteTimeoutHoursDescription": "활동 여부와 관계없이 최대 세션 지속 시간 (1–720)",
+      "maxSessions": "최대 세션 수",
+      "maxSessionsDescription": "계정당 최대 동시 세션 수 (비워두면 무제한)"
+    },
+    "lockoutPolicy": {
+      "title": "잠금 정책",
+      "description": "로그인 실패 시 계정 잠금을 설정합니다.",
+      "stage1Threshold": "실패 시도 임계값",
+      "stage1ThresholdDescription": "잠금 전 실패 시도 횟수 (1–100)",
+      "stage1DurationMinutes": "잠금 기간 (분)",
+      "stage1DurationMinutesDescription": "계정 잠금 기간 (1–1440)"
+    },
+    "jwtPolicy": {
+      "title": "JWT 정책",
+      "description": "JSON Web Token 설정을 구성합니다.",
+      "accessTokenExpirationMinutes": "액세스 토큰 만료 (분)",
+      "accessTokenExpirationMinutesDescription": "재인증이 필요하기 전 토큰 수명 (1–60)"
+    },
+    "mfaPolicy": {
+      "title": "MFA 정책",
+      "description": "다단계 인증 방법을 설정합니다.",
+      "allowedMethods": "허용된 방법",
+      "webauthn": "WebAuthn (패스키)",
+      "totp": "TOTP (인증 앱)"
+    },
+    "rateLimits": {
+      "title": "속도 제한",
+      "description": "로그인 및 API 요청의 속도 제한을 설정합니다.",
+      "signInTitle": "로그인 속도 제한",
+      "apiTitle": "API 속도 제한",
+      "perIpCount": "IP당 제한",
+      "perIpCountDescription": "IP 주소당 최대 로그인 시도 횟수",
+      "perIpWindowMinutes": "IP당 기간 (분)",
+      "perIpWindowMinutesDescription": "IP당 제한 시간 범위",
+      "perAccountIpCount": "계정+IP당 제한",
+      "perAccountIpCountDescription": "계정+IP 조합당 최대 시도 횟수",
+      "perAccountIpWindowMinutes": "계정+IP당 기간 (분)",
+      "perAccountIpWindowMinutesDescription": "계정+IP당 제한 시간 범위",
+      "globalCount": "전체 제한",
+      "globalCountDescription": "전체 최대 로그인 시도 횟수",
+      "globalWindowMinutes": "전체 기간 (분)",
+      "globalWindowMinutesDescription": "전체 제한 시간 범위",
+      "perUserCount": "사용자당 제한",
+      "perUserCountDescription": "사용자당 최대 API 요청 수",
+      "perUserWindowMinutes": "사용자당 기간 (분)",
+      "perUserWindowMinutesDescription": "사용자당 제한 시간 범위"
+    }
   },
   "changePassword": {
     "heading": "비밀번호 변경",

@@ -51,7 +51,8 @@
     "accounts": "Accounts",
     "roles": "Roles",
     "profile": "Profile",
-    "customers": "Customers"
+    "customers": "Customers",
+    "system": "System"
   },
   "validation": {
     "required": "{field} is required",
@@ -109,12 +110,18 @@
       "customer_update": "Customer update",
       "customer_delete": "Customer delete",
       "customer_assign": "Customer assign",
-      "customer_unassign": "Customer unassign"
+      "customer_unassign": "Customer unassign",
+      "system_settings_update": "Settings update",
+      "role_create": "Role create",
+      "role_update": "Role update",
+      "role_delete": "Role delete"
     },
     "targetTypes": {
       "account": "Account",
       "session": "Session",
-      "customer": "Customer"
+      "customer": "Customer",
+      "system_settings": "System Settings",
+      "role": "Role"
     }
   },
   "customers": {
@@ -180,6 +187,86 @@
     "saved": "Preferences saved",
     "saving": "Saving...",
     "save": "Save"
+  },
+  "systemSettings": {
+    "title": "System Settings",
+    "readOnlyNotice": "You do not have permission to modify these settings.",
+    "saved": "Setting updated successfully.",
+    "saving": "Saving...",
+    "error": "Failed to update setting.",
+    "tabs": {
+      "password": "Password",
+      "session": "Session",
+      "lockout": "Lockout",
+      "jwt": "JWT",
+      "mfa": "MFA",
+      "rateLimits": "Rate Limits"
+    },
+    "passwordPolicy": {
+      "title": "Password Policy",
+      "description": "Configure password requirements for all accounts.",
+      "minLength": "Minimum Length",
+      "minLengthDescription": "Minimum number of characters (8–128)",
+      "maxLength": "Maximum Length",
+      "maxLengthDescription": "Maximum number of characters (up to 256)",
+      "complexityEnabled": "Require Complexity",
+      "complexityEnabledDescription": "Require uppercase, lowercase, digit, and special character",
+      "reuseBanCount": "Password History",
+      "reuseBanCountDescription": "Number of previous passwords that cannot be reused (0–24)"
+    },
+    "sessionPolicy": {
+      "title": "Session Policy",
+      "description": "Control session timeouts and limits.",
+      "idleTimeoutMinutes": "Idle Timeout (minutes)",
+      "idleTimeoutMinutesDescription": "Minutes of inactivity before session expires (1–1440)",
+      "absoluteTimeoutHours": "Absolute Timeout (hours)",
+      "absoluteTimeoutHoursDescription": "Maximum session duration regardless of activity (1–720)",
+      "maxSessions": "Max Sessions",
+      "maxSessionsDescription": "Maximum concurrent sessions per account (leave empty for unlimited)"
+    },
+    "lockoutPolicy": {
+      "title": "Lockout Policy",
+      "description": "Configure account lockout after failed sign-in attempts.",
+      "stage1Threshold": "Failed Attempt Threshold",
+      "stage1ThresholdDescription": "Number of failed attempts before lockout (1–100)",
+      "stage1DurationMinutes": "Lockout Duration (minutes)",
+      "stage1DurationMinutesDescription": "Duration of account lockout (1–1440)"
+    },
+    "jwtPolicy": {
+      "title": "JWT Policy",
+      "description": "Configure JSON Web Token settings.",
+      "accessTokenExpirationMinutes": "Access Token Expiration (minutes)",
+      "accessTokenExpirationMinutesDescription": "Token lifetime before re-authentication is required (1–60)"
+    },
+    "mfaPolicy": {
+      "title": "MFA Policy",
+      "description": "Configure multi-factor authentication methods.",
+      "allowedMethods": "Allowed Methods",
+      "webauthn": "WebAuthn (passkeys)",
+      "totp": "TOTP (authenticator app)"
+    },
+    "rateLimits": {
+      "title": "Rate Limits",
+      "description": "Configure rate limiting for sign-in and API requests.",
+      "signInTitle": "Sign-in Rate Limits",
+      "apiTitle": "API Rate Limits",
+      "perIpCount": "Per-IP Limit",
+      "perIpCountDescription": "Max sign-in attempts per IP address",
+      "perIpWindowMinutes": "Per-IP Window (minutes)",
+      "perIpWindowMinutesDescription": "Time window for per-IP limit",
+      "perAccountIpCount": "Per-Account-IP Limit",
+      "perAccountIpCountDescription": "Max attempts per account+IP combination",
+      "perAccountIpWindowMinutes": "Per-Account-IP Window (minutes)",
+      "perAccountIpWindowMinutesDescription": "Time window for per-account-IP limit",
+      "globalCount": "Global Limit",
+      "globalCountDescription": "Max sign-in attempts globally",
+      "globalWindowMinutes": "Global Window (minutes)",
+      "globalWindowMinutesDescription": "Time window for global limit",
+      "perUserCount": "Per-User Limit",
+      "perUserCountDescription": "Max API requests per user",
+      "perUserWindowMinutes": "Per-User Window (minutes)",
+      "perUserWindowMinutesDescription": "Time window for per-user limit"
+    }
   },
   "changePassword": {
     "heading": "Change Password",

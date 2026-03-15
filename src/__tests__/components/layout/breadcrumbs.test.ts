@@ -92,7 +92,7 @@ describe("NAV_SEGMENTS", () => {
 
 describe("SETTINGS_SEGMENTS", () => {
   it("contains all expected settings keys", () => {
-    const expected = ["accounts", "roles", "profile", "customers"];
+    const expected = ["accounts", "roles", "profile", "customers", "system"];
     for (const key of expected) {
       expect(SETTINGS_SEGMENTS.has(key)).toBe(true);
     }
