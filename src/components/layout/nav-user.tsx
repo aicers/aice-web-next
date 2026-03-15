@@ -42,7 +42,7 @@ export function NavUser({ username, collapsed = false }: NavUserProps) {
   const trigger = (
     <DropdownMenuTrigger
       className={cn(
-        "flex w-full items-center gap-3 rounded-lg bg-sidebar-account p-3 text-sm font-medium text-sidebar-foreground transition-colors",
+        "flex w-full items-center gap-3 rounded-lg bg-[var(--sidebar-account-bg)] p-3 text-sm font-medium text-[var(--sidebar-fg)] transition-colors",
         "hover:brightness-125",
         collapsed && "justify-center rounded-full bg-transparent p-0",
       )}

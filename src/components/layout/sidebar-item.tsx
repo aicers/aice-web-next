@@ -30,14 +30,14 @@ export function SidebarItem({
       className={cn(
         "group relative flex h-12 items-center gap-3 px-4 text-base font-medium transition-colors",
         active
-          ? "text-sidebar-foreground"
-          : "text-sidebar-muted hover:text-sidebar-foreground",
+          ? "text-[var(--sidebar-fg)]"
+          : "text-[var(--sidebar-muted)] hover:text-[var(--sidebar-fg)]",
         collapsed && "justify-center px-0",
       )}
     >
       {/* Active indicator — blue left border bar */}
       {active && (
-        <span className="absolute top-0 left-0 h-full w-1 rounded-r-lg bg-sidebar-active" />
+        <span className="absolute top-0 left-0 h-full w-1 rounded-r-lg bg-[var(--sidebar-active)]" />
       )}
       {/* Active glow — radial gradient from left */}
       {active && (

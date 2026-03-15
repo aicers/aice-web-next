@@ -38,6 +38,14 @@
   --btn-primary-bg-disabled: #c5e4f7;
   --danger: #db1d03;
   --neutral-40: #7c8492;
+
+  /* Sidebar — light variant (Figma NavBar page) */
+  --sidebar-bg: #ffffff;
+  --sidebar-fg: #212428;
+  --sidebar-muted: #7c8492;
+  --sidebar-active: #156ef2;
+  --sidebar-account-bg: #f5f6f7;
+  --sidebar-border: rgba(97, 105, 116, 0.16);
 }
 
 [data-theme="gray-dark"] {
@@ -50,6 +58,14 @@
   --danger: #fb2c10;
   --neutral-30: #8e97a5;
   --neutral-40: #7c8492;
+
+  /* Sidebar — dark variant (Figma Home page) */
+  --sidebar-bg: #212428;
+  --sidebar-fg: #fafafa;
+  --sidebar-muted: #7c8492;
+  --sidebar-active: #156ef2;
+  --sidebar-account-bg: #2f333a;
+  --sidebar-border: rgba(97, 105, 116, 0.24);
 }
 
 @theme inline {
@@ -76,13 +92,6 @@
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
-  /* Sidebar — always dark regardless of theme */
-  --color-sidebar: #212428;
-  --color-sidebar-foreground: #fafafa;
-  --color-sidebar-muted: #7c8492;
-  --color-sidebar-active: #156ef2;
-  --color-sidebar-account: #2f333a;
-  --color-sidebar-divider: rgba(97, 105, 116, 0.24);
   --breakpoint-desktop: 1280px;
   --breakpoint-wide: 2000px;
 }

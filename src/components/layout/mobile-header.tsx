@@ -54,12 +54,12 @@ export function MobileHeader({
 
   return (
     <>
-      <header className="flex h-14 items-center border-b bg-sidebar px-4 desktop:hidden">
+      <header className="flex h-14 items-center border-b bg-[var(--sidebar-bg)] px-4 desktop:hidden">
         <Button
           variant="ghost"
           size="icon"
           onClick={() => onOpenChange(true)}
-          className="text-sidebar-foreground hover:bg-sidebar-divider"
+          className="text-[var(--sidebar-fg)] hover:bg-[var(--sidebar-border)]"
         >
           <Menu className="h-5 w-5" />
           <span className="sr-only">Open menu</span>
@@ -70,17 +70,17 @@ export function MobileHeader({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
           side="left"
-          className="w-64 border-none bg-sidebar p-0 text-sidebar-foreground"
+          className="w-64 border-none bg-[var(--sidebar-bg)] p-0 text-[var(--sidebar-fg)]"
         >
           <SheetHeader className="px-5 pt-6">
-            <SheetTitle className="text-sidebar-foreground">
+            <SheetTitle className="text-[var(--sidebar-fg)]">
               <Logo />
             </SheetTitle>
           </SheetHeader>
 
           {/* Divider */}
           <div className="px-4 pt-6">
-            <div className="h-px bg-sidebar-divider" />
+            <div className="h-px bg-[var(--sidebar-border)]" />
           </div>
 
           <TooltipProvider>
@@ -97,7 +97,7 @@ export function MobileHeader({
             </nav>
             <div className="space-y-4 p-4">
               <div className="px-0">
-                <ThemeToggle className="text-sidebar-muted hover:bg-sidebar-divider hover:text-sidebar-foreground" />
+                <ThemeToggle className="text-[var(--sidebar-muted)] hover:bg-[var(--sidebar-border)] hover:text-[var(--sidebar-fg)]" />
               </div>
               <NavUser username={username} />
             </div>

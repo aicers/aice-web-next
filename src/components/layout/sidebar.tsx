@@ -47,7 +47,7 @@ export function Sidebar({ collapsed, onToggle, username }: SidebarProps) {
     <TooltipProvider>
       <aside
         className={cn(
-          "flex h-full flex-col bg-sidebar transition-[width] duration-200",
+          "flex h-full flex-col bg-[var(--sidebar-bg)] transition-[width] duration-200",
           collapsed ? "w-16" : "w-64",
         )}
       >
@@ -63,7 +63,7 @@ export function Sidebar({ collapsed, onToggle, username }: SidebarProps) {
 
         {/* Divider */}
         <div className={cn("px-4 pt-6", collapsed && "px-2")}>
-          <div className="h-px bg-sidebar-divider" />
+          <div className="h-px bg-[var(--sidebar-border)]" />
         </div>
 
         {/* Navigation */}
@@ -85,7 +85,7 @@ export function Sidebar({ collapsed, onToggle, username }: SidebarProps) {
           <button
             type="button"
             onClick={onToggle}
-            className="flex size-8 items-center justify-center rounded-lg bg-sidebar-divider text-sidebar-muted transition-colors hover:text-sidebar-foreground"
+            className="flex size-8 items-center justify-center rounded-lg bg-[var(--sidebar-border)] text-[var(--sidebar-muted)] transition-colors hover:text-[var(--sidebar-fg)]"
           >
             {collapsed ? (
               <ArrowRight className="size-4" />
@@ -95,7 +95,7 @@ export function Sidebar({ collapsed, onToggle, username }: SidebarProps) {
             <span className="sr-only">Toggle sidebar</span>
           </button>
           <div className={cn("flex", collapsed ? "justify-center" : "px-0")}>
-            <ThemeToggle className="text-sidebar-muted hover:bg-sidebar-divider hover:text-sidebar-foreground" />
+            <ThemeToggle className="text-[var(--sidebar-muted)] hover:bg-[var(--sidebar-account-bg)] hover:text-[var(--sidebar-fg)]" />
           </div>
           <NavUser username={username} collapsed={collapsed} />
         </div>

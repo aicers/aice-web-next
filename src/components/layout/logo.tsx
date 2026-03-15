@@ -5,10 +5,12 @@ import { cn } from "@/lib/utils";
 interface LogoProps {
   /** Show only the icon (no text). Used in collapsed sidebar. */
   collapsed?: boolean;
+  /** Force a specific variant instead of auto-detecting from theme. */
+  variant?: "light" | "dark";
   className?: string;
 }
 
-export function Logo({ collapsed = false, className }: LogoProps) {
+export function Logo({ collapsed = false, variant, className }: LogoProps) {
   if (collapsed) {
     return (
       <Image
@@ -17,6 +19,32 @@ export function Logo({ collapsed = false, className }: LogoProps) {
         width={26}
         height={28}
         className={cn("shrink-0", className)}
+      />
+    );
+  }
+
+  if (variant === "dark") {
+    return (
+      <Image
+        src="/logo-dark.svg"
+        alt="Clumit Security"
+        width={204}
+        height={28}
+        className={cn("h-7 w-auto", className)}
+        priority
+      />
+    );
+  }
+
+  if (variant === "light") {
+    return (
+      <Image
+        src="/logo.svg"
+        alt="Clumit Security"
+        width={204}
+        height={28}
+        className={cn("h-7 w-auto", className)}
+        priority
       />
     );
   }
