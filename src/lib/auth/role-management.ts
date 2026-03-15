@@ -1,6 +1,6 @@
 import "server-only";
 
-import { query } from "@/lib/db/client";
+import { query, withTransaction } from "@/lib/db/client";
 
 import { invalidatePermissionCache, VALID_PERMISSIONS } from "./permissions";
 
@@ -54,8 +54,29 @@ function validateRoleInput(
 
 // ── Public API ─────────────────────────────────────────────────
 
+export interface RoleSummary {
+  id: number;
+  name: string;
+  description: string | null;
+  is_builtin: boolean;
+}
+
 /**
- * List all roles with their permission counts and account counts.
+ * List all roles with minimal fields (id, name, description, is_builtin).
+ * Safe for any authenticated user — used by account creation forms.
+ */
+export async function getRoles(): Promise<RoleSummary[]> {
+  const { rows } = await query<RoleSummary>(
+    `SELECT id, name, description, is_builtin
+     FROM roles
+     ORDER BY is_builtin DESC, name`,
+  );
+  return rows;
+}
+
+/**
+ * List all roles with their full permissions and account counts.
+ * Should only be exposed to users with `roles:read`.
  */
 export async function getRolesWithDetails(): Promise<RoleWithPermissions[]> {
   const { rows } = await query<
@@ -129,24 +150,28 @@ export async function createRole(
     return { valid: false, errors: ["A role with this name already exists"] };
   }
 
-  // Insert role
-  const { rows } = await query<RoleRow>(
-    `INSERT INTO roles (name, description)
-     VALUES ($1, $2)
-     RETURNING id, name, description, is_builtin, created_at, updated_at`,
-    [name.trim(), description?.trim() || null],
-  );
-
-  const role = rows[0];
-
-  // Insert permissions
-  if (permissions.length > 0) {
-    const values = permissions.map((_, i) => `($1, $${i + 2})`).join(", ");
-    await query(
-      `INSERT INTO role_permissions (role_id, permission) VALUES ${values}`,
-      [role.id, ...permissions],
+  const role = await withTransaction(async (client) => {
+    // Insert role
+    const { rows } = await client.query<RoleRow>(
+      `INSERT INTO roles (name, description)
+       VALUES ($1, $2)
+       RETURNING id, name, description, is_builtin, created_at, updated_at`,
+      [name.trim(), description?.trim() || null],
     );
-  }
+
+    const created = rows[0];
+
+    // Insert permissions
+    if (permissions.length > 0) {
+      const values = permissions.map((_, i) => `($1, $${i + 2})`).join(", ");
+      await client.query(
+        `INSERT INTO role_permissions (role_id, permission) VALUES ${values}`,
+        [created.id, ...permissions],
+      );
+    }
+
+    return created;
+  });
 
   invalidatePermissionCache();
 
@@ -186,24 +211,28 @@ export async function updateRole(
     return { valid: false, errors: ["A role with this name already exists"] };
   }
 
-  // Update role
-  const { rows } = await query<RoleRow>(
-    `UPDATE roles SET name = $1, description = $2, updated_at = NOW()
-     WHERE id = $3
-     RETURNING id, name, description, is_builtin, created_at, updated_at`,
-    [name.trim(), description?.trim() || null, id],
-  );
-
-  // Replace permissions: delete all, then insert new
-  await query("DELETE FROM role_permissions WHERE role_id = $1", [id]);
-
-  if (permissions.length > 0) {
-    const values = permissions.map((_, i) => `($1, $${i + 2})`).join(", ");
-    await query(
-      `INSERT INTO role_permissions (role_id, permission) VALUES ${values}`,
-      [id, ...permissions],
+  const updated = await withTransaction(async (client) => {
+    // Update role
+    const { rows } = await client.query<RoleRow>(
+      `UPDATE roles SET name = $1, description = $2, updated_at = NOW()
+       WHERE id = $3
+       RETURNING id, name, description, is_builtin, created_at, updated_at`,
+      [name.trim(), description?.trim() || null, id],
     );
-  }
+
+    // Replace permissions: delete all, then insert new
+    await client.query("DELETE FROM role_permissions WHERE role_id = $1", [id]);
+
+    if (permissions.length > 0) {
+      const values = permissions.map((_, i) => `($1, $${i + 2})`).join(", ");
+      await client.query(
+        `INSERT INTO role_permissions (role_id, permission) VALUES ${values}`,
+        [id, ...permissions],
+      );
+    }
+
+    return rows[0];
+  });
 
   invalidatePermissionCache(existing.name);
   // Also invalidate new name in case it changed
@@ -214,7 +243,7 @@ export async function updateRole(
   return {
     valid: true,
     data: {
-      ...rows[0],
+      ...updated,
       permissions,
       account_count: existing.account_count,
     },

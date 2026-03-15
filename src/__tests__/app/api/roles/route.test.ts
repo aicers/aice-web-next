@@ -13,6 +13,7 @@ interface WithAuthOptions {
   requiredPermissions?: string[];
 }
 
+const mockGetRoles = vi.hoisted(() => vi.fn());
 const mockGetRolesWithDetails = vi.hoisted(() => vi.fn());
 const mockCreateRole = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
@@ -39,6 +40,7 @@ vi.mock("@/lib/auth/permissions", () => ({
 }));
 
 vi.mock("@/lib/auth/role-management", () => ({
+  getRoles: mockGetRoles,
   getRolesWithDetails: mockGetRolesWithDetails,
   createRole: mockCreateRole,
 }));
@@ -75,18 +77,19 @@ function makeContext() {
 
 describe("GET /api/roles", () => {
   beforeEach(() => {
+    mockGetRoles.mockReset();
     mockGetRolesWithDetails.mockReset();
     mockHasPermission.mockReset().mockResolvedValue(true);
     currentSession = adminSession;
   });
 
-  it("returns all roles", async () => {
+  it("returns detailed roles when user has roles:read", async () => {
     const roles = [
       {
         id: 1,
         name: "System Administrator",
         is_builtin: true,
-        permissions: [],
+        permissions: ["accounts:read"],
         account_count: 2,
       },
     ];
@@ -101,6 +104,39 @@ describe("GET /api/roles", () => {
 
     expect(response.status).toBe(200);
     expect(body.data).toHaveLength(1);
+    expect(body.data[0].permissions).toEqual(["accounts:read"]);
+    expect(body.data[0].account_count).toBe(2);
+    expect(mockGetRolesWithDetails).toHaveBeenCalledOnce();
+    expect(mockGetRoles).not.toHaveBeenCalled();
+  });
+
+  it("returns minimal roles when user lacks roles:read", async () => {
+    // hasPermission returns false for roles:read
+    mockHasPermission.mockResolvedValue(false);
+    const roles = [
+      {
+        id: 1,
+        name: "System Administrator",
+        description: "Full access",
+        is_builtin: true,
+      },
+    ];
+    mockGetRoles.mockResolvedValueOnce(roles);
+
+    const { GET } = await import("@/app/api/roles/route");
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/roles"),
+      makeContext(),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0].name).toBe("System Administrator");
+    expect(body.data[0]).not.toHaveProperty("permissions");
+    expect(body.data[0]).not.toHaveProperty("account_count");
+    expect(mockGetRoles).toHaveBeenCalledOnce();
+    expect(mockGetRolesWithDetails).not.toHaveBeenCalled();
   });
 });
 

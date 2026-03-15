@@ -476,9 +476,14 @@ test.describe("Role management", () => {
       const cookies = await page.context().cookies();
       const csrfCookie = cookies.find((c) => c.name === "csrf");
 
-      // GET /api/roles is open (needed for account forms), but POST requires roles:write
+      // GET /api/roles returns minimal data without roles:read
       const getRes = await page.request.get("/api/roles");
       expect(getRes.status()).toBe(200);
+      const getBody = await getRes.json();
+      // Should have role names but NOT permissions array or account_count
+      expect(getBody.data[0]).toHaveProperty("name");
+      expect(getBody.data[0]).not.toHaveProperty("permissions");
+      expect(getBody.data[0]).not.toHaveProperty("account_count");
 
       const postRes = await page.request.post("/api/roles", {
         data: { name: "hacked", permissions: [] },

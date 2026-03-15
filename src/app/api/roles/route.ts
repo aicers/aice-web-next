@@ -5,16 +5,31 @@ import { NextResponse } from "next/server";
 import { auditLog } from "@/lib/audit/logger";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
-import { createRole, getRolesWithDetails } from "@/lib/auth/role-management";
+import { hasPermission } from "@/lib/auth/permissions";
+import {
+  createRole,
+  getRoles,
+  getRolesWithDetails,
+} from "@/lib/auth/role-management";
 
 /**
  * GET /api/roles
  *
- * List all roles with details. No special permission required beyond
- * being authenticated — needed for account creation forms.
+ * Without `roles:read`: returns minimal fields (id, name, description,
+ * is_builtin) — safe for any authenticated user (e.g. account forms).
+ *
+ * With `roles:read`: returns full permission arrays and account counts
+ * for the role management UI.
  */
-export const GET = withAuth(async () => {
-  const roles = await getRolesWithDetails();
+export const GET = withAuth(async (_request, _context, session) => {
+  const canReadDetails = await hasPermission(session.roles, "roles:read");
+
+  if (canReadDetails) {
+    const roles = await getRolesWithDetails();
+    return NextResponse.json({ data: roles });
+  }
+
+  const roles = await getRoles();
   return NextResponse.json({ data: roles });
 });
 

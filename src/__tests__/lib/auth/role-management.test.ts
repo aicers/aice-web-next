@@ -2,13 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+const mockQuery = vi.hoisted(() => vi.fn());
+const mockWithTransaction = vi.hoisted(() => vi.fn());
+
 vi.mock("@/lib/db/client", () => ({
-  query: vi.fn(),
+  query: mockQuery,
+  withTransaction: mockWithTransaction,
 }));
 
-import { query } from "@/lib/db/client";
-
-const queryMock = vi.mocked(query);
+/**
+ * Create a fake PoolClient that delegates to the shared mockQuery.
+ * This lets us verify that transactional writes use `client.query()`
+ * while keeping the mock assertions simple.
+ */
+function makeFakeClient() {
+  return { query: mockQuery };
+}
 
 describe("role-management", () => {
   let mod: typeof import("@/lib/auth/role-management");
@@ -16,14 +25,44 @@ describe("role-management", () => {
   beforeEach(async () => {
     vi.resetModules();
     mod = await import("@/lib/auth/role-management");
-    queryMock.mockClear();
+    mockQuery.mockClear();
+    mockWithTransaction.mockClear();
+    // Default: withTransaction executes the callback with a fake client
+    mockWithTransaction.mockImplementation(
+      async (fn: (...args: never[]) => unknown) => fn(makeFakeClient()),
+    );
+  });
+
+  // ── getRoles ──────────────────────────────────────────────────
+
+  describe("getRoles", () => {
+    it("returns minimal role list", async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            name: "System Administrator",
+            description: "Full access",
+            is_builtin: true,
+          },
+        ],
+        rowCount: 1,
+      });
+
+      const result = await mod.getRoles();
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("System Administrator");
+      // Minimal: no permissions or account_count
+      expect(result[0]).not.toHaveProperty("permissions");
+      expect(result[0]).not.toHaveProperty("account_count");
+    });
   });
 
   // ── getRolesWithDetails ─────────────────────────────────────
 
   describe("getRolesWithDetails", () => {
     it("returns all roles with details", async () => {
-      queryMock.mockResolvedValueOnce({
+      mockQuery.mockResolvedValueOnce({
         rows: [
           {
             id: 1,
@@ -54,14 +93,14 @@ describe("role-management", () => {
 
   describe("getRoleWithPermissions", () => {
     it("returns null for non-existent role", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
       const result = await mod.getRoleWithPermissions(999);
       expect(result).toBeNull();
     });
 
     it("returns role with permissions", async () => {
-      queryMock.mockResolvedValueOnce({
+      mockQuery.mockResolvedValueOnce({
         rows: [
           {
             id: 1,
@@ -99,32 +138,32 @@ describe("role-management", () => {
     });
 
     it("rejects duplicate name", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 });
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 });
 
       const result = await mod.createRole("Existing Role", null, []);
       expect(result.valid).toBe(false);
       expect(result.errors?.[0]).toMatch(/already exists/);
     });
 
-    it("creates role with permissions", async () => {
-      // Check duplicate name
-      queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
-      // Insert role
-      queryMock.mockResolvedValueOnce({
-        rows: [
-          {
-            id: 10,
-            name: "New Role",
-            description: "Test",
-            is_builtin: false,
-            created_at: "2025-01-01",
-            updated_at: "2025-01-01",
-          },
-        ],
-        rowCount: 1,
-      });
-      // Insert permissions
-      queryMock.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    it("creates role with permissions inside a transaction", async () => {
+      // Check duplicate name (outside transaction)
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      // Inside transaction: insert role, then insert permissions
+      mockQuery
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 10,
+              name: "New Role",
+              description: "Test",
+              is_builtin: false,
+              created_at: "2025-01-01",
+              updated_at: "2025-01-01",
+            },
+          ],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
       const result = await mod.createRole("New Role", "Test", [
         "accounts:read",
@@ -132,6 +171,8 @@ describe("role-management", () => {
       expect(result.valid).toBe(true);
       expect(result.data?.name).toBe("New Role");
       expect(result.data?.permissions).toEqual(["accounts:read"]);
+      // Verify withTransaction was called
+      expect(mockWithTransaction).toHaveBeenCalledOnce();
     });
   });
 
@@ -140,7 +181,7 @@ describe("role-management", () => {
   describe("updateRole", () => {
     it("rejects built-in role modification", async () => {
       // getRoleWithPermissions lookup
-      queryMock.mockResolvedValueOnce({
+      mockQuery.mockResolvedValueOnce({
         rows: [
           {
             id: 1,
@@ -162,11 +203,57 @@ describe("role-management", () => {
     });
 
     it("rejects non-existent role", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
       const result = await mod.updateRole(999, "Name", null, []);
       expect(result.valid).toBe(false);
       expect(result.errors?.[0]).toMatch(/not found/);
+    });
+
+    it("updates role inside a transaction", async () => {
+      // getRoleWithPermissions
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 10,
+            name: "Old Name",
+            description: null,
+            is_builtin: false,
+            created_at: "2025-01-01",
+            updated_at: "2025-01-01",
+            permissions: ["accounts:read"],
+            account_count: "0",
+          },
+        ],
+        rowCount: 1,
+      });
+      // Duplicate name check
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      // Inside transaction: update role, delete permissions, insert permissions
+      mockQuery
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 10,
+              name: "New Name",
+              description: null,
+              is_builtin: false,
+              created_at: "2025-01-01",
+              updated_at: "2025-01-01",
+            },
+          ],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+      const result = await mod.updateRole(10, "New Name", null, [
+        "accounts:write",
+      ]);
+      expect(result.valid).toBe(true);
+      expect(result.data?.name).toBe("New Name");
+      expect(result.data?.permissions).toEqual(["accounts:write"]);
+      expect(mockWithTransaction).toHaveBeenCalledOnce();
     });
   });
 
@@ -174,7 +261,7 @@ describe("role-management", () => {
 
   describe("deleteRole", () => {
     it("rejects built-in role deletion", async () => {
-      queryMock.mockResolvedValueOnce({
+      mockQuery.mockResolvedValueOnce({
         rows: [
           {
             id: 1,
@@ -196,7 +283,7 @@ describe("role-management", () => {
     });
 
     it("rejects deletion of role in use", async () => {
-      queryMock.mockResolvedValueOnce({
+      mockQuery.mockResolvedValueOnce({
         rows: [
           {
             id: 10,
@@ -219,7 +306,7 @@ describe("role-management", () => {
 
     it("deletes role successfully", async () => {
       // getRoleWithPermissions
-      queryMock.mockResolvedValueOnce({
+      mockQuery.mockResolvedValueOnce({
         rows: [
           {
             id: 10,
@@ -235,7 +322,7 @@ describe("role-management", () => {
         rowCount: 1,
       });
       // DELETE
-      queryMock.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
       const result = await mod.deleteRole(10);
       expect(result.valid).toBe(true);
