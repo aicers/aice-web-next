@@ -106,29 +106,31 @@ test.describe("Auth flow screens (#131)", () => {
     expect(count).toBeGreaterThanOrEqual(2);
   });
 
-  // ── Actual sign-out flow sets reason param ──────────────────
+  // ── Sign-out invalidates session and redirects ──────────────
 
-  test("sign-out redirects to sign-in with signed-out reason", async ({
+  test("sign-out invalidates session so protected pages redirect to sign-in", async ({
     page,
   }) => {
     await resetAccountDefaults(ADMIN_USERNAME);
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
 
-    // Use the session extension dialog's sign-out (which sets ?reason=signed-out)
-    // Or use the API sign-out and check the redirect behavior
-    // Since the redirect happens client-side after API call, test via direct nav
     const cookies = await page.context().cookies();
     const csrf = cookies.find((c) => c.name === "csrf")?.value ?? "";
 
-    await page.request.post("/api/auth/sign-out", {
+    const res = await page.request.post("/api/auth/sign-out", {
       headers: {
         "x-csrf-token": csrf,
         Origin: "http://localhost:3000",
       },
     });
+    expect(res.status()).toBe(200);
 
-    // After sign-out, navigating to a protected page should redirect to sign-in
+    // After sign-out, navigating to a protected page must redirect to /sign-in.
+    // The server-side auth guard redirects to /sign-in (without reason param);
+    // the ?reason=signed-out param is added client-side by session-extension-dialog.
     await page.goto("/");
     await page.waitForURL(/\/sign-in/);
+    // Confirm we landed on the sign-in page with the form visible
+    await expect(page.getByLabel("Account ID")).toBeVisible();
   });
 });
