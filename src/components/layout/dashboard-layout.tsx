@@ -8,11 +8,15 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { TimezoneProvider } from "@/components/providers/timezone-provider";
 import { useSidebar } from "@/hooks/use-sidebar";
 
+interface DashboardLayoutProps {
+  children: React.ReactNode;
+  username?: string;
+}
+
 export default function DashboardLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+  username,
+}: Readonly<DashboardLayoutProps>) {
   const { collapsed, toggle } = useSidebar();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -20,12 +24,20 @@ export default function DashboardLayout({
     <TimezoneProvider>
       <div className="flex h-screen flex-col">
         {/* Mobile header — visible only below desktop breakpoint */}
-        <MobileHeader open={mobileOpen} onOpenChange={setMobileOpen} />
+        <MobileHeader
+          open={mobileOpen}
+          onOpenChange={setMobileOpen}
+          username={username}
+        />
 
         <div className="flex flex-1 overflow-hidden">
           {/* Desktop sidebar — hidden below desktop breakpoint */}
           <div className="hidden desktop:flex">
-            <Sidebar collapsed={collapsed} onToggle={toggle} />
+            <Sidebar
+              collapsed={collapsed}
+              onToggle={toggle}
+              username={username}
+            />
           </div>
 
           {/* Main content */}
