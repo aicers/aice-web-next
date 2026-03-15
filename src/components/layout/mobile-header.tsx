@@ -14,7 +14,6 @@ import {
 import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
   SheetContent,
@@ -42,16 +41,26 @@ const NAV_ITEMS = [
 interface MobileHeaderProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  username?: string;
 }
 
-export function MobileHeader({ open, onOpenChange }: MobileHeaderProps) {
+export function MobileHeader({
+  open,
+  onOpenChange,
+  username,
+}: MobileHeaderProps) {
   const t = useTranslations("nav");
   const pathname = usePathname();
 
   return (
     <>
-      <header className="bg-card flex h-14 items-center border-b px-4 desktop:hidden">
-        <Button variant="ghost" size="icon" onClick={() => onOpenChange(true)}>
+      <header className="flex h-14 items-center border-b bg-sidebar px-4 desktop:hidden">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onOpenChange(true)}
+          className="text-sidebar-foreground hover:bg-sidebar-divider"
+        >
           <Menu className="h-5 w-5" />
           <span className="sr-only">Open menu</span>
         </Button>
@@ -59,14 +68,23 @@ export function MobileHeader({ open, onOpenChange }: MobileHeaderProps) {
       </header>
 
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="left" className="w-64 p-0">
-          <SheetHeader className="border-b px-4">
-            <SheetTitle>
+        <SheetContent
+          side="left"
+          className="w-64 border-none bg-sidebar p-0 text-sidebar-foreground"
+        >
+          <SheetHeader className="px-5 pt-6">
+            <SheetTitle className="text-sidebar-foreground">
               <Logo />
             </SheetTitle>
           </SheetHeader>
+
+          {/* Divider */}
+          <div className="px-4 pt-6">
+            <div className="h-px bg-sidebar-divider" />
+          </div>
+
           <TooltipProvider>
-            <nav className="flex-1 space-y-1 overflow-y-auto p-2">
+            <nav className="flex-1 space-y-3 overflow-y-auto pt-6">
               {NAV_ITEMS.map((item) => (
                 <SidebarItem
                   key={item.key}
@@ -77,12 +95,11 @@ export function MobileHeader({ open, onOpenChange }: MobileHeaderProps) {
                 />
               ))}
             </nav>
-            <div className="space-y-1 p-2">
-              <Separator className="mb-2" />
-              <div className="px-1">
-                <ThemeToggle />
+            <div className="space-y-4 p-4">
+              <div className="px-0">
+                <ThemeToggle className="text-sidebar-muted hover:bg-sidebar-divider hover:text-sidebar-foreground" />
               </div>
-              <NavUser />
+              <NavUser username={username} />
             </div>
           </TooltipProvider>
         </SheetContent>

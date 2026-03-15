@@ -28,14 +28,31 @@ export function SidebarItem({
     <Link
       href={href}
       className={cn(
-        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-        "hover:bg-accent hover:text-accent-foreground",
-        active ? "bg-accent text-accent-foreground" : "text-muted-foreground",
-        collapsed && "justify-center px-2",
+        "group relative flex h-12 items-center gap-3 px-4 text-base font-medium transition-colors",
+        active
+          ? "text-sidebar-foreground"
+          : "text-sidebar-muted hover:text-sidebar-foreground",
+        collapsed && "justify-center px-0",
       )}
     >
-      <Icon className="h-5 w-5 shrink-0" />
-      {!collapsed && <span>{label}</span>}
+      {/* Active indicator — blue left border bar */}
+      {active && (
+        <span className="absolute top-0 left-0 h-full w-1 rounded-r-lg bg-sidebar-active" />
+      )}
+      {/* Active glow — radial gradient from left */}
+      {active && (
+        <span
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse at left center, rgba(21, 110, 242, 0.29) 0%, transparent 100%)",
+          }}
+        />
+      )}
+      <Icon
+        className={cn("relative z-10 size-5 shrink-0", collapsed && "size-6")}
+      />
+      {!collapsed && <span className="relative z-10">{label}</span>}
     </Link>
   );
 

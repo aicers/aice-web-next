@@ -1,7 +1,8 @@
 "use client";
 
 import {
-  ChevronLeft,
+  ArrowLeft,
+  ArrowRight,
   FileText,
   Home,
   LayoutDashboard,
@@ -13,8 +14,6 @@ import {
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { usePathname } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
@@ -26,6 +25,7 @@ import { SidebarItem } from "./sidebar-item";
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  username?: string;
 }
 
 const NAV_ITEMS = [
@@ -39,7 +39,7 @@ const NAV_ITEMS = [
   { key: "settings", href: "/settings", icon: Settings },
 ] as const;
 
-export function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export function Sidebar({ collapsed, onToggle, username }: SidebarProps) {
   const t = useTranslations("nav");
   const pathname = usePathname();
 
@@ -47,39 +47,27 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     <TooltipProvider>
       <aside
         className={cn(
-          "bg-card flex h-full flex-col border-r transition-[width] duration-200",
+          "flex h-full flex-col bg-sidebar transition-[width] duration-200",
           collapsed ? "w-16" : "w-64",
         )}
       >
         {/* Logo / Header */}
         <div
           className={cn(
-            "flex h-16 items-center border-b px-4",
-            collapsed ? "justify-center" : "justify-between",
+            "flex shrink-0 items-center px-5 pt-6",
+            collapsed ? "justify-center px-0" : "h-16",
           )}
         >
-          {collapsed ? (
-            <button
-              type="button"
-              onClick={onToggle}
-              className="flex items-center justify-center"
-            >
-              <Logo collapsed />
-              <span className="sr-only">Toggle sidebar</span>
-            </button>
-          ) : (
-            <>
-              <Logo />
-              <Button variant="ghost" size="icon" onClick={onToggle}>
-                <ChevronLeft className="h-4 w-4" />
-                <span className="sr-only">Toggle sidebar</span>
-              </Button>
-            </>
-          )}
+          {collapsed ? <Logo collapsed /> : <Logo />}
+        </div>
+
+        {/* Divider */}
+        <div className={cn("px-4 pt-6", collapsed && "px-2")}>
+          <div className="h-px bg-sidebar-divider" />
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-1 overflow-y-auto p-2">
+        <nav className="flex-1 space-y-3 overflow-y-auto pt-6">
           {NAV_ITEMS.map((item) => (
             <SidebarItem
               key={item.key}
@@ -93,12 +81,23 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </nav>
 
         {/* Bottom section */}
-        <div className="space-y-1 p-2">
-          <Separator className="mb-2" />
-          <div className={cn("flex", collapsed ? "justify-center" : "px-1")}>
-            <ThemeToggle />
+        <div className={cn("space-y-4 p-4", collapsed && "px-2")}>
+          <button
+            type="button"
+            onClick={onToggle}
+            className="flex size-8 items-center justify-center rounded-lg bg-sidebar-divider text-sidebar-muted transition-colors hover:text-sidebar-foreground"
+          >
+            {collapsed ? (
+              <ArrowRight className="size-4" />
+            ) : (
+              <ArrowLeft className="size-4" />
+            )}
+            <span className="sr-only">Toggle sidebar</span>
+          </button>
+          <div className={cn("flex", collapsed ? "justify-center" : "px-0")}>
+            <ThemeToggle className="text-sidebar-muted hover:bg-sidebar-divider hover:text-sidebar-foreground" />
           </div>
-          <NavUser collapsed={collapsed} />
+          <NavUser username={username} collapsed={collapsed} />
         </div>
       </aside>
     </TooltipProvider>
