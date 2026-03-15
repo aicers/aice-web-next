@@ -66,11 +66,13 @@ test.describe("Session Extension Dialog", () => {
     await expect(dialog).toBeVisible({ timeout: 5_000 });
 
     // Verify dialog content
-    await expect(dialog.getByText(/session expir|세션 만료/i)).toBeVisible();
+    await expect(
+      dialog.getByText(/session is about to expire|세션이 곧 만료/i),
+    ).toBeVisible();
 
     // Verify both buttons are present
     await expect(
-      dialog.getByRole("button", { name: /extend|연장/i }),
+      dialog.getByRole("button", { name: /stay signed in|로그인 유지/i }),
     ).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: /sign out|로그아웃/i }),
@@ -119,7 +121,9 @@ test.describe("Session Extension Dialog", () => {
     );
 
     // Click Extend
-    await dialog.getByRole("button", { name: /extend|연장/i }).click();
+    await dialog
+      .getByRole("button", { name: /stay signed in|로그인 유지/i })
+      .click();
 
     // Verify /api/auth/me was called successfully
     const meResponse = await mePromise;
@@ -210,7 +214,9 @@ test.describe("Session Extension Dialog", () => {
     await expect(dialog).toBeVisible({ timeout: 5_000 });
 
     // Click Extend
-    await dialog.getByRole("button", { name: /extend|연장/i }).click();
+    await dialog
+      .getByRole("button", { name: /stay signed in|로그인 유지/i })
+      .click();
     await expect(dialog).not.toBeVisible({ timeout: 5_000 });
 
     // Wait 2 more seconds — dialog should NOT reappear (same exp)
@@ -239,7 +245,9 @@ test.describe("Session Extension Dialog", () => {
     });
 
     // Rapid double-click — button should disable after first click
-    const extendBtn = dialog.getByRole("button", { name: /extend|연장/i });
+    const extendBtn = dialog.getByRole("button", {
+      name: /stay signed in|로그인 유지/i,
+    });
     await extendBtn.dblclick();
 
     // Wait for the request to complete
@@ -293,9 +301,9 @@ test.describe("Session Extension Dialog", () => {
     await expect(dialog).toBeVisible({ timeout: 5_000 });
 
     // Verify Korean text
-    await expect(dialog.getByText(/세션 만료/)).toBeVisible();
+    await expect(dialog.getByText(/세션이 곧 만료/)).toBeVisible();
     await expect(
-      dialog.getByRole("button", { name: /세션 연장/ }),
+      dialog.getByRole("button", { name: /로그인 유지/ }),
     ).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: /로그아웃/ }),

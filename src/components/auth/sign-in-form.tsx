@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -111,7 +111,7 @@ export function SignInForm() {
           name="username"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t("username")}</FormLabel>
+              <FormLabel required>{t("username")}</FormLabel>
               <FormControl>
                 <Input
                   autoComplete="username"
@@ -133,7 +133,7 @@ export function SignInForm() {
           name="password"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t("password")}</FormLabel>
+              <FormLabel required>{t("password")}</FormLabel>
               <FormControl>
                 <div className="relative">
                   <Input
@@ -170,7 +170,11 @@ export function SignInForm() {
         />
 
         {serverError && (
-          <p className="text-destructive text-sm" role="alert">
+          <p
+            className="text-destructive flex items-center gap-1 text-sm"
+            role="alert"
+          >
+            <AlertCircle className="size-3.5 shrink-0" />
             {serverError}
           </p>
         )}

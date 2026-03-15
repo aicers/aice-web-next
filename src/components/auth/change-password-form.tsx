@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -122,7 +122,7 @@ export function ChangePasswordForm() {
           name="currentPassword"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t("currentPassword")}</FormLabel>
+              <FormLabel required>{t("currentPassword")}</FormLabel>
               <FormControl>
                 <div className="relative">
                   <Input
@@ -161,7 +161,7 @@ export function ChangePasswordForm() {
           name="newPassword"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t("newPassword")}</FormLabel>
+              <FormLabel required>{t("newPassword")}</FormLabel>
               <FormControl>
                 <div className="relative">
                   <Input
@@ -199,7 +199,7 @@ export function ChangePasswordForm() {
           name="confirmPassword"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t("confirmPassword")}</FormLabel>
+              <FormLabel required>{t("confirmPassword")}</FormLabel>
               <FormControl>
                 <Input
                   type="password"
@@ -217,7 +217,11 @@ export function ChangePasswordForm() {
         />
 
         {serverError && (
-          <p className="text-destructive text-sm" role="alert">
+          <p
+            className="text-destructive flex items-center gap-1 text-sm"
+            role="alert"
+          >
+            <AlertCircle className="size-3.5 shrink-0" />
             {serverError}
           </p>
         )}

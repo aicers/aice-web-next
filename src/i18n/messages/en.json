@@ -28,9 +28,14 @@
     "resetPassword": "Reset your password",
     "sessionTimeout": "Session timeout",
     "sessionEnded": "Session ended",
-    "sessionExpiring": "Session expiring",
-    "sessionExpiringDescription": "Your session will expire in {seconds} seconds. Would you like to extend it?",
-    "extendSession": "Extend session"
+    "signedOutHeading": "You've been signed out",
+    "signedOutDescription": "You have successfully signed out.",
+    "sessionEndedHeading": "Your session has ended",
+    "sessionEndedDescription": "Your session expired due to inactivity. Please sign in again to continue.",
+    "signInAgain": "Sign in again",
+    "sessionExpiring": "Your session is about to expire",
+    "sessionExpiringDescription": "Your session will expire in {seconds} seconds. Would you like to stay signed in?",
+    "extendSession": "Stay signed in"
   },
   "nav": {
     "home": "Home",
