@@ -2,6 +2,8 @@ import "server-only";
 
 import { query } from "@/lib/db/client";
 
+import { SettingsCache } from "./settings-cache";
+
 // ── Types ───────────────────────────────────────────────────────
 
 export interface SessionPolicy {
@@ -24,10 +26,18 @@ const DEFAULTS: SessionPolicy = {
   maxSessions: null,
 };
 
+// ── Cache ────────────────────────────────────────────────────────
+
+const cache = new SettingsCache<SessionPolicy>();
+const CACHE_KEY = "session_policy";
+
 // ── Public API ──────────────────────────────────────────────────
 
 /**
  * Load session policy with priority: env vars > DB > defaults.
+ *
+ * Results are cached for 60 seconds so that hot paths like
+ * `withAuth()` do not query the database on every request.
  *
  * Environment variables:
  *   SESSION_IDLE_TIMEOUT_MINUTES
@@ -35,6 +45,9 @@ const DEFAULTS: SessionPolicy = {
  *   SESSION_MAX_SESSIONS
  */
 export async function loadSessionPolicy(): Promise<SessionPolicy> {
+  const cached = cache.get(CACHE_KEY);
+  if (cached) return cached;
+
   // Start with defaults
   const policy: SessionPolicy = { ...DEFAULTS };
 
@@ -85,7 +98,13 @@ export async function loadSessionPolicy(): Promise<SessionPolicy> {
     }
   }
 
+  cache.set(CACHE_KEY, policy);
   return policy;
+}
+
+/** Invalidate the cached policy so the next call re-queries the DB. */
+export function invalidateSessionPolicy(): void {
+  cache.invalidate(CACHE_KEY);
 }
 
 /**

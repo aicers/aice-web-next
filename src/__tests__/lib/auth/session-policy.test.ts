@@ -15,6 +15,7 @@ describe("session-policy", () => {
     delete process.env.SESSION_ABSOLUTE_TIMEOUT_HOURS;
     delete process.env.SESSION_MAX_SESSIONS;
     mod = await import("@/lib/auth/session-policy");
+    mod.invalidateSessionPolicy();
   });
 
   afterEach(() => {

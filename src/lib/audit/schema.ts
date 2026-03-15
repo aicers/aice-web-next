@@ -39,16 +39,29 @@ type CustomerAction =
   | "customer.assign"
   | "customer.unassign";
 
+/** System settings event actions (#132). */
+type SystemSettingsAction = "system_settings.update";
+
+/** Role event actions (#134). */
+type RoleAction = "role.create" | "role.update" | "role.delete";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
   | SessionAction
   | AccountAction
   | PasswordAction
-  | CustomerAction;
+  | CustomerAction
+  | SystemSettingsAction
+  | RoleAction;
 
 /** Target entity types for audit events. */
-export type AuditTargetType = "account" | "session" | "customer";
+export type AuditTargetType =
+  | "account"
+  | "session"
+  | "customer"
+  | "system_settings"
+  | "role";
 
 /** Canonical runtime list of supported audit actions. */
 export const AUDIT_ACTIONS = [
@@ -80,6 +93,10 @@ export const AUDIT_ACTIONS = [
   "customer.delete",
   "customer.assign",
   "customer.unassign",
+  "system_settings.update",
+  "role.create",
+  "role.update",
+  "role.delete",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */
@@ -87,4 +104,6 @@ export const AUDIT_TARGET_TYPES = [
   "account",
   "session",
   "customer",
+  "system_settings",
+  "role",
 ] as const satisfies readonly AuditTargetType[];

@@ -3,14 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useRouter } from "@/i18n/navigation";
-import { TOKEN_EXPIRATION_SECONDS } from "@/lib/auth/constants";
 
 // ── Constants ──────────────────────────────────────────────────
 
-/** Show the dialog when remaining ≤ 1/DIALOG_FRACTION of total. */
-const DIALOG_FRACTION = 5; // 1/5 = 180s = 3 minutes
-
-const DIALOG_THRESHOLD_SECONDS = TOKEN_EXPIRATION_SECONDS / DIALOG_FRACTION;
+/**
+ * Show the session extension dialog when the remaining JWT lifetime
+ * drops to 3 minutes or less.
+ *
+ * This is a fixed absolute threshold — simpler than a fraction of the
+ * total TTL and requires no additional signal from the server.
+ */
+const DIALOG_THRESHOLD_SECONDS = 180;
 
 const TOKEN_EXP_COOKIE = "token_exp";
 
@@ -38,9 +41,17 @@ interface SessionMonitorState {
 
 export function useSessionMonitor(): SessionMonitorState {
   const router = useRouter();
-  const [remainingSeconds, setRemainingSeconds] = useState(
-    TOKEN_EXPIRATION_SECONDS,
-  );
+  const [remainingSeconds, setRemainingSeconds] = useState(() => {
+    // Derive initial remaining time from the cookie if available,
+    // otherwise fall back to a safe non-zero value.
+    if (typeof document !== "undefined") {
+      const exp = readTokenExp();
+      if (exp !== null) {
+        return Math.max(0, exp - Math.floor(Date.now() / 1000));
+      }
+    }
+    return DIALOG_THRESHOLD_SECONDS + 1;
+  });
   const [showDialog, setShowDialog] = useState(false);
   const dismissedExpRef = useRef<number | null>(null);
 

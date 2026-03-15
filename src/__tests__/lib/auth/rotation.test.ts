@@ -32,6 +32,10 @@ vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({ set: mockCookiesSet })),
 }));
 
+vi.mock("@/lib/auth/jwt-policy", () => ({
+  loadJwtPolicy: vi.fn(async () => ({ accessTokenExpirationMinutes: 15 })),
+}));
+
 describe("rotation", () => {
   let rotation: typeof import("@/lib/auth/rotation");
 
