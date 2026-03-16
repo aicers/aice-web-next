@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 
 import { ActiveSessionsCard } from "./active-sessions-card";
+import { CertExpiryCard } from "./cert-expiry-card";
 import { LockedAccountsCard } from "./locked-accounts-card";
 import { SuspiciousAlertsCard } from "./suspicious-alerts-card";
 
@@ -20,7 +21,10 @@ export function DashboardPanel({ canWrite }: DashboardPanelProps) {
         <ActiveSessionsCard canWrite={canWrite} />
         <LockedAccountsCard />
       </div>
-      <SuspiciousAlertsCard />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <SuspiciousAlertsCard />
+        <CertExpiryCard />
+      </div>
     </div>
   );
 }

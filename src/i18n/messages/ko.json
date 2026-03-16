@@ -368,6 +368,21 @@
         "privilege_escalation": "{count}건의 잠재적 권한 상승",
         "mass_revocation": "행위자 {actor}가 {count}개 세션 해지"
       }
+    },
+    "certExpiry": {
+      "title": "인증서 만료",
+      "description": "mTLS 인증서 상태",
+      "subject": "주체",
+      "issuer": "발급자",
+      "validFrom": "유효 시작일",
+      "validTo": "만료일",
+      "daysRemaining": "만료까지 {days}일",
+      "ok": "정상",
+      "warning": "경고",
+      "critical": "위험",
+      "notConfigured": "mTLS 인증서가 구성되지 않았습니다",
+      "loading": "인증서 확인 중...",
+      "error": "인증서 상태를 확인하지 못했습니다"
     }
   },
   "changePassword": {
