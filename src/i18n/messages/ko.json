@@ -300,6 +300,76 @@
       "access-all": "전체 접근"
     }
   },
+  "dashboard": {
+    "title": "시스템 대시보드",
+    "noPermission": "대시보드를 볼 수 있는 권한이 없습니다.",
+    "activeSessions": {
+      "title": "활성 세션",
+      "description": "현재 활성 상태인 사용자 세션",
+      "username": "사용자",
+      "displayName": "표시 이름",
+      "ipAddress": "IP 주소",
+      "userAgent": "사용자 에이전트",
+      "createdAt": "생성일",
+      "lastActive": "마지막 활동",
+      "needsReauth": "재인증 필요",
+      "revoke": "해지",
+      "revokeConfirm": "이 세션을 해지하시겠습니까? 해당 사용자는 즉시 로그아웃됩니다.",
+      "revokeSuccess": "세션이 해지되었습니다",
+      "revokeError": "세션 해지에 실패했습니다",
+      "noSessions": "활성 세션이 없습니다",
+      "loading": "세션 로딩 중...",
+      "error": "세션을 불러오지 못했습니다"
+    },
+    "lockedAccounts": {
+      "title": "잠긴 및 정지된 계정",
+      "description": "현재 잠금 또는 정지 상태인 계정",
+      "username": "사용자",
+      "displayName": "표시 이름",
+      "role": "역할",
+      "status": "상태",
+      "lockedUntil": "잠금 해제 시각",
+      "failedAttempts": "실패 횟수",
+      "updatedAt": "수정일",
+      "locked": "잠금",
+      "suspended": "정지",
+      "noAccounts": "잠긴 또는 정지된 계정이 없습니다",
+      "loading": "계정 로딩 중...",
+      "error": "계정을 불러오지 못했습니다"
+    },
+    "alerts": {
+      "title": "의심 활동",
+      "description": "최근 24시간 동안 감지된 보안 알림",
+      "severity": "심각도",
+      "rule": "규칙",
+      "message": "상세",
+      "count": "발생 횟수",
+      "latestAt": "최근 발생",
+      "critical": "심각",
+      "high": "높음",
+      "medium": "보통",
+      "low": "낮음",
+      "noAlerts": "의심 활동이 감지되지 않았습니다",
+      "loading": "알림 로딩 중...",
+      "error": "알림을 불러오지 못했습니다",
+      "rules": {
+        "brute_force": "무차별 대입",
+        "account_lockout": "계정 잠금",
+        "ip_ua_mismatch": "IP/UA 불일치",
+        "after_hours": "비근무시간 로그인",
+        "privilege_escalation": "권한 상승",
+        "mass_revocation": "대량 세션 해지"
+      },
+      "messages": {
+        "brute_force": "IP {ip}에서 {count}회 로그인 실패 시도",
+        "account_lockout": "최근 24시간 동안 {count}건의 계정 잠금",
+        "ip_ua_mismatch": "{count}건의 세션 IP/UA 불일치",
+        "after_hours": "비근무시간(22:00–06:00 UTC)에 {count}건의 로그인",
+        "privilege_escalation": "{count}건의 잠재적 권한 상승",
+        "mass_revocation": "행위자 {actor}가 {count}개 세션 해지"
+      }
+    }
+  },
   "changePassword": {
     "heading": "비밀번호 변경",
     "currentPassword": "현재 비밀번호",

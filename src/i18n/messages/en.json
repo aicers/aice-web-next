@@ -300,6 +300,76 @@
       "access-all": "Access All"
     }
   },
+  "dashboard": {
+    "title": "System Dashboard",
+    "noPermission": "You do not have permission to view the dashboard.",
+    "activeSessions": {
+      "title": "Active Sessions",
+      "description": "Currently active user sessions",
+      "username": "User",
+      "displayName": "Display Name",
+      "ipAddress": "IP Address",
+      "userAgent": "User Agent",
+      "createdAt": "Created",
+      "lastActive": "Last Active",
+      "needsReauth": "Re-auth Required",
+      "revoke": "Revoke",
+      "revokeConfirm": "Are you sure you want to revoke this session? The user will be signed out immediately.",
+      "revokeSuccess": "Session revoked successfully",
+      "revokeError": "Failed to revoke session",
+      "noSessions": "No active sessions",
+      "loading": "Loading sessions...",
+      "error": "Failed to load sessions"
+    },
+    "lockedAccounts": {
+      "title": "Locked & Suspended Accounts",
+      "description": "Accounts currently locked or suspended",
+      "username": "User",
+      "displayName": "Display Name",
+      "role": "Role",
+      "status": "Status",
+      "lockedUntil": "Locked Until",
+      "failedAttempts": "Failed Attempts",
+      "updatedAt": "Updated",
+      "locked": "Locked",
+      "suspended": "Suspended",
+      "noAccounts": "No locked or suspended accounts",
+      "loading": "Loading accounts...",
+      "error": "Failed to load accounts"
+    },
+    "alerts": {
+      "title": "Suspicious Activity",
+      "description": "Security alerts detected in the last 24 hours",
+      "severity": "Severity",
+      "rule": "Rule",
+      "message": "Details",
+      "count": "Occurrences",
+      "latestAt": "Latest",
+      "critical": "Critical",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low",
+      "noAlerts": "No suspicious activity detected",
+      "loading": "Loading alerts...",
+      "error": "Failed to load alerts",
+      "rules": {
+        "brute_force": "Brute Force",
+        "account_lockout": "Account Lockout",
+        "ip_ua_mismatch": "IP/UA Mismatch",
+        "after_hours": "After-Hours Sign-In",
+        "privilege_escalation": "Privilege Escalation",
+        "mass_revocation": "Mass Session Revocation"
+      },
+      "messages": {
+        "brute_force": "{count} failed sign-in attempts from IP {ip}",
+        "account_lockout": "{count} account lockout(s) in the last 24 hours",
+        "ip_ua_mismatch": "{count} session IP/UA mismatch event(s)",
+        "after_hours": "{count} sign-in(s) during off-hours (22:00–06:00 UTC)",
+        "privilege_escalation": "{count} potential privilege escalation(s)",
+        "mass_revocation": "Actor {actor} revoked {count} sessions"
+      }
+    }
+  },
   "changePassword": {
     "heading": "Change Password",
     "currentPassword": "Current Password",

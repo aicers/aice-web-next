@@ -599,6 +599,76 @@ function escapeIdentifier(str: string): string {
   return `"${str.replace(/"/g, '""')}"`;
 }
 
+// ── Audit database helpers ────────────────────────────────────────
+
+function getAuditDatabaseUrl(): string {
+  if (process.env.AUDIT_DATABASE_URL) return process.env.AUDIT_DATABASE_URL;
+
+  try {
+    const envFile = readFileSync(
+      resolve(__dirname, "../../.env.local"),
+      "utf8",
+    );
+    const match = envFile.match(/^AUDIT_DATABASE_URL=(.+)$/m);
+    if (match) return match[1].trim();
+  } catch {
+    // .env.local not found — use default
+  }
+
+  return "postgres://postgres:postgres@localhost:5432/audit_db";
+}
+
+const AUDIT_DATABASE_URL = getAuditDatabaseUrl();
+
+/**
+ * Insert a fake audit log entry into the audit database.
+ * Returns the inserted row ID for targeted cleanup.
+ */
+export async function insertAuditLog(opts: {
+  actorId: string;
+  action: string;
+  targetType: string;
+  targetId?: string;
+  ipAddress?: string;
+  details?: Record<string, unknown>;
+}): Promise<string> {
+  const client = new pg.Client({ connectionString: AUDIT_DATABASE_URL });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO audit_logs
+         (actor_id, action, target_type, target_id, ip_address, details)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [
+        opts.actorId,
+        opts.action,
+        opts.targetType,
+        opts.targetId ?? null,
+        opts.ipAddress ?? "127.0.0.1",
+        opts.details ? JSON.stringify(opts.details) : null,
+      ],
+    );
+    return rows[0].id;
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Delete a specific audit log entry by ID.
+ * Only removes the exact row that was seeded, leaving other data intact.
+ */
+export async function deleteAuditLogById(id: string): Promise<void> {
+  const client = new pg.Client({ connectionString: AUDIT_DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query("DELETE FROM audit_logs WHERE id = $1", [id]);
+  } finally {
+    await client.end();
+  }
+}
+
 /**
  * Get session status for diagnostic/assertion purposes.
  */
