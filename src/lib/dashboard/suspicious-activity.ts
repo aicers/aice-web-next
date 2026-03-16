@@ -10,7 +10,6 @@ export interface SuspiciousAlert {
   id: string;
   rule: string;
   severity: AlertSeverity;
-  message: string;
   count: number;
   latest_at: string;
   details: Record<string, unknown>;
@@ -56,7 +55,6 @@ async function detectBruteForce(): Promise<SuspiciousAlert[]> {
     id: `brute-force-${i}`,
     rule: "brute_force",
     severity: "critical" as const,
-    message: `${r.count} failed sign-in attempts from IP ${r.group_key}`,
     count: Number.parseInt(r.count, 10),
     latest_at: r.latest_at,
     details: { ip: r.group_key },
@@ -82,7 +80,7 @@ async function detectAccountLockouts(): Promise<SuspiciousAlert[]> {
       id: "account-lockouts",
       rule: "account_lockout",
       severity: "high",
-      message: `${count} account lockout(s) in the last ${WINDOW_HOURS} hours`,
+
       count,
       latest_at: rows[0].latest_at,
       details: {},
@@ -113,7 +111,7 @@ async function detectIpUaMismatches(): Promise<SuspiciousAlert[]> {
       id: "ip-ua-mismatch",
       rule: "ip_ua_mismatch",
       severity: "medium",
-      message: `${count} session IP/UA mismatch event(s)`,
+
       count,
       latest_at: rows[0].latest_at,
       details: {},
@@ -130,8 +128,8 @@ async function detectAfterHoursSignIns(): Promise<SuspiciousAlert[]> {
        FROM audit_logs
       WHERE action = 'auth.sign_in.success'
         AND timestamp >= NOW() - INTERVAL '${WINDOW_HOURS} hours'
-        AND (EXTRACT(HOUR FROM timestamp) >= 22
-             OR EXTRACT(HOUR FROM timestamp) < 6)`,
+        AND (EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') >= 22
+             OR EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') < 6)`,
   );
 
   const count = Number.parseInt(rows[0].count, 10);
@@ -142,7 +140,7 @@ async function detectAfterHoursSignIns(): Promise<SuspiciousAlert[]> {
       id: "after-hours",
       rule: "after_hours",
       severity: "low",
-      message: `${count} sign-in(s) during off-hours (22:00–06:00 UTC)`,
+
       count,
       latest_at: rows[0].latest_at,
       details: {},
@@ -170,7 +168,7 @@ async function detectPrivilegeEscalation(): Promise<SuspiciousAlert[]> {
       id: "privilege-escalation",
       rule: "privilege_escalation",
       severity: "high",
-      message: `${count} potential privilege escalation(s)`,
+
       count,
       latest_at: rows[0].latest_at,
       details: {},
@@ -200,7 +198,6 @@ async function detectMassRevocations(): Promise<SuspiciousAlert[]> {
     id: `mass-revocation-${i}`,
     rule: "mass_revocation",
     severity: "medium" as const,
-    message: `Actor ${r.group_key} revoked ${r.count} sessions`,
     count: Number.parseInt(r.count, 10),
     latest_at: r.latest_at,
     details: { actor: r.group_key },

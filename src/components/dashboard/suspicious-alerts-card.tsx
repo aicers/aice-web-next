@@ -30,9 +30,9 @@ interface Alert {
   id: string;
   rule: string;
   severity: AlertSeverity;
-  message: string;
   count: number;
   latest_at: string;
+  details: Record<string, unknown>;
 }
 
 // ── Severity badge styles ────────────────────────────────────────
@@ -114,7 +114,11 @@ export function SuspiciousAlertsCard() {
                       {t(`rules.${a.rule}` as Parameters<typeof t>[0])}
                     </TableCell>
                     <TableCell className="max-w-[300px] text-xs">
-                      {a.message}
+                      {t(`messages.${a.rule}` as Parameters<typeof t>[0], {
+                        count: a.count,
+                        ip: String(a.details.ip ?? ""),
+                        actor: String(a.details.actor ?? ""),
+                      })}
                     </TableCell>
                     <TableCell className="text-xs">{a.count}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs">

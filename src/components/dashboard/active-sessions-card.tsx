@@ -53,6 +53,7 @@ interface Session {
 
 export function ActiveSessionsCard({ canWrite }: { canWrite: boolean }) {
   const t = useTranslations("dashboard.activeSessions");
+  const tc = useTranslations("common");
   const tz = useTimezone();
 
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -180,7 +181,9 @@ export function ActiveSessionsCard({ canWrite }: { canWrite: boolean }) {
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogCancel>
+                                {tc("cancel")}
+                              </AlertDialogCancel>
                               <AlertDialogAction
                                 onClick={() => handleRevoke(s.sid)}
                               >

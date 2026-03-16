@@ -359,6 +359,14 @@
         "after_hours": "비근무시간 로그인",
         "privilege_escalation": "권한 상승",
         "mass_revocation": "대량 세션 해지"
+      },
+      "messages": {
+        "brute_force": "IP {ip}에서 {count}회 로그인 실패 시도",
+        "account_lockout": "최근 24시간 동안 {count}건의 계정 잠금",
+        "ip_ua_mismatch": "{count}건의 세션 IP/UA 불일치",
+        "after_hours": "비근무시간(22:00–06:00 UTC)에 {count}건의 로그인",
+        "privilege_escalation": "{count}건의 잠재적 권한 상승",
+        "mass_revocation": "행위자 {actor}가 {count}개 세션 해지"
       }
     }
   },

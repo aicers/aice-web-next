@@ -359,6 +359,14 @@
         "after_hours": "After-Hours Sign-In",
         "privilege_escalation": "Privilege Escalation",
         "mass_revocation": "Mass Session Revocation"
+      },
+      "messages": {
+        "brute_force": "{count} failed sign-in attempts from IP {ip}",
+        "account_lockout": "{count} account lockout(s) in the last 24 hours",
+        "ip_ua_mismatch": "{count} session IP/UA mismatch event(s)",
+        "after_hours": "{count} sign-in(s) during off-hours (22:00–06:00 UTC)",
+        "privilege_escalation": "{count} potential privilege escalation(s)",
+        "mass_revocation": "Actor {actor} revoked {count} sessions"
       }
     }
   },
