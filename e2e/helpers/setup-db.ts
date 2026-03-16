@@ -622,7 +622,7 @@ const AUDIT_DATABASE_URL = getAuditDatabaseUrl();
 
 /**
  * Insert a fake audit log entry into the audit database.
- * Useful for seeding suspicious-activity detection rules in E2E tests.
+ * Returns the inserted row ID for targeted cleanup.
  */
 export async function insertAuditLog(opts: {
   actorId: string;
@@ -631,14 +631,15 @@ export async function insertAuditLog(opts: {
   targetId?: string;
   ipAddress?: string;
   details?: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<string> {
   const client = new pg.Client({ connectionString: AUDIT_DATABASE_URL });
   await client.connect();
   try {
-    await client.query(
+    const { rows } = await client.query<{ id: string }>(
       `INSERT INTO audit_logs
          (actor_id, action, target_type, target_id, ip_address, details)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
       [
         opts.actorId,
         opts.action,
@@ -648,20 +649,21 @@ export async function insertAuditLog(opts: {
         opts.details ? JSON.stringify(opts.details) : null,
       ],
     );
+    return rows[0].id;
   } finally {
     await client.end();
   }
 }
 
 /**
- * Delete audit log entries matching a given action.
- * For cleanup after E2E tests that seed fake audit data.
+ * Delete a specific audit log entry by ID.
+ * Only removes the exact row that was seeded, leaving other data intact.
  */
-export async function deleteAuditLogsByAction(action: string): Promise<void> {
+export async function deleteAuditLogById(id: string): Promise<void> {
   const client = new pg.Client({ connectionString: AUDIT_DATABASE_URL });
   await client.connect();
   try {
-    await client.query("DELETE FROM audit_logs WHERE action = $1", [action]);
+    await client.query("DELETE FROM audit_logs WHERE id = $1", [id]);
   } finally {
     await client.end();
   }

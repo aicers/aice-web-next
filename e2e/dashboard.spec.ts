@@ -10,7 +10,7 @@ import {
 import {
   createTestAccount,
   createTestRole,
-  deleteAuditLogsByAction,
+  deleteAuditLogById,
   deleteTestAccount,
   deleteTestRole,
   insertAuditLog,
@@ -381,7 +381,7 @@ test("Korean locale: alerts card shows Korean detail messages", async ({
   page,
 }) => {
   // Seed an account.lock audit event to trigger the "account_lockout" rule
-  await insertAuditLog({
+  const auditId = await insertAuditLog({
     actorId: "system",
     action: "account.lock",
     targetType: "account",
@@ -407,6 +407,6 @@ test("Korean locale: alerts card shows Korean detail messages", async ({
     // Severity badge should be Korean "높음" (high)
     await expect(page.getByText("높음").first()).toBeVisible();
   } finally {
-    await deleteAuditLogsByAction("account.lock");
+    await deleteAuditLogById(auditId);
   }
 });
