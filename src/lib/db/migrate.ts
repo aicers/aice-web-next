@@ -35,6 +35,14 @@ function requireAuditDatabaseUrl(): string {
   return url;
 }
 
+function requireDatabaseAdminUrl(): string {
+  const url = process.env.DATABASE_ADMIN_URL;
+  if (!url) {
+    throw new Error("Missing environment variable: DATABASE_ADMIN_URL");
+  }
+  return url;
+}
+
 function scanMigrations(directory: string): MigrationFile[] {
   let entries: string[];
   try {
@@ -111,6 +119,15 @@ function getMigrationsDir(subdir: string): string {
   return path.resolve(process.cwd(), "migrations", subdir);
 }
 
+async function runAdminQuery(sql: string): Promise<void> {
+  const pool = connectTo(requireDatabaseAdminUrl());
+  try {
+    await pool.query(sql);
+  } finally {
+    await pool.end();
+  }
+}
+
 export async function migrateAuthDb(): Promise<number> {
   const migrations = scanMigrations(getMigrationsDir("auth"));
   if (migrations.length === 0) return 0;
@@ -151,7 +168,7 @@ export async function migrateCustomerDb(
 
 export async function provisionCustomerDb(dbName: string): Promise<void> {
   // CREATE DATABASE cannot run inside a transaction in PostgreSQL
-  await query(`CREATE DATABASE ${escapeIdentifier(dbName)}`);
+  await runAdminQuery(`CREATE DATABASE ${escapeIdentifier(dbName)}`);
 
   const baseUrl = requireDatabaseUrl();
   const url = new URL(baseUrl);
@@ -162,8 +179,7 @@ export async function provisionCustomerDb(dbName: string): Promise<void> {
     const migrations = scanMigrations(getMigrationsDir("customer"));
     await applyMigrations(customerPool, migrations);
   } catch (err) {
-    await customerPool.end();
-    await query(`DROP DATABASE IF EXISTS ${escapeIdentifier(dbName)}`);
+    await runAdminQuery(`DROP DATABASE IF EXISTS ${escapeIdentifier(dbName)}`);
     throw err;
   } finally {
     await customerPool.end();
@@ -171,7 +187,7 @@ export async function provisionCustomerDb(dbName: string): Promise<void> {
 }
 
 export async function dropCustomerDb(dbName: string): Promise<void> {
-  await query(`DROP DATABASE IF EXISTS ${escapeIdentifier(dbName)}`);
+  await runAdminQuery(`DROP DATABASE IF EXISTS ${escapeIdentifier(dbName)}`);
 }
 
 export async function runStartupMigrations(): Promise<void> {
@@ -183,7 +199,7 @@ export async function runStartupMigrations(): Promise<void> {
     "SELECT database_name FROM customers WHERE status = 'provisioning'",
   );
   for (const row of stale.rows) {
-    await query(
+    await runAdminQuery(
       `DROP DATABASE IF EXISTS ${escapeIdentifier(row.database_name)}`,
     );
   }

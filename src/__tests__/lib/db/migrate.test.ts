@@ -5,18 +5,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   mockClientQuery,
   mockRelease,
+  mockAdminPoolEnd,
+  mockAdminPoolQuery,
   mockPoolEnd,
   mockPoolConnect,
   mockPoolQuery,
 } = vi.hoisted(() => {
   const mockClientQuery = vi.fn();
   const mockRelease = vi.fn();
+  const mockAdminPoolEnd = vi.fn();
+  const mockAdminPoolQuery = vi.fn();
   const mockPoolEnd = vi.fn();
   const mockPoolConnect = vi.fn();
   const mockPoolQuery = vi.fn();
   return {
     mockClientQuery,
     mockRelease,
+    mockAdminPoolEnd,
+    mockAdminPoolQuery,
     mockPoolEnd,
     mockPoolConnect,
     mockPoolQuery,
@@ -33,11 +39,21 @@ vi.mock("pg", () => {
 });
 
 vi.mock("@/lib/db/client", () => ({
-  connectTo: vi.fn(() => ({
-    query: mockPoolQuery,
-    connect: mockPoolConnect,
-    end: mockPoolEnd,
-  })),
+  connectTo: vi.fn((connectionString: string) => {
+    if (connectionString === process.env.DATABASE_ADMIN_URL) {
+      return {
+        query: mockAdminPoolQuery,
+        connect: mockPoolConnect,
+        end: mockAdminPoolEnd,
+      };
+    }
+
+    return {
+      query: mockPoolQuery,
+      connect: mockPoolConnect,
+      end: mockPoolEnd,
+    };
+  }),
   query: vi.fn((...args: unknown[]) => mockPoolQuery(...args)),
   withTransaction: vi.fn(),
 }));
@@ -61,9 +77,13 @@ describe("migrate", () => {
     vi.spyOn(process, "cwd").mockReturnValue(tmpDir);
     process.env.DATABASE_URL =
       "postgres://postgres:postgres@localhost:5432/auth_db";
+    process.env.DATABASE_ADMIN_URL =
+      "postgres://postgres:postgres@localhost:5432/postgres";
 
     mockClientQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
     mockRelease.mockReset();
+    mockAdminPoolEnd.mockReset().mockResolvedValue(undefined);
+    mockAdminPoolQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
     mockPoolEnd.mockReset().mockResolvedValue(undefined);
     mockPoolConnect.mockReset().mockResolvedValue({
       query: mockClientQuery,
@@ -76,6 +96,7 @@ describe("migrate", () => {
 
   afterEach(() => {
     delete process.env.DATABASE_URL;
+    delete process.env.DATABASE_ADMIN_URL;
     delete process.env.AUDIT_DATABASE_URL;
     vi.restoreAllMocks();
     rmSync(tmpDir, { recursive: true, force: true });
@@ -200,10 +221,8 @@ describe("migrate", () => {
     it("drops database on migration failure", async () => {
       writeMigration("customer", "0001_init.sql", "CREATE TABLE t (id INT)");
 
-      const { query: clientQuery } = await import("@/lib/db/client");
-
       // CREATE DATABASE succeeds
-      vi.mocked(clientQuery).mockResolvedValueOnce({
+      mockAdminPoolQuery.mockResolvedValueOnce({
         rows: [],
         rowCount: 0,
       });
@@ -224,7 +243,7 @@ describe("migrate", () => {
       );
 
       // Should attempt DROP DATABASE on failure
-      expect(vi.mocked(clientQuery)).toHaveBeenCalledWith(
+      expect(mockAdminPoolQuery).toHaveBeenCalledWith(
         'DROP DATABASE IF EXISTS "customer_42"',
       );
     });
@@ -234,11 +253,9 @@ describe("migrate", () => {
 
   describe("dropCustomerDb", () => {
     it("executes DROP DATABASE with escaped name", async () => {
-      const { query: clientQuery } = await import("@/lib/db/client");
-
       await migrate.dropCustomerDb("customer_42");
 
-      expect(vi.mocked(clientQuery)).toHaveBeenCalledWith(
+      expect(mockAdminPoolQuery).toHaveBeenCalledWith(
         'DROP DATABASE IF EXISTS "customer_42"',
       );
     });
@@ -328,6 +345,15 @@ describe("migrate", () => {
       const callOrder: string[] = [];
 
       vi.mocked(connectTo).mockImplementation((url: string) => {
+        if (url === process.env.DATABASE_ADMIN_URL) {
+          callOrder.push("admin");
+          return {
+            query: mockAdminPoolQuery,
+            connect: mockPoolConnect,
+            end: mockAdminPoolEnd,
+          } as never;
+        }
+
         if (url.includes("auth_db")) callOrder.push("auth");
         else if (url.includes("audit_db")) callOrder.push("audit");
         else callOrder.push("customer");
@@ -353,6 +379,46 @@ describe("migrate", () => {
       await migrate.runStartupMigrations();
 
       expect(callOrder).toEqual(["auth", "audit", "customer"]);
+    });
+
+    it("uses the admin connection when cleaning stale provisioning databases", async () => {
+      process.env.AUDIT_DATABASE_URL =
+        "postgres://postgres:postgres@localhost:5432/audit_db";
+
+      writeMigration("auth", "0001_init.sql", "SELECT 1");
+      writeMigration("audit", "0001_init.sql", "SELECT 1");
+
+      const { connectTo, query: clientQuery } = await import("@/lib/db/client");
+
+      vi.mocked(connectTo).mockImplementation((url: string) => {
+        if (url === process.env.DATABASE_ADMIN_URL) {
+          return {
+            query: mockAdminPoolQuery,
+            connect: mockPoolConnect,
+            end: mockAdminPoolEnd,
+          } as never;
+        }
+
+        return {
+          query: mockPoolQuery,
+          connect: mockPoolConnect,
+          end: mockPoolEnd,
+        } as never;
+      });
+
+      vi.mocked(clientQuery)
+        .mockResolvedValueOnce({
+          rows: [{ database_name: "customer_stale" }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+      await migrate.runStartupMigrations();
+
+      expect(mockAdminPoolQuery).toHaveBeenCalledWith(
+        'DROP DATABASE IF EXISTS "customer_stale"',
+      );
     });
   });
 });

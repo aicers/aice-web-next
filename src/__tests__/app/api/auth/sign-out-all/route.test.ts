@@ -12,6 +12,7 @@ type HandlerFn = (
 const mockWithTransaction = vi.hoisted(() => vi.fn());
 const mockDeleteAccessTokenCookie = vi.hoisted(() => vi.fn());
 const mockDeleteTokenExpCookie = vi.hoisted(() => vi.fn());
+const mockDeleteTokenTtlCookie = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockExtractClientIp = vi.hoisted(() => vi.fn());
 const mockCookieDelete = vi.hoisted(() => vi.fn());
@@ -38,6 +39,9 @@ vi.mock("@/lib/auth/cookies", () => ({
   ),
   deleteTokenExpCookie: vi.fn((...args: unknown[]) =>
     mockDeleteTokenExpCookie(...args),
+  ),
+  deleteTokenTtlCookie: vi.fn((...args: unknown[]) =>
+    mockDeleteTokenTtlCookie(...args),
   ),
 }));
 
@@ -94,6 +98,7 @@ describe("POST /api/auth/sign-out-all", () => {
     mockWithTransaction.mockReset();
     mockDeleteAccessTokenCookie.mockReset();
     mockDeleteTokenExpCookie.mockReset();
+    mockDeleteTokenTtlCookie.mockReset();
     mockAuditRecord.mockReset();
     mockExtractClientIp.mockReset();
     mockCookieDelete.mockReset();
@@ -154,6 +159,7 @@ describe("POST /api/auth/sign-out-all", () => {
     currentSession = validSession;
     mockDeleteAccessTokenCookie.mockResolvedValueOnce(undefined);
     mockDeleteTokenExpCookie.mockResolvedValueOnce(undefined);
+    mockDeleteTokenTtlCookie.mockResolvedValueOnce(undefined);
     mockAuditRecord.mockResolvedValueOnce(undefined);
     mockExtractClientIp.mockReturnValue("127.0.0.1");
 
@@ -162,6 +168,7 @@ describe("POST /api/auth/sign-out-all", () => {
 
     expect(mockDeleteAccessTokenCookie).toHaveBeenCalled();
     expect(mockDeleteTokenExpCookie).toHaveBeenCalled();
+    expect(mockDeleteTokenTtlCookie).toHaveBeenCalled();
     expect(mockCookieDelete).toHaveBeenCalledWith("csrf");
   });
 

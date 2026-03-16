@@ -10,6 +10,7 @@ const mockIssueAccessToken = vi.hoisted(() => vi.fn());
 const mockGenerateCsrfToken = vi.hoisted(() => vi.fn());
 const mockSetAccessTokenCookie = vi.hoisted(() => vi.fn());
 const mockSetTokenExpCookie = vi.hoisted(() => vi.fn());
+const mockSetTokenTtlCookie = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockIsIpAllowed = vi.hoisted(() => vi.fn());
 const mockExtractClientIp = vi.hoisted(() => vi.fn());
@@ -48,6 +49,7 @@ vi.mock("@/lib/auth/csrf", () => ({
 vi.mock("@/lib/auth/cookies", () => ({
   setAccessTokenCookie: mockSetAccessTokenCookie,
   setTokenExpCookie: mockSetTokenExpCookie,
+  setTokenTtlCookie: mockSetTokenTtlCookie,
 }));
 
 vi.mock("@/lib/audit/logger", () => ({
@@ -117,6 +119,8 @@ describe("POST /api/auth/sign-in", () => {
     mockIssueAccessToken.mockResolvedValue("jwt-token");
     mockGenerateCsrfToken.mockReturnValue({ token: "csrf-token" });
     mockSetAccessTokenCookie.mockResolvedValue(undefined);
+    mockSetTokenExpCookie.mockResolvedValue(undefined);
+    mockSetTokenTtlCookie.mockResolvedValue(undefined);
     mockAuditRecord.mockResolvedValue(undefined);
     mockGenerateCorrelationId.mockReturnValue("corr-id-1");
     mockWithCorrelationId.mockImplementation((_id: string, fn: () => unknown) =>
@@ -677,6 +681,13 @@ describe("POST /api/auth/sign-in", () => {
       expect(expArg).toBeGreaterThanOrEqual(before);
       expect(expArg).toBeLessThanOrEqual(after);
       expect(maxAgeArg).toBe(900);
+    });
+
+    it("sets token_ttl cookie with the current JWT lifetime", async () => {
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      await POST(makeRequest({ username: "admin", password: "pass" }));
+
+      expect(mockSetTokenTtlCookie).toHaveBeenCalledWith(900);
     });
 
     it("records audit success", async () => {

@@ -31,10 +31,12 @@ export function readCsrfToken(): string | null {
   return null;
 }
 
-/** Delete the token_exp cookie client-side to prevent the dialog from re-appearing. */
-function clearTokenExpCookie(): void {
+/** Delete session monitor cookies client-side to prevent stale warnings. */
+function clearSessionMonitorCookies(): void {
   // biome-ignore lint/suspicious/noDocumentCookie: Cookie Store API not universally supported
   document.cookie = "token_exp=; path=/; max-age=0";
+  // biome-ignore lint/suspicious/noDocumentCookie: Cookie Store API not universally supported
+  document.cookie = "token_ttl=; path=/; max-age=0";
 }
 
 export function formatCountdown(seconds: number): string {
@@ -61,11 +63,11 @@ export function SessionExtensionDialog() {
         dismiss();
       } else {
         // Token already expired or invalid — redirect to sign-in
-        clearTokenExpCookie();
+        clearSessionMonitorCookies();
         router.push("/sign-in?reason=session-ended");
       }
     } catch {
-      clearTokenExpCookie();
+      clearSessionMonitorCookies();
       router.push("/sign-in?reason=session-ended");
     } finally {
       setExtending(false);
@@ -83,7 +85,7 @@ export function SessionExtensionDialog() {
     } catch {
       // Best-effort sign-out; redirect regardless
     } finally {
-      clearTokenExpCookie();
+      clearSessionMonitorCookies();
       router.push("/sign-in?reason=signed-out");
     }
   }, [router]);

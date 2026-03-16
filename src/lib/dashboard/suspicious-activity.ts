@@ -94,11 +94,10 @@ async function detectAccountLockouts(): Promise<SuspiciousAlert[]> {
 async function detectIpUaMismatches(): Promise<SuspiciousAlert[]> {
   const { rows } = await queryAudit<CountRow>(
     `SELECT COUNT(*) AS count, MAX(timestamp) AS latest_at
-       FROM audit_logs
+      FROM audit_logs
       WHERE action IN (
               'session.ip_mismatch',
-              'session.ua_mismatch',
-              'session.ip_ua_mismatch'
+              'session.ua_mismatch'
             )
         AND timestamp >= NOW() - INTERVAL '${WINDOW_HOURS} hours'`,
   );

@@ -9,7 +9,11 @@ import {
 } from "@/lib/audit/correlation";
 import { auditLog } from "@/lib/audit/logger";
 import { isIpAllowed } from "@/lib/auth/cidr";
-import { setAccessTokenCookie, setTokenExpCookie } from "@/lib/auth/cookies";
+import {
+  setAccessTokenCookie,
+  setTokenExpCookie,
+  setTokenTtlCookie,
+} from "@/lib/auth/cookies";
 import {
   CSRF_COOKIE_NAME,
   CSRF_COOKIE_OPTIONS,
@@ -258,6 +262,7 @@ async function createSessionAndIssueTokens(params: {
   const tokenExp = Math.floor(Date.now() / 1000) + maxAge;
   await setAccessTokenCookie(jwt, maxAge);
   await setTokenExpCookie(tokenExp, maxAge);
+  await setTokenTtlCookie(maxAge);
   const cookieStore = await cookies();
   cookieStore.set(CSRF_COOKIE_NAME, csrfToken, {
     ...CSRF_COOKIE_OPTIONS,

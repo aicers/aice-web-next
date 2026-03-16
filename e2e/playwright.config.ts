@@ -8,6 +8,7 @@ function buildEnv(): Record<string, string> {
 
   const keys = [
     "DATABASE_URL",
+    "DATABASE_ADMIN_URL",
     "AUDIT_DATABASE_URL",
     "DATA_DIR",
     "CSRF_SECRET",

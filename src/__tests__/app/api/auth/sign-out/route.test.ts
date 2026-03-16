@@ -12,6 +12,7 @@ type HandlerFn = (
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockDeleteAccessTokenCookie = vi.hoisted(() => vi.fn());
 const mockDeleteTokenExpCookie = vi.hoisted(() => vi.fn());
+const mockDeleteTokenTtlCookie = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockExtractClientIp = vi.hoisted(() => vi.fn());
 const mockCookieDelete = vi.hoisted(() => vi.fn());
@@ -38,6 +39,9 @@ vi.mock("@/lib/auth/cookies", () => ({
   ),
   deleteTokenExpCookie: vi.fn((...args: unknown[]) =>
     mockDeleteTokenExpCookie(...args),
+  ),
+  deleteTokenTtlCookie: vi.fn((...args: unknown[]) =>
+    mockDeleteTokenTtlCookie(...args),
   ),
 }));
 
@@ -161,6 +165,21 @@ describe("POST /api/auth/sign-out", () => {
     await POST(makeRequest(), makeContext());
 
     expect(mockCookieDelete).toHaveBeenCalledWith("csrf");
+  });
+
+  it("deletes the token_ttl cookie", async () => {
+    currentSession = validSession;
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    mockDeleteAccessTokenCookie.mockResolvedValueOnce(undefined);
+    mockDeleteTokenExpCookie.mockResolvedValueOnce(undefined);
+    mockDeleteTokenTtlCookie.mockResolvedValueOnce(undefined);
+    mockAuditRecord.mockResolvedValueOnce(undefined);
+    mockExtractClientIp.mockReturnValue("127.0.0.1");
+
+    const { POST } = await import("@/app/api/auth/sign-out/route");
+    await POST(makeRequest(), makeContext());
+
+    expect(mockDeleteTokenTtlCookie).toHaveBeenCalled();
   });
 
   it("records audit with action auth.sign_out", async () => {

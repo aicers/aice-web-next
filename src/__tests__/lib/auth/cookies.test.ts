@@ -117,4 +117,32 @@ describe("cookies", () => {
       expect(mockDelete).toHaveBeenCalledWith("token_exp");
     });
   });
+
+  describe("TOKEN_TTL_COOKIE", () => {
+    it("is 'token_ttl'", () => {
+      expect(cookiesMod.TOKEN_TTL_COOKIE).toBe("token_ttl");
+    });
+  });
+
+  describe("setTokenTtlCookie", () => {
+    it("sets the cookie with the TTL as both value and maxAge", async () => {
+      await cookiesMod.setTokenTtlCookie(900);
+
+      expect(mockSet).toHaveBeenCalledWith("token_ttl", "900", {
+        httpOnly: false,
+        secure: false,
+        sameSite: "strict",
+        path: "/",
+        maxAge: 900,
+      });
+    });
+  });
+
+  describe("deleteTokenTtlCookie", () => {
+    it("calls delete with the correct cookie name", async () => {
+      await cookiesMod.deleteTokenTtlCookie();
+
+      expect(mockDelete).toHaveBeenCalledWith("token_ttl");
+    });
+  });
 });

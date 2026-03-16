@@ -6,26 +6,34 @@ import { useRouter } from "@/i18n/navigation";
 
 // ── Constants ──────────────────────────────────────────────────
 
-/**
- * Show the session extension dialog when the remaining JWT lifetime
- * drops to 3 minutes or less.
- *
- * This is a fixed absolute threshold — simpler than a fraction of the
- * total TTL and requires no additional signal from the server.
- */
-const DIALOG_THRESHOLD_SECONDS = 180;
-
 const TOKEN_EXP_COOKIE = "token_exp";
+const TOKEN_TTL_COOKIE = "token_ttl";
 
 // ── Cookie helper ──────────────────────────────────────────────
 
-function readTokenExp(): number | null {
+interface SessionTokenMeta {
+  exp: number;
+  ttl: number;
+}
+
+function readCookieNumber(name: string): number | null {
   const match = document.cookie
     .split("; ")
-    .find((c) => c.startsWith(`${TOKEN_EXP_COOKIE}=`));
+    .find((c) => c.startsWith(`${name}=`));
   if (!match) return null;
+
   const value = Number(match.split("=")[1]);
-  return Number.isNaN(value) ? null : value;
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function readSessionTokenMeta(): SessionTokenMeta | null {
+  const exp = readCookieNumber(TOKEN_EXP_COOKIE);
+  const ttl = readCookieNumber(TOKEN_TTL_COOKIE);
+  if (exp === null || ttl === null) {
+    return null;
+  }
+
+  return { exp, ttl };
 }
 
 // ── Hook ───────────────────────────────────────────────────────
@@ -42,38 +50,33 @@ interface SessionMonitorState {
 export function useSessionMonitor(): SessionMonitorState {
   const router = useRouter();
   const [remainingSeconds, setRemainingSeconds] = useState(() => {
-    // Derive initial remaining time from the cookie if available,
-    // otherwise fall back to a safe non-zero value.
     if (typeof document !== "undefined") {
-      const exp = readTokenExp();
-      if (exp !== null) {
-        return Math.max(0, exp - Math.floor(Date.now() / 1000));
+      const token = readSessionTokenMeta();
+      if (token !== null) {
+        return Math.max(0, token.exp - Math.floor(Date.now() / 1000));
       }
     }
-    return DIALOG_THRESHOLD_SECONDS + 1;
+    return 0;
   });
   const [showDialog, setShowDialog] = useState(false);
   const dismissedExpRef = useRef<number | null>(null);
 
   const dismiss = useCallback(() => {
     setShowDialog(false);
-    // Remember which exp we dismissed for, so we don't re-show
-    // until the cookie updates (i.e. rotation happens).
-    dismissedExpRef.current = readTokenExp();
+    dismissedExpRef.current = readSessionTokenMeta()?.exp ?? null;
   }, []);
 
   useEffect(() => {
     const tick = () => {
-      const exp = readTokenExp();
-      if (exp === null) {
-        // No token_exp cookie — user is not authenticated or cookie
-        // was cleared.  Nothing to monitor.
+      const token = readSessionTokenMeta();
+      if (token === null) {
         setShowDialog(false);
+        setRemainingSeconds(0);
         return;
       }
 
       const now = Math.floor(Date.now() / 1000);
-      const remaining = exp - now;
+      const remaining = token.exp - now;
 
       setRemainingSeconds(Math.max(0, remaining));
 
@@ -84,17 +87,17 @@ export function useSessionMonitor(): SessionMonitorState {
         return;
       }
 
-      // If the token_exp changed (rotation happened), dismiss any
-      // previously shown dialog.
-      if (dismissedExpRef.current !== null && exp !== dismissedExpRef.current) {
+      if (
+        dismissedExpRef.current !== null &&
+        token.exp !== dismissedExpRef.current
+      ) {
         dismissedExpRef.current = null;
       }
 
-      // Show dialog when remaining ≤ threshold and we haven't
-      // dismissed for this particular exp value.
+      const dialogThreshold = token.ttl / 5;
       if (
-        remaining <= DIALOG_THRESHOLD_SECONDS &&
-        dismissedExpRef.current !== exp
+        remaining <= dialogThreshold &&
+        dismissedExpRef.current !== token.exp
       ) {
         setShowDialog(true);
       } else {

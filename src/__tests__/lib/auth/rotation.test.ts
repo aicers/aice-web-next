@@ -6,6 +6,7 @@ const mockIssueAccessToken = vi.hoisted(() => vi.fn());
 const mockGenerateCsrfToken = vi.hoisted(() => vi.fn());
 const mockSetAccessTokenCookie = vi.hoisted(() => vi.fn());
 const mockSetTokenExpCookie = vi.hoisted(() => vi.fn());
+const mockSetTokenTtlCookie = vi.hoisted(() => vi.fn());
 const mockCookiesSet = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/jwt", () => ({
@@ -26,6 +27,7 @@ vi.mock("@/lib/auth/csrf", () => ({
 vi.mock("@/lib/auth/cookies", () => ({
   setAccessTokenCookie: mockSetAccessTokenCookie,
   setTokenExpCookie: mockSetTokenExpCookie,
+  setTokenTtlCookie: mockSetTokenTtlCookie,
 }));
 
 vi.mock("next/headers", () => ({
@@ -62,6 +64,7 @@ describe("rotation", () => {
     mockGenerateCsrfToken.mockReset().mockReturnValue({ token: "new-csrf" });
     mockSetAccessTokenCookie.mockReset().mockResolvedValue(undefined);
     mockSetTokenExpCookie.mockReset().mockResolvedValue(undefined);
+    mockSetTokenTtlCookie.mockReset().mockResolvedValue(undefined);
     mockCookiesSet.mockReset();
 
     process.env.CSRF_SECRET = "test-csrf-secret";
@@ -134,6 +137,7 @@ describe("rotation", () => {
       expect(mockIssueAccessToken).not.toHaveBeenCalled();
       expect(mockGenerateCsrfToken).not.toHaveBeenCalled();
       expect(mockSetTokenExpCookie).not.toHaveBeenCalled();
+      expect(mockSetTokenTtlCookie).not.toHaveBeenCalled();
     });
   });
 
@@ -191,6 +195,12 @@ describe("rotation", () => {
       });
     });
 
+    it("sets token_ttl cookie with the current JWT lifetime", async () => {
+      await rotation.rotateTokens(validSession);
+
+      expect(mockSetTokenTtlCookie).toHaveBeenCalledWith(900);
+    });
+
     it("skips silently when CSRF_SECRET is missing", async () => {
       delete process.env.CSRF_SECRET;
 
@@ -199,6 +209,7 @@ describe("rotation", () => {
       expect(mockIssueAccessToken).not.toHaveBeenCalled();
       expect(mockGenerateCsrfToken).not.toHaveBeenCalled();
       expect(mockSetTokenExpCookie).not.toHaveBeenCalled();
+      expect(mockSetTokenTtlCookie).not.toHaveBeenCalled();
     });
   });
 });
