@@ -12,6 +12,8 @@ import {
 } from "./helpers/setup-db";
 
 const APP_URL = process.env.BASE_URL ?? "http://localhost:3000";
+// Next.js local CSRF origin checks still expect the canonical localhost
+// origin even when Playwright targets the app over 127.0.0.1.
 const APP_ORIGIN = APP_URL.replace("127.0.0.1", "localhost");
 
 async function signInViaApi(page: Page): Promise<void> {
@@ -64,6 +66,11 @@ test.describe("Sign-out-all", () => {
       // because the server-side guard checks session existence in the DB.
       const apiResponse = await pageB.request.get("/api/audit-logs");
       expect(apiResponse.status()).toBe(401);
+
+      // Protected page navigation should also redirect through the
+      // dashboard layout guard once the DB-backed session is gone.
+      await pageB.goto("/ko/audit-logs");
+      await expect(pageB).toHaveURL(/\/ko\/sign-in$/, { timeout: 10_000 });
     } finally {
       await contextA.close();
       await contextB.close();
@@ -80,14 +87,12 @@ test.describe("Sign-out-all", () => {
 
     await signOutAllViaApi(page);
 
-    await expect
-      .poll(async () => (await getSessionStatus(ADMIN_USERNAME)) === null)
-      .toBe(true);
+    await expect.poll(async () => getSessionStatus(ADMIN_USERNAME)).toBeNull();
 
     await signInViaApi(page);
 
     await expect
-      .poll(async () => (await getSessionStatus(ADMIN_USERNAME)) !== null)
-      .toBe(true);
+      .poll(async () => getSessionStatus(ADMIN_USERNAME))
+      .not.toBeNull();
   });
 });
