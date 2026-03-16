@@ -230,9 +230,7 @@ test("dashboard page renders three cards for admin", async ({ page }) => {
 
   // All three card titles should be present
   await expect(page.getByText("Active Sessions").first()).toBeVisible();
-  await expect(
-    page.getByText("Locked & Suspended Accounts"),
-  ).toBeVisible();
+  await expect(page.getByText("Locked & Suspended Accounts")).toBeVisible();
   await expect(page.getByText("Suspicious Activity").first()).toBeVisible();
 });
 
@@ -276,9 +274,9 @@ test("locked account shows in dashboard card", async ({ page }) => {
     await page.goto("/dashboard");
 
     // Wait for locked accounts card to render
-    await expect(
-      page.getByText("Locked & Suspended Accounts"),
-    ).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("Locked & Suspended Accounts")).toBeVisible({
+      timeout: 10000,
+    });
 
     // The locked user should appear
     await expect(page.getByText(LOCKED_USER)).toBeVisible({ timeout: 5000 });
