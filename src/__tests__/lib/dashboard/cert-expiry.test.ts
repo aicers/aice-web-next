@@ -40,6 +40,7 @@ describe("getCertStatus", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     clearEnv();
     vi.restoreAllMocks();
   });
@@ -96,8 +97,6 @@ describe("getCertStatus", () => {
     expect(result.severity).toBe("warning");
     expect(result.daysRemaining).toBeGreaterThanOrEqual(14);
     expect(result.daysRemaining).toBeLessThanOrEqual(15);
-
-    vi.useRealTimers();
   });
 
   it('returns severity "critical" for a cert expiring in less than 7 days', async () => {
@@ -120,8 +119,6 @@ describe("getCertStatus", () => {
     expect(result.severity).toBe("critical");
     expect(result.daysRemaining).toBeGreaterThanOrEqual(2);
     expect(result.daysRemaining).toBeLessThanOrEqual(3);
-
-    vi.useRealTimers();
   });
 
   it('returns severity "critical" for an already-expired cert', async () => {
@@ -141,8 +138,6 @@ describe("getCertStatus", () => {
     expect(result.configured).toBe(true);
     expect(result.severity).toBe("critical");
     expect(result.daysRemaining).toBeLessThan(0);
-
-    vi.useRealTimers();
   });
 
   it('returns severity "warning" at exactly 29 days remaining (boundary)', async () => {
@@ -162,8 +157,6 @@ describe("getCertStatus", () => {
     const result = getCertStatus();
 
     expect(result.severity).toBe("warning");
-
-    vi.useRealTimers();
   });
 
   it('returns severity "ok" at exactly 30 days remaining (boundary)', async () => {
@@ -183,8 +176,6 @@ describe("getCertStatus", () => {
     const result = getCertStatus();
 
     expect(result.severity).toBe("ok");
-
-    vi.useRealTimers();
   });
 
   it('returns severity "critical" at exactly 6 days remaining (boundary)', async () => {
@@ -201,8 +192,6 @@ describe("getCertStatus", () => {
     const result = getCertStatus();
 
     expect(result.severity).toBe("critical");
-
-    vi.useRealTimers();
   });
 
   it('returns severity "warning" at exactly 7 days remaining (boundary)', async () => {
@@ -222,8 +211,6 @@ describe("getCertStatus", () => {
     const result = getCertStatus();
 
     expect(result.severity).toBe("warning");
-
-    vi.useRealTimers();
   });
 
   it("parses subject and issuer from the certificate", async () => {

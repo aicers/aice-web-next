@@ -294,15 +294,29 @@ test("locked account shows in dashboard card", async ({ page }) => {
 
 // ── Certificate Expiry API tests ─────────────────────────────────
 
-test("GET /api/dashboard/cert-status returns cert status", async ({ page }) => {
+test("GET /api/dashboard/cert-status returns valid cert status shape", async ({
+  page,
+}) => {
   await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
 
   const response = await page.request.get("/api/dashboard/cert-status");
   expect(response.status()).toBe(200);
 
   const body = await response.json();
-  // In test environment, MTLS_CERT_PATH is typically not set
   expect(typeof body.data.configured).toBe("boolean");
+
+  if (body.data.configured) {
+    // When a cert is present, all fields must be populated
+    expect(body.data.subject).toBeTruthy();
+    expect(body.data.issuer).toBeTruthy();
+    expect(body.data.validFrom).toBeTruthy();
+    expect(body.data.validTo).toBeTruthy();
+    expect(typeof body.data.daysRemaining).toBe("number");
+    expect(["ok", "warning", "critical"]).toContain(body.data.severity);
+  } else {
+    // When no cert, only configured:false should be returned
+    expect(body.data.severity).toBeUndefined();
+  }
 });
 
 test("user without dashboard:read gets 403 on cert-status endpoint", async ({
@@ -326,9 +340,14 @@ test("dashboard:read user can access cert-status endpoint", async ({
   expect(typeof body.data.configured).toBe("boolean");
 });
 
+// NOTE: The cert-expiry UI card renders different content depending on
+// whether MTLS_CERT_PATH is set in the server environment.  The unit
+// tests cover both paths exhaustively; the E2E tests below verify that
+// the card renders without error in whichever state the server is in.
+
 // ── Certificate Expiry UI tests ─────────────────────────────────
 
-test("dashboard page renders cert expiry card with not-configured message", async ({
+test("dashboard page renders cert expiry card with status content", async ({
   page,
 }) => {
   await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
@@ -342,10 +361,11 @@ test("dashboard page renders cert expiry card with not-configured message", asyn
   // Description should be visible
   await expect(page.getByText("mTLS certificate status")).toBeVisible();
 
-  // In test environment MTLS_CERT_PATH is not set, so "not configured" shows
-  await expect(page.getByText("No mTLS certificate configured")).toBeVisible({
-    timeout: 5_000,
-  });
+  // Card should show either "not configured" or a severity badge —
+  // depending on whether MTLS_CERT_PATH is set on the server.
+  const notConfigured = page.getByText("No mTLS certificate configured");
+  const severityBadge = page.getByText(/OK|Warning|Critical/);
+  await expect(notConfigured.or(severityBadge)).toBeVisible({ timeout: 5_000 });
 });
 
 // ── Korean locale UI tests ──────────────────────────────────────
@@ -473,7 +493,7 @@ test("Korean locale: alerts card shows Korean detail messages", async ({
   }
 });
 
-test("Korean locale: cert expiry card shows Korean text and not-configured message", async ({
+test("Korean locale: cert expiry card shows Korean text and status", async ({
   page,
 }) => {
   await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
@@ -487,8 +507,8 @@ test("Korean locale: cert expiry card shows Korean text and not-configured messa
   // Description in Korean
   await expect(page.getByText("mTLS 인증서 상태")).toBeVisible();
 
-  // Not configured message in Korean
-  await expect(page.getByText("mTLS 인증서가 구성되지 않았습니다")).toBeVisible(
-    { timeout: 5_000 },
-  );
+  // Should show Korean "not configured" or a Korean severity badge
+  const notConfigured = page.getByText("mTLS 인증서가 구성되지 않았습니다");
+  const severityBadge = page.getByText(/정상|경고|위험/);
+  await expect(notConfigured.or(severityBadge)).toBeVisible({ timeout: 5_000 });
 });
