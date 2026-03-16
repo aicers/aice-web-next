@@ -368,6 +368,21 @@
         "privilege_escalation": "{count} potential privilege escalation(s)",
         "mass_revocation": "Actor {actor} revoked {count} sessions"
       }
+    },
+    "certExpiry": {
+      "title": "Certificate Expiry",
+      "description": "mTLS certificate status",
+      "subject": "Subject",
+      "issuer": "Issuer",
+      "validFrom": "Valid From",
+      "validTo": "Valid To",
+      "daysRemaining": "{days} days remaining",
+      "ok": "OK",
+      "warning": "Warning",
+      "critical": "Critical",
+      "notConfigured": "No mTLS certificate configured",
+      "loading": "Checking certificate...",
+      "error": "Failed to check certificate status"
     }
   },
   "changePassword": {

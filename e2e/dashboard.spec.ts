@@ -222,7 +222,7 @@ test("dashboard:read user cannot revoke sessions (needs dashboard:write)", async
 
 // ── UI tests ─────────────────────────────────────────────────────
 
-test("dashboard page renders three cards for admin", async ({ page }) => {
+test("dashboard page renders four cards for admin", async ({ page }) => {
   await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
   await page.goto("/dashboard");
 
@@ -231,10 +231,13 @@ test("dashboard page renders three cards for admin", async ({ page }) => {
     timeout: 10000,
   });
 
-  // All three card titles should be present
+  // All four card titles should be present
   await expect(page.getByText("Active Sessions").first()).toBeVisible();
   await expect(page.getByText("Locked & Suspended Accounts")).toBeVisible();
   await expect(page.getByText("Suspicious Activity").first()).toBeVisible();
+  const certTitle = page.getByText("Certificate Expiry");
+  await certTitle.scrollIntoViewIfNeeded();
+  await expect(certTitle).toBeVisible();
 });
 
 test("dashboard page redirects for user without dashboard:read", async ({
@@ -289,9 +292,65 @@ test("locked account shows in dashboard card", async ({ page }) => {
   }
 });
 
+// ── Certificate Expiry API tests ─────────────────────────────────
+
+test("GET /api/dashboard/cert-status returns cert status", async ({ page }) => {
+  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+
+  const response = await page.request.get("/api/dashboard/cert-status");
+  expect(response.status()).toBe(200);
+
+  const body = await response.json();
+  // In test environment, MTLS_CERT_PATH is typically not set
+  expect(typeof body.data.configured).toBe("boolean");
+});
+
+test("user without dashboard:read gets 403 on cert-status endpoint", async ({
+  page,
+}) => {
+  await signInAndWait(page, NOPERM_USER, NOPERM_PASS);
+
+  const response = await page.request.get("/api/dashboard/cert-status");
+  expect(response.status()).toBe(403);
+});
+
+test("dashboard:read user can access cert-status endpoint", async ({
+  page,
+}) => {
+  await signInAndWait(page, READER_USER, READER_PASS);
+
+  const response = await page.request.get("/api/dashboard/cert-status");
+  expect(response.status()).toBe(200);
+
+  const body = await response.json();
+  expect(typeof body.data.configured).toBe("boolean");
+});
+
+// ── Certificate Expiry UI tests ─────────────────────────────────
+
+test("dashboard page renders cert expiry card with not-configured message", async ({
+  page,
+}) => {
+  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await page.goto("/dashboard");
+
+  // Scroll down to make cert card visible
+  const certTitle = page.getByText("Certificate Expiry");
+  await certTitle.scrollIntoViewIfNeeded();
+  await expect(certTitle).toBeVisible({ timeout: 10_000 });
+
+  // Description should be visible
+  await expect(page.getByText("mTLS certificate status")).toBeVisible();
+
+  // In test environment MTLS_CERT_PATH is not set, so "not configured" shows
+  await expect(page.getByText("No mTLS certificate configured")).toBeVisible({
+    timeout: 5_000,
+  });
+});
+
 // ── Korean locale UI tests ──────────────────────────────────────
 
-test("Korean locale: dashboard renders three cards with Korean text", async ({
+test("Korean locale: dashboard renders four cards with Korean text", async ({
   page,
 }) => {
   await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
@@ -302,10 +361,13 @@ test("Korean locale: dashboard renders three cards with Korean text", async ({
     page.getByRole("heading", { name: "시스템 대시보드" }),
   ).toBeVisible({ timeout: 10_000 });
 
-  // All three card titles in Korean
+  // All four card titles in Korean
   await expect(page.getByText("활성 세션").first()).toBeVisible();
   await expect(page.getByText("잠긴 및 정지된 계정")).toBeVisible();
   await expect(page.getByText("의심 활동").first()).toBeVisible();
+  const certTitle = page.getByText("인증서 만료");
+  await certTitle.scrollIntoViewIfNeeded();
+  await expect(certTitle).toBeVisible();
 });
 
 test("Korean locale: sessions card shows Korean column headers", async ({
@@ -409,4 +471,24 @@ test("Korean locale: alerts card shows Korean detail messages", async ({
   } finally {
     await deleteAuditLogById(auditId);
   }
+});
+
+test("Korean locale: cert expiry card shows Korean text and not-configured message", async ({
+  page,
+}) => {
+  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await page.goto("/ko/dashboard");
+
+  // Scroll cert card into view
+  const certTitle = page.getByText("인증서 만료");
+  await certTitle.scrollIntoViewIfNeeded();
+  await expect(certTitle).toBeVisible({ timeout: 10_000 });
+
+  // Description in Korean
+  await expect(page.getByText("mTLS 인증서 상태")).toBeVisible();
+
+  // Not configured message in Korean
+  await expect(page.getByText("mTLS 인증서가 구성되지 않았습니다")).toBeVisible(
+    { timeout: 5_000 },
+  );
 });
