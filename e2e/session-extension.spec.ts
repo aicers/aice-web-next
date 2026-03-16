@@ -5,6 +5,7 @@ import { resetAccountDefaults, revokeAllSessions } from "./helpers/setup-db";
 
 const ADMIN_USERNAME = "admin";
 const ADMIN_PASSWORD = "Admin1234!";
+const APP_URL = process.env.BASE_URL ?? "http://localhost:3000";
 
 /**
  * Helper: sign in via the UI and wait until redirected away from sign-in.
@@ -18,19 +19,25 @@ async function signIn(page: import("@playwright/test").Page): Promise<void> {
 }
 
 /**
- * Helper: set the token_exp cookie to a specific timestamp to simulate
- * near-expiry without waiting 12+ minutes.
+ * Helper: set the session monitor cookies to simulate near-expiry without
+ * waiting for the server-issued JWT to age naturally.
  */
-async function setTokenExpCookie(
+async function setSessionMonitorCookies(
   page: import("@playwright/test").Page,
   expSeconds: number,
+  ttlSeconds = 15 * 60,
 ): Promise<void> {
   await page.context().addCookies([
     {
       name: "token_exp",
       value: String(expSeconds),
-      domain: "localhost",
-      path: "/",
+      url: APP_URL,
+      sameSite: "Strict",
+    },
+    {
+      name: "token_ttl",
+      value: String(ttlSeconds),
+      url: APP_URL,
       sameSite: "Strict",
     },
   ]);
@@ -59,7 +66,7 @@ test.describe("Session Extension Dialog", () => {
 
     // Set token_exp to 2 minutes from now (< 3 min threshold)
     const exp = Math.floor(Date.now() / 1000) + 120;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
     // Wait for the session monitor to detect near-expiry (ticks every 1s)
     const dialog = page.getByRole("alertdialog");
@@ -89,7 +96,7 @@ test.describe("Session Extension Dialog", () => {
 
     // Set token_exp to 10 minutes from now (well above 3 min threshold)
     const exp = Math.floor(Date.now() / 1000) + 600;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
     // Wait a moment to give the monitor time to tick
     await page.waitForTimeout(2_000);
@@ -109,7 +116,7 @@ test.describe("Session Extension Dialog", () => {
 
     // Set token_exp to 2 minutes from now
     const exp = Math.floor(Date.now() / 1000) + 120;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
     // Wait for dialog to appear
     const dialog = page.getByRole("alertdialog");
@@ -146,7 +153,7 @@ test.describe("Session Extension Dialog", () => {
 
     // Set token_exp to 2 minutes from now
     const exp = Math.floor(Date.now() / 1000) + 120;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
     // Wait for dialog to appear
     const dialog = page.getByRole("alertdialog");
@@ -172,7 +179,7 @@ test.describe("Session Extension Dialog", () => {
 
     // Set token_exp to 3 seconds from now — dialog appears, then expires
     const exp = Math.floor(Date.now() / 1000) + 3;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
     // Dialog should appear
     const dialog = page.getByRole("alertdialog");
@@ -190,7 +197,7 @@ test.describe("Session Extension Dialog", () => {
 
     // Set token_exp to 90 seconds from now
     const exp = Math.floor(Date.now() / 1000) + 90;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
     // Wait for dialog to appear
     const dialog = page.getByRole("alertdialog");
@@ -210,7 +217,7 @@ test.describe("Session Extension Dialog", () => {
 
     // Set token_exp to 2 minutes from now
     const exp = Math.floor(Date.now() / 1000) + 120;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
     // Wait for dialog to appear
     const dialog = page.getByRole("alertdialog");
@@ -236,7 +243,7 @@ test.describe("Session Extension Dialog", () => {
     await signIn(page);
 
     const exp = Math.floor(Date.now() / 1000) + 120;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible({ timeout: 5_000 });
@@ -273,7 +280,7 @@ test.describe("Session Extension Dialog", () => {
     await page.context().clearCookies({ name: "__Host-csrf" });
 
     const exp = Math.floor(Date.now() / 1000) + 120;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible({ timeout: 5_000 });
@@ -297,9 +304,8 @@ test.describe("Session Extension Dialog", () => {
 
     // Set token_exp to 2 minutes from now
     const exp = Math.floor(Date.now() / 1000) + 120;
-    await setTokenExpCookie(page, exp);
+    await setSessionMonitorCookies(page, exp);
 
-    // Wait for dialog to appear
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible({ timeout: 5_000 });
 
@@ -310,6 +316,35 @@ test.describe("Session Extension Dialog", () => {
     ).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: /로그아웃/ }),
+    ).toBeVisible();
+  });
+
+  test("dialog threshold follows the current JWT lifetime", async ({
+    page,
+  }) => {
+    await revokeAllSessions(ADMIN_USERNAME);
+    await signIn(page);
+
+    const dialog = page.getByRole("alertdialog");
+
+    // For a 10-minute token, the dialog threshold is 2 minutes.
+    await setSessionMonitorCookies(
+      page,
+      Math.floor(Date.now() / 1000) + 125,
+      600,
+    );
+    await page.waitForTimeout(2_000);
+    await expect(dialog).not.toBeVisible();
+
+    await setSessionMonitorCookies(
+      page,
+      Math.floor(Date.now() / 1000) + 120,
+      600,
+    );
+    await expect(dialog).toBeVisible({ timeout: 5_000 });
+
+    await expect(
+      dialog.getByText(/session is about to expire|세션이 곧 만료/i),
     ).toBeVisible();
   });
 });

@@ -277,14 +277,14 @@ describe("GET /api/audit-logs", () => {
 
       const { GET } = await import("@/app/api/audit-logs/route");
       const response = await GET(
-        makeRequest("action=session.reauth_required"),
+        makeRequest("action=session.reauth_failure"),
         makeContext(),
       );
 
       expect(response.status).toBe(200);
       expect(mockQueryAudit).toHaveBeenCalledWith(
         expect.stringContaining("action = $1"),
-        ["session.reauth_required"],
+        ["session.reauth_failure"],
       );
     });
 

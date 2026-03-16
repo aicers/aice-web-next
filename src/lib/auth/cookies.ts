@@ -10,6 +10,7 @@ export const ACCESS_TOKEN_COOKIE = "at";
  * uses this to display a session-extension dialog before expiry.
  */
 export const TOKEN_EXP_COOKIE = "token_exp";
+export const TOKEN_TTL_COOKIE = "token_ttl";
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -65,4 +66,19 @@ export async function setTokenExpCookie(
 export async function deleteTokenExpCookie(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(TOKEN_EXP_COOKIE);
+}
+
+/** Set the token_ttl cookie so the client can read the JWT lifetime. */
+export async function setTokenTtlCookie(ttlSeconds: number): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.set(TOKEN_TTL_COOKIE, String(ttlSeconds), {
+    ...TOKEN_EXP_COOKIE_OPTIONS,
+    maxAge: ttlSeconds,
+  });
+}
+
+/** Delete the token_ttl cookie. */
+export async function deleteTokenTtlCookie(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(TOKEN_TTL_COOKIE);
 }

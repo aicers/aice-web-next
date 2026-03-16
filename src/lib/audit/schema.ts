@@ -2,16 +2,13 @@
 type AuthAction =
   | "auth.sign_in.success"
   | "auth.sign_in.failure"
-  | "auth.sign_out"
-  | "auth.session_extend";
+  | "auth.sign_out";
 
 /** Phase 1 session event actions. */
 type SessionAction =
   | "session.ip_mismatch"
   | "session.ua_mismatch"
-  | "session.ip_ua_mismatch"
   | "session.revoke"
-  | "session.reauth_required"
   | "session.reauth_success"
   | "session.reauth_failure"
   | "session.idle_timeout"
@@ -21,7 +18,6 @@ type SessionAction =
 type AccountAction =
   | "account.create"
   | "account.update"
-  | "account.disable"
   | "account.delete"
   | "account.lock"
   | "account.unlock"
@@ -68,19 +64,15 @@ export const AUDIT_ACTIONS = [
   "auth.sign_in.success",
   "auth.sign_in.failure",
   "auth.sign_out",
-  "auth.session_extend",
   "session.ip_mismatch",
   "session.ua_mismatch",
-  "session.ip_ua_mismatch",
   "session.revoke",
-  "session.reauth_required",
   "session.reauth_success",
   "session.reauth_failure",
   "session.idle_timeout",
   "session.absolute_timeout",
   "account.create",
   "account.update",
-  "account.disable",
   "account.delete",
   "account.lock",
   "account.unlock",

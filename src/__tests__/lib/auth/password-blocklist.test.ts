@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { isBlocklisted } from "@/lib/auth/password-blocklist";
+import {
+  isBlocklisted,
+  PASSWORD_BLOCKLIST_SIZE,
+} from "@/lib/auth/password-blocklist";
 
 describe("password-blocklist", () => {
+  it("bundles the full offline top-100K dataset", () => {
+    expect(PASSWORD_BLOCKLIST_SIZE).toBe(100000);
+    expect(isBlocklisted("nebneb")).toBe(true);
+  });
+
   it("returns true for a known common password", () => {
     expect(isBlocklisted("password")).toBe(true);
     expect(isBlocklisted("123456")).toBe(true);

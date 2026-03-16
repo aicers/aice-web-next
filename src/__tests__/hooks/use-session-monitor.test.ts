@@ -67,10 +67,15 @@ vi.mock("@/i18n/navigation", () => ({
 
 describe("useSessionMonitor", () => {
   const now = Math.floor(Date.now() / 1000);
+  const defaultTtl = 900;
+
+  function makeSessionCookies(exp: number, ttl = defaultTtl): string {
+    return `token_exp=${exp}; token_ttl=${ttl}`;
+  }
 
   beforeEach(() => {
     fakeCookie = "";
-    remainingState = 181;
+    remainingState = 0;
     showDialogState = false;
     refObject.current = null;
     useEffectCallbacks.length = 0;
@@ -91,15 +96,17 @@ describe("useSessionMonitor", () => {
   }
 
   it("returns initial state with full remaining time", async () => {
+    fakeCookie = makeSessionCookies(now + 600);
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     const result = useSessionMonitor();
 
-    expect(result.remainingSeconds).toBe(181);
+    expect(result.remainingSeconds).toBeGreaterThanOrEqual(599);
+    expect(result.remainingSeconds).toBeLessThanOrEqual(600);
     expect(result.showDialog).toBe(false);
     expect(typeof result.dismiss).toBe("function");
   });
 
-  it("does not show dialog when no token_exp cookie is present", async () => {
+  it("does not show dialog when session monitor cookies are absent", async () => {
     fakeCookie = "";
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
@@ -109,9 +116,9 @@ describe("useSessionMonitor", () => {
     expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
-  it("does not show dialog when remaining > threshold (180s)", async () => {
+  it("does not show dialog when remaining is above one-fifth of the TTL", async () => {
     const exp = now + 600; // 10 min remaining — well above threshold
-    fakeCookie = `token_exp=${exp}`;
+    fakeCookie = makeSessionCookies(exp);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
@@ -120,9 +127,9 @@ describe("useSessionMonitor", () => {
     expect(setShowDialog).toHaveBeenCalledWith(false);
   });
 
-  it("shows dialog when remaining ≤ threshold (180s)", async () => {
+  it("shows dialog when remaining is below one-fifth of the TTL", async () => {
     const exp = now + 120; // 2 min remaining — below threshold
-    fakeCookie = `token_exp=${exp}`;
+    fakeCookie = makeSessionCookies(exp);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
@@ -131,9 +138,9 @@ describe("useSessionMonitor", () => {
     expect(setShowDialog).toHaveBeenCalledWith(true);
   });
 
-  it("shows dialog at exactly the threshold boundary", async () => {
-    const exp = now + 180; // exactly 3 min = 180s = threshold
-    fakeCookie = `token_exp=${exp}`;
+  it("shows dialog at exactly the one-fifth threshold boundary", async () => {
+    const exp = now + defaultTtl / 5;
+    fakeCookie = makeSessionCookies(exp);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
@@ -144,7 +151,7 @@ describe("useSessionMonitor", () => {
 
   it("redirects to sign-in when JWT is expired", async () => {
     const exp = now - 10; // expired 10 seconds ago
-    fakeCookie = `token_exp=${exp}`;
+    fakeCookie = makeSessionCookies(exp);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
@@ -158,7 +165,7 @@ describe("useSessionMonitor", () => {
 
   it("sets remainingSeconds to 0 when expired", async () => {
     const exp = now - 10;
-    fakeCookie = `token_exp=${exp}`;
+    fakeCookie = makeSessionCookies(exp);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
@@ -169,7 +176,7 @@ describe("useSessionMonitor", () => {
 
   it("dismiss() records the current exp and prevents re-show", async () => {
     const exp = now + 100;
-    fakeCookie = `token_exp=${exp}`;
+    fakeCookie = makeSessionCookies(exp);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     const { dismiss } = useSessionMonitor();
@@ -189,7 +196,7 @@ describe("useSessionMonitor", () => {
 
   it("clears dismissed state when token_exp changes (rotation)", async () => {
     const oldExp = now + 100;
-    fakeCookie = `token_exp=${oldExp}`;
+    fakeCookie = makeSessionCookies(oldExp);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     const { dismiss } = useSessionMonitor();
@@ -200,7 +207,7 @@ describe("useSessionMonitor", () => {
 
     // Simulate rotation: token_exp changes to a new value
     const newExp = now + 900;
-    fakeCookie = `token_exp=${newExp}`;
+    fakeCookie = makeSessionCookies(newExp);
 
     setShowDialog.mockClear();
     runEffect();
@@ -209,8 +216,8 @@ describe("useSessionMonitor", () => {
     expect(refObject.current).toBeNull();
   });
 
-  it("handles non-numeric cookie values gracefully", async () => {
-    fakeCookie = "token_exp=not-a-number";
+  it("handles invalid cookie values gracefully", async () => {
+    fakeCookie = "token_exp=not-a-number; token_ttl=bad";
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
@@ -221,22 +228,22 @@ describe("useSessionMonitor", () => {
     expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
-  it("reads token_exp from among multiple cookies", async () => {
+  it("reads token cookies from among multiple cookies", async () => {
     const exp = now + 60;
-    fakeCookie = `other=value; token_exp=${exp}; csrf=abc123`;
+    fakeCookie = `other=value; token_exp=${exp}; token_ttl=${defaultTtl}; csrf=abc123`;
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
     runEffect();
 
-    // 60s remaining < 180s threshold → dialog should show
+    // 60s remaining < 180s threshold for a 15-minute token → dialog should show
     expect(setShowDialog).toHaveBeenCalledWith(true);
   });
 
   it("updates remainingSeconds to correct non-zero value", async () => {
     const remaining = 120;
     const exp = now + remaining;
-    fakeCookie = `token_exp=${exp}`;
+    fakeCookie = makeSessionCookies(exp);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
@@ -254,7 +261,7 @@ describe("useSessionMonitor", () => {
   });
 
   it("useEffect returns a cleanup function", async () => {
-    fakeCookie = `token_exp=${now + 600}`;
+    fakeCookie = makeSessionCookies(now + 600);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
@@ -264,5 +271,15 @@ describe("useSessionMonitor", () => {
       const cleanup = cb();
       expect(typeof cleanup).toBe("function");
     }
+  });
+
+  it("uses the current token TTL instead of a fixed 180-second threshold", async () => {
+    fakeCookie = makeSessionCookies(now + 121, 600);
+
+    const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
+    useSessionMonitor();
+    runEffect();
+
+    expect(setShowDialog).toHaveBeenCalledWith(false);
   });
 });

@@ -5,6 +5,7 @@ import { auditLog } from "@/lib/audit/logger";
 import {
   deleteAccessTokenCookie,
   deleteTokenExpCookie,
+  deleteTokenTtlCookie,
 } from "@/lib/auth/cookies";
 import { CSRF_COOKIE_NAME } from "@/lib/auth/csrf";
 import { withAuth } from "@/lib/auth/guard";
@@ -19,6 +20,7 @@ export const POST = withAuth(
     // Clear cookies
     await deleteAccessTokenCookie();
     await deleteTokenExpCookie();
+    await deleteTokenTtlCookie();
     const cookieStore = await cookies();
     cookieStore.delete(CSRF_COOKIE_NAME);
 

@@ -2,7 +2,11 @@ import "server-only";
 
 import { cookies } from "next/headers";
 
-import { setAccessTokenCookie, setTokenExpCookie } from "./cookies";
+import {
+  setAccessTokenCookie,
+  setTokenExpCookie,
+  setTokenTtlCookie,
+} from "./cookies";
 import {
   CSRF_COOKIE_NAME,
   CSRF_COOKIE_OPTIONS,
@@ -73,6 +77,7 @@ export async function reissueAuthCookies(
   const tokenExp = Math.floor(Date.now() / 1000) + maxAge;
   await setAccessTokenCookie(newToken, maxAge);
   await setTokenExpCookie(tokenExp, maxAge);
+  await setTokenTtlCookie(maxAge);
 
   // Set CSRF cookie
   const cookieStore = await cookies();

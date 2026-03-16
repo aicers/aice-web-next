@@ -191,7 +191,7 @@ describe("auditLog", () => {
 
       await auditLog.record({
         actor: "user-1",
-        action: "auth.session_extend",
+        action: "session.reauth_success",
         target: "session",
         correlationId: "explicit-value",
       });
@@ -457,7 +457,6 @@ describe("auditLog", () => {
       "auth.sign_in.success",
       "auth.sign_in.failure",
       "auth.sign_out",
-      "auth.session_extend",
       "session.ip_mismatch",
       "session.ua_mismatch",
       "session.revoke",
