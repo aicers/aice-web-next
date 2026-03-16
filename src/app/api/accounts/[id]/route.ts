@@ -6,6 +6,7 @@ import { auditLog } from "@/lib/audit/logger";
 import { validateManagedAccountTarget } from "@/lib/auth/account-management";
 import {
   loadAccountRolePolicy,
+  rolePermissionsSelectSql,
   SYSTEM_ADMIN_ROLE_NAME,
 } from "@/lib/auth/account-role-policy";
 import { MAX_SYSTEM_ADMINISTRATORS } from "@/lib/auth/bootstrap";
@@ -128,11 +129,7 @@ export const PATCH = withAuth(async (request, context, session) => {
   const { rows: existing } = await query<AccountDetailRow>(
     `SELECT a.id, a.username, a.display_name, a.email, a.phone,
               a.role_id, r.name AS role_name,
-              COALESCE(
-                (SELECT array_agg(rp.permission ORDER BY rp.permission)
-                 FROM role_permissions rp WHERE rp.role_id = r.id),
-                '{}'
-              ) AS role_permissions,
+              ${rolePermissionsSelectSql("r", "role_permissions")},
               a.status,
               a.last_sign_in_at, a.created_at, a.updated_at
        FROM accounts a JOIN roles r ON a.role_id = r.id
@@ -314,11 +311,7 @@ export const PATCH = withAuth(async (request, context, session) => {
   const { rows: result } = await query<AccountDetailRow>(
     `SELECT a.id, a.username, a.display_name, a.email, a.phone,
               a.role_id, r.name AS role_name,
-              COALESCE(
-                (SELECT array_agg(rp.permission ORDER BY rp.permission)
-                 FROM role_permissions rp WHERE rp.role_id = r.id),
-                '{}'
-              ) AS role_permissions,
+              ${rolePermissionsSelectSql("r", "role_permissions")},
               a.status,
               a.last_sign_in_at, a.created_at, a.updated_at
        FROM accounts a JOIN roles r ON a.role_id = r.id
@@ -375,11 +368,7 @@ export const DELETE = withAuth(
     const { rows } = await query<AccountDetailRow>(
       `SELECT a.id, a.username, a.display_name, a.email, a.phone,
               a.role_id, r.name AS role_name,
-              COALESCE(
-                (SELECT array_agg(rp.permission ORDER BY rp.permission)
-                 FROM role_permissions rp WHERE rp.role_id = r.id),
-                '{}'
-              ) AS role_permissions,
+              ${rolePermissionsSelectSql("r", "role_permissions")},
               a.status,
               a.last_sign_in_at, a.created_at, a.updated_at
        FROM accounts a JOIN roles r ON a.role_id = r.id

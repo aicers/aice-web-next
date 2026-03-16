@@ -27,6 +27,18 @@ export interface AccountRolePolicySummary {
   tenant_manageable: boolean;
 }
 
+export function rolePermissionsSelectSql(
+  roleAlias = "r",
+  columnAlias = "permissions",
+): string {
+  return `COALESCE(
+            (SELECT array_agg(rp.permission ORDER BY rp.permission)
+             FROM role_permissions rp
+             WHERE rp.role_id = ${roleAlias}.id),
+            '{}'
+          ) AS ${columnAlias}`;
+}
+
 function hasGlobalCustomerAccess(permissions: string[]): boolean {
   return permissions.includes("customers:access-all");
 }
@@ -69,13 +81,7 @@ export async function loadAccountRolePolicy(
   roleId: number,
 ): Promise<AccountRolePolicy | null> {
   const { rows } = await query<RolePolicyRow>(
-    `SELECT r.id, r.name,
-            COALESCE(
-              (SELECT array_agg(rp.permission ORDER BY rp.permission)
-               FROM role_permissions rp
-               WHERE rp.role_id = r.id),
-              '{}'
-            ) AS permissions
+    `SELECT r.id, r.name, ${rolePermissionsSelectSql("r")}
        FROM roles r
       WHERE r.id = $1`,
     [roleId],

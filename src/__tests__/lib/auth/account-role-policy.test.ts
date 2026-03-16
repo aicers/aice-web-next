@@ -31,6 +31,19 @@ describe("account-role-policy", () => {
     expect(policy.tenantManageable).toBe(true);
   });
 
+  it("treats customer-scoped roles with permissions as non-monitor accounts", () => {
+    const policy = deriveAccountRolePolicy({
+      id: 3,
+      name: "Custom Tenant Operator",
+      permissions: ["accounts:read", "customers:read"],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(false);
+    expect(policy.requiresCustomerAssignment).toBe(true);
+    expect(policy.maxCustomerAssignments).toBeNull();
+    expect(policy.tenantManageable).toBe(false);
+  });
+
   it("summarizes the policy for API consumers", () => {
     const summary = summarizeAccountRolePolicy({
       requiresCustomerAssignment: true,
