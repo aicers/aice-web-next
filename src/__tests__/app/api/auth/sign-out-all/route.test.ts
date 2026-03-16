@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthSession } from "@/lib/auth/jwt";
 
@@ -9,7 +9,7 @@ type HandlerFn = (
   session: AuthSession,
 ) => Promise<Response>;
 
-const mockQuery = vi.hoisted(() => vi.fn());
+const mockWithTransaction = vi.hoisted(() => vi.fn());
 const mockDeleteAccessTokenCookie = vi.hoisted(() => vi.fn());
 const mockDeleteTokenExpCookie = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
@@ -29,7 +29,7 @@ vi.mock("@/lib/auth/guard", () => ({
 }));
 
 vi.mock("@/lib/db/client", () => ({
-  query: vi.fn((...args: unknown[]) => mockQuery(...args)),
+  withTransaction: vi.fn((...args: unknown[]) => mockWithTransaction(...args)),
 }));
 
 vi.mock("@/lib/auth/cookies", () => ({
@@ -61,6 +61,7 @@ vi.mock("next/headers", () => ({
 
 describe("POST /api/auth/sign-out-all", () => {
   const now = Math.floor(Date.now() / 1000);
+  let mockClientQuery: ReturnType<typeof vi.fn>;
 
   const validSession: AuthSession = {
     accountId: "acc-1",
@@ -88,13 +89,24 @@ describe("POST /api/auth/sign-out-all", () => {
     return { params: Promise.resolve({}) };
   }
 
-  afterEach(() => {
+  beforeEach(() => {
     vi.resetModules();
+    mockWithTransaction.mockReset();
+    mockDeleteAccessTokenCookie.mockReset();
+    mockDeleteTokenExpCookie.mockReset();
+    mockAuditRecord.mockReset();
+    mockExtractClientIp.mockReset();
+    mockCookieDelete.mockReset();
+
+    mockClientQuery = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    mockWithTransaction.mockImplementation(
+      async (fn: (client: { query: ReturnType<typeof vi.fn> }) => unknown) =>
+        fn({ query: mockClientQuery }),
+    );
   });
 
   it("returns 200 with { ok: true } on success", async () => {
     currentSession = validSession;
-    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
     mockDeleteAccessTokenCookie.mockResolvedValueOnce(undefined);
     mockAuditRecord.mockResolvedValueOnce(undefined);
     mockExtractClientIp.mockReturnValue("127.0.0.1");
@@ -109,7 +121,6 @@ describe("POST /api/auth/sign-out-all", () => {
 
   it("increments token_version in DB", async () => {
     currentSession = validSession;
-    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
     mockDeleteAccessTokenCookie.mockResolvedValueOnce(undefined);
     mockAuditRecord.mockResolvedValueOnce(undefined);
     mockExtractClientIp.mockReturnValue("127.0.0.1");
@@ -117,15 +128,30 @@ describe("POST /api/auth/sign-out-all", () => {
     const { POST } = await import("@/app/api/auth/sign-out-all/route");
     await POST(makeRequest(), makeContext());
 
-    expect(mockQuery).toHaveBeenCalledWith(
+    expect(mockClientQuery).toHaveBeenCalledWith(
       "UPDATE accounts SET token_version = token_version + 1 WHERE id = $1",
+      ["acc-1"],
+    );
+  });
+
+  it("revokes all non-revoked sessions for the account", async () => {
+    currentSession = validSession;
+    mockDeleteAccessTokenCookie.mockResolvedValueOnce(undefined);
+    mockAuditRecord.mockResolvedValueOnce(undefined);
+    mockExtractClientIp.mockReturnValue("127.0.0.1");
+
+    const { POST } = await import("@/app/api/auth/sign-out-all/route");
+    await POST(makeRequest(), makeContext());
+
+    expect(mockClientQuery).toHaveBeenCalledWith(
+      `UPDATE sessions SET revoked = true
+         WHERE account_id = $1 AND revoked = false`,
       ["acc-1"],
     );
   });
 
   it("deletes all session cookies", async () => {
     currentSession = validSession;
-    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
     mockDeleteAccessTokenCookie.mockResolvedValueOnce(undefined);
     mockDeleteTokenExpCookie.mockResolvedValueOnce(undefined);
     mockAuditRecord.mockResolvedValueOnce(undefined);
@@ -141,7 +167,6 @@ describe("POST /api/auth/sign-out-all", () => {
 
   it("records audit with action session.revoke and target account", async () => {
     currentSession = validSession;
-    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
     mockDeleteAccessTokenCookie.mockResolvedValueOnce(undefined);
     mockAuditRecord.mockResolvedValueOnce(undefined);
     mockExtractClientIp.mockReturnValue("127.0.0.1");
