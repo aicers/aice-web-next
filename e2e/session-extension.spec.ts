@@ -155,8 +155,11 @@ test.describe("Session Extension Dialog", () => {
     // Click Sign Out
     await dialog.getByRole("button", { name: /sign out|로그아웃/i }).click();
 
-    // Should redirect to sign-in page
-    await expect(page).toHaveURL(/sign-in/, { timeout: 10_000 });
+    // Should redirect to sign-in page with ?reason=signed-out
+    // (SessionExtensionDialog.handleSignOut calls router.push("/sign-in?reason=signed-out"))
+    await expect(page).toHaveURL(/sign-in\?reason=signed-out/, {
+      timeout: 10_000,
+    });
   });
 
   // ── 5. Countdown expires → redirect ───────────────────────────
