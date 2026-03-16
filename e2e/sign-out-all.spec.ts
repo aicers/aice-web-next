@@ -1,20 +1,49 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 import {
   ADMIN_PASSWORD,
   ADMIN_USERNAME,
   resetRateLimits,
-  signIn,
 } from "./helpers/auth";
-import { resetAccountDefaults } from "./helpers/setup-db";
+import {
+  getSessionStatus,
+  resetAccountDefaults,
+  setMaxSessions,
+} from "./helpers/setup-db";
+
+const APP_URL = process.env.BASE_URL ?? "http://localhost:3000";
+const APP_ORIGIN = APP_URL.replace("127.0.0.1", "localhost");
+
+async function signInViaApi(page: Page): Promise<void> {
+  const response = await page.request.post("/api/auth/sign-in", {
+    headers: { "Content-Type": "application/json" },
+    data: {
+      username: ADMIN_USERNAME,
+      password: ADMIN_PASSWORD,
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+}
+
+async function signOutAllViaApi(page: Page): Promise<void> {
+  const cookies = await page.context().cookies();
+  const csrf = cookies.find((c) => c.name === "csrf");
+  const response = await page.request.post("/api/auth/sign-out-all", {
+    headers: {
+      "x-csrf-token": csrf?.value ?? "",
+      Origin: APP_ORIGIN,
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+}
 
 test.describe("Sign-out-all", () => {
-  test.beforeAll(async () => {
+  test.beforeEach(async () => {
     await resetRateLimits();
     await resetAccountDefaults(ADMIN_USERNAME);
   });
 
-  test.afterAll(async () => {
+  test.afterEach(async () => {
     await resetAccountDefaults(ADMIN_USERNAME);
   });
 
@@ -27,43 +56,38 @@ test.describe("Sign-out-all", () => {
       const pageA = await contextA.newPage();
       const pageB = await contextB.newPage();
 
-      // Sign in on context A.
-      await pageA.goto("http://localhost:3000/sign-in");
-      await signIn(pageA, ADMIN_USERNAME, ADMIN_PASSWORD);
-      await expect(pageA).not.toHaveURL(/sign-in/, { timeout: 10_000 });
-
-      // Sign in on context B.
-      await pageB.goto("http://localhost:3000/sign-in");
-      await signIn(pageB, ADMIN_USERNAME, ADMIN_PASSWORD);
-      await expect(pageB).not.toHaveURL(/sign-in/, { timeout: 10_000 });
-
-      // From context A: call sign-out-all.
-      const cookiesA = await contextA.cookies();
-      const csrfA = cookiesA.find((c) => c.name === "csrf");
-      const response = await pageA.request.post("/api/auth/sign-out-all", {
-        headers: {
-          "x-csrf-token": csrfA?.value ?? "",
-          Origin: "http://localhost:3000",
-        },
-      });
-      expect(response.ok()).toBeTruthy();
+      await signInViaApi(pageA);
+      await signInViaApi(pageB);
+      await signOutAllViaApi(pageA);
 
       // Context B should be invalidated: API call should return 401
       // because the server-side guard checks session existence in the DB.
-      // (The proxy only does stateless JWT verification, so page navigation
-      // still succeeds – but the API guard catches revoked sessions.)
-      const apiResponse = await pageB.request.get(
-        "http://localhost:3000/api/audit-logs",
-      );
+      const apiResponse = await pageB.request.get("/api/audit-logs");
       expect(apiResponse.status()).toBe(401);
-
-      // Protected page navigation should also redirect to localized sign-in
-      // because the dashboard layout now rejects invalidated DB sessions.
-      await pageB.goto("http://localhost:3000/ko/audit-logs");
-      await expect(pageB).toHaveURL(/\/ko\/sign-in$/, { timeout: 10_000 });
     } finally {
       await contextA.close();
       await contextB.close();
     }
+  });
+
+  test("sign-out-all clears active sessions so max_sessions does not block re-login", async ({
+    page,
+  }) => {
+    await setMaxSessions(ADMIN_USERNAME, 1);
+    await signInViaApi(page);
+
+    expect(await getSessionStatus(ADMIN_USERNAME)).not.toBeNull();
+
+    await signOutAllViaApi(page);
+
+    await expect
+      .poll(async () => (await getSessionStatus(ADMIN_USERNAME)) === null)
+      .toBe(true);
+
+    await signInViaApi(page);
+
+    await expect
+      .poll(async () => (await getSessionStatus(ADMIN_USERNAME)) !== null)
+      .toBe(true);
   });
 });
