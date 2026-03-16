@@ -45,6 +45,7 @@ describe("role-management", () => {
             name: "System Administrator",
             description: "Full access",
             is_builtin: true,
+            permissions: ["accounts:read", "customers:access-all"],
           },
         ],
         rowCount: 1,
@@ -56,6 +57,7 @@ describe("role-management", () => {
       // Minimal: no permissions or account_count
       expect(result[0]).not.toHaveProperty("permissions");
       expect(result[0]).not.toHaveProperty("account_count");
+      expect(result[0].requires_customer_assignment).toBe(false);
     });
   });
 
@@ -87,6 +89,7 @@ describe("role-management", () => {
         "accounts:read",
         "accounts:write",
       ]);
+      expect(result[0].requires_customer_assignment).toBe(true);
     });
   });
 
@@ -120,6 +123,7 @@ describe("role-management", () => {
       const result = await mod.getRoleWithPermissions(1);
       expect(result?.name).toBe("Test Role");
       expect(result?.account_count).toBe(0);
+      expect(result?.tenant_manageable).toBe(false);
     });
   });
 

@@ -63,6 +63,13 @@ vi.mock("@/lib/auth/ip", () => ({
 
 describe("POST /api/accounts/[id]/unlock", () => {
   const now = Math.floor(Date.now() / 1000);
+  const TENANT_ADMIN_PERMISSIONS = [
+    "accounts:read",
+    "accounts:write",
+    "accounts:delete",
+    "customers:read",
+    "customers:write",
+  ];
 
   const adminSession: AuthSession = {
     accountId: "admin-1",
@@ -96,6 +103,17 @@ describe("POST /api/accounts/[id]/unlock", () => {
 
   function makeContext() {
     return { params: Promise.resolve({ id: targetAccountId }) };
+  }
+
+  function makeTargetAccount(roleName: string, rolePermissions: string[]) {
+    return {
+      id: targetAccountId,
+      role_id: roleName === "Tenant Administrator" ? 2 : 3,
+      role_name: roleName,
+      role_permissions: rolePermissions,
+      status: "locked",
+      lockout_count: 1,
+    };
   }
 
   beforeEach(() => {
@@ -143,14 +161,7 @@ describe("POST /api/accounts/[id]/unlock", () => {
   it("returns 404 when Tenant Admin targets an out-of-scope account", async () => {
     currentSession = tenantSession;
     mockQuery.mockResolvedValue({
-      rows: [
-        {
-          id: targetAccountId,
-          role_name: "Security Monitor",
-          status: "locked",
-          lockout_count: 1,
-        },
-      ],
+      rows: [makeTargetAccount("Security Monitor", [])],
       rowCount: 1,
     });
     mockGetAccountCustomerIds
@@ -167,12 +178,7 @@ describe("POST /api/accounts/[id]/unlock", () => {
     currentSession = tenantSession;
     mockQuery.mockResolvedValue({
       rows: [
-        {
-          id: targetAccountId,
-          role_name: "Tenant Administrator",
-          status: "locked",
-          lockout_count: 1,
-        },
+        makeTargetAccount("Tenant Administrator", TENANT_ADMIN_PERMISSIONS),
       ],
       rowCount: 1,
     });
@@ -192,14 +198,7 @@ describe("POST /api/accounts/[id]/unlock", () => {
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("SELECT")) {
         return {
-          rows: [
-            {
-              id: targetAccountId,
-              role_name: "Security Monitor",
-              status: "locked",
-              lockout_count: 1,
-            },
-          ],
+          rows: [makeTargetAccount("Security Monitor", [])],
           rowCount: 1,
         };
       }
@@ -244,8 +243,7 @@ describe("POST /api/accounts/[id]/unlock", () => {
         return {
           rows: [
             {
-              id: targetAccountId,
-              role_name: "Security Monitor",
+              ...makeTargetAccount("Security Monitor", []),
               status: "suspended",
               lockout_count: 2,
             },
@@ -287,8 +285,7 @@ describe("POST /api/accounts/[id]/unlock", () => {
         return {
           rows: [
             {
-              id: targetAccountId,
-              role_name: "Security Monitor",
+              ...makeTargetAccount("Security Monitor", []),
               status: "locked",
               lockout_count: 0,
             },
@@ -317,14 +314,7 @@ describe("POST /api/accounts/[id]/unlock", () => {
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("SELECT")) {
         return {
-          rows: [
-            {
-              id: targetAccountId,
-              role_name: "Security Monitor",
-              status: "locked",
-              lockout_count: 1,
-            },
-          ],
+          rows: [makeTargetAccount("Security Monitor", [])],
           rowCount: 1,
         };
       }
@@ -346,8 +336,7 @@ describe("POST /api/accounts/[id]/unlock", () => {
         return {
           rows: [
             {
-              id: targetAccountId,
-              role_name: "Security Monitor",
+              ...makeTargetAccount("Security Monitor", []),
               status: "suspended",
               lockout_count: 1,
             },
@@ -375,8 +364,7 @@ describe("POST /api/accounts/[id]/unlock", () => {
     mockQuery.mockResolvedValue({
       rows: [
         {
-          id: targetAccountId,
-          role_name: "Security Monitor",
+          ...makeTargetAccount("Security Monitor", []),
           status: "active",
           lockout_count: 0,
         },
@@ -396,8 +384,7 @@ describe("POST /api/accounts/[id]/unlock", () => {
     mockQuery.mockResolvedValue({
       rows: [
         {
-          id: targetAccountId,
-          role_name: "Security Monitor",
+          ...makeTargetAccount("Security Monitor", []),
           status: "disabled",
           lockout_count: 0,
         },

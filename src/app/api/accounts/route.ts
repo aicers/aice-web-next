@@ -3,6 +3,10 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { auditLog } from "@/lib/audit/logger";
+import {
+  loadAccountRolePolicy,
+  SYSTEM_ADMIN_ROLE_NAME,
+} from "@/lib/auth/account-role-policy";
 import { MAX_SYSTEM_ADMINISTRATORS } from "@/lib/auth/bootstrap";
 import { getAccountCustomerIds } from "@/lib/auth/customer-scope";
 import { withAuth } from "@/lib/auth/guard";
@@ -27,9 +31,6 @@ interface AccountRow {
 }
 
 // ── Constants ───────────────────────────────────────────────────
-
-const SYSTEM_ADMIN_ROLE = "System Administrator";
-const SECURITY_MONITOR_ROLE = "Security Monitor";
 
 const VALID_STATUSES = new Set(["active", "locked", "suspended", "disabled"]);
 const DEFAULT_PAGE_SIZE = 20;
@@ -220,34 +221,33 @@ export const POST = withAuth(
     }
 
     // Step 2: Look up target role
-    const { rows: roleRows } = await query<{ id: number; name: string }>(
-      "SELECT id, name FROM roles WHERE id = $1",
-      [roleId],
-    );
-    if (roleRows.length === 0) {
+    const targetRole = await loadAccountRolePolicy(roleId);
+    if (!targetRole) {
       return NextResponse.json({ error: "Role not found" }, { status: 400 });
     }
-    const targetRoleName = roleRows[0].name;
 
-    // Step 3: Tenant Admin can only create Security Monitor
-    const callerIsSysAdmin = session.roles.includes(SYSTEM_ADMIN_ROLE);
-    if (!callerIsSysAdmin && targetRoleName !== SECURITY_MONITOR_ROLE) {
+    // Step 3: Tenant-scoped operators can only create monitor-equivalent roles
+    const callerAccessAll = await hasPermission(
+      session.roles,
+      "customers:access-all",
+    );
+    if (!callerAccessAll && !targetRole.tenantManageable) {
       return NextResponse.json(
         {
           error:
-            "Tenant Administrator can only create Security Monitor accounts",
+            "Tenant Administrator can only create Security Monitor-equivalent accounts",
         },
         { status: 403 },
       );
     }
 
     // Step 4: System Admin count limit
-    if (targetRoleName === SYSTEM_ADMIN_ROLE) {
+    if (targetRole.isNamedSystemAdministrator) {
       const { rows: countRows } = await query<{ count: string }>(
         `SELECT COUNT(*)::text AS count FROM accounts a
          JOIN roles r ON a.role_id = r.id
          WHERE r.name = $1 AND a.status != 'disabled'`,
-        [SYSTEM_ADMIN_ROLE],
+        [SYSTEM_ADMIN_ROLE_NAME],
       );
       if (
         Number.parseInt(countRows[0].count, 10) >= MAX_SYSTEM_ADMINISTRATORS
@@ -262,7 +262,7 @@ export const POST = withAuth(
     }
 
     // Step 5: Customer assignment validation
-    const requiresCustomerAssignment = targetRoleName !== SYSTEM_ADMIN_ROLE;
+    const requiresCustomerAssignment = targetRole.requiresCustomerAssignment;
 
     if (requiresCustomerAssignment) {
       if (
@@ -273,7 +273,7 @@ export const POST = withAuth(
         return NextResponse.json(
           {
             error:
-              "Customer assignment is required for non-System Administrator accounts",
+              "Customer assignment is required for customer-scoped accounts",
           },
           { status: 400 },
         );
@@ -290,16 +290,15 @@ export const POST = withAuth(
       }
     }
 
-    // Security Monitor: max 1 customer
     if (
-      targetRoleName === SECURITY_MONITOR_ROLE &&
+      targetRole.maxCustomerAssignments === 1 &&
       customerIds &&
       customerIds.length > 1
     ) {
       return NextResponse.json(
         {
           error:
-            "Security Monitor accounts can only be assigned to a single customer",
+            "Security Monitor-equivalent accounts can only be assigned to a single customer",
         },
         { status: 400 },
       );
@@ -325,7 +324,7 @@ export const POST = withAuth(
     }
 
     // Tenant Admin scope: can only assign their own customers
-    if (!callerIsSysAdmin && uniqueCustomerIds.length > 0) {
+    if (!callerAccessAll && uniqueCustomerIds.length > 0) {
       const callerCustomerIds = await getAccountCustomerIds(session.accountId);
       const callerSet = new Set(callerCustomerIds);
       const outOfScope = uniqueCustomerIds.filter((id) => !callerSet.has(id));
@@ -422,7 +421,7 @@ export const POST = withAuth(
       details: {
         username,
         displayName,
-        role: targetRoleName,
+        role: targetRole.roleName,
         customerIds: uniqueCustomerIds,
       },
     });

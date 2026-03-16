@@ -39,6 +39,9 @@ interface Account {
 interface Role {
   id: number;
   name: string;
+  requires_customer_assignment: boolean;
+  max_customer_assignments: number | null;
+  tenant_manageable: boolean;
 }
 
 interface Customer {
@@ -102,18 +105,17 @@ export function AccountFormDialog({
     }
   }, [open, account, roles]);
 
-  const selectedRoleName =
-    roles.find((r) => String(r.id) === roleId)?.name ?? "";
-  const isSecurityMonitor = selectedRoleName === "Security Monitor";
-  const isSysAdmin = selectedRoleName === "System Administrator";
+  const selectedRole = roles.find((r) => String(r.id) === roleId);
+  const hasSingleCustomerLimit = selectedRole?.max_customer_assignments === 1;
+  const requiresCustomerAssignment =
+    selectedRole?.requires_customer_assignment ?? false;
 
   const handleCustomerToggle = (customerId: number) => {
     setSelectedCustomerIds((prev) => {
       if (prev.includes(customerId)) {
         return prev.filter((id) => id !== customerId);
       }
-      // Security Monitor: max 1
-      if (isSecurityMonitor) {
+      if (hasSingleCustomerLimit) {
         return [customerId];
       }
       return [...prev, customerId];
@@ -185,7 +187,8 @@ export function AccountFormDialog({
     : username.trim().length > 0 &&
       displayName.trim().length > 0 &&
       password.length > 0 &&
-      roleId.length > 0;
+      roleId.length > 0 &&
+      (!requiresCustomerAssignment || selectedCustomerIds.length > 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -273,39 +276,41 @@ export function AccountFormDialog({
             />
           </div>
 
-          {/* Customer assignment (create only, non-SysAdmin) */}
-          {!isEdit && !isSysAdmin && customers.length > 0 && (
-            <div className="space-y-2">
-              <Label>
-                {t("customers")}
-                {isSecurityMonitor && (
-                  <span className="text-muted-foreground ml-1 text-xs">
-                    (max 1)
-                  </span>
-                )}
-              </Label>
-              <div className="max-h-40 space-y-2 overflow-y-auto rounded border p-3">
-                {customers.map((customer) => {
-                  const checkboxId = `customer-${customer.id}`;
-                  return (
-                    <div
-                      key={customer.id}
-                      className="flex items-center gap-2 text-sm"
-                    >
-                      <Checkbox
-                        id={checkboxId}
-                        checked={selectedCustomerIds.includes(customer.id)}
-                        onCheckedChange={() =>
-                          handleCustomerToggle(customer.id)
-                        }
-                      />
-                      <label htmlFor={checkboxId}>{customer.name}</label>
-                    </div>
-                  );
-                })}
+          {!isEdit &&
+            selectedRole &&
+            requiresCustomerAssignment &&
+            customers.length > 0 && (
+              <div className="space-y-2">
+                <Label>
+                  {t("customers")}
+                  {hasSingleCustomerLimit && (
+                    <span className="text-muted-foreground ml-1 text-xs">
+                      (max 1)
+                    </span>
+                  )}
+                </Label>
+                <div className="max-h-40 space-y-2 overflow-y-auto rounded border p-3">
+                  {customers.map((customer) => {
+                    const checkboxId = `customer-${customer.id}`;
+                    return (
+                      <div
+                        key={customer.id}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <Checkbox
+                          id={checkboxId}
+                          checked={selectedCustomerIds.includes(customer.id)}
+                          onCheckedChange={() =>
+                            handleCustomerToggle(customer.id)
+                          }
+                        />
+                        <label htmlFor={checkboxId}>{customer.name}</label>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {error && <p className="text-destructive text-sm">{error}</p>}
 

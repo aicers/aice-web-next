@@ -1,14 +1,15 @@
 import "server-only";
 
+import { deriveAccountRolePolicy } from "./account-role-policy";
 import { getAccountCustomerIds } from "./customer-scope";
 import type { AuthSession } from "./jwt";
 import { hasPermission } from "./permissions";
 
-export const SECURITY_MONITOR_ROLE = "Security Monitor";
-
 export interface ManagedAccountTarget {
   id: string;
+  role_permissions?: string[];
   role_name: string;
+  role_id: number;
 }
 
 export interface ManagedAccountPolicyError {
@@ -42,9 +43,16 @@ export async function validateManagedAccountTarget(
     return { error: "Account not found", status: 404 };
   }
 
-  if (account.role_name !== SECURITY_MONITOR_ROLE) {
+  const targetPolicy = deriveAccountRolePolicy({
+    id: account.role_id,
+    name: account.role_name,
+    permissions: account.role_permissions ?? [],
+  });
+
+  if (!targetPolicy.tenantManageable) {
     return {
-      error: "Tenant Administrator can only manage Security Monitor accounts",
+      error:
+        "Tenant Administrator can only manage Security Monitor-equivalent accounts",
       status: 403,
     };
   }

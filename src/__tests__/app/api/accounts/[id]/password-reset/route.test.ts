@@ -77,6 +77,13 @@ vi.mock("@/lib/auth/ip", () => ({
 
 describe("POST /api/accounts/[id]/password-reset", () => {
   const now = Math.floor(Date.now() / 1000);
+  const TENANT_ADMIN_PERMISSIONS = [
+    "accounts:read",
+    "accounts:write",
+    "accounts:delete",
+    "customers:read",
+    "customers:write",
+  ];
 
   const adminSession: AuthSession = {
     accountId: "admin-1",
@@ -121,6 +128,15 @@ describe("POST /api/accounts/[id]/password-reset", () => {
     return { params: Promise.resolve({ id: currentSession.accountId }) };
   }
 
+  function makeTargetAccount(roleName: string, rolePermissions: string[]) {
+    return {
+      id: targetAccountId,
+      role_id: roleName === "Tenant Administrator" ? 2 : 3,
+      role_name: roleName,
+      role_permissions: rolePermissions,
+    };
+  }
+
   beforeEach(() => {
     currentSession = adminSession;
     mockQuery.mockReset();
@@ -146,7 +162,7 @@ describe("POST /api/accounts/[id]/password-reset", () => {
 
     // Default: account exists
     mockQuery.mockResolvedValue({
-      rows: [{ id: targetAccountId, role_name: "Security Monitor" }],
+      rows: [makeTargetAccount("Security Monitor", [])],
       rowCount: 1,
     });
     mockGetAccountCustomerIds.mockResolvedValue([1]);
@@ -222,7 +238,9 @@ describe("POST /api/accounts/[id]/password-reset", () => {
   it("returns 403 when Tenant Admin targets an in-scope Tenant Administrator", async () => {
     currentSession = tenantSession;
     mockQuery.mockResolvedValue({
-      rows: [{ id: targetAccountId, role_name: "Tenant Administrator" }],
+      rows: [
+        makeTargetAccount("Tenant Administrator", TENANT_ADMIN_PERMISSIONS),
+      ],
       rowCount: 1,
     });
     mockGetAccountCustomerIds

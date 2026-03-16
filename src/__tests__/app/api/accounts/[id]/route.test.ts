@@ -94,6 +94,33 @@ const tenantSession: AuthSession = {
   roles: ["Tenant Administrator"],
 };
 
+const SYSTEM_ADMIN_PERMISSIONS = [
+  "accounts:read",
+  "accounts:write",
+  "accounts:delete",
+  "roles:read",
+  "roles:write",
+  "roles:delete",
+  "customers:read",
+  "customers:write",
+  "customers:access-all",
+  "audit-logs:read",
+  "system-settings:read",
+  "system-settings:write",
+];
+
+const TENANT_ADMIN_PERMISSIONS = [
+  "accounts:read",
+  "accounts:write",
+  "accounts:delete",
+  "customers:read",
+  "customers:write",
+];
+
+function makeRoleLookupRow(id: number, name: string, permissions: string[]) {
+  return { id, name, permissions };
+}
+
 function makeContext(id = TARGET_UUID) {
   return { params: Promise.resolve({ id }) };
 }
@@ -106,6 +133,7 @@ const targetRow = {
   phone: null,
   role_id: 3,
   role_name: "Security Monitor",
+  role_permissions: [] as string[],
   status: "active",
   last_sign_in_at: null,
   created_at: new Date().toISOString(),
@@ -116,7 +144,10 @@ const targetRow = {
 
 describe("GET /api/accounts/[id]", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockAuditRecord.mockReset();
+    mockGetAccountCustomerIds.mockReset();
+    mockHasPermission.mockReset();
     currentSession = adminSession;
     mockHasPermission.mockImplementation(
       async (_roles: string[], perm: string) => {
@@ -232,7 +263,10 @@ describe("GET /api/accounts/[id]", () => {
 
 describe("PATCH /api/accounts/[id]", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockAuditRecord.mockReset();
+    mockGetAccountCustomerIds.mockReset();
+    mockHasPermission.mockReset();
     currentSession = adminSession;
     mockHasPermission.mockImplementation(
       async (_roles: string[], perm: string) => {
@@ -411,12 +445,20 @@ describe("PATCH /api/accounts/[id]", () => {
     const { PATCH } = await import("@/app/api/accounts/[id]/route");
     const sysAdminTarget = {
       ...targetRow,
+      role_id: 1,
       role_name: "System Administrator",
+      role_permissions: SYSTEM_ADMIN_PERMISSIONS,
     };
     mockQuery
       .mockResolvedValueOnce({ rows: [sysAdminTarget], rowCount: 1 }) // fetch
       .mockResolvedValueOnce({
-        rows: [{ id: 2, name: "Tenant Administrator" }],
+        rows: [
+          makeRoleLookupRow(
+            2,
+            "Tenant Administrator",
+            TENANT_ADMIN_PERMISSIONS,
+          ),
+        ],
         rowCount: 1,
       }) // role lookup
       .mockResolvedValueOnce({ rows: [{ count: "1" }], rowCount: 1 }); // count
@@ -438,7 +480,13 @@ describe("PATCH /api/accounts/[id]", () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [targetRow], rowCount: 1 }) // fetch
       .mockResolvedValueOnce({
-        rows: [{ id: 1, name: "System Administrator" }],
+        rows: [
+          makeRoleLookupRow(
+            1,
+            "System Administrator",
+            SYSTEM_ADMIN_PERMISSIONS,
+          ),
+        ],
         rowCount: 1,
       }) // role lookup
       .mockResolvedValueOnce({ rows: [{ count: "5" }], rowCount: 1 }); // count at max
@@ -585,7 +633,9 @@ describe("PATCH /api/accounts/[id]", () => {
     const { PATCH } = await import("@/app/api/accounts/[id]/route");
     const tenantAdminTarget = {
       ...targetRow,
+      role_id: 2,
       role_name: "Tenant Administrator",
+      role_permissions: TENANT_ADMIN_PERMISSIONS,
     };
     mockQuery.mockResolvedValueOnce({ rows: [tenantAdminTarget], rowCount: 1 });
     mockGetAccountCustomerIds
@@ -609,7 +659,9 @@ describe("PATCH /api/accounts/[id]", () => {
     const { PATCH } = await import("@/app/api/accounts/[id]/route");
     const tenantAdminTarget = {
       ...targetRow,
+      role_id: 2,
       role_name: "Tenant Administrator",
+      role_permissions: TENANT_ADMIN_PERMISSIONS,
     };
     mockQuery.mockResolvedValueOnce({ rows: [tenantAdminTarget], rowCount: 1 });
     mockGetAccountCustomerIds
@@ -676,7 +728,9 @@ describe("PATCH /api/accounts/[id]", () => {
       .mockResolvedValueOnce([1, 2]) // caller customers
       .mockResolvedValueOnce([1]); // target customers (overlap)
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, name: "System Administrator" }],
+      rows: [
+        makeRoleLookupRow(1, "System Administrator", SYSTEM_ADMIN_PERMISSIONS),
+      ],
       rowCount: 1,
     });
 
@@ -700,7 +754,9 @@ describe("PATCH /api/accounts/[id]", () => {
       .mockResolvedValueOnce([1, 2]) // caller customers
       .mockResolvedValueOnce([1]); // target customers (overlap)
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 2, name: "Tenant Administrator" }],
+      rows: [
+        makeRoleLookupRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS),
+      ],
       rowCount: 1,
     });
 
@@ -737,12 +793,25 @@ describe("PATCH /api/accounts/[id]", () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [targetRow], rowCount: 1 }) // fetch
       .mockResolvedValueOnce({
-        rows: [{ id: 2, name: "Tenant Administrator" }],
+        rows: [
+          makeRoleLookupRow(
+            2,
+            "Tenant Administrator",
+            TENANT_ADMIN_PERMISSIONS,
+          ),
+        ],
         rowCount: 1,
       }) // role lookup
       .mockResolvedValueOnce({ rows: [{ id: TARGET_UUID }], rowCount: 1 }) // update
       .mockResolvedValueOnce({
-        rows: [{ ...targetRow, role_name: "Tenant Administrator" }],
+        rows: [
+          {
+            ...targetRow,
+            role_id: 2,
+            role_name: "Tenant Administrator",
+            role_permissions: TENANT_ADMIN_PERMISSIONS,
+          },
+        ],
         rowCount: 1,
       }); // refetch
 
@@ -766,7 +835,10 @@ describe("PATCH /api/accounts/[id]", () => {
 
 describe("DELETE /api/accounts/[id]", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockAuditRecord.mockReset();
+    mockGetAccountCustomerIds.mockReset();
+    mockHasPermission.mockReset();
     currentSession = adminSession;
     mockHasPermission.mockImplementation(
       async (_roles: string[], perm: string) => {
@@ -864,7 +936,9 @@ describe("DELETE /api/accounts/[id]", () => {
     const { DELETE } = await import("@/app/api/accounts/[id]/route");
     const sysAdminTarget = {
       ...targetRow,
+      role_id: 1,
       role_name: "System Administrator",
+      role_permissions: SYSTEM_ADMIN_PERMISSIONS,
     };
     mockQuery
       .mockResolvedValueOnce({ rows: [sysAdminTarget], rowCount: 1 }) // fetch
@@ -886,7 +960,9 @@ describe("DELETE /api/accounts/[id]", () => {
     const { DELETE } = await import("@/app/api/accounts/[id]/route");
     const sysAdminTarget = {
       ...targetRow,
+      role_id: 1,
       role_name: "System Administrator",
+      role_permissions: SYSTEM_ADMIN_PERMISSIONS,
     };
     mockQuery.mockResolvedValueOnce({
       rows: [sysAdminTarget],
@@ -912,7 +988,9 @@ describe("DELETE /api/accounts/[id]", () => {
     const { DELETE } = await import("@/app/api/accounts/[id]/route");
     const tenantAdminTarget = {
       ...targetRow,
+      role_id: 2,
       role_name: "Tenant Administrator",
+      role_permissions: TENANT_ADMIN_PERMISSIONS,
     };
     mockQuery.mockResolvedValueOnce({
       rows: [tenantAdminTarget],
@@ -966,7 +1044,9 @@ describe("DELETE /api/accounts/[id]", () => {
     const { DELETE } = await import("@/app/api/accounts/[id]/route");
     const sysAdminTarget = {
       ...targetRow,
+      role_id: 1,
       role_name: "System Administrator",
+      role_permissions: SYSTEM_ADMIN_PERMISSIONS,
     };
     mockQuery
       .mockResolvedValueOnce({ rows: [sysAdminTarget], rowCount: 1 }) // fetch
