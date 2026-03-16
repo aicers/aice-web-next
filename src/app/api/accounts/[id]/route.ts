@@ -4,6 +4,11 @@ import { NextResponse } from "next/server";
 
 import { auditLog } from "@/lib/audit/logger";
 import { validateManagedAccountTarget } from "@/lib/auth/account-management";
+import {
+  loadAccountRolePolicy,
+  rolePermissionsSelectSql,
+  SYSTEM_ADMIN_ROLE_NAME,
+} from "@/lib/auth/account-role-policy";
 import { MAX_SYSTEM_ADMINISTRATORS } from "@/lib/auth/bootstrap";
 import { getAccountCustomerIds } from "@/lib/auth/customer-scope";
 import { withAuth } from "@/lib/auth/guard";
@@ -21,6 +26,7 @@ interface AccountDetailRow {
   phone: string | null;
   role_id: number;
   role_name: string;
+  role_permissions?: string[];
   status: string;
   last_sign_in_at: string | null;
   created_at: string;
@@ -32,8 +38,6 @@ interface AccountDetailRow {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const SYSTEM_ADMIN_ROLE = "System Administrator";
-const SECURITY_MONITOR_ROLE = "Security Monitor";
 const VALID_STATUSES = new Set(["active", "locked", "suspended", "disabled"]);
 
 // ── Route Handlers ──────────────────────────────────────────────
@@ -124,7 +128,9 @@ export const PATCH = withAuth(async (request, context, session) => {
   // Fetch target account
   const { rows: existing } = await query<AccountDetailRow>(
     `SELECT a.id, a.username, a.display_name, a.email, a.phone,
-              a.role_id, r.name AS role_name, a.status,
+              a.role_id, r.name AS role_name,
+              ${rolePermissionsSelectSql("r", "role_permissions")},
+              a.status,
               a.last_sign_in_at, a.created_at, a.updated_at
        FROM accounts a JOIN roles r ON a.role_id = r.id
        WHERE a.id = $1`,
@@ -197,33 +203,33 @@ export const PATCH = withAuth(async (request, context, session) => {
       return NextResponse.json({ error: "Invalid roleId" }, { status: 400 });
     }
     // Verify role exists
-    const { rows: roleRows } = await query<{ id: number; name: string }>(
-      "SELECT id, name FROM roles WHERE id = $1",
-      [newRoleId],
-    );
-    if (roleRows.length === 0) {
+    const nextRole = await loadAccountRolePolicy(newRoleId);
+    if (!nextRole) {
       return NextResponse.json({ error: "Role not found" }, { status: 400 });
     }
     const callerAccessAll = await hasPermission(
       session.roles,
       "customers:access-all",
     );
-    if (!callerAccessAll && roleRows[0].name !== SECURITY_MONITOR_ROLE) {
+    if (!callerAccessAll && !nextRole.tenantManageable) {
       return NextResponse.json(
-        { error: "Tenant Administrator can only assign Security Monitor role" },
+        {
+          error:
+            "Tenant Administrator can only assign Security Monitor-equivalent roles",
+        },
         { status: 403 },
       );
     }
     // System Admin count check if changing away from SysAdmin
     if (
-      existing[0].role_name === SYSTEM_ADMIN_ROLE &&
-      roleRows[0].name !== SYSTEM_ADMIN_ROLE
+      existing[0].role_name === SYSTEM_ADMIN_ROLE_NAME &&
+      !nextRole.isNamedSystemAdministrator
     ) {
       const { rows: countRows } = await query<{ count: string }>(
         `SELECT COUNT(*)::text AS count FROM accounts a
            JOIN roles r ON a.role_id = r.id
            WHERE r.name = $1 AND a.status != 'disabled'`,
-        [SYSTEM_ADMIN_ROLE],
+        [SYSTEM_ADMIN_ROLE_NAME],
       );
       if (Number.parseInt(countRows[0].count, 10) <= 1) {
         return NextResponse.json(
@@ -234,14 +240,14 @@ export const PATCH = withAuth(async (request, context, session) => {
     }
     // System Admin count check if changing to SysAdmin
     if (
-      roleRows[0].name === SYSTEM_ADMIN_ROLE &&
-      existing[0].role_name !== SYSTEM_ADMIN_ROLE
+      nextRole.isNamedSystemAdministrator &&
+      existing[0].role_name !== SYSTEM_ADMIN_ROLE_NAME
     ) {
       const { rows: countRows } = await query<{ count: string }>(
         `SELECT COUNT(*)::text AS count FROM accounts a
            JOIN roles r ON a.role_id = r.id
            WHERE r.name = $1 AND a.status != 'disabled'`,
-        [SYSTEM_ADMIN_ROLE],
+        [SYSTEM_ADMIN_ROLE_NAME],
       );
       if (
         Number.parseInt(countRows[0].count, 10) >= MAX_SYSTEM_ADMINISTRATORS
@@ -257,7 +263,7 @@ export const PATCH = withAuth(async (request, context, session) => {
     updates.push(`role_id = $${idx++}`);
     params.push(newRoleId);
     changes.roleId = newRoleId;
-    changes.roleName = roleRows[0].name;
+    changes.roleName = nextRole.roleName;
   }
 
   if (body.status !== undefined) {
@@ -304,7 +310,9 @@ export const PATCH = withAuth(async (request, context, session) => {
   // Refetch with role name
   const { rows: result } = await query<AccountDetailRow>(
     `SELECT a.id, a.username, a.display_name, a.email, a.phone,
-              a.role_id, r.name AS role_name, a.status,
+              a.role_id, r.name AS role_name,
+              ${rolePermissionsSelectSql("r", "role_permissions")},
+              a.status,
               a.last_sign_in_at, a.created_at, a.updated_at
        FROM accounts a JOIN roles r ON a.role_id = r.id
        WHERE a.id = $1`,
@@ -359,7 +367,9 @@ export const DELETE = withAuth(
     // Fetch target account
     const { rows } = await query<AccountDetailRow>(
       `SELECT a.id, a.username, a.display_name, a.email, a.phone,
-              a.role_id, r.name AS role_name, a.status,
+              a.role_id, r.name AS role_name,
+              ${rolePermissionsSelectSql("r", "role_permissions")},
+              a.status,
               a.last_sign_in_at, a.created_at, a.updated_at
        FROM accounts a JOIN roles r ON a.role_id = r.id
        WHERE a.id = $1`,
@@ -389,12 +399,12 @@ export const DELETE = withAuth(
     }
 
     // Last System Administrator check
-    if (target.role_name === SYSTEM_ADMIN_ROLE) {
+    if (target.role_name === SYSTEM_ADMIN_ROLE_NAME) {
       const { rows: countRows } = await query<{ count: string }>(
         `SELECT COUNT(*)::text AS count FROM accounts a
          JOIN roles r ON a.role_id = r.id
          WHERE r.name = $1 AND a.status != 'disabled'`,
-        [SYSTEM_ADMIN_ROLE],
+        [SYSTEM_ADMIN_ROLE_NAME],
       );
       if (Number.parseInt(countRows[0].count, 10) <= 1) {
         return NextResponse.json(

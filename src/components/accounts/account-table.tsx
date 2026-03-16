@@ -54,6 +54,9 @@ interface Account {
 interface Role {
   id: number;
   name: string;
+  requires_customer_assignment: boolean;
+  max_customer_assignments: number | null;
+  tenant_manageable: boolean;
 }
 
 interface Customer {

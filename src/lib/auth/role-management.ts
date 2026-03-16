@@ -2,6 +2,11 @@ import "server-only";
 
 import { query, withTransaction } from "@/lib/db/client";
 
+import {
+  deriveAccountRolePolicy,
+  rolePermissionsSelectSql,
+  summarizeAccountRolePolicy,
+} from "./account-role-policy";
 import { invalidatePermissionCache, VALID_PERMISSIONS } from "./permissions";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -18,6 +23,9 @@ export interface RoleRow {
 export interface RoleWithPermissions extends RoleRow {
   permissions: string[];
   account_count: number;
+  requires_customer_assignment: boolean;
+  max_customer_assignments: number | null;
+  tenant_manageable: boolean;
 }
 
 interface ValidationResult {
@@ -59,6 +67,9 @@ export interface RoleSummary {
   name: string;
   description: string | null;
   is_builtin: boolean;
+  requires_customer_assignment: boolean;
+  max_customer_assignments: number | null;
+  tenant_manageable: boolean;
 }
 
 /**
@@ -66,12 +77,25 @@ export interface RoleSummary {
  * Safe for any authenticated user — used by account creation forms.
  */
 export async function getRoles(): Promise<RoleSummary[]> {
-  const { rows } = await query<RoleSummary>(
-    `SELECT id, name, description, is_builtin
-     FROM roles
-     ORDER BY is_builtin DESC, name`,
+  const { rows } = await query<RoleSummary & { permissions: string[] }>(
+    `SELECT r.id, r.name, r.description, r.is_builtin,
+            ${rolePermissionsSelectSql("r")}
+     FROM roles r
+     ORDER BY r.is_builtin DESC, r.name`,
   );
-  return rows;
+  return rows.map((role) => ({
+    id: role.id,
+    name: role.name,
+    description: role.description,
+    is_builtin: role.is_builtin,
+    ...summarizeAccountRolePolicy(
+      deriveAccountRolePolicy({
+        id: role.id,
+        name: role.name,
+        permissions: role.permissions,
+      }),
+    ),
+  }));
 }
 
 /**
@@ -84,11 +108,7 @@ export async function getRolesWithDetails(): Promise<RoleWithPermissions[]> {
   >(
     `SELECT r.id, r.name, r.description, r.is_builtin,
             r.created_at, r.updated_at,
-            COALESCE(
-              (SELECT array_agg(rp.permission ORDER BY rp.permission)
-               FROM role_permissions rp WHERE rp.role_id = r.id),
-              '{}'
-            ) AS permissions,
+            ${rolePermissionsSelectSql("r")},
             (SELECT COUNT(*)::TEXT FROM accounts a WHERE a.role_id = r.id) AS account_count
      FROM roles r
      ORDER BY r.is_builtin DESC, r.name`,
@@ -97,6 +117,13 @@ export async function getRolesWithDetails(): Promise<RoleWithPermissions[]> {
   return rows.map((r) => ({
     ...r,
     account_count: Number(r.account_count),
+    ...summarizeAccountRolePolicy(
+      deriveAccountRolePolicy({
+        id: r.id,
+        name: r.name,
+        permissions: r.permissions,
+      }),
+    ),
   }));
 }
 
@@ -111,11 +138,7 @@ export async function getRoleWithPermissions(
   >(
     `SELECT r.id, r.name, r.description, r.is_builtin,
             r.created_at, r.updated_at,
-            COALESCE(
-              (SELECT array_agg(rp.permission ORDER BY rp.permission)
-               FROM role_permissions rp WHERE rp.role_id = r.id),
-              '{}'
-            ) AS permissions,
+            ${rolePermissionsSelectSql("r")},
             (SELECT COUNT(*)::TEXT FROM accounts a WHERE a.role_id = r.id) AS account_count
      FROM roles r
      WHERE r.id = $1`,
@@ -124,9 +147,17 @@ export async function getRoleWithPermissions(
 
   if (rows.length === 0) return null;
 
+  const role = rows[0];
   return {
-    ...rows[0],
-    account_count: Number(rows[0].account_count),
+    ...role,
+    account_count: Number(role.account_count),
+    ...summarizeAccountRolePolicy(
+      deriveAccountRolePolicy({
+        id: role.id,
+        name: role.name,
+        permissions: role.permissions,
+      }),
+    ),
   };
 }
 
@@ -177,7 +208,18 @@ export async function createRole(
 
   return {
     valid: true,
-    data: { ...role, permissions, account_count: 0 },
+    data: {
+      ...role,
+      permissions,
+      account_count: 0,
+      ...summarizeAccountRolePolicy(
+        deriveAccountRolePolicy({
+          id: role.id,
+          name: role.name,
+          permissions,
+        }),
+      ),
+    },
   };
 }
 
@@ -246,6 +288,13 @@ export async function updateRole(
       ...updated,
       permissions,
       account_count: existing.account_count,
+      ...summarizeAccountRolePolicy(
+        deriveAccountRolePolicy({
+          id: updated.id,
+          name: updated.name,
+          permissions,
+        }),
+      ),
     },
   };
 }

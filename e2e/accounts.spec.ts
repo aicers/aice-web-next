@@ -9,6 +9,8 @@ import {
 import {
   clearMustChangePassword,
   createTestAccount,
+  createTestRole,
+  deleteRolesByPrefix,
   deleteTestAccount,
   resetAccountDefaults,
   revokeAllSessions,
@@ -18,6 +20,27 @@ const TEST_PREFIX = "e2e-acct-";
 const UI_CREATE_USERNAME = `${TEST_PREFIX}ui-create`;
 const UI_EDIT_USERNAME = `${TEST_PREFIX}ui-edit`;
 const UI_DELETE_USERNAME = `${TEST_PREFIX}ui-delete`;
+const CUSTOM_ROLE_API_USERNAME = `${TEST_PREFIX}custom-api`;
+const CUSTOM_ROLE_UI_USERNAME = `${TEST_PREFIX}custom-ui`;
+const CUSTOM_ROLE_PREFIX = `${TEST_PREFIX}role-`;
+const CUSTOM_GLOBAL_ROLE_NAME = `${CUSTOM_ROLE_PREFIX}global-access`;
+
+const SYSTEM_ADMIN_PERMISSIONS = [
+  "accounts:read",
+  "accounts:write",
+  "accounts:delete",
+  "roles:read",
+  "roles:write",
+  "roles:delete",
+  "customers:read",
+  "customers:write",
+  "customers:access-all",
+  "audit-logs:read",
+  "system-settings:read",
+  "system-settings:write",
+];
+
+let customGlobalRoleId: number;
 
 async function recreateUiAccount(
   username: string,
@@ -43,6 +66,14 @@ test.describe("Account management", () => {
     await deleteTestAccount(UI_CREATE_USERNAME);
     await deleteTestAccount(UI_EDIT_USERNAME);
     await deleteTestAccount(UI_DELETE_USERNAME);
+    await deleteTestAccount(CUSTOM_ROLE_API_USERNAME);
+    await deleteTestAccount(CUSTOM_ROLE_UI_USERNAME);
+    await deleteRolesByPrefix(CUSTOM_ROLE_PREFIX);
+    customGlobalRoleId = await createTestRole(
+      CUSTOM_GLOBAL_ROLE_NAME,
+      SYSTEM_ADMIN_PERMISSIONS,
+      "E2E custom global-access role",
+    );
   });
 
   test.beforeEach(async () => {
@@ -55,6 +86,9 @@ test.describe("Account management", () => {
     await deleteTestAccount(UI_CREATE_USERNAME);
     await deleteTestAccount(UI_EDIT_USERNAME);
     await deleteTestAccount(UI_DELETE_USERNAME);
+    await deleteTestAccount(CUSTOM_ROLE_API_USERNAME);
+    await deleteTestAccount(CUSTOM_ROLE_UI_USERNAME);
+    await deleteRolesByPrefix(CUSTOM_ROLE_PREFIX);
   });
 
   // ── API tests ─────────────────────────────────────────────────
@@ -84,6 +118,34 @@ test.describe("Account management", () => {
     const body = await response.json();
     expect(body.data.username).toBe(`${TEST_PREFIX}alpha`);
     expect(body.data.status).toBe("active");
+  });
+
+  test("POST /api/accounts accepts a custom global-access role without customers", async ({
+    page,
+  }) => {
+    await deleteTestAccount(CUSTOM_ROLE_API_USERNAME);
+    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+
+    const cookies = await page.context().cookies();
+    const csrfCookie = cookies.find((c) => c.name === "csrf");
+
+    const response = await page.request.post("/api/accounts", {
+      data: {
+        username: CUSTOM_ROLE_API_USERNAME,
+        displayName: "Custom Role API",
+        password: "TestPass1234!",
+        roleId: customGlobalRoleId,
+      },
+      headers: {
+        "x-csrf-token": csrfCookie?.value ?? "",
+        Origin: "http://localhost:3000",
+      },
+    });
+
+    expect(response.status()).toBe(201);
+    const body = await response.json();
+    expect(body.data.username).toBe(CUSTOM_ROLE_API_USERNAME);
+    expect(body.data.role_name).toBe(CUSTOM_GLOBAL_ROLE_NAME);
   });
 
   test("GET /api/accounts lists accounts", async ({ page }) => {
@@ -217,6 +279,35 @@ test.describe("Account management", () => {
     await expect(accountRow(page, UI_CREATE_USERNAME)).toBeVisible({
       timeout: 15_000,
     });
+  });
+
+  test("UI create flow treats a custom global-access role like System Administrator", async ({
+    page,
+  }) => {
+    await deleteTestAccount(CUSTOM_ROLE_UI_USERNAME);
+
+    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await page.goto("/settings/accounts");
+
+    await page.getByRole("button", { name: "Create Account" }).click();
+
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Username").fill(CUSTOM_ROLE_UI_USERNAME);
+    await dialog.getByLabel("Display Name").fill("Custom Role UI");
+    await dialog.getByLabel("Password").fill("UiTestPass1234!");
+    await dialog.getByRole("combobox").click();
+    await page.getByRole("option", { name: CUSTOM_GLOBAL_ROLE_NAME }).click();
+
+    await expect(dialog.getByText("Customers")).toHaveCount(0);
+
+    await dialog.getByRole("button", { name: "Create Account" }).click();
+
+    await expect(accountRow(page, CUSTOM_ROLE_UI_USERNAME)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(accountRow(page, CUSTOM_ROLE_UI_USERNAME)).toContainText(
+      CUSTOM_GLOBAL_ROLE_NAME,
+    );
   });
 
   test("edits an account via UI", async ({ page }) => {

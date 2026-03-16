@@ -92,6 +92,27 @@ const tenantAdminSession: AuthSession = {
   roles: ["Tenant Administrator"],
 };
 
+const TENANT_ADMIN_PERMISSIONS = [
+  "accounts:read",
+  "accounts:write",
+  "accounts:delete",
+  "customers:read",
+  "customers:write",
+];
+
+function makeAccountRoleRow(
+  roleId: number,
+  roleName: string,
+  rolePermissions: string[],
+) {
+  return {
+    id: TARGET_UUID,
+    role_id: roleId,
+    role_name: roleName,
+    role_permissions: rolePermissions,
+  };
+}
+
 function makeContext(id = TARGET_UUID) {
   return { params: Promise.resolve({ id }) };
 }
@@ -235,7 +256,9 @@ describe("POST /api/accounts/[id]/customers", () => {
   it("assigns customers as System Administrator", async () => {
     // Account exists with role
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: TARGET_UUID, role_name: "Tenant Administrator" }],
+      rows: [
+        makeAccountRoleRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS),
+      ],
     });
     // Customers exist
     mockQuery.mockResolvedValueOnce({
@@ -286,7 +309,7 @@ describe("POST /api/accounts/[id]/customers", () => {
 
     // Account exists
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: TARGET_UUID, role_name: "Security Monitor" }],
+      rows: [makeAccountRoleRow(3, "Security Monitor", [])],
     });
     // Customers exist
     mockQuery.mockResolvedValueOnce({
@@ -311,7 +334,7 @@ describe("POST /api/accounts/[id]/customers", () => {
   it("returns 400 when Security Monitor would exceed single customer", async () => {
     // Account exists as Security Monitor
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: TARGET_UUID, role_name: "Security Monitor" }],
+      rows: [makeAccountRoleRow(3, "Security Monitor", [])],
     });
     // Customers exist
     mockQuery.mockResolvedValueOnce({
@@ -393,7 +416,9 @@ describe("POST /api/accounts/[id]/customers", () => {
   it("returns 400 when a customer does not exist", async () => {
     // Account exists
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: TARGET_UUID, role_name: "Tenant Administrator" }],
+      rows: [
+        makeAccountRoleRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS),
+      ],
     });
     // Only customer 1 found out of [1, 999]
     mockQuery.mockResolvedValueOnce({
@@ -470,7 +495,9 @@ describe("POST /api/accounts/[id]/customers", () => {
 
     // Account exists
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: TARGET_UUID, role_name: "Tenant Administrator" }],
+      rows: [
+        makeAccountRoleRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS),
+      ],
     });
     // Customer exists
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
@@ -505,7 +532,9 @@ describe("POST /api/accounts/[id]/customers", () => {
   it("deduplicates customerIds", async () => {
     // Account exists
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: TARGET_UUID, role_name: "Tenant Administrator" }],
+      rows: [
+        makeAccountRoleRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS),
+      ],
     });
     // Only unique IDs should be checked — [1, 2] not [1, 2, 1, 2]
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }, { id: 2 }] });
@@ -537,7 +566,7 @@ describe("POST /api/accounts/[id]/customers", () => {
   it("returns 400 when Security Monitor already has 1 customer and adds another", async () => {
     // Account exists as Security Monitor
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: TARGET_UUID, role_name: "Security Monitor" }],
+      rows: [makeAccountRoleRow(3, "Security Monitor", [])],
     });
     // Customer exists
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 2 }] });
@@ -573,7 +602,7 @@ describe("POST /api/accounts/[id]/customers", () => {
   it("allows Security Monitor to re-assign already assigned customer (idempotent)", async () => {
     // Account exists as Security Monitor
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: TARGET_UUID, role_name: "Security Monitor" }],
+      rows: [makeAccountRoleRow(3, "Security Monitor", [])],
     });
     // Customer exists
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });

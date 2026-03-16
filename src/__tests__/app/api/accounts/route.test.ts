@@ -107,6 +107,33 @@ const tenantSession: AuthSession = {
   roles: ["Tenant Administrator"],
 };
 
+const SYSTEM_ADMIN_PERMISSIONS = [
+  "accounts:read",
+  "accounts:write",
+  "accounts:delete",
+  "roles:read",
+  "roles:write",
+  "roles:delete",
+  "customers:read",
+  "customers:write",
+  "customers:access-all",
+  "audit-logs:read",
+  "system-settings:read",
+  "system-settings:write",
+];
+
+const TENANT_ADMIN_PERMISSIONS = [
+  "accounts:read",
+  "accounts:write",
+  "accounts:delete",
+  "customers:read",
+  "customers:write",
+];
+
+function makeRoleRow(id: number, name: string, permissions: string[]) {
+  return { id, name, permissions };
+}
+
 function makeContext() {
   return { params: Promise.resolve({}) };
 }
@@ -115,7 +142,9 @@ function makeContext() {
 
 describe("GET /api/accounts", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockGetAccountCustomerIds.mockReset();
+    mockHasPermission.mockReset();
     currentSession = adminSession;
     mockHasPermission.mockImplementation(
       async (_roles: string[], perm: string) =>
@@ -386,7 +415,13 @@ describe("GET /api/accounts", () => {
 
 describe("POST /api/accounts", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockAuditRecord.mockReset();
+    mockHasPermission.mockReset();
+    mockGetAccountCustomerIds.mockReset();
+    mockWithTransaction.mockReset();
+    mockHashPassword.mockReset();
+    mockValidatePassword.mockReset();
     currentSession = adminSession;
     mockHasPermission.mockImplementation(
       async (_roles: string[], perm: string) =>
@@ -404,7 +439,7 @@ describe("POST /api/accounts", () => {
     const { POST } = await import("@/app/api/accounts/route");
     // Role lookup
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 3, name: "Security Monitor" }],
+      rows: [makeRoleRow(3, "Security Monitor", [])],
       rowCount: 1,
     });
     // Customer existence check
@@ -550,7 +585,7 @@ describe("POST /api/accounts", () => {
     currentSession = tenantSession;
     const { POST } = await import("@/app/api/accounts/route");
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 2, name: "Tenant Administrator" }],
+      rows: [makeRoleRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS)],
       rowCount: 1,
     });
 
@@ -571,7 +606,7 @@ describe("POST /api/accounts", () => {
   it("returns 400 when System Admin count limit reached", async () => {
     const { POST } = await import("@/app/api/accounts/route");
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, name: "System Administrator" }],
+      rows: [makeRoleRow(1, "System Administrator", SYSTEM_ADMIN_PERMISSIONS)],
       rowCount: 1,
     });
     mockQuery.mockResolvedValueOnce({
@@ -597,7 +632,7 @@ describe("POST /api/accounts", () => {
   it("returns 400 when non-SysAdmin has no customerIds", async () => {
     const { POST } = await import("@/app/api/accounts/route");
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 3, name: "Security Monitor" }],
+      rows: [makeRoleRow(3, "Security Monitor", [])],
       rowCount: 1,
     });
 
@@ -619,7 +654,7 @@ describe("POST /api/accounts", () => {
   it("returns 400 when Security Monitor has more than 1 customer", async () => {
     const { POST } = await import("@/app/api/accounts/route");
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 3, name: "Security Monitor" }],
+      rows: [makeRoleRow(3, "Security Monitor", [])],
       rowCount: 1,
     });
 
@@ -642,7 +677,7 @@ describe("POST /api/accounts", () => {
   it("returns 409 when username already exists", async () => {
     const { POST } = await import("@/app/api/accounts/route");
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 3, name: "Security Monitor" }],
+      rows: [makeRoleRow(3, "Security Monitor", [])],
       rowCount: 1,
     });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 });
@@ -675,7 +710,7 @@ describe("POST /api/accounts", () => {
   it("returns 400 when password fails validation", async () => {
     const { POST } = await import("@/app/api/accounts/route");
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, name: "System Administrator" }],
+      rows: [makeRoleRow(1, "System Administrator", SYSTEM_ADMIN_PERMISSIONS)],
       rowCount: 1,
     });
     mockQuery.mockResolvedValueOnce({ rows: [{ count: "1" }], rowCount: 1 });
@@ -702,7 +737,7 @@ describe("POST /api/accounts", () => {
   it("returns 400 when customerIds contain non-positive integers", async () => {
     const { POST } = await import("@/app/api/accounts/route");
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 3, name: "Security Monitor" }],
+      rows: [makeRoleRow(3, "Security Monitor", [])],
       rowCount: 1,
     });
 
@@ -726,7 +761,7 @@ describe("POST /api/accounts", () => {
     const { POST } = await import("@/app/api/accounts/route");
     // Role lookup → Tenant Administrator
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 2, name: "Tenant Administrator" }],
+      rows: [makeRoleRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS)],
       rowCount: 1,
     });
     // Customer existence check → only id=1 found, id=999 missing
@@ -756,7 +791,7 @@ describe("POST /api/accounts", () => {
     const { POST } = await import("@/app/api/accounts/route");
     const newId = "00000000-0000-0000-0000-000000000088";
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 3, name: "Security Monitor" }],
+      rows: [makeRoleRow(3, "Security Monitor", [])],
       rowCount: 1,
     });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 });
@@ -810,7 +845,7 @@ describe("POST /api/accounts", () => {
     currentSession = tenantSession;
     const { POST } = await import("@/app/api/accounts/route");
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 3, name: "Security Monitor" }],
+      rows: [makeRoleRow(3, "Security Monitor", [])],
       rowCount: 1,
     });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 5 }], rowCount: 1 });
