@@ -5,6 +5,7 @@ import {
   ADMIN_USERNAME,
   resetRateLimits,
   signInAndWait,
+  signInAndWaitKo,
 } from "./helpers/auth";
 import {
   createTestAccount,
@@ -284,4 +285,109 @@ test("locked account shows in dashboard card", async ({ page }) => {
     // Restore account status to avoid leaking state
     await setAccountStatus(LOCKED_USER, "active");
   }
+});
+
+// ── Korean locale UI tests ──────────────────────────────────────
+
+test("Korean locale: dashboard renders three cards with Korean text", async ({
+  page,
+}) => {
+  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await page.goto("/ko/dashboard");
+
+  // Dashboard title in Korean
+  await expect(
+    page.getByRole("heading", { name: "시스템 대시보드" }),
+  ).toBeVisible({ timeout: 10_000 });
+
+  // All three card titles in Korean
+  await expect(page.getByText("활성 세션").first()).toBeVisible();
+  await expect(page.getByText("잠긴 및 정지된 계정")).toBeVisible();
+  await expect(page.getByText("의심 활동").first()).toBeVisible();
+});
+
+test("Korean locale: sessions card shows Korean column headers", async ({
+  page,
+}) => {
+  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await page.goto("/ko/dashboard");
+
+  // Wait for sessions card to load data
+  await expect(page.getByText("활성 세션").first()).toBeVisible({
+    timeout: 10_000,
+  });
+
+  // Column headers should be in Korean
+  await expect(page.getByText("사용자").first()).toBeVisible();
+  await expect(page.getByText("IP 주소").first()).toBeVisible();
+  await expect(page.getByText("마지막 활동")).toBeVisible();
+});
+
+test("Korean locale: revoke button and confirm dialog use Korean", async ({
+  page,
+}) => {
+  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await page.goto("/ko/dashboard");
+
+  // Wait for sessions card
+  await expect(page.getByText("활성 세션").first()).toBeVisible({
+    timeout: 10_000,
+  });
+
+  // Revoke button should be in Korean
+  const revokeBtn = page.getByRole("button", { name: "해지" }).first();
+  await expect(revokeBtn).toBeVisible({ timeout: 5_000 });
+
+  // Click to open confirm dialog
+  await revokeBtn.click();
+
+  // Confirm dialog should show Korean text
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("이 세션을 해지하시겠습니까?")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "취소" })).toBeVisible();
+
+  // Dismiss
+  await dialog.getByRole("button", { name: "취소" }).click();
+});
+
+test("Korean locale: locked account card shows Korean status", async ({
+  page,
+}) => {
+  await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
+
+  try {
+    await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await page.goto("/ko/dashboard");
+
+    // Wait for locked accounts card in Korean
+    await expect(page.getByText("잠긴 및 정지된 계정")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The locked user should appear
+    await expect(page.getByText(LOCKED_USER)).toBeVisible({ timeout: 5_000 });
+
+    // Status badge should show Korean "잠금"
+    await expect(page.getByText("잠금").first()).toBeVisible();
+  } finally {
+    await setAccountStatus(LOCKED_USER, "active");
+  }
+});
+
+test("Korean locale: alerts card shows Korean severity and description", async ({
+  page,
+}) => {
+  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await page.goto("/ko/dashboard");
+
+  // Scroll the alerts card description into view and verify Korean text
+  const desc = page.getByText("최근 24시간 동안 감지된 보안 알림");
+  await desc.scrollIntoViewIfNeeded();
+  await expect(desc).toBeVisible({ timeout: 10_000 });
+
+  // Either the no-alerts message or alert severity headers should be Korean
+  const noAlerts = page.getByText("의심 활동이 감지되지 않았습니다");
+  const severityHeader = page.getByText("심각도");
+  await expect(noAlerts.or(severityHeader)).toBeVisible({ timeout: 5_000 });
 });

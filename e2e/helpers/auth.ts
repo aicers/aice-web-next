@@ -73,3 +73,21 @@ export async function signInAndWait(
     timeout: 10_000,
   });
 }
+
+/**
+ * Korean variant of signInAndWait — navigates to /ko/sign-in, fills
+ * the form, and waits for redirect.
+ */
+export async function signInAndWaitKo(
+  page: Page,
+  username: string,
+  password: string,
+): Promise<void> {
+  await page.goto("/ko/sign-in");
+  await page.getByLabel("계정 ID").fill(username);
+  await page.locator("input[name='password']").fill(password);
+  await page.getByRole("button", { name: "로그인" }).click();
+  await page.waitForURL((url) => !url.pathname.endsWith("/sign-in"), {
+    timeout: 10_000,
+  });
+}
