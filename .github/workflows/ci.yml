@@ -115,6 +115,7 @@ jobs:
         env:
           CI: true
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/auth_db
+          DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
           AUDIT_DATABASE_URL: postgres://audit_writer:changeme@localhost:5432/audit_db
           DATA_DIR: ./data-e2e
           CSRF_SECRET: ci-e2e-csrf-secret-at-least-32-characters!!
