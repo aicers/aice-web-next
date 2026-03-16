@@ -149,7 +149,7 @@ export const POST = withAuth(
               ) AS role_permissions
        FROM accounts a
        JOIN roles r ON a.role_id = r.id
-       WHERE id = $1`,
+       WHERE a.id = $1`,
       [accountId],
     );
     if (accountRows.length === 0) {
