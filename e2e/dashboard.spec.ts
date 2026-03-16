@@ -10,8 +10,10 @@ import {
 import {
   createTestAccount,
   createTestRole,
+  deleteAuditLogsByAction,
   deleteTestAccount,
   deleteTestRole,
+  insertAuditLog,
   resetAccountDefaults,
   setAccountStatus,
 } from "./helpers/setup-db";
@@ -375,19 +377,36 @@ test("Korean locale: locked account card shows Korean status", async ({
   }
 });
 
-test("Korean locale: alerts card shows Korean severity and description", async ({
+test("Korean locale: alerts card shows Korean detail messages", async ({
   page,
 }) => {
-  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-  await page.goto("/ko/dashboard");
+  // Seed an account.lock audit event to trigger the "account_lockout" rule
+  await insertAuditLog({
+    actorId: "system",
+    action: "account.lock",
+    targetType: "account",
+    targetId: "e2e-fake-id",
+    ipAddress: "127.0.0.1",
+  });
 
-  // Scroll the alerts card description into view and verify Korean text
-  const desc = page.getByText("최근 24시간 동안 감지된 보안 알림");
-  await desc.scrollIntoViewIfNeeded();
-  await expect(desc).toBeVisible({ timeout: 10_000 });
+  try {
+    await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await page.goto("/ko/dashboard");
 
-  // Either the no-alerts message or alert severity headers should be Korean
-  const noAlerts = page.getByText("의심 활동이 감지되지 않았습니다");
-  const severityHeader = page.getByText("심각도");
-  await expect(noAlerts.or(severityHeader)).toBeVisible({ timeout: 5_000 });
+    // Scroll the alerts card into view
+    const desc = page.getByText("최근 24시간 동안 감지된 보안 알림");
+    await desc.scrollIntoViewIfNeeded();
+    await expect(desc).toBeVisible({ timeout: 10_000 });
+
+    // The alert detail message should be the Korean interpolated string
+    // Rule "account_lockout" → "최근 24시간 동안 {count}건의 계정 잠금"
+    await expect(
+      page.getByText(/최근 24시간 동안 \d+건의 계정 잠금/),
+    ).toBeVisible({ timeout: 5_000 });
+
+    // Severity badge should be Korean "높음" (high)
+    await expect(page.getByText("높음").first()).toBeVisible();
+  } finally {
+    await deleteAuditLogsByAction("account.lock");
+  }
 });

@@ -599,6 +599,74 @@ function escapeIdentifier(str: string): string {
   return `"${str.replace(/"/g, '""')}"`;
 }
 
+// ── Audit database helpers ────────────────────────────────────────
+
+function getAuditDatabaseUrl(): string {
+  if (process.env.AUDIT_DATABASE_URL) return process.env.AUDIT_DATABASE_URL;
+
+  try {
+    const envFile = readFileSync(
+      resolve(__dirname, "../../.env.local"),
+      "utf8",
+    );
+    const match = envFile.match(/^AUDIT_DATABASE_URL=(.+)$/m);
+    if (match) return match[1].trim();
+  } catch {
+    // .env.local not found — use default
+  }
+
+  return "postgres://postgres:postgres@localhost:5432/audit_db";
+}
+
+const AUDIT_DATABASE_URL = getAuditDatabaseUrl();
+
+/**
+ * Insert a fake audit log entry into the audit database.
+ * Useful for seeding suspicious-activity detection rules in E2E tests.
+ */
+export async function insertAuditLog(opts: {
+  actorId: string;
+  action: string;
+  targetType: string;
+  targetId?: string;
+  ipAddress?: string;
+  details?: Record<string, unknown>;
+}): Promise<void> {
+  const client = new pg.Client({ connectionString: AUDIT_DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      `INSERT INTO audit_logs
+         (actor_id, action, target_type, target_id, ip_address, details)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        opts.actorId,
+        opts.action,
+        opts.targetType,
+        opts.targetId ?? null,
+        opts.ipAddress ?? "127.0.0.1",
+        opts.details ? JSON.stringify(opts.details) : null,
+      ],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Delete audit log entries matching a given action.
+ * For cleanup after E2E tests that seed fake audit data.
+ */
+export async function deleteAuditLogsByAction(action: string): Promise<void> {
+  const client = new pg.Client({ connectionString: AUDIT_DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query("DELETE FROM audit_logs WHERE action = $1", [action]);
+  } finally {
+    await client.end();
+  }
+}
+
 /**
  * Get session status for diagnostic/assertion purposes.
  */
