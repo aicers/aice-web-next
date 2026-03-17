@@ -30,6 +30,8 @@ const READER_ROLE = "E2E Dashboard Reader";
 
 const LOCKED_USER = "e2e-dashboard-locked";
 const LOCKED_PASS = "Locked1234!";
+const SUSPENDED_USER = "e2e-dashboard-suspended";
+const SUSPENDED_PASS = "Suspended1234!";
 
 function csrfHeader(csrfValue: string) {
   return {
@@ -42,6 +44,13 @@ function csrfHeader(csrfValue: string) {
 async function getCsrf(page: import("@playwright/test").Page) {
   const cookies = await page.context().cookies();
   return cookies.find((c) => c.name === "csrf")?.value ?? "";
+}
+
+async function getLockedAccounts(page: import("@playwright/test").Page) {
+  const response = await page.request.get("/api/dashboard/locked-accounts");
+  expect(response.status()).toBe(200);
+  const body = await response.json();
+  return body.data as Array<{ username: string; status: string }>;
 }
 
 // ── Setup / Teardown ─────────────────────────────────────────────
@@ -59,11 +68,18 @@ test.beforeAll(async () => {
 
   // Account to lock for locked-accounts card test
   await createTestAccount(LOCKED_USER, LOCKED_PASS, "Tenant Administrator");
+  await createTestAccount(
+    SUSPENDED_USER,
+    SUSPENDED_PASS,
+    "Tenant Administrator",
+  );
 });
 
 test.beforeEach(async () => {
   await resetRateLimits();
   await resetAccountDefaults(ADMIN_USERNAME);
+  await resetAccountDefaults(LOCKED_USER);
+  await resetAccountDefaults(SUSPENDED_USER);
 });
 
 test.afterAll(async () => {
@@ -71,6 +87,7 @@ test.afterAll(async () => {
     await deleteTestAccount(NOPERM_USER);
     await deleteTestAccount(READER_USER);
     await deleteTestAccount(LOCKED_USER);
+    await deleteTestAccount(SUSPENDED_USER);
     await deleteTestRole(NOPERM_ROLE);
     await deleteTestRole(READER_ROLE);
   } catch {
@@ -252,23 +269,25 @@ test("dashboard page redirects for user without dashboard:read", async ({
   });
 });
 
-test("dashboard:read user cannot see revoke buttons", async ({ page }) => {
+test("dashboard:read user cannot see dashboard action buttons", async ({
+  page,
+}) => {
+  await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
+  await setAccountStatus(SUSPENDED_USER, "suspended");
+
   await signInAndWait(page, READER_USER, READER_PASS);
   await page.goto("/dashboard");
 
-  // Wait for sessions card to load
   await expect(page.getByText("Active Sessions")).toBeVisible({
     timeout: 10000,
   });
+  await expect(page.getByText(LOCKED_USER)).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText(SUSPENDED_USER)).toBeVisible({ timeout: 5000 });
 
-  // Wait for data to load (either sessions show or "No active sessions")
-  await expect(
-    page.getByText("Active Sessions").locator("..").locator(".."),
-  ).toBeVisible();
-
-  // Revoke buttons should not be present for read-only user
   const revokeButtons = page.getByRole("button", { name: /Revoke/i });
   await expect(revokeButtons).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Unlock/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Restore/i })).toHaveCount(0);
 });
 
 test("locked account shows in dashboard card", async ({ page }) => {
@@ -290,6 +309,56 @@ test("locked account shows in dashboard card", async ({ page }) => {
     // Restore account status to avoid leaking state
     await setAccountStatus(LOCKED_USER, "active");
   }
+});
+
+test("admin can unlock a locked account from the dashboard", async ({
+  page,
+}) => {
+  await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
+  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await page.goto("/dashboard");
+
+  const row = page.locator("tr", { hasText: LOCKED_USER });
+  await expect(row).toBeVisible({ timeout: 10000 });
+  await row.getByRole("button", { name: "Unlock" }).click();
+
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Unlock" }).click();
+
+  await expect(row).toHaveCount(0);
+
+  await expect
+    .poll(async () => {
+      const accounts = await getLockedAccounts(page);
+      return accounts.some((account) => account.username === LOCKED_USER);
+    })
+    .toBe(false);
+});
+
+test("admin can restore a suspended account from the dashboard", async ({
+  page,
+}) => {
+  await setAccountStatus(SUSPENDED_USER, "suspended");
+  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await page.goto("/dashboard");
+
+  const row = page.locator("tr", { hasText: SUSPENDED_USER });
+  await expect(row).toBeVisible({ timeout: 10000 });
+  await row.getByRole("button", { name: "Restore" }).click();
+
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Restore" }).click();
+
+  await expect(row).toHaveCount(0);
+
+  await expect
+    .poll(async () => {
+      const accounts = await getLockedAccounts(page);
+      return accounts.some((account) => account.username === SUSPENDED_USER);
+    })
+    .toBe(false);
 });
 
 // ── Certificate Expiry API tests ─────────────────────────────────

@@ -333,6 +333,12 @@
       "updatedAt": "수정일",
       "locked": "잠금",
       "suspended": "정지",
+      "unlock": "잠금 해제",
+      "unlockConfirm": "이 계정을 잠금 해제하시겠습니까? 계정은 즉시 활성 상태로 돌아갑니다.",
+      "restore": "복구",
+      "restoreConfirm": "정지된 이 계정을 복구하시겠습니까? 계정은 즉시 활성 상태로 돌아갑니다.",
+      "cancel": "취소",
+      "actionError": "계정 상태 변경에 실패했습니다",
       "noAccounts": "잠긴 또는 정지된 계정이 없습니다",
       "loading": "계정 로딩 중...",
       "error": "계정을 불러오지 못했습니다"
