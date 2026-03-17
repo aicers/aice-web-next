@@ -333,6 +333,12 @@
       "updatedAt": "Updated",
       "locked": "Locked",
       "suspended": "Suspended",
+      "unlock": "Unlock",
+      "unlockConfirm": "Are you sure you want to unlock this account? The account will become active immediately.",
+      "restore": "Restore",
+      "restoreConfirm": "Are you sure you want to restore this suspended account? The account will become active immediately.",
+      "cancel": "Cancel",
+      "actionError": "Failed to update account status",
       "noAccounts": "No locked or suspended accounts",
       "loading": "Loading accounts...",
       "error": "Failed to load accounts"

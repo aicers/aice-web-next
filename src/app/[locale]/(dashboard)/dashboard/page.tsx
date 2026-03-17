@@ -8,7 +8,16 @@ export default async function DashboardPage() {
 
   await requirePermission(session, "dashboard:read");
 
-  const canWrite = await hasPermission(session.roles, "dashboard:write");
+  const canWriteSessions = await hasPermission(
+    session.roles,
+    "dashboard:write",
+  );
+  const canWriteAccounts = await hasPermission(session.roles, "accounts:write");
 
-  return <DashboardPanel canWrite={canWrite} />;
+  return (
+    <DashboardPanel
+      canWriteSessions={canWriteSessions}
+      canWriteAccounts={canWriteAccounts}
+    />
+  );
 }

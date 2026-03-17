@@ -8,18 +8,22 @@ import { LockedAccountsCard } from "./locked-accounts-card";
 import { SuspiciousAlertsCard } from "./suspicious-alerts-card";
 
 interface DashboardPanelProps {
-  canWrite: boolean;
+  canWriteSessions: boolean;
+  canWriteAccounts: boolean;
 }
 
-export function DashboardPanel({ canWrite }: DashboardPanelProps) {
+export function DashboardPanel({
+  canWriteSessions,
+  canWriteAccounts,
+}: DashboardPanelProps) {
   const t = useTranslations("dashboard");
 
   return (
     <div className="space-y-6">
       <h1 className="text-foreground text-2xl font-bold">{t("title")}</h1>
       <div className="grid gap-6 lg:grid-cols-2">
-        <ActiveSessionsCard canWrite={canWrite} />
-        <LockedAccountsCard />
+        <ActiveSessionsCard canWrite={canWriteSessions} />
+        <LockedAccountsCard canWrite={canWriteAccounts} />
       </div>
       <div className="grid gap-6 lg:grid-cols-2">
         <SuspiciousAlertsCard />
