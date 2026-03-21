@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -8,11 +9,21 @@ import type pg from "pg";
 import { connectTo, query } from "@/lib/db/client";
 
 const MIGRATIONS_TABLE = "_migrations";
+const LOCK_ID = 0xa1ce0001;
 
 interface MigrationFile {
   version: string;
   name: string;
   filePath: string;
+}
+
+function computeChecksum(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+function hasNoTransactionMarker(sql: string): boolean {
+  const firstLine = sql.split("\n", 1)[0];
+  return firstLine.trimEnd() === "-- no-transaction";
 }
 
 function escapeIdentifier(str: string): string {
@@ -71,16 +82,73 @@ async function ensureMigrationsTable(client: pg.PoolClient): Promise<void> {
     CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
       version    TEXT PRIMARY KEY,
       name       TEXT NOT NULL,
-      applied_at TIMESTAMPTZ DEFAULT NOW()
+      applied_at TIMESTAMPTZ DEFAULT NOW(),
+      checksum   TEXT
     )
+  `);
+
+  // Add checksum column if upgrading from an older schema
+  await client.query(`
+    ALTER TABLE ${MIGRATIONS_TABLE}
+      ADD COLUMN IF NOT EXISTS checksum TEXT
   `);
 }
 
-async function getAppliedVersions(client: pg.PoolClient): Promise<Set<string>> {
-  const result = await client.query<{ version: string }>(
-    `SELECT version FROM ${MIGRATIONS_TABLE} ORDER BY version`,
+interface AppliedMigration {
+  version: string;
+  checksum: string | null;
+}
+
+async function getAppliedMigrations(
+  client: pg.PoolClient,
+): Promise<Map<string, string | null>> {
+  const result = await client.query<AppliedMigration>(
+    `SELECT version, checksum FROM ${MIGRATIONS_TABLE} ORDER BY version`,
   );
-  return new Set(result.rows.map((r) => r.version));
+  return new Map(result.rows.map((r) => [r.version, r.checksum]));
+}
+
+async function backfillChecksums(
+  client: pg.PoolClient,
+  applied: Map<string, string | null>,
+  migrations: MigrationFile[],
+): Promise<void> {
+  const filesByVersion = new Map(migrations.map((m) => [m.version, m]));
+
+  for (const [version, checksum] of applied) {
+    if (checksum !== null) continue;
+    const file = filesByVersion.get(version);
+    if (!file) {
+      throw new Error(
+        `Cannot backfill checksum for migration ${version}: file not found on disk`,
+      );
+    }
+    const sql = readFileSync(file.filePath, "utf8");
+    const hash = computeChecksum(sql);
+    await client.query(
+      `UPDATE ${MIGRATIONS_TABLE} SET checksum = $1 WHERE version = $2`,
+      [hash, version],
+    );
+    applied.set(version, hash);
+  }
+}
+
+function validateChecksums(
+  applied: Map<string, string | null>,
+  migrations: MigrationFile[],
+): void {
+  for (const migration of migrations) {
+    const storedChecksum = applied.get(migration.version);
+    if (storedChecksum === undefined || storedChecksum === null) continue;
+    const sql = readFileSync(migration.filePath, "utf8");
+    const currentChecksum = computeChecksum(sql);
+    if (currentChecksum !== storedChecksum) {
+      throw new Error(
+        `Checksum mismatch for migration ${migration.version}_${migration.name}: ` +
+          `expected ${storedChecksum}, got ${currentChecksum}`,
+      );
+    }
+  }
 }
 
 async function applyMigrations(
@@ -89,27 +157,46 @@ async function applyMigrations(
 ): Promise<number> {
   const client = await pool.connect();
   try {
-    await ensureMigrationsTable(client);
-    const applied = await getAppliedVersions(client);
+    await client.query("SELECT pg_advisory_lock($1)", [LOCK_ID]);
 
-    const pending = migrations.filter((m) => !applied.has(m.version));
-    for (const migration of pending) {
-      const sql = readFileSync(migration.filePath, "utf8");
-      await client.query("BEGIN");
-      try {
-        await client.query(sql);
-        await client.query(
-          `INSERT INTO ${MIGRATIONS_TABLE} (version, name) VALUES ($1, $2)`,
-          [migration.version, migration.name],
-        );
-        await client.query("COMMIT");
-      } catch (err) {
-        await client.query("ROLLBACK");
-        throw err;
+    try {
+      await ensureMigrationsTable(client);
+      const applied = await getAppliedMigrations(client);
+
+      await backfillChecksums(client, applied, migrations);
+      validateChecksums(applied, migrations);
+
+      const pending = migrations.filter((m) => !applied.has(m.version));
+      for (const migration of pending) {
+        const sql = readFileSync(migration.filePath, "utf8");
+        const checksum = computeChecksum(sql);
+
+        if (hasNoTransactionMarker(sql)) {
+          await client.query(sql);
+          await client.query(
+            `INSERT INTO ${MIGRATIONS_TABLE} (version, name, checksum) VALUES ($1, $2, $3)`,
+            [migration.version, migration.name, checksum],
+          );
+        } else {
+          await client.query("BEGIN");
+          try {
+            await client.query(sql);
+            await client.query(
+              `INSERT INTO ${MIGRATIONS_TABLE} (version, name, checksum) VALUES ($1, $2, $3)`,
+              [migration.version, migration.name, checksum],
+            );
+            await client.query("COMMIT");
+          } catch (err) {
+            await client.query("ROLLBACK");
+            throw err;
+          }
+        }
       }
-    }
 
-    return pending.length;
+      return pending.length;
+    } finally {
+      await client.query("SELECT pg_advisory_unlock($1)", [LOCK_ID]);
+    }
   } finally {
     client.release();
   }
@@ -219,4 +306,8 @@ export async function runStartupMigrations(): Promise<void> {
   }
 }
 
-export { scanMigrations as _scanMigrations };
+export {
+  computeChecksum as _computeChecksum,
+  hasNoTransactionMarker as _hasNoTransactionMarker,
+  scanMigrations as _scanMigrations,
+};

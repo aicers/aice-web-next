@@ -274,7 +274,7 @@ describe("useSessionMonitor", () => {
   });
 
   it("uses the current token TTL instead of a fixed 180-second threshold", async () => {
-    fakeCookie = makeSessionCookies(now + 121, 600);
+    fakeCookie = makeSessionCookies(now + 125, 600);
 
     const { useSessionMonitor } = await import("@/hooks/use-session-monitor");
     useSessionMonitor();
