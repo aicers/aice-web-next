@@ -4,7 +4,7 @@
 
 ```bash
 # Install dependencies (one-time)
-python3 -m pip install mkdocs-material mkdocs-static-i18n
+python3 -m pip install mkdocs-material mkdocs-static-i18n mkdocs-with-pdf
 
 # Start the dev server
 mkdocs serve
@@ -20,6 +20,15 @@ mkdocs build --strict
 ```
 
 The static site is generated in `site/`.
+
+## PDF generation
+
+```bash
+./scripts/build-docs-pdf.sh en
+./scripts/build-docs-pdf.sh ko
+```
+
+PDFs are written to `site/pdf/aice-web-manual.{en,ko}.pdf`.
 
 ## Authoring rules
 
