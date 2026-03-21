@@ -52,6 +52,9 @@ yarn-error.log*
 
 # MkDocs
 /site/
+/site-pdf-*/
+/.pdf-tmp/
+mkdocs.tmp.yml
 
 # vercel
 .vercel
