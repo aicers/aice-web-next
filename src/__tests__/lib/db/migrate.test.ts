@@ -362,6 +362,25 @@ describe("migrate", () => {
       expect(updateCall).toBeDefined();
       expect(updateCall?.[1]).toEqual([sha256(sql), "0001"]);
     });
+
+    it("aborts when NULL-checksum row has no matching file on disk", async () => {
+      // Write a file for 0002 but NOT for 0001, so scanMigrations returns
+      // at least one entry and applyMigrations is invoked.
+      writeMigration("auth", "0002_add_col.sql", "ALTER TABLE a ADD name TEXT");
+
+      mockClientQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
+        .mockResolvedValueOnce({
+          rows: [{ version: "0001", checksum: null }],
+          rowCount: 1,
+        }); // SELECT version, checksum
+
+      await expect(migrate.migrateAuthDb()).rejects.toThrow(
+        "Cannot backfill checksum for migration 0001: file not found on disk",
+      );
+    });
   });
 
   // ── no-transaction marker ───────────────────────────────────────────

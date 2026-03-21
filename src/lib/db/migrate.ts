@@ -118,7 +118,11 @@ async function backfillChecksums(
   for (const [version, checksum] of applied) {
     if (checksum !== null) continue;
     const file = filesByVersion.get(version);
-    if (!file) continue;
+    if (!file) {
+      throw new Error(
+        `Cannot backfill checksum for migration ${version}: file not found on disk`,
+      );
+    }
     const sql = readFileSync(file.filePath, "utf8");
     const hash = computeChecksum(sql);
     await client.query(
