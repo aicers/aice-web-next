@@ -40,3 +40,13 @@
   would pass for the changed files.
 - Before pushing or opening a PR, ensure the full CI pipeline passes locally
   (all checks, tests, and builds).
+
+## Manual documentation
+
+- A feature is not done until its manual page is written.
+- Do not write docs for features still under active development.
+- Keep the manual in sync with code — update docs whenever user-facing
+  behavior changes.
+- Every feature description must include UI screenshots.
+- EN/KR pages must stay in sync (same structure, same filenames).
+- See `docs/AUTHORING.md` for the full authoring guide.
