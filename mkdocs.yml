@@ -1,7 +1,7 @@
 site_name: AICE Web Manual
 site_description: AICE Web user manual
 repo_url: https://github.com/aicers/aice-web-next
-site_url: https://aicers.github.io/aice-web-next/
+site_url: https://example.invalid/aice-web-next
 
 theme:
   name: material
