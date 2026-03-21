@@ -2,6 +2,8 @@
 
 Web UI for AICE, built with Next.js.
 
+**[User Manual](docs/en/index.md)** · **[사용자 매뉴얼](docs/ko/index.md)**
+
 ## Getting started
 
 ```bash

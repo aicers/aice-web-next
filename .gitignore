@@ -50,6 +50,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# MkDocs
+/site/
+
 # vercel
 .vercel
 
