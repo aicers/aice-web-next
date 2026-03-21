@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -64,6 +65,10 @@ function writeMigration(subdir: string, filename: string, sql: string) {
   const dir = path.join(tmpDir, "migrations", subdir);
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, filename), sql);
+}
+
+function sha256(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
 describe("migrate", () => {
@@ -148,6 +153,54 @@ describe("migrate", () => {
     });
   });
 
+  // ── computeChecksum ─────────────────────────────────────────────────
+
+  describe("computeChecksum", () => {
+    it("returns SHA-256 hex digest of content", () => {
+      const content = "CREATE TABLE foo (id INT)";
+      const expected = sha256(content);
+      expect(migrate._computeChecksum(content)).toBe(expected);
+    });
+
+    it("produces different checksums for different content", () => {
+      const a = migrate._computeChecksum("SELECT 1");
+      const b = migrate._computeChecksum("SELECT 2");
+      expect(a).not.toBe(b);
+    });
+  });
+
+  // ── hasNoTransactionMarker ──────────────────────────────────────────
+
+  describe("hasNoTransactionMarker", () => {
+    it("returns true when first line is exactly '-- no-transaction'", () => {
+      expect(
+        migrate._hasNoTransactionMarker(
+          "-- no-transaction\nCREATE INDEX CONCURRENTLY idx ON t (col);",
+        ),
+      ).toBe(true);
+    });
+
+    it("returns false for normal SQL", () => {
+      expect(migrate._hasNoTransactionMarker("CREATE TABLE t (id INT);")).toBe(
+        false,
+      );
+    });
+
+    it("returns false when marker is not on the first line", () => {
+      expect(
+        migrate._hasNoTransactionMarker(
+          "-- some comment\n-- no-transaction\nSELECT 1;",
+        ),
+      ).toBe(false);
+    });
+
+    it("returns false for partial match", () => {
+      expect(
+        migrate._hasNoTransactionMarker("-- no-transaction-please\nSELECT 1;"),
+      ).toBe(false);
+    });
+  });
+
   // ── migrateAuthDb ───────────────────────────────────────────────────
 
   describe("migrateAuthDb", () => {
@@ -168,12 +221,15 @@ describe("migrate", () => {
       writeMigration("auth", "0001_init_schema.sql", "CREATE TABLE a (id INT)");
       writeMigration("auth", "0002_add_col.sql", "ALTER TABLE a ADD name TEXT");
 
+      const sql1 = "CREATE TABLE a (id INT)";
       mockClientQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
         .mockResolvedValueOnce({
-          rows: [{ version: "0001" }],
+          rows: [{ version: "0001", checksum: sha256(sql1) }],
           rowCount: 1,
-        }); // SELECT versions
+        }); // SELECT version, checksum
 
       const count = await migrate.migrateAuthDb();
 
@@ -193,8 +249,10 @@ describe("migrate", () => {
       writeMigration("auth", "0001_bad.sql", "INVALID SQL");
 
       mockClientQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // SELECT versions
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // SELECT version, checksum
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
         .mockRejectedValueOnce(new Error("syntax error")); // migration SQL
 
@@ -212,6 +270,127 @@ describe("migrate", () => {
       await migrate.migrateAuthDb();
 
       expect(mockPoolEnd).toHaveBeenCalled();
+    });
+
+    it("acquires and releases advisory lock", async () => {
+      writeMigration("auth", "0001_init.sql", "SELECT 1");
+
+      await migrate.migrateAuthDb();
+
+      const queries = mockClientQuery.mock.calls.map((c: unknown[]) => c[0]);
+      expect(queries).toContain("SELECT pg_advisory_lock($1)");
+      expect(queries).toContain("SELECT pg_advisory_unlock($1)");
+    });
+
+    it("releases advisory lock even on failure", async () => {
+      writeMigration("auth", "0001_bad.sql", "INVALID SQL");
+
+      mockClientQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // SELECT version, checksum
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+        .mockRejectedValueOnce(new Error("syntax error")); // migration SQL
+
+      await expect(migrate.migrateAuthDb()).rejects.toThrow("syntax error");
+
+      const queries = mockClientQuery.mock.calls.map((c: unknown[]) => c[0]);
+      expect(queries).toContain("SELECT pg_advisory_unlock($1)");
+    });
+  });
+
+  // ── checksum validation ─────────────────────────────────────────────
+
+  describe("checksum validation", () => {
+    it("stores checksum when applying a migration", async () => {
+      const sql = "CREATE TABLE a (id INT)";
+      writeMigration("auth", "0001_init.sql", sql);
+
+      await migrate.migrateAuthDb();
+
+      const insertCall = mockClientQuery.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" &&
+          (c[0] as string).includes("INSERT INTO _migrations"),
+      );
+      expect(insertCall).toBeDefined();
+      expect(insertCall?.[1]).toEqual(["0001", "init", sha256(sql)]);
+    });
+
+    it("aborts when checksum of applied migration does not match", async () => {
+      const originalSql = "CREATE TABLE a (id INT)";
+      const modifiedSql = "CREATE TABLE a (id BIGINT)";
+      writeMigration("auth", "0001_init.sql", modifiedSql);
+
+      mockClientQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
+        .mockResolvedValueOnce({
+          rows: [{ version: "0001", checksum: sha256(originalSql) }],
+          rowCount: 1,
+        }); // SELECT version, checksum
+
+      await expect(migrate.migrateAuthDb()).rejects.toThrow(
+        "Checksum mismatch",
+      );
+    });
+
+    it("backfills NULL checksums from current file on disk", async () => {
+      const sql = "CREATE TABLE a (id INT)";
+      writeMigration("auth", "0001_init.sql", sql);
+
+      mockClientQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
+        .mockResolvedValueOnce({
+          rows: [{ version: "0001", checksum: null }],
+          rowCount: 1,
+        }) // SELECT version, checksum — NULL checksum
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // UPDATE checksum
+
+      const count = await migrate.migrateAuthDb();
+
+      expect(count).toBe(0);
+      const updateCall = mockClientQuery.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" &&
+          (c[0] as string).includes("UPDATE _migrations SET checksum"),
+      );
+      expect(updateCall).toBeDefined();
+      expect(updateCall?.[1]).toEqual([sha256(sql), "0001"]);
+    });
+  });
+
+  // ── no-transaction marker ───────────────────────────────────────────
+
+  describe("no-transaction migrations", () => {
+    it("skips BEGIN/COMMIT for migrations with -- no-transaction marker", async () => {
+      const sql =
+        "-- no-transaction\nCREATE INDEX CONCURRENTLY idx ON t (col);";
+      writeMigration("auth", "0001_idx.sql", sql);
+
+      await migrate.migrateAuthDb();
+
+      const queries = mockClientQuery.mock.calls.map((c: unknown[]) => c[0]);
+      expect(queries).toContain(sql);
+      // Should NOT have BEGIN/COMMIT around the migration
+      const sqlIndex = queries.indexOf(sql);
+      // Check that the query before the SQL is not BEGIN
+      const queriesBefore = queries.slice(0, sqlIndex);
+      expect(queriesBefore[queriesBefore.length - 1]).not.toBe("BEGIN");
+    });
+
+    it("uses transaction for normal migrations", async () => {
+      writeMigration("auth", "0001_init.sql", "CREATE TABLE a (id INT)");
+
+      await migrate.migrateAuthDb();
+
+      const queries = mockClientQuery.mock.calls.map((c: unknown[]) => c[0]);
+      expect(queries).toContain("BEGIN");
+      expect(queries).toContain("COMMIT");
     });
   });
 
@@ -231,8 +410,10 @@ describe("migrate", () => {
       mockPoolConnect.mockResolvedValueOnce({
         query: vi
           .fn()
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
           .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // SELECT versions
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // SELECT version, checksum
           .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
           .mockRejectedValueOnce(new Error("migration failed")),
         release: vi.fn(),
@@ -309,18 +490,17 @@ describe("migrate", () => {
       process.env.AUDIT_DATABASE_URL =
         "postgres://postgres:postgres@localhost:5432/audit_db";
 
-      writeMigration(
-        "audit",
-        "0001_init_audit_logs.sql",
-        "CREATE TABLE audit_logs (id BIGSERIAL)",
-      );
+      const sql = "CREATE TABLE audit_logs (id BIGSERIAL)";
+      writeMigration("audit", "0001_init_audit_logs.sql", sql);
 
       mockClientQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
         .mockResolvedValueOnce({
-          rows: [{ version: "0001" }],
+          rows: [{ version: "0001", checksum: sha256(sql) }],
           rowCount: 1,
-        }); // SELECT versions — already applied
+        }); // SELECT version, checksum — already applied
 
       const count = await migrate.migrateAuditDb();
 
