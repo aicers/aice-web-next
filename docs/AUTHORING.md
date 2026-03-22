@@ -127,6 +127,18 @@ When reassessing, check:
 
 See Discussion #178 for the full rationale.
 
+## CI behavior for docs-only changes
+
+The CI workflow (`.github/workflows/ci.yml`) uses `dorny/paths-filter`
+to detect docs-only changes. When a commit modifies only documentation
+files (`docs/`, `decisions/`, `**/*.md`, `mkdocs.yml`,
+`.markdownlint*`), build, test, nginx-config, and other code-related
+jobs are skipped. Only the change-filter job itself runs.
+
+This means docs-only PRs merge faster and do not consume CI resources
+for unrelated checks. If your PR includes both code and docs changes,
+all CI jobs run as usual.
+
 ## Docs PR checklist
 
 Before submitting a docs PR, verify:
