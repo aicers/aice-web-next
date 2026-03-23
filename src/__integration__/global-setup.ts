@@ -115,6 +115,11 @@ export async function setup(): Promise<() => Promise<void>> {
     // No server running — start one
   }
 
+  // Save tsconfig.json before starting the dev server — Next.js rewrites
+  // it on startup, which dirties the worktree.
+  const tsconfigPath = resolve("tsconfig.json");
+  const tsconfigBackup = readFileSync(tsconfigPath, "utf8");
+
   console.log(`[integration] Starting dev server on port ${PORT}…`);
   const proc = spawn("pnpm", ["dev", "--port", PORT], {
     env: { ...process.env, ...env },
@@ -147,5 +152,8 @@ export async function setup(): Promise<() => Promise<void>> {
         serverProcess.kill("SIGTERM");
       }
     }
+
+    // Restore tsconfig.json to its pre-test state
+    writeFileSync(tsconfigPath, tsconfigBackup, "utf8");
   };
 }

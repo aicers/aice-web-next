@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthSession } from "@/lib/auth/jwt";
 
-const mockGetAccessTokenCookie = vi.hoisted(() => vi.fn());
 const mockVerifyJwtFull = vi.hoisted(() => vi.fn());
 const mockPoolQuery = vi.hoisted(() => vi.fn());
 const mockValidateCsrfToken = vi.hoisted(() => vi.fn());
@@ -21,7 +20,7 @@ const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockHasPermission = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/cookies", () => ({
-  getAccessTokenCookie: mockGetAccessTokenCookie,
+  ACCESS_TOKEN_COOKIE: "at",
 }));
 
 vi.mock("@/lib/auth/jwt", () => ({
@@ -114,12 +113,31 @@ describe("withAuth", () => {
 
   function makeRequest(
     url = "http://localhost:3000/api/test",
-    options?: { method?: string; headers?: Record<string, string> },
+    options?: {
+      method?: string;
+      headers?: Record<string, string>;
+      cookie?: string;
+    },
   ) {
+    const headers = { ...options?.headers };
+    if (options?.cookie) {
+      headers.cookie = options.cookie;
+    }
     return new NextRequest(url, {
       method: options?.method ?? "GET",
-      headers: options?.headers,
+      headers,
     });
+  }
+
+  /** Create a request with a valid-looking access token cookie. */
+  function makeAuthRequest(
+    url = "http://localhost:3000/api/test",
+    options?: {
+      method?: string;
+      headers?: Record<string, string>;
+    },
+  ) {
+    return makeRequest(url, { ...options, cookie: "at=valid-token" });
   }
 
   function makeContext() {
@@ -127,7 +145,6 @@ describe("withAuth", () => {
   }
 
   beforeEach(async () => {
-    mockGetAccessTokenCookie.mockReset();
     mockVerifyJwtFull.mockReset();
     mockPoolQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
     mockValidateCsrfToken.mockReset();
@@ -157,8 +174,6 @@ describe("withAuth", () => {
 
   describe("authentication", () => {
     it("returns 401 when no cookie is present", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue(undefined);
-
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
       const response = await wrapped(makeRequest(), makeContext());
@@ -170,12 +185,11 @@ describe("withAuth", () => {
     });
 
     it("returns 401 when token verification fails", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("bad-token");
       mockVerifyJwtFull.mockRejectedValue(new Error("Invalid token"));
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(401);
@@ -184,7 +198,6 @@ describe("withAuth", () => {
     });
 
     it("returns 403 when mustChangePassword is true", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue({
         ...validSession,
         mustChangePassword: true,
@@ -192,7 +205,7 @@ describe("withAuth", () => {
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(403);
@@ -202,14 +215,13 @@ describe("withAuth", () => {
     });
 
     it("calls handler with session on valid GET request", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
 
       const handler = vi
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      const request = makeRequest();
+      const request = makeAuthRequest();
       const context = makeContext();
 
       const response = await wrapped(request, context);
@@ -220,14 +232,13 @@ describe("withAuth", () => {
     });
 
     it("updates last_active_at in the database", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
 
       const handler = vi
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(mockPoolQuery).toHaveBeenCalledWith(
         expect.stringContaining("UPDATE sessions SET last_active_at"),
@@ -236,7 +247,6 @@ describe("withAuth", () => {
     });
 
     it("updates last_active_at before calling the handler", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
 
       const callOrder: string[] = [];
@@ -252,7 +262,7 @@ describe("withAuth", () => {
       });
 
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(callOrder).toEqual(["db-update", "handler"]);
     });
@@ -262,14 +272,13 @@ describe("withAuth", () => {
 
   describe("CSRF protection", () => {
     it("GET request passes without CSRF validation", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
 
       const handler = vi
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
 
       expect(response.status).toBe(200);
       expect(handler).toHaveBeenCalled();
@@ -278,7 +287,6 @@ describe("withAuth", () => {
     });
 
     it("POST with valid CSRF token and valid Origin passes", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockValidateOrigin.mockReturnValue(true);
       mockValidateCsrfToken.mockReturnValue(true);
@@ -288,7 +296,7 @@ describe("withAuth", () => {
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
 
-      const request = makeRequest("http://localhost:3000/api/test", {
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
         method: "POST",
         headers: {
           origin: "http://localhost:3000",
@@ -302,14 +310,13 @@ describe("withAuth", () => {
     });
 
     it("POST without CSRF token returns 403", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockValidateOrigin.mockReturnValue(true);
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
 
-      const request = makeRequest("http://localhost:3000/api/test", {
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
         method: "POST",
         headers: { origin: "http://localhost:3000" },
       });
@@ -323,7 +330,6 @@ describe("withAuth", () => {
     });
 
     it("POST with invalid CSRF token returns 403", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockValidateOrigin.mockReturnValue(true);
       mockValidateCsrfToken.mockReturnValue(false);
@@ -331,7 +337,7 @@ describe("withAuth", () => {
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
 
-      const request = makeRequest("http://localhost:3000/api/test", {
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
         method: "POST",
         headers: {
           origin: "http://localhost:3000",
@@ -348,14 +354,13 @@ describe("withAuth", () => {
     });
 
     it("POST with mismatched Origin returns 403", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockValidateOrigin.mockReturnValue(false);
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
 
-      const request = makeRequest("http://localhost:3000/api/test", {
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
         method: "POST",
         headers: {
           origin: "https://evil.com",
@@ -375,13 +380,13 @@ describe("withAuth", () => {
 
     it("missing CSRF_SECRET on POST returns 500", async () => {
       delete process.env.CSRF_SECRET;
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
+
       mockVerifyJwtFull.mockResolvedValue(validSession);
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
 
-      const request = makeRequest("http://localhost:3000/api/test", {
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
         method: "POST",
         headers: { origin: "http://localhost:3000" },
       });
@@ -395,7 +400,6 @@ describe("withAuth", () => {
     });
 
     it("passes correct arguments to validateCsrfToken", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockValidateOrigin.mockReturnValue(true);
       mockValidateCsrfToken.mockReturnValue(true);
@@ -405,7 +409,7 @@ describe("withAuth", () => {
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
 
-      const request = makeRequest("http://localhost:3000/api/test", {
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
         method: "POST",
         headers: {
           origin: "http://localhost:3000",
@@ -428,7 +432,6 @@ describe("withAuth", () => {
       "PATCH",
       "DELETE",
     ])("%s request also requires CSRF validation", async (method) => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockValidateOrigin.mockReturnValue(true);
       mockValidateCsrfToken.mockReturnValue(false);
@@ -436,7 +439,7 @@ describe("withAuth", () => {
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
 
-      const request = makeRequest("http://localhost:3000/api/test", {
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
         method,
         headers: {
           origin: "http://localhost:3000",
@@ -454,7 +457,6 @@ describe("withAuth", () => {
 
   describe("rate limiting", () => {
     it("GET request within rate limit passes", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockCheckApiRateLimit.mockResolvedValue({ limited: false });
 
@@ -462,14 +464,13 @@ describe("withAuth", () => {
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
 
       expect(response.status).toBe(200);
       expect(handler).toHaveBeenCalled();
     });
 
     it("returns 429 with Retry-After when rate limit exceeded", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockCheckApiRateLimit.mockResolvedValue({
         limited: true,
@@ -478,7 +479,7 @@ describe("withAuth", () => {
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(429);
@@ -488,7 +489,6 @@ describe("withAuth", () => {
     });
 
     it("rate limit applies to POST requests as well", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockCheckApiRateLimit.mockResolvedValue({
         limited: true,
@@ -498,7 +498,7 @@ describe("withAuth", () => {
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
 
-      const request = makeRequest("http://localhost:3000/api/test", {
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
         method: "POST",
         headers: {
           origin: "http://localhost:3000",
@@ -515,14 +515,13 @@ describe("withAuth", () => {
     });
 
     it("passes accountId to checkApiRateLimit", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
 
       const handler = vi
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(mockCheckApiRateLimit).toHaveBeenCalledWith("account-1");
     });
@@ -532,13 +531,12 @@ describe("withAuth", () => {
 
   describe("session policy enforcement", () => {
     it("returns 401 when absolute timeout exceeded", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockIsAbsoluteTimedOut.mockReturnValue(true);
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(401);
@@ -560,13 +558,12 @@ describe("withAuth", () => {
     });
 
     it("returns 401 when idle timeout exceeded", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockIsIdleTimedOut.mockReturnValue(true);
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(401);
@@ -584,21 +581,19 @@ describe("withAuth", () => {
     });
 
     it("proceeds when session is within both timeouts", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
 
       const handler = vi
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
 
       expect(response.status).toBe(200);
       expect(handler).toHaveBeenCalled();
     });
 
     it("returns 401 REAUTH_REQUIRED when UA major version changes", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockAssessIpUaRisk.mockReturnValue({
         proceed: false,
@@ -609,7 +604,7 @@ describe("withAuth", () => {
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(401);
@@ -623,7 +618,6 @@ describe("withAuth", () => {
     });
 
     it("returns 401 REAUTH_REQUIRED when both IP and UA change", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockAssessIpUaRisk.mockReturnValue({
         proceed: false,
@@ -634,7 +628,7 @@ describe("withAuth", () => {
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(401);
@@ -645,7 +639,6 @@ describe("withAuth", () => {
     });
 
     it("proceeds normally when only IP changes (low risk)", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockAssessIpUaRisk.mockReturnValue({
         proceed: true,
@@ -658,7 +651,7 @@ describe("withAuth", () => {
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
 
       expect(response.status).toBe(200);
       expect(handler).toHaveBeenCalled();
@@ -671,7 +664,6 @@ describe("withAuth", () => {
     });
 
     it("returns 401 REAUTH_REQUIRED when session already has needsReauth", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue({
         ...validSession,
         needsReauth: true,
@@ -679,7 +671,7 @@ describe("withAuth", () => {
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(401);
@@ -688,7 +680,6 @@ describe("withAuth", () => {
     });
 
     it("passes correct arguments to assessIpUaRisk", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockExtractClientIp.mockReturnValue("10.0.0.99");
       mockExtractBrowserFingerprint.mockReturnValue("Firefox/133");
@@ -697,7 +688,7 @@ describe("withAuth", () => {
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(mockAssessIpUaRisk).toHaveBeenCalledWith({
         storedIp: "127.0.0.1",
@@ -708,7 +699,6 @@ describe("withAuth", () => {
     });
 
     it("skips DB UPDATE when needsReauth is already true", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue({
         ...validSession,
         needsReauth: true,
@@ -722,7 +712,7 @@ describe("withAuth", () => {
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       // Should NOT call UPDATE sessions SET needs_reauth since it's already true
       const reauthUpdateCalls = mockPoolQuery.mock.calls.filter(
@@ -734,14 +724,13 @@ describe("withAuth", () => {
     });
 
     it("absolute timeout takes priority over idle timeout", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockIsAbsoluteTimedOut.mockReturnValue(true);
       mockIsIdleTimedOut.mockReturnValue(true);
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       // Absolute timeout should be reported, not idle
@@ -755,19 +744,17 @@ describe("withAuth", () => {
     });
 
     it("does not call assessIpUaRisk when session is timed out", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockIsAbsoluteTimedOut.mockReturnValue(true);
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(mockAssessIpUaRisk).not.toHaveBeenCalled();
     });
 
     it("re-auth gate blocks before mustChangePassword check", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue({
         ...validSession,
         needsReauth: true,
@@ -776,7 +763,7 @@ describe("withAuth", () => {
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       // Re-auth (step 7) should block before password change (step 8)
@@ -785,7 +772,6 @@ describe("withAuth", () => {
     });
 
     it("does not record audit when risk has no audit actions", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockAssessIpUaRisk.mockReturnValue({
         proceed: true,
@@ -798,7 +784,7 @@ describe("withAuth", () => {
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(mockAuditRecord).not.toHaveBeenCalled();
     });
@@ -808,7 +794,6 @@ describe("withAuth", () => {
 
   describe("skipSessionPolicy option", () => {
     it("skips timeout and IP/UA checks when skipSessionPolicy is true", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue({
         ...validSession,
         needsReauth: true,
@@ -821,7 +806,7 @@ describe("withAuth", () => {
         skipPasswordCheck: true,
         skipSessionPolicy: true,
       });
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
 
       expect(response.status).toBe(200);
       expect(handler).toHaveBeenCalled();
@@ -835,7 +820,6 @@ describe("withAuth", () => {
 
   describe("sliding rotation", () => {
     it("rotates tokens when shouldRotate returns true", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockShouldRotate.mockReturnValue(true);
 
@@ -843,7 +827,7 @@ describe("withAuth", () => {
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(mockShouldRotate).toHaveBeenCalledWith(
         validSession.iat,
@@ -853,7 +837,6 @@ describe("withAuth", () => {
     });
 
     it("does not rotate when shouldRotate returns false", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockShouldRotate.mockReturnValue(false);
 
@@ -861,7 +844,7 @@ describe("withAuth", () => {
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(mockShouldRotate).toHaveBeenCalledWith(
         validSession.iat,
@@ -871,7 +854,6 @@ describe("withAuth", () => {
     });
 
     it("returns the handler's response after rotation", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockShouldRotate.mockReturnValue(true);
 
@@ -879,7 +861,7 @@ describe("withAuth", () => {
         .fn()
         .mockResolvedValue(NextResponse.json({ data: "hello" }));
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(body.data).toBe("hello");
@@ -887,7 +869,6 @@ describe("withAuth", () => {
     });
 
     it("rotation happens after the handler is called", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockShouldRotate.mockReturnValue(true);
 
@@ -903,7 +884,7 @@ describe("withAuth", () => {
       });
 
       const wrapped = guard.withAuth(handler);
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(callOrder).toEqual(["handler", "rotate"]);
     });
@@ -913,7 +894,6 @@ describe("withAuth", () => {
 
   describe("skipPasswordCheck option", () => {
     it("allows handler when mustChangePassword is true and skipPasswordCheck is true", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue({
         ...validSession,
         mustChangePassword: true,
@@ -923,7 +903,7 @@ describe("withAuth", () => {
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler, { skipPasswordCheck: true });
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -932,7 +912,6 @@ describe("withAuth", () => {
     });
 
     it("still blocks when mustChangePassword is true and no options are given", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue({
         ...validSession,
         mustChangePassword: true,
@@ -940,7 +919,7 @@ describe("withAuth", () => {
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(403);
@@ -953,7 +932,6 @@ describe("withAuth", () => {
 
   describe("requiredPermissions", () => {
     it("returns 403 when required permission is missing", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockHasPermission.mockResolvedValue(false);
 
@@ -961,7 +939,7 @@ describe("withAuth", () => {
       const wrapped = guard.withAuth(handler, {
         requiredPermissions: ["accounts:write"],
       });
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(403);
@@ -970,7 +948,6 @@ describe("withAuth", () => {
     });
 
     it("passes when all required permissions are present", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       mockHasPermission.mockResolvedValue(true);
 
@@ -980,7 +957,7 @@ describe("withAuth", () => {
       const wrapped = guard.withAuth(handler, {
         requiredPermissions: ["accounts:read", "accounts:write"],
       });
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
 
       expect(response.status).toBe(200);
       expect(handler).toHaveBeenCalled();
@@ -988,7 +965,6 @@ describe("withAuth", () => {
     });
 
     it("enforces AND semantics — fails if any permission is missing", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
       // First permission passes, second fails
       mockHasPermission
@@ -999,7 +975,7 @@ describe("withAuth", () => {
       const wrapped = guard.withAuth(handler, {
         requiredPermissions: ["accounts:read", "accounts:delete"],
       });
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
       const body = await response.json();
 
       expect(response.status).toBe(403);
@@ -1008,14 +984,13 @@ describe("withAuth", () => {
     });
 
     it("skips permission check when requiredPermissions is not set", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue(validSession);
 
       const handler = vi
         .fn()
         .mockResolvedValue(NextResponse.json({ ok: true }));
       const wrapped = guard.withAuth(handler);
-      const response = await wrapped(makeRequest(), makeContext());
+      const response = await wrapped(makeAuthRequest(), makeContext());
 
       expect(response.status).toBe(200);
       expect(handler).toHaveBeenCalled();
@@ -1023,7 +998,6 @@ describe("withAuth", () => {
     });
 
     it("passes session roles to hasPermission", async () => {
-      mockGetAccessTokenCookie.mockResolvedValue("valid-token");
       mockVerifyJwtFull.mockResolvedValue({
         ...validSession,
         roles: ["System Administrator"],
@@ -1036,7 +1010,7 @@ describe("withAuth", () => {
       const wrapped = guard.withAuth(handler, {
         requiredPermissions: ["audit-logs:read"],
       });
-      await wrapped(makeRequest(), makeContext());
+      await wrapped(makeAuthRequest(), makeContext());
 
       expect(mockHasPermission).toHaveBeenCalledWith(
         ["System Administrator"],

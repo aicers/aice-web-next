@@ -6,7 +6,7 @@ import { auditLog } from "@/lib/audit/logger";
 import { query } from "@/lib/db/client";
 import { checkApiRateLimit } from "@/lib/rate-limit/limiter";
 
-import { getAccessTokenCookie } from "./cookies";
+import { ACCESS_TOKEN_COOKIE } from "./cookies";
 import {
   CSRF_HEADER_NAME,
   isMutationMethod,
@@ -95,8 +95,10 @@ export function withAuth(
   options?: WithAuthOptions,
 ): RouteHandler {
   return async (request, context) => {
-    // Step 1: Read token from cookie
-    const token = await getAccessTokenCookie();
+    // Step 1: Read token from the request cookie directly (avoids
+    // relying on the next/headers cookies() async context which can
+    // break under certain server configurations).
+    const token = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value;
     if (!token) {
       return NextResponse.json(
         { error: "Authentication required" },
