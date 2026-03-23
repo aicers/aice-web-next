@@ -36,6 +36,7 @@
 # Bootstrap data directory (consumed marker)
 /data
 /data-e2e
+/data-integration
 
 # TLS certificates (never commit private keys)
 /infra/certs/

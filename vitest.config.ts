@@ -12,6 +12,13 @@ export default defineConfig({
     },
   },
   test: {
-    exclude: ["node_modules", "e2e", ".next", ".claude/worktrees"],
+    exclude: [
+      "node_modules",
+      "e2e",
+      ".next",
+      ".claude/worktrees",
+      ".worktrees",
+      "src/__integration__",
+    ],
   },
 });

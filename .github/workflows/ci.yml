@@ -125,6 +125,48 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  integration:
+    name: Integration
+    needs: check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-trixie
+        env:
+          POSTGRES_DB: auth_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Create audit_db and audit_writer role
+        run: psql "postgres://postgres:postgres@localhost:5432/auth_db" -f infra/postgres/init-audit-db.sql
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run integration tests
+        run: pnpm test:integration
+        env:
+          CI: true
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/auth_db
+          DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
+          AUDIT_DATABASE_URL: postgres://audit_writer:changeme@localhost:5432/audit_db
+          DATA_DIR: ./data-integration
+          CSRF_SECRET: ci-integration-csrf-secret-at-least-32-chars!!
+          INIT_ADMIN_USERNAME: admin
+          INIT_ADMIN_PASSWORD: Admin1234!
+          DEFAULT_LOCALE: en
+          INTEGRATION_SERVER_URL: http://localhost:3001
+
   e2e:
     name: E2E
     needs: check
