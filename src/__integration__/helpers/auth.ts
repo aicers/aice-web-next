@@ -136,13 +136,17 @@ export async function signIn(
     }
     const account = accountRows[0];
 
-    // Create session — metadata must match the User-Agent header sent
-    // by the HTTP helpers so withAuth's IP/UA check passes.
+    // Create session — browser_fingerprint must store the NORMALIZED
+    // value that extractBrowserFingerprint() produces for our UA string.
+    // The parser doesn't recognize "IntegrationTest/1.0", so it returns
+    // "Unknown/0". Storing the same value avoids a major-UA-change
+    // detection in withAuth's session-policy step.
+    const NORMALIZED_FINGERPRINT = "Unknown/0";
     const { rows: sessionRows } = await client.query<{ sid: string }>(
       `INSERT INTO sessions (sid, account_id, ip_address, user_agent, browser_fingerprint)
-       VALUES (gen_random_uuid(), $1, '127.0.0.1', $2, $2)
+       VALUES (gen_random_uuid(), $1, '127.0.0.1', $2, $3)
        RETURNING sid`,
-      [account.id, INTEGRATION_USER_AGENT],
+      [account.id, INTEGRATION_USER_AGENT, NORMALIZED_FINGERPRINT],
     );
     const sid = sessionRows[0].sid;
 
