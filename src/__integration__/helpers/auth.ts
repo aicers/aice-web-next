@@ -11,6 +11,13 @@ export const ADMIN_USERNAME = "admin";
 export const ADMIN_PASSWORD = "Admin1234!";
 
 /**
+ * User-Agent string shared between session creation and HTTP requests.
+ * Must match so that withAuth's IP/UA risk assessment does not flag
+ * the session for re-authentication.
+ */
+const INTEGRATION_USER_AGENT = "IntegrationTest/1.0";
+
+/**
  * Authenticated HTTP session for integration tests.
  * Manages JWT cookie and CSRF token.
  */
@@ -129,12 +136,13 @@ export async function signIn(
     }
     const account = accountRows[0];
 
-    // Create session
+    // Create session — metadata must match the User-Agent header sent
+    // by the HTTP helpers so withAuth's IP/UA check passes.
     const { rows: sessionRows } = await client.query<{ sid: string }>(
       `INSERT INTO sessions (sid, account_id, ip_address, user_agent, browser_fingerprint)
-       VALUES (gen_random_uuid(), $1, '127.0.0.1', 'integration-test', 'IntegrationTest/1')
+       VALUES (gen_random_uuid(), $1, '127.0.0.1', $2, $2)
        RETURNING sid`,
-      [account.id],
+      [account.id, INTEGRATION_USER_AGENT],
     );
     const sid = sessionRows[0].sid;
 
@@ -192,6 +200,7 @@ export async function authGet(
   return fetch(`${SERVER_ORIGIN}${path}`, {
     headers: {
       Cookie: session.cookie,
+      "User-Agent": INTEGRATION_USER_AGENT,
     },
   });
 }
@@ -210,6 +219,7 @@ export async function authPost(
       "Content-Type": "application/json",
       Cookie: session.cookie,
       "X-CSRF-Token": session.csrfToken,
+      "User-Agent": INTEGRATION_USER_AGENT,
       Origin: SERVER_ORIGIN,
     },
     body: data !== undefined ? JSON.stringify(data) : undefined,
@@ -230,6 +240,7 @@ export async function authPatch(
       "Content-Type": "application/json",
       Cookie: session.cookie,
       "X-CSRF-Token": session.csrfToken,
+      "User-Agent": INTEGRATION_USER_AGENT,
       Origin: SERVER_ORIGIN,
     },
     body: JSON.stringify(data),
@@ -248,6 +259,7 @@ export async function authDelete(
     headers: {
       Cookie: session.cookie,
       "X-CSRF-Token": session.csrfToken,
+      "User-Agent": INTEGRATION_USER_AGENT,
       Origin: SERVER_ORIGIN,
     },
   });
