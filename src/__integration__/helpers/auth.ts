@@ -1,4 +1,4 @@
-import { BASE_URL } from "../setup";
+import { SERVER_ORIGIN } from "../setup";
 
 export const ADMIN_USERNAME = "admin";
 export const ADMIN_PASSWORD = "Admin1234!";
@@ -21,11 +21,11 @@ export async function signIn(
   username: string,
   password: string,
 ): Promise<AuthSession> {
-  const res = await fetch(`${BASE_URL}/api/auth/sign-in`, {
+  const res = await fetch(`${SERVER_ORIGIN}/api/auth/sign-in`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Origin: BASE_URL,
+      Origin: SERVER_ORIGIN,
     },
     body: JSON.stringify({ username, password }),
     redirect: "manual",
@@ -63,7 +63,7 @@ export async function authGet(
   session: AuthSession,
   path: string,
 ): Promise<Response> {
-  return fetch(`${BASE_URL}${path}`, {
+  return fetch(`${SERVER_ORIGIN}${path}`, {
     headers: {
       Cookie: session.cookie,
     },
@@ -78,13 +78,13 @@ export async function authPost(
   path: string,
   data?: unknown,
 ): Promise<Response> {
-  return fetch(`${BASE_URL}${path}`, {
+  return fetch(`${SERVER_ORIGIN}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Cookie: session.cookie,
       "X-CSRF-Token": session.csrfToken,
-      Origin: BASE_URL,
+      Origin: SERVER_ORIGIN,
     },
     body: data !== undefined ? JSON.stringify(data) : undefined,
   });
@@ -98,13 +98,13 @@ export async function authPatch(
   path: string,
   data: unknown,
 ): Promise<Response> {
-  return fetch(`${BASE_URL}${path}`, {
+  return fetch(`${SERVER_ORIGIN}${path}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
       Cookie: session.cookie,
       "X-CSRF-Token": session.csrfToken,
-      Origin: BASE_URL,
+      Origin: SERVER_ORIGIN,
     },
     body: JSON.stringify(data),
   });
@@ -117,12 +117,12 @@ export async function authDelete(
   session: AuthSession,
   path: string,
 ): Promise<Response> {
-  return fetch(`${BASE_URL}${path}`, {
+  return fetch(`${SERVER_ORIGIN}${path}`, {
     method: "DELETE",
     headers: {
       Cookie: session.cookie,
       "X-CSRF-Token": session.csrfToken,
-      Origin: BASE_URL,
+      Origin: SERVER_ORIGIN,
     },
   });
 }
@@ -131,7 +131,7 @@ export async function authDelete(
  * Reset the in-memory rate limiter via the test-only API endpoint.
  */
 export async function resetRateLimits(): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api/e2e/reset-rate-limits`, {
+  const res = await fetch(`${SERVER_ORIGIN}/api/e2e/reset-rate-limits`, {
     method: "POST",
   });
   if (!res.ok) throw new Error(`reset-rate-limits failed: ${res.status}`);

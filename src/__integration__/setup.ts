@@ -1,4 +1,9 @@
 /**
- * Per-file setup: exposes BASE_URL for all integration tests.
+ * Per-file setup: exposes the integration server origin for all tests.
+ *
+ * IMPORTANT: Do NOT use `BASE_URL` as a name — Vitest injects
+ * `process.env.BASE_URL = viteConfig.base` (default "/") into test
+ * modules, which silently overrides the real environment variable.
  */
-export const BASE_URL = process.env.BASE_URL || "http://localhost:3001";
+export const SERVER_ORIGIN =
+  process.env.INTEGRATION_SERVER_URL || "http://localhost:3001";

@@ -7,11 +7,12 @@ import { resolve } from "node:path";
 import { exportJWK, generateKeyPair } from "jose";
 
 const DATA_DIR = process.env.DATA_DIR || resolve("data-integration");
-const BASE_URL = process.env.BASE_URL || "http://localhost:3001";
-const PORT = new URL(BASE_URL).port || "3001";
+const SERVER_URL =
+  process.env.INTEGRATION_SERVER_URL || "http://localhost:3001";
+const PORT = new URL(SERVER_URL).port || "3001";
 
 /**
- * Resolve DATABASE_URL: prefer process.env, then parse .env.local.
+ * Resolve an env var: prefer process.env, then parse .env.local.
  */
 function getEnvVar(key: string, fallback: string): string {
   if (process.env[key]) return process.env[key];
@@ -105,9 +106,9 @@ export async function setup(): Promise<() => Promise<void>> {
 
   // Check if a server is already running on this port
   try {
-    const res = await fetch(BASE_URL, { redirect: "manual" });
+    const res = await fetch(SERVER_URL, { redirect: "manual" });
     if (res.status < 500) {
-      console.log(`[integration] Reusing existing server at ${BASE_URL}`);
+      console.log(`[integration] Reusing existing server at ${SERVER_URL}`);
       return async () => {};
     }
   } catch {
@@ -118,10 +119,12 @@ export async function setup(): Promise<() => Promise<void>> {
   const proc = spawn("pnpm", ["dev", "--port", PORT], {
     env: { ...process.env, ...env },
     stdio: "pipe",
-    detached: false,
+    detached: true,
   });
   serverProcess = proc;
 
+  // Unref so the child doesn't keep this process alive
+  proc.unref();
   proc.stdout?.on("data", (data: Buffer) => {
     const line = data.toString().trim();
     if (line) console.log(`[dev] ${line}`);
@@ -131,14 +134,14 @@ export async function setup(): Promise<() => Promise<void>> {
     if (line) console.log(`[dev:err] ${line}`);
   });
 
-  await waitForServer(BASE_URL, 120_000);
+  await waitForServer(SERVER_URL, 120_000);
   console.log("[integration] Dev server is ready.");
 
   return async () => {
     if (serverProcess?.pid) {
       console.log("[integration] Stopping dev server…");
-      // Kill the process group to ensure all child processes are terminated
       try {
+        // Kill the detached process group
         process.kill(-serverProcess.pid, "SIGTERM");
       } catch {
         serverProcess.kill("SIGTERM");

@@ -29,18 +29,18 @@ Unit tests with mocked DB cannot catch real SQL bugs. E2E tests with a browser a
 
 ### Problem
 
-Migrations and bootstrap run inside `instrumentation.ts` at Next.js startup. Vitest integration tests do not start a Next.js server, so they need an equivalent setup.
+Migrations and bootstrap run inside `instrumentation.ts` at Next.js startup. Integration tests need a running Next.js dev server to test API routes through the full middleware stack (auth, CSRF, rate limiting).
 
 ### Solution
 
 A Vitest `globalSetup` file that:
 
-1. Connects to PostgreSQL using `DATABASE_ADMIN_URL`.
-2. Creates fresh test databases (`auth_db_test`, `audit_db_test`) or resets them by dropping and recreating.
-3. Runs `migrateAuthDb()` and `migrateAuditDb()` from `src/lib/db/migrate.ts`.
-4. Runs `bootstrapAdminAccount()` from `src/lib/auth/bootstrap.ts`.
-5. Generates a JWT signing key (same as `e2e/global-setup.ts`).
-6. Exports database URLs for use in test files.
+1. Generates a JWT signing key if absent (same as `e2e/global-setup.ts`).
+2. Starts `pnpm dev` on a dedicated port (default 3001) if no server is already running.
+3. Waits for the server to be ready (migrations and bootstrap run as part of Next.js startup via `instrumentation.ts`).
+4. Returns a teardown function that kills the server process.
+
+Integration tests use the same databases as E2E (`auth_db`, `audit_db`) — not isolated test-only databases. This matches the existing E2E approach: tests are responsible for setting up and cleaning up their own data using shared helpers. In CI, each job starts with a fresh PostgreSQL instance, so isolation is guaranteed. Locally, integration tests share the developer's databases and may mutate their state, same as running E2E tests locally.
 
 ### Required environment variables
 
