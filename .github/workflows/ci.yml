@@ -111,8 +111,8 @@ jobs:
             -v "$PWD/infra/certs:/etc/nginx/certs:ro" \
             nginx:alpine nginx -t
 
-  test:
-    name: Test
+  unit:
+    name: Unit
     needs: check
     runs-on: ubuntu-latest
     steps:
@@ -125,8 +125,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
-  integration:
-    name: Integration
+  api-db:
+    name: API & DB
     needs: check
     runs-on: ubuntu-latest
     services:
@@ -221,7 +221,7 @@ jobs:
 
   image-build:
     name: Image Build
-    needs: test
+    needs: unit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
