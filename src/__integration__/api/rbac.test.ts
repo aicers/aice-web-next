@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  ADMIN_PASSWORD,
   ADMIN_USERNAME,
   authGet,
   resetRateLimits,
@@ -33,7 +32,7 @@ describe("RBAC permission enforcement", () => {
   });
 
   it("admin can access audit-logs API", async () => {
-    const session = await signIn(ADMIN_USERNAME, ADMIN_PASSWORD);
+    const session = await signIn(ADMIN_USERNAME);
 
     const response = await authGet(session, "/api/audit-logs");
 
@@ -44,7 +43,7 @@ describe("RBAC permission enforcement", () => {
   });
 
   it("non-admin user gets 403 on audit-logs API", async () => {
-    const session = await signIn(MONITOR_USERNAME, MONITOR_PASSWORD);
+    const session = await signIn(MONITOR_USERNAME);
 
     const response = await authGet(session, "/api/audit-logs");
 
