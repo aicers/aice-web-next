@@ -9,16 +9,19 @@ communication between the browser and `review-web` (the GraphQL backend).
 ```text
 Browser ──► Next.js (aice-web-next) ──► review-web (GraphQL)
               │         │                    │
-              │         └─► auth_db (PG)     ├─ mTLS handshake
-              │                              ├─ Context JWT verification
-              ├─ Route Handlers              └─ RoleGuard + CustomerIds
+              │         ├─► auth_db (PG)     ├─ mTLS handshake
+              │         ├─► audit_db (PG)    ├─ Context JWT verification
+              │         └─► customer_db (PG) └─ RoleGuard + CustomerIds
+              │
+              ├─ Route Handlers
               ├─ Server Actions
               └─ React Server Components
 ```
 
 The browser never accesses `review-web` directly. Every GraphQL request
 originates from the server side of Next.js. `aice-web-next` is the sole owner
-of both `auth_db` and `customer_db` (see Discussion #32 §3).
+of `auth_db`, `audit_db`, and `customer_db`
+(see [`decisions/account-management.md`](decisions/account-management.md) §3).
 
 ## Authentication flow
 
@@ -35,7 +38,8 @@ extended via **Sliding Rotation**: each server request within the validity
 window issues a replacement token with a reset expiry. A single BFF instance
 handles all requests, so the "stateless JWT to avoid DB lookups" benefit of
 Refresh Tokens does not apply; `sid` validation already requires a DB lookup
-on every request (see Discussion #32 §7).
+on every request
+(see [`decisions/account-management.md`](decisions/account-management.md) §7).
 
 Authentication endpoints (`/api/auth/*`) are the **only** place where auth
 logic lives. Server Actions handle business logic only.
@@ -78,7 +82,7 @@ All mTLS and JWT signing logic is encapsulated in `lib/mtls.ts`:
 ## Role system
 
 aice-web-next defines three built-in roles and supports custom roles
-(see Discussion #32 §1):
+(see [`decisions/account-management.md`](decisions/account-management.md) §1):
 
 | Role | Scope | Deletable |
 |------|-------|-----------|
@@ -101,14 +105,15 @@ aice-web-next defines three built-in roles and supports custom roles
 |-------|-----------|------------|-----------|
 | Client | Browser → BFF | TanStack Query | HTTP (fetch) |
 | Server | BFF → review-web | graphql-request | HTTPS (mTLS) |
-| DB | BFF → auth_db | pg | PostgreSQL protocol |
+| DB | BFF → auth_db / audit_db / customer_db | pg | PostgreSQL protocol |
 
 - **Client layer**: React components use TanStack Query to call Route Handlers
   or Server Actions. The browser has no knowledge of GraphQL.
 - **Server layer**: Route Handlers and Server Actions use `graphql-request`
   with the mTLS `https.Agent` to query `review-web`.
 - **DB layer**: Account management operations (auth, sessions, roles) query
-  `auth_db` directly via `pg`.
+  `auth_db` directly via `pg`. Audit events are written to `audit_db`.
+  Customer-scoped data goes to the appropriate `customer_db`.
 
 ### Auth boundary
 
@@ -121,50 +126,94 @@ aice-web-next defines three built-in roles and supports custom roles
 
 ## Database architecture
 
-aice-web-next is the sole owner of two PostgreSQL databases:
+aice-web-next is the sole owner of three PostgreSQL databases:
 
 ```text
 PostgreSQL
-├── auth_db        ← Accounts, roles, sessions, audit logs (single instance)
+├── auth_db        ← Accounts, roles, sessions (single instance)
+├── audit_db       ← Immutable audit event log (single instance)
 └── customer_db ×N ← Per-customer data (one instance per customer)
 ```
 
 - **auth_db**: single instance storing all account management and
   authentication data.
-- **customer_db**: one database per customer for tenant-scoped data. aice-web-next
-  manages the full lifecycle: creation, schema migration, and deletion.
+- **audit_db**: single instance storing immutable audit events
+  (auth, account, role, customer, and system operations). See
+  [`decisions/audit-log.md`](decisions/audit-log.md) for the full
+  specification.
+- **customer_db**: one database per customer for tenant-scoped data.
+  aice-web-next manages the full lifecycle: creation, schema migration,
+  and deletion.
 - Raw SQL with `pg` (no ORM). SQL is explicit and fully visible, which aids
   both human and AI-driven debugging. SQL injection is prevented by
-  parameterized queries. See Discussion #34 for the full strategy.
+  parameterized queries. See
+  [`decisions/database-migration.md`](decisions/database-migration.md) for
+  the full strategy.
 - Schema changes use versioned SQL migration files (`migrations/auth/`,
-  `migrations/customer/`) applied by a custom runner at startup and at runtime
-  when customers are created.
+  `migrations/audit/`, `migrations/customer/`) applied by a custom runner
+  at startup and at runtime when customers are created.
 - Forward-only: rollbacks are new migration files, not reverse operations.
+- Backup strategy covers all three databases with different retention
+  policies. See
+  [`decisions/backup-restore.md`](decisions/backup-restore.md).
 
 ## Directory structure
 
 ```text
+decisions/                   # Architecture decision records
+  account-management.md
+  audit-log.md
+  backup-restore.md
+  database-migration.md
+  testing-strategy.md
+  ui-architecture.md
+
+docs/                        # User manual (EN + KR)
+  en/
+  ko/
+
 migrations/
-  auth/                    # auth_db migration files (versioned SQL/TS)
-  customer/                # customer_db migration files (versioned SQL/TS)
+  auth/                      # auth_db migration files (versioned SQL/TS)
+  audit/                     # audit_db migration files
+  customer/                  # customer_db migration files
+
+e2e/                         # Playwright E2E tests
 
 src/
+  __tests__/                 # Vitest unit tests (mirrors src/ structure)
+  __integration__/           # Vitest integration tests (real PostgreSQL)
   app/
-    [locale]/              # next-intl locale segment (/en/, /ko/)
-      layout.tsx
-      page.tsx
-    api/
-      auth/                # Auth boundary — Route Handlers only
+    [locale]/                # next-intl locale segment (/en/, /ko/)
+      (auth)/                # Auth pages (sign-in)
+      (dashboard)/           # Dashboard pages (accounts, roles, …)
+    api/                     # Route Handlers
+      auth/                  # Auth boundary (sign-in, sign-out, tokens)
+      accounts/              # Account management
+      audit-logs/            # Audit log queries
+      customers/             # Customer CRUD
+      dashboard/             # Dashboard data
+      roles/                 # Role management
+      system-settings/       # System settings
   lib/
-    mtls.ts                # mTLS + Context JWT encapsulation
-    graphql/               # graphql-request client setup
-    db/
-      client.ts            # Connection pool, query<T>(), withTransaction()
-      migrate.ts           # Migration runner
+    auth/                    # Auth logic (JWT, sessions, passwords, MFA, …)
+    audit/                   # Audit logging (client, schema, correlation)
+    db/                      # PostgreSQL client, migration runner
+    graphql/                 # graphql-request client setup
+    rate-limit/              # Rate limiter (sliding window)
+    dashboard/               # Dashboard queries
+    mtls.ts                  # mTLS + Context JWT encapsulation
   components/
-    ui/                    # shadcn/ui components
+    ui/                      # shadcn/ui primitives
+    accounts/                # Account management UI
+    audit/                   # Audit log UI
+    customers/               # Customer management UI
+    dashboard/               # Dashboard UI
+    layout/                  # Sidebar, header, breadcrumbs
+    roles/                   # Role management UI
+    settings/                # System settings UI
+  hooks/                     # Custom React hooks
   i18n/
-    messages/              # Translation files (en.json, ko.json)
+    messages/                # Translation files (en.json, ko.json)
 ```
 
 ## Tech stack
@@ -225,15 +274,38 @@ src/
 | Docker (Debian bookworm) | Containerization |
 | Nginx | HTTPS reverse proxy, TLS termination |
 
+## Testing
+
+Tests are organized into three tiers. See
+[`decisions/testing-strategy.md`](decisions/testing-strategy.md) for the
+rationale and migration plan.
+
+| Tier | Tool | Directory | Command |
+|------|------|-----------|---------|
+| Unit | Vitest | `src/__tests__/` | `pnpm test` |
+| Integration | Vitest + real PG | `src/__integration__/` | `pnpm test:integration` |
+| E2E | Playwright | `e2e/` | `pnpm e2e` |
+
 ## References
+
+### Internal decisions
+
+- [`decisions/account-management.md`](decisions/account-management.md) —
+  Account management feature specification
+- [`decisions/audit-log.md`](decisions/audit-log.md) —
+  Audit logging architecture
+- [`decisions/backup-restore.md`](decisions/backup-restore.md) —
+  Backup and restore strategy
+- [`decisions/database-migration.md`](decisions/database-migration.md) —
+  Database migration strategy
+- [`decisions/testing-strategy.md`](decisions/testing-strategy.md) —
+  Three-tier testing architecture
+- [`decisions/ui-architecture.md`](decisions/ui-architecture.md) —
+  UI architecture and design tokens
+
+### External
 
 - [aicers/patio#556](https://github.com/orgs/aicers/discussions/556) —
   Authentication and data flow architecture
 - [aicers/review-web#768](https://github.com/aicers/review-web/issues/768) —
   mTLS + Context JWT on review-web side
-- [Discussion #32](https://github.com/aicers/aice-web-next/discussions/32) —
-  Account management feature specification
-- [Discussion #33](https://github.com/aicers/aice-web-next/discussions/33) —
-  UI architecture
-- [Discussion #34](https://github.com/aicers/aice-web-next/discussions/34) —
-  Database migration strategy
