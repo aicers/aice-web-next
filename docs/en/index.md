@@ -1,24 +1,27 @@
 # AICE Web Manual
 
-This manual explains how to install, configure, and use **AICE Web**
-(aice-web-next), a full-stack web application built with Next.js that serves
-the browser UI and acts as a BFF (Backend For Frontend) for review-web.
+This manual covers installation, configuration, and administration of
+**AICE Web** (aice-web-next), the management interface for the AICE
+threat detection platform.
 
 ## What AICE Web Does
 
-AICE Web provides a web-based management interface for the AICE platform.
-It mediates all communication between the browser and review-web (the GraphQL
-backend). The browser never accesses review-web directly — every GraphQL
-request originates from the server side of Next.js.
+AICE Web is a full-stack Next.js application that serves as the
+management interface and BFF (Backend For Frontend) for the AICE
+platform. Operators use it to monitor threats, investigate events,
+and manage the system. The browser never contacts the backend
+directly — every GraphQL request originates from the server side of
+Next.js.
 
-Key capabilities:
+Current capabilities:
 
-- **Account management**: Sign-in, sign-out, password management, and
-  role-based access control
-- **Customer management**: Multi-tenant customer lifecycle management
-- **Dashboard**: Real-time monitoring and visualization
-- **Audit logging**: Comprehensive audit trail for all operations
-- **Settings**: System and user preference configuration
+- **Administration** — account, role, customer, and system settings
+  management with full audit logging
+- **Dashboard** — real-time operational overview for administrators
+
+As the platform evolves, AICE Web will expand to cover event
+investigation, detection rule management, triage workflows, and
+reporting.
 
 ## Architecture Overview
 
@@ -32,19 +35,24 @@ Browser ──► Next.js (aice-web-next) ──► review-web (GraphQL)
               └─ React Server Components
 ```
 
+AICE Web manages its own authentication database (`auth_db`) and a
+separate audit database (`audit_db`). Customer-specific runtime
+databases are provisioned and migrated automatically.
+
 ## Role System
 
 | Role | Scope |
 |------|-------|
 | System Administrator | Full system, account, role, customer management |
-| Tenant Administrator | Tenant-scoped ops + Security Monitor account management |
-| Security Monitor | Event/dashboard read-only within assigned customer |
-| Custom Role | System Administrator-defined permission combinations |
+| Tenant Administrator | Tenant-scoped operations + Security Monitor account management |
+| Security Monitor | Read-only event and dashboard access within assigned customers |
+| Custom Role | Administrator-defined permission combinations |
 
 ## Manual Map
 
-- **Getting Started**: Prerequisites, installation, and first launch
-- **Configuration**: Environment variables, database setup, mTLS certificates,
-  and Nginx reverse proxy
-- **Usage**: Sign-in, account management, customer management, dashboard,
-  audit logs, and settings
+- **[Getting Started](getting-started.md)** — prerequisites,
+  installation, and first sign-in
+- **[Configuration](configuration.md)** — environment variables,
+  databases, mTLS, and Nginx
+- **[Administration](administration.md)** — accounts, roles,
+  customers, system settings, and audit logs

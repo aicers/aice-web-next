@@ -26,7 +26,7 @@ plugins:
             - Overview: index.md
             - Getting Started: getting-started.md
             - Configuration: configuration.md
-            - Usage: usage.md
+            - Administration: administration.md
         - locale: ko
           name: 한국어
           build: true
@@ -34,12 +34,12 @@ plugins:
             - Overview: index.md
             - Getting Started: getting-started.md
             - Configuration: configuration.md
-            - Usage: usage.md
+            - Administration: administration.md
           nav_translations:
             Overview: 개요
             Getting Started: 시작하기
             Configuration: 설정
-            Usage: 사용법
+            Administration: 관리
 
 extra_css:
   - styles/lists.css
