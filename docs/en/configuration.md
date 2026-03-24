@@ -43,13 +43,13 @@ Customer database migrations also run at provisioning time.
 
 ### Connection String Format
 
-```
+```text
 postgres://user:password@host:5432/dbname
 ```
 
 For production, use SSL connections:
 
-```
+```text
 postgres://user:password@host:5432/dbname?sslmode=require
 ```
 

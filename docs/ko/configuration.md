@@ -45,13 +45,13 @@ AICE Web은 세 가지 범주의 PostgreSQL 데이터베이스를
 
 ### 연결 문자열 형식
 
-```
+```text
 postgres://user:password@host:5432/dbname
 ```
 
 프로덕션 환경에서는 SSL 연결을 사용합니다:
 
-```
+```text
 postgres://user:password@host:5432/dbname?sslmode=require
 ```
 
