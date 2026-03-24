@@ -31,9 +31,10 @@ AICE Web은 세 가지 범주의 PostgreSQL 데이터베이스를
 
 - **auth_db** — 계정, 역할, 세션, 고객, 시스템 설정, 비밀번호
   이력.
-- **audit_db** — 변경 불가한 감사 로그 기록. 위변조 방지를
-  위해 연결 역할에 `INSERT`와 `SELECT` 권한만
-  부여해야 합니다.
+- **audit_db** — 변경 불가한 감사 로그 기록. 연결 역할에
+  `public` 스키마에 대한 `CREATE`와 `USAGE` 권한
+  (애플리케이션이 시작 시 마이그레이션을 실행)과 테이블에
+  대한 `INSERT`와 `SELECT` 권한을 부여해야 합니다.
 - **고객 데이터베이스** — 고객 생성 시 자동 프로비저닝됩니다.
   `DATABASE_ADMIN_URL`을 통해 관리되며 `CREATE DATABASE` /
   `DROP DATABASE` 권한이 필요합니다.

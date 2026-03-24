@@ -16,8 +16,9 @@
 - **auth_db** — 계정, 역할, 세션, 고객, 시스템 설정을
   저장합니다.
 - **audit_db** — 변경 불가한 감사 로그 기록을 저장합니다.
-  위변조 방지를 위해 제한된 데이터베이스 역할
-  (`INSERT`/`SELECT` 전용)을 사용합니다.
+  `public` 스키마에 대한 `CREATE` 권한(마이그레이션용)과
+  테이블에 대한 `INSERT`/`SELECT` 권한만 부여된 제한된
+  데이터베이스 역할을 사용하여 위변조를 방지합니다.
 
 ## 설치
 
@@ -50,11 +51,13 @@ pnpm build
 CREATE DATABASE auth_db;
 CREATE DATABASE audit_db;
 
--- audit_db 쓰기 역할 (INSERT/SELECT 전용)
+-- audit_db 쓰기 역할
 CREATE ROLE audit_writer WITH LOGIN PASSWORD 'changeme';
 GRANT CONNECT ON DATABASE audit_db TO audit_writer;
 -- audit_db에 연결한 후:
-GRANT USAGE ON SCHEMA public TO audit_writer;
+-- 애플리케이션이 시작 시 audit_writer로 마이그레이션
+-- (CREATE TABLE)을 실행하므로 CREATE 권한이 필요합니다.
+GRANT CREATE, USAGE ON SCHEMA public TO audit_writer;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT ON TABLES TO audit_writer;
 ```

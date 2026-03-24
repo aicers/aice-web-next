@@ -15,7 +15,8 @@ Two PostgreSQL databases are required:
 - **auth_db** — stores accounts, roles, sessions, customers, and
   system settings.
 - **audit_db** — stores immutable audit log records. Uses a
-  restricted database role (`INSERT`/`SELECT` only) for tamper
+  restricted database role with `CREATE` on the `public` schema
+  (for migrations) and `INSERT`/`SELECT` on tables for tamper
   resistance.
 
 ## Installation
@@ -49,11 +50,13 @@ Create the two databases and an audit-specific role:
 CREATE DATABASE auth_db;
 CREATE DATABASE audit_db;
 
--- audit_db writer role (INSERT/SELECT only)
+-- audit_db writer role
 CREATE ROLE audit_writer WITH LOGIN PASSWORD 'changeme';
 GRANT CONNECT ON DATABASE audit_db TO audit_writer;
 -- After connecting to audit_db:
-GRANT USAGE ON SCHEMA public TO audit_writer;
+-- CREATE is required because the application runs migrations
+-- (CREATE TABLE) as audit_writer on startup.
+GRANT CREATE, USAGE ON SCHEMA public TO audit_writer;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT ON TABLES TO audit_writer;
 ```

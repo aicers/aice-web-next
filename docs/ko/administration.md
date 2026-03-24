@@ -145,7 +145,9 @@
 - **전화번호** — 선택적 연락처 전화번호.
 - **역할** — 권한을 결정합니다. System Administrator는 모든
   역할을 할당할 수 있습니다. Tenant Administrator는 Security
-  Monitor 계정만 생성할 수 있습니다.
+  Monitor 동급 역할(권한이 0개인 역할, 즉 기본 제공 Security
+  Monitor 및 권한 없는 커스텀 역할)의 계정만 생성할 수
+  있습니다.
 - **고객 할당** — 고객 범위가 필요한 역할에 필수입니다.
   할당 가능한 고객 수는 역할의 `max_customer_assignments`
   설정에 따라 다릅니다.
@@ -210,10 +212,9 @@ System Administrator 계정에는 제약이 있습니다: 최소 1개는
 | 대시보드 | `dashboard:read`, `dashboard:write` |
 | 계정 | `accounts:read`, `accounts:write`, `accounts:delete` |
 | 역할 | `roles:read`, `roles:write`, `roles:delete` |
-| 고객 | `customers:read`, `customers:write`, `customers:delete` |
+| 고객 | `customers:read`, `customers:write`, `customers:delete`, `customers:access-all` |
 | 시스템 설정 | `system-settings:read`, `system-settings:write` |
 | 감사 로그 | `audit-logs:read` |
-| 세션 | `sessions:revoke` |
 
 ## 고객 관리
 
@@ -328,7 +329,7 @@ Administrator 전용). 시스템은 삭제 전에 해당 고객에 할당된
 
 ### 활성 세션
 
-현재 활성 중인 모든 세션을 나열합니다. `sessions:revoke`
+현재 활성 중인 모든 세션을 나열합니다. `dashboard:write`
 권한이 있는 관리자는 **폐기** 버튼으로 개별 세션을 종료할
 수 있습니다. 재인증이 필요한 세션에는 배지가 표시됩니다.
 

@@ -31,8 +31,9 @@ AICE Web uses three categories of PostgreSQL databases:
 - **auth_db** — accounts, roles, sessions, customers, system
   settings, and password history.
 - **audit_db** — immutable audit log records. The connection role
-  should have only `INSERT` and `SELECT` privileges for tamper
-  resistance.
+  needs `CREATE` and `USAGE` on the `public` schema (the
+  application runs migrations on startup) plus `INSERT` and
+  `SELECT` on tables for tamper resistance.
 - **Customer databases** — provisioned automatically when a
   customer is created. Managed through `DATABASE_ADMIN_URL`, which
   needs `CREATE DATABASE` / `DROP DATABASE` privileges.

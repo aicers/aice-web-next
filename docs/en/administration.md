@@ -143,8 +143,10 @@ Fields:
 - **Email** — optional contact email.
 - **Phone** — optional contact phone.
 - **Role** — determines permissions. System Administrators can
-  assign any role. Tenant Administrators can only create Security
-  Monitor accounts.
+  assign any role. Tenant Administrators can only create accounts
+  with Security Monitor-equivalent roles (any role with zero
+  permissions, including the built-in Security Monitor and
+  zero-permission custom roles).
 - **Customer assignment** — required for roles that need customer
   scope. The number of assignable customers depends on the role's
   `max_customer_assignments` setting.
@@ -209,10 +211,9 @@ resource:
 | Dashboard | `dashboard:read`, `dashboard:write` |
 | Accounts | `accounts:read`, `accounts:write`, `accounts:delete` |
 | Roles | `roles:read`, `roles:write`, `roles:delete` |
-| Customers | `customers:read`, `customers:write`, `customers:delete` |
+| Customers | `customers:read`, `customers:write`, `customers:delete`, `customers:access-all` |
 | System Settings | `system-settings:read`, `system-settings:write` |
 | Audit Logs | `audit-logs:read` |
-| Sessions | `sessions:revoke` |
 
 ## Customer Management
 
@@ -327,7 +328,7 @@ overview. Navigate to **Dashboard** in the sidebar.
 ### Active Sessions
 
 Lists all currently active sessions. Administrators with the
-`sessions:revoke` permission can terminate individual sessions
+`dashboard:write` permission can terminate individual sessions
 using the **Revoke** button. Sessions requiring re-authentication
 are flagged with a badge.
 
