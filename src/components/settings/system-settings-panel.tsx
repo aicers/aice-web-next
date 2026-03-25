@@ -40,6 +40,7 @@ function toRecord(
 
 export function SystemSettingsPanel({ readOnly }: SystemSettingsPanelProps) {
   const t = useTranslations("systemSettings");
+  const tSettings = useTranslations("settings");
   const tc = useTranslations("common");
 
   const [settings, setSettings] = useState<Record<
@@ -117,7 +118,7 @@ export function SystemSettingsPanel({ readOnly }: SystemSettingsPanelProps) {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">{t("title")}</h1>
+      <h1 className="text-2xl font-semibold">{tSettings("policies")}</h1>
 
       {readOnly && (
         <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">

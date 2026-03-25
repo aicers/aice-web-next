@@ -17,7 +17,10 @@ export default async function SettingsPage() {
       redirect("/settings/customers");
     }
     if (await hasPermission(session.roles, "system-settings:read")) {
-      redirect("/settings/system");
+      redirect("/settings/policies");
+    }
+    if (await hasPermission(session.roles, "dashboard:read")) {
+      redirect("/settings/account-status");
     }
   }
 

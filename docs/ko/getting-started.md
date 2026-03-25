@@ -30,8 +30,7 @@ cd aice-web-next
 pnpm install
 ```
 
-예제 환경 파일을 복사하고 값을 채웁니다(자세한 내용은
-[설정](configuration.md) 참조):
+예제 환경 파일을 복사하고 값을 채웁니다:
 
 ```bash
 cp .env.example .env.local

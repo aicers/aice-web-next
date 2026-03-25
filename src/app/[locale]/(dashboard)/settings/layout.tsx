@@ -18,8 +18,11 @@ export default async function SettingsLayout({
   const showCustomers = session
     ? await hasPermission(session.roles, "customers:read")
     : false;
-  const showSystem = session
+  const showPolicies = session
     ? await hasPermission(session.roles, "system-settings:read")
+    : false;
+  const showAccountStatus = session
+    ? await hasPermission(session.roles, "dashboard:read")
     : false;
 
   return (
@@ -28,7 +31,8 @@ export default async function SettingsLayout({
         showAccounts={showAccounts}
         showRoles={showRoles}
         showCustomers={showCustomers}
-        showSystem={showSystem}
+        showPolicies={showPolicies}
+        showAccountStatus={showAccountStatus}
       />
       {children}
     </div>

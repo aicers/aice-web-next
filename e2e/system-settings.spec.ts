@@ -37,7 +37,7 @@ test.afterAll(async () => {
 test.describe("System settings — UI", () => {
   test("settings page displays all tabs", async ({ page }) => {
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-    await page.goto("/settings/system");
+    await page.goto("/settings/policies");
 
     await expect(page.getByRole("tab", { name: /password/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /session/i })).toBeVisible();
@@ -49,7 +49,7 @@ test.describe("System settings — UI", () => {
 
   test("tab switching shows different form fields", async ({ page }) => {
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-    await page.goto("/settings/system");
+    await page.goto("/settings/policies");
 
     await expect(page.locator("#min_length")).toBeVisible();
 
@@ -67,7 +67,7 @@ test.describe("System settings — UI", () => {
   }) => {
     await resetAccountDefaults(READER_USER);
     await signInAndWait(page, READER_USER, READER_PASS);
-    await page.goto("/settings/system");
+    await page.goto("/settings/policies");
 
     await expect(
       page.getByText(/do not have permission to modify/i),
@@ -79,7 +79,7 @@ test.describe("System settings — UI", () => {
 
   test("settings update via UI persists", async ({ page }) => {
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-    await page.goto("/settings/system");
+    await page.goto("/settings/policies");
 
     await page.getByRole("tab", { name: /jwt/i }).click();
 

@@ -61,11 +61,23 @@ describe("parseBreadcrumbs", () => {
     expect(result[2].href).toBe("/settings/roles/detail");
   });
 
-  it("handles all three settings sub-segments", () => {
-    for (const segment of ["accounts", "roles", "profile"]) {
+  it("handles all settings sub-segments", () => {
+    for (const segment of [
+      "accounts",
+      "roles",
+      "profile",
+      "customers",
+      "policies",
+    ]) {
       const result = parseBreadcrumbs(`/settings/${segment}`, mockTranslate);
       expect(result[1].label).toBe(`settings.${segment}`);
     }
+  });
+
+  it("maps account-status segment to accountStatus i18n key", () => {
+    const result = parseBreadcrumbs("/settings/account-status", mockTranslate);
+    expect(result[1].label).toBe("settings.accountStatus");
+    expect(result[1].href).toBe("/settings/account-status");
   });
 });
 
@@ -92,7 +104,14 @@ describe("NAV_SEGMENTS", () => {
 
 describe("SETTINGS_SEGMENTS", () => {
   it("contains all expected settings keys", () => {
-    const expected = ["accounts", "roles", "profile", "customers", "system"];
+    const expected = [
+      "accounts",
+      "roles",
+      "profile",
+      "customers",
+      "policies",
+      "account-status",
+    ];
     for (const key of expected) {
       expect(SETTINGS_SEGMENTS.has(key)).toBe(true);
     }

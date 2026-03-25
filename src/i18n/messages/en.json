@@ -52,7 +52,8 @@
     "roles": "Roles",
     "profile": "Profile",
     "customers": "Customers",
-    "system": "System"
+    "policies": "Policies",
+    "accountStatus": "Account Status"
   },
   "validation": {
     "required": "{field} is required",
@@ -189,7 +190,6 @@
     "save": "Save"
   },
   "systemSettings": {
-    "title": "System Settings",
     "readOnlyNotice": "You do not have permission to modify these settings.",
     "saved": "Setting updated successfully.",
     "saving": "Saving...",
@@ -301,7 +301,8 @@
     }
   },
   "dashboard": {
-    "title": "System Dashboard",
+    "title": "Dashboard",
+    "placeholder": "Detection events will be displayed here.",
     "noPermission": "You do not have permission to view the dashboard.",
     "activeSessions": {
       "title": "Active Sessions",

@@ -8,14 +8,16 @@ interface SettingsNavProps {
   showAccounts?: boolean;
   showRoles?: boolean;
   showCustomers?: boolean;
-  showSystem?: boolean;
+  showPolicies?: boolean;
+  showAccountStatus?: boolean;
 }
 
 export function SettingsNav({
   showAccounts,
   showRoles,
   showCustomers,
-  showSystem,
+  showPolicies,
+  showAccountStatus,
 }: SettingsNavProps) {
   const t = useTranslations("settings");
   const pathname = usePathname();
@@ -25,7 +27,9 @@ export function SettingsNav({
   if (showRoles) items.push({ key: "roles", href: "/settings/roles" });
   if (showCustomers)
     items.push({ key: "customers", href: "/settings/customers" });
-  if (showSystem) items.push({ key: "system", href: "/settings/system" });
+  if (showPolicies) items.push({ key: "policies", href: "/settings/policies" });
+  if (showAccountStatus)
+    items.push({ key: "accountStatus", href: "/settings/account-status" });
 
   if (items.length === 0) return null;
 

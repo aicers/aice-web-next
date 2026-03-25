@@ -52,7 +52,8 @@
     "roles": "역할",
     "profile": "프로필",
     "customers": "고객",
-    "system": "시스템"
+    "policies": "정책",
+    "accountStatus": "계정 현황"
   },
   "validation": {
     "required": "{field}은(는) 필수입니다",
@@ -189,7 +190,6 @@
     "save": "저장"
   },
   "systemSettings": {
-    "title": "시스템 설정",
     "readOnlyNotice": "이 설정을 수정할 권한이 없습니다.",
     "saved": "설정이 업데이트되었습니다.",
     "saving": "저장 중...",
@@ -301,7 +301,8 @@
     }
   },
   "dashboard": {
-    "title": "시스템 대시보드",
+    "title": "대시보드",
+    "placeholder": "탐지 이벤트가 여기에 표시됩니다.",
     "noPermission": "대시보드를 볼 수 있는 권한이 없습니다.",
     "activeSessions": {
       "title": "활성 세션",
