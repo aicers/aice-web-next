@@ -50,7 +50,7 @@ const SEVERITY_VARIANT: Record<
 // ── Component ────────────────────────────────────────────────────
 
 export function SuspiciousAlertsCard() {
-  const t = useTranslations("dashboard.alerts");
+  const t = useTranslations("accountStatus.alerts");
   const tz = useTimezone();
 
   const [alerts, setAlerts] = useState<Alert[]>([]);

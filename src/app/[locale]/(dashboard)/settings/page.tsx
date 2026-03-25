@@ -17,7 +17,7 @@ export default async function SettingsPage() {
       redirect("/settings/customers");
     }
     if (await hasPermission(session.roles, "system-settings:read")) {
-      redirect("/settings/system");
+      redirect("/settings/policies");
     }
   }
 

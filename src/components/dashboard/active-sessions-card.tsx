@@ -52,7 +52,7 @@ interface Session {
 // ── Component ────────────────────────────────────────────────────
 
 export function ActiveSessionsCard({ canWrite }: { canWrite: boolean }) {
-  const t = useTranslations("dashboard.activeSessions");
+  const t = useTranslations("accountStatus.activeSessions");
   const tc = useTranslations("common");
   const tz = useTimezone();
 

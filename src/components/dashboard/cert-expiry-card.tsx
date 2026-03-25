@@ -40,7 +40,7 @@ const SEVERITY_VARIANT: Record<
 // ── Component ────────────────────────────────────────────────────
 
 export function CertExpiryCard() {
-  const t = useTranslations("dashboard.certExpiry");
+  const t = useTranslations("accountStatus.certExpiry");
 
   const [status, setStatus] = useState<CertStatus | null>(null);
   const [loading, setLoading] = useState(true);

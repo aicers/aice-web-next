@@ -51,7 +51,7 @@ interface LockedAccount {
 // ── Component ────────────────────────────────────────────────────
 
 export function LockedAccountsCard({ canWrite }: { canWrite: boolean }) {
-  const t = useTranslations("dashboard.lockedAccounts");
+  const t = useTranslations("accountStatus.lockedAccounts");
   const tz = useTimezone();
 
   const [accounts, setAccounts] = useState<LockedAccount[]>([]);

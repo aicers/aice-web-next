@@ -52,7 +52,8 @@
     "roles": "Roles",
     "profile": "Profile",
     "customers": "Customers",
-    "system": "System"
+    "policies": "Policies",
+    "accountStatus": "Account Status"
   },
   "validation": {
     "required": "{field} is required",
@@ -189,7 +190,7 @@
     "save": "Save"
   },
   "systemSettings": {
-    "title": "System Settings",
+    "title": "Policies",
     "readOnlyNotice": "You do not have permission to modify these settings.",
     "saved": "Setting updated successfully.",
     "saving": "Saving...",
@@ -291,7 +292,7 @@
       "customers": "Customers",
       "audit-logs": "Audit Logs",
       "dashboard": "Dashboard",
-      "system-settings": "System Settings"
+      "system-settings": "Policies"
     },
     "permissionActions": {
       "read": "Read",
@@ -301,8 +302,12 @@
     }
   },
   "dashboard": {
-    "title": "System Dashboard",
+    "title": "Dashboard",
     "noPermission": "You do not have permission to view the dashboard.",
+    "placeholder": "Detection event monitoring will be available here."
+  },
+  "accountStatus": {
+    "title": "Account Status",
     "activeSessions": {
       "title": "Active Sessions",
       "description": "Currently active user sessions",

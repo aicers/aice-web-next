@@ -25,21 +25,18 @@ plugins:
           nav:
             - Overview: index.md
             - Getting Started: getting-started.md
-            - Configuration: configuration.md
-            - Usage: usage.md
+            - Settings: settings.md
         - locale: ko
           name: 한국어
           build: true
           nav:
             - Overview: index.md
             - Getting Started: getting-started.md
-            - Configuration: configuration.md
-            - Usage: usage.md
+            - Settings: settings.md
           nav_translations:
             Overview: 개요
             Getting Started: 시작하기
-            Configuration: 설정
-            Usage: 사용법
+            Settings: 설정
 
 extra_css:
   - styles/lists.css

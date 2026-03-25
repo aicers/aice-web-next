@@ -239,22 +239,13 @@ test("dashboard:read user cannot revoke sessions (needs dashboard:write)", async
 
 // ── UI tests ─────────────────────────────────────────────────────
 
-test("dashboard page renders four cards for admin", async ({ page }) => {
+test("dashboard page shows placeholder for admin", async ({ page }) => {
   await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
   await page.goto("/dashboard");
 
-  // Wait for the dashboard title to appear
   await expect(page.getByRole("heading", { name: /Dashboard/i })).toBeVisible({
     timeout: 10000,
   });
-
-  // All four card titles should be present
-  await expect(page.getByText("Active Sessions").first()).toBeVisible();
-  await expect(page.getByText("Locked & Suspended Accounts")).toBeVisible();
-  await expect(page.getByText("Suspicious Activity").first()).toBeVisible();
-  const certTitle = page.getByText("Certificate Expiry");
-  await certTitle.scrollIntoViewIfNeeded();
-  await expect(certTitle).toBeVisible();
 });
 
 test("dashboard page redirects for user without dashboard:read", async ({
@@ -269,14 +260,29 @@ test("dashboard page redirects for user without dashboard:read", async ({
   });
 });
 
-test("dashboard:read user cannot see dashboard action buttons", async ({
+test("account status page renders four cards for admin", async ({ page }) => {
+  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await page.goto("/settings/account-status");
+
+  // All four card titles should be present
+  await expect(page.getByText("Active Sessions").first()).toBeVisible({
+    timeout: 10000,
+  });
+  await expect(page.getByText("Locked & Suspended Accounts")).toBeVisible();
+  await expect(page.getByText("Suspicious Activity").first()).toBeVisible();
+  const certTitle = page.getByText("Certificate Expiry");
+  await certTitle.scrollIntoViewIfNeeded();
+  await expect(certTitle).toBeVisible();
+});
+
+test("dashboard:read user cannot see account status action buttons", async ({
   page,
 }) => {
   await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
   await setAccountStatus(SUSPENDED_USER, "suspended");
 
   await signInAndWait(page, READER_USER, READER_PASS);
-  await page.goto("/dashboard");
+  await page.goto("/settings/account-status");
 
   await expect(page.getByText("Active Sessions")).toBeVisible({
     timeout: 10000,
@@ -290,13 +296,13 @@ test("dashboard:read user cannot see dashboard action buttons", async ({
   await expect(page.getByRole("button", { name: /Restore/i })).toHaveCount(0);
 });
 
-test("locked account shows in dashboard card", async ({ page }) => {
+test("locked account shows in account status card", async ({ page }) => {
   // Lock the test account
   await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
 
   try {
     await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-    await page.goto("/dashboard");
+    await page.goto("/settings/account-status");
 
     // Wait for locked accounts card to render
     await expect(page.getByText("Locked & Suspended Accounts")).toBeVisible({
@@ -311,12 +317,12 @@ test("locked account shows in dashboard card", async ({ page }) => {
   }
 });
 
-test("admin can unlock a locked account from the dashboard", async ({
+test("admin can unlock a locked account from account status", async ({
   page,
 }) => {
   await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
   await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-  await page.goto("/dashboard");
+  await page.goto("/settings/account-status");
 
   const row = page.locator("tr", { hasText: LOCKED_USER });
   await expect(row).toBeVisible({ timeout: 10000 });
@@ -336,12 +342,12 @@ test("admin can unlock a locked account from the dashboard", async ({
     .toBe(false);
 });
 
-test("admin can restore a suspended account from the dashboard", async ({
+test("admin can restore a suspended account from account status", async ({
   page,
 }) => {
   await setAccountStatus(SUSPENDED_USER, "suspended");
   await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-  await page.goto("/dashboard");
+  await page.goto("/settings/account-status");
 
   const row = page.locator("tr", { hasText: SUSPENDED_USER });
   await expect(row).toBeVisible({ timeout: 10000 });
@@ -416,11 +422,11 @@ test("dashboard:read user can access cert-status endpoint", async ({
 
 // ── Certificate Expiry UI tests ─────────────────────────────────
 
-test("dashboard page renders cert expiry card with status content", async ({
+test("account status page renders cert expiry card with status content", async ({
   page,
 }) => {
   await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-  await page.goto("/dashboard");
+  await page.goto("/settings/account-status");
 
   // Scroll down to make cert card visible
   const certTitle = page.getByText("Certificate Expiry");
@@ -439,19 +445,16 @@ test("dashboard page renders cert expiry card with status content", async ({
 
 // ── Korean locale UI tests ──────────────────────────────────────
 
-test("Korean locale: dashboard renders four cards with Korean text", async ({
+test("Korean locale: account status renders four cards with Korean text", async ({
   page,
 }) => {
   await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-  await page.goto("/ko/dashboard");
-
-  // Dashboard title in Korean
-  await expect(
-    page.getByRole("heading", { name: "시스템 대시보드" }),
-  ).toBeVisible({ timeout: 10_000 });
+  await page.goto("/ko/settings/account-status");
 
   // All four card titles in Korean
-  await expect(page.getByText("활성 세션").first()).toBeVisible();
+  await expect(page.getByText("활성 세션").first()).toBeVisible({
+    timeout: 10_000,
+  });
   await expect(page.getByText("잠긴 및 정지된 계정")).toBeVisible();
   await expect(page.getByText("의심 활동").first()).toBeVisible();
   const certTitle = page.getByText("인증서 만료");
@@ -463,7 +466,7 @@ test("Korean locale: sessions card shows Korean column headers", async ({
   page,
 }) => {
   await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-  await page.goto("/ko/dashboard");
+  await page.goto("/ko/settings/account-status");
 
   // Wait for sessions card to load data
   await expect(page.getByText("활성 세션").first()).toBeVisible({
@@ -480,7 +483,7 @@ test("Korean locale: revoke button and confirm dialog use Korean", async ({
   page,
 }) => {
   await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-  await page.goto("/ko/dashboard");
+  await page.goto("/ko/settings/account-status");
 
   // Wait for sessions card
   await expect(page.getByText("활성 세션").first()).toBeVisible({
@@ -511,7 +514,7 @@ test("Korean locale: locked account card shows Korean status", async ({
 
   try {
     await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-    await page.goto("/ko/dashboard");
+    await page.goto("/ko/settings/account-status");
 
     // Wait for locked accounts card in Korean
     await expect(page.getByText("잠긴 및 정지된 계정")).toBeVisible({
@@ -542,7 +545,7 @@ test("Korean locale: alerts card shows Korean detail messages", async ({
 
   try {
     await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-    await page.goto("/ko/dashboard");
+    await page.goto("/ko/settings/account-status");
 
     // Scroll the alerts card into view
     const desc = page.getByText("최근 24시간 동안 감지된 보안 알림");
@@ -566,7 +569,7 @@ test("Korean locale: cert expiry card shows Korean text and status", async ({
   page,
 }) => {
   await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
-  await page.goto("/ko/dashboard");
+  await page.goto("/ko/settings/account-status");
 
   // Scroll cert card into view
   const certTitle = page.getByText("인증서 만료");
