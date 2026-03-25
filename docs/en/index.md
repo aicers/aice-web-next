@@ -1,8 +1,8 @@
 # AICE Web Manual
 
-This manual covers installation, configuration, and administration of
-**AICE Web** (aice-web-next), the management interface for the AICE
-threat detection platform.
+This manual covers installation and operation of **AICE Web**
+(aice-web-next), the management interface for the AICE threat
+detection platform.
 
 ## What AICE Web Does
 
@@ -15,13 +15,11 @@ Next.js.
 
 Current capabilities:
 
-- **Administration** — account, role, customer, and system settings
-  management with full audit logging
-- **Dashboard** — real-time operational overview for administrators
+- **Settings** — account, role, customer, and policy management
+  with full audit logging
 
-As the platform evolves, AICE Web will expand to cover event
-investigation, detection rule management, triage workflows, and
-reporting.
+As the platform evolves, AICE Web will expand to cover detection
+events, investigation workflows, triage, and reporting.
 
 ## Architecture Overview
 
@@ -52,7 +50,5 @@ databases are provisioned and migrated automatically.
 
 - **[Getting Started](getting-started.md)** — prerequisites,
   installation, and first sign-in
-- **[Configuration](configuration.md)** — environment variables,
-  databases, mTLS, and Nginx
-- **[Administration](administration.md)** — accounts, roles,
-  customers, system settings, and audit logs
+- **[Settings](settings.md)** — accounts, roles, customers,
+  policies, and account status

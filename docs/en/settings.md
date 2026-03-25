@@ -1,0 +1,237 @@
+# Settings
+
+The Settings page is accessed from the sidebar. It contains tabs
+for managing accounts, roles, customers, policies, and account
+status. Each tab is gated by permissions — you only see tabs your
+role allows.
+
+## Accounts
+
+Navigate to **Settings → Accounts** to manage user accounts.
+Requires `accounts:read` to view, `accounts:write` to create
+and edit, `accounts:delete` to disable.
+
+### Account List
+
+The account list shows all accounts with filtering and pagination.
+
+![Account list](../assets/accounts-list-en.png)
+
+Available filters:
+
+- **Search** — filter by username or display name.
+- **Role** — filter by assigned role.
+- **Status** — filter by account status (active, locked,
+  suspended, disabled).
+- **Customer** — filter by assigned customer.
+
+### Creating an Account
+
+Click the **+** button to open the account creation dialog.
+
+![Account creation dialog](../assets/account-create-en.png)
+
+Fields:
+
+- **Username** — unique login identifier (immutable after
+  creation).
+- **Display name** — shown in the UI (required).
+- **Email** — optional contact email.
+- **Phone** — optional contact phone.
+- **Role** — determines permissions. System Administrators can
+  assign any role. Tenant Administrators can only create accounts
+  with Security Monitor-equivalent roles.
+- **Customer assignment** — required for roles that need customer
+  scope.
+- **Password** — set the initial password for the account.
+
+### Editing an Account
+
+Click the edit icon (pencil) on an account row. Display name,
+email, and phone can be modified. Username, role, and customer
+assignments are immutable after creation.
+
+### Disabling Accounts
+
+Click the delete icon (trash) on an account row. A confirmation
+dialog appears. Role hierarchy is enforced — you cannot delete
+accounts with a role equal to or higher than your own.
+
+### Account Status
+
+| Status | Description |
+|--------|-------------|
+| Active | Normal operating state |
+| Locked | Temporarily locked due to failed sign-in attempts (auto-recovers) |
+| Suspended | Permanently locked after repeated lockouts (admin restore required) |
+| Disabled | Deactivated by an administrator |
+
+## Roles
+
+Navigate to **Settings → Roles** to manage roles. Requires
+`roles:read` to view, `roles:write` to create, edit, and clone,
+`roles:delete` to delete.
+
+![Role list](../assets/roles-list-en.png)
+
+### Built-In Roles
+
+Three roles are provided out of the box and cannot be edited or
+deleted (marked with a **BUILTIN** badge):
+
+- **System Administrator** — full access to all features.
+- **Tenant Administrator** — manage operations and Security
+  Monitor accounts within assigned customers.
+- **Security Monitor** — read-only access to events and dashboards
+  within a single assigned customer.
+
+### Custom Roles
+
+Click the **+** button to create a custom role, or click the
+clone icon (copy) on an existing role.
+
+![Role creation dialog](../assets/role-create-en.png)
+
+The permission grid shows all available permissions grouped by
+resource:
+
+| Group | Permissions |
+|-------|-------------|
+| Dashboard | `dashboard:read`, `dashboard:write` |
+| Accounts | `accounts:read`, `accounts:write`, `accounts:delete` |
+| Roles | `roles:read`, `roles:write`, `roles:delete` |
+| Customers | `customers:read`, `customers:write`, `customers:delete`, `customers:access-all` |
+| System Settings | `system-settings:read`, `system-settings:write` |
+| Audit Logs | `audit-logs:read` |
+
+## Customers
+
+Navigate to **Settings → Customers** to manage customers.
+Requires `customers:read` to view, `customers:write` to create
+and edit, `customers:delete` to delete.
+
+![Customer list](../assets/customers-list-en.png)
+
+### Creating a Customer
+
+Click the **+** button to open the customer creation dialog.
+
+![Customer creation dialog](../assets/customer-create-en.png)
+
+Fields:
+
+- **Name** — customer display name (required).
+- **Description** — optional description.
+
+When a customer is created, the system provisions a dedicated
+database automatically.
+
+### Deleting a Customer
+
+Deletion requires the `customers:delete` permission (System
+Administrator only). No accounts may be assigned to the customer.
+On deletion, the customer's database is dropped.
+
+## Policies
+
+Navigate to **Settings → Policies** to configure system-wide
+policies. Requires `system-settings:read` to view,
+`system-settings:write` to edit.
+
+![Policies settings](../assets/system-settings-en.png)
+
+Settings are organized into tabs:
+
+### Password Policy
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Minimum length | 12 | Minimum password length |
+| Maximum length | 128 | Maximum password length |
+| Complexity | Enabled | Require uppercase, lowercase, digits, and symbols |
+| Reuse ban count | 5 | Number of previous passwords that cannot be reused |
+
+### Session Policy
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Idle timeout | 30 min | Time before inactive session expires |
+| Absolute timeout | 8 hours | Maximum session duration |
+| Max sessions | Unlimited | Maximum concurrent sessions per account |
+
+### Lockout Policy
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Stage 1 threshold | 5 | Failed attempts before temporary lock |
+| Stage 1 duration | 30 min | Duration of temporary lockout |
+
+Stage 2 (permanent suspension) triggers automatically when an
+account is locked a second time.
+
+### JWT Policy
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Token expiration | 15 min | JWT access token lifetime |
+
+### MFA Policy
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| WebAuthn (FIDO2) | Enabled | Allow hardware key / platform authenticator |
+| TOTP | Enabled | Allow time-based one-time passwords |
+
+### Rate Limits
+
+**Sign-in rate limits:**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Per-IP count / window | 20 / 5 min | Requests per IP address |
+| Per-account-IP count / window | 5 / 5 min | Requests per account + IP |
+| Global count / window | 100 / 1 min | Total sign-in requests |
+
+**API rate limits:**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Per-user count / window | 100 / 1 min | Requests per authenticated user |
+
+All changes to policy settings are recorded in the audit log.
+
+## Account Status
+
+Navigate to **Settings → Account Status** to view operational
+monitoring cards. Requires `dashboard:read` permission to view.
+
+![Account status](../assets/dashboard-en.png)
+
+### Active Sessions
+
+Lists all currently active sessions. Users with the
+`dashboard:write` permission can terminate individual sessions
+using the **Revoke** button.
+
+### Locked and Suspended Accounts
+
+Shows accounts that are currently locked or suspended. Users
+with the `accounts:write` permission can:
+
+- **Unlock** a temporarily locked account.
+- **Restore** a suspended account.
+
+### Suspicious Activity
+
+Displays security alerts detected in the last 24 hours,
+categorized by severity (critical, high, medium, low). Each
+alert shows the rule name, description, occurrence count, and
+the most recent timestamp.
+
+### Certificate Expiry
+
+Displays mTLS certificate status with severity indicators:
+
+- **OK** — certificate is valid with plenty of time remaining.
+- **Warning** — certificate will expire soon.
+- **Critical** — certificate is expired or expiring imminently.

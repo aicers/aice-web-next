@@ -29,8 +29,7 @@ cd aice-web-next
 pnpm install
 ```
 
-Copy the example environment file and fill in the values (see
-[Configuration](configuration.md) for details):
+Copy the example environment file and fill in the values:
 
 ```bash
 cp .env.example .env.local

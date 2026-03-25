@@ -16,8 +16,17 @@ export const SETTINGS_SEGMENTS = new Set([
   "roles",
   "profile",
   "customers",
-  "system",
+  "policies",
+  "account-status",
 ]);
+
+/**
+ * Map URL segments to i18n keys when they differ.
+ * Segments not listed here use the segment itself as the key.
+ */
+const SETTINGS_KEY_MAP: Record<string, string> = {
+  "account-status": "accountStatus",
+};
 
 export interface BreadcrumbSegment {
   label: string;
@@ -46,7 +55,7 @@ export function parseBreadcrumbs(
     if (NAV_SEGMENTS.has(segment)) {
       label = translate("nav", segment);
     } else if (SETTINGS_SEGMENTS.has(segment)) {
-      label = translate("settings", segment);
+      label = translate("settings", SETTINGS_KEY_MAP[segment] ?? segment);
     }
 
     crumbs.push({
