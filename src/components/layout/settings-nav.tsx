@@ -34,7 +34,7 @@ export function SettingsNav({
   if (items.length === 0) return null;
 
   return (
-    <nav className="flex gap-1 border-b">
+    <nav className="flex gap-1">
       {items.map((item) => {
         const active = pathname.startsWith(item.href);
         return (

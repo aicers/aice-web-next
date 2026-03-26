@@ -173,7 +173,7 @@ export function RoleFormDialog({
           {/* Permission checkbox grid */}
           <div className="space-y-3">
             <Label>{t("permissions")}</Label>
-            <div className="space-y-4 rounded border p-3">
+            <div className="bg-muted/50 space-y-4 rounded p-3">
               {Object.entries(ALL_PERMISSIONS).map(([group, perms]) => (
                 <div key={group}>
                   <p className="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wider">

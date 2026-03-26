@@ -1,6 +1,14 @@
 "use client";
 
-import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  ChevronsUpDown,
+  CirclePlus,
+  Copy,
+  MoreVertical,
+  Pencil,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 
@@ -18,6 +26,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -51,6 +66,7 @@ export function RoleTable({ canWrite, canDelete }: RoleTableProps) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
 
   // Dialog state
   const [formOpen, setFormOpen] = useState(false);
@@ -82,6 +98,27 @@ export function RoleTable({ canWrite, canDelete }: RoleTableProps) {
   useEffect(() => {
     fetchRoles();
   }, [fetchRoles]);
+
+  // ── Selection ────────────────────────────────────────────────
+
+  const allSelected = roles.length > 0 && selected.size === roles.length;
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(roles.map((r) => r.id)));
+    }
+  };
+
+  const toggleOne = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   // ── Handlers ──────────────────────────────────────────────────
 
@@ -135,99 +172,140 @@ export function RoleTable({ canWrite, canDelete }: RoleTableProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-foreground text-2xl font-bold">{t("title")}</h1>
-        {canWrite && (
-          <Button onClick={handleCreate}>
-            <Plus className="mr-2 h-4 w-4" />
-            {t("create")}
-          </Button>
+      {/* Card container */}
+      <div className="rounded-lg bg-card">
+        {/* Title bar inside card */}
+        <div className="flex items-center justify-between px-6 py-4">
+          <h1 className="text-foreground text-lg font-semibold">
+            {t("title")}
+          </h1>
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="default">
+              <SlidersHorizontal className="mr-2 h-4 w-4" />
+              {t("latest")}
+            </Button>
+            {canWrite && (
+              <Button onClick={handleCreate} className="rounded-full">
+                <CirclePlus className="mr-2 h-4 w-4" />
+                {t("create")}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {loading && (
+          <p className="text-muted-foreground px-6 pb-4 text-sm">
+            {t("loading")}
+          </p>
+        )}
+        {error && <p className="text-destructive px-6 pb-4 text-sm">{error}</p>}
+
+        {!loading && !error && roles.length === 0 && (
+          <p className="text-muted-foreground px-6 pb-4 text-sm">
+            {t("noResults")}
+          </p>
+        )}
+
+        {!loading && roles.length > 0 && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[40px] pl-6">
+                  <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
+                </TableHead>
+                <TableHead>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1"
+                  >
+                    {t("name")}
+                    <ChevronsUpDown className="h-3.5 w-3.5" />
+                  </button>
+                </TableHead>
+                <TableHead>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1"
+                  >
+                    {t("description")}
+                    <ChevronsUpDown className="h-3.5 w-3.5" />
+                  </button>
+                </TableHead>
+                <TableHead className="text-center">
+                  {t("permissionCount")}
+                </TableHead>
+                <TableHead className="text-center">
+                  {t("accountCount")}
+                </TableHead>
+                {(canWrite || canDelete) && <TableHead className="w-[40px]" />}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {roles.map((role) => (
+                <TableRow key={role.id}>
+                  <TableCell className="pl-6">
+                    <Checkbox
+                      checked={selected.has(role.id)}
+                      onCheckedChange={() => toggleOne(role.id)}
+                    />
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <span className="mr-2">{role.name}</span>
+                    {role.is_builtin && (
+                      <Badge variant="secondary" className="text-xs">
+                        {t("builtin")}
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {role.description ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {role.permissions.length}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {role.account_count}
+                  </TableCell>
+                  {(canWrite || canDelete) && (
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon-xs">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {canWrite && !role.is_builtin && (
+                            <DropdownMenuItem onClick={() => handleEdit(role)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              {t("edit")}
+                            </DropdownMenuItem>
+                          )}
+                          {canWrite && (
+                            <DropdownMenuItem onClick={() => handleClone(role)}>
+                              <Copy className="mr-2 h-4 w-4" />
+                              {t("clone")}
+                            </DropdownMenuItem>
+                          )}
+                          {canDelete && !role.is_builtin && (
+                            <DropdownMenuItem
+                              onClick={() => setDeleteTarget(role)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              {t("delete")}
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </div>
-
-      {loading && (
-        <p className="text-muted-foreground text-sm">{t("loading")}</p>
-      )}
-      {error && <p className="text-destructive text-sm">{error}</p>}
-
-      {!loading && !error && roles.length === 0 && (
-        <p className="text-muted-foreground text-sm">{t("noResults")}</p>
-      )}
-
-      {!loading && roles.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t("name")}</TableHead>
-              <TableHead>{t("description")}</TableHead>
-              <TableHead className="text-center">
-                {t("permissionCount")}
-              </TableHead>
-              <TableHead className="text-center">{t("accountCount")}</TableHead>
-              {(canWrite || canDelete) && <TableHead className="w-[120px]" />}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {roles.map((role) => (
-              <TableRow key={role.id}>
-                <TableCell className="font-medium">
-                  <span className="mr-2">{role.name}</span>
-                  {role.is_builtin && (
-                    <Badge variant="secondary" className="text-xs">
-                      {t("builtin")}
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {role.description ?? "—"}
-                </TableCell>
-                <TableCell className="text-center">
-                  {role.permissions.length}
-                </TableCell>
-                <TableCell className="text-center">
-                  {role.account_count}
-                </TableCell>
-                {(canWrite || canDelete) && (
-                  <TableCell>
-                    <div className="flex gap-1">
-                      {canWrite && !role.is_builtin && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEdit(role)}
-                          title={t("edit")}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {canWrite && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleClone(role)}
-                          title={t("clone")}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {canDelete && !role.is_builtin && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteTarget(role)}
-                          title={t("delete")}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
 
       {/* Create/Edit/Clone Dialog */}
       {canWrite && (

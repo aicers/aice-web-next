@@ -70,7 +70,7 @@ test.describe("Role management — UI", () => {
 
     await expect(page.getByRole("heading", { name: "Roles" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Create Role" }).click();
+    await page.getByRole("button", { name: "Add" }).click();
 
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -80,7 +80,7 @@ test.describe("Role management — UI", () => {
     await dialog.locator("#perm-accounts\\:read").click();
     await dialog.locator("#perm-customers\\:read").click();
 
-    await dialog.getByRole("button", { name: "Create Role" }).click();
+    await dialog.getByRole("button", { name: "Add" }).click();
 
     await expect(roleRow(page, `${TEST_PREFIX}ui-create`)).toBeVisible({
       timeout: 15_000,
@@ -105,7 +105,9 @@ test.describe("Role management — UI", () => {
     const row = roleRow(page, `${TEST_PREFIX}ui-edit`);
     await expect(row).toBeVisible({ timeout: 10_000 });
 
+    // Open kebab menu and click Edit
     await row.getByRole("button").first().click();
+    await page.getByRole("menuitem", { name: "Edit" }).click();
 
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -116,7 +118,7 @@ test.describe("Role management — UI", () => {
 
     await dialog.locator("#perm-customers\\:read").click();
 
-    await dialog.getByRole("button", { name: "Edit Role" }).click();
+    await dialog.getByRole("button", { name: "Edit" }).click();
 
     await expect(roleRow(page, `${TEST_PREFIX}ui-edited`)).toBeVisible({
       timeout: 15_000,
@@ -138,10 +140,12 @@ test.describe("Role management — UI", () => {
     const adminRow = roleRow(page, "System Administrator");
     await expect(adminRow).toBeVisible({ timeout: 10_000 });
 
+    // Open kebab menu and click Clone
     await adminRow.getByRole("button").first().click();
+    await page.getByRole("menuitem", { name: "Clone" }).click();
 
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByText("Clone Role")).toBeVisible();
+    await expect(dialog.getByText("Clone")).toBeVisible();
 
     await dialog.getByLabel("Name").fill(`${TEST_PREFIX}ui-clone`);
 
@@ -151,7 +155,7 @@ test.describe("Role management — UI", () => {
         response.url().includes("/api/roles"),
     );
 
-    await dialog.getByRole("button", { name: "Create Role" }).click();
+    await dialog.getByRole("button", { name: "Add" }).click();
     const createResponse = await createRequest;
 
     if (!createResponse.ok()) {
@@ -179,10 +183,21 @@ test.describe("Role management — UI", () => {
     const adminRow = roleRow(page, "System Administrator");
     await expect(adminRow).toBeVisible({ timeout: 10_000 });
 
+    // Built-in roles have a kebab menu with only Clone
     const buttons = adminRow.getByRole("button");
     await expect(buttons).toHaveCount(1);
 
-    await expect(buttons.first()).toHaveAttribute("title", "Clone Role");
+    // Open kebab and verify only Clone is available
+    await buttons.first().click();
+    await expect(page.getByRole("menuitem", { name: "Clone" })).toBeVisible();
+    await expect(
+      page.getByRole("menuitem", { name: "Edit" }),
+    ).not.toBeVisible();
+    await expect(
+      page.getByRole("menuitem", { name: "Delete" }),
+    ).not.toBeVisible();
+    // Close menu
+    await page.keyboard.press("Escape");
   });
 
   test("custom roles have edit, clone, and delete buttons", async ({
@@ -198,12 +213,17 @@ test.describe("Role management — UI", () => {
     const row = roleRow(page, `${TEST_PREFIX}ui-buttons`);
     await expect(row).toBeVisible({ timeout: 10_000 });
 
+    // Custom roles have a kebab menu with Edit, Clone, and Delete
     const buttons = row.getByRole("button");
-    await expect(buttons).toHaveCount(3);
+    await expect(buttons).toHaveCount(1);
 
-    await expect(buttons.nth(0)).toHaveAttribute("title", "Edit Role");
-    await expect(buttons.nth(1)).toHaveAttribute("title", "Clone Role");
-    await expect(buttons.nth(2)).toHaveAttribute("title", "Delete Role");
+    // Open kebab and verify all three actions are available
+    await buttons.first().click();
+    await expect(page.getByRole("menuitem", { name: "Edit" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Clone" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    // Close menu
+    await page.keyboard.press("Escape");
   });
 
   test("deletes a custom role via UI", async ({
@@ -224,9 +244,11 @@ test.describe("Role management — UI", () => {
         response.request().method() === "DELETE" &&
         response.url().includes("/api/roles/"),
     );
-    await row.getByRole("button").nth(2).click();
+    // Open kebab menu and click Delete
+    await row.getByRole("button").first().click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
 
-    await page.getByRole("button", { name: "Delete Role" }).click();
+    await page.getByRole("button", { name: "Delete" }).click();
     const deleteResponse = await deleteRequest;
     expect(deleteResponse.ok()).toBeTruthy();
 

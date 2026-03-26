@@ -40,12 +40,13 @@ test.describe("Customer management — UI", () => {
       page.getByRole("heading", { name: "Customers" }),
     ).toBeVisible();
 
-    await page.getByRole("button", { name: "Create Customer" }).click();
+    await page.getByRole("button", { name: "Add" }).click();
 
-    await page.getByLabel("Name").fill(`${TEST_PREFIX}UITest`);
-    await page.getByLabel("Description").fill("Created via E2E");
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Name").fill(`${TEST_PREFIX}UITest`);
+    await dialog.getByLabel("Description").fill("Created via E2E");
 
-    await page.getByRole("button", { name: "Create Customer" }).click();
+    await dialog.getByRole("button", { name: "Add" }).click();
 
     await expect(
       page.getByRole("cell", { name: `${TEST_PREFIX}UITest` }),
@@ -67,13 +68,15 @@ test.describe("Customer management — UI", () => {
     const row = page.getByRole("row").filter({
       hasText: `${TEST_PREFIX}UITest`,
     });
+    // Open kebab menu and click Edit
     await row.getByRole("button").first().click();
+    await page.getByRole("menuitem", { name: "Edit" }).click();
 
     const nameInput = page.getByLabel("Name");
     await nameInput.clear();
     await nameInput.fill(`${TEST_PREFIX}UITest-Edited`);
 
-    await page.getByRole("button", { name: "Edit Customer" }).click();
+    await page.getByRole("button", { name: "Edit" }).click();
 
     await expect(
       page.getByRole("cell", { name: `${TEST_PREFIX}UITest-Edited` }),
@@ -95,9 +98,11 @@ test.describe("Customer management — UI", () => {
     const row = page.getByRole("row").filter({
       hasText: `${TEST_PREFIX}UITest-Edited`,
     });
-    await row.getByRole("button").nth(1).click();
+    // Open kebab menu and click Delete
+    await row.getByRole("button").first().click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
 
-    await page.getByRole("button", { name: "Delete Customer" }).click();
+    await page.getByRole("button", { name: "Delete" }).click();
 
     await expect(
       page.getByRole("cell", { name: `${TEST_PREFIX}UITest-Edited` }),

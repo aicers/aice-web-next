@@ -284,20 +284,20 @@ test.describe("Account management", () => {
     await expect(page.getByRole("heading", { name: "Accounts" })).toBeVisible();
 
     // Click create button
-    await page.getByRole("button", { name: "Create Account" }).click();
+    await page.getByRole("button", { name: "Add" }).click();
 
     // Fill form
-    await page.getByLabel("Username").fill(UI_CREATE_USERNAME);
-    await page.getByLabel("Display Name").fill("E2E UI Test");
-    await page.getByLabel("Password").fill("UiTestPass1234!");
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Username").fill(UI_CREATE_USERNAME);
+    await dialog.getByLabel("Display Name").fill("E2E UI Test");
+    await dialog.getByLabel("Password").fill("UiTestPass1234!");
 
     // Select role (System Administrator doesn't require customer assignment)
-    const dialog = page.getByRole("dialog");
     await dialog.getByRole("combobox").click();
     await page.getByRole("option", { name: "System Administrator" }).click();
 
     // Submit
-    await page.getByRole("button", { name: "Create Account" }).click();
+    await dialog.getByRole("button", { name: "Add" }).click();
 
     // Wait for dialog to close and table to update
     await expect(accountRow(page, UI_CREATE_USERNAME)).toBeVisible({
@@ -315,7 +315,7 @@ test.describe("Account management", () => {
     await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/accounts");
 
-    await page.getByRole("button", { name: "Create Account" }).click();
+    await page.getByRole("button", { name: "Add" }).click();
 
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Username").fill(CUSTOM_ROLE_UI_USERNAME);
@@ -326,7 +326,7 @@ test.describe("Account management", () => {
 
     await expect(dialog.getByText("Customers")).toHaveCount(0);
 
-    await dialog.getByRole("button", { name: "Create Account" }).click();
+    await dialog.getByRole("button", { name: "Add" }).click();
 
     await expect(accountRow(page, CUSTOM_ROLE_UI_USERNAME)).toBeVisible({
       timeout: 15_000,
@@ -350,8 +350,9 @@ test.describe("Account management", () => {
     const row = accountRow(page, UI_EDIT_USERNAME);
     await expect(row).toBeVisible({ timeout: 10_000 });
 
-    // Click edit button on the row
+    // Open kebab menu and click Edit
     await row.getByRole("button").first().click();
+    await page.getByRole("menuitem", { name: "Edit" }).click();
 
     // Update display name
     const nameInput = page.getByLabel("Display Name");
@@ -359,7 +360,7 @@ test.describe("Account management", () => {
     await nameInput.fill("E2E UI Edited");
 
     // Submit
-    await page.getByRole("button", { name: "Edit Account" }).click();
+    await page.getByRole("button", { name: "Edit" }).click();
 
     // Verify update
     await expect(row).toContainText("E2E UI Edited", { timeout: 10_000 });
@@ -379,16 +380,17 @@ test.describe("Account management", () => {
     const row = accountRow(page, UI_DELETE_USERNAME);
     await expect(row).toBeVisible({ timeout: 10_000 });
 
-    // Click delete button on the row (second button)
+    // Open kebab menu and click Delete
     const deleteRequest = page.waitForResponse(
       (response) =>
         response.request().method() === "DELETE" &&
         response.url().includes("/api/accounts/"),
     );
-    await row.getByRole("button").nth(1).click();
+    await row.getByRole("button").first().click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
 
     // Confirm deletion in alert dialog
-    await page.getByRole("button", { name: "Delete Account" }).click();
+    await page.getByRole("button", { name: "Delete" }).click();
     const deleteResponse = await deleteRequest;
     expect(deleteResponse.ok()).toBeTruthy();
 

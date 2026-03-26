@@ -289,7 +289,7 @@ export function AccountFormDialog({
                     </span>
                   )}
                 </Label>
-                <div className="max-h-40 space-y-2 overflow-y-auto rounded border p-3">
+                <div className="bg-muted/50 max-h-40 space-y-2 overflow-y-auto rounded p-3">
                   {customers.map((customer) => {
                     const checkboxId = `customer-${customer.id}`;
                     return (

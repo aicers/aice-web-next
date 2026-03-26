@@ -11,7 +11,7 @@
   --foreground: var(--text-primary);
   --card: var(--card-bg);
   --card-foreground: var(--text-primary);
-  --popover: var(--card-bg);
+  --popover: var(--popover-bg, var(--card-bg));
   --popover-foreground: var(--text-primary);
   --primary: var(--btn-primary-bg);
   --primary-foreground: var(--btn-primary-fg);
@@ -49,8 +49,9 @@
 }
 
 [data-theme="gray-dark"] {
-  --bg-canvas: #1a1d20;
+  --bg-canvas: #1e2124;
   --card-bg: rgba(97, 105, 116, 0.08);
+  --popover-bg: #2a2d31;
   --control-bg: rgba(97, 105, 116, 0.24);
   --control-placeholder: #616974;
   --text-primary: #fafafa;
