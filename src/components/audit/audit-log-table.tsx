@@ -59,6 +59,24 @@ function actionToI18nKey(action: string): string {
   return action.replaceAll(".", "_");
 }
 
+// ── Helpers ──────────────────────────────────────────────────────
+
+function buildPageNumbers(current: number, total: number): (number | "...")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+
+  const pages: (number | "...")[] = [];
+  if (current <= 4) {
+    for (let i = 1; i <= 5; i++) pages.push(i);
+    pages.push("...", total);
+  } else if (current >= total - 3) {
+    pages.push(1, "...");
+    for (let i = total - 4; i <= total; i++) pages.push(i);
+  } else {
+    pages.push(1, "...", current - 1, current, current + 1, "...", total);
+  }
+  return pages;
+}
+
 // ── Component ────────────────────────────────────────────────────
 
 export function AuditLogTable() {
@@ -185,6 +203,7 @@ export function AuditLogTable() {
     ? Math.max(1, Math.ceil(result.total / result.pageSize))
     : 1;
   const currentPage = result?.page ?? 1;
+  const pageNumbers = buildPageNumbers(currentPage, totalPages);
 
   // ── Render ──────────────────────────────────────────────────
 
@@ -194,7 +213,7 @@ export function AuditLogTable() {
       <h1 className="text-foreground text-2xl font-bold">{t("title")}</h1>
 
       {/* Filters */}
-      <div className="bg-card space-y-4 rounded-lg border p-4">
+      <div className="bg-card space-y-4 rounded-lg p-4">
         <h2 className="text-foreground text-sm font-medium">{t("filters")}</h2>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -290,9 +309,9 @@ export function AuditLogTable() {
         <p className="text-muted-foreground text-sm">{t("noResults")}</p>
       )}
 
-      {/* Table */}
+      {/* Table in card */}
       {!loading && result && result.data.length > 0 && (
-        <>
+        <div className="rounded-lg bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -352,31 +371,35 @@ export function AuditLogTable() {
             </TableBody>
           </Table>
 
-          {/* Pagination */}
-          <div className="flex items-center justify-between">
-            <p className="text-muted-foreground text-sm">
-              {t("page", { current: currentPage, total: totalPages })}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentPage <= 1}
-                onClick={() => goToPage(currentPage - 1)}
-              >
-                {t("previous")}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentPage >= totalPages}
-                onClick={() => goToPage(currentPage + 1)}
-              >
-                {t("next")}
-              </Button>
+          {/* Numbered pagination */}
+          {totalPages > 1 && (
+            <div className="flex justify-center gap-1 py-4">
+              {pageNumbers.map((p, i) =>
+                p === "..." ? (
+                  <span
+                    key={i === 1 ? "ellipsis-start" : "ellipsis-end"}
+                    className="text-muted-foreground flex h-8 w-8 items-center justify-center text-sm"
+                  >
+                    ...
+                  </span>
+                ) : (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => goToPage(p)}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md text-sm transition-colors ${
+                      p === currentPage
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ),
+              )}
             </div>
-          </div>
-        </>
+          )}
+        </div>
       )}
     </div>
   );

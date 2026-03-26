@@ -48,7 +48,7 @@ Tokens are extracted from the Figma "Ready for Development" files.
 
 | Token | Light | Dark | Usage |
 |-------|-------|------|-------|
-| `--bg-canvas` | `#f5f6f7` | `#1a1d20` | Page background |
+| `--bg-canvas` | `#f5f6f7` | `#1e2124` | Page background |
 | `--card-bg` | `#ffffff` | `rgba(97, 105, 116, 0.08)` | Card background |
 | `--control-bg` | `rgba(97, 105, 116, 0.08)` | `rgba(97, 105, 116, 0.24)` | Input background |
 | `--control-placeholder` | `#616974` | `#616974` | Placeholder text |
@@ -79,7 +79,7 @@ Tokens are extracted from the Figma "Ready for Development" files.
 | Button border-radius | 8px |
 | Button height | 40px |
 | Input height (with label) | 68px |
-| Card shadow | `0 10px 10px rgba(0,0,0,0.04), 0 20px 25px rgba(0,0,0,0.01)` |
+| Card shadow | none (background-only card separation per Figma) |
 | Sidebar expanded | 256px |
 | Sidebar collapsed | 64px |
 
@@ -108,7 +108,7 @@ Base tokens shared across all themes, plus the complete shadcn/ui semantic alias
   --foreground:             var(--text-primary);
   --card:                   var(--card-bg);
   --card-foreground:        var(--text-primary);
-  --popover:                var(--card-bg);
+  --popover:                var(--popover-bg, var(--card-bg));
   --popover-foreground:     var(--text-primary);
   --primary:                var(--btn-primary-bg);
   --primary-foreground:     var(--btn-primary-fg);
@@ -146,8 +146,9 @@ Base tokens shared across all themes, plus the complete shadcn/ui semantic alias
 
 ```css
 [data-theme="gray-dark"] {
-  --bg-canvas: #1a1d20;
+  --bg-canvas: #1e2124;
   --card-bg: rgba(97, 105, 116, 0.08);
+  --popover-bg: #2a2d31;
   --control-bg: rgba(97, 105, 116, 0.24);
   --control-placeholder: #616974;
   --text-primary: #fafafa;

@@ -43,7 +43,7 @@ export default function DashboardLayout({
           {/* Main content */}
           <main className="flex flex-1 flex-col overflow-hidden">
             {/* Breadcrumb bar */}
-            <div className="flex h-16 shrink-0 items-center border-b px-6">
+            <div className="flex h-16 shrink-0 items-center px-6">
               <Breadcrumbs />
             </div>
 
