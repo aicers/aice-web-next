@@ -1,19 +1,21 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 import { resetRateLimits } from "./helpers/auth";
 import { resetAccountDefaults, revokeAllSessions } from "./helpers/setup-db";
 
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "Admin1234!";
 const APP_URL = process.env.BASE_URL ?? "http://localhost:3000";
 
 /**
  * Helper: sign in via the UI and wait until redirected away from sign-in.
  */
-async function signIn(page: import("@playwright/test").Page): Promise<void> {
+async function signIn(
+  page: import("@playwright/test").Page,
+  username: string,
+  password: string,
+): Promise<void> {
   await page.goto("/sign-in");
-  await page.getByLabel("Account ID").fill(ADMIN_USERNAME);
-  await page.locator("input[name='password']").fill(ADMIN_PASSWORD);
+  await page.getByLabel("Account ID").fill(username);
+  await page.locator("input[name='password']").fill(password);
   await page.getByRole("button", { name: "Sign In" }).click();
   await expect(page).not.toHaveURL(/sign-in/, { timeout: 10_000 });
 }
@@ -44,25 +46,28 @@ async function setSessionMonitorCookies(
 }
 
 test.describe("Session Extension Dialog", () => {
-  test.beforeAll(async () => {
-    await resetAccountDefaults(ADMIN_USERNAME);
+  test.beforeAll(async ({ workerUsername }) => {
+    await resetRateLimits();
+    await resetAccountDefaults(workerUsername);
   });
 
   test.beforeEach(async () => {
     await resetRateLimits();
   });
 
-  test.afterAll(async () => {
-    await resetAccountDefaults(ADMIN_USERNAME);
+  test.afterAll(async ({ workerUsername }) => {
+    await resetAccountDefaults(workerUsername);
   });
 
   // ── 1. Dialog appears when session nears expiry ───────────────
 
   test("dialog appears when JWT remaining ≤ 1/5 of lifetime", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Set token_exp to 2 minutes from now (< 3 min threshold)
     const exp = Math.floor(Date.now() / 1000) + 120;
@@ -90,9 +95,11 @@ test.describe("Session Extension Dialog", () => {
 
   test("dialog does not appear when JWT has plenty of time remaining", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Set token_exp to 10 minutes from now (well above 3 min threshold)
     const exp = Math.floor(Date.now() / 1000) + 600;
@@ -110,9 +117,11 @@ test.describe("Session Extension Dialog", () => {
 
   test("clicking Extend calls /api/auth/me and closes the dialog", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Set token_exp to 2 minutes from now
     const exp = Math.floor(Date.now() / 1000) + 120;
@@ -147,9 +156,11 @@ test.describe("Session Extension Dialog", () => {
 
   test("clicking Sign Out signs out and redirects to sign-in", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Set token_exp to 2 minutes from now
     const exp = Math.floor(Date.now() / 1000) + 120;
@@ -173,9 +184,11 @@ test.describe("Session Extension Dialog", () => {
 
   test("when countdown reaches zero, user is redirected to sign-in", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Set token_exp to 3 seconds from now — dialog appears, then expires
     const exp = Math.floor(Date.now() / 1000) + 3;
@@ -191,9 +204,13 @@ test.describe("Session Extension Dialog", () => {
 
   // ── 6. Countdown display shows correct format ─────────────────
 
-  test("dialog displays countdown in MM:SS format", async ({ page }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+  test("dialog displays countdown in MM:SS format", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Set token_exp to 90 seconds from now
     const exp = Math.floor(Date.now() / 1000) + 90;
@@ -211,9 +228,11 @@ test.describe("Session Extension Dialog", () => {
 
   test("dialog stays dismissed after extend even while near-expiry", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Set token_exp to 2 minutes from now
     const exp = Math.floor(Date.now() / 1000) + 120;
@@ -238,9 +257,11 @@ test.describe("Session Extension Dialog", () => {
 
   test("rapid double-click on Extend only triggers one /api/auth/me", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     const exp = Math.floor(Date.now() / 1000) + 120;
     await setSessionMonitorCookies(page, exp);
@@ -271,9 +292,11 @@ test.describe("Session Extension Dialog", () => {
 
   test("sign-out succeeds even when CSRF cookie is missing", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Delete CSRF cookies before triggering dialog
     await page.context().clearCookies({ name: "csrf" });
@@ -292,13 +315,17 @@ test.describe("Session Extension Dialog", () => {
 
   // ── 10. i18n: dialog renders in Korean locale ──────────────────
 
-  test("dialog renders correctly in Korean locale", async ({ page }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
+  test("dialog renders correctly in Korean locale", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await revokeAllSessions(workerUsername);
 
     // Sign in via Korean locale
     await page.goto("/ko/sign-in");
-    await page.getByLabel("계정 ID").fill(ADMIN_USERNAME);
-    await page.locator("input[name='password']").fill(ADMIN_PASSWORD);
+    await page.getByLabel("계정 ID").fill(workerUsername);
+    await page.locator("input[name='password']").fill(workerPassword);
     await page.getByRole("button", { name: "로그인" }).click();
     await expect(page).not.toHaveURL(/sign-in/, { timeout: 10_000 });
 
@@ -321,9 +348,11 @@ test.describe("Session Extension Dialog", () => {
 
   test("dialog threshold follows the current JWT lifetime", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     const dialog = page.getByRole("alertdialog");
 

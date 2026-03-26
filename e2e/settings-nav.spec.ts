@@ -1,8 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
   resetRateLimits,
   signInAndWait,
   signInAndWaitKo,
@@ -15,49 +13,58 @@ import {
   resetAccountDefaults,
 } from "./helpers/setup-db";
 
-// User with only accounts:read — no dashboard or system-settings access
-const ACCOUNTS_ONLY_USER = "e2e-settings-acct-only";
+// Passwords are not prefix-dependent
 const ACCOUNTS_ONLY_PASS = "AcctOnly1234!";
-const ACCOUNTS_ONLY_ROLE = "E2E Accounts Only";
-
-// User with dashboard:read but no system-settings — can see Account Status but not Policies
-const DASH_ONLY_USER = "e2e-settings-dash-only";
 const DASH_ONLY_PASS = "DashOnly1234!";
-const DASH_ONLY_ROLE = "E2E Dashboard Only";
-
-test.beforeAll(async () => {
-  await resetRateLimits();
-
-  await createTestRole(ACCOUNTS_ONLY_ROLE, ["accounts:read"]);
-  await createTestAccount(
-    ACCOUNTS_ONLY_USER,
-    ACCOUNTS_ONLY_PASS,
-    ACCOUNTS_ONLY_ROLE,
-  );
-
-  await createTestRole(DASH_ONLY_ROLE, ["dashboard:read"]);
-  await createTestAccount(DASH_ONLY_USER, DASH_ONLY_PASS, DASH_ONLY_ROLE);
-});
-
-test.beforeEach(async () => {
-  await resetRateLimits();
-  await resetAccountDefaults(ADMIN_USERNAME);
-});
-
-test.afterAll(async () => {
-  try {
-    await deleteTestAccount(ACCOUNTS_ONLY_USER);
-    await deleteTestAccount(DASH_ONLY_USER);
-    await deleteTestRole(ACCOUNTS_ONLY_ROLE);
-    await deleteTestRole(DASH_ONLY_ROLE);
-  } catch {
-    // best-effort cleanup
-  }
-});
 
 test.describe("Settings navigation", () => {
-  test("settings page shows all five tabs for admin", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  let TEST_PREFIX: string;
+  let ACCOUNTS_ONLY_USER: string;
+  let ACCOUNTS_ONLY_ROLE: string;
+  let DASH_ONLY_USER: string;
+  let DASH_ONLY_ROLE: string;
+
+  test.beforeAll(async ({ workerPrefix: wp }) => {
+    await resetRateLimits();
+    TEST_PREFIX = wp("e2e-settings-");
+    ACCOUNTS_ONLY_USER = `${TEST_PREFIX}acct-only`;
+    ACCOUNTS_ONLY_ROLE = `${TEST_PREFIX}Accounts Only`;
+    DASH_ONLY_USER = `${TEST_PREFIX}dash-only`;
+    DASH_ONLY_ROLE = `${TEST_PREFIX}Dashboard Only`;
+
+    await createTestRole(ACCOUNTS_ONLY_ROLE, ["accounts:read"]);
+    await createTestAccount(
+      ACCOUNTS_ONLY_USER,
+      ACCOUNTS_ONLY_PASS,
+      ACCOUNTS_ONLY_ROLE,
+    );
+
+    await createTestRole(DASH_ONLY_ROLE, ["dashboard:read"]);
+    await createTestAccount(DASH_ONLY_USER, DASH_ONLY_PASS, DASH_ONLY_ROLE);
+  });
+
+  test.beforeEach(async ({ workerUsername }) => {
+    await resetRateLimits();
+    await resetAccountDefaults(workerUsername);
+  });
+
+  test.afterAll(async () => {
+    try {
+      await deleteTestAccount(ACCOUNTS_ONLY_USER);
+      await deleteTestAccount(DASH_ONLY_USER);
+      await deleteTestRole(ACCOUNTS_ONLY_ROLE);
+      await deleteTestRole(DASH_ONLY_ROLE);
+    } catch {
+      // best-effort cleanup
+    }
+  });
+
+  test("settings page shows all five tabs for admin", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings");
 
     const nav = page.locator("nav").filter({ hasText: "Accounts" });
@@ -70,16 +77,24 @@ test.describe("Settings navigation", () => {
     ).toBeVisible();
   });
 
-  test("settings redirects to accounts tab by default", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("settings redirects to accounts tab by default", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings");
 
     await page.waitForURL(/\/settings\/accounts/, { timeout: 10_000 });
     await expect(page.getByRole("heading", { name: "Accounts" })).toBeVisible();
   });
 
-  test("policies tab renders system settings panel", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("policies tab renders system settings panel", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/policies");
 
     await expect(page.getByRole("tab", { name: /password/i })).toBeVisible();
@@ -90,8 +105,12 @@ test.describe("Settings navigation", () => {
     await expect(page.getByRole("tab", { name: /rate limits/i })).toBeVisible();
   });
 
-  test("account status tab renders monitoring cards", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("account status tab renders monitoring cards", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/account-status");
 
     await expect(
@@ -101,8 +120,12 @@ test.describe("Settings navigation", () => {
     await expect(page.getByText("Locked & Suspended Accounts")).toBeVisible();
   });
 
-  test("breadcrumb shows correct label for policies", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("breadcrumb shows correct label for policies", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/policies");
 
     const breadcrumb = page.getByLabel("Breadcrumb");
@@ -112,19 +135,23 @@ test.describe("Settings navigation", () => {
 
   test("breadcrumb shows correct label for account status", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/account-status");
 
     const breadcrumb = page.getByLabel("Breadcrumb");
     await expect(breadcrumb.getByText("Settings")).toBeVisible();
     await expect(breadcrumb.getByText("Account Status")).toBeVisible();
   });
-});
 
-test.describe("Settings navigation — Korean locale", () => {
-  test("settings page shows Korean tab labels", async ({ page }) => {
-    await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("settings page shows Korean tab labels", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWaitKo(page, workerUsername, workerPassword);
     await page.goto("/ko/settings");
 
     await page.waitForURL(/\/settings\/accounts/, { timeout: 10_000 });
@@ -141,8 +168,10 @@ test.describe("Settings navigation — Korean locale", () => {
 
   test("Korean breadcrumb shows correct label for policies", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWaitKo(page, workerUsername, workerPassword);
     await page.goto("/ko/settings/policies");
 
     const breadcrumb = page.getByLabel("Breadcrumb");
@@ -152,17 +181,17 @@ test.describe("Settings navigation — Korean locale", () => {
 
   test("Korean breadcrumb shows correct label for account status", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWaitKo(page, workerUsername, workerPassword);
     await page.goto("/ko/settings/account-status");
 
     const breadcrumb = page.getByLabel("Breadcrumb");
     await expect(breadcrumb.getByText("설정")).toBeVisible();
     await expect(breadcrumb.getByText("계정 현황")).toBeVisible();
   });
-});
 
-test.describe("Settings navigation — RBAC", () => {
   test("user without dashboard:read does not see Account Status tab", async ({
     page,
   }) => {
@@ -232,11 +261,13 @@ test.describe("Settings navigation — RBAC", () => {
       { timeout: 10_000 },
     );
   });
-});
 
-test.describe("Settings navigation — old URL", () => {
-  test("/settings/system returns 404", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("/settings/system returns 404", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const response = await page.goto("/settings/system");
     expect(response?.status()).toBe(404);

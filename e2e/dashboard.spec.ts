@@ -1,8 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
   resetRateLimits,
   signInAndWait,
   signInAndWaitKo,
@@ -20,17 +18,9 @@ import {
 
 // ── Constants ────────────────────────────────────────────────────
 
-const NOPERM_USER = "e2e-dashboard-noperm";
 const NOPERM_PASS = "Noperm1234!";
-const NOPERM_ROLE = "E2E No Dashboard";
-
-const READER_USER = "e2e-dashboard-reader";
 const READER_PASS = "Reader1234!";
-const READER_ROLE = "E2E Dashboard Reader";
-
-const LOCKED_USER = "e2e-dashboard-locked";
 const LOCKED_PASS = "Locked1234!";
-const SUSPENDED_USER = "e2e-dashboard-suspended";
 const SUSPENDED_PASS = "Suspended1234!";
 
 function csrfHeader(csrfValue: string) {
@@ -53,10 +43,29 @@ async function getLockedAccounts(page: import("@playwright/test").Page) {
   return body.data as Array<{ username: string; status: string }>;
 }
 
+// ── Prefix-derived constants (initialized in beforeAll) ─────────
+
+let NOPERM_USER: string;
+let NOPERM_ROLE: string;
+let READER_USER: string;
+let READER_ROLE: string;
+let LOCKED_USER: string;
+let SUSPENDED_USER: string;
+
 // ── Setup / Teardown ─────────────────────────────────────────────
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ workerUsername, workerPrefix }) => {
   await resetRateLimits();
+  const prefix = workerPrefix("e2e-dashboard-");
+
+  NOPERM_USER = `${prefix}noperm`;
+  NOPERM_ROLE = `${prefix}No Dashboard`;
+  READER_USER = `${prefix}reader`;
+  READER_ROLE = `${prefix}Dashboard Reader`;
+  LOCKED_USER = `${prefix}locked`;
+  SUSPENDED_USER = `${prefix}suspended`;
+
+  await resetAccountDefaults(workerUsername);
 
   // Role with no dashboard permissions
   await createTestRole(NOPERM_ROLE, ["accounts:read"]);
@@ -75,9 +84,9 @@ test.beforeAll(async () => {
   );
 });
 
-test.beforeEach(async () => {
+test.beforeEach(async ({ workerUsername }) => {
   await resetRateLimits();
-  await resetAccountDefaults(ADMIN_USERNAME);
+  await resetAccountDefaults(workerUsername);
   await resetAccountDefaults(LOCKED_USER);
   await resetAccountDefaults(SUSPENDED_USER);
 });
@@ -99,8 +108,10 @@ test.afterAll(async () => {
 
 test("GET /api/dashboard/sessions returns active sessions", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWait(page, workerUsername, workerPassword);
 
   const response = await page.request.get("/api/dashboard/sessions");
   expect(response.status()).toBe(200);
@@ -110,7 +121,7 @@ test("GET /api/dashboard/sessions returns active sessions", async ({
 
   // Admin's own session should be present
   const adminSession = body.data.find(
-    (s: { username: string }) => s.username === ADMIN_USERNAME,
+    (s: { username: string }) => s.username === workerUsername,
   );
   expect(adminSession).toBeDefined();
   expect(adminSession.ip_address).toBeTruthy();
@@ -118,11 +129,13 @@ test("GET /api/dashboard/sessions returns active sessions", async ({
 
 test("GET /api/dashboard/locked-accounts returns locked accounts", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
   // Lock the test account
   await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
 
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWait(page, workerUsername, workerPassword);
 
   const response = await page.request.get("/api/dashboard/locked-accounts");
   expect(response.status()).toBe(200);
@@ -138,8 +151,12 @@ test("GET /api/dashboard/locked-accounts returns locked accounts", async ({
   await setAccountStatus(LOCKED_USER, "active");
 });
 
-test("GET /api/dashboard/alerts returns alerts array", async ({ page }) => {
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+test("GET /api/dashboard/alerts returns alerts array", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
 
   const response = await page.request.get("/api/dashboard/alerts");
   expect(response.status()).toBe(200);
@@ -150,12 +167,14 @@ test("GET /api/dashboard/alerts returns alerts array", async ({ page }) => {
 
 test("POST /api/dashboard/sessions/[sid]/revoke revokes a session", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
   // Create a session for the reader user by signing in
   await signInAndWait(page, READER_USER, READER_PASS);
 
   // Now sign in as admin
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWait(page, workerUsername, workerPassword);
   const csrf = await getCsrf(page);
 
   // Find the reader's session
@@ -184,8 +203,12 @@ test("POST /api/dashboard/sessions/[sid]/revoke revokes a session", async ({
   expect(found).toBeUndefined();
 });
 
-test("POST revoke returns 404 for non-existent session", async ({ page }) => {
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+test("POST revoke returns 404 for non-existent session", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
   const csrf = await getCsrf(page);
 
   const response = await page.request.post(
@@ -239,8 +262,12 @@ test("dashboard:read user cannot revoke sessions (needs dashboard:write)", async
 
 // ── Dashboard placeholder UI tests ──────────────────────────────
 
-test("dashboard page shows placeholder for admin", async ({ page }) => {
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+test("dashboard page shows placeholder for admin", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
   await page.goto("/dashboard");
 
   await expect(page.getByRole("heading", { name: /Dashboard/i })).toBeVisible({
@@ -265,8 +292,10 @@ test("dashboard page redirects for user without dashboard:read", async ({
 
 test("Korean locale: dashboard shows placeholder in Korean", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
-  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWaitKo(page, workerUsername, workerPassword);
   await page.goto("/ko/dashboard");
 
   await expect(page.getByRole("heading", { name: "대시보드" })).toBeVisible({
@@ -279,8 +308,12 @@ test("Korean locale: dashboard shows placeholder in Korean", async ({
 
 // ── Account Status UI tests (Settings → Account Status) ─────────
 
-test("account status page renders four cards for admin", async ({ page }) => {
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+test("account status page renders four cards for admin", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
   await page.goto("/settings/account-status");
 
   await expect(
@@ -317,11 +350,15 @@ test("dashboard:read user cannot see action buttons on account status page", asy
   await expect(page.getByRole("button", { name: /Restore/i })).toHaveCount(0);
 });
 
-test("locked account shows in account status card", async ({ page }) => {
+test("locked account shows in account status card", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
   await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
 
   try {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/account-status");
 
     await expect(page.getByText("Locked & Suspended Accounts")).toBeVisible({
@@ -336,9 +373,11 @@ test("locked account shows in account status card", async ({ page }) => {
 
 test("admin can unlock a locked account from account status page", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
   await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWait(page, workerUsername, workerPassword);
   await page.goto("/settings/account-status");
 
   const row = page.locator("tr", { hasText: LOCKED_USER });
@@ -361,9 +400,11 @@ test("admin can unlock a locked account from account status page", async ({
 
 test("admin can restore a suspended account from account status page", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
   await setAccountStatus(SUSPENDED_USER, "suspended");
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWait(page, workerUsername, workerPassword);
   await page.goto("/settings/account-status");
 
   const row = page.locator("tr", { hasText: SUSPENDED_USER });
@@ -388,8 +429,10 @@ test("admin can restore a suspended account from account status page", async ({
 
 test("GET /api/dashboard/cert-status returns valid cert status shape", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWait(page, workerUsername, workerPassword);
 
   const response = await page.request.get("/api/dashboard/cert-status");
   expect(response.status()).toBe(200);
@@ -436,8 +479,10 @@ test("dashboard:read user can access cert-status endpoint", async ({
 
 test("account status page renders cert expiry card with status content", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
-  await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWait(page, workerUsername, workerPassword);
   await page.goto("/settings/account-status");
 
   // Scroll down to make cert card visible
@@ -458,8 +503,10 @@ test("account status page renders cert expiry card with status content", async (
 
 test("Korean locale: account status renders four cards with Korean text", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
-  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWaitKo(page, workerUsername, workerPassword);
   await page.goto("/ko/settings/account-status");
 
   await expect(page.getByRole("heading", { name: "계정 현황" })).toBeVisible({
@@ -477,8 +524,10 @@ test("Korean locale: account status renders four cards with Korean text", async 
 
 test("Korean locale: sessions card shows Korean column headers", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
-  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWaitKo(page, workerUsername, workerPassword);
   await page.goto("/ko/settings/account-status");
 
   await expect(page.getByText("활성 세션").first()).toBeVisible({
@@ -492,8 +541,10 @@ test("Korean locale: sessions card shows Korean column headers", async ({
 
 test("Korean locale: revoke button and confirm dialog use Korean", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
-  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWaitKo(page, workerUsername, workerPassword);
   await page.goto("/ko/settings/account-status");
 
   await expect(page.getByText("활성 세션").first()).toBeVisible({
@@ -515,11 +566,13 @@ test("Korean locale: revoke button and confirm dialog use Korean", async ({
 
 test("Korean locale: locked account card shows Korean status", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
   await setAccountStatus(LOCKED_USER, "locked", new Date(Date.now() + 3600000));
 
   try {
-    await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWaitKo(page, workerUsername, workerPassword);
     await page.goto("/ko/settings/account-status");
 
     await expect(page.getByText("잠긴 및 정지된 계정")).toBeVisible({
@@ -535,6 +588,8 @@ test("Korean locale: locked account card shows Korean status", async ({
 
 test("Korean locale: alerts card shows Korean detail messages", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
   const auditId = await insertAuditLog({
     actorId: "system",
@@ -545,7 +600,7 @@ test("Korean locale: alerts card shows Korean detail messages", async ({
   });
 
   try {
-    await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWaitKo(page, workerUsername, workerPassword);
     await page.goto("/ko/settings/account-status");
 
     const desc = page.getByText("최근 24시간 동안 감지된 보안 알림");
@@ -564,8 +619,10 @@ test("Korean locale: alerts card shows Korean detail messages", async ({
 
 test("Korean locale: cert expiry card shows Korean text and status", async ({
   page,
+  workerUsername,
+  workerPassword,
 }) => {
-  await signInAndWaitKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  await signInAndWaitKo(page, workerUsername, workerPassword);
   await page.goto("/ko/settings/account-status");
 
   const certTitle = page.getByText("인증서 만료");

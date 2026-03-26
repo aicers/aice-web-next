@@ -1,11 +1,7 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signInAndWait,
-} from "./helpers/auth";
+import { expect, test } from "./fixtures";
+import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import {
   clearMustChangePassword,
   createTestRole,
@@ -15,8 +11,6 @@ import {
   revokeAllSessions,
 } from "./helpers/setup-db";
 
-const TEST_PREFIX = "e2e-role-";
-
 function roleRow(page: Page, name: string): Locator {
   return page.locator("tbody tr").filter({
     has: page.locator("td.font-medium", { hasText: name }),
@@ -24,16 +18,19 @@ function roleRow(page: Page, name: string): Locator {
 }
 
 test.describe("Role management — UI", () => {
-  test.beforeAll(async () => {
+  let TEST_PREFIX: string;
+
+  test.beforeAll(async ({ workerUsername, workerPrefix: wp }) => {
     await resetRateLimits();
-    await clearMustChangePassword(ADMIN_USERNAME);
-    await resetAccountDefaults(ADMIN_USERNAME);
+    TEST_PREFIX = wp("e2e-role-");
+    await clearMustChangePassword(workerUsername);
+    await resetAccountDefaults(workerUsername);
     await deleteRolesByPrefix(TEST_PREFIX);
   });
 
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ workerUsername }) => {
     await resetRateLimits();
-    await revokeAllSessions(ADMIN_USERNAME);
+    await revokeAllSessions(workerUsername);
   });
 
   test.afterAll(async () => {
@@ -42,8 +39,10 @@ test.describe("Role management — UI", () => {
 
   test("navigates to roles page and displays built-in roles", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/roles");
 
     await expect(page.getByRole("heading", { name: "Roles" })).toBeVisible();
@@ -59,10 +58,14 @@ test.describe("Role management — UI", () => {
     ).toBeVisible();
   });
 
-  test("creates a custom role via UI", async ({ page }) => {
+  test("creates a custom role via UI", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     await deleteTestRole(`${TEST_PREFIX}ui-create`);
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/roles");
 
     await expect(page.getByRole("heading", { name: "Roles" })).toBeVisible();
@@ -85,14 +88,18 @@ test.describe("Role management — UI", () => {
     await expect(roleRow(page, `${TEST_PREFIX}ui-create`)).toContainText("2");
   });
 
-  test("edits a custom role via UI", async ({ page }) => {
+  test("edits a custom role via UI", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     await createTestRole(
       `${TEST_PREFIX}ui-edit`,
       ["accounts:read"],
       "Before edit",
     );
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/roles");
 
     const row = roleRow(page, `${TEST_PREFIX}ui-edit`);
@@ -118,10 +125,14 @@ test.describe("Role management — UI", () => {
     await deleteTestRole(`${TEST_PREFIX}ui-edited`);
   });
 
-  test("clones a built-in role via UI", async ({ page }) => {
+  test("clones a built-in role via UI", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     await deleteTestRole(`${TEST_PREFIX}ui-clone`);
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/roles");
 
     const adminRow = roleRow(page, "System Administrator");
@@ -157,8 +168,12 @@ test.describe("Role management — UI", () => {
     await expect(clonedRow).toContainText("15");
   });
 
-  test("built-in roles have no edit or delete buttons", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("built-in roles have no edit or delete buttons", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/roles");
 
     const adminRow = roleRow(page, "System Administrator");
@@ -172,10 +187,12 @@ test.describe("Role management — UI", () => {
 
   test("custom roles have edit, clone, and delete buttons", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     await createTestRole(`${TEST_PREFIX}ui-buttons`, ["accounts:read"]);
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/roles");
 
     const row = roleRow(page, `${TEST_PREFIX}ui-buttons`);
@@ -189,10 +206,14 @@ test.describe("Role management — UI", () => {
     await expect(buttons.nth(2)).toHaveAttribute("title", "Delete Role");
   });
 
-  test("deletes a custom role via UI", async ({ page }) => {
+  test("deletes a custom role via UI", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     await createTestRole(`${TEST_PREFIX}ui-delete`, ["accounts:read"]);
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/roles");
 
     const row = roleRow(page, `${TEST_PREFIX}ui-delete`);

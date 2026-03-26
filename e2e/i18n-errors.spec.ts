@@ -1,11 +1,5 @@
-import { expect, test } from "@playwright/test";
-
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signInKo,
-} from "./helpers/auth";
+import { expect, test } from "./fixtures";
+import { resetRateLimits, signInKo } from "./helpers/auth";
 import {
   createFakeSessions,
   resetAccountDefaults,
@@ -21,12 +15,15 @@ test.describe("Korean error messages", () => {
     await resetRateLimits();
   });
 
-  test.afterEach(async () => {
-    await resetAccountDefaults(ADMIN_USERNAME);
+  test.afterEach(async ({ workerUsername }) => {
+    await resetAccountDefaults(workerUsername);
   });
 
-  test("/ko wrong credentials shows Korean error", async ({ page }) => {
-    await signInKo(page, ADMIN_USERNAME, "WrongPassword!");
+  test("/ko wrong credentials shows Korean error", async ({
+    page,
+    workerUsername,
+  }) => {
+    await signInKo(page, workerUsername, "WrongPassword!");
 
     await expect(alert(page)).toBeVisible();
     await expect(alert(page)).toContainText(
@@ -34,10 +31,14 @@ test.describe("Korean error messages", () => {
     );
   });
 
-  test("/ko locked account shows Korean error", async ({ page }) => {
-    await setAccountStatus(ADMIN_USERNAME, "locked", null);
+  test("/ko locked account shows Korean error", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await setAccountStatus(workerUsername, "locked", null);
 
-    await signInKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInKo(page, workerUsername, workerPassword);
 
     await expect(alert(page)).toBeVisible();
     await expect(alert(page)).toContainText(
@@ -45,21 +46,29 @@ test.describe("Korean error messages", () => {
     );
   });
 
-  test("/ko inactive account shows Korean error", async ({ page }) => {
-    await setAccountStatus(ADMIN_USERNAME, "disabled");
+  test("/ko inactive account shows Korean error", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await setAccountStatus(workerUsername, "disabled");
 
-    await signInKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInKo(page, workerUsername, workerPassword);
 
     await expect(alert(page)).toBeVisible();
     await expect(alert(page)).toContainText("계정이 활성 상태가 아닙니다");
   });
 
-  test("/ko max sessions shows Korean error", async ({ page }) => {
-    await resetAccountDefaults(ADMIN_USERNAME);
-    await setMaxSessions(ADMIN_USERNAME, 1);
-    await createFakeSessions(ADMIN_USERNAME, 1);
+  test("/ko max sessions shows Korean error", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await resetAccountDefaults(workerUsername);
+    await setMaxSessions(workerUsername, 1);
+    await createFakeSessions(workerUsername, 1);
 
-    await signInKo(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInKo(page, workerUsername, workerPassword);
 
     await expect(alert(page)).toBeVisible();
     await expect(alert(page)).toContainText("최대 활성 세션 수에 도달했습니다");

@@ -4,6 +4,12 @@ import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
 
+import {
+  createTestAccount,
+  createTestRole,
+  resetAccountDefaults,
+} from "./helpers/setup-db";
+
 /**
  * Resolve DATA_DIR the same way the app does:
  * process.env → .env.local → default "./data".
@@ -64,10 +70,44 @@ async function ensureJwtSigningKey(): Promise<void> {
   );
 }
 
+const WORKER_PASSWORD = "WorkerPass1234!";
+const WORKER_ROLE = "E2E Test Admin";
+const MAX_WORKERS = 8;
+
+// All permissions — same as System Administrator, but with a different
+// role name so worker accounts don't count toward the System Admin limit.
+const ALL_PERMISSIONS = [
+  "accounts:read",
+  "accounts:write",
+  "accounts:delete",
+  "roles:read",
+  "roles:write",
+  "roles:delete",
+  "customers:read",
+  "customers:write",
+  "customers:delete",
+  "customers:access-all",
+  "audit-logs:read",
+  "system-settings:read",
+  "system-settings:write",
+  "dashboard:read",
+  "dashboard:write",
+];
+
+async function ensureWorkerAccounts(): Promise<void> {
+  await createTestRole(WORKER_ROLE, ALL_PERMISSIONS, "E2E worker role");
+  for (let i = 0; i < MAX_WORKERS; i++) {
+    const username = `e2e-worker-${i}`;
+    await createTestAccount(username, WORKER_PASSWORD, WORKER_ROLE);
+    await resetAccountDefaults(username);
+  }
+}
+
 export default async function globalSetup(): Promise<void> {
   console.log("[e2e] Running global setup…");
   try {
     await ensureJwtSigningKey();
+    await ensureWorkerAccounts();
     console.log("[e2e] Global setup complete.");
   } catch (error) {
     console.error("[e2e] Global setup failed:", error);
