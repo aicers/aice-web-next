@@ -1,25 +1,24 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signInAndWait,
-} from "./helpers/auth";
+import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import { resetAccountDefaults } from "./helpers/setup-db";
 
 test.describe("Audit log page", () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ workerUsername }) => {
     await resetRateLimits();
-    await resetAccountDefaults(ADMIN_USERNAME);
+    await resetAccountDefaults(workerUsername);
   });
 
-  test.afterAll(async () => {
-    await resetAccountDefaults(ADMIN_USERNAME);
+  test.afterAll(async ({ workerUsername }) => {
+    await resetAccountDefaults(workerUsername);
   });
 
-  test("audit log page loads and displays entries", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("audit log page loads and displays entries", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     await page.goto("/audit-logs");
     await page.waitForURL("**/audit-logs");
@@ -34,8 +33,12 @@ test.describe("Audit log page", () => {
     await expect(rows.first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test("sign-in event appears in audit log", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("sign-in event appears in audit log", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/audit-logs");
     await page.waitForURL("**/audit-logs");
 
@@ -50,8 +53,12 @@ test.describe("Audit log page", () => {
     await expect(signInBadge.first()).toBeVisible();
   });
 
-  test("filter by action returns filtered results", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("filter by action returns filtered results", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/audit-logs");
     await page.waitForURL("**/audit-logs");
 
@@ -88,8 +95,12 @@ test.describe("Audit log page", () => {
     }
   });
 
-  test("filter by date range returns results", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("filter by date range returns results", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/audit-logs");
     await page.waitForURL("**/audit-logs");
 

@@ -1,16 +1,13 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 import { resetRateLimits } from "./helpers/auth";
 import { clearMustChangePassword, revokeAllSessions } from "./helpers/setup-db";
 
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "Admin1234!";
-
 test.describe("Authentication E2E", () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ workerUsername }) => {
     await resetRateLimits();
-    await clearMustChangePassword(ADMIN_USERNAME);
-    await revokeAllSessions(ADMIN_USERNAME);
+    await clearMustChangePassword(workerUsername);
+    await revokeAllSessions(workerUsername);
   });
 
   test("unauthenticated access to protected route redirects to sign-in", async ({
@@ -36,9 +33,10 @@ test.describe("Authentication E2E", () => {
 
   test("sign-in with invalid credentials shows error message", async ({
     page,
+    workerUsername,
   }) => {
     await page.goto("/sign-in");
-    await page.getByLabel("Account ID").fill(ADMIN_USERNAME);
+    await page.getByLabel("Account ID").fill(workerUsername);
     await page.locator("input[name='password']").fill("WrongPassword123!");
     await page.getByRole("button", { name: "Sign In" }).click();
 
@@ -50,20 +48,26 @@ test.describe("Authentication E2E", () => {
 
   test("sign-in with valid credentials redirects to dashboard", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     await page.goto("/sign-in");
-    await page.getByLabel("Account ID").fill(ADMIN_USERNAME);
-    await page.locator("input[name='password']").fill(ADMIN_PASSWORD);
+    await page.getByLabel("Account ID").fill(workerUsername);
+    await page.locator("input[name='password']").fill(workerPassword);
     await page.getByRole("button", { name: "Sign In" }).click();
 
     await expect(page).not.toHaveURL(/sign-in/, { timeout: 10_000 });
   });
 
-  test("sign-out clears session and redirects to sign-in", async ({ page }) => {
+  test("sign-out clears session and redirects to sign-in", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     // Sign in first
     await page.goto("/sign-in");
-    await page.getByLabel("Account ID").fill(ADMIN_USERNAME);
-    await page.locator("input[name='password']").fill(ADMIN_PASSWORD);
+    await page.getByLabel("Account ID").fill(workerUsername);
+    await page.locator("input[name='password']").fill(workerPassword);
     await page.getByRole("button", { name: "Sign In" }).click();
     await expect(page).not.toHaveURL(/sign-in/, { timeout: 10_000 });
 

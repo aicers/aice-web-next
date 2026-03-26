@@ -28,11 +28,12 @@ function buildEnv(): Record<string, string> {
 
 export default defineConfig({
   globalSetup: "./global-setup.ts",
+  globalTeardown: "./global-teardown.ts",
   testDir: ".",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: 1,
+  workers: process.env.CI ? 4 : undefined,
   reporter: process.env.CI
     ? [["html", { open: "never" }], ["github"]]
     : [["html", { open: "on-failure" }]],
@@ -43,7 +44,14 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "chromium",
+      name: "parallel",
+      testIgnore: ["rate-limit.spec.ts", "system-settings.spec.ts"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "serial",
+      testMatch: ["rate-limit.spec.ts", "system-settings.spec.ts"],
+      dependencies: ["parallel"],
       use: { ...devices["Desktop Chrome"] },
     },
   ],

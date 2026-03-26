@@ -1,87 +1,39 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { expect, test } from "@playwright/test";
-import pg from "pg";
+import { expect, test } from "./fixtures";
 
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signInAndWait,
-} from "./helpers/auth";
+import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import {
   clearMustChangePassword,
   resetAccountDefaults,
   resetAccountPreferences,
   revokeAllSessions,
+  setAccountLocale,
+  setAccountTimezone,
 } from "./helpers/setup-db";
-
-// ── DB helpers ────────────────────────────────────────────────
-
-function getDatabaseUrl(): string {
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
-  try {
-    const envFile = readFileSync(resolve(__dirname, "../.env.local"), "utf8");
-    const match = envFile.match(/^DATABASE_URL=(.+)$/m);
-    if (match) return match[1].trim();
-  } catch {
-    // .env.local not found
-  }
-  return "postgres://postgres:postgres@localhost:5432/auth_db";
-}
-
-async function setAccountLocale(
-  username: string,
-  locale: string,
-): Promise<void> {
-  const client = new pg.Client({ connectionString: getDatabaseUrl() });
-  await client.connect();
-  try {
-    await client.query("UPDATE accounts SET locale = $2 WHERE username = $1", [
-      username,
-      locale,
-    ]);
-  } finally {
-    await client.end();
-  }
-}
-
-async function setAccountTimezone(
-  username: string,
-  timezone: string,
-): Promise<void> {
-  const client = new pg.Client({ connectionString: getDatabaseUrl() });
-  await client.connect();
-  try {
-    await client.query(
-      "UPDATE accounts SET timezone = $2 WHERE username = $1",
-      [username, timezone],
-    );
-  } finally {
-    await client.end();
-  }
-}
 
 // ── Tests ─────────────────────────────────────────────────────
 
 test.describe("Preferences", () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ workerUsername }) => {
     await resetRateLimits();
-    await clearMustChangePassword(ADMIN_USERNAME);
-    await resetAccountDefaults(ADMIN_USERNAME);
-    await resetAccountPreferences(ADMIN_USERNAME);
+    await clearMustChangePassword(workerUsername);
+    await resetAccountDefaults(workerUsername);
+    await resetAccountPreferences(workerUsername);
   });
 
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ workerUsername }) => {
     await resetRateLimits();
-    await revokeAllSessions(ADMIN_USERNAME);
-    await resetAccountPreferences(ADMIN_USERNAME);
+    await revokeAllSessions(workerUsername);
+    await resetAccountPreferences(workerUsername);
   });
 
   // ── API tests ─────────────────────────────────────────────────
 
-  test("GET returns null when preferences are not set", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("GET returns null when preferences are not set", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const res = await page.request.get("/api/accounts/me/preferences");
     expect(res.status()).toBe(200);
@@ -91,8 +43,12 @@ test.describe("Preferences", () => {
     expect(body.data.timezone).toBeNull();
   });
 
-  test("PATCH sets locale and NEXT_LOCALE cookie", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("PATCH sets locale and NEXT_LOCALE cookie", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -116,8 +72,12 @@ test.describe("Preferences", () => {
     expect(localeCookie?.value).toBe("ko");
   });
 
-  test("PATCH sets timezone", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("PATCH sets timezone", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -137,8 +97,10 @@ test.describe("Preferences", () => {
 
   test("PATCH sets both locale and timezone simultaneously", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -157,8 +119,12 @@ test.describe("Preferences", () => {
     expect(body.data.timezone).toBe("Asia/Seoul");
   });
 
-  test("PATCH rejects invalid locale", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("PATCH rejects invalid locale", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -174,8 +140,12 @@ test.describe("Preferences", () => {
     expect(res.status()).toBe(400);
   });
 
-  test("PATCH rejects invalid timezone", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("PATCH rejects invalid timezone", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -191,8 +161,12 @@ test.describe("Preferences", () => {
     expect(res.status()).toBe(400);
   });
 
-  test("PATCH null locale deletes NEXT_LOCALE cookie", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("PATCH null locale deletes NEXT_LOCALE cookie", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -224,8 +198,12 @@ test.describe("Preferences", () => {
     expect(localeCookie).toBeUndefined();
   });
 
-  test("GET returns updated values after PATCH", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("GET returns updated values after PATCH", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -259,10 +237,12 @@ test.describe("Preferences", () => {
 
   test("sign-in sets NEXT_LOCALE cookie when account has stored locale", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await setAccountLocale(ADMIN_USERNAME, "ko");
+    await setAccountLocale(workerUsername, "ko");
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const localeCookie = cookies.find((c) => c.name === "NEXT_LOCALE");
@@ -272,10 +252,12 @@ test.describe("Preferences", () => {
 
   test("sign-in does not set NEXT_LOCALE cookie when locale is null", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await resetAccountPreferences(ADMIN_USERNAME);
+    await resetAccountPreferences(workerUsername);
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const localeCookie = cookies.find((c) => c.name === "NEXT_LOCALE");
@@ -284,8 +266,12 @@ test.describe("Preferences", () => {
 
   // ── UI tests ──────────────────────────────────────────────────
 
-  test("profile page shows preferences form", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("profile page shows preferences form", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/profile");
 
     await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
@@ -294,12 +280,16 @@ test.describe("Preferences", () => {
     await expect(page.getByRole("button", { name: "Save" })).toBeVisible();
   });
 
-  test("profile page displays stored preferences on load", async ({ page }) => {
+  test("profile page displays stored preferences on load", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     // Pre-set preferences in DB
-    await setAccountLocale(ADMIN_USERNAME, "ko");
-    await setAccountTimezone(ADMIN_USERNAME, "Asia/Seoul");
+    await setAccountLocale(workerUsername, "ko");
+    await setAccountTimezone(workerUsername, "Asia/Seoul");
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/profile");
 
     // Form should show stored values
@@ -310,8 +300,10 @@ test.describe("Preferences", () => {
 
   test("locale change via UI switches page language to Korean", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/profile");
 
     await expect(page.getByRole("button", { name: "Save" })).toBeVisible();
@@ -337,8 +329,12 @@ test.describe("Preferences", () => {
     await expect(page.getByLabel("시간대")).toBeVisible();
   });
 
-  test("locale change persists after page reload", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("locale change persists after page reload", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -361,8 +357,12 @@ test.describe("Preferences", () => {
     });
   });
 
-  test("timezone preference persists after page reload", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("timezone preference persists after page reload", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -385,8 +385,12 @@ test.describe("Preferences", () => {
 
   // ── Timezone display integration ────────────────────────────────
 
-  test("audit log timestamps reflect timezone preference", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("audit log timestamps reflect timezone preference", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");

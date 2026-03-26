@@ -1,16 +1,15 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signInAndWait,
-} from "./helpers/auth";
+import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import { resetAccountDefaults } from "./helpers/setup-db";
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ workerUsername }) => {
   await resetRateLimits();
-  await resetAccountDefaults(ADMIN_USERNAME);
+  await resetAccountDefaults(workerUsername);
+});
+
+test.beforeEach(async () => {
+  await resetRateLimits();
 });
 
 test.describe("UI regression (#129 Logo, #130 Sidebar/NavUser)", () => {
@@ -26,8 +25,12 @@ test.describe("UI regression (#129 Logo, #130 Sidebar/NavUser)", () => {
     expect(count).toBeGreaterThanOrEqual(1);
   });
 
-  test("logo renders in sidebar after sign-in", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("logo renders in sidebar after sign-in", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     // Sidebar should contain at least one logo image
     const logos = page.locator('img[alt="Clumit Security"]');
@@ -39,32 +42,42 @@ test.describe("UI regression (#129 Logo, #130 Sidebar/NavUser)", () => {
 
   test("nav user shows real username instead of hardcoded text", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
-    // The nav user should show "admin" (the actual username), not "Profile" or "U"
+    // The nav user should show the actual username, not "Profile" or "U"
     // The username appears in the sidebar's nav user section
     const sidebar = page.locator("aside");
-    await expect(sidebar.getByText(ADMIN_USERNAME)).toBeVisible();
+    await expect(sidebar.getByText(workerUsername)).toBeVisible();
   });
 
-  test("nav user avatar shows correct initials", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("nav user avatar shows correct initials", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     // The avatar should show the first letter(s) of the username
-    // For "admin" → "A"
+    // For "e2e-worker-N" → "E"
     const avatar = page.locator(
       '[class*="bg-primary"][class*="text-primary-foreground"]',
     );
     await expect(avatar.first()).toBeVisible();
     const text = await avatar.first().textContent();
-    expect(text?.trim().charAt(0).toUpperCase()).toBe("A");
+    expect(text?.trim().charAt(0).toUpperCase()).toBe("E");
   });
 
   // ── Sidebar active indicator (#130) ─────────────────────────
 
-  test("sidebar shows active indicator on current page", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("sidebar shows active indicator on current page", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     // Navigate to accounts page
     await page.goto("/settings/accounts");
@@ -92,14 +105,16 @@ test.describe("UI regression (#129 Logo, #130 Sidebar/NavUser)", () => {
 
   test("nav user dropdown has profile and sign-out options", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     // Click the nav user trigger to open dropdown
     const sidebar = page.locator("aside");
     const navUser = sidebar
       .locator("button")
-      .filter({ hasText: ADMIN_USERNAME });
+      .filter({ hasText: workerUsername });
     await navUser.click();
 
     // Dropdown should show Profile and Sign Out

@@ -1,11 +1,7 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signInAndWait,
-} from "./helpers/auth";
+import { expect, test } from "./fixtures";
+import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import {
   clearMustChangePassword,
   createTestAccount,
@@ -15,15 +11,6 @@ import {
   resetAccountDefaults,
   revokeAllSessions,
 } from "./helpers/setup-db";
-
-const TEST_PREFIX = "e2e-acct-";
-const UI_CREATE_USERNAME = `${TEST_PREFIX}ui-create`;
-const UI_EDIT_USERNAME = `${TEST_PREFIX}ui-edit`;
-const UI_DELETE_USERNAME = `${TEST_PREFIX}ui-delete`;
-const CUSTOM_ROLE_API_USERNAME = `${TEST_PREFIX}custom-api`;
-const CUSTOM_ROLE_UI_USERNAME = `${TEST_PREFIX}custom-ui`;
-const CUSTOM_ROLE_PREFIX = `${TEST_PREFIX}role-`;
-const CUSTOM_GLOBAL_ROLE_NAME = `${CUSTOM_ROLE_PREFIX}global-access`;
 
 const SYSTEM_ADMIN_PERMISSIONS = [
   "accounts:read",
@@ -40,8 +27,6 @@ const SYSTEM_ADMIN_PERMISSIONS = [
   "system-settings:write",
 ];
 
-let customGlobalRoleId: number;
-
 async function recreateUiAccount(
   username: string,
   password: string,
@@ -57,10 +42,29 @@ function accountRow(page: Page, username: string): Locator {
 }
 
 test.describe("Account management", () => {
-  test.beforeAll(async () => {
+  let TEST_PREFIX: string;
+  let UI_CREATE_USERNAME: string;
+  let UI_EDIT_USERNAME: string;
+  let UI_DELETE_USERNAME: string;
+  let CUSTOM_ROLE_API_USERNAME: string;
+  let CUSTOM_ROLE_UI_USERNAME: string;
+  let CUSTOM_ROLE_PREFIX: string;
+  let CUSTOM_GLOBAL_ROLE_NAME: string;
+  let customGlobalRoleId: number;
+
+  test.beforeAll(async ({ workerUsername, workerPrefix: wp }) => {
     await resetRateLimits();
-    await clearMustChangePassword(ADMIN_USERNAME);
-    await resetAccountDefaults(ADMIN_USERNAME);
+    TEST_PREFIX = wp("e2e-acct-");
+    UI_CREATE_USERNAME = `${TEST_PREFIX}ui-create`;
+    UI_EDIT_USERNAME = `${TEST_PREFIX}ui-edit`;
+    UI_DELETE_USERNAME = `${TEST_PREFIX}ui-delete`;
+    CUSTOM_ROLE_API_USERNAME = `${TEST_PREFIX}custom-api`;
+    CUSTOM_ROLE_UI_USERNAME = `${TEST_PREFIX}custom-ui`;
+    CUSTOM_ROLE_PREFIX = `${TEST_PREFIX}role-`;
+    CUSTOM_GLOBAL_ROLE_NAME = `${CUSTOM_ROLE_PREFIX}global-access`;
+
+    await clearMustChangePassword(workerUsername);
+    await resetAccountDefaults(workerUsername);
     // Clean up any leftover test accounts
     await deleteTestAccount(`${TEST_PREFIX}alpha`);
     await deleteTestAccount(UI_CREATE_USERNAME);
@@ -76,9 +80,9 @@ test.describe("Account management", () => {
     );
   });
 
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ workerUsername }) => {
     await resetRateLimits();
-    await revokeAllSessions(ADMIN_USERNAME);
+    await revokeAllSessions(workerUsername);
   });
 
   test.afterAll(async () => {
@@ -93,8 +97,12 @@ test.describe("Account management", () => {
 
   // ── API tests ─────────────────────────────────────────────────
 
-  test("POST /api/accounts creates an account", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("POST /api/accounts creates an account", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -122,9 +130,11 @@ test.describe("Account management", () => {
 
   test("POST /api/accounts accepts a custom global-access role without customers", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     await deleteTestAccount(CUSTOM_ROLE_API_USERNAME);
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -148,8 +158,12 @@ test.describe("Account management", () => {
     expect(body.data.role_name).toBe(CUSTOM_GLOBAL_ROLE_NAME);
   });
 
-  test("GET /api/accounts lists accounts", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("GET /api/accounts lists accounts", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const response = await page.request.get(
       `/api/accounts?search=${TEST_PREFIX}`,
@@ -163,8 +177,12 @@ test.describe("Account management", () => {
     expect(testAccounts.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("PATCH /api/accounts/[id] updates an account", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("PATCH /api/accounts/[id] updates an account", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     // Get account ID
     const listRes = await page.request.get(
@@ -194,8 +212,10 @@ test.describe("Account management", () => {
 
   test("DELETE /api/accounts/[id] soft-deletes an account", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     // Get account ID
     const listRes = await page.request.get(
@@ -228,8 +248,10 @@ test.describe("Account management", () => {
 
   test("POST /api/accounts returns 400 for missing fields", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "csrf");
@@ -249,11 +271,13 @@ test.describe("Account management", () => {
 
   test("navigates to accounts page and creates an account via UI", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     // Clean up first
     await deleteTestAccount(UI_CREATE_USERNAME);
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/accounts");
 
     // Verify page heading
@@ -283,10 +307,12 @@ test.describe("Account management", () => {
 
   test("UI create flow treats a custom global-access role like System Administrator", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     await deleteTestAccount(CUSTOM_ROLE_UI_USERNAME);
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/accounts");
 
     await page.getByRole("button", { name: "Create Account" }).click();
@@ -310,10 +336,14 @@ test.describe("Account management", () => {
     );
   });
 
-  test("edits an account via UI", async ({ page }) => {
+  test("edits an account via UI", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     await recreateUiAccount(UI_EDIT_USERNAME, "UiEditPass1234!");
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/accounts");
 
     // Wait for table to load
@@ -335,10 +365,14 @@ test.describe("Account management", () => {
     await expect(row).toContainText("E2E UI Edited", { timeout: 10_000 });
   });
 
-  test("deletes an account via UI", async ({ page }) => {
+  test("deletes an account via UI", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     await recreateUiAccount(UI_DELETE_USERNAME, "UiDeletePass1234!");
 
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/accounts");
 
     // Wait for table to load
@@ -395,8 +429,12 @@ test.describe("Account management", () => {
 
   // ── Filter tests ────────────────────────────────────────────
 
-  test("search filter returns matching accounts", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("search filter returns matching accounts", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const response = await page.request.get("/api/accounts?search=admin");
     expect(response.status()).toBe(200);
@@ -410,8 +448,12 @@ test.describe("Account management", () => {
     ).toBe(true);
   });
 
-  test("role filter returns only matching role accounts", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("role filter returns only matching role accounts", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const response = await page.request.get(
       "/api/accounts?role=System+Administrator",
@@ -428,8 +470,10 @@ test.describe("Account management", () => {
 
   test("status filter returns only matching status accounts", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const response = await page.request.get("/api/accounts?status=active");
     expect(response.status()).toBe(200);
@@ -441,8 +485,12 @@ test.describe("Account management", () => {
 
   // ── Audit log verification ────────────────────────────────────
 
-  test("account audit events are visible in audit logs", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("account audit events are visible in audit logs", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     // Check audit logs API for account.create
     const auditRes = await page.request.get(

@@ -1,32 +1,33 @@
-import { expect, test } from "@playwright/test";
-
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signIn,
-} from "./helpers/auth";
+import { expect, test } from "./fixtures";
+import { resetRateLimits, signIn } from "./helpers/auth";
 import {
   clearMustChangePassword,
   resetAccountDefaults,
   setMustChangePassword,
+  setPassword,
 } from "./helpers/setup-db";
 
 test.describe("Must-change-password flow", () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ workerUsername, workerPassword }) => {
     await resetRateLimits();
-    await resetAccountDefaults(ADMIN_USERNAME);
-    await setMustChangePassword(ADMIN_USERNAME, true);
+    await resetAccountDefaults(workerUsername);
+    await setPassword(workerUsername, workerPassword);
+    await setMustChangePassword(workerUsername, true);
   });
 
-  test.afterAll(async () => {
-    await clearMustChangePassword(ADMIN_USERNAME);
-    await resetAccountDefaults(ADMIN_USERNAME);
+  test.afterAll(async ({ workerUsername, workerPassword }) => {
+    await clearMustChangePassword(workerUsername);
+    await setPassword(workerUsername, workerPassword);
+    await resetAccountDefaults(workerUsername);
   });
 
-  test("sign-in redirects to /change-password", async ({ page }) => {
+  test("sign-in redirects to /change-password", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signIn(page, workerUsername, workerPassword);
 
     await page.waitForURL("**/change-password", { timeout: 10_000 });
     await expect(page).toHaveURL(/\/change-password/);
@@ -34,9 +35,11 @@ test.describe("Must-change-password flow", () => {
 
   test("API returns 403 while must_change_password is true", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signIn(page, workerUsername, workerPassword);
     await page.waitForURL("**/change-password", { timeout: 10_000 });
 
     // Attempt to access a protected API endpoint.
@@ -49,9 +52,11 @@ test.describe("Must-change-password flow", () => {
 
   test("sign-out still works when must_change_password is true", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signIn(page, workerUsername, workerPassword);
     await page.waitForURL("**/change-password", { timeout: 10_000 });
 
     // Sign out via API (should succeed despite must_change_password).

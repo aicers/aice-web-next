@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 import { resetRateLimits } from "./helpers/auth";
 import {
@@ -9,16 +9,17 @@ import {
   revokeAllSessions,
 } from "./helpers/setup-db";
 
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "Admin1234!";
-
 /**
  * Helper: sign in via the UI and wait until redirected away from sign-in.
  */
-async function signIn(page: import("@playwright/test").Page): Promise<void> {
+async function signIn(
+  page: import("@playwright/test").Page,
+  username: string,
+  password: string,
+): Promise<void> {
   await page.goto("/sign-in");
-  await page.getByLabel("Account ID").fill(ADMIN_USERNAME);
-  await page.locator("input[name='password']").fill(ADMIN_PASSWORD);
+  await page.getByLabel("Account ID").fill(username);
+  await page.locator("input[name='password']").fill(password);
   await page.getByRole("button", { name: "Sign In" }).click();
   await expect(page).not.toHaveURL(/sign-in/, { timeout: 10_000 });
 }
@@ -33,21 +34,25 @@ async function callProtectedApi(
 }
 
 test.describe("Session Policy E2E", () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ workerUsername }) => {
     await resetRateLimits();
-    await resetAccountDefaults(ADMIN_USERNAME);
+    await resetAccountDefaults(workerUsername);
   });
 
-  test.afterAll(async () => {
-    await resetAccountDefaults(ADMIN_USERNAME);
+  test.afterAll(async ({ workerUsername }) => {
+    await resetAccountDefaults(workerUsername);
   });
 
   // ── 1. Idle timeout → 401 ──────────────────────────────────────
 
-  test("idle timeout expires session and returns 401", async ({ page }) => {
+  test("idle timeout expires session and returns 401", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     // Clean up and sign in
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Verify authenticated API works before expiring
     const beforeResponse = await callProtectedApi(page);
@@ -55,7 +60,7 @@ test.describe("Session Policy E2E", () => {
 
     // Expire the session idle timeout by setting last_active_at far in the past
     // Default idle timeout is 30 minutes, so we set 60 minutes ago
-    await expireSessionIdle(ADMIN_USERNAME, 60);
+    await expireSessionIdle(workerUsername, 60);
 
     // Next API call should return 401 with SESSION_IDLE_TIMEOUT code
     const afterResponse = await callProtectedApi(page);
@@ -69,10 +74,12 @@ test.describe("Session Policy E2E", () => {
 
   test("session flagged for re-auth blocks API calls with REAUTH_REQUIRED", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     // Clean up and sign in
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Verify authenticated API works
     const beforeResponse = await callProtectedApi(page);
@@ -81,7 +88,7 @@ test.describe("Session Policy E2E", () => {
     // Simulate IP/UA change detection by directly flagging the session
     // (In production, the guard would detect this via IP/UA comparison.
     //  Here we simulate the outcome by writing needs_reauth = true.)
-    await flagSessionReauth(ADMIN_USERNAME);
+    await flagSessionReauth(workerUsername);
 
     // Next API call should return 401 with REAUTH_REQUIRED code
     const afterResponse = await callProtectedApi(page);
@@ -95,17 +102,19 @@ test.describe("Session Policy E2E", () => {
 
   test("re-auth with correct password restores session access", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     // Clean up and sign in
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Verify authenticated API works
     const beforeResponse = await callProtectedApi(page);
     expect(beforeResponse.ok()).toBeTruthy();
 
     // Flag the session for re-auth (simulating UA major change detection)
-    await flagSessionReauth(ADMIN_USERNAME);
+    await flagSessionReauth(workerUsername);
 
     // Verify the session is blocked
     const blockedResponse = await callProtectedApi(page);
@@ -119,7 +128,7 @@ test.describe("Session Policy E2E", () => {
 
     // Call re-auth endpoint with correct password
     const reauthResponse = await page.request.post("/api/auth/reauth", {
-      data: { password: ADMIN_PASSWORD },
+      data: { password: workerPassword },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
         Origin: "http://localhost:3000",
@@ -131,7 +140,7 @@ test.describe("Session Policy E2E", () => {
     expect(reauthBody.ok).toBe(true);
 
     // Verify session is restored: needs_reauth should be false now
-    const sessionStatus = await getSessionStatus(ADMIN_USERNAME);
+    const sessionStatus = await getSessionStatus(workerUsername);
     expect(sessionStatus).not.toBeNull();
     expect(sessionStatus?.needsReauth).toBe(false);
 
@@ -142,13 +151,15 @@ test.describe("Session Policy E2E", () => {
 
   test("re-auth with wrong password is rejected and session stays blocked", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
     // Clean up and sign in
-    await revokeAllSessions(ADMIN_USERNAME);
-    await signIn(page);
+    await revokeAllSessions(workerUsername);
+    await signIn(page, workerUsername, workerPassword);
 
     // Flag for re-auth
-    await flagSessionReauth(ADMIN_USERNAME);
+    await flagSessionReauth(workerUsername);
 
     // Get CSRF token
     const cookies = await page.context().cookies();
@@ -168,7 +179,7 @@ test.describe("Session Policy E2E", () => {
     expect(reauthBody.error).toBe("Invalid password");
 
     // Session should still be blocked
-    const sessionStatus = await getSessionStatus(ADMIN_USERNAME);
+    const sessionStatus = await getSessionStatus(workerUsername);
     expect(sessionStatus).not.toBeNull();
     expect(sessionStatus?.needsReauth).toBe(true);
 

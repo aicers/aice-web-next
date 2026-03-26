@@ -1,25 +1,24 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signInAndWait,
-} from "./helpers/auth";
+import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import { resetAccountDefaults } from "./helpers/setup-db";
 
 test.describe("CSRF protection", () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ workerUsername }) => {
     await resetRateLimits();
-    await resetAccountDefaults(ADMIN_USERNAME);
+    await resetAccountDefaults(workerUsername);
   });
 
-  test.afterAll(async () => {
-    await resetAccountDefaults(ADMIN_USERNAME);
+  test.afterAll(async ({ workerUsername }) => {
+    await resetAccountDefaults(workerUsername);
   });
 
-  test("POST without x-csrf-token header returns 403", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("POST without x-csrf-token header returns 403", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const response = await page.request.post("/api/auth/sign-out", {
       headers: {
@@ -31,8 +30,12 @@ test.describe("CSRF protection", () => {
     expect(response.status()).toBe(403);
   });
 
-  test("POST with wrong CSRF token returns 403", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("POST with wrong CSRF token returns 403", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const response = await page.request.post("/api/auth/sign-out", {
       headers: {
@@ -47,8 +50,10 @@ test.describe("CSRF protection", () => {
   test("POST without Origin header returns 403", async ({
     page,
     playwright,
+    workerUsername,
+    workerPassword,
   }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     // Extract cookies from the authenticated context.
     const cookies = await page.context().cookies();

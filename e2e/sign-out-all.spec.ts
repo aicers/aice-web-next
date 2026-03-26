@@ -1,10 +1,7 @@
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-} from "./helpers/auth";
+import { expect, test } from "./fixtures";
+import { resetRateLimits } from "./helpers/auth";
 import {
   getSessionStatus,
   resetAccountDefaults,
@@ -16,15 +13,17 @@ const APP_URL = process.env.BASE_URL ?? "http://localhost:3000";
 // origin even when Playwright targets the app over 127.0.0.1.
 const APP_ORIGIN = APP_URL.replace("127.0.0.1", "localhost");
 
-async function signInViaApi(page: Page): Promise<void> {
-  const response = await page.request.post("/api/auth/sign-in", {
-    headers: { "Content-Type": "application/json" },
-    data: {
-      username: ADMIN_USERNAME,
-      password: ADMIN_PASSWORD,
-    },
-  });
-  expect(response.ok()).toBeTruthy();
+function makeSignInViaApi(username: string, password: string) {
+  return async (page: Page): Promise<void> => {
+    const response = await page.request.post("/api/auth/sign-in", {
+      headers: { "Content-Type": "application/json" },
+      data: {
+        username,
+        password,
+      },
+    });
+    expect(response.ok()).toBeTruthy();
+  };
 }
 
 async function signOutAllViaApi(page: Page): Promise<void> {
@@ -40,16 +39,21 @@ async function signOutAllViaApi(page: Page): Promise<void> {
 }
 
 test.describe("Sign-out-all", () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ workerUsername }) => {
     await resetRateLimits();
-    await resetAccountDefaults(ADMIN_USERNAME);
+    await resetAccountDefaults(workerUsername);
   });
 
-  test.afterEach(async () => {
-    await resetAccountDefaults(ADMIN_USERNAME);
+  test.afterEach(async ({ workerUsername }) => {
+    await resetAccountDefaults(workerUsername);
   });
 
-  test("sign-out-all invalidates other sessions", async ({ browser }) => {
+  test("sign-out-all invalidates other sessions", async ({
+    browser,
+    workerUsername,
+    workerPassword,
+  }) => {
+    const signInViaApi = makeSignInViaApi(workerUsername, workerPassword);
     // Create two independent browser contexts (separate cookie jars).
     const contextA = await browser.newContext();
     const contextB = await browser.newContext();
@@ -79,20 +83,23 @@ test.describe("Sign-out-all", () => {
 
   test("sign-out-all clears active sessions so max_sessions does not block re-login", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await setMaxSessions(ADMIN_USERNAME, 1);
+    const signInViaApi = makeSignInViaApi(workerUsername, workerPassword);
+    await setMaxSessions(workerUsername, 1);
     await signInViaApi(page);
 
-    expect(await getSessionStatus(ADMIN_USERNAME)).not.toBeNull();
+    expect(await getSessionStatus(workerUsername)).not.toBeNull();
 
     await signOutAllViaApi(page);
 
-    await expect.poll(async () => getSessionStatus(ADMIN_USERNAME)).toBeNull();
+    await expect.poll(async () => getSessionStatus(workerUsername)).toBeNull();
 
     await signInViaApi(page);
 
     await expect
-      .poll(async () => getSessionStatus(ADMIN_USERNAME))
+      .poll(async () => getSessionStatus(workerUsername))
       .not.toBeNull();
   });
 });

@@ -1,23 +1,22 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signInAndWait,
-} from "./helpers/auth";
+import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import { resetAccountDefaults } from "./helpers/setup-db";
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ workerUsername }) => {
   await resetRateLimits();
-  await resetAccountDefaults(ADMIN_USERNAME);
+  await resetAccountDefaults(workerUsername);
 });
 
 test.describe("Auth flow screens (#131)", () => {
   // ── Sign-out reason screen ──────────────────────────────────
 
-  test("signed-out reason screen displays after sign-out", async ({ page }) => {
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+  test("signed-out reason screen displays after sign-out", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
 
     // Sign out via the nav user menu
     await page.goto("/sign-in?reason=signed-out");
@@ -110,9 +109,11 @@ test.describe("Auth flow screens (#131)", () => {
 
   test("sign-out invalidates session so protected pages redirect to sign-in", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await resetAccountDefaults(ADMIN_USERNAME);
-    await signInAndWait(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await resetAccountDefaults(workerUsername);
+    await signInAndWait(page, workerUsername, workerPassword);
 
     const cookies = await page.context().cookies();
     const csrf = cookies.find((c) => c.name === "csrf")?.value ?? "";

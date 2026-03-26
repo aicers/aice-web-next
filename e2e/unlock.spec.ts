@@ -1,6 +1,5 @@
-import { expect, test } from "@playwright/test";
-
-import { ADMIN_USERNAME, resetRateLimits } from "./helpers/auth";
+import { expect, test } from "./fixtures";
+import { resetRateLimits } from "./helpers/auth";
 import {
   createTestAccount,
   deleteTestAccount,
@@ -11,9 +10,9 @@ const TARGET_USERNAME = "e2e-unlock-target";
 const TARGET_PASSWORD = "Target1234!";
 
 test.describe("Account unlock/restore — UI", () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ workerUsername }) => {
     await resetRateLimits();
-    await resetAccountDefaults(ADMIN_USERNAME);
+    await resetAccountDefaults(workerUsername);
     await createTestAccount(
       TARGET_USERNAME,
       TARGET_PASSWORD,
@@ -21,9 +20,9 @@ test.describe("Account unlock/restore — UI", () => {
     );
   });
 
-  test.afterAll(async () => {
+  test.afterAll(async ({ workerUsername }) => {
     await deleteTestAccount(TARGET_USERNAME);
-    await resetAccountDefaults(ADMIN_USERNAME);
+    await resetAccountDefaults(workerUsername);
   });
 
   test("restored account can sign in again", async ({ page }) => {

@@ -1,11 +1,5 @@
-import { expect, test } from "@playwright/test";
-
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signIn,
-} from "./helpers/auth";
+import { expect, test } from "./fixtures";
+import { resetRateLimits, signIn } from "./helpers/auth";
 import {
   addPasswordHistory,
   clearPasswordHistory,
@@ -17,40 +11,47 @@ import {
 const NEW_PASSWORD = "NewSecurePass123!";
 
 test.describe("Change password flow", () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ workerUsername, workerPassword }) => {
     await resetRateLimits();
-    await resetAccountDefaults(ADMIN_USERNAME);
-    await clearPasswordHistory(ADMIN_USERNAME);
+    await resetAccountDefaults(workerUsername);
+    await setPassword(workerUsername, workerPassword);
+    await clearPasswordHistory(workerUsername);
   });
 
   test.beforeEach(async () => {
     await resetRateLimits();
   });
 
-  test.afterAll(async () => {
+  test.afterAll(async ({ workerUsername, workerPassword }) => {
     // Restore original password and reset account
-    await setPassword(ADMIN_USERNAME, ADMIN_PASSWORD);
-    await clearPasswordHistory(ADMIN_USERNAME);
-    await resetAccountDefaults(ADMIN_USERNAME);
+    await setPassword(workerUsername, workerPassword);
+    await clearPasswordHistory(workerUsername);
+    await resetAccountDefaults(workerUsername);
   });
 
   test("mustChangePassword user is redirected to /change-password from dashboard", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await setMustChangePassword(ADMIN_USERNAME, true);
+    await setMustChangePassword(workerUsername, true);
 
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signIn(page, workerUsername, workerPassword);
 
     await page.waitForURL("**/change-password", { timeout: 10_000 });
     await expect(page).toHaveURL(/\/change-password/);
   });
 
-  test("wrong current password shows error", async ({ page }) => {
-    await setMustChangePassword(ADMIN_USERNAME, true);
+  test("wrong current password shows error", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await setMustChangePassword(workerUsername, true);
 
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signIn(page, workerUsername, workerPassword);
     await page.waitForURL("**/change-password", { timeout: 10_000 });
 
     // Fill the change-password form with wrong current password
@@ -73,17 +74,19 @@ test.describe("Change password flow", () => {
 
   test("successful password change redirects to dashboard", async ({
     page,
+    workerUsername,
+    workerPassword,
   }) => {
-    await setMustChangePassword(ADMIN_USERNAME, true);
+    await setMustChangePassword(workerUsername, true);
 
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signIn(page, workerUsername, workerPassword);
     await page.waitForURL("**/change-password", { timeout: 10_000 });
 
     // Fill the change-password form correctly
     await page
       .locator("input[autocomplete='current-password']")
-      .fill(ADMIN_PASSWORD);
+      .fill(workerPassword);
     await page
       .locator("input[autocomplete='new-password']")
       .first()
@@ -106,14 +109,16 @@ test.describe("Change password flow", () => {
     expect(meResponse.status()).toBe(200);
 
     // Restore password for subsequent tests
-    await setPassword(ADMIN_USERNAME, ADMIN_PASSWORD);
-    await clearPasswordHistory(ADMIN_USERNAME);
+    await setPassword(workerUsername, workerPassword);
+    await clearPasswordHistory(workerUsername);
   });
 
   test("password change keeps the current session and revokes others", async ({
     browser,
+    workerUsername,
+    workerPassword,
   }) => {
-    await setMustChangePassword(ADMIN_USERNAME, true);
+    await setMustChangePassword(workerUsername, true);
 
     const contextA = await browser.newContext();
     const contextB = await browser.newContext();
@@ -123,16 +128,16 @@ test.describe("Change password flow", () => {
       const pageB = await contextB.newPage();
 
       await pageA.goto("/sign-in");
-      await signIn(pageA, ADMIN_USERNAME, ADMIN_PASSWORD);
+      await signIn(pageA, workerUsername, workerPassword);
       await pageA.waitForURL("**/change-password", { timeout: 10_000 });
 
       await pageB.goto("/sign-in");
-      await signIn(pageB, ADMIN_USERNAME, ADMIN_PASSWORD);
+      await signIn(pageB, workerUsername, workerPassword);
       await pageB.waitForURL("**/change-password", { timeout: 10_000 });
 
       await pageA
         .locator("input[autocomplete='current-password']")
-        .fill(ADMIN_PASSWORD);
+        .fill(workerPassword);
       await pageA
         .locator("input[autocomplete='new-password']")
         .first()
@@ -158,24 +163,28 @@ test.describe("Change password flow", () => {
     } finally {
       await contextA.close();
       await contextB.close();
-      await setPassword(ADMIN_USERNAME, ADMIN_PASSWORD);
-      await clearPasswordHistory(ADMIN_USERNAME);
-      await resetAccountDefaults(ADMIN_USERNAME);
+      await setPassword(workerUsername, workerPassword);
+      await clearPasswordHistory(workerUsername);
+      await resetAccountDefaults(workerUsername);
     }
   });
 
-  test("blocklisted password shows error", async ({ page }) => {
-    await setMustChangePassword(ADMIN_USERNAME, true);
+  test("blocklisted password shows error", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await setMustChangePassword(workerUsername, true);
 
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signIn(page, workerUsername, workerPassword);
     await page.waitForURL("**/change-password", { timeout: 10_000 });
 
     // "password" is in the blocklist (also too short, so both errors appear)
     const blocklisted = "password";
     await page
       .locator("input[autocomplete='current-password']")
-      .fill(ADMIN_PASSWORD);
+      .fill(workerPassword);
     await page
       .locator("input[autocomplete='new-password']")
       .first()
@@ -191,15 +200,19 @@ test.describe("Change password flow", () => {
     await expect(errorAlert).toContainText(/common/i);
   });
 
-  test("recently used password shows reuse error", async ({ page }) => {
+  test("recently used password shows reuse error", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
     // Use a password that meets minLength (12) and add it to history
     const reusedPassword = "ReusedPass123!";
-    await setPassword(ADMIN_USERNAME, reusedPassword);
-    await addPasswordHistory(ADMIN_USERNAME, reusedPassword);
-    await setMustChangePassword(ADMIN_USERNAME, true);
+    await setPassword(workerUsername, reusedPassword);
+    await addPasswordHistory(workerUsername, reusedPassword);
+    await setMustChangePassword(workerUsername, true);
 
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, reusedPassword);
+    await signIn(page, workerUsername, reusedPassword);
     await page.waitForURL("**/change-password", { timeout: 10_000 });
 
     // Try to reuse the same password
@@ -221,7 +234,7 @@ test.describe("Change password flow", () => {
     await expect(errorAlert).toContainText(/recent/i);
 
     // Cleanup: restore original password
-    await setPassword(ADMIN_USERNAME, ADMIN_PASSWORD);
-    await clearPasswordHistory(ADMIN_USERNAME);
+    await setPassword(workerUsername, workerPassword);
+    await clearPasswordHistory(workerUsername);
   });
 });

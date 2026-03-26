@@ -1,11 +1,5 @@
-import { expect, test } from "@playwright/test";
-
-import {
-  ADMIN_PASSWORD,
-  ADMIN_USERNAME,
-  resetRateLimits,
-  signIn,
-} from "./helpers/auth";
+import { expect, test } from "./fixtures";
+import { resetRateLimits, signIn } from "./helpers/auth";
 import {
   createFakeSessions,
   resetAccountDefaults,
@@ -21,27 +15,35 @@ test.describe("Sign-in error messages", () => {
     await resetRateLimits();
   });
 
-  test.afterEach(async () => {
-    await resetAccountDefaults(ADMIN_USERNAME);
+  test.afterEach(async ({ workerUsername }) => {
+    await resetAccountDefaults(workerUsername);
   });
 
-  test("inactive account shows 'Account is not active'", async ({ page }) => {
-    await setAccountStatus(ADMIN_USERNAME, "disabled");
+  test("inactive account shows 'Account is not active'", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await setAccountStatus(workerUsername, "disabled");
 
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signIn(page, workerUsername, workerPassword);
 
     await expect(alert(page)).toBeVisible();
     await expect(alert(page)).toContainText("Account is not active");
   });
 
-  test("max sessions exceeded shows error", async ({ page }) => {
-    await resetAccountDefaults(ADMIN_USERNAME);
-    await setMaxSessions(ADMIN_USERNAME, 1);
-    await createFakeSessions(ADMIN_USERNAME, 1);
+  test("max sessions exceeded shows error", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await resetAccountDefaults(workerUsername);
+    await setMaxSessions(workerUsername, 1);
+    await createFakeSessions(workerUsername, 1);
 
     await page.goto("/sign-in");
-    await signIn(page, ADMIN_USERNAME, ADMIN_PASSWORD);
+    await signIn(page, workerUsername, workerPassword);
 
     await expect(alert(page)).toBeVisible();
     await expect(alert(page)).toContainText(
