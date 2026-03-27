@@ -55,9 +55,9 @@
     "@types/pg": "^8.18.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "markdownlint-cli2": "^0.21.0",
+    "markdownlint-cli2": "^0.22.0",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.2"
   }
 }
