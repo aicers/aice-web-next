@@ -487,6 +487,31 @@ export async function getSessionStatus(username: string): Promise<{
   });
 }
 
+// ── TOTP helpers ──────────────────────────────────────────────────
+
+export async function deleteTotpCredential(username: string): Promise<void> {
+  await withAuthDb((c) =>
+    c.query(
+      "DELETE FROM totp_credentials WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    ),
+  );
+}
+
+export async function setMfaPolicyAllowedMethods(
+  methods: string[],
+): Promise<void> {
+  await withAuthDb((c) =>
+    c.query(`UPDATE system_settings SET value = $1 WHERE key = 'mfa_policy'`, [
+      JSON.stringify({ allowed_methods: methods }),
+    ]),
+  );
+}
+
+export async function resetMfaPolicy(): Promise<void> {
+  await setMfaPolicyAllowedMethods(["webauthn", "totp"]);
+}
+
 function escapeIdentifier(str: string): string {
   return `"${str.replace(/"/g, '""')}"`;
 }

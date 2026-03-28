@@ -115,14 +115,17 @@
       "system_settings_update": "Settings update",
       "role_create": "Role create",
       "role_update": "Role update",
-      "role_delete": "Role delete"
+      "role_delete": "Role delete",
+      "mfa_totp_enroll": "TOTP enroll",
+      "mfa_totp_remove": "TOTP remove"
     },
     "targetTypes": {
       "account": "Account",
       "session": "Session",
       "customer": "Customer",
       "system_settings": "System Settings",
-      "role": "Role"
+      "role": "Role",
+      "mfa": "MFA"
     }
   },
   "customers": {
