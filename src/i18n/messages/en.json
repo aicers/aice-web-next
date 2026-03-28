@@ -35,7 +35,17 @@
     "signInAgain": "Sign in again",
     "sessionExpiring": "Your session is about to expire",
     "sessionExpiringDescription": "Your session will expire in {seconds} seconds. Would you like to stay signed in?",
-    "extendSession": "Stay Signed In"
+    "extendSession": "Stay Signed In",
+    "mfa": {
+      "enterTotpCode": "Enter the 6-digit code from your authenticator app",
+      "verifyButton": "Verify",
+      "verifying": "Verifying...",
+      "invalidCode": "Invalid verification code. Please try again.",
+      "mfaTokenExpired": "Verification session expired. Please sign in again.",
+      "totpDisabledMidFlow": "TOTP verification is no longer available. Please contact your administrator.",
+      "rateLimited": "Too many attempts. Please wait and try again.",
+      "backToSignIn": "Back to sign in"
+    }
   },
   "nav": {
     "home": "Home",
@@ -117,7 +127,9 @@
       "role_update": "Role update",
       "role_delete": "Role delete",
       "mfa_totp_enroll": "TOTP enroll",
-      "mfa_totp_remove": "TOTP remove"
+      "mfa_totp_remove": "TOTP remove",
+      "mfa_totp_verify_success": "TOTP verify success",
+      "mfa_totp_verify_failure": "TOTP verify failure"
     },
     "targetTypes": {
       "account": "Account",

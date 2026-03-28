@@ -1,6 +1,7 @@
 import "server-only";
 
-import { cookies } from "next/headers";
+import { randomUUID } from "node:crypto";
+
 import { type NextRequest, NextResponse } from "next/server";
 
 import {
@@ -9,23 +10,14 @@ import {
 } from "@/lib/audit/correlation";
 import { auditLog } from "@/lib/audit/logger";
 import { isIpAllowed } from "@/lib/auth/cidr";
-import {
-  setAccessTokenCookie,
-  setTokenExpCookie,
-  setTokenTtlCookie,
-} from "@/lib/auth/cookies";
-import {
-  CSRF_COOKIE_NAME,
-  CSRF_COOKIE_OPTIONS,
-  generateCsrfToken,
-} from "@/lib/auth/csrf";
 import { extractClientIp } from "@/lib/auth/ip";
-import { issueAccessToken } from "@/lib/auth/jwt";
-import { loadJwtPolicy } from "@/lib/auth/jwt-policy";
 import { loadLockoutPolicy } from "@/lib/auth/lockout-policy";
+import { loadMfaPolicy } from "@/lib/auth/mfa-policy";
+import { issueMfaToken } from "@/lib/auth/mfa-token";
 import { verifyPassword } from "@/lib/auth/password";
 import { loadSessionPolicy } from "@/lib/auth/session-policy";
-import { extractBrowserFingerprint } from "@/lib/auth/ua-parser";
+import { createSessionAndIssueTokens } from "@/lib/auth/sign-in";
+import { getTotpCredential } from "@/lib/auth/totp";
 import { query } from "@/lib/db/client";
 import { checkSignInRateLimit } from "@/lib/rate-limit/limiter";
 
@@ -195,101 +187,6 @@ async function applyFailedLogin(
   );
 }
 
-/**
- * Create a new session, issue JWT + CSRF tokens, set cookies,
- * and log a successful sign-in.
- */
-async function createSessionAndIssueTokens(params: {
-  accountId: string;
-  roleName: string;
-  tokenVersion: number;
-  mustChangePassword: boolean;
-  locale: string | null;
-  ip: string;
-  userAgent: string;
-}): Promise<NextResponse> {
-  const {
-    accountId,
-    roleName,
-    tokenVersion,
-    mustChangePassword,
-    locale,
-    ip,
-    userAgent,
-  } = params;
-
-  // Reset failed count, lockout count, and update last_sign_in_at
-  await query(
-    `UPDATE accounts
-     SET failed_sign_in_count = 0, lockout_count = 0, last_sign_in_at = NOW()
-     WHERE id = $1`,
-    [accountId],
-  );
-
-  // Create session
-  const browserFingerprint = extractBrowserFingerprint(userAgent);
-  const { rows: sessionRows } = await query<{ sid: string }>(
-    `INSERT INTO sessions (sid, account_id, ip_address, user_agent, browser_fingerprint)
-     VALUES (gen_random_uuid(), $1, $2, $3, $4)
-     RETURNING sid`,
-    [accountId, ip, userAgent, browserFingerprint],
-  );
-  const sessionId = sessionRows[0].sid;
-
-  // Issue JWT
-  const jwt = await issueAccessToken({
-    accountId,
-    sessionId,
-    roles: [roleName],
-    tokenVersion,
-  });
-
-  // Issue CSRF token
-  const csrfSecret = process.env.CSRF_SECRET;
-  if (!csrfSecret) {
-    return NextResponse.json(
-      { error: "Server configuration error" },
-      { status: 500 },
-    );
-  }
-  const { token: csrfToken } = generateCsrfToken(sessionId, csrfSecret);
-
-  // Read JWT policy for cookie maxAge
-  const jwtPolicy = await loadJwtPolicy();
-  const maxAge = jwtPolicy.accessTokenExpirationMinutes * 60;
-
-  // Set cookies
-  const tokenExp = Math.floor(Date.now() / 1000) + maxAge;
-  await setAccessTokenCookie(jwt, maxAge);
-  await setTokenExpCookie(tokenExp, maxAge);
-  await setTokenTtlCookie(maxAge);
-  const cookieStore = await cookies();
-  cookieStore.set(CSRF_COOKIE_NAME, csrfToken, {
-    ...CSRF_COOKIE_OPTIONS,
-    maxAge,
-  });
-
-  // Set NEXT_LOCALE cookie for next-intl locale negotiation
-  if (locale) {
-    cookieStore.set("NEXT_LOCALE", locale, {
-      path: "/",
-      maxAge: 365 * 24 * 60 * 60,
-    });
-  }
-
-  // Audit success
-  await auditLog.record({
-    actor: accountId,
-    action: "auth.sign_in.success",
-    target: "session",
-    targetId: sessionId,
-    ip,
-    sid: sessionId,
-  });
-
-  return NextResponse.json({ mustChangePassword });
-}
-
 // ── Handler ─────────────────────────────────────────────────────
 
 async function handleSignIn(request: NextRequest): Promise<NextResponse> {
@@ -383,6 +280,32 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
   const passwordValid = await verifyPassword(account.password_hash, password);
   if (!passwordValid) {
     return applyFailedLogin(account, ip);
+  }
+
+  // Step 6.5: MFA check (credential + policy dual check)
+  const totpCredential = await getTotpCredential(account.id);
+  if (totpCredential?.verified) {
+    const mfaPolicy = await loadMfaPolicy();
+    if (mfaPolicy.allowedMethods.includes("totp")) {
+      const jti = randomUUID();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      await query(
+        "INSERT INTO mfa_challenges (jti, account_id, expires_at) VALUES ($1, $2, $3)",
+        [jti, account.id, expiresAt],
+      );
+      const mfaToken = await issueMfaToken({
+        accountId: account.id,
+        roles: [account.role_name],
+        tokenVersion: account.token_version,
+        jti,
+      });
+      return NextResponse.json({
+        mfaRequired: true,
+        mfaToken,
+        mfaMethods: ["totp"],
+      });
+    }
+    // TOTP enrolled but not in policy — graceful degradation
   }
 
   // Step 7: Max sessions check

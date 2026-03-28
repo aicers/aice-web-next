@@ -245,6 +245,35 @@ export async function checkSensitiveOpRateLimit(
   return { limited: false };
 }
 
+// ── MFA challenge rate limiting ──────────────────────────────────
+
+const MFA_CHALLENGE_COUNT = 5;
+const MFA_CHALLENGE_WINDOW_MINUTES = 5;
+
+/**
+ * Per-account+IP rate limit for MFA challenge attempts.
+ *
+ * @param accountId The account extracted from the mfaToken.
+ * @param ip        Client IP address.
+ */
+export async function checkMfaChallengeRateLimit(
+  accountId: string,
+  ip: string,
+): Promise<RateLimitResult> {
+  const s = getStore();
+  const windowMs = MFA_CHALLENGE_WINDOW_MINUTES * 60_000;
+  const result = s.increment(
+    `mfa-challenge:account-ip:${accountId}:${ip}`,
+    windowMs,
+  );
+
+  if (result.count > MFA_CHALLENGE_COUNT) {
+    return { limited: true, retryAfterSeconds: retryAfter(result.resetAt) };
+  }
+
+  return { limited: false };
+}
+
 // ── Cache invalidation ───────────────────────────────────────────
 
 /**

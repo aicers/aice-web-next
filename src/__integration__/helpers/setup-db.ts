@@ -512,6 +512,66 @@ export async function resetMfaPolicy(): Promise<void> {
   await setMfaPolicyAllowedMethods(["webauthn", "totp"]);
 }
 
+// ── MFA challenge helpers ─────────────────────────────────────────
+
+export async function enrollAndVerifyTotp(username: string): Promise<string> {
+  const OTPAuth = await import("otpauth");
+  const secret = new OTPAuth.Secret({ size: 20 }).base32;
+
+  return withAuthDb(async (c) => {
+    await c.query(
+      `INSERT INTO totp_credentials (account_id, secret, verified)
+       VALUES ((SELECT id FROM accounts WHERE username = $1), $2, true)
+       ON CONFLICT (account_id)
+       DO UPDATE SET secret = $2, verified = true`,
+      [username, secret],
+    );
+    return secret;
+  });
+}
+
+export async function deleteMfaChallenges(username: string): Promise<void> {
+  await withAuthDb((c) =>
+    c.query(
+      "DELETE FROM mfa_challenges WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    ),
+  );
+}
+
+export async function incrementTokenVersion(username: string): Promise<void> {
+  await withAuthDb((c) =>
+    c.query(
+      "UPDATE accounts SET token_version = token_version + 1 WHERE username = $1",
+      [username],
+    ),
+  );
+}
+
+export async function setAllowedIps(
+  username: string,
+  ips: string[] | null,
+): Promise<void> {
+  await withAuthDb((c) =>
+    c.query("UPDATE accounts SET allowed_ips = $2 WHERE username = $1", [
+      username,
+      ips,
+    ]),
+  );
+}
+
+export async function setAccountRole(
+  username: string,
+  roleName: string,
+): Promise<void> {
+  await withAuthDb((c) =>
+    c.query(
+      `UPDATE accounts SET role_id = (SELECT id FROM roles WHERE name = $1) WHERE username = $2`,
+      [roleName, username],
+    ),
+  );
+}
+
 function escapeIdentifier(str: string): string {
   return `"${str.replace(/"/g, '""')}"`;
 }
