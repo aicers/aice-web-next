@@ -115,14 +115,17 @@
       "system_settings_update": "설정 변경",
       "role_create": "역할 생성",
       "role_update": "역할 수정",
-      "role_delete": "역할 삭제"
+      "role_delete": "역할 삭제",
+      "mfa_totp_enroll": "TOTP 등록",
+      "mfa_totp_remove": "TOTP 해제"
     },
     "targetTypes": {
       "account": "계정",
       "session": "세션",
       "customer": "고객",
       "system_settings": "시스템 설정",
-      "role": "역할"
+      "role": "역할",
+      "mfa": "MFA"
     }
   },
   "customers": {

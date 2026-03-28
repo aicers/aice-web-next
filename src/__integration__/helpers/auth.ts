@@ -257,15 +257,21 @@ export async function authPatch(
 export async function authDelete(
   session: AuthSession,
   path: string,
+  data?: unknown,
 ): Promise<Response> {
+  const headers: Record<string, string> = {
+    Cookie: session.cookie,
+    "X-CSRF-Token": session.csrfToken,
+    "User-Agent": INTEGRATION_USER_AGENT,
+    Origin: SERVER_ORIGIN,
+  };
+  if (data !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
   return fetch(`${SERVER_ORIGIN}${path}`, {
     method: "DELETE",
-    headers: {
-      Cookie: session.cookie,
-      "X-CSRF-Token": session.csrfToken,
-      "User-Agent": INTEGRATION_USER_AGENT,
-      Origin: SERVER_ORIGIN,
-    },
+    headers,
+    body: data !== undefined ? JSON.stringify(data) : undefined,
   });
 }
 

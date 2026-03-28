@@ -41,6 +41,9 @@ type SystemSettingsAction = "system_settings.update";
 /** Role event actions (#134). */
 type RoleAction = "role.create" | "role.update" | "role.delete";
 
+/** MFA event actions (#206). */
+type MfaAction = "mfa.totp.enroll" | "mfa.totp.remove";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
@@ -49,7 +52,8 @@ export type AuditAction =
   | PasswordAction
   | CustomerAction
   | SystemSettingsAction
-  | RoleAction;
+  | RoleAction
+  | MfaAction;
 
 /** Target entity types for audit events. */
 export type AuditTargetType =
@@ -57,7 +61,8 @@ export type AuditTargetType =
   | "session"
   | "customer"
   | "system_settings"
-  | "role";
+  | "role"
+  | "mfa";
 
 /** Canonical runtime list of supported audit actions. */
 export const AUDIT_ACTIONS = [
@@ -89,6 +94,8 @@ export const AUDIT_ACTIONS = [
   "role.create",
   "role.update",
   "role.delete",
+  "mfa.totp.enroll",
+  "mfa.totp.remove",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */
@@ -98,4 +105,5 @@ export const AUDIT_TARGET_TYPES = [
   "customer",
   "system_settings",
   "role",
+  "mfa",
 ] as const satisfies readonly AuditTargetType[];
