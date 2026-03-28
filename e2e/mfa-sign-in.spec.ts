@@ -94,7 +94,7 @@ test.describe("MFA sign-in flow (#207)", () => {
     await page.getByRole("button", { name: /verify/i }).click();
 
     // Should show error message
-    const alert = page.locator("[role='alert']");
+    const alert = page.locator("p[role='alert']");
     await expect(alert).toBeVisible({ timeout: 5_000 });
 
     // Clear and enter correct code
