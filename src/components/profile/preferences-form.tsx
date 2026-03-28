@@ -96,7 +96,7 @@ export function PreferencesForm() {
   }
 
   return (
-    <div className="mx-auto max-w-lg space-y-8">
+    <>
       <h1 className="text-2xl font-semibold">{t("heading")}</h1>
 
       <div className="space-y-6">
@@ -150,6 +150,6 @@ export function PreferencesForm() {
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 }
