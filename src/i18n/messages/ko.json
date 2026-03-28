@@ -35,7 +35,17 @@
     "signInAgain": "다시 로그인",
     "sessionExpiring": "세션이 곧 만료됩니다",
     "sessionExpiringDescription": "세션이 {seconds}초 후에 만료됩니다. 로그인을 유지하시겠습니까?",
-    "extendSession": "로그인 유지"
+    "extendSession": "로그인 유지",
+    "mfa": {
+      "enterTotpCode": "인증 앱의 6자리 코드를 입력하세요",
+      "verifyButton": "확인",
+      "verifying": "확인 중...",
+      "invalidCode": "잘못된 인증 코드입니다. 다시 시도해 주세요.",
+      "mfaTokenExpired": "인증 세션이 만료되었습니다. 다시 로그인해 주세요.",
+      "totpDisabledMidFlow": "TOTP 인증을 더 이상 사용할 수 없습니다. 관리자에게 문의하세요.",
+      "rateLimited": "시도 횟수가 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+      "backToSignIn": "로그인으로 돌아가기"
+    }
   },
   "nav": {
     "home": "홈",
@@ -117,7 +127,9 @@
       "role_update": "역할 수정",
       "role_delete": "역할 삭제",
       "mfa_totp_enroll": "TOTP 등록",
-      "mfa_totp_remove": "TOTP 해제"
+      "mfa_totp_remove": "TOTP 해제",
+      "mfa_totp_verify_success": "TOTP 인증 성공",
+      "mfa_totp_verify_failure": "TOTP 인증 실패"
     },
     "targetTypes": {
       "account": "계정",

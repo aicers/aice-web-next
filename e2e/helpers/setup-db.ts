@@ -541,6 +541,81 @@ function escapeIdentifier(str: string): string {
   return `"${str.replace(/"/g, '""')}"`;
 }
 
+// ── TOTP / MFA helpers ───────────────────────────────────────────
+
+/**
+ * Enroll a verified TOTP credential directly in the DB.
+ * Returns the base32 secret for generating codes in tests.
+ */
+export async function enrollAndVerifyTotp(username: string): Promise<string> {
+  const { randomBytes } = await import("node:crypto");
+  // Manual base32 encoding of 20 random bytes
+  const raw = randomBytes(20);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let secret = "";
+  let bits = 0;
+  let buffer = 0;
+  for (const byte of raw) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      secret += alphabet[(buffer >> bits) & 0x1f];
+    }
+  }
+  if (bits > 0) {
+    secret += alphabet[(buffer << (5 - bits)) & 0x1f];
+  }
+
+  await pool.query(
+    `INSERT INTO totp_credentials (account_id, secret, verified)
+     VALUES ((SELECT id FROM accounts WHERE username = $1), $2, true)
+     ON CONFLICT (account_id)
+     DO UPDATE SET secret = $2, verified = true`,
+    [username, secret],
+  );
+  return secret;
+}
+
+/**
+ * Delete all TOTP credentials for a user.
+ */
+export async function deleteTotpCredential(username: string): Promise<void> {
+  await pool.query(
+    "DELETE FROM totp_credentials WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+    [username],
+  );
+}
+
+/**
+ * Delete all MFA challenge nonces for a user.
+ */
+export async function deleteMfaChallenges(username: string): Promise<void> {
+  await pool.query(
+    "DELETE FROM mfa_challenges WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+    [username],
+  );
+}
+
+/**
+ * Update MFA policy allowed methods directly in DB.
+ */
+export async function setMfaPolicyAllowedMethods(
+  methods: string[],
+): Promise<void> {
+  await pool.query(
+    `UPDATE system_settings SET value = $1 WHERE key = 'mfa_policy'`,
+    [JSON.stringify({ allowed_methods: methods })],
+  );
+}
+
+/**
+ * Reset MFA policy to default (allow both webauthn and totp).
+ */
+export async function resetMfaPolicy(): Promise<void> {
+  await setMfaPolicyAllowedMethods(["webauthn", "totp"]);
+}
+
 // ── Audit database helpers ────────────────────────────────────────
 
 /**
