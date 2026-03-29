@@ -129,7 +129,9 @@
       "mfa_totp_enroll": "TOTP enroll",
       "mfa_totp_remove": "TOTP remove",
       "mfa_totp_verify_success": "TOTP verify success",
-      "mfa_totp_verify_failure": "TOTP verify failure"
+      "mfa_totp_verify_failure": "TOTP verify failure",
+      "mfa_webauthn_register": "WebAuthn register",
+      "mfa_webauthn_remove": "WebAuthn remove"
     },
     "targetTypes": {
       "account": "Account",

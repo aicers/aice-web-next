@@ -512,6 +512,57 @@ export async function resetMfaPolicy(): Promise<void> {
   await setMfaPolicyAllowedMethods(["webauthn", "totp"]);
 }
 
+// ── WebAuthn helpers ─────────────────────────────────────────────
+
+export async function deleteWebAuthnCredentials(
+  username: string,
+): Promise<void> {
+  await withAuthDb((c) =>
+    c.query(
+      "DELETE FROM webauthn_credentials WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    ),
+  );
+}
+
+export async function deleteWebAuthnChallenges(
+  username: string,
+): Promise<void> {
+  await withAuthDb(async (c) => {
+    await c.query(
+      "DELETE FROM webauthn_registration_challenges WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    );
+    await c.query(
+      "DELETE FROM webauthn_authentication_challenges WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    );
+  });
+}
+
+export async function insertWebAuthnCredential(
+  username: string,
+  opts?: { displayName?: string },
+): Promise<string> {
+  return withAuthDb(async (c) => {
+    const credentialId = Buffer.from(
+      crypto.getRandomValues(new Uint8Array(32)),
+    );
+    const publicKey = Buffer.from(crypto.getRandomValues(new Uint8Array(65)));
+    const { rows } = await c.query<{ id: string }>(
+      `INSERT INTO webauthn_credentials
+         (account_id, credential_id, public_key, counter, display_name)
+       VALUES (
+         (SELECT id FROM accounts WHERE username = $1),
+         $2, $3, 0, $4
+       )
+       RETURNING id`,
+      [username, credentialId, publicKey, opts?.displayName ?? null],
+    );
+    return rows[0].id;
+  });
+}
+
 // ── MFA challenge helpers ─────────────────────────────────────────
 
 export async function enrollAndVerifyTotp(username: string): Promise<string> {
