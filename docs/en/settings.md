@@ -200,6 +200,88 @@ account is locked a second time.
 
 All changes to policy settings are recorded in the audit log.
 
+## Profile
+
+The Profile page is accessed from **Settings → Profile**. It
+allows users to manage personal preferences and two-factor
+authentication.
+
+### Preferences
+
+Users can configure their language and timezone preferences.
+
+![Profile preferences](../assets/preferences-en.png)
+
+### Two-Factor Authentication (TOTP)
+
+The TOTP card shows the current enrollment status and allows
+users to enable or disable time-based one-time passwords.
+
+The card displays one of four states depending on the TOTP
+enrollment status and administrator policy:
+
+| State | Display |
+|-------|---------|
+| Available, not enrolled | "Disabled" badge with **Enable TOTP** button |
+| Available, enrolled | "Enabled" badge with **Disable TOTP** button |
+| Disabled by admin, enrolled | "Enabled" badge with admin notice and **Remove TOTP** button |
+| Not available | "Disabled" badge with "TOTP is not available" message |
+
+![TOTP — available, not enrolled](../assets/totp-disabled-en.png)
+
+#### Enabling TOTP
+
+1. Click **Enable TOTP** to open the setup wizard.
+2. Scan the QR code with your authenticator app (e.g., Google
+   Authenticator, Authy). Alternatively, click **Can't scan?
+   Enter this key manually** to copy the secret key.
+3. Enter the 6-digit code displayed in your authenticator app.
+4. Click **Verify** to complete setup.
+
+![TOTP setup wizard](../assets/totp-setup-en.png)
+
+After successful verification, TOTP is enabled and you will be
+prompted for a code on subsequent sign-ins.
+
+![TOTP — available, enrolled](../assets/totp-enabled-en.png)
+
+#### Disabling TOTP
+
+1. Click **Disable TOTP** (or **Remove TOTP** if disabled by
+   admin).
+2. Enter your current 6-digit TOTP code to confirm.
+3. Click **Disable TOTP** (or **Remove TOTP**) to remove the
+   credential.
+
+![TOTP disable dialog](../assets/totp-disable-en.png)
+
+#### Disabled by Administrator
+
+When an administrator removes TOTP from the allowed MFA
+methods while a user still has TOTP enrolled, the card shows
+an "Enabled" badge with a notice that TOTP has been disabled
+by an administrator. The user can click **Remove TOTP** to
+remove the stale credential.
+
+![TOTP — disabled by admin](../assets/totp-admin-disabled-en.png)
+
+#### Not Available
+
+When the administrator has not enabled TOTP in the MFA policy
+and the user has no TOTP credential enrolled, the card shows a
+"Disabled" badge with a "TOTP is not available" message. No
+action is available to the user.
+
+![TOTP — not available](../assets/totp-not-available-en.png)
+
+#### MFA Sign-In
+
+When TOTP is enabled, sign-in requires an additional step after
+entering your password. Enter the 6-digit code from your
+authenticator app and click **Verify**.
+
+![MFA sign-in challenge](../assets/mfa-sign-in-en.png)
+
 ## Account Status
 
 Navigate to **Settings → Account Status** to view operational
