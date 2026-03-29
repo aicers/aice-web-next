@@ -129,7 +129,9 @@
       "mfa_totp_enroll": "TOTP 등록",
       "mfa_totp_remove": "TOTP 해제",
       "mfa_totp_verify_success": "TOTP 인증 성공",
-      "mfa_totp_verify_failure": "TOTP 인증 실패"
+      "mfa_totp_verify_failure": "TOTP 인증 실패",
+      "mfa_webauthn_register": "WebAuthn 등록",
+      "mfa_webauthn_remove": "WebAuthn 해제"
     },
     "targetTypes": {
       "account": "계정",
