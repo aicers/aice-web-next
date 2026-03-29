@@ -312,7 +312,7 @@ test.describe("TOTP profile management (#205)", () => {
 
   // ── Policy enforcement ──────────────────────────────────────
 
-  test("enable button is disabled when TOTP is not allowed by policy", async ({
+  test("shows not-available message when TOTP is not allowed by policy", async ({
     page,
     workerUsername,
     workerPassword,
@@ -331,25 +331,156 @@ test.describe("TOTP profile management (#205)", () => {
       data: { value: { allowed_methods: ["webauthn"] } },
     });
 
-    await page.goto("/profile");
+    try {
+      await page.goto("/profile");
 
-    const enableButton = page.getByRole("button", { name: /enable totp/i });
-    await expect(enableButton).toBeVisible({ timeout: 5_000 });
-    await expect(enableButton).toBeDisabled();
+      // No enable button should be visible
+      await expect(
+        page.getByRole("button", { name: /enable totp/i }),
+      ).not.toBeVisible({ timeout: 5_000 });
 
-    // Policy restriction message
-    await expect(
-      page.getByText(/not allowed by the current security policy/i),
-    ).toBeVisible();
+      // "TOTP is not available" message
+      await expect(page.getByText(/totp is not available/i)).toBeVisible();
+    } finally {
+      // Restore policy via API so server cache is consistent for other suites
+      await page.request.patch("/api/system-settings/mfa_policy", {
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfCookie?.value ?? "",
+          Origin: "http://localhost:3000",
+        },
+        data: { value: { allowed_methods: ["webauthn", "totp"] } },
+      });
+    }
+  });
 
-    // Restore policy via API so server cache is consistent for other suites
+  test("shows disabled-by-admin state when enrolled but policy disallows TOTP", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Enroll TOTP first
+    const secret = await enrollAndVerifyTotp(workerUsername);
+
+    await signInWithTotp(page, workerUsername, workerPassword, secret);
+
+    // Disable TOTP in policy via API
+    const cookies = await page.context().cookies();
+    const csrfCookie = cookies.find((c) => c.name === "csrf");
     await page.request.patch("/api/system-settings/mfa_policy", {
       headers: {
         "Content-Type": "application/json",
         "x-csrf-token": csrfCookie?.value ?? "",
         Origin: "http://localhost:3000",
       },
-      data: { value: { allowed_methods: ["webauthn", "totp"] } },
+      data: { value: { allowed_methods: ["webauthn"] } },
     });
+
+    try {
+      await page.goto("/profile");
+
+      // Should show "Enabled" badge (still enrolled)
+      await expect(page.getByText("Enabled")).toBeVisible({ timeout: 5_000 });
+
+      // Should show "disabled by admin" message
+      await expect(
+        page.getByText(/disabled by an administrator/i),
+      ).toBeVisible();
+
+      // Should show "Remove TOTP" button
+      const removeButton = page.getByRole("button", {
+        name: /remove totp/i,
+      });
+      await expect(removeButton).toBeVisible();
+
+      // Remove TOTP using the button
+      await removeButton.click();
+
+      // Enter code and confirm removal
+      const code = generateCode(secret);
+      const codeInput = page.locator("input[autocomplete='one-time-code']");
+      await codeInput.fill(code);
+      await page
+        .getByRole("button", { name: /remove totp/i })
+        .last()
+        .click();
+
+      // Should revert to "not available" (still policy-off, now unenrolled)
+      await expect(page.getByText(/totp is not available/i)).toBeVisible({
+        timeout: 5_000,
+      });
+    } finally {
+      // Re-enable TOTP in policy
+      await page.request.patch("/api/system-settings/mfa_policy", {
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfCookie?.value ?? "",
+          Origin: "http://localhost:3000",
+        },
+        data: { value: { allowed_methods: ["webauthn", "totp"] } },
+      });
+    }
+
+    // Reload — "Enable TOTP" button should reappear
+    await page.goto("/profile");
+    await expect(
+      page.getByRole("button", { name: /enable totp/i }),
+    ).toBeVisible({ timeout: 5_000 });
+  });
+
+  test("mid-enrollment policy change shows error gracefully", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+    await page.goto("/profile");
+
+    // Start enrollment — click enable and wait for QR
+    await page.getByRole("button", { name: /enable totp/i }).click();
+    await expect(page.getByText(/scan this qr code/i)).toBeVisible({
+      timeout: 5_000,
+    });
+
+    // Read the secret for code generation
+    await page.getByText(/enter this key manually/i).click();
+    const secretElement = page.locator("[data-testid='totp-secret']");
+    await expect(secretElement).toBeVisible();
+    const secret = await secretElement.textContent();
+    expect(secret).toBeTruthy();
+
+    // Admin disables TOTP mid-enrollment via API
+    const cookies = await page.context().cookies();
+    const csrfCookie = cookies.find((c) => c.name === "csrf");
+    await page.request.patch("/api/system-settings/mfa_policy", {
+      headers: {
+        "Content-Type": "application/json",
+        "x-csrf-token": csrfCookie?.value ?? "",
+        Origin: "http://localhost:3000",
+      },
+      data: { value: { allowed_methods: ["webauthn"] } },
+    });
+
+    try {
+      // Enter valid code and try to verify
+      const code = generateCode(secret as string);
+      const codeInput = page.locator("input[autocomplete='one-time-code']");
+      await codeInput.fill(code);
+      await page.getByRole("button", { name: /^verify$/i }).click();
+
+      // Should show an error (TOTP_NOT_ALLOWED handled gracefully)
+      const alert = page.locator("p[role='alert']");
+      await expect(alert).toBeVisible({ timeout: 5_000 });
+    } finally {
+      // Restore policy
+      await page.request.patch("/api/system-settings/mfa_policy", {
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfCookie?.value ?? "",
+          Origin: "http://localhost:3000",
+        },
+        data: { value: { allowed_methods: ["webauthn", "totp"] } },
+      });
+    }
   });
 });

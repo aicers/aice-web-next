@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import * as OTPAuth from "otpauth";
 
 import { expect, test } from "./fixtures";
@@ -9,6 +10,24 @@ import {
   resetAccountDefaults,
   resetMfaPolicy,
 } from "./helpers/setup-db";
+
+/** Change MFA policy via API (invalidates server cache). Requires a signed-in page context. */
+async function setMfaPolicyViaApi(
+  page: Page,
+  allowedMethods: string[],
+): Promise<void> {
+  const cookies = await page.context().cookies();
+  const csrfCookie = cookies.find((c) => c.name === "csrf");
+  const res = await page.request.patch("/api/system-settings/mfa_policy", {
+    headers: {
+      "Content-Type": "application/json",
+      "x-csrf-token": csrfCookie?.value ?? "",
+      Origin: "http://localhost:3000",
+    },
+    data: { value: { allowed_methods: allowedMethods } },
+  });
+  if (!res.ok()) throw new Error(`setMfaPolicyViaApi failed: ${res.status()}`);
+}
 
 /** Generate a valid TOTP code for a given base32 secret. */
 function generateCode(secret: string): string {
@@ -150,5 +169,82 @@ test.describe("MFA sign-in flow (#207)", () => {
     // TOTP input should NOT have appeared
     const totpInput = page.locator("input[autocomplete='one-time-code']");
     await expect(totpInput).not.toBeVisible();
+  });
+
+  // ── Policy-off: enrolled user bypasses MFA ────────────────
+
+  test("enrolled user signs in without MFA when admin disables TOTP policy", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    const secret = await enrollAndVerifyTotp(workerUsername);
+
+    // Sign in with TOTP to get a session for the policy API call
+    await page.goto("/sign-in");
+    await signIn(page, workerUsername, workerPassword);
+
+    const totpInput = page.locator("input[autocomplete='one-time-code']");
+    await expect(totpInput).toBeVisible({ timeout: 5_000 });
+    await totpInput.fill(generateCode(secret));
+    await page.getByRole("button", { name: /verify/i }).click();
+    await page.waitForURL((url) => !url.pathname.endsWith("/sign-in"), {
+      timeout: 10_000,
+    });
+
+    // Disable TOTP in policy via API (properly invalidates server cache)
+    await setMfaPolicyViaApi(page, ["webauthn"]);
+
+    try {
+      // Sign out
+      const cookies = await page.context().cookies();
+      const csrfCookie = cookies.find((c) => c.name === "csrf");
+      await page.request.post("/api/auth/sign-out", {
+        headers: {
+          "x-csrf-token": csrfCookie?.value ?? "",
+          Origin: "http://localhost:3000",
+        },
+      });
+
+      // Sign in again — should go straight to dashboard without TOTP
+      await page.goto("/sign-in");
+      await signIn(page, workerUsername, workerPassword);
+
+      await page.waitForURL((url) => !url.pathname.endsWith("/sign-in"), {
+        timeout: 10_000,
+      });
+
+      const totpInput2 = page.locator("input[autocomplete='one-time-code']");
+      await expect(totpInput2).not.toBeVisible();
+    } finally {
+      // Re-establish a session to restore the policy. Race the redirect
+      // against the TOTP challenge so cleanup works regardless of whether
+      // the bypass is functioning correctly.
+      await page.goto("/sign-in");
+      await signIn(page, workerUsername, workerPassword);
+
+      const challengeInput = page.locator(
+        "input[autocomplete='one-time-code']",
+      );
+      const redirected = page
+        .waitForURL((url) => !url.pathname.endsWith("/sign-in"), {
+          timeout: 10_000,
+        })
+        .then(() => "redirected" as const);
+      const challenged = challengeInput
+        .waitFor({ state: "visible", timeout: 10_000 })
+        .then(() => "challenged" as const);
+
+      const outcome = await Promise.race([redirected, challenged]);
+      if (outcome === "challenged") {
+        await challengeInput.fill(generateCode(secret));
+        await page.getByRole("button", { name: /verify/i }).click();
+        await page.waitForURL((url) => !url.pathname.endsWith("/sign-in"), {
+          timeout: 10_000,
+        });
+      }
+
+      await setMfaPolicyViaApi(page, ["webauthn", "totp"]);
+    }
   });
 });

@@ -54,6 +54,7 @@ export function TotpCard() {
   const [fetchError, setFetchError] = useState(false);
   const [enrollOpen, setEnrollOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
+  const adminDisabled = enrolled && !allowed;
 
   const fetchStatus = useCallback(() => {
     setFetchError(false);
@@ -109,18 +110,26 @@ export function TotpCard() {
         {!fetchError && (
           <CardFooter>
             {enrolled ? (
-              <Button variant="outline" onClick={() => setDisableOpen(true)}>
-                {t("disable")}
-              </Button>
+              <div className="space-y-2">
+                {adminDisabled && (
+                  <p className="text-muted-foreground text-sm">
+                    {t("disabledByAdmin")}
+                  </p>
+                )}
+                <Button variant="outline" onClick={() => setDisableOpen(true)}>
+                  {adminDisabled ? t("remove") : t("disable")}
+                </Button>
+              </div>
             ) : (
               <div className="space-y-2">
-                <Button onClick={() => setEnrollOpen(true)} disabled={!allowed}>
-                  {t("enable")}
-                </Button>
-                {!allowed && (
+                {!allowed ? (
                   <p className="text-muted-foreground text-sm">
-                    {t("notAllowed")}
+                    {t("notAvailable")}
                   </p>
+                ) : (
+                  <Button onClick={() => setEnrollOpen(true)}>
+                    {t("enable")}
+                  </Button>
                 )}
               </div>
             )}
@@ -130,7 +139,10 @@ export function TotpCard() {
 
       <TotpEnrollDialog
         open={enrollOpen}
-        onOpenChange={setEnrollOpen}
+        onOpenChange={(isOpen) => {
+          setEnrollOpen(isOpen);
+          if (!isOpen) fetchStatus();
+        }}
         onComplete={handleEnrollComplete}
       />
 
@@ -138,6 +150,7 @@ export function TotpCard() {
         open={disableOpen}
         onOpenChange={setDisableOpen}
         onComplete={handleDisableComplete}
+        isRemoval={adminDisabled}
       />
     </>
   );
@@ -375,10 +388,12 @@ function TotpDisableDialog({
   open,
   onOpenChange,
   onComplete,
+  isRemoval,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onComplete: () => void;
+  isRemoval: boolean;
 }) {
   const t = useTranslations("profile.totp");
 
@@ -464,7 +479,7 @@ function TotpDisableDialog({
             onClick={handleDisable}
             disabled={code.length !== 6 || loading}
           >
-            {loading ? t("disabling") : t("disable")}
+            {loading ? t("disabling") : isRemoval ? t("remove") : t("disable")}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
