@@ -611,8 +611,22 @@ export async function setMfaPolicyAllowedMethods(
 
 /**
  * Reset MFA policy to default (allow both webauthn and totp).
+ *
+ * Calls the E2E-only API endpoint so the server's in-memory cache
+ * is invalidated together with the DB update.  Falls back to a
+ * direct DB update when the server is unreachable (e.g. during
+ * global teardown).
  */
 export async function resetMfaPolicy(): Promise<void> {
+  const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
+  try {
+    const res = await fetch(`${baseUrl}/api/e2e/reset-mfa-policy`, {
+      method: "POST",
+    });
+    if (res.ok) return;
+  } catch {
+    // Server not reachable — fall back to direct DB update
+  }
   await setMfaPolicyAllowedMethods(["webauthn", "totp"]);
 }
 
