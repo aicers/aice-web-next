@@ -44,7 +44,15 @@
       "mfaTokenExpired": "인증 세션이 만료되었습니다. 다시 로그인해 주세요.",
       "totpDisabledMidFlow": "TOTP 인증을 더 이상 사용할 수 없습니다. 관리자에게 문의하세요.",
       "rateLimited": "시도 횟수가 너무 많습니다. 잠시 후 다시 시도해 주세요.",
-      "backToSignIn": "로그인으로 돌아가기"
+      "backToSignIn": "로그인으로 돌아가기",
+      "usePasskey": "패스키 사용",
+      "passkeyPrompt": "브라우저의 안내에 따라 본인 인증을 완료하세요",
+      "useTotp": "인증 앱으로 전환",
+      "useWebauthn": "패스키로 전환",
+      "webauthnError": "패스키 인증에 실패했습니다. 다시 시도해 주세요.",
+      "webauthnCancelled": "인증이 취소되었습니다. 아래 버튼을 눌러 다시 시도하세요.",
+      "webauthnRetry": "다시 시도",
+      "webauthnDisabledMidFlow": "관리자에 의해 패스키가 비활성화되었습니다. 다시 로그인해 주세요."
     }
   },
   "nav": {
@@ -131,7 +139,9 @@
       "mfa_totp_verify_success": "TOTP 인증 성공",
       "mfa_totp_verify_failure": "TOTP 인증 실패",
       "mfa_webauthn_register": "WebAuthn 등록",
-      "mfa_webauthn_remove": "WebAuthn 해제"
+      "mfa_webauthn_remove": "WebAuthn 해제",
+      "mfa_webauthn_verify_success": "WebAuthn 인증 성공",
+      "mfa_webauthn_verify_failure": "WebAuthn 인증 실패"
     },
     "targetTypes": {
       "account": "계정",

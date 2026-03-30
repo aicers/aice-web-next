@@ -44,7 +44,15 @@
       "mfaTokenExpired": "Verification session expired. Please sign in again.",
       "totpDisabledMidFlow": "TOTP verification is no longer available. Please contact your administrator.",
       "rateLimited": "Too many attempts. Please wait and try again.",
-      "backToSignIn": "Back to sign in"
+      "backToSignIn": "Back to sign in",
+      "usePasskey": "Use a passkey",
+      "passkeyPrompt": "Follow your browser's prompt to verify your identity",
+      "useTotp": "Use authenticator app instead",
+      "useWebauthn": "Use passkey instead",
+      "webauthnError": "Passkey verification failed. Please try again.",
+      "webauthnCancelled": "Verification was cancelled. Click below to try again.",
+      "webauthnRetry": "Try again",
+      "webauthnDisabledMidFlow": "Passkeys have been disabled by an administrator. Please sign in again."
     }
   },
   "nav": {
@@ -131,7 +139,9 @@
       "mfa_totp_verify_success": "TOTP verify success",
       "mfa_totp_verify_failure": "TOTP verify failure",
       "mfa_webauthn_register": "WebAuthn register",
-      "mfa_webauthn_remove": "WebAuthn remove"
+      "mfa_webauthn_remove": "WebAuthn remove",
+      "mfa_webauthn_verify_success": "WebAuthn verify success",
+      "mfa_webauthn_verify_failure": "WebAuthn verify failure"
     },
     "targetTypes": {
       "account": "Account",

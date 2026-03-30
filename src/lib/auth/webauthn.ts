@@ -16,6 +16,8 @@ interface WebAuthnCredentialRow {
   last_used_at: Date | null;
 }
 
+export type AuthenticatorTransport = "usb" | "ble" | "nfc" | "internal";
+
 export interface WebAuthnCredentialRecord {
   id: string;
   accountId: string;
@@ -258,9 +260,10 @@ export async function consumeRegistrationChallenge(
   return rows.length > 0 ? rows[0].challenge : null;
 }
 
-/** Store an authentication challenge (one per account, UPSERT). */
+/** Store an authentication challenge keyed by login attempt (jti). */
 export async function storeAuthenticationChallenge(
   accountId: string,
+  jti: string,
   challenge: string,
 ): Promise<string> {
   await query(
@@ -268,26 +271,26 @@ export async function storeAuthenticationChallenge(
   );
 
   const { rows } = await query<{ id: string }>(
-    `INSERT INTO webauthn_authentication_challenges (account_id, challenge, expires_at)
-     VALUES ($1, $2, NOW() + INTERVAL '${CHALLENGE_TTL_SECONDS} seconds')
-     ON CONFLICT (account_id) DO UPDATE
+    `INSERT INTO webauthn_authentication_challenges (account_id, jti, challenge, expires_at)
+     VALUES ($1, $2, $3, NOW() + INTERVAL '${CHALLENGE_TTL_SECONDS} seconds')
+     ON CONFLICT (jti) DO UPDATE
        SET challenge = EXCLUDED.challenge,
            expires_at = EXCLUDED.expires_at
      RETURNING id`,
-    [accountId, challenge],
+    [accountId, jti, challenge],
   );
   return rows[0].id;
 }
 
-/** Retrieve and consume an authentication challenge. Returns null if expired or not found. */
+/** Retrieve and consume an authentication challenge by login attempt (jti). Returns null if expired or not found. */
 export async function consumeAuthenticationChallenge(
-  accountId: string,
+  jti: string,
 ): Promise<string | null> {
   const { rows } = await query<ChallengeRow>(
     `DELETE FROM webauthn_authentication_challenges
-     WHERE account_id = $1 AND expires_at > NOW()
+     WHERE jti = $1 AND expires_at > NOW()
      RETURNING id, challenge`,
-    [accountId],
+    [jti],
   );
   return rows.length > 0 ? rows[0].challenge : null;
 }

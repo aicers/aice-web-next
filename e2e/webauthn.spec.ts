@@ -133,14 +133,14 @@ test.describe("WebAuthn API (#217)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
     await insertWebAuthnCredential(workerUsername, {
       displayName: "Key 1",
     });
     await insertWebAuthnCredential(workerUsername, {
       displayName: "Key 2",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     const csrf = await getCsrf(page);
 
     const res = await page.request.get("/api/auth/mfa/webauthn/status", {
@@ -241,11 +241,11 @@ test.describe("WebAuthn API (#217)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
     await insertWebAuthnCredential(workerUsername, {
       displayName: "Existing",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     const csrf = await getCsrf(page);
 
     const res = await page.request.post(
@@ -491,11 +491,11 @@ test.describe("WebAuthn API (#217)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
     await insertWebAuthnCredential(workerUsername, {
       displayName: "My Passkey",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     const csrf = await getCsrf(page);
 
     const res = await page.request.get("/api/auth/mfa/webauthn/credentials", {
@@ -521,11 +521,11 @@ test.describe("WebAuthn API (#217)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
     const credId = await insertWebAuthnCredential(workerUsername, {
       displayName: "Old Name",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     const csrf = await getCsrf(page);
 
     const res = await page.request.patch(
@@ -573,11 +573,11 @@ test.describe("WebAuthn API (#217)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
     const credId = await insertWebAuthnCredential(workerUsername, {
       displayName: "To Delete",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     const csrf = await getCsrf(page);
 
     const res = await page.request.delete(
@@ -605,9 +605,9 @@ test.describe("WebAuthn API (#217)", () => {
     workerUsername,
     workerPassword,
   }) => {
-    const credId = await insertWebAuthnCredential(workerUsername);
-
     await signInAndWait(page, workerUsername, workerPassword);
+
+    const credId = await insertWebAuthnCredential(workerUsername);
     const csrf = await getCsrf(page);
 
     const res = await page.request.delete(
@@ -622,9 +622,9 @@ test.describe("WebAuthn API (#217)", () => {
     workerUsername,
     workerPassword,
   }) => {
-    const credId = await insertWebAuthnCredential(workerUsername);
-
     await signInAndWait(page, workerUsername, workerPassword);
+
+    const credId = await insertWebAuthnCredential(workerUsername);
     const csrf = await getCsrf(page);
 
     const res = await page.request.delete(
@@ -660,14 +660,14 @@ test.describe("WebAuthn API (#217)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
     const credId1 = await insertWebAuthnCredential(workerUsername, {
       displayName: "Keep",
     });
     const credId2 = await insertWebAuthnCredential(workerUsername, {
       displayName: "Remove",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     const csrf = await getCsrf(page);
 
     await page.request.delete(`/api/auth/mfa/webauthn/credentials/${credId2}`, {
@@ -690,11 +690,11 @@ test.describe("WebAuthn API (#217)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
     const credId = await insertWebAuthnCredential(workerUsername, {
       displayName: "Policy Off",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     const csrf = await getCsrf(page);
 
     // Disable webauthn in policy

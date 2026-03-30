@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.0",
     "argon2": "^0.44.0",
     "class-variance-authority": "^0.7.1",
