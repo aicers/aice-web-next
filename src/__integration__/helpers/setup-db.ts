@@ -563,6 +563,31 @@ export async function insertWebAuthnCredential(
   });
 }
 
+/**
+ * Insert a WebAuthn credential with caller-supplied key material.
+ * Used by tests that need to build valid assertions.
+ */
+export async function insertWebAuthnCredentialWithKey(
+  username: string,
+  credentialId: Buffer,
+  publicKey: Buffer,
+  opts?: { displayName?: string },
+): Promise<string> {
+  return withAuthDb(async (c) => {
+    const { rows } = await c.query<{ id: string }>(
+      `INSERT INTO webauthn_credentials
+         (account_id, credential_id, public_key, counter, display_name)
+       VALUES (
+         (SELECT id FROM accounts WHERE username = $1),
+         $2, $3, 0, $4
+       )
+       RETURNING id`,
+      [username, credentialId, publicKey, opts?.displayName ?? null],
+    );
+    return rows[0].id;
+  });
+}
+
 // ── MFA challenge helpers ─────────────────────────────────────────
 
 export async function enrollAndVerifyTotp(username: string): Promise<string> {

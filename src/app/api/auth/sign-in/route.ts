@@ -18,6 +18,7 @@ import { verifyPassword } from "@/lib/auth/password";
 import { loadSessionPolicy } from "@/lib/auth/session-policy";
 import { createSessionAndIssueTokens } from "@/lib/auth/sign-in";
 import { getTotpCredential } from "@/lib/auth/totp";
+import { getWebAuthnCredentials } from "@/lib/auth/webauthn";
 import { query } from "@/lib/db/client";
 import { checkSignInRateLimit } from "@/lib/rate-limit/limiter";
 
@@ -283,29 +284,40 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
   }
 
   // Step 6.5: MFA check (credential + policy dual check)
+  const mfaPolicy = await loadMfaPolicy();
+  const mfaMethods: string[] = [];
+
   const totpCredential = await getTotpCredential(account.id);
-  if (totpCredential?.verified) {
-    const mfaPolicy = await loadMfaPolicy();
-    if (mfaPolicy.allowedMethods.includes("totp")) {
-      const jti = randomUUID();
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-      await query(
-        "INSERT INTO mfa_challenges (jti, account_id, expires_at) VALUES ($1, $2, $3)",
-        [jti, account.id, expiresAt],
-      );
-      const mfaToken = await issueMfaToken({
-        accountId: account.id,
-        roles: [account.role_name],
-        tokenVersion: account.token_version,
-        jti,
-      });
-      return NextResponse.json({
-        mfaRequired: true,
-        mfaToken,
-        mfaMethods: ["totp"],
-      });
-    }
-    // TOTP enrolled but not in policy — graceful degradation
+  if (totpCredential?.verified && mfaPolicy.allowedMethods.includes("totp")) {
+    mfaMethods.push("totp");
+  }
+
+  const webauthnCreds = await getWebAuthnCredentials(account.id);
+  if (
+    webauthnCreds.length > 0 &&
+    mfaPolicy.allowedMethods.includes("webauthn")
+  ) {
+    mfaMethods.push("webauthn");
+  }
+
+  if (mfaMethods.length > 0) {
+    const jti = randomUUID();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    await query(
+      "INSERT INTO mfa_challenges (jti, account_id, expires_at) VALUES ($1, $2, $3)",
+      [jti, account.id, expiresAt],
+    );
+    const mfaToken = await issueMfaToken({
+      accountId: account.id,
+      roles: [account.role_name],
+      tokenVersion: account.token_version,
+      jti,
+    });
+    return NextResponse.json({
+      mfaRequired: true,
+      mfaToken,
+      mfaMethods,
+    });
   }
 
   // Step 7: Max sessions check

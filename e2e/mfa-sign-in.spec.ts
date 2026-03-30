@@ -6,6 +6,8 @@ import { resetRateLimits, signIn } from "./helpers/auth";
 import {
   deleteMfaChallenges,
   deleteTotpCredential,
+  deleteWebAuthnChallenges,
+  deleteWebAuthnCredentials,
   enrollAndVerifyTotp,
   resetAccountDefaults,
   resetMfaPolicy,
@@ -46,6 +48,8 @@ test.describe("MFA sign-in flow (#207)", () => {
     await resetRateLimits();
     await resetAccountDefaults(workerUsername);
     await deleteTotpCredential(workerUsername);
+    await deleteWebAuthnCredentials(workerUsername);
+    await deleteWebAuthnChallenges(workerUsername);
     await deleteMfaChallenges(workerUsername);
     await resetMfaPolicy();
   });
@@ -54,12 +58,16 @@ test.describe("MFA sign-in flow (#207)", () => {
     await resetRateLimits();
     await resetAccountDefaults(workerUsername);
     await deleteTotpCredential(workerUsername);
+    await deleteWebAuthnCredentials(workerUsername);
+    await deleteWebAuthnChallenges(workerUsername);
     await deleteMfaChallenges(workerUsername);
     await resetMfaPolicy();
   });
 
   test.afterAll(async ({ workerUsername }) => {
     await deleteTotpCredential(workerUsername);
+    await deleteWebAuthnCredentials(workerUsername);
+    await deleteWebAuthnChallenges(workerUsername);
     await deleteMfaChallenges(workerUsername);
     await resetAccountDefaults(workerUsername);
     await resetMfaPolicy();

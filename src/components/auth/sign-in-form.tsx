@@ -1,9 +1,17 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertCircle, ArrowLeft, Eye, EyeOff, Loader2 } from "lucide-react";
+import { startAuthentication } from "@simplewebauthn/browser";
+import {
+  AlertCircle,
+  ArrowLeft,
+  Eye,
+  EyeOff,
+  Fingerprint,
+  Loader2,
+} from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -42,6 +50,7 @@ const MFA_CODES: Record<string, string> = {
   INVALID_MFA_CODE: "mfa.invalidCode",
   MFA_TOKEN_INVALID: "mfa.mfaTokenExpired",
   TOTP_NOT_ALLOWED: "mfa.totpDisabledMidFlow",
+  WEBAUTHN_NOT_ALLOWED: "mfa.webauthnDisabledMidFlow",
   MFA_RATE_LIMITED: "mfa.rateLimited",
 };
 
@@ -54,10 +63,14 @@ export function SignInForm() {
   const [serverError, setServerError] = useState<string | null>(null);
 
   // MFA state
-  const [mfaStep, setMfaStep] = useState<"credentials" | "totp">("credentials");
+  const [mfaStep, setMfaStep] = useState<"credentials" | "totp" | "webauthn">(
+    "credentials",
+  );
   const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaMethods, setMfaMethods] = useState<string[]>([]);
   const [totpCode, setTotpCode] = useState("");
   const [mfaSubmitting, setMfaSubmitting] = useState(false);
+  const [webauthnCancelled, setWebauthnCancelled] = useState(false);
   const totpInputRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<SignInValues>({
@@ -67,13 +80,127 @@ export function SignInForm() {
 
   const isSubmitting = form.formState.isSubmitting;
 
-  function handleSignInSuccess(body: { mustChangePassword?: boolean }) {
-    if (body.mustChangePassword) {
-      router.push("/change-password");
-    } else {
-      router.push("/");
-    }
-  }
+  const handleSignInSuccess = useCallback(
+    (body: { mustChangePassword?: boolean }) => {
+      if (body.mustChangePassword) {
+        router.push("/change-password");
+      } else {
+        router.push("/");
+      }
+    },
+    [router],
+  );
+
+  const startWebAuthnFlow = useCallback(
+    async (token: string) => {
+      setServerError(null);
+      setWebauthnCancelled(false);
+      setMfaSubmitting(true);
+
+      try {
+        // Step 1: Get assertion options
+        const optionsRes = await fetch(
+          "/api/auth/mfa/webauthn/challenge/options",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mfaToken: token }),
+          },
+        );
+
+        if (!optionsRes.ok) {
+          const body = (await optionsRes.json().catch(() => ({}))) as {
+            code?: string;
+          };
+          if (body.code === "MFA_TOKEN_INVALID") {
+            setMfaStep("credentials");
+            setMfaToken(null);
+            setServerError(t("mfa.mfaTokenExpired"));
+            return;
+          }
+          if (body.code === "WEBAUTHN_NOT_ALLOWED") {
+            setMfaStep("credentials");
+            setMfaToken(null);
+            setServerError(t("mfa.webauthnDisabledMidFlow"));
+            return;
+          }
+          setServerError(t("mfa.webauthnError"));
+          return;
+        }
+
+        const options = await optionsRes.json();
+
+        // Step 2: Trigger browser authenticator prompt
+        const assertionResponse = await startAuthentication({
+          optionsJSON: options,
+        });
+
+        // Step 3: Submit assertion to server
+        const verifyRes = await fetch("/api/auth/mfa/webauthn/challenge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mfaToken: token,
+            response: assertionResponse,
+          }),
+        });
+
+        if (verifyRes.ok) {
+          const body = (await verifyRes.json()) as {
+            mustChangePassword?: boolean;
+          };
+          handleSignInSuccess(body);
+          return;
+        }
+
+        // Handle rate limit
+        if (verifyRes.status === 429) {
+          setServerError(t("mfa.rateLimited"));
+          return;
+        }
+
+        const body = (await verifyRes.json().catch(() => ({}))) as {
+          code?: string;
+        };
+        if (body.code) {
+          if (body.code === "MFA_TOKEN_INVALID") {
+            setMfaStep("credentials");
+            setMfaToken(null);
+            setServerError(t("mfa.mfaTokenExpired"));
+            return;
+          }
+          if (body.code === "WEBAUTHN_NOT_ALLOWED") {
+            setMfaStep("credentials");
+            setMfaToken(null);
+            setServerError(t("mfa.webauthnDisabledMidFlow"));
+            return;
+          }
+          const mfaKey = MFA_CODES[body.code];
+          if (mfaKey) {
+            setServerError(t(mfaKey));
+            return;
+          }
+          const sharedKey = KNOWN_CODES[body.code];
+          if (sharedKey) {
+            setServerError(t(sharedKey));
+            return;
+          }
+        }
+        setServerError(t("mfa.webauthnError"));
+      } catch (err) {
+        // User cancelled the browser prompt
+        if (err instanceof Error && err.name === "NotAllowedError") {
+          setWebauthnCancelled(true);
+          setServerError(t("mfa.webauthnCancelled"));
+          return;
+        }
+        setServerError(t("mfa.webauthnError"));
+      } finally {
+        setMfaSubmitting(false);
+      }
+    },
+    [t, handleSignInSuccess],
+  );
 
   async function onSubmit(values: SignInValues) {
     setServerError(null);
@@ -90,14 +217,23 @@ export function SignInForm() {
           mustChangePassword?: boolean;
           mfaRequired?: boolean;
           mfaToken?: string;
+          mfaMethods?: string[];
         };
 
         if (body.mfaRequired && body.mfaToken) {
+          const methods = body.mfaMethods ?? [];
           setMfaToken(body.mfaToken);
-          setMfaStep("totp");
-          setTotpCode("");
-          // Auto-focus TOTP input on next render
-          setTimeout(() => totpInputRef.current?.focus(), 0);
+          setMfaMethods(methods);
+
+          // Default to WebAuthn if available, otherwise TOTP
+          if (methods.includes("webauthn")) {
+            setMfaStep("webauthn");
+            startWebAuthnFlow(body.mfaToken);
+          } else {
+            setMfaStep("totp");
+            setTotpCode("");
+            setTimeout(() => totpInputRef.current?.focus(), 0);
+          }
           return;
         }
 
@@ -208,8 +344,87 @@ export function SignInForm() {
   function resetToCredentials() {
     setMfaStep("credentials");
     setMfaToken(null);
+    setMfaMethods([]);
     setTotpCode("");
+    setWebauthnCancelled(false);
     setServerError(null);
+  }
+
+  // ── WebAuthn step ─────────────────────────────────────────────
+
+  if (mfaStep === "webauthn") {
+    return (
+      <div className="grid gap-6">
+        <h1 className="text-xl font-semibold tracking-tight">
+          {t("mfa.usePasskey")}
+        </h1>
+
+        <div className="flex flex-col items-center gap-4 py-4">
+          <Fingerprint className="text-muted-foreground size-12" />
+          <p className="text-muted-foreground text-center text-sm">
+            {t("mfa.passkeyPrompt")}
+          </p>
+        </div>
+
+        {serverError && (
+          <p
+            className="text-destructive flex items-center gap-1 text-sm"
+            role="alert"
+          >
+            <AlertCircle className="size-3.5 shrink-0" />
+            {serverError}
+          </p>
+        )}
+
+        {(webauthnCancelled || serverError) && !mfaSubmitting && (
+          <Button
+            type="button"
+            className="w-full"
+            onClick={() => {
+              if (mfaToken) startWebAuthnFlow(mfaToken);
+            }}
+          >
+            {t("mfa.webauthnRetry")}
+          </Button>
+        )}
+
+        {mfaSubmitting && (
+          <Button type="button" className="w-full" disabled>
+            <Loader2 className="animate-spin" />
+            {t("mfa.verifying")}
+          </Button>
+        )}
+
+        {mfaMethods.includes("totp") && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full"
+            onClick={() => {
+              setMfaStep("totp");
+              setServerError(null);
+              setWebauthnCancelled(false);
+              setTotpCode("");
+              setTimeout(() => totpInputRef.current?.focus(), 0);
+            }}
+            disabled={mfaSubmitting}
+          >
+            {t("mfa.useTotp")}
+          </Button>
+        )}
+
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          onClick={resetToCredentials}
+          disabled={mfaSubmitting}
+        >
+          <ArrowLeft className="size-4" />
+          {t("mfa.backToSignIn")}
+        </Button>
+      </div>
+    );
   }
 
   // ── TOTP step ───────────────────────────────────────────────
@@ -264,6 +479,23 @@ export function SignInForm() {
             t("mfa.verifyButton")
           )}
         </Button>
+
+        {mfaMethods.includes("webauthn") && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full"
+            onClick={() => {
+              setMfaStep("webauthn");
+              setServerError(null);
+              setTotpCode("");
+              if (mfaToken) startWebAuthnFlow(mfaToken);
+            }}
+            disabled={mfaSubmitting}
+          >
+            {t("mfa.useWebauthn")}
+          </Button>
+        )}
 
         <Button
           type="button"

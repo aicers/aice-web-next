@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 
 import { withAuth } from "@/lib/auth/guard";
 import { loadMfaPolicy } from "@/lib/auth/mfa-policy";
+import type { AuthenticatorTransport } from "@/lib/auth/webauthn";
 import {
   bufferToBase64url,
   getRelyingParty,
@@ -65,5 +66,3 @@ export const POST = withAuth(async (_request, _context, session) => {
 
   return NextResponse.json(options);
 });
-
-type AuthenticatorTransport = "usb" | "ble" | "nfc" | "internal";
