@@ -616,6 +616,64 @@ export async function resetMfaPolicy(): Promise<void> {
   await setMfaPolicyAllowedMethods(["webauthn", "totp"]);
 }
 
+// ── WebAuthn helpers ─────────────────────────────────────────────
+
+/**
+ * Delete all WebAuthn credentials for a user.
+ */
+export async function deleteWebAuthnCredentials(
+  username: string,
+): Promise<void> {
+  await pool.query(
+    "DELETE FROM webauthn_credentials WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+    [username],
+  );
+}
+
+/**
+ * Delete all WebAuthn registration and authentication challenges for a user.
+ */
+export async function deleteWebAuthnChallenges(
+  username: string,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query(
+      "DELETE FROM webauthn_registration_challenges WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    );
+    await client.query(
+      "DELETE FROM webauthn_authentication_challenges WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    );
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Insert a fake WebAuthn credential directly in the DB for testing.
+ * Returns the credential UUID (primary key).
+ */
+export async function insertWebAuthnCredential(
+  username: string,
+  opts?: { displayName?: string },
+): Promise<string> {
+  const credentialId = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
+  const publicKey = Buffer.from(crypto.getRandomValues(new Uint8Array(65)));
+  const { rows } = await pool.query<{ id: string }>(
+    `INSERT INTO webauthn_credentials
+       (account_id, credential_id, public_key, counter, display_name)
+     VALUES (
+       (SELECT id FROM accounts WHERE username = $1),
+       $2, $3, 0, $4
+     )
+     RETURNING id`,
+    [username, credentialId, publicKey, opts?.displayName ?? null],
+  );
+  return rows[0].id;
+}
+
 // ── Audit database helpers ────────────────────────────────────────
 
 /**

@@ -45,12 +45,24 @@ export default defineConfig({
   projects: [
     {
       name: "parallel",
-      testIgnore: ["rate-limit.spec.ts", "system-settings.spec.ts"],
+      testIgnore: [
+        "mfa-sign-in.spec.ts",
+        "rate-limit.spec.ts",
+        "system-settings.spec.ts",
+        "totp-profile.spec.ts",
+        "webauthn.spec.ts",
+      ],
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "serial",
-      testMatch: ["rate-limit.spec.ts", "system-settings.spec.ts"],
+      testMatch: [
+        "mfa-sign-in.spec.ts",
+        "rate-limit.spec.ts",
+        "system-settings.spec.ts",
+        "totp-profile.spec.ts",
+        "webauthn.spec.ts",
+      ],
       dependencies: ["parallel"],
       use: { ...devices["Desktop Chrome"] },
     },
