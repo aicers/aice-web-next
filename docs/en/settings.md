@@ -203,8 +203,8 @@ All changes to policy settings are recorded in the audit log.
 ## Profile
 
 The Profile page is accessed from **Settings → Profile**. It
-allows users to manage personal preferences and two-factor
-authentication.
+allows users to manage personal preferences, two-factor
+authentication, and passkeys.
 
 ### Preferences
 
@@ -281,6 +281,78 @@ entering your password. Enter the 6-digit code from your
 authenticator app and click **Verify**.
 
 ![MFA sign-in challenge](../assets/mfa-sign-in-en.png)
+
+### Passkeys (WebAuthn)
+
+The Passkeys card shows registered passkey credentials and allows
+users to register, rename, or remove passkeys for passwordless
+sign-in verification.
+
+The card displays one of four states depending on enrollment and
+administrator policy:
+
+| State | Display |
+|-------|---------|
+| Available, not enrolled | "Disabled" badge with **Register Passkey** button |
+| Available, enrolled | "Enabled" badge with credential list and **Add Passkey** button |
+| Disabled by admin, enrolled | "Enabled" badge with admin notice and credential list (remove only) |
+| Not available | "Disabled" badge with "Passkeys are not available" message |
+
+![Passkeys — available, not enrolled](../assets/webauthn-disabled-en.png)
+
+#### Registering a Passkey
+
+1. Click **Register Passkey** (or **Add Passkey** if you already
+   have one registered).
+2. Optionally enter a display name (e.g., "MacBook Touch ID").
+3. Click **Register Passkey** to start the browser prompt.
+4. Follow your browser's prompt to create the passkey.
+
+![Passkey registration](../assets/webauthn-register-en.png)
+
+After successful registration, the passkey appears in the
+credential list.
+
+![Passkeys — available, enrolled](../assets/webauthn-enabled-en.png)
+
+#### Renaming a Passkey
+
+Click the pencil icon next to a passkey, enter the new name,
+and click **Save**.
+
+#### Removing a Passkey
+
+1. Click the trash icon next to the passkey you want to remove.
+2. Enter your account password to confirm.
+3. Click **Remove Passkey** to delete the credential.
+
+#### Disabled by Administrator
+
+When an administrator removes WebAuthn from the allowed MFA
+methods while a user still has passkeys enrolled, the card shows
+an "Enabled" badge with a notice that passkeys have been disabled
+by an administrator. The user can still remove credentials but
+cannot register new ones.
+
+![Passkeys — disabled by admin](../assets/webauthn-admin-disabled-en.png)
+
+#### Not Available
+
+When the administrator has not enabled WebAuthn in the MFA policy
+and the user has no passkeys enrolled, the card shows a "Disabled"
+badge with a "Passkeys are not available" message. No action is
+available to the user.
+
+![Passkeys — not available](../assets/webauthn-not-available-en.png)
+
+#### MFA Sign-In with Passkey
+
+When a passkey is enrolled, sign-in requires an additional step
+after entering your password. Follow your browser's prompt to
+verify your identity with the passkey. If both TOTP and WebAuthn
+are enrolled, you can switch between methods.
+
+![MFA method selection](../assets/mfa-method-select-en.png)
 
 ## Account Status
 
