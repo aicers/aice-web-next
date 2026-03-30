@@ -674,6 +674,18 @@ export async function insertWebAuthnCredential(
   return rows[0].id;
 }
 
+/**
+ * Alias for insertWebAuthnCredential — used in sign-in tests to
+ * pre-enroll a (fake) WebAuthn credential so the server presents the
+ * WebAuthn MFA step. Returns the credential UUID.
+ */
+export async function enrollWebAuthnCredential(
+  username: string,
+  displayName = "Test Passkey",
+): Promise<string> {
+  return insertWebAuthnCredential(username, { displayName });
+}
+
 // ── Audit database helpers ────────────────────────────────────────
 
 /**

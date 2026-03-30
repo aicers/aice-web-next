@@ -7,83 +7,11 @@ import {
   resetAccountDefaults,
   resetMfaPolicy,
 } from "./helpers/setup-db";
-
-/**
- * Helper: get CSRF token and Origin header from current page cookies.
- */
-function csrfHeaders(csrfValue: string) {
-  return {
-    "Content-Type": "application/json",
-    "x-csrf-token": csrfValue,
-    Origin: "http://localhost:3000",
-  };
-}
-
-async function getCsrf(page: import("@playwright/test").Page) {
-  const cookies = await page.context().cookies();
-  return cookies.find((c) => c.name === "csrf")?.value ?? "";
-}
-
-/**
- * Use the browser's virtual authenticator (via page.evaluate) to create
- * a WebAuthn credential from the server-provided registration options.
- * Returns a RegistrationResponseJSON-compatible object.
- */
-async function createCredentialInBrowser(
-  page: import("@playwright/test").Page,
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic server response
-  options: any,
-) {
-  return page.evaluate(async (opts) => {
-    const cred = (await navigator.credentials.create({
-      publicKey: {
-        ...opts,
-        challenge: Uint8Array.from(
-          atob(opts.challenge.replace(/-/g, "+").replace(/_/g, "/")),
-          (c) => c.charCodeAt(0),
-        ),
-        user: {
-          ...opts.user,
-          id: Uint8Array.from(
-            atob(opts.user.id.replace(/-/g, "+").replace(/_/g, "/")),
-            (c) => c.charCodeAt(0),
-          ),
-        },
-        excludeCredentials: (opts.excludeCredentials ?? []).map(
-          (ec: { id: string; type: string; transports?: string[] }) => ({
-            ...ec,
-            id: Uint8Array.from(
-              atob(ec.id.replace(/-/g, "+").replace(/_/g, "/")),
-              (c) => c.charCodeAt(0),
-            ),
-          }),
-        ),
-      },
-    })) as PublicKeyCredential;
-
-    const response = cred.response as AuthenticatorAttestationResponse;
-
-    function toBase64url(buffer: ArrayBuffer): string {
-      return btoa(String.fromCharCode(...new Uint8Array(buffer)))
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=+$/, "");
-    }
-
-    return {
-      id: cred.id,
-      rawId: toBase64url(cred.rawId),
-      type: cred.type,
-      response: {
-        clientDataJSON: toBase64url(response.clientDataJSON),
-        attestationObject: toBase64url(response.attestationObject),
-        transports: response.getTransports?.() ?? [],
-      },
-      clientExtensionResults: cred.getClientExtensionResults(),
-      authenticatorAttachment: cred.authenticatorAttachment ?? undefined,
-    };
-  }, options);
-}
+import {
+  createCredentialInBrowser,
+  csrfHeaders,
+  getCsrf,
+} from "./helpers/webauthn";
 
 test.describe("WebAuthn API (#217)", () => {
   test.beforeAll(async ({ workerUsername }) => {
