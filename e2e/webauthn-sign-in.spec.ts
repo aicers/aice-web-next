@@ -320,7 +320,7 @@ test.describe("WebAuthn sign-in flow (#218)", () => {
         page.getByText(/follow your browser.*prompt/i),
       ).not.toBeVisible();
     } finally {
-      await setMfaPolicyViaApi(page, ["webauthn", "totp"]);
+      await resetMfaPolicy();
     }
   });
 });

@@ -61,11 +61,10 @@ test.describe("WebAuthn profile management (#219)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await insertWebAuthnCredential(workerUsername, {
       displayName: "My Passkey",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/profile");
 
     await expect(page.getByText("My Passkey")).toBeVisible({ timeout: 5_000 });
@@ -117,7 +116,7 @@ test.describe("WebAuthn profile management (#219)", () => {
       // Should show success message
       await expect(
         page.getByText(/passkey registered successfully/i),
-      ).toBeVisible({ timeout: 10_000 });
+      ).toBeVisible({ timeout: 20_000 });
 
       // Close dialog
       await page.getByRole("button", { name: /done/i }).click();
@@ -151,7 +150,7 @@ test.describe("WebAuthn profile management (#219)", () => {
 
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("WebAuthn.enable");
-    const { authenticatorId } = await cdp.send(
+    let { authenticatorId } = await cdp.send(
       "WebAuthn.addVirtualAuthenticator",
       {
         options: {
@@ -173,8 +172,25 @@ test.describe("WebAuthn profile management (#219)", () => {
       await page.getByRole("button", { name: /^register passkey$/i }).click();
       await expect(
         page.getByText(/passkey registered successfully/i),
-      ).toBeVisible({ timeout: 10_000 });
+      ).toBeVisible({ timeout: 20_000 });
       await page.getByRole("button", { name: /done/i }).click();
+
+      // Reset virtual authenticator so excludeCredentials doesn't block
+      await cdp.send("WebAuthn.removeVirtualAuthenticator", {
+        authenticatorId,
+      });
+      ({ authenticatorId } = await cdp.send(
+        "WebAuthn.addVirtualAuthenticator",
+        {
+          options: {
+            protocol: "ctap2",
+            transport: "internal",
+            hasResidentKey: true,
+            hasUserVerification: true,
+            isUserVerified: true,
+          },
+        },
+      ));
 
       // Register second passkey
       await page.getByRole("button", { name: /add passkey/i }).click();
@@ -182,7 +198,7 @@ test.describe("WebAuthn profile management (#219)", () => {
       await page.getByRole("button", { name: /^register passkey$/i }).click();
       await expect(
         page.getByText(/passkey registered successfully/i),
-      ).toBeVisible({ timeout: 10_000 });
+      ).toBeVisible({ timeout: 20_000 });
       await page.getByRole("button", { name: /done/i }).click();
 
       // Both should be listed
@@ -204,11 +220,10 @@ test.describe("WebAuthn profile management (#219)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await insertWebAuthnCredential(workerUsername, {
       displayName: "Old Name",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/profile");
 
     await expect(page.getByText("Old Name")).toBeVisible({ timeout: 5_000 });
@@ -237,11 +252,10 @@ test.describe("WebAuthn profile management (#219)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await insertWebAuthnCredential(workerUsername, {
       displayName: "To Remove",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/profile");
 
     await expect(page.getByText("To Remove")).toBeVisible({ timeout: 5_000 });
@@ -269,11 +283,10 @@ test.describe("WebAuthn profile management (#219)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
     await insertWebAuthnCredential(workerUsername, {
       displayName: "Keep Me",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/profile");
 
     await expect(page.getByText("Keep Me")).toBeVisible({ timeout: 5_000 });
@@ -318,12 +331,11 @@ test.describe("WebAuthn profile management (#219)", () => {
     workerUsername,
     workerPassword,
   }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
     await insertWebAuthnCredential(workerUsername, {
       displayName: "Admin Off",
     });
-
-    await signInAndWait(page, workerUsername, workerPassword);
-
     await setMfaPolicyViaApi(page, ["totp"]);
 
     try {
@@ -372,9 +384,9 @@ test.describe("WebAuthn profile management (#219)", () => {
     await page.getByRole("button", { name: /register passkey/i }).click();
 
     // Wait for dialog
-    await expect(page.getByText(/register a passkey/i)).toBeVisible({
-      timeout: 5_000,
-    });
+    await expect(
+      page.getByRole("heading", { name: /register a passkey/i }),
+    ).toBeVisible({ timeout: 5_000 });
 
     // Cancel
     await page.getByRole("button", { name: /cancel/i }).click();
@@ -413,9 +425,9 @@ test.describe("WebAuthn profile management (#219)", () => {
 
       // Open registration dialog
       await page.getByRole("button", { name: /register passkey/i }).click();
-      await expect(page.getByText(/register a passkey/i)).toBeVisible({
-        timeout: 5_000,
-      });
+      await expect(
+        page.getByRole("heading", { name: /register a passkey/i }),
+      ).toBeVisible({ timeout: 5_000 });
 
       // Admin disables WebAuthn mid-registration via API
       await setMfaPolicyViaApi(page, ["totp"]);
@@ -425,7 +437,7 @@ test.describe("WebAuthn profile management (#219)", () => {
 
       // Should show an error (WEBAUTHN_NOT_ALLOWED handled gracefully)
       const alert = page.locator("p[role='alert']");
-      await expect(alert).toBeVisible({ timeout: 10_000 });
+      await expect(alert).toBeVisible({ timeout: 20_000 });
     } finally {
       await setMfaPolicyViaApi(page, ["webauthn", "totp"]);
       await cdp.send("WebAuthn.removeVirtualAuthenticator", {

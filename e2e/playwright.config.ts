@@ -58,21 +58,47 @@ export default defineConfig({
     },
     {
       name: "serial",
-      testMatch: [
-        "mfa-sign-in.spec.ts",
-        "system-settings.spec.ts",
-        "totp-profile.spec.ts",
-        "webauthn.spec.ts",
-        "webauthn-profile.spec.ts",
-        "webauthn-sign-in.spec.ts",
-      ],
+      testMatch: ["system-settings.spec.ts"],
       dependencies: ["parallel"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // These suites mutate the global mfa_policy row. Running them
+    // in the same project with workers > 1 causes races, so each
+    // file gets its own project chained via dependencies.
+    {
+      name: "mfa-policy-1",
+      testMatch: ["mfa-sign-in.spec.ts"],
+      dependencies: ["serial"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "mfa-policy-2",
+      testMatch: ["totp-profile.spec.ts"],
+      dependencies: ["mfa-policy-1"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "mfa-policy-3",
+      testMatch: ["webauthn.spec.ts"],
+      dependencies: ["mfa-policy-2"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "mfa-policy-4",
+      testMatch: ["webauthn-profile.spec.ts"],
+      dependencies: ["mfa-policy-3"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "mfa-policy-5",
+      testMatch: ["webauthn-sign-in.spec.ts"],
+      dependencies: ["mfa-policy-4"],
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "isolated",
       testMatch: ["rate-limit.spec.ts"],
-      dependencies: ["serial"],
+      dependencies: ["mfa-policy-5"],
       use: { ...devices["Desktop Chrome"] },
     },
   ],

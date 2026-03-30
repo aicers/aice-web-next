@@ -77,7 +77,13 @@ test.describe("TOTP profile management (#205)", () => {
     await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/profile");
 
-    await expect(page.getByText("Disabled")).toBeVisible({ timeout: 5_000 });
+    const totpCard = page
+      .locator("[data-slot='card']")
+      .filter({ has: page.getByText("Two-Factor Authentication") })
+      .filter({ has: page.getByText("authenticator app") });
+    await expect(totpCard.getByText("Disabled")).toBeVisible({
+      timeout: 5_000,
+    });
     await expect(
       page.getByRole("button", { name: /enable totp/i }),
     ).toBeVisible();
@@ -199,7 +205,9 @@ test.describe("TOTP profile management (#205)", () => {
     await page.getByRole("button", { name: /cancel/i }).click();
 
     // Dialog should close, card still shows disabled
-    await expect(page.getByText("Disabled")).toBeVisible({ timeout: 5_000 });
+    await expect(
+      page.getByRole("button", { name: /enable totp/i }),
+    ).toBeVisible({ timeout: 5_000 });
   });
 
   test("enroll via UI then sign in with TOTP", async ({
@@ -284,7 +292,9 @@ test.describe("TOTP profile management (#205)", () => {
       .click();
 
     // Card should revert to disabled
-    await expect(page.getByText("Disabled")).toBeVisible({ timeout: 5_000 });
+    await expect(
+      page.getByRole("button", { name: /enable totp/i }),
+    ).toBeVisible({ timeout: 5_000 });
   });
 
   test("disable TOTP with wrong code shows error", async ({
@@ -385,15 +395,15 @@ test.describe("TOTP profile management (#205)", () => {
       await expect(page.getByText("Enabled")).toBeVisible({ timeout: 5_000 });
 
       // Should show "disabled by admin" message
-      await expect(
-        page.getByText(/disabled by an administrator/i),
-      ).toBeVisible();
+      await expect(page.getByText(/disabled by an administrator/i)).toBeVisible(
+        { timeout: 5_000 },
+      );
 
       // Should show "Remove TOTP" button
       const removeButton = page.getByRole("button", {
         name: /remove totp/i,
       });
-      await expect(removeButton).toBeVisible();
+      await expect(removeButton).toBeVisible({ timeout: 5_000 });
 
       // Remove TOTP using the button
       await removeButton.click();
