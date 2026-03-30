@@ -109,8 +109,10 @@ test.describe("TOTP profile management (#205)", () => {
     await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/profile");
 
-    // Click enable
-    await page.getByRole("button", { name: /enable totp/i }).click();
+    // Click enable (wait for profile page to fully load)
+    const enableBtn = page.getByRole("button", { name: /enable totp/i });
+    await expect(enableBtn).toBeVisible({ timeout: 10_000 });
+    await enableBtn.click();
 
     // Wait for QR code SVG
     await expect(page.getByText(/scan this qr code/i)).toBeVisible({

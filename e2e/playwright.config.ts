@@ -58,12 +58,17 @@ export default defineConfig({
       name: "serial",
       testMatch: [
         "mfa-sign-in.spec.ts",
-        "rate-limit.spec.ts",
         "system-settings.spec.ts",
         "totp-profile.spec.ts",
         "webauthn.spec.ts",
       ],
       dependencies: ["parallel"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "isolated",
+      testMatch: ["rate-limit.spec.ts"],
+      dependencies: ["serial"],
       use: { ...devices["Desktop Chrome"] },
     },
   ],
