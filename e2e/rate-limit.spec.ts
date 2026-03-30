@@ -3,21 +3,20 @@ import { expect, test } from "@playwright/test";
 import { resetRateLimits, signIn } from "./helpers/auth";
 
 test.describe("Rate limiting — UI", () => {
-  test.beforeAll(async () => {
+  test("per-account+IP: 429 after exceeding limit", async ({ page }) => {
+    // Reset inside the test (not beforeAll) so no other serial worker
+    // can fill buckets between the reset and our seed attempts.
     await resetRateLimits();
-  });
 
-  test("per-account+IP: 429 after exceeding limit", async ({
-    page,
-    request,
-  }) => {
     // The per-account+IP limit is 5 per 5 minutes.
     // Use a fake username so we don't trigger account lockout.
     const fakeUser = "ratelimit-acctip-test";
 
-    // Submit 5 attempts via API (fast).
+    // Submit 5 attempts via page.request (shares the browser's IP,
+    // unlike the standalone `request` fixture which may resolve to
+    // a different loopback address — e.g. 127.0.0.1 vs ::1).
     for (let i = 0; i < 5; i++) {
-      await request.post("/api/auth/sign-in", {
+      await page.request.post("/api/auth/sign-in", {
         data: { username: fakeUser, password: "wrong" },
       });
     }
