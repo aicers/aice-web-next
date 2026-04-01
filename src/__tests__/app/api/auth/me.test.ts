@@ -35,6 +35,7 @@ describe("GET /api/auth/me", () => {
     roles: ["admin"],
     tokenVersion: 0,
     mustChangePassword: false,
+    mustEnrollMfa: false,
     iat: now,
     exp: now + 900,
     sessionIp: "127.0.0.1",

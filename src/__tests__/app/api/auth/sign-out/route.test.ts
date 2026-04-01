@@ -72,6 +72,7 @@ describe("POST /api/auth/sign-out", () => {
     roles: ["System Administrator"],
     tokenVersion: 0,
     mustChangePassword: false,
+    mustEnrollMfa: false,
     iat: now,
     exp: now + 900,
     sessionIp: "127.0.0.1",
@@ -207,6 +208,7 @@ describe("POST /api/auth/sign-out", () => {
 
     expect(mockWithAuth).toHaveBeenCalledWith(expect.any(Function), {
       skipPasswordCheck: true,
+      skipMfaEnrollCheck: true,
     });
   });
 });

@@ -51,6 +51,7 @@ const defaultSession: AuthSession = {
   roles: ["System Administrator"],
   tokenVersion: 0,
   mustChangePassword: false,
+  mustEnrollMfa: false,
   iat: Math.floor(Date.now() / 1000),
   exp: Math.floor(Date.now() / 1000) + 3600,
   sessionCreatedAt: new Date(),

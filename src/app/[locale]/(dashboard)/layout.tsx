@@ -24,6 +24,10 @@ export default async function DashboardLayout({
     redirect(`${localePrefix}/change-password`);
   }
 
+  if (session?.mustEnrollMfa) {
+    redirect(`${localePrefix}/enroll-mfa`);
+  }
+
   // Fetch username for sidebar display
   let username: string | undefined;
   try {

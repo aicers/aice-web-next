@@ -28,6 +28,7 @@ export async function createSessionAndIssueTokens(params: {
   roleName: string;
   tokenVersion: number;
   mustChangePassword: boolean;
+  mustEnrollMfa?: boolean;
   locale: string | null;
   ip: string;
   userAgent: string;
@@ -37,6 +38,7 @@ export async function createSessionAndIssueTokens(params: {
     roleName,
     tokenVersion,
     mustChangePassword,
+    mustEnrollMfa = false,
     locale,
     ip,
     userAgent,
@@ -53,10 +55,10 @@ export async function createSessionAndIssueTokens(params: {
   // Create session
   const browserFingerprint = extractBrowserFingerprint(userAgent);
   const { rows: sessionRows } = await query<{ sid: string }>(
-    `INSERT INTO sessions (sid, account_id, ip_address, user_agent, browser_fingerprint)
-     VALUES (gen_random_uuid(), $1, $2, $3, $4)
+    `INSERT INTO sessions (sid, account_id, ip_address, user_agent, browser_fingerprint, must_enroll_mfa)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
      RETURNING sid`,
-    [accountId, ip, userAgent, browserFingerprint],
+    [accountId, ip, userAgent, browserFingerprint, mustEnrollMfa],
   );
   const sessionId = sessionRows[0].sid;
 
@@ -111,5 +113,5 @@ export async function createSessionAndIssueTokens(params: {
     sid: sessionId,
   });
 
-  return NextResponse.json({ mustChangePassword });
+  return NextResponse.json({ mustChangePassword, mustEnrollMfa });
 }

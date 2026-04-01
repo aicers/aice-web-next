@@ -12,15 +12,18 @@ import { getWebAuthnCredentials } from "@/lib/auth/webauthn";
  * Check WebAuthn enrollment status and policy state.
  * Policy-independent — always accessible.
  */
-export const GET = withAuth(async (_request, _context, session) => {
-  const [credentials, policy] = await Promise.all([
-    getWebAuthnCredentials(session.accountId),
-    loadMfaPolicy(),
-  ]);
+export const GET = withAuth(
+  async (_request, _context, session) => {
+    const [credentials, policy] = await Promise.all([
+      getWebAuthnCredentials(session.accountId),
+      loadMfaPolicy(),
+    ]);
 
-  return NextResponse.json({
-    enrolled: credentials.length > 0,
-    allowed: policy.allowedMethods.includes("webauthn"),
-    credentialCount: credentials.length,
-  });
-});
+    return NextResponse.json({
+      enrolled: credentials.length > 0,
+      allowed: policy.allowedMethods.includes("webauthn"),
+      credentialCount: credentials.length,
+    });
+  },
+  { skipMfaEnrollCheck: true },
+);

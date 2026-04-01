@@ -12,6 +12,7 @@ import {
   deleteTestAccount,
   deleteTestRole,
   resetAccountDefaults,
+  setAccountMfaOverride,
 } from "./helpers/setup-db";
 
 const READER_USER = "e2e-settings-reader";
@@ -27,6 +28,7 @@ test.beforeAll(async () => {
 test.beforeEach(async () => {
   await resetRateLimits();
   await resetAccountDefaults(ADMIN_USERNAME);
+  await setAccountMfaOverride(ADMIN_USERNAME, "exempt");
 });
 
 test.afterAll(async () => {

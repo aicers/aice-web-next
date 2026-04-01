@@ -91,6 +91,7 @@ const adminSession: AuthSession = {
   roles: ["System Administrator"],
   tokenVersion: 0,
   mustChangePassword: false,
+  mustEnrollMfa: false,
   iat: now,
   exp: now + 900,
   sessionCreatedAt: new Date(),

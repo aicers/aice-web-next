@@ -74,6 +74,7 @@ describe("POST /api/auth/password", () => {
     roles: ["System Administrator"],
     tokenVersion: 0,
     mustChangePassword: true,
+    mustEnrollMfa: false,
     iat: now,
     exp: now + 900,
     sessionIp: "127.0.0.1",

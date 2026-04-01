@@ -12,6 +12,7 @@ import { auditLog } from "@/lib/audit/logger";
 import { isIpAllowed } from "@/lib/auth/cidr";
 import { extractClientIp } from "@/lib/auth/ip";
 import { loadLockoutPolicy } from "@/lib/auth/lockout-policy";
+import { getMfaRequirement } from "@/lib/auth/mfa-enforcement";
 import { loadMfaPolicy } from "@/lib/auth/mfa-policy";
 import { issueMfaToken } from "@/lib/auth/mfa-token";
 import { verifyPassword } from "@/lib/auth/password";
@@ -30,12 +31,14 @@ interface AccountRow {
   status: string;
   token_version: number;
   must_change_password: boolean;
+  mfa_override: string | null;
   failed_sign_in_count: number;
   lockout_count: number;
   locked_until: string | null;
   max_sessions: number | null;
   allowed_ips: string[] | null;
   role_name: string;
+  role_mfa_required: boolean;
   locale: string | null;
 }
 
@@ -234,9 +237,11 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
   // Step 3: Fetch account
   const { rows: accountRows } = await query<AccountRow>(
     `SELECT a.id, a.password_hash, a.status, a.token_version,
-            a.must_change_password, a.failed_sign_in_count,
-            a.lockout_count, a.locked_until, a.max_sessions,
-            a.allowed_ips, r.name AS role_name, a.locale
+            a.must_change_password, a.mfa_override,
+            a.failed_sign_in_count, a.lockout_count, a.locked_until,
+            a.max_sessions, a.allowed_ips,
+            r.name AS role_name, r.mfa_required AS role_mfa_required,
+            a.locale
      FROM accounts a
      JOIN roles r ON a.role_id = r.id
      WHERE a.username = $1`,
@@ -320,6 +325,24 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
     });
   }
 
+  // Step 6.6: MFA enforcement — required but not enrolled
+  const mfaRequirement = getMfaRequirement(
+    account.mfa_override,
+    account.role_mfa_required,
+  );
+  const mustEnrollMfa = mfaRequirement === "required";
+
+  if (mustEnrollMfa) {
+    await auditLog.record({
+      actor: account.id,
+      action: "mfa.enforcement.blocked",
+      target: "mfa",
+      targetId: account.id,
+      ip,
+      details: { reason: "not_enrolled" },
+    });
+  }
+
   // Step 7: Max sessions check
   const policy = await loadSessionPolicy();
   const effectiveMaxSessions = account.max_sessions ?? policy.maxSessions;
@@ -359,6 +382,7 @@ async function handleSignIn(request: NextRequest): Promise<NextResponse> {
     roleName: account.role_name,
     tokenVersion: account.token_version,
     mustChangePassword: account.must_change_password,
+    mustEnrollMfa,
     locale: account.locale,
     ip,
     userAgent,

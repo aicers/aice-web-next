@@ -46,6 +46,7 @@ export default defineConfig({
     {
       name: "parallel",
       testIgnore: [
+        "mfa-enforcement.spec.ts",
         "mfa-sign-in.spec.ts",
         "rate-limit.spec.ts",
         "system-settings.spec.ts",
@@ -96,9 +97,15 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
     {
+      name: "mfa-policy-6",
+      testMatch: ["mfa-enforcement.spec.ts"],
+      dependencies: ["mfa-policy-5"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
       name: "isolated",
       testMatch: ["rate-limit.spec.ts"],
-      dependencies: ["mfa-policy-5"],
+      dependencies: ["mfa-policy-6"],
       use: { ...devices["Desktop Chrome"] },
     },
   ],
