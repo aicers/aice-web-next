@@ -88,6 +88,7 @@ describe("withAuth", () => {
     roles: ["admin"],
     tokenVersion: 0,
     mustChangePassword: false,
+    mustEnrollMfa: false,
     iat: now,
     exp: now + 900, // 15 minutes
     sessionIp: "127.0.0.1",
@@ -924,6 +925,64 @@ describe("withAuth", () => {
 
       expect(response.status).toBe(403);
       expect(body.error).toBe("Password change required");
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── MFA enrollment check (step 8.5) ────────────────────────────
+
+  describe("MFA enrollment check", () => {
+    it("returns 403 MFA_ENROLLMENT_REQUIRED when mustEnrollMfa is true", async () => {
+      mockVerifyJwtFull.mockResolvedValue({
+        ...validSession,
+        mustEnrollMfa: true,
+      });
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler);
+      const response = await wrapped(makeAuthRequest(), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(body.code).toBe("MFA_ENROLLMENT_REQUIRED");
+      expect(body.redirect).toBe("/enroll-mfa");
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("proceeds when mustEnrollMfa is true and skipMfaEnrollCheck is true", async () => {
+      mockVerifyJwtFull.mockResolvedValue({
+        ...validSession,
+        mustEnrollMfa: true,
+      });
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler, { skipMfaEnrollCheck: true });
+      const response = await wrapped(makeAuthRequest(), makeContext());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it("password check fires before MFA enrollment check when both flags are true", async () => {
+      mockVerifyJwtFull.mockResolvedValue({
+        ...validSession,
+        mustChangePassword: true,
+        mustEnrollMfa: true,
+      });
+
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler);
+      const response = await wrapped(makeAuthRequest(), makeContext());
+      const body = await response.json();
+
+      // Step 8 (password) should fire before step 8.5 (MFA enrollment)
+      expect(response.status).toBe(403);
+      expect(body.error).toBe("Password change required");
+      expect(body.redirect).toBe("/change-password");
       expect(handler).not.toHaveBeenCalled();
     });
   });

@@ -36,5 +36,5 @@ export const POST = withAuth(
 
     return NextResponse.json({ ok: true });
   },
-  { skipPasswordCheck: true },
+  { skipPasswordCheck: true, skipMfaEnrollCheck: true },
 );

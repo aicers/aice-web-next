@@ -49,6 +49,7 @@ describe("rotation", () => {
     roles: ["admin"],
     tokenVersion: 0,
     mustChangePassword: false,
+    mustEnrollMfa: false,
     iat: now - 600, // 10 min ago
     exp: now + 300, // 5 min from now (total 15 min)
     sessionIp: "127.0.0.1",

@@ -63,12 +63,13 @@ export function SignInForm() {
   const [serverError, setServerError] = useState<string | null>(null);
 
   // MFA state
-  const [mfaStep, setMfaStep] = useState<"credentials" | "totp" | "webauthn">(
-    "credentials",
-  );
+  const [mfaStep, setMfaStep] = useState<
+    "credentials" | "totp" | "webauthn" | "recovery"
+  >("credentials");
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [mfaMethods, setMfaMethods] = useState<string[]>([]);
   const [totpCode, setTotpCode] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
   const [mfaSubmitting, setMfaSubmitting] = useState(false);
   const [webauthnCancelled, setWebauthnCancelled] = useState(false);
   const totpInputRef = useRef<HTMLInputElement>(null);
@@ -81,9 +82,11 @@ export function SignInForm() {
   const isSubmitting = form.formState.isSubmitting;
 
   const handleSignInSuccess = useCallback(
-    (body: { mustChangePassword?: boolean }) => {
+    (body: { mustChangePassword?: boolean; mustEnrollMfa?: boolean }) => {
       if (body.mustChangePassword) {
         router.push("/change-password");
+      } else if (body.mustEnrollMfa) {
+        router.push("/enroll-mfa");
       } else {
         router.push("/");
       }
@@ -341,13 +344,133 @@ export function SignInForm() {
     }
   }
 
+  async function onRecoverySubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setServerError(null);
+    setMfaSubmitting(true);
+
+    try {
+      const res = await fetch("/api/auth/mfa/recovery/challenge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mfaToken, code: recoveryCode }),
+      });
+
+      if (res.ok) {
+        const body = (await res.json()) as {
+          mustChangePassword?: boolean;
+          mustEnrollMfa?: boolean;
+        };
+        handleSignInSuccess(body);
+        return;
+      }
+
+      if (res.status === 429) {
+        setServerError(t("mfa.rateLimited"));
+        return;
+      }
+
+      try {
+        const body = (await res.json()) as { code?: string };
+        if (body.code) {
+          if (body.code === "MFA_TOKEN_INVALID") {
+            setMfaStep("credentials");
+            setMfaToken(null);
+            setRecoveryCode("");
+            setServerError(t("mfa.mfaTokenExpired"));
+            return;
+          }
+          const mfaKey = MFA_CODES[body.code];
+          if (mfaKey) {
+            setServerError(t(mfaKey));
+            setRecoveryCode("");
+            return;
+          }
+        }
+      } catch {
+        // Response body is not JSON
+      }
+
+      setServerError(t("serverError"));
+    } catch {
+      setServerError(t("serverError"));
+    } finally {
+      setMfaSubmitting(false);
+    }
+  }
+
   function resetToCredentials() {
     setMfaStep("credentials");
     setMfaToken(null);
     setMfaMethods([]);
     setTotpCode("");
+    setRecoveryCode("");
     setWebauthnCancelled(false);
     setServerError(null);
+  }
+
+  // ── Recovery code step ────────────────────────────────────────
+
+  if (mfaStep === "recovery") {
+    return (
+      <form onSubmit={onRecoverySubmit} className="grid gap-6">
+        <h1 className="text-xl font-semibold tracking-tight">
+          {t("mfa.useRecoveryCode")}
+        </h1>
+
+        <p className="text-muted-foreground text-sm">
+          {t("mfa.enterRecoveryCode")}
+        </p>
+
+        <div className="grid gap-2">
+          <Input
+            type="text"
+            placeholder={t("mfa.recoveryCodePlaceholder")}
+            value={recoveryCode}
+            onChange={(e) => setRecoveryCode(e.target.value)}
+            disabled={mfaSubmitting}
+            className="text-center text-lg tracking-widest"
+            autoFocus
+          />
+        </div>
+
+        {serverError && (
+          <p
+            className="text-destructive flex items-center gap-1 text-sm"
+            role="alert"
+          >
+            <AlertCircle className="size-3.5 shrink-0" />
+            {serverError}
+          </p>
+        )}
+
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={mfaSubmitting || recoveryCode.trim().length === 0}
+        >
+          {mfaSubmitting ? (
+            <>
+              <Loader2 className="animate-spin" />
+              {t("mfa.verifying")}
+            </>
+          ) : (
+            t("mfa.verifyButton")
+          )}
+        </Button>
+
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          onClick={resetToCredentials}
+          disabled={mfaSubmitting}
+        >
+          <ArrowLeft className="size-4" />
+          {t("mfa.backToSignIn")}
+        </Button>
+      </form>
+    );
   }
 
   // ── WebAuthn step ─────────────────────────────────────────────
@@ -412,6 +535,21 @@ export function SignInForm() {
             {t("mfa.useTotp")}
           </Button>
         )}
+
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          onClick={() => {
+            setMfaStep("recovery");
+            setServerError(null);
+            setWebauthnCancelled(false);
+            setRecoveryCode("");
+          }}
+          disabled={mfaSubmitting}
+        >
+          {t("mfa.useRecoveryCode")}
+        </Button>
 
         <Button
           type="button"
@@ -496,6 +634,21 @@ export function SignInForm() {
             {t("mfa.useWebauthn")}
           </Button>
         )}
+
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          onClick={() => {
+            setMfaStep("recovery");
+            setServerError(null);
+            setTotpCode("");
+            setRecoveryCode("");
+          }}
+          disabled={mfaSubmitting}
+        >
+          {t("mfa.useRecoveryCode")}
+        </Button>
 
         <Button
           type="button"

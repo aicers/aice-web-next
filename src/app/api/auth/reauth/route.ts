@@ -80,5 +80,9 @@ export const POST = withAuth(
 
     return NextResponse.json({ ok: true });
   },
-  { skipPasswordCheck: true, skipSessionPolicy: true },
+  {
+    skipPasswordCheck: true,
+    skipMfaEnrollCheck: true,
+    skipSessionPolicy: true,
+  },
 );

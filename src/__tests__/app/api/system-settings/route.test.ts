@@ -49,6 +49,7 @@ describe("GET /api/system-settings", () => {
     roles: ["System Administrator"],
     tokenVersion: 0,
     mustChangePassword: false,
+    mustEnrollMfa: false,
     iat: now,
     exp: now + 900,
     sessionIp: "127.0.0.1",

@@ -18,6 +18,11 @@ const mockWithCorrelationId = vi.hoisted(() => vi.fn());
 const mockGenerateCorrelationId = vi.hoisted(() => vi.fn());
 const mockCookieSet = vi.hoisted(() => vi.fn());
 const mockCookieDelete = vi.hoisted(() => vi.fn());
+const mockLoadMfaPolicy = vi.hoisted(() => vi.fn());
+const mockGetMfaRequirement = vi.hoisted(() => vi.fn());
+const mockGetTotpCredential = vi.hoisted(() => vi.fn());
+const mockGetWebAuthnCredentials = vi.hoisted(() => vi.fn());
+const mockIssueMfaToken = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/db/client", () => ({
   query: vi.fn((...args: unknown[]) => mockQuery(...args)),
@@ -69,6 +74,26 @@ vi.mock("@/lib/audit/correlation", () => ({
   withCorrelationId: mockWithCorrelationId,
 }));
 
+vi.mock("@/lib/auth/mfa-policy", () => ({
+  loadMfaPolicy: mockLoadMfaPolicy,
+}));
+
+vi.mock("@/lib/auth/mfa-enforcement", () => ({
+  getMfaRequirement: mockGetMfaRequirement,
+}));
+
+vi.mock("@/lib/auth/totp", () => ({
+  getTotpCredential: mockGetTotpCredential,
+}));
+
+vi.mock("@/lib/auth/webauthn", () => ({
+  getWebAuthnCredentials: mockGetWebAuthnCredentials,
+}));
+
+vi.mock("@/lib/auth/mfa-token", () => ({
+  issueMfaToken: mockIssueMfaToken,
+}));
+
 vi.mock("next/headers", () => ({
   cookies: vi.fn(() => ({ set: mockCookieSet, delete: mockCookieDelete })),
 }));
@@ -87,6 +112,8 @@ const activeAccount = {
   max_sessions: null,
   allowed_ips: null,
   role_name: "System Administrator",
+  mfa_override: null,
+  role_mfa_required: false,
   locale: null,
 };
 
@@ -126,6 +153,15 @@ describe("POST /api/auth/sign-in", () => {
     mockWithCorrelationId.mockImplementation((_id: string, fn: () => unknown) =>
       fn(),
     );
+
+    // MFA defaults: no credentials, both methods allowed, no enforcement
+    mockLoadMfaPolicy.mockResolvedValue({
+      allowedMethods: ["totp", "webauthn"],
+    });
+    mockGetTotpCredential.mockResolvedValue(null);
+    mockGetWebAuthnCredentials.mockResolvedValue([]);
+    mockGetMfaRequirement.mockReturnValue("none");
+    mockIssueMfaToken.mockResolvedValue("mfa-jwt-token");
 
     // Default: return active account
     mockQuery.mockImplementation(async (sql: string) => {
@@ -774,6 +810,225 @@ describe("POST /api/auth/sign-in", () => {
         (call: unknown[]) => call[0] === "NEXT_LOCALE",
       );
       expect(nextLocaleCalls).toHaveLength(0);
+    });
+  });
+
+  describe("step 6.5 — MFA challenge issuance", () => {
+    it("returns mfaRequired with totp when user has verified TOTP and policy allows it", async () => {
+      mockGetTotpCredential.mockResolvedValue({
+        id: "totp-1",
+        verified: true,
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const response = await POST(
+        makeRequest({ username: "admin", password: "pass" }),
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.mfaRequired).toBe(true);
+      expect(body.mfaToken).toBe("mfa-jwt-token");
+      expect(body.mfaMethods).toEqual(["totp"]);
+    });
+
+    it("returns mfaRequired with webauthn when user has WebAuthn credentials", async () => {
+      mockGetWebAuthnCredentials.mockResolvedValue([
+        { id: "webauthn-1", credentialId: "cred-1" },
+      ]);
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const response = await POST(
+        makeRequest({ username: "admin", password: "pass" }),
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.mfaRequired).toBe(true);
+      expect(body.mfaMethods).toEqual(["webauthn"]);
+    });
+
+    it("returns both totp and webauthn when user has both", async () => {
+      mockGetTotpCredential.mockResolvedValue({
+        id: "totp-1",
+        verified: true,
+      });
+      mockGetWebAuthnCredentials.mockResolvedValue([
+        { id: "webauthn-1", credentialId: "cred-1" },
+      ]);
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const response = await POST(
+        makeRequest({ username: "admin", password: "pass" }),
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.mfaRequired).toBe(true);
+      expect(body.mfaMethods).toEqual(["totp", "webauthn"]);
+    });
+
+    it("falls through when user has TOTP but policy disallows it", async () => {
+      mockGetTotpCredential.mockResolvedValue({
+        id: "totp-1",
+        verified: true,
+      });
+      mockLoadMfaPolicy.mockResolvedValue({
+        allowedMethods: ["webauthn"],
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const response = await POST(
+        makeRequest({ username: "admin", password: "pass" }),
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // No MFA challenge — falls through to normal session
+      expect(body.mfaRequired).toBeUndefined();
+      expect(body.mustChangePassword).toBe(false);
+    });
+
+    it("inserts mfa_challenges row and issues mfaToken", async () => {
+      mockGetTotpCredential.mockResolvedValue({
+        id: "totp-1",
+        verified: true,
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      await POST(makeRequest({ username: "admin", password: "pass" }));
+
+      // Should have inserted into mfa_challenges
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO mfa_challenges"),
+        expect.arrayContaining(["acc-1"]),
+      );
+
+      // Should have issued an MFA token
+      expect(mockIssueMfaToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountId: "acc-1",
+          roles: ["System Administrator"],
+          tokenVersion: 0,
+        }),
+      );
+    });
+  });
+
+  describe("step 6.6 — MFA enforcement (must enroll)", () => {
+    it("sets mustEnrollMfa true when role requires MFA but user has none", async () => {
+      mockGetMfaRequirement.mockReturnValue("required");
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const response = await POST(
+        makeRequest({ username: "admin", password: "pass" }),
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.mustEnrollMfa).toBe(true);
+    });
+
+    it("sets mustEnrollMfa false when role does not require MFA", async () => {
+      mockGetMfaRequirement.mockReturnValue("none");
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const response = await POST(
+        makeRequest({ username: "admin", password: "pass" }),
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.mustEnrollMfa).toBe(false);
+    });
+
+    it("sets mustEnrollMfa false when account mfa_override is exempt", async () => {
+      mockGetMfaRequirement.mockReturnValue("exempt");
+
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM accounts")) {
+          return {
+            rows: [
+              {
+                ...activeAccount,
+                mfa_override: "exempt",
+                role_mfa_required: true,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes("INSERT INTO sessions")) {
+          return { rows: [{ sid: "sess-1" }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      const response = await POST(
+        makeRequest({ username: "admin", password: "pass" }),
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.mustEnrollMfa).toBe(false);
+    });
+
+    it("records mfa.enforcement.blocked audit when mustEnrollMfa is true", async () => {
+      mockGetMfaRequirement.mockReturnValue("required");
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      await POST(makeRequest({ username: "admin", password: "pass" }));
+
+      expect(mockAuditRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "mfa.enforcement.blocked",
+          target: "mfa",
+          targetId: "acc-1",
+          details: expect.objectContaining({ reason: "not_enrolled" }),
+        }),
+      );
+    });
+
+    it("does not record mfa.enforcement.blocked when mustEnrollMfa is false", async () => {
+      mockGetMfaRequirement.mockReturnValue("none");
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      await POST(makeRequest({ username: "admin", password: "pass" }));
+
+      const blockedCalls = mockAuditRecord.mock.calls.filter(
+        (args: unknown[]) => {
+          const entry = args[0] as Record<string, unknown>;
+          return entry.action === "mfa.enforcement.blocked";
+        },
+      );
+      expect(blockedCalls).toHaveLength(0);
+    });
+
+    it("passes mfa_override and role_mfa_required to getMfaRequirement", async () => {
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM accounts")) {
+          return {
+            rows: [
+              {
+                ...activeAccount,
+                mfa_override: "required",
+                role_mfa_required: true,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes("INSERT INTO sessions")) {
+          return { rows: [{ sid: "sess-1" }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+
+      const { POST } = await import("@/app/api/auth/sign-in/route");
+      await POST(makeRequest({ username: "admin", password: "pass" }));
+
+      expect(mockGetMfaRequirement).toHaveBeenCalledWith("required", true);
     });
   });
 });

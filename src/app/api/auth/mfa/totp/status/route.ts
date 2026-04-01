@@ -12,14 +12,17 @@ import { getTotpCredential } from "@/lib/auth/totp";
  * Check the current user's TOTP enrollment status and policy state.
  * Policy-independent — always accessible.
  */
-export const GET = withAuth(async (_request, _context, session) => {
-  const [credential, policy] = await Promise.all([
-    getTotpCredential(session.accountId),
-    loadMfaPolicy(),
-  ]);
+export const GET = withAuth(
+  async (_request, _context, session) => {
+    const [credential, policy] = await Promise.all([
+      getTotpCredential(session.accountId),
+      loadMfaPolicy(),
+    ]);
 
-  return NextResponse.json({
-    enrolled: credential?.verified === true,
-    allowed: policy.allowedMethods.includes("totp"),
-  });
-});
+    return NextResponse.json({
+      enrolled: credential?.verified === true,
+      allowed: policy.allowedMethods.includes("totp"),
+    });
+  },
+  { skipMfaEnrollCheck: true },
+);

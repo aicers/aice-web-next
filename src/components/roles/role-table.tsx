@@ -6,6 +6,7 @@ import {
   Copy,
   MoreVertical,
   Pencil,
+  ShieldCheck,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
@@ -49,6 +50,7 @@ interface Role {
   name: string;
   description: string | null;
   is_builtin: boolean;
+  mfa_required: boolean;
   permissions: string[];
   account_count: number;
 }
@@ -138,6 +140,33 @@ export function RoleTable({ canWrite, canDelete }: RoleTableProps) {
     setEditingRole(undefined);
     setCloneSource(role);
     setFormOpen(true);
+  };
+
+  const handleToggleMfa = async (role: Role) => {
+    try {
+      const csrfToken = readCsrfToken();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (csrfToken) {
+        headers["X-CSRF-Token"] = csrfToken;
+      }
+
+      const res = await fetch(`/api/roles/${role.id}/mfa-required`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ mfaRequired: !role.mfa_required }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error ?? t("error"));
+      }
+
+      fetchRoles();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("error"));
+    }
   };
 
   const handleDelete = async () => {
@@ -237,6 +266,9 @@ export function RoleTable({ canWrite, canDelete }: RoleTableProps) {
                 <TableHead className="text-center">
                   {t("accountCount")}
                 </TableHead>
+                <TableHead className="text-center">
+                  {t("mfaRequired")}
+                </TableHead>
                 {(canWrite || canDelete) && <TableHead className="w-[40px]" />}
               </TableRow>
             </TableHeader>
@@ -266,6 +298,13 @@ export function RoleTable({ canWrite, canDelete }: RoleTableProps) {
                   <TableCell className="text-center">
                     {role.account_count}
                   </TableCell>
+                  <TableCell className="text-center">
+                    {role.mfa_required ? (
+                      <Badge variant="default">{t("mfaRequired")}</Badge>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
                   {(canWrite || canDelete) && (
                     <TableCell>
                       <DropdownMenu>
@@ -285,6 +324,14 @@ export function RoleTable({ canWrite, canDelete }: RoleTableProps) {
                             <DropdownMenuItem onClick={() => handleClone(role)}>
                               <Copy className="mr-2 h-4 w-4" />
                               {t("clone")}
+                            </DropdownMenuItem>
+                          )}
+                          {canWrite && (
+                            <DropdownMenuItem
+                              onClick={() => handleToggleMfa(role)}
+                            >
+                              <ShieldCheck className="mr-2 h-4 w-4" />
+                              {t("toggleMfa")}
                             </DropdownMenuItem>
                           )}
                           {canDelete && !role.is_builtin && (

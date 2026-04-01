@@ -648,6 +648,41 @@ export async function setAccountRole(
   );
 }
 
+// ── MFA enforcement helpers ──────────────────────────────────────
+
+export async function setRoleMfaRequired(
+  roleName: string,
+  required: boolean,
+): Promise<void> {
+  await withAuthDb((c) =>
+    c.query("UPDATE roles SET mfa_required = $2 WHERE name = $1", [
+      roleName,
+      required,
+    ]),
+  );
+}
+
+export async function setAccountMfaOverride(
+  username: string,
+  override: string | null,
+): Promise<void> {
+  await withAuthDb((c) =>
+    c.query("UPDATE accounts SET mfa_override = $2 WHERE username = $1", [
+      username,
+      override,
+    ]),
+  );
+}
+
+export async function deleteRecoveryCodes(username: string): Promise<void> {
+  await withAuthDb((c) =>
+    c.query(
+      "DELETE FROM recovery_codes WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    ),
+  );
+}
+
 function escapeIdentifier(str: string): string {
   return `"${str.replace(/"/g, '""')}"`;
 }

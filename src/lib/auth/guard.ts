@@ -50,6 +50,11 @@ interface WithAuthOptions {
    */
   skipPasswordCheck?: boolean;
   /**
+   * When `true`, skip the must-enroll-mfa check.
+   * Needed for MFA enrollment endpoints and sign-out.
+   */
+  skipMfaEnrollCheck?: boolean;
+  /**
    * When `true`, skip session policy checks (timeouts, IP/UA,
    * re-auth gate).  Needed for the re-auth endpoint itself to
    * avoid a deadlock where re-auth is blocked by the re-auth gate.
@@ -83,6 +88,8 @@ interface WithAuthOptions {
  *  7. Re-auth gate (if session.needs_reauth → 401)
  *  8. Checks must_change_password → 403 with redirect indicator
  *     (skippable via `options.skipPasswordCheck`)
+ *  8.5. Checks must_enroll_mfa → 403 MFA_ENROLLMENT_REQUIRED
+ *       (skippable via `options.skipMfaEnrollCheck`)
  *  9. Updates session last_active_at
  * 10. Calls the wrapped handler with the authenticated session
  * 11. Sliding rotation — re-issues JWT + CSRF when ≤ 1/3 lifetime
@@ -283,6 +290,18 @@ export function withAuth(
     if (!options?.skipPasswordCheck && session.mustChangePassword) {
       return NextResponse.json(
         { error: "Password change required", redirect: "/change-password" },
+        { status: 403 },
+      );
+    }
+
+    // Step 8.5: Check must_enroll_mfa (skippable)
+    if (!options?.skipMfaEnrollCheck && session.mustEnrollMfa) {
+      return NextResponse.json(
+        {
+          error: "MFA enrollment required",
+          code: "MFA_ENROLLMENT_REQUIRED",
+          redirect: "/enroll-mfa",
+        },
         { status: 403 },
       );
     }

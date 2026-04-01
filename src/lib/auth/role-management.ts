@@ -16,6 +16,7 @@ export interface RoleRow {
   name: string;
   description: string | null;
   is_builtin: boolean;
+  mfa_required: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -67,6 +68,7 @@ export interface RoleSummary {
   name: string;
   description: string | null;
   is_builtin: boolean;
+  mfa_required: boolean;
   requires_customer_assignment: boolean;
   max_customer_assignments: number | null;
   tenant_manageable: boolean;
@@ -78,7 +80,7 @@ export interface RoleSummary {
  */
 export async function getRoles(): Promise<RoleSummary[]> {
   const { rows } = await query<RoleSummary & { permissions: string[] }>(
-    `SELECT r.id, r.name, r.description, r.is_builtin,
+    `SELECT r.id, r.name, r.description, r.is_builtin, r.mfa_required,
             ${rolePermissionsSelectSql("r")}
      FROM roles r
      ORDER BY r.is_builtin DESC, r.name`,
@@ -88,6 +90,7 @@ export async function getRoles(): Promise<RoleSummary[]> {
     name: role.name,
     description: role.description,
     is_builtin: role.is_builtin,
+    mfa_required: role.mfa_required,
     ...summarizeAccountRolePolicy(
       deriveAccountRolePolicy({
         id: role.id,
@@ -106,7 +109,7 @@ export async function getRolesWithDetails(): Promise<RoleWithPermissions[]> {
   const { rows } = await query<
     RoleRow & { permissions: string[]; account_count: string }
   >(
-    `SELECT r.id, r.name, r.description, r.is_builtin,
+    `SELECT r.id, r.name, r.description, r.is_builtin, r.mfa_required,
             r.created_at, r.updated_at,
             ${rolePermissionsSelectSql("r")},
             (SELECT COUNT(*)::TEXT FROM accounts a WHERE a.role_id = r.id) AS account_count
@@ -136,7 +139,7 @@ export async function getRoleWithPermissions(
   const { rows } = await query<
     RoleRow & { permissions: string[]; account_count: string }
   >(
-    `SELECT r.id, r.name, r.description, r.is_builtin,
+    `SELECT r.id, r.name, r.description, r.is_builtin, r.mfa_required,
             r.created_at, r.updated_at,
             ${rolePermissionsSelectSql("r")},
             (SELECT COUNT(*)::TEXT FROM accounts a WHERE a.role_id = r.id) AS account_count
@@ -186,7 +189,7 @@ export async function createRole(
     const { rows } = await client.query<RoleRow>(
       `INSERT INTO roles (name, description)
        VALUES ($1, $2)
-       RETURNING id, name, description, is_builtin, created_at, updated_at`,
+       RETURNING id, name, description, is_builtin, mfa_required, created_at, updated_at`,
       [name.trim(), description?.trim() || null],
     );
 
@@ -258,7 +261,7 @@ export async function updateRole(
     const { rows } = await client.query<RoleRow>(
       `UPDATE roles SET name = $1, description = $2, updated_at = NOW()
        WHERE id = $3
-       RETURNING id, name, description, is_builtin, created_at, updated_at`,
+       RETURNING id, name, description, is_builtin, mfa_required, created_at, updated_at`,
       [name.trim(), description?.trim() || null, id],
     );
 

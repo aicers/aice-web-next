@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 
 import { PreferencesForm } from "@/components/profile/preferences-form";
+import { RecoveryCodesCard } from "@/components/profile/recovery-codes-card";
 import { TotpCard } from "@/components/profile/totp-card";
 import { WebAuthnCard } from "@/components/profile/webauthn-card";
 
@@ -15,6 +16,9 @@ export default function ProfilePage() {
       </Suspense>
       <Suspense>
         <WebAuthnCard />
+      </Suspense>
+      <Suspense>
+        <RecoveryCodesCard />
       </Suspense>
     </div>
   );

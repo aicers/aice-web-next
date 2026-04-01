@@ -33,6 +33,7 @@ export interface AuthSession {
   roles: string[];
   tokenVersion: number;
   mustChangePassword: boolean;
+  mustEnrollMfa: boolean;
   /** JWT issued-at timestamp (seconds since epoch). */
   iat: number;
   /** JWT expiration timestamp (seconds since epoch). */
@@ -128,6 +129,7 @@ export async function verifyJwtFull(token: string): Promise<AuthSession> {
     user_agent: string;
     browser_fingerprint: string;
     needs_reauth: boolean;
+    must_enroll_mfa: boolean;
     created_at: string;
     last_active_at: string;
     token_version: number;
@@ -135,7 +137,7 @@ export async function verifyJwtFull(token: string): Promise<AuthSession> {
     must_change_password: boolean;
   }>(
     `SELECT s.sid, s.revoked, s.ip_address, s.user_agent,
-            s.browser_fingerprint, s.needs_reauth,
+            s.browser_fingerprint, s.needs_reauth, s.must_enroll_mfa,
             s.created_at, s.last_active_at,
             a.token_version, a.status, a.must_change_password
      FROM sessions s
@@ -168,6 +170,7 @@ export async function verifyJwtFull(token: string): Promise<AuthSession> {
     roles: payload.roles,
     tokenVersion: payload.token_version,
     mustChangePassword: row.must_change_password,
+    mustEnrollMfa: row.must_enroll_mfa,
     iat: payload.iat,
     exp: payload.exp,
     sessionIp: row.ip_address,

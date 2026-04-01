@@ -173,5 +173,5 @@ export const POST = withAuth(
     // Step 9: Success
     return NextResponse.json({ success: true });
   },
-  { skipPasswordCheck: true },
+  { skipPasswordCheck: true, skipMfaEnrollCheck: true },
 );

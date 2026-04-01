@@ -178,6 +178,7 @@ export async function resetAccountDefaults(username: string): Promise<void> {
            lockout_count = 0,
            locked_until = NULL,
            must_change_password = false,
+           mfa_override = NULL,
            max_sessions = NULL
        WHERE username = $1`,
       [username],
@@ -698,6 +699,84 @@ export async function enrollWebAuthnCredential(
   displayName = "Test Passkey",
 ): Promise<string> {
   return insertWebAuthnCredential(username, { displayName });
+}
+
+// ── MFA enforcement helpers ──────────────────────────────────────
+
+/**
+ * Set `mfa_required` on the role that the given account belongs to.
+ */
+export async function setRoleMfaRequired(
+  username: string,
+  required: boolean,
+): Promise<void> {
+  await pool.query(
+    `UPDATE roles SET mfa_required = $2
+     WHERE id = (SELECT role_id FROM accounts WHERE username = $1)`,
+    [username, required],
+  );
+}
+
+export async function setAccountMfaOverride(
+  username: string,
+  override: "exempt" | "required" | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE accounts SET mfa_override = $2 WHERE username = $1`,
+    [username, override],
+  );
+}
+
+// ── Recovery code helpers ───────────────────────────────────────
+
+/**
+ * Generate 10 recovery codes for an account directly in the DB.
+ * Returns the plaintext codes for use in E2E tests.
+ */
+export async function generateRecoveryCodesForAccount(
+  username: string,
+): Promise<string[]> {
+  const { randomBytes } = await import("node:crypto");
+
+  const codes: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    const hex = randomBytes(4).toString("hex").toUpperCase();
+    codes.push(`${hex.slice(0, 4)}-${hex.slice(4, 8)}`);
+  }
+
+  const client = await pool.connect();
+  try {
+    // Delete existing codes
+    await client.query(
+      "DELETE FROM recovery_codes WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+      [username],
+    );
+
+    // Insert hashed codes
+    for (const code of codes) {
+      const normalized = code.replace(/-/g, "").toUpperCase();
+      const hash = await argon2.hash(normalized, { type: argon2.argon2id });
+      await client.query(
+        `INSERT INTO recovery_codes (account_id, code_hash)
+         VALUES ((SELECT id FROM accounts WHERE username = $1), $2)`,
+        [username, hash],
+      );
+    }
+  } finally {
+    client.release();
+  }
+
+  return codes;
+}
+
+/**
+ * Delete all recovery codes for a user.
+ */
+export async function deleteRecoveryCodes(username: string): Promise<void> {
+  await pool.query(
+    "DELETE FROM recovery_codes WHERE account_id = (SELECT id FROM accounts WHERE username = $1)",
+    [username],
+  );
 }
 
 // ── Audit database helpers ────────────────────────────────────────

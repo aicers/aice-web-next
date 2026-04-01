@@ -60,6 +60,7 @@ describe("POST /api/auth/reauth", () => {
     roles: ["System Administrator"],
     tokenVersion: 0,
     mustChangePassword: false,
+    mustEnrollMfa: false,
     iat: now,
     exp: now + 900,
     sessionIp: "127.0.0.1",
@@ -101,6 +102,7 @@ describe("POST /api/auth/reauth", () => {
 
     expect(mockWithAuth).toHaveBeenCalledWith(expect.any(Function), {
       skipPasswordCheck: true,
+      skipMfaEnrollCheck: true,
       skipSessionPolicy: true,
     });
   });
