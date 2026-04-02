@@ -104,6 +104,29 @@ resource:
 | System Settings | `system-settings:read`, `system-settings:write` |
 | Audit Logs | `audit-logs:read` |
 
+### MFA Required
+
+Each role has an **MFA Required** flag. When enabled, users
+with that role must enroll at least one MFA method (TOTP or
+passkey) before accessing the dashboard. The System
+Administrator role has MFA required by default.
+
+![Role list with MFA Required column](../assets/roles-mfa-en.png)
+
+To toggle MFA enforcement for a role, click the dropdown
+menu (⋯) on the role row and select **Toggle MFA**. This
+works for both built-in and custom roles. The `roles:write`
+permission is required.
+
+Individual accounts can override the role default using the
+`mfa_override` field:
+
+| Override | Behavior |
+|----------|----------|
+| *(none)* | Follows the role's MFA Required setting |
+| Exempt | MFA is never required, even if the role requires it |
+| Required | MFA is always required, even if the role does not require it |
+
 ## Customers
 
 Navigate to **Settings → Customers** to manage customers.
@@ -353,6 +376,81 @@ verify your identity with the passkey. If both TOTP and WebAuthn
 are enrolled, you can switch between methods.
 
 ![MFA method selection](../assets/mfa-method-select-en.png)
+
+#### Recovery Code Sign-In
+
+If you lose access to your authenticator app or passkey, you
+can use a recovery code to sign in. On the MFA verification
+step, click **Use a recovery code**, enter one of your saved
+codes, and click **Verify**.
+
+![Recovery code sign-in](../assets/mfa-recovery-sign-in-en.png)
+
+Each recovery code can only be used once.
+
+### Recovery Codes
+
+Recovery codes provide a backup way to sign in when your
+primary MFA method (TOTP or passkey) is unavailable. Ten
+single-use codes are generated and stored as hashed values.
+
+![Recovery codes card](../assets/recovery-codes-en.png)
+
+#### Automatic Generation
+
+When you enroll your first MFA method, 10 recovery codes
+are automatically generated and displayed. Save these codes
+in a secure location — they will not be shown again.
+
+![Recovery codes after enrollment](../assets/enroll-mfa-codes-en.png)
+
+#### Generating Recovery Codes
+
+If you have no recovery codes or want to replace existing
+ones:
+
+1. Navigate to **Settings → Profile**.
+2. In the Recovery Codes card, click **Generate Recovery
+   Codes** (or **Regenerate Codes** if codes already exist).
+3. Enter your account password to confirm.
+4. Click **Generate Recovery Codes** in the dialog.
+
+![Generate recovery codes dialog](../assets/recovery-codes-generate-en.png)
+
+The new codes are displayed once. Use **Copy All** to copy
+them to your clipboard or **Download** to save them as a
+text file.
+
+![Recovery codes displayed](../assets/recovery-codes-display-en.png)
+
+Regenerating codes invalidates all previous codes.
+
+#### Recovery Code Count
+
+The card shows how many unused codes remain (e.g.,
+"9/10 remaining"). A warning badge appears when 3 or
+fewer codes remain.
+
+### Mandatory MFA Enrollment
+
+When a role has MFA required and a user has not enrolled
+any MFA method, the user is redirected to the mandatory
+enrollment page after signing in. The user cannot access
+any dashboard page until at least one MFA method is enrolled.
+
+![Mandatory MFA enrollment page](../assets/enroll-mfa-en.png)
+
+The enrollment page automatically starts the TOTP setup
+wizard:
+
+1. Scan the QR code with your authenticator app, or click
+   **Enter this key manually** to copy the secret key.
+2. Enter the 6-digit code from your authenticator app.
+3. Click **Verify** to complete enrollment.
+
+After verification, your recovery codes are displayed.
+Save them securely, then click **Done** to proceed to the
+dashboard.
 
 ## Account Status
 
