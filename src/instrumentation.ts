@@ -9,9 +9,14 @@ export async function register() {
       "@/lib/auth/jwt-verify-stateless"
     );
 
+    const { emergencyMfaReset } = await import(
+      "@/lib/auth/emergency-mfa-reset"
+    );
+
     await runStartupMigrations();
     await bootstrapAdminAccount();
     await loadSigningKeys();
     await initStatelessKeys(getPublicKeyData());
+    await emergencyMfaReset();
   }
 }

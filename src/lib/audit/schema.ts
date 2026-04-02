@@ -41,7 +41,7 @@ type SystemSettingsAction = "system_settings.update";
 /** Role event actions (#134). */
 type RoleAction = "role.create" | "role.update" | "role.delete";
 
-/** MFA event actions (#206, #207, #217, #218, #220). */
+/** MFA event actions (#206, #207, #217, #218, #220, #221). */
 type MfaAction =
   | "mfa.totp.enroll"
   | "mfa.totp.remove"
@@ -54,7 +54,9 @@ type MfaAction =
   | "mfa.recovery.generate"
   | "mfa.recovery.use"
   | "mfa.enforcement.blocked"
-  | "mfa.enrollment.complete";
+  | "mfa.enrollment.complete"
+  | "mfa.admin.reset"
+  | "mfa.emergency.reset";
 
 /** All audit event actions. */
 export type AuditAction =
@@ -118,6 +120,8 @@ export const AUDIT_ACTIONS = [
   "mfa.recovery.use",
   "mfa.enforcement.blocked",
   "mfa.enrollment.complete",
+  "mfa.admin.reset",
+  "mfa.emergency.reset",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */

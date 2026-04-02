@@ -28,6 +28,7 @@ interface AccountRow {
   status: string;
   last_sign_in_at: string | null;
   created_at: string;
+  has_mfa: boolean;
 }
 
 // ── Constants ───────────────────────────────────────────────────
@@ -143,7 +144,12 @@ export const GET = withAuth(
     const offset = (page - 1) * pageSize;
     const { rows } = await query<AccountRow>(
       `SELECT a.id, a.username, a.display_name, a.email, a.phone,
-              r.name AS role_name, a.status, a.last_sign_in_at, a.created_at
+              r.name AS role_name, a.status, a.last_sign_in_at, a.created_at,
+              EXISTS(
+                SELECT 1 FROM totp_credentials WHERE account_id = a.id AND verified = true
+                UNION ALL
+                SELECT 1 FROM webauthn_credentials WHERE account_id = a.id
+              ) AS has_mfa
        FROM accounts a
        JOIN roles r ON a.role_id = r.id
        ${whereClause}
@@ -429,7 +435,8 @@ export const POST = withAuth(
     // Step 10: Fetch and return the created account
     const { rows: created } = await query<AccountRow>(
       `SELECT a.id, a.username, a.display_name, a.email, a.phone,
-              r.name AS role_name, a.status, a.last_sign_in_at, a.created_at
+              r.name AS role_name, a.status, a.last_sign_in_at, a.created_at,
+              false AS has_mfa
        FROM accounts a JOIN roles r ON a.role_id = r.id
        WHERE a.id = $1`,
       [accountId],

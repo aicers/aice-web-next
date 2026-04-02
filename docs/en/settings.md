@@ -57,6 +57,60 @@ Click the delete icon (trash) on an account row. A confirmation
 dialog appears. Role hierarchy is enforced — you cannot delete
 accounts with a role equal to or higher than your own.
 
+### Resetting MFA
+
+If a user loses access to their MFA device, an administrator
+can reset all MFA methods for that account. Open the dropdown
+menu (⋮) on the account row and select **Reset MFA** (only
+visible for accounts that have MFA enrolled).
+
+![MFA reset confirmation dialog](../assets/mfa-reset-en.png)
+
+A confirmation dialog asks for **your own password** (step-up
+authentication). After confirmation:
+
+- All TOTP credentials, passkeys, and recovery codes are
+  removed.
+- All active sessions for the account are revoked.
+- The user must re-enroll MFA on their next sign-in if their
+  role requires it.
+
+**Restrictions:**
+
+- You cannot reset MFA for accounts with a role equal to or
+  higher than your own.
+- You cannot reset your own MFA through this screen (manage
+  your own MFA from **Profile → Two-Factor Authentication**).
+
+### Emergency MFA Reset (break-glass)
+
+If all administrators are locked out by MFA, a server-level
+emergency reset is available.
+
+1. Set the environment variable `EMERGENCY_MFA_RESET` to the
+   username of the locked-out account.
+2. Restart the server.
+3. The server removes all MFA credentials and revokes all
+   sessions for that account on startup.
+4. Remove the environment variable after use.
+
+A per-username marker file
+(`$DATA_DIR/.emergency_mfa_reset_consumed_{username}`) prevents
+repeated execution on subsequent restarts. An audit event
+(`mfa.emergency.reset`) is recorded with actor `system`.
+
+If the same user needs an emergency reset again later, delete
+the marker file before restarting:
+
+```bash
+rm "$DATA_DIR/.emergency_mfa_reset_consumed_<username>"
+```
+
+!!! warning
+    This mechanism bypasses all authentication checks. Use it
+    only for disaster recovery and remove the environment
+    variable immediately after the reset.
+
 ### Account Status
 
 | Status | Description |
