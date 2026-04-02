@@ -250,8 +250,15 @@ export async function checkSensitiveOpRateLimit(
 const MFA_CHALLENGE_COUNT = 5;
 const MFA_CHALLENGE_WINDOW_MINUTES = 5;
 
+const MFA_CHALLENGE_ACCOUNT_COUNT = 15;
+const MFA_CHALLENGE_ACCOUNT_WINDOW_MINUTES = 15;
+
 /**
- * Per-account+IP rate limit for MFA challenge attempts.
+ * Dual-bucket rate limit for MFA challenge attempts:
+ *
+ * 1. **Per-account+IP** — 5 attempts / 5 min (targeted stuffing)
+ * 2. **Per-account global** — 15 attempts / 15 min across all IPs
+ *    (distributed attacks)
  *
  * @param accountId The account extracted from the mfaToken.
  * @param ip        Client IP address.
@@ -261,14 +268,28 @@ export async function checkMfaChallengeRateLimit(
   ip: string,
 ): Promise<RateLimitResult> {
   const s = getStore();
-  const windowMs = MFA_CHALLENGE_WINDOW_MINUTES * 60_000;
-  const result = s.increment(
-    `mfa-challenge:account-ip:${accountId}:${ip}`,
-    windowMs,
-  );
 
-  if (result.count > MFA_CHALLENGE_COUNT) {
-    return { limited: true, retryAfterSeconds: retryAfter(result.resetAt) };
+  // 1. Per-account+IP
+  const ipWindowMs = MFA_CHALLENGE_WINDOW_MINUTES * 60_000;
+  const ipResult = s.increment(
+    `mfa-challenge:account-ip:${accountId}:${ip}`,
+    ipWindowMs,
+  );
+  if (ipResult.count > MFA_CHALLENGE_COUNT) {
+    return { limited: true, retryAfterSeconds: retryAfter(ipResult.resetAt) };
+  }
+
+  // 2. Per-account global
+  const accountWindowMs = MFA_CHALLENGE_ACCOUNT_WINDOW_MINUTES * 60_000;
+  const accountResult = s.increment(
+    `mfa-challenge:account:${accountId}`,
+    accountWindowMs,
+  );
+  if (accountResult.count > MFA_CHALLENGE_ACCOUNT_COUNT) {
+    return {
+      limited: true,
+      retryAfterSeconds: retryAfter(accountResult.resetAt),
+    };
   }
 
   return { limited: false };

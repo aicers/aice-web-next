@@ -125,6 +125,99 @@ describe("rate limiter", () => {
     });
   });
 
+  // ── checkMfaChallengeRateLimit ────────────────────────────────
+
+  describe("checkMfaChallengeRateLimit()", () => {
+    it("passes when within both limits", async () => {
+      const result = await limiter.checkMfaChallengeRateLimit(
+        "account-1",
+        "1.2.3.4",
+      );
+      expect(result.limited).toBe(false);
+    });
+
+    it("blocks when per-account+IP limit (5) is exceeded", async () => {
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkMfaChallengeRateLimit("account-1", "1.2.3.4");
+      }
+
+      const result = await limiter.checkMfaChallengeRateLimit(
+        "account-1",
+        "1.2.3.4",
+      );
+      expect(result.limited).toBe(true);
+      if (result.limited) {
+        expect(result.retryAfterSeconds).toBeGreaterThan(0);
+      }
+    });
+
+    it("blocks when per-account global limit (15) is exceeded across IPs", async () => {
+      // Use different IPs to avoid per-account+IP limit (5 each)
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkMfaChallengeRateLimit("account-1", "10.0.0.1");
+      }
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkMfaChallengeRateLimit("account-1", "10.0.0.2");
+      }
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkMfaChallengeRateLimit("account-1", "10.0.0.3");
+      }
+
+      // 16th attempt from a new IP — per-account+IP is fresh but global is exhausted
+      const result = await limiter.checkMfaChallengeRateLimit(
+        "account-1",
+        "10.0.0.4",
+      );
+      expect(result.limited).toBe(true);
+    });
+
+    it("different accounts have independent global counters", async () => {
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkMfaChallengeRateLimit("account-1", "10.0.0.1");
+      }
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkMfaChallengeRateLimit("account-1", "10.0.0.2");
+      }
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkMfaChallengeRateLimit("account-1", "10.0.0.3");
+      }
+
+      // account-2 should not be affected
+      const result = await limiter.checkMfaChallengeRateLimit(
+        "account-2",
+        "10.0.0.1",
+      );
+      expect(result.limited).toBe(false);
+    });
+
+    it("different IPs have independent per-account+IP counters", async () => {
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkMfaChallengeRateLimit("account-1", "1.2.3.4");
+      }
+
+      // Different IP should still pass (under global limit)
+      const result = await limiter.checkMfaChallengeRateLimit(
+        "account-1",
+        "5.6.7.8",
+      );
+      expect(result.limited).toBe(false);
+    });
+
+    it("per-account+IP triggers before global when same IP used", async () => {
+      // 6th attempt from same IP should hit per-account+IP (5) first,
+      // even though global (15) is not exhausted
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkMfaChallengeRateLimit("account-1", "1.2.3.4");
+      }
+
+      const result = await limiter.checkMfaChallengeRateLimit(
+        "account-1",
+        "1.2.3.4",
+      );
+      expect(result.limited).toBe(true);
+    });
+  });
+
   // ── Config loading ───────────────────────────────────────────
 
   describe("config loading", () => {

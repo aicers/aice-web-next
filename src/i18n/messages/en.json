@@ -150,7 +150,9 @@
       "mfa_recovery_generate": "Recovery codes generate",
       "mfa_recovery_use": "Recovery code use",
       "mfa_enforcement_blocked": "MFA enrollment required",
-      "mfa_enrollment_complete": "MFA enrollment complete"
+      "mfa_enrollment_complete": "MFA enrollment complete",
+      "mfa_admin_reset": "MFA admin reset",
+      "mfa_emergency_reset": "MFA emergency reset"
     },
     "targetTypes": {
       "account": "Account",
@@ -215,7 +217,12 @@
     "never": "Never",
     "page": "Page {current} of {total}",
     "previous": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "mfaReset": "Reset MFA",
+    "mfaResetDescription": "Remove all MFA methods and recovery codes for this account. The user will need to re-enroll if MFA is required.",
+    "mfaResetConfirm": "Enter your password to confirm",
+    "mfaResetSuccess": "MFA has been reset for {username}.",
+    "mfaResetError": "Failed to reset MFA."
   },
   "profile": {
     "heading": "Profile",

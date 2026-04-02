@@ -5,6 +5,7 @@ import {
   CirclePlus,
   MoreVertical,
   Pencil,
+  ShieldOff,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
@@ -63,6 +64,7 @@ interface Account {
   status: string;
   last_sign_in_at: string | null;
   created_at: string;
+  has_mfa: boolean;
 }
 
 interface Role {
@@ -138,6 +140,13 @@ export function AccountTable() {
   const [editingAccount, setEditingAccount] = useState<Account | undefined>();
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // MFA reset state
+  const [mfaResetTarget, setMfaResetTarget] = useState<Account | null>(null);
+  const [mfaResetPassword, setMfaResetPassword] = useState("");
+  const [mfaResetError, setMfaResetError] = useState<string | null>(null);
+  const [mfaResetLoading, setMfaResetLoading] = useState(false);
+  const [mfaResetSuccess, setMfaResetSuccess] = useState<string | null>(null);
 
   // ── Fetch reference data ────────────────────────────────────────
 
@@ -244,6 +253,43 @@ export function AccountTable() {
       fetchAccounts();
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : t("error"));
+    }
+  };
+
+  const handleMfaReset = async () => {
+    if (!mfaResetTarget || !mfaResetPassword) return;
+    setMfaResetLoading(true);
+    setMfaResetError(null);
+
+    try {
+      const csrfToken = readCsrfToken();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (csrfToken) {
+        headers["X-CSRF-Token"] = csrfToken;
+      }
+
+      const res = await fetch(`/api/accounts/${mfaResetTarget.id}/mfa-reset`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ password: mfaResetPassword }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error ?? t("mfaResetError"));
+      }
+
+      const username = mfaResetTarget.username;
+      setMfaResetTarget(null);
+      setMfaResetPassword("");
+      setMfaResetSuccess(t("mfaResetSuccess", { username }));
+      fetchAccounts();
+    } catch (err) {
+      setMfaResetError(err instanceof Error ? err.message : t("mfaResetError"));
+    } finally {
+      setMfaResetLoading(false);
     }
   };
 
@@ -465,6 +511,14 @@ export function AccountTable() {
                             <Pencil className="mr-2 h-4 w-4" />
                             {t("edit")}
                           </DropdownMenuItem>
+                          {account.has_mfa && (
+                            <DropdownMenuItem
+                              onClick={() => setMfaResetTarget(account)}
+                            >
+                              <ShieldOff className="mr-2 h-4 w-4" />
+                              {t("mfaReset")}
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem
                             onClick={() => setDeleteTarget(account)}
                             className="text-destructive focus:text-destructive"
@@ -550,6 +604,66 @@ export function AccountTable() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* MFA Reset Confirmation */}
+      <AlertDialog
+        open={!!mfaResetTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setMfaResetTarget(null);
+            setMfaResetPassword("");
+            setMfaResetError(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("mfaReset")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("mfaResetDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            type="password"
+            placeholder={t("mfaResetConfirm")}
+            value={mfaResetPassword}
+            onChange={(e) => setMfaResetPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+          {mfaResetError && (
+            <p className="text-destructive text-sm">{mfaResetError}</p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleMfaReset();
+              }}
+              disabled={!mfaResetPassword || mfaResetLoading}
+            >
+              {t("mfaReset")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* MFA Reset Success */}
+      {mfaResetSuccess && (
+        <AlertDialog open onOpenChange={() => setMfaResetSuccess(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("mfaReset")}</AlertDialogTitle>
+              <AlertDialogDescription>{mfaResetSuccess}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogAction onClick={() => setMfaResetSuccess(null)}>
+                OK
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </div>
   );
 }

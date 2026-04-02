@@ -150,7 +150,9 @@
       "mfa_recovery_generate": "복구 코드 생성",
       "mfa_recovery_use": "복구 코드 사용",
       "mfa_enforcement_blocked": "MFA 등록 필요",
-      "mfa_enrollment_complete": "MFA 등록 완료"
+      "mfa_enrollment_complete": "MFA 등록 완료",
+      "mfa_admin_reset": "MFA 관리자 초기화",
+      "mfa_emergency_reset": "MFA 긴급 초기화"
     },
     "targetTypes": {
       "account": "계정",
@@ -215,7 +217,12 @@
     "never": "없음",
     "page": "페이지 {current} / {total}",
     "previous": "이전",
-    "next": "다음"
+    "next": "다음",
+    "mfaReset": "MFA 초기화",
+    "mfaResetDescription": "이 계정의 모든 MFA 수단과 복구 코드를 삭제합니다. MFA가 필요한 경우 사용자는 다시 등록해야 합니다.",
+    "mfaResetConfirm": "비밀번호를 입력하여 확인하세요",
+    "mfaResetSuccess": "{username}의 MFA가 초기화되었습니다.",
+    "mfaResetError": "MFA 초기화에 실패했습니다."
   },
   "profile": {
     "heading": "프로필",
