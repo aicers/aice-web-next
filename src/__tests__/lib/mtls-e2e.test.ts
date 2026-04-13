@@ -17,8 +17,20 @@ import { readFileSync } from "node:fs";
 import { createServer } from "node:https";
 
 import { importPKCS8, importSPKI, jwtVerify, SignJWT } from "jose";
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+interface GraphqlResponse {
+  data: {
+    auth: {
+      role: string;
+      customerIds: number[] | null;
+      algorithm: string;
+      verified: boolean;
+    };
+  };
+  errors: { message: string }[];
+}
 
 describe("mTLS + Context JWT E2E", () => {
   // Generate a fresh CA + client cert for the test
@@ -188,18 +200,21 @@ describe("mTLS + Context JWT E2E", () => {
     const agent = await getAgent();
     const token = await signContextJwt("System Administrator", [42, 99]);
 
-    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+    const response = await undiciFetch(
+      `https://localhost:${serverPort}/graphql`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ query: "{ auth { role customerIds } }" }),
+        dispatcher: agent,
       },
-      body: JSON.stringify({ query: "{ auth { role customerIds } }" }),
-      dispatcher: agent,
-    } as RequestInit);
+    );
 
     expect(response.status).toBe(200);
-    const body = await response.json();
+    const body = (await response.json()) as GraphqlResponse;
     expect(body.data.auth.role).toBe("System Administrator");
     expect(body.data.auth.customerIds).toEqual([42, 99]);
     expect(body.data.auth.verified).toBe(true);
@@ -211,18 +226,21 @@ describe("mTLS + Context JWT E2E", () => {
     const agent = await getAgent();
     const token = await signContextJwt("Security Administrator");
 
-    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+    const response = await undiciFetch(
+      `https://localhost:${serverPort}/graphql`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ query: "{ auth { role customerIds } }" }),
+        dispatcher: agent,
       },
-      body: JSON.stringify({ query: "{ auth { role customerIds } }" }),
-      dispatcher: agent,
-    } as RequestInit);
+    );
 
     expect(response.status).toBe(200);
-    const body = await response.json();
+    const body = (await response.json()) as GraphqlResponse;
     expect(body.data.auth.role).toBe("Security Administrator");
     expect(body.data.auth.customerIds).toBeNull();
   });
@@ -233,18 +251,21 @@ describe("mTLS + Context JWT E2E", () => {
     const agent = await getAgent();
     const token = await signContextJwt("System Administrator", []);
 
-    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+    const response = await undiciFetch(
+      `https://localhost:${serverPort}/graphql`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ query: "{ auth { role customerIds } }" }),
+        dispatcher: agent,
       },
-      body: JSON.stringify({ query: "{ auth { role customerIds } }" }),
-      dispatcher: agent,
-    } as RequestInit);
+    );
 
     expect(response.status).toBe(200);
-    const body = await response.json();
+    const body = (await response.json()) as GraphqlResponse;
     expect(body.data.auth.customerIds).toEqual([]);
   });
 
@@ -252,15 +273,18 @@ describe("mTLS + Context JWT E2E", () => {
     const { getAgent } = await import("@/lib/mtls");
     const agent = await getAgent();
 
-    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: "{ auth { role } }" }),
-      dispatcher: agent,
-    } as RequestInit);
+    const response = await undiciFetch(
+      `https://localhost:${serverPort}/graphql`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "{ auth { role } }" }),
+        dispatcher: agent,
+      },
+    );
 
     expect(response.status).toBe(401);
-    const body = await response.json();
+    const body = (await response.json()) as GraphqlResponse;
     expect(body.errors[0].message).toBe("Bearer token required");
   });
 
@@ -278,18 +302,21 @@ describe("mTLS + Context JWT E2E", () => {
     // Small delay to ensure the token is past expiration
     await new Promise((r) => setTimeout(r, 1100));
 
-    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${expiredToken}`,
+    const response = await undiciFetch(
+      `https://localhost:${serverPort}/graphql`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${expiredToken}`,
+        },
+        body: JSON.stringify({ query: "{ auth { role } }" }),
+        dispatcher: agent,
       },
-      body: JSON.stringify({ query: "{ auth { role } }" }),
-      dispatcher: agent,
-    } as RequestInit);
+    );
 
     expect(response.status).toBe(401);
-    const body = await response.json();
+    const body = (await response.json()) as GraphqlResponse;
     expect(body.errors[0].message).toContain("exp");
   });
 
@@ -299,18 +326,21 @@ describe("mTLS + Context JWT E2E", () => {
 
     for (const role of ["System Administrator", "Security Administrator"]) {
       const token = await signContextJwt(role, [1]);
-      const response = await fetch(`https://localhost:${serverPort}/graphql`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+      const response = await undiciFetch(
+        `https://localhost:${serverPort}/graphql`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ query: "{ auth { role } }" }),
+          dispatcher: agent,
         },
-        body: JSON.stringify({ query: "{ auth { role } }" }),
-        dispatcher: agent,
-      } as RequestInit);
+      );
 
       expect(response.status).toBe(200);
-      const body = await response.json();
+      const body = (await response.json()) as GraphqlResponse;
       expect(body.data.auth.role).toBe(role);
     }
   });
@@ -325,12 +355,12 @@ describe("mTLS + Context JWT E2E", () => {
     });
 
     try {
-      await fetch(`https://localhost:${serverPort}/graphql`, {
+      await undiciFetch(`https://localhost:${serverPort}/graphql`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: "{ auth { role } }" }),
         dispatcher: noCertAgent,
-      } as RequestInit);
+      });
       // If we get here, the TLS handshake didn't reject — check response
       expect.fail("Expected TLS handshake to fail without client cert");
     } catch (err) {
@@ -353,18 +383,21 @@ describe("mTLS + Context JWT E2E", () => {
       .setExpirationTime("5m")
       .sign(wrongKey);
 
-    const response = await fetch(`https://localhost:${serverPort}/graphql`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${forgedToken}`,
+    const response = await undiciFetch(
+      `https://localhost:${serverPort}/graphql`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${forgedToken}`,
+        },
+        body: JSON.stringify({ query: "{ auth { role } }" }),
+        dispatcher: await agent,
       },
-      body: JSON.stringify({ query: "{ auth { role } }" }),
-      dispatcher: await agent,
-    } as RequestInit);
+    );
 
     expect(response.status).toBe(401);
-    const body = await response.json();
+    const body = (await response.json()) as GraphqlResponse;
     expect(body.errors[0].message).toContain("signature");
   });
 

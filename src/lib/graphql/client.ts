@@ -1,6 +1,7 @@
 import "server-only";
 
 import { GraphQLClient, type RequestDocument } from "graphql-request";
+import { fetch as undiciFetch } from "undici";
 
 import { getAgent, signContextJwt } from "@/lib/mtls";
 
@@ -17,10 +18,10 @@ function getClient(): GraphQLClient {
   client = new GraphQLClient(endpoint, {
     fetch: async (input, init) => {
       const agent = await getAgent();
-      return globalThis.fetch(input, {
-        ...init,
-        dispatcher: agent,
-      } as RequestInit);
+      return undiciFetch(
+        input as string | URL,
+        { ...init, dispatcher: agent } as Parameters<typeof undiciFetch>[1],
+      ) as unknown as Response;
     },
   });
   return client;

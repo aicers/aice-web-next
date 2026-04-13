@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/mtls", () => ({
-  signContextJwt: vi.fn().mockResolvedValue("mock-jwt-token"),
-  getAgent: vi.fn().mockResolvedValue({ mock: "dispatcher" }),
-}));
-
 const fetchSpy = vi.fn().mockImplementation(() =>
   Promise.resolve(
     new Response(JSON.stringify({ data: { hello: "world" } }), {
@@ -13,7 +8,15 @@ const fetchSpy = vi.fn().mockImplementation(() =>
     }),
   ),
 );
-vi.stubGlobal("fetch", fetchSpy);
+
+vi.mock("@/lib/mtls", () => ({
+  signContextJwt: vi.fn().mockResolvedValue("mock-jwt-token"),
+  getAgent: vi.fn().mockResolvedValue({ mock: "dispatcher" }),
+}));
+
+vi.mock("undici", () => ({
+  fetch: fetchSpy,
+}));
 
 describe("graphql client", () => {
   let client: typeof import("@/lib/graphql/client");
