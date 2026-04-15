@@ -22,6 +22,63 @@ jobs:
         run: npx -y skills experimental_install -y -a claude-code -a codex -a gemini-cli
       - name: Update skills
         run: npx -y skills update -y -p
+      - name: Prune skills to allowlist
+        run: |
+          set -euo pipefail
+          ALLOWLIST=(
+            frontend-design
+            vercel-composition-patterns
+            vercel-react-best-practices
+            vercel-react-view-transitions
+            web-design-guidelines
+            webapp-testing
+          )
+
+          is_allowed() {
+            local name="$1"
+            for allowed in "${ALLOWLIST[@]}"; do
+              [[ "$name" == "$allowed" ]] && return 0
+            done
+            return 1
+          }
+
+          # Prune .agents/skills/ — remove any skill dir not on the allowlist.
+          if [ -d .agents/skills ]; then
+            for dir in .agents/skills/*/; do
+              [ -d "$dir" ] || continue
+              name=$(basename "$dir")
+              if ! is_allowed "$name"; then
+                rm -rf "$dir"
+              fi
+            done
+          fi
+
+          # Prune skills-lock.json to the allowlist.
+          allow_json=$(printf '%s\n' "${ALLOWLIST[@]}" | jq -R . | jq -s .)
+          jq --argjson allow "$allow_json" \
+            '.skills |= with_entries(select(.key as $k | $allow | index($k)))' \
+            skills-lock.json > skills-lock.json.tmp
+          mv skills-lock.json.tmp skills-lock.json
+
+          # Sync .claude/skills/ — ensure exactly one symlink per allowlisted
+          # skill, remove anything else. Claude Code reads this directory;
+          # Codex and Gemini CLI read .agents/skills/ directly.
+          mkdir -p .claude/skills
+          for skill in "${ALLOWLIST[@]}"; do
+            target="../../.agents/skills/$skill"
+            link=".claude/skills/$skill"
+            if [ ! -L "$link" ] || [ "$(readlink "$link")" != "$target" ]; then
+              rm -rf "$link"
+              ln -s "$target" "$link"
+            fi
+          done
+          for entry in .claude/skills/*; do
+            [ -e "$entry" ] || [ -L "$entry" ] || continue
+            name=$(basename "$entry")
+            if ! is_allowed "$name"; then
+              rm -rf "$entry"
+            fi
+          done
       - name: Check for changes
         id: changes
         run: |
