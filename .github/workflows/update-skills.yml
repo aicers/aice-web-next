@@ -19,9 +19,9 @@ jobs:
         with:
           node-version: 24
       - name: Restore skills from lock file
-        run: npx -y skills experimental_install -y
+        run: npx -y skills experimental_install -y -a claude-code -a codex -a gemini-cli
       - name: Update skills
-        run: npx -y skills update -y
+        run: npx -y skills update -y -p
       - name: Check for changes
         id: changes
         run: |
