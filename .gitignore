@@ -30,7 +30,8 @@
 # misc
 .DS_Store
 *.pem
-.claude
+.claude/*
+!.claude/skills
 .mcp.json
 
 # Bootstrap data directory (consumed marker)
