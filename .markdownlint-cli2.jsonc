@@ -1,3 +1,8 @@
 {
-  "ignores": ["node_modules", ".next"]
+  "ignores": ["node_modules", ".next"],
+  "config": {
+    "MD013": false,
+    "MD024": { "siblings_only": true },
+    "MD060": false
+  }
 }
