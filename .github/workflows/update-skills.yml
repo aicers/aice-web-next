@@ -19,66 +19,71 @@ jobs:
         with:
           node-version: 24
       - name: Restore skills from lock file
-        run: npx -y skills experimental_install -y -a claude-code -a codex -a gemini-cli
+        run: npx -y skills experimental_install -y
       - name: Update skills
-        run: npx -y skills update -y -p
-      - name: Prune skills to allowlist
+        run: npx -y skills update -y
+      # The `skills` CLI has no allowlist flag for `experimental_install` /
+      # `update` (see v1.5.0), so it materializes a symlink directory under
+      # every non-universal agent it knows about (`.adal`, `.augment`, …).
+      # We only use Claude Code, Codex, and Gemini CLI on this repo:
+      #   - claude-code keeps its own dir (`.claude/skills/`)
+      #   - codex and gemini-cli are universal agents that read directly
+      #     from `.agents/skills/`, so no extra dir is needed for them
+      # Prune everything else so the weekly PR stays small.
+      - name: Prune non-allowlisted agent directories
         run: |
-          set -euo pipefail
-          ALLOWLIST=(
+          rm -rf .adal .agent .augment .bob .codebuddy .commandcode .continue \
+            .cortex .crush .factory .goose .iflow .junie .kilocode .kiro \
+            .kode .mcpjam .mux .neovate .openhands .pi .pochi .qoder .qwen \
+            .roo .trae .vibe .windsurf .zencoder skills
+      # `skills update` pulls every skill its configured source repos expose,
+      # including new ones we never opted in to. The CLI has no per-skill
+      # allowlist flag in v1.5.0, so post-prune to the skill set we actually
+      # use on this repo.
+      #
+      # To add or remove a skill, edit ALLOWLIST here, and `.agents/skills/`
+      # + `skills-lock.json` will converge on the next workflow run.
+      - name: Prune non-allowlisted skills
+        env:
+          ALLOWLIST: >-
             frontend-design
             vercel-composition-patterns
             vercel-react-best-practices
             vercel-react-view-transitions
             web-design-guidelines
             webapp-testing
-          )
-
+        run: |
           is_allowed() {
-            local name="$1"
-            for allowed in "${ALLOWLIST[@]}"; do
-              [[ "$name" == "$allowed" ]] && return 0
+            for name in $ALLOWLIST; do
+              [ "$name" = "$1" ] && return 0
             done
             return 1
           }
-
-          # Prune .agents/skills/ — remove any skill dir not on the allowlist.
-          if [ -d .agents/skills ]; then
-            for dir in .agents/skills/*/; do
-              [ -d "$dir" ] || continue
-              name=$(basename "$dir")
-              if ! is_allowed "$name"; then
-                rm -rf "$dir"
-              fi
-            done
-          fi
-
-          # Prune skills-lock.json to the allowlist.
-          allow_json=$(printf '%s\n' "${ALLOWLIST[@]}" | jq -R . | jq -s .)
+          # 1. Skill source dirs under .agents/skills/
+          for dir in .agents/skills/*/; do
+            [ -d "$dir" ] || continue
+            name=$(basename "$dir")
+            is_allowed "$name" || rm -rf "$dir"
+          done
+          # 2. Claude Code reads skills from .claude/skills/, so keep it in
+          #    lockstep with the allowlist: one symlink per allowlisted skill,
+          #    no extras. `ln -sfn` makes the write idempotent.
+          mkdir -p .claude/skills
+          for name in $ALLOWLIST; do
+            ln -sfn "../../.agents/skills/$name" ".claude/skills/$name"
+          done
+          for link in .claude/skills/*; do
+            [ -e "$link" ] || [ -L "$link" ] || continue
+            name=$(basename "$link")
+            is_allowed "$name" || rm -rf "$link"
+          done
+          # 3. skills-lock.json — keep only allowlisted entries.
+          allow_json=$(printf '%s\n' $ALLOWLIST | jq -Rn '[inputs]')
+          tmp=$(mktemp)
           jq --argjson allow "$allow_json" \
             '.skills |= with_entries(select(.key as $k | $allow | index($k)))' \
-            skills-lock.json > skills-lock.json.tmp
-          mv skills-lock.json.tmp skills-lock.json
-
-          # Sync .claude/skills/ — ensure exactly one symlink per allowlisted
-          # skill, remove anything else. Claude Code reads this directory;
-          # Codex and Gemini CLI read .agents/skills/ directly.
-          mkdir -p .claude/skills
-          for skill in "${ALLOWLIST[@]}"; do
-            target="../../.agents/skills/$skill"
-            link=".claude/skills/$skill"
-            if [ ! -L "$link" ] || [ "$(readlink "$link")" != "$target" ]; then
-              rm -rf "$link"
-              ln -s "$target" "$link"
-            fi
-          done
-          for entry in .claude/skills/*; do
-            [ -e "$entry" ] || [ -L "$entry" ] || continue
-            name=$(basename "$entry")
-            if ! is_allowed "$name"; then
-              rm -rf "$entry"
-            fi
-          done
+            skills-lock.json > "$tmp"
+          mv "$tmp" skills-lock.json
       - name: Check for changes
         id: changes
         run: |
