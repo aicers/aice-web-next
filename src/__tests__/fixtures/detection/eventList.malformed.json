@@ -1,0 +1,9 @@
+{
+  "eventList": {
+    "pageInfo": {
+      "hasNextPage": "definitely-not-a-boolean",
+      "hasPreviousPage": false
+    },
+    "totalCount": null
+  }
+}

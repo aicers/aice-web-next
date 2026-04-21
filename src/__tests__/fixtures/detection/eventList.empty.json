@@ -1,0 +1,13 @@
+{
+  "eventList": {
+    "pageInfo": {
+      "hasNextPage": false,
+      "hasPreviousPage": false,
+      "startCursor": null,
+      "endCursor": null
+    },
+    "edges": [],
+    "nodes": [],
+    "totalCount": "0"
+  }
+}

@@ -1,0 +1,8 @@
+[
+  {
+    "operation": "eventList",
+    "query": "detection/eventList.empty.graphql",
+    "fixture": "detection/eventList.empty.json",
+    "variables": { "filter": {}, "first": 10 }
+  }
+]

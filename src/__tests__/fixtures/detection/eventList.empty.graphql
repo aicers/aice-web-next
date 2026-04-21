@@ -1,0 +1,14 @@
+query EventListSmoke($filter: EventListFilterInput!, $first: Int) {
+  eventList(filter: $filter, first: $first) {
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+    edges {
+      cursor
+    }
+    totalCount
+  }
+}
