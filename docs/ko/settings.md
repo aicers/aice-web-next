@@ -132,8 +132,8 @@ rm "$DATA_DIR/.emergency_mfa_reset_consumed_<username>"
 - **System Administrator** — 모든 기능에 대한 전체 접근 권한.
 - **Tenant Administrator** — 할당된 고객 내 운영 및 Security
   Monitor 계정 관리.
-- **Security Monitor** — 할당된 단일 고객 내 이벤트 및
-  대시보드 읽기 전용 접근.
+- **Security Monitor** — 할당된 단일 고객 내 이벤트, 대시보드,
+  탐지 읽기 전용 접근.
 
 ### 커스텀 역할
 
@@ -148,6 +148,7 @@ rm "$DATA_DIR/.emergency_mfa_reset_consumed_<username>"
 | 그룹 | 권한 |
 |------|------|
 | 대시보드 | `dashboard:read`, `dashboard:write` |
+| 탐지 | `detection:read` |
 | 계정 | `accounts:read`, `accounts:write`, `accounts:delete` |
 | 역할 | `roles:read`, `roles:write`, `roles:delete` |
 | 고객 | `customers:read`, `customers:write`, `customers:delete`, `customers:access-all` |

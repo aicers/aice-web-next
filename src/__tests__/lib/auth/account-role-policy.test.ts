@@ -31,6 +31,58 @@ describe("account-role-policy", () => {
     expect(policy.tenantManageable).toBe(true);
   });
 
+  it("treats read-only data permissions as Security Monitor-equivalent", () => {
+    const policy = deriveAccountRolePolicy({
+      id: 5,
+      name: "Security Monitor",
+      permissions: ["detection:read"],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(true);
+    expect(policy.requiresCustomerAssignment).toBe(true);
+    expect(policy.maxCustomerAssignments).toBe(1);
+    expect(policy.tenantManageable).toBe(true);
+  });
+
+  it("treats the full Security Monitor read-only permission set as equivalent", () => {
+    const policy = deriveAccountRolePolicy({
+      id: 6,
+      name: "Security Monitor Clone",
+      permissions: ["audit-logs:read", "dashboard:read", "detection:read"],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(true);
+    expect(policy.tenantManageable).toBe(true);
+    expect(policy.maxCustomerAssignments).toBe(1);
+  });
+
+  it("does not treat dashboard:write as Security Monitor-equivalent", () => {
+    // dashboard:write is not read-only — it gates session revocation
+    // (src/app/api/dashboard/sessions/[sid]/revoke/route.ts). A custom
+    // role that holds it must not be tenant-manageable as a Security
+    // Monitor clone.
+    const policy = deriveAccountRolePolicy({
+      id: 7,
+      name: "Dashboard Operator",
+      permissions: ["dashboard:read", "dashboard:write"],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(false);
+    expect(policy.tenantManageable).toBe(false);
+    expect(policy.maxCustomerAssignments).toBeNull();
+  });
+
+  it("does not treat system-settings:read as Security Monitor-equivalent", () => {
+    const policy = deriveAccountRolePolicy({
+      id: 8,
+      name: "Settings Viewer",
+      permissions: ["system-settings:read"],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(false);
+    expect(policy.tenantManageable).toBe(false);
+  });
+
   it("treats customer-scoped roles with permissions as non-monitor accounts", () => {
     const policy = deriveAccountRolePolicy({
       id: 3,

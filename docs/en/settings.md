@@ -136,8 +136,8 @@ deleted (marked with a **BUILTIN** badge):
 - **System Administrator** — full access to all features.
 - **Tenant Administrator** — manage operations and Security
   Monitor accounts within assigned customers.
-- **Security Monitor** — read-only access to events and dashboards
-  within a single assigned customer.
+- **Security Monitor** — read-only access to events, dashboards,
+  and detection within a single assigned customer.
 
 ### Custom Roles
 
@@ -152,6 +152,7 @@ resource:
 | Group | Permissions |
 |-------|-------------|
 | Dashboard | `dashboard:read`, `dashboard:write` |
+| Detection | `detection:read` |
 | Accounts | `accounts:read`, `accounts:write`, `accounts:delete` |
 | Roles | `roles:read`, `roles:write`, `roles:delete` |
 | Customers | `customers:read`, `customers:write`, `customers:delete`, `customers:access-all` |

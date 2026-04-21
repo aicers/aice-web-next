@@ -43,13 +43,32 @@ function hasGlobalCustomerAccess(permissions: string[]): boolean {
   return permissions.includes("customers:access-all");
 }
 
+// Allow-list of read-only data permissions that preserve Security
+// Monitor semantics. A role whose permissions are all drawn from this
+// set is treated as Security Monitor-equivalent. Any permission
+// outside this set (including write permissions such as
+// `dashboard:write`, which gates session revocation) disqualifies a
+// role from equivalence, so new permissions must be added here
+// explicitly.
+const SECURITY_MONITOR_EQUIVALENT_PERMISSIONS: ReadonlySet<string> = new Set([
+  "audit-logs:read",
+  "dashboard:read",
+  "detection:read",
+]);
+
+function hasNonMonitorPermission(permissions: string[]): boolean {
+  return permissions.some(
+    (permission) => !SECURITY_MONITOR_EQUIVALENT_PERMISSIONS.has(permission),
+  );
+}
+
 export function deriveAccountRolePolicy(
   role: RolePolicyRow,
 ): AccountRolePolicy {
   const permissions = Array.isArray(role.permissions)
     ? [...role.permissions].sort()
     : [];
-  const securityMonitorEquivalent = permissions.length === 0;
+  const securityMonitorEquivalent = !hasNonMonitorPermission(permissions);
   const requiresCustomerAssignment = !hasGlobalCustomerAccess(permissions);
 
   return {

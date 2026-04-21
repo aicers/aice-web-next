@@ -40,7 +40,7 @@ AICE Web은 자체 인증 데이터베이스(`auth_db`)와 별도의 감사
 |------|------|
 | System Administrator | 전체 시스템, 계정, 역할, 고객 관리 |
 | Tenant Administrator | 테넌트 범위 운영 + Security Monitor 계정 관리 |
-| Security Monitor | 할당된 고객 내 이벤트/대시보드 읽기 전용 |
+| Security Monitor | 할당된 고객 내 이벤트/대시보드/탐지 읽기 전용 |
 | Custom Role | 관리자가 정의한 권한 조합 |
 
 ## 매뉴얼 구성
