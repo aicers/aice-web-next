@@ -1,4 +1,10 @@
+import { parse } from "graphql";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const Q_HELLO = parse("query { __typename }");
+const Q_A = parse("query A { __typename }");
+const Q_B = parse("query B { __typename }");
+const Q_WITH_VAR = parse("query ($id: ID!) { __typename }");
 
 const fetchSpy = vi.fn().mockImplementation(() =>
   Promise.resolve(
@@ -48,7 +54,7 @@ describe("graphql client", () => {
     it("attaches Bearer token from signContextJwt", async () => {
       vi.mocked(mtls.signContextJwt).mockResolvedValue("test-token-123");
 
-      await client.graphqlRequest("query { hello }", undefined, {
+      await client.graphqlRequest(Q_HELLO, undefined, {
         role: "admin",
       });
 
@@ -63,8 +69,8 @@ describe("graphql client", () => {
         .mockResolvedValueOnce("token-1")
         .mockResolvedValueOnce("token-2");
 
-      await client.graphqlRequest("query { a }", undefined, { role: "admin" });
-      await client.graphqlRequest("query { b }", undefined, { role: "admin" });
+      await client.graphqlRequest(Q_A, undefined, { role: "admin" });
+      await client.graphqlRequest(Q_B, undefined, { role: "admin" });
 
       const headers1 = new Headers(fetchSpy.mock.calls[0][1].headers);
       const headers2 = new Headers(fetchSpy.mock.calls[1][1].headers);
@@ -77,7 +83,7 @@ describe("graphql client", () => {
 
   describe("context passing", () => {
     it("passes role and customerIds to signContextJwt", async () => {
-      await client.graphqlRequest("query { hello }", undefined, {
+      await client.graphqlRequest(Q_HELLO, undefined, {
         role: "Security Administrator",
         customerIds: [42, 99],
       });
@@ -89,7 +95,7 @@ describe("graphql client", () => {
     });
 
     it("passes undefined customerIds when omitted", async () => {
-      await client.graphqlRequest("query { hello }", undefined, {
+      await client.graphqlRequest(Q_HELLO, undefined, {
         role: "System Administrator",
       });
 
@@ -100,10 +106,10 @@ describe("graphql client", () => {
     });
 
     it("passes different context per request", async () => {
-      await client.graphqlRequest("query { a }", undefined, {
+      await client.graphqlRequest(Q_A, undefined, {
         role: "System Administrator",
       });
-      await client.graphqlRequest("query { b }", undefined, {
+      await client.graphqlRequest(Q_B, undefined, {
         role: "Security Administrator",
         customerIds: [1],
       });
@@ -129,7 +135,7 @@ describe("graphql client", () => {
       const mockAgent = { mock: "agent-dispatcher" };
       vi.mocked(mtls.getAgent).mockResolvedValue(mockAgent as never);
 
-      await client.graphqlRequest("query { hello }", undefined, {
+      await client.graphqlRequest(Q_HELLO, undefined, {
         role: "admin",
       });
 
@@ -138,8 +144,8 @@ describe("graphql client", () => {
     });
 
     it("calls getAgent on every request", async () => {
-      await client.graphqlRequest("query { a }", undefined, { role: "admin" });
-      await client.graphqlRequest("query { b }", undefined, { role: "admin" });
+      await client.graphqlRequest(Q_A, undefined, { role: "admin" });
+      await client.graphqlRequest(Q_B, undefined, { role: "admin" });
 
       expect(mtls.getAgent).toHaveBeenCalledTimes(2);
     });
@@ -149,11 +155,7 @@ describe("graphql client", () => {
 
   describe("variables forwarding", () => {
     it("forwards variables in the request body", async () => {
-      await client.graphqlRequest(
-        "query ($id: ID!) { node(id: $id) { id } }",
-        { id: "123" },
-        { role: "admin" },
-      );
+      await client.graphqlRequest(Q_WITH_VAR, { id: "123" }, { role: "admin" });
 
       const [, init] = fetchSpy.mock.calls[0];
       const body = JSON.parse(init.body);
@@ -161,13 +163,14 @@ describe("graphql client", () => {
     });
 
     it("sends request body without variables when undefined", async () => {
-      await client.graphqlRequest("query { hello }", undefined, {
+      await client.graphqlRequest(Q_HELLO, undefined, {
         role: "admin",
       });
 
       const [, init] = fetchSpy.mock.calls[0];
       const body = JSON.parse(init.body);
-      expect(body.query).toContain("hello");
+      expect(body.query).toContain("__typename");
+      expect(body.variables).toBeUndefined();
     });
   });
 
@@ -175,7 +178,7 @@ describe("graphql client", () => {
 
   describe("endpoint configuration", () => {
     it("sends request to REVIEW_GRAPHQL_ENDPOINT", async () => {
-      await client.graphqlRequest("query { hello }", undefined, {
+      await client.graphqlRequest(Q_HELLO, undefined, {
         role: "admin",
       });
 
@@ -188,7 +191,7 @@ describe("graphql client", () => {
       client.resetClient();
 
       await expect(
-        client.graphqlRequest("query { hello }", undefined, { role: "admin" }),
+        client.graphqlRequest(Q_HELLO, undefined, { role: "admin" }),
       ).rejects.toThrow(
         "Missing environment variable: REVIEW_GRAPHQL_ENDPOINT",
       );
@@ -199,12 +202,12 @@ describe("graphql client", () => {
 
   describe("resetClient", () => {
     it("forces client re-creation with new endpoint", async () => {
-      await client.graphqlRequest("query { a }", undefined, { role: "admin" });
+      await client.graphqlRequest(Q_A, undefined, { role: "admin" });
 
       client.resetClient();
       process.env.REVIEW_GRAPHQL_ENDPOINT = "https://other.example.com/graphql";
 
-      await client.graphqlRequest("query { b }", undefined, { role: "admin" });
+      await client.graphqlRequest(Q_B, undefined, { role: "admin" });
 
       const [url1] = fetchSpy.mock.calls[0];
       const [url2] = fetchSpy.mock.calls[1];
@@ -213,8 +216,8 @@ describe("graphql client", () => {
     });
 
     it("reuses client across requests without reset", async () => {
-      await client.graphqlRequest("query { a }", undefined, { role: "admin" });
-      await client.graphqlRequest("query { b }", undefined, { role: "admin" });
+      await client.graphqlRequest(Q_A, undefined, { role: "admin" });
+      await client.graphqlRequest(Q_B, undefined, { role: "admin" });
 
       // Both should go to the same endpoint
       const [url1] = fetchSpy.mock.calls[0];
@@ -232,7 +235,7 @@ describe("graphql client", () => {
       );
 
       await expect(
-        client.graphqlRequest("query { hello }", undefined, { role: "admin" }),
+        client.graphqlRequest(Q_HELLO, undefined, { role: "admin" }),
       ).rejects.toThrow("Missing environment variable: MTLS_CERT_PATH");
     });
 
@@ -242,7 +245,7 @@ describe("graphql client", () => {
       );
 
       await expect(
-        client.graphqlRequest("query { hello }", undefined, { role: "admin" }),
+        client.graphqlRequest(Q_HELLO, undefined, { role: "admin" }),
       ).rejects.toThrow("Missing environment variable: MTLS_KEY_PATH");
     });
 
@@ -250,8 +253,27 @@ describe("graphql client", () => {
       fetchSpy.mockRejectedValueOnce(new TypeError("fetch failed"));
 
       await expect(
-        client.graphqlRequest("query { hello }", undefined, { role: "admin" }),
+        client.graphqlRequest(Q_HELLO, undefined, { role: "admin" }),
       ).rejects.toThrow("fetch failed");
+    });
+  });
+
+  // ── Raw-string guard ─────────────────────────────────────────────
+
+  describe("raw-string guard", () => {
+    it("rejects raw query strings smuggled past the type system", async () => {
+      // Callers must pass a parsed DocumentNode (typically from a checked-in
+      // .graphql file). Raw strings bypass the schema-validation test, so
+      // graphqlRequest throws at runtime if one sneaks through via `as any`.
+      const rawQuery = "query { hello }" as unknown as Parameters<
+        typeof client.graphqlRequest
+      >[0];
+
+      await expect(
+        client.graphqlRequest(rawQuery, undefined, { role: "admin" }),
+      ).rejects.toThrow(/raw query strings are not allowed/);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 });

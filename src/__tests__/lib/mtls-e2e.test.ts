@@ -404,6 +404,7 @@ describe("mTLS + Context JWT E2E", () => {
   it("graphqlRequest integrates mTLS + JWT end-to-end", async () => {
     // Use the full graphqlRequest function
     const { graphqlRequest } = await import("@/lib/graphql/client");
+    const { parse } = await import("graphql");
 
     const result = await graphqlRequest<{
       auth: {
@@ -411,7 +412,7 @@ describe("mTLS + Context JWT E2E", () => {
         customerIds: number[] | null;
         verified: boolean;
       };
-    }>("{ auth { role customerIds verified } }", undefined, {
+    }>(parse("{ auth { role customerIds verified } }"), undefined, {
       role: "System Administrator",
       customerIds: [42],
     });
