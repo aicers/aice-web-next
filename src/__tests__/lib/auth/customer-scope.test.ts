@@ -41,14 +41,46 @@ describe("getAccountCustomerIds", () => {
   });
 });
 
+describe("getAllCustomerIds", () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("returns every registered customer ID in ascending order", async () => {
+    mockQuery.mockResolvedValue({
+      rows: [{ id: 1 }, { id: 4 }, { id: 9 }],
+    });
+
+    const { getAllCustomerIds } = await import("@/lib/auth/customer-scope");
+    const result = await getAllCustomerIds();
+
+    expect(result).toEqual([1, 4, 9]);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/SELECT id FROM customers ORDER BY id/i),
+    );
+  });
+
+  it("returns an empty array when no customers are registered", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { getAllCustomerIds } = await import("@/lib/auth/customer-scope");
+    const result = await getAllCustomerIds();
+
+    expect(result).toEqual([]);
+  });
+});
+
 describe("resolveEffectiveCustomerIds", () => {
   beforeEach(() => {
     mockQuery.mockReset();
     mockHasPermission.mockReset();
   });
 
-  it("returns undefined when account has customers:access-all", async () => {
+  it("materializes every registered customer ID when account has customers:access-all", async () => {
     mockHasPermission.mockResolvedValue(true);
+    mockQuery.mockResolvedValue({
+      rows: [{ id: 1 }, { id: 2 }, { id: 3 }],
+    });
 
     const { resolveEffectiveCustomerIds } = await import(
       "@/lib/auth/customer-scope"
@@ -57,8 +89,13 @@ describe("resolveEffectiveCustomerIds", () => {
       "System Administrator",
     ]);
 
-    expect(result).toBeUndefined();
-    expect(mockQuery).not.toHaveBeenCalled();
+    // Access-all is resolved to the explicit list of every customer —
+    // the consumer (REview) applies scope from an explicit claim set,
+    // not from an omitted claim.
+    expect(result).toEqual([1, 2, 3]);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/SELECT id FROM customers ORDER BY id/i),
+    );
   });
 
   it("returns customer IDs when account lacks customers:access-all", async () => {

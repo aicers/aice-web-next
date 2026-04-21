@@ -178,8 +178,23 @@ call — fails CI with a message pointing back to this section.
    `schemas/review.version`.
 4. Review `git diff schemas/` and update any code that references
    removed or renamed fields in the same PR.
-5. Commit the schema and version files together. Call out any
-   breaking-change mitigation in the PR description.
+5. Regenerate schema-derived TypeScript types:
+
+   ```sh
+   pnpm codegen:detection
+   ```
+
+   The generator at `scripts/codegen-detection-types.mjs` reads
+   `schemas/review.graphql` and rewrites
+   `src/lib/detection/types.generated.ts` (scalars, enums, the
+   `EventListFilterInput` and its transitive inputs,
+   `EventConnection`/`EventEdge`/`PageInfo`, the `eventCountsBy*`
+   counter shapes, and an `EventBase` interface covering the Event
+   interface's common fields). A Vitest spec re-runs the generator
+   in CI and fails if the checked-in file drifts, so a schema bump
+   that forgets this step is caught at PR time.
+6. Commit the schema, version file, and regenerated types together.
+   Call out any breaking-change mitigation in the PR description.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system overview and
 the `decisions/` directory for detailed design records.

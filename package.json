@@ -18,7 +18,8 @@
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "e2e": "playwright test --config e2e/playwright.config.ts",
-    "typecheck": "next typegen && tsc --noEmit -p tsconfig.typecheck.json"
+    "typecheck": "next typegen && tsc --noEmit -p tsconfig.typecheck.json",
+    "codegen:detection": "node scripts/codegen-detection-types.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
