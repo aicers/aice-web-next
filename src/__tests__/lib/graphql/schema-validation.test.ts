@@ -15,7 +15,13 @@ const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SCHEMA_PATH = path.join(REPO_ROOT, "schemas/review.graphql");
 const VERSION_PATH = path.join(REPO_ROOT, "schemas/review.version");
 const QUERY_ROOT = path.join(REPO_ROOT, "src");
-const SKIP_DIRS = new Set(["node_modules", ".next", "__tests__"]);
+const SKIP_DIRS = new Set([
+  "node_modules",
+  ".next",
+  "__tests__",
+  "__integration__",
+  "test-harness",
+]);
 
 // Known module specifiers that export a `gql` tag producing a GraphQL
 // document. Template literals tagged with identifiers imported from these

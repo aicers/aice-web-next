@@ -1,32 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
 
 import {
+  readManifest,
+  runFixturePreflight,
+} from "../src/test-harness/fixtures";
+import { startMockServer } from "../src/test-harness/mock-server";
+import { ensureTestCerts } from "../src/test-harness/test-certs";
+import { resolveDataDir } from "./data-dir";
+import {
   createTestAccount,
   createTestRole,
   resetAccountDefaults,
 } from "./helpers/setup-db";
-
-/**
- * Resolve DATA_DIR the same way the app does:
- * process.env → .env.local → default "./data".
- */
-function getDataDir(): string {
-  if (process.env.DATA_DIR) return resolve(process.env.DATA_DIR);
-
-  try {
-    const envFile = readFileSync(resolve(__dirname, "../.env.local"), "utf8");
-    const match = envFile.match(/^DATA_DIR=(.+)$/m);
-    if (match) return resolve(match[1].trim());
-  } catch {
-    // .env.local not found — use default
-  }
-
-  return resolve("data");
-}
+import { mockServerPort, setMockServer } from "./mock-server-state";
 
 /**
  * Generate an ES256 JWT signing key if one doesn't already exist.
@@ -35,7 +25,7 @@ function getDataDir(): string {
  * webServer starts.
  */
 async function ensureJwtSigningKey(): Promise<void> {
-  const dataDir = getDataDir();
+  const dataDir = resolveDataDir();
   const keysDir = resolve(dataDir, "keys");
   const keyPath = resolve(keysDir, "jwt-signing.json");
 
@@ -103,9 +93,44 @@ async function ensureWorkerAccounts(): Promise<void> {
   }
 }
 
+async function startMockReviewGraphql(): Promise<void> {
+  const manifest = readManifest();
+  const failures = runFixturePreflight(manifest);
+  if (failures.length > 0) {
+    throw new Error(
+      "Fixture preflight failed (schema validation or manifest coverage):\n\n" +
+        failures.join("\n\n"),
+    );
+  }
+  console.log(
+    `[e2e] Validated ${manifest.length} fixture(s) against schemas/review.graphql ` +
+      "and confirmed manifest coverage of the fixtures tree",
+  );
+
+  // Generate (or reuse) short-lived test certs so the mock server can serve
+  // over HTTPS + mTLS. `ensureTestCerts` is idempotent when the on-disk
+  // chain is still within its validity window, and auto-regenerates if any
+  // cert has expired — `playwright.config.ts` already calls it before
+  // webServer starts; calling it again here just reads the existing PEMs.
+  // Once this is set, the dev server reaches the mock via the production
+  // mTLS path in `src/lib/mtls.ts` (no bypass needed).
+  const certDir = resolve(resolveDataDir(), "certs");
+  const certs = ensureTestCerts(certDir);
+  console.log(`[e2e] Test mTLS material ready at ${certs.dir}`);
+
+  const port = mockServerPort();
+  const server = await startMockServer({
+    port,
+    tls: { cert: certs.serverCert, key: certs.serverKey, ca: certs.caCert },
+  });
+  setMockServer(server);
+  console.log(`[e2e] Mock REview GraphQL listening at ${server.url}`);
+}
+
 export default async function globalSetup(): Promise<void> {
   console.log("[e2e] Running global setup…");
   try {
+    await startMockReviewGraphql();
     await ensureJwtSigningKey();
     await ensureWorkerAccounts();
     console.log("[e2e] Global setup complete.");

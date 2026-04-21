@@ -1,4 +1,10 @@
+import { resolve } from "node:path";
+
 import { defineConfig, devices } from "@playwright/test";
+
+import { ensureTestCerts } from "../src/test-harness/test-certs";
+import { resolveDataDir } from "./data-dir";
+import { mockServerUrl } from "./mock-server-state";
 
 // Build webServer.env: only set values that are explicitly provided
 // via environment variables (e.g., from CI). Omitted keys let Next.js
@@ -22,6 +28,37 @@ function buildEnv(): Record<string, string> {
       env[key] = process.env[key];
     }
   }
+
+  // Point the dev server at the mock REview GraphQL endpoint that
+  // global-setup.ts brings up. The mock is served over HTTPS + mTLS using
+  // short-lived certs, so the dev server reaches it via the production
+  // mTLS code path in src/lib/mtls.ts (no bypass involved — the bypass's
+  // NODE_ENV gate is unreachable from `next dev`, since `next dev` forces
+  // NODE_ENV=development).
+  env.REVIEW_GRAPHQL_ENDPOINT = mockServerUrl();
+
+  // The mock server is an HTTPS + mTLS endpoint. Generate (or reuse)
+  // short-lived test certs now — before webServer starts — so the dev
+  // server's mTLS module reads the test CA + client cert + key via these
+  // env vars. globalSetup picks up the same files when it starts the mock.
+  //
+  // Both this file and globalSetup must resolve DATA_DIR identically
+  // (process.env → .env.local → "./data"); otherwise the dev-server env
+  // and the mock-server cert directory drift apart on local runs with a
+  // custom .env.local. Publish the resolved absolute path back into
+  // env.DATA_DIR so the dev server inherits the same value.
+  const dataDir = resolveDataDir();
+  env.DATA_DIR = dataDir;
+  const certs = ensureTestCerts(resolve(dataDir, "certs"));
+  env.MTLS_CA_PATH = certs.paths.caPath;
+  env.MTLS_CERT_PATH = certs.paths.clientCertPath;
+  env.MTLS_KEY_PATH = certs.paths.clientKeyPath;
+  // Also expose them to this process so globalSetup (which runs in this
+  // process) and the admin client in specs can read the same paths.
+  process.env.DATA_DIR = dataDir;
+  process.env.MTLS_CA_PATH = certs.paths.caPath;
+  process.env.MTLS_CERT_PATH = certs.paths.clientCertPath;
+  process.env.MTLS_KEY_PATH = certs.paths.clientKeyPath;
 
   return env;
 }
@@ -112,7 +149,15 @@ export default defineConfig({
   webServer: {
     command: "pnpm dev",
     url: "http://localhost:3000",
-    reuseExistingServer: !process.env.CI,
+    // Never reuse an existing server. Playwright's webServer reuse would
+    // skip `env` injection and adopt whatever process already holds the
+    // port, so `REVIEW_GRAPHQL_ENDPOINT` / `MTLS_*` would not reach the app.
+    // Future REview-backed scenarios would then silently hit the wrong
+    // backend while the smoke spec still passes (it only probes `/` and
+    // talks to the mock directly). Owning the app process every run is the
+    // safer default for test infra; local devs with a persistent dev server
+    // on :3000 must stop it before invoking `pnpm e2e`.
+    reuseExistingServer: false,
     timeout: 120_000,
     env: buildEnv(),
   },

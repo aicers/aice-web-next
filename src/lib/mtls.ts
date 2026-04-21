@@ -3,7 +3,7 @@ import "server-only";
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { importPKCS8, SignJWT } from "jose";
+import { generateKeyPair, importPKCS8, SignJWT } from "jose";
 import { Agent } from "undici";
 
 type JwtAlgorithm = "RS256" | "RS384" | "RS512" | "ES256" | "ES384";
@@ -15,6 +15,52 @@ interface MtlsState {
 }
 
 let state: MtlsState | null = null;
+
+/**
+ * Test-only bypass: when running under the test harness, return a plain-HTTP
+ * dispatcher and an ephemeral ES256 signing key so requests can be routed to
+ * a non-mTLS mock GraphQL server. Gated by both `NODE_ENV === 'test'` and
+ * `TEST_ALLOW_PLAIN_GRAPHQL=1` to make accidental enabling in dev / prod
+ * impossible. A loud warning is printed at first use.
+ *
+ * The mTLS code path is still exercised by `src/__tests__/lib/mtls-e2e.test.ts`,
+ * which spins up a real HTTPS + mTLS server.
+ */
+function isPlainGraphqlBypassEnabled(): boolean {
+  return (
+    process.env.NODE_ENV === "test" &&
+    process.env.TEST_ALLOW_PLAIN_GRAPHQL === "1"
+  );
+}
+
+let bypassWarned = false;
+function warnBypassOnce(): void {
+  if (bypassWarned) return;
+  bypassWarned = true;
+  // eslint-disable-next-line no-console -- intentional, see docstring
+  console.warn(
+    "============================================================\n" +
+      "  WARNING: mTLS bypass is ACTIVE.\n" +
+      "  REVIEW_GRAPHQL_ENDPOINT will be reached over plain HTTP\n" +
+      "  with an ephemeral JWT signing key. This branch is allowed\n" +
+      "  ONLY when NODE_ENV=test AND TEST_ALLOW_PLAIN_GRAPHQL=1.\n" +
+      "  If you see this in production, abort immediately.\n" +
+      "============================================================",
+  );
+}
+
+async function buildBypassState(): Promise<MtlsState> {
+  warnBypassOnce();
+  const { privateKey } = await generateKeyPair("ES256", { extractable: true });
+  return {
+    // A bare undici Agent with no `connect.cert/key/ca` performs plain
+    // HTTP/HTTPS without client-cert auth, which is what the mock server
+    // expects.
+    agent: new Agent(),
+    privateKey,
+    algorithm: "ES256",
+  };
+}
 
 export function detectAlgorithm(certPem: string): JwtAlgorithm {
   const x509 = new X509Certificate(certPem);
@@ -44,6 +90,8 @@ function readEnvPath(envVar: string): string {
 }
 
 async function buildState(): Promise<MtlsState> {
+  if (isPlainGraphqlBypassEnabled()) return buildBypassState();
+
   const cert = readEnvPath("MTLS_CERT_PATH");
   const key = readEnvPath("MTLS_KEY_PATH");
   const ca = readEnvPath("MTLS_CA_PATH");

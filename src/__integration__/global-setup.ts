@@ -6,10 +6,20 @@ import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
 
+import { readManifest, runFixturePreflight } from "../test-harness/fixtures";
+import {
+  type RunningMockServer,
+  startMockServer,
+} from "../test-harness/mock-server";
+import { ensureTestCerts } from "../test-harness/test-certs";
+
 const DATA_DIR = process.env.DATA_DIR || resolve("data-integration");
 const SERVER_URL =
   process.env.INTEGRATION_SERVER_URL || "http://localhost:3001";
 const PORT = new URL(SERVER_URL).port || "3001";
+const MOCK_GRAPHQL_PORT = Number(
+  process.env.MOCK_REVIEW_GRAPHQL_PORT || "4011",
+);
 
 /**
  * Resolve an env var: prefer process.env, then parse .env.local.
@@ -73,9 +83,50 @@ async function waitForServer(url: string, timeoutMs: number): Promise<void> {
 }
 
 let serverProcess: ChildProcess | undefined;
+let mockServer: RunningMockServer | undefined;
+
+function preflightFixtures(): void {
+  const manifest = readManifest();
+  const failures = runFixturePreflight(manifest);
+  if (failures.length > 0) {
+    throw new Error(
+      "Fixture preflight failed (schema validation or manifest coverage):\n\n" +
+        failures.join("\n\n"),
+    );
+  }
+  console.log(
+    `[integration] Validated ${manifest.length} fixture(s) against ` +
+      "schemas/review.graphql and confirmed manifest coverage of the " +
+      "fixtures tree",
+  );
+}
 
 export async function setup(): Promise<() => Promise<void>> {
   console.log("[integration] Running global setup…");
+
+  preflightFixtures();
+
+  // Generate (or reuse) short-lived test certs. Both the mock server and
+  // the dev server use them: the mock presents the server cert + requires
+  // mTLS, and the dev server's mtls module reads the client cert/key via
+  // the MTLS_* env vars we set below. This exercises the production mTLS
+  // code path end to end in CI (no bypass needed).
+  const certDir = resolve(DATA_DIR, "certs");
+  const certs = ensureTestCerts(certDir);
+  process.env.MTLS_CA_PATH = certs.paths.caPath;
+  process.env.MTLS_CERT_PATH = certs.paths.clientCertPath;
+  process.env.MTLS_KEY_PATH = certs.paths.clientKeyPath;
+  console.log(`[integration] Test mTLS material ready at ${certs.dir}`);
+
+  console.log(
+    `[integration] Starting mock REview GraphQL server on port ${MOCK_GRAPHQL_PORT}…`,
+  );
+  mockServer = await startMockServer({
+    port: MOCK_GRAPHQL_PORT,
+    tls: { cert: certs.serverCert, key: certs.serverKey, ca: certs.caCert },
+  });
+  process.env.REVIEW_GRAPHQL_ENDPOINT = mockServer.url;
+  console.log(`[integration] Mock REview GraphQL ready at ${mockServer.url}`);
 
   await ensureJwtSigningKey();
 
@@ -102,17 +153,35 @@ export async function setup(): Promise<() => Promise<void>> {
     INIT_ADMIN_USERNAME: getEnvVar("INIT_ADMIN_USERNAME", "admin"),
     INIT_ADMIN_PASSWORD: getEnvVar("INIT_ADMIN_PASSWORD", "Admin1234!"),
     DEFAULT_LOCALE: getEnvVar("DEFAULT_LOCALE", "en"),
+    REVIEW_GRAPHQL_ENDPOINT: mockServer.url,
+    MTLS_CA_PATH: certs.paths.caPath,
+    MTLS_CERT_PATH: certs.paths.clientCertPath,
+    MTLS_KEY_PATH: certs.paths.clientKeyPath,
   };
 
-  // Check if a server is already running on this port
+  // Never reuse an existing server. A process already bound to SERVER_URL
+  // has its own env and will not have received the harness-controlled
+  // REVIEW_GRAPHQL_ENDPOINT / MTLS_* vars set above, so REview-backed tests
+  // could silently talk to the wrong backend while the smoke still passes.
+  // Fail fast instead, and make the developer stop any stray `pnpm dev` on
+  // ${SERVER_URL} before re-running.
   try {
     const res = await fetch(SERVER_URL, { redirect: "manual" });
     if (res.status < 500) {
-      console.log(`[integration] Reusing existing server at ${SERVER_URL}`);
-      return async () => {};
+      await mockServer.close();
+      throw new Error(
+        `[integration] Port ${PORT} is already in use by another process ` +
+          `(responded at ${SERVER_URL}). The integration harness owns the ` +
+          "app process so REVIEW_GRAPHQL_ENDPOINT / MTLS_* reach it " +
+          "correctly. Stop the stray server and re-run, or set " +
+          "INTEGRATION_SERVER_URL to a different port.",
+      );
     }
-  } catch {
-    // No server running — start one
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("[integration] Port")) {
+      throw err;
+    }
+    // Port is free — start our own dev server below.
   }
 
   // Save tsconfig.json before starting the dev server — Next.js rewrites
@@ -120,37 +189,77 @@ export async function setup(): Promise<() => Promise<void>> {
   const tsconfigPath = resolve("tsconfig.json");
   const tsconfigBackup = readFileSync(tsconfigPath, "utf8");
 
-  console.log(`[integration] Starting dev server on port ${PORT}…`);
-  const proc = spawn("pnpm", ["dev", "--port", PORT], {
-    env: { ...process.env, ...env },
-    stdio: "pipe",
-    detached: true,
-  });
-  serverProcess = proc;
+  const killServerProcess = (): void => {
+    if (!serverProcess?.pid) return;
+    try {
+      // Kill the detached process group so webpack workers die too.
+      process.kill(-serverProcess.pid, "SIGTERM");
+    } catch {
+      serverProcess.kill("SIGTERM");
+    }
+  };
 
-  // Unref so the child doesn't keep this process alive
-  proc.unref();
-  proc.stdout?.on("data", (data: Buffer) => {
-    const line = data.toString().trim();
-    if (line) console.log(`[dev] ${line}`);
-  });
-  proc.stderr?.on("data", (data: Buffer) => {
-    const line = data.toString().trim();
-    if (line) console.log(`[dev:err] ${line}`);
-  });
+  try {
+    console.log(`[integration] Starting dev server on port ${PORT}…`);
+    const proc = spawn("pnpm", ["dev", "--port", PORT], {
+      env: { ...process.env, ...env },
+      stdio: "pipe",
+      detached: true,
+    });
+    serverProcess = proc;
 
-  await waitForServer(SERVER_URL, 120_000);
-  console.log("[integration] Dev server is ready.");
+    // Unref so the child doesn't keep this process alive
+    proc.unref();
+    proc.stdout?.on("data", (data: Buffer) => {
+      const line = data.toString().trim();
+      if (line) console.log(`[dev] ${line}`);
+    });
+    proc.stderr?.on("data", (data: Buffer) => {
+      const line = data.toString().trim();
+      if (line) console.log(`[dev:err] ${line}`);
+    });
+
+    await waitForServer(SERVER_URL, 120_000);
+    console.log("[integration] Dev server is ready.");
+  } catch (err) {
+    // The dev server is spawned with `detached: true` + `unref()` so it
+    // survives this process by design. That is correct for the happy path
+    // (teardown re-attaches via `serverProcess.pid`), but it means any
+    // failure between `spawn()` and `waitForServer()` succeeding would
+    // orphan the child — and the next local rerun would trip the
+    // port-in-use guard we just added above. Clean up explicitly before
+    // rethrowing so setup failures are recoverable without manual
+    // `lsof | kill` intervention.
+    console.error(
+      "[integration] Dev-server startup failed; tearing down partial state.",
+    );
+    killServerProcess();
+    serverProcess = undefined;
+    if (mockServer) {
+      try {
+        await mockServer.close();
+      } catch {
+        // best-effort: we're already unwinding a setup failure
+      }
+      mockServer = undefined;
+    }
+    try {
+      writeFileSync(tsconfigPath, tsconfigBackup, "utf8");
+    } catch {
+      // best-effort: same reason
+    }
+    throw err;
+  }
 
   return async () => {
     if (serverProcess?.pid) {
       console.log("[integration] Stopping dev server…");
-      try {
-        // Kill the detached process group
-        process.kill(-serverProcess.pid, "SIGTERM");
-      } catch {
-        serverProcess.kill("SIGTERM");
-      }
+      killServerProcess();
+    }
+
+    if (mockServer) {
+      console.log("[integration] Stopping mock REview GraphQL server…");
+      await mockServer.close();
     }
 
     // Restore tsconfig.json to its pre-test state

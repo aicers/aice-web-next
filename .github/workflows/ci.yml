@@ -170,6 +170,7 @@ jobs:
           INIT_ADMIN_PASSWORD: Admin1234!
           DEFAULT_LOCALE: en
           INTEGRATION_SERVER_URL: http://localhost:3001
+          MOCK_REVIEW_GRAPHQL_PORT: "4011"
 
   e2e:
     name: E2E
@@ -217,6 +218,7 @@ jobs:
           INIT_ADMIN_USERNAME: admin
           INIT_ADMIN_PASSWORD: Admin1234!
           DEFAULT_LOCALE: en
+          MOCK_REVIEW_GRAPHQL_PORT: "4012"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
