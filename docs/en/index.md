@@ -43,7 +43,7 @@ databases are provisioned and migrated automatically.
 |------|-------|
 | System Administrator | Full system, account, role, customer management |
 | Tenant Administrator | Tenant-scoped operations + Security Monitor account management |
-| Security Monitor | Read-only event and dashboard access within assigned customers |
+| Security Monitor | Read-only event, dashboard, and detection access within assigned customers |
 | Custom Role | Administrator-defined permission combinations |
 
 ## Manual Map

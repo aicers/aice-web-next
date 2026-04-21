@@ -431,6 +431,7 @@
       "customers": "고객",
       "audit-logs": "감사 로그",
       "dashboard": "대시보드",
+      "detection": "탐지",
       "system-settings": "시스템 설정"
     },
     "permissionActions": {
@@ -530,6 +531,32 @@
       "notConfigured": "mTLS 인증서가 구성되지 않았습니다",
       "loading": "인증서 확인 중...",
       "error": "인증서 상태를 확인하지 못했습니다"
+    }
+  },
+  "detection": {
+    "title": "탐지",
+    "savedRail": {
+      "recommended": "추천 필터",
+      "saved": "저장된 필터",
+      "placeholder": "아직 필터가 없습니다."
+    },
+    "filters": {
+      "open": "필터",
+      "comingSoon": "필터 드로어는 이번 단계에서는 제공되지 않습니다.",
+      "activeChips": "활성 필터가 여기에 표시됩니다.",
+      "placeholder": "필터 드로어가 여기에서 열립니다."
+    },
+    "results": {
+      "placeholder": "탐지 결과가 여기에 표시됩니다."
+    },
+    "analytics": {
+      "toggle": "분석",
+      "show": "분석 보기",
+      "hide": "분석 숨기기",
+      "placeholder": "분석이 여기에 표시됩니다."
+    },
+    "quickPeek": {
+      "placeholder": "간단 미리보기가 여기에 표시됩니다."
     }
   },
   "changePassword": {

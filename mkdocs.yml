@@ -25,6 +25,7 @@ plugins:
           nav:
             - Overview: index.md
             - Getting Started: getting-started.md
+            - Detection: detection.md
             - Settings: settings.md
         - locale: ko
           name: 한국어
@@ -32,10 +33,12 @@ plugins:
           nav:
             - Overview: index.md
             - Getting Started: getting-started.md
+            - Detection: detection.md
             - Settings: settings.md
           nav_translations:
             Overview: 개요
             Getting Started: 시작하기
+            Detection: 탐지
             Settings: 설정
 
 extra_css:

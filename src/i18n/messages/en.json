@@ -431,6 +431,7 @@
       "customers": "Customers",
       "audit-logs": "Audit Logs",
       "dashboard": "Dashboard",
+      "detection": "Detection",
       "system-settings": "System Settings"
     },
     "permissionActions": {
@@ -530,6 +531,32 @@
       "notConfigured": "No mTLS certificate configured",
       "loading": "Checking certificate...",
       "error": "Failed to check certificate status"
+    }
+  },
+  "detection": {
+    "title": "Detection",
+    "savedRail": {
+      "recommended": "Recommended Filter",
+      "saved": "Saved Filters",
+      "placeholder": "No filters yet."
+    },
+    "filters": {
+      "open": "Filters",
+      "comingSoon": "Filters drawer is not available yet in this phase.",
+      "activeChips": "Active filters will appear here.",
+      "placeholder": "Filter drawer will open here."
+    },
+    "results": {
+      "placeholder": "Detection results will appear here."
+    },
+    "analytics": {
+      "toggle": "Analytics",
+      "show": "Show analytics",
+      "hide": "Hide analytics",
+      "placeholder": "Analytics will appear here."
+    },
+    "quickPeek": {
+      "placeholder": "Quick peek inspector will appear here."
     }
   },
   "changePassword": {

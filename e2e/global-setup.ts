@@ -92,6 +92,7 @@ const ALL_PERMISSIONS = [
   "system-settings:write",
   "dashboard:read",
   "dashboard:write",
+  "detection:read",
 ];
 
 async function ensureWorkerAccounts(): Promise<void> {
