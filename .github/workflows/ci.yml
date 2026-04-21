@@ -39,6 +39,7 @@ jobs:
               - "src/**"
               - "e2e/**"
               - "migrations/**"
+              - "schemas/**"
               - "scripts/**"
               - "infra/**"
               - "public/**"

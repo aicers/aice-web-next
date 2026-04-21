@@ -14,7 +14,8 @@
       "!dist",
       "!build",
       "!.agents",
-      "!src/lib/auth/common-passwords-top-100k.json"
+      "!src/lib/auth/common-passwords-top-100k.json",
+      "!schemas"
     ]
   },
   "formatter": {

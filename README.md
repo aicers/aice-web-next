@@ -74,6 +74,7 @@ pnpm typecheck          # TypeScript type check (no emit)
 decisions/       Architecture decision records
 docs/            User manual (EN + KR)
 migrations/      Versioned SQL migration files (auth, audit, customer)
+schemas/         Vendored GraphQL SDL from upstream backends (REview, …)
 e2e/             Playwright E2E tests
 src/
   app/           Next.js App Router (pages, layouts, API routes)
@@ -84,6 +85,101 @@ src/
   __tests__/     Unit tests
   __integration__/  Integration tests
 ```
+
+## Backend schema versions
+
+The `schemas/` directory holds vendored GraphQL SDL from the backends this
+BFF targets:
+
+| File | Backend | Scope |
+|------|---------|-------|
+| `schemas/review.graphql` | `review-web` (REview) | Detection and Triage menus |
+| `schemas/review.version` | — | Semver or commit SHA the SDL corresponds to |
+
+Future: when the Event menu lands, `schemas/giganto.graphql` and
+`schemas/giganto.version` will follow the same pattern for Giganto.
+
+These files are **manually provided** by the engineer doing the update —
+there is no auto-fetch script. The manual review step is intentional, so
+breaking changes from upstream are caught at PR time rather than in
+production.
+
+### CI validation
+
+Every CI run validates every GraphQL query document the BFF can send
+against the vendored `schemas/review.graphql`. The check lives in
+`src/__tests__/lib/graphql/schema-validation.test.ts` and covers:
+
+- every `.graphql` / `.gql` file under `src/`, and
+- inline GraphQL embedded in TypeScript sources. Detection is scoped
+  to call/tag sites that actually produce a GraphQL document, via a
+  TypeScript AST walk:
+  - `` gql`…` `` tagged templates, where `gql` is imported from a
+    known GraphQL package (`graphql-tag`, `graphql-request`,
+    `@apollo/client`, `@urql/core`, `graphql`). Import aliases are
+    supported.
+  - `parse("…")` calls where `parse` is the named import from
+    `graphql` (including `import * as graphql from "graphql"` with
+    `graphql.parse("…")`).
+
+  Arbitrary string literals that happen to start with `query` /
+  `mutation` / `subscription` / `fragment` are deliberately ignored
+  so unrelated code (e.g. `JSON.parse("query parameter")`) is not
+  misclassified as GraphQL.
+
+Dynamic construction of GraphQL documents in production code is
+rejected by the same check. Interpolated `` gql`… ${x} …` ``
+templates and `parse(variable)` / `graphql.parse(variable)` calls
+produce a `DocumentNode` that cannot be statically validated against
+the vendored schema, so the AST walk fails CI at those sites with a
+message telling the contributor to inline the query as a string
+literal or move it to a checked-in `.graphql` file. This closes the
+escape hatch of building a `DocumentNode` from a runtime-assembled
+string and passing it to `graphqlRequest`.
+
+`src/lib/graphql/client.ts` also restricts `graphqlRequest` to
+`DocumentNode` (no raw strings), with a runtime guard as
+defense-in-depth, so drift cannot leak through an `as any` cast. A PR
+that references a field not present in the vendored schema — whether
+from a `.graphql` file, an inline `gql` template, or a `parse("…")`
+call — fails CI with a message pointing back to this section.
+
+### Update procedure
+
+1. Obtain the target REview SDL by whatever means are available. There
+   is no canonical location yet; REview does not currently ship an SDL
+   file. The pragmatic option today is to build `review-web` locally
+   with the `auth-mtls` feature and dump the SDL, e.g.:
+
+   ```rust
+   // examples/dump_sdl.rs in a review-web checkout
+   use async_graphql::Schema;
+   use review_web::graphql::{Mutation, Query, Subscription};
+
+   fn main() {
+       let schema = Schema::build(
+           Query::default(),
+           Mutation::default(),
+           Subscription::default(),
+       )
+       .finish();
+       println!("{}", schema.sdl());
+   }
+   ```
+
+   `Schema`, `Query`, `Mutation`, `Subscription` are currently
+   `pub(super)` in `review-web::graphql`; the current SDL in this
+   repo was produced by temporarily widening their visibility to
+   `pub`. Once REview exposes a stable SDL source, this step can be
+   simplified.
+2. Replace `schemas/review.graphql` with the new SDL (preserve the
+   header comment that records the source and version).
+3. Write the corresponding version (semver or commit SHA) into
+   `schemas/review.version`.
+4. Review `git diff schemas/` and update any code that references
+   removed or renamed fields in the same PR.
+5. Commit the schema and version files together. Call out any
+   breaking-change mitigation in the PR description.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system overview and
 the `decisions/` directory for detailed design records.
