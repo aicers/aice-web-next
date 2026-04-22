@@ -4,6 +4,13 @@ export {
 } from "./errors";
 export { type Filter, toEventListFilterInput } from "./filter";
 export {
+  listSensors,
+  SENSOR_LIST_ENDPOINT_AVAILABLE,
+  type Sensor,
+  type SensorListResult,
+  sensorsOrEmpty,
+} from "./sensors";
+export {
   countEventsByCategory,
   countEventsByCountry,
   countEventsByIpAddress,
