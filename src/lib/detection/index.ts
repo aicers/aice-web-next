@@ -26,7 +26,11 @@ export {
   countEventsByLevel,
   countEventsByOriginatorIpAddress,
   countEventsByResponderIpAddress,
+  type EventDetailResolution,
   eventFrequencySeries,
+  fetchEventByLocator,
+  locatorToEventListFilter,
+  lookupIpLocation,
   type SearchEventsArgs,
   searchEvents,
 } from "./server-actions";
@@ -52,3 +56,13 @@ export type {
   TriageScore,
   U8EventCounter,
 } from "./types";
+export {
+  buildDetectionPivotUrl,
+  buildPivotChips,
+  type PivotChip,
+  type PivotChipLabels,
+  type PivotFilterParams,
+  type PivotKey,
+  type PivotWindow,
+  parsePivotSearchParams,
+} from "./url-filters";

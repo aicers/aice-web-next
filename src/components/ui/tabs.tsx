@@ -79,10 +79,17 @@ function TabsContent({
   className,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.Content>) {
+  // When consumers pass `forceMount`, Radix keeps the Content in
+  // the DOM even while inactive so it does not lose state. The
+  // base class hides any inactive content in that case so the
+  // visible tab still switches cleanly.
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn("flex-1 outline-none", className)}
+      className={cn(
+        "flex-1 outline-none data-[state=inactive]:hidden",
+        className,
+      )}
       {...props}
     />
   );

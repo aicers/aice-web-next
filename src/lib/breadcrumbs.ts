@@ -3,6 +3,7 @@ export const NAV_SEGMENTS = new Set([
   "home",
   "dashboard",
   "event",
+  "events",
   "detection",
   "triage",
   "report",

@@ -5,6 +5,10 @@ import type { DocumentNode } from "graphql";
 import { resolveEffectiveCustomerIds } from "@/lib/auth/customer-scope";
 import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
+import {
+  type EventLocator,
+  THREAT_LEVEL_TO_NUMBER,
+} from "@/lib/events/event-locator";
 import { graphqlRequest } from "@/lib/graphql/client";
 
 import { DetectionUnauthorizedError } from "./errors";
@@ -17,10 +21,13 @@ import {
   EVENT_COUNTS_BY_LEVEL_QUERY,
   EVENT_COUNTS_BY_ORIGINATOR_IP_ADDRESS_QUERY,
   EVENT_COUNTS_BY_RESPONDER_IP_ADDRESS_QUERY,
+  EVENT_DETAIL_QUERY,
   EVENT_FREQUENCY_SERIES_QUERY,
   EVENT_LIST_QUERY,
+  IP_LOCATION_QUERY,
 } from "./queries";
 import type {
+  Event,
   EventConnection,
   EventCountsByCategoryResult,
   EventCountsByCountryResult,
@@ -29,9 +36,11 @@ import type {
   EventCountsByLevelResult,
   EventCountsByOriginatorIpAddressResult,
   EventCountsByResponderIpAddressResult,
+  EventDetailResult,
   EventFrequencySeriesResult,
   EventListFilterInput,
   EventListResult,
+  IpLocationResult,
   StringEventCounter,
   U8EventCounter,
 } from "./types";
@@ -265,6 +274,95 @@ export async function countEventsByResponderIpAddress(
       (d as unknown as EventCountsByResponderIpAddressResult)
         .eventCountsByResponderIpAddress,
   );
+}
+
+// ── Event detail (investigation view) ────────────────────────────
+//
+// Resolution semantics — see `@/lib/events/event-locator` and the
+// spec in issue #291. The decoded locator is translated into a tight
+// `EventListFilterInput`:
+//   - `time` is used for both `start` and `end` (exact match)
+//   - `origAddr` -> `source`, `respAddr` -> `destination`
+//   - `kind` -> `kinds[0]`, `level` -> `levels[0]`
+// Ports, proto, and sensor-name are kept in the locator for display
+// and forward-compat; they do not narrow the query in v1.
+
+export type EventDetailResolution =
+  | { status: "zero" }
+  | { status: "one"; event: Event; totalCount: string }
+  | { status: "multiple"; event: Event; totalCount: string };
+
+interface EventDetailVariables extends Record<string, unknown> {
+  filter: EventListFilterInput;
+}
+
+interface IpLocationVariables extends Record<string, unknown> {
+  address: string;
+}
+
+/**
+ * Build the tight `EventListFilterInput` for a decoded locator.
+ * Exposed for tests and for the page component, which logs the
+ * filter it will dispatch for debuggability.
+ */
+export function locatorToEventListFilter(
+  locator: EventLocator,
+): EventListFilterInput {
+  return {
+    start: locator.time,
+    end: locator.time,
+    source: locator.origAddr,
+    destination: locator.respAddr,
+    kinds: [locator.kind],
+    levels: [THREAT_LEVEL_TO_NUMBER[locator.level]],
+  };
+}
+
+export async function fetchEventByLocator(
+  session: AuthSession,
+  locator: EventLocator,
+): Promise<EventDetailResolution> {
+  const ctx = await buildDispatchContext(session, {
+    mode: "structured",
+    input: locatorToEventListFilter(locator),
+  });
+  const data = await graphqlRequest<EventDetailResult, EventDetailVariables>(
+    EVENT_DETAIL_QUERY,
+    { filter: ctx.filter },
+    { role: ctx.role, customerIds: ctx.customerIds },
+  );
+  const nodes = data.eventList.nodes;
+  const totalCount = data.eventList.totalCount;
+  if (nodes.length === 0) return { status: "zero" };
+  if (nodes.length === 1) {
+    return { status: "one", event: nodes[0], totalCount };
+  }
+  return { status: "multiple", event: nodes[0], totalCount };
+}
+
+/**
+ * Look up geolocation for a single IP address. Returns `null` when
+ * REview has no entry (the `IpLocation` return is nullable), or when
+ * the query fails — IP enrichment is a best-effort decoration.
+ */
+export async function lookupIpLocation(
+  session: AuthSession,
+  address: string,
+): Promise<IpLocationResult["ipLocation"]> {
+  const ctx = await buildDispatchContext(session, {
+    mode: "structured",
+    input: {},
+  });
+  try {
+    const data = await graphqlRequest<IpLocationResult, IpLocationVariables>(
+      IP_LOCATION_QUERY,
+      { address },
+      { role: ctx.role, customerIds: ctx.customerIds },
+    );
+    return data.ipLocation;
+  } catch {
+    return null;
+  }
 }
 
 export async function eventFrequencySeries(

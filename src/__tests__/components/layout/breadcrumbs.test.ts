@@ -89,6 +89,7 @@ describe("NAV_SEGMENTS", () => {
       "home",
       "dashboard",
       "event",
+      "events",
       "detection",
       "triage",
       "report",

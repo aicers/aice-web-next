@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" font-family="-apple-system, Segoe UI, Roboto, 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">이벤트 조사 페이지 — 와이어프레임</title>
+  <desc id="desc">/events/&lt;token&gt; 조사 페이지의 선화 와이어프레임: 돌아가기 링크, 친숙한 이벤트 종류 이름과 엔드포인트 요약, 심각도 배지, 시간과 신뢰도, 탭(개요 / 엔드포인트 / 프로토콜 / 페이로드 / 컨텍스트 / 관련), 개요 요약 카드, Aimer로 보내기 플레이스홀더 배너, 바로가기.</desc>
+
+  <style>
+    .page { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .panel { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .chip { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .tab { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .tab-active { fill: #ffffff; stroke: #3f3f46; stroke-width: 1.5; rx: 6; ry: 6; }
+    .btn { fill: #ffffff; stroke: #3f3f46; stroke-width: 1; rx: 4; ry: 4; }
+    .badge-high { fill: #fef2f2; stroke: #dc2626; stroke-width: 1; rx: 10; ry: 10; }
+    .placeholder { fill: #fafafa; stroke: #d4d4d8; stroke-dasharray: 4 3; stroke-width: 1; rx: 6; ry: 6; }
+    .h1 { font-size: 20px; font-weight: 600; fill: #18181b; }
+    .h2 { font-size: 14px; font-weight: 600; fill: #18181b; }
+    .lbl { font-size: 12px; fill: #52525b; }
+    .val { font-size: 12px; fill: #18181b; }
+    .muted { font-size: 11px; fill: #71717a; }
+    .tabtxt { font-size: 13px; fill: #27272a; }
+    .note { font-size: 11px; font-style: italic; fill: #a16207; }
+    .link { font-size: 12px; fill: #1d4ed8; text-decoration: underline; }
+  </style>
+
+  <rect x="0" y="0" width="1200" height="900" fill="#fafafa" />
+  <rect x="24" y="24" width="1152" height="852" class="page" rx="8" ry="8" />
+
+  <!-- 돌아가기 -->
+  <g transform="translate(48, 56)">
+    <text class="link">← 탐지로 돌아가기</text>
+  </g>
+
+  <!-- 헤더 -->
+  <g transform="translate(48, 96)">
+    <text class="h1">HTTP Threat</text>
+    <text class="lbl" x="128" y="-1">· 10.0.0.5 → 203.0.113.45</text>
+    <rect x="340" y="-18" width="60" height="22" class="badge-high" />
+    <text x="370" y="-2" text-anchor="middle" font-size="11" font-weight="600" fill="#dc2626">HIGH</text>
+  </g>
+
+  <!-- 메타데이터 행 -->
+  <g transform="translate(48, 132)">
+    <text class="lbl">시간</text>
+    <text class="val" x="40" y="0">2026-04-22T03:14:08.123456789Z</text>
+    <text class="lbl" x="290" y="0">신뢰도</text>
+    <text class="val" x="350" y="0">0.87</text>
+  </g>
+
+  <!-- 탭 -->
+  <g transform="translate(48, 164)">
+    <rect x="0" y="0" width="80" height="34" class="tab-active" />
+    <text x="40" y="22" text-anchor="middle" class="tabtxt" font-weight="600">개요</text>
+
+    <rect x="86" y="0" width="92" height="34" class="tab" />
+    <text x="132" y="22" text-anchor="middle" class="tabtxt">엔드포인트</text>
+
+    <rect x="184" y="0" width="92" height="34" class="tab" />
+    <text x="230" y="22" text-anchor="middle" class="tabtxt">프로토콜</text>
+
+    <rect x="282" y="0" width="82" height="34" class="tab" />
+    <text x="323" y="22" text-anchor="middle" class="tabtxt">페이로드</text>
+
+    <rect x="370" y="0" width="80" height="34" class="tab" />
+    <text x="410" y="22" text-anchor="middle" class="tabtxt">컨텍스트</text>
+
+    <rect x="456" y="0" width="80" height="34" class="tab" />
+    <text x="496" y="22" text-anchor="middle" class="tabtxt">관련</text>
+  </g>
+
+  <!-- 개요 — 요약 카드 -->
+  <g transform="translate(48, 216)">
+    <rect x="0" y="0" width="1104" height="160" class="panel" />
+    <text x="16" y="24" class="h2">요약</text>
+
+    <g transform="translate(16, 48)">
+      <text class="lbl">심각도</text>
+      <text class="val" x="0" y="18">High</text>
+    </g>
+    <g transform="translate(140, 48)">
+      <text class="lbl">시간</text>
+      <text class="val" x="0" y="18">2026-04-22 03:14</text>
+    </g>
+    <g transform="translate(300, 48)">
+      <text class="lbl">종류</text>
+      <text class="val" x="0" y="18">HTTP Threat</text>
+    </g>
+    <g transform="translate(440, 48)">
+      <text class="lbl">분류</text>
+      <text class="val" x="0" y="18">Command &amp; Control</text>
+    </g>
+    <g transform="translate(620, 48)">
+      <text class="lbl">신뢰도</text>
+      <text class="val" x="0" y="18">0.87</text>
+    </g>
+
+    <g transform="translate(16, 100)">
+      <text class="lbl">트리아지 점수</text>
+      <rect x="0" y="6" width="180" height="22" class="chip" />
+      <text x="10" y="22" class="val">policy-a: 0.82</text>
+      <rect x="192" y="6" width="180" height="22" class="chip" />
+      <text x="202" y="22" class="val">policy-b: 0.55</text>
+    </g>
+  </g>
+
+  <!-- Aimer로 보내기 배너 (v1 플레이스홀더) -->
+  <g transform="translate(48, 400)">
+    <rect x="0" y="0" width="1104" height="92" class="panel" />
+    <text x="16" y="24" class="h2">Aimer로 이 이벤트를 AI 분석에 보내기</text>
+    <text x="16" y="46" class="lbl">aimer-web에서 로그인이 요구되며, 데이터 전송을 승인하면 결과는 그쪽에서 표시됩니다.</text>
+    <rect x="16" y="58" width="170" height="26" class="btn" />
+    <text x="101" y="76" text-anchor="middle" class="tabtxt">Aimer로 보내기 →</text>
+    <text x="200" y="76" class="note">v1 플레이스홀더 — 클릭 시 "곧 제공됩니다" 토스트가 뜹니다.</text>
+  </g>
+
+  <!-- 바로가기 -->
+  <g transform="translate(48, 516)">
+    <rect x="0" y="0" width="1104" height="120" class="panel" />
+    <text x="16" y="24" class="h2">바로가기</text>
+    <g transform="translate(16, 48)">
+      <rect x="0" y="0" width="340" height="28" class="chip" />
+      <text x="12" y="18" class="val">같은 출발지 IP · 최근 24시간</text>
+    </g>
+    <g transform="translate(16, 82)">
+      <rect x="0" y="0" width="340" height="28" class="chip" />
+      <text x="12" y="18" class="val">같은 목적지 IP · 최근 24시간</text>
+    </g>
+    <g transform="translate(370, 48)">
+      <rect x="0" y="0" width="300" height="28" class="chip" />
+      <text x="12" y="18" class="val">같은 종류 · 최근 7일</text>
+    </g>
+    <text x="16" y="138" class="muted">각 바로가기는 필터가 칩으로 표시된 /detection?… 페이지를 엽니다.</text>
+  </g>
+
+  <!-- 플로팅 토스트 미리보기 -->
+  <g transform="translate(940, 820)">
+    <rect x="0" y="0" width="212" height="36" class="panel" />
+    <text x="12" y="22" class="val">ⓘ  곧 제공됩니다</text>
+  </g>
+
+  <!-- 하단 안내 -->
+  <g transform="translate(48, 848)">
+    <text class="muted">와이어프레임 — 실제 페이지는 애플리케이션 테마를 따릅니다. 스테이징 환경이 준비되면 실제 캡처로 교체하세요.</text>
+  </g>
+</svg>

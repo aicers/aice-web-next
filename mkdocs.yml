@@ -26,6 +26,7 @@ plugins:
             - Overview: index.md
             - Getting Started: getting-started.md
             - Detection: detection.md
+            - Event Investigation: event-investigation.md
             - Settings: settings.md
         - locale: ko
           name: 한국어
@@ -34,11 +35,13 @@ plugins:
             - Overview: index.md
             - Getting Started: getting-started.md
             - Detection: detection.md
+            - Event Investigation: event-investigation.md
             - Settings: settings.md
           nav_translations:
             Overview: 개요
             Getting Started: 시작하기
             Detection: 탐지
+            Event Investigation: 이벤트 조사
             Settings: 설정
 
 extra_css:

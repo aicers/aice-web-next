@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Event Investigation page — wireframe</title>
+  <desc id="desc">Line-drawing wireframe of the /events/&lt;token&gt; Investigation page: back link, header with friendly kind name, endpoint summary, severity badge, time and confidence, tabs (Overview, Endpoints, Protocol, Payload, Context, Related), Overview summary card, Send-to-Aimer banner placeholder, and pivot shortcuts.</desc>
+
+  <style>
+    .page { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .panel { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .chip { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .tab { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .tab-active { fill: #ffffff; stroke: #3f3f46; stroke-width: 1.5; rx: 6; ry: 6; }
+    .btn { fill: #ffffff; stroke: #3f3f46; stroke-width: 1; rx: 4; ry: 4; }
+    .badge-high { fill: #fef2f2; stroke: #dc2626; stroke-width: 1; rx: 10; ry: 10; }
+    .placeholder { fill: #fafafa; stroke: #d4d4d8; stroke-dasharray: 4 3; stroke-width: 1; rx: 6; ry: 6; }
+    .h1 { font-size: 20px; font-weight: 600; fill: #18181b; }
+    .h2 { font-size: 14px; font-weight: 600; fill: #18181b; }
+    .lbl { font-size: 12px; fill: #52525b; }
+    .val { font-size: 12px; fill: #18181b; }
+    .muted { font-size: 11px; fill: #71717a; }
+    .tabtxt { font-size: 13px; fill: #27272a; }
+    .note { font-size: 11px; font-style: italic; fill: #a16207; }
+    .link { font-size: 12px; fill: #1d4ed8; text-decoration: underline; }
+  </style>
+
+  <!-- Page background -->
+  <rect x="0" y="0" width="1200" height="900" fill="#fafafa" />
+  <rect x="24" y="24" width="1152" height="852" class="page" rx="8" ry="8" />
+
+  <!-- Back link -->
+  <g transform="translate(48, 56)">
+    <text class="link">← Back to detection</text>
+  </g>
+
+  <!-- Header: friendly kind + endpoint summary + severity badge -->
+  <g transform="translate(48, 96)">
+    <text class="h1">HTTP Threat</text>
+    <text class="lbl" x="128" y="-1">· 10.0.0.5 → 203.0.113.45</text>
+    <rect x="340" y="-18" width="60" height="22" class="badge-high" />
+    <text x="370" y="-2" text-anchor="middle" font-size="11" font-weight="600" fill="#dc2626">HIGH</text>
+  </g>
+
+  <!-- Metadata row -->
+  <g transform="translate(48, 132)">
+    <text class="lbl">Time</text>
+    <text class="val" x="40" y="0">2026-04-22T03:14:08.123456789Z</text>
+    <text class="lbl" x="290" y="0">Confidence</text>
+    <text class="val" x="360" y="0">0.87</text>
+  </g>
+
+  <!-- Tabs -->
+  <g transform="translate(48, 164)">
+    <rect x="0" y="0" width="92" height="34" class="tab-active" />
+    <text x="46" y="22" text-anchor="middle" class="tabtxt" font-weight="600">Overview</text>
+
+    <rect x="98" y="0" width="92" height="34" class="tab" />
+    <text x="144" y="22" text-anchor="middle" class="tabtxt">Endpoints</text>
+
+    <rect x="196" y="0" width="82" height="34" class="tab" />
+    <text x="237" y="22" text-anchor="middle" class="tabtxt">Protocol</text>
+
+    <rect x="284" y="0" width="80" height="34" class="tab" />
+    <text x="324" y="22" text-anchor="middle" class="tabtxt">Payload</text>
+
+    <rect x="370" y="0" width="80" height="34" class="tab" />
+    <text x="410" y="22" text-anchor="middle" class="tabtxt">Context</text>
+
+    <rect x="456" y="0" width="82" height="34" class="tab" />
+    <text x="497" y="22" text-anchor="middle" class="tabtxt">Related</text>
+  </g>
+
+  <!-- Overview content area -->
+  <!-- Summary card -->
+  <g transform="translate(48, 216)">
+    <rect x="0" y="0" width="1104" height="160" class="panel" />
+    <text x="16" y="24" class="h2">Summary</text>
+
+    <g transform="translate(16, 48)">
+      <text class="lbl">Severity</text>
+      <text class="val" x="0" y="18">High</text>
+    </g>
+    <g transform="translate(140, 48)">
+      <text class="lbl">Time</text>
+      <text class="val" x="0" y="18">2026-04-22 03:14</text>
+    </g>
+    <g transform="translate(300, 48)">
+      <text class="lbl">Kind</text>
+      <text class="val" x="0" y="18">HTTP Threat</text>
+    </g>
+    <g transform="translate(440, 48)">
+      <text class="lbl">Category</text>
+      <text class="val" x="0" y="18">Command &amp; Control</text>
+    </g>
+    <g transform="translate(620, 48)">
+      <text class="lbl">Confidence</text>
+      <text class="val" x="0" y="18">0.87</text>
+    </g>
+
+    <g transform="translate(16, 100)">
+      <text class="lbl">Triage scores</text>
+      <rect x="0" y="6" width="180" height="22" class="chip" />
+      <text x="10" y="22" class="val">policy-a: 0.82</text>
+      <rect x="192" y="6" width="180" height="22" class="chip" />
+      <text x="202" y="22" class="val">policy-b: 0.55</text>
+    </g>
+  </g>
+
+  <!-- Send to Aimer banner (placeholder in v1) -->
+  <g transform="translate(48, 400)">
+    <rect x="0" y="0" width="1104" height="92" class="panel" />
+    <text x="16" y="24" class="h2">Send this event to Aimer for AI analysis</text>
+    <text x="16" y="46" class="lbl">You'll be asked to sign in at aimer-web, approve the data transfer, and the result will be shown there.</text>
+    <rect x="16" y="58" width="160" height="26" class="btn" />
+    <text x="96" y="76" text-anchor="middle" class="tabtxt">Send to Aimer →</text>
+    <text x="192" y="76" class="note">Placeholder in v1 — click pops a floating "Coming soon" toast.</text>
+  </g>
+
+  <!-- Pivot shortcuts -->
+  <g transform="translate(48, 516)">
+    <rect x="0" y="0" width="1104" height="120" class="panel" />
+    <text x="16" y="24" class="h2">Pivot shortcuts</text>
+    <g transform="translate(16, 48)">
+      <rect x="0" y="0" width="320" height="28" class="chip" />
+      <text x="12" y="18" class="val">Same source IP · last 24h</text>
+    </g>
+    <g transform="translate(16, 82)">
+      <rect x="0" y="0" width="320" height="28" class="chip" />
+      <text x="12" y="18" class="val">Same destination IP · last 24h</text>
+    </g>
+    <g transform="translate(352, 48)">
+      <rect x="0" y="0" width="320" height="28" class="chip" />
+      <text x="12" y="18" class="val">Same kind · last 7d</text>
+    </g>
+    <text x="16" y="138" class="muted">Each pivot opens /detection?… with the filter rendered as chips.</text>
+  </g>
+
+  <!-- Floating toast preview -->
+  <g transform="translate(940, 820)">
+    <rect x="0" y="0" width="212" height="36" class="panel" />
+    <text x="12" y="22" class="val">ⓘ  Coming soon</text>
+  </g>
+
+  <!-- Footer note -->
+  <g transform="translate(48, 848)">
+    <text class="muted">Wireframe — the actual page inherits the application theme. Replace with a live capture once staging is available.</text>
+  </g>
+</svg>

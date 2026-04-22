@@ -62,6 +62,275 @@ export const EVENT_LIST_QUERY = parse(`
   }
 `);
 
+// ── Event detail (investigation view) ──────────────────────────
+//
+// The investigation page at `/events/<token>` decodes a composite
+// locator (see `@/lib/events/event-locator`) into a tight filter
+// and reuses `eventList` for lookup. The selection set below is a
+// superset of the list-view selection — it adds the addressing
+// fields (`origAddr`, `respAddr`, ports, proto, customer, network)
+// plus inline fragments for the curated `Event` subtypes so the
+// Protocol tab can render kind-specific content without a second
+// round-trip.
+//
+// Subtypes absent from the inline-fragment set still render via
+// the Overview / Endpoints tabs (they receive the common `Event`
+// interface fields plus the addressing fields from the
+// `EventWithAddressing` fragment).
+export const EVENT_DETAIL_QUERY = parse(`
+  query EventDetail($filter: EventListFilterInput!) {
+    eventList(filter: $filter, first: 5) {
+      totalCount
+      nodes {
+        __typename
+        time
+        sensor
+        confidence
+        category
+        level
+        triageScores {
+          policyId
+          score
+        }
+        ... on BlocklistConn {
+          origAddr
+          origCountry
+          origPort
+          respAddr
+          respCountry
+          respPort
+          proto
+          origCustomer { id name }
+          respCustomer { id name }
+          origNetwork { id name }
+          respNetwork { id name }
+          connState
+          service
+          startTime
+          duration
+          origBytes
+          respBytes
+          origPkts
+          respPkts
+        }
+        ... on DnsCovertChannel {
+          origAddr
+          origCountry
+          origPort
+          respAddr
+          respCountry
+          respPort
+          proto
+          origCustomer { id name }
+          respCustomer { id name }
+          origNetwork { id name }
+          respNetwork { id name }
+          startTime
+          duration
+          query
+          answer
+          transId
+          rtt
+          qclass
+          qtype
+          rcode
+          aaFlag
+          tcFlag
+          rdFlag
+          raFlag
+          ttl
+        }
+        ... on FtpBruteForce {
+          origAddr
+          origCountry
+          respAddr
+          respCountry
+          respPort
+          proto
+          origCustomer { id name }
+          respCustomer { id name }
+          origNetwork { id name }
+          respNetwork { id name }
+          userList
+          startTime
+          endTime
+          isInternal
+        }
+        ... on HttpThreat {
+          origAddr
+          origCountry
+          origPort
+          respAddr
+          respCountry
+          respPort
+          proto
+          origCustomer { id name }
+          respCustomer { id name }
+          origNetwork { id name }
+          respNetwork { id name }
+          startTime
+          duration
+          method
+          host
+          uri
+          referer
+          version
+          userAgent
+          requestLen
+          responseLen
+          statusCode
+          statusMsg
+          username
+          password
+          cookie
+          contentEncoding
+          contentType
+          cacheControl
+          filenames
+          mimeTypes
+          body
+          content
+          state
+          attackKind
+        }
+        ... on NetworkThreat {
+          origAddr
+          origCountry
+          origPort
+          respAddr
+          respCountry
+          respPort
+          proto
+          origCustomer { id name }
+          respCustomer { id name }
+          origNetwork { id name }
+          respNetwork { id name }
+          startTime
+          duration
+          service
+          content
+          attackKind
+        }
+        ... on PortScan {
+          origAddr
+          origCountry
+          respAddr
+          respCountry
+          respPorts
+          proto
+          origCustomer { id name }
+          respCustomer { id name }
+          origNetwork { id name }
+          respNetwork { id name }
+          startTime
+          endTime
+        }
+        ... on MultiHostPortScan {
+          origAddr
+          origCountry
+          respAddrs
+          respCountries
+          respPort
+          proto
+          origCustomer { id name }
+          respCustomers { id name }
+          respNetwork { id name }
+          startTime
+          endTime
+        }
+        ... on FtpPlainText {
+          origAddr
+          origCountry
+          origPort
+          respAddr
+          respCountry
+          respPort
+          proto
+          origCustomer { id name }
+          respCustomer { id name }
+          origNetwork { id name }
+          respNetwork { id name }
+          startTime
+          duration
+          user
+          password
+          commands {
+            command
+            replyCode
+            replyMsg
+          }
+        }
+        ... on BlocklistDns {
+          origAddr
+          origCountry
+          origPort
+          respAddr
+          respCountry
+          respPort
+          proto
+          origCustomer { id name }
+          respCustomer { id name }
+          origNetwork { id name }
+          respNetwork { id name }
+          startTime
+          duration
+          query
+          answer
+          transId
+          rtt
+          qclass
+          qtype
+          rcode
+          aaFlag
+          tcFlag
+          rdFlag
+          raFlag
+          ttl
+        }
+        ... on RdpBruteForce {
+          origAddr
+          origCountry
+          respAddrs
+          respCountries
+          proto
+          origCustomer { id name }
+          origNetwork { id name }
+          respCustomers { id name }
+          startTime
+          endTime
+        }
+        ... on ExternalDdos {
+          origAddrs
+          origCountries
+          respAddr
+          respCountry
+          proto
+          origCustomers { id name }
+          origNetwork { id name }
+          respCustomer { id name }
+          respNetwork { id name }
+          startTime
+          endTime
+        }
+      }
+    }
+  }
+`);
+
+export const IP_LOCATION_QUERY = parse(`
+  query IpLocationLookup($address: IpAddress!) {
+    ipLocation(address: $address) {
+      latitude
+      longitude
+      country
+      region
+      city
+      isp
+      domain
+    }
+  }
+`);
+
 export const EVENT_COUNTS_BY_CATEGORY_QUERY = parse(`
   query EventCountsByCategory($filter: EventListFilterInput!, $first: Int!) {
     eventCountsByCategory(filter: $filter, first: $first) {

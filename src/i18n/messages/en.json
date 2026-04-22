@@ -64,6 +64,7 @@
     "home": "Home",
     "dashboard": "Dashboard",
     "event": "Event",
+    "events": "Event",
     "detection": "Detection",
     "triage": "Triage",
     "report": "Report",
@@ -569,7 +570,18 @@
       "resultsRegion": "Detection results",
       "resultsLoading": "Running query...",
       "resultsCount": "{count} detection events match the current filter.",
-      "resultsError": "Could not load detection results."
+      "resultsError": "Could not load detection results.",
+      "chips": {
+        "source": "Source IP",
+        "destination": "Destination IP",
+        "kind": "Kind",
+        "origPort": "Source port",
+        "respPort": "Destination port",
+        "proto": "Protocol",
+        "window": "Window",
+        "windowLastDay": "Last 24 hours",
+        "windowLastWeek": "Last 7 days"
+      }
     },
     "results": {
       "placeholder": "Detection results will appear here."
@@ -582,6 +594,212 @@
     },
     "quickPeek": {
       "placeholder": "Quick peek inspector will appear here."
+    }
+  },
+  "events": {
+    "notFound": {
+      "invalidTokenTitle": "Invalid event link",
+      "invalidTokenBody": "This investigation URL is malformed or has been tampered with. Go back to Detection and open the event from the list.",
+      "notFoundTitle": "Event no longer available",
+      "notFoundBody": "We could not find an event matching this link. It may have aged out of retention, or its addressing information may have changed.",
+      "fetchErrorTitle": "Could not load event",
+      "fetchErrorBody": "We were unable to contact the detection service. Please try again in a moment.",
+      "back": "Back to Detection"
+    },
+    "header": {
+      "back": "Back to Detection",
+      "severity": "Severity level",
+      "time": "Time",
+      "confidence": "Confidence",
+      "multipleNotice": "Multiple events match this link; showing one. Open the full result list for the complete set."
+    },
+    "tabs": {
+      "overview": "Overview",
+      "endpoints": "Endpoints",
+      "protocol": "Protocol",
+      "payload": "Payload",
+      "context": "Context",
+      "related": "Related Events"
+    },
+    "overview": {
+      "summary": "Summary",
+      "time": "Time",
+      "kind": "Kind",
+      "category": "Category",
+      "level": "Level",
+      "confidence": "Confidence",
+      "triageScores": "Triage Scores",
+      "noTriage": "No triage scores",
+      "aimerTitle": "Send to Aimer",
+      "aimerBody": "Send this event to Aimer for AI analysis. You'll be asked to sign in at aimer-web, approve the data transfer, and the result will be shown there.",
+      "aimerCta": "Send to Aimer →",
+      "aimerToast": "Coming soon",
+      "pivotsTitle": "Pivot shortcuts",
+      "pivotSameSource": "Same Source IP · last 24h",
+      "pivotSameDestination": "Same Destination IP · last 24h",
+      "pivotSameKind": "Same kind · last 7d"
+    },
+    "endpoints": {
+      "source": "Source",
+      "destination": "Destination",
+      "ip": "IP Address",
+      "country": "Country",
+      "region": "Region",
+      "city": "City",
+      "coordinates": "Coordinates",
+      "ports": "Ports",
+      "company": "Company",
+      "companySourceCustomer": "from customer",
+      "companySourceNetwork": "from network",
+      "companySourceIsp": "from IP enrichment",
+      "noCompany": "Not available",
+      "loading": "Loading endpoint details…"
+    },
+    "protocol": {
+      "noFields": "No kind-specific fields are available for this event type.",
+      "http": {
+        "request": "Request",
+        "response": "Response",
+        "auth": "Auth",
+        "body": "Body",
+        "fields": {
+          "method": "Method",
+          "host": "Host",
+          "uri": "URI",
+          "referer": "Referer",
+          "version": "Version",
+          "userAgent": "User-Agent",
+          "requestLen": "Request Length",
+          "statusCode": "Status Code",
+          "statusMsg": "Status Message",
+          "responseLen": "Response Length",
+          "contentEncoding": "Content Encoding",
+          "contentType": "Content Type",
+          "cacheControl": "Cache Control",
+          "username": "Username",
+          "password": "Password",
+          "cookie": "Cookie",
+          "filenames": "Filenames",
+          "mimeTypes": "MIME Types",
+          "content": "Content",
+          "body": "Body"
+        }
+      },
+      "dns": {
+        "query": "Query",
+        "response": "Response",
+        "flags": "Flags",
+        "fields": {
+          "query": "Query",
+          "queryClass": "Query Class",
+          "queryType": "Query Type",
+          "transactionId": "Transaction ID",
+          "roundTripTime": "Round-Trip Time",
+          "answer": "Answer",
+          "responseCode": "Response Code",
+          "ttl": "TTL",
+          "authoritative": "Authoritative",
+          "truncated": "Truncated",
+          "recursionDesired": "Recursion Desired",
+          "recursionAvailable": "Recursion Available"
+        }
+      },
+      "scan": {
+        "targets": "Scan Targets",
+        "duration": "Duration",
+        "fields": {
+          "scannedPorts": "Scanned Ports",
+          "startTime": "Start Time",
+          "endTime": "End Time"
+        }
+      },
+      "ftp": {
+        "users": "Users",
+        "duration": "Duration",
+        "fields": {
+          "userList": "User List",
+          "startTime": "Start Time",
+          "endTime": "End Time"
+        }
+      },
+      "ftpPlainText": {
+        "auth": "Auth",
+        "duration": "Duration",
+        "session": "Session",
+        "fields": {
+          "user": "User",
+          "password": "Password",
+          "startTime": "Start Time",
+          "duration": "Duration",
+          "commands": "Commands"
+        }
+      },
+      "multiHostScan": {
+        "targets": "Scan Targets",
+        "duration": "Duration",
+        "fields": {
+          "respAddrs": "Destination IPs",
+          "respPort": "Destination Port",
+          "startTime": "Start Time",
+          "endTime": "End Time"
+        }
+      },
+      "network": {
+        "title": "Network Threat",
+        "fields": {
+          "service": "Service",
+          "attackKind": "Attack Kind",
+          "content": "Content",
+          "startTime": "Start Time",
+          "duration": "Duration"
+        }
+      },
+      "blocklist": {
+        "title": "Connection",
+        "fields": {
+          "state": "State",
+          "service": "Service",
+          "startTime": "Start Time",
+          "duration": "Duration",
+          "origBytes": "Orig Bytes",
+          "respBytes": "Resp Bytes",
+          "origPkts": "Orig Packets",
+          "respPkts": "Resp Packets"
+        }
+      }
+    },
+    "payload": {
+      "title": "Captured payload",
+      "description": "Application payload bytes captured with this event. The detection service does not expose raw packet capture yet; for HTTP events this is the HTTP body stream. Use the download action to save the bytes for offline analysis.",
+      "size": "Size",
+      "bytes": "{count} B",
+      "download": "Download payload",
+      "downloadName": "event-payload.bin"
+    },
+    "context": {
+      "threatName": "Threat Name",
+      "threatCategory": "Threat Category",
+      "threatLevel": "Threat Level",
+      "explanation": "Explanation",
+      "mitre": "MITRE ATT&CK",
+      "tactic": "Tactic",
+      "technique": "Technique",
+      "subTechnique": "Sub-technique",
+      "none": "—"
+    },
+    "related": {
+      "sameSource": "Same Source IP",
+      "sameDestination": "Same Destination IP",
+      "sameKind": "Same kind",
+      "sameSession": "Same session / flow",
+      "lastDay": "Last 24 hours",
+      "lastWeek": "Last 7 days",
+      "openInSearch": "Open in search",
+      "loading": "Counting…",
+      "count": "Count",
+      "lastSeen": "Last seen",
+      "none": "No matches in window",
+      "note": "Pivots use only filter-based lookups — no external AI insight is fetched."
     }
   },
   "changePassword": {
