@@ -17,6 +17,13 @@ export {
 } from "./errors";
 export { type Filter, toEventListFilterInput } from "./filter";
 export {
+  CHIP_DIMENSION_CAP,
+  type FilterChip,
+  type SensorOption,
+  type SummarizeFilterLabels,
+  summarizeFilter,
+} from "./filter-summary";
+export {
   computePeriodRange,
   DEFAULT_PERIOD_KEY,
   matchesPeriodKey,

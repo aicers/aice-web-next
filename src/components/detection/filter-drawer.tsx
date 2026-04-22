@@ -1,6 +1,6 @@
 "use client";
 
-import { Filter as FilterIcon } from "lucide-react";
+import { ChevronDown, Filter as FilterIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -36,11 +36,16 @@ import {
 } from "@/lib/detection/period";
 import type { FlowKind } from "@/lib/detection/types";
 import { cn } from "@/lib/utils";
-
 import {
   EndpointFilterPanel,
   type EndpointFilterPanelLabels,
 } from "./endpoint-filter-panel";
+import {
+  SensorMultiSelect,
+  type SensorMultiSelectLabels,
+  type SensorMultiSelectState,
+  type SensorOption,
+} from "./sensor-multi-select";
 
 export interface FilterDrawerLabels {
   title: string;
@@ -65,6 +70,10 @@ export interface FilterDrawerLabels {
   endpointEmpty: string;
   endpointCount: string;
   endpointPanel: EndpointFilterPanelLabels;
+  customerLabel: string;
+  customerComingSoon: string;
+  customerComingSoonHint: string;
+  sensor: SensorMultiSelectLabels;
 }
 
 interface FilterDrawerProps {
@@ -81,6 +90,21 @@ interface FilterDrawerProps {
    */
   openEndpointPanelOnOpen?: boolean;
   onEndpointPanelOpenChange?: (open: boolean) => void;
+  /**
+   * Sensor options from REview, already scoped to the caller's
+   * accessible customers. Only consumed when `sensorState` is
+   * `"ready"`; otherwise the control renders a state-specific
+   * disabled affordance (loading / error / unavailable) and
+   * `sensorIds` is not populated — the filter submits no `sensors`
+   * value in any non-ready state.
+   */
+  sensorOptions: readonly SensorOption[];
+  sensorState: SensorMultiSelectState;
+  /**
+   * Invoked when the user clicks the retry button surfaced in the
+   * `error` state. The parent should re-issue the fetch.
+   */
+  onSensorRetry?: () => void;
 }
 
 /**
@@ -99,6 +123,9 @@ export function FilterDrawer({
   labels,
   openEndpointPanelOnOpen,
   onEndpointPanelOpenChange,
+  sensorOptions,
+  sensorState,
+  onSensorRetry,
 }: FilterDrawerProps) {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [endpointPanelOpen, setEndpointPanelOpen] = useState(false);
@@ -455,6 +482,60 @@ export function FilterDrawer({
                 </div>
               </div>
             </fieldset>
+
+            {/*
+             * Customer placeholder. The Customer directory is not yet
+             * modelled (#271 umbrella); render a disabled control
+             * with the same shape as its eventual neighbours and
+             * never submit its value. Forward-compatibility note:
+             * `triagePolicies` will share the picker component built
+             * by the Triage menu effort — when that lands, swap this
+             * placeholder for the same component so the look is
+             * consistent across surfaces. Update the call site in
+             * `detection-shell.tsx` to populate the active-filter
+             * chip bar once the directory ships.
+             */}
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-foreground text-sm font-medium">
+                {labels.customerLabel}
+              </legend>
+              <button
+                type="button"
+                disabled
+                aria-disabled="true"
+                title={labels.customerComingSoonHint}
+                className="border-input bg-background text-muted-foreground flex h-9 items-center justify-between rounded-md border px-3 text-sm opacity-60"
+              >
+                <span>{labels.customerComingSoon}</span>
+                <ChevronDown className="size-4" aria-hidden="true" />
+              </button>
+            </fieldset>
+
+            {/*
+             * Sensor multi-select. Options come from REview via
+             * `fetchSensors()`. The control switches on `sensorState`:
+             *   - `ready`   — functional multi-select.
+             *   - `loading` — disabled, "Loading sensors…" affordance
+             *                 while the in-flight request resolves.
+             *   - `error`   — disabled with a retry button; the user
+             *                 is not forced to close/reopen the drawer
+             *                 to recover from a transient failure.
+             *   - `unavailable` — "Coming soon" placeholder while the
+             *                 REview sensor-list query is absent from
+             *                 the vendored schema
+             *                 (`SENSOR_LIST_ENDPOINT_AVAILABLE` is
+             *                 `false` in `src/lib/detection/sensors.ts`).
+             * In every non-`ready` state `sensorIds` stays empty so no
+             * `sensors` value reaches the filter.
+             */}
+            <SensorMultiSelect
+              options={sensorOptions}
+              value={draft.sensorIds}
+              onChange={(next) => onDraftChange({ ...draft, sensorIds: next })}
+              labels={labels.sensor}
+              state={sensorState}
+              onRetry={onSensorRetry}
+            />
 
             <div className="mt-auto flex flex-col gap-2 pt-2">
               <Button type="submit">{labels.apply}</Button>

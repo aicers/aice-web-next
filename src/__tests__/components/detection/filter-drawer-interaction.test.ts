@@ -41,6 +41,7 @@ describe("filter-drawer confidence input interaction", () => {
       endpoints: [],
       confidenceMin: 0,
       confidenceMax: 1,
+      sensorIds: [],
     };
   }
 

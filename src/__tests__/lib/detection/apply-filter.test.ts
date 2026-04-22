@@ -20,6 +20,7 @@ function draft(
     endpoints: [],
     confidenceMin: 0,
     confidenceMax: 1,
+    sensorIds: [],
     ...overrides,
   };
 }

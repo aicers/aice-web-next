@@ -135,6 +135,37 @@ test("filter drawer opens from the Filters button and exposes chips + inputs", a
   ).toHaveAttribute("aria-pressed", "false");
 });
 
+test("drawer renders Customer placeholder and Sensor fallback while REview endpoint is absent", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/detection");
+
+  const filtersButton = page.getByRole("button", { name: "Filters" });
+  await expect(filtersButton).toBeVisible({ timeout: 10_000 });
+  await filtersButton.click();
+
+  // Customer is always rendered as a disabled "Coming soon" control;
+  // the nearest <button> inside the Customer fieldset must be disabled.
+  // The Sensor control collapses to the same disabled state while the
+  // vendored REview schema does not expose the sensor-list query —
+  // a "Coming soon" button under the Sensor legend appears then.
+  const customerSection = page
+    .locator("fieldset")
+    .filter({ has: page.locator("legend", { hasText: "Customer" }) });
+  await expect(customerSection).toBeVisible();
+  await expect(customerSection.getByRole("button")).toBeDisabled();
+
+  const sensorSection = page
+    .locator("fieldset")
+    .filter({ has: page.locator("legend", { hasText: "Sensor" }) });
+  await expect(sensorSection).toBeVisible();
+  // Until REview ships the endpoint the sensor trigger is disabled.
+  await expect(sensorSection.getByRole("button")).toBeDisabled();
+});
+
 test("closing the drawer without Apply preserves in-flight edits", async ({
   page,
   workerUsername,

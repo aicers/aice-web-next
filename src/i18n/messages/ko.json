@@ -577,6 +577,27 @@
       "confidenceMinLabel": "최소",
       "confidenceMaxLabel": "최대",
       "confidenceChipLabel": "신뢰도",
+      "customerLabel": "고객사",
+      "customerComingSoon": "곧 제공됩니다",
+      "customerComingSoonHint": "고객사 범위 지정은 고객사 디렉터리와 함께 이후 단계에서 제공됩니다.",
+      "sensor": {
+        "label": "센서",
+        "placeholder": "센서 선택",
+        "searchPlaceholder": "센서 검색…",
+        "selectAll": "전체",
+        "clearAll": "선택 해제",
+        "empty": "현재 고객사 범위에서 사용할 수 있는 센서가 없습니다.",
+        "noMatches": "일치하는 센서가 없습니다.",
+        "selectedSummary": "{count}개 선택됨",
+        "removeSelection": "{name} 제거",
+        "comingSoonLabel": "곧 제공됩니다",
+        "comingSoonHint": "REview가 센서 목록 엔드포인트를 제공하면 센서 옵션이 활성화됩니다.",
+        "loadingLabel": "센서 목록을 불러오는 중…",
+        "loadingHint": "탐지 백엔드에서 센서 목록을 가져오는 중입니다.",
+        "errorLabel": "센서 목록을 불러오지 못했습니다",
+        "errorHint": "센서 목록을 다시 불러옵니다.",
+        "retry": "다시 시도"
+      },
       "apply": "적용",
       "saveThisFilter": "필터 저장",
       "saveThisFilterComingSoon": "필터 저장 기능은 이후 단계에서 연결됩니다.",
@@ -596,7 +617,9 @@
         "proto": "프로토콜",
         "window": "기간",
         "windowLastDay": "최근 24시간",
-        "windowLastWeek": "최근 7일"
+        "windowLastWeek": "최근 7일",
+        "sensor": "센서",
+        "sensorAggregate": "{count}개 선택됨"
       },
       "endpoint": {
         "label": "네트워크 / IP",

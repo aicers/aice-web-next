@@ -577,6 +577,27 @@
       "confidenceMinLabel": "Min",
       "confidenceMaxLabel": "Max",
       "confidenceChipLabel": "Confidence",
+      "customerLabel": "Customer",
+      "customerComingSoon": "Coming soon",
+      "customerComingSoonHint": "Customer scoping arrives with the Customer directory in a later phase.",
+      "sensor": {
+        "label": "Sensor",
+        "placeholder": "Select sensors",
+        "searchPlaceholder": "Search sensors…",
+        "selectAll": "All",
+        "clearAll": "Clear selection",
+        "empty": "No sensors available for your customer scope.",
+        "noMatches": "No sensors match your search.",
+        "selectedSummary": "{count} selected",
+        "removeSelection": "Remove {name}",
+        "comingSoonLabel": "Coming soon",
+        "comingSoonHint": "Sensor options become available once REview publishes the sensor-list endpoint.",
+        "loadingLabel": "Loading sensors…",
+        "loadingHint": "Fetching the sensor list from the detection backend.",
+        "errorLabel": "Could not load sensors",
+        "errorHint": "Retry fetching the sensor list.",
+        "retry": "Retry"
+      },
       "apply": "Apply",
       "saveThisFilter": "Save this filter",
       "saveThisFilterComingSoon": "Saving filters is wired up in a later phase.",
@@ -596,7 +617,9 @@
         "proto": "Protocol",
         "window": "Window",
         "windowLastDay": "Last 24 hours",
-        "windowLastWeek": "Last 7 days"
+        "windowLastWeek": "Last 7 days",
+        "sensor": "Sensor",
+        "sensorAggregate": "{count} selected"
       },
       "endpoint": {
         "label": "Network / IP",

@@ -34,6 +34,13 @@ export interface DetectionFilterDraft {
    */
   confidenceMin: number;
   confidenceMax: number;
+  /**
+   * Selected sensor Node IDs. Submitted as `sensors: [<id>, ...]`
+   * in the `EventListFilterInput`. Customer is intentionally absent
+   * from the draft — it is a placeholder while the Customer
+   * directory is unmodelled and must never reach the filter.
+   */
+  sensorIds: string[];
 }
 
 export const CONFIDENCE_DEFAULT_MIN = 0;

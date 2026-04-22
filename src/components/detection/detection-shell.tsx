@@ -4,6 +4,10 @@ import { Bookmark, ChevronRight, SlidersHorizontal, Star } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { startTransition, useCallback, useRef, useState } from "react";
 import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
+import {
+  type FetchSensorsResult,
+  fetchSensors,
+} from "@/app/[locale]/(dashboard)/detection/sensor-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { buildAppliedFilter } from "@/lib/detection/apply-filter";
@@ -26,11 +30,20 @@ import {
   type DetectionFilterDraft,
   isoToLocalInput,
 } from "@/lib/detection/filter-draft";
+import {
+  type FilterChip,
+  type SummarizeFilterLabels,
+  summarizeFilter,
+} from "@/lib/detection/filter-summary";
 import type { PeriodKey } from "@/lib/detection/period";
 import type { FlowKind } from "@/lib/detection/types";
 import type { PivotChip } from "@/lib/detection/url-filters";
 import { cn } from "@/lib/utils";
 import { FilterDrawer, type FilterDrawerLabels } from "./filter-drawer";
+import type {
+  SensorMultiSelectState,
+  SensorOption,
+} from "./sensor-multi-select";
 
 export interface DetectionShellLabels {
   recommendedFilter: string;
@@ -49,6 +62,7 @@ export interface DetectionShellLabels {
   endpointChips: EndpointChipLabels;
   confidenceChipLabel: string;
   drawer: FilterDrawerLabels;
+  summarize: SummarizeFilterLabels;
 }
 
 export interface DetectionShellInitialResult {
@@ -63,6 +77,42 @@ interface DetectionShellProps {
   initialPeriod: PeriodKey | null;
   initialResult: DetectionShellInitialResult;
   initialChips?: PivotChip[];
+}
+
+/**
+ * Session-cached sensor inventory. The drawer resolves this on
+ * first open and reuses it for subsequent opens in the same tab,
+ * so toggling the drawer repeatedly does not re-hit the REview
+ * endpoint. The `status` discriminator distinguishes "not fetched
+ * yet" from "fetched but endpoint absent" so the UI can tell a
+ * real empty inventory from a transitional build.
+ */
+export type SensorCache =
+  | { status: "idle" }
+  | { status: "loading" }
+  | {
+      status: "loaded";
+      endpointAvailable: boolean;
+      options: readonly SensorOption[];
+    }
+  | { status: "error" };
+
+/**
+ * Translate the session sensor cache into the visual state the
+ * Sensor control should render. The mapping is intentionally
+ * distinct for each non-ready source so that the UI does not
+ * conflate "endpoint genuinely absent" with "endpoint live but
+ * request in flight" or "endpoint live but the last attempt
+ * failed" — the reviewer concern that motivated this helper.
+ */
+export function sensorStateForCache(
+  cache: SensorCache,
+): SensorMultiSelectState {
+  if (cache.status === "loaded") {
+    return cache.endpointAvailable ? "ready" : "unavailable";
+  }
+  if (cache.status === "error") return "error";
+  return "loading";
 }
 
 export function DetectionShell({
@@ -87,6 +137,9 @@ export function DetectionShell({
     [],
   );
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(null);
+  const [sensorCache, setSensorCache] = useState<SensorCache>({
+    status: "idle",
+  });
 
   const [totalCount, setTotalCount] = useState<string | null>(
     initialResult.totalCount,
@@ -101,6 +154,33 @@ export function DetectionShell({
   // in quick succession.
   const latestRequestIdRef = useRef(0);
 
+  // Kicks off a sensor-list fetch and threads the result into the
+  // session cache. Extracted so both the initial lazy-load (on the
+  // first drawer open) and an explicit Retry click from the error
+  // state can share the same side-effect shape. Kept outside the
+  // cache updater so React Strict Mode's double-invocation of state
+  // updaters cannot trigger duplicate network requests.
+  const triggerSensorFetch = useCallback(() => {
+    setSensorCache({ status: "loading" });
+    void fetchSensors().then(
+      (result: FetchSensorsResult) => {
+        if (result.ok) {
+          setSensorCache({
+            status: "loaded",
+            endpointAvailable: result.endpointAvailable,
+            options: result.sensors.map((s) => ({
+              id: s.id,
+              name: s.name,
+            })),
+          });
+        } else {
+          setSensorCache({ status: "error" });
+        }
+      },
+      () => setSensorCache({ status: "error" }),
+    );
+  }, []);
+
   const openDrawer = useCallback(
     (options?: { openEndpointPanel?: boolean }) => {
       setDraft(
@@ -110,14 +190,35 @@ export function DetectionShell({
       );
       setOpenEndpointPanelOnDrawerOpen(options?.openEndpointPanel ?? false);
       setDrawerOpen(true);
+      // Lazy-load the sensor inventory the first time the drawer
+      // opens, and retry on a prior transient failure so a single
+      // hiccup doesn't freeze Sensor into the "Coming soon" fallback
+      // for the rest of the tab session. Only `loading` / `loaded`
+      // short-circuit — `idle` means never fetched, `error` means the
+      // last attempt failed and the user just asked again.
+      if (sensorCache.status === "loading" || sensorCache.status === "loaded") {
+        return;
+      }
+      triggerSensorFetch();
     },
-    [committedFilter, committedPeriod, committedEndpoints],
+    [
+      committedFilter,
+      committedPeriod,
+      committedEndpoints,
+      sensorCache.status,
+      triggerSensorFetch,
+    ],
   );
 
   const handleApply = useCallback(
     (applied: DetectionFilterDraft) => {
       if (!applied.startIso || !applied.endIso) return;
-      const next = buildAppliedFilter(committedFilter, applied);
+      // Only the `ready` state (sensor-list query present + loaded)
+      // permits a `sensors` value in the committed filter; every
+      // other state strips it to preserve the fallback contract.
+      const endpointLive =
+        sensorCache.status === "loaded" && sensorCache.endpointAvailable;
+      const next = buildAppliedFilter(committedFilter, applied, endpointLive);
       setCommittedFilter(next);
       setCommittedPeriod(applied.period);
       setCommittedEndpoints(applied.endpoints);
@@ -151,7 +252,7 @@ export function DetectionShell({
         }
       });
     },
-    [committedFilter, labels.resultsError],
+    [committedFilter, labels.resultsError, sensorCache],
   );
 
   const { summary: activeChipText, chips: baseChips } = buildDetectionFilterBar(
@@ -175,10 +276,33 @@ export function DetectionShell({
     committedEndpoints,
     labels.endpointChips,
   );
+  const sensorOptions: readonly SensorOption[] =
+    sensorCache.status === "loaded" ? sensorCache.options : [];
+  // See `sensorStateForCache` for the intent behind each branch:
+  //   - `idle`/`loading` → "Loading sensors…" while the first
+  //     fetch resolves; this must NOT reuse "Coming soon" copy
+  //     because the endpoint may well be live.
+  //   - `error` → retryable error state with an inline Retry
+  //     button, so a transient hiccup doesn't require closing and
+  //     reopening the drawer.
+  //   - `loaded && !endpointAvailable` → "Coming soon" placeholder,
+  //     the only case where the vendored schema actually lacks the
+  //     sensor-list query.
+  //   - `loaded && endpointAvailable` → functional multi-select.
+  // `buildAppliedFilter` still gates `sensors` submission on the
+  // `ready` state, so no intermediate state leaks IDs into the
+  // committed filter.
+  const sensorState = sensorStateForCache(sensorCache);
+
+  const sensorChips: FilterChip[] =
+    committedFilter.mode === "structured"
+      ? summarizeFilter(committedFilter.input, sensorOptions, labels.summarize)
+      : [];
   const hasChips =
     baseChips.length > 0 ||
     directionChips.length > 0 ||
-    endpointChips.length > 0;
+    endpointChips.length > 0 ||
+    sensorChips.length > 0;
 
   return (
     <div className="flex gap-4">
@@ -278,6 +402,18 @@ export function DetectionShell({
                     )}
                   </li>
                 ))}
+                {sensorChips.map((chip) => (
+                  <li key={chip.id}>
+                    <Badge variant="secondary" className="font-normal">
+                      <span className="text-muted-foreground mr-1 text-xs">
+                        {chip.label}
+                      </span>
+                      <span className="text-foreground text-xs font-medium">
+                        {chip.value}
+                      </span>
+                    </Badge>
+                  </li>
+                ))}
               </ul>
             ) : null}
           </div>
@@ -339,6 +475,9 @@ export function DetectionShell({
           onApply={handleApply}
           labels={labels.drawer}
           openEndpointPanelOnOpen={openEndpointPanelOnDrawerOpen}
+          sensorOptions={sensorOptions}
+          sensorState={sensorState}
+          onSensorRetry={triggerSensorFetch}
         />
       ) : null}
     </div>
@@ -353,6 +492,8 @@ function filterToDraft(
   const startIso = structuredStart(filter);
   const endIso = structuredEnd(filter);
   const confidence = structuredConfidence(filter);
+  const sensorIds =
+    filter.mode === "structured" ? (filter.input.sensors ?? []) : [];
   return {
     period,
     startLocal: isoToLocalInput(startIso),
@@ -363,6 +504,7 @@ function filterToDraft(
     endpoints,
     confidenceMin: confidence?.min ?? CONFIDENCE_DEFAULT_MIN,
     confidenceMax: confidence?.max ?? CONFIDENCE_DEFAULT_MAX,
+    sensorIds: [...sensorIds],
   };
 }
 

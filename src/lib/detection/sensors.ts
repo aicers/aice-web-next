@@ -116,9 +116,15 @@ export function sensorsOrEmpty(result: SensorListResult): readonly Sensor[] {
  * Pass the result through `sensorsOrEmpty()` to recover the "empty
  * list" iteration shape — the two consumers degrade gracefully:
  *
- *   - #278 Sensor dropdown: renders with no options — the multi-select
- *     is still usable once REview ships the endpoint without any
- *     client-side refactor.
+ *   - #278 Sensor dropdown: renders a disabled "Coming soon"
+ *     placeholder (the same affordance as Customer) so operators
+ *     immediately understand why the control is non-interactive. A
+ *     transient fetch failure is surfaced as a separate retryable
+ *     error state rather than being collapsed into this
+ *     endpoint-absent copy. When REview ships the endpoint and the
+ *     constant flips to `true`, the placeholder is replaced with the
+ *     functional multi-select without any further client-side
+ *     refactor.
  *   - #291 event locator: skips name → ID resolution and omits
  *     `sensors: [<id>]` from the tight filter (same behaviour as a
  *     name mismatch / out-of-scope event).

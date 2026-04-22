@@ -40,6 +40,10 @@ export default async function DetectionPage({
     windowLastDay: t("filters.chips.windowLastDay"),
     windowLastWeek: t("filters.chips.windowLastWeek"),
   });
+  const summarizeLabels = {
+    sensor: t("filters.chips.sensor"),
+    sensorAggregate: t.raw("filters.chips.sensorAggregate") as string,
+  };
 
   const defaultRange = computePeriodRange(DEFAULT_PERIOD_KEY);
   const initialFilter: Filter = {
@@ -142,7 +146,29 @@ export default async function DetectionPage({
             removeEntry: t("filters.endpoint.removeEntry"),
             done: t("filters.endpoint.done"),
           },
+          customerLabel: t("filters.customerLabel"),
+          customerComingSoon: t("filters.customerComingSoon"),
+          customerComingSoonHint: t("filters.customerComingSoonHint"),
+          sensor: {
+            label: t("filters.sensor.label"),
+            placeholder: t("filters.sensor.placeholder"),
+            searchPlaceholder: t("filters.sensor.searchPlaceholder"),
+            selectAll: t("filters.sensor.selectAll"),
+            clearAll: t("filters.sensor.clearAll"),
+            empty: t("filters.sensor.empty"),
+            noMatches: t("filters.sensor.noMatches"),
+            selectedSummary: t.raw("filters.sensor.selectedSummary") as string,
+            removeSelection: t.raw("filters.sensor.removeSelection") as string,
+            comingSoonLabel: t("filters.sensor.comingSoonLabel"),
+            comingSoonHint: t("filters.sensor.comingSoonHint"),
+            loadingLabel: t("filters.sensor.loadingLabel"),
+            loadingHint: t("filters.sensor.loadingHint"),
+            errorLabel: t("filters.sensor.errorLabel"),
+            errorHint: t("filters.sensor.errorHint"),
+            retry: t("filters.sensor.retry"),
+          },
         },
+        summarize: summarizeLabels,
       }}
       initialChips={initialChips}
     />

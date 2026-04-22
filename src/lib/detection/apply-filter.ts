@@ -26,6 +26,7 @@ import type { EventListFilterInput } from "./types";
 export function buildAppliedFilter(
   currentFilter: Filter,
   applied: DetectionFilterDraft,
+  sensorEndpointLive: boolean = false,
 ): Filter {
   if (!applied.startIso || !applied.endIso) {
     throw new Error("buildAppliedFilter requires both startIso and endIso");
@@ -38,6 +39,7 @@ export function buildAppliedFilter(
     confidenceMax: _prevMax,
     directions: _prevDirections,
     endpoints: _prevEndpoints,
+    sensors: _prevSensors,
     ...previousWithoutConfidence
   } = previousInput;
 
@@ -56,6 +58,13 @@ export function buildAppliedFilter(
   if (!isConfidenceDefault(applied)) {
     input.confidenceMin = applied.confidenceMin;
     input.confidenceMax = applied.confidenceMax;
+  }
+  // Sensors only flow into the submitted filter when the REview
+  // sensor-list endpoint is live AND the user picked at least one;
+  // every other state strips the field so the fallback contract
+  // ("no `sensors` reaches the filter unless ready") holds.
+  if (sensorEndpointLive && applied.sensorIds.length > 0) {
+    input.sensors = [...applied.sensorIds];
   }
 
   return { mode: "structured", input };
