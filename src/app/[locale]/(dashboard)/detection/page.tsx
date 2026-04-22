@@ -95,6 +95,7 @@ export default async function DetectionPage({
           destination: t("filters.endpoint.chipDestination"),
           aggregate: t.raw("filters.endpoint.chipAggregate") as string,
         },
+        confidenceChipLabel: t("filters.confidenceChipLabel"),
         drawer: {
           title: t("filters.drawerTitle"),
           description: t("filters.drawerDescription"),
@@ -105,6 +106,9 @@ export default async function DetectionPage({
           endLabel: t("filters.endLabel"),
           directionLabel: t("filters.directionLabel"),
           directionOptions,
+          confidenceLabel: t("filters.confidenceLabel"),
+          confidenceMinLabel: t("filters.confidenceMinLabel"),
+          confidenceMaxLabel: t("filters.confidenceMaxLabel"),
           apply: t("filters.apply"),
           saveThisFilter: t("filters.saveThisFilter"),
           saveThisFilterComingSoon: t("filters.saveThisFilterComingSoon"),

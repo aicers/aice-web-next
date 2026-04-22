@@ -1,7 +1,7 @@
 "use client";
 
 import { Filter as FilterIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,20 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { FLOW_KINDS, toggleDirection } from "@/lib/detection/direction";
-import type { EndpointEntry } from "@/lib/detection/endpoint-filter";
+import {
+  applyConfidenceMax,
+  applyConfidenceMin,
+  applyManualEnd,
+  applyManualStart,
+  CONFIDENCE_DEFAULT_MAX,
+  CONFIDENCE_DEFAULT_MIN,
+  CONFIDENCE_STEP,
+  type DetectionFilterDraft,
+  formatConfidenceInput,
+  isoToLocalInput,
+  setConfidenceMax,
+  setConfidenceMin,
+} from "@/lib/detection/filter-draft";
 import {
   computePeriodRange,
   PERIOD_KEYS,
@@ -39,6 +52,9 @@ export interface FilterDrawerLabels {
   endLabel: string;
   directionLabel: string;
   directionOptions: Record<FlowKind, string>;
+  confidenceLabel: string;
+  confidenceMinLabel: string;
+  confidenceMaxLabel: string;
   apply: string;
   saveThisFilter: string;
   saveThisFilterComingSoon: string;
@@ -51,32 +67,12 @@ export interface FilterDrawerLabels {
   endpointPanel: EndpointFilterPanelLabels;
 }
 
-export interface FilterDrawerDraft {
-  period: PeriodKey | null;
-  startLocal: string;
-  endLocal: string;
-  directions: FlowKind[];
-  /**
-   * ISO-8601 UTC strings used on Apply. Kept in sync with the
-   * local-input fields: a chip selection writes the raw
-   * `computePeriodRange()` instants here (seconds/ms intact). A
-   * manual edit to either input normalizes BOTH sides from their
-   * visible `datetime-local` values so the submitted range exactly
-   * matches what the drawer shows — otherwise a one-sided edit
-   * after a chip selection would leave the un-edited side at
-   * full precision while the visible field shows minute precision.
-   */
-  startIso: string | null;
-  endIso: string | null;
-  endpoints: EndpointEntry[];
-}
-
 interface FilterDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  draft: FilterDrawerDraft;
-  onDraftChange: (draft: FilterDrawerDraft) => void;
-  onApply: (draft: FilterDrawerDraft) => void;
+  draft: DetectionFilterDraft;
+  onDraftChange: (draft: DetectionFilterDraft) => void;
+  onApply: (draft: DetectionFilterDraft) => void;
   labels: FilterDrawerLabels;
   /**
    * When true, the Network/IP advanced panel opens alongside the
@@ -106,6 +102,28 @@ export function FilterDrawer({
 }: FilterDrawerProps) {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [endpointPanelOpen, setEndpointPanelOpen] = useState(false);
+  // Transient text state for the two confidence inputs: the input's
+  // displayed value is owned here while the user is typing, instead
+  // of being reformatted back through `formatConfidenceInput()` on
+  // every keystroke. Without this, typing `0.7` character-by-character
+  // is impossible because each intermediate value (`0`, `0.`) would
+  // be snapped to the last committed two-decimal string.
+  //
+  // The committed numeric values still live on the draft and are
+  // updated on every keystroke so the min/max invariant and the
+  // outgoing submission stay in sync with what the user has typed.
+  // `*FocusedRef` flags gate the unfocused-sync effect so a cross-
+  // snap (typing a large min that snaps max upward) can still refresh
+  // the other input's text, without clobbering the one the user is
+  // actively editing.
+  const [confidenceMinText, setConfidenceMinText] = useState(() =>
+    formatConfidenceInput(draft.confidenceMin),
+  );
+  const [confidenceMaxText, setConfidenceMaxText] = useState(() =>
+    formatConfidenceInput(draft.confidenceMax),
+  );
+  const minFocusedRef = useRef(false);
+  const maxFocusedRef = useRef(false);
 
   useEffect(() => {
     if (!open) {
@@ -122,6 +140,18 @@ export function FilterDrawer({
     setEndpointPanelOpen(next);
     onEndpointPanelOpenChange?.(next);
   }
+
+  useEffect(() => {
+    if (!minFocusedRef.current) {
+      setConfidenceMinText(formatConfidenceInput(draft.confidenceMin));
+    }
+  }, [draft.confidenceMin]);
+
+  useEffect(() => {
+    if (!maxFocusedRef.current) {
+      setConfidenceMaxText(formatConfidenceInput(draft.confidenceMax));
+    }
+  }, [draft.confidenceMax]);
 
   function selectPeriod(key: PeriodKey) {
     const range = computePeriodRange(key);
@@ -153,6 +183,56 @@ export function FilterDrawer({
     });
   }
 
+  function onConfidenceMinChange(value: string) {
+    setConfidenceMinText(value);
+    onDraftChange(applyConfidenceMin(draft, value));
+  }
+
+  function onConfidenceMaxChange(value: string) {
+    setConfidenceMaxText(value);
+    onDraftChange(applyConfidenceMax(draft, value));
+  }
+
+  function onConfidenceMinBlur() {
+    minFocusedRef.current = false;
+    // Re-render the formatted numeric on blur so an in-progress edit
+    // like "0." snaps back to the committed "0.00".
+    setConfidenceMinText(formatConfidenceInput(draft.confidenceMin));
+  }
+
+  function onConfidenceMaxBlur() {
+    maxFocusedRef.current = false;
+    setConfidenceMaxText(formatConfidenceInput(draft.confidenceMax));
+  }
+
+  function onConfidenceMinKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Home") {
+      e.preventDefault();
+      const nextDraft = setConfidenceMin(draft, CONFIDENCE_DEFAULT_MIN);
+      onDraftChange(nextDraft);
+      setConfidenceMinText(formatConfidenceInput(nextDraft.confidenceMin));
+    } else if (e.key === "End") {
+      e.preventDefault();
+      const nextDraft = setConfidenceMin(draft, draft.confidenceMax);
+      onDraftChange(nextDraft);
+      setConfidenceMinText(formatConfidenceInput(nextDraft.confidenceMin));
+    }
+  }
+
+  function onConfidenceMaxKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Home") {
+      e.preventDefault();
+      const nextDraft = setConfidenceMax(draft, draft.confidenceMin);
+      onDraftChange(nextDraft);
+      setConfidenceMaxText(formatConfidenceInput(nextDraft.confidenceMax));
+    } else if (e.key === "End") {
+      e.preventDefault();
+      const nextDraft = setConfidenceMax(draft, CONFIDENCE_DEFAULT_MAX);
+      onDraftChange(nextDraft);
+      setConfidenceMaxText(formatConfidenceInput(nextDraft.confidenceMax));
+    }
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (
@@ -163,6 +243,17 @@ export function FilterDrawer({
       setValidationError(labels.invalidRange);
       return;
     }
+    // Submit via Enter doesn't fire blur on the focused confidence
+    // input, so an intermediate value like "0." or "" would otherwise
+    // stay in the transient text after the drawer closes. The drawer
+    // is kept mounted by the shell and reopened with the same draft,
+    // so without this sync the next open would show stale raw text
+    // while the committed filter already used the fallback numeric.
+    // Clear the focus refs so a re-focus after reopen starts clean.
+    minFocusedRef.current = false;
+    maxFocusedRef.current = false;
+    setConfidenceMinText(formatConfidenceInput(draft.confidenceMin));
+    setConfidenceMaxText(formatConfidenceInput(draft.confidenceMax));
     onApply(draft);
   }
 
@@ -316,6 +407,55 @@ export function FilterDrawer({
               </div>
             </fieldset>
 
+            {/* Confidence range */}
+            <fieldset className="flex flex-col gap-3">
+              <legend className="text-foreground text-sm font-medium">
+                {labels.confidenceLabel}
+              </legend>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="filter-confidence-min">
+                    {labels.confidenceMinLabel}
+                  </Label>
+                  <Input
+                    id="filter-confidence-min"
+                    type="number"
+                    inputMode="decimal"
+                    min={CONFIDENCE_DEFAULT_MIN}
+                    max={CONFIDENCE_DEFAULT_MAX}
+                    step={CONFIDENCE_STEP}
+                    value={confidenceMinText}
+                    onChange={(e) => onConfidenceMinChange(e.target.value)}
+                    onFocus={() => {
+                      minFocusedRef.current = true;
+                    }}
+                    onBlur={onConfidenceMinBlur}
+                    onKeyDown={onConfidenceMinKeyDown}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="filter-confidence-max">
+                    {labels.confidenceMaxLabel}
+                  </Label>
+                  <Input
+                    id="filter-confidence-max"
+                    type="number"
+                    inputMode="decimal"
+                    min={CONFIDENCE_DEFAULT_MIN}
+                    max={CONFIDENCE_DEFAULT_MAX}
+                    step={CONFIDENCE_STEP}
+                    value={confidenceMaxText}
+                    onChange={(e) => onConfidenceMaxChange(e.target.value)}
+                    onFocus={() => {
+                      maxFocusedRef.current = true;
+                    }}
+                    onBlur={onConfidenceMaxBlur}
+                    onKeyDown={onConfidenceMaxKeyDown}
+                  />
+                </div>
+              </div>
+            </fieldset>
+
             <div className="mt-auto flex flex-col gap-2 pt-2">
               <Button type="submit">{labels.apply}</Button>
               <Button
@@ -344,68 +484,4 @@ export function FilterDrawer({
       />
     </>
   );
-}
-
-/**
- * Convert an ISO-8601 UTC string to the `YYYY-MM-DDTHH:mm` format
- * `<input type="datetime-local">` expects, in the user's local
- * timezone. Returns `""` on an unparseable input so the input
- * renders empty rather than with `NaN`.
- */
-export function isoToLocalInput(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}
-
-/**
- * Convert a `<input type="datetime-local">` string (interpreted in
- * the browser's local timezone) back to an ISO-8601 UTC string
- * suitable for `EventListFilterInput.start`/`end`. Returns `null`
- * on an empty or unparseable input.
- */
-export function localInputToIso(local: string): string | null {
-  if (!local) return null;
-  const d = new Date(local);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
-}
-
-/**
- * Draft transition for a manual Start edit. Clears the selected
- * Period chip and normalizes BOTH ISO fields from the visible
- * `datetime-local` strings so a one-sided edit after a chip
- * selection cannot leave `endIso` at full precision while the End
- * input shows minute precision.
- */
-export function applyManualStart(
-  draft: FilterDrawerDraft,
-  value: string,
-): FilterDrawerDraft {
-  return {
-    ...draft,
-    period: null,
-    startLocal: value,
-    startIso: localInputToIso(value),
-    endIso: localInputToIso(draft.endLocal),
-  };
-}
-
-/** Symmetric counterpart of `applyManualStart` for the End input. */
-export function applyManualEnd(
-  draft: FilterDrawerDraft,
-  value: string,
-): FilterDrawerDraft {
-  return {
-    ...draft,
-    period: null,
-    endLocal: value,
-    startIso: localInputToIso(draft.startLocal),
-    endIso: localInputToIso(value),
-  };
 }

@@ -573,6 +573,10 @@
         "INBOUND": "외부 → 내부"
       },
       "directionChipLabel": "방향",
+      "confidenceLabel": "신뢰도",
+      "confidenceMinLabel": "최소",
+      "confidenceMaxLabel": "최대",
+      "confidenceChipLabel": "신뢰도",
       "apply": "적용",
       "saveThisFilter": "필터 저장",
       "saveThisFilterComingSoon": "필터 저장 기능은 이후 단계에서 연결됩니다.",

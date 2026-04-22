@@ -573,6 +573,10 @@
         "INBOUND": "Inbound"
       },
       "directionChipLabel": "Direction",
+      "confidenceLabel": "Confidence",
+      "confidenceMinLabel": "Min",
+      "confidenceMaxLabel": "Max",
+      "confidenceChipLabel": "Confidence",
       "apply": "Apply",
       "saveThisFilter": "Save this filter",
       "saveThisFilterComingSoon": "Saving filters is wired up in a later phase.",

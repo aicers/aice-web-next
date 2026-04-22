@@ -90,6 +90,22 @@ When fewer than three are selected, the active filter chip bar
 renders one chip per selected direction (e.g. `Direction: Inbound`,
 `Direction: Internal`).
 
+### Confidence
+
+The **Confidence** section narrows the result set to events whose
+detection score falls within a `[min, max]` window. The domain is
+`0.00`–`1.00` with two-decimal precision; arrow keys nudge the
+focused input by `0.01`, `Home` jumps to the input's lower bound
+(`0.00` for min, the current min for max), and `End` jumps to the
+corresponding upper bound.
+
+The inputs cannot produce a reversed range — typing a min that
+exceeds the current max snaps max upward, and vice versa. Leaving
+both inputs at `0.00` / `1.00` is the "no filter" default and
+omits `confidenceMin` / `confidenceMax` from the submitted query.
+Any non-default range surfaces a single chip in the active filter
+bar (for example, `Confidence 0.70 – 1.00`).
+
 ### Apply
 
 Click **Apply** (or press `Enter` while focused in the drawer) to
