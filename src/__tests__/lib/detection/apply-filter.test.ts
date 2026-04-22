@@ -21,6 +21,11 @@ function draft(
     confidenceMin: 0,
     confidenceMax: 1,
     sensorIds: [],
+    levels: [],
+    countries: [],
+    learningMethods: [],
+    categories: [],
+    kinds: [],
     ...overrides,
   };
 }

@@ -52,8 +52,8 @@ describe("filter-draft helpers", () => {
   it("applyManualStart normalizes both ISO fields from local strings", () => {
     const chipStartIso = "2026-04-22T11:34:56.789Z";
     const chipEndIso = "2026-04-22T12:34:56.789Z";
-    const draft = {
-      period: "1h" as const,
+    const draft: DetectionFilterDraft = {
+      period: "1h",
       startLocal: isoToLocalInput(chipStartIso),
       endLocal: isoToLocalInput(chipEndIso),
       startIso: chipStartIso,
@@ -63,6 +63,11 @@ describe("filter-draft helpers", () => {
       confidenceMin: 0,
       confidenceMax: 1,
       sensorIds: [],
+      levels: [],
+      countries: [],
+      learningMethods: [],
+      categories: [],
+      kinds: [],
     };
 
     const newStartLocal = isoToLocalInput("2026-04-22T11:00:00.000Z");
@@ -81,8 +86,8 @@ describe("filter-draft helpers", () => {
   it("applyManualEnd normalizes both ISO fields from local strings", () => {
     const chipStartIso = "2026-04-22T11:34:56.789Z";
     const chipEndIso = "2026-04-22T12:34:56.789Z";
-    const draft = {
-      period: "1h" as const,
+    const draft: DetectionFilterDraft = {
+      period: "1h",
       startLocal: isoToLocalInput(chipStartIso),
       endLocal: isoToLocalInput(chipEndIso),
       startIso: chipStartIso,
@@ -92,6 +97,11 @@ describe("filter-draft helpers", () => {
       confidenceMin: 0,
       confidenceMax: 1,
       sensorIds: [],
+      levels: [],
+      countries: [],
+      learningMethods: [],
+      categories: [],
+      kinds: [],
     };
 
     const newEndLocal = isoToLocalInput("2026-04-22T13:00:00.000Z");
@@ -116,6 +126,11 @@ describe("filter-draft helpers", () => {
       confidenceMin: 0,
       confidenceMax: 1,
       sensorIds: [],
+      levels: [],
+      countries: [],
+      learningMethods: [],
+      categories: [],
+      kinds: [],
     };
   }
 

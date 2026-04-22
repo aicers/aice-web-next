@@ -34,12 +34,17 @@ import {
   PERIOD_KEYS,
   type PeriodKey,
 } from "@/lib/detection/period";
-import type { FlowKind } from "@/lib/detection/types";
+import type { FlowKind, LearningMethod } from "@/lib/detection/types";
 import { cn } from "@/lib/utils";
 import {
   EndpointFilterPanel,
   type EndpointFilterPanelLabels,
 } from "./endpoint-filter-panel";
+import {
+  FilterMultiSelect,
+  type FilterMultiSelectLabels,
+  type FilterMultiSelectOption,
+} from "./filter-multi-select";
 import {
   SensorMultiSelect,
   type SensorMultiSelectLabels,
@@ -74,6 +79,28 @@ export interface FilterDrawerLabels {
   customerComingSoon: string;
   customerComingSoonHint: string;
   sensor: SensorMultiSelectLabels;
+  categoricalSectionLabel: string;
+  fields: {
+    levels: string;
+    countries: string;
+    learningMethods: string;
+    categories: string;
+    kinds: string;
+  };
+}
+
+/**
+ * Multi-select option bundles for each categorical field. The parent
+ * owns the option lists (localised once at page level) so the drawer
+ * stays a pure renderer and tests can supply fixtures without Next's
+ * i18n context.
+ */
+export interface FilterDrawerOptions {
+  levels: readonly FilterMultiSelectOption<number>[];
+  countries: readonly FilterMultiSelectOption<string>[];
+  learningMethods: readonly FilterMultiSelectOption<LearningMethod>[];
+  categories: readonly FilterMultiSelectOption<number>[];
+  kinds: readonly FilterMultiSelectOption<string>[];
 }
 
 interface FilterDrawerProps {
@@ -82,7 +109,9 @@ interface FilterDrawerProps {
   draft: DetectionFilterDraft;
   onDraftChange: (draft: DetectionFilterDraft) => void;
   onApply: (draft: DetectionFilterDraft) => void;
+  options: FilterDrawerOptions;
   labels: FilterDrawerLabels;
+  multiSelectLabels: FilterMultiSelectLabels;
   /**
    * When true, the Network/IP advanced panel opens alongside the
    * drawer the moment the drawer opens. The DetectionShell sets
@@ -120,7 +149,9 @@ export function FilterDrawer({
   draft,
   onDraftChange,
   onApply,
+  options,
   labels,
+  multiSelectLabels,
   openEndpointPanelOnOpen,
   onEndpointPanelOpenChange,
   sensorOptions,
@@ -536,6 +567,63 @@ export function FilterDrawer({
               state={sensorState}
               onRetry={onSensorRetry}
             />
+
+            {/* Categorical multi-select filters */}
+            <fieldset className="flex flex-col gap-3">
+              <legend className="text-foreground text-sm font-medium">
+                {labels.categoricalSectionLabel}
+              </legend>
+              <FilterMultiSelect
+                id="filter-levels"
+                label={labels.fields.levels}
+                options={options.levels}
+                selected={draft.levels}
+                onChange={(next) => onDraftChange({ ...draft, levels: next })}
+                labels={multiSelectLabels}
+              />
+              <FilterMultiSelect
+                id="filter-countries"
+                label={labels.fields.countries}
+                options={options.countries}
+                selected={draft.countries}
+                onChange={(next) =>
+                  onDraftChange({ ...draft, countries: next })
+                }
+                searchable
+                labels={multiSelectLabels}
+              />
+              <FilterMultiSelect
+                id="filter-learning-methods"
+                label={labels.fields.learningMethods}
+                options={options.learningMethods}
+                selected={draft.learningMethods}
+                onChange={(next) =>
+                  onDraftChange({ ...draft, learningMethods: next })
+                }
+                labels={multiSelectLabels}
+              />
+              <FilterMultiSelect
+                id="filter-categories"
+                label={labels.fields.categories}
+                options={options.categories}
+                selected={draft.categories}
+                onChange={(next) =>
+                  onDraftChange({ ...draft, categories: next })
+                }
+                searchable
+                labels={multiSelectLabels}
+              />
+              <FilterMultiSelect
+                id="filter-kinds"
+                label={labels.fields.kinds}
+                options={options.kinds}
+                selected={draft.kinds}
+                onChange={(next) => onDraftChange({ ...draft, kinds: next })}
+                searchable
+                openList
+                labels={multiSelectLabels}
+              />
+            </fieldset>
 
             <div className="mt-auto flex flex-col gap-2 pt-2">
               <Button type="submit">{labels.apply}</Button>

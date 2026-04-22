@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 820" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Noto Sans KR', sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">탐지 필터 드로어 — 범주형 다중 선택 (와이어프레임)</title>
+  <desc id="desc">오른쪽 필터 드로어의 와이어프레임: 제목, 기간 칩, 시간 범위 입력, 새로운 "범주형 필터" 섹션의 다섯 개 접을 수 있는 다중 선택 필드(위협 수준, 위협 국가, AI 모델 유형, 위협 범주, 위협 이름). 위협 수준 필드는 펼쳐진 상태로 전체 토글과 세 개의 체크박스 행을 보여 주고, 나머지 필드는 접힌 상태로 요약 문구("전체" 또는 "2개 선택됨")를 보여 줍니다. 하단에는 두 개의 액션 버튼이 있습니다.</desc>
+
+  <style>
+    .page { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .panel { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .chip { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 14; ry: 14; }
+    .chip-on { fill: #2563eb; stroke: #2563eb; stroke-width: 1; rx: 14; ry: 14; }
+    .row { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .trigger { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .check { fill: #ffffff; stroke: #52525b; stroke-width: 1; rx: 2; ry: 2; }
+    .check-on { fill: #2563eb; stroke: #2563eb; stroke-width: 1; rx: 2; ry: 2; }
+    .btn { fill: #2563eb; stroke: #2563eb; stroke-width: 1; rx: 6; ry: 6; }
+    .btn-ghost { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .h1 { font-size: 16px; font-weight: 600; fill: #18181b; }
+    .h2 { font-size: 12px; font-weight: 600; fill: #18181b; }
+    .lbl { font-size: 12px; fill: #18181b; }
+    .muted { font-size: 11px; fill: #71717a; }
+    .chip-on-txt { font-size: 11px; fill: #ffffff; }
+    .note { font-size: 11px; font-style: italic; fill: #a16207; }
+  </style>
+
+  <rect x="0" y="0" width="560" height="820" fill="#fafafa" />
+  <rect x="16" y="16" width="528" height="788" class="page" rx="8" ry="8" />
+
+  <g transform="translate(32, 48)">
+    <text class="h1">필터</text>
+    <text class="muted" y="18">기간, 시간 범위, 범주형 필터로 탐지 결과를 좁힙니다.</text>
+  </g>
+
+  <g transform="translate(32, 108)">
+    <text class="h2">기간</text>
+    <g transform="translate(0, 12)">
+      <rect class="chip-on" x="0" y="0" width="72" height="24" />
+      <text class="chip-on-txt" x="36" y="16" text-anchor="middle">최근 1시간</text>
+      <rect class="chip" x="80" y="0" width="72" height="24" />
+      <text class="muted" x="116" y="16" text-anchor="middle">최근 12시간</text>
+      <rect class="chip" x="160" y="0" width="72" height="24" />
+      <text class="muted" x="196" y="16" text-anchor="middle">최근 1일</text>
+      <rect class="chip" x="240" y="0" width="72" height="24" />
+      <text class="muted" x="276" y="16" text-anchor="middle">최근 1주</text>
+    </g>
+  </g>
+
+  <g transform="translate(32, 172)">
+    <text class="h2">시간 범위</text>
+    <rect x="0" y="16" width="224" height="28" class="trigger" />
+    <text class="muted" x="10" y="35">시작 · YYYY-MM-DD HH:mm</text>
+    <rect x="240" y="16" width="224" height="28" class="trigger" />
+    <text class="muted" x="250" y="35">종료 · YYYY-MM-DD HH:mm</text>
+  </g>
+
+  <g transform="translate(32, 240)">
+    <text class="h2">범주형 필터</text>
+
+    <g transform="translate(0, 16)">
+      <rect x="0" y="0" width="464" height="40" class="trigger" />
+      <text class="lbl" x="10" y="16">위협 수준</text>
+      <text class="muted" x="10" y="32">2개 선택됨</text>
+      <text class="muted" x="450" y="24" text-anchor="end">▲</text>
+
+      <rect x="0" y="46" width="464" height="128" class="panel" />
+      <rect x="12" y="58" width="14" height="14" class="check-on" />
+      <text class="lbl" x="34" y="70" font-weight="600">전체</text>
+      <rect x="12" y="82" width="14" height="14" class="check-on" />
+      <text class="lbl" x="34" y="94">낮음</text>
+      <rect x="12" y="104" width="14" height="14" class="check" />
+      <text class="lbl" x="34" y="116">중간</text>
+      <rect x="12" y="126" width="14" height="14" class="check-on" />
+      <text class="lbl" x="34" y="138">높음</text>
+      <text class="muted" x="12" y="162">(닫힌 목록: 전체 / 선택 없음 → 필터 없음. 위협 이름은 열린 목록 — 모두 선택해도 제출됨.)</text>
+    </g>
+
+    <g transform="translate(0, 200)">
+      <rect x="0" y="0" width="464" height="40" class="trigger" />
+      <text class="lbl" x="10" y="16">위협 국가</text>
+      <text class="muted" x="10" y="32">12개 선택됨</text>
+      <text class="muted" x="450" y="24" text-anchor="end">▼</text>
+    </g>
+
+    <g transform="translate(0, 250)">
+      <rect x="0" y="0" width="464" height="40" class="trigger" />
+      <text class="lbl" x="10" y="16">AI 모델 유형</text>
+      <text class="muted" x="10" y="32">전체</text>
+      <text class="muted" x="450" y="24" text-anchor="end">▼</text>
+    </g>
+
+    <g transform="translate(0, 300)">
+      <rect x="0" y="0" width="464" height="40" class="trigger" />
+      <text class="lbl" x="10" y="16">위협 범주</text>
+      <text class="muted" x="10" y="32">3개 선택됨</text>
+      <text class="muted" x="450" y="24" text-anchor="end">▼</text>
+    </g>
+
+    <g transform="translate(0, 350)">
+      <rect x="0" y="0" width="464" height="40" class="trigger" />
+      <text class="lbl" x="10" y="16">위협 이름</text>
+      <text class="muted" x="10" y="32">4개 선택됨</text>
+      <text class="muted" x="450" y="24" text-anchor="end">▼</text>
+    </g>
+  </g>
+
+  <g transform="translate(32, 712)">
+    <rect x="0" y="0" width="464" height="36" class="btn" />
+    <text x="232" y="22" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="600">적용</text>
+    <rect x="0" y="44" width="464" height="32" class="btn-ghost" />
+    <text class="muted" x="232" y="64" text-anchor="middle">필터 저장 (곧 지원)</text>
+  </g>
+
+  <text class="note" x="32" y="800">와이어프레임 대체 이미지 — 스테이징 연결 후 실제 캡처로 교체 예정.</text>
+</svg>

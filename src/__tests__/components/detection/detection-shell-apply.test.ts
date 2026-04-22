@@ -45,6 +45,11 @@ const BASE_DRAFT: DetectionFilterDraft = {
   confidenceMin: 0,
   confidenceMax: 1,
   sensorIds: [],
+  levels: [],
+  countries: [],
+  learningMethods: [],
+  categories: [],
+  kinds: [],
 };
 
 describe("buildAppliedFilter", () => {
