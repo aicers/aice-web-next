@@ -2,7 +2,7 @@
 
 import { Bookmark, ChevronRight, SlidersHorizontal, Star } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { startTransition, useCallback, useRef, useState } from "react";
+import { startTransition, useCallback, useMemo, useRef, useState } from "react";
 import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
 import {
   type FetchSensorsResult,
@@ -25,6 +25,10 @@ import {
 import type { Filter } from "@/lib/detection/filter";
 import { buildDetectionFilterBar } from "@/lib/detection/filter-bar";
 import {
+  type ActiveFilterChip,
+  buildMultiSelectChips,
+} from "@/lib/detection/filter-chips";
+import {
   CONFIDENCE_DEFAULT_MAX,
   CONFIDENCE_DEFAULT_MIN,
   type DetectionFilterDraft,
@@ -36,10 +40,15 @@ import {
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
 import type { PeriodKey } from "@/lib/detection/period";
-import type { FlowKind } from "@/lib/detection/types";
+import type { FlowKind, LearningMethod } from "@/lib/detection/types";
 import type { PivotChip } from "@/lib/detection/url-filters";
 import { cn } from "@/lib/utils";
-import { FilterDrawer, type FilterDrawerLabels } from "./filter-drawer";
+import {
+  FilterDrawer,
+  type FilterDrawerLabels,
+  type FilterDrawerOptions,
+} from "./filter-drawer";
+import type { FilterMultiSelectLabels } from "./filter-multi-select";
 import type {
   SensorMultiSelectState,
   SensorOption,
@@ -73,6 +82,7 @@ export interface DetectionShellInitialResult {
 interface DetectionShellProps {
   title: string;
   labels: DetectionShellLabels;
+  options: FilterDrawerOptions;
   initialFilter: Filter;
   initialPeriod: PeriodKey | null;
   initialResult: DetectionShellInitialResult;
@@ -118,12 +128,26 @@ export function sensorStateForCache(
 export function DetectionShell({
   title,
   labels,
+  options,
   initialFilter,
   initialPeriod,
   initialResult,
   initialChips = [],
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
+  const multiSelectLabels = useMemo<FilterMultiSelectLabels>(
+    () => ({
+      allToggle: t("multiSelect.all"),
+      searchPlaceholder: t("multiSelect.searchPlaceholder"),
+      noOptionsMatch: t("multiSelect.noOptionsMatch"),
+      summaryNone: t("multiSelect.summaryNone"),
+      summaryAll: t("multiSelect.summaryAll"),
+      summarySome: (count: number) => t("multiSelect.summarySome", { count }),
+      expand: t("multiSelect.expand"),
+      collapse: t("multiSelect.collapse"),
+    }),
+    [t],
+  );
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openEndpointPanelOnDrawerOpen, setOpenEndpointPanelOnDrawerOpen] =
@@ -182,13 +206,13 @@ export function DetectionShell({
   }, []);
 
   const openDrawer = useCallback(
-    (options?: { openEndpointPanel?: boolean }) => {
+    (opts?: { openEndpointPanel?: boolean }) => {
       setDraft(
         (current) =>
           current ??
           filterToDraft(committedFilter, committedPeriod, committedEndpoints),
       );
-      setOpenEndpointPanelOnDrawerOpen(options?.openEndpointPanel ?? false);
+      setOpenEndpointPanelOnDrawerOpen(opts?.openEndpointPanel ?? false);
       setDrawerOpen(true);
       // Lazy-load the sensor inventory the first time the drawer
       // opens, and retry on a prior transient failure so a single
@@ -218,7 +242,12 @@ export function DetectionShell({
       // other state strips it to preserve the fallback contract.
       const endpointLive =
         sensorCache.status === "loaded" && sensorCache.endpointAvailable;
-      const next = buildAppliedFilter(committedFilter, applied, endpointLive);
+      const next = buildAppliedFilter(
+        committedFilter,
+        applied,
+        endpointLive,
+        options,
+      );
       setCommittedFilter(next);
       setCommittedPeriod(applied.period);
       setCommittedEndpoints(applied.endpoints);
@@ -252,7 +281,7 @@ export function DetectionShell({
         }
       });
     },
-    [committedFilter, labels.resultsError, sensorCache],
+    [committedFilter, labels.resultsError, options, sensorCache],
   );
 
   const { summary: activeChipText, chips: baseChips } = buildDetectionFilterBar(
@@ -298,11 +327,22 @@ export function DetectionShell({
     committedFilter.mode === "structured"
       ? summarizeFilter(committedFilter.input, sensorOptions, labels.summarize)
       : [];
+  const multiSelectChips = useMemo(
+    () =>
+      buildActiveMultiSelectChips(
+        committedFilter,
+        options,
+        labels.drawer,
+        multiSelectLabels,
+      ),
+    [committedFilter, options, labels.drawer, multiSelectLabels],
+  );
   const hasChips =
     baseChips.length > 0 ||
     directionChips.length > 0 ||
     endpointChips.length > 0 ||
-    sensorChips.length > 0;
+    sensorChips.length > 0 ||
+    multiSelectChips.length > 0;
 
   return (
     <div className="flex gap-4">
@@ -414,6 +454,18 @@ export function DetectionShell({
                     </Badge>
                   </li>
                 ))}
+                {multiSelectChips.map((chip) => (
+                  <li key={chip.key}>
+                    <Badge variant="secondary" className="font-normal">
+                      <span className="text-muted-foreground mr-1 text-xs">
+                        {chip.label}
+                      </span>
+                      <span className="text-foreground text-xs font-medium">
+                        {chip.value}
+                      </span>
+                    </Badge>
+                  </li>
+                ))}
               </ul>
             ) : null}
           </div>
@@ -473,7 +525,9 @@ export function DetectionShell({
           draft={draft}
           onDraftChange={setDraft}
           onApply={handleApply}
+          options={options}
           labels={labels.drawer}
+          multiSelectLabels={multiSelectLabels}
           openEndpointPanelOnOpen={openEndpointPanelOnDrawerOpen}
           sensorOptions={sensorOptions}
           sensorState={sensorState}
@@ -494,6 +548,7 @@ function filterToDraft(
   const confidence = structuredConfidence(filter);
   const sensorIds =
     filter.mode === "structured" ? (filter.input.sensors ?? []) : [];
+  const input = filter.mode === "structured" ? filter.input : {};
   return {
     period,
     startLocal: isoToLocalInput(startIso),
@@ -505,6 +560,13 @@ function filterToDraft(
     confidenceMin: confidence?.min ?? CONFIDENCE_DEFAULT_MIN,
     confidenceMax: confidence?.max ?? CONFIDENCE_DEFAULT_MAX,
     sensorIds: [...sensorIds],
+    levels: (input.levels ?? []) as readonly number[],
+    countries: (input.countries ?? []) as readonly string[],
+    learningMethods: (input.learningMethods ?? []) as readonly LearningMethod[],
+    categories: (input.categories ?? []).filter(
+      (v): v is number => typeof v === "number",
+    ) as readonly number[],
+    kinds: (input.kinds ?? []) as readonly string[],
   };
 }
 
@@ -534,6 +596,69 @@ function structuredConfidence(
     min: min ?? CONFIDENCE_DEFAULT_MIN,
     max: max ?? CONFIDENCE_DEFAULT_MAX,
   };
+}
+
+function buildActiveMultiSelectChips(
+  filter: Filter,
+  options: FilterDrawerOptions,
+  labels: FilterDrawerLabels,
+  multiSelectLabels: FilterMultiSelectLabels,
+): ActiveFilterChip[] {
+  if (filter.mode !== "structured") return [];
+  const input = filter.input;
+  const aggregateCount = (n: number) => multiSelectLabels.summarySome(n);
+
+  const chips: ActiveFilterChip[] = [];
+  chips.push(
+    ...buildMultiSelectChips({
+      fieldKey: "levels",
+      fieldLabel: labels.fields.levels,
+      options: options.levels,
+      selected: input.levels ?? [],
+      aggregateValue: aggregateCount,
+    }),
+  );
+  chips.push(
+    ...buildMultiSelectChips({
+      fieldKey: "countries",
+      fieldLabel: labels.fields.countries,
+      options: options.countries,
+      selected: input.countries ?? [],
+      aggregateValue: aggregateCount,
+    }),
+  );
+  chips.push(
+    ...buildMultiSelectChips({
+      fieldKey: "learningMethods",
+      fieldLabel: labels.fields.learningMethods,
+      options: options.learningMethods,
+      selected: input.learningMethods ?? [],
+      aggregateValue: aggregateCount,
+    }),
+  );
+  chips.push(
+    ...buildMultiSelectChips<number>({
+      fieldKey: "categories",
+      fieldLabel: labels.fields.categories,
+      options: options.categories,
+      selected: (input.categories ?? []).filter(
+        (v): v is number => typeof v === "number",
+      ),
+      aggregateValue: aggregateCount,
+    }),
+  );
+  chips.push(
+    ...buildMultiSelectChips({
+      fieldKey: "kinds",
+      fieldLabel: labels.fields.kinds,
+      options: options.kinds,
+      selected: input.kinds ?? [],
+      aggregateValue: aggregateCount,
+      // Seed-list field — see the `openList` note in filter-chips.ts.
+      openList: true,
+    }),
+  );
+  return chips;
 }
 
 function RailSection({

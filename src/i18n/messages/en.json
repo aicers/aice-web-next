@@ -545,7 +545,7 @@
       "open": "Filters",
       "close": "Close filters",
       "drawerTitle": "Filters",
-      "drawerDescription": "Narrow the detection results by period and time range. Apply commits the filter and runs the query.",
+      "drawerDescription": "Narrow the detection results by period, time range, and categorical filters. Apply commits the filter and runs the query.",
       "periodLabel": "Period",
       "periodOptions": {
         "1h": "Last 1 hour",
@@ -651,6 +651,59 @@
         "chipSource": "Src",
         "chipDestination": "Dst",
         "chipAggregate": "Network: {count} rules"
+      },
+      "categoricalSectionLabel": "Categorical filters",
+      "fields": {
+        "levels": "Threat Level",
+        "countries": "Threat Country",
+        "learningMethods": "AI Model Type",
+        "categories": "Threat Category",
+        "kinds": "Threat Name"
+      },
+      "multiSelect": {
+        "all": "All",
+        "searchPlaceholder": "Search options",
+        "noOptionsMatch": "No options match.",
+        "summaryNone": "All",
+        "summaryAll": "All",
+        "summarySome": "{count} selected",
+        "expand": "Expand options",
+        "collapse": "Collapse options"
+      },
+      "levelOptions": {
+        "LOW": "Low",
+        "MEDIUM": "Medium",
+        "HIGH": "High"
+      },
+      "learningMethodOptions": {
+        "UNSUPERVISED": "Unsupervised",
+        "SEMI_SUPERVISED": "Semi-supervised"
+      },
+      "categoryOptions": {
+        "RECONNAISSANCE": "Reconnaissance",
+        "INITIAL_ACCESS": "Initial Access",
+        "EXECUTION": "Execution",
+        "CREDENTIAL_ACCESS": "Credential Access",
+        "DISCOVERY": "Discovery",
+        "LATERAL_MOVEMENT": "Lateral Movement",
+        "COMMAND_AND_CONTROL": "Command and Control",
+        "EXFILTRATION": "Exfiltration",
+        "IMPACT": "Impact",
+        "COLLECTION": "Collection",
+        "DEFENSE_EVASION": "Defense Evasion",
+        "PERSISTENCE": "Persistence",
+        "PRIVILEGE_ESCALATION": "Privilege Escalation",
+        "RESOURCE_DEVELOPMENT": "Resource Development"
+      },
+      "countrySentinels": {
+        "XX": {
+          "label": "Location unknown",
+          "searchAliases": "unknown unresolved ungeolocated no location"
+        },
+        "ZZ": {
+          "label": "Location database unavailable",
+          "searchAliases": "unavailable geoip database missing no database"
+        }
       }
     },
     "results": {

@@ -42,6 +42,11 @@ describe("filter-drawer confidence input interaction", () => {
       confidenceMin: 0,
       confidenceMax: 1,
       sensorIds: [],
+      levels: [],
+      countries: [],
+      learningMethods: [],
+      categories: [],
+      kinds: [],
     };
   }
 

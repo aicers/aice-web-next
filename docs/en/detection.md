@@ -144,6 +144,83 @@ surfaces a **Could not load sensors** message with an inline
 **Retry** button; clicking Retry re-issues the request without
 having to close and reopen the drawer.
 
+### Categorical filters
+
+Below the time range, a **Categorical filters** section groups the
+per-event dimensions you can narrow by. Each dimension is a
+multi-select with the same interaction pattern:
+
+- A trigger shows the current summary. For closed-list fields
+  (Threat Level, Threat Country, AI Model Type, Threat Category)
+  the summary reads `All` when everything or nothing is selected —
+  both mean "no filter" — and `N selected` otherwise. **Threat
+  Name** is treated as an open list while its options are still a
+  seed subset (see below): a saturated Threat Name selection reads
+  as `N selected` rather than `All`, because the submitted filter
+  still actively constrains to the visible list.
+- An **All** master toggle selects or clears every option. When
+  some but not all options are checked, the toggle renders as a
+  mixed state.
+- Long lists (Threat Country, Threat Category, Threat Name) expose
+  a case-insensitive substring search above the options.
+- For closed-list fields, selecting zero options and selecting
+  every option are both treated as "no filter" — the field is
+  omitted from the submitted query and does not appear in the chip
+  bar. Threat Name follows a different rule: selecting zero still
+  omits the field, but selecting every visible option submits the
+  explicit list and still emits chips, since the seed list is not
+  exhaustive.
+
+![Detection filter drawer — categorical filters wireframe](../assets/detection-drawer-categorical-en.svg)
+
+The figure above is an SVG wireframe stand-in for the expanded
+categorical section. It is shipped under `docs/AUTHORING.md`
+§"Screenshot exception for infrastructure-gated features"; replace
+it with a PNG capture (`detection-drawer-categorical-en.png`) once
+a staging environment with a seeded REview session is available to
+render all five fields in their expanded state.
+
+The five categorical fields are:
+
+- **Threat Level** — `Low` / `Medium` / `High` (maps to
+  `levels: [1, 2, 3]` on the backend).
+- **Threat Country** — originator / responder country, selected by
+  ISO-3166 alpha-2 code. The list includes the REview sentinels
+  `XX` and `ZZ` so events that could not be geolocated can still
+  be filtered in or out. These surface with explicit localized
+  labels — `Location unknown (XX)` and `Location database
+  unavailable (ZZ)` — and the option search matches both the raw
+  code and the meaning (e.g. searching `unknown` lands on `XX`,
+  `unavailable` lands on `ZZ`).
+- **AI Model Type** — `Unsupervised` / `Semi-supervised` (maps to
+  `learningMethods`).
+- **Threat Category** — the 14 MITRE ATT&CK tactic-style categories
+  REview tags events with (Reconnaissance, Initial Access,
+  Execution, …).
+- **Threat Name** — a curated starting list of attack kinds
+  submitted as REview's canonical event `__typename` tokens
+  (`HttpThreat`, `PortScan`, …). The option labels render the
+  friendlier display name ("HTTP Threat", "Port Scan"), and search
+  matches either form. The list is an open seed subset rather than
+  an exhaustive option source: saturating the visible list does
+  **not** broaden the query, and a live completion sourced from
+  REview will replace the seed list in a follow-up.
+
+### Active filter chip bar
+
+Applied filters appear as chips in the top bar next to the
+**Filters** button. Categorical fields follow a shared aggregation
+rule:
+
+- For closed-list fields: no chip when nothing or everything is
+  selected for a field (both mean "no filter").
+- For Threat Name (open-list): no chip when nothing is selected,
+  but a saturated selection still emits chips because the field is
+  still actively filtering to the visible list.
+- One chip per value for 1 – 3 selected values.
+- A single aggregate token (e.g. `Countries: 12 selected`) when
+  more than 3 values are selected, to keep the bar compact.
+
 ### Apply
 
 Click **Apply** (or press `Enter` while focused in the drawer) to

@@ -1,6 +1,6 @@
 import type { EndpointEntry } from "./endpoint-filter";
 import type { PeriodKey } from "./period";
-import type { FlowKind } from "./types";
+import type { FlowKind, LearningMethod } from "./types";
 
 /**
  * Editable snapshot of the Detection filter owned by the filter
@@ -41,6 +41,11 @@ export interface DetectionFilterDraft {
    * directory is unmodelled and must never reach the filter.
    */
   sensorIds: string[];
+  levels: readonly number[];
+  countries: readonly string[];
+  learningMethods: readonly LearningMethod[];
+  categories: readonly number[];
+  kinds: readonly string[];
 }
 
 export const CONFIDENCE_DEFAULT_MIN = 0;

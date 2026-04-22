@@ -335,6 +335,96 @@ test("Apply with a direction subset renders chips in the active filter bar", asy
   await expect(toolbar.getByText("Outbound")).not.toBeVisible();
 });
 
+// ── Categorical multi-select filters ─────────────────────────────
+
+test("categorical multi-select: All toggle, substring search, and chip summary", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/detection");
+
+  const filtersButton = page.getByRole("button", { name: "Filters" });
+  await expect(filtersButton).toBeVisible({ timeout: 10_000 });
+  await filtersButton.click();
+
+  // 1 ── Closed-list field (Threat Level): expand, flip the master
+  // "All" toggle on, and confirm the trigger summary switches from
+  // "All" (the shared "no filter" wording) to the mid-state "N
+  // selected" format. Saturating a closed list still reads as "All"
+  // because saturated = no filter for Threat Level.
+  const levelsTrigger = page.getByRole("button", { name: /Threat Level/ });
+  await expect(levelsTrigger).toBeVisible();
+  await expect(levelsTrigger).toHaveAttribute("aria-expanded", "false");
+  await levelsTrigger.click();
+  await expect(levelsTrigger).toHaveAttribute("aria-expanded", "true");
+
+  // Scope further interactions to the disclosure panel itself (the
+  // outer fieldset around the trigger also has `role=group` with the
+  // same accessible name, so use the stable panel id).
+  const levelsPanel = page.locator("#filter-levels-panel");
+  await expect(levelsPanel).toBeVisible();
+
+  // Click a single option (Low) — trigger summary becomes "1 selected".
+  await levelsPanel.getByLabel("Low").check();
+  await expect(levelsTrigger).toContainText("1 selected");
+
+  // Clicking "All" selects every remaining option → 3/3 checked →
+  // trigger reads "All" again (saturated = no filter for closed list).
+  await levelsPanel.getByLabel("All", { exact: true }).check();
+  await expect(levelsPanel.getByLabel("Low")).toBeChecked();
+  await expect(levelsPanel.getByLabel("Medium")).toBeChecked();
+  await expect(levelsPanel.getByLabel("High")).toBeChecked();
+  await expect(levelsTrigger).toContainText("All");
+
+  // Unchecking "All" clears everything → back to "All" (empty = no
+  // filter). Leave Threat Level cleared so the chip bar assertions
+  // below are not polluted.
+  await levelsPanel.getByLabel("All", { exact: true }).uncheck();
+  await expect(levelsPanel.getByLabel("Low")).not.toBeChecked();
+
+  // 2 ── Long list with substring search (Threat Country): searching
+  // by raw ISO code narrows the visible options.
+  const countriesTrigger = page.getByRole("button", {
+    name: /Threat Country/,
+  });
+  await countriesTrigger.click();
+  await expect(countriesTrigger).toHaveAttribute("aria-expanded", "true");
+
+  const countriesPanel = page.locator("#filter-countries-panel");
+  const countrySearch = countriesPanel.getByRole("searchbox", {
+    name: "Search options",
+  });
+  await countrySearch.fill("KR");
+  // Korea remains visible; a disjoint code does not. `Korea` appears
+  // in both KP and KR labels, so anchor on the KR-only "(KR)" suffix.
+  await expect(countriesPanel.getByText(/\(KR\)/)).toBeVisible();
+  await expect(countriesPanel.getByText(/\(US\)/)).toHaveCount(0);
+
+  // Searching `unknown` finds the REview sentinel `XX` via its
+  // localized label + search aliases (the fix for Round 4).
+  await countrySearch.fill("unknown");
+  await expect(countriesPanel.getByText(/\(XX\)/)).toBeVisible();
+
+  await countrySearch.fill("KR");
+  await countriesPanel.getByLabel(/\(KR\)/).check();
+  await expect(countriesTrigger).toContainText("1 selected");
+
+  // 3 ── Apply and verify the chip bar reflects the single selection
+  // as a per-value chip (1–3 selected → individual chip per value).
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Filters" }),
+  ).not.toBeVisible();
+
+  const chipBar = page.getByRole("toolbar", { name: "Filters" });
+  await expect(chipBar).toBeVisible();
+  // The chip for a single-value selection is the per-value label, not
+  // the "N selected" aggregate token.
+  await expect(chipBar.getByText(/\(KR\)/)).toBeVisible();
+});
+
 // ── Analytics strip collapsed-by-default ─────────────────────────
 
 test("analytics strip starts collapsed and toggles open", async ({
