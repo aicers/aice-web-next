@@ -542,9 +542,34 @@
     },
     "filters": {
       "open": "Filters",
-      "comingSoon": "Filters drawer is not available yet in this phase.",
-      "activeChips": "Active filters will appear here.",
-      "placeholder": "Filter drawer will open here."
+      "close": "Close filters",
+      "drawerTitle": "Filters",
+      "drawerDescription": "Narrow the detection results by period and time range. Apply commits the filter and runs the query.",
+      "periodLabel": "Period",
+      "periodOptions": {
+        "1h": "Last 1 hour",
+        "12h": "Last 12 hours",
+        "1d": "Last 1 day",
+        "1w": "Last 1 week",
+        "1m": "Last 1 month",
+        "3m": "Last 3 months",
+        "6m": "Last 6 months",
+        "1y": "Last 1 year",
+        "3y": "Last 3 years"
+      },
+      "timeRangeLabel": "Time period",
+      "startLabel": "Start",
+      "endLabel": "End",
+      "apply": "Apply",
+      "saveThisFilter": "Save this filter",
+      "saveThisFilterComingSoon": "Saving filters is wired up in a later phase.",
+      "invalidRange": "End must be later than start.",
+      "activeChipsEmpty": "No filter applied.",
+      "activeRange": "{start} – {end}",
+      "resultsRegion": "Detection results",
+      "resultsLoading": "Running query...",
+      "resultsCount": "{count} detection events match the current filter.",
+      "resultsError": "Could not load detection results."
     },
     "results": {
       "placeholder": "Detection results will appear here."

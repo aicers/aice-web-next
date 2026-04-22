@@ -4,6 +4,14 @@ export {
 } from "./errors";
 export { type Filter, toEventListFilterInput } from "./filter";
 export {
+  computePeriodRange,
+  DEFAULT_PERIOD_KEY,
+  matchesPeriodKey,
+  PERIOD_KEYS,
+  type PeriodKey,
+  type PeriodRange,
+} from "./period";
+export {
   listSensors,
   SENSOR_LIST_ENDPOINT_AVAILABLE,
   type Sensor,
