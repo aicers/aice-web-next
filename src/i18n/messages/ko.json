@@ -64,6 +64,7 @@
     "home": "홈",
     "dashboard": "대시보드",
     "event": "이벤트",
+    "events": "이벤트",
     "detection": "탐지",
     "triage": "분류",
     "report": "보고서",
@@ -569,7 +570,18 @@
       "resultsRegion": "탐지 결과",
       "resultsLoading": "쿼리 실행 중...",
       "resultsCount": "현재 필터에 일치하는 탐지 이벤트 {count}건.",
-      "resultsError": "탐지 결과를 불러오지 못했습니다."
+      "resultsError": "탐지 결과를 불러오지 못했습니다.",
+      "chips": {
+        "source": "출발지 IP",
+        "destination": "목적지 IP",
+        "kind": "종류",
+        "origPort": "출발지 포트",
+        "respPort": "목적지 포트",
+        "proto": "프로토콜",
+        "window": "기간",
+        "windowLastDay": "최근 24시간",
+        "windowLastWeek": "최근 7일"
+      }
     },
     "results": {
       "placeholder": "탐지 결과가 여기에 표시됩니다."
@@ -582,6 +594,212 @@
     },
     "quickPeek": {
       "placeholder": "간단 미리보기가 여기에 표시됩니다."
+    }
+  },
+  "events": {
+    "notFound": {
+      "invalidTokenTitle": "잘못된 이벤트 링크",
+      "invalidTokenBody": "이 조사 URL이 잘못되었거나 변조되었습니다. 탐지로 돌아가 목록에서 이벤트를 여세요.",
+      "notFoundTitle": "이벤트를 더 이상 사용할 수 없습니다",
+      "notFoundBody": "이 링크와 일치하는 이벤트를 찾을 수 없습니다. 보존 기간이 지났거나 주소 정보가 변경되었을 수 있습니다.",
+      "fetchErrorTitle": "이벤트를 불러올 수 없습니다",
+      "fetchErrorBody": "탐지 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      "back": "탐지로 돌아가기"
+    },
+    "header": {
+      "back": "탐지로 돌아가기",
+      "severity": "심각도",
+      "time": "시간",
+      "confidence": "신뢰도",
+      "multipleNotice": "이 링크와 일치하는 이벤트가 여러 개 있습니다. 하나만 표시합니다. 전체 목록을 확인하려면 결과 목록을 여세요."
+    },
+    "tabs": {
+      "overview": "개요",
+      "endpoints": "엔드포인트",
+      "protocol": "프로토콜",
+      "payload": "페이로드",
+      "context": "컨텍스트",
+      "related": "관련 이벤트"
+    },
+    "overview": {
+      "summary": "요약",
+      "time": "시간",
+      "kind": "종류",
+      "category": "분류",
+      "level": "수준",
+      "confidence": "신뢰도",
+      "triageScores": "트리아지 점수",
+      "noTriage": "트리아지 점수 없음",
+      "aimerTitle": "Aimer로 보내기",
+      "aimerBody": "이 이벤트를 Aimer에 보내 AI 분석을 요청합니다. aimer-web에 로그인하고 데이터 전송을 승인한 뒤 결과를 그곳에서 확인하게 됩니다.",
+      "aimerCta": "Aimer로 보내기 →",
+      "aimerToast": "곧 제공됩니다",
+      "pivotsTitle": "바로가기",
+      "pivotSameSource": "같은 출발지 IP · 최근 24시간",
+      "pivotSameDestination": "같은 목적지 IP · 최근 24시간",
+      "pivotSameKind": "같은 종류 · 최근 7일"
+    },
+    "endpoints": {
+      "source": "출발지",
+      "destination": "목적지",
+      "ip": "IP 주소",
+      "country": "국가",
+      "region": "지역",
+      "city": "도시",
+      "coordinates": "좌표",
+      "ports": "포트",
+      "company": "회사",
+      "companySourceCustomer": "고객 정보 기준",
+      "companySourceNetwork": "네트워크 정보 기준",
+      "companySourceIsp": "IP 보강 정보 기준",
+      "noCompany": "확인할 수 없음",
+      "loading": "엔드포인트 정보를 불러오는 중…"
+    },
+    "protocol": {
+      "noFields": "이 이벤트 종류에는 표시할 프로토콜 필드가 없습니다.",
+      "http": {
+        "request": "요청",
+        "response": "응답",
+        "auth": "인증",
+        "body": "본문",
+        "fields": {
+          "method": "메서드",
+          "host": "호스트",
+          "uri": "URI",
+          "referer": "리퍼러",
+          "version": "버전",
+          "userAgent": "사용자 에이전트",
+          "requestLen": "요청 길이",
+          "statusCode": "상태 코드",
+          "statusMsg": "상태 메시지",
+          "responseLen": "응답 길이",
+          "contentEncoding": "콘텐츠 인코딩",
+          "contentType": "콘텐츠 유형",
+          "cacheControl": "캐시 제어",
+          "username": "사용자 이름",
+          "password": "비밀번호",
+          "cookie": "쿠키",
+          "filenames": "파일명",
+          "mimeTypes": "MIME 유형",
+          "content": "내용",
+          "body": "본문"
+        }
+      },
+      "dns": {
+        "query": "질의",
+        "response": "응답",
+        "flags": "플래그",
+        "fields": {
+          "query": "질의",
+          "queryClass": "질의 클래스",
+          "queryType": "질의 유형",
+          "transactionId": "트랜잭션 ID",
+          "roundTripTime": "왕복 시간",
+          "answer": "응답",
+          "responseCode": "응답 코드",
+          "ttl": "TTL",
+          "authoritative": "권한 응답",
+          "truncated": "잘림",
+          "recursionDesired": "재귀 요청",
+          "recursionAvailable": "재귀 가능"
+        }
+      },
+      "scan": {
+        "targets": "스캔 대상",
+        "duration": "지속 시간",
+        "fields": {
+          "scannedPorts": "스캔 포트",
+          "startTime": "시작 시각",
+          "endTime": "종료 시각"
+        }
+      },
+      "ftp": {
+        "users": "사용자",
+        "duration": "지속 시간",
+        "fields": {
+          "userList": "사용자 목록",
+          "startTime": "시작 시각",
+          "endTime": "종료 시각"
+        }
+      },
+      "ftpPlainText": {
+        "auth": "인증",
+        "duration": "지속 시간",
+        "session": "세션",
+        "fields": {
+          "user": "사용자",
+          "password": "비밀번호",
+          "startTime": "시작 시각",
+          "duration": "지속 시간",
+          "commands": "명령"
+        }
+      },
+      "multiHostScan": {
+        "targets": "스캔 대상",
+        "duration": "지속 시간",
+        "fields": {
+          "respAddrs": "대상 IP 목록",
+          "respPort": "대상 포트",
+          "startTime": "시작 시각",
+          "endTime": "종료 시각"
+        }
+      },
+      "network": {
+        "title": "네트워크 위협",
+        "fields": {
+          "service": "서비스",
+          "attackKind": "공격 유형",
+          "content": "내용",
+          "startTime": "시작 시각",
+          "duration": "지속 시간"
+        }
+      },
+      "blocklist": {
+        "title": "연결",
+        "fields": {
+          "state": "상태",
+          "service": "서비스",
+          "startTime": "시작 시각",
+          "duration": "지속 시간",
+          "origBytes": "송신 바이트",
+          "respBytes": "수신 바이트",
+          "origPkts": "송신 패킷",
+          "respPkts": "수신 패킷"
+        }
+      }
+    },
+    "payload": {
+      "title": "캡처된 페이로드",
+      "description": "이 이벤트와 함께 수집된 애플리케이션 페이로드 바이트입니다. 탐지 서비스는 아직 원시 패킷 캡처를 제공하지 않으며, HTTP 이벤트의 경우 HTTP 본문 스트림입니다. 오프라인 분석을 위해 다운로드 버튼으로 바이트를 저장할 수 있습니다.",
+      "size": "크기",
+      "bytes": "{count} B",
+      "download": "페이로드 다운로드",
+      "downloadName": "event-payload.bin"
+    },
+    "context": {
+      "threatName": "위협 이름",
+      "threatCategory": "위협 분류",
+      "threatLevel": "위협 수준",
+      "explanation": "설명",
+      "mitre": "MITRE ATT&CK",
+      "tactic": "전술",
+      "technique": "기법",
+      "subTechnique": "하위 기법",
+      "none": "—"
+    },
+    "related": {
+      "sameSource": "같은 출발지 IP",
+      "sameDestination": "같은 목적지 IP",
+      "sameKind": "같은 종류",
+      "sameSession": "같은 세션 / 플로우",
+      "lastDay": "최근 24시간",
+      "lastWeek": "최근 7일",
+      "openInSearch": "검색에서 열기",
+      "loading": "집계 중…",
+      "count": "건수",
+      "lastSeen": "마지막 발생",
+      "none": "기간 내 일치 없음",
+      "note": "바로가기는 필터 기반 조회만 사용합니다. 외부 AI 분석은 가져오지 않습니다."
     }
   },
   "changePassword": {

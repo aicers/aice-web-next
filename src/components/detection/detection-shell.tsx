@@ -4,9 +4,11 @@ import { Bookmark, ChevronRight, SlidersHorizontal, Star } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { startTransition, useCallback, useRef, useState } from "react";
 import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Filter } from "@/lib/detection/filter";
 import type { PeriodKey } from "@/lib/detection/period";
+import type { PivotChip } from "@/lib/detection/url-filters";
 import { cn } from "@/lib/utils";
 import {
   FilterDrawer,
@@ -42,6 +44,7 @@ interface DetectionShellProps {
   initialFilter: Filter;
   initialPeriod: PeriodKey | null;
   initialResult: DetectionShellInitialResult;
+  initialChips?: PivotChip[];
 }
 
 export function DetectionShell({
@@ -50,6 +53,7 @@ export function DetectionShell({
   initialFilter,
   initialPeriod,
   initialResult,
+  initialChips = [],
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -177,9 +181,31 @@ export function DetectionShell({
           <div
             role="toolbar"
             aria-label={labels.filtersOpen}
-            className="text-muted-foreground flex min-h-8 flex-1 items-center rounded-md border border-dashed border-[var(--sidebar-border)] px-3 text-xs"
+            className={cn(
+              "flex min-h-8 flex-1 items-center gap-2 rounded-md border border-dashed border-[var(--sidebar-border)] px-3",
+              initialChips.length === 0
+                ? "text-muted-foreground text-xs"
+                : "py-1",
+            )}
           >
-            {activeChipText}
+            {initialChips.length === 0 ? (
+              activeChipText
+            ) : (
+              <ul className="flex flex-wrap items-center gap-1.5">
+                {initialChips.map((chip) => (
+                  <li key={chip.id}>
+                    <Badge variant="secondary" className="font-normal">
+                      <span className="text-muted-foreground mr-1 text-xs">
+                        {chip.label}
+                      </span>
+                      <span className="text-foreground text-xs font-medium">
+                        {chip.value}
+                      </span>
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 

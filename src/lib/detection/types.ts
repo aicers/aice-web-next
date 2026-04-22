@@ -49,10 +49,12 @@ import type {
  */
 export const CURATED_EVENT_TYPENAMES = [
   "BlocklistConn",
+  "BlocklistDns",
   "DnsCovertChannel",
   "DomainGenerationAlgorithm",
   "ExternalDdos",
   "FtpBruteForce",
+  "FtpPlainText",
   "HttpThreat",
   "LdapBruteForce",
   "MultiHostPortScan",
@@ -107,6 +109,23 @@ export interface EventConnection
 
 export interface EventListResult {
   eventList: EventConnection;
+}
+
+export interface EventDetailResult {
+  eventList: EventConnection;
+}
+
+/** Result shape from `ipLocation(address: IpAddress!): IpLocation`. */
+export interface IpLocationResult {
+  ipLocation: {
+    latitude: number | null;
+    longitude: number | null;
+    country: string | null;
+    region: string | null;
+    city: string | null;
+    isp: string | null;
+    domain: string | null;
+  } | null;
 }
 
 export interface EventCountsByCategoryResult {

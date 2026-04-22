@@ -1,0 +1,267 @@
+# Event Investigation
+
+The Event Investigation page is the destination for deep forensic
+analysis of a single detection event. The page is addressable by
+URL so an investigator can share or bookmark a link to a specific
+finding.
+
+The page is reached from the Quick peek inspector's **Open full
+investigation** action on the Detection page. Quick peek itself
+lands in Phase Detection-18; until that phase ships, the page is
+still reachable by direct URL (shared links, bookmarks, sibling
+menu pivots). The composite-locator codec the Quick peek action
+calls is already exported from `src/lib/events/event-locator.ts`,
+so wiring the inspector is a consumer-side change only.
+
+Viewing the page requires the `detection:read` permission — the same
+permission that gates the Detection page. Accounts without it are
+redirected away from the Investigation URL even if they obtain a
+valid event link.
+
+![Event Investigation page — wireframe](../assets/event-investigation-en.svg)
+
+The figure above is an SVG wireframe stand-in. Authoring a
+representative PNG capture requires a running REview environment
+with at least one event matching the tight locator filter, which
+the development worktree this branch was written in does not have
+access to. The wireframe diagram is shipped as the permitted
+alternative artifact under `docs/AUTHORING.md` §"Screenshot
+exception for infrastructure-gated features"; replace it with a
+PNG capture (`event-investigation-en.png`) when staging becomes
+available.
+
+## URL shape
+
+The page is served at `/events/<eventToken>`. The route is
+menu-neutral (not nested under `/detection/`) so that sibling
+menus such as Triage can link to the same page without a
+Detection prefix.
+
+`eventToken` is an opaque, URL-safe string that encodes the
+event's composite locator — sensor, time, source and responder
+addresses, ports, protocol, kind and level. The locator is
+**best-effort**: the link loads the intended event for as long as
+the event exists in the detection store and its composite tuple
+remains unique.
+
+## Header
+
+The page header shows:
+
+- The event kind's friendly name and an endpoint summary
+  (for example `HTTP Threat · 10.0.0.5 → 203.0.113.45`).
+- A severity-level badge.
+- The event time and confidence.
+- A back link. By default it returns the user to `/detection`.
+  When the page is opened from a list or inspector, the opener
+  appends `?returnTo=<relative path>` to carry the user's prior
+  tab and filter state back on return. Off-site `returnTo`
+  targets are rejected — the back link only follows
+  same-origin relative paths.
+
+When the locator matches more than one event — rare at
+nanosecond precision, but possible — a non-blocking notice
+appears below the header and the first matching event is
+rendered:
+
+> Multiple events match this link; showing one. Open the full
+> result list for the complete set.
+
+## Error states
+
+### Invalid event link
+
+When the token is malformed or has been tampered with, the page
+renders an **Invalid event link** state with a back link to
+Detection. No network request is made to the detection service.
+
+### Event no longer available
+
+When the locator resolves successfully but the detection service
+returns no matching event, the page renders an **Event no longer
+available** state. This happens when the event has aged out of
+retention, when the sensor has been renamed out of scope, or when
+time precision was lost in the round-trip.
+
+### Could not load event
+
+When the detection service is unreachable or returns an error,
+the page renders a **Could not load event** state with guidance
+to retry.
+
+## Tabs
+
+The investigation view is organized into tabs instead of one long
+scroll. Tabs that would carry no useful content for the event are
+hidden rather than painting an empty placeholder:
+
+- The **Protocol** tab is hidden for event subtypes that the
+  investigation page does not yet render kind-specific fields for.
+  Supported subtypes today are HTTP Threat, DNS Covert Channel,
+  Blocklist / DNS, Port Scan, Multi-Host Port Scan, FTP Brute Force,
+  FTP Plain Text, Network Threat, and Blocklist / Connection.
+- The **Payload** tab is hidden for events that carry no captured
+  byte stream (today only HTTP Threat events surface payload bytes,
+  via the HTTP body field).
+
+The other tabs — Overview, Endpoints, Context, and Related Events —
+are always available.
+
+The issue originally scoped this section as a **Packets** tab with
+a raw packet-capture hex dump. In v1 the detection service does
+not expose a raw packet-capture field on any event subtype — only
+HTTP Threat carries captured bytes, and what it exposes is the
+HTTP body stream rather than link-layer packets. The tab is
+therefore labelled **Payload** in v1 so investigators don't read
+packet semantics into application bytes. When the detection
+service adds a true packet-capture field, the tab will be re-
+labelled and extended without changing the URL or layout.
+
+The event itself is fetched once when the page loads — a single
+`eventList` lookup whose selection set carries every subtype
+fragment the page knows how to render. That call powers Overview,
+Protocol, Payload, and Context without any additional network
+traffic, and it also decides whether the Protocol and Payload
+tabs are visible at all. The two tabs that make extra detection-
+service calls — Endpoints (`ipLocation` enrichment) and Related
+Events (per-pivot count + last-seen snippets) — defer their work
+until a user first opens the tab. Once a lazy tab has been
+activated its data is kept in memory for the life of the page:
+switching away and back does not re-issue the lookup.
+
+### Overview
+
+Summary card with severity, time, kind, category, confidence
+and triage scores (each score with its policy ID).
+
+The tab also includes a **Send to Aimer** banner. In this
+release the button is a placeholder: clicking it shows a
+**Coming soon** notice rather than performing a transfer. The
+full Aimer bridge — signed envelope packaging, context token
+exchange, and POST to the `aimer-web` bridge endpoint — is
+tracked as a separate future effort.
+
+Below the Aimer banner, **Pivot shortcuts** lists links that
+open the Detection page pre-filtered to related activity:
+same source IP in the last 24 hours, same destination IP in
+the last 24 hours, and same kind in the last 7 days. The
+filter is encoded into Detection's URL as search params
+(`source`, `destination`, `kind`, `window`, `origPort`,
+`respPort`, `proto`); the Detection page displays the
+resulting filter as chips in its active-filter toolbar.
+
+### Endpoints
+
+Source and Destination cards with the IP, country, region and
+city, ports, coordinates (when available), and a derived
+**Company** value. The Company row falls through three
+sources in priority order, and the source is annotated next to
+the value:
+
+1. The event's customer (`origCustomer` / `respCustomer`).
+2. The event's network (`origNetwork` / `respNetwork`).
+3. The `ipLocation` enrichment's ISP, fetched lazily from the
+    detection service when this tab activates.
+
+For event subtypes that carry array endpoints (for example
+scanned-port lists), all entries are shown — the investigation
+view is deliberately verbose compared to the list view.
+
+For subtypes with an array of responders (notably Multi-Host
+Port Scan), the destination column renders one card per
+responder, each with its own country, customer, and
+`ipLocation` enrichment.
+
+### Protocol
+
+All kind-specific fields for the event's subtype, grouped into
+logical subsections rather than a flat grid. Examples:
+
+- **HTTP Threat** — Request (method, host, URI, referer,
+    version, User-Agent, request length), Response (status
+    code, status message, response length, content
+    encoding/type, cache control), Auth (username, masked
+    password, cookie), Body (filenames, MIME types, event
+    content, and a hex preview of the captured body bytes).
+    Passwords are rendered as a fixed-length mask — the
+    full plaintext is never painted on this page.
+- **DNS Covert Channel** — Query (query name, class, type,
+    transaction ID, round-trip time), Response (answer,
+    response code, TTL), Flags (authoritative, truncated,
+    recursion desired / available).
+- **Port Scan** — Scanned ports, detection start and end time.
+- **Multi-Host Port Scan** — Destination IPs, destination port,
+    detection start and end time.
+- **FTP Brute Force** — User list, detection start and end
+    time.
+- **FTP Plain Text** — User, masked password, session start and
+    duration, captured commands (first ten).
+- **Blocklist / DNS** — Query, response, and flags sections
+    (same shape as DNS Covert Channel).
+- **Network Threat** — Service, attack kind, content, start and
+    duration.
+- **Blocklist / Connection** — Connection state, service, start
+    and duration, originator / responder byte and packet counts.
+
+Empty fields are skipped rather than rendered as blank rows.
+
+### Payload
+
+When the event carries captured bytes, the Payload tab renders
+a classic hex dump of the payload with offset, hex, and ASCII
+columns, plus a **Download payload** action that saves the
+bytes as a `.bin` file for offline analysis (for example a
+Wireshark or `xxd` workflow). The tab is hidden for events
+without captured bytes.
+
+### Context
+
+Threat metadata for the event: threat name (from the
+subtype's `attackKind` field where present), threat category
+(REview's `ThreatCategory`, treated as a MITRE tactic),
+threat level, and — when the event matches the built-in
+MITRE catalogue — a structured **MITRE ATT&CK** card with
+the resolved tactic, technique, and (where applicable)
+sub-technique. Each identifier links to the canonical entry
+on `attack.mitre.org`. A descriptive **Explanation** card
+follows when the catalogue has guidance for the event's
+class.
+
+The catalogue is keyed first by `attackKind` (per-technique
+entries) and falls back to the event's `__typename`
+(explanation only) and `category` (tactic only). It lives in
+`src/lib/events/mitre-catalogue.ts` and is the extension
+point both for adding new techniques and for merging
+REview-sourced strings later behind the same lookup.
+
+### Related Events
+
+Filter-based pivots rendered as link rows. Each row opens a
+new Detection page pre-filtered to the relevant activity:
+
+- Same Source IP — last 24 hours.
+- Same Destination IP — last 24 hours.
+- Same kind — last 7 days.
+- Same session / flow — same originator and responder,
+    last 24 hours. In v1 the detection service's list filter
+    does not accept ports or protocol, so the session pivot
+    narrows on the address pair only. The Count / Last seen
+    snippet uses the same 2-tuple, so it matches what the
+    user sees after clicking through.
+
+When the tab activates, the page issues one `eventList`
+lookup per pivot to populate a small **Count / Last seen**
+snippet next to each row. Counts come from REview's
+`totalCount`. Because the detection service's `eventList`
+documents no sort order, the timestamp is computed
+client-side as the max `time` across a bounded sample of the
+window — honest best-effort: the snippet never reports a
+value that is not an actual event in the window, but when
+the window is large enough that the sample misses the true
+latest event the timestamp may trail it. A failing lookup
+falls back to "No matches in window" and does not blank the
+rest of the tab.
+
+Related pivots use only filter-based lookups against the
+detection service. No external AI-inferred relationships are
+fetched here.

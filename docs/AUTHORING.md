@@ -31,6 +31,32 @@ familiar with the interface.
   (e.g., `![dialog](../assets/account-create.png)`).
 - Update screenshots whenever the UI changes.
 
+### Screenshot exception for infrastructure-gated features
+
+A narrow exception applies when a feature's UI cannot be rendered
+in the authoring worktree because it depends on external
+infrastructure the worktree has no access to (for example, a
+back-end service that is not open-sourced yet, or a live event
+store with real data). In that case the feature page may ship
+an SVG wireframe stand-in instead of a PNG capture, provided
+that:
+
+- The wireframe is placed in `docs/assets/` alongside the
+  would-be PNG, using the matching filename with an `.svg`
+  suffix (e.g., `event-investigation-en.svg`).
+- EN and KO pages each carry their own localized wireframe so
+  language parity is preserved.
+- The page body explicitly tags the figure as a wireframe
+  stand-in and points to the follow-up that will replace it
+  with a real capture once staging is available.
+- The PR description's "Not addressed" or equivalent section
+  records the screenshot debt so the follow-up is not lost.
+
+This exception is intended for phase PRs that land before
+their depended-on infrastructure. It is not a general waiver:
+once staging is available, the wireframe must be replaced with
+an actual screenshot as a follow-up.
+
 ### Language parity
 
 - Every page in `docs/en/` must have a corresponding page in
