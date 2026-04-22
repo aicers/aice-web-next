@@ -542,9 +542,34 @@
     },
     "filters": {
       "open": "필터",
-      "comingSoon": "필터 드로어는 이번 단계에서는 제공되지 않습니다.",
-      "activeChips": "활성 필터가 여기에 표시됩니다.",
-      "placeholder": "필터 드로어가 여기에서 열립니다."
+      "close": "필터 닫기",
+      "drawerTitle": "필터",
+      "drawerDescription": "기간과 시간 범위로 탐지 결과를 좁힙니다. 적용을 누르면 필터가 커밋되고 쿼리가 실행됩니다.",
+      "periodLabel": "기간",
+      "periodOptions": {
+        "1h": "최근 1시간",
+        "12h": "최근 12시간",
+        "1d": "최근 1일",
+        "1w": "최근 1주",
+        "1m": "최근 1개월",
+        "3m": "최근 3개월",
+        "6m": "최근 6개월",
+        "1y": "최근 1년",
+        "3y": "최근 3년"
+      },
+      "timeRangeLabel": "시간 범위",
+      "startLabel": "시작",
+      "endLabel": "종료",
+      "apply": "적용",
+      "saveThisFilter": "필터 저장",
+      "saveThisFilterComingSoon": "필터 저장 기능은 이후 단계에서 연결됩니다.",
+      "invalidRange": "종료 시각은 시작 시각보다 뒤여야 합니다.",
+      "activeChipsEmpty": "적용된 필터가 없습니다.",
+      "activeRange": "{start} – {end}",
+      "resultsRegion": "탐지 결과",
+      "resultsLoading": "쿼리 실행 중...",
+      "resultsCount": "현재 필터에 일치하는 탐지 이벤트 {count}건.",
+      "resultsError": "탐지 결과를 불러오지 못했습니다."
     },
     "results": {
       "placeholder": "탐지 결과가 여기에 표시됩니다."

@@ -77,11 +77,8 @@ test("detection page renders shell for admin worker", async ({
   // Filters affordance and region placeholders confirm the shell mounted.
   const filtersButton = page.getByRole("button", { name: "Filters" });
   await expect(filtersButton).toBeVisible({ timeout: 10_000 });
-  // The drawer lands in a later phase; the placeholder button is disabled.
-  await expect(filtersButton).toBeDisabled();
-  await expect(
-    page.getByText("Detection results will appear here."),
-  ).toBeVisible();
+  await expect(filtersButton).toBeEnabled();
+  await expect(filtersButton).toHaveAttribute("aria-expanded", "false");
 
   // Rail sections expose accessible names so the collapsed icon-only
   // layout still announces what each icon represents.
@@ -101,6 +98,127 @@ test("detection page renders shell for admin worker", async ({
   await expect(
     page.getByRole("region", { name: "Saved Filters" }),
   ).toBeAttached();
+});
+
+// ── Filter drawer ───────────────────────────────────────────────
+
+test("filter drawer opens from the Filters button and exposes chips + inputs", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/detection");
+
+  const filtersButton = page.getByRole("button", { name: "Filters" });
+  await expect(filtersButton).toBeVisible({ timeout: 10_000 });
+  await filtersButton.click();
+
+  // Drawer heading + period chip + time range fields all render.
+  await expect(page.getByRole("heading", { name: "Filters" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Last 1 hour" })).toBeVisible();
+  await expect(page.getByLabel("Start", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("End", { exact: true })).toBeVisible();
+  const applyButton = page.getByRole("button", { name: "Apply", exact: true });
+  await expect(applyButton).toBeEnabled();
+
+  // Save this filter is stubbed in this phase.
+  const saveButton = page.getByRole("button", { name: "Save this filter" });
+  await expect(saveButton).toBeDisabled();
+
+  // Picking a different chip toggles its pressed state.
+  const weekChip = page.getByRole("button", { name: "Last 1 week" });
+  await weekChip.click();
+  await expect(weekChip).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("button", { name: "Last 1 hour" }),
+  ).toHaveAttribute("aria-pressed", "false");
+});
+
+test("closing the drawer without Apply preserves in-flight edits", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/detection");
+
+  const filtersButton = page.getByRole("button", { name: "Filters" });
+  await expect(filtersButton).toBeVisible({ timeout: 10_000 });
+
+  // First open: default chip is "Last 1 hour".
+  await filtersButton.click();
+  await expect(
+    page.getByRole("button", { name: "Last 1 hour" }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  // Edit the draft: pick a different chip, then dismiss via Escape.
+  // Dismissal must NOT commit the filter — the active chip bar on the
+  // page should still say "Last 1 hour".
+  await page.getByRole("button", { name: "Last 1 week" }).click();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("heading", { name: "Filters" }),
+  ).not.toBeVisible();
+  await expect(filtersButton).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByText("Last 1 hour")).toBeVisible();
+
+  // Reopening reveals the edited-but-uncommitted draft — "Last 1 week"
+  // is still pressed, proving the draft persisted across close/reopen.
+  await filtersButton.click();
+  await expect(
+    page.getByRole("button", { name: "Last 1 week" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("button", { name: "Last 1 hour" }),
+  ).toHaveAttribute("aria-pressed", "false");
+});
+
+test("editing the time range manually clears the Period chip selection", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/detection");
+
+  const filtersButton = page.getByRole("button", { name: "Filters" });
+  await expect(filtersButton).toBeVisible({ timeout: 10_000 });
+  await filtersButton.click();
+
+  // Default chip is "Last 1 hour" on first open.
+  const hourChip = page.getByRole("button", { name: "Last 1 hour" });
+  await expect(hourChip).toHaveAttribute("aria-pressed", "true");
+
+  // Typing an explicit end time clears the chip — an edited range is
+  // no longer a quick-select window.
+  await page.getByLabel("End", { exact: true }).fill("2026-04-22T13:00");
+  await expect(hourChip).toHaveAttribute("aria-pressed", "false");
+});
+
+test("Apply with an invalid range keeps the drawer open and shows validation", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/detection");
+
+  const filtersButton = page.getByRole("button", { name: "Filters" });
+  await expect(filtersButton).toBeVisible({ timeout: 10_000 });
+  await filtersButton.click();
+
+  // Force end <= start: set end to the same timestamp as start.
+  await page.getByLabel("Start", { exact: true }).fill("2026-04-22T12:00");
+  await page.getByLabel("End", { exact: true }).fill("2026-04-22T12:00");
+
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+
+  // Drawer stays open, error is announced via role="alert".
+  await expect(page.getByRole("alert")).toHaveText(
+    "End must be later than start.",
+  );
+  await expect(page.getByRole("heading", { name: "Filters" })).toBeVisible();
 });
 
 // ── Analytics strip collapsed-by-default ─────────────────────────
