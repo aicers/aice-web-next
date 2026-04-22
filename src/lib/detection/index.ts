@@ -1,4 +1,17 @@
 export {
+  buildEndpointChips,
+  createEndpointEntryId,
+  ENDPOINT_CHIP_AGGREGATE_THRESHOLD,
+  type EndpointChip,
+  type EndpointChipLabels,
+  type EndpointEntry,
+  type EndpointEntryDirection,
+  type EndpointEntryKind,
+  endpointsToEndpointInputs,
+  type ParsedEndpoint,
+  parseEndpointInput,
+} from "./endpoint-filter";
+export {
   DetectionNotImplementedError,
   DetectionUnauthorizedError,
 } from "./errors";

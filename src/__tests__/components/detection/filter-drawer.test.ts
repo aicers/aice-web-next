@@ -75,6 +75,7 @@ describe("filter-drawer helpers", () => {
       endLocal: isoToLocalInput(chipEndIso),
       startIso: chipStartIso,
       endIso: chipEndIso,
+      endpoints: [],
     };
 
     const newStartLocal = isoToLocalInput("2026-04-22T11:00:00.000Z");
@@ -98,6 +99,7 @@ describe("filter-drawer helpers", () => {
       endLocal: isoToLocalInput(chipEndIso),
       startIso: chipStartIso,
       endIso: chipEndIso,
+      endpoints: [],
     };
 
     const newEndLocal = isoToLocalInput("2026-04-22T13:00:00.000Z");

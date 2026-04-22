@@ -81,6 +81,58 @@ in-flight edits — they reappear the next time you open the drawer.
 The drawer rejects a range whose end is not strictly later than its
 start, surfacing an inline validation message.
 
+### Network / IP
+
+The **Network / IP** section carries a summary line and a funnel
+affordance. Activating the funnel opens the advanced Network/IP
+filter panel alongside the drawer so the drawer stays in view.
+
+![Network/IP advanced filter](../assets/detection-endpoint-filter-en.png)
+
+The panel has two sections:
+
+- **Saved Network/IPs** renders in v1 but is not functional. It
+  shows `No saved network/IPs` and a help line explaining that
+  saved network/IP groups are not yet available in this version.
+- **Custom Network/IPs** is fully functional. Each row represents
+  a single entry with its original text, a selection checkbox, a
+  Direction selector (Both / Source / Destination) and a remove
+  control.
+
+A single text input above the list accepts three formats:
+
+- Single IP — `10.84.1.7`.
+- IP range — `10.1.1.1 - 10.1.1.20`.
+- CIDR network — `192.168.10.0/24`.
+
+Press `Enter` or the `+` button to commit the entry. A smart
+parser routes each entry into the correct bucket — single IPs
+become hosts, ranges become ranges, CIDRs become networks. An
+invalid input surfaces an inline error listing the three valid
+examples.
+
+Above the list, a master checkbox selects or clears every entry
+and a `Set directions` control applies a direction to all selected
+rows at once. Deselected rows are visually de-emphasized but
+retain their state; they are simply omitted when the filter is
+submitted.
+
+Close the panel with the close affordance or `Escape`. The
+entries you've added persist until you close the filter drawer
+without applying.
+
+#### Active filter chips
+
+Each committed Network/IP entry surfaces a chip in the active
+filter bar so the operator can see what's scoped:
+
+- No entries — no chip.
+- 1–3 entries — one chip per entry, each prefixed with `Src`,
+  `Dst`, or no prefix for Both (e.g. `Src 10.0.0.5`).
+- More than 3 entries — a single aggregate chip
+  (`Network: N rules`) that, when activated, re-opens the advanced
+  panel with the Custom section expanded.
+
 ### Save this filter
 
 The **Save this filter** button is present alongside Apply but
