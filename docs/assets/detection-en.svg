@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 820" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Detection page — wireframe</title>
+  <desc id="desc">Line-drawing wireframe of the Detection page: left rail with Recommended / Saved sections, top bar with Filters affordance and active filter chip bar, two-line result list rows with severity badge, time, kind, confidence, triage summary, source/destination endpoints, sensor, and an Open-investigation affordance, header showing Detected Events range / total / Updated / Refresh / Download CSV, and a collapsed Analytics strip below.</desc>
+
+  <style>
+    .page { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .panel { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 8; ry: 8; }
+    .panel-dashed { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; stroke-dasharray: 4 3; rx: 6; ry: 6; }
+    .chip { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 12; ry: 12; }
+    .chip-x { fill: #71717a; }
+    .btn { fill: #ffffff; stroke: #3f3f46; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-disabled { fill: #fafafa; stroke: #a1a1aa; stroke-width: 1; rx: 4; ry: 4; }
+    .badge-high { fill: #fef2f2; stroke: #dc2626; stroke-width: 1; rx: 10; ry: 10; }
+    .badge-medium { fill: #fffbeb; stroke: #d97706; stroke-width: 1; rx: 10; ry: 10; }
+    .badge-low { fill: #f4f4f5; stroke: #71717a; stroke-width: 1; rx: 10; ry: 10; }
+    .row { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .row-alt { fill: #fafafa; stroke: #e5e7eb; stroke-width: 1; }
+    .h1 { font-size: 18px; font-weight: 600; fill: #18181b; }
+    .h2 { font-size: 13px; font-weight: 600; fill: #18181b; }
+    .lbl { font-size: 12px; fill: #52525b; }
+    .val { font-size: 12px; fill: #18181b; }
+    .mono { font-size: 11px; fill: #18181b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .muted { font-size: 11px; fill: #71717a; }
+    .pill { font-size: 10px; fill: #18181b; }
+    .level-high { font-size: 10px; font-weight: 700; fill: #dc2626; }
+    .level-medium { font-size: 10px; font-weight: 700; fill: #d97706; }
+    .level-low { font-size: 10px; font-weight: 700; fill: #52525b; }
+    .arrow { font-size: 12px; fill: #71717a; }
+  </style>
+
+  <rect class="page" x="0" y="0" width="1280" height="820"/>
+
+  <!-- Sidebar / left rail -->
+  <rect x="0" y="0" width="200" height="820" fill="#fafafa" stroke="#e5e7eb"/>
+  <text x="20" y="36" class="h2">Recommended</text>
+  <rect x="20" y="48" width="160" height="32" class="panel-dashed"/>
+  <text x="100" y="68" class="muted" text-anchor="middle">No filters yet.</text>
+
+  <text x="20" y="112" class="h2">Saved Filters</text>
+  <rect x="20" y="124" width="160" height="32" class="panel-dashed"/>
+  <text x="100" y="144" class="muted" text-anchor="middle">No filters yet.</text>
+
+  <!-- Top bar -->
+  <rect x="220" y="20" width="100" height="32" class="btn"/>
+  <text x="270" y="40" class="val" text-anchor="middle">⚙ Filters</text>
+
+  <!-- Active chip bar -->
+  <rect x="332" y="20" width="928" height="32" class="panel-dashed"/>
+  <!-- chip: Period -->
+  <rect x="344" y="26" width="118" height="20" class="chip"/>
+  <text x="354" y="40" class="muted">Period:</text>
+  <text x="396" y="40" class="pill">Last 1 hour</text>
+  <text x="450" y="40" class="chip-x" font-size="12">×</text>
+  <!-- chip: Source -->
+  <rect x="470" y="26" width="138" height="20" class="chip"/>
+  <text x="480" y="40" class="muted">Source:</text>
+  <text x="522" y="40" class="pill">10.0.0.5</text>
+  <text x="596" y="40" class="chip-x" font-size="12">×</text>
+  <!-- chip: Hostnames aggregate -->
+  <rect x="616" y="26" width="160" height="20" class="chip"/>
+  <text x="626" y="40" class="muted">Hostnames:</text>
+  <text x="690" y="40" class="pill">7 selected</text>
+  <text x="764" y="40" class="chip-x" font-size="12">×</text>
+  <!-- chip: Severity HIGH -->
+  <rect x="784" y="26" width="116" height="20" class="chip"/>
+  <text x="794" y="40" class="muted">Severity:</text>
+  <text x="846" y="40" class="pill">HIGH</text>
+  <text x="888" y="40" class="chip-x" font-size="12">×</text>
+
+  <!-- Result list panel (hero) -->
+  <rect x="220" y="68" width="1040" height="596" class="panel"/>
+
+  <!-- List header -->
+  <text x="240" y="92" class="h1">Detected Events 1-50 / 1,284</text>
+  <text x="980" y="92" class="muted">Updated just now</text>
+  <rect x="1078" y="76" width="80" height="28" class="btn"/>
+  <text x="1118" y="94" class="val" text-anchor="middle">↻ Refresh</text>
+  <rect x="1166" y="76" width="86" height="28" class="btn-disabled"/>
+  <text x="1208" y="94" class="muted" text-anchor="middle">⤓ CSV</text>
+  <line x1="220" y1="116" x2="1260" y2="116" stroke="#e5e7eb"/>
+
+  <!-- Row template (repeat) -->
+  <!-- Row 1 -->
+  <rect x="220" y="116" width="1040" height="68" class="row"/>
+  <rect x="240" y="128" width="50" height="18" class="badge-high"/>
+  <text x="265" y="141" class="level-high" text-anchor="middle">HIGH</text>
+  <text x="304" y="141" class="mono">2026-04-22 12:45</text>
+  <text x="416" y="141" class="val">HTTP Threat</text>
+  <text x="500" y="141" class="muted">Attack: sql-injection</text>
+  <text x="640" y="141" class="muted">Initial Access</text>
+  <text x="1080" y="141" class="mono" text-anchor="end">0.92</text>
+  <text x="1170" y="141" class="muted" text-anchor="end">2 policies · 0.87 max</text>
+  <text x="1240" y="141" class="muted" text-anchor="end">⧉</text>
+  <text x="240" y="170" class="mono">10.0.0.5:54321 (US)</text>
+  <text x="394" y="170" class="arrow">→</text>
+  <text x="408" y="170" class="mono">203.0.113.45:80 (DE)</text>
+  <text x="1240" y="170" class="muted" text-anchor="end">sensor-edge-01</text>
+
+  <!-- Row 2 -->
+  <rect x="220" y="184" width="1040" height="68" class="row-alt"/>
+  <rect x="240" y="196" width="68" height="18" class="badge-medium"/>
+  <text x="274" y="209" class="level-medium" text-anchor="middle">MEDIUM</text>
+  <text x="324" y="209" class="mono">2026-04-22 12:43</text>
+  <text x="436" y="209" class="val">Multi-Host Port Scan</text>
+  <text x="608" y="209" class="muted">Discovery</text>
+  <text x="1080" y="209" class="mono" text-anchor="end">0.74</text>
+  <text x="1240" y="209" class="muted" text-anchor="end">⧉</text>
+  <text x="240" y="238" class="mono">192.168.1.20 (US)</text>
+  <text x="384" y="238" class="arrow">→</text>
+  <text x="398" y="238" class="mono">203.0.113.1:22 (DE) +2 more</text>
+  <text x="1240" y="238" class="muted" text-anchor="end">sensor-net-02</text>
+
+  <!-- Row 3 -->
+  <rect x="220" y="252" width="1040" height="68" class="row"/>
+  <rect x="240" y="264" width="50" height="18" class="badge-low"/>
+  <text x="265" y="277" class="level-low" text-anchor="middle">LOW</text>
+  <text x="304" y="277" class="mono">2026-04-22 12:41</text>
+  <text x="416" y="277" class="val">DNS Covert Channel</text>
+  <text x="572" y="277" class="muted">Command &amp; Control</text>
+  <text x="1080" y="277" class="mono" text-anchor="end">0.41</text>
+  <text x="1240" y="277" class="muted" text-anchor="end">⧉</text>
+  <text x="240" y="306" class="mono">10.0.0.55:53 (US)</text>
+  <text x="376" y="306" class="arrow">→</text>
+  <text x="390" y="306" class="mono">198.51.100.20:53 (RU)</text>
+  <text x="1240" y="306" class="muted" text-anchor="end">sensor-dns-01</text>
+
+  <!-- Row 4 -->
+  <rect x="220" y="320" width="1040" height="68" class="row-alt"/>
+  <rect x="240" y="332" width="50" height="18" class="badge-high"/>
+  <text x="265" y="345" class="level-high" text-anchor="middle">HIGH</text>
+  <text x="304" y="345" class="mono">2026-04-22 12:38</text>
+  <text x="416" y="345" class="val">Windows Threat</text>
+  <text x="514" y="345" class="muted">Attack: credential-dumping</text>
+  <text x="708" y="345" class="muted">Credential Access</text>
+  <text x="1080" y="345" class="mono" text-anchor="end">0.88</text>
+  <text x="1170" y="345" class="muted" text-anchor="end">1 policy · 0.88 max</text>
+  <text x="1240" y="345" class="muted" text-anchor="end">⧉</text>
+  <text x="240" y="374" class="mono">—</text>
+  <text x="280" y="374" class="arrow">→</text>
+  <text x="296" y="374" class="mono">—</text>
+  <text x="1240" y="374" class="muted" text-anchor="end">sensor-host-04</text>
+
+  <!-- Spacer rows -->
+  <rect x="220" y="388" width="1040" height="68" class="row"/>
+  <rect x="220" y="456" width="1040" height="68" class="row-alt"/>
+  <rect x="220" y="524" width="1040" height="68" class="row"/>
+  <text x="740" y="640" class="muted" text-anchor="middle">… 1,278 more rows scroll within the panel …</text>
+
+  <!-- Analytics strip (collapsed) -->
+  <rect x="220" y="684" width="1040" height="40" class="panel"/>
+  <text x="244" y="708" class="h2">▸ Analytics</text>
+  <text x="324" y="708" class="muted">Collapsed by default — expand to view aggregates.</text>
+</svg>

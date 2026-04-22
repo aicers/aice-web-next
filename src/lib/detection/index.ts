@@ -34,6 +34,15 @@ export {
   type SearchEventsArgs,
   searchEvents,
 } from "./server-actions";
+export {
+  type ChipFieldId,
+  type ChipSpec,
+  MAX_INDIVIDUAL_VALUES,
+  removeChipFromFilter,
+  type SummarizeFilterContext,
+  type SummarizeFilterLabels,
+  summarizeFilter,
+} from "./summarize-filter";
 export type {
   DateTimeScalar,
   EndpointInput,
