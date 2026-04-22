@@ -1,41 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
+import {
+  applyConfidenceMax,
+  applyConfidenceMin,
+  applyManualEnd,
+  applyManualStart,
+  type DetectionFilterDraft,
+  formatConfidenceInput,
+  isConfidenceDefault,
+  isoToLocalInput,
+  localInputToIso,
+  parseConfidenceValue,
+  setConfidenceMax,
+  setConfidenceMin,
+} from "@/lib/detection/filter-draft";
 import type { FlowKind } from "@/lib/detection/types";
 
-// Mock React + UI dependencies so we can import the pure helpers
-// without pulling in JSX/runtime.
-vi.mock("react", () => ({
-  useEffect: vi.fn(),
-  useRef: (v: unknown) => ({ current: v }),
-  useState: (v: unknown) => [v, vi.fn()],
-}));
-vi.mock("@/components/ui/button", () => ({ Button: "button" }));
-vi.mock("@/components/ui/input", () => ({ Input: "input" }));
-vi.mock("@/components/ui/label", () => ({ Label: "label" }));
-vi.mock("@/components/ui/sheet", () => ({
-  Sheet: "div",
-  SheetContent: "div",
-  SheetDescription: "div",
-  SheetHeader: "div",
-  SheetTitle: "div",
-}));
-
-type FilterDrawerModule = typeof import("@/components/detection/filter-drawer");
-
-describe("filter-drawer helpers", () => {
-  let isoToLocalInput: FilterDrawerModule["isoToLocalInput"];
-  let localInputToIso: FilterDrawerModule["localInputToIso"];
-  let applyManualStart: FilterDrawerModule["applyManualStart"];
-  let applyManualEnd: FilterDrawerModule["applyManualEnd"];
-
-  it("loads helpers", async () => {
-    const mod = await import("@/components/detection/filter-drawer");
-    isoToLocalInput = mod.isoToLocalInput;
-    localInputToIso = mod.localInputToIso;
-    applyManualStart = mod.applyManualStart;
-    applyManualEnd = mod.applyManualEnd;
-  });
-
+describe("filter-draft helpers", () => {
   it("isoToLocalInput returns empty for null/undefined/invalid input", () => {
     expect(isoToLocalInput(null)).toBe("");
     expect(isoToLocalInput(undefined)).toBe("");
@@ -79,6 +60,8 @@ describe("filter-drawer helpers", () => {
       endIso: chipEndIso,
       directions: ["OUTBOUND", "INTERNAL", "INBOUND"] as FlowKind[],
       endpoints: [],
+      confidenceMin: 0,
+      confidenceMax: 1,
     };
 
     const newStartLocal = isoToLocalInput("2026-04-22T11:00:00.000Z");
@@ -105,6 +88,8 @@ describe("filter-drawer helpers", () => {
       endIso: chipEndIso,
       directions: ["OUTBOUND", "INTERNAL", "INBOUND"] as FlowKind[],
       endpoints: [],
+      confidenceMin: 0,
+      confidenceMax: 1,
     };
 
     const newEndLocal = isoToLocalInput("2026-04-22T13:00:00.000Z");
@@ -115,5 +100,74 @@ describe("filter-drawer helpers", () => {
     expect(next.startLocal).toBe(draft.startLocal);
     expect(next.startIso).toBe(localInputToIso(next.startLocal));
     expect(next.endIso).toBe(localInputToIso(next.endLocal));
+  });
+
+  function baseDraft(): DetectionFilterDraft {
+    return {
+      period: null,
+      startLocal: "",
+      endLocal: "",
+      startIso: null,
+      endIso: null,
+      directions: ["OUTBOUND", "INTERNAL", "INBOUND"] as FlowKind[],
+      endpoints: [],
+      confidenceMin: 0,
+      confidenceMax: 1,
+    };
+  }
+
+  it("isConfidenceDefault is true only for the [0, 1] domain ends", () => {
+    expect(isConfidenceDefault({ confidenceMin: 0, confidenceMax: 1 })).toBe(
+      true,
+    );
+    expect(isConfidenceDefault({ confidenceMin: 0.01, confidenceMax: 1 })).toBe(
+      false,
+    );
+    expect(isConfidenceDefault({ confidenceMin: 0, confidenceMax: 0.99 })).toBe(
+      false,
+    );
+  });
+
+  it("parseConfidenceValue clamps into [0, 1] and rounds to 0.01", () => {
+    expect(parseConfidenceValue("0.5", 0)).toBe(0.5);
+    expect(parseConfidenceValue("1.5", 0)).toBe(1);
+    expect(parseConfidenceValue("-0.2", 0.3)).toBe(0);
+    expect(parseConfidenceValue("0.777", 0)).toBe(0.78);
+    // Empty / garbage input falls back to the supplied default.
+    expect(parseConfidenceValue("", 0.4)).toBe(0.4);
+    expect(parseConfidenceValue("abc", 0.4)).toBe(0.4);
+  });
+
+  it("formatConfidenceInput renders two-decimal strings", () => {
+    expect(formatConfidenceInput(0)).toBe("0.00");
+    expect(formatConfidenceInput(0.7)).toBe("0.70");
+    expect(formatConfidenceInput(1)).toBe("1.00");
+  });
+
+  it("applyConfidenceMin updates the draft within the domain", () => {
+    const next = applyConfidenceMin(baseDraft(), "0.30");
+    expect(next.confidenceMin).toBe(0.3);
+    expect(next.confidenceMax).toBe(1);
+  });
+
+  it("applyConfidenceMin snaps max upward to preserve min <= max", () => {
+    const draft = { ...baseDraft(), confidenceMin: 0.2, confidenceMax: 0.5 };
+    const next = applyConfidenceMin(draft, "0.80");
+    expect(next.confidenceMin).toBe(0.8);
+    // New min exceeded the previous max — max snaps up so min <= max holds.
+    expect(next.confidenceMax).toBe(0.8);
+  });
+
+  it("applyConfidenceMax snaps min downward to preserve min <= max", () => {
+    const draft = { ...baseDraft(), confidenceMin: 0.6, confidenceMax: 1 };
+    const next = applyConfidenceMax(draft, "0.40");
+    expect(next.confidenceMax).toBe(0.4);
+    expect(next.confidenceMin).toBe(0.4);
+  });
+
+  it("setConfidenceMin / setConfidenceMax clamp into the domain", () => {
+    const draft = baseDraft();
+    expect(setConfidenceMin(draft, -1).confidenceMin).toBe(0);
+    expect(setConfidenceMax(draft, 5).confidenceMax).toBe(1);
   });
 });

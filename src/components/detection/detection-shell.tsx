@@ -6,30 +6,31 @@ import { startTransition, useCallback, useRef, useState } from "react";
 import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { buildAppliedFilter } from "@/lib/detection/apply-filter";
 import {
   buildDirectionChips,
   type DirectionChip,
   type DirectionChipLabels,
-  directionsForFilterInput,
   readDirectionsFromInput,
 } from "@/lib/detection/direction";
 import {
   buildEndpointChips,
   type EndpointChipLabels,
   type EndpointEntry,
-  endpointsToEndpointInputs,
 } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
+import { buildDetectionFilterBar } from "@/lib/detection/filter-bar";
+import {
+  CONFIDENCE_DEFAULT_MAX,
+  CONFIDENCE_DEFAULT_MIN,
+  type DetectionFilterDraft,
+  isoToLocalInput,
+} from "@/lib/detection/filter-draft";
 import type { PeriodKey } from "@/lib/detection/period";
 import type { FlowKind } from "@/lib/detection/types";
 import type { PivotChip } from "@/lib/detection/url-filters";
 import { cn } from "@/lib/utils";
-import {
-  FilterDrawer,
-  type FilterDrawerDraft,
-  type FilterDrawerLabels,
-  isoToLocalInput,
-} from "./filter-drawer";
+import { FilterDrawer, type FilterDrawerLabels } from "./filter-drawer";
 
 export interface DetectionShellLabels {
   recommendedFilter: string;
@@ -46,6 +47,7 @@ export interface DetectionShellLabels {
   analyticsPlaceholder: string;
   directionChips: DirectionChipLabels;
   endpointChips: EndpointChipLabels;
+  confidenceChipLabel: string;
   drawer: FilterDrawerLabels;
 }
 
@@ -84,7 +86,7 @@ export function DetectionShell({
   const [committedEndpoints, setCommittedEndpoints] = useState<EndpointEntry[]>(
     [],
   );
-  const [draft, setDraft] = useState<FilterDrawerDraft | null>(null);
+  const [draft, setDraft] = useState<DetectionFilterDraft | null>(null);
 
   const [totalCount, setTotalCount] = useState<string | null>(
     initialResult.totalCount,
@@ -113,22 +115,9 @@ export function DetectionShell({
   );
 
   const handleApply = useCallback(
-    (applied: FilterDrawerDraft) => {
+    (applied: DetectionFilterDraft) => {
       if (!applied.startIso || !applied.endIso) return;
-      const { directions: _ignored, ...structured } =
-        extractStructuredInput(committedFilter);
-      const directions = directionsForFilterInput(applied.directions);
-      const endpoints = endpointsToEndpointInputs(applied.endpoints);
-      const next: Filter = {
-        mode: "structured",
-        input: {
-          ...structured,
-          start: applied.startIso,
-          end: applied.endIso,
-          endpoints: endpoints.length > 0 ? endpoints : null,
-          ...(directions ? { directions } : {}),
-        },
-      };
+      const next = buildAppliedFilter(committedFilter, applied);
       setCommittedFilter(next);
       setCommittedPeriod(applied.period);
       setCommittedEndpoints(applied.endpoints);
@@ -165,16 +154,19 @@ export function DetectionShell({
     [committedFilter, labels.resultsError],
   );
 
-  const committedStart = structuredStart(committedFilter);
-  const committedEnd = structuredEnd(committedFilter);
-  const activeChipText = committedPeriod
-    ? labels.drawer.periodOptions[committedPeriod]
-    : committedStart && committedEnd
-      ? t("activeRange", {
-          start: isoToLocalInput(committedStart),
-          end: isoToLocalInput(committedEnd),
-        })
-      : labels.activeChipsEmpty;
+  const { summary: activeChipText, chips: baseChips } = buildDetectionFilterBar(
+    {
+      filter: committedFilter,
+      period: committedPeriod,
+      pivotChips: initialChips,
+      labels: {
+        confidenceChipLabel: labels.confidenceChipLabel,
+        activeChipsEmpty: labels.activeChipsEmpty,
+        periodOptions: labels.drawer.periodOptions,
+        formatRange: ({ start, end }) => t("activeRange", { start, end }),
+      },
+    },
+  );
   const directionChips: DirectionChip[] = buildDirectionChips(
     structuredDirections(committedFilter),
     labels.directionChips,
@@ -184,7 +176,7 @@ export function DetectionShell({
     labels.endpointChips,
   );
   const hasChips =
-    initialChips.length > 0 ||
+    baseChips.length > 0 ||
     directionChips.length > 0 ||
     endpointChips.length > 0;
 
@@ -227,15 +219,16 @@ export function DetectionShell({
             role="toolbar"
             aria-label={labels.filtersOpen}
             className={cn(
-              "flex min-h-8 flex-1 items-center gap-2 rounded-md border border-dashed border-[var(--sidebar-border)] px-3",
+              "flex min-h-8 flex-1 flex-wrap items-center gap-2 rounded-md border border-dashed border-[var(--sidebar-border)] px-3",
               !hasChips ? "text-muted-foreground text-xs" : "py-1",
             )}
           >
-            {!hasChips ? (
-              activeChipText
-            ) : (
+            <span className="text-muted-foreground text-xs">
+              {activeChipText}
+            </span>
+            {hasChips ? (
               <ul className="flex flex-wrap items-center gap-1.5">
-                {initialChips.map((chip) => (
+                {baseChips.map((chip) => (
                   <li key={chip.id}>
                     <Badge variant="secondary" className="font-normal">
                       <span className="text-muted-foreground mr-1 text-xs">
@@ -286,7 +279,7 @@ export function DetectionShell({
                   </li>
                 ))}
               </ul>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -356,9 +349,10 @@ function filterToDraft(
   filter: Filter,
   period: PeriodKey | null,
   endpoints: EndpointEntry[],
-): FilterDrawerDraft {
+): DetectionFilterDraft {
   const startIso = structuredStart(filter);
   const endIso = structuredEnd(filter);
+  const confidence = structuredConfidence(filter);
   return {
     period,
     startLocal: isoToLocalInput(startIso),
@@ -367,12 +361,9 @@ function filterToDraft(
     endIso,
     directions: readDirectionsFromInput(structuredDirections(filter)),
     endpoints,
+    confidenceMin: confidence?.min ?? CONFIDENCE_DEFAULT_MIN,
+    confidenceMax: confidence?.max ?? CONFIDENCE_DEFAULT_MAX,
   };
-}
-
-function extractStructuredInput(filter: Filter) {
-  if (filter.mode !== "structured") return {};
-  return filter.input;
 }
 
 function structuredStart(filter: Filter): string | null {
@@ -388,6 +379,19 @@ function structuredEnd(filter: Filter): string | null {
 function structuredDirections(filter: Filter): FlowKind[] | null | undefined {
   if (filter.mode !== "structured") return undefined;
   return filter.input.directions;
+}
+
+function structuredConfidence(
+  filter: Filter,
+): { min: number; max: number } | null {
+  if (filter.mode !== "structured") return null;
+  const min = filter.input.confidenceMin;
+  const max = filter.input.confidenceMax;
+  if (min == null && max == null) return null;
+  return {
+    min: min ?? CONFIDENCE_DEFAULT_MIN,
+    max: max ?? CONFIDENCE_DEFAULT_MAX,
+  };
 }
 
 function RailSection({
