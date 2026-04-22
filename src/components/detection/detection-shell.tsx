@@ -6,6 +6,12 @@ import { startTransition, useCallback, useRef, useState } from "react";
 import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  buildEndpointChips,
+  type EndpointChipLabels,
+  type EndpointEntry,
+  endpointsToEndpointInputs,
+} from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
 import type { PeriodKey } from "@/lib/detection/period";
 import type { PivotChip } from "@/lib/detection/url-filters";
@@ -30,6 +36,7 @@ export interface DetectionShellLabels {
   analyticsShow: string;
   analyticsHide: string;
   analyticsPlaceholder: string;
+  endpointChips: EndpointChipLabels;
   drawer: FilterDrawerLabels;
 }
 
@@ -58,10 +65,15 @@ export function DetectionShell({
   const t = useTranslations("detection.filters");
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [openEndpointPanelOnDrawerOpen, setOpenEndpointPanelOnDrawerOpen] =
+    useState(false);
 
   const [committedFilter, setCommittedFilter] = useState<Filter>(initialFilter);
   const [committedPeriod, setCommittedPeriod] = useState<PeriodKey | null>(
     initialPeriod,
+  );
+  const [committedEndpoints, setCommittedEndpoints] = useState<EndpointEntry[]>(
+    [],
   );
   const [draft, setDraft] = useState<FilterDrawerDraft | null>(null);
 
@@ -78,27 +90,36 @@ export function DetectionShell({
   // in quick succession.
   const latestRequestIdRef = useRef(0);
 
-  const openDrawer = useCallback(() => {
-    setDraft(
-      (current) => current ?? filterToDraft(committedFilter, committedPeriod),
-    );
-    setDrawerOpen(true);
-  }, [committedFilter, committedPeriod]);
+  const openDrawer = useCallback(
+    (options?: { openEndpointPanel?: boolean }) => {
+      setDraft(
+        (current) =>
+          current ??
+          filterToDraft(committedFilter, committedPeriod, committedEndpoints),
+      );
+      setOpenEndpointPanelOnDrawerOpen(options?.openEndpointPanel ?? false);
+      setDrawerOpen(true);
+    },
+    [committedFilter, committedPeriod, committedEndpoints],
+  );
 
   const handleApply = useCallback(
     (applied: FilterDrawerDraft) => {
       if (!applied.startIso || !applied.endIso) return;
       const structured = extractStructuredInput(committedFilter);
+      const endpoints = endpointsToEndpointInputs(applied.endpoints);
       const next: Filter = {
         mode: "structured",
         input: {
           ...structured,
           start: applied.startIso,
           end: applied.endIso,
+          endpoints: endpoints.length > 0 ? endpoints : null,
         },
       };
       setCommittedFilter(next);
       setCommittedPeriod(applied.period);
+      setCommittedEndpoints(applied.endpoints);
       setDrawerOpen(false);
       setLoading(true);
       setResultError(null);
@@ -143,6 +164,12 @@ export function DetectionShell({
         })
       : labels.activeChipsEmpty;
 
+  const endpointChips = buildEndpointChips(
+    committedEndpoints,
+    labels.endpointChips,
+  );
+  const hasChips = initialChips.length > 0 || endpointChips.length > 0;
+
   return (
     <div className="flex gap-4">
       <aside
@@ -173,7 +200,7 @@ export function DetectionShell({
             aria-label={labels.filtersOpen}
             aria-expanded={drawerOpen}
             aria-haspopup="dialog"
-            onClick={openDrawer}
+            onClick={() => openDrawer()}
           >
             <SlidersHorizontal className="size-4" />
             {labels.filtersOpen}
@@ -183,12 +210,10 @@ export function DetectionShell({
             aria-label={labels.filtersOpen}
             className={cn(
               "flex min-h-8 flex-1 items-center gap-2 rounded-md border border-dashed border-[var(--sidebar-border)] px-3",
-              initialChips.length === 0
-                ? "text-muted-foreground text-xs"
-                : "py-1",
+              !hasChips ? "text-muted-foreground text-xs" : "py-1",
             )}
           >
-            {initialChips.length === 0 ? (
+            {!hasChips ? (
               activeChipText
             ) : (
               <ul className="flex flex-wrap items-center gap-1.5">
@@ -202,6 +227,32 @@ export function DetectionShell({
                         {chip.value}
                       </span>
                     </Badge>
+                  </li>
+                ))}
+                {endpointChips.map((chip) => (
+                  <li key={chip.id}>
+                    {chip.aggregate ? (
+                      <button
+                        type="button"
+                        onClick={() => openDrawer({ openEndpointPanel: true })}
+                        className="focus-visible:ring-ring rounded-full focus-visible:ring-2 focus-visible:outline-none"
+                      >
+                        <Badge
+                          variant="secondary"
+                          className="cursor-pointer font-normal"
+                        >
+                          <span className="text-foreground text-xs font-medium">
+                            {chip.label}
+                          </span>
+                        </Badge>
+                      </button>
+                    ) : (
+                      <Badge variant="secondary" className="font-normal">
+                        <span className="text-foreground text-xs font-medium">
+                          {chip.label}
+                        </span>
+                      </Badge>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -264,6 +315,7 @@ export function DetectionShell({
           onDraftChange={setDraft}
           onApply={handleApply}
           labels={labels.drawer}
+          openEndpointPanelOnOpen={openEndpointPanelOnDrawerOpen}
         />
       ) : null}
     </div>
@@ -273,6 +325,7 @@ export function DetectionShell({
 function filterToDraft(
   filter: Filter,
   period: PeriodKey | null,
+  endpoints: EndpointEntry[],
 ): FilterDrawerDraft {
   const startIso = structuredStart(filter);
   const endIso = structuredEnd(filter);
@@ -282,6 +335,7 @@ function filterToDraft(
     endLocal: isoToLocalInput(endIso),
     startIso,
     endIso,
+    endpoints,
   };
 }
 
