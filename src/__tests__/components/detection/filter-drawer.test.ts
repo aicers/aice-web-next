@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { FlowKind } from "@/lib/detection/types";
+
 // Mock React + UI dependencies so we can import the pure helpers
 // without pulling in JSX/runtime.
 vi.mock("react", () => ({
@@ -75,6 +77,7 @@ describe("filter-drawer helpers", () => {
       endLocal: isoToLocalInput(chipEndIso),
       startIso: chipStartIso,
       endIso: chipEndIso,
+      directions: ["OUTBOUND", "INTERNAL", "INBOUND"] as FlowKind[],
       endpoints: [],
     };
 
@@ -88,6 +91,7 @@ describe("filter-drawer helpers", () => {
     expect(next.endLocal).toBe(draft.endLocal);
     expect(next.startIso).toBe(localInputToIso(next.startLocal));
     expect(next.endIso).toBe(localInputToIso(next.endLocal));
+    expect(next.directions).toEqual(draft.directions);
   });
 
   it("applyManualEnd normalizes both ISO fields from local strings", () => {
@@ -99,6 +103,7 @@ describe("filter-drawer helpers", () => {
       endLocal: isoToLocalInput(chipEndIso),
       startIso: chipStartIso,
       endIso: chipEndIso,
+      directions: ["OUTBOUND", "INTERNAL", "INBOUND"] as FlowKind[],
       endpoints: [],
     };
 

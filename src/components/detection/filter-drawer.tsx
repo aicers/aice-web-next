@@ -14,12 +14,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { FLOW_KINDS, toggleDirection } from "@/lib/detection/direction";
 import type { EndpointEntry } from "@/lib/detection/endpoint-filter";
 import {
   computePeriodRange,
   PERIOD_KEYS,
   type PeriodKey,
 } from "@/lib/detection/period";
+import type { FlowKind } from "@/lib/detection/types";
 import { cn } from "@/lib/utils";
 
 import {
@@ -35,6 +37,8 @@ export interface FilterDrawerLabels {
   timeRangeLabel: string;
   startLabel: string;
   endLabel: string;
+  directionLabel: string;
+  directionOptions: Record<FlowKind, string>;
   apply: string;
   saveThisFilter: string;
   saveThisFilterComingSoon: string;
@@ -51,6 +55,7 @@ export interface FilterDrawerDraft {
   period: PeriodKey | null;
   startLocal: string;
   endLocal: string;
+  directions: FlowKind[];
   /**
    * ISO-8601 UTC strings used on Apply. Kept in sync with the
    * local-input fields: a chip selection writes the raw
@@ -139,6 +144,13 @@ export function FilterDrawer({
   function onEndChange(value: string) {
     onDraftChange(applyManualEnd(draft, value));
     setValidationError(null);
+  }
+
+  function onToggleDirection(kind: FlowKind) {
+    onDraftChange({
+      ...draft,
+      directions: toggleDirection(draft.directions, kind),
+    });
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -273,6 +285,34 @@ export function FilterDrawer({
                 >
                   <FilterIcon className="size-4" />
                 </Button>
+              </div>
+            </fieldset>
+
+            {/* Direction multi-select */}
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-foreground text-sm font-medium">
+                {labels.directionLabel}
+              </legend>
+              <div className="flex flex-wrap gap-2">
+                {FLOW_KINDS.map((kind) => {
+                  const selected = draft.directions.includes(kind);
+                  return (
+                    <button
+                      key={kind}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => onToggleDirection(kind)}
+                      className={cn(
+                        "focus-visible:ring-ring rounded-full border px-3 py-1 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-none",
+                        selected
+                          ? "bg-primary text-primary-foreground border-transparent"
+                          : "bg-background text-foreground hover:bg-muted border-[var(--sidebar-border)]",
+                      )}
+                    >
+                      {labels.directionOptions[kind]}
+                    </button>
+                  );
+                })}
               </div>
             </fieldset>
 

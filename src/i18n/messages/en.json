@@ -561,6 +561,18 @@
       "timeRangeLabel": "Time period",
       "startLabel": "Start",
       "endLabel": "End",
+      "directionLabel": "Direction",
+      "directionOptions": {
+        "OUTBOUND": "Inside → Outside",
+        "INTERNAL": "Inside → Inside",
+        "INBOUND": "Outside → Inside"
+      },
+      "directionChipValues": {
+        "OUTBOUND": "Outbound",
+        "INTERNAL": "Internal",
+        "INBOUND": "Inbound"
+      },
+      "directionChipLabel": "Direction",
       "apply": "Apply",
       "saveThisFilter": "Save this filter",
       "saveThisFilterComingSoon": "Saving filters is wired up in a later phase.",

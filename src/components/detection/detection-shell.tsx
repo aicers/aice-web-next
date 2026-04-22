@@ -7,6 +7,13 @@ import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  buildDirectionChips,
+  type DirectionChip,
+  type DirectionChipLabels,
+  directionsForFilterInput,
+  readDirectionsFromInput,
+} from "@/lib/detection/direction";
+import {
   buildEndpointChips,
   type EndpointChipLabels,
   type EndpointEntry,
@@ -14,6 +21,7 @@ import {
 } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
 import type { PeriodKey } from "@/lib/detection/period";
+import type { FlowKind } from "@/lib/detection/types";
 import type { PivotChip } from "@/lib/detection/url-filters";
 import { cn } from "@/lib/utils";
 import {
@@ -36,6 +44,7 @@ export interface DetectionShellLabels {
   analyticsShow: string;
   analyticsHide: string;
   analyticsPlaceholder: string;
+  directionChips: DirectionChipLabels;
   endpointChips: EndpointChipLabels;
   drawer: FilterDrawerLabels;
 }
@@ -106,7 +115,9 @@ export function DetectionShell({
   const handleApply = useCallback(
     (applied: FilterDrawerDraft) => {
       if (!applied.startIso || !applied.endIso) return;
-      const structured = extractStructuredInput(committedFilter);
+      const { directions: _ignored, ...structured } =
+        extractStructuredInput(committedFilter);
+      const directions = directionsForFilterInput(applied.directions);
       const endpoints = endpointsToEndpointInputs(applied.endpoints);
       const next: Filter = {
         mode: "structured",
@@ -115,6 +126,7 @@ export function DetectionShell({
           start: applied.startIso,
           end: applied.endIso,
           endpoints: endpoints.length > 0 ? endpoints : null,
+          ...(directions ? { directions } : {}),
         },
       };
       setCommittedFilter(next);
@@ -163,12 +175,18 @@ export function DetectionShell({
           end: isoToLocalInput(committedEnd),
         })
       : labels.activeChipsEmpty;
-
+  const directionChips: DirectionChip[] = buildDirectionChips(
+    structuredDirections(committedFilter),
+    labels.directionChips,
+  );
   const endpointChips = buildEndpointChips(
     committedEndpoints,
     labels.endpointChips,
   );
-  const hasChips = initialChips.length > 0 || endpointChips.length > 0;
+  const hasChips =
+    initialChips.length > 0 ||
+    directionChips.length > 0 ||
+    endpointChips.length > 0;
 
   return (
     <div className="flex gap-4">
@@ -218,6 +236,18 @@ export function DetectionShell({
             ) : (
               <ul className="flex flex-wrap items-center gap-1.5">
                 {initialChips.map((chip) => (
+                  <li key={chip.id}>
+                    <Badge variant="secondary" className="font-normal">
+                      <span className="text-muted-foreground mr-1 text-xs">
+                        {chip.label}
+                      </span>
+                      <span className="text-foreground text-xs font-medium">
+                        {chip.value}
+                      </span>
+                    </Badge>
+                  </li>
+                ))}
+                {directionChips.map((chip) => (
                   <li key={chip.id}>
                     <Badge variant="secondary" className="font-normal">
                       <span className="text-muted-foreground mr-1 text-xs">
@@ -335,6 +365,7 @@ function filterToDraft(
     endLocal: isoToLocalInput(endIso),
     startIso,
     endIso,
+    directions: readDirectionsFromInput(structuredDirections(filter)),
     endpoints,
   };
 }
@@ -352,6 +383,11 @@ function structuredStart(filter: Filter): string | null {
 function structuredEnd(filter: Filter): string | null {
   if (filter.mode !== "structured") return null;
   return filter.input.end ?? null;
+}
+
+function structuredDirections(filter: Filter): FlowKind[] | null | undefined {
+  if (filter.mode !== "structured") return undefined;
+  return filter.input.directions;
 }
 
 function RailSection({
