@@ -70,6 +70,26 @@ Two `datetime-local` inputs let you specify an explicit start and
 end. Editing either input clears the Period chip selection — an
 edited range is no longer a quick-select window.
 
+### Direction
+
+The **Direction** section is a three-way multi-select matching the
+backend's `FlowKind` values:
+
+- `Inside → Outside` (outbound traffic)
+- `Inside → Inside` (internal traffic)
+- `Outside → Inside` (inbound traffic)
+
+All three are selected by default, which is equivalent to "no
+filter" — the submitted filter omits `directions` in that case.
+Toggle a chip off to drop that direction from the results. The
+drawer refuses to empty the set: attempting to deselect the last
+remaining direction silently reverts to all three selected, since
+an empty selection would mean "no rows".
+
+When fewer than three are selected, the active filter chip bar
+renders one chip per selected direction (e.g. `Direction: Inbound`,
+`Direction: Internal`).
+
 ### Apply
 
 Click **Apply** (or press `Enter` while focused in the drawer) to

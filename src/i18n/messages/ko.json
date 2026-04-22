@@ -561,6 +561,18 @@
       "timeRangeLabel": "시간 범위",
       "startLabel": "시작",
       "endLabel": "종료",
+      "directionLabel": "방향",
+      "directionOptions": {
+        "OUTBOUND": "내부 → 외부",
+        "INTERNAL": "내부 → 내부",
+        "INBOUND": "외부 → 내부"
+      },
+      "directionChipValues": {
+        "OUTBOUND": "내부 → 외부",
+        "INTERNAL": "내부 → 내부",
+        "INBOUND": "외부 → 내부"
+      },
+      "directionChipLabel": "방향",
       "apply": "적용",
       "saveThisFilter": "필터 저장",
       "saveThisFilterComingSoon": "필터 저장 기능은 이후 단계에서 연결됩니다.",

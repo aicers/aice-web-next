@@ -221,6 +221,89 @@ test("Apply with an invalid range keeps the drawer open and shows validation", a
   await expect(page.getByRole("heading", { name: "Filters" })).toBeVisible();
 });
 
+// ── Direction multi-select ──────────────────────────────────────
+
+test("direction chips start all-selected and toggle off independently", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/detection");
+
+  const filtersButton = page.getByRole("button", { name: "Filters" });
+  await expect(filtersButton).toBeVisible({ timeout: 10_000 });
+  await filtersButton.click();
+
+  const outbound = page.getByRole("button", { name: "Inside → Outside" });
+  const internal = page.getByRole("button", { name: "Inside → Inside" });
+  const inbound = page.getByRole("button", { name: "Outside → Inside" });
+
+  for (const chip of [outbound, internal, inbound]) {
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+  }
+
+  await outbound.click();
+  await expect(outbound).toHaveAttribute("aria-pressed", "false");
+  await expect(internal).toHaveAttribute("aria-pressed", "true");
+  await expect(inbound).toHaveAttribute("aria-pressed", "true");
+});
+
+test("direction multi-select reverts to all three when the last is deselected", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/detection");
+
+  await page.getByRole("button", { name: "Filters" }).click();
+
+  const outbound = page.getByRole("button", { name: "Inside → Outside" });
+  const internal = page.getByRole("button", { name: "Inside → Inside" });
+  const inbound = page.getByRole("button", { name: "Outside → Inside" });
+
+  // Turn two off; inbound is the last remaining selection.
+  await outbound.click();
+  await internal.click();
+  await expect(outbound).toHaveAttribute("aria-pressed", "false");
+  await expect(internal).toHaveAttribute("aria-pressed", "false");
+  await expect(inbound).toHaveAttribute("aria-pressed", "true");
+
+  // Clicking the last-remaining chip silently reverts to all three —
+  // an empty selection would mean "no rows" and is not allowed, so
+  // we return to the default "no filter" state instead.
+  await inbound.click();
+  await expect(outbound).toHaveAttribute("aria-pressed", "true");
+  await expect(internal).toHaveAttribute("aria-pressed", "true");
+  await expect(inbound).toHaveAttribute("aria-pressed", "true");
+});
+
+test("Apply with a direction subset renders chips in the active filter bar", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/detection");
+
+  await page.getByRole("button", { name: "Filters" }).click();
+
+  // Deselect Outbound, leaving Internal + Inbound.
+  await page.getByRole("button", { name: "Inside → Outside" }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Filters" }),
+  ).not.toBeVisible();
+
+  // Chip bar shows two chips in canonical order (Internal, Inbound).
+  const toolbar = page.getByRole("toolbar", { name: "Filters" });
+  await expect(toolbar.getByText("Internal")).toBeVisible();
+  await expect(toolbar.getByText("Inbound")).toBeVisible();
+  await expect(toolbar.getByText("Outbound")).not.toBeVisible();
+});
+
 // ── Analytics strip collapsed-by-default ─────────────────────────
 
 test("analytics strip starts collapsed and toggles open", async ({

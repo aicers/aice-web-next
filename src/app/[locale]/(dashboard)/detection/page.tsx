@@ -7,10 +7,12 @@ import {
   computePeriodRange,
   DEFAULT_PERIOD_KEY,
   type Filter,
+  type FlowKind,
   PERIOD_KEYS,
   parsePivotSearchParams,
   searchEvents,
 } from "@/lib/detection";
+import { FLOW_KINDS } from "@/lib/detection/direction";
 
 interface DetectionPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -58,6 +60,13 @@ export default async function DetectionPage({
     PERIOD_KEYS.map((key) => [key, t(`filters.periodOptions.${key}`)]),
   ) as Record<(typeof PERIOD_KEYS)[number], string>;
 
+  const directionOptions = Object.fromEntries(
+    FLOW_KINDS.map((kind) => [kind, t(`filters.directionOptions.${kind}`)]),
+  ) as Record<FlowKind, string>;
+  const directionChipValues = Object.fromEntries(
+    FLOW_KINDS.map((kind) => [kind, t(`filters.directionChipValues.${kind}`)]),
+  ) as Record<FlowKind, string>;
+
   return (
     <DetectionShell
       title={t("title")}
@@ -77,6 +86,10 @@ export default async function DetectionPage({
         analyticsShow: t("analytics.show"),
         analyticsHide: t("analytics.hide"),
         analyticsPlaceholder: t("analytics.placeholder"),
+        directionChips: {
+          label: t("filters.directionChipLabel"),
+          values: directionChipValues,
+        },
         endpointChips: {
           source: t("filters.endpoint.chipSource"),
           destination: t("filters.endpoint.chipDestination"),
@@ -90,6 +103,8 @@ export default async function DetectionPage({
           timeRangeLabel: t("filters.timeRangeLabel"),
           startLabel: t("filters.startLabel"),
           endLabel: t("filters.endLabel"),
+          directionLabel: t("filters.directionLabel"),
+          directionOptions,
           apply: t("filters.apply"),
           saveThisFilter: t("filters.saveThisFilter"),
           saveThisFilterComingSoon: t("filters.saveThisFilterComingSoon"),
