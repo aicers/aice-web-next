@@ -106,6 +106,44 @@ omits `confidenceMin` / `confidenceMax` from the submitted query.
 Any non-default range surfaces a single chip in the active filter
 bar (for example, `Confidence 0.70 – 1.00`).
 
+### Customer
+
+**Customer** is a disabled placeholder marked **Coming soon**.
+Customer scoping still happens automatically — results are already
+limited to the customers your account has access to — but picking
+a subset of them from the UI arrives with the Customer directory
+in a later phase. The field is never submitted with the filter and
+never appears in the chip bar.
+
+### Sensor
+
+**Sensor** is a multi-select backed by the sensor inventory that
+the detection backend maintains for the customers you can access.
+Open the control to reveal a search box, a **Select all / Clear
+selection** toggle, and a scrollable list of sensors; picked
+sensors also appear as removable chips just below the control.
+
+Applying the filter submits the selected sensor IDs; they show up
+in the active chip bar at the top of the page. For one to three
+selections each sensor gets its own chip; four or more collapse to
+a single `Sensor: N selected` aggregate token so the bar does not
+wrap unpredictably.
+
+If the detection backend in use has not yet published the
+sensor-list endpoint, the Sensor control falls back to the same
+**Coming soon** disabled state as Customer and is simply not
+submitted. This fallback only appears in transitional builds — as
+soon as the backend ships the endpoint the control becomes
+functional without any further change here.
+
+While the sensor list is being fetched on the first drawer open,
+the control shows a **Loading sensors…** affordance instead of
+**Coming soon** so the disabled state is not mistaken for a
+missing endpoint. If the fetch fails transiently, the control
+surfaces a **Could not load sensors** message with an inline
+**Retry** button; clicking Retry re-issues the request without
+having to close and reopen the drawer.
+
 ### Apply
 
 Click **Apply** (or press `Enter` while focused in the drawer) to

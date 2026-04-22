@@ -62,6 +62,7 @@ describe("filter-draft helpers", () => {
       endpoints: [],
       confidenceMin: 0,
       confidenceMax: 1,
+      sensorIds: [],
     };
 
     const newStartLocal = isoToLocalInput("2026-04-22T11:00:00.000Z");
@@ -90,6 +91,7 @@ describe("filter-draft helpers", () => {
       endpoints: [],
       confidenceMin: 0,
       confidenceMax: 1,
+      sensorIds: [],
     };
 
     const newEndLocal = isoToLocalInput("2026-04-22T13:00:00.000Z");
@@ -113,6 +115,7 @@ describe("filter-draft helpers", () => {
       endpoints: [],
       confidenceMin: 0,
       confidenceMax: 1,
+      sensorIds: [],
     };
   }
 
