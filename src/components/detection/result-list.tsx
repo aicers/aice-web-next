@@ -16,6 +16,7 @@ import {
 } from "@/components/events/event-display-helpers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatEventTime } from "@/lib/detection/event-time";
 import type {
   Event,
   ThreatCategory,
@@ -727,28 +728,6 @@ function formatCountryShort(code: string, labels: ResultListLabels): string {
   if (code === "XX") return labels.countryUnknown;
   if (code === "ZZ") return labels.countryUnavailable;
   return code;
-}
-
-function formatEventTime(
-  iso: string,
-  locale: string,
-  fallback: string,
-): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return fallback;
-  try {
-    return new Intl.DateTimeFormat(locale, {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(d);
-  } catch {
-    return iso;
-  }
 }
 
 function StatePanel({

@@ -54,6 +54,7 @@ import {
   type EndpointChipLabels,
   type EndpointEntry,
 } from "@/lib/detection/endpoint-filter";
+import { formatEventTime } from "@/lib/detection/event-time";
 import type { Filter } from "@/lib/detection/filter";
 import {
   CONFIDENCE_DEFAULT_MAX,
@@ -74,12 +75,9 @@ import type {
 } from "@/lib/detection/types";
 import {
   buildDetectionSearchParams,
-  buildPivotChips,
   mergePivotParams,
-  type PivotChip,
   type PivotChipLabels,
   type PivotFilterParams,
-  type PivotKey,
   pivotParamsFromFilterInput,
   type TagField,
 } from "@/lib/detection/url-filters";
@@ -187,7 +185,7 @@ interface DetectionShellProps {
   initialFilter: Filter;
   initialPeriod: PeriodKey | null;
   initialResult: DetectionShellInitialResult;
-  /** Pivot-only params from the URL (kind, ports, proto, window) — rendered as chips but not editable in the drawer yet. */
+  /** URL-only pivot params (kind, ports, proto, window). Preserved through URL round-trips for Phase Detection-12 pivot logic; not rendered as active-filter chips yet because they do not participate in the committed `EventListFilterInput`. */
   initialPivotOnly?: PivotFilterParams;
 }
 
@@ -403,12 +401,15 @@ export function DetectionShell({
   const [committedEndpoints, setCommittedEndpoints] = useState<EndpointEntry[]>(
     [],
   );
-  // `pivotOnly` carries chip-only fields (kind/ports/proto/window) that
-  // arrive from the Investigation handoff URL and have no drawer
-  // editor yet. They live in component state so chip × removal can
-  // also drop them from the bar.
-  const [pivotOnly, setPivotOnly] =
-    useState<PivotFilterParams>(initialPivotOnly);
+  // `pivotOnly` carries URL-only fields (kind/ports/proto/window) that
+  // arrive from the Investigation handoff. They are preserved through
+  // URL round-trips so pivot logic (Phase Detection-12) can pick them
+  // up, but they are not represented in `EventListFilterInput` and do
+  // not participate in the active filter chip bar yet — rendering them
+  // as chips would violate the "× is a self-contained commit that
+  // re-runs the query" contract while the underlying query still
+  // ignores them.
+  const pivotOnly = initialPivotOnly;
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(null);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
@@ -638,33 +639,6 @@ export function DetectionShell({
     [committedFilter, pivotOnly, options, pathname, runQueryFor, sensorCache],
   );
 
-  // Pure helper: drop a single pivot-only field. Pivot-only chips
-  // come from the URL (kind/origPort/respPort/proto/window) and are
-  // not represented in `EventListFilterInput`, so removal touches
-  // `pivotOnly` state alone — the active filter doesn't change.
-  const handleRemovePivotOnlyChip = useCallback(
-    (field: PivotKey) => {
-      const next: PivotFilterParams = { ...pivotOnly };
-      if (field === "kind") next.kind = undefined;
-      else if (field === "origPort") next.origPort = undefined;
-      else if (field === "respPort") next.respPort = undefined;
-      else if (field === "proto") next.proto = undefined;
-      else if (field === "window") next.window = undefined;
-      else return;
-      setPivotOnly(next);
-      if (committedFilter.mode === "structured") {
-        const merged = mergePivotParams(
-          next,
-          pivotParamsFromFilterInput(committedFilter.input),
-        );
-        const qs = buildDetectionSearchParams(merged).toString();
-        const url = qs ? `${pathname}?${qs}` : pathname;
-        window.history.replaceState(window.history.state, "", url);
-      }
-    },
-    [committedFilter, pathname, pivotOnly],
-  );
-
   const handleRemoveChip = useCallback(
     (target: ChipRemoveTarget) => {
       const next = removeActiveChip(
@@ -739,19 +713,6 @@ export function DetectionShell({
     ],
   );
 
-  // Compose the function-valued labels the chip builder needs on this
-  // side of the server/client boundary. The server page passes only
-  // plain strings; the translator closes over the active locale here so
-  // aggregate chip counts format with the right language.
-  const chipLabels = useMemo<PivotChipLabels>(
-    () => ({
-      ...labels.chipLabels,
-      countAggregate: (label, count) =>
-        t("chips.countAggregate", { label, count }),
-    }),
-    [labels.chipLabels, t],
-  );
-
   const drawerLabels = useMemo<FilterDrawerLabels>(() => {
     const withRemoveLabel = (
       field: TagField,
@@ -784,17 +745,6 @@ export function DetectionShell({
     };
     return { ...labels.drawer, attributes };
   }, [labels.drawer, t]);
-
-  // URL-only pivot chips: kind / origPort / respPort / proto / window
-  // live in `pivotOnly` state and are not represented in the
-  // `EventListFilterInput`, so they don't flow through
-  // `summarizeFilter`. Per-field filter chips (source, destination,
-  // tag fields, direction, confidence, sensor, categoricals, period)
-  // are produced by the shared summariser below.
-  const pivotOnlyChips = useMemo<PivotChip[]>(
-    () => buildPivotChips(pivotOnly, chipLabels),
-    [pivotOnly, chipLabels],
-  );
 
   const sensorOptions: readonly SensorOption[] =
     sensorCache.status === "loaded" ? sensorCache.options : [];
@@ -867,10 +817,7 @@ export function DetectionShell({
     committedEndpoints,
     labels.endpointChips,
   );
-  const hasChips =
-    summarizedChips.length > 0 ||
-    pivotOnlyChips.length > 0 ||
-    endpointChips.length > 0;
+  const hasChips = summarizedChips.length > 0 || endpointChips.length > 0;
 
   const resultRange = useMemo<{ start: string; end: string } | null>(() => {
     if (committedFilter.mode !== "structured") return null;
@@ -1021,18 +968,6 @@ export function DetectionShell({
                           ? () =>
                               handleRemoveChip(chip.remove as ChipRemoveTarget)
                           : undefined
-                      }
-                      removeLabel={removeChip(chip.value)}
-                    />
-                  </li>
-                ))}
-                {pivotOnlyChips.map((chip) => (
-                  <li key={chip.id}>
-                    <RemovableChip
-                      prefix={chip.aggregate ? null : chip.label}
-                      value={chip.value}
-                      onRemove={() =>
-                        handleRemovePivotOnlyChip(chip.field as PivotKey)
                       }
                       removeLabel={removeChip(chip.value)}
                     />
@@ -1214,7 +1149,9 @@ function QuickPeekInspectorOverlay({
   const kindLabel = event
     ? (EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename)
     : "";
-  const timeLabel = event ? formatEventTime(event.time, locale, labels) : "";
+  const timeLabel = event
+    ? formatEventTime(event.time, locale, labels.unknownTime)
+    : "";
   return (
     <Sheet
       open={open}
@@ -1264,7 +1201,7 @@ function QuickPeekInspectorBody({
 }) {
   const kindLabel =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
-  const timeLabel = formatEventTime(event.time, locale, labels);
+  const timeLabel = formatEventTime(event.time, locale, labels.unknownTime);
   return (
     <>
       <header className="flex items-start gap-2 border-b border-[var(--sidebar-border)] px-4 py-3">
@@ -1332,24 +1269,6 @@ function QuickPeekInspectorContent({
       </Button>
     </div>
   );
-}
-
-function formatEventTime(
-  time: string,
-  locale: string,
-  labels: ResultListLabels,
-): string {
-  const d = new Date(time);
-  if (Number.isNaN(d.getTime())) return labels.unknownTime;
-  return new Intl.DateTimeFormat(locale, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(d);
 }
 
 function filterToDraft(
