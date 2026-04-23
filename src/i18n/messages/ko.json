@@ -646,6 +646,7 @@
       "resultsCount": "현재 필터에 일치하는 탐지 이벤트 {count}건.",
       "resultsError": "탐지 결과를 불러오지 못했습니다.",
       "chips": {
+        "period": "기간",
         "source": "출발지",
         "destination": "목적지",
         "kind": "종류",

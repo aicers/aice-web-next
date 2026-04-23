@@ -646,6 +646,7 @@
       "resultsCount": "{count} detection events match the current filter.",
       "resultsError": "Could not load detection results.",
       "chips": {
+        "period": "Period",
         "source": "Source",
         "destination": "Destination",
         "kind": "Kind",

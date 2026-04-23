@@ -8,12 +8,23 @@ vi.mock("react", () => ({
   useState: (v: unknown) => [v, vi.fn()],
   startTransition: (fn: () => void) => fn(),
 }));
-vi.mock("next-intl", () => ({ useTranslations: () => () => "" }));
+vi.mock("next-intl", () => ({
+  useTranslations: () => () => "",
+  useLocale: () => "en",
+}));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/detection",
+}));
+vi.mock("@/i18n/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}));
 vi.mock("lucide-react", () => ({
   Bookmark: "span",
   ChevronRight: "span",
   SlidersHorizontal: "span",
   Star: "span",
+  X: "span",
+  XIcon: "span",
 }));
 vi.mock("@/app/[locale]/(dashboard)/detection/actions", () => ({
   runEventQuery: vi.fn(),
@@ -23,10 +34,20 @@ vi.mock("@/app/[locale]/(dashboard)/detection/sensor-actions", () => ({
 }));
 vi.mock("@/components/ui/badge", () => ({ Badge: "span" }));
 vi.mock("@/components/ui/button", () => ({ Button: "button" }));
+vi.mock("@/components/ui/sheet", () => ({
+  Sheet: "div",
+  SheetContent: "div",
+  SheetDescription: "div",
+  SheetHeader: "div",
+  SheetTitle: "div",
+}));
 vi.mock("@/components/detection/filter-drawer", () => ({
   FilterDrawer: "div",
 }));
 vi.mock("@/components/detection/sensor-multi-select", () => ({}));
+vi.mock("@/components/detection/result-list", () => ({
+  ResultList: "div",
+}));
 
 import { buildAppliedFilter } from "@/lib/detection/apply-filter";
 import type { Filter } from "@/lib/detection/filter";

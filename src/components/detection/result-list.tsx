@@ -480,11 +480,11 @@ function EndpointSummary({
 
 interface EndpointDisplay {
   address: string;
-  extraAddresses: number;
+  extraAddresses: string[];
   port: number | null;
-  extraPorts: number;
+  extraPorts: number[];
   country: string | null;
-  extraCountries: number;
+  extraCountries: string[];
 }
 
 function pickEndpoint(
@@ -496,23 +496,23 @@ function pickEndpoint(
   pluralPorts: number[] = [],
 ): EndpointDisplay | null {
   let address = singularAddr;
-  let extraAddresses = 0;
+  let extraAddresses: string[] = [];
   if (!address && pluralAddrs.length > 0) {
     address = pluralAddrs[0];
-    extraAddresses = pluralAddrs.length - 1;
+    extraAddresses = pluralAddrs.slice(1);
   }
   if (!address) return null;
   let port = singularPort;
-  let extraPorts = 0;
+  let extraPorts: number[] = [];
   if (port === null && pluralPorts.length > 0) {
     port = pluralPorts[0];
-    extraPorts = pluralPorts.length - 1;
+    extraPorts = pluralPorts.slice(1);
   }
   let country = singularCountry;
-  let extraCountries = 0;
+  let extraCountries: string[] = [];
   if (!country && pluralCountries.length > 0) {
     country = pluralCountries[0];
-    extraCountries = pluralCountries.length - 1;
+    extraCountries = pluralCountries.slice(1);
   }
   return {
     address,
@@ -533,10 +533,6 @@ function EndpointPart({
 }) {
   if (!endpoint) return <span className="text-muted-foreground/60">—</span>;
   const portLabel = endpoint.port !== null ? `:${endpoint.port}` : "";
-  const portMore =
-    endpoint.extraPorts > 0
-      ? ` ${labels.moreCountSuffix(endpoint.extraPorts)}`
-      : "";
   const country = endpoint.country
     ? formatCountryShort(endpoint.country, labels)
     : null;
@@ -546,14 +542,19 @@ function EndpointPart({
         {endpoint.address}
         {portLabel}
       </span>
-      {endpoint.extraAddresses > 0 ? (
-        <span className="text-muted-foreground/80">
-          {" "}
-          {labels.moreCountSuffix(endpoint.extraAddresses)}
-        </span>
+      {endpoint.extraAddresses.length > 0 ? (
+        <MorePopover
+          count={endpoint.extraAddresses.length}
+          values={endpoint.extraAddresses}
+          labels={labels}
+        />
       ) : null}
-      {portMore ? (
-        <span className="text-muted-foreground/80">{portMore}</span>
+      {endpoint.extraPorts.length > 0 ? (
+        <MorePopover
+          count={endpoint.extraPorts.length}
+          values={endpoint.extraPorts.map((p) => String(p))}
+          labels={labels}
+        />
       ) : null}
       {country ? (
         <span className="text-muted-foreground/80 ml-1 normal-case">
@@ -561,6 +562,83 @@ function EndpointPart({
         </span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * Compact `+N more` control that reveals the full list of hidden
+ * values on activation. Uses a minimal inline popover — clicking
+ * the button toggles a panel anchored beneath it; clicking outside
+ * or pressing Escape closes it. Satisfies the spec's "popover for
+ * the full list" acceptance without pulling in a new Radix
+ * primitive.
+ */
+function MorePopover({
+  count,
+  values,
+  labels,
+}: {
+  count: number;
+  values: string[];
+  labels: ResultListLabels;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && open) {
+            e.preventDefault();
+            setOpen(false);
+          }
+        }}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        className="text-muted-foreground/80 hover:text-foreground focus-visible:ring-ring/50 rounded px-1 focus-visible:ring-2 focus-visible:outline-none"
+      >
+        {labels.moreCountSuffix(count)}
+      </button>
+      {open ? (
+        <MorePopoverPanel values={values} onClose={() => setOpen(false)} />
+      ) : null}
+    </span>
+  );
+}
+
+function MorePopoverPanel({
+  values,
+  onClose,
+}: {
+  values: string[];
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest("[data-slot=more-popover]")) onClose();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose]);
+  return (
+    <div
+      data-slot="more-popover"
+      role="dialog"
+      className="bg-popover text-popover-foreground absolute top-full z-20 mt-1 max-h-64 min-w-[10rem] overflow-auto rounded-md border p-2 shadow-md"
+    >
+      <ul className="flex flex-col gap-0.5 font-mono text-xs">
+        {values.map((v) => (
+          <li key={v} className="truncate">
+            {v}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

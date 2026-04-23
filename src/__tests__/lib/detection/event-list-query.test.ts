@@ -13,15 +13,36 @@ describe("EVENT_LIST_QUERY", () => {
     const printed = print(EVENT_LIST_QUERY);
     // Curated typenames the result list dispatches on (Detection-2).
     const required = [
+      "BlocklistBootp",
       "BlocklistConn",
+      "BlocklistDceRpc",
+      "BlocklistDhcp",
       "BlocklistDns",
+      "BlocklistFtp",
+      "BlocklistHttp",
+      "BlocklistKerberos",
+      "BlocklistLdap",
+      "BlocklistMalformedDns",
+      "BlocklistMqtt",
+      "BlocklistNfs",
+      "BlocklistNtlm",
+      "BlocklistRadius",
+      "BlocklistRdp",
+      "BlocklistSmb",
+      "BlocklistSmtp",
+      "BlocklistSsh",
+      "BlocklistTls",
+      "CryptocurrencyMiningPool",
       "DnsCovertChannel",
       "DomainGenerationAlgorithm",
       "ExternalDdos",
+      "ExtraThreat",
       "FtpBruteForce",
       "FtpPlainText",
       "HttpThreat",
       "LdapBruteForce",
+      "LdapPlainText",
+      "LockyRansomware",
       "MultiHostPortScan",
       "NetworkThreat",
       "NonBrowser",
@@ -31,6 +52,7 @@ describe("EVENT_LIST_QUERY", () => {
       "SuspiciousTlsTraffic",
       "TorConnection",
       "TorConnectionConn",
+      "UnusualDestinationPattern",
       "WindowsThreat",
     ];
     for (const t of required) {
@@ -38,9 +60,14 @@ describe("EVENT_LIST_QUERY", () => {
     }
   });
 
-  it("selects attackKind on the four ML subtypes that expose it", () => {
+  it("selects attackKind on ML subtypes that expose it", () => {
     const printed = print(EVENT_LIST_QUERY);
-    for (const t of ["HttpThreat", "NetworkThreat", "WindowsThreat"]) {
+    for (const t of [
+      "HttpThreat",
+      "NetworkThreat",
+      "WindowsThreat",
+      "ExtraThreat",
+    ]) {
       const idx = printed.indexOf(`... on ${t}`);
       const next = printed.indexOf("... on", idx + 1);
       const block = next > 0 ? printed.slice(idx, next) : printed.slice(idx);
@@ -57,6 +84,10 @@ describe("EVENT_LIST_QUERY", () => {
     // PortScan exposes respPorts (plural) instead of respPort.
     const ps = printed.indexOf("... on PortScan");
     expect(printed.slice(ps, ps + 250)).toContain("respPorts");
+    // UnusualDestinationPattern is responder-array only.
+    const udp = printed.indexOf("... on UnusualDestinationPattern");
+    expect(printed.slice(udp, udp + 250)).toContain("respAddrs");
+    expect(printed.slice(udp, udp + 250)).toContain("respCountries");
   });
 });
 

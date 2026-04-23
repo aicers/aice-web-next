@@ -63,6 +63,15 @@ export const EVENT_LIST_QUERY = parse(`
           policyId
           score
         }
+        ... on BlocklistBootp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
         ... on BlocklistConn {
           origAddr
           origPort
@@ -72,7 +81,160 @@ export const EVENT_LIST_QUERY = parse(`
           respCountry
           proto
         }
+        ... on BlocklistDceRpc {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistDhcp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
         ... on BlocklistDns {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistFtp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistHttp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistKerberos {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistLdap {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistMalformedDns {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistMqtt {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistNfs {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistNtlm {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistRadius {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistRdp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistSmb {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistSmtp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistSsh {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistTls {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on CryptocurrencyMiningPool {
           origAddr
           origPort
           origCountry
@@ -105,6 +267,9 @@ export const EVENT_LIST_QUERY = parse(`
           respAddr
           respCountry
           proto
+        }
+        ... on ExtraThreat {
+          attackKind
         }
         ... on FtpBruteForce {
           origAddr
@@ -139,6 +304,24 @@ export const EVENT_LIST_QUERY = parse(`
           respAddr
           respCountry
           respPort
+          proto
+        }
+        ... on LdapPlainText {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on LockyRansomware {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
           proto
         }
         ... on MultiHostPortScan {
@@ -218,6 +401,10 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+        }
+        ... on UnusualDestinationPattern {
+          respAddrs
+          respCountries
         }
         ... on WindowsThreat {
           attackKind

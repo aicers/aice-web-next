@@ -20,30 +20,34 @@ import {
   type ResultListLabels,
   type ResultListState,
 } from "@/components/detection/result-list";
+import {
+  EVENT_KIND_FRIENDLY_NAMES,
+  formatEndpointSummary,
+  levelBadgeVariant,
+} from "@/components/events/event-display-helpers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useRouter } from "@/i18n/navigation";
 import {
   type ChipRemoveTarget,
   removeActiveChip,
 } from "@/lib/detection/active-filters";
 import { buildAppliedFilter } from "@/lib/detection/apply-filter";
-import {
-  buildDirectionChips,
-  type DirectionChip,
-  type DirectionChipLabels,
-  readDirectionsFromInput,
-} from "@/lib/detection/direction";
+import type { DirectionChipLabels } from "@/lib/detection/direction";
+import { readDirectionsFromInput } from "@/lib/detection/direction";
 import {
   buildEndpointChips,
   type EndpointChipLabels,
   type EndpointEntry,
 } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
-import { buildDetectionFilterBar } from "@/lib/detection/filter-bar";
-import {
-  type ActiveFilterChip,
-  buildMultiSelectChips,
-} from "@/lib/detection/filter-chips";
 import {
   CONFIDENCE_DEFAULT_MAX,
   CONFIDENCE_DEFAULT_MIN,
@@ -52,13 +56,13 @@ import {
 } from "@/lib/detection/filter-draft";
 import {
   type FilterChip,
+  type FilterChipFocus,
   type SummarizeFilterLabels,
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
 import type { PeriodKey } from "@/lib/detection/period";
 import type {
   Event as DetectionEvent,
-  FlowKind,
   LearningMethod,
 } from "@/lib/detection/types";
 import {
@@ -70,10 +74,12 @@ import {
   type PivotFilterParams,
   type PivotKey,
   pivotParamsFromFilterInput,
-  TAG_FIELDS,
   type TagField,
-  TEXT_FIELDS,
 } from "@/lib/detection/url-filters";
+import {
+  encodeEventLocator,
+  isEventAddressable,
+} from "@/lib/events/event-locator";
 import { cn } from "@/lib/utils";
 import {
   type DrawerFocusField,
@@ -141,7 +147,16 @@ export interface DetectionShellLabels {
   confidenceChipLabel: string;
   chipLabels: ChipLabelStrings;
   drawer: DrawerLabelStrings;
-  summarize: SummarizeFilterLabels;
+  /**
+   * Serializable subset of {@link SummarizeFilterLabels} — the server
+   * page only passes plain strings; the client shell builds the full
+   * labels (including the function-valued `formatRange` and
+   * `categoricalAggregate` formatters) using the locale translator.
+   */
+  summarize: {
+    sensor: string;
+    sensorAggregate: string;
+  };
 }
 
 export interface DetectionShellInitialResult {
@@ -210,6 +225,7 @@ export function DetectionShell({
   const tResults = useTranslations("detection.results");
   const locale = useLocale();
   const pathname = usePathname();
+  const router = useRouter();
   // Build the function-valued labels for the chip remove button and the
   // result list on this side of the server/client boundary. Function
   // props can't cross that boundary, so the bound translator stays on
@@ -315,6 +331,23 @@ export function DetectionShell({
       ? Date.now()
       : null,
   );
+  // Tracks whether any query has been dispatched (by the server-
+  // rendered initial load or a subsequent Apply / Refresh / chip
+  // removal). A freshly-mounted `+` tab with no successful query —
+  // e.g. the server action returned an error before the page mounted
+  // — renders the dedicated pre-query empty state instead of the
+  // generic zero-results panel.
+  const [hasQueried, setHasQueried] = useState(
+    initialResult.error === null && initialResult.totalCount !== null,
+  );
+  // Quick peek inspector (Phase Detection-18 owns the content; this
+  // shell wires the open/close contract and the jump into full
+  // Investigation). At wide widths (≥ `desktop`) the inspector docks
+  // inline as a right-hand pane; at narrower widths the same state
+  // drives an overlay drawer.
+  const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
+    null,
+  );
   // Monotonic id for the in-flight Apply; a late response whose id
   // no longer matches is dropped so the results region can't drift
   // away from the committed filter when the operator applies twice
@@ -387,6 +420,7 @@ export function DetectionShell({
     (filter: Filter) => {
       setLoading(true);
       setResultError(null);
+      setHasQueried(true);
       const requestId = latestRequestIdRef.current + 1;
       latestRequestIdRef.current = requestId;
       startTransition(async () => {
@@ -541,20 +575,23 @@ export function DetectionShell({
   }, [committedFilter, runQueryFor]);
 
   const openDrawerFocused = useCallback(
-    (field: PivotKey) => {
-      // Only drawer-editable fields have an input to focus. Pivot-only
-      // fields (kind/origPort/respPort/proto/window) produce scalar
-      // chips that never aggregate, so in practice this branch is only
-      // reached for tag/text fields — the guard keeps us honest if a
-      // future aggregate path widens the chip set.
+    (focus: FilterChipFocus) => {
+      // Ensure the drawer has a draft to edit, then scroll-focus the
+      // matching section. `DrawerFocusField` is a superset that covers
+      // every `FilterChipFocus` value, so the cast is safe — the
+      // drawer itself no-ops on targets whose anchor isn't mounted.
       setDraft(
         (current) =>
           current ??
           filterToDraft(committedFilter, committedPeriod, committedEndpoints),
       );
-      setFocusField(isDrawerFocusField(field) ? field : null);
+      setFocusField(focus);
       setFocusToken((t) => t + 1);
       setDrawerOpen(true);
+      // Endpoint aggregate: also expand the Network/IP advanced panel
+      // so the operator lands in the same UI as the sidebar "Advanced"
+      // affordance.
+      if (focus === "endpoints") setOpenEndpointPanelOnDrawerOpen(true);
     },
     [committedFilter, committedPeriod, committedEndpoints],
   );
@@ -605,40 +642,17 @@ export function DetectionShell({
     return { ...labels.drawer, attributes };
   }, [labels.drawer, t]);
 
-  // Pivot-style chips from drawer free-form fields (+ URL-only pivots).
-  const pivotChips = useMemo<PivotChip[]>(
-    () =>
-      buildPivotChips(
-        mergePivotParams(
-          pivotOnly,
-          pivotParamsFromFilterInput(extractStructuredInput(committedFilter)),
-        ),
-        chipLabels,
-      ),
-    [committedFilter, pivotOnly, chipLabels],
+  // URL-only pivot chips: kind / origPort / respPort / proto / window
+  // live in `pivotOnly` state and are not represented in the
+  // `EventListFilterInput`, so they don't flow through
+  // `summarizeFilter`. Per-field filter chips (source, destination,
+  // tag fields, direction, confidence, sensor, categoricals, period)
+  // are produced by the shared summariser below.
+  const pivotOnlyChips = useMemo<PivotChip[]>(
+    () => buildPivotChips(pivotOnly, chipLabels),
+    [pivotOnly, chipLabels],
   );
 
-  const { summary: activeChipText, chips: baseChips } = buildDetectionFilterBar(
-    {
-      filter: committedFilter,
-      period: committedPeriod,
-      pivotChips,
-      labels: {
-        confidenceChipLabel: labels.confidenceChipLabel,
-        activeChipsEmpty: labels.activeChipsEmpty,
-        periodOptions: labels.drawer.periodOptions,
-        formatRange: ({ start, end }) => t("activeRange", { start, end }),
-      },
-    },
-  );
-  const directionChips: DirectionChip[] = buildDirectionChips(
-    structuredDirections(committedFilter),
-    labels.directionChips,
-  );
-  const endpointChips = buildEndpointChips(
-    committedEndpoints,
-    labels.endpointChips,
-  );
   const sensorOptions: readonly SensorOption[] =
     sensorCache.status === "loaded" ? sensorCache.options : [];
   // See `sensorStateForCache` for the intent behind each branch:
@@ -657,26 +671,63 @@ export function DetectionShell({
   // committed filter.
   const sensorState = sensorStateForCache(sensorCache);
 
-  const sensorChips: FilterChip[] =
-    committedFilter.mode === "structured"
-      ? summarizeFilter(committedFilter.input, sensorOptions, labels.summarize)
-      : [];
-  const multiSelectChips = useMemo(
+  // Shared chip summariser: one `Filter → FilterChip[]` call the bar
+  // reuses everywhere. The pivot-only chips above are concatenated
+  // on render because they live outside `EventListFilterInput`.
+  const summarizeLabels = useMemo<SummarizeFilterLabels>(
+    () => ({
+      sensor: labels.drawer.sensor.label,
+      sensorAggregate: labels.summarize.sensorAggregate,
+      period: t("chips.period"),
+      periodOptions: labels.drawer.periodOptions,
+      formatRange: ({ start, end }) => t("activeRange", { start, end }),
+      direction: labels.directionChips.label,
+      directionValues: labels.directionChips.values,
+      confidence: labels.confidenceChipLabel,
+      source: labels.chipLabels.source,
+      destination: labels.chipLabels.destination,
+      keywords: labels.chipLabels.keywords,
+      hostnames: labels.chipLabels.hostnames,
+      userIds: labels.chipLabels.userIds,
+      userNames: labels.chipLabels.userNames,
+      userDepartments: labels.chipLabels.userDepartments,
+      levels: labels.drawer.fields.levels,
+      countries: labels.drawer.fields.countries,
+      learningMethods: labels.drawer.fields.learningMethods,
+      categories: labels.drawer.fields.categories,
+      kinds: labels.drawer.fields.kinds,
+      categoricalAggregate: ({ label, count }) =>
+        t("chips.countAggregate", { label, count }),
+    }),
+    [labels, t],
+  );
+  const summarizedChips = useMemo<FilterChip[]>(
     () =>
-      buildActiveMultiSelectChips(
-        committedFilter,
-        options,
-        drawerLabels,
-        multiSelectLabels,
-      ),
-    [committedFilter, options, drawerLabels, multiSelectLabels],
+      summarizeFilter(committedFilter, summarizeLabels, {
+        period: committedPeriod,
+        sensorOptions,
+        categoricalOptions: {
+          levels: options.levels,
+          countries: options.countries,
+          learningMethods: options.learningMethods,
+          categories: options.categories,
+          kinds: options.kinds,
+        },
+      }),
+    [committedFilter, committedPeriod, options, sensorOptions, summarizeLabels],
+  );
+  // Endpoints still flow through their richer drawer-side entries; the
+  // unified summariser covers the committed `EventListFilterInput`, but
+  // endpoint entries live parallel to it and carry the raw text the
+  // user typed.
+  const endpointChips = buildEndpointChips(
+    committedEndpoints,
+    labels.endpointChips,
   );
   const hasChips =
-    baseChips.length > 0 ||
-    directionChips.length > 0 ||
-    endpointChips.length > 0 ||
-    sensorChips.length > 0 ||
-    multiSelectChips.length > 0;
+    summarizedChips.length > 0 ||
+    pivotOnlyChips.length > 0 ||
+    endpointChips.length > 0;
 
   const resultRange = useMemo<{ start: string; end: string } | null>(() => {
     if (committedFilter.mode !== "structured") return null;
@@ -707,6 +758,15 @@ export function DetectionShell({
         lastUpdatedMs,
       };
     }
+    if (!hasQueried) {
+      return {
+        status: "empty-prequery",
+        events: [],
+        totalCount: null,
+        range: resultRange,
+        lastUpdatedMs,
+      };
+    }
     return {
       status: "ready",
       events,
@@ -714,7 +774,39 @@ export function DetectionShell({
       range: resultRange,
       lastUpdatedMs,
     };
-  }, [events, lastUpdatedMs, loading, resultError, resultRange, totalCount]);
+  }, [
+    events,
+    hasQueried,
+    lastUpdatedMs,
+    loading,
+    resultError,
+    resultRange,
+    totalCount,
+  ]);
+
+  const handleRowOpen = useCallback((event: DetectionEvent) => {
+    setQuickPeekEvent(event);
+  }, []);
+
+  const handleRowInvestigate = useCallback(
+    (event: DetectionEvent) => {
+      // Build a locator token and jump into the Investigation view.
+      // Carry the current pathname + search as `returnTo` so a
+      // non-default-locale operator who lands on `/events/<token>`
+      // can return to their filtered Detection tab. `useRouter`
+      // from `next-intl/navigation` is locale-aware — it prefixes
+      // the target path so Korean / English operators land on the
+      // right segment.
+      const token = encodeEventLocator(event);
+      if (!token) return;
+      const search =
+        typeof window !== "undefined" ? window.location.search : "";
+      const returnTo = `${pathname}${search}`;
+      const href = `/events/${encodeURIComponent(token)}?returnTo=${encodeURIComponent(returnTo)}`;
+      router.push(href);
+    },
+    [pathname, router],
+  );
 
   return (
     <div className="flex gap-4">
@@ -759,59 +851,40 @@ export function DetectionShell({
               !hasChips ? "text-muted-foreground text-xs" : "py-1",
             )}
           >
-            <span className="text-muted-foreground text-xs">
-              {activeChipText}
-            </span>
-            {hasChips ? (
+            {!hasChips ? (
+              <span className="text-muted-foreground text-xs">
+                {labels.activeChipsEmpty}
+              </span>
+            ) : (
               <ul className="flex flex-wrap items-center gap-1.5">
-                {baseChips.map((chip) => {
-                  const isPivotOnly = isPivotOnlyField(chip.field);
-                  const removeTarget = chip.field
-                    ? pivotChipRemoveTarget(
-                        chip.field,
-                        chip.value,
-                        !!chip.aggregate,
-                      )
-                    : chip.id === "confidence"
-                      ? ({ kind: "confidence" } as const)
-                      : null;
-                  return (
-                    <li key={chip.id}>
-                      <RemovableChip
-                        prefix={
-                          chip.aggregate && chip.field ? null : chip.label
-                        }
-                        value={chip.value}
-                        onActivate={
-                          chip.aggregate && chip.field && !isPivotOnly
-                            ? () => openDrawerFocused(chip.field as PivotKey)
-                            : undefined
-                        }
-                        onRemove={
-                          isPivotOnly && chip.field
-                            ? () =>
-                                handleRemovePivotOnlyChip(
-                                  chip.field as PivotKey,
-                                )
-                            : removeTarget
-                              ? () => handleRemoveChip(removeTarget)
-                              : undefined
-                        }
-                        removeLabel={removeChip(chip.value)}
-                      />
-                    </li>
-                  );
-                })}
-                {directionChips.map((chip) => (
+                {summarizedChips.map((chip) => (
                   <li key={chip.id}>
                     <RemovableChip
-                      prefix={chip.label}
+                      prefix={chip.aggregate ? null : chip.label}
+                      value={chip.value}
+                      onActivate={
+                        chip.focus
+                          ? () =>
+                              openDrawerFocused(chip.focus as FilterChipFocus)
+                          : undefined
+                      }
+                      onRemove={
+                        chip.remove
+                          ? () =>
+                              handleRemoveChip(chip.remove as ChipRemoveTarget)
+                          : undefined
+                      }
+                      removeLabel={removeChip(chip.value)}
+                    />
+                  </li>
+                ))}
+                {pivotOnlyChips.map((chip) => (
+                  <li key={chip.id}>
+                    <RemovableChip
+                      prefix={chip.aggregate ? null : chip.label}
                       value={chip.value}
                       onRemove={() =>
-                        handleRemoveChip({
-                          kind: "directionValue",
-                          value: chip.id.replace("direction:", "") as FlowKind,
-                        })
+                        handleRemovePivotOnlyChip(chip.field as PivotKey)
                       }
                       removeLabel={removeChip(chip.value)}
                     />
@@ -822,11 +895,7 @@ export function DetectionShell({
                     <RemovableChip
                       prefix={null}
                       value={chip.label}
-                      onActivate={
-                        chip.aggregate
-                          ? () => openDrawer({ openEndpointPanel: true })
-                          : undefined
-                      }
+                      onActivate={() => openDrawer({ openEndpointPanel: true })}
                       onRemove={() =>
                         chip.aggregate
                           ? handleRemoveChip({ kind: "endpointAll" })
@@ -839,44 +908,8 @@ export function DetectionShell({
                     />
                   </li>
                 ))}
-                {sensorChips.map((chip) => (
-                  <li key={chip.id}>
-                    <RemovableChip
-                      prefix={chip.label}
-                      value={chip.value}
-                      onRemove={() =>
-                        chip.id === "sensor:aggregate"
-                          ? handleRemoveChip({
-                              kind: "arrayAggregate",
-                              field: "sensors",
-                            })
-                          : handleRemoveChip({
-                              kind: "arrayValue",
-                              field: "sensors",
-                              value: chip.id.replace(/^sensor:/, ""),
-                            })
-                      }
-                      removeLabel={removeChip(chip.value)}
-                    />
-                  </li>
-                ))}
-                {multiSelectChips.map((chip) => {
-                  const target = multiSelectChipRemoveTarget(chip);
-                  return (
-                    <li key={chip.key}>
-                      <RemovableChip
-                        prefix={chip.label}
-                        value={chip.value}
-                        onRemove={
-                          target ? () => handleRemoveChip(target) : undefined
-                        }
-                        removeLabel={removeChip(chip.value)}
-                      />
-                    </li>
-                  );
-                })}
               </ul>
-            ) : null}
+            )}
           </div>
         </div>
 
@@ -892,6 +925,8 @@ export function DetectionShell({
             locale={locale}
             onRefresh={handleRefresh}
             onOpenFilters={() => openDrawer()}
+            onRowOpen={handleRowOpen}
+            onRowInvestigate={handleRowInvestigate}
           />
         </section>
 
@@ -945,7 +980,112 @@ export function DetectionShell({
           focusToken={focusToken}
         />
       ) : null}
+
+      <QuickPeekInspector
+        event={quickPeekEvent}
+        locale={locale}
+        labels={resultListLabels}
+        onClose={() => setQuickPeekEvent(null)}
+        onInvestigate={() => {
+          if (quickPeekEvent) handleRowInvestigate(quickPeekEvent);
+        }}
+      />
     </div>
+  );
+}
+
+/**
+ * Quick peek inspector shell. Phase Detection-18 owns the full
+ * contents; for v1 we render the compact summary the list row
+ * already shows plus the "Open investigation" jump. The inspector
+ * opens as an overlay drawer (`Sheet` from `radix-ui`) at every
+ * viewport — the inline-dock split at ≥ desktop widths is a
+ * polish follow-up tracked against Phase Detection-18.
+ */
+function QuickPeekInspector({
+  event,
+  locale,
+  labels,
+  onClose,
+  onInvestigate,
+}: {
+  event: DetectionEvent | null;
+  locale: string;
+  labels: ResultListLabels;
+  onClose: () => void;
+  onInvestigate: () => void;
+}) {
+  const open = event !== null;
+  const addressable = event ? isEventAddressable(event) : false;
+  const endpointSummary = event ? formatEndpointSummary(event) : null;
+  const kindLabel = event
+    ? (EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename)
+    : "";
+  let timeLabel = "";
+  if (event) {
+    const d = new Date(event.time);
+    timeLabel = Number.isNaN(d.getTime())
+      ? labels.unknownTime
+      : new Intl.DateTimeFormat(locale, {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }).format(d);
+  }
+  return (
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <SheetContent
+        side="right"
+        className="sm:max-w-md"
+        closeLabel={labels.errorRetry}
+      >
+        <SheetHeader>
+          <SheetTitle>{kindLabel}</SheetTitle>
+          <SheetDescription>{timeLabel}</SheetDescription>
+        </SheetHeader>
+        {event ? (
+          <div className="flex flex-1 flex-col gap-3 px-4 pb-4">
+            <div className="flex items-center gap-2">
+              <Badge
+                variant={levelBadgeVariant(event.level)}
+                className="uppercase"
+              >
+                {labels.levelLabels[event.level] ?? event.level}
+              </Badge>
+              <span className="text-muted-foreground text-xs">
+                {labels.confidenceLabel} {event.confidence.toFixed(2)}
+              </span>
+            </div>
+            {endpointSummary ? (
+              <p className="text-foreground font-mono text-xs break-all">
+                {endpointSummary}
+              </p>
+            ) : null}
+            <p className="text-muted-foreground text-xs">
+              {event.sensor || labels.noSensor}
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              onClick={onInvestigate}
+              disabled={!addressable}
+              className="mt-2 self-start"
+            >
+              {labels.rowInvestigateLabel}
+            </Button>
+          </div>
+        ) : null}
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -954,12 +1094,12 @@ function filterToDraft(
   period: PeriodKey | null,
   endpoints: EndpointEntry[],
 ): DetectionFilterDraft {
-  const startIso = structuredStart(filter);
-  const endIso = structuredEnd(filter);
-  const confidence = structuredConfidence(filter);
-  const sensorIds =
-    filter.mode === "structured" ? (filter.input.sensors ?? []) : [];
   const input = filter.mode === "structured" ? filter.input : {};
+  const startIso = input.start ?? null;
+  const endIso = input.end ?? null;
+  const confidenceMin = input.confidenceMin ?? CONFIDENCE_DEFAULT_MIN;
+  const confidenceMax = input.confidenceMax ?? CONFIDENCE_DEFAULT_MAX;
+  const sensorIds = input.sensors ?? [];
   const fromArray = (values: string[] | null | undefined): string[] =>
     values && values.length > 0 ? [...values] : [];
   return {
@@ -968,10 +1108,10 @@ function filterToDraft(
     endLocal: isoToLocalInput(endIso),
     startIso,
     endIso,
-    directions: readDirectionsFromInput(structuredDirections(filter)),
+    directions: readDirectionsFromInput(input.directions),
     endpoints,
-    confidenceMin: confidence?.min ?? CONFIDENCE_DEFAULT_MIN,
-    confidenceMax: confidence?.max ?? CONFIDENCE_DEFAULT_MAX,
+    confidenceMin,
+    confidenceMax,
     sensorIds: [...sensorIds],
     levels: (input.levels ?? []) as readonly number[],
     countries: (input.countries ?? []) as readonly string[],
@@ -988,184 +1128,6 @@ function filterToDraft(
     userNames: fromArray(input.userNames),
     userDepartments: fromArray(input.userDepartments),
   };
-}
-
-const FOCUSABLE_FIELDS = new Set<string>([...TEXT_FIELDS, ...TAG_FIELDS]);
-
-function isDrawerFocusField(field: PivotKey): field is DrawerFocusField {
-  return FOCUSABLE_FIELDS.has(field);
-}
-
-function extractStructuredInput(filter: Filter) {
-  if (filter.mode !== "structured") return {};
-  return filter.input;
-}
-
-function structuredStart(filter: Filter): string | null {
-  if (filter.mode !== "structured") return null;
-  return filter.input.start ?? null;
-}
-
-function structuredEnd(filter: Filter): string | null {
-  if (filter.mode !== "structured") return null;
-  return filter.input.end ?? null;
-}
-
-function structuredDirections(filter: Filter): FlowKind[] | null | undefined {
-  if (filter.mode !== "structured") return undefined;
-  return filter.input.directions;
-}
-
-function structuredConfidence(
-  filter: Filter,
-): { min: number; max: number } | null {
-  if (filter.mode !== "structured") return null;
-  const min = filter.input.confidenceMin;
-  const max = filter.input.confidenceMax;
-  if (min == null && max == null) return null;
-  return {
-    min: min ?? CONFIDENCE_DEFAULT_MIN,
-    max: max ?? CONFIDENCE_DEFAULT_MAX,
-  };
-}
-
-function buildActiveMultiSelectChips(
-  filter: Filter,
-  options: FilterDrawerOptions,
-  labels: FilterDrawerLabels,
-  multiSelectLabels: FilterMultiSelectLabels,
-): ActiveFilterChip[] {
-  if (filter.mode !== "structured") return [];
-  const input = filter.input;
-  const aggregateCount = (n: number) => multiSelectLabels.summarySome(n);
-
-  const chips: ActiveFilterChip[] = [];
-  chips.push(
-    ...buildMultiSelectChips({
-      fieldKey: "levels",
-      fieldLabel: labels.fields.levels,
-      options: options.levels,
-      selected: input.levels ?? [],
-      aggregateValue: aggregateCount,
-    }),
-  );
-  chips.push(
-    ...buildMultiSelectChips({
-      fieldKey: "countries",
-      fieldLabel: labels.fields.countries,
-      options: options.countries,
-      selected: input.countries ?? [],
-      aggregateValue: aggregateCount,
-    }),
-  );
-  chips.push(
-    ...buildMultiSelectChips({
-      fieldKey: "learningMethods",
-      fieldLabel: labels.fields.learningMethods,
-      options: options.learningMethods,
-      selected: input.learningMethods ?? [],
-      aggregateValue: aggregateCount,
-    }),
-  );
-  chips.push(
-    ...buildMultiSelectChips<number>({
-      fieldKey: "categories",
-      fieldLabel: labels.fields.categories,
-      options: options.categories,
-      selected: (input.categories ?? []).filter(
-        (v): v is number => typeof v === "number",
-      ),
-      aggregateValue: aggregateCount,
-    }),
-  );
-  chips.push(
-    ...buildMultiSelectChips({
-      fieldKey: "kinds",
-      fieldLabel: labels.fields.kinds,
-      options: options.kinds,
-      selected: input.kinds ?? [],
-      aggregateValue: aggregateCount,
-      // Seed-list field — see the `openList` note in filter-chips.ts.
-      openList: true,
-    }),
-  );
-  return chips;
-}
-
-/**
- * URL-only pivot fields. These show up as chips but have no slot in
- * `EventListFilterInput`, so chip × removal updates `pivotOnly` state
- * rather than the active filter.
- */
-const PIVOT_ONLY_FIELDS = new Set<PivotKey>([
-  "kind",
-  "origPort",
-  "respPort",
-  "proto",
-  "window",
-]);
-
-function isPivotOnlyField(field: PivotKey | undefined): boolean {
-  return field !== undefined && PIVOT_ONLY_FIELDS.has(field);
-}
-
-function pivotChipRemoveTarget(
-  field: PivotKey,
-  value: string,
-  aggregate: boolean,
-): ChipRemoveTarget | null {
-  if (PIVOT_ONLY_FIELDS.has(field)) return null;
-  if (field === "source" || field === "destination") {
-    return { kind: "scalarField", field };
-  }
-  // Tag fields: keywords / hostnames / userIds / userNames / userDepartments.
-  if (
-    field === "keywords" ||
-    field === "hostnames" ||
-    field === "userIds" ||
-    field === "userNames" ||
-    field === "userDepartments"
-  ) {
-    if (aggregate) return { kind: "arrayAggregate", field };
-    return { kind: "arrayValue", field, value };
-  }
-  return null;
-}
-
-function multiSelectChipRemoveTarget(
-  chip: ActiveFilterChip,
-): ChipRemoveTarget | null {
-  const field = chip.fieldKey;
-  if (
-    field !== "levels" &&
-    field !== "countries" &&
-    field !== "learningMethods" &&
-    field !== "categories" &&
-    field !== "kinds"
-  ) {
-    return null;
-  }
-  if (chip.aggregate) {
-    return { kind: "categoricalAggregate", field };
-  }
-  // The chip key encodes the underlying value — `levels:5`,
-  // `countries:US`, `kinds:HttpThreat`, etc. Parse it back so the
-  // removal target matches the typed `selected` array.
-  const valueText = chip.key.startsWith(`${field}:`)
-    ? chip.key.slice(field.length + 1)
-    : chip.value;
-  if (field === "levels" || field === "categories") {
-    const n = Number.parseInt(valueText, 10);
-    if (!Number.isFinite(n)) return null;
-    return { kind: "categoricalValue", field, value: n };
-  }
-  if (field === "learningMethods") {
-    if (valueText !== "UNSUPERVISED" && valueText !== "SEMI_SUPERVISED") {
-      return null;
-    }
-    return { kind: "categoricalValue", field, value: valueText };
-  }
-  return { kind: "categoricalValue", field, value: valueText };
 }
 
 function RemovableChip({

@@ -48,15 +48,33 @@ active filter chip bar. Clicking **Filters** opens the filter
 drawer on the right; the chip bar to its right summarises the
 filter currently applied to the active tab.
 
-The chip bar follows an aggregation rule so it stays compact when
-many values are active:
+The chip bar is built from a single shared helper
+(`summarizeFilter(filter: Filter)`) so every surface that renders
+chips — the active bar and any future forms of it — follow the
+same aggregation rules:
 
+- The committed period (or explicit time range) always renders as
+  a removable `Period: …` chip so the operator can drop it with
+  `×` just like any other filter.
 - Single-value fields (`Source`, `Destination`) render as a single
   chip with the value (e.g. `Source: 10.0.0.5`).
 - Tag fields with **1–3** values render one chip per value.
 - Tag fields with **more than 3** values collapse to a single
   count token (e.g. `Keywords: 12`). Activating the count chip
-  reopens the drawer so you can edit the list.
+  reopens the drawer focused on that field so you can edit the
+  list.
+- Direction, Confidence, Sensor, and every categorical
+  multi-select (Threat Level, Threat Country, AI Model Type,
+  Threat Category, Threat Name) follow the same ≤ 3 / aggregate
+  rule.
+
+When the future search-language filter mode is enabled
+(`Filter.mode === "query"`) the shared helper returns no chips
+and the bar will instead render the query text as a single
+editable pill — the query language can express OR / NOT / regex
+that structured chips cannot represent. The pill's query editor
+lands in a later phase; until then, query-mode filters carry no
+chip-level decomposition.
 
 Every chip carries an `×` affordance. Pressing `×` is a
 self-contained commit — the field is removed from the active
@@ -65,8 +83,11 @@ For aggregate chips (e.g. `Hostnames: 7`) the `×` removes the
 whole field. Single-value removal is atomic and explicit, so it
 does not conflict with the drawer's Apply-centric model — Apply
 exists to batch multi-field edits. Activating a chip's body
-(rather than its `×`) opens the filter drawer focused on that
-field so you can amend the value before re-applying.
+(rather than its `×`) opens the filter drawer scrolled to the
+matching section (text / tag chips focus the input; the period,
+direction, confidence, sensor, endpoint, and categorical chips
+scroll their section into view) so you can amend the value
+before re-applying.
 
 Tag-field state and the `Source` / `Destination` values are
 persisted in the URL as comma-separated values
@@ -109,7 +130,8 @@ Each detection event renders as a compact two-line entry:
 - **Line 2** — `source endpoint → destination endpoint`, each
   endpoint formatted as `IP[:port] (country)`, followed by the
   sensor name. Subtypes whose source or destination is an array
-  show the first entry plus a `+N more` suffix.
+  show the first entry plus a `+N more` button; clicking the
+  button opens an inline popover listing every hidden IP or port.
 
 Severity, time, kind, source IP+port, and destination IP+port are
 present for every event subtype. At narrower viewports the row
@@ -136,9 +158,16 @@ The result region uses distinct panels for each non-ready state:
 
 #### Row interactions
 
-Clicking a row body opens the **Quick peek** inspector (added in
-a later phase); the inline `›` icon at the end of the row opens
-the full **Investigation** view. Pivot links on supported values
+Clicking anywhere on a row body opens the **Quick peek**
+inspector on the right-hand side of the page. Quick peek carries
+the event summary (severity, time, kind, confidence, source →
+destination, sensor) and an **Open investigation** button that
+jumps into the full Investigation view. The inline `›` icon at
+the end of the row opens the Investigation view directly,
+skipping Quick peek. Investigation navigation is locale-aware
+and carries a `returnTo` URL parameter so the Back link returns
+to the exact Detection tab the operator left, including the
+active filter's chip state. Pivot links on supported values
 (IP, country, kind, category, level, hostname, user) open or
 focus a narrowed tab — that wiring lands in the Pivot phase.
 
