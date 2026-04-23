@@ -19,7 +19,10 @@
  */
 
 import { directionsForFilterInput, FLOW_KINDS } from "./direction";
-import type { EndpointEntry } from "./endpoint-filter";
+import {
+  type EndpointEntry,
+  endpointsToEndpointInputs,
+} from "./endpoint-filter";
 import type { Filter } from "./filter";
 import { CONFIDENCE_DEFAULT_MAX, CONFIDENCE_DEFAULT_MIN } from "./filter-draft";
 import type { EventListFilterInput, FlowKind, LearningMethod } from "./types";
@@ -179,10 +182,15 @@ export function removeActiveChip(
       break;
     case "endpointEntry": {
       const next = endpoints.filter((e) => e.id !== target.entryId);
-      // The endpoints field is rebuilt by buildAppliedFilter from the
-      // remaining entries; here we just keep the input shape consistent
-      // by clearing it when nothing is left.
-      if (next.length === 0) delete input.endpoints;
+      // The drawer's Apply path uses `endpointsToEndpointInputs` to
+      // translate the surviving entries into the GraphQL `endpoints`
+      // payload. A chip × must mirror that — otherwise the chip bar
+      // hides the removed rule while the dispatched query still
+      // carries it, and the operator sees the filtered-out rows
+      // "come back" on the next render.
+      const submitted = endpointsToEndpointInputs(next);
+      if (submitted.length === 0) delete input.endpoints;
+      else input.endpoints = submitted;
       return { filter: { mode: "structured", input }, endpoints: next };
     }
     case "endpointAll":

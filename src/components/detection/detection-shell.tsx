@@ -9,7 +9,14 @@ import {
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
-import { startTransition, useCallback, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
 import {
   type FetchSensorsResult,
@@ -348,6 +355,7 @@ export function DetectionShell({
   const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
     null,
   );
+  const isDesktop = useIsDesktopViewport();
   // Monotonic id for the in-flight Apply; a late response whose id
   // no longer matches is dropped so the results region can't drift
   // away from the committed filter when the operator applies twice
@@ -913,22 +921,48 @@ export function DetectionShell({
           </div>
         </div>
 
-        {/* Results region (hero) */}
-        <section
-          aria-label={labels.resultsRegion}
-          aria-live="polite"
-          className="flex min-h-[60vh] flex-1 flex-col"
-        >
-          <ResultList
-            state={resultListState}
-            labels={resultListLabels}
-            locale={locale}
-            onRefresh={handleRefresh}
-            onOpenFilters={() => openDrawer()}
-            onRowOpen={handleRowOpen}
-            onRowInvestigate={handleRowInvestigate}
-          />
-        </section>
+        {/*
+         * Results region (hero) + inline Quick peek inspector (desktop+).
+         *
+         * Layout contract (issue #280): at ≥ desktop widths, when Quick
+         * peek is open the list shrinks proportionally to the right
+         * and the inspector docks as an inline pane beside it. At
+         * narrower widths the inspector falls back to an overlay drawer
+         * (rendered below) and the list keeps its full width. Both
+         * branches reuse `QuickPeekInspectorBody` so the summary +
+         * "Open investigation" contract is defined once.
+         */}
+        <div className="flex min-h-[60vh] flex-1 gap-4">
+          <section
+            aria-label={labels.resultsRegion}
+            aria-live="polite"
+            className="flex min-w-0 flex-1 flex-col"
+          >
+            <ResultList
+              state={resultListState}
+              labels={resultListLabels}
+              locale={locale}
+              onRefresh={handleRefresh}
+              onOpenFilters={() => openDrawer()}
+              onRowOpen={handleRowOpen}
+              onRowInvestigate={handleRowInvestigate}
+            />
+          </section>
+          {isDesktop && quickPeekEvent ? (
+            <aside
+              aria-label={resultListLabels.rowOpenLabel}
+              className="hidden w-80 shrink-0 flex-col overflow-hidden rounded-lg border border-[var(--sidebar-border)] desktop:flex"
+            >
+              <QuickPeekInspectorBody
+                event={quickPeekEvent}
+                locale={locale}
+                labels={resultListLabels}
+                onClose={() => setQuickPeekEvent(null)}
+                onInvestigate={() => handleRowInvestigate(quickPeekEvent)}
+              />
+            </aside>
+          ) : null}
+        </div>
 
         {/* Collapsible analytics strip (collapsed by default) */}
         <div className="rounded-lg border border-[var(--sidebar-border)]">
@@ -981,8 +1015,8 @@ export function DetectionShell({
         />
       ) : null}
 
-      <QuickPeekInspector
-        event={quickPeekEvent}
+      <QuickPeekInspectorOverlay
+        event={isDesktop ? null : quickPeekEvent}
         locale={locale}
         labels={resultListLabels}
         onClose={() => setQuickPeekEvent(null)}
@@ -995,14 +1029,34 @@ export function DetectionShell({
 }
 
 /**
- * Quick peek inspector shell. Phase Detection-18 owns the full
- * contents; for v1 we render the compact summary the list row
- * already shows plus the "Open investigation" jump. The inspector
- * opens as an overlay drawer (`Sheet` from `radix-ui`) at every
- * viewport — the inline-dock split at ≥ desktop widths is a
- * polish follow-up tracked against Phase Detection-18.
+ * Subscribes to the desktop media query (`≥ --breakpoint-desktop`).
+ * Starts as `false` so the server render matches the narrow branch —
+ * the desktop branch flips on post-mount once `matchMedia` reports
+ * the real viewport width. Prevents hydration mismatch without the
+ * flash-of-incorrect-layout a purely CSS-based toggle would need.
  */
-function QuickPeekInspector({
+function useIsDesktopViewport(): boolean {
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mql = window.matchMedia("(min-width: 1280px)");
+    const sync = () => setIsDesktop(mql.matches);
+    sync();
+    mql.addEventListener("change", sync);
+    return () => mql.removeEventListener("change", sync);
+  }, []);
+  return isDesktop;
+}
+
+/**
+ * Narrow-viewport Quick peek inspector: an overlay sheet. Phase
+ * Detection-18 owns the full contents; for v1 we render the compact
+ * summary the list row already shows plus the "Open investigation"
+ * jump. At ≥ desktop widths the shell renders the same body
+ * ({@link QuickPeekInspectorBody}) inline as a right-hand pane,
+ * matching the layout contract in issue #280.
+ */
+function QuickPeekInspectorOverlay({
   event,
   locale,
   labels,
@@ -1016,26 +1070,10 @@ function QuickPeekInspector({
   onInvestigate: () => void;
 }) {
   const open = event !== null;
-  const addressable = event ? isEventAddressable(event) : false;
-  const endpointSummary = event ? formatEndpointSummary(event) : null;
   const kindLabel = event
     ? (EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename)
     : "";
-  let timeLabel = "";
-  if (event) {
-    const d = new Date(event.time);
-    timeLabel = Number.isNaN(d.getTime())
-      ? labels.unknownTime
-      : new Intl.DateTimeFormat(locale, {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        }).format(d);
-  }
+  const timeLabel = event ? formatEventTime(event.time, locale, labels) : "";
   return (
     <Sheet
       open={open}
@@ -1053,40 +1091,124 @@ function QuickPeekInspector({
           <SheetDescription>{timeLabel}</SheetDescription>
         </SheetHeader>
         {event ? (
-          <div className="flex flex-1 flex-col gap-3 px-4 pb-4">
-            <div className="flex items-center gap-2">
-              <Badge
-                variant={levelBadgeVariant(event.level)}
-                className="uppercase"
-              >
-                {labels.levelLabels[event.level] ?? event.level}
-              </Badge>
-              <span className="text-muted-foreground text-xs">
-                {labels.confidenceLabel} {event.confidence.toFixed(2)}
-              </span>
-            </div>
-            {endpointSummary ? (
-              <p className="text-foreground font-mono text-xs break-all">
-                {endpointSummary}
-              </p>
-            ) : null}
-            <p className="text-muted-foreground text-xs">
-              {event.sensor || labels.noSensor}
-            </p>
-            <Button
-              type="button"
-              size="sm"
-              onClick={onInvestigate}
-              disabled={!addressable}
-              className="mt-2 self-start"
-            >
-              {labels.rowInvestigateLabel}
-            </Button>
-          </div>
+          <QuickPeekInspectorContent
+            event={event}
+            labels={labels}
+            onInvestigate={onInvestigate}
+          />
         ) : null}
       </SheetContent>
     </Sheet>
   );
+}
+
+/**
+ * Inline inspector body used by the desktop+ right-hand pane. The
+ * pane header mirrors the overlay's `SheetHeader` (kind + time) and
+ * carries an explicit Close affordance because there's no backdrop
+ * click to dismiss the inline pane.
+ */
+function QuickPeekInspectorBody({
+  event,
+  locale,
+  labels,
+  onClose,
+  onInvestigate,
+}: {
+  event: DetectionEvent;
+  locale: string;
+  labels: ResultListLabels;
+  onClose: () => void;
+  onInvestigate: () => void;
+}) {
+  const kindLabel =
+    EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
+  const timeLabel = formatEventTime(event.time, locale, labels);
+  return (
+    <>
+      <header className="flex items-start gap-2 border-b border-[var(--sidebar-border)] px-4 py-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-foreground truncate text-sm font-semibold">
+            {kindLabel}
+          </span>
+          <span className="text-muted-foreground text-xs">{timeLabel}</span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={labels.errorRetry}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex size-7 items-center justify-center rounded-sm focus-visible:ring-2 focus-visible:outline-none"
+        >
+          <X className="size-4" aria-hidden="true" />
+        </button>
+      </header>
+      <QuickPeekInspectorContent
+        event={event}
+        labels={labels}
+        onInvestigate={onInvestigate}
+      />
+    </>
+  );
+}
+
+function QuickPeekInspectorContent({
+  event,
+  labels,
+  onInvestigate,
+}: {
+  event: DetectionEvent;
+  labels: ResultListLabels;
+  onInvestigate: () => void;
+}) {
+  const addressable = isEventAddressable(event);
+  const endpointSummary = formatEndpointSummary(event);
+  return (
+    <div className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-3">
+      <div className="flex items-center gap-2">
+        <Badge variant={levelBadgeVariant(event.level)} className="uppercase">
+          {labels.levelLabels[event.level] ?? event.level}
+        </Badge>
+        <span className="text-muted-foreground text-xs">
+          {labels.confidenceLabel} {event.confidence.toFixed(2)}
+        </span>
+      </div>
+      {endpointSummary ? (
+        <p className="text-foreground font-mono text-xs break-all">
+          {endpointSummary}
+        </p>
+      ) : null}
+      <p className="text-muted-foreground text-xs">
+        {event.sensor || labels.noSensor}
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        onClick={onInvestigate}
+        disabled={!addressable}
+        className="mt-2 self-start"
+      >
+        {labels.rowInvestigateLabel}
+      </Button>
+    </div>
+  );
+}
+
+function formatEventTime(
+  time: string,
+  locale: string,
+  labels: ResultListLabels,
+): string {
+  const d = new Date(time);
+  if (Number.isNaN(d.getTime())) return labels.unknownTime;
+  return new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(d);
 }
 
 function filterToDraft(

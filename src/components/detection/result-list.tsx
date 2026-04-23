@@ -444,6 +444,22 @@ function TriageSummary({
   );
 }
 
+/**
+ * Render the source → destination line for an event row.
+ *
+ * Not every `Event` implementor in the vendored schema carries
+ * endpoint fields: `ExtraThreat` and `WindowsThreat` model host- /
+ * agent-side threats and expose no `origAddr` / `respAddr` / port
+ * fields at all (see `schemas/review.graphql` — both types only
+ * surface sensor, service, agent, and user context). A handful of
+ * other subtypes omit one side or one port — for example
+ * `UnusualDestinationPattern` is responder-array only, and
+ * `RdpBruteForce` / `LdapBruteForce` omit the originator port. In
+ * every such case the missing slot falls through to a `—`
+ * placeholder via {@link EndpointPart}; the whole line is suppressed
+ * only when neither side is addressable, so the rest of the row
+ * (severity / time / kind / sensor) still renders.
+ */
 function EndpointSummary({
   addressing,
   labels,

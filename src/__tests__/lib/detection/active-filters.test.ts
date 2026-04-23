@@ -131,11 +131,67 @@ describe("removeActiveChip", () => {
       direction: "SOURCE",
       selected: true,
     };
-    const result = removeActiveChip(baseFilter, [e1, e2], {
+    const filterWithTwo: Filter = {
+      mode: "structured",
+      input: {
+        ...baseFilter.input,
+        endpoints: [
+          {
+            direction: null,
+            custom: { hosts: ["10.0.0.5"], networks: [], ranges: [] },
+          },
+          {
+            direction: "FROM",
+            custom: { hosts: [], networks: ["192.168.1.0/24"], ranges: [] },
+          },
+        ],
+      },
+    };
+    const result = removeActiveChip(filterWithTwo, [e1, e2], {
       kind: "endpointEntry",
       entryId: "ep-1",
     });
     expect(result.endpoints).toEqual([e2]);
+    // The dispatched filter must mirror the chip bar — the surviving
+    // endpoint rule is the only one in `input.endpoints`, so the
+    // removed host no longer leaks into the re-run query.
+    if (result.filter.mode !== "structured") throw new Error("unreachable");
+    expect(result.filter.input.endpoints).toEqual([
+      {
+        direction: "FROM",
+        custom: { hosts: [], networks: ["192.168.1.0/24"], ranges: [] },
+      },
+    ]);
+  });
+
+  it("drops input.endpoints entirely when the last entry is removed", () => {
+    const e1: EndpointEntry = {
+      id: "ep-1",
+      raw: "10.0.0.5",
+      kind: "host",
+      host: "10.0.0.5",
+      direction: "BOTH",
+      selected: true,
+    };
+    const filter: Filter = {
+      mode: "structured",
+      input: {
+        ...baseFilter.input,
+        endpoints: [
+          {
+            direction: null,
+            custom: { hosts: ["10.0.0.5"], networks: [], ranges: [] },
+          },
+        ],
+      },
+    };
+    const result = removeActiveChip(filter, [e1], {
+      kind: "endpointEntry",
+      entryId: "ep-1",
+    });
+    expect(result.endpoints).toEqual([]);
+    if (result.filter.mode !== "structured") throw new Error("unreachable");
+    expect(result.filter.input.endpoints).toBeUndefined();
   });
 
   it("clears every endpoint entry on aggregate removal", () => {

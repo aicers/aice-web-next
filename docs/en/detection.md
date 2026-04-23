@@ -159,17 +159,32 @@ The result region uses distinct panels for each non-ready state:
 #### Row interactions
 
 Clicking anywhere on a row body opens the **Quick peek**
-inspector on the right-hand side of the page. Quick peek carries
-the event summary (severity, time, kind, confidence, source →
-destination, sensor) and an **Open investigation** button that
-jumps into the full Investigation view. The inline `›` icon at
-the end of the row opens the Investigation view directly,
-skipping Quick peek. Investigation navigation is locale-aware
-and carries a `returnTo` URL parameter so the Back link returns
-to the exact Detection tab the operator left, including the
-active filter's chip state. Pivot links on supported values
-(IP, country, kind, category, level, hostname, user) open or
-focus a narrowed tab — that wiring lands in the Pivot phase.
+inspector. At desktop widths (≥ 1280 px) Quick peek docks inline
+as a right-hand pane beside the result list — the list shrinks
+proportionally to the right to make room. At narrower widths the
+same summary is rendered as an overlay drawer and the list keeps
+its full width, so smaller screens don't try to fit two columns
+of dense data. Quick peek carries the event summary (severity,
+time, kind, confidence, source → destination, sensor) and an
+**Open investigation** button that jumps into the full
+Investigation view. The inline `›` icon at the end of the row
+opens the Investigation view directly, skipping Quick peek.
+Investigation navigation is locale-aware and carries a `returnTo`
+URL parameter so the Back link returns to the exact Detection
+tab the operator left, including the active filter's chip state.
+Pivot links on supported values (IP, country, kind, category,
+level, hostname, user) open or focus a narrowed tab — that
+wiring lands in the Pivot phase.
+
+Two subtypes in the vendored schema — `ExtraThreat` and
+`WindowsThreat` — model host- / agent-side threats and expose no
+network addressing at all. For those rows the source →
+destination line is omitted, and the row still renders severity,
+time, kind, confidence, triage summary, and sensor. A handful of
+other subtypes omit one side or one port (for example
+`UnusualDestinationPattern` is responder-array only, and
+`RdpBruteForce` omits the originator port); in those cases the
+missing slot falls back to `—`.
 
 ### Analytics strip
 
