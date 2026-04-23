@@ -50,6 +50,13 @@ const BASE_DRAFT: DetectionFilterDraft = {
   learningMethods: [],
   categories: [],
   kinds: [],
+  source: "",
+  destination: "",
+  keywords: [],
+  hostnames: [],
+  userIds: [],
+  userNames: [],
+  userDepartments: [],
 };
 
 describe("buildAppliedFilter", () => {

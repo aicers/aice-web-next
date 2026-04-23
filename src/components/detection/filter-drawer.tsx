@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, Filter as FilterIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import {
   type DetectionFilterDraft,
   formatConfidenceInput,
   isoToLocalInput,
+  normalizeDraftForSubmit,
   setConfidenceMax,
   setConfidenceMin,
 } from "@/lib/detection/filter-draft";
@@ -35,6 +36,12 @@ import {
   type PeriodKey,
 } from "@/lib/detection/period";
 import type { FlowKind, LearningMethod } from "@/lib/detection/types";
+import {
+  TAG_FIELDS,
+  type TagField,
+  TEXT_FIELDS,
+  type TextField,
+} from "@/lib/detection/url-filters";
 import { cn } from "@/lib/utils";
 import {
   EndpointFilterPanel,
@@ -51,6 +58,19 @@ import {
   type SensorMultiSelectState,
   type SensorOption,
 } from "./sensor-multi-select";
+import { TagInput } from "./tag-input";
+
+export interface TagFieldLabel {
+  label: string;
+  placeholder: string;
+  /** Template that returns the a11y label for a tag's remove button. */
+  removeLabel: (tag: string) => string;
+}
+
+export interface TextFieldLabel {
+  label: string;
+  placeholder: string;
+}
 
 export interface FilterDrawerLabels {
   title: string;
@@ -79,6 +99,24 @@ export interface FilterDrawerLabels {
   customerComingSoon: string;
   customerComingSoonHint: string;
   sensor: SensorMultiSelectLabels;
+  /**
+   * Section legend for the free-form text/tag inputs (source,
+   * destination, keywords, hostnames, userIds, userNames,
+   * userDepartments). Renamed from the original `fieldsLegend` on the
+   * branch so it no longer collides with `fields` below, which main
+   * now uses for the categorical multi-select labels.
+   */
+  attributesLegend: string;
+  /** Per-field labels for the Attributes section (text + tag inputs). */
+  attributes: {
+    source: TextFieldLabel;
+    destination: TextFieldLabel;
+    keywords: TagFieldLabel;
+    hostnames: TagFieldLabel;
+    userIds: TagFieldLabel;
+    userNames: TagFieldLabel;
+    userDepartments: TagFieldLabel;
+  };
   categoricalSectionLabel: string;
   fields: {
     levels: string;
@@ -102,6 +140,9 @@ export interface FilterDrawerOptions {
   categories: readonly FilterMultiSelectOption<number>[];
   kinds: readonly FilterMultiSelectOption<string>[];
 }
+
+/** Drawer-editable field names — the ones whose chips can focus an input. */
+export type DrawerFocusField = TextField | TagField;
 
 interface FilterDrawerProps {
   open: boolean;
@@ -134,6 +175,22 @@ interface FilterDrawerProps {
    * `error` state. The parent should re-issue the fetch.
    */
   onSensorRetry?: () => void;
+  /**
+   * Field to scroll into view and focus once the drawer finishes
+   * opening. The shell sets this when an aggregate chip is activated
+   * so operators land directly on the offending list instead of
+   * scanning for it. A new non-null value re-runs the focus effect
+   * even if the field name hasn't changed (second click on the same
+   * chip).
+   */
+  focusField?: DrawerFocusField | null;
+  /**
+   * Monotonic token that pairs with {@link focusField}. When it
+   * increments the drawer treats the focus request as fresh even if
+   * `focusField` hasn't changed, so repeated clicks on the same chip
+   * refocus reliably.
+   */
+  focusToken?: number;
 }
 
 /**
@@ -157,9 +214,12 @@ export function FilterDrawer({
   sensorOptions,
   sensorState,
   onSensorRetry,
+  focusField = null,
+  focusToken = 0,
 }: FilterDrawerProps) {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [endpointPanelOpen, setEndpointPanelOpen] = useState(false);
+  const fieldIdPrefix = useId();
   // Transient text state for the two confidence inputs: the input's
   // displayed value is owned here while the user is typing, instead
   // of being reformatted back through `formatConfidenceInput()` on
@@ -210,6 +270,31 @@ export function FilterDrawer({
       setConfidenceMaxText(formatConfidenceInput(draft.confidenceMax));
     }
   }, [draft.confidenceMax]);
+
+  // Scroll + focus the requested field once the drawer has opened.
+  // The shared `Sheet` content animates in, so we defer with
+  // `requestAnimationFrame` to let the target element mount and the
+  // sheet settle before calling `focus()`; otherwise the scroll-into-
+  // view snaps to the wrong position on some browsers.
+  //
+  // `focusToken` is intentionally in the dep list so repeated clicks
+  // on the same aggregate chip re-run the effect even though the
+  // field name is unchanged — biome's exhaustive-deps rule can't see
+  // that motivation so the dep is left in deliberately.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: focusToken re-triggers repeat-click focus
+  useEffect(() => {
+    if (!open || !focusField) return;
+    const id = `${fieldIdPrefix}-${focusField}`;
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "auto" });
+      if (typeof (el as HTMLInputElement).focus === "function") {
+        (el as HTMLInputElement).focus({ preventScroll: true });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [open, focusField, focusToken, fieldIdPrefix]);
 
   function selectPeriod(key: PeriodKey) {
     const range = computePeriodRange(key);
@@ -291,6 +376,14 @@ export function FilterDrawer({
     }
   }
 
+  function setTextField(field: TextField, value: string) {
+    onDraftChange({ ...draft, [field]: value });
+  }
+
+  function setTagField(field: TagField, value: string[]) {
+    onDraftChange({ ...draft, [field]: value });
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (
@@ -312,7 +405,7 @@ export function FilterDrawer({
     maxFocusedRef.current = false;
     setConfidenceMinText(formatConfidenceInput(draft.confidenceMin));
     setConfidenceMaxText(formatConfidenceInput(draft.confidenceMax));
-    onApply(draft);
+    onApply(normalizeDraftForSubmit(draft));
   }
 
   const endpointCount = draft.endpoints.filter((e) => e.selected).length;
@@ -567,6 +660,47 @@ export function FilterDrawer({
               state={sensorState}
               onRetry={onSensorRetry}
             />
+
+            {/* Free-form fields: single-string + tag-input filters. */}
+            <fieldset className="flex flex-col gap-3">
+              <legend className="text-foreground text-sm font-medium">
+                {labels.attributesLegend}
+              </legend>
+              {TEXT_FIELDS.map((field) => {
+                const inputId = `${fieldIdPrefix}-${field}`;
+                return (
+                  <div key={field} className="flex flex-col gap-2">
+                    <Label htmlFor={inputId}>
+                      {labels.attributes[field].label}
+                    </Label>
+                    <Input
+                      id={inputId}
+                      type="text"
+                      value={draft[field]}
+                      onChange={(e) => setTextField(field, e.target.value)}
+                      placeholder={labels.attributes[field].placeholder}
+                    />
+                  </div>
+                );
+              })}
+              {TAG_FIELDS.map((field) => {
+                const inputId = `${fieldIdPrefix}-${field}`;
+                return (
+                  <div key={field} className="flex flex-col gap-2">
+                    <Label htmlFor={inputId}>
+                      {labels.attributes[field].label}
+                    </Label>
+                    <TagInput
+                      id={inputId}
+                      value={draft[field]}
+                      onChange={(next) => setTagField(field, next)}
+                      placeholder={labels.attributes[field].placeholder}
+                      removeLabel={labels.attributes[field].removeLabel}
+                    />
+                  </div>
+                );
+              })}
+            </fieldset>
 
             {/* Categorical multi-select filters */}
             <fieldset className="flex flex-col gap-3">

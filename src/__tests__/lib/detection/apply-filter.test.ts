@@ -26,6 +26,13 @@ function draft(
     learningMethods: [],
     categories: [],
     kinds: [],
+    source: "",
+    destination: "",
+    keywords: [],
+    hostnames: [],
+    userIds: [],
+    userNames: [],
+    userDepartments: [],
     ...overrides,
   };
 }

@@ -7,12 +7,35 @@
  * the Investigation page and the reader on the Detection page —
  * stay in sync without depending on each other.
  *
- * v1 is deliberately minimal: params round-trip into active-filter
- * chip descriptors rendered by the Detection shell's chip toolbar.
- * Future Detection phases will translate the same params into the
- * concrete `EventListFilterInput` that drives the list query; the
- * URL shape is stable across that transition.
+ * The same URL shape doubles as persistence for the drawer's
+ * free-form filter fields: the Apply handler round-trips source,
+ * destination, keywords, hostnames, userIds, userNames, and
+ * userDepartments through the URL so a page refresh restores the
+ * active tab's filter state.
  */
+import type { EventListFilterInput } from "./types";
+
+/**
+ * Free-form tag-input fields in the filter drawer. Kept as a named
+ * set so the draft, chip builder, and URL encoder all iterate the
+ * same list and can't drift out of sync when a new tag-valued field
+ * is added. Lives in the lib (non-client) module so server code —
+ * the Detection page — can import it without tripping Next.js's
+ * server-reference wrapping of exports from `"use client"` modules.
+ */
+export const TAG_FIELDS = [
+  "keywords",
+  "hostnames",
+  "userIds",
+  "userNames",
+  "userDepartments",
+] as const;
+export type TagField = (typeof TAG_FIELDS)[number];
+
+/** Single-string fields in the drawer (`source`, `destination`). */
+export const TEXT_FIELDS = ["source", "destination"] as const;
+export type TextField = (typeof TEXT_FIELDS)[number];
+
 export type PivotWindow = "1d" | "7d";
 
 export interface PivotFilterParams {
@@ -23,6 +46,11 @@ export interface PivotFilterParams {
   respPort?: number;
   proto?: number;
   window?: PivotWindow;
+  keywords?: string[];
+  hostnames?: string[];
+  userIds?: string[];
+  userNames?: string[];
+  userDepartments?: string[];
 }
 
 export type PivotKey = keyof PivotFilterParams;
@@ -55,6 +83,32 @@ function readFiniteInt(
 }
 
 /**
+ * Decode a comma-separated list param. Empty strings and
+ * whitespace-only entries are dropped so stray separators don't
+ * produce empty tags; duplicates are collapsed (first-seen wins) so
+ * a user-controlled URL can't inject duplicate chip ids or unstable
+ * tag-input React keys. Returns `undefined` when nothing usable
+ * remains so callers can treat "missing" and "explicitly empty"
+ * identically.
+ */
+function readStringList(
+  source: Record<string, string | string[] | undefined>,
+  key: string,
+): string[] | undefined {
+  const raw = source[key];
+  if (typeof raw !== "string") return undefined;
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const piece of raw.split(",")) {
+    const trimmed = piece.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    parts.push(trimmed);
+  }
+  return parts.length > 0 ? parts : undefined;
+}
+
+/**
  * Decode Detection pivot search params. Unknown or malformed entries
  * are dropped silently — the Detection page treats the URL as a
  * best-effort handoff, not a form to validate.
@@ -71,14 +125,33 @@ export function parsePivotSearchParams(
     respPort: readFiniteInt(source, "respPort"),
     proto: readFiniteInt(source, "proto"),
     window: window && isPivotWindow(window) ? window : undefined,
+    keywords: readStringList(source, "keywords"),
+    hostnames: readStringList(source, "hostnames"),
+    userIds: readStringList(source, "userIds"),
+    userNames: readStringList(source, "userNames"),
+    userDepartments: readStringList(source, "userDepartments"),
   };
 }
 
 /**
- * Encode pivot params into a `/detection?…` URL. Undefined fields
- * are omitted so shared URLs stay tidy.
+ * Encode pivot params into a `/detection?…` URL. Undefined or empty
+ * fields are omitted so shared URLs stay tidy.
  */
 export function buildDetectionPivotUrl(params: PivotFilterParams): string {
+  const search = buildDetectionSearchParams(params);
+  const qs = search.toString();
+  return qs ? `/detection?${qs}` : "/detection";
+}
+
+/**
+ * Serialize pivot params into a `URLSearchParams`. Exposed separately
+ * from {@link buildDetectionPivotUrl} so client-side callers can merge
+ * the result with `usePathname()` and `router.replace()` without
+ * parsing the URL back out.
+ */
+export function buildDetectionSearchParams(
+  params: PivotFilterParams,
+): URLSearchParams {
   const search = new URLSearchParams();
   if (params.source) search.set("source", params.source);
   if (params.destination) search.set("destination", params.destination);
@@ -91,8 +164,23 @@ export function buildDetectionPivotUrl(params: PivotFilterParams): string {
   }
   if (params.proto !== undefined) search.set("proto", String(params.proto));
   if (params.window) search.set("window", params.window);
-  const qs = search.toString();
-  return qs ? `/detection?${qs}` : "/detection";
+  writeList(search, "keywords", params.keywords);
+  writeList(search, "hostnames", params.hostnames);
+  writeList(search, "userIds", params.userIds);
+  writeList(search, "userNames", params.userNames);
+  writeList(search, "userDepartments", params.userDepartments);
+  return search;
+}
+
+function writeList(
+  search: URLSearchParams,
+  key: string,
+  values: string[] | undefined,
+): void {
+  if (!values || values.length === 0) return;
+  // Commas are URL-reserved but not encoded by default; use them as
+  // the list separator so the value stays human-readable when copied.
+  search.set(key, values.join(","));
 }
 
 export interface PivotChipLabels {
@@ -105,18 +193,39 @@ export interface PivotChipLabels {
   window: string;
   windowLastDay: string;
   windowLastWeek: string;
+  keywords: string;
+  hostnames: string;
+  userIds: string;
+  userNames: string;
+  userDepartments: string;
+  /** Rendered for an aggregated multi-value chip (e.g. "Keywords: 12"). */
+  countAggregate: (label: string, count: number) => string;
 }
 
 export interface PivotChip {
-  id: PivotKey;
+  /** Stable id used as React key; also encodes which field the chip represents. */
+  id: string;
+  /** Underlying filter field the chip belongs to — used when the operator activates an aggregate chip to open the drawer focused on that field. */
+  field: PivotKey;
   label: string;
   value: string;
+  /** Whether this chip represents an aggregated count rather than a single value. */
+  aggregate?: boolean;
 }
+
+/**
+ * Per the shared aggregation rule, array fields expand to individual
+ * chips when there are three or fewer values and collapse to a single
+ * "Keywords: N" token once there are more.
+ */
+const AGGREGATE_THRESHOLD = 3;
 
 /**
  * Build a display-ready chip descriptor list from pivot params.
  * Order is stable (same order as `PivotKey` declarations) so the
- * chip bar is deterministic across renders.
+ * chip bar is deterministic across renders. Array fields follow the
+ * shared aggregation rule: 1–3 values → individual chips, more →
+ * aggregate count token.
  */
 export function buildPivotChips(
   params: PivotFilterParams,
@@ -124,21 +233,33 @@ export function buildPivotChips(
 ): PivotChip[] {
   const chips: PivotChip[] = [];
   if (params.source) {
-    chips.push({ id: "source", label: labels.source, value: params.source });
+    chips.push({
+      id: "source",
+      field: "source",
+      label: labels.source,
+      value: params.source,
+    });
   }
   if (params.destination) {
     chips.push({
       id: "destination",
+      field: "destination",
       label: labels.destination,
       value: params.destination,
     });
   }
   if (params.kind) {
-    chips.push({ id: "kind", label: labels.kind, value: params.kind });
+    chips.push({
+      id: "kind",
+      field: "kind",
+      label: labels.kind,
+      value: params.kind,
+    });
   }
   if (params.origPort !== undefined) {
     chips.push({
       id: "origPort",
+      field: "origPort",
       label: labels.origPort,
       value: String(params.origPort),
     });
@@ -146,6 +267,7 @@ export function buildPivotChips(
   if (params.respPort !== undefined) {
     chips.push({
       id: "respPort",
+      field: "respPort",
       label: labels.respPort,
       value: String(params.respPort),
     });
@@ -153,6 +275,7 @@ export function buildPivotChips(
   if (params.proto !== undefined) {
     chips.push({
       id: "proto",
+      field: "proto",
       label: labels.proto,
       value: String(params.proto),
     });
@@ -160,10 +283,114 @@ export function buildPivotChips(
   if (params.window) {
     chips.push({
       id: "window",
+      field: "window",
       label: labels.window,
       value:
         params.window === "1d" ? labels.windowLastDay : labels.windowLastWeek,
     });
   }
+  appendArrayChips(chips, "keywords", params.keywords, labels.keywords, labels);
+  appendArrayChips(
+    chips,
+    "hostnames",
+    params.hostnames,
+    labels.hostnames,
+    labels,
+  );
+  appendArrayChips(chips, "userIds", params.userIds, labels.userIds, labels);
+  appendArrayChips(
+    chips,
+    "userNames",
+    params.userNames,
+    labels.userNames,
+    labels,
+  );
+  appendArrayChips(
+    chips,
+    "userDepartments",
+    params.userDepartments,
+    labels.userDepartments,
+    labels,
+  );
   return chips;
+}
+
+function appendArrayChips(
+  chips: PivotChip[],
+  field: PivotKey,
+  values: string[] | undefined,
+  label: string,
+  labels: PivotChipLabels,
+): void {
+  if (!values || values.length === 0) return;
+  if (values.length > AGGREGATE_THRESHOLD) {
+    chips.push({
+      id: `${field}:agg`,
+      field,
+      label,
+      value: labels.countAggregate(label, values.length),
+      aggregate: true,
+    });
+    return;
+  }
+  for (const value of values) {
+    chips.push({
+      id: `${field}:${value}`,
+      field,
+      label,
+      value,
+    });
+  }
+}
+
+/**
+ * Lift the free-form drawer fields out of a concrete filter input so
+ * the shell can reuse one chip builder for both URL-seeded pivots and
+ * the committed filter. Only fields this module knows how to render
+ * as chips/URL params are extracted; the rest (start/end, categorical
+ * inputs, network tags, etc.) stay where they are.
+ */
+export function pivotParamsFromFilterInput(
+  input: EventListFilterInput,
+): PivotFilterParams {
+  return {
+    source: input.source ?? undefined,
+    destination: input.destination ?? undefined,
+    keywords: input.keywords?.length ? input.keywords : undefined,
+    hostnames: input.hostnames?.length ? input.hostnames : undefined,
+    userIds: input.userIds?.length ? input.userIds : undefined,
+    userNames: input.userNames?.length ? input.userNames : undefined,
+    userDepartments: input.userDepartments?.length
+      ? input.userDepartments
+      : undefined,
+  };
+}
+
+/**
+ * Merge pivot-only chip fields (kind/ports/proto/window — not yet
+ * wired to the filter drawer) with the free-form filter fields into
+ * a single params object so {@link buildPivotChips} produces the
+ * drawer-backed chips alongside the Investigation-handoff chips.
+ */
+export function mergePivotParams(
+  pivotOnly: PivotFilterParams,
+  filterSide: PivotFilterParams,
+): PivotFilterParams {
+  return {
+    // Filter-side fields win for any overlap (currently source &
+    // destination) because the committed filter is the source of
+    // truth once Apply fires.
+    kind: pivotOnly.kind,
+    origPort: pivotOnly.origPort,
+    respPort: pivotOnly.respPort,
+    proto: pivotOnly.proto,
+    window: pivotOnly.window,
+    source: filterSide.source ?? pivotOnly.source,
+    destination: filterSide.destination ?? pivotOnly.destination,
+    keywords: filterSide.keywords,
+    hostnames: filterSide.hostnames,
+    userIds: filterSide.userIds,
+    userNames: filterSide.userNames,
+    userDepartments: filterSide.userDepartments,
+  };
 }

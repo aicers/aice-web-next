@@ -60,6 +60,16 @@ export function buildAppliedFilter(
     directions: _prevDirections,
     endpoints: _prevEndpoints,
     sensors: _prevSensors,
+    // Strip the branch-introduced free-form fields from the previous
+    // input so stale values don't survive when the drawer clears them;
+    // the drawer-provided `applied` draft is the source of truth below.
+    source: _prevSource,
+    destination: _prevDestination,
+    keywords: _prevKeywords,
+    hostnames: _prevHostnames,
+    userIds: _prevUserIds,
+    userNames: _prevUserNames,
+    userDepartments: _prevUserDepartments,
     ...previousRest
   } = previousInput;
   // Only strip the previous categorical values when the caller is
@@ -104,6 +114,21 @@ export function buildAppliedFilter(
   // ("no `sensors` reaches the filter unless ready") holds.
   if (sensorEndpointLive && applied.sensorIds.length > 0) {
     input.sensors = [...applied.sensorIds];
+  }
+
+  // Free-form drawer fields: source/destination are single strings,
+  // the rest are tag lists. Empty values are omitted from the input so
+  // a cleared field doesn't submit `""` or `[]` to REview.
+  const source = applied.source.trim();
+  if (source.length > 0) input.source = source;
+  const destination = applied.destination.trim();
+  if (destination.length > 0) input.destination = destination;
+  if (applied.keywords.length > 0) input.keywords = [...applied.keywords];
+  if (applied.hostnames.length > 0) input.hostnames = [...applied.hostnames];
+  if (applied.userIds.length > 0) input.userIds = [...applied.userIds];
+  if (applied.userNames.length > 0) input.userNames = [...applied.userNames];
+  if (applied.userDepartments.length > 0) {
+    input.userDepartments = [...applied.userDepartments];
   }
 
   if (categoricalOptions) {

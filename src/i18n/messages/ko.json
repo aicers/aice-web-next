@@ -598,6 +598,42 @@
         "errorHint": "센서 목록을 다시 불러옵니다.",
         "retry": "다시 시도"
       },
+      "attributesLegend": "출발지, 목적지, 사용자 속성",
+      "attributes": {
+        "source": {
+          "label": "출발지",
+          "placeholder": "예: 10.0.0.5"
+        },
+        "destination": {
+          "label": "목적지",
+          "placeholder": "예: 203.0.113.45"
+        },
+        "keywords": {
+          "label": "키워드",
+          "placeholder": "예: 멀웨어, 피싱",
+          "remove": "키워드 {tag} 제거"
+        },
+        "hostnames": {
+          "label": "호스트명",
+          "placeholder": "예: host01.corp.local",
+          "remove": "호스트명 {tag} 제거"
+        },
+        "userIds": {
+          "label": "사용자 ID",
+          "placeholder": "예: jdoe, 12345",
+          "remove": "사용자 ID {tag} 제거"
+        },
+        "userNames": {
+          "label": "사용자 이름",
+          "placeholder": "예: 홍길동",
+          "remove": "사용자 이름 {tag} 제거"
+        },
+        "userDepartments": {
+          "label": "사용자 부서",
+          "placeholder": "예: 엔지니어링",
+          "remove": "부서 {tag} 제거"
+        }
+      },
       "apply": "적용",
       "saveThisFilter": "필터 저장",
       "saveThisFilterComingSoon": "필터 저장 기능은 이후 단계에서 연결됩니다.",
@@ -609,8 +645,8 @@
       "resultsCount": "현재 필터에 일치하는 탐지 이벤트 {count}건.",
       "resultsError": "탐지 결과를 불러오지 못했습니다.",
       "chips": {
-        "source": "출발지 IP",
-        "destination": "목적지 IP",
+        "source": "출발지",
+        "destination": "목적지",
         "kind": "종류",
         "origPort": "출발지 포트",
         "respPort": "목적지 포트",
@@ -619,7 +655,13 @@
         "windowLastDay": "최근 24시간",
         "windowLastWeek": "최근 7일",
         "sensor": "센서",
-        "sensorAggregate": "{count}개 선택됨"
+        "sensorAggregate": "{count}개 선택됨",
+        "keywords": "키워드",
+        "hostnames": "호스트명",
+        "userIds": "사용자 ID",
+        "userNames": "사용자 이름",
+        "userDepartments": "사용자 부서",
+        "countAggregate": "{label}: {count}"
       },
       "endpoint": {
         "label": "네트워크 / IP",

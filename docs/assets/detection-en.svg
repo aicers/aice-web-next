@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" role="img"
+     aria-label="Wireframe stand-in for the Detection page">
+  <title>Detection page (wireframe stand-in)</title>
+  <desc>Schematic layout of the Detection page: left nav, saved/recommended rail,
+        top bar with Filters button and chip bar, Results region with count summary,
+        collapsed Analytics strip. A real capture replaces this once a staging
+        environment with seeded detection data is available.</desc>
+
+  <defs>
+    <style>
+      .bg      { fill: #0f1420; }
+      .panel   { fill: #151b2c; stroke: #2a3352; stroke-width: 1; }
+      .dashed  { fill: none; stroke: #4a5578; stroke-width: 1.5;
+                 stroke-dasharray: 6 4; }
+      .chip    { fill: #1d2742; stroke: #3a486b; stroke-width: 1; rx: 12; ry: 12; }
+      .chipPri { fill: #2749a8; stroke: #3f66c9; stroke-width: 1; rx: 12; ry: 12; }
+      .label   { fill: #c8d0e4; font-family: system-ui, sans-serif; font-size: 14px; }
+      .labelSm { fill: #8e97ae; font-family: system-ui, sans-serif; font-size: 12px; }
+      .labelLg { fill: #e7ebf5; font-family: system-ui, sans-serif; font-size: 16px;
+                 font-weight: 600; }
+      .muted   { fill: #6d7690; font-family: system-ui, sans-serif; font-size: 12px;
+                 font-style: italic; }
+      .heroNum { fill: #e7ebf5; font-family: system-ui, sans-serif; font-size: 44px;
+                 font-weight: 600; }
+      .heroSub { fill: #9aa3bc; font-family: system-ui, sans-serif; font-size: 14px; }
+      .watermark { fill: #6d7690; font-family: system-ui, sans-serif; font-size: 11px;
+                   letter-spacing: 0.08em; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1440" height="900" />
+
+  <!-- Left sidebar -->
+  <rect class="panel" x="0" y="0" width="240" height="900" />
+  <text class="labelLg" x="72" y="45">Clumit Security</text>
+  <g class="label" font-family="system-ui, sans-serif" font-size="14">
+    <text x="60" y="138">Home</text>
+    <text x="60" y="200">Dashboard</text>
+    <text x="60" y="262">Event</text>
+  </g>
+  <rect x="0" y="296" width="240" height="44" fill="#1a2340" />
+  <text class="labelLg" x="60" y="324" font-size="14">Detection</text>
+  <g class="label" font-family="system-ui, sans-serif" font-size="14">
+    <text x="60" y="382">Triage</text>
+    <text x="60" y="444">Report</text>
+    <text x="60" y="506">Audit Logs</text>
+    <text x="60" y="568">Settings</text>
+  </g>
+
+  <!-- Saved / Recommended rail -->
+  <rect class="panel" x="240" y="0" width="280" height="900" />
+  <text class="labelLg" x="266" y="38">Detection</text>
+  <text class="labelSm" x="266" y="92" letter-spacing="0.08em">RECOMMENDED FILTER</text>
+  <text class="labelSm" x="266" y="118">No filters yet.</text>
+  <text class="labelSm" x="266" y="164" letter-spacing="0.08em">SAVED FILTERS</text>
+  <text class="labelSm" x="266" y="190">No filters yet.</text>
+
+  <!-- Top bar -->
+  <rect class="panel" x="552" y="80" width="112" height="44" rx="8" ry="8" />
+  <text class="label" x="578" y="108">Filters</text>
+  <rect class="chip" x="676" y="88" width="120" height="28" />
+  <text class="label" x="696" y="107">Last 1 hour</text>
+  <rect class="chip" x="808" y="88" width="176" height="28" />
+  <text class="label" x="828" y="107">Keywords: auth-fail</text>
+  <rect class="chip" x="996" y="88" width="144" height="28" />
+  <text class="label" x="1016" y="107">Hostnames: 5</text>
+
+  <!-- Results region -->
+  <rect class="dashed" x="552" y="152" width="860" height="548" rx="10" ry="10" />
+  <text class="labelSm" x="576" y="182">RESULTS</text>
+  <text class="heroNum" x="982" y="420" text-anchor="middle">1,284</text>
+  <text class="heroSub" x="982" y="452" text-anchor="middle">events match the active filter</text>
+  <text class="muted" x="982" y="490" text-anchor="middle">(list view renders in a later phase)</text>
+
+  <!-- Analytics strip -->
+  <rect class="panel" x="552" y="716" width="860" height="52" rx="8" ry="8" />
+  <text class="label" x="576" y="748">&#9654; Analytics</text>
+
+  <!-- Wireframe watermark -->
+  <text class="watermark" x="1412" y="884" text-anchor="end">
+    WIREFRAME STAND-IN — replaced with a real capture once staging is available
+  </text>
+</svg>

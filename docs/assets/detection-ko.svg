@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" role="img"
+     aria-label="탐지 페이지 와이어프레임 대체 이미지">
+  <title>탐지 페이지 (와이어프레임 대체)</title>
+  <desc>탐지 페이지 레이아웃 스케치: 좌측 내비게이션, 추천/저장 필터 레일,
+        필터 버튼과 칩 바가 있는 상단 바, 결과 카운트를 표시하는 결과 영역,
+        접혀 있는 분석 스트립. 시드 데이터가 포함된 스테이징 환경이 준비되면
+        실제 캡처로 교체됩니다.</desc>
+
+  <defs>
+    <style>
+      .bg      { fill: #0f1420; }
+      .panel   { fill: #151b2c; stroke: #2a3352; stroke-width: 1; }
+      .dashed  { fill: none; stroke: #4a5578; stroke-width: 1.5;
+                 stroke-dasharray: 6 4; }
+      .chip    { fill: #1d2742; stroke: #3a486b; stroke-width: 1; rx: 12; ry: 12; }
+      .chipPri { fill: #2749a8; stroke: #3f66c9; stroke-width: 1; rx: 12; ry: 12; }
+      .label   { fill: #c8d0e4; font-family: system-ui, sans-serif; font-size: 14px; }
+      .labelSm { fill: #8e97ae; font-family: system-ui, sans-serif; font-size: 12px; }
+      .labelLg { fill: #e7ebf5; font-family: system-ui, sans-serif; font-size: 16px;
+                 font-weight: 600; }
+      .muted   { fill: #6d7690; font-family: system-ui, sans-serif; font-size: 12px;
+                 font-style: italic; }
+      .heroNum { fill: #e7ebf5; font-family: system-ui, sans-serif; font-size: 44px;
+                 font-weight: 600; }
+      .heroSub { fill: #9aa3bc; font-family: system-ui, sans-serif; font-size: 14px; }
+      .watermark { fill: #6d7690; font-family: system-ui, sans-serif; font-size: 11px;
+                   letter-spacing: 0.08em; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1440" height="900" />
+
+  <!-- Left sidebar -->
+  <rect class="panel" x="0" y="0" width="240" height="900" />
+  <text class="labelLg" x="72" y="45">Clumit Security</text>
+  <g class="label" font-family="system-ui, sans-serif" font-size="14">
+    <text x="60" y="138">홈</text>
+    <text x="60" y="200">대시보드</text>
+    <text x="60" y="262">이벤트</text>
+  </g>
+  <rect x="0" y="296" width="240" height="44" fill="#1a2340" />
+  <text class="labelLg" x="60" y="324" font-size="14">탐지</text>
+  <g class="label" font-family="system-ui, sans-serif" font-size="14">
+    <text x="60" y="382">분류</text>
+    <text x="60" y="444">보고서</text>
+    <text x="60" y="506">감사 로그</text>
+    <text x="60" y="568">설정</text>
+  </g>
+
+  <!-- Saved / Recommended rail -->
+  <rect class="panel" x="240" y="0" width="280" height="900" />
+  <text class="labelLg" x="266" y="38">탐지</text>
+  <text class="labelSm" x="266" y="92" letter-spacing="0.08em">추천 필터</text>
+  <text class="labelSm" x="266" y="118">아직 필터가 없습니다.</text>
+  <text class="labelSm" x="266" y="164" letter-spacing="0.08em">저장된 필터</text>
+  <text class="labelSm" x="266" y="190">아직 필터가 없습니다.</text>
+
+  <!-- Top bar -->
+  <rect class="panel" x="552" y="80" width="112" height="44" rx="8" ry="8" />
+  <text class="label" x="584" y="108">필터</text>
+  <rect class="chip" x="676" y="88" width="104" height="28" />
+  <text class="label" x="696" y="107">최근 1시간</text>
+  <rect class="chip" x="792" y="88" width="184" height="28" />
+  <text class="label" x="812" y="107">키워드: auth-fail</text>
+  <rect class="chip" x="988" y="88" width="136" height="28" />
+  <text class="label" x="1008" y="107">호스트명: 5</text>
+
+  <!-- Results region -->
+  <rect class="dashed" x="552" y="152" width="860" height="548" rx="10" ry="10" />
+  <text class="labelSm" x="576" y="182">결과</text>
+  <text class="heroNum" x="982" y="420" text-anchor="middle">1,284</text>
+  <text class="heroSub" x="982" y="452" text-anchor="middle">건이 현재 필터와 일치합니다</text>
+  <text class="muted" x="982" y="490" text-anchor="middle">(전체 목록은 이후 단계에서 렌더링됩니다)</text>
+
+  <!-- Analytics strip -->
+  <rect class="panel" x="552" y="716" width="860" height="52" rx="8" ry="8" />
+  <text class="label" x="576" y="748">&#9654; 분석</text>
+
+  <!-- Wireframe watermark -->
+  <text class="watermark" x="1412" y="884" text-anchor="end">
+    와이어프레임 대체 이미지 — 스테이징 환경 준비 후 실제 캡처로 교체 예정
+  </text>
+</svg>
