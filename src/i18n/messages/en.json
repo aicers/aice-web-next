@@ -780,7 +780,8 @@
       "moreCountSuffix": "+{count} more",
       "countryUnknown": "??",
       "countryUnavailable": "—",
-      "attackKindLabel": "Attack:"
+      "attackKindLabel": "Attack:",
+      "quickPeekClose": "Close Quick peek"
     },
     "analytics": {
       "toggle": "Analytics",

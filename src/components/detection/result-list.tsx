@@ -8,7 +8,7 @@ import {
   RefreshCw,
   TriangleAlert,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   EVENT_KIND_FRIENDLY_NAMES,
   type EventAddressing,
@@ -17,7 +17,12 @@ import {
 } from "@/components/events/event-display-helpers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { Event, ThreatLevel, TriageScore } from "@/lib/detection/types";
+import type {
+  Event,
+  ThreatCategory,
+  ThreatLevel,
+  TriageScore,
+} from "@/lib/detection/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -54,6 +59,7 @@ export interface ResultListLabels {
   emptyFilterAction: string;
   rowOpenLabel: string;
   rowInvestigateLabel: string;
+  quickPeekClose: string;
   unknownTime: string;
   noSensor: string;
   confidenceLabel: string;
@@ -63,6 +69,7 @@ export interface ResultListLabels {
   countryUnknown: string;
   countryUnavailable: string;
   levelLabels: Record<ThreatLevel, string>;
+  categoryLabels: Record<ThreatCategory, string>;
   attackKindLabel: string;
 }
 
@@ -380,7 +387,7 @@ function EventRow({
               ) : null}
               {event.category ? (
                 <Badge variant="outline" className="font-normal">
-                  {event.category}
+                  {labels.categoryLabels[event.category] ?? event.category}
                 </Badge>
               ) : null}
               <span className="text-muted-foreground text-xs">
@@ -599,19 +606,37 @@ function MorePopover({
   labels: ResultListLabels;
 }) {
   const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
+  // Outside-click handler is scoped to this popover's own wrapper via
+  // ref, so a click on the trigger counts as "inside" (the button's
+  // onClick still runs and toggles closed) and, with multiple popovers
+  // on the same row, clicking into another popover correctly closes
+  // this one.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (wrapperRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("keydown", keyHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", keyHandler);
+    };
+  }, [open]);
   return (
-    <span className="relative inline-flex">
+    <span className="relative inline-flex" ref={wrapperRef}>
       <button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Escape" && open) {
-            e.preventDefault();
-            setOpen(false);
-          }
         }}
         aria-expanded={open}
         aria-haspopup="dialog"
@@ -620,41 +645,20 @@ function MorePopover({
         {labels.moreCountSuffix(count)}
       </button>
       {open ? (
-        <MorePopoverPanel values={values} onClose={() => setOpen(false)} />
+        <div
+          role="dialog"
+          className="bg-popover text-popover-foreground absolute top-full z-20 mt-1 max-h-64 min-w-[10rem] overflow-auto rounded-md border p-2 shadow-md"
+        >
+          <ul className="flex flex-col gap-0.5 font-mono text-xs">
+            {values.map((v) => (
+              <li key={v} className="truncate">
+                {v}
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </span>
-  );
-}
-
-function MorePopoverPanel({
-  values,
-  onClose,
-}: {
-  values: string[];
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target?.closest("[data-slot=more-popover]")) onClose();
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [onClose]);
-  return (
-    <div
-      data-slot="more-popover"
-      role="dialog"
-      className="bg-popover text-popover-foreground absolute top-full z-20 mt-1 max-h-64 min-w-[10rem] overflow-auto rounded-md border p-2 shadow-md"
-    >
-      <ul className="flex flex-col gap-0.5 font-mono text-xs">
-        {values.map((v) => (
-          <li key={v} className="truncate">
-            {v}
-          </li>
-        ))}
-      </ul>
-    </div>
   );
 }
 

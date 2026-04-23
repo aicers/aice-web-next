@@ -265,6 +265,7 @@ export function DetectionShell({
       emptyFilterAction: tResults("emptyFilterAction"),
       rowOpenLabel: tResults("rowOpenLabel"),
       rowInvestigateLabel: tResults("rowInvestigateLabel"),
+      quickPeekClose: tResults("quickPeekClose"),
       unknownTime: tResults("unknownTime"),
       noSensor: tResults("noSensor"),
       confidenceLabel: t("confidenceChipLabel"),
@@ -279,6 +280,22 @@ export function DetectionShell({
         LOW: t("levelOptions.LOW"),
         MEDIUM: t("levelOptions.MEDIUM"),
         HIGH: t("levelOptions.HIGH"),
+      },
+      categoryLabels: {
+        RECONNAISSANCE: t("categoryOptions.RECONNAISSANCE"),
+        INITIAL_ACCESS: t("categoryOptions.INITIAL_ACCESS"),
+        EXECUTION: t("categoryOptions.EXECUTION"),
+        CREDENTIAL_ACCESS: t("categoryOptions.CREDENTIAL_ACCESS"),
+        DISCOVERY: t("categoryOptions.DISCOVERY"),
+        LATERAL_MOVEMENT: t("categoryOptions.LATERAL_MOVEMENT"),
+        COMMAND_AND_CONTROL: t("categoryOptions.COMMAND_AND_CONTROL"),
+        EXFILTRATION: t("categoryOptions.EXFILTRATION"),
+        IMPACT: t("categoryOptions.IMPACT"),
+        COLLECTION: t("categoryOptions.COLLECTION"),
+        DEFENSE_EVASION: t("categoryOptions.DEFENSE_EVASION"),
+        PERSISTENCE: t("categoryOptions.PERSISTENCE"),
+        PRIVILEGE_ESCALATION: t("categoryOptions.PRIVILEGE_ESCALATION"),
+        RESOURCE_DEVELOPMENT: t("categoryOptions.RESOURCE_DEVELOPMENT"),
       },
       attackKindLabel: tResults("attackKindLabel"),
     }),
@@ -1084,7 +1101,7 @@ function QuickPeekInspectorOverlay({
       <SheetContent
         side="right"
         className="sm:max-w-md"
-        closeLabel={labels.errorRetry}
+        closeLabel={labels.quickPeekClose}
       >
         <SheetHeader>
           <SheetTitle>{kindLabel}</SheetTitle>
@@ -1136,7 +1153,7 @@ function QuickPeekInspectorBody({
         <button
           type="button"
           onClick={onClose}
-          aria-label={labels.errorRetry}
+          aria-label={labels.quickPeekClose}
           className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex size-7 items-center justify-center rounded-sm focus-visible:ring-2 focus-visible:outline-none"
         >
           <X className="size-4" aria-hidden="true" />

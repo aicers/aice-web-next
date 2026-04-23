@@ -780,7 +780,8 @@
       "moreCountSuffix": "+{count}개 더",
       "countryUnknown": "??",
       "countryUnavailable": "—",
-      "attackKindLabel": "공격:"
+      "attackKindLabel": "공격:",
+      "quickPeekClose": "간단 미리보기 닫기"
     },
     "analytics": {
       "toggle": "분석",
