@@ -195,16 +195,16 @@ rule — a one-sided-address row still shows `— → <destination>`
 (or `<source> → —`) in the inspector summary, so the operator
 never loses the endpoint context they just clicked.
 
-Quick peek tracks the inspected row by the server-side cursor
-that already keys the result list, not by its position in the
-current page slice. When you apply a filter, remove a chip, or
-refresh the list, the inspector is reconciled against the new
-result set: if the same row is still present the inspector
-refreshes its summary in place, and if the row has dropped out
-(or the list went into zero-results / error) the inspector
-closes so the **Open investigation** handoff can't latch onto
-a stale event. At desktop widths this also restores the hero
-list to its full width once no row is selected.
+Quick peek closes whenever a committed query transition replaces
+the result set — Apply, chip removal, Refresh, or a transition
+into a zero-results or error state. REview does not yet expose a
+stable per-event identity, so carrying the inspector across
+committed queries could silently retarget it at a different
+event; closing on every commit keeps the **Open investigation**
+handoff from latching onto a stale row, and at desktop widths
+restores the hero list to its full width once no row is selected.
+Reopening Quick peek on the row you want after a filter change
+is a single click.
 
 ### Analytics strip
 

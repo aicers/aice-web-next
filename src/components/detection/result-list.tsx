@@ -77,11 +77,16 @@ export interface ResultListState {
   status: "loading" | "ready" | "error" | "empty-prequery";
   events: Event[];
   /**
-   * Parallel to `events`: `eventKeys[i]` is the stable server-side
-   * cursor for `events[i]`. The list keys each row on this cursor
-   * so two otherwise-identical events (same time, same endpoint
-   * tuple) within a page slice can't alias onto a shared React key
-   * and leak local row state (`MorePopover`, focus) between rows.
+   * Parallel to `events`: `eventKeys[i]` is the per-edge REview
+   * cursor for `events[i]`. The list composes this with the
+   * committed-query epoch to build a React row key. Within a single
+   * committed slice the cursor is guaranteed unique (Relay connection
+   * contract), so two otherwise-identical events can't alias onto a
+   * shared row. REview does *not* document the cursor as a stable
+   * per-event identity across queries — it is "a cursor for use in
+   * pagination" — so cross-commit state leakage is prevented by the
+   * epoch prefix on the row key rather than by the cursor value
+   * alone.
    */
   eventKeys: string[];
   totalCount: string | null;
@@ -94,15 +99,19 @@ interface ResultListProps {
   state: ResultListState;
   labels: ResultListLabels;
   locale: string;
+  /**
+   * Monotonic counter bumped by the shell on every committed query
+   * transition (Apply, chip removal, Refresh, error). Composed into
+   * the React row key so `EventRow` / `MorePopover` state cannot be
+   * carried across unrelated committed queries even if REview reuses
+   * a positional cursor value in the new slice. Defaults to `0` in
+   * callers that render a single slice (tests, Storybook).
+   */
+  queryEpoch?: number;
   onRefresh: () => void;
   onOpenFilters?: () => void;
-  /**
-   * Click on a row body — opens Quick peek (Phase Detection-18). The
-   * callback receives both the event and its stable cursor key so the
-   * shell can revalidate the Quick peek selection against the new
-   * result set when a subsequent query commits.
-   */
-  onRowOpen?: (event: Event, eventKey: string) => void;
+  /** Click on a row body — opens Quick peek (Phase Detection-18). */
+  onRowOpen?: (event: Event) => void;
   /** Click on the Investigate icon — opens the full view (Phase Detection-19). */
   onRowInvestigate?: (event: Event) => void;
 }
@@ -111,6 +120,7 @@ export function ResultList({
   state,
   labels,
   locale,
+  queryEpoch = 0,
   onRefresh,
   onOpenFilters,
   onRowOpen,
@@ -123,6 +133,7 @@ export function ResultList({
         state={state}
         labels={labels}
         locale={locale}
+        queryEpoch={queryEpoch}
         onOpenFilters={onOpenFilters}
         onRefresh={onRefresh}
         onRowOpen={onRowOpen}
@@ -236,6 +247,7 @@ function ResultListBody({
   state,
   labels,
   locale,
+  queryEpoch,
   onOpenFilters,
   onRefresh,
   onRowOpen,
@@ -244,9 +256,10 @@ function ResultListBody({
   state: ResultListState;
   labels: ResultListLabels;
   locale: string;
+  queryEpoch: number;
   onOpenFilters?: () => void;
   onRefresh: () => void;
-  onRowOpen?: (event: Event, eventKey: string) => void;
+  onRowOpen?: (event: Event) => void;
   onRowInvestigate?: (event: Event) => void;
 }) {
   if (state.status === "loading" && state.events.length === 0) {
@@ -312,43 +325,46 @@ function ResultListBody({
 
   return (
     <ul className="flex flex-col gap-2" data-slot="detection-result-list">
-      {state.events.map((event, index) => (
-        // Key on the server-side cursor (see
-        // `ResultListState.eventKeys`). A composite of content
-        // fields (time, endpoint tuple, sensor) is not guaranteed
-        // unique — two events at the same instant with the same
-        // addressing alias onto a shared key, which lets local row
-        // state (`MorePopover` open/close, focus) leak between
-        // rows when the upstream list reorders or re-renders. The
-        // server already tags each edge with a cursor, so thread
-        // it through and key on that instead.
-        <EventRow
-          key={state.eventKeys[index] ?? `row-${index}`}
-          event={event}
-          eventKey={state.eventKeys[index] ?? `row-${index}`}
-          labels={labels}
-          locale={locale}
-          onRowOpen={onRowOpen}
-          onRowInvestigate={onRowInvestigate}
-        />
-      ))}
+      {state.events.map((event, index) => {
+        // Row key composes the committed-query epoch with the per-
+        // edge REview cursor. Within a single committed slice the
+        // cursor is unique (Relay connection contract), so two byte-
+        // identical events render as distinct siblings. The epoch
+        // prefix guards the cross-commit case: REview's schema only
+        // documents `EventEdge.cursor` as "a cursor for use in
+        // pagination", and if REview returns positional cursors
+        // across different filters the same value can point at a
+        // different event in the new slice. Prefixing with epoch
+        // forces React to remount rows on every committed
+        // transition so `EventRow` / `MorePopover` local state
+        // cannot leak across unrelated queries.
+        const cursor = state.eventKeys[index] ?? `row-${index}`;
+        return (
+          <EventRow
+            key={`${queryEpoch}:${cursor}`}
+            event={event}
+            labels={labels}
+            locale={locale}
+            onRowOpen={onRowOpen}
+            onRowInvestigate={onRowInvestigate}
+          />
+        );
+      })}
     </ul>
   );
 }
 
 function EventRow({
   event,
-  eventKey,
   labels,
   locale,
   onRowOpen,
   onRowInvestigate,
 }: {
   event: Event;
-  eventKey: string;
   labels: ResultListLabels;
   locale: string;
-  onRowOpen?: (event: Event, eventKey: string) => void;
+  onRowOpen?: (event: Event) => void;
   onRowInvestigate?: (event: Event) => void;
 }) {
   const addressing = readEventAddressing(event);
@@ -396,7 +412,7 @@ function EventRow({
         // nesting interactive controls inside the row button.
         <button
           type="button"
-          onClick={() => onRowOpen?.(event, eventKey)}
+          onClick={() => onRowOpen?.(event)}
           aria-label={labels.rowOpenLabel}
           className="focus-visible:ring-ring/50 absolute inset-0 z-0 cursor-pointer rounded-md focus:outline-none focus-visible:ring-2"
         />

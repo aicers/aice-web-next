@@ -20,11 +20,16 @@ export interface RunEventQueryOk {
   /** First-page event nodes for the result list. */
   events: Event[];
   /**
-   * Per-row stable identity from the REview connection. Parallel to
-   * `events`: `eventKeys[i]` is the cursor for `events[i]`. Used as
-   * the React key for each row so duplicate content (same time,
-   * same endpoint tuple) cannot alias onto a shared key and leak
-   * local row state (popover open/close, focus) between rows.
+   * Per-edge REview cursor. Parallel to `events`: `eventKeys[i]` is
+   * the cursor for `events[i]`. Relay-style connections guarantee
+   * cursor uniqueness *within* a single page, so the client uses
+   * this value as the row-key component that disambiguates two
+   * byte-identical events in the same slice. The schema only
+   * documents this as "a cursor for use in pagination", not as a
+   * stable per-event identity across queries — so the shell
+   * additionally composes it with a committed-query epoch before
+   * keying rows, and does not rely on cursor equality to revalidate
+   * Quick peek across committed transitions.
    */
   eventKeys: string[];
   pageInfo: PageInfo;
@@ -63,9 +68,12 @@ export async function runEventQuery(
       totalCount: connection.totalCount,
       events: connection.nodes,
       // Relay-style connections emit `edges` and `nodes` in parallel
-      // order, so `edges[i].cursor` is the stable server identity for
-      // `nodes[i]`. Thread it into the result so the client can key
-      // rows on cursor instead of a lossy composite of content fields.
+      // order. Within a single connection the cursor is unique
+      // (pagination requires it) which is enough to disambiguate two
+      // byte-identical rows inside one slice — but the schema does
+      // not promise stability across different queries, so the
+      // client composes it with a committed-query epoch before
+      // keying rows.
       eventKeys: connection.edges.map((edge) => edge.cursor),
       pageInfo: connection.pageInfo,
     };

@@ -68,10 +68,6 @@ import {
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
 import type { PeriodKey } from "@/lib/detection/period";
-import {
-  type QuickPeekSelection,
-  revalidateQuickPeekSelection,
-} from "@/lib/detection/quick-peek";
 import type {
   Event as DetectionEvent,
   LearningMethod,
@@ -394,11 +390,24 @@ export function DetectionShell({
     initialResult.totalCount,
   );
   const [events, setEvents] = useState<DetectionEvent[]>(initialResult.events);
-  // Parallel array of stable server-side row cursors (see
+  // Parallel array of per-edge REview cursors (see
   // `DetectionShellInitialResult.eventKeys`). Kept in lockstep with
   // `events`: every `setEvents(x)` call is paired with a matching
-  // `setEventKeys(y)` so the result list can key rows on cursor.
+  // `setEventKeys(y)`. The cursor is used as the React row key only
+  // within a single committed slice — REview's schema documents
+  // `EventEdge.cursor` as "a cursor for use in pagination", not as a
+  // stable per-event identity across queries, so cross-commit row
+  // reuse is prevented by `queryEpoch` below rather than by the
+  // cursor value itself.
   const [eventKeys, setEventKeys] = useState<string[]>(initialResult.eventKeys);
+  // Monotonic per-commit counter. Bumped on every committed query
+  // transition — Apply, chip removal, Refresh, and the error / zero-
+  // results branches — and composed into the React row key so
+  // `EventRow` / `MorePopover` state cannot be carried across
+  // unrelated committed queries even if REview happens to reuse a
+  // positional cursor value in the new slice. The initial slice sits
+  // on epoch `0`; the first client-side commit advances to `1`.
+  const [queryEpoch, setQueryEpoch] = useState(0);
   const [resultError, setResultError] = useState<string | null>(
     initialResult.error,
   );
@@ -423,15 +432,18 @@ export function DetectionShell({
   // inline as a right-hand pane; at narrower widths the same state
   // drives an overlay drawer.
   //
-  // The selection carries the row's stable cursor key alongside the
-  // event payload so a committed query change can revalidate it
-  // against the new result set — without the key, changing the
-  // filter so the inspected row disappears (or the list goes into
-  // zero-results / error) would leave a stale inspector + stale
-  // Investigation handoff visible.
-  const [quickPeekSelection, setQuickPeekSelection] =
-    useState<QuickPeekSelection | null>(null);
-  const quickPeekEvent = quickPeekSelection?.event ?? null;
+  // The selection is cleared whenever a committed query transition
+  // replaces the result set (Apply, chip removal, Refresh, error,
+  // zero-results). REview does not expose a stable per-event identity
+  // in v1 — `EventEdge.cursor` is a pagination cursor, and the
+  // `encodeEventLocator` tuple is documented as best-effort — so a
+  // "keep inspector open and revalidate against the new slice"
+  // strategy can silently retarget the inspector at a different
+  // event when a positional cursor is reused across filters. Closing
+  // on every commit is the defensive alternative.
+  const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
+    null,
+  );
   const isDesktop = useIsDesktopViewport();
   // Monotonic id for the in-flight Apply; a late response whose id
   // no longer matches is dropped so the results region can't drift
@@ -507,6 +519,12 @@ export function DetectionShell({
         try {
           const result = await runEventQuery(filter);
           if (latestRequestIdRef.current !== requestId) return;
+          // Any committed query transition replaces the result set,
+          // so advance `queryEpoch` (forces row state isolation) and
+          // close Quick peek (no stable event id exists to safely
+          // retarget the inspector).
+          setQueryEpoch((epoch) => epoch + 1);
+          setQuickPeekEvent(null);
           if (result.ok) {
             setTotalCount(result.totalCount);
             setEvents(result.events);
@@ -521,6 +539,8 @@ export function DetectionShell({
           }
         } catch {
           if (latestRequestIdRef.current !== requestId) return;
+          setQueryEpoch((epoch) => epoch + 1);
+          setQuickPeekEvent(null);
           setTotalCount(null);
           setEvents([]);
           setEventKeys([]);
@@ -885,24 +905,9 @@ export function DetectionShell({
     totalCount,
   ]);
 
-  const handleRowOpen = useCallback(
-    (event: DetectionEvent, eventKey: string) => {
-      setQuickPeekSelection({ event, key: eventKey });
-    },
-    [],
-  );
-
-  // Whenever a committed query replaces the result set (Apply, chip
-  // removal, Refresh, error branch), revalidate the Quick peek
-  // selection against the new `eventKeys`. The reconciliation
-  // itself lives in a pure helper (`revalidateQuickPeekSelection`)
-  // so it can be unit-tested independently of this client
-  // component's React wiring.
-  useEffect(() => {
-    setQuickPeekSelection((current) =>
-      revalidateQuickPeekSelection(current, events, eventKeys),
-    );
-  }, [events, eventKeys]);
+  const handleRowOpen = useCallback((event: DetectionEvent) => {
+    setQuickPeekEvent(event);
+  }, []);
 
   const handleRowInvestigate = useCallback(
     (event: DetectionEvent) => {
@@ -1050,6 +1055,7 @@ export function DetectionShell({
               state={resultListState}
               labels={resultListLabels}
               locale={locale}
+              queryEpoch={queryEpoch}
               onRefresh={handleRefresh}
               onOpenFilters={() => openDrawer()}
               onRowOpen={handleRowOpen}
@@ -1065,7 +1071,7 @@ export function DetectionShell({
                 event={quickPeekEvent}
                 locale={locale}
                 labels={resultListLabels}
-                onClose={() => setQuickPeekSelection(null)}
+                onClose={() => setQuickPeekEvent(null)}
                 onInvestigate={() => handleRowInvestigate(quickPeekEvent)}
               />
             </aside>
@@ -1127,7 +1133,7 @@ export function DetectionShell({
         event={isDesktop ? null : quickPeekEvent}
         locale={locale}
         labels={resultListLabels}
-        onClose={() => setQuickPeekSelection(null)}
+        onClose={() => setQuickPeekEvent(null)}
         onInvestigate={() => {
           if (quickPeekEvent) handleRowInvestigate(quickPeekEvent);
         }}
