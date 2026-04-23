@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ResultList,
@@ -78,6 +78,7 @@ function state(events: Event[]): ResultListState {
   return {
     status: "ready",
     events,
+    eventKeys: events.map((_, i) => `cursor-${i}`),
     totalCount: String(events.length),
     range: { start: "1", end: String(events.length) },
     lastUpdatedMs: null,
@@ -211,5 +212,72 @@ describe("ResultList row rendering", () => {
     );
 
     expect(html).toContain("Open investigation");
+  });
+});
+
+// Two rows whose content is byte-for-byte identical (same __typename,
+// time, sensor, and endpoint tuple) must still be keyed distinctly so
+// a re-render or filter change cannot collapse them onto a single
+// React-reconciled row (which would leak per-row state like
+// `MorePopover` open/close between rows). The server emits a unique
+// cursor per edge — the list is supposed to key on that. Guard the
+// contract with a duplicate-content regression that fails loudly if
+// the list ever falls back to a content-composite key.
+describe("ResultList row keys — duplicate content", () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  it("renders duplicate-content rows separately and emits no duplicate-key warning", () => {
+    const duplicate = baseEvent({
+      __typename: "HttpThreat",
+      origAddr: "10.0.0.5",
+      origPort: 1234,
+      respAddr: "10.0.0.6",
+      respPort: 443,
+    } as unknown as Partial<Event>);
+    // Two byte-identical events with distinct cursors from the server.
+    const resultState: ResultListState = {
+      status: "ready",
+      events: [duplicate, { ...duplicate }],
+      eventKeys: ["cursor-a", "cursor-b"],
+      totalCount: "2",
+      range: { start: "1", end: "2" },
+      lastUpdatedMs: null,
+    };
+
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={resultState}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {}}
+        onRowInvestigate={() => {}}
+      />,
+    );
+
+    // Both rows must render — the reconciler should treat them as
+    // two distinct siblings.
+    const rowMatches = html.match(/aria-label="Open quick peek"/g);
+    expect(rowMatches?.length).toBe(2);
+
+    // React logs a `console.error` for duplicate keys. If the list
+    // ever reverts to a content-composite key, the two identical
+    // events will collide and this assertion fires.
+    const duplicateKeyWarning = errorSpy.mock.calls.find((args: unknown[]) =>
+      args.some(
+        (arg) =>
+          typeof arg === "string" &&
+          arg.includes("Encountered two children with the same key"),
+      ),
+    );
+    expect(duplicateKeyWarning).toBeUndefined();
   });
 });

@@ -170,6 +170,14 @@ export interface DetectionShellInitialResult {
   totalCount: string | null;
   error: string | null;
   events: DetectionEvent[];
+  /**
+   * Parallel to `events`: `eventKeys[i]` is the stable cursor for
+   * `events[i]`. Threaded through from the server so the result
+   * list can key rows on server identity instead of a lossy
+   * composite of content fields (which aliases when two events
+   * share the same time / endpoint tuple within one page).
+   */
+  eventKeys: string[];
 }
 
 interface DetectionShellProps {
@@ -382,6 +390,11 @@ export function DetectionShell({
     initialResult.totalCount,
   );
   const [events, setEvents] = useState<DetectionEvent[]>(initialResult.events);
+  // Parallel array of stable server-side row cursors (see
+  // `DetectionShellInitialResult.eventKeys`). Kept in lockstep with
+  // `events`: every `setEvents(x)` call is paired with a matching
+  // `setEventKeys(y)` so the result list can key rows on cursor.
+  const [eventKeys, setEventKeys] = useState<string[]>(initialResult.eventKeys);
   const [resultError, setResultError] = useState<string | null>(
     initialResult.error,
   );
@@ -486,17 +499,20 @@ export function DetectionShell({
           if (result.ok) {
             setTotalCount(result.totalCount);
             setEvents(result.events);
+            setEventKeys(result.eventKeys);
             setResultError(null);
             setLastUpdatedMs(Date.now());
           } else {
             setTotalCount(null);
             setEvents([]);
+            setEventKeys([]);
             setResultError(labels.resultsError);
           }
         } catch {
           if (latestRequestIdRef.current !== requestId) return;
           setTotalCount(null);
           setEvents([]);
+          setEventKeys([]);
           setResultError(labels.resultsError);
         } finally {
           if (latestRequestIdRef.current === requestId) {
@@ -813,6 +829,7 @@ export function DetectionShell({
       return {
         status: "loading",
         events,
+        eventKeys,
         totalCount,
         range: resultRange,
         lastUpdatedMs,
@@ -822,6 +839,7 @@ export function DetectionShell({
       return {
         status: "error",
         events: [],
+        eventKeys: [],
         totalCount: null,
         range: resultRange,
         lastUpdatedMs,
@@ -831,6 +849,7 @@ export function DetectionShell({
       return {
         status: "empty-prequery",
         events: [],
+        eventKeys: [],
         totalCount: null,
         range: resultRange,
         lastUpdatedMs,
@@ -839,12 +858,14 @@ export function DetectionShell({
     return {
       status: "ready",
       events,
+      eventKeys,
       totalCount,
       range: resultRange,
       lastUpdatedMs,
     };
   }, [
     events,
+    eventKeys,
     hasQueried,
     lastUpdatedMs,
     loading,

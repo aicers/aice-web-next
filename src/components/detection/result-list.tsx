@@ -76,6 +76,14 @@ export interface ResultListLabels {
 export interface ResultListState {
   status: "loading" | "ready" | "error" | "empty-prequery";
   events: Event[];
+  /**
+   * Parallel to `events`: `eventKeys[i]` is the stable server-side
+   * cursor for `events[i]`. The list keys each row on this cursor
+   * so two otherwise-identical events (same time, same endpoint
+   * tuple) within a page slice can't alias onto a shared React key
+   * and leak local row state (`MorePopover`, focus) between rows.
+   */
+  eventKeys: string[];
   totalCount: string | null;
   range: { start: string; end: string } | null;
   /** Wall-clock ms timestamp of the last successful refresh. */
@@ -299,9 +307,18 @@ function ResultListBody({
 
   return (
     <ul className="flex flex-col gap-2" data-slot="detection-result-list">
-      {state.events.map((event) => (
+      {state.events.map((event, index) => (
+        // Key on the server-side cursor (see
+        // `ResultListState.eventKeys`). A composite of content
+        // fields (time, endpoint tuple, sensor) is not guaranteed
+        // unique — two events at the same instant with the same
+        // addressing alias onto a shared key, which lets local row
+        // state (`MorePopover` open/close, focus) leak between
+        // rows when the upstream list reorders or re-renders. The
+        // server already tags each edge with a cursor, so thread
+        // it through and key on that instead.
         <EventRow
-          key={eventListKey(event)}
+          key={state.eventKeys[index] ?? `row-${index}`}
           event={event}
           labels={labels}
           locale={locale}
@@ -311,19 +328,6 @@ function ResultListBody({
       ))}
     </ul>
   );
-}
-
-/**
- * Build a per-row key that's stable across renders without depending
- * on the array index. Cursor-based keying lands with pagination
- * (Phase Detection-11); until then a composite of `__typename`, time,
- * sensor, and addressing is unique enough for a single page slice.
- */
-function eventListKey(event: Event): string {
-  const a = readEventAddressing(event);
-  const orig = a.origAddr ?? a.origAddrs[0] ?? "";
-  const resp = a.respAddr ?? a.respAddrs[0] ?? "";
-  return `${event.__typename}|${event.time}|${event.sensor}|${orig}|${resp}|${a.origPort ?? ""}|${a.respPort ?? ""}`;
 }
 
 function EventRow({
