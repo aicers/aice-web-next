@@ -123,7 +123,7 @@ export async function fetchRelatedPivotSummaries(
         return {
           id: spec.id,
           count: page.totalCount,
-          lastTime: maxTime(page.nodes),
+          lastTime: maxTime(page.edges.map((edge) => edge.node)),
         };
       } catch {
         return { id: spec.id, count: "0", lastTime: null };

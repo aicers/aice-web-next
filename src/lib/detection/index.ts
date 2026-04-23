@@ -1,8 +1,31 @@
 export {
+  buildEndpointChips,
+  createEndpointEntryId,
+  ENDPOINT_CHIP_AGGREGATE_THRESHOLD,
+  type EndpointChip,
+  type EndpointChipLabels,
+  type EndpointEntry,
+  type EndpointEntryDirection,
+  type EndpointEntryKind,
+  endpointsToEndpointInputs,
+  type ParsedEndpoint,
+  parseEndpointInput,
+} from "./endpoint-filter";
+export {
   DetectionNotImplementedError,
   DetectionUnauthorizedError,
 } from "./errors";
 export { type Filter, toEventListFilterInput } from "./filter";
+export {
+  CHIP_DIMENSION_CAP,
+  type FilterChipSpec,
+  type MultiSelectFieldKey,
+  type SensorOption,
+  type SummarizeFilterContext,
+  type SummarizeFilterLabels,
+  type SummarizeFilterResult,
+  summarizeFilter,
+} from "./filter-summary";
 export {
   computePeriodRange,
   DEFAULT_PERIOD_KEY,
@@ -58,11 +81,18 @@ export type {
 } from "./types";
 export {
   buildDetectionPivotUrl,
+  buildDetectionSearchParams,
   buildPivotChips,
+  mergePivotParams,
   type PivotChip,
   type PivotChipLabels,
   type PivotFilterParams,
   type PivotKey,
   type PivotWindow,
   parsePivotSearchParams,
+  pivotParamsFromFilterInput,
+  TAG_FIELDS,
+  type TagField,
+  TEXT_FIELDS,
+  type TextField,
 } from "./url-filters";

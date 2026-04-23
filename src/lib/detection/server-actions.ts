@@ -331,7 +331,11 @@ export async function fetchEventByLocator(
     { filter: ctx.filter },
     { role: ctx.role, customerIds: ctx.customerIds },
   );
-  const nodes = data.eventList.nodes;
+  // `EVENT_DETAIL_QUERY` selects `nodes` (not `edges`), so it is
+  // always present at runtime. The fallback satisfies the shared
+  // `EventConnection` type where `nodes` is optional because the
+  // list query drops it.
+  const nodes = data.eventList.nodes ?? [];
   const totalCount = data.eventList.totalCount;
   if (nodes.length === 0) return { status: "zero" };
   if (nodes.length === 1) {

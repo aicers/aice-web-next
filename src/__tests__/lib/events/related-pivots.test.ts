@@ -73,18 +73,20 @@ describe("fetchRelatedPivotSummaries", () => {
         _session: AuthSession,
         filter: { input: Record<string, unknown> },
       ) => ({
-        nodes: [
+        edges: [
           {
-            __typename: "HttpThreat",
-            time: filter.input.start as string,
-            sensor: "sensor-1",
-            confidence: 0.8,
-            level: "HIGH",
-            triageScores: null,
-            category: null,
+            cursor: "c1",
+            node: {
+              __typename: "HttpThreat",
+              time: filter.input.start as string,
+              sensor: "sensor-1",
+              confidence: 0.8,
+              level: "HIGH",
+              triageScores: null,
+              category: null,
+            },
           },
         ],
-        edges: [],
         totalCount: "5",
         pageInfo: {
           hasNextPage: false,
@@ -128,36 +130,44 @@ describe("fetchRelatedPivotSummaries", () => {
   it("computes lastTime as the max time across returned nodes (no ordering reliance)", async () => {
     mockGetCurrentSession.mockResolvedValue(SESSION);
     const unorderedPage = {
-      nodes: [
+      edges: [
         {
-          __typename: "HttpThreat",
-          time: "2026-04-22T01:00:00.000Z",
-          sensor: "sensor-1",
-          confidence: 0.8,
-          level: "HIGH",
-          triageScores: null,
-          category: null,
+          cursor: "c1",
+          node: {
+            __typename: "HttpThreat",
+            time: "2026-04-22T01:00:00.000Z",
+            sensor: "sensor-1",
+            confidence: 0.8,
+            level: "HIGH",
+            triageScores: null,
+            category: null,
+          },
         },
         {
-          __typename: "HttpThreat",
-          time: "2026-04-22T09:00:00.000Z",
-          sensor: "sensor-1",
-          confidence: 0.8,
-          level: "HIGH",
-          triageScores: null,
-          category: null,
+          cursor: "c2",
+          node: {
+            __typename: "HttpThreat",
+            time: "2026-04-22T09:00:00.000Z",
+            sensor: "sensor-1",
+            confidence: 0.8,
+            level: "HIGH",
+            triageScores: null,
+            category: null,
+          },
         },
         {
-          __typename: "HttpThreat",
-          time: "2026-04-22T03:00:00.000Z",
-          sensor: "sensor-1",
-          confidence: 0.8,
-          level: "HIGH",
-          triageScores: null,
-          category: null,
+          cursor: "c3",
+          node: {
+            __typename: "HttpThreat",
+            time: "2026-04-22T03:00:00.000Z",
+            sensor: "sensor-1",
+            confidence: 0.8,
+            level: "HIGH",
+            triageScores: null,
+            category: null,
+          },
         },
       ],
-      edges: [],
       totalCount: "3",
       pageInfo: {
         hasNextPage: false,
@@ -181,7 +191,6 @@ describe("fetchRelatedPivotSummaries", () => {
   it("requests a bounded sample (not last: 1) for the lastTime computation", async () => {
     mockGetCurrentSession.mockResolvedValue(SESSION);
     mockSearchEvents.mockResolvedValue({
-      nodes: [],
       edges: [],
       totalCount: "0",
       pageInfo: {
@@ -208,7 +217,6 @@ describe("fetchRelatedPivotSummaries", () => {
     mockGetCurrentSession.mockResolvedValue(SESSION);
     mockSearchEvents
       .mockResolvedValueOnce({
-        nodes: [],
         edges: [],
         totalCount: "0",
         pageInfo: {
@@ -220,7 +228,6 @@ describe("fetchRelatedPivotSummaries", () => {
       })
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValueOnce({
-        nodes: [],
         edges: [],
         totalCount: "0",
         pageInfo: {
@@ -231,7 +238,6 @@ describe("fetchRelatedPivotSummaries", () => {
         },
       })
       .mockResolvedValueOnce({
-        nodes: [],
         edges: [],
         totalCount: "0",
         pageInfo: {

@@ -21,4 +21,20 @@ export function sanitizeReturnTo(value: string | string[] | undefined): string {
   return value;
 }
 
+/**
+ * Build a locale-stripped `returnTo` target for the Investigation
+ * page. The caller should pass the current locale-stripped pathname
+ * (e.g. from next-intl's `usePathname`) and the query string for the
+ * active URL. The Investigation back-link renders through the
+ * locale-aware `<Link>`, so the returned path must NOT carry a locale
+ * prefix — the `<Link>` re-adds it per the user's current locale.
+ */
+export function buildInvestigationReturnTo(
+  pathname: string,
+  search: string,
+): string {
+  const qs = search.startsWith("?") ? search.slice(1) : search;
+  return qs.length > 0 ? `${pathname}?${qs}` : pathname;
+}
+
 export { DEFAULT_BACK_HREF };

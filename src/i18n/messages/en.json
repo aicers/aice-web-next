@@ -545,7 +545,7 @@
       "open": "Filters",
       "close": "Close filters",
       "drawerTitle": "Filters",
-      "drawerDescription": "Narrow the detection results by period and time range. Apply commits the filter and runs the query.",
+      "drawerDescription": "Narrow the detection results by period, time range, and categorical filters. Apply commits the filter and runs the query.",
       "periodLabel": "Period",
       "periodOptions": {
         "1h": "Last 1 hour",
@@ -561,30 +561,225 @@
       "timeRangeLabel": "Time period",
       "startLabel": "Start",
       "endLabel": "End",
+      "directionLabel": "Direction",
+      "directionOptions": {
+        "OUTBOUND": "Inside → Outside",
+        "INTERNAL": "Inside → Inside",
+        "INBOUND": "Outside → Inside"
+      },
+      "directionChipValues": {
+        "OUTBOUND": "Outbound",
+        "INTERNAL": "Internal",
+        "INBOUND": "Inbound"
+      },
+      "directionChipLabel": "Direction",
+      "confidenceLabel": "Confidence",
+      "confidenceMinLabel": "Min",
+      "confidenceMaxLabel": "Max",
+      "confidenceChipLabel": "Confidence",
+      "customerLabel": "Customer",
+      "customerComingSoon": "Coming soon",
+      "customerComingSoonHint": "Customer scoping arrives with the Customer directory in a later phase.",
+      "sensor": {
+        "label": "Sensor",
+        "placeholder": "Select sensors",
+        "searchPlaceholder": "Search sensors…",
+        "selectAll": "All",
+        "clearAll": "Clear selection",
+        "empty": "No sensors available for your customer scope.",
+        "noMatches": "No sensors match your search.",
+        "selectedSummary": "{count} selected",
+        "removeSelection": "Remove {name}",
+        "comingSoonLabel": "Coming soon",
+        "comingSoonHint": "Sensor options become available once REview publishes the sensor-list endpoint.",
+        "loadingLabel": "Loading sensors…",
+        "loadingHint": "Fetching the sensor list from the detection backend.",
+        "errorLabel": "Could not load sensors",
+        "errorHint": "Retry fetching the sensor list.",
+        "retry": "Retry"
+      },
+      "attributesLegend": "Source, destination, and user attributes",
+      "attributes": {
+        "source": {
+          "label": "Source",
+          "placeholder": "e.g. 10.0.0.5"
+        },
+        "destination": {
+          "label": "Destination",
+          "placeholder": "e.g. 203.0.113.45"
+        },
+        "keywords": {
+          "label": "Keywords",
+          "placeholder": "e.g. malware, phishing",
+          "remove": "Remove keyword {tag}"
+        },
+        "hostnames": {
+          "label": "Hostnames",
+          "placeholder": "e.g. host01.corp.local",
+          "remove": "Remove hostname {tag}"
+        },
+        "userIds": {
+          "label": "User IDs",
+          "placeholder": "e.g. jdoe, 12345",
+          "remove": "Remove user ID {tag}"
+        },
+        "userNames": {
+          "label": "User Names",
+          "placeholder": "e.g. Jane Doe",
+          "remove": "Remove user name {tag}"
+        },
+        "userDepartments": {
+          "label": "User Departments",
+          "placeholder": "e.g. Engineering",
+          "remove": "Remove department {tag}"
+        }
+      },
       "apply": "Apply",
       "saveThisFilter": "Save this filter",
       "saveThisFilterComingSoon": "Saving filters is wired up in a later phase.",
       "invalidRange": "End must be later than start.",
       "activeChipsEmpty": "No filter applied.",
       "activeRange": "{start} – {end}",
+      "removeChip": "Remove {label}",
+      "periodChipLabel": "Period",
       "resultsRegion": "Detection results",
       "resultsLoading": "Running query...",
       "resultsCount": "{count} detection events match the current filter.",
       "resultsError": "Could not load detection results.",
       "chips": {
-        "source": "Source IP",
-        "destination": "Destination IP",
+        "source": "Source",
+        "destination": "Destination",
         "kind": "Kind",
         "origPort": "Source port",
         "respPort": "Destination port",
         "proto": "Protocol",
         "window": "Window",
         "windowLastDay": "Last 24 hours",
-        "windowLastWeek": "Last 7 days"
+        "windowLastWeek": "Last 7 days",
+        "sensor": "Sensor",
+        "sensorAggregate": "{count} selected",
+        "keywords": "Keywords",
+        "hostnames": "Hostnames",
+        "userIds": "User IDs",
+        "userNames": "User Names",
+        "userDepartments": "User Departments",
+        "countAggregate": "{label}: {count}"
+      },
+      "endpoint": {
+        "label": "Network / IP",
+        "advanced": "Open advanced Network/IP filter",
+        "empty": "No network/IP rules applied",
+        "count": "{count} network/IP rule(s) applied",
+        "panelTitle": "Network/IP filter",
+        "panelDescription": "Add single IPs, ranges, or CIDR networks and choose a direction per entry.",
+        "close": "Close Network/IP filter",
+        "savedSectionTitle": "Saved Network/IPs",
+        "savedEmpty": "No saved network/IPs",
+        "savedHelp": "Saved network/IP groups are not yet available in this version.",
+        "customSectionTitle": "Custom Network/IPs",
+        "customEmpty": "No custom network/IPs added",
+        "inputLabel": "Add a network or IP",
+        "inputPlaceholder": "10.84.1.7, 10.1.1.1 - 10.1.1.20, or 192.168.10.0/24",
+        "addEntry": "Add entry",
+        "invalidInput": "Enter a valid IP, range, or CIDR.",
+        "invalidInputExamples": "Examples: 10.84.1.7, 10.1.1.1 - 10.1.1.20, 192.168.10.0/24",
+        "countBadge": "{count}",
+        "directionLabel": "Direction",
+        "directionBoth": "Both",
+        "directionSource": "Source",
+        "directionDestination": "Destination",
+        "batchSetDirection": "Set directions",
+        "selectAll": "Select all",
+        "removeEntry": "Remove entry",
+        "done": "Done",
+        "chipSource": "Src",
+        "chipDestination": "Dst",
+        "chipAggregate": "Network: {count} rules"
+      },
+      "categoricalSectionLabel": "Categorical filters",
+      "fields": {
+        "levels": "Threat Level",
+        "countries": "Threat Country",
+        "learningMethods": "AI Model Type",
+        "categories": "Threat Category",
+        "kinds": "Threat Name"
+      },
+      "multiSelect": {
+        "all": "All",
+        "searchPlaceholder": "Search options",
+        "noOptionsMatch": "No options match.",
+        "summaryNone": "All",
+        "summaryAll": "All",
+        "summarySome": "{count} selected",
+        "expand": "Expand options",
+        "collapse": "Collapse options"
+      },
+      "levelOptions": {
+        "LOW": "Low",
+        "MEDIUM": "Medium",
+        "HIGH": "High"
+      },
+      "learningMethodOptions": {
+        "UNSUPERVISED": "Unsupervised",
+        "SEMI_SUPERVISED": "Semi-supervised"
+      },
+      "categoryOptions": {
+        "RECONNAISSANCE": "Reconnaissance",
+        "INITIAL_ACCESS": "Initial Access",
+        "EXECUTION": "Execution",
+        "CREDENTIAL_ACCESS": "Credential Access",
+        "DISCOVERY": "Discovery",
+        "LATERAL_MOVEMENT": "Lateral Movement",
+        "COMMAND_AND_CONTROL": "Command and Control",
+        "EXFILTRATION": "Exfiltration",
+        "IMPACT": "Impact",
+        "COLLECTION": "Collection",
+        "DEFENSE_EVASION": "Defense Evasion",
+        "PERSISTENCE": "Persistence",
+        "PRIVILEGE_ESCALATION": "Privilege Escalation",
+        "RESOURCE_DEVELOPMENT": "Resource Development"
+      },
+      "countrySentinels": {
+        "XX": {
+          "label": "Location unknown",
+          "searchAliases": "unknown unresolved ungeolocated no location"
+        },
+        "ZZ": {
+          "label": "Location database unavailable",
+          "searchAliases": "unavailable geoip database missing no database"
+        }
       }
     },
     "results": {
-      "placeholder": "Detection results will appear here."
+      "region": "Detection results",
+      "loading": "Loading detection events…",
+      "headerCount": "Detected Events",
+      "headerCountKnown": "Detected Events {range} / {total}",
+      "headerCountRange": "{start}-{end}",
+      "downloadCsv": "Download CSV",
+      "downloadCsvComingSoon": "CSV export arrives in a later phase.",
+      "refresh": "Refresh",
+      "updatedRelative": "Updated {relative}",
+      "updatedJustNow": "just now",
+      "updatedNever": "never",
+      "emptyTitle": "No matches",
+      "emptyBody": "No detection events match the current filter.",
+      "preQueryTitle": "Build a filter to see events",
+      "preQueryBody": "Open Filters above to narrow detection events by period, endpoint, category, or keyword.",
+      "openInvestigation": "Open full investigation",
+      "confidence": "Confidence {value}",
+      "triageSummary": "⊙ {count} policies · {max} max",
+      "unknownEndpoint": "—",
+      "attackKindLabel": "Attack: {kind}",
+      "moreCount": "+{count} more",
+      "moreAddressesTitle": "All addresses",
+      "moreAddressesCount": "{count} addresses",
+      "morePortsTitle": "All ports",
+      "morePortsCount": "{count} ports",
+      "rowTrigger": "{level} {time} {kind} · {source} → {destination} · {sensor}",
+      "pivotKind": "Pivot on kind {kind}",
+      "pivotSourceIp": "Pivot on source IP {value}",
+      "pivotDestinationIp": "Pivot on destination IP {value}"
     },
     "analytics": {
       "toggle": "Analytics",
@@ -593,7 +788,11 @@
       "placeholder": "Analytics will appear here."
     },
     "quickPeek": {
-      "placeholder": "Quick peek inspector will appear here."
+      "title": "Quick peek",
+      "description": "Summary of the selected event. Open the full investigation for every detail.",
+      "placeholder": "Detail panels arrive in a later phase.",
+      "openInvestigation": "Open full investigation",
+      "close": "Close quick peek"
     }
   },
   "events": {
@@ -653,7 +852,12 @@
       "companySourceNetwork": "from network",
       "companySourceIsp": "from IP enrichment",
       "noCompany": "Not available",
-      "loading": "Loading endpoint details…"
+      "loading": "Loading endpoint details…",
+      "map": {
+        "title": "Endpoint map",
+        "sourceLegend": "Source",
+        "destinationLegend": "Destination"
+      }
     },
     "protocol": {
       "noFields": "No kind-specific fields are available for this event type.",

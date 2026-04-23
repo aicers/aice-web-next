@@ -545,7 +545,7 @@
       "open": "필터",
       "close": "필터 닫기",
       "drawerTitle": "필터",
-      "drawerDescription": "기간과 시간 범위로 탐지 결과를 좁힙니다. 적용을 누르면 필터가 커밋되고 쿼리가 실행됩니다.",
+      "drawerDescription": "기간, 시간 범위, 범주형 필터로 탐지 결과를 좁힙니다. 적용을 누르면 필터가 커밋되고 쿼리가 실행됩니다.",
       "periodLabel": "기간",
       "periodOptions": {
         "1h": "최근 1시간",
@@ -561,30 +561,225 @@
       "timeRangeLabel": "시간 범위",
       "startLabel": "시작",
       "endLabel": "종료",
+      "directionLabel": "방향",
+      "directionOptions": {
+        "OUTBOUND": "내부 → 외부",
+        "INTERNAL": "내부 → 내부",
+        "INBOUND": "외부 → 내부"
+      },
+      "directionChipValues": {
+        "OUTBOUND": "내부 → 외부",
+        "INTERNAL": "내부 → 내부",
+        "INBOUND": "외부 → 내부"
+      },
+      "directionChipLabel": "방향",
+      "confidenceLabel": "신뢰도",
+      "confidenceMinLabel": "최소",
+      "confidenceMaxLabel": "최대",
+      "confidenceChipLabel": "신뢰도",
+      "customerLabel": "고객사",
+      "customerComingSoon": "곧 제공됩니다",
+      "customerComingSoonHint": "고객사 범위 지정은 고객사 디렉터리와 함께 이후 단계에서 제공됩니다.",
+      "sensor": {
+        "label": "센서",
+        "placeholder": "센서 선택",
+        "searchPlaceholder": "센서 검색…",
+        "selectAll": "전체",
+        "clearAll": "선택 해제",
+        "empty": "현재 고객사 범위에서 사용할 수 있는 센서가 없습니다.",
+        "noMatches": "일치하는 센서가 없습니다.",
+        "selectedSummary": "{count}개 선택됨",
+        "removeSelection": "{name} 제거",
+        "comingSoonLabel": "곧 제공됩니다",
+        "comingSoonHint": "REview가 센서 목록 엔드포인트를 제공하면 센서 옵션이 활성화됩니다.",
+        "loadingLabel": "센서 목록을 불러오는 중…",
+        "loadingHint": "탐지 백엔드에서 센서 목록을 가져오는 중입니다.",
+        "errorLabel": "센서 목록을 불러오지 못했습니다",
+        "errorHint": "센서 목록을 다시 불러옵니다.",
+        "retry": "다시 시도"
+      },
+      "attributesLegend": "출발지, 목적지, 사용자 속성",
+      "attributes": {
+        "source": {
+          "label": "출발지",
+          "placeholder": "예: 10.0.0.5"
+        },
+        "destination": {
+          "label": "목적지",
+          "placeholder": "예: 203.0.113.45"
+        },
+        "keywords": {
+          "label": "키워드",
+          "placeholder": "예: 멀웨어, 피싱",
+          "remove": "키워드 {tag} 제거"
+        },
+        "hostnames": {
+          "label": "호스트명",
+          "placeholder": "예: host01.corp.local",
+          "remove": "호스트명 {tag} 제거"
+        },
+        "userIds": {
+          "label": "사용자 ID",
+          "placeholder": "예: jdoe, 12345",
+          "remove": "사용자 ID {tag} 제거"
+        },
+        "userNames": {
+          "label": "사용자 이름",
+          "placeholder": "예: 홍길동",
+          "remove": "사용자 이름 {tag} 제거"
+        },
+        "userDepartments": {
+          "label": "사용자 부서",
+          "placeholder": "예: 엔지니어링",
+          "remove": "부서 {tag} 제거"
+        }
+      },
       "apply": "적용",
       "saveThisFilter": "필터 저장",
       "saveThisFilterComingSoon": "필터 저장 기능은 이후 단계에서 연결됩니다.",
       "invalidRange": "종료 시각은 시작 시각보다 뒤여야 합니다.",
       "activeChipsEmpty": "적용된 필터가 없습니다.",
       "activeRange": "{start} – {end}",
+      "removeChip": "{label} 제거",
+      "periodChipLabel": "기간",
       "resultsRegion": "탐지 결과",
       "resultsLoading": "쿼리 실행 중...",
       "resultsCount": "현재 필터에 일치하는 탐지 이벤트 {count}건.",
       "resultsError": "탐지 결과를 불러오지 못했습니다.",
       "chips": {
-        "source": "출발지 IP",
-        "destination": "목적지 IP",
+        "source": "출발지",
+        "destination": "목적지",
         "kind": "종류",
         "origPort": "출발지 포트",
         "respPort": "목적지 포트",
         "proto": "프로토콜",
         "window": "기간",
         "windowLastDay": "최근 24시간",
-        "windowLastWeek": "최근 7일"
+        "windowLastWeek": "최근 7일",
+        "sensor": "센서",
+        "sensorAggregate": "{count}개 선택됨",
+        "keywords": "키워드",
+        "hostnames": "호스트명",
+        "userIds": "사용자 ID",
+        "userNames": "사용자 이름",
+        "userDepartments": "사용자 부서",
+        "countAggregate": "{label}: {count}"
+      },
+      "endpoint": {
+        "label": "네트워크 / IP",
+        "advanced": "네트워크/IP 고급 필터 열기",
+        "empty": "적용된 네트워크/IP 규칙이 없습니다",
+        "count": "네트워크/IP 규칙 {count}건 적용됨",
+        "panelTitle": "네트워크/IP 필터",
+        "panelDescription": "단일 IP, 범위, CIDR을 추가하고 각 항목의 방향을 선택하세요.",
+        "close": "네트워크/IP 필터 닫기",
+        "savedSectionTitle": "저장된 네트워크/IP",
+        "savedEmpty": "저장된 네트워크/IP가 없습니다",
+        "savedHelp": "저장된 네트워크/IP 그룹 기능은 이번 버전에서 아직 제공되지 않습니다.",
+        "customSectionTitle": "사용자 지정 네트워크/IP",
+        "customEmpty": "추가된 사용자 지정 네트워크/IP가 없습니다",
+        "inputLabel": "네트워크 또는 IP 추가",
+        "inputPlaceholder": "10.84.1.7, 10.1.1.1 - 10.1.1.20 또는 192.168.10.0/24",
+        "addEntry": "항목 추가",
+        "invalidInput": "유효한 IP, 범위 또는 CIDR을 입력하세요.",
+        "invalidInputExamples": "예: 10.84.1.7, 10.1.1.1 - 10.1.1.20, 192.168.10.0/24",
+        "countBadge": "{count}",
+        "directionLabel": "방향",
+        "directionBoth": "양방향",
+        "directionSource": "출발지",
+        "directionDestination": "목적지",
+        "batchSetDirection": "방향 일괄 설정",
+        "selectAll": "전체 선택",
+        "removeEntry": "항목 삭제",
+        "done": "완료",
+        "chipSource": "출발",
+        "chipDestination": "목적",
+        "chipAggregate": "네트워크: {count}건"
+      },
+      "categoricalSectionLabel": "범주형 필터",
+      "fields": {
+        "levels": "위협 수준",
+        "countries": "위협 국가",
+        "learningMethods": "AI 모델 유형",
+        "categories": "위협 범주",
+        "kinds": "위협 이름"
+      },
+      "multiSelect": {
+        "all": "전체",
+        "searchPlaceholder": "옵션 검색",
+        "noOptionsMatch": "일치하는 옵션이 없습니다.",
+        "summaryNone": "전체",
+        "summaryAll": "전체",
+        "summarySome": "{count}개 선택됨",
+        "expand": "옵션 펼치기",
+        "collapse": "옵션 접기"
+      },
+      "levelOptions": {
+        "LOW": "낮음",
+        "MEDIUM": "중간",
+        "HIGH": "높음"
+      },
+      "learningMethodOptions": {
+        "UNSUPERVISED": "비지도",
+        "SEMI_SUPERVISED": "준지도"
+      },
+      "categoryOptions": {
+        "RECONNAISSANCE": "정찰",
+        "INITIAL_ACCESS": "초기 접근",
+        "EXECUTION": "실행",
+        "CREDENTIAL_ACCESS": "자격증명 접근",
+        "DISCOVERY": "탐색",
+        "LATERAL_MOVEMENT": "측면 이동",
+        "COMMAND_AND_CONTROL": "지휘 통제",
+        "EXFILTRATION": "유출",
+        "IMPACT": "영향",
+        "COLLECTION": "수집",
+        "DEFENSE_EVASION": "방어 회피",
+        "PERSISTENCE": "지속",
+        "PRIVILEGE_ESCALATION": "권한 상승",
+        "RESOURCE_DEVELOPMENT": "자원 개발"
+      },
+      "countrySentinels": {
+        "XX": {
+          "label": "위치 알 수 없음",
+          "searchAliases": "알 수 없음 미상 확인 불가 위치없음 unknown"
+        },
+        "ZZ": {
+          "label": "위치 데이터베이스 없음",
+          "searchAliases": "데이터베이스 없음 GeoIP 누락 DB 없음 unavailable"
+        }
       }
     },
     "results": {
-      "placeholder": "탐지 결과가 여기에 표시됩니다."
+      "region": "탐지 결과",
+      "loading": "탐지 이벤트 불러오는 중…",
+      "headerCount": "탐지 이벤트",
+      "headerCountKnown": "탐지 이벤트 {range} / {total}",
+      "headerCountRange": "{start}-{end}",
+      "downloadCsv": "CSV 다운로드",
+      "downloadCsvComingSoon": "CSV 내보내기는 이후 단계에서 제공됩니다.",
+      "refresh": "새로고침",
+      "updatedRelative": "업데이트 {relative}",
+      "updatedJustNow": "방금 전",
+      "updatedNever": "없음",
+      "emptyTitle": "일치 없음",
+      "emptyBody": "현재 필터에 일치하는 탐지 이벤트가 없습니다.",
+      "preQueryTitle": "필터를 구성하여 이벤트를 확인하세요",
+      "preQueryBody": "위의 필터 버튼을 열어 기간, 엔드포인트, 카테고리, 키워드로 탐지 이벤트를 좁혀보세요.",
+      "openInvestigation": "상세 분석 열기",
+      "confidence": "신뢰도 {value}",
+      "triageSummary": "⊙ 정책 {count}건 · 최대 {max}",
+      "unknownEndpoint": "—",
+      "attackKindLabel": "공격: {kind}",
+      "moreCount": "+{count}개 더보기",
+      "moreAddressesTitle": "전체 주소",
+      "moreAddressesCount": "주소 {count}개",
+      "morePortsTitle": "전체 포트",
+      "morePortsCount": "포트 {count}개",
+      "rowTrigger": "{level} {time} {kind} · {source} → {destination} · {sensor}",
+      "pivotKind": "종류 {kind} 기준으로 전환",
+      "pivotSourceIp": "출발지 IP {value} 기준으로 전환",
+      "pivotDestinationIp": "목적지 IP {value} 기준으로 전환"
     },
     "analytics": {
       "toggle": "분석",
@@ -593,7 +788,11 @@
       "placeholder": "분석이 여기에 표시됩니다."
     },
     "quickPeek": {
-      "placeholder": "간단 미리보기가 여기에 표시됩니다."
+      "title": "간단 미리보기",
+      "description": "선택한 이벤트의 요약입니다. 전체 내용은 상세 분석에서 확인하세요.",
+      "placeholder": "상세 패널은 이후 단계에서 제공됩니다.",
+      "openInvestigation": "상세 분석 열기",
+      "close": "간단 미리보기 닫기"
     }
   },
   "events": {
@@ -653,7 +852,12 @@
       "companySourceNetwork": "네트워크 정보 기준",
       "companySourceIsp": "IP 보강 정보 기준",
       "noCompany": "확인할 수 없음",
-      "loading": "엔드포인트 정보를 불러오는 중…"
+      "loading": "엔드포인트 정보를 불러오는 중…",
+      "map": {
+        "title": "엔드포인트 지도",
+        "sourceLegend": "출발지",
+        "destinationLegend": "목적지"
+      }
     },
     "protocol": {
       "noFields": "이 이벤트 종류에는 표시할 프로토콜 필드가 없습니다.",

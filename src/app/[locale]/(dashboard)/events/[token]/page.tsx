@@ -135,6 +135,11 @@ function buildInvestigationLabels(t: EventsTranslator) {
       companySourceIsp: t("endpoints.companySourceIsp"),
       noCompany: t("endpoints.noCompany"),
       loading: t("endpoints.loading"),
+      map: {
+        title: t("endpoints.map.title"),
+        sourceLegend: t("endpoints.map.sourceLegend"),
+        destinationLegend: t("endpoints.map.destinationLegend"),
+      },
     },
     protocol: {
       noFields: t("protocol.noFields"),

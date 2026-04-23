@@ -48,15 +48,36 @@ import type {
  * `Event` union below inherits the literal `__typename` types.
  */
 export const CURATED_EVENT_TYPENAMES = [
+  "BlocklistBootp",
   "BlocklistConn",
+  "BlocklistDceRpc",
+  "BlocklistDhcp",
   "BlocklistDns",
+  "BlocklistFtp",
+  "BlocklistHttp",
+  "BlocklistKerberos",
+  "BlocklistLdap",
+  "BlocklistMalformedDns",
+  "BlocklistMqtt",
+  "BlocklistNfs",
+  "BlocklistNtlm",
+  "BlocklistRadius",
+  "BlocklistRdp",
+  "BlocklistSmb",
+  "BlocklistSmtp",
+  "BlocklistSsh",
+  "BlocklistTls",
+  "CryptocurrencyMiningPool",
   "DnsCovertChannel",
   "DomainGenerationAlgorithm",
   "ExternalDdos",
+  "ExtraThreat",
   "FtpBruteForce",
   "FtpPlainText",
   "HttpThreat",
   "LdapBruteForce",
+  "LdapPlainText",
+  "LockyRansomware",
   "MultiHostPortScan",
   "NetworkThreat",
   "NonBrowser",
@@ -66,6 +87,7 @@ export const CURATED_EVENT_TYPENAMES = [
   "SuspiciousTlsTraffic",
   "TorConnection",
   "TorConnectionConn",
+  "UnusualDestinationPattern",
   "WindowsThreat",
 ] as const;
 
@@ -91,6 +113,11 @@ export type Event =
  * only commits to the interface; the narrowing is a product choice
  * about which subtypes the UI dispatches on and lives here rather
  * than in the generated file.
+ *
+ * `nodes` is optional because `EVENT_LIST_QUERY` selects only
+ * `edges { node }` (requesting both would duplicate the per-event
+ * payload). `EVENT_DETAIL_QUERY` selects `nodes` only, so detail
+ * callers still receive it.
  */
 export interface EventEdge extends Omit<GeneratedEventEdge, "node"> {
   node: Event;
@@ -99,7 +126,7 @@ export interface EventEdge extends Omit<GeneratedEventEdge, "node"> {
 export interface EventConnection
   extends Omit<GeneratedEventConnection, "edges" | "nodes"> {
   edges: EventEdge[];
-  nodes: Event[];
+  nodes?: Event[];
 }
 
 // ── Query result shapes ──────────────────────────────────────────
