@@ -1,6 +1,68 @@
 import type { Event, EventBase, ThreatLevel } from "@/lib/detection/types";
 
 /**
+ * Loose addressing/network shape carried by the curated `Event`
+ * subtypes. The GraphQL list query selects whichever fields the
+ * runtime `__typename` exposes (see `EVENT_LIST_QUERY` per-typename
+ * fragments); the result list reads them through this loose record
+ * because the curated `Event` type only commits to the interface's
+ * common fields.
+ */
+export interface EventAddressing {
+  origAddr: string | null;
+  origAddrs: string[];
+  origPort: number | null;
+  origCountry: string | null;
+  origCountries: string[];
+  respAddr: string | null;
+  respAddrs: string[];
+  respPort: number | null;
+  respPorts: number[];
+  respCountry: string | null;
+  respCountries: string[];
+  proto: number | null;
+  attackKind: string | null;
+}
+
+/**
+ * Read the addressing fields off any `Event` subtype, falling back
+ * to nulls / empty arrays for fields the subtype doesn't carry.
+ * The union of fields lives in `EVENT_LIST_QUERY`.
+ */
+export function readEventAddressing(event: Event | EventBase): EventAddressing {
+  const e = event as Partial<{
+    origAddr: string;
+    origAddrs: string[];
+    origPort: number;
+    origCountry: string;
+    origCountries: string[];
+    respAddr: string;
+    respAddrs: string[];
+    respPort: number;
+    respPorts: number[];
+    respCountry: string;
+    respCountries: string[];
+    proto: number;
+    attackKind: string;
+  }>;
+  return {
+    origAddr: e.origAddr ?? null,
+    origAddrs: Array.isArray(e.origAddrs) ? e.origAddrs : [],
+    origPort: typeof e.origPort === "number" ? e.origPort : null,
+    origCountry: e.origCountry ?? null,
+    origCountries: Array.isArray(e.origCountries) ? e.origCountries : [],
+    respAddr: e.respAddr ?? null,
+    respAddrs: Array.isArray(e.respAddrs) ? e.respAddrs : [],
+    respPort: typeof e.respPort === "number" ? e.respPort : null,
+    respPorts: Array.isArray(e.respPorts) ? e.respPorts : [],
+    respCountry: e.respCountry ?? null,
+    respCountries: Array.isArray(e.respCountries) ? e.respCountries : [],
+    proto: typeof e.proto === "number" ? e.proto : null,
+    attackKind: e.attackKind ?? null,
+  };
+}
+
+/**
  * Friendly names for the curated `Event` subtypes. Used by the
  * investigation page header and the MITRE / category rendering in
  * the Context tab.

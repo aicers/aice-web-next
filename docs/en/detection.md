@@ -58,6 +58,16 @@ many values are active:
   count token (e.g. `Keywords: 12`). Activating the count chip
   reopens the drawer so you can edit the list.
 
+Every chip carries an `×` affordance. Pressing `×` is a
+self-contained commit — the field is removed from the active
+filter immediately, the query re-runs, and the chip disappears.
+For aggregate chips (e.g. `Hostnames: 7`) the `×` removes the
+whole field. Single-value removal is atomic and explicit, so it
+does not conflict with the drawer's Apply-centric model — Apply
+exists to batch multi-field edits. Activating a chip's body
+(rather than its `×`) opens the filter drawer focused on that
+field so you can amend the value before re-applying.
+
 Tag-field state and the `Source` / `Destination` values are
 persisted in the URL as comma-separated values
 (`?keywords=alpha,beta`). Refreshing the page restores these
@@ -67,11 +77,70 @@ refresh falls back to the default period.
 
 ### Results
 
-The Results region fills most of the screen and displays the
-detection findings. On page entry the default filter
-(**Last 1 hour**) runs automatically so the page is never empty on
-first view. A full result list renders in a later phase; for now
-the region shows a single line summarising how many events match.
+The Results region is the **hero** of the main work area: it
+occupies the largest share of the viewport at every supported
+width. On page entry the default filter (**Last 1 hour**) runs
+automatically so the page is never empty on first view.
+
+#### Header line
+
+A single header line above the list shows:
+
+- The result count and time range
+  (`Detected events <range> / <totalCount>`). Total counts are
+  64-bit safe — REview returns them as strings to avoid loss of
+  precision, and the UI displays them verbatim.
+- An **Updated _N_ ago** label that refreshes itself in the
+  background so you can see how stale the current view is.
+- A **Refresh** affordance that re-runs the active filter
+  without going through the drawer.
+- A **Download CSV** button. The button is visible but disabled
+  in this phase; CSV export wiring lands in a later phase.
+
+#### Result rows
+
+Each detection event renders as a compact two-line entry:
+
+- **Line 1** — severity badge (LOW / MEDIUM / HIGH), event time
+  (locale-aware), event kind (e.g. `HTTP Threat`), an optional
+  attack kind for the ML subtypes, the threat category, the
+  detection confidence score, and a triage summary (max score +
+  policy count) when triage scores are present.
+- **Line 2** — `source endpoint → destination endpoint`, each
+  endpoint formatted as `IP[:port] (country)`, followed by the
+  sensor name. Subtypes whose source or destination is an array
+  show the first entry plus a `+N more` suffix.
+
+Severity, time, kind, source IP+port, and destination IP+port are
+present for every event subtype. At narrower viewports the row
+tightens (shorter country labels, truncated attack kind with a
+tooltip), and at the narrowest widths the source and destination
+stack vertically — the destination and severity indicator are
+never hidden.
+
+#### Empty, loading, and error states
+
+The result region uses distinct panels for each non-ready state:
+
+- **Loading** — shows a spinner with `Running query…` while the
+  active filter is being executed.
+- **Error** — shows `Could not load detection results`, a short
+  hint, and an inline **Retry** button so a transient failure
+  does not require reopening the drawer.
+- **No matches** — shown when the query succeeds but returns zero
+  events. The copy invites the operator to loosen the filter or
+  pick a wider time range.
+- **Build a filter to begin** — the rare empty pre-query state
+  (a freshly-created tab or a tab whose filter has been fully
+  cleared). The panel offers a button that opens the drawer.
+
+#### Row interactions
+
+Clicking a row body opens the **Quick peek** inspector (added in
+a later phase); the inline `›` icon at the end of the row opens
+the full **Investigation** view. Pivot links on supported values
+(IP, country, kind, category, level, hostname, user) open or
+focus a narrowed tab — that wiring lands in the Pivot phase.
 
 ### Analytics strip
 

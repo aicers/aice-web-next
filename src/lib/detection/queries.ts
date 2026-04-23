@@ -9,6 +9,13 @@ import { parse } from "graphql";
  * string literals so the AST walk can statically validate them.
  */
 
+// Per-typename inline fragments select the addressing/network fields
+// the result-list rows render (Phase Detection-9). The selection is
+// deliberately kept to a minimum — it adds origAddr / respAddr,
+// origPort / respPort, origCountry / respCountry, proto, and the ML
+// types' attackKind. Heavy payload fields (HTTP body, DNS answer,
+// FTP commands, etc.) live in EVENT_DETAIL_QUERY and are not
+// requested here.
 export const EVENT_LIST_QUERY = parse(`
   query EventList(
     $filter: EventListFilterInput!
@@ -55,6 +62,165 @@ export const EVENT_LIST_QUERY = parse(`
         triageScores {
           policyId
           score
+        }
+        ... on BlocklistConn {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistDns {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on DnsCovertChannel {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on DomainGenerationAlgorithm {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on ExternalDdos {
+          origAddrs
+          origCountries
+          respAddr
+          respCountry
+          proto
+        }
+        ... on FtpBruteForce {
+          origAddr
+          origCountry
+          respAddr
+          respCountry
+          respPort
+          proto
+        }
+        ... on FtpPlainText {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on HttpThreat {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+          attackKind
+        }
+        ... on LdapBruteForce {
+          origAddr
+          origCountry
+          respAddr
+          respCountry
+          respPort
+          proto
+        }
+        ... on MultiHostPortScan {
+          origAddr
+          origCountry
+          respAddrs
+          respCountries
+          respPort
+          proto
+        }
+        ... on NetworkThreat {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+          attackKind
+        }
+        ... on NonBrowser {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on PortScan {
+          origAddr
+          origCountry
+          respAddr
+          respCountry
+          respPorts
+          proto
+        }
+        ... on RdpBruteForce {
+          origAddr
+          origCountry
+          respAddrs
+          respCountries
+          proto
+        }
+        ... on RepeatedHttpSessions {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on SuspiciousTlsTraffic {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on TorConnection {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on TorConnectionConn {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on WindowsThreat {
+          attackKind
         }
       }
       totalCount

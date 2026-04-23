@@ -1,16 +1,31 @@
 "use client";
 
-import { Bookmark, ChevronRight, SlidersHorizontal, Star } from "lucide-react";
+import {
+  Bookmark,
+  ChevronRight,
+  SlidersHorizontal,
+  Star,
+  X,
+} from "lucide-react";
 import { usePathname } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { startTransition, useCallback, useMemo, useRef, useState } from "react";
 import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
 import {
   type FetchSensorsResult,
   fetchSensors,
 } from "@/app/[locale]/(dashboard)/detection/sensor-actions";
+import {
+  ResultList,
+  type ResultListLabels,
+  type ResultListState,
+} from "@/components/detection/result-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  type ChipRemoveTarget,
+  removeActiveChip,
+} from "@/lib/detection/active-filters";
 import { buildAppliedFilter } from "@/lib/detection/apply-filter";
 import {
   buildDirectionChips,
@@ -41,7 +56,11 @@ import {
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
 import type { PeriodKey } from "@/lib/detection/period";
-import type { FlowKind, LearningMethod } from "@/lib/detection/types";
+import type {
+  Event as DetectionEvent,
+  FlowKind,
+  LearningMethod,
+} from "@/lib/detection/types";
 import {
   buildDetectionSearchParams,
   buildPivotChips,
@@ -110,6 +129,7 @@ export interface DetectionShellLabels {
   railPlaceholder: string;
   filtersOpen: string;
   activeChipsEmpty: string;
+  removeChip: (chipLabel: string) => string;
   resultsRegion: string;
   resultsLoading: string;
   resultsError: string;
@@ -123,11 +143,13 @@ export interface DetectionShellLabels {
   chipLabels: ChipLabelStrings;
   drawer: DrawerLabelStrings;
   summarize: SummarizeFilterLabels;
+  resultList: ResultListLabels;
 }
 
 export interface DetectionShellInitialResult {
   totalCount: string | null;
   error: string | null;
+  events: DetectionEvent[];
 }
 
 interface DetectionShellProps {
@@ -187,6 +209,7 @@ export function DetectionShell({
   initialPivotOnly = {},
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
+  const locale = useLocale();
   const pathname = usePathname();
   const multiSelectLabels = useMemo<FilterMultiSelectLabels>(
     () => ({
@@ -213,6 +236,12 @@ export function DetectionShell({
   const [committedEndpoints, setCommittedEndpoints] = useState<EndpointEntry[]>(
     [],
   );
+  // `pivotOnly` carries chip-only fields (kind/ports/proto/window) that
+  // arrive from the Investigation handoff URL and have no drawer
+  // editor yet. They live in component state so chip × removal can
+  // also drop them from the bar.
+  const [pivotOnly, setPivotOnly] =
+    useState<PivotFilterParams>(initialPivotOnly);
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(null);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
@@ -226,10 +255,16 @@ export function DetectionShell({
   const [totalCount, setTotalCount] = useState<string | null>(
     initialResult.totalCount,
   );
+  const [events, setEvents] = useState<DetectionEvent[]>(initialResult.events);
   const [resultError, setResultError] = useState<string | null>(
     initialResult.error,
   );
   const [loading, setLoading] = useState(false);
+  const [lastUpdatedMs, setLastUpdatedMs] = useState<number | null>(
+    initialResult.error === null && initialResult.totalCount !== null
+      ? Date.now()
+      : null,
+  );
   // Monotonic id for the in-flight Apply; a late response whose id
   // no longer matches is dropped so the results region can't drift
   // away from the committed filter when the operator applies twice
@@ -293,6 +328,46 @@ export function DetectionShell({
     ],
   );
 
+  // Re-run a committed filter without going through the drawer's
+  // Apply path. Used by both chip × removal and the result list's
+  // Refresh button — neither has a draft to normalize, so they
+  // bypass `buildAppliedFilter`. Mirrors the same monotonic
+  // request-id late-response guard that `handleApply` uses.
+  const runQueryFor = useCallback(
+    (filter: Filter) => {
+      setLoading(true);
+      setResultError(null);
+      const requestId = latestRequestIdRef.current + 1;
+      latestRequestIdRef.current = requestId;
+      startTransition(async () => {
+        try {
+          const result = await runEventQuery(filter);
+          if (latestRequestIdRef.current !== requestId) return;
+          if (result.ok) {
+            setTotalCount(result.totalCount);
+            setEvents(result.events);
+            setResultError(null);
+            setLastUpdatedMs(Date.now());
+          } else {
+            setTotalCount(null);
+            setEvents([]);
+            setResultError(labels.resultsError);
+          }
+        } catch {
+          if (latestRequestIdRef.current !== requestId) return;
+          setTotalCount(null);
+          setEvents([]);
+          setResultError(labels.resultsError);
+        } finally {
+          if (latestRequestIdRef.current === requestId) {
+            setLoading(false);
+          }
+        }
+      });
+    },
+    [labels.resultsError],
+  );
+
   const handleApply = useCallback(
     (applied: DetectionFilterDraft) => {
       if (!applied.startIso || !applied.endIso) return;
@@ -317,8 +392,6 @@ export function DetectionShell({
       // rather than the original whitespace-padded input.
       setDraft(applied);
       setDrawerOpen(false);
-      setLoading(true);
-      setResultError(null);
 
       // Mirror the free-form filter fields into the URL so a refresh
       // restores them. Only the drawer's free-form inputs (source,
@@ -338,7 +411,7 @@ export function DetectionShell({
       // active tab) without paying for a duplicate REview round-trip.
       if (next.mode === "structured") {
         const merged = mergePivotParams(
-          initialPivotOnly,
+          pivotOnly,
           pivotParamsFromFilterInput(next.input),
         );
         const qs = buildDetectionSearchParams(merged).toString();
@@ -346,42 +419,76 @@ export function DetectionShell({
         window.history.replaceState(window.history.state, "", url);
       }
 
-      const requestId = latestRequestIdRef.current + 1;
-      latestRequestIdRef.current = requestId;
-      startTransition(async () => {
-        try {
-          const result = await runEventQuery(next);
-          if (latestRequestIdRef.current !== requestId) return;
-          if (result.ok) {
-            setTotalCount(result.totalCount);
-            setResultError(null);
-          } else {
-            setTotalCount(null);
-            setResultError(labels.resultsError);
-          }
-        } catch {
-          // A rejected invocation (transport error, serialization
-          // failure, unexpected throw before the typed union is
-          // returned) would otherwise leave `loading` true forever.
-          if (latestRequestIdRef.current !== requestId) return;
-          setTotalCount(null);
-          setResultError(labels.resultsError);
-        } finally {
-          if (latestRequestIdRef.current === requestId) {
-            setLoading(false);
-          }
-        }
-      });
+      runQueryFor(next);
     },
-    [
-      committedFilter,
-      initialPivotOnly,
-      labels.resultsError,
-      options,
-      pathname,
-      sensorCache,
-    ],
+    [committedFilter, pivotOnly, options, pathname, runQueryFor, sensorCache],
   );
+
+  // Pure helper: drop a single pivot-only field. Pivot-only chips
+  // come from the URL (kind/origPort/respPort/proto/window) and are
+  // not represented in `EventListFilterInput`, so removal touches
+  // `pivotOnly` state alone — the active filter doesn't change.
+  const handleRemovePivotOnlyChip = useCallback(
+    (field: PivotKey) => {
+      const next: PivotFilterParams = { ...pivotOnly };
+      if (field === "kind") next.kind = undefined;
+      else if (field === "origPort") next.origPort = undefined;
+      else if (field === "respPort") next.respPort = undefined;
+      else if (field === "proto") next.proto = undefined;
+      else if (field === "window") next.window = undefined;
+      else return;
+      setPivotOnly(next);
+      if (committedFilter.mode === "structured") {
+        const merged = mergePivotParams(
+          next,
+          pivotParamsFromFilterInput(committedFilter.input),
+        );
+        const qs = buildDetectionSearchParams(merged).toString();
+        const url = qs ? `${pathname}?${qs}` : pathname;
+        window.history.replaceState(window.history.state, "", url);
+      }
+    },
+    [committedFilter, pathname, pivotOnly],
+  );
+
+  const handleRemoveChip = useCallback(
+    (target: ChipRemoveTarget) => {
+      const next = removeActiveChip(
+        committedFilter,
+        committedEndpoints,
+        target,
+      );
+      setCommittedFilter(next.filter);
+      setCommittedEndpoints(next.endpoints);
+      // A chip removal that drops `start`/`end` would clear the
+      // committed period state too — the shell never reaches that
+      // path today (the period chip removal target is `period`),
+      // so the period stays in sync with the filter's start/end.
+      if (target.kind === "period") {
+        setCommittedPeriod(null);
+      }
+      // Drop the cached drawer draft — it was built from the
+      // pre-removal filter and would clobber the change if the
+      // operator opens the drawer next.
+      setDraft(null);
+      // Persist the removal in the URL the same way Apply does.
+      if (next.filter.mode === "structured") {
+        const merged = mergePivotParams(
+          pivotOnly,
+          pivotParamsFromFilterInput(next.filter.input),
+        );
+        const qs = buildDetectionSearchParams(merged).toString();
+        const url = qs ? `${pathname}?${qs}` : pathname;
+        window.history.replaceState(window.history.state, "", url);
+      }
+      runQueryFor(next.filter);
+    },
+    [committedEndpoints, committedFilter, pivotOnly, pathname, runQueryFor],
+  );
+
+  const handleRefresh = useCallback(() => {
+    runQueryFor(committedFilter);
+  }, [committedFilter, runQueryFor]);
 
   const openDrawerFocused = useCallback(
     (field: PivotKey) => {
@@ -453,12 +560,12 @@ export function DetectionShell({
     () =>
       buildPivotChips(
         mergePivotParams(
-          initialPivotOnly,
+          pivotOnly,
           pivotParamsFromFilterInput(extractStructuredInput(committedFilter)),
         ),
         chipLabels,
       ),
-    [committedFilter, initialPivotOnly, chipLabels],
+    [committedFilter, pivotOnly, chipLabels],
   );
 
   const { summary: activeChipText, chips: baseChips } = buildDetectionFilterBar(
@@ -521,6 +628,44 @@ export function DetectionShell({
     sensorChips.length > 0 ||
     multiSelectChips.length > 0;
 
+  const resultRange = useMemo<{ start: string; end: string } | null>(() => {
+    if (committedFilter.mode !== "structured") return null;
+    const { start, end } = committedFilter.input;
+    if (!start || !end) return null;
+    return {
+      start: isoToLocalInput(start),
+      end: isoToLocalInput(end),
+    };
+  }, [committedFilter]);
+
+  const resultListState: ResultListState = useMemo(() => {
+    if (loading) {
+      return {
+        status: "loading",
+        events,
+        totalCount,
+        range: resultRange,
+        lastUpdatedMs,
+      };
+    }
+    if (resultError) {
+      return {
+        status: "error",
+        events: [],
+        totalCount: null,
+        range: resultRange,
+        lastUpdatedMs,
+      };
+    }
+    return {
+      status: "ready",
+      events,
+      totalCount,
+      range: resultRange,
+      lastUpdatedMs,
+    };
+  }, [events, lastUpdatedMs, loading, resultError, resultRange, totalCount]);
+
   return (
     <div className="flex gap-4">
       <aside
@@ -569,96 +714,117 @@ export function DetectionShell({
             </span>
             {hasChips ? (
               <ul className="flex flex-wrap items-center gap-1.5">
-                {baseChips.map((chip) => (
-                  <li key={chip.id}>
-                    {chip.aggregate && chip.field ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          openDrawerFocused(chip.field as PivotKey)
+                {baseChips.map((chip) => {
+                  const isPivotOnly = isPivotOnlyField(chip.field);
+                  const removeTarget = chip.field
+                    ? pivotChipRemoveTarget(
+                        chip.field,
+                        chip.value,
+                        !!chip.aggregate,
+                      )
+                    : chip.id === "confidence"
+                      ? ({ kind: "confidence" } as const)
+                      : null;
+                  return (
+                    <li key={chip.id}>
+                      <RemovableChip
+                        prefix={
+                          chip.aggregate && chip.field ? null : chip.label
                         }
-                        className="focus-visible:ring-ring/50 rounded-full focus-visible:ring-2 focus-visible:outline-none"
-                      >
-                        <Badge variant="secondary" className="font-normal">
-                          <span className="text-foreground text-xs font-medium">
-                            {chip.value}
-                          </span>
-                        </Badge>
-                      </button>
-                    ) : (
-                      <Badge variant="secondary" className="font-normal">
-                        <span className="text-muted-foreground mr-1 text-xs">
-                          {chip.label}
-                        </span>
-                        <span className="text-foreground text-xs font-medium">
-                          {chip.value}
-                        </span>
-                      </Badge>
-                    )}
-                  </li>
-                ))}
+                        value={chip.value}
+                        onActivate={
+                          chip.aggregate && chip.field && !isPivotOnly
+                            ? () => openDrawerFocused(chip.field as PivotKey)
+                            : undefined
+                        }
+                        onRemove={
+                          isPivotOnly && chip.field
+                            ? () =>
+                                handleRemovePivotOnlyChip(
+                                  chip.field as PivotKey,
+                                )
+                            : removeTarget
+                              ? () => handleRemoveChip(removeTarget)
+                              : undefined
+                        }
+                        removeLabel={labels.removeChip(chip.value)}
+                      />
+                    </li>
+                  );
+                })}
                 {directionChips.map((chip) => (
                   <li key={chip.id}>
-                    <Badge variant="secondary" className="font-normal">
-                      <span className="text-muted-foreground mr-1 text-xs">
-                        {chip.label}
-                      </span>
-                      <span className="text-foreground text-xs font-medium">
-                        {chip.value}
-                      </span>
-                    </Badge>
+                    <RemovableChip
+                      prefix={chip.label}
+                      value={chip.value}
+                      onRemove={() =>
+                        handleRemoveChip({
+                          kind: "directionValue",
+                          value: chip.id.replace("direction:", "") as FlowKind,
+                        })
+                      }
+                      removeLabel={labels.removeChip(chip.value)}
+                    />
                   </li>
                 ))}
                 {endpointChips.map((chip) => (
                   <li key={chip.id}>
-                    {chip.aggregate ? (
-                      <button
-                        type="button"
-                        onClick={() => openDrawer({ openEndpointPanel: true })}
-                        className="focus-visible:ring-ring rounded-full focus-visible:ring-2 focus-visible:outline-none"
-                      >
-                        <Badge
-                          variant="secondary"
-                          className="cursor-pointer font-normal"
-                        >
-                          <span className="text-foreground text-xs font-medium">
-                            {chip.label}
-                          </span>
-                        </Badge>
-                      </button>
-                    ) : (
-                      <Badge variant="secondary" className="font-normal">
-                        <span className="text-foreground text-xs font-medium">
-                          {chip.label}
-                        </span>
-                      </Badge>
-                    )}
+                    <RemovableChip
+                      prefix={null}
+                      value={chip.label}
+                      onActivate={
+                        chip.aggregate
+                          ? () => openDrawer({ openEndpointPanel: true })
+                          : undefined
+                      }
+                      onRemove={() =>
+                        chip.aggregate
+                          ? handleRemoveChip({ kind: "endpointAll" })
+                          : handleRemoveChip({
+                              kind: "endpointEntry",
+                              entryId: chip.id,
+                            })
+                      }
+                      removeLabel={labels.removeChip(chip.label)}
+                    />
                   </li>
                 ))}
                 {sensorChips.map((chip) => (
                   <li key={chip.id}>
-                    <Badge variant="secondary" className="font-normal">
-                      <span className="text-muted-foreground mr-1 text-xs">
-                        {chip.label}
-                      </span>
-                      <span className="text-foreground text-xs font-medium">
-                        {chip.value}
-                      </span>
-                    </Badge>
+                    <RemovableChip
+                      prefix={chip.label}
+                      value={chip.value}
+                      onRemove={() =>
+                        chip.id === "sensor:aggregate"
+                          ? handleRemoveChip({
+                              kind: "arrayAggregate",
+                              field: "sensors",
+                            })
+                          : handleRemoveChip({
+                              kind: "arrayValue",
+                              field: "sensors",
+                              value: chip.id.replace(/^sensor:/, ""),
+                            })
+                      }
+                      removeLabel={labels.removeChip(chip.value)}
+                    />
                   </li>
                 ))}
-                {multiSelectChips.map((chip) => (
-                  <li key={chip.key}>
-                    <Badge variant="secondary" className="font-normal">
-                      <span className="text-muted-foreground mr-1 text-xs">
-                        {chip.label}
-                      </span>
-                      <span className="text-foreground text-xs font-medium">
-                        {chip.value}
-                      </span>
-                    </Badge>
-                  </li>
-                ))}
+                {multiSelectChips.map((chip) => {
+                  const target = multiSelectChipRemoveTarget(chip);
+                  return (
+                    <li key={chip.key}>
+                      <RemovableChip
+                        prefix={chip.label}
+                        value={chip.value}
+                        onRemove={
+                          target ? () => handleRemoveChip(target) : undefined
+                        }
+                        removeLabel={labels.removeChip(chip.value)}
+                      />
+                    </li>
+                  );
+                })}
               </ul>
             ) : null}
           </div>
@@ -668,15 +834,15 @@ export function DetectionShell({
         <section
           aria-label={labels.resultsRegion}
           aria-live="polite"
-          className="bg-card text-muted-foreground flex min-h-[60vh] flex-1 items-center justify-center rounded-lg border border-[var(--sidebar-border)] text-sm"
+          className="flex min-h-[60vh] flex-1 flex-col"
         >
-          {loading
-            ? labels.resultsLoading
-            : resultError
-              ? resultError
-              : totalCount !== null
-                ? t("resultsCount", { count: totalCount })
-                : labels.resultsError}
+          <ResultList
+            state={resultListState}
+            labels={labels.resultList}
+            locale={locale}
+            onRefresh={handleRefresh}
+            onOpenFilters={() => openDrawer()}
+          />
         </section>
 
         {/* Collapsible analytics strip (collapsed by default) */}
@@ -874,6 +1040,139 @@ function buildActiveMultiSelectChips(
     }),
   );
   return chips;
+}
+
+/**
+ * URL-only pivot fields. These show up as chips but have no slot in
+ * `EventListFilterInput`, so chip × removal updates `pivotOnly` state
+ * rather than the active filter.
+ */
+const PIVOT_ONLY_FIELDS = new Set<PivotKey>([
+  "kind",
+  "origPort",
+  "respPort",
+  "proto",
+  "window",
+]);
+
+function isPivotOnlyField(field: PivotKey | undefined): boolean {
+  return field !== undefined && PIVOT_ONLY_FIELDS.has(field);
+}
+
+function pivotChipRemoveTarget(
+  field: PivotKey,
+  value: string,
+  aggregate: boolean,
+): ChipRemoveTarget | null {
+  if (PIVOT_ONLY_FIELDS.has(field)) return null;
+  if (field === "source" || field === "destination") {
+    return { kind: "scalarField", field };
+  }
+  // Tag fields: keywords / hostnames / userIds / userNames / userDepartments.
+  if (
+    field === "keywords" ||
+    field === "hostnames" ||
+    field === "userIds" ||
+    field === "userNames" ||
+    field === "userDepartments"
+  ) {
+    if (aggregate) return { kind: "arrayAggregate", field };
+    return { kind: "arrayValue", field, value };
+  }
+  return null;
+}
+
+function multiSelectChipRemoveTarget(
+  chip: ActiveFilterChip,
+): ChipRemoveTarget | null {
+  const field = chip.fieldKey;
+  if (
+    field !== "levels" &&
+    field !== "countries" &&
+    field !== "learningMethods" &&
+    field !== "categories" &&
+    field !== "kinds"
+  ) {
+    return null;
+  }
+  if (chip.aggregate) {
+    return { kind: "categoricalAggregate", field };
+  }
+  // The chip key encodes the underlying value — `levels:5`,
+  // `countries:US`, `kinds:HttpThreat`, etc. Parse it back so the
+  // removal target matches the typed `selected` array.
+  const valueText = chip.key.startsWith(`${field}:`)
+    ? chip.key.slice(field.length + 1)
+    : chip.value;
+  if (field === "levels" || field === "categories") {
+    const n = Number.parseInt(valueText, 10);
+    if (!Number.isFinite(n)) return null;
+    return { kind: "categoricalValue", field, value: n };
+  }
+  if (field === "learningMethods") {
+    if (valueText !== "UNSUPERVISED" && valueText !== "SEMI_SUPERVISED") {
+      return null;
+    }
+    return { kind: "categoricalValue", field, value: valueText };
+  }
+  return { kind: "categoricalValue", field, value: valueText };
+}
+
+function RemovableChip({
+  prefix,
+  value,
+  onActivate,
+  onRemove,
+  removeLabel,
+}: {
+  prefix: string | null;
+  value: string;
+  onActivate?: () => void;
+  onRemove?: () => void;
+  removeLabel: string;
+}) {
+  const interactive = !!onActivate;
+  const Wrapper = interactive ? "button" : "span";
+  const wrapperProps = interactive
+    ? {
+        type: "button" as const,
+        onClick: onActivate,
+        className:
+          "focus-visible:ring-ring/50 rounded-full focus-visible:ring-2 focus-visible:outline-none",
+      }
+    : {};
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Wrapper {...wrapperProps}>
+        <Badge
+          variant="secondary"
+          className={cn(
+            "font-normal",
+            interactive && "cursor-pointer",
+            onRemove && "pr-1",
+          )}
+        >
+          {prefix ? (
+            <span className="text-muted-foreground mr-1 text-xs">{prefix}</span>
+          ) : null}
+          <span className="text-foreground text-xs font-medium">{value}</span>
+          {onRemove ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove();
+              }}
+              aria-label={removeLabel}
+              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 ml-1 inline-flex size-3.5 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none"
+            >
+              <X className="size-3" aria-hidden="true" />
+            </button>
+          ) : null}
+        </Badge>
+      </Wrapper>
+    </span>
+  );
 }
 
 function RailSection({

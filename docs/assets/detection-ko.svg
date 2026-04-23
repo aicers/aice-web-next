@@ -3,27 +3,34 @@
      aria-label="탐지 페이지 와이어프레임 대체 이미지">
   <title>탐지 페이지 (와이어프레임 대체)</title>
   <desc>탐지 페이지 레이아웃 스케치: 좌측 내비게이션, 추천/저장 필터 레일,
-        필터 버튼과 칩 바가 있는 상단 바, 결과 카운트를 표시하는 결과 영역,
-        접혀 있는 분석 스트립. 시드 데이터가 포함된 스테이징 환경이 준비되면
-        실제 캡처로 교체됩니다.</desc>
+        필터 버튼과 제거 가능한 칩 바가 있는 상단 바, 결과 카운트와
+        새로고침/CSV 다운로드 어포던스가 있는 헤더 줄, 두 줄짜리 이벤트 행이
+        들어가는 결과 영역, 접혀 있는 분석 스트립. 시드 데이터가 포함된
+        스테이징 환경이 준비되면 실제 캡처로 교체됩니다.</desc>
 
   <defs>
     <style>
       .bg      { fill: #0f1420; }
       .panel   { fill: #151b2c; stroke: #2a3352; stroke-width: 1; }
+      .row     { fill: #131a2c; stroke: #2a3352; stroke-width: 1; }
       .dashed  { fill: none; stroke: #4a5578; stroke-width: 1.5;
                  stroke-dasharray: 6 4; }
       .chip    { fill: #1d2742; stroke: #3a486b; stroke-width: 1; rx: 12; ry: 12; }
       .chipPri { fill: #2749a8; stroke: #3f66c9; stroke-width: 1; rx: 12; ry: 12; }
+      .sevHi   { fill: #b3324a; stroke: #d04866; stroke-width: 1; rx: 8; ry: 8; }
+      .sevMd   { fill: #2749a8; stroke: #3f66c9; stroke-width: 1; rx: 8; ry: 8; }
+      .sevLo   { fill: #2a3352; stroke: #4a5578; stroke-width: 1; rx: 8; ry: 8; }
       .label   { fill: #c8d0e4; font-family: system-ui, sans-serif; font-size: 14px; }
       .labelSm { fill: #8e97ae; font-family: system-ui, sans-serif; font-size: 12px; }
       .labelLg { fill: #e7ebf5; font-family: system-ui, sans-serif; font-size: 16px;
                  font-weight: 600; }
       .muted   { fill: #6d7690; font-family: system-ui, sans-serif; font-size: 12px;
                  font-style: italic; }
-      .heroNum { fill: #e7ebf5; font-family: system-ui, sans-serif; font-size: 44px;
-                 font-weight: 600; }
-      .heroSub { fill: #9aa3bc; font-family: system-ui, sans-serif; font-size: 14px; }
+      .mono    { fill: #e7ebf5; font-family: ui-monospace, monospace; font-size: 12px; }
+      .monoMu  { fill: #8e97ae; font-family: ui-monospace, monospace; font-size: 12px; }
+      .sevTx   { fill: #ffffff; font-family: system-ui, sans-serif; font-size: 11px;
+                 font-weight: 700; letter-spacing: 0.04em; }
+      .x       { fill: #6d7690; font-family: system-ui, sans-serif; font-size: 12px; }
       .watermark { fill: #6d7690; font-family: system-ui, sans-serif; font-size: 11px;
                    letter-spacing: 0.08em; }
     </style>
@@ -57,25 +64,77 @@
   <text class="labelSm" x="266" y="190">아직 필터가 없습니다.</text>
 
   <!-- Top bar -->
-  <rect class="panel" x="552" y="80" width="112" height="44" rx="8" ry="8" />
-  <text class="label" x="584" y="108">필터</text>
-  <rect class="chip" x="676" y="88" width="104" height="28" />
-  <text class="label" x="696" y="107">최근 1시간</text>
-  <rect class="chip" x="792" y="88" width="184" height="28" />
-  <text class="label" x="812" y="107">키워드: auth-fail</text>
-  <rect class="chip" x="988" y="88" width="136" height="28" />
-  <text class="label" x="1008" y="107">호스트명: 5</text>
+  <rect class="panel" x="552" y="32" width="112" height="36" rx="8" ry="8" />
+  <text class="label" x="584" y="55">필터</text>
+  <rect class="chip" x="676" y="36" width="104" height="28" />
+  <text class="label" x="696" y="55">최근 1시간</text>
+  <text class="x" x="765" y="55">×</text>
+  <rect class="chip" x="792" y="36" width="184" height="28" />
+  <text class="label" x="812" y="55">키워드: auth-fail</text>
+  <text class="x" x="958" y="55">×</text>
+  <rect class="chip" x="988" y="36" width="136" height="28" />
+  <text class="label" x="1008" y="55">호스트명: 5</text>
+  <text class="x" x="1108" y="55">×</text>
+
+  <!-- Result list header -->
+  <text class="labelLg" x="552" y="100" font-size="14">
+    탐지 이벤트 2026-04-22 11:00 – 12:00 / 1,284
+  </text>
+  <text class="labelSm" x="1208" y="100">방금 업데이트됨</text>
+  <rect class="panel" x="1300" y="84" width="32" height="24" rx="6" ry="6" />
+  <text class="label" x="1308" y="100" font-size="12">⟳</text>
+  <rect class="panel" x="1340" y="84" width="72" height="24" rx="6" ry="6" />
+  <text class="label" x="1352" y="100" font-size="12">⬇ CSV</text>
 
   <!-- Results region -->
-  <rect class="dashed" x="552" y="152" width="860" height="548" rx="10" ry="10" />
-  <text class="labelSm" x="576" y="182">결과</text>
-  <text class="heroNum" x="982" y="420" text-anchor="middle">1,284</text>
-  <text class="heroSub" x="982" y="452" text-anchor="middle">건이 현재 필터와 일치합니다</text>
-  <text class="muted" x="982" y="490" text-anchor="middle">(전체 목록은 이후 단계에서 렌더링됩니다)</text>
+  <g>
+    <!-- Row 1 -->
+    <rect class="row" x="552" y="120" width="860" height="62" rx="6" ry="6" />
+    <rect class="sevHi" x="568" y="132" width="50" height="20" />
+    <text class="sevTx" x="593" y="146" text-anchor="middle">높음</text>
+    <text class="labelSm" x="628" y="147">2026-04-22 11:48:21</text>
+    <text class="label" x="756" y="147">HTTP 위협</text>
+    <text class="labelSm" x="844" y="147">· 0.97 · ⊙ 정책 2건 · 최대 0.87</text>
+    <text class="mono" x="568" y="170">10.0.0.5:49152</text>
+    <text class="monoMu" x="676" y="170">(US)</text>
+    <text class="monoMu" x="700" y="170">→</text>
+    <text class="mono" x="716" y="170">203.0.113.45:443</text>
+    <text class="monoMu" x="848" y="170">(DE) · sensor-edge-01</text>
+
+    <!-- Row 2 -->
+    <rect class="row" x="552" y="190" width="860" height="62" rx="6" ry="6" />
+    <rect class="sevMd" x="568" y="202" width="50" height="20" />
+    <text class="sevTx" x="593" y="216" text-anchor="middle">중간</text>
+    <text class="labelSm" x="628" y="217">2026-04-22 11:46:02</text>
+    <text class="label" x="756" y="217">포트 스캔</text>
+    <text class="labelSm" x="848" y="217">· 0.82</text>
+    <text class="mono" x="568" y="240">10.1.4.27</text>
+    <text class="monoMu" x="640" y="240">(US)</text>
+    <text class="monoMu" x="664" y="240">→</text>
+    <text class="mono" x="680" y="240">198.51.100.10:22</text>
+    <text class="monoMu" x="800" y="240">+12개 더</text>
+    <text class="monoMu" x="876" y="240">(BR) · sensor-dmz-02</text>
+
+    <!-- Row 3 -->
+    <rect class="row" x="552" y="260" width="860" height="62" rx="6" ry="6" />
+    <rect class="sevLo" x="568" y="272" width="50" height="20" />
+    <text class="sevTx" x="593" y="286" text-anchor="middle">낮음</text>
+    <text class="labelSm" x="628" y="287">2026-04-22 11:42:11</text>
+    <text class="label" x="756" y="287">DNS 은닉 채널</text>
+    <text class="labelSm" x="892" y="287">· 0.61</text>
+    <text class="mono" x="568" y="310">10.0.0.18:54237</text>
+    <text class="monoMu" x="676" y="310">(US)</text>
+    <text class="monoMu" x="700" y="310">→</text>
+    <text class="mono" x="716" y="310">93.184.216.34:53</text>
+    <text class="monoMu" x="848" y="310">(NL) · sensor-edge-01</text>
+
+    <!-- Ellipsis -->
+    <text class="muted" x="982" y="368" text-anchor="middle">… 추가 행 …</text>
+  </g>
 
   <!-- Analytics strip -->
   <rect class="panel" x="552" y="716" width="860" height="52" rx="8" ry="8" />
-  <text class="label" x="576" y="748">&#9654; 분석</text>
+  <text class="label" x="576" y="748">▶ 분석</text>
 
   <!-- Wireframe watermark -->
   <text class="watermark" x="1412" y="884" text-anchor="end">
