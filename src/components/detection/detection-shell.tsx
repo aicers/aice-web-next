@@ -219,6 +219,31 @@ export function sensorStateForCache(
   return "loading";
 }
 
+/**
+ * True when an open-drawer path should kick off a sensor fetch. An
+ * in-flight request or a loaded cache is reused as-is; `idle` (never
+ * fetched) and `error` (last attempt failed) both re-request so the
+ * Sensor control doesn't sit in its disabled placeholder forever.
+ * Shared by both the Filters button path and the chip-body path so
+ * the two cannot drift.
+ */
+export function shouldTriggerSensorFetch(cache: SensorCache): boolean {
+  return cache.status !== "loading" && cache.status !== "loaded";
+}
+
+/**
+ * Whether opening the drawer on a given chip-body focus should also
+ * expand the Network/IP advanced panel. Only the endpoints aggregate
+ * wants it; every other focus (period, source, direction, …) must
+ * explicitly clear the flag so a prior endpoint activation doesn't
+ * leak into an unrelated field on the next chip click.
+ */
+export function shouldOpenEndpointPanelForFocus(
+  focus: FilterChipFocus,
+): boolean {
+  return focus === "endpoints";
+}
+
 export function DetectionShell({
   title,
   labels,
@@ -419,19 +444,14 @@ export function DetectionShell({
       // Lazy-load the sensor inventory the first time the drawer
       // opens, and retry on a prior transient failure so a single
       // hiccup doesn't freeze Sensor into the "Coming soon" fallback
-      // for the rest of the tab session. Only `loading` / `loaded`
-      // short-circuit — `idle` means never fetched, `error` means the
-      // last attempt failed and the user just asked again.
-      if (sensorCache.status === "loading" || sensorCache.status === "loaded") {
-        return;
-      }
-      triggerSensorFetch();
+      // for the rest of the tab session.
+      if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
     },
     [
       committedFilter,
       committedPeriod,
       committedEndpoints,
-      sensorCache.status,
+      sensorCache,
       triggerSensorFetch,
     ],
   );
@@ -612,13 +632,26 @@ export function DetectionShell({
       );
       setFocusField(focus);
       setFocusToken((t) => t + 1);
-      setDrawerOpen(true);
       // Endpoint aggregate: also expand the Network/IP advanced panel
       // so the operator lands in the same UI as the sidebar "Advanced"
-      // affordance.
-      if (focus === "endpoints") setOpenEndpointPanelOnDrawerOpen(true);
+      // affordance. For every other focus target, clear the flag so a
+      // prior endpoint activation doesn't leak into an unrelated field
+      // (e.g. Period / Source) on the next chip click.
+      setOpenEndpointPanelOnDrawerOpen(shouldOpenEndpointPanelForFocus(focus));
+      setDrawerOpen(true);
+      // Kick off the lazy sensor fetch on the chip-body path too, so
+      // `SensorMultiSelect` doesn't sit in its disabled "Loading
+      // sensors…" placeholder forever when the operator opens the
+      // drawer via a chip without ever having clicked Filters.
+      if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
     },
-    [committedFilter, committedPeriod, committedEndpoints],
+    [
+      committedFilter,
+      committedPeriod,
+      committedEndpoints,
+      sensorCache,
+      triggerSensorFetch,
+    ],
   );
 
   // Compose the function-valued labels the chip builder needs on this

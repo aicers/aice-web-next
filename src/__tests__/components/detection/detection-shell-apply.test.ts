@@ -205,3 +205,77 @@ describe("sensorStateForCache", () => {
     ).toBe("ready");
   });
 });
+
+describe("shouldTriggerSensorFetch", () => {
+  let shouldTriggerSensorFetch: ShellModule["shouldTriggerSensorFetch"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldTriggerSensorFetch = mod.shouldTriggerSensorFetch;
+  });
+
+  it("fetches on the first drawer open when the cache is still idle", () => {
+    // Regression (Reviewer Round 6 #1): the chip-body open path must
+    // kick off the lazy sensor fetch on an idle cache, otherwise
+    // `sensorStateForCache` keeps reporting "loading" and the
+    // Sensor control stays stuck in its disabled placeholder.
+    expect(shouldTriggerSensorFetch({ status: "idle" })).toBe(true);
+  });
+
+  it("retries after a prior transient failure", () => {
+    expect(shouldTriggerSensorFetch({ status: "error" })).toBe(true);
+  });
+
+  it("does not re-fetch while a request is already in flight", () => {
+    expect(shouldTriggerSensorFetch({ status: "loading" })).toBe(false);
+  });
+
+  it("does not re-fetch when a successful response is cached", () => {
+    expect(
+      shouldTriggerSensorFetch({
+        status: "loaded",
+        endpointAvailable: true,
+        options: [{ id: "s1", name: "Alpha" }],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldOpenEndpointPanelForFocus", () => {
+  let shouldOpenEndpointPanelForFocus: ShellModule["shouldOpenEndpointPanelForFocus"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldOpenEndpointPanelForFocus = mod.shouldOpenEndpointPanelForFocus;
+  });
+
+  it("expands the Network/IP advanced panel for the endpoints aggregate chip", () => {
+    expect(shouldOpenEndpointPanelForFocus("endpoints")).toBe(true);
+  });
+
+  it.each([
+    "period",
+    "timeRange",
+    "direction",
+    "confidence",
+    "sensor",
+    "source",
+    "destination",
+    "keywords",
+    "hostnames",
+    "userIds",
+    "userNames",
+    "userDepartments",
+    "levels",
+    "countries",
+    "learningMethods",
+    "categories",
+    "kinds",
+  ] as const)("clears the endpoint panel flag so a prior activation does not leak into %s", (focus) => {
+    // Regression (Reviewer Round 6 #2): without this reset, clicking
+    // a Network/IP chip followed by, say, a Period chip would
+    // reopen the drawer with the endpoint panel still expanded —
+    // not the "focused on that field" behavior the issue calls for.
+    expect(shouldOpenEndpointPanelForFocus(focus)).toBe(false);
+  });
+});
