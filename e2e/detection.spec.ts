@@ -169,7 +169,12 @@ test("drawer renders Customer placeholder and Sensor fallback while REview endpo
     .filter({ has: page.locator("legend", { hasText: "Sensor" }) });
   await expect(sensorSection).toBeVisible();
   // Until REview ships the endpoint the sensor trigger is disabled.
-  await expect(sensorSection.getByRole("button")).toBeDisabled();
+  // The sensor fieldset may render a second button (the inline
+  // "Retry" action) when the lazy fetch lands in the error state —
+  // e.g. because the e2e DB has no customer scope seeded — so scope
+  // the disabled-state assertion to the trigger (always the first
+  // button in the fieldset) rather than any button under the legend.
+  await expect(sensorSection.getByRole("button").first()).toBeDisabled();
 });
 
 test("closing the drawer without Apply preserves in-flight edits", async ({
