@@ -96,8 +96,13 @@ interface ResultListProps {
   locale: string;
   onRefresh: () => void;
   onOpenFilters?: () => void;
-  /** Click on a row body — opens Quick peek (Phase Detection-18). */
-  onRowOpen?: (event: Event) => void;
+  /**
+   * Click on a row body — opens Quick peek (Phase Detection-18). The
+   * callback receives both the event and its stable cursor key so the
+   * shell can revalidate the Quick peek selection against the new
+   * result set when a subsequent query commits.
+   */
+  onRowOpen?: (event: Event, eventKey: string) => void;
   /** Click on the Investigate icon — opens the full view (Phase Detection-19). */
   onRowInvestigate?: (event: Event) => void;
 }
@@ -241,7 +246,7 @@ function ResultListBody({
   locale: string;
   onOpenFilters?: () => void;
   onRefresh: () => void;
-  onRowOpen?: (event: Event) => void;
+  onRowOpen?: (event: Event, eventKey: string) => void;
   onRowInvestigate?: (event: Event) => void;
 }) {
   if (state.status === "loading" && state.events.length === 0) {
@@ -320,6 +325,7 @@ function ResultListBody({
         <EventRow
           key={state.eventKeys[index] ?? `row-${index}`}
           event={event}
+          eventKey={state.eventKeys[index] ?? `row-${index}`}
           labels={labels}
           locale={locale}
           onRowOpen={onRowOpen}
@@ -332,15 +338,17 @@ function ResultListBody({
 
 function EventRow({
   event,
+  eventKey,
   labels,
   locale,
   onRowOpen,
   onRowInvestigate,
 }: {
   event: Event;
+  eventKey: string;
   labels: ResultListLabels;
   locale: string;
-  onRowOpen?: (event: Event) => void;
+  onRowOpen?: (event: Event, eventKey: string) => void;
   onRowInvestigate?: (event: Event) => void;
 }) {
   const addressing = readEventAddressing(event);
@@ -388,7 +396,7 @@ function EventRow({
         // nesting interactive controls inside the row button.
         <button
           type="button"
-          onClick={() => onRowOpen?.(event)}
+          onClick={() => onRowOpen?.(event, eventKey)}
           aria-label={labels.rowOpenLabel}
           className="focus-visible:ring-ring/50 absolute inset-0 z-0 cursor-pointer rounded-md focus:outline-none focus-visible:ring-2"
         />

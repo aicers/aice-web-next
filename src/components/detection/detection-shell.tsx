@@ -68,6 +68,10 @@ import {
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
 import type { PeriodKey } from "@/lib/detection/period";
+import {
+  type QuickPeekSelection,
+  revalidateQuickPeekSelection,
+} from "@/lib/detection/quick-peek";
 import type {
   Event as DetectionEvent,
   LearningMethod,
@@ -418,9 +422,16 @@ export function DetectionShell({
   // Investigation). At wide widths (≥ `desktop`) the inspector docks
   // inline as a right-hand pane; at narrower widths the same state
   // drives an overlay drawer.
-  const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
-    null,
-  );
+  //
+  // The selection carries the row's stable cursor key alongside the
+  // event payload so a committed query change can revalidate it
+  // against the new result set — without the key, changing the
+  // filter so the inspected row disappears (or the list goes into
+  // zero-results / error) would leave a stale inspector + stale
+  // Investigation handoff visible.
+  const [quickPeekSelection, setQuickPeekSelection] =
+    useState<QuickPeekSelection | null>(null);
+  const quickPeekEvent = quickPeekSelection?.event ?? null;
   const isDesktop = useIsDesktopViewport();
   // Monotonic id for the in-flight Apply; a late response whose id
   // no longer matches is dropped so the results region can't drift
@@ -874,9 +885,24 @@ export function DetectionShell({
     totalCount,
   ]);
 
-  const handleRowOpen = useCallback((event: DetectionEvent) => {
-    setQuickPeekEvent(event);
-  }, []);
+  const handleRowOpen = useCallback(
+    (event: DetectionEvent, eventKey: string) => {
+      setQuickPeekSelection({ event, key: eventKey });
+    },
+    [],
+  );
+
+  // Whenever a committed query replaces the result set (Apply, chip
+  // removal, Refresh, error branch), revalidate the Quick peek
+  // selection against the new `eventKeys`. The reconciliation
+  // itself lives in a pure helper (`revalidateQuickPeekSelection`)
+  // so it can be unit-tested independently of this client
+  // component's React wiring.
+  useEffect(() => {
+    setQuickPeekSelection((current) =>
+      revalidateQuickPeekSelection(current, events, eventKeys),
+    );
+  }, [events, eventKeys]);
 
   const handleRowInvestigate = useCallback(
     (event: DetectionEvent) => {
@@ -1039,7 +1065,7 @@ export function DetectionShell({
                 event={quickPeekEvent}
                 locale={locale}
                 labels={resultListLabels}
-                onClose={() => setQuickPeekEvent(null)}
+                onClose={() => setQuickPeekSelection(null)}
                 onInvestigate={() => handleRowInvestigate(quickPeekEvent)}
               />
             </aside>
@@ -1101,7 +1127,7 @@ export function DetectionShell({
         event={isDesktop ? null : quickPeekEvent}
         locale={locale}
         labels={resultListLabels}
-        onClose={() => setQuickPeekEvent(null)}
+        onClose={() => setQuickPeekSelection(null)}
         onInvestigate={() => {
           if (quickPeekEvent) handleRowInvestigate(quickPeekEvent);
         }}

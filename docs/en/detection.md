@@ -195,6 +195,17 @@ rule — a one-sided-address row still shows `— → <destination>`
 (or `<source> → —`) in the inspector summary, so the operator
 never loses the endpoint context they just clicked.
 
+Quick peek tracks the inspected row by the server-side cursor
+that already keys the result list, not by its position in the
+current page slice. When you apply a filter, remove a chip, or
+refresh the list, the inspector is reconciled against the new
+result set: if the same row is still present the inspector
+refreshes its summary in place, and if the row has dropped out
+(or the list went into zero-results / error) the inspector
+closes so the **Open investigation** handoff can't latch onto
+a stale event. At desktop widths this also restores the hero
+list to its full width once no row is selected.
+
 ### Analytics strip
 
 Below Results, an Analytics strip is reserved for aggregate views of
