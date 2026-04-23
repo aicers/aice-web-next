@@ -129,7 +129,6 @@ export interface DetectionShellLabels {
   railPlaceholder: string;
   filtersOpen: string;
   activeChipsEmpty: string;
-  removeChip: (chipLabel: string) => string;
   resultsRegion: string;
   resultsLoading: string;
   resultsError: string;
@@ -143,7 +142,6 @@ export interface DetectionShellLabels {
   chipLabels: ChipLabelStrings;
   drawer: DrawerLabelStrings;
   summarize: SummarizeFilterLabels;
-  resultList: ResultListLabels;
 }
 
 export interface DetectionShellInitialResult {
@@ -209,8 +207,60 @@ export function DetectionShell({
   initialPivotOnly = {},
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
+  const tResults = useTranslations("detection.results");
   const locale = useLocale();
   const pathname = usePathname();
+  // Build the function-valued labels for the chip remove button and the
+  // result list on this side of the server/client boundary. Function
+  // props can't cross that boundary, so the bound translator stays on
+  // the client and closes over the active locale.
+  const removeChip = useCallback(
+    (label: string) => t("removeChip", { label }),
+    [t],
+  );
+  const resultListLabels = useMemo<ResultListLabels>(
+    () => ({
+      countWithRange: ({ range, total }) =>
+        tResults("countWithRange", { range, total }),
+      totalOnly: ({ total }) => tResults("totalOnly", { total }),
+      download: tResults("download"),
+      downloadComingSoon: tResults("downloadComingSoon"),
+      refresh: tResults("refresh"),
+      updatedJustNow: tResults("updatedJustNow"),
+      updatedSecondsAgo: (s: number) => tResults("updatedSecondsAgo", { s }),
+      updatedMinutesAgo: (m: number) => tResults("updatedMinutesAgo", { m }),
+      updatedHoursAgo: (h: number) => tResults("updatedHoursAgo", { h }),
+      loadingTitle: tResults("loadingTitle"),
+      loadingDescription: tResults("loadingDescription"),
+      errorTitle: tResults("errorTitle"),
+      errorDescription: tResults("errorDescription"),
+      errorRetry: tResults("errorRetry"),
+      emptyResultsTitle: tResults("emptyResultsTitle"),
+      emptyResultsDescription: tResults("emptyResultsDescription"),
+      emptyFilterTitle: tResults("emptyFilterTitle"),
+      emptyFilterDescription: tResults("emptyFilterDescription"),
+      emptyFilterAction: tResults("emptyFilterAction"),
+      rowOpenLabel: tResults("rowOpenLabel"),
+      rowInvestigateLabel: tResults("rowInvestigateLabel"),
+      unknownTime: tResults("unknownTime"),
+      noSensor: tResults("noSensor"),
+      confidenceLabel: t("confidenceChipLabel"),
+      triageSummary: ({ count, max }) =>
+        tResults("triageSummary", { count, max }),
+      endpointSeparator: tResults("endpointSeparator"),
+      moreCountSuffix: (count: number) =>
+        tResults("moreCountSuffix", { count }),
+      countryUnknown: tResults("countryUnknown"),
+      countryUnavailable: tResults("countryUnavailable"),
+      levelLabels: {
+        LOW: t("levelOptions.LOW"),
+        MEDIUM: t("levelOptions.MEDIUM"),
+        HIGH: t("levelOptions.HIGH"),
+      },
+      attackKindLabel: tResults("attackKindLabel"),
+    }),
+    [t, tResults],
+  );
   const multiSelectLabels = useMemo<FilterMultiSelectLabels>(
     () => ({
       allToggle: t("multiSelect.all"),
@@ -747,7 +797,7 @@ export function DetectionShell({
                               ? () => handleRemoveChip(removeTarget)
                               : undefined
                         }
-                        removeLabel={labels.removeChip(chip.value)}
+                        removeLabel={removeChip(chip.value)}
                       />
                     </li>
                   );
@@ -763,7 +813,7 @@ export function DetectionShell({
                           value: chip.id.replace("direction:", "") as FlowKind,
                         })
                       }
-                      removeLabel={labels.removeChip(chip.value)}
+                      removeLabel={removeChip(chip.value)}
                     />
                   </li>
                 ))}
@@ -785,7 +835,7 @@ export function DetectionShell({
                               entryId: chip.id,
                             })
                       }
-                      removeLabel={labels.removeChip(chip.label)}
+                      removeLabel={removeChip(chip.label)}
                     />
                   </li>
                 ))}
@@ -806,7 +856,7 @@ export function DetectionShell({
                               value: chip.id.replace(/^sensor:/, ""),
                             })
                       }
-                      removeLabel={labels.removeChip(chip.value)}
+                      removeLabel={removeChip(chip.value)}
                     />
                   </li>
                 ))}
@@ -820,7 +870,7 @@ export function DetectionShell({
                         onRemove={
                           target ? () => handleRemoveChip(target) : undefined
                         }
-                        removeLabel={labels.removeChip(chip.value)}
+                        removeLabel={removeChip(chip.value)}
                       />
                     </li>
                   );
@@ -838,7 +888,7 @@ export function DetectionShell({
         >
           <ResultList
             state={resultListState}
-            labels={labels.resultList}
+            labels={resultListLabels}
             locale={locale}
             onRefresh={handleRefresh}
             onOpenFilters={() => openDrawer()}

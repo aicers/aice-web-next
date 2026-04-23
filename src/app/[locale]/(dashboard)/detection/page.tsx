@@ -3,7 +3,6 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { DetectionShell } from "@/components/detection/detection-shell";
 import type { FilterDrawerOptions } from "@/components/detection/filter-drawer";
 import type { FilterMultiSelectOption } from "@/components/detection/filter-multi-select";
-import type { ResultListLabels } from "@/components/detection/result-list";
 import { EVENT_KIND_FRIENDLY_NAMES } from "@/components/events/event-display-helpers";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
@@ -21,7 +20,6 @@ import {
   type TagField,
   TEXT_FIELDS,
   type TextField,
-  type ThreatLevel,
 } from "@/lib/detection";
 import { COUNTRY_CODES } from "@/lib/detection/countries";
 import { FLOW_KINDS } from "@/lib/detection/direction";
@@ -144,46 +142,6 @@ export default async function DetectionPage({
     ]),
   ) as Record<TagField, { label: string; placeholder: string }>;
 
-  const resultListLabels: ResultListLabels = {
-    countWithRange: ({ range, total }) =>
-      t("results.countWithRange", { range, total }),
-    totalOnly: ({ total }) => t("results.totalOnly", { total }),
-    download: t("results.download"),
-    downloadComingSoon: t("results.downloadComingSoon"),
-    refresh: t("results.refresh"),
-    updatedJustNow: t("results.updatedJustNow"),
-    updatedSecondsAgo: (s: number) => t("results.updatedSecondsAgo", { s }),
-    updatedMinutesAgo: (m: number) => t("results.updatedMinutesAgo", { m }),
-    updatedHoursAgo: (h: number) => t("results.updatedHoursAgo", { h }),
-    loadingTitle: t("results.loadingTitle"),
-    loadingDescription: t("results.loadingDescription"),
-    errorTitle: t("results.errorTitle"),
-    errorDescription: t("results.errorDescription"),
-    errorRetry: t("results.errorRetry"),
-    emptyResultsTitle: t("results.emptyResultsTitle"),
-    emptyResultsDescription: t("results.emptyResultsDescription"),
-    emptyFilterTitle: t("results.emptyFilterTitle"),
-    emptyFilterDescription: t("results.emptyFilterDescription"),
-    emptyFilterAction: t("results.emptyFilterAction"),
-    rowOpenLabel: t("results.rowOpenLabel"),
-    rowInvestigateLabel: t("results.rowInvestigateLabel"),
-    unknownTime: t("results.unknownTime"),
-    noSensor: t("results.noSensor"),
-    confidenceLabel: t("filters.confidenceChipLabel"),
-    triageSummary: ({ count, max }) =>
-      t("results.triageSummary", { count, max }),
-    endpointSeparator: t("results.endpointSeparator"),
-    moreCountSuffix: (count: number) => t("results.moreCountSuffix", { count }),
-    countryUnknown: t("results.countryUnknown"),
-    countryUnavailable: t("results.countryUnavailable"),
-    levelLabels: {
-      LOW: t("filters.levelOptions.LOW"),
-      MEDIUM: t("filters.levelOptions.MEDIUM"),
-      HIGH: t("filters.levelOptions.HIGH"),
-    } satisfies Record<ThreatLevel, string>,
-    attackKindLabel: t("results.attackKindLabel"),
-  };
-
   return (
     <DetectionShell
       title={t("title")}
@@ -201,11 +159,9 @@ export default async function DetectionPage({
         railPlaceholder: t("savedRail.placeholder"),
         filtersOpen: t("filters.open"),
         activeChipsEmpty: t("filters.activeChipsEmpty"),
-        removeChip: (label: string) => t("filters.removeChip", { label }),
         resultsRegion: t("filters.resultsRegion"),
         resultsLoading: t("filters.resultsLoading"),
         resultsError: t("filters.resultsError"),
-        resultList: resultListLabels,
         analyticsToggle: t("analytics.toggle"),
         analyticsShow: t("analytics.show"),
         analyticsHide: t("analytics.hide"),
