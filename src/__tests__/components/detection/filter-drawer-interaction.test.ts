@@ -47,6 +47,13 @@ describe("filter-drawer confidence input interaction", () => {
       learningMethods: [],
       categories: [],
       kinds: [],
+      source: "",
+      destination: "",
+      keywords: [],
+      hostnames: [],
+      userIds: [],
+      userNames: [],
+      userDepartments: [],
     };
   }
 

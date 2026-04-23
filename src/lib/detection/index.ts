@@ -78,11 +78,18 @@ export type {
 } from "./types";
 export {
   buildDetectionPivotUrl,
+  buildDetectionSearchParams,
   buildPivotChips,
+  mergePivotParams,
   type PivotChip,
   type PivotChipLabels,
   type PivotFilterParams,
   type PivotKey,
   type PivotWindow,
   parsePivotSearchParams,
+  pivotParamsFromFilterInput,
+  TAG_FIELDS,
+  type TagField,
+  TEXT_FIELDS,
+  type TextField,
 } from "./url-filters";

@@ -3,6 +3,23 @@ import type { PeriodKey } from "./period";
 import type { FlowKind, LearningMethod } from "./types";
 
 /**
+ * De-dupe and trim-normalize a tag-input array. Mirrors the drawer's
+ * TagInput input handling so submit-time normalization produces the
+ * same canonical list the UI already renders.
+ */
+function normalizeTagList(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+/**
  * Editable snapshot of the Detection filter owned by the filter
  * drawer while the user is composing edits. Kept framework-agnostic
  * so shared filter-assembly code (e.g. `buildAppliedFilter`) does
@@ -46,6 +63,15 @@ export interface DetectionFilterDraft {
   learningMethods: readonly LearningMethod[];
   categories: readonly number[];
   kinds: readonly string[];
+  /** Single-string free-form fields — source/destination IP or hostname text. */
+  source: string;
+  destination: string;
+  /** Tag-input free-form fields. */
+  keywords: string[];
+  hostnames: string[];
+  userIds: string[];
+  userNames: string[];
+  userDepartments: string[];
 }
 
 export const CONFIDENCE_DEFAULT_MIN = 0;
@@ -99,6 +125,29 @@ export function applyManualStart(
     startLocal: value,
     startIso: localInputToIso(value),
     endIso: localInputToIso(draft.endLocal),
+  };
+}
+
+/**
+ * Canonicalize a draft for submit: trim the single-string fields and
+ * de-dupe/trim each tag field so a blur-committed trailing draft plus
+ * any whitespace padding reaches the parent in the same form the drawer
+ * actually renders. The parent mirrors the result back into its cached
+ * draft so reopening the drawer shows the value that was committed —
+ * not the original padded input.
+ */
+export function normalizeDraftForSubmit(
+  draft: DetectionFilterDraft,
+): DetectionFilterDraft {
+  return {
+    ...draft,
+    source: draft.source.trim(),
+    destination: draft.destination.trim(),
+    keywords: normalizeTagList(draft.keywords),
+    hostnames: normalizeTagList(draft.hostnames),
+    userIds: normalizeTagList(draft.userIds),
+    userNames: normalizeTagList(draft.userNames),
+    userDepartments: normalizeTagList(draft.userDepartments),
   };
 }
 

@@ -91,7 +91,7 @@ describe("buildDetectionFilterBar", () => {
 
   it("renders pivot chips and the confidence chip together and keeps the period summary", () => {
     const pivotChips: PivotChip[] = [
-      { id: "source", label: "Source IP", value: "10.0.0.1" },
+      { id: "source", field: "source", label: "Source IP", value: "10.0.0.1" },
     ];
     const filter: Filter = {
       mode: "structured",

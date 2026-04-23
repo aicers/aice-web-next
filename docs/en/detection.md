@@ -9,7 +9,21 @@ built-in roles Security Monitor, Tenant Administrator, and System
 Administrator receive this permission by default. Custom roles that
 grant `detection:read` also qualify.
 
-![Detection page](../assets/detection-en.png)
+![Detection page — wireframe stand-in](../assets/detection-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The page-level illustration above is an SVG wireframe rather than a
+    real capture. The Detection page renders its hero count from a live
+    REview query, and the authoring worktree has no staging backend with
+    seeded detection data — a PNG captured here would show the
+    `Could not load detection results.` error state. Per
+    `docs/AUTHORING.md`'s "Screenshot exception for
+    infrastructure-gated features", this page ships a localized SVG
+    wireframe and will be replaced with a real screenshot once a
+    staging environment with sample data is available. The filter
+    drawer capture further down is a real PNG — the drawer is
+    client-rendered and does not depend on backend data.
 
 ## Layout
 
@@ -33,6 +47,23 @@ The top of the main region holds the **Filters** button and the
 active filter chip bar. Clicking **Filters** opens the filter
 drawer on the right; the chip bar to its right summarises the
 filter currently applied to the active tab.
+
+The chip bar follows an aggregation rule so it stays compact when
+many values are active:
+
+- Single-value fields (`Source`, `Destination`) render as a single
+  chip with the value (e.g. `Source: 10.0.0.5`).
+- Tag fields with **1–3** values render one chip per value.
+- Tag fields with **more than 3** values collapse to a single
+  count token (e.g. `Keywords: 12`). Activating the count chip
+  reopens the drawer so you can edit the list.
+
+Tag-field state and the `Source` / `Destination` values are
+persisted in the URL as comma-separated values
+(`?keywords=alpha,beta`). Refreshing the page restores these
+free-form fields, and clearing all values removes the parameter
+from the URL. The time range is not persisted in the URL, so a
+refresh falls back to the default period.
 
 ### Results
 
@@ -143,6 +174,26 @@ missing endpoint. If the fetch fails transiently, the control
 surfaces a **Could not load sensors** message with an inline
 **Retry** button; clicking Retry re-issues the request without
 having to close and reopen the drawer.
+
+### Source, destination, and user attributes
+
+Below the sensor control, a dedicated **Attributes** section narrows
+the query by free-form strings.
+
+- **Source** and **Destination** are single-value text inputs — the
+  active filter carries exactly one source string and one destination
+  string at a time. Validation is lenient: the backend rejects
+  malformed values, so operators can paste whatever REview accepts.
+- **Keywords**, **Hostnames**, **User IDs**, **User Names**, and
+  **User Departments** are tag inputs. Press `Enter` or type a comma
+  to commit the current entry as a chip; `Backspace` on an empty
+  input removes the most recent tag. Paste a comma-separated or
+  newline-separated list to bulk-add many values at once. Entries
+  are trimmed and deduped automatically.
+
+Clearing all tags in a field omits that field from the submitted
+filter entirely. Apply also mirrors the free-form fields into the
+URL so a refresh restores the active tab's filter state.
 
 ### Categorical filters
 

@@ -7,12 +7,20 @@ import {
   isoToLocalInput,
 } from "./filter-draft";
 import type { PeriodKey } from "./period";
-import type { PivotChip } from "./url-filters";
+import type { PivotChip, PivotKey } from "./url-filters";
 
 export interface DetectionFilterBarChip {
   id: string;
   label: string;
   value: string;
+  /**
+   * Pass-through from {@link PivotChip}: when the chip represents an
+   * aggregated multi-value (e.g. "Keywords: 12"), activating it opens
+   * the drawer focused on the underlying field. The shell consults
+   * these to decide whether to render the chip as a button.
+   */
+  aggregate?: boolean;
+  field?: PivotKey;
 }
 
 export interface DetectionFilterBarState {

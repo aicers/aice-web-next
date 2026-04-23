@@ -10,6 +10,7 @@ import {
   isConfidenceDefault,
   isoToLocalInput,
   localInputToIso,
+  normalizeDraftForSubmit,
   parseConfidenceValue,
   setConfidenceMax,
   setConfidenceMin,
@@ -52,23 +53,13 @@ describe("filter-draft helpers", () => {
   it("applyManualStart normalizes both ISO fields from local strings", () => {
     const chipStartIso = "2026-04-22T11:34:56.789Z";
     const chipEndIso = "2026-04-22T12:34:56.789Z";
-    const draft: DetectionFilterDraft = {
+    const draft: DetectionFilterDraft = baseDraft({
       period: "1h",
       startLocal: isoToLocalInput(chipStartIso),
       endLocal: isoToLocalInput(chipEndIso),
       startIso: chipStartIso,
       endIso: chipEndIso,
-      directions: ["OUTBOUND", "INTERNAL", "INBOUND"] as FlowKind[],
-      endpoints: [],
-      confidenceMin: 0,
-      confidenceMax: 1,
-      sensorIds: [],
-      levels: [],
-      countries: [],
-      learningMethods: [],
-      categories: [],
-      kinds: [],
-    };
+    });
 
     const newStartLocal = isoToLocalInput("2026-04-22T11:00:00.000Z");
     const next = applyManualStart(draft, newStartLocal);
@@ -86,23 +77,13 @@ describe("filter-draft helpers", () => {
   it("applyManualEnd normalizes both ISO fields from local strings", () => {
     const chipStartIso = "2026-04-22T11:34:56.789Z";
     const chipEndIso = "2026-04-22T12:34:56.789Z";
-    const draft: DetectionFilterDraft = {
+    const draft: DetectionFilterDraft = baseDraft({
       period: "1h",
       startLocal: isoToLocalInput(chipStartIso),
       endLocal: isoToLocalInput(chipEndIso),
       startIso: chipStartIso,
       endIso: chipEndIso,
-      directions: ["OUTBOUND", "INTERNAL", "INBOUND"] as FlowKind[],
-      endpoints: [],
-      confidenceMin: 0,
-      confidenceMax: 1,
-      sensorIds: [],
-      levels: [],
-      countries: [],
-      learningMethods: [],
-      categories: [],
-      kinds: [],
-    };
+    });
 
     const newEndLocal = isoToLocalInput("2026-04-22T13:00:00.000Z");
     const next = applyManualEnd(draft, newEndLocal);
@@ -114,7 +95,9 @@ describe("filter-draft helpers", () => {
     expect(next.endIso).toBe(localInputToIso(next.endLocal));
   });
 
-  function baseDraft(): DetectionFilterDraft {
+  function baseDraft(
+    overrides: Partial<DetectionFilterDraft> = {},
+  ): DetectionFilterDraft {
     return {
       period: null,
       startLocal: "",
@@ -131,6 +114,14 @@ describe("filter-draft helpers", () => {
       learningMethods: [],
       categories: [],
       kinds: [],
+      source: "",
+      destination: "",
+      keywords: [],
+      hostnames: [],
+      userIds: [],
+      userNames: [],
+      userDepartments: [],
+      ...overrides,
     };
   }
 
@@ -169,7 +160,7 @@ describe("filter-draft helpers", () => {
   });
 
   it("applyConfidenceMin snaps max upward to preserve min <= max", () => {
-    const draft = { ...baseDraft(), confidenceMin: 0.2, confidenceMax: 0.5 };
+    const draft = baseDraft({ confidenceMin: 0.2, confidenceMax: 0.5 });
     const next = applyConfidenceMin(draft, "0.80");
     expect(next.confidenceMin).toBe(0.8);
     // New min exceeded the previous max — max snaps up so min <= max holds.
@@ -177,7 +168,7 @@ describe("filter-draft helpers", () => {
   });
 
   it("applyConfidenceMax snaps min downward to preserve min <= max", () => {
-    const draft = { ...baseDraft(), confidenceMin: 0.6, confidenceMax: 1 };
+    const draft = baseDraft({ confidenceMin: 0.6, confidenceMax: 1 });
     const next = applyConfidenceMax(draft, "0.40");
     expect(next.confidenceMax).toBe(0.4);
     expect(next.confidenceMin).toBe(0.4);
@@ -187,5 +178,68 @@ describe("filter-draft helpers", () => {
     const draft = baseDraft();
     expect(setConfidenceMin(draft, -1).confidenceMin).toBe(0);
     expect(setConfidenceMax(draft, 5).confidenceMax).toBe(1);
+  });
+
+  // Regression: when the user types whitespace-padded `source` /
+  // `destination` or leaves a duplicate/trailing-whitespace tag in
+  // any list, Apply commits the trimmed/deduped canonical form. The
+  // shell mirrors this normalized draft back into its cached draft
+  // so reopening the drawer shows the committed values rather than
+  // the original padded input.
+  it("normalizeDraftForSubmit trims text fields and dedupes tag fields", () => {
+    const startIso = "2026-04-22T11:00:00.000Z";
+    const endIso = "2026-04-22T12:00:00.000Z";
+    const draft = baseDraft({
+      startLocal: isoToLocalInput(startIso),
+      endLocal: isoToLocalInput(endIso),
+      startIso,
+      endIso,
+      source: "  10.0.0.5  ",
+      destination: "   ",
+      keywords: [" alpha ", "beta", "beta", "", "  "],
+      hostnames: ["host-a", " host-a ", "host-b"],
+      userIds: ["  "],
+      userNames: [],
+      userDepartments: ["ops"],
+    });
+
+    const out = normalizeDraftForSubmit(draft);
+
+    // Single-value text fields are trimmed; a whitespace-only value
+    // collapses to "" so the shell's nonEmptyString gate drops it.
+    expect(out.source).toBe("10.0.0.5");
+    expect(out.destination).toBe("");
+    // Tag fields: trim, drop empties, dedupe preserving first-seen
+    // order.
+    expect(out.keywords).toEqual(["alpha", "beta"]);
+    expect(out.hostnames).toEqual(["host-a", "host-b"]);
+    expect(out.userIds).toEqual([]);
+    expect(out.userNames).toEqual([]);
+    expect(out.userDepartments).toEqual(["ops"]);
+    // Period / range fields are passed through untouched.
+    expect(out.period).toBeNull();
+    expect(out.startIso).toBe(startIso);
+    expect(out.endIso).toBe(endIso);
+  });
+
+  // Regression: normalize is idempotent, which is what lets the shell
+  // safely store the result back as its cached draft without a new
+  // Apply producing a different canonical form.
+  it("normalizeDraftForSubmit is idempotent", () => {
+    const startIso = "2026-04-22T11:00:00.000Z";
+    const endIso = "2026-04-22T12:00:00.000Z";
+    const draft = baseDraft({
+      startLocal: isoToLocalInput(startIso),
+      endLocal: isoToLocalInput(endIso),
+      startIso,
+      endIso,
+      source: "  10.0.0.5  ",
+      destination: "host.example",
+      keywords: [" dup ", "dup", "other"],
+    });
+
+    const once = normalizeDraftForSubmit(draft);
+    const twice = normalizeDraftForSubmit(once);
+    expect(twice).toEqual(once);
   });
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import { Bookmark, ChevronRight, SlidersHorizontal, Star } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { startTransition, useCallback, useMemo, useRef, useState } from "react";
 import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
@@ -41,18 +42,67 @@ import {
 } from "@/lib/detection/filter-summary";
 import type { PeriodKey } from "@/lib/detection/period";
 import type { FlowKind, LearningMethod } from "@/lib/detection/types";
-import type { PivotChip } from "@/lib/detection/url-filters";
+import {
+  buildDetectionSearchParams,
+  buildPivotChips,
+  mergePivotParams,
+  type PivotChip,
+  type PivotChipLabels,
+  type PivotFilterParams,
+  type PivotKey,
+  pivotParamsFromFilterInput,
+  TAG_FIELDS,
+  type TagField,
+  TEXT_FIELDS,
+} from "@/lib/detection/url-filters";
 import { cn } from "@/lib/utils";
 import {
+  type DrawerFocusField,
   FilterDrawer,
   type FilterDrawerLabels,
   type FilterDrawerOptions,
+  type TagFieldLabel,
 } from "./filter-drawer";
 import type { FilterMultiSelectLabels } from "./filter-multi-select";
 import type {
   SensorMultiSelectState,
   SensorOption,
 } from "./sensor-multi-select";
+
+/**
+ * Serializable subset of {@link PivotChipLabels} — the server page passes
+ * this shape, and the client shell injects `countAggregate` (a function
+ * that takes a dynamic count) on render. Function props can't cross the
+ * server→client boundary, so the bound translator stays on the client.
+ */
+type ChipLabelStrings = Omit<PivotChipLabels, "countAggregate">;
+
+/**
+ * Serializable subset of {@link FilterDrawerLabels["attributes"]} — the
+ * server page passes plain strings for each tag field, and the client
+ * shell constructs the per-field `removeLabel` formatter using the
+ * locale's translator.
+ */
+type AttributesLabelStrings = Omit<
+  FilterDrawerLabels["attributes"],
+  "keywords" | "hostnames" | "userIds" | "userNames" | "userDepartments"
+> & {
+  keywords: Omit<TagFieldLabel, "removeLabel">;
+  hostnames: Omit<TagFieldLabel, "removeLabel">;
+  userIds: Omit<TagFieldLabel, "removeLabel">;
+  userNames: Omit<TagFieldLabel, "removeLabel">;
+  userDepartments: Omit<TagFieldLabel, "removeLabel">;
+};
+
+/**
+ * Serializable subset of {@link FilterDrawerLabels} — the server page
+ * passes plain strings for each tag field, and the client shell
+ * constructs the per-field `removeLabel` formatter using the locale's
+ * translator.
+ */
+type DrawerLabelStrings = Omit<FilterDrawerLabels, "attributes"> & {
+  attributes: AttributesLabelStrings;
+};
 
 export interface DetectionShellLabels {
   recommendedFilter: string;
@@ -70,7 +120,8 @@ export interface DetectionShellLabels {
   directionChips: DirectionChipLabels;
   endpointChips: EndpointChipLabels;
   confidenceChipLabel: string;
-  drawer: FilterDrawerLabels;
+  chipLabels: ChipLabelStrings;
+  drawer: DrawerLabelStrings;
   summarize: SummarizeFilterLabels;
 }
 
@@ -86,7 +137,8 @@ interface DetectionShellProps {
   initialFilter: Filter;
   initialPeriod: PeriodKey | null;
   initialResult: DetectionShellInitialResult;
-  initialChips?: PivotChip[];
+  /** Pivot-only params from the URL (kind, ports, proto, window) — rendered as chips but not editable in the drawer yet. */
+  initialPivotOnly?: PivotFilterParams;
 }
 
 /**
@@ -132,9 +184,10 @@ export function DetectionShell({
   initialFilter,
   initialPeriod,
   initialResult,
-  initialChips = [],
+  initialPivotOnly = {},
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
+  const pathname = usePathname();
   const multiSelectLabels = useMemo<FilterMultiSelectLabels>(
     () => ({
       allToggle: t("multiSelect.all"),
@@ -164,6 +217,11 @@ export function DetectionShell({
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
   });
+  // Target field for the drawer to focus after opening. `focusToken`
+  // increments on each openDrawerFocused call so repeated clicks on
+  // the same aggregate chip re-trigger the drawer's focus effect.
+  const [focusField, setFocusField] = useState<DrawerFocusField | null>(null);
+  const [focusToken, setFocusToken] = useState(0);
 
   const [totalCount, setTotalCount] = useState<string | null>(
     initialResult.totalCount,
@@ -213,6 +271,7 @@ export function DetectionShell({
           filterToDraft(committedFilter, committedPeriod, committedEndpoints),
       );
       setOpenEndpointPanelOnDrawerOpen(opts?.openEndpointPanel ?? false);
+      setFocusField(null);
       setDrawerOpen(true);
       // Lazy-load the sensor inventory the first time the drawer
       // opens, and retry on a prior transient failure so a single
@@ -251,9 +310,42 @@ export function DetectionShell({
       setCommittedFilter(next);
       setCommittedPeriod(applied.period);
       setCommittedEndpoints(applied.endpoints);
+      // Sync the cached draft with the canonical values we just
+      // committed. `applied` is the drawer's already-normalized draft
+      // (trimmed strings, normalized tag arrays), so reopening the
+      // drawer shows the same text that the filter is actually using
+      // rather than the original whitespace-padded input.
+      setDraft(applied);
       setDrawerOpen(false);
       setLoading(true);
       setResultError(null);
+
+      // Mirror the free-form filter fields into the URL so a refresh
+      // restores them. Only the drawer's free-form inputs (source,
+      // destination, and the tag fields) ride in the URL today — the
+      // time range has no URL-persisted form, so a refresh falls back
+      // to the default period. The pivot-only params
+      // (kind/ports/proto/window) stay as-is — they carry no drawer
+      // state yet.
+      //
+      // Use `history.replaceState` rather than `router.replace` so the
+      // URL update doesn't trigger a soft navigation. A soft navigation
+      // would re-run this route's server page and `searchEvents()`
+      // alongside the explicit `runEventQuery(next)` below — two
+      // queries per Apply for the same filter, with the navigation
+      // result discarded because the shell keeps its own client state.
+      // `replaceState` keeps URL persistence (refresh restores the
+      // active tab) without paying for a duplicate REview round-trip.
+      if (next.mode === "structured") {
+        const merged = mergePivotParams(
+          initialPivotOnly,
+          pivotParamsFromFilterInput(next.input),
+        );
+        const qs = buildDetectionSearchParams(merged).toString();
+        const url = qs ? `${pathname}?${qs}` : pathname;
+        window.history.replaceState(window.history.state, "", url);
+      }
+
       const requestId = latestRequestIdRef.current + 1;
       latestRequestIdRef.current = requestId;
       startTransition(async () => {
@@ -281,14 +373,99 @@ export function DetectionShell({
         }
       });
     },
-    [committedFilter, labels.resultsError, options, sensorCache],
+    [
+      committedFilter,
+      initialPivotOnly,
+      labels.resultsError,
+      options,
+      pathname,
+      sensorCache,
+    ],
+  );
+
+  const openDrawerFocused = useCallback(
+    (field: PivotKey) => {
+      // Only drawer-editable fields have an input to focus. Pivot-only
+      // fields (kind/origPort/respPort/proto/window) produce scalar
+      // chips that never aggregate, so in practice this branch is only
+      // reached for tag/text fields — the guard keeps us honest if a
+      // future aggregate path widens the chip set.
+      setDraft(
+        (current) =>
+          current ??
+          filterToDraft(committedFilter, committedPeriod, committedEndpoints),
+      );
+      setFocusField(isDrawerFocusField(field) ? field : null);
+      setFocusToken((t) => t + 1);
+      setDrawerOpen(true);
+    },
+    [committedFilter, committedPeriod, committedEndpoints],
+  );
+
+  // Compose the function-valued labels the chip builder needs on this
+  // side of the server/client boundary. The server page passes only
+  // plain strings; the translator closes over the active locale here so
+  // aggregate chip counts format with the right language.
+  const chipLabels = useMemo<PivotChipLabels>(
+    () => ({
+      ...labels.chipLabels,
+      countAggregate: (label, count) =>
+        t("chips.countAggregate", { label, count }),
+    }),
+    [labels.chipLabels, t],
+  );
+
+  const drawerLabels = useMemo<FilterDrawerLabels>(() => {
+    const withRemoveLabel = (
+      field: TagField,
+      strings: Omit<TagFieldLabel, "removeLabel">,
+    ): TagFieldLabel => ({
+      ...strings,
+      removeLabel: (tag: string) =>
+        t(
+          `attributes.${field}.remove` as Parameters<typeof t>[0],
+          { tag } as Parameters<typeof t>[1],
+        ),
+    });
+    const attributes: FilterDrawerLabels["attributes"] = {
+      source: labels.drawer.attributes.source,
+      destination: labels.drawer.attributes.destination,
+      keywords: withRemoveLabel("keywords", labels.drawer.attributes.keywords),
+      hostnames: withRemoveLabel(
+        "hostnames",
+        labels.drawer.attributes.hostnames,
+      ),
+      userIds: withRemoveLabel("userIds", labels.drawer.attributes.userIds),
+      userNames: withRemoveLabel(
+        "userNames",
+        labels.drawer.attributes.userNames,
+      ),
+      userDepartments: withRemoveLabel(
+        "userDepartments",
+        labels.drawer.attributes.userDepartments,
+      ),
+    };
+    return { ...labels.drawer, attributes };
+  }, [labels.drawer, t]);
+
+  // Pivot-style chips from drawer free-form fields (+ URL-only pivots).
+  const pivotChips = useMemo<PivotChip[]>(
+    () =>
+      buildPivotChips(
+        mergePivotParams(
+          initialPivotOnly,
+          pivotParamsFromFilterInput(extractStructuredInput(committedFilter)),
+        ),
+        chipLabels,
+      ),
+    [committedFilter, initialPivotOnly, chipLabels],
   );
 
   const { summary: activeChipText, chips: baseChips } = buildDetectionFilterBar(
     {
       filter: committedFilter,
       period: committedPeriod,
-      pivotChips: initialChips,
+      pivotChips,
       labels: {
         confidenceChipLabel: labels.confidenceChipLabel,
         activeChipsEmpty: labels.activeChipsEmpty,
@@ -332,10 +509,10 @@ export function DetectionShell({
       buildActiveMultiSelectChips(
         committedFilter,
         options,
-        labels.drawer,
+        drawerLabels,
         multiSelectLabels,
       ),
-    [committedFilter, options, labels.drawer, multiSelectLabels],
+    [committedFilter, options, drawerLabels, multiSelectLabels],
   );
   const hasChips =
     baseChips.length > 0 ||
@@ -394,14 +571,30 @@ export function DetectionShell({
               <ul className="flex flex-wrap items-center gap-1.5">
                 {baseChips.map((chip) => (
                   <li key={chip.id}>
-                    <Badge variant="secondary" className="font-normal">
-                      <span className="text-muted-foreground mr-1 text-xs">
-                        {chip.label}
-                      </span>
-                      <span className="text-foreground text-xs font-medium">
-                        {chip.value}
-                      </span>
-                    </Badge>
+                    {chip.aggregate && chip.field ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openDrawerFocused(chip.field as PivotKey)
+                        }
+                        className="focus-visible:ring-ring/50 rounded-full focus-visible:ring-2 focus-visible:outline-none"
+                      >
+                        <Badge variant="secondary" className="font-normal">
+                          <span className="text-foreground text-xs font-medium">
+                            {chip.value}
+                          </span>
+                        </Badge>
+                      </button>
+                    ) : (
+                      <Badge variant="secondary" className="font-normal">
+                        <span className="text-muted-foreground mr-1 text-xs">
+                          {chip.label}
+                        </span>
+                        <span className="text-foreground text-xs font-medium">
+                          {chip.value}
+                        </span>
+                      </Badge>
+                    )}
                   </li>
                 ))}
                 {directionChips.map((chip) => (
@@ -526,12 +719,14 @@ export function DetectionShell({
           onDraftChange={setDraft}
           onApply={handleApply}
           options={options}
-          labels={labels.drawer}
+          labels={drawerLabels}
           multiSelectLabels={multiSelectLabels}
           openEndpointPanelOnOpen={openEndpointPanelOnDrawerOpen}
           sensorOptions={sensorOptions}
           sensorState={sensorState}
           onSensorRetry={triggerSensorFetch}
+          focusField={focusField}
+          focusToken={focusToken}
         />
       ) : null}
     </div>
@@ -549,6 +744,8 @@ function filterToDraft(
   const sensorIds =
     filter.mode === "structured" ? (filter.input.sensors ?? []) : [];
   const input = filter.mode === "structured" ? filter.input : {};
+  const fromArray = (values: string[] | null | undefined): string[] =>
+    values && values.length > 0 ? [...values] : [];
   return {
     period,
     startLocal: isoToLocalInput(startIso),
@@ -567,7 +764,25 @@ function filterToDraft(
       (v): v is number => typeof v === "number",
     ) as readonly number[],
     kinds: (input.kinds ?? []) as readonly string[],
+    source: input.source ?? "",
+    destination: input.destination ?? "",
+    keywords: fromArray(input.keywords),
+    hostnames: fromArray(input.hostnames),
+    userIds: fromArray(input.userIds),
+    userNames: fromArray(input.userNames),
+    userDepartments: fromArray(input.userDepartments),
   };
+}
+
+const FOCUSABLE_FIELDS = new Set<string>([...TEXT_FIELDS, ...TAG_FIELDS]);
+
+function isDrawerFocusField(field: PivotKey): field is DrawerFocusField {
+  return FOCUSABLE_FIELDS.has(field);
+}
+
+function extractStructuredInput(filter: Filter) {
+  if (filter.mode !== "structured") return {};
+  return filter.input;
 }
 
 function structuredStart(filter: Filter): string | null {

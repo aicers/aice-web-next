@@ -6,14 +6,19 @@ import type { FilterMultiSelectOption } from "@/components/detection/filter-mult
 import { EVENT_KIND_FRIENDLY_NAMES } from "@/components/events/event-display-helpers";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
-  buildPivotChips,
   computePeriodRange,
   DEFAULT_PERIOD_KEY,
+  type EventListFilterInput,
   type Filter,
   type FlowKind,
   PERIOD_KEYS,
+  type PivotFilterParams,
   parsePivotSearchParams,
   searchEvents,
+  TAG_FIELDS,
+  type TagField,
+  TEXT_FIELDS,
+  type TextField,
 } from "@/lib/detection";
 import { COUNTRY_CODES } from "@/lib/detection/countries";
 import { FLOW_KINDS } from "@/lib/detection/direction";
@@ -43,26 +48,37 @@ export default async function DetectionPage({
   const locale = await getLocale();
   const rawParams = await searchParams;
   const pivotParams = parsePivotSearchParams(rawParams);
-  const initialChips = buildPivotChips(pivotParams, {
-    source: t("filters.chips.source"),
-    destination: t("filters.chips.destination"),
-    kind: t("filters.chips.kind"),
-    origPort: t("filters.chips.origPort"),
-    respPort: t("filters.chips.respPort"),
-    proto: t("filters.chips.proto"),
-    window: t("filters.chips.window"),
-    windowLastDay: t("filters.chips.windowLastDay"),
-    windowLastWeek: t("filters.chips.windowLastWeek"),
-  });
+  // The client shell builds chip label strings from `labels.chipLabels`
+  // — including the aggregate-count formatter that closes over the
+  // active locale — so the server page only needs the plain strings.
   const summarizeLabels = {
     sensor: t("filters.chips.sensor"),
     sensorAggregate: t.raw("filters.chips.sensorAggregate") as string,
   };
 
   const defaultRange = computePeriodRange(DEFAULT_PERIOD_KEY);
-  const initialFilter: Filter = {
-    mode: "structured",
-    input: { start: defaultRange.start, end: defaultRange.end },
+  const initialInput: EventListFilterInput = {
+    start: defaultRange.start,
+    end: defaultRange.end,
+  };
+  if (pivotParams.source) initialInput.source = pivotParams.source;
+  if (pivotParams.destination) {
+    initialInput.destination = pivotParams.destination;
+  }
+  for (const field of TAG_FIELDS) {
+    const values = pivotParams[field];
+    if (values && values.length > 0) initialInput[field] = values;
+  }
+  const initialFilter: Filter = { mode: "structured", input: initialInput };
+
+  // Pivot-only params carry through as chip state but aren't part of
+  // the EventListFilterInput yet — they land in the Network/IP phase.
+  const initialPivotOnly: PivotFilterParams = {
+    kind: pivotParams.kind,
+    origPort: pivotParams.origPort,
+    respPort: pivotParams.respPort,
+    proto: pivotParams.proto,
+    window: pivotParams.window,
   };
 
   let initialTotal: string | null = null;
@@ -95,6 +111,31 @@ export default async function DetectionPage({
     }),
   });
 
+  // Free-form fields: single-string text inputs (source, destination)
+  // and tag inputs (keywords, hostnames, user*). Only plain strings
+  // cross the server→client boundary here; the client shell uses
+  // `useTranslations` to build the per-tag remove labels (which take a
+  // dynamic `tag` arg) so no function prop is serialized.
+  const textFieldLabels = Object.fromEntries(
+    TEXT_FIELDS.map((field) => [
+      field,
+      {
+        label: t(`filters.attributes.${field}.label`),
+        placeholder: t(`filters.attributes.${field}.placeholder`),
+      },
+    ]),
+  ) as Record<TextField, { label: string; placeholder: string }>;
+
+  const tagFieldLabels = Object.fromEntries(
+    TAG_FIELDS.map((field) => [
+      field,
+      {
+        label: t(`filters.attributes.${field}.label`),
+        placeholder: t(`filters.attributes.${field}.placeholder`),
+      },
+    ]),
+  ) as Record<TagField, { label: string; placeholder: string }>;
+
   return (
     <DetectionShell
       title={t("title")}
@@ -125,6 +166,22 @@ export default async function DetectionPage({
           aggregate: t.raw("filters.endpoint.chipAggregate") as string,
         },
         confidenceChipLabel: t("filters.confidenceChipLabel"),
+        chipLabels: {
+          source: t("filters.chips.source"),
+          destination: t("filters.chips.destination"),
+          kind: t("filters.chips.kind"),
+          origPort: t("filters.chips.origPort"),
+          respPort: t("filters.chips.respPort"),
+          proto: t("filters.chips.proto"),
+          window: t("filters.chips.window"),
+          windowLastDay: t("filters.chips.windowLastDay"),
+          windowLastWeek: t("filters.chips.windowLastWeek"),
+          keywords: t("filters.chips.keywords"),
+          hostnames: t("filters.chips.hostnames"),
+          userIds: t("filters.chips.userIds"),
+          userNames: t("filters.chips.userNames"),
+          userDepartments: t("filters.chips.userDepartments"),
+        },
         drawer: {
           title: t("filters.drawerTitle"),
           description: t("filters.drawerDescription"),
@@ -138,6 +195,16 @@ export default async function DetectionPage({
           confidenceLabel: t("filters.confidenceLabel"),
           confidenceMinLabel: t("filters.confidenceMinLabel"),
           confidenceMaxLabel: t("filters.confidenceMaxLabel"),
+          attributesLegend: t("filters.attributesLegend"),
+          attributes: {
+            source: textFieldLabels.source,
+            destination: textFieldLabels.destination,
+            keywords: tagFieldLabels.keywords,
+            hostnames: tagFieldLabels.hostnames,
+            userIds: tagFieldLabels.userIds,
+            userNames: tagFieldLabels.userNames,
+            userDepartments: tagFieldLabels.userDepartments,
+          },
           apply: t("filters.apply"),
           saveThisFilter: t("filters.saveThisFilter"),
           saveThisFilterComingSoon: t("filters.saveThisFilterComingSoon"),
@@ -203,7 +270,7 @@ export default async function DetectionPage({
         },
         summarize: summarizeLabels,
       }}
-      initialChips={initialChips}
+      initialPivotOnly={initialPivotOnly}
     />
   );
 }

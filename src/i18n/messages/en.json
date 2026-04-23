@@ -598,6 +598,42 @@
         "errorHint": "Retry fetching the sensor list.",
         "retry": "Retry"
       },
+      "attributesLegend": "Source, destination, and user attributes",
+      "attributes": {
+        "source": {
+          "label": "Source",
+          "placeholder": "e.g. 10.0.0.5"
+        },
+        "destination": {
+          "label": "Destination",
+          "placeholder": "e.g. 203.0.113.45"
+        },
+        "keywords": {
+          "label": "Keywords",
+          "placeholder": "e.g. malware, phishing",
+          "remove": "Remove keyword {tag}"
+        },
+        "hostnames": {
+          "label": "Hostnames",
+          "placeholder": "e.g. host01.corp.local",
+          "remove": "Remove hostname {tag}"
+        },
+        "userIds": {
+          "label": "User IDs",
+          "placeholder": "e.g. jdoe, 12345",
+          "remove": "Remove user ID {tag}"
+        },
+        "userNames": {
+          "label": "User Names",
+          "placeholder": "e.g. Jane Doe",
+          "remove": "Remove user name {tag}"
+        },
+        "userDepartments": {
+          "label": "User Departments",
+          "placeholder": "e.g. Engineering",
+          "remove": "Remove department {tag}"
+        }
+      },
       "apply": "Apply",
       "saveThisFilter": "Save this filter",
       "saveThisFilterComingSoon": "Saving filters is wired up in a later phase.",
@@ -609,8 +645,8 @@
       "resultsCount": "{count} detection events match the current filter.",
       "resultsError": "Could not load detection results.",
       "chips": {
-        "source": "Source IP",
-        "destination": "Destination IP",
+        "source": "Source",
+        "destination": "Destination",
         "kind": "Kind",
         "origPort": "Source port",
         "respPort": "Destination port",
@@ -619,7 +655,13 @@
         "windowLastDay": "Last 24 hours",
         "windowLastWeek": "Last 7 days",
         "sensor": "Sensor",
-        "sensorAggregate": "{count} selected"
+        "sensorAggregate": "{count} selected",
+        "keywords": "Keywords",
+        "hostnames": "Hostnames",
+        "userIds": "User IDs",
+        "userNames": "User Names",
+        "userDepartments": "User Departments",
+        "countAggregate": "{label}: {count}"
       },
       "endpoint": {
         "label": "Network / IP",
