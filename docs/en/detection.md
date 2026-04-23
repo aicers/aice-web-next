@@ -48,15 +48,46 @@ active filter chip bar. Clicking **Filters** opens the filter
 drawer on the right; the chip bar to its right summarises the
 filter currently applied to the active tab.
 
-The chip bar follows an aggregation rule so it stays compact when
-many values are active:
+The chip bar is built from a single shared helper
+(`summarizeFilter(filter: Filter)`) so every surface that renders
+chips — the active bar and any future forms of it — follow the
+same aggregation rules:
 
+- The committed period (or explicit time range) always renders as
+  a removable `Period: …` chip so the operator can drop it with
+  `×` just like any other filter.
 - Single-value fields (`Source`, `Destination`) render as a single
   chip with the value (e.g. `Source: 10.0.0.5`).
 - Tag fields with **1–3** values render one chip per value.
 - Tag fields with **more than 3** values collapse to a single
   count token (e.g. `Keywords: 12`). Activating the count chip
-  reopens the drawer so you can edit the list.
+  reopens the drawer focused on that field so you can edit the
+  list.
+- Direction, Confidence, Sensor, and every categorical
+  multi-select (Threat Level, Threat Country, AI Model Type,
+  Threat Category, Threat Name) follow the same ≤ 3 / aggregate
+  rule.
+
+When the future search-language filter mode is enabled
+(`Filter.mode === "query"`) the shared helper returns no chips
+and the bar will instead render the query text as a single
+editable pill — the query language can express OR / NOT / regex
+that structured chips cannot represent. The pill's query editor
+lands in a later phase; until then, query-mode filters carry no
+chip-level decomposition.
+
+Every chip carries an `×` affordance. Pressing `×` is a
+self-contained commit — the field is removed from the active
+filter immediately, the query re-runs, and the chip disappears.
+For aggregate chips (e.g. `Hostnames: 7`) the `×` removes the
+whole field. Single-value removal is atomic and explicit, so it
+does not conflict with the drawer's Apply-centric model — Apply
+exists to batch multi-field edits. Activating a chip's body
+(rather than its `×`) opens the filter drawer scrolled to the
+matching section (text / tag chips focus the input; the period,
+direction, confidence, sensor, endpoint, and categorical chips
+scroll their section into view) so you can amend the value
+before re-applying.
 
 Tag-field state and the `Source` / `Destination` values are
 persisted in the URL as comma-separated values
@@ -67,11 +98,116 @@ refresh falls back to the default period.
 
 ### Results
 
-The Results region fills most of the screen and displays the
-detection findings. On page entry the default filter
-(**Last 1 hour**) runs automatically so the page is never empty on
-first view. A full result list renders in a later phase; for now
-the region shows a single line summarising how many events match.
+The Results region is the **hero** of the main work area: it
+occupies the largest share of the viewport at every supported
+width. On page entry the default filter (**Last 1 hour**) runs
+automatically so the page is never empty on first view.
+
+#### Header line
+
+A single header line above the list shows:
+
+- The result count and time range
+  (`Detected events <range> / <totalCount>`). Total counts are
+  64-bit safe — REview returns them as strings to avoid loss of
+  precision, and the UI displays them verbatim.
+- An **Updated _N_ ago** label that refreshes itself in the
+  background so you can see how stale the current view is.
+- A **Refresh** affordance that re-runs the active filter
+  without going through the drawer.
+- A **Download CSV** button. The button is visible but disabled
+  in this phase; CSV export wiring lands in a later phase.
+
+#### Result rows
+
+Each detection event renders as a compact two-line entry:
+
+- **Line 1** — severity badge (LOW / MEDIUM / HIGH), event time
+  (locale-aware), event kind (e.g. `HTTP Threat`), an optional
+  attack kind for the ML subtypes, the threat category, the
+  detection confidence score, and a triage summary (max score +
+  policy count) when triage scores are present.
+- **Line 2** — `source endpoint → destination endpoint`, each
+  endpoint formatted as `IP[:port] (country)`, followed by the
+  sensor name. Subtypes whose source or destination is an array
+  show the first entry plus a `+N more` button; clicking the
+  button opens an inline popover listing every hidden IP or port.
+
+Severity, time, and kind are present for every event subtype.
+Source IP+port and destination IP+port are present for every
+subtype that the vendored schema exposes as network-side — two
+host-/agent-side subtypes (`ExtraThreat`, `WindowsThreat`) carry
+no addressing fields at all, and those rows drop the source →
+destination line entirely (see the schema-limited note below).
+At narrower viewports the row tightens (shorter country labels,
+truncated attack kind with a tooltip, secondary labels such as
+attack kind, category, confidence, and triage summary are hidden),
+and at the narrowest widths the source and destination stack
+vertically — whenever the source → destination line is rendered,
+the destination and the severity indicator are never hidden.
+
+#### Empty, loading, and error states
+
+The result region uses distinct panels for each non-ready state:
+
+- **Loading** — shows a spinner with `Running query…` while the
+  active filter is being executed.
+- **Error** — shows `Could not load detection results`, a short
+  hint, and an inline **Retry** button so a transient failure
+  does not require reopening the drawer.
+- **No matches** — shown when the query succeeds but returns zero
+  events. The copy invites the operator to loosen the filter or
+  pick a wider time range.
+- **Build a filter to begin** — the rare empty pre-query state
+  (a freshly-created tab or a tab whose filter has been fully
+  cleared). The panel offers a button that opens the drawer.
+
+#### Row interactions
+
+Clicking anywhere on a row body opens the **Quick peek**
+inspector. At desktop widths (≥ 1280 px) Quick peek docks inline
+as a right-hand pane beside the result list — the list shrinks
+proportionally to the right to make room. At narrower widths the
+same summary is rendered as an overlay drawer and the list keeps
+its full width, so smaller screens don't try to fit two columns
+of dense data. Quick peek carries the event summary (severity,
+time, kind, confidence, source → destination, sensor) and an
+**Open investigation** button that jumps into the full
+Investigation view. The inline `›` icon at the end of the row
+opens the Investigation view directly, skipping Quick peek.
+Investigation navigation is locale-aware and carries a `returnTo`
+URL parameter so the Back link returns to the exact Detection
+tab the operator left, including the active filter's chip state.
+Pivot links on supported values (IP, country, kind, category,
+level, hostname, user) open or focus a narrowed tab — that
+wiring lands in the Pivot phase.
+
+Two subtypes in the vendored schema — `ExtraThreat` and
+`WindowsThreat` — model host- / agent-side threats and expose no
+network addressing at all. For those rows the source →
+destination line is omitted, and the row still renders severity,
+time, kind, confidence, triage summary, and sensor. A handful of
+other subtypes omit one side or one port (for example
+`UnusualDestinationPattern` is responder-array only, and
+`RdpBruteForce` omits the originator port); in those cases the
+missing slot falls back to `—`. Quick peek follows the same
+rule — a one-sided-address row still shows `— → <destination>`
+(or `<source> → —`) in the inspector summary, so the operator
+never loses the endpoint context they just clicked.
+
+Quick peek closes the instant a committed query transition is
+dispatched — Apply, chip removal, or Refresh — not after the
+replacement slice resolves. The inspector and its **Open
+investigation** button disappear synchronously with the new
+chip bar / URL, so there is no window during the round-trip
+where the handoff could fire on a row the newly committed
+filter no longer describes. REview does not yet expose a stable
+per-event identity, so carrying the inspector across committed
+queries could silently retarget it at a different event;
+closing on every commit is the defensive alternative, and at
+desktop widths restores the hero list to its full width once
+no row is selected. Reopening Quick peek on the row you want
+after a filter change is a single click.
 
 ### Analytics strip
 
@@ -332,8 +468,12 @@ filter bar so the operator can see what's scoped:
 - 1–3 entries — one chip per entry, each prefixed with `Src`,
   `Dst`, or no prefix for Both (e.g. `Src 10.0.0.5`).
 - More than 3 entries — a single aggregate chip
-  (`Network: N rules`) that, when activated, re-opens the advanced
-  panel with the Custom section expanded.
+  (`Network: N rules`).
+
+Activating any Network/IP chip body (rather than its `×`) reopens
+the filter drawer scrolled to the Network/IP section with the
+advanced Custom panel expanded, matching the chip-body contract
+for every other chip type.
 
 ### Save this filter
 

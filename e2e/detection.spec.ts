@@ -116,7 +116,13 @@ test("filter drawer opens from the Filters button and exposes chips + inputs", a
 
   // Drawer heading + period chip + time range fields all render.
   await expect(page.getByRole("heading", { name: "Filters" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Last 1 hour" })).toBeVisible();
+  // Scope chip-button queries to the drawer — the active filter chip
+  // bar on the page also renders "Last 1 hour" and would otherwise
+  // match by substring.
+  const drawer = page.getByRole("dialog");
+  await expect(
+    drawer.getByRole("button", { name: "Last 1 hour" }),
+  ).toBeVisible();
   await expect(page.getByLabel("Start", { exact: true })).toBeVisible();
   await expect(page.getByLabel("End", { exact: true })).toBeVisible();
   const applyButton = page.getByRole("button", { name: "Apply", exact: true });
@@ -127,11 +133,11 @@ test("filter drawer opens from the Filters button and exposes chips + inputs", a
   await expect(saveButton).toBeDisabled();
 
   // Picking a different chip toggles its pressed state.
-  const weekChip = page.getByRole("button", { name: "Last 1 week" });
+  const weekChip = drawer.getByRole("button", { name: "Last 1 week" });
   await weekChip.click();
   await expect(weekChip).toHaveAttribute("aria-pressed", "true");
   await expect(
-    page.getByRole("button", { name: "Last 1 hour" }),
+    drawer.getByRole("button", { name: "Last 1 hour" }),
   ).toHaveAttribute("aria-pressed", "false");
 });
 
@@ -163,7 +169,12 @@ test("drawer renders Customer placeholder and Sensor fallback while REview endpo
     .filter({ has: page.locator("legend", { hasText: "Sensor" }) });
   await expect(sensorSection).toBeVisible();
   // Until REview ships the endpoint the sensor trigger is disabled.
-  await expect(sensorSection.getByRole("button")).toBeDisabled();
+  // The sensor fieldset may render a second button (the inline
+  // "Retry" action) when the lazy fetch lands in the error state —
+  // e.g. because the e2e DB has no customer scope seeded — so scope
+  // the disabled-state assertion to the trigger (always the first
+  // button in the fieldset) rather than any button under the legend.
+  await expect(sensorSection.getByRole("button").first()).toBeDisabled();
 });
 
 test("closing the drawer without Apply preserves in-flight edits", async ({
@@ -177,31 +188,36 @@ test("closing the drawer without Apply preserves in-flight edits", async ({
   const filtersButton = page.getByRole("button", { name: "Filters" });
   await expect(filtersButton).toBeVisible({ timeout: 10_000 });
 
-  // First open: default chip is "Last 1 hour".
+  // First open: default chip is "Last 1 hour". Scope chip queries to
+  // the drawer — the active filter chip bar on the page also renders
+  // "Last 1 hour" and would otherwise match by substring.
   await filtersButton.click();
+  const drawer = page.getByRole("dialog");
   await expect(
-    page.getByRole("button", { name: "Last 1 hour" }),
+    drawer.getByRole("button", { name: "Last 1 hour" }),
   ).toHaveAttribute("aria-pressed", "true");
 
   // Edit the draft: pick a different chip, then dismiss via Escape.
   // Dismissal must NOT commit the filter — the active chip bar on the
   // page should still say "Last 1 hour".
-  await page.getByRole("button", { name: "Last 1 week" }).click();
+  await drawer.getByRole("button", { name: "Last 1 week" }).click();
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("heading", { name: "Filters" }),
   ).not.toBeVisible();
   await expect(filtersButton).toHaveAttribute("aria-expanded", "false");
-  await expect(page.getByText("Last 1 hour")).toBeVisible();
+  const chipBar = page.getByRole("toolbar", { name: "Filters" });
+  await expect(chipBar.getByText("Last 1 hour")).toBeVisible();
 
   // Reopening reveals the edited-but-uncommitted draft — "Last 1 week"
   // is still pressed, proving the draft persisted across close/reopen.
   await filtersButton.click();
+  const reopenedDrawer = page.getByRole("dialog");
   await expect(
-    page.getByRole("button", { name: "Last 1 week" }),
+    reopenedDrawer.getByRole("button", { name: "Last 1 week" }),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(
-    page.getByRole("button", { name: "Last 1 hour" }),
+    reopenedDrawer.getByRole("button", { name: "Last 1 hour" }),
   ).toHaveAttribute("aria-pressed", "false");
 });
 
@@ -217,8 +233,10 @@ test("editing the time range manually clears the Period chip selection", async (
   await expect(filtersButton).toBeVisible({ timeout: 10_000 });
   await filtersButton.click();
 
-  // Default chip is "Last 1 hour" on first open.
-  const hourChip = page.getByRole("button", { name: "Last 1 hour" });
+  // Default chip is "Last 1 hour" on first open. Scope to the drawer —
+  // the active filter chip bar on the page also shows "Last 1 hour".
+  const drawer = page.getByRole("dialog");
+  const hourChip = drawer.getByRole("button", { name: "Last 1 hour" });
   await expect(hourChip).toHaveAttribute("aria-pressed", "true");
 
   // Typing an explicit end time clears the chip — an edited range is

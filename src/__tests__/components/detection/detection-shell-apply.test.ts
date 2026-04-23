@@ -8,12 +8,23 @@ vi.mock("react", () => ({
   useState: (v: unknown) => [v, vi.fn()],
   startTransition: (fn: () => void) => fn(),
 }));
-vi.mock("next-intl", () => ({ useTranslations: () => () => "" }));
+vi.mock("next-intl", () => ({
+  useTranslations: () => () => "",
+  useLocale: () => "en",
+}));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/detection",
+}));
+vi.mock("@/i18n/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}));
 vi.mock("lucide-react", () => ({
   Bookmark: "span",
   ChevronRight: "span",
   SlidersHorizontal: "span",
   Star: "span",
+  X: "span",
+  XIcon: "span",
 }));
 vi.mock("@/app/[locale]/(dashboard)/detection/actions", () => ({
   runEventQuery: vi.fn(),
@@ -23,10 +34,20 @@ vi.mock("@/app/[locale]/(dashboard)/detection/sensor-actions", () => ({
 }));
 vi.mock("@/components/ui/badge", () => ({ Badge: "span" }));
 vi.mock("@/components/ui/button", () => ({ Button: "button" }));
+vi.mock("@/components/ui/sheet", () => ({
+  Sheet: "div",
+  SheetContent: "div",
+  SheetDescription: "div",
+  SheetHeader: "div",
+  SheetTitle: "div",
+}));
 vi.mock("@/components/detection/filter-drawer", () => ({
   FilterDrawer: "div",
 }));
 vi.mock("@/components/detection/sensor-multi-select", () => ({}));
+vi.mock("@/components/detection/result-list", () => ({
+  ResultList: "div",
+}));
 
 import { buildAppliedFilter } from "@/lib/detection/apply-filter";
 import type { Filter } from "@/lib/detection/filter";
@@ -182,5 +203,138 @@ describe("sensorStateForCache", () => {
         options: [{ id: "s1", name: "Alpha" }],
       }),
     ).toBe("ready");
+  });
+});
+
+describe("shouldTriggerSensorFetch", () => {
+  let shouldTriggerSensorFetch: ShellModule["shouldTriggerSensorFetch"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldTriggerSensorFetch = mod.shouldTriggerSensorFetch;
+  });
+
+  it("fetches on the first drawer open when the cache is still idle", () => {
+    // Regression (Reviewer Round 6 #1): the chip-body open path must
+    // kick off the lazy sensor fetch on an idle cache, otherwise
+    // `sensorStateForCache` keeps reporting "loading" and the
+    // Sensor control stays stuck in its disabled placeholder.
+    expect(shouldTriggerSensorFetch({ status: "idle" })).toBe(true);
+  });
+
+  it("retries after a prior transient failure", () => {
+    expect(shouldTriggerSensorFetch({ status: "error" })).toBe(true);
+  });
+
+  it("does not re-fetch while a request is already in flight", () => {
+    expect(shouldTriggerSensorFetch({ status: "loading" })).toBe(false);
+  });
+
+  it("does not re-fetch when a successful response is cached", () => {
+    expect(
+      shouldTriggerSensorFetch({
+        status: "loaded",
+        endpointAvailable: true,
+        options: [{ id: "s1", name: "Alpha" }],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldOpenEndpointPanelForFocus", () => {
+  let shouldOpenEndpointPanelForFocus: ShellModule["shouldOpenEndpointPanelForFocus"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldOpenEndpointPanelForFocus = mod.shouldOpenEndpointPanelForFocus;
+  });
+
+  it("expands the Network/IP advanced panel for the endpoints aggregate chip", () => {
+    expect(shouldOpenEndpointPanelForFocus("endpoints")).toBe(true);
+  });
+
+  it.each([
+    "period",
+    "timeRange",
+    "direction",
+    "confidence",
+    "sensor",
+    "source",
+    "destination",
+    "keywords",
+    "hostnames",
+    "userIds",
+    "userNames",
+    "userDepartments",
+    "levels",
+    "countries",
+    "learningMethods",
+    "categories",
+    "kinds",
+  ] as const)("clears the endpoint panel flag so a prior activation does not leak into %s", (focus) => {
+    // Regression (Reviewer Round 6 #2): without this reset, clicking
+    // a Network/IP chip followed by, say, a Period chip would
+    // reopen the drawer with the endpoint panel still expanded —
+    // not the "focused on that field" behavior the issue calls for.
+    expect(shouldOpenEndpointPanelForFocus(focus)).toBe(false);
+  });
+});
+
+describe("applyCommitDispatchReset", () => {
+  let applyCommitDispatchReset: ShellModule["applyCommitDispatchReset"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    applyCommitDispatchReset = mod.applyCommitDispatchReset;
+  });
+
+  it("bumps the query epoch synchronously at dispatch", () => {
+    // Reviewer Round 12: advancing `queryEpoch` must happen at the
+    // moment the commit is dispatched, not after the replacement
+    // slice resolves. Otherwise `ResultList` keeps reconciling
+    // per-row state (MorePopover open/close, focus) across the
+    // committed transition until the network returns.
+    const setQueryEpoch = vi.fn();
+    const setQuickPeekEvent = vi.fn();
+    applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+    expect(setQueryEpoch).toHaveBeenCalledTimes(1);
+    const updater = setQueryEpoch.mock.calls[0]?.[0] as (n: number) => number;
+    expect(typeof updater).toBe("function");
+    expect(updater(0)).toBe(1);
+    expect(updater(7)).toBe(8);
+  });
+
+  it("closes Quick peek synchronously at dispatch", () => {
+    // Reviewer Round 12: closing Quick peek only after the async
+    // response lands leaves a window during the round-trip where
+    // the inspector and its Open investigation button still point
+    // at a row the newly committed filter no longer describes.
+    const setQueryEpoch = vi.fn();
+    const setQuickPeekEvent = vi.fn();
+    applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+    expect(setQuickPeekEvent).toHaveBeenCalledTimes(1);
+    expect(setQuickPeekEvent).toHaveBeenCalledWith(null);
+  });
+});
+
+describe("ENDPOINT_CHIP_FOCUS", () => {
+  it("routes endpoint chip activation through the chip-body focus path", async () => {
+    // Regression (Reviewer Round 7 #1): the Network/IP chip used to
+    // call `openDrawer({ openEndpointPanel: true })`, which clears
+    // `focusField` — so the drawer would expand the advanced panel
+    // but skip the scroll-to-field step every other chip receives.
+    // The shell now uses this exported constant on that onActivate
+    // path, so endpoint chips share the same `openDrawerFocused`
+    // contract as period / direction / confidence / sensor / source
+    // / destination / text-and-tag / multi-select chips.
+    const mod = await import("@/components/detection/detection-shell");
+    expect(mod.ENDPOINT_CHIP_FOCUS).toBe("endpoints");
+    // And the combined wiring: routing endpoint chips through the
+    // focus path still expands the Network/IP advanced panel, so
+    // the previous behavior is preserved on top of the new
+    // scroll-to-field behavior.
+    expect(mod.shouldOpenEndpointPanelForFocus(mod.ENDPOINT_CHIP_FOCUS)).toBe(
+      true,
+    );
   });
 });

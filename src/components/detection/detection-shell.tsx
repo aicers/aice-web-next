@@ -1,34 +1,61 @@
 "use client";
 
-import { Bookmark, ChevronRight, SlidersHorizontal, Star } from "lucide-react";
+import {
+  Bookmark,
+  ChevronRight,
+  SlidersHorizontal,
+  Star,
+  X,
+} from "lucide-react";
 import { usePathname } from "next/navigation";
-import { useTranslations } from "next-intl";
-import { startTransition, useCallback, useMemo, useRef, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
 import {
   type FetchSensorsResult,
   fetchSensors,
 } from "@/app/[locale]/(dashboard)/detection/sensor-actions";
+import {
+  ResultList,
+  type ResultListLabels,
+  type ResultListState,
+} from "@/components/detection/result-list";
+import {
+  EVENT_KIND_FRIENDLY_NAMES,
+  formatEndpointSummary,
+  levelBadgeVariant,
+} from "@/components/events/event-display-helpers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { buildAppliedFilter } from "@/lib/detection/apply-filter";
 import {
-  buildDirectionChips,
-  type DirectionChip,
-  type DirectionChipLabels,
-  readDirectionsFromInput,
-} from "@/lib/detection/direction";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useRouter } from "@/i18n/navigation";
+import {
+  type ChipRemoveTarget,
+  removeActiveChip,
+} from "@/lib/detection/active-filters";
+import { buildAppliedFilter } from "@/lib/detection/apply-filter";
+import type { DirectionChipLabels } from "@/lib/detection/direction";
+import { readDirectionsFromInput } from "@/lib/detection/direction";
 import {
   buildEndpointChips,
   type EndpointChipLabels,
   type EndpointEntry,
 } from "@/lib/detection/endpoint-filter";
+import { formatEventTime } from "@/lib/detection/event-time";
 import type { Filter } from "@/lib/detection/filter";
-import { buildDetectionFilterBar } from "@/lib/detection/filter-bar";
-import {
-  type ActiveFilterChip,
-  buildMultiSelectChips,
-} from "@/lib/detection/filter-chips";
 import {
   CONFIDENCE_DEFAULT_MAX,
   CONFIDENCE_DEFAULT_MIN,
@@ -37,24 +64,27 @@ import {
 } from "@/lib/detection/filter-draft";
 import {
   type FilterChip,
+  type FilterChipFocus,
   type SummarizeFilterLabels,
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
 import type { PeriodKey } from "@/lib/detection/period";
-import type { FlowKind, LearningMethod } from "@/lib/detection/types";
+import type {
+  Event as DetectionEvent,
+  LearningMethod,
+} from "@/lib/detection/types";
 import {
   buildDetectionSearchParams,
-  buildPivotChips,
   mergePivotParams,
-  type PivotChip,
   type PivotChipLabels,
   type PivotFilterParams,
-  type PivotKey,
   pivotParamsFromFilterInput,
-  TAG_FIELDS,
   type TagField,
-  TEXT_FIELDS,
 } from "@/lib/detection/url-filters";
+import {
+  encodeEventLocator,
+  isEventAddressable,
+} from "@/lib/events/event-locator";
 import { cn } from "@/lib/utils";
 import {
   type DrawerFocusField,
@@ -122,12 +152,30 @@ export interface DetectionShellLabels {
   confidenceChipLabel: string;
   chipLabels: ChipLabelStrings;
   drawer: DrawerLabelStrings;
-  summarize: SummarizeFilterLabels;
+  /**
+   * Serializable subset of {@link SummarizeFilterLabels} — the server
+   * page only passes plain strings; the client shell builds the full
+   * labels (including the function-valued `formatRange` and
+   * `categoricalAggregate` formatters) using the locale translator.
+   */
+  summarize: {
+    sensor: string;
+    sensorAggregate: string;
+  };
 }
 
 export interface DetectionShellInitialResult {
   totalCount: string | null;
   error: string | null;
+  events: DetectionEvent[];
+  /**
+   * Parallel to `events`: `eventKeys[i]` is the stable cursor for
+   * `events[i]`. Threaded through from the server so the result
+   * list can key rows on server identity instead of a lossy
+   * composite of content fields (which aliases when two events
+   * share the same time / endpoint tuple within one page).
+   */
+  eventKeys: string[];
 }
 
 interface DetectionShellProps {
@@ -137,7 +185,7 @@ interface DetectionShellProps {
   initialFilter: Filter;
   initialPeriod: PeriodKey | null;
   initialResult: DetectionShellInitialResult;
-  /** Pivot-only params from the URL (kind, ports, proto, window) — rendered as chips but not editable in the drawer yet. */
+  /** URL-only pivot params (kind, ports, proto, window). Preserved through URL round-trips for Phase Detection-12 pivot logic; not rendered as active-filter chips yet because they do not participate in the committed `EventListFilterInput`. */
   initialPivotOnly?: PivotFilterParams;
 }
 
@@ -177,6 +225,75 @@ export function sensorStateForCache(
   return "loading";
 }
 
+/**
+ * True when an open-drawer path should kick off a sensor fetch. An
+ * in-flight request or a loaded cache is reused as-is; `idle` (never
+ * fetched) and `error` (last attempt failed) both re-request so the
+ * Sensor control doesn't sit in its disabled placeholder forever.
+ * Shared by both the Filters button path and the chip-body path so
+ * the two cannot drift.
+ */
+export function shouldTriggerSensorFetch(cache: SensorCache): boolean {
+  return cache.status !== "loading" && cache.status !== "loaded";
+}
+
+/**
+ * Whether opening the drawer on a given chip-body focus should also
+ * expand the Network/IP advanced panel. Only the endpoints aggregate
+ * wants it; every other focus (period, source, direction, …) must
+ * explicitly clear the flag so a prior endpoint activation doesn't
+ * leak into an unrelated field on the next chip click.
+ */
+export function shouldOpenEndpointPanelForFocus(
+  focus: FilterChipFocus,
+): boolean {
+  return focus === "endpoints";
+}
+
+/**
+ * Chip-body focus target for every Network/IP endpoint chip (both
+ * the per-entry and aggregate forms). Exported so the shell and
+ * tests agree on a single key — endpoint chips must route through
+ * the same `openDrawerFocused` path as every other chip so the
+ * drawer scrolls the Network/IP section into view. Previously the
+ * endpoint chip was an exception that skipped focus entirely,
+ * which the reviewer flagged in Round 7.
+ */
+export const ENDPOINT_CHIP_FOCUS: FilterChipFocus = "endpoints";
+
+/**
+ * State updates that must fire synchronously at the moment a
+ * committed query transition is dispatched — Apply / chip × /
+ * Refresh — regardless of whether the async response later
+ * resolves, rejects, or is dropped as stale.
+ *
+ * The contract (Reviewer Round 12): bump `queryEpoch` and close
+ * Quick peek at dispatch time, not after the replacement slice
+ * lands. `ResultList` keeps painting the previous rows while
+ * `loading` is true as long as it still has events, so deferring
+ * either reset until the response lands leaves a window during
+ * the round-trip where:
+ *
+ * - the chip bar and URL already describe the newly committed
+ *   filter, but
+ * - the Quick peek inspector (and its **Open investigation**
+ *   button) is still pinned to a row the committed filter no
+ *   longer describes, and
+ * - `EventRow` / `MorePopover` state from the stale slice can be
+ *   reconciled onto the replacement slice because `queryEpoch`
+ *   hasn't advanced yet.
+ *
+ * Extracted so the dispatch-time contract can be unit-tested
+ * without standing up a full DOM render of the shell.
+ */
+export function applyCommitDispatchReset(setters: {
+  setQueryEpoch: (fn: (n: number) => number) => void;
+  setQuickPeekEvent: (event: null) => void;
+}): void {
+  setters.setQueryEpoch((epoch) => epoch + 1);
+  setters.setQuickPeekEvent(null);
+}
+
 export function DetectionShell({
   title,
   labels,
@@ -187,7 +304,78 @@ export function DetectionShell({
   initialPivotOnly = {},
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
+  const tResults = useTranslations("detection.results");
+  const locale = useLocale();
   const pathname = usePathname();
+  const router = useRouter();
+  // Build the function-valued labels for the chip remove button and the
+  // result list on this side of the server/client boundary. Function
+  // props can't cross that boundary, so the bound translator stays on
+  // the client and closes over the active locale.
+  const removeChip = useCallback(
+    (label: string) => t("removeChip", { label }),
+    [t],
+  );
+  const resultListLabels = useMemo<ResultListLabels>(
+    () => ({
+      countWithRange: ({ range, total }) =>
+        tResults("countWithRange", { range, total }),
+      totalOnly: ({ total }) => tResults("totalOnly", { total }),
+      download: tResults("download"),
+      downloadComingSoon: tResults("downloadComingSoon"),
+      refresh: tResults("refresh"),
+      updatedJustNow: tResults("updatedJustNow"),
+      updatedSecondsAgo: (s: number) => tResults("updatedSecondsAgo", { s }),
+      updatedMinutesAgo: (m: number) => tResults("updatedMinutesAgo", { m }),
+      updatedHoursAgo: (h: number) => tResults("updatedHoursAgo", { h }),
+      loadingTitle: tResults("loadingTitle"),
+      loadingDescription: tResults("loadingDescription"),
+      errorTitle: tResults("errorTitle"),
+      errorDescription: tResults("errorDescription"),
+      errorRetry: tResults("errorRetry"),
+      emptyResultsTitle: tResults("emptyResultsTitle"),
+      emptyResultsDescription: tResults("emptyResultsDescription"),
+      emptyFilterTitle: tResults("emptyFilterTitle"),
+      emptyFilterDescription: tResults("emptyFilterDescription"),
+      emptyFilterAction: tResults("emptyFilterAction"),
+      rowOpenLabel: tResults("rowOpenLabel"),
+      rowInvestigateLabel: tResults("rowInvestigateLabel"),
+      quickPeekClose: tResults("quickPeekClose"),
+      unknownTime: tResults("unknownTime"),
+      noSensor: tResults("noSensor"),
+      confidenceLabel: t("confidenceChipLabel"),
+      triageSummary: ({ count, max }) =>
+        tResults("triageSummary", { count, max }),
+      endpointSeparator: tResults("endpointSeparator"),
+      moreCountSuffix: (count: number) =>
+        tResults("moreCountSuffix", { count }),
+      countryUnknown: tResults("countryUnknown"),
+      countryUnavailable: tResults("countryUnavailable"),
+      levelLabels: {
+        LOW: t("levelOptions.LOW"),
+        MEDIUM: t("levelOptions.MEDIUM"),
+        HIGH: t("levelOptions.HIGH"),
+      },
+      categoryLabels: {
+        RECONNAISSANCE: t("categoryOptions.RECONNAISSANCE"),
+        INITIAL_ACCESS: t("categoryOptions.INITIAL_ACCESS"),
+        EXECUTION: t("categoryOptions.EXECUTION"),
+        CREDENTIAL_ACCESS: t("categoryOptions.CREDENTIAL_ACCESS"),
+        DISCOVERY: t("categoryOptions.DISCOVERY"),
+        LATERAL_MOVEMENT: t("categoryOptions.LATERAL_MOVEMENT"),
+        COMMAND_AND_CONTROL: t("categoryOptions.COMMAND_AND_CONTROL"),
+        EXFILTRATION: t("categoryOptions.EXFILTRATION"),
+        IMPACT: t("categoryOptions.IMPACT"),
+        COLLECTION: t("categoryOptions.COLLECTION"),
+        DEFENSE_EVASION: t("categoryOptions.DEFENSE_EVASION"),
+        PERSISTENCE: t("categoryOptions.PERSISTENCE"),
+        PRIVILEGE_ESCALATION: t("categoryOptions.PRIVILEGE_ESCALATION"),
+        RESOURCE_DEVELOPMENT: t("categoryOptions.RESOURCE_DEVELOPMENT"),
+      },
+      attackKindLabel: tResults("attackKindLabel"),
+    }),
+    [t, tResults],
+  );
   const multiSelectLabels = useMemo<FilterMultiSelectLabels>(
     () => ({
       allToggle: t("multiSelect.all"),
@@ -213,6 +401,15 @@ export function DetectionShell({
   const [committedEndpoints, setCommittedEndpoints] = useState<EndpointEntry[]>(
     [],
   );
+  // `pivotOnly` carries URL-only fields (kind/ports/proto/window) that
+  // arrive from the Investigation handoff. They are preserved through
+  // URL round-trips so pivot logic (Phase Detection-12) can pick them
+  // up, but they are not represented in `EventListFilterInput` and do
+  // not participate in the active filter chip bar yet — rendering them
+  // as chips would violate the "× is a self-contained commit that
+  // re-runs the query" contract while the underlying query still
+  // ignores them.
+  const pivotOnly = initialPivotOnly;
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(null);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
@@ -226,10 +423,62 @@ export function DetectionShell({
   const [totalCount, setTotalCount] = useState<string | null>(
     initialResult.totalCount,
   );
+  const [events, setEvents] = useState<DetectionEvent[]>(initialResult.events);
+  // Parallel array of per-edge REview cursors (see
+  // `DetectionShellInitialResult.eventKeys`). Kept in lockstep with
+  // `events`: every `setEvents(x)` call is paired with a matching
+  // `setEventKeys(y)`. The cursor is used as the React row key only
+  // within a single committed slice — REview's schema documents
+  // `EventEdge.cursor` as "a cursor for use in pagination", not as a
+  // stable per-event identity across queries, so cross-commit row
+  // reuse is prevented by `queryEpoch` below rather than by the
+  // cursor value itself.
+  const [eventKeys, setEventKeys] = useState<string[]>(initialResult.eventKeys);
+  // Monotonic per-commit counter. Bumped on every committed query
+  // transition — Apply, chip removal, Refresh, and the error / zero-
+  // results branches — and composed into the React row key so
+  // `EventRow` / `MorePopover` state cannot be carried across
+  // unrelated committed queries even if REview happens to reuse a
+  // positional cursor value in the new slice. The initial slice sits
+  // on epoch `0`; the first client-side commit advances to `1`.
+  const [queryEpoch, setQueryEpoch] = useState(0);
   const [resultError, setResultError] = useState<string | null>(
     initialResult.error,
   );
   const [loading, setLoading] = useState(false);
+  const [lastUpdatedMs, setLastUpdatedMs] = useState<number | null>(
+    initialResult.error === null && initialResult.totalCount !== null
+      ? Date.now()
+      : null,
+  );
+  // Tracks whether any query has been dispatched (by the server-
+  // rendered initial load or a subsequent Apply / Refresh / chip
+  // removal). A freshly-mounted `+` tab with no successful query —
+  // e.g. the server action returned an error before the page mounted
+  // — renders the dedicated pre-query empty state instead of the
+  // generic zero-results panel.
+  const [hasQueried, setHasQueried] = useState(
+    initialResult.error === null && initialResult.totalCount !== null,
+  );
+  // Quick peek inspector (Phase Detection-18 owns the content; this
+  // shell wires the open/close contract and the jump into full
+  // Investigation). At wide widths (≥ `desktop`) the inspector docks
+  // inline as a right-hand pane; at narrower widths the same state
+  // drives an overlay drawer.
+  //
+  // The selection is cleared whenever a committed query transition
+  // replaces the result set (Apply, chip removal, Refresh, error,
+  // zero-results). REview does not expose a stable per-event identity
+  // in v1 — `EventEdge.cursor` is a pagination cursor, and the
+  // `encodeEventLocator` tuple is documented as best-effort — so a
+  // "keep inspector open and revalidate against the new slice"
+  // strategy can silently retarget the inspector at a different
+  // event when a positional cursor is reused across filters. Closing
+  // on every commit is the defensive alternative.
+  const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
+    null,
+  );
+  const isDesktop = useIsDesktopViewport();
   // Monotonic id for the in-flight Apply; a late response whose id
   // no longer matches is dropped so the results region can't drift
   // away from the committed filter when the operator applies twice
@@ -263,34 +512,75 @@ export function DetectionShell({
     );
   }, []);
 
-  const openDrawer = useCallback(
-    (opts?: { openEndpointPanel?: boolean }) => {
-      setDraft(
-        (current) =>
-          current ??
-          filterToDraft(committedFilter, committedPeriod, committedEndpoints),
-      );
-      setOpenEndpointPanelOnDrawerOpen(opts?.openEndpointPanel ?? false);
-      setFocusField(null);
-      setDrawerOpen(true);
-      // Lazy-load the sensor inventory the first time the drawer
-      // opens, and retry on a prior transient failure so a single
-      // hiccup doesn't freeze Sensor into the "Coming soon" fallback
-      // for the rest of the tab session. Only `loading` / `loaded`
-      // short-circuit — `idle` means never fetched, `error` means the
-      // last attempt failed and the user just asked again.
-      if (sensorCache.status === "loading" || sensorCache.status === "loaded") {
-        return;
-      }
-      triggerSensorFetch();
+  const openDrawer = useCallback(() => {
+    setDraft(
+      (current) =>
+        current ??
+        filterToDraft(committedFilter, committedPeriod, committedEndpoints),
+    );
+    // The Filters button opens the drawer with no focus target;
+    // chip-body activation routes through `openDrawerFocused`, which
+    // is the only path that ever sets the endpoint panel flag.
+    setOpenEndpointPanelOnDrawerOpen(false);
+    setFocusField(null);
+    setDrawerOpen(true);
+    // Lazy-load the sensor inventory the first time the drawer
+    // opens, and retry on a prior transient failure so a single
+    // hiccup doesn't freeze Sensor into the "Coming soon" fallback
+    // for the rest of the tab session.
+    if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
+  }, [
+    committedFilter,
+    committedPeriod,
+    committedEndpoints,
+    sensorCache,
+    triggerSensorFetch,
+  ]);
+
+  // Re-run a committed filter without going through the drawer's
+  // Apply path. Used by both chip × removal and the result list's
+  // Refresh button — neither has a draft to normalize, so they
+  // bypass `buildAppliedFilter`. Mirrors the same monotonic
+  // request-id late-response guard that `handleApply` uses.
+  const runQueryFor = useCallback(
+    (filter: Filter) => {
+      setLoading(true);
+      setResultError(null);
+      setHasQueried(true);
+      // See `applyCommitDispatchReset` for the dispatch-time contract.
+      applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+      const requestId = latestRequestIdRef.current + 1;
+      latestRequestIdRef.current = requestId;
+      startTransition(async () => {
+        try {
+          const result = await runEventQuery(filter);
+          if (latestRequestIdRef.current !== requestId) return;
+          if (result.ok) {
+            setTotalCount(result.totalCount);
+            setEvents(result.events);
+            setEventKeys(result.eventKeys);
+            setResultError(null);
+            setLastUpdatedMs(Date.now());
+          } else {
+            setTotalCount(null);
+            setEvents([]);
+            setEventKeys([]);
+            setResultError(labels.resultsError);
+          }
+        } catch {
+          if (latestRequestIdRef.current !== requestId) return;
+          setTotalCount(null);
+          setEvents([]);
+          setEventKeys([]);
+          setResultError(labels.resultsError);
+        } finally {
+          if (latestRequestIdRef.current === requestId) {
+            setLoading(false);
+          }
+        }
+      });
     },
-    [
-      committedFilter,
-      committedPeriod,
-      committedEndpoints,
-      sensorCache.status,
-      triggerSensorFetch,
-    ],
+    [labels.resultsError],
   );
 
   const handleApply = useCallback(
@@ -317,8 +607,6 @@ export function DetectionShell({
       // rather than the original whitespace-padded input.
       setDraft(applied);
       setDrawerOpen(false);
-      setLoading(true);
-      setResultError(null);
 
       // Mirror the free-form filter fields into the URL so a refresh
       // restores them. Only the drawer's free-form inputs (source,
@@ -338,7 +626,7 @@ export function DetectionShell({
       // active tab) without paying for a duplicate REview round-trip.
       if (next.mode === "structured") {
         const merged = mergePivotParams(
-          initialPivotOnly,
+          pivotOnly,
           pivotParamsFromFilterInput(next.input),
         );
         const qs = buildDetectionSearchParams(merged).toString();
@@ -346,73 +634,83 @@ export function DetectionShell({
         window.history.replaceState(window.history.state, "", url);
       }
 
-      const requestId = latestRequestIdRef.current + 1;
-      latestRequestIdRef.current = requestId;
-      startTransition(async () => {
-        try {
-          const result = await runEventQuery(next);
-          if (latestRequestIdRef.current !== requestId) return;
-          if (result.ok) {
-            setTotalCount(result.totalCount);
-            setResultError(null);
-          } else {
-            setTotalCount(null);
-            setResultError(labels.resultsError);
-          }
-        } catch {
-          // A rejected invocation (transport error, serialization
-          // failure, unexpected throw before the typed union is
-          // returned) would otherwise leave `loading` true forever.
-          if (latestRequestIdRef.current !== requestId) return;
-          setTotalCount(null);
-          setResultError(labels.resultsError);
-        } finally {
-          if (latestRequestIdRef.current === requestId) {
-            setLoading(false);
-          }
-        }
-      });
+      runQueryFor(next);
     },
-    [
-      committedFilter,
-      initialPivotOnly,
-      labels.resultsError,
-      options,
-      pathname,
-      sensorCache,
-    ],
+    [committedFilter, pivotOnly, options, pathname, runQueryFor, sensorCache],
   );
 
+  const handleRemoveChip = useCallback(
+    (target: ChipRemoveTarget) => {
+      const next = removeActiveChip(
+        committedFilter,
+        committedEndpoints,
+        target,
+      );
+      setCommittedFilter(next.filter);
+      setCommittedEndpoints(next.endpoints);
+      // A chip removal that drops `start`/`end` would clear the
+      // committed period state too — the shell never reaches that
+      // path today (the period chip removal target is `period`),
+      // so the period stays in sync with the filter's start/end.
+      if (target.kind === "period") {
+        setCommittedPeriod(null);
+      }
+      // Drop the cached drawer draft — it was built from the
+      // pre-removal filter and would clobber the change if the
+      // operator opens the drawer next.
+      setDraft(null);
+      // Persist the removal in the URL the same way Apply does.
+      if (next.filter.mode === "structured") {
+        const merged = mergePivotParams(
+          pivotOnly,
+          pivotParamsFromFilterInput(next.filter.input),
+        );
+        const qs = buildDetectionSearchParams(merged).toString();
+        const url = qs ? `${pathname}?${qs}` : pathname;
+        window.history.replaceState(window.history.state, "", url);
+      }
+      runQueryFor(next.filter);
+    },
+    [committedEndpoints, committedFilter, pivotOnly, pathname, runQueryFor],
+  );
+
+  const handleRefresh = useCallback(() => {
+    runQueryFor(committedFilter);
+  }, [committedFilter, runQueryFor]);
+
   const openDrawerFocused = useCallback(
-    (field: PivotKey) => {
-      // Only drawer-editable fields have an input to focus. Pivot-only
-      // fields (kind/origPort/respPort/proto/window) produce scalar
-      // chips that never aggregate, so in practice this branch is only
-      // reached for tag/text fields — the guard keeps us honest if a
-      // future aggregate path widens the chip set.
+    (focus: FilterChipFocus) => {
+      // Ensure the drawer has a draft to edit, then scroll-focus the
+      // matching section. `DrawerFocusField` is a superset that covers
+      // every `FilterChipFocus` value, so the cast is safe — the
+      // drawer itself no-ops on targets whose anchor isn't mounted.
       setDraft(
         (current) =>
           current ??
           filterToDraft(committedFilter, committedPeriod, committedEndpoints),
       );
-      setFocusField(isDrawerFocusField(field) ? field : null);
+      setFocusField(focus);
       setFocusToken((t) => t + 1);
+      // Endpoint aggregate: also expand the Network/IP advanced panel
+      // so the operator lands in the same UI as the sidebar "Advanced"
+      // affordance. For every other focus target, clear the flag so a
+      // prior endpoint activation doesn't leak into an unrelated field
+      // (e.g. Period / Source) on the next chip click.
+      setOpenEndpointPanelOnDrawerOpen(shouldOpenEndpointPanelForFocus(focus));
       setDrawerOpen(true);
+      // Kick off the lazy sensor fetch on the chip-body path too, so
+      // `SensorMultiSelect` doesn't sit in its disabled "Loading
+      // sensors…" placeholder forever when the operator opens the
+      // drawer via a chip without ever having clicked Filters.
+      if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
     },
-    [committedFilter, committedPeriod, committedEndpoints],
-  );
-
-  // Compose the function-valued labels the chip builder needs on this
-  // side of the server/client boundary. The server page passes only
-  // plain strings; the translator closes over the active locale here so
-  // aggregate chip counts format with the right language.
-  const chipLabels = useMemo<PivotChipLabels>(
-    () => ({
-      ...labels.chipLabels,
-      countAggregate: (label, count) =>
-        t("chips.countAggregate", { label, count }),
-    }),
-    [labels.chipLabels, t],
+    [
+      committedFilter,
+      committedPeriod,
+      committedEndpoints,
+      sensorCache,
+      triggerSensorFetch,
+    ],
   );
 
   const drawerLabels = useMemo<FilterDrawerLabels>(() => {
@@ -448,40 +746,6 @@ export function DetectionShell({
     return { ...labels.drawer, attributes };
   }, [labels.drawer, t]);
 
-  // Pivot-style chips from drawer free-form fields (+ URL-only pivots).
-  const pivotChips = useMemo<PivotChip[]>(
-    () =>
-      buildPivotChips(
-        mergePivotParams(
-          initialPivotOnly,
-          pivotParamsFromFilterInput(extractStructuredInput(committedFilter)),
-        ),
-        chipLabels,
-      ),
-    [committedFilter, initialPivotOnly, chipLabels],
-  );
-
-  const { summary: activeChipText, chips: baseChips } = buildDetectionFilterBar(
-    {
-      filter: committedFilter,
-      period: committedPeriod,
-      pivotChips,
-      labels: {
-        confidenceChipLabel: labels.confidenceChipLabel,
-        activeChipsEmpty: labels.activeChipsEmpty,
-        periodOptions: labels.drawer.periodOptions,
-        formatRange: ({ start, end }) => t("activeRange", { start, end }),
-      },
-    },
-  );
-  const directionChips: DirectionChip[] = buildDirectionChips(
-    structuredDirections(committedFilter),
-    labels.directionChips,
-  );
-  const endpointChips = buildEndpointChips(
-    committedEndpoints,
-    labels.endpointChips,
-  );
   const sensorOptions: readonly SensorOption[] =
     sensorCache.status === "loaded" ? sensorCache.options : [];
   // See `sensorStateForCache` for the intent behind each branch:
@@ -500,26 +764,144 @@ export function DetectionShell({
   // committed filter.
   const sensorState = sensorStateForCache(sensorCache);
 
-  const sensorChips: FilterChip[] =
-    committedFilter.mode === "structured"
-      ? summarizeFilter(committedFilter.input, sensorOptions, labels.summarize)
-      : [];
-  const multiSelectChips = useMemo(
-    () =>
-      buildActiveMultiSelectChips(
-        committedFilter,
-        options,
-        drawerLabels,
-        multiSelectLabels,
-      ),
-    [committedFilter, options, drawerLabels, multiSelectLabels],
+  // Shared chip summariser: one `Filter → FilterChip[]` call the bar
+  // reuses everywhere. The pivot-only chips above are concatenated
+  // on render because they live outside `EventListFilterInput`.
+  const summarizeLabels = useMemo<SummarizeFilterLabels>(
+    () => ({
+      sensor: labels.drawer.sensor.label,
+      sensorAggregate: labels.summarize.sensorAggregate,
+      period: t("chips.period"),
+      periodOptions: labels.drawer.periodOptions,
+      formatRange: ({ start, end }) => t("activeRange", { start, end }),
+      direction: labels.directionChips.label,
+      directionValues: labels.directionChips.values,
+      confidence: labels.confidenceChipLabel,
+      source: labels.chipLabels.source,
+      destination: labels.chipLabels.destination,
+      keywords: labels.chipLabels.keywords,
+      hostnames: labels.chipLabels.hostnames,
+      userIds: labels.chipLabels.userIds,
+      userNames: labels.chipLabels.userNames,
+      userDepartments: labels.chipLabels.userDepartments,
+      levels: labels.drawer.fields.levels,
+      countries: labels.drawer.fields.countries,
+      learningMethods: labels.drawer.fields.learningMethods,
+      categories: labels.drawer.fields.categories,
+      kinds: labels.drawer.fields.kinds,
+      categoricalAggregate: ({ label, count }) =>
+        t("chips.countAggregate", { label, count }),
+    }),
+    [labels, t],
   );
-  const hasChips =
-    baseChips.length > 0 ||
-    directionChips.length > 0 ||
-    endpointChips.length > 0 ||
-    sensorChips.length > 0 ||
-    multiSelectChips.length > 0;
+  const summarizedChips = useMemo<FilterChip[]>(
+    () =>
+      summarizeFilter(committedFilter, summarizeLabels, {
+        period: committedPeriod,
+        sensorOptions,
+        categoricalOptions: {
+          levels: options.levels,
+          countries: options.countries,
+          learningMethods: options.learningMethods,
+          categories: options.categories,
+          kinds: options.kinds,
+        },
+      }),
+    [committedFilter, committedPeriod, options, sensorOptions, summarizeLabels],
+  );
+  // Endpoints still flow through their richer drawer-side entries; the
+  // unified summariser covers the committed `EventListFilterInput`, but
+  // endpoint entries live parallel to it and carry the raw text the
+  // user typed.
+  const endpointChips = buildEndpointChips(
+    committedEndpoints,
+    labels.endpointChips,
+  );
+  const hasChips = summarizedChips.length > 0 || endpointChips.length > 0;
+
+  const resultRange = useMemo<{ start: string; end: string } | null>(() => {
+    if (committedFilter.mode !== "structured") return null;
+    const { start, end } = committedFilter.input;
+    if (!start || !end) return null;
+    return {
+      start: isoToLocalInput(start),
+      end: isoToLocalInput(end),
+    };
+  }, [committedFilter]);
+
+  const resultListState: ResultListState = useMemo(() => {
+    if (loading) {
+      return {
+        status: "loading",
+        events,
+        eventKeys,
+        totalCount,
+        range: resultRange,
+        lastUpdatedMs,
+      };
+    }
+    if (resultError) {
+      return {
+        status: "error",
+        events: [],
+        eventKeys: [],
+        totalCount: null,
+        range: resultRange,
+        lastUpdatedMs,
+      };
+    }
+    if (!hasQueried) {
+      return {
+        status: "empty-prequery",
+        events: [],
+        eventKeys: [],
+        totalCount: null,
+        range: resultRange,
+        lastUpdatedMs,
+      };
+    }
+    return {
+      status: "ready",
+      events,
+      eventKeys,
+      totalCount,
+      range: resultRange,
+      lastUpdatedMs,
+    };
+  }, [
+    events,
+    eventKeys,
+    hasQueried,
+    lastUpdatedMs,
+    loading,
+    resultError,
+    resultRange,
+    totalCount,
+  ]);
+
+  const handleRowOpen = useCallback((event: DetectionEvent) => {
+    setQuickPeekEvent(event);
+  }, []);
+
+  const handleRowInvestigate = useCallback(
+    (event: DetectionEvent) => {
+      // Build a locator token and jump into the Investigation view.
+      // Carry the current pathname + search as `returnTo` so a
+      // non-default-locale operator who lands on `/events/<token>`
+      // can return to their filtered Detection tab. `useRouter`
+      // from `next-intl/navigation` is locale-aware — it prefixes
+      // the target path so Korean / English operators land on the
+      // right segment.
+      const token = encodeEventLocator(event);
+      if (!token) return;
+      const search =
+        typeof window !== "undefined" ? window.location.search : "";
+      const returnTo = `${pathname}${search}`;
+      const href = `/events/${encodeURIComponent(token)}?returnTo=${encodeURIComponent(returnTo)}`;
+      router.push(href);
+    },
+    [pathname, router],
+  );
 
   return (
     <div className="flex gap-4">
@@ -564,120 +946,99 @@ export function DetectionShell({
               !hasChips ? "text-muted-foreground text-xs" : "py-1",
             )}
           >
-            <span className="text-muted-foreground text-xs">
-              {activeChipText}
-            </span>
-            {hasChips ? (
+            {!hasChips ? (
+              <span className="text-muted-foreground text-xs">
+                {labels.activeChipsEmpty}
+              </span>
+            ) : (
               <ul className="flex flex-wrap items-center gap-1.5">
-                {baseChips.map((chip) => (
+                {summarizedChips.map((chip) => (
                   <li key={chip.id}>
-                    {chip.aggregate && chip.field ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          openDrawerFocused(chip.field as PivotKey)
-                        }
-                        className="focus-visible:ring-ring/50 rounded-full focus-visible:ring-2 focus-visible:outline-none"
-                      >
-                        <Badge variant="secondary" className="font-normal">
-                          <span className="text-foreground text-xs font-medium">
-                            {chip.value}
-                          </span>
-                        </Badge>
-                      </button>
-                    ) : (
-                      <Badge variant="secondary" className="font-normal">
-                        <span className="text-muted-foreground mr-1 text-xs">
-                          {chip.label}
-                        </span>
-                        <span className="text-foreground text-xs font-medium">
-                          {chip.value}
-                        </span>
-                      </Badge>
-                    )}
-                  </li>
-                ))}
-                {directionChips.map((chip) => (
-                  <li key={chip.id}>
-                    <Badge variant="secondary" className="font-normal">
-                      <span className="text-muted-foreground mr-1 text-xs">
-                        {chip.label}
-                      </span>
-                      <span className="text-foreground text-xs font-medium">
-                        {chip.value}
-                      </span>
-                    </Badge>
+                    <RemovableChip
+                      prefix={chip.aggregate ? null : chip.label}
+                      value={chip.value}
+                      onActivate={
+                        chip.focus
+                          ? () =>
+                              openDrawerFocused(chip.focus as FilterChipFocus)
+                          : undefined
+                      }
+                      onRemove={
+                        chip.remove
+                          ? () =>
+                              handleRemoveChip(chip.remove as ChipRemoveTarget)
+                          : undefined
+                      }
+                      removeLabel={removeChip(chip.value)}
+                    />
                   </li>
                 ))}
                 {endpointChips.map((chip) => (
                   <li key={chip.id}>
-                    {chip.aggregate ? (
-                      <button
-                        type="button"
-                        onClick={() => openDrawer({ openEndpointPanel: true })}
-                        className="focus-visible:ring-ring rounded-full focus-visible:ring-2 focus-visible:outline-none"
-                      >
-                        <Badge
-                          variant="secondary"
-                          className="cursor-pointer font-normal"
-                        >
-                          <span className="text-foreground text-xs font-medium">
-                            {chip.label}
-                          </span>
-                        </Badge>
-                      </button>
-                    ) : (
-                      <Badge variant="secondary" className="font-normal">
-                        <span className="text-foreground text-xs font-medium">
-                          {chip.label}
-                        </span>
-                      </Badge>
-                    )}
-                  </li>
-                ))}
-                {sensorChips.map((chip) => (
-                  <li key={chip.id}>
-                    <Badge variant="secondary" className="font-normal">
-                      <span className="text-muted-foreground mr-1 text-xs">
-                        {chip.label}
-                      </span>
-                      <span className="text-foreground text-xs font-medium">
-                        {chip.value}
-                      </span>
-                    </Badge>
-                  </li>
-                ))}
-                {multiSelectChips.map((chip) => (
-                  <li key={chip.key}>
-                    <Badge variant="secondary" className="font-normal">
-                      <span className="text-muted-foreground mr-1 text-xs">
-                        {chip.label}
-                      </span>
-                      <span className="text-foreground text-xs font-medium">
-                        {chip.value}
-                      </span>
-                    </Badge>
+                    <RemovableChip
+                      prefix={null}
+                      value={chip.label}
+                      onActivate={() => openDrawerFocused(ENDPOINT_CHIP_FOCUS)}
+                      onRemove={() =>
+                        chip.aggregate
+                          ? handleRemoveChip({ kind: "endpointAll" })
+                          : handleRemoveChip({
+                              kind: "endpointEntry",
+                              entryId: chip.id,
+                            })
+                      }
+                      removeLabel={removeChip(chip.label)}
+                    />
                   </li>
                 ))}
               </ul>
-            ) : null}
+            )}
           </div>
         </div>
 
-        {/* Results region (hero) */}
-        <section
-          aria-label={labels.resultsRegion}
-          aria-live="polite"
-          className="bg-card text-muted-foreground flex min-h-[60vh] flex-1 items-center justify-center rounded-lg border border-[var(--sidebar-border)] text-sm"
-        >
-          {loading
-            ? labels.resultsLoading
-            : resultError
-              ? resultError
-              : totalCount !== null
-                ? t("resultsCount", { count: totalCount })
-                : labels.resultsError}
-        </section>
+        {/*
+         * Results region (hero) + inline Quick peek inspector (desktop+).
+         *
+         * Layout contract (issue #280): at ≥ desktop widths, when Quick
+         * peek is open the list shrinks proportionally to the right
+         * and the inspector docks as an inline pane beside it. At
+         * narrower widths the inspector falls back to an overlay drawer
+         * (rendered below) and the list keeps its full width. Both
+         * branches reuse `QuickPeekInspectorBody` so the summary +
+         * "Open investigation" contract is defined once.
+         */}
+        <div className="flex min-h-[60vh] flex-1 gap-4">
+          <section
+            aria-label={labels.resultsRegion}
+            aria-live="polite"
+            className="flex min-w-0 flex-1 flex-col"
+          >
+            <ResultList
+              state={resultListState}
+              labels={resultListLabels}
+              locale={locale}
+              queryEpoch={queryEpoch}
+              onRefresh={handleRefresh}
+              onOpenFilters={() => openDrawer()}
+              onRowOpen={handleRowOpen}
+              onRowInvestigate={handleRowInvestigate}
+            />
+          </section>
+          {isDesktop && quickPeekEvent ? (
+            <aside
+              aria-label={resultListLabels.rowOpenLabel}
+              className="hidden w-80 shrink-0 flex-col overflow-hidden rounded-lg border border-[var(--sidebar-border)] desktop:flex"
+            >
+              <QuickPeekInspectorBody
+                event={quickPeekEvent}
+                locale={locale}
+                labels={resultListLabels}
+                onClose={() => setQuickPeekEvent(null)}
+                onInvestigate={() => handleRowInvestigate(quickPeekEvent)}
+              />
+            </aside>
+          ) : null}
+        </div>
 
         {/* Collapsible analytics strip (collapsed by default) */}
         <div className="rounded-lg border border-[var(--sidebar-border)]">
@@ -729,6 +1090,183 @@ export function DetectionShell({
           focusToken={focusToken}
         />
       ) : null}
+
+      <QuickPeekInspectorOverlay
+        event={isDesktop ? null : quickPeekEvent}
+        locale={locale}
+        labels={resultListLabels}
+        onClose={() => setQuickPeekEvent(null)}
+        onInvestigate={() => {
+          if (quickPeekEvent) handleRowInvestigate(quickPeekEvent);
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Subscribes to the desktop media query (`≥ --breakpoint-desktop`).
+ * Starts as `false` so the server render matches the narrow branch —
+ * the desktop branch flips on post-mount once `matchMedia` reports
+ * the real viewport width. Prevents hydration mismatch without the
+ * flash-of-incorrect-layout a purely CSS-based toggle would need.
+ */
+function useIsDesktopViewport(): boolean {
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mql = window.matchMedia("(min-width: 1280px)");
+    const sync = () => setIsDesktop(mql.matches);
+    sync();
+    mql.addEventListener("change", sync);
+    return () => mql.removeEventListener("change", sync);
+  }, []);
+  return isDesktop;
+}
+
+/**
+ * Narrow-viewport Quick peek inspector: an overlay sheet. Phase
+ * Detection-18 owns the full contents; for v1 we render the compact
+ * summary the list row already shows plus the "Open investigation"
+ * jump. At ≥ desktop widths the shell renders the same body
+ * ({@link QuickPeekInspectorBody}) inline as a right-hand pane,
+ * matching the layout contract in issue #280.
+ */
+function QuickPeekInspectorOverlay({
+  event,
+  locale,
+  labels,
+  onClose,
+  onInvestigate,
+}: {
+  event: DetectionEvent | null;
+  locale: string;
+  labels: ResultListLabels;
+  onClose: () => void;
+  onInvestigate: () => void;
+}) {
+  const open = event !== null;
+  const kindLabel = event
+    ? (EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename)
+    : "";
+  const timeLabel = event
+    ? formatEventTime(event.time, locale, labels.unknownTime)
+    : "";
+  return (
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <SheetContent
+        side="right"
+        className="sm:max-w-md"
+        closeLabel={labels.quickPeekClose}
+      >
+        <SheetHeader>
+          <SheetTitle>{kindLabel}</SheetTitle>
+          <SheetDescription>{timeLabel}</SheetDescription>
+        </SheetHeader>
+        {event ? (
+          <QuickPeekInspectorContent
+            event={event}
+            labels={labels}
+            onInvestigate={onInvestigate}
+          />
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/**
+ * Inline inspector body used by the desktop+ right-hand pane. The
+ * pane header mirrors the overlay's `SheetHeader` (kind + time) and
+ * carries an explicit Close affordance because there's no backdrop
+ * click to dismiss the inline pane.
+ */
+function QuickPeekInspectorBody({
+  event,
+  locale,
+  labels,
+  onClose,
+  onInvestigate,
+}: {
+  event: DetectionEvent;
+  locale: string;
+  labels: ResultListLabels;
+  onClose: () => void;
+  onInvestigate: () => void;
+}) {
+  const kindLabel =
+    EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
+  const timeLabel = formatEventTime(event.time, locale, labels.unknownTime);
+  return (
+    <>
+      <header className="flex items-start gap-2 border-b border-[var(--sidebar-border)] px-4 py-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-foreground truncate text-sm font-semibold">
+            {kindLabel}
+          </span>
+          <span className="text-muted-foreground text-xs">{timeLabel}</span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={labels.quickPeekClose}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex size-7 items-center justify-center rounded-sm focus-visible:ring-2 focus-visible:outline-none"
+        >
+          <X className="size-4" aria-hidden="true" />
+        </button>
+      </header>
+      <QuickPeekInspectorContent
+        event={event}
+        labels={labels}
+        onInvestigate={onInvestigate}
+      />
+    </>
+  );
+}
+
+function QuickPeekInspectorContent({
+  event,
+  labels,
+  onInvestigate,
+}: {
+  event: DetectionEvent;
+  labels: ResultListLabels;
+  onInvestigate: () => void;
+}) {
+  const addressable = isEventAddressable(event);
+  const endpointSummary = formatEndpointSummary(event);
+  return (
+    <div className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-3">
+      <div className="flex items-center gap-2">
+        <Badge variant={levelBadgeVariant(event.level)} className="uppercase">
+          {labels.levelLabels[event.level] ?? event.level}
+        </Badge>
+        <span className="text-muted-foreground text-xs">
+          {labels.confidenceLabel} {event.confidence.toFixed(2)}
+        </span>
+      </div>
+      {endpointSummary ? (
+        <p className="text-foreground font-mono text-xs break-all">
+          {endpointSummary}
+        </p>
+      ) : null}
+      <p className="text-muted-foreground text-xs">
+        {event.sensor || labels.noSensor}
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        onClick={onInvestigate}
+        disabled={!addressable}
+        className="mt-2 self-start"
+      >
+        {labels.rowInvestigateLabel}
+      </Button>
     </div>
   );
 }
@@ -738,12 +1276,12 @@ function filterToDraft(
   period: PeriodKey | null,
   endpoints: EndpointEntry[],
 ): DetectionFilterDraft {
-  const startIso = structuredStart(filter);
-  const endIso = structuredEnd(filter);
-  const confidence = structuredConfidence(filter);
-  const sensorIds =
-    filter.mode === "structured" ? (filter.input.sensors ?? []) : [];
   const input = filter.mode === "structured" ? filter.input : {};
+  const startIso = input.start ?? null;
+  const endIso = input.end ?? null;
+  const confidenceMin = input.confidenceMin ?? CONFIDENCE_DEFAULT_MIN;
+  const confidenceMax = input.confidenceMax ?? CONFIDENCE_DEFAULT_MAX;
+  const sensorIds = input.sensors ?? [];
   const fromArray = (values: string[] | null | undefined): string[] =>
     values && values.length > 0 ? [...values] : [];
   return {
@@ -752,10 +1290,10 @@ function filterToDraft(
     endLocal: isoToLocalInput(endIso),
     startIso,
     endIso,
-    directions: readDirectionsFromInput(structuredDirections(filter)),
+    directions: readDirectionsFromInput(input.directions),
     endpoints,
-    confidenceMin: confidence?.min ?? CONFIDENCE_DEFAULT_MIN,
-    confidenceMax: confidence?.max ?? CONFIDENCE_DEFAULT_MAX,
+    confidenceMin,
+    confidenceMax,
     sensorIds: [...sensorIds],
     levels: (input.levels ?? []) as readonly number[],
     countries: (input.countries ?? []) as readonly string[],
@@ -774,106 +1312,71 @@ function filterToDraft(
   };
 }
 
-const FOCUSABLE_FIELDS = new Set<string>([...TEXT_FIELDS, ...TAG_FIELDS]);
-
-function isDrawerFocusField(field: PivotKey): field is DrawerFocusField {
-  return FOCUSABLE_FIELDS.has(field);
-}
-
-function extractStructuredInput(filter: Filter) {
-  if (filter.mode !== "structured") return {};
-  return filter.input;
-}
-
-function structuredStart(filter: Filter): string | null {
-  if (filter.mode !== "structured") return null;
-  return filter.input.start ?? null;
-}
-
-function structuredEnd(filter: Filter): string | null {
-  if (filter.mode !== "structured") return null;
-  return filter.input.end ?? null;
-}
-
-function structuredDirections(filter: Filter): FlowKind[] | null | undefined {
-  if (filter.mode !== "structured") return undefined;
-  return filter.input.directions;
-}
-
-function structuredConfidence(
-  filter: Filter,
-): { min: number; max: number } | null {
-  if (filter.mode !== "structured") return null;
-  const min = filter.input.confidenceMin;
-  const max = filter.input.confidenceMax;
-  if (min == null && max == null) return null;
-  return {
-    min: min ?? CONFIDENCE_DEFAULT_MIN,
-    max: max ?? CONFIDENCE_DEFAULT_MAX,
-  };
-}
-
-function buildActiveMultiSelectChips(
-  filter: Filter,
-  options: FilterDrawerOptions,
-  labels: FilterDrawerLabels,
-  multiSelectLabels: FilterMultiSelectLabels,
-): ActiveFilterChip[] {
-  if (filter.mode !== "structured") return [];
-  const input = filter.input;
-  const aggregateCount = (n: number) => multiSelectLabels.summarySome(n);
-
-  const chips: ActiveFilterChip[] = [];
-  chips.push(
-    ...buildMultiSelectChips({
-      fieldKey: "levels",
-      fieldLabel: labels.fields.levels,
-      options: options.levels,
-      selected: input.levels ?? [],
-      aggregateValue: aggregateCount,
-    }),
+function RemovableChip({
+  prefix,
+  value,
+  onActivate,
+  onRemove,
+  removeLabel,
+}: {
+  prefix: string | null;
+  value: string;
+  onActivate?: () => void;
+  onRemove?: () => void;
+  removeLabel: string;
+}) {
+  // The activator and remove controls must be siblings, not nested —
+  // a <button> inside another <button> is invalid HTML and triggers a
+  // React hydration mismatch. Render the Badge as a plain span and
+  // place each button beside it inside the outer wrapper.
+  const activateLabel = prefix ? `${prefix}: ${value}` : value;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full",
+        (onActivate || onRemove) &&
+          "bg-secondary text-secondary-foreground gap-1 px-2 py-0.5",
+      )}
+    >
+      {onActivate ? (
+        <button
+          type="button"
+          onClick={onActivate}
+          aria-label={activateLabel}
+          className="focus-visible:ring-ring/50 inline-flex items-center gap-1 rounded-sm focus-visible:ring-2 focus-visible:outline-none"
+        >
+          {prefix ? (
+            <span className="text-muted-foreground text-xs" aria-hidden="true">
+              {prefix}
+            </span>
+          ) : null}
+          <span
+            className="text-foreground text-xs font-medium"
+            aria-hidden="true"
+          >
+            {value}
+          </span>
+        </button>
+      ) : (
+        <>
+          {prefix ? (
+            <span className="text-muted-foreground text-xs">{prefix}</span>
+          ) : null}
+          <span className="text-foreground text-xs font-medium">{value}</span>
+        </>
+      )}
+      {onRemove ? (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={removeLabel}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex size-3.5 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none"
+        >
+          <X className="size-3" aria-hidden="true" />
+        </button>
+      ) : null}
+    </span>
   );
-  chips.push(
-    ...buildMultiSelectChips({
-      fieldKey: "countries",
-      fieldLabel: labels.fields.countries,
-      options: options.countries,
-      selected: input.countries ?? [],
-      aggregateValue: aggregateCount,
-    }),
-  );
-  chips.push(
-    ...buildMultiSelectChips({
-      fieldKey: "learningMethods",
-      fieldLabel: labels.fields.learningMethods,
-      options: options.learningMethods,
-      selected: input.learningMethods ?? [],
-      aggregateValue: aggregateCount,
-    }),
-  );
-  chips.push(
-    ...buildMultiSelectChips<number>({
-      fieldKey: "categories",
-      fieldLabel: labels.fields.categories,
-      options: options.categories,
-      selected: (input.categories ?? []).filter(
-        (v): v is number => typeof v === "number",
-      ),
-      aggregateValue: aggregateCount,
-    }),
-  );
-  chips.push(
-    ...buildMultiSelectChips({
-      fieldKey: "kinds",
-      fieldLabel: labels.fields.kinds,
-      options: options.kinds,
-      selected: input.kinds ?? [],
-      aggregateValue: aggregateCount,
-      // Seed-list field — see the `openList` note in filter-chips.ts.
-      openList: true,
-    }),
-  );
-  return chips;
 }
 
 function RailSection({

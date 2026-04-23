@@ -141,8 +141,27 @@ export interface FilterDrawerOptions {
   kinds: readonly FilterMultiSelectOption<string>[];
 }
 
-/** Drawer-editable field names — the ones whose chips can focus an input. */
-export type DrawerFocusField = TextField | TagField;
+/**
+ * Targets the drawer knows how to scroll-to and focus when a chip
+ * is activated. Text and tag fields jump to their input; the
+ * remaining targets land on the enclosing section (period,
+ * direction, confidence, sensor, endpoints, and the categorical
+ * multi-selects).
+ */
+export type DrawerFocusField =
+  | TextField
+  | TagField
+  | "period"
+  | "timeRange"
+  | "direction"
+  | "confidence"
+  | "sensor"
+  | "endpoints"
+  | "levels"
+  | "countries"
+  | "learningMethods"
+  | "categories"
+  | "kinds";
 
 interface FilterDrawerProps {
   open: boolean;
@@ -284,11 +303,13 @@ export function FilterDrawer({
   // biome-ignore lint/correctness/useExhaustiveDependencies: focusToken re-triggers repeat-click focus
   useEffect(() => {
     if (!open || !focusField) return;
-    const id = `${fieldIdPrefix}-${focusField}`;
+    const id = resolveFocusElementId(focusField, fieldIdPrefix);
     const raf = requestAnimationFrame(() => {
       const el = document.getElementById(id);
       if (!el) return;
       el.scrollIntoView({ block: "center", behavior: "auto" });
+      // Text / tag fields accept programmatic focus; section anchors
+      // are plain fieldsets, so the focus call is a no-op there.
       if (typeof (el as HTMLInputElement).focus === "function") {
         (el as HTMLInputElement).focus({ preventScroll: true });
       }
@@ -435,7 +456,10 @@ export function FilterDrawer({
             className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 pb-4"
           >
             {/* Period quick-select */}
-            <fieldset className="flex flex-col gap-2">
+            <fieldset
+              id="filter-section-period"
+              className="flex flex-col gap-2"
+            >
               <legend className="text-foreground text-sm font-medium">
                 {labels.periodLabel}
               </legend>
@@ -463,7 +487,10 @@ export function FilterDrawer({
             </fieldset>
 
             {/* Explicit time range */}
-            <fieldset className="flex flex-col gap-3">
+            <fieldset
+              id="filter-section-timeRange"
+              className="flex flex-col gap-3"
+            >
               <legend className="text-foreground text-sm font-medium">
                 {labels.timeRangeLabel}
               </legend>
@@ -505,7 +532,10 @@ export function FilterDrawer({
             </fieldset>
 
             {/* Network / IP — opens the advanced panel. */}
-            <fieldset className="flex flex-col gap-2">
+            <fieldset
+              id="filter-section-endpoints"
+              className="flex flex-col gap-2"
+            >
               <legend className="text-foreground text-sm font-medium">
                 {labels.endpointLabel}
               </legend>
@@ -531,7 +561,10 @@ export function FilterDrawer({
             </fieldset>
 
             {/* Direction multi-select */}
-            <fieldset className="flex flex-col gap-2">
+            <fieldset
+              id="filter-section-direction"
+              className="flex flex-col gap-2"
+            >
               <legend className="text-foreground text-sm font-medium">
                 {labels.directionLabel}
               </legend>
@@ -559,7 +592,10 @@ export function FilterDrawer({
             </fieldset>
 
             {/* Confidence range */}
-            <fieldset className="flex flex-col gap-3">
+            <fieldset
+              id="filter-section-confidence"
+              className="flex flex-col gap-3"
+            >
               <legend className="text-foreground text-sm font-medium">
                 {labels.confidenceLabel}
               </legend>
@@ -652,14 +688,18 @@ export function FilterDrawer({
              * In every non-`ready` state `sensorIds` stays empty so no
              * `sensors` value reaches the filter.
              */}
-            <SensorMultiSelect
-              options={sensorOptions}
-              value={draft.sensorIds}
-              onChange={(next) => onDraftChange({ ...draft, sensorIds: next })}
-              labels={labels.sensor}
-              state={sensorState}
-              onRetry={onSensorRetry}
-            />
+            <div id="filter-section-sensor">
+              <SensorMultiSelect
+                options={sensorOptions}
+                value={draft.sensorIds}
+                onChange={(next) =>
+                  onDraftChange({ ...draft, sensorIds: next })
+                }
+                labels={labels.sensor}
+                state={sensorState}
+                onRetry={onSensorRetry}
+              />
+            </div>
 
             {/* Free-form fields: single-string + tag-input filters. */}
             <fieldset className="flex flex-col gap-3">
@@ -787,4 +827,39 @@ export function FilterDrawer({
       />
     </>
   );
+}
+
+/**
+ * Text / tag fields have a per-instance input id (`${prefix}-${field}`);
+ * every other focus target is a static section anchor the drawer
+ * decorates with `id="filter-section-<focus>"`. The categorical
+ * multi-selects already own stable ids (`filter-levels`, etc.).
+ */
+function resolveFocusElementId(
+  focusField: DrawerFocusField,
+  prefix: string,
+): string {
+  switch (focusField) {
+    case "source":
+    case "destination":
+    case "keywords":
+    case "hostnames":
+    case "userIds":
+    case "userNames":
+    case "userDepartments":
+      return `${prefix}-${focusField}`;
+    case "levels":
+    case "countries":
+    case "learningMethods":
+    case "categories":
+    case "kinds":
+      return `filter-${focusField === "learningMethods" ? "learning-methods" : focusField}`;
+    case "period":
+    case "timeRange":
+    case "direction":
+    case "confidence":
+    case "sensor":
+    case "endpoints":
+      return `filter-section-${focusField}`;
+  }
 }

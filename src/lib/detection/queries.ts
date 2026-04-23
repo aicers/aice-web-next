@@ -9,6 +9,13 @@ import { parse } from "graphql";
  * string literals so the AST walk can statically validate them.
  */
 
+// Per-typename inline fragments select the addressing/network fields
+// the result-list rows render (Phase Detection-9). The selection is
+// deliberately kept to a minimum — it adds origAddr / respAddr,
+// origPort / respPort, origCountry / respCountry, proto, and the ML
+// types' attackKind. Heavy payload fields (HTTP body, DNS answer,
+// FTP commands, etc.) live in EVENT_DETAIL_QUERY and are not
+// requested here.
 export const EVENT_LIST_QUERY = parse(`
   query EventList(
     $filter: EventListFilterInput!
@@ -55,6 +62,352 @@ export const EVENT_LIST_QUERY = parse(`
         triageScores {
           policyId
           score
+        }
+        ... on BlocklistBootp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistConn {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistDceRpc {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistDhcp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistDns {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistFtp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistHttp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistKerberos {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistLdap {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistMalformedDns {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistMqtt {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistNfs {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistNtlm {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistRadius {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistRdp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistSmb {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistSmtp {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistSsh {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on BlocklistTls {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on CryptocurrencyMiningPool {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on DnsCovertChannel {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on DomainGenerationAlgorithm {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on ExternalDdos {
+          origAddrs
+          origCountries
+          respAddr
+          respCountry
+          proto
+        }
+        ... on ExtraThreat {
+          attackKind
+        }
+        ... on FtpBruteForce {
+          origAddr
+          origCountry
+          respAddr
+          respCountry
+          respPort
+          proto
+        }
+        ... on FtpPlainText {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on HttpThreat {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+          attackKind
+        }
+        ... on LdapBruteForce {
+          origAddr
+          origCountry
+          respAddr
+          respCountry
+          respPort
+          proto
+        }
+        ... on LdapPlainText {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on LockyRansomware {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on MultiHostPortScan {
+          origAddr
+          origCountry
+          respAddrs
+          respCountries
+          respPort
+          proto
+        }
+        ... on NetworkThreat {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+          attackKind
+        }
+        ... on NonBrowser {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on PortScan {
+          origAddr
+          origCountry
+          respAddr
+          respCountry
+          respPorts
+          proto
+        }
+        ... on RdpBruteForce {
+          origAddr
+          origCountry
+          respAddrs
+          respCountries
+          proto
+        }
+        ... on RepeatedHttpSessions {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on SuspiciousTlsTraffic {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on TorConnection {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on TorConnectionConn {
+          origAddr
+          origPort
+          origCountry
+          respAddr
+          respPort
+          respCountry
+          proto
+        }
+        ... on UnusualDestinationPattern {
+          respAddrs
+          respCountries
+        }
+        ... on WindowsThreat {
+          attackKind
         }
       }
       totalCount

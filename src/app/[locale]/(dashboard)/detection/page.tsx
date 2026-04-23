@@ -8,6 +8,7 @@ import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
   computePeriodRange,
   DEFAULT_PERIOD_KEY,
+  type Event,
   type EventListFilterInput,
   type Filter,
   type FlowKind,
@@ -30,6 +31,7 @@ import {
   THREAT_LEVEL_KEY_BY_VALUE,
   THREAT_LEVEL_VALUES,
 } from "@/lib/detection/filter-options";
+import { DEFAULT_EVENT_LIST_PAGE_SIZE } from "@/lib/detection/page-size";
 import type { LearningMethod } from "@/lib/detection/types";
 
 interface DetectionPageProps {
@@ -83,9 +85,18 @@ export default async function DetectionPage({
 
   let initialTotal: string | null = null;
   let initialError: string | null = null;
+  let initialEvents: Event[] = [];
+  let initialEventKeys: string[] = [];
   try {
-    const connection = await searchEvents(session, initialFilter, { first: 1 });
+    const connection = await searchEvents(session, initialFilter, {
+      first: DEFAULT_EVENT_LIST_PAGE_SIZE,
+    });
     initialTotal = connection.totalCount;
+    initialEvents = connection.nodes;
+    // Parallel to `nodes`: each `edges[i].cursor` is the stable
+    // server identity for `nodes[i]`. The client uses it as the
+    // row's React key so duplicate content can't collide.
+    initialEventKeys = connection.edges.map((edge) => edge.cursor);
   } catch {
     initialError = t("filters.resultsError");
   }
@@ -141,7 +152,12 @@ export default async function DetectionPage({
       title={t("title")}
       initialFilter={initialFilter}
       initialPeriod={DEFAULT_PERIOD_KEY}
-      initialResult={{ totalCount: initialTotal, error: initialError }}
+      initialResult={{
+        totalCount: initialTotal,
+        error: initialError,
+        events: initialEvents,
+        eventKeys: initialEventKeys,
+      }}
       options={options}
       labels={{
         recommendedFilter: t("savedRail.recommended"),

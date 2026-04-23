@@ -57,12 +57,23 @@ describe("formatEndpointSummary", () => {
     expect(formatEndpointSummary(event)).toBeNull();
   });
 
-  it("returns null when one side is empty", () => {
+  it("renders a `—` placeholder when only the originator is addressable", () => {
     const event = makeEvent("MultiHostPortScan", {
       origAddr: "10.0.0.5",
       respAddrs: [],
     });
-    expect(formatEndpointSummary(event)).toBeNull();
+    expect(formatEndpointSummary(event)).toBe("10.0.0.5 → —");
+  });
+
+  it("renders a `—` placeholder when only the responder is addressable", () => {
+    // `UnusualDestinationPattern` is responder-array only in the
+    // vendored schema — Quick peek still needs an endpoint summary
+    // so the inspector does not silently drop what the list row
+    // just showed as `— → <responder>`.
+    const event = makeEvent("UnusualDestinationPattern", {
+      respAddrs: ["203.0.113.45", "203.0.113.46"],
+    });
+    expect(formatEndpointSummary(event)).toBe("— → 203.0.113.45 +1");
   });
 });
 

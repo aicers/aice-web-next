@@ -1,4 +1,10 @@
 export {
+  type ActiveChipRemoval,
+  type ChipRemoveTarget,
+  hasAnyActiveChip,
+  removeActiveChip,
+} from "./active-filters";
+export {
   buildEndpointChips,
   createEndpointEntryId,
   ENDPOINT_CHIP_AGGREGATE_THRESHOLD,
