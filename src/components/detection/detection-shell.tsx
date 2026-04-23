@@ -263,6 +263,39 @@ export function shouldOpenEndpointPanelForFocus(
  */
 export const ENDPOINT_CHIP_FOCUS: FilterChipFocus = "endpoints";
 
+/**
+ * State updates that must fire synchronously at the moment a
+ * committed query transition is dispatched — Apply / chip × /
+ * Refresh — regardless of whether the async response later
+ * resolves, rejects, or is dropped as stale.
+ *
+ * The contract (Reviewer Round 12): bump `queryEpoch` and close
+ * Quick peek at dispatch time, not after the replacement slice
+ * lands. `ResultList` keeps painting the previous rows while
+ * `loading` is true as long as it still has events, so deferring
+ * either reset until the response lands leaves a window during
+ * the round-trip where:
+ *
+ * - the chip bar and URL already describe the newly committed
+ *   filter, but
+ * - the Quick peek inspector (and its **Open investigation**
+ *   button) is still pinned to a row the committed filter no
+ *   longer describes, and
+ * - `EventRow` / `MorePopover` state from the stale slice can be
+ *   reconciled onto the replacement slice because `queryEpoch`
+ *   hasn't advanced yet.
+ *
+ * Extracted so the dispatch-time contract can be unit-tested
+ * without standing up a full DOM render of the shell.
+ */
+export function applyCommitDispatchReset(setters: {
+  setQueryEpoch: (fn: (n: number) => number) => void;
+  setQuickPeekEvent: (event: null) => void;
+}): void {
+  setters.setQueryEpoch((epoch) => epoch + 1);
+  setters.setQuickPeekEvent(null);
+}
+
 export function DetectionShell({
   title,
   labels,
@@ -513,18 +546,14 @@ export function DetectionShell({
       setLoading(true);
       setResultError(null);
       setHasQueried(true);
+      // See `applyCommitDispatchReset` for the dispatch-time contract.
+      applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
       const requestId = latestRequestIdRef.current + 1;
       latestRequestIdRef.current = requestId;
       startTransition(async () => {
         try {
           const result = await runEventQuery(filter);
           if (latestRequestIdRef.current !== requestId) return;
-          // Any committed query transition replaces the result set,
-          // so advance `queryEpoch` (forces row state isolation) and
-          // close Quick peek (no stable event id exists to safely
-          // retarget the inspector).
-          setQueryEpoch((epoch) => epoch + 1);
-          setQuickPeekEvent(null);
           if (result.ok) {
             setTotalCount(result.totalCount);
             setEvents(result.events);
@@ -539,8 +568,6 @@ export function DetectionShell({
           }
         } catch {
           if (latestRequestIdRef.current !== requestId) return;
-          setQueryEpoch((epoch) => epoch + 1);
-          setQuickPeekEvent(null);
           setTotalCount(null);
           setEvents([]);
           setEventKeys([]);

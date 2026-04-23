@@ -280,6 +280,43 @@ describe("shouldOpenEndpointPanelForFocus", () => {
   });
 });
 
+describe("applyCommitDispatchReset", () => {
+  let applyCommitDispatchReset: ShellModule["applyCommitDispatchReset"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    applyCommitDispatchReset = mod.applyCommitDispatchReset;
+  });
+
+  it("bumps the query epoch synchronously at dispatch", () => {
+    // Reviewer Round 12: advancing `queryEpoch` must happen at the
+    // moment the commit is dispatched, not after the replacement
+    // slice resolves. Otherwise `ResultList` keeps reconciling
+    // per-row state (MorePopover open/close, focus) across the
+    // committed transition until the network returns.
+    const setQueryEpoch = vi.fn();
+    const setQuickPeekEvent = vi.fn();
+    applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+    expect(setQueryEpoch).toHaveBeenCalledTimes(1);
+    const updater = setQueryEpoch.mock.calls[0]?.[0] as (n: number) => number;
+    expect(typeof updater).toBe("function");
+    expect(updater(0)).toBe(1);
+    expect(updater(7)).toBe(8);
+  });
+
+  it("closes Quick peek synchronously at dispatch", () => {
+    // Reviewer Round 12: closing Quick peek only after the async
+    // response lands leaves a window during the round-trip where
+    // the inspector and its Open investigation button still point
+    // at a row the newly committed filter no longer describes.
+    const setQueryEpoch = vi.fn();
+    const setQuickPeekEvent = vi.fn();
+    applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+    expect(setQuickPeekEvent).toHaveBeenCalledTimes(1);
+    expect(setQuickPeekEvent).toHaveBeenCalledWith(null);
+  });
+});
+
 describe("ENDPOINT_CHIP_FOCUS", () => {
   it("routes endpoint chip activation through the chip-body focus path", async () => {
     // Regression (Reviewer Round 7 #1): the Network/IP chip used to
