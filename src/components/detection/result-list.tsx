@@ -11,7 +11,6 @@ import {
 import { useEffect, useRef, useState } from "react";
 import {
   EVENT_KIND_FRIENDLY_NAMES,
-  type EventAddressing,
   levelBadgeVariant,
   readEventAddressing,
 } from "@/components/events/event-display-helpers";
@@ -344,6 +343,27 @@ function EventRow({
   const kindLabel =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
   const isInteractive = typeof onRowOpen === "function";
+  // Compute the endpoint sides up front so the row can omit the
+  // entire source → destination line (and its separator to sensor)
+  // for subtypes whose schema exposes no addressing at all — e.g.
+  // ExtraThreat / WindowsThreat. Without this, those rows render a
+  // bare `· sensor` fragment after the first line.
+  const origEndpoint = pickEndpoint(
+    addressing.origAddr,
+    addressing.origAddrs,
+    addressing.origPort,
+    addressing.origCountry,
+    addressing.origCountries,
+  );
+  const respEndpoint = pickEndpoint(
+    addressing.respAddr,
+    addressing.respAddrs,
+    addressing.respPort,
+    addressing.respCountry,
+    addressing.respCountries,
+    addressing.respPorts,
+  );
+  const hasEndpoint = Boolean(origEndpoint || respEndpoint);
   // Investigation requires an encodable locator (origAddr + respAddr). For
   // schema-limited subtypes (e.g. ExtraThreat, WindowsThreat, UnusualDestinationPattern
   // when neither side is present) the chevron would silently no-op, so
@@ -383,7 +403,14 @@ function EventRow({
             </span>
             <span className="text-foreground font-medium">{kindLabel}</span>
             {addressing.attackKind ? (
-              <span className="text-muted-foreground truncate text-xs">
+              // Secondary label: truncates at medium widths (the
+              // `title` surfaces the full value on hover) and is
+              // hidden entirely at narrow widths per #280's
+              // density-not-column-drop strategy.
+              <span
+                className="text-muted-foreground hidden max-w-[16ch] truncate text-xs sm:inline-flex"
+                title={addressing.attackKind}
+              >
                 <span className="text-muted-foreground/70 mr-1">
                   {labels.attackKindLabel}
                 </span>
@@ -391,11 +418,14 @@ function EventRow({
               </span>
             ) : null}
             {event.category ? (
-              <Badge variant="outline" className="font-normal">
+              <Badge
+                variant="outline"
+                className="hidden font-normal sm:inline-flex"
+              >
                 {labels.categoryLabels[event.category] ?? event.category}
               </Badge>
             ) : null}
-            <span className="text-muted-foreground text-xs">
+            <span className="text-muted-foreground hidden text-xs sm:inline">
               <span className="mr-1">{labels.confidenceLabel}</span>
               <span className="text-foreground tabular-nums">
                 {event.confidence.toFixed(2)}
@@ -403,9 +433,19 @@ function EventRow({
             </span>
             <TriageSummary triageScores={event.triageScores} labels={labels} />
           </div>
-          <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 text-xs">
-            <EndpointSummary addressing={addressing} labels={labels} />
-            <span className="text-muted-foreground/70">·</span>
+          <div className="text-muted-foreground mt-1 flex flex-col gap-x-2 gap-y-1 text-xs sm:flex-row sm:flex-wrap sm:items-center">
+            {hasEndpoint ? (
+              <EndpointSummary
+                orig={origEndpoint}
+                resp={respEndpoint}
+                labels={labels}
+              />
+            ) : null}
+            {hasEndpoint ? (
+              <span className="text-muted-foreground/70 hidden sm:inline">
+                ·
+              </span>
+            ) : null}
             <span className="truncate">{event.sensor || labels.noSensor}</span>
           </div>
         </div>
@@ -442,7 +482,7 @@ function TriageSummary({
   let max = triageScores[0].score;
   for (const t of triageScores) if (t.score > max) max = t.score;
   return (
-    <span className="text-muted-foreground text-xs">
+    <span className="text-muted-foreground hidden text-xs sm:inline">
       {labels.triageSummary({
         count: triageScores.length,
         max: max.toFixed(2),
@@ -468,32 +508,22 @@ function TriageSummary({
  * (severity / time / kind / sensor) still renders.
  */
 function EndpointSummary({
-  addressing,
+  orig,
+  resp,
   labels,
 }: {
-  addressing: EventAddressing;
+  orig: EndpointDisplay | null;
+  resp: EndpointDisplay | null;
   labels: ResultListLabels;
 }) {
-  const orig = pickEndpoint(
-    addressing.origAddr,
-    addressing.origAddrs,
-    addressing.origPort,
-    addressing.origCountry,
-    addressing.origCountries,
-  );
-  const resp = pickEndpoint(
-    addressing.respAddr,
-    addressing.respAddrs,
-    addressing.respPort,
-    addressing.respCountry,
-    addressing.respCountries,
-    addressing.respPorts,
-  );
   if (!orig && !resp) return null;
+  // At narrow widths the two endpoints stack vertically and the `→`
+  // glyph is suppressed — #280's density strategy keeps IPs and ports
+  // visible but drops the horizontal source → destination layout.
   return (
-    <span className="flex flex-wrap items-center gap-1">
+    <span className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center">
       <EndpointPart endpoint={orig} labels={labels} />
-      <span className="text-muted-foreground/70">
+      <span className="text-muted-foreground/70 hidden sm:inline">
         {labels.endpointSeparator}
       </span>
       <EndpointPart endpoint={resp} labels={labels} />

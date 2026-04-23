@@ -133,12 +133,18 @@ Each detection event renders as a compact two-line entry:
   show the first entry plus a `+N more` button; clicking the
   button opens an inline popover listing every hidden IP or port.
 
-Severity, time, kind, source IP+port, and destination IP+port are
-present for every event subtype. At narrower viewports the row
-tightens (shorter country labels, truncated attack kind with a
-tooltip), and at the narrowest widths the source and destination
-stack vertically — the destination and severity indicator are
-never hidden.
+Severity, time, and kind are present for every event subtype.
+Source IP+port and destination IP+port are present for every
+subtype that the vendored schema exposes as network-side — two
+host-/agent-side subtypes (`ExtraThreat`, `WindowsThreat`) carry
+no addressing fields at all, and those rows drop the source →
+destination line entirely (see the schema-limited note below).
+At narrower viewports the row tightens (shorter country labels,
+truncated attack kind with a tooltip, secondary labels such as
+attack kind, category, confidence, and triage summary are hidden),
+and at the narrowest widths the source and destination stack
+vertically — whenever the source → destination line is rendered,
+the destination and the severity indicator are never hidden.
 
 #### Empty, loading, and error states
 
