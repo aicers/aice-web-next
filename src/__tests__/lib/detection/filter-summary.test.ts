@@ -199,6 +199,9 @@ describe("summarizeFilter (structured)", () => {
     );
     expect(chips).toHaveLength(1);
     expect(chips[0].aggregate).toBe(true);
+    // Aggregate chips keep the field identity inside `value` itself
+    // because the shell drops the label prefix for aggregate chips.
+    expect(chips[0].value).toBe("Sensor: 4 selected");
     expect(chips[0].remove).toEqual({
       kind: "arrayAggregate",
       field: "sensors",

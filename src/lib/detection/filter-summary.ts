@@ -470,11 +470,17 @@ function sensorChips(
 ): FilterChip[] {
   if (!ids || ids.length === 0) return [];
   if (ids.length > CHIP_DIMENSION_CAP) {
+    // Aggregate chips keep the field label so the operator can still
+    // tell which filter the collapsed token belongs to — the shell
+    // strips the `prefix` for aggregate chips, so the field identity
+    // has to live inside `value` itself (matches the issue's
+    // `Level: 3 selected` / `Hostnames: 7` shape).
+    const count = labels.sensorAggregate.replace("{count}", String(ids.length));
     return [
       {
         id: "sensor:aggregate",
         label: labels.sensor,
-        value: labels.sensorAggregate.replace("{count}", String(ids.length)),
+        value: `${labels.sensor}: ${count}`,
         focus: "sensor",
         aggregate: true,
         remove: { kind: "arrayAggregate", field: "sensors" },

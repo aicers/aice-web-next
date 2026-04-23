@@ -142,4 +142,74 @@ describe("ResultList row rendering", () => {
     // Initial render should not open the popover panel.
     expect(html).not.toContain('role="dialog"');
   });
+
+  it("does not nest the +N more trigger inside the row-open button", () => {
+    // The row-open overlay button must be a sibling of MorePopover's own
+    // button — nesting interactive controls is invalid HTML and, in
+    // browsers, routes the popover click back through the outer button.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          baseEvent({
+            __typename: "UnusualDestinationPattern",
+            respAddrs: ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
+          } as unknown as Partial<Event>),
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {}}
+      />,
+    );
+
+    // No `<button>` opens while another `<button>` is still open
+    // inside it — a quick structural guard that catches the regression.
+    expect(html).not.toMatch(/<button[^>]*>[^<]*<button/);
+  });
+
+  it("hides the investigate chevron when the event cannot be located", () => {
+    // ExtraThreat / WindowsThreat / UnusualDestinationPattern without a
+    // singular origAddr have no encodable locator — the chevron would
+    // silently no-op, so it must not render at all.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          baseEvent({
+            __typename: "WindowsThreat",
+            // no origAddr / respAddr — schema-limited subtype
+          } as unknown as Partial<Event>),
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {}}
+        onRowInvestigate={() => {}}
+      />,
+    );
+
+    expect(html).not.toContain("Open investigation");
+  });
+
+  it("renders the investigate chevron when the event is addressable", () => {
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          baseEvent({
+            __typename: "HttpThreat",
+            origAddr: "10.0.0.5",
+            origPort: 1234,
+            respAddr: "10.0.0.6",
+            respPort: 443,
+          } as unknown as Partial<Event>),
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {}}
+        onRowInvestigate={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Open investigation");
+  });
 });

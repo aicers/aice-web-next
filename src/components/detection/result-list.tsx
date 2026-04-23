@@ -23,6 +23,7 @@ import type {
   ThreatLevel,
   TriageScore,
 } from "@/lib/detection/types";
+import { isEventAddressable } from "@/lib/events/event-locator";
 import { cn } from "@/lib/utils";
 
 /**
@@ -343,6 +344,12 @@ function EventRow({
   const kindLabel =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
   const isInteractive = typeof onRowOpen === "function";
+  // Investigation requires an encodable locator (origAddr + respAddr). For
+  // schema-limited subtypes (e.g. ExtraThreat, WindowsThreat, UnusualDestinationPattern
+  // when neither side is present) the chevron would silently no-op, so
+  // hide the affordance rather than rendering a dead control.
+  const canInvestigate =
+    typeof onRowInvestigate === "function" && isEventAddressable(event);
   return (
     <li
       className={cn(
@@ -350,82 +357,75 @@ function EventRow({
         isInteractive && "hover:bg-accent/40 focus-within:bg-accent/40",
       )}
     >
-      <div className="flex flex-wrap items-start gap-3">
-        <div className="flex-1 min-w-0">
-          <button
-            type="button"
-            onClick={() => onRowOpen?.(event)}
-            disabled={!isInteractive}
-            aria-label={labels.rowOpenLabel}
-            className={cn(
-              "block w-full text-left",
-              isInteractive
-                ? "cursor-pointer focus:outline-none"
-                : "cursor-default",
-            )}
-          >
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-              <Badge
-                variant={levelBadgeVariant(event.level)}
-                className="uppercase"
-              >
-                {labels.levelLabels[event.level] ?? event.level}
+      {isInteractive ? (
+        // Overlay "open Quick peek" button covers the whole row. Keeping
+        // it as a sibling of the interactive controls (MorePopover,
+        // investigate chevron) — instead of wrapping them — avoids
+        // nesting interactive controls inside the row button.
+        <button
+          type="button"
+          onClick={() => onRowOpen?.(event)}
+          aria-label={labels.rowOpenLabel}
+          className="focus-visible:ring-ring/50 absolute inset-0 z-0 cursor-pointer rounded-md focus:outline-none focus-visible:ring-2"
+        />
+      ) : null}
+      <div className="pointer-events-none relative flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <Badge
+              variant={levelBadgeVariant(event.level)}
+              className="uppercase"
+            >
+              {labels.levelLabels[event.level] ?? event.level}
+            </Badge>
+            <span className="text-muted-foreground text-xs tabular-nums">
+              {formatEventTime(event.time, locale, labels.unknownTime)}
+            </span>
+            <span className="text-foreground font-medium">{kindLabel}</span>
+            {addressing.attackKind ? (
+              <span className="text-muted-foreground truncate text-xs">
+                <span className="text-muted-foreground/70 mr-1">
+                  {labels.attackKindLabel}
+                </span>
+                <span className="text-foreground">{addressing.attackKind}</span>
+              </span>
+            ) : null}
+            {event.category ? (
+              <Badge variant="outline" className="font-normal">
+                {labels.categoryLabels[event.category] ?? event.category}
               </Badge>
-              <span className="text-muted-foreground text-xs tabular-nums">
-                {formatEventTime(event.time, locale, labels.unknownTime)}
+            ) : null}
+            <span className="text-muted-foreground text-xs">
+              <span className="mr-1">{labels.confidenceLabel}</span>
+              <span className="text-foreground tabular-nums">
+                {event.confidence.toFixed(2)}
               </span>
-              <span className="text-foreground font-medium">{kindLabel}</span>
-              {addressing.attackKind ? (
-                <span className="text-muted-foreground truncate text-xs">
-                  <span className="text-muted-foreground/70 mr-1">
-                    {labels.attackKindLabel}
-                  </span>
-                  <span className="text-foreground">
-                    {addressing.attackKind}
-                  </span>
-                </span>
-              ) : null}
-              {event.category ? (
-                <Badge variant="outline" className="font-normal">
-                  {labels.categoryLabels[event.category] ?? event.category}
-                </Badge>
-              ) : null}
-              <span className="text-muted-foreground text-xs">
-                <span className="mr-1">{labels.confidenceLabel}</span>
-                <span className="text-foreground tabular-nums">
-                  {event.confidence.toFixed(2)}
-                </span>
-              </span>
-              <TriageSummary
-                triageScores={event.triageScores}
-                labels={labels}
-              />
-            </div>
-            <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 text-xs">
-              <EndpointSummary addressing={addressing} labels={labels} />
-              <span className="text-muted-foreground/70">·</span>
-              <span className="truncate">
-                {event.sensor || labels.noSensor}
-              </span>
-            </div>
-          </button>
+            </span>
+            <TriageSummary triageScores={event.triageScores} labels={labels} />
+          </div>
+          <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 text-xs">
+            <EndpointSummary addressing={addressing} labels={labels} />
+            <span className="text-muted-foreground/70">·</span>
+            <span className="truncate">{event.sensor || labels.noSensor}</span>
+          </div>
         </div>
-        <div className="shrink-0 self-center">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={labels.rowInvestigateLabel}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRowInvestigate?.(event);
-            }}
-            disabled={typeof onRowInvestigate !== "function"}
-            className="size-7"
-          >
-            <ChevronRight className="size-4" aria-hidden="true" />
-          </Button>
-        </div>
+        {canInvestigate ? (
+          <div className="pointer-events-auto relative z-10 shrink-0 self-center">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={labels.rowInvestigateLabel}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRowInvestigate?.(event);
+              }}
+              className="size-7"
+            >
+              <ChevronRight className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        ) : null}
       </div>
     </li>
   );
@@ -631,7 +631,10 @@ function MorePopover({
     };
   }, [open]);
   return (
-    <span className="relative inline-flex" ref={wrapperRef}>
+    <span
+      className="pointer-events-auto relative z-10 inline-flex"
+      ref={wrapperRef}
+    >
       <button
         type="button"
         onClick={(e) => {
