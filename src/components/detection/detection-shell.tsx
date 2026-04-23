@@ -1143,46 +1143,56 @@ function RemovableChip({
   onRemove?: () => void;
   removeLabel: string;
 }) {
-  const interactive = !!onActivate;
-  const Wrapper = interactive ? "button" : "span";
-  const wrapperProps = interactive
-    ? {
-        type: "button" as const,
-        onClick: onActivate,
-        className:
-          "focus-visible:ring-ring/50 rounded-full focus-visible:ring-2 focus-visible:outline-none",
-      }
-    : {};
+  // The activator and remove controls must be siblings, not nested —
+  // a <button> inside another <button> is invalid HTML and triggers a
+  // React hydration mismatch. Render the Badge as a plain span and
+  // place each button beside it inside the outer wrapper.
+  const activateLabel = prefix ? `${prefix}: ${value}` : value;
   return (
-    <span className="inline-flex items-center gap-1">
-      <Wrapper {...wrapperProps}>
-        <Badge
-          variant="secondary"
-          className={cn(
-            "font-normal",
-            interactive && "cursor-pointer",
-            onRemove && "pr-1",
-          )}
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full",
+        (onActivate || onRemove) &&
+          "bg-secondary text-secondary-foreground gap-1 px-2 py-0.5",
+      )}
+    >
+      {onActivate ? (
+        <button
+          type="button"
+          onClick={onActivate}
+          aria-label={activateLabel}
+          className="focus-visible:ring-ring/50 inline-flex items-center gap-1 rounded-sm focus-visible:ring-2 focus-visible:outline-none"
         >
           {prefix ? (
-            <span className="text-muted-foreground mr-1 text-xs">{prefix}</span>
+            <span className="text-muted-foreground text-xs" aria-hidden="true">
+              {prefix}
+            </span>
+          ) : null}
+          <span
+            className="text-foreground text-xs font-medium"
+            aria-hidden="true"
+          >
+            {value}
+          </span>
+        </button>
+      ) : (
+        <>
+          {prefix ? (
+            <span className="text-muted-foreground text-xs">{prefix}</span>
           ) : null}
           <span className="text-foreground text-xs font-medium">{value}</span>
-          {onRemove ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove();
-              }}
-              aria-label={removeLabel}
-              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 ml-1 inline-flex size-3.5 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none"
-            >
-              <X className="size-3" aria-hidden="true" />
-            </button>
-          ) : null}
-        </Badge>
-      </Wrapper>
+        </>
+      )}
+      {onRemove ? (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={removeLabel}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex size-3.5 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none"
+        >
+          <X className="size-3" aria-hidden="true" />
+        </button>
+      ) : null}
     </span>
   );
 }
