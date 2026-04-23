@@ -190,7 +190,10 @@ time, kind, confidence, triage summary, and sensor. A handful of
 other subtypes omit one side or one port (for example
 `UnusualDestinationPattern` is responder-array only, and
 `RdpBruteForce` omits the originator port); in those cases the
-missing slot falls back to `—`.
+missing slot falls back to `—`. Quick peek follows the same
+rule — a one-sided-address row still shows `— → <destination>`
+(or `<source> → —`) in the inspector summary, so the operator
+never loses the endpoint context they just clicked.
 
 ### Analytics strip
 

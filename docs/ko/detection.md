@@ -175,6 +175,9 @@ Security Monitor, Tenant Administrator, System Administrator는 이
 서브타입(예: 응답자 측 배열만 제공하는
 `UnusualDestinationPattern`, 출발지 포트가 없는
 `RdpBruteForce`)의 경우 해당 슬롯은 `—`로 대체됩니다.
+Quick peek도 동일한 규칙을 따르며, 한쪽 주소만 가진 행은
+인스펙터 요약에서도 `— → <목적지>` (또는 `<출발지> → —`)로
+표시되어 방금 클릭한 엔드포인트 맥락이 그대로 유지됩니다.
 
 ### 분석 스트립
 

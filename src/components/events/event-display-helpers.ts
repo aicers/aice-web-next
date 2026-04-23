@@ -133,7 +133,7 @@ export function levelBadgeVariant(
 /**
  * Produce a short "origAddr → respAddr" summary for the header.
  *
- * Three addressing shapes exist across the curated `Event` subtypes:
+ * Four addressing shapes exist across the curated `Event` subtypes:
  *
  * - Both singular (the common case): render `A → B`.
  * - Singular originator + array responder (e.g. `MultiHostPortScan`,
@@ -142,6 +142,11 @@ export function levelBadgeVariant(
  *   keeps the heading one-line; the Endpoints tab lists every row.
  * - Array originator + singular responder (`ExternalDdos`): the
  *   symmetric case — render `A[0] → B` with a `+N` suffix.
+ * - Only one side addressable (e.g. `UnusualDestinationPattern`
+ *   exposes responders only): the missing slot renders as `—` so
+ *   the summary stays aligned with the list row's `— → B` (or
+ *   `A → —`) rendering and Quick peek does not silently drop the
+ *   endpoint context the row just showed.
  *
  * Returns null only when neither side carries a usable address, in
  * which case the caller suppresses the summary rather than guessing.
@@ -156,10 +161,12 @@ export function formatEndpointSummary(event: Event | EventBase): string | null {
 
   const orig = pickAddress(source.origAddr, source.origAddrs);
   const resp = pickAddress(source.respAddr, source.respAddrs);
-  if (!orig || !resp) return null;
+  if (!orig && !resp) return null;
 
+  const origText = orig ? orig.value : "—";
+  const respText = resp ? resp.value : "—";
   const extras = extraCount(source.origAddrs) + extraCount(source.respAddrs);
-  const base = `${orig.value} → ${resp.value}`;
+  const base = `${origText} → ${respText}`;
   return extras > 0 ? `${base} +${extras}` : base;
 }
 
