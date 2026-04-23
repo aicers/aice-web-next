@@ -70,6 +70,11 @@ export interface EventInvestigationLabels {
     companySourceIsp: string;
     noCompany: string;
     loading: string;
+    map: {
+      title: string;
+      sourceLegend: string;
+      destinationLegend: string;
+    };
   };
   protocol: {
     noFields: string;

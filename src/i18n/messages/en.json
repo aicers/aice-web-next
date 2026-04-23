@@ -696,7 +696,12 @@
       "companySourceNetwork": "from network",
       "companySourceIsp": "from IP enrichment",
       "noCompany": "Not available",
-      "loading": "Loading endpoint details…"
+      "loading": "Loading endpoint details…",
+      "map": {
+        "title": "Endpoint map",
+        "sourceLegend": "Source",
+        "destinationLegend": "Destination"
+      }
     },
     "protocol": {
       "noFields": "No kind-specific fields are available for this event type.",

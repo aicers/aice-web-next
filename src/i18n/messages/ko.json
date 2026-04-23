@@ -696,7 +696,12 @@
       "companySourceNetwork": "네트워크 정보 기준",
       "companySourceIsp": "IP 보강 정보 기준",
       "noCompany": "확인할 수 없음",
-      "loading": "엔드포인트 정보를 불러오는 중…"
+      "loading": "엔드포인트 정보를 불러오는 중…",
+      "map": {
+        "title": "엔드포인트 지도",
+        "sourceLegend": "출발지",
+        "destinationLegend": "목적지"
+      }
     },
     "protocol": {
       "noFields": "이 이벤트 종류에는 표시할 프로토콜 필드가 없습니다.",

@@ -172,6 +172,33 @@ Port Scan), the destination column renders one card per
 responder, each with its own country, customer, and
 `ipLocation` enrichment.
 
+When at least one endpoint's `ipLocation` enrichment includes
+both latitude and longitude, an **Endpoint map** is rendered
+above the Source / Destination cards. The map plots one
+marker per unique `(address, role)` pair: sources as blue
+circles, destinations as rose diamonds. Hovering a marker
+surfaces the IP address and, when available, the country.
+For array-addressed subtypes (Multi-Host Port Scan, External
+DDoS) every resolved address is plotted — not only the first.
+When no endpoint has geographic enrichment the map is hidden
+entirely; the Source / Destination tables remain fully
+functional on their own.
+
+![Endpoints tab with world map — wireframe](../assets/event-investigation-endpoints-map-en.svg)
+
+The figure above is an SVG wireframe stand-in, following the
+same infrastructure-gated screenshot exception as the rest of
+this page. Replace it with a PNG capture
+(`event-investigation-endpoints-map-en.png`) when staging
+becomes available.
+
+The map is rendered as a static SVG using an equirectangular
+projection of the `world-atlas` `land-110m` topology. It has
+no client-side runtime dependency on a tile server, no pan /
+zoom, and no ongoing map network traffic — once the map chunk
+loads, marker rendering is fully local. Click-to-pivot from a
+marker is deliberately out of scope for v1.
+
 ### Protocol
 
 All kind-specific fields for the event's subtype, grouped into
