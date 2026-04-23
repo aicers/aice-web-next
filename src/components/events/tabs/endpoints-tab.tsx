@@ -1,11 +1,29 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 
 import type { Event, IpLocationResult } from "@/lib/detection/types";
 import { fetchEndpointEnrichments } from "@/lib/events/endpoint-enrichment";
 import type { EndpointEnrichmentMap } from "@/lib/events/endpoint-enrichment-types";
 import type { EventLocator } from "@/lib/events/event-locator";
+import {
+  collectMapMarkers,
+  type EndpointsMapLabels,
+} from "./endpoints-map-utils";
+
+// Dynamically loaded so the map's transitive deps
+// (`d3-geo`, `topojson-client`, `world-atlas/land-110m.json` — ~100 KB
+// of geometry data) stay out of the Investigation page's initial
+// client bundle. The chunk is fetched only once this component is
+// rendered for the first time, which — combined with the
+// `mapMarkers.length > 0` guard below — means the map code is
+// downloaded only when the Endpoints tab is activated *and* at
+// least one endpoint has geo enrichment.
+const EndpointsMap = dynamic(
+  () => import("./endpoints-map").then((m) => ({ default: m.EndpointsMap })),
+  { ssr: false },
+);
 
 export interface EndpointsLabels {
   source: string;
@@ -22,6 +40,7 @@ export interface EndpointsLabels {
   companySourceIsp: string;
   noCompany: string;
   loading: string;
+  map: EndpointsMapLabels;
 }
 
 export type EndpointEnrichment = IpLocationResult["ipLocation"];
@@ -93,6 +112,11 @@ export function EndpointsTab({ event, locator, labels }: Props) {
   }, [addresses]);
 
   const loading = enrichments === null;
+  const mapMarkers = useMemo(
+    () =>
+      enrichments ? collectMapMarkers(sources, destinations, enrichments) : [],
+    [sources, destinations, enrichments],
+  );
 
   return (
     <div className="flex flex-col gap-3">
@@ -104,6 +128,9 @@ export function EndpointsTab({ event, locator, labels }: Props) {
         >
           {labels.loading}
         </p>
+      ) : null}
+      {mapMarkers.length > 0 ? (
+        <EndpointsMap markers={mapMarkers} labels={labels.map} />
       ) : null}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="flex flex-col gap-3">
