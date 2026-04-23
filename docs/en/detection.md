@@ -451,8 +451,12 @@ filter bar so the operator can see what's scoped:
 - 1–3 entries — one chip per entry, each prefixed with `Src`,
   `Dst`, or no prefix for Both (e.g. `Src 10.0.0.5`).
 - More than 3 entries — a single aggregate chip
-  (`Network: N rules`) that, when activated, re-opens the advanced
-  panel with the Custom section expanded.
+  (`Network: N rules`).
+
+Activating any Network/IP chip body (rather than its `×`) reopens
+the filter drawer scrolled to the Network/IP section with the
+advanced Custom panel expanded, matching the chip-body contract
+for every other chip type.
 
 ### Save this filter
 

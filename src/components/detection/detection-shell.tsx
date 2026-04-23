@@ -244,6 +244,17 @@ export function shouldOpenEndpointPanelForFocus(
   return focus === "endpoints";
 }
 
+/**
+ * Chip-body focus target for every Network/IP endpoint chip (both
+ * the per-entry and aggregate forms). Exported so the shell and
+ * tests agree on a single key — endpoint chips must route through
+ * the same `openDrawerFocused` path as every other chip so the
+ * drawer scrolls the Network/IP section into view. Previously the
+ * endpoint chip was an exception that skipped focus entirely,
+ * which the reviewer flagged in Round 7.
+ */
+export const ENDPOINT_CHIP_FOCUS: FilterChipFocus = "endpoints";
+
 export function DetectionShell({
   title,
   labels,
@@ -431,30 +442,30 @@ export function DetectionShell({
     );
   }, []);
 
-  const openDrawer = useCallback(
-    (opts?: { openEndpointPanel?: boolean }) => {
-      setDraft(
-        (current) =>
-          current ??
-          filterToDraft(committedFilter, committedPeriod, committedEndpoints),
-      );
-      setOpenEndpointPanelOnDrawerOpen(opts?.openEndpointPanel ?? false);
-      setFocusField(null);
-      setDrawerOpen(true);
-      // Lazy-load the sensor inventory the first time the drawer
-      // opens, and retry on a prior transient failure so a single
-      // hiccup doesn't freeze Sensor into the "Coming soon" fallback
-      // for the rest of the tab session.
-      if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
-    },
-    [
-      committedFilter,
-      committedPeriod,
-      committedEndpoints,
-      sensorCache,
-      triggerSensorFetch,
-    ],
-  );
+  const openDrawer = useCallback(() => {
+    setDraft(
+      (current) =>
+        current ??
+        filterToDraft(committedFilter, committedPeriod, committedEndpoints),
+    );
+    // The Filters button opens the drawer with no focus target;
+    // chip-body activation routes through `openDrawerFocused`, which
+    // is the only path that ever sets the endpoint panel flag.
+    setOpenEndpointPanelOnDrawerOpen(false);
+    setFocusField(null);
+    setDrawerOpen(true);
+    // Lazy-load the sensor inventory the first time the drawer
+    // opens, and retry on a prior transient failure so a single
+    // hiccup doesn't freeze Sensor into the "Coming soon" fallback
+    // for the rest of the tab session.
+    if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
+  }, [
+    committedFilter,
+    committedPeriod,
+    committedEndpoints,
+    sensorCache,
+    triggerSensorFetch,
+  ]);
 
   // Re-run a committed filter without going through the drawer's
   // Apply path. Used by both chip × removal and the result list's
@@ -953,7 +964,7 @@ export function DetectionShell({
                     <RemovableChip
                       prefix={null}
                       value={chip.label}
-                      onActivate={() => openDrawer({ openEndpointPanel: true })}
+                      onActivate={() => openDrawerFocused(ENDPOINT_CHIP_FOCUS)}
                       onRemove={() =>
                         chip.aggregate
                           ? handleRemoveChip({ kind: "endpointAll" })

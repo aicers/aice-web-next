@@ -279,3 +279,25 @@ describe("shouldOpenEndpointPanelForFocus", () => {
     expect(shouldOpenEndpointPanelForFocus(focus)).toBe(false);
   });
 });
+
+describe("ENDPOINT_CHIP_FOCUS", () => {
+  it("routes endpoint chip activation through the chip-body focus path", async () => {
+    // Regression (Reviewer Round 7 #1): the Network/IP chip used to
+    // call `openDrawer({ openEndpointPanel: true })`, which clears
+    // `focusField` — so the drawer would expand the advanced panel
+    // but skip the scroll-to-field step every other chip receives.
+    // The shell now uses this exported constant on that onActivate
+    // path, so endpoint chips share the same `openDrawerFocused`
+    // contract as period / direction / confidence / sensor / source
+    // / destination / text-and-tag / multi-select chips.
+    const mod = await import("@/components/detection/detection-shell");
+    expect(mod.ENDPOINT_CHIP_FOCUS).toBe("endpoints");
+    // And the combined wiring: routing endpoint chips through the
+    // focus path still expands the Network/IP advanced panel, so
+    // the previous behavior is preserved on top of the new
+    // scroll-to-field behavior.
+    expect(mod.shouldOpenEndpointPanelForFocus(mod.ENDPOINT_CHIP_FOCUS)).toBe(
+      true,
+    );
+  });
+});
