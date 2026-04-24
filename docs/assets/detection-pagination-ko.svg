@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 120" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif, Apple SD Gothic Neo, Noto Sans KR" role="img" aria-labelledby="title desc">
+  <title id="title">탐지 결과 페이지네이션 컨트롤 (와이어프레임)</title>
+  <desc id="desc">결과 목록 아래에 위치하는 페이지네이션 컨트롤 와이어프레임입니다. 왼쪽에는 '페이지당 행' 선택기와 50행 트리거, 가운데에는 로케일 포맷된 범위 표시 '1,453개 중 1–50', 오른쪽 그룹에는 '30 페이지 중 1'과 처음/이전/다음/마지막 아이콘 버튼, 맨 오른쪽에는 '페이지 이동' 입력과 이동 버튼, 그 아래에 이동 진행 안내가 있습니다.</desc>
+
+  <style>
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .divider { stroke: #e5e7eb; stroke-width: 1; }
+    .trigger { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .btn { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .btn-icon { fill: #ffffff; stroke: transparent; rx: 6; ry: 6; }
+    .btn-disabled { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; rx: 6; ry: 6; }
+    .input { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .lbl { font-size: 11px; fill: #71717a; font-weight: 500; }
+    .val { font-size: 12px; fill: #18181b; }
+    .muted { font-size: 11px; fill: #a1a1aa; }
+    .range { font-size: 12px; fill: #52525b; font-variant-numeric: tabular-nums; }
+    .chev { stroke: #52525b; stroke-width: 1.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .chev-disabled { stroke: #d4d4d8; stroke-width: 1.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+
+  <rect x="0" y="0" width="880" height="120" fill="#fafafa" />
+  <line x1="16" y1="16" x2="864" y2="16" class="divider" />
+
+  <g transform="translate(16, 36)">
+    <text class="lbl" x="0" y="12">페이지당 행</text>
+    <rect class="trigger" x="70" y="0" width="72" height="24" />
+    <text class="val" x="82" y="16">50</text>
+    <polyline class="chev" points="126,9 132,15 138,9" />
+  </g>
+
+  <g transform="translate(440, 36)">
+    <text class="range" x="0" y="16" text-anchor="middle">1,453개 중 1–50</text>
+  </g>
+
+  <g transform="translate(576, 36)">
+    <rect class="btn-disabled" x="0" y="0" width="28" height="24" />
+    <polyline class="chev-disabled" points="16,7 10,12 16,17" />
+    <polyline class="chev-disabled" points="20,7 14,12 20,17" />
+
+    <rect class="btn-disabled" x="32" y="0" width="28" height="24" />
+    <polyline class="chev-disabled" points="50,7 44,12 50,17" />
+
+    <text class="range" x="98" y="16" text-anchor="middle">30 페이지 중 1</text>
+
+    <rect class="btn-icon" x="136" y="0" width="28" height="24" />
+    <polyline class="chev" points="148,7 154,12 148,17" />
+
+    <rect class="btn-icon" x="168" y="0" width="28" height="24" />
+    <polyline class="chev" points="176,7 182,12 176,17" />
+    <polyline class="chev" points="180,7 186,12 180,17" />
+  </g>
+
+  <g transform="translate(700, 36)">
+    <text class="lbl" x="0" y="12">페이지 이동</text>
+    <rect class="input" x="66" y="0" width="48" height="24" />
+    <text class="muted" x="80" y="16">N</text>
+    <rect class="btn" x="118" y="0" width="36" height="24" />
+    <text class="val" x="136" y="16" text-anchor="middle">이동</text>
+  </g>
+
+  <g transform="translate(700, 70)">
+    <text class="muted" x="0" y="12">이동 중… 12 중 4 페이지</text>
+  </g>
+</svg>

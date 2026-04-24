@@ -14,6 +14,11 @@ import { graphqlRequest } from "@/lib/graphql/client";
 import { DetectionUnauthorizedError } from "./errors";
 import { type Filter, toEventListFilterInput } from "./filter";
 import {
+  type PageAnchor,
+  type PageSize,
+  searchArgsForAnchor,
+} from "./pagination";
+import {
   EVENT_COUNTS_BY_CATEGORY_QUERY,
   EVENT_COUNTS_BY_COUNTRY_QUERY,
   EVENT_COUNTS_BY_IP_ADDRESS_QUERY,
@@ -155,6 +160,51 @@ export async function searchEvents(
     { role: ctx.role, customerIds: ctx.customerIds },
   );
   return data.eventList;
+}
+
+/** Maximum number of corrective re-queries for a drifting `tail`. */
+const TAIL_DRIFT_MAX_CORRECTIONS = 2;
+
+/**
+ * Fetch an event page at a cursor anchor with total-drift correction
+ * on `tail` windows.
+ *
+ * Relay's `last: N` returns the last N rows of the connection, not
+ * "the Nth-from-end page", so {@link searchArgsForAnchor} narrows
+ * `last` to `totalCount % pageSize` to match the labeled final page.
+ * That narrowing relies on an accurate `totalCount`: if the caller's
+ * cached total is stale (new events arrived between navigations),
+ * REview still returns the tail of the *current* connection, but
+ * that window straddles a page boundary and the UI label lies.
+ *
+ * This helper re-queries with the total reported by the first
+ * response; a tight correction loop (capped at
+ * {@link TAIL_DRIFT_MAX_CORRECTIONS}) converges in steady state and
+ * bounds worst-case traffic under pathological drift. Non-tail
+ * anchors (head / after / before) sidestep the loop — their `first`
+ * / `last` argument is independent of `totalCount`.
+ */
+export async function searchEventsAtAnchor(
+  session: AuthSession,
+  filter: Filter,
+  anchor: PageAnchor,
+  pageSize: PageSize,
+  knownTotal: string | null = null,
+): Promise<EventConnection> {
+  let args = searchArgsForAnchor(anchor, pageSize, knownTotal);
+  let connection = await searchEvents(session, filter, args);
+  if (anchor.kind !== "tail") return connection;
+  for (let attempt = 0; attempt < TAIL_DRIFT_MAX_CORRECTIONS; attempt++) {
+    const corrected = searchArgsForAnchor(
+      anchor,
+      pageSize,
+      connection.totalCount,
+    );
+    if (corrected.last === args.last) break;
+    args = corrected;
+    connection = await searchEvents(session, filter, args);
+  }
+  return connection;
 }
 
 async function dispatchCounter<TPayload>(

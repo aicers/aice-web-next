@@ -12,14 +12,17 @@ import {
   type EventListFilterInput,
   type Filter,
   type FlowKind,
+  type PaginationState,
   PERIOD_KEYS,
   type PivotFilterParams,
+  parsePaginationSearchParams,
   parsePivotSearchParams,
-  searchEvents,
+  searchEventsAtAnchor,
   TAG_FIELDS,
   type TagField,
   TEXT_FIELDS,
   type TextField,
+  totalPagesFrom,
 } from "@/lib/detection";
 import { COUNTRY_CODES } from "@/lib/detection/countries";
 import { FLOW_KINDS } from "@/lib/detection/direction";
@@ -31,8 +34,7 @@ import {
   THREAT_LEVEL_KEY_BY_VALUE,
   THREAT_LEVEL_VALUES,
 } from "@/lib/detection/filter-options";
-import { DEFAULT_EVENT_LIST_PAGE_SIZE } from "@/lib/detection/page-size";
-import type { LearningMethod } from "@/lib/detection/types";
+import type { LearningMethod, PageInfo } from "@/lib/detection/types";
 
 interface DetectionPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -50,6 +52,8 @@ export default async function DetectionPage({
   const locale = await getLocale();
   const rawParams = await searchParams;
   const pivotParams = parsePivotSearchParams(rawParams);
+  let initialPagination: PaginationState =
+    parsePaginationSearchParams(rawParams);
   // The client shell builds chip label strings from `labels.chipLabels`
   // — including the aggregate-count formatter that closes over the
   // active locale — so the server page only needs the plain strings.
@@ -87,16 +91,43 @@ export default async function DetectionPage({
   let initialError: string | null = null;
   let initialEvents: Event[] = [];
   let initialEventKeys: string[] = [];
+  let initialPageInfo: PageInfo | null = null;
   try {
-    const connection = await searchEvents(session, initialFilter, {
-      first: DEFAULT_EVENT_LIST_PAGE_SIZE,
-    });
+    // `searchEventsAtAnchor` handles the cold-SSR two-step for a
+    // `tail` deep link: the first call discovers `totalCount`, then
+    // the helper's drift-correction loop re-queries with
+    // `last: totalCount % pageSize` so a reload of
+    // `?last=1&page=15&pageSize=100` lands on the labeled last page's
+    // actual rows rather than the straddling `last: pageSize` window.
+    // The same loop absorbs real-time total drift across consecutive
+    // queries for free.
+    const connection = await searchEventsAtAnchor(
+      session,
+      initialFilter,
+      initialPagination.anchor,
+      initialPagination.pageSize,
+    );
+    if (initialPagination.anchor.kind === "tail") {
+      // Synchronise the page number with the real last page once the
+      // total is known. A URL like `?last=1` without `?page=` parses
+      // to `page: 1`; pair that with the tail anchor and the range
+      // indicator would label the final slice as page 1. The derived
+      // total-page count recovers the right label.
+      const lastPage = totalPagesFrom(
+        connection.totalCount,
+        initialPagination.pageSize,
+      );
+      if (lastPage !== null && lastPage !== initialPagination.page) {
+        initialPagination = { ...initialPagination, page: lastPage };
+      }
+    }
     initialTotal = connection.totalCount;
     initialEvents = connection.nodes;
     // Parallel to `nodes`: each `edges[i].cursor` is the stable
     // server identity for `nodes[i]`. The client uses it as the
     // row's React key so duplicate content can't collide.
     initialEventKeys = connection.edges.map((edge) => edge.cursor);
+    initialPageInfo = connection.pageInfo;
   } catch {
     initialError = t("filters.resultsError");
   }
@@ -157,7 +188,9 @@ export default async function DetectionPage({
         error: initialError,
         events: initialEvents,
         eventKeys: initialEventKeys,
+        pageInfo: initialPageInfo,
       }}
+      initialPagination={initialPagination}
       options={options}
       labels={{
         recommendedFilter: t("savedRail.recommended"),
@@ -285,6 +318,16 @@ export default async function DetectionPage({
           },
         },
         summarize: summarizeLabels,
+        pagination: {
+          pageSizeLabel: t("pagination.pageSizeLabel"),
+          firstPage: t("pagination.firstPage"),
+          previousPage: t("pagination.previousPage"),
+          nextPage: t("pagination.nextPage"),
+          lastPage: t("pagination.lastPage"),
+          goToPageLabel: t("pagination.goToPageLabel"),
+          goToPagePlaceholder: t("pagination.goToPagePlaceholder"),
+          goToPageSubmit: t("pagination.goToPageSubmit"),
+        },
       }}
       initialPivotOnly={initialPivotOnly}
     />
