@@ -1,0 +1,210 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuthSession } from "@/lib/auth/jwt";
+import {
+  type CsvColumnHeaders,
+  DEFAULT_CSV_HEADERS,
+  type FormatCsvRowOptions,
+} from "@/lib/detection/csv-export";
+
+const mockSearchEvents = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/detection/server-actions", () => ({
+  searchEvents: mockSearchEvents,
+}));
+
+const ROW_OPTIONS: FormatCsvRowOptions = {
+  levelLabels: { LOW: "Low", MEDIUM: "Medium", HIGH: "High" },
+  categoryLabels: {},
+  countryUnknown: "??",
+  countryUnavailable: "—",
+  triageSummaryTemplate: "{count} policies · {max} max",
+  moreCountSuffixTemplate: "+{count} more",
+};
+
+const HEADERS: CsvColumnHeaders = { ...DEFAULT_CSV_HEADERS };
+
+const FILTER = {
+  mode: "structured" as const,
+  input: {
+    start: "2026-04-22T00:00:00.000Z",
+    end: "2026-04-22T01:00:00.000Z",
+  },
+};
+
+function buildSession(): AuthSession {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    accountId: "account-1",
+    sessionId: "session-1",
+    roles: ["Security Monitor"],
+    tokenVersion: 0,
+    mustChangePassword: false,
+    mustEnrollMfa: false,
+    iat: now,
+    exp: now + 900,
+    sessionIp: "127.0.0.1",
+    sessionUserAgent: "Mozilla/5.0",
+    sessionBrowserFingerprint: "Chrome/131",
+    needsReauth: false,
+    sessionCreatedAt: new Date(),
+    sessionLastActiveAt: new Date(),
+  };
+}
+
+const EVENT = {
+  __typename: "HttpThreat",
+  time: "2026-04-22T00:00:00.000Z",
+  sensor: "sensor-1",
+  confidence: 0.8,
+  category: null,
+  level: "LOW",
+  triageScores: null,
+  origAddr: "10.0.0.5",
+  respAddr: "10.0.0.6",
+};
+
+describe("createCsvExportStream", () => {
+  beforeEach(() => {
+    mockSearchEvents.mockReset();
+  });
+
+  it("does not fetch additional pages while the consumer has not drained the first page", async () => {
+    // Page 1 claims a next page exists; if the stream did not
+    // respect backpressure it would eagerly fetch page 2 even
+    // though the consumer has not yet requested any chunks.
+    mockSearchEvents
+      .mockResolvedValueOnce({
+        pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
+        edges: Array.from({ length: 5 }, (_, i) => ({
+          cursor: `c${i}`,
+          node: EVENT,
+        })),
+        nodes: [],
+        totalCount: "10",
+      })
+      .mockResolvedValueOnce({
+        pageInfo: { hasNextPage: false, endCursor: null },
+        edges: Array.from({ length: 5 }, (_, i) => ({
+          cursor: `d${i}`,
+          node: EVENT,
+        })),
+        nodes: [],
+        totalCount: "10",
+      });
+
+    const { createCsvExportStream } = await import(
+      "@/lib/detection/export-stream"
+    );
+    const stream = createCsvExportStream({
+      session: buildSession(),
+      filter: FILTER,
+      headers: HEADERS,
+      formatRowOptions: ROW_OPTIONS,
+    });
+
+    const reader = stream.getReader();
+    // Read one chunk (the header). The page-1 buffer is now loaded
+    // so the producer can serve subsequent rows without another
+    // fetch, but it must NOT have issued the page-2 fetch yet.
+    await reader.read();
+    // Yield so any stray pending microtasks in the producer can
+    // settle before we assert.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockSearchEvents).toHaveBeenCalledTimes(1);
+
+    // Drain the buffered rows and the next page to make sure the
+    // stream still terminates cleanly under backpressure.
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+    expect(mockSearchEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops fetching pages when the consumer cancels the body", async () => {
+    mockSearchEvents.mockResolvedValue({
+      pageInfo: { hasNextPage: true, endCursor: "cursor-n" },
+      edges: Array.from({ length: 5 }, (_, i) => ({
+        cursor: `c${i}`,
+        node: EVENT,
+      })),
+      nodes: [],
+      totalCount: "10000",
+    });
+
+    const { createCsvExportStream } = await import(
+      "@/lib/detection/export-stream"
+    );
+    const stream = createCsvExportStream({
+      session: buildSession(),
+      filter: FILTER,
+      headers: HEADERS,
+      formatRowOptions: ROW_OPTIONS,
+    });
+
+    const reader = stream.getReader();
+    await reader.read(); // header
+    await reader.read(); // first data row (forces page fetch)
+    const fetchesBeforeCancel = mockSearchEvents.mock.calls.length;
+
+    await reader.cancel();
+    // Give the producer a tick to notice the flip.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Drain whatever the runtime has queued so we can observe
+    // whether the loop tried to fetch another page after cancel.
+    // It must not — `cancel()` flipped the flag, so the producer
+    // returns at the top of the next `pull()` iteration.
+    const later = mockSearchEvents.mock.calls.length;
+    // Allow at most one in-flight fetch that was already awaited
+    // before the cancel arrived; assert we did not keep looping.
+    expect(later - fetchesBeforeCancel).toBeLessThanOrEqual(1);
+
+    // A subsequent read must reflect the cancelled stream.
+    const next = await reader.read();
+    expect(next.done).toBe(true);
+  });
+
+  it("stops fetching pages when the upstream abort signal fires", async () => {
+    mockSearchEvents.mockResolvedValue({
+      pageInfo: { hasNextPage: true, endCursor: "cursor-n" },
+      edges: Array.from({ length: 5 }, (_, i) => ({
+        cursor: `c${i}`,
+        node: EVENT,
+      })),
+      nodes: [],
+      totalCount: "10000",
+    });
+
+    const { createCsvExportStream } = await import(
+      "@/lib/detection/export-stream"
+    );
+    const controller = new AbortController();
+    const stream = createCsvExportStream({
+      session: buildSession(),
+      filter: FILTER,
+      headers: HEADERS,
+      formatRowOptions: ROW_OPTIONS,
+      signal: controller.signal,
+    });
+
+    const reader = stream.getReader();
+    await reader.read(); // header
+    await reader.read(); // first data row (forces page fetch)
+    const fetchesBeforeAbort = mockSearchEvents.mock.calls.length;
+
+    controller.abort();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Drain the stream; the signal-driven flag must stop the loop.
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+    const later = mockSearchEvents.mock.calls.length;
+    expect(later - fetchesBeforeAbort).toBeLessThanOrEqual(1);
+  });
+});

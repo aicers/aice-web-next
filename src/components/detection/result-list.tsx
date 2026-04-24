@@ -43,7 +43,9 @@ export interface ResultListLabels {
   countWithRange: (args: { range: string; total: string }) => React.ReactNode;
   totalOnly: (args: { total: string }) => React.ReactNode;
   download: string;
-  downloadComingSoon: string;
+  downloadRunning: string;
+  downloadErrorTitle: string;
+  downloadErrorDismiss: string;
   refresh: string;
   updatedJustNow: string;
   updatedSecondsAgo: (s: number) => string;
@@ -116,6 +118,26 @@ interface ResultListProps {
   onRowOpen?: (event: Event) => void;
   /** Click on the Investigate icon — opens the full view (Phase Detection-19). */
   onRowInvestigate?: (event: Event) => void;
+  /**
+   * CSV export affordance wiring (Phase Detection-13). When
+   * omitted, the Download button is disabled — preserves the
+   * existing "feature not wired" rendering used by tests and
+   * storyboards that don't thread an export controller through.
+   */
+  onDownload?: () => void;
+  /**
+   * When `true`, the Download button is disabled and labelled with
+   * the "exporting" busy text so the operator sees progress while
+   * the stream is in flight.
+   */
+  downloadRunning?: boolean;
+  /**
+   * Localized error message surfaced below the header when the
+   * last export failed. Dismissing the banner is wired up by the
+   * shell via `onDismissDownloadError`.
+   */
+  downloadError?: string | null;
+  onDismissDownloadError?: () => void;
 }
 
 export function ResultList({
@@ -127,10 +149,28 @@ export function ResultList({
   onOpenFilters,
   onRowOpen,
   onRowInvestigate,
+  onDownload,
+  downloadRunning,
+  downloadError,
+  onDismissDownloadError,
 }: ResultListProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3">
-      <ResultListHeader state={state} labels={labels} onRefresh={onRefresh} />
+      <ResultListHeader
+        state={state}
+        labels={labels}
+        onRefresh={onRefresh}
+        onDownload={onDownload}
+        downloadRunning={downloadRunning}
+      />
+      {downloadError ? (
+        <DownloadErrorBanner
+          message={downloadError}
+          title={labels.downloadErrorTitle}
+          dismissLabel={labels.downloadErrorDismiss}
+          onDismiss={onDismissDownloadError}
+        />
+      ) : null}
       <ResultListBody
         state={state}
         labels={labels}
@@ -149,14 +189,28 @@ function ResultListHeader({
   state,
   labels,
   onRefresh,
+  onDownload,
+  downloadRunning,
 }: {
   state: ResultListState;
   labels: ResultListLabels;
   onRefresh: () => void;
+  onDownload?: () => void;
+  downloadRunning?: boolean;
 }) {
   const total = state.totalCount;
   const range = state.range;
   const showCount = total !== null;
+  const downloadDisabled =
+    !onDownload ||
+    downloadRunning === true ||
+    state.status === "loading" ||
+    state.status === "error" ||
+    state.status === "empty-prequery" ||
+    state.events.length === 0;
+  const downloadLabel = downloadRunning
+    ? labels.downloadRunning
+    : labels.download;
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="text-foreground text-sm font-semibold">
@@ -195,17 +249,51 @@ function ResultListHeader({
           type="button"
           variant="outline"
           size="sm"
-          // CSV export wiring lands in Phase Detection-13. Until then
-          // the affordance is visible but disabled with a tooltip
-          // explaining the deferred status.
-          disabled
-          title={labels.downloadComingSoon}
-          aria-label={labels.download}
+          onClick={onDownload}
+          disabled={downloadDisabled}
+          aria-label={downloadLabel}
+          aria-busy={downloadRunning === true}
         >
           <Download className="size-4" aria-hidden="true" />
-          {labels.download}
+          {downloadLabel}
         </Button>
       </div>
+    </div>
+  );
+}
+
+function DownloadErrorBanner({
+  title,
+  message,
+  dismissLabel,
+  onDismiss,
+}: {
+  title: string;
+  message: string;
+  dismissLabel: string;
+  onDismiss?: () => void;
+}) {
+  return (
+    <div
+      role="alert"
+      className="border-destructive/40 bg-destructive/5 text-destructive flex items-start gap-3 rounded-md border px-3 py-2 text-sm"
+    >
+      <TriangleAlert className="size-4 shrink-0" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">{title}</p>
+        <p className="text-muted-foreground text-xs">{message}</p>
+      </div>
+      {onDismiss ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onDismiss}
+          className="text-destructive hover:text-destructive"
+        >
+          {dismissLabel}
+        </Button>
+      ) : null}
     </div>
   );
 }

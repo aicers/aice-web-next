@@ -214,6 +214,31 @@ export default async function DetectionPage({
       initialPagination={initialPagination}
       options={options}
       labels={{
+        exportConfirm: {
+          title: t("results.exportConfirm.title"),
+          descriptionTemplate: t.raw(
+            "results.exportConfirm.description",
+          ) as string,
+          continueLabel: t("results.exportConfirm.continue"),
+          cancelLabel: t("results.exportConfirm.cancel"),
+          narrowFilterLabel: t("results.exportConfirm.narrowFilter"),
+        },
+        exportErrorMessage: t("results.downloadErrorDescription"),
+        exportLimitExceededTemplate: t.raw(
+          "results.downloadLimitExceededDescription",
+        ) as string,
+        exportColumnHeaders: {
+          level: t("results.csvHeaders.level"),
+          time: t("results.csvHeaders.time"),
+          kind: t("results.csvHeaders.kind"),
+          attackKind: t("results.csvHeaders.attackKind"),
+          category: t("results.csvHeaders.category"),
+          confidence: t("results.csvHeaders.confidence"),
+          triage: t("results.csvHeaders.triage"),
+          source: t("results.csvHeaders.source"),
+          destination: t("results.csvHeaders.destination"),
+          sensor: t("results.csvHeaders.sensor"),
+        },
         recommendedFilter: t("savedRail.recommended"),
         savedFilters: t("savedRail.saved"),
         railPlaceholder: t("savedRail.placeholder"),

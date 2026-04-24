@@ -25,6 +25,10 @@ import {
   type FetchSensorsResult,
   fetchSensors,
 } from "@/app/[locale]/(dashboard)/detection/sensor-actions";
+import {
+  CsvExportConfirmDialog,
+  type CsvExportConfirmLabels,
+} from "@/components/detection/csv-export-dialog";
 import { isMorePopoverOpen } from "@/components/detection/more-popover";
 import {
   PaginationControls,
@@ -39,6 +43,11 @@ import {
   type ResultListLabels,
   type ResultListState,
 } from "@/components/detection/result-list";
+import {
+  type CsvExportPayload,
+  useCsvExport,
+} from "@/components/detection/use-csv-export";
+import { useCsvExportTotalCountGetter } from "@/components/detection/use-render-synced-ref";
 import { EVENT_KIND_FRIENDLY_NAMES } from "@/components/events/event-display-helpers";
 import { Button } from "@/components/ui/button";
 import {
@@ -165,6 +174,25 @@ export type QuickPeekLabelStrings = Omit<
 >;
 
 export interface DetectionShellLabels {
+  /**
+   * CSV export affordance labels — confirmation dialog copy, the
+   * column headers the downloaded file will carry, and the generic
+   * error message surfaced when the stream fails. The server action
+   * echoes the headers back in the CSV so the file matches the
+   * operator's locale regardless of where the stream is rendered.
+   */
+  exportConfirm: Omit<CsvExportConfirmLabels, "descriptionTemplate"> & {
+    descriptionTemplate: string;
+  };
+  exportErrorMessage: string;
+  /**
+   * Template used when the server rejects the export because the
+   * estimated row count exceeds the hard per-export ceiling. Carries
+   * `{count}` and `{limit}` placeholders so the error message can
+   * quote the figures from the 413 response body.
+   */
+  exportLimitExceededTemplate: string;
+  exportColumnHeaders: Record<string, string>;
   recommendedFilter: string;
   savedFilters: string;
   railPlaceholder: string;
@@ -408,7 +436,9 @@ export function DetectionShell({
         tResults("countWithRange", { range, total }),
       totalOnly: ({ total }) => tResults("totalOnly", { total }),
       download: tResults("download"),
-      downloadComingSoon: tResults("downloadComingSoon"),
+      downloadRunning: tResults("downloadRunning"),
+      downloadErrorTitle: tResults("downloadErrorTitle"),
+      downloadErrorDismiss: tResults("downloadErrorDismiss"),
       refresh: tResults("refresh"),
       updatedJustNow: tResults("updatedJustNow"),
       updatedSecondsAgo: (s: number) => tResults("updatedSecondsAgo", { s }),
@@ -1387,6 +1417,82 @@ export function DetectionShell({
     [loading, navigateTo, pagination, runWalkTo, totalCount],
   );
 
+  // CSV export controller — owns the download round-trip, the
+  // large-export confirmation dialog, and the error banner. The
+  // payload is built lazily from `committedFilter` and the locale
+  // translator so the export always reflects the latest committed
+  // state at click time, not the state that was live when the
+  // button was first rendered.
+  // Latest committed total-count is threaded through
+  // `useCsvExportTotalCountGetter`, which owns the render-synced
+  // ref + stable lazy getter together so the regression test can
+  // import the exact helper the shell wires into `useCsvExport`.
+  // See the helper's module-level comment for why an effect-based
+  // sync would open a stale-count window for Download CSV.
+  const getKnownTotalCount = useCsvExportTotalCountGetter(totalCount);
+  const csvExport = useCsvExport({
+    errorMessage: labels.exportErrorMessage,
+    formatLimitExceededMessage: useCallback(
+      ({ totalCount, limit }: { totalCount: string; limit: number }) =>
+        labels.exportLimitExceededTemplate
+          .replace("{count}", totalCount)
+          .replace("{limit}", String(limit)),
+      [labels.exportLimitExceededTemplate],
+    ),
+    // Reviewer Round 10: feed the currently-rendered total count
+    // into the hook so known-large / known-over-cap exports are
+    // gated on the client before the save picker opens.
+    getKnownTotalCount,
+    buildPayload: useCallback<() => CsvExportPayload>(() => {
+      const headers = {
+        level: tResults("csvHeaders.level"),
+        time: tResults("csvHeaders.time"),
+        kind: tResults("csvHeaders.kind"),
+        attackKind: tResults("csvHeaders.attackKind"),
+        category: tResults("csvHeaders.category"),
+        confidence: tResults("csvHeaders.confidence"),
+        triage: tResults("csvHeaders.triage"),
+        source: tResults("csvHeaders.source"),
+        destination: tResults("csvHeaders.destination"),
+        sensor: tResults("csvHeaders.sensor"),
+      } as const;
+      return {
+        filter: committedFilter,
+        periodKey: committedPeriod,
+        headers,
+        formatRowOptions: {
+          levelLabels: resultListLabels.levelLabels,
+          categoryLabels: resultListLabels.categoryLabels,
+          countryUnknown: resultListLabels.countryUnknown,
+          countryUnavailable: resultListLabels.countryUnavailable,
+          // Raw ICU template so the server can substitute
+          // `{count}` / `{max}` into the triage cell without a
+          // next-intl message formatter — matches the string the
+          // result row renders via `ResultListLabels.triageSummary`.
+          triageSummaryTemplate: tResults.raw("triageSummary") as string,
+          // Same raw-template trick for the plural-endpoint "+N
+          // more" summary so subtypes that only populate the
+          // plural addressing fields (e.g. ExternalDdos,
+          // MultiHostPortScan) render the locale's suffix instead
+          // of an English fallback. Matches
+          // `ResultListLabels.moreCountSuffix` in KR.
+          moreCountSuffixTemplate: tResults.raw("moreCountSuffix") as string,
+        },
+      };
+    }, [committedFilter, committedPeriod, resultListLabels, tResults]),
+  });
+
+  const handleDownloadCsv = useCallback(() => {
+    void csvExport.start();
+  }, [csvExport]);
+  const handleConfirmLargeExport = useCallback(() => {
+    void csvExport.confirmAndContinue();
+  }, [csvExport]);
+  const handleNarrowFilterFromExport = useCallback(() => {
+    csvExport.cancelConfirmation();
+    openDrawer();
+  }, [csvExport, openDrawer]);
+
   const openDrawerFocused = useCallback(
     (focus: FilterChipFocus) => {
       // Ensure the drawer has a draft to edit, then scroll-focus the
@@ -1857,6 +1963,14 @@ export function DetectionShell({
               onOpenFilters={() => openDrawer()}
               onRowOpen={handleRowOpen}
               onRowInvestigate={handleRowInvestigate}
+              onDownload={handleDownloadCsv}
+              downloadRunning={csvExport.status.kind === "running"}
+              downloadError={
+                csvExport.status.kind === "error"
+                  ? csvExport.status.message
+                  : null
+              }
+              onDismissDownloadError={csvExport.dismissError}
             />
             {hasQueried && !resultError ? (
               <PaginationControls
@@ -1960,6 +2074,24 @@ export function DetectionShell({
         labels={quickPeekLabels}
         buildInvestigateHref={buildInvestigateHref}
         onClose={closeQuickPeek}
+      />
+
+      <CsvExportConfirmDialog
+        open={csvExport.status.kind === "confirm-required"}
+        totalCount={
+          csvExport.status.kind === "confirm-required"
+            ? csvExport.status.confirmation.totalCount
+            : null
+        }
+        estimatedBytes={
+          csvExport.status.kind === "confirm-required"
+            ? csvExport.status.confirmation.estimatedBytes
+            : null
+        }
+        labels={labels.exportConfirm}
+        onContinue={handleConfirmLargeExport}
+        onCancel={csvExport.cancelConfirmation}
+        onNarrow={handleNarrowFilterFromExport}
       />
     </div>
   );
