@@ -165,22 +165,12 @@ The result region uses distinct panels for each non-ready state:
 #### Row interactions
 
 Clicking anywhere on a row body opens the **Quick peek**
-inspector. At desktop widths (≥ 1280 px) Quick peek docks inline
-as a right-hand pane beside the result list — the list shrinks
-proportionally to the right to make room. At narrower widths the
-same summary is rendered as an overlay drawer and the list keeps
-its full width, so smaller screens don't try to fit two columns
-of dense data. Quick peek carries the event summary (severity,
-time, kind, confidence, source → destination, sensor) and an
-**Open investigation** button that jumps into the full
-Investigation view. The inline `›` icon at the end of the row
-opens the Investigation view directly, skipping Quick peek.
-Investigation navigation is locale-aware and carries a `returnTo`
-URL parameter so the Back link returns to the exact Detection
-tab the operator left, including the active filter's chip state.
-Pivot links on supported values (IP, country, kind, category,
-level, hostname, user) open or focus a narrowed tab — that
-wiring lands in the Pivot phase.
+inspector (see the dedicated section below). The inline `›` icon
+at the end of the row opens the full Investigation view directly,
+skipping Quick peek. Investigation navigation is locale-aware and
+carries a `returnTo` URL parameter so the Back link returns to
+the exact Detection tab the operator left, including the active
+filter's chip state.
 
 Two subtypes in the vendored schema — `ExtraThreat` and
 `WindowsThreat` — model host- / agent-side threats and expose no
@@ -190,24 +180,166 @@ time, kind, confidence, triage summary, and sensor. A handful of
 other subtypes omit one side or one port (for example
 `UnusualDestinationPattern` is responder-array only, and
 `RdpBruteForce` omits the originator port); in those cases the
-missing slot falls back to `—`. Quick peek follows the same
-rule — a one-sided-address row still shows `— → <destination>`
-(or `<source> → —`) in the inspector summary, so the operator
-never loses the endpoint context they just clicked.
+missing slot falls back to `—`.
 
-Quick peek closes the instant a committed query transition is
-dispatched — Apply, chip removal, or Refresh — not after the
-replacement slice resolves. The inspector and its **Open
-investigation** button disappear synchronously with the new
-chip bar / URL, so there is no window during the round-trip
-where the handoff could fire on a row the newly committed
-filter no longer describes. REview does not yet expose a stable
-per-event identity, so carrying the inspector across committed
-queries could silently retarget it at a different event;
-closing on every commit is the defensive alternative, and at
-desktop widths restores the hero list to its full width once
-no row is selected. Reopening Quick peek on the row you want
-after a filter change is a single click.
+Selecting any row opens the Quick peek inspector, including the
+schema-limited subtypes that have no encodable locator —
+`ExtraThreat`, `WindowsThreat`, and rows that happen to carry
+neither source nor destination IP. The inspector still renders
+every field the schema provides for those events. Only the
+investigate chevron is hidden on those rows, because it would
+navigate through the locator token the investigation page needs;
+the Quick peek itself stays available. The URL mirror skips the
+selection for these rows (the token cannot be encoded), so a
+reload or shared link restores the peek only for selections that
+do round-trip through the locator.
+
+## Quick peek inspector
+
+Selecting a row opens the **Quick peek** inspector — a compact
+summary of the event that stays in context with the result list
+so you can triage without leaving the tab.
+
+![Quick peek inspector — wireframe stand-in](../assets/detection-quick-peek-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The figure above is an SVG wireframe rather than a real
+    capture. Quick peek reads its content from live detection
+    events returned by REview, and the authoring worktree has no
+    staging backend with seeded data. Per `docs/AUTHORING.md`'s
+    "Screenshot exception for infrastructure-gated features", this
+    page ships a localized SVG wireframe and will be replaced with
+    a real screenshot once staging is available.
+
+### Responsive surface
+
+- **Wide viewport (≥ 1280 px)**: Quick peek renders as an inline
+  right-hand **inspector pane**. The result list shrinks to make
+  room so the list and the inspector coexist side-by-side.
+- **Narrower viewports**: Quick peek renders as an overlay
+  **drawer** above the list, so smaller screens do not try to
+  fit two columns of dense data. The list keeps its full width
+  beneath the overlay.
+
+The breakpoint matches the slim-rail breakpoint used elsewhere in
+the page.
+
+### Dismissing the peek
+
+Quick peek is dismissable via the close affordance (inline Close
+button on desktop, Sheet-supplied Close on the overlay drawer),
+the Escape key, or by selecting a different row — picking another
+row updates the existing peek's content rather than opening a
+second instance. It also closes the instant a committed query
+transition is dispatched (Apply, chip removal, or Refresh) so
+there is no window during the round-trip where the inspector
+could still describe a row the newly committed filter no longer
+returns.
+
+### Content
+
+The peek groups the event's most useful fields into short,
+collapsible-free sections. Empty fields are **hidden** rather
+than rendered as `(Not Provided)` placeholders, so a peek on a
+subtype whose schema omits certain fields simply shows fewer
+rows rather than a column of dashes.
+
+- **Summary** — severity level, threat category, detection
+  confidence, and the triage summary (max score + policy count)
+  when triage scores are present.
+- **Endpoints** — source and destination, each rendered as
+  `IP[:port] (country)`. The country label is an inert text
+  span — country pivots are out of scope for v1 (see the
+  issue's **Pivot affordances** note). Sentinel codes (`??`,
+  `—`) represent `location unknown` / `location unavailable`.
+  Array-valued endpoints — `origAddrs` (`ExternalDdos`),
+  `respAddrs` (`MultiHostPortScan`, `RdpBruteForce`,
+  `UnusualDestinationPattern`), `respPorts` (`PortScan`) —
+  render up to three tuples inline, then fold any remainder
+  into a `+N more` button. Each inline tuple keeps its per-entry
+  country (so the four-host `MultiHostPortScan` case shows three
+  flags alongside the three hosts rather than flattening to a
+  single country). For the `PortScan` shape — one shared responder
+  IP with an array of ports — the shared IP and country back-fill
+  every inline tuple so each port still reads as `IP:port
+  (country)` rather than a bare port number. Activating the
+  `+N more` button opens an inline popover that lists every
+  remaining tuple with the same formatting. The popover dismisses
+  on outside click or Escape and uses the same control as the
+  result list. Pressing Escape with a popover open only closes
+  the popover; the enclosing Quick peek inspector stays open and
+  a subsequent Escape dismisses it. A subtle copy-to-clipboard icon next to each inline
+  IP copies the literal into the clipboard for use in another
+  tool; the same Copy affordance is preserved on every entry
+  inside the `+N more` popover so the 4th+ overflowed responder
+  remains one click away. Copy there emits the raw IP (not the
+  `IP:port (country)` display string) so it drops cleanly into
+  another tool.
+- **Detection** — the sensor that produced the event, the ML
+  subtype's `attackKind` when present, and the `learningMethod`
+  (Unsupervised / Semi-supervised) for the ML threat types.
+- **Protocol** — a handful of kind-specific fields that matter
+  at a glance. Each subtype exposes under ten fields; the rest
+  belongs to the Investigation view. Current highlights include
+  method / host / URI / status code for HTTP subtypes
+  (`HttpThreat`, `BlocklistHttp`), query / type / response code
+  for DNS subtypes (`DnsCovertChannel`, `BlocklistDns`), server
+  name / version / JA3 for the TLS subtypes
+  (`SuspiciousTlsTraffic`, `BlocklistTls`), user list / internal
+  flag plus detection window for `FtpBruteForce`, and the
+  detection window for `RdpBruteForce`, `PortScan`,
+  `MultiHostPortScan`, and `ExternalDdos`. Subtypes without
+  highlights render no Protocol section. Hostname, URI, DNS
+  query, JA3, and user-identifier values expose a hover-revealed
+  copy icon so the operator can pull a single literal into the
+  clipboard. For array-valued identifiers such as `userList`, the
+  Copy affordance is preserved inside the `+N more` popover so
+  the 4th and later entries stay one click away from the
+  clipboard.
+- **Actions**:
+  - **Open full investigation** jumps into the Investigation
+    view at `/events/<eventToken>`. It is a real anchor tag,
+    so **middle-click** or **Cmd/Ctrl-click** opens the full
+    page in a new browser tab while leaving the current
+    Detection tab's filter and peek state intact. The anchor
+    is omitted (not disabled) for subtypes that carry no
+    encodable locator — `ExtraThreat`, `WindowsThreat`, and
+    some host-only subtypes — since no link would land on a
+    valid investigation.
+  - **Pivot links** — `Same source IP · last 24h`,
+    `Same destination IP · last 24h`, and `Same kind ·
+    last 7d` — are also real anchor tags pointing at the
+    `/detection?…` page, so they can be middle-clicked into a
+    new tab. Pivot targets that are not present on the event
+    (e.g. source IP on a response-only subtype) are omitted
+    rather than rendered as dead controls.
+
+### Selected-event URL state
+
+The selected event's locator token (the same base64url token the
+Investigation view uses) is mirrored into the tab's URL as an
+`event` query parameter. A page refresh or shared link restores
+the peek on the same row — when the token's locator still matches
+an event in the current result slice. When the restored token
+does not match any event in the current slice (pagination
+shifted, filter narrowed, event aged out), the token is stripped
+from the URL on mount and the peek stays closed rather than
+opening on an arbitrary row. Clicking Refresh or committing any
+new query clears the `event` parameter from the URL so a
+subsequent reload lands on a clean slate rather than resurrecting
+the stale selection. The URL write uses `history.replaceState`,
+so Back does not rewind the peek and does not add a navigation
+entry per click.
+
+Only one event is selected at a time; selecting another row
+replaces the token in the URL rather than stacking peeks.
+Selecting a row whose event cannot be encoded into a locator
+(`ExtraThreat`, `WindowsThreat`, or any row that is missing both
+source and destination IP) still opens the Quick peek inspector,
+but the URL `event` parameter is cleared on that selection — the
+peek is live for the current tab only and will not be restored by
+a reload or shared link.
 
 #### Pagination
 

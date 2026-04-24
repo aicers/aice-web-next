@@ -25,21 +25,21 @@ import {
   type FetchSensorsResult,
   fetchSensors,
 } from "@/app/[locale]/(dashboard)/detection/sensor-actions";
+import { isMorePopoverOpen } from "@/components/detection/more-popover";
 import {
   PaginationControls,
   type PaginationControlsLabels,
 } from "@/components/detection/pagination-controls";
 import {
+  QuickPeekInspector,
+  type QuickPeekInspectorLabels,
+} from "@/components/detection/quick-peek-inspector";
+import {
   ResultList,
   type ResultListLabels,
   type ResultListState,
 } from "@/components/detection/result-list";
-import {
-  EVENT_KIND_FRIENDLY_NAMES,
-  formatEndpointSummary,
-  levelBadgeVariant,
-} from "@/components/events/event-display-helpers";
-import { Badge } from "@/components/ui/badge";
+import { EVENT_KIND_FRIENDLY_NAMES } from "@/components/events/event-display-helpers";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -61,7 +61,6 @@ import {
   type EndpointChipLabels,
   type EndpointEntry,
 } from "@/lib/detection/endpoint-filter";
-import { formatEventTime } from "@/lib/detection/event-time";
 import type { Filter } from "@/lib/detection/filter";
 import {
   CONFIDENCE_DEFAULT_MAX,
@@ -87,6 +86,10 @@ import {
   totalPagesFrom,
 } from "@/lib/detection/pagination";
 import type { PeriodKey } from "@/lib/detection/period";
+import {
+  applyQuickPeekToken,
+  readQuickPeekToken,
+} from "@/lib/detection/quick-peek-url";
 import type {
   Event as DetectionEvent,
   LearningMethod,
@@ -100,10 +103,7 @@ import {
   pivotParamsFromFilterInput,
   type TagField,
 } from "@/lib/detection/url-filters";
-import {
-  encodeEventLocator,
-  isEventAddressable,
-} from "@/lib/events/event-locator";
+import { encodeEventLocator } from "@/lib/events/event-locator";
 import { cn } from "@/lib/utils";
 import {
   type DrawerFocusField,
@@ -153,6 +153,17 @@ type DrawerLabelStrings = Omit<FilterDrawerLabels, "attributes"> & {
   attributes: AttributesLabelStrings;
 };
 
+/**
+ * Serializable subset of {@link QuickPeekInspectorLabels}. Function-
+ * valued formatters (`triageSummary`, `moreCountSuffix`) are built
+ * on the client side using the locale translator — the server page
+ * only passes plain strings.
+ */
+export type QuickPeekLabelStrings = Omit<
+  QuickPeekInspectorLabels,
+  "triageSummary" | "moreCountSuffix"
+>;
+
 export interface DetectionShellLabels {
   recommendedFilter: string;
   savedFilters: string;
@@ -182,6 +193,7 @@ export interface DetectionShellLabels {
     sensor: string;
     sensorAggregate: string;
   };
+  quickPeek: QuickPeekLabelStrings;
 }
 
 /**
@@ -334,15 +346,36 @@ export const ENDPOINT_CHIP_FOCUS: FilterChipFocus = "endpoints";
  *   reconciled onto the replacement slice because `queryEpoch`
  *   hasn't advanced yet.
  *
+ * Reviewer Round 3 added `clearQuickPeekUrl`: closing the in-
+ * memory peek alone leaves the tab URL carrying a stale
+ * `?event=<token>` entry, so a reload after Refresh would
+ * resurrect the selection. The URL sink is injected rather than
+ * called inline so the helper stays DOM-free and testable.
+ *
+ * Reviewer Round 7 tightened the URL contract: the sink now
+ * receives `hadPeek` so callers can preserve the URL token when
+ * there is no open peek being dismissed. The specific scenario
+ * that prompted the change is "reload with `?event=` → transient
+ * backend error → click Refresh": the URL token is pending a
+ * successful retry, and unconditionally stripping it on dispatch
+ * would lose the selection URL state before the retry's slice
+ * could match it.
+ *
  * Extracted so the dispatch-time contract can be unit-tested
  * without standing up a full DOM render of the shell.
  */
 export function applyCommitDispatchReset(setters: {
   setQueryEpoch: (fn: (n: number) => number) => void;
-  setQuickPeekEvent: (event: null) => void;
+  setQuickPeekEvent: (
+    fn: (prev: DetectionEvent | null) => DetectionEvent | null,
+  ) => void;
+  clearQuickPeekUrl?: (args: { hadPeek: boolean }) => void;
 }): void {
   setters.setQueryEpoch((epoch) => epoch + 1);
-  setters.setQuickPeekEvent(null);
+  setters.setQuickPeekEvent((prev) => {
+    setters.clearQuickPeekUrl?.({ hadPeek: prev !== null });
+    return null;
+  });
 }
 
 export function DetectionShell({
@@ -442,6 +475,22 @@ export function DetectionShell({
     }),
     [t],
   );
+  // Build the Quick peek inspector labels on the client side. The
+  // server page supplies plain strings (including the per-subtype
+  // `protocolFields` table); function-valued formatters —
+  // `triageSummary` and `moreCountSuffix` — close over the active
+  // locale so they can't cross the server→client boundary and are
+  // assembled here instead.
+  const quickPeekLabels = useMemo<QuickPeekInspectorLabels>(
+    () => ({
+      ...labels.quickPeek,
+      triageSummary: ({ count, max }) =>
+        tResults("triageSummary", { count, max }),
+      moreCountSuffix: (count: number) =>
+        tResults("moreCountSuffix", { count }),
+    }),
+    [labels.quickPeek, tResults],
+  );
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openEndpointPanelOnDrawerOpen, setOpenEndpointPanelOnDrawerOpen] =
@@ -454,14 +503,16 @@ export function DetectionShell({
   const [committedEndpoints, setCommittedEndpoints] = useState<EndpointEntry[]>(
     [],
   );
-  // `pivotOnly` carries URL-only fields (kind/ports/proto/window) that
-  // arrive from the Investigation handoff. They are preserved through
-  // URL round-trips so pivot logic (Phase Detection-12) can pick them
-  // up, but they are not represented in `EventListFilterInput` and do
-  // not participate in the active filter chip bar yet — rendering them
-  // as chips would violate the "× is a self-contained commit that
-  // re-runs the query" contract while the underlying query still
-  // ignores them.
+  // `pivotOnly` carries URL-only fields that aren't yet represented
+  // in the drawer — today that's `origPort` / `respPort` / `proto`,
+  // which arrive from the Investigation handoff and ride through
+  // `history.replaceState` so the pivot shape survives a reload
+  // until Phase Network/IP wires them into the drawer. `kind` and
+  // `window` were previously also parked here, but they now live in
+  // the committed filter (`input.kinds`) and `committedPeriod`; the
+  // URL writer extracts them from there via
+  // {@link pivotParamsFromFilterInput} so edits in the drawer clear
+  // stale pivot tokens on the next Apply / chip removal.
   const pivotOnly = initialPivotOnly;
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(null);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
@@ -548,6 +599,15 @@ export function DetectionShell({
   const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
     null,
   );
+  // Ref mirror of `quickPeekEvent` so the async `runQueryFor` success
+  // path can read the latest state without becoming a dependency.
+  // Reviewer Round 7: used to gate the post-Refresh URL reconcile so
+  // a pending `?event=` token from the mount-error path can be
+  // matched against the retry's slice.
+  const quickPeekEventRef = useRef<DetectionEvent | null>(null);
+  useEffect(() => {
+    quickPeekEventRef.current = quickPeekEvent;
+  }, [quickPeekEvent]);
   const isDesktop = useIsDesktopViewport();
   // Monotonic id for the in-flight Apply; a late response whose id
   // no longer matches is dropped so the results region can't drift
@@ -613,6 +673,86 @@ export function DetectionShell({
     triggerSensorFetch,
   ]);
 
+  // Mirror the Quick peek selection into the URL so a refresh
+  // restores the active peek. `history.replaceState` matches the
+  // Apply / chip-remove path above — the selection is not a
+  // separate history entry, so Back does not rewind the peek.
+  //
+  // Defined ahead of the committed-query helpers (`dispatchQuery`,
+  // `runQueryFor`, `handleApply`, `handleRemoveChip`) so those paths
+  // can hand the URL sink into `applyCommitDispatchReset` —
+  // Reviewer Round 3 flagged that closing the in-memory peek alone
+  // leaves the tab URL carrying a stale `?event=<token>` entry, so
+  // Refresh plus reload would resurrect the selection.
+  const writeQuickPeekToUrl = useCallback((token: string | null) => {
+    if (typeof window === "undefined") return;
+    const nextSearch = applyQuickPeekToken(window.location.search, token);
+    const url = `${window.location.pathname}${nextSearch}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", url);
+  }, []);
+
+  // Match-or-strip leg of the mount-restore contract, run against a
+  // freshly resolved committed-query slice. Reviewer Round 7: the
+  // mount-only restore effect preserves a pending `?event=` token
+  // when the initial fetch errors; this helper picks up the
+  // deferred decision the first time a later successful slice can
+  // actually prove the token stale or restore the peek.
+  //
+  // Reviewer Round 8 widened the scope: the helper also closes any
+  // in-memory peek whose locator no longer matches the fresh slice.
+  // That covers the "peek reopened during the retained-slice loading
+  // window" race — the result list also drops row handlers during
+  // `status === "loading"` to prevent that re-open, but this
+  // defense-in-depth pass means the stale-inspector contract holds
+  // even if another path manages to set the peek between dispatch
+  // and the fetch landing.
+  const reconcileQuickPeekAgainstSlice = useCallback(
+    (nextEvents: readonly DetectionEvent[]) => {
+      if (typeof window === "undefined") return;
+      const current = quickPeekEventRef.current;
+      const currentToken = current ? encodeEventLocator(current) : null;
+      const stored = readQuickPeekToken(
+        new URLSearchParams(window.location.search),
+      );
+      // Prefer the in-memory peek's own locator when present — covers
+      // the race where a row click during the retained-slice loading
+      // window reopened the peek after dispatch. Fall back to the URL
+      // token for the mount-error restore path, where no in-memory
+      // peek exists yet.
+      const probeToken = currentToken ?? stored?.token ?? null;
+      if (!probeToken) {
+        // No URL token and no addressable in-memory peek. A non-
+        // addressable in-memory peek (rare: a schema-limited row was
+        // selected mid-flight) has no stable identity to re-match
+        // against the fresh slice, so close it rather than risk
+        // showing an inspector describing a row the new filter does
+        // not return.
+        if (current) setQuickPeekEvent(null);
+        return;
+      }
+      const match = nextEvents.find(
+        (evt) => encodeEventLocator(evt) === probeToken,
+      );
+      const action = reconcileQuickPeekUrlAction({
+        tokenPresent: stored !== null,
+        matchFound: match !== undefined,
+      });
+      if (match) {
+        // `restore` for the mount-error path (no in-memory peek yet);
+        // otherwise pin to the fresh-slice reference so downstream
+        // renders use the latest event identity.
+        if (action === "restore" && !current) setQuickPeekEvent(match);
+        else if (current && current !== match) setQuickPeekEvent(match);
+        return;
+      }
+      // Token present but the fresh slice does not contain it: strip
+      // the URL token and close any stale in-memory peek.
+      if (action === "strip") writeQuickPeekToUrl(null);
+      if (current) setQuickPeekEvent(null);
+    },
+    [writeQuickPeekToUrl],
+  );
+
   /**
    * Re-run a committed filter at a specific page / anchor. Used by
    * chip × removal, the result list's Refresh, the paginator's
@@ -647,7 +787,20 @@ export function DetectionShell({
       setHasQueried(true);
       if (!args.navigating) {
         // See `applyCommitDispatchReset` for the dispatch-time contract.
-        applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+        // Reviewer Round 7: only clear the URL token when we are
+        // actually dismissing an open peek. Otherwise — e.g. Refresh
+        // after an errored initial load, where the URL still carries a
+        // pending-restore token but `quickPeekEvent` is null — we leave
+        // the URL alone so a successful retry can still restore the
+        // peek. The post-fetch reconcile below performs the "prove
+        // stale with a successful slice" leg of the same contract.
+        applyCommitDispatchReset({
+          setQueryEpoch,
+          setQuickPeekEvent,
+          clearQuickPeekUrl: ({ hadPeek }) => {
+            if (hadPeek) writeQuickPeekToUrl(null);
+          },
+        });
       }
       const requestId = latestRequestIdRef.current + 1;
       latestRequestIdRef.current = requestId;
@@ -695,6 +848,23 @@ export function DetectionShell({
               });
               setResultError(null);
               setLastUpdatedMs(Date.now());
+              // Reviewer Round 7: if the mount-error path left a
+              // pending `?event=` token in the URL (no in-memory peek
+              // to dismiss, token preserved through dispatch), this is
+              // the first successful slice that can actually prove the
+              // token stale or restore the selection. Re-run the same
+              // match-or-strip logic the mount effect applies on first
+              // load, against the fresh slice we just committed.
+              //
+              // Reviewer Round 8: the prior `=== null` guard let a peek
+              // reopened during the retained-slice loading window
+              // survive even when the fresh slice no longer contained
+              // its row. Always reconciling — and letting the helper
+              // itself close a stale in-memory peek — closes that
+              // window. Paired with the result-list's handler gate on
+              // `status === "ready"`, the stale-inspector contract from
+              // #290 now has both a prevention and a detection leg.
+              reconcileQuickPeekAgainstSlice(result.events);
             } else {
               totalCountRef.current = null;
               setTotalCount(null);
@@ -724,7 +894,7 @@ export function DetectionShell({
         });
       });
     },
-    [labels.resultsError],
+    [labels.resultsError, writeQuickPeekToUrl, reconcileQuickPeekAgainstSlice],
   );
 
   // Wrapper used by the Apply / chip / Refresh paths — they all
@@ -789,7 +959,7 @@ export function DetectionShell({
       if (next.mode === "structured") {
         const merged = mergePivotParams(
           pivotOnly,
-          pivotParamsFromFilterInput(next.input),
+          pivotParamsFromFilterInput(next.input, applied.period),
         );
         const search = buildDetectionSearchParams(merged);
         // Apply resets the cursor to the start of the new filter
@@ -841,10 +1011,15 @@ export function DetectionShell({
       // operator opens the drawer next.
       setDraft(null);
       // Persist the removal in the URL the same way Apply does.
+      // The period chip removes `committedPeriod` → we pass `null` so
+      // the URL drops `window=` alongside the period itself; every
+      // other target leaves the period untouched so the current
+      // committed period still drives `window=` in the URL.
+      const nextPeriod = target.kind === "period" ? null : committedPeriod;
       if (next.filter.mode === "structured") {
         const merged = mergePivotParams(
           pivotOnly,
-          pivotParamsFromFilterInput(next.filter.input),
+          pivotParamsFromFilterInput(next.filter.input, nextPeriod),
         );
         const search = buildDetectionSearchParams(merged);
         clearPaginationParams(search);
@@ -860,6 +1035,7 @@ export function DetectionShell({
     [
       committedEndpoints,
       committedFilter,
+      committedPeriod,
       pagination.pageSize,
       pivotOnly,
       pathname,
@@ -1433,29 +1609,134 @@ export function DetectionShell({
     totalCount,
   ]);
 
-  const handleRowOpen = useCallback((event: DetectionEvent) => {
-    setQuickPeekEvent(event);
-  }, []);
+  /**
+   * Build the `/events/<token>?returnTo=...` href for an event so
+   * the Quick peek "Open full investigation" action can render as a
+   * real anchor tag — middle-click and Cmd+click open a new browser
+   * tab rather than routing programmatically. Returns `null` when
+   * the event lacks an encodable locator (schema-limited subtypes);
+   * callers hide the affordance in that case.
+   */
+  const buildInvestigateHref = useCallback(
+    (event: DetectionEvent): string | null => {
+      const token = encodeEventLocator(event);
+      if (!token) return null;
+      const search =
+        typeof window !== "undefined" ? window.location.search : "";
+      // Drop the peek-selection param from `returnTo` — if the
+      // operator comes back, Quick peek restores on mount from the
+      // tab's own URL state rather than from a stale `returnTo`.
+      const cleanSearch = applyQuickPeekToken(search, null);
+      const returnTo = `${pathname}${cleanSearch}`;
+      return `/events/${encodeURIComponent(token)}?returnTo=${encodeURIComponent(returnTo)}`;
+    },
+    [pathname],
+  );
+
+  const openQuickPeekFor = useCallback(
+    (event: DetectionEvent) => {
+      setQuickPeekEvent(event);
+      const token = encodeEventLocator(event);
+      writeQuickPeekToUrl(token);
+    },
+    [writeQuickPeekToUrl],
+  );
+
+  const closeQuickPeek = useCallback(() => {
+    setQuickPeekEvent(null);
+    writeQuickPeekToUrl(null);
+  }, [writeQuickPeekToUrl]);
+
+  const handleRowOpen = useCallback(
+    (event: DetectionEvent) => {
+      openQuickPeekFor(event);
+    },
+    [openQuickPeekFor],
+  );
 
   const handleRowInvestigate = useCallback(
     (event: DetectionEvent) => {
-      // Build a locator token and jump into the Investigation view.
-      // Carry the current pathname + search as `returnTo` so a
-      // non-default-locale operator who lands on `/events/<token>`
-      // can return to their filtered Detection tab. `useRouter`
-      // from `next-intl/navigation` is locale-aware — it prefixes
-      // the target path so Korean / English operators land on the
-      // right segment.
-      const token = encodeEventLocator(event);
-      if (!token) return;
-      const search =
-        typeof window !== "undefined" ? window.location.search : "";
-      const returnTo = `${pathname}${search}`;
-      const href = `/events/${encodeURIComponent(token)}?returnTo=${encodeURIComponent(returnTo)}`;
+      // Programmatic route kept for the row chevron. The Quick peek
+      // inspector itself renders the "Open full investigation"
+      // action as a real `<a>` (see {@link buildInvestigateHref}),
+      // so middle-click / Cmd+click work there; the row-level
+      // chevron lands directly on the investigation view via client
+      // navigation.
+      const href = buildInvestigateHref(event);
+      if (!href) return;
       router.push(href);
     },
-    [pathname, router],
+    [buildInvestigateHref, router],
   );
+
+  // Restore the Quick peek selection from the URL on mount. When
+  // the stored token's locator matches an event in the current
+  // slice (by re-encoding every event and comparing tokens), we
+  // pin the peek to that event. When the slice does not contain
+  // the event — e.g. the operator shared a link whose filter no
+  // longer matches, or pagination shifted — strip the stale token
+  // from the URL and keep the peek closed rather than opening on
+  // an arbitrary row (issue #290's "close the peek silently").
+  //
+  // The strip is gated on a confirmed-successful initial slice. A
+  // transient backend failure on first load surfaces as an empty
+  // `events` array alongside a non-null `initialResult.error`; in
+  // that case the slice never proved the token stale, so the URL
+  // is left intact and a later successful reload (or Refresh, if
+  // the commit path itself preserves the token) can still restore
+  // the peek.
+  //
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally mount-only — subsequent URL writes go through `writeQuickPeekToUrl` directly so re-running on every `events` change would fight the operator's own open/close actions.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = readQuickPeekToken(
+      new URLSearchParams(window.location.search),
+    );
+    if (!stored) return;
+    const match = events.find(
+      (evt) => encodeEventLocator(evt) === stored.token,
+    );
+    if (match) {
+      setQuickPeekEvent(match);
+      return;
+    }
+    if (
+      shouldStripStaleQuickPeekToken({
+        tokenPresent: true,
+        matchFound: false,
+        initialErrored: initialResult.error !== null,
+      })
+    ) {
+      writeQuickPeekToUrl(null);
+    }
+  }, []);
+
+  // Escape dismisses the desktop inline Quick peek pane. The narrow
+  // overlay Sheet uses Radix Dialog, which already handles Escape
+  // internally — so only attach the listener on the desktop branch
+  // to avoid double-close with the Sheet's built-in handler. We
+  // also skip the close when a `MorePopover` is open so a single
+  // Escape unwinds only the topmost layer (the popover) rather than
+  // collapsing the inspector too; a subsequent Escape — with no
+  // popover open — closes the inspector.
+  useEffect(() => {
+    if (!isDesktop || !quickPeekEvent) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (
+        !shouldCloseQuickPeekOnEscape({
+          isDesktop: true,
+          quickPeekOpen: true,
+          morePopoverOpen: isMorePopoverOpen(),
+        })
+      ) {
+        return;
+      }
+      closeQuickPeek();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isDesktop, quickPeekEvent, closeQuickPeek]);
 
   return (
     <div className="flex gap-4">
@@ -1600,14 +1881,23 @@ export function DetectionShell({
           {isDesktop && quickPeekEvent ? (
             <aside
               aria-label={resultListLabels.rowOpenLabel}
-              className="hidden w-80 shrink-0 flex-col overflow-hidden rounded-lg border border-[var(--sidebar-border)] desktop:flex"
+              className="hidden w-96 shrink-0 flex-col overflow-hidden rounded-lg border border-[var(--sidebar-border)] desktop:flex"
             >
-              <QuickPeekInspectorBody
+              {/*
+               * Remount the inspector whenever the selected event
+               * identity changes so descendant components with local
+               * UI state (notably `MorePopover`'s open flag) reset
+               * instead of leaking across row switches. Mirrors the
+               * `queryEpoch`-composed remount the result list uses
+               * for the same reason.
+               */}
+              <QuickPeekInspector
+                key={quickPeekResetKey(quickPeekEvent)}
                 event={quickPeekEvent}
+                labels={quickPeekLabels}
                 locale={locale}
-                labels={resultListLabels}
-                onClose={() => setQuickPeekEvent(null)}
-                onInvestigate={() => handleRowInvestigate(quickPeekEvent)}
+                investigateHref={buildInvestigateHref(quickPeekEvent)}
+                onClose={closeQuickPeek}
               />
             </aside>
           ) : null}
@@ -1667,14 +1957,97 @@ export function DetectionShell({
       <QuickPeekInspectorOverlay
         event={isDesktop ? null : quickPeekEvent}
         locale={locale}
-        labels={resultListLabels}
-        onClose={() => setQuickPeekEvent(null)}
-        onInvestigate={() => {
-          if (quickPeekEvent) handleRowInvestigate(quickPeekEvent);
-        }}
+        labels={quickPeekLabels}
+        buildInvestigateHref={buildInvestigateHref}
+        onClose={closeQuickPeek}
       />
     </div>
   );
+}
+
+/**
+ * Stable identity string for a Quick peek selection, used as the
+ * inspector's React `key` so changing rows remounts the subtree.
+ * `encodeEventLocator` is preferred (it is the same token persisted
+ * to the URL and so collides at the same rate as the locator), but
+ * it returns null for events missing addressing data; in that case
+ * we fall back to the composite tuple the locator itself is built
+ * from. The row list already uses a similar epoch-plus-cursor key
+ * to reset `MorePopover` state across committed queries.
+ */
+export function quickPeekResetKey(event: DetectionEvent): string {
+  const token = encodeEventLocator(event);
+  if (token) return `t:${token}`;
+  return `e:${event.__typename}|${event.time}|${event.sensor}`;
+}
+
+/**
+ * Decides whether the mount-only URL restore should strip a stale
+ * `?event=` token after it fails to match any event in the current
+ * slice. The strip is the issue's documented "close the peek
+ * silently" behavior, but it is only safe after a successful slice
+ * load has proved the token does not map into the active query. A
+ * transient backend error on first load surfaces as an empty
+ * `events` array alongside a non-null `initialError`; in that case
+ * the slice never proved the token stale, so the URL is left alone
+ * and a later successful reload can still restore the peek.
+ */
+export function shouldStripStaleQuickPeekToken(args: {
+  tokenPresent: boolean;
+  matchFound: boolean;
+  initialErrored: boolean;
+}): boolean {
+  if (!args.tokenPresent) return false;
+  if (args.matchFound) return false;
+  if (args.initialErrored) return false;
+  return true;
+}
+
+/**
+ * Decision for the post-fetch Quick peek URL reconcile used by
+ * `runQueryFor`. Reviewer Round 7: a Refresh after a transient
+ * initial-load error must re-evaluate a pending `?event=` token
+ * against the replacement slice — restoring the peek on match,
+ * stripping the token on a confirmed miss, no-op when the URL
+ * carries no token. The mount-only restore effect can't help here
+ * because it is gated on `[]` and only runs once.
+ *
+ * Extracted as a pure helper so the branch logic stays unit-
+ * testable without standing up the client component.
+ */
+export type ReconcileQuickPeekUrlAction = "noop" | "restore" | "strip";
+
+export function reconcileQuickPeekUrlAction(args: {
+  tokenPresent: boolean;
+  matchFound: boolean;
+}): ReconcileQuickPeekUrlAction {
+  if (!args.tokenPresent) return "noop";
+  if (args.matchFound) return "restore";
+  return "strip";
+}
+
+/**
+ * Predicate for the desktop inline inspector's Escape handler.
+ *
+ * Reviewer Round 13: pressing Escape with a `+N more` popover open
+ * used to close the popover and the inspector together, because
+ * both surfaces installed document-level Escape listeners on the
+ * same key event. The shell's handler now skips the close when any
+ * `MorePopover` is open — a single Escape unwinds only the topmost
+ * layer (the popover); a subsequent Escape (with no popover open)
+ * dismisses the inspector. Extracted as a pure helper so the branch
+ * logic stays unit-testable without standing up the client
+ * component.
+ */
+export function shouldCloseQuickPeekOnEscape(args: {
+  isDesktop: boolean;
+  quickPeekOpen: boolean;
+  morePopoverOpen: boolean;
+}): boolean {
+  if (!args.isDesktop) return false;
+  if (!args.quickPeekOpen) return false;
+  if (args.morePopoverOpen) return false;
+  return true;
 }
 
 /**
@@ -1698,32 +2071,29 @@ function useIsDesktopViewport(): boolean {
 }
 
 /**
- * Narrow-viewport Quick peek inspector: an overlay sheet. Phase
- * Detection-18 owns the full contents; for v1 we render the compact
- * summary the list row already shows plus the "Open investigation"
- * jump. At ≥ desktop widths the shell renders the same body
- * ({@link QuickPeekInspectorBody}) inline as a right-hand pane,
- * matching the layout contract in issue #280.
+ * Narrow-viewport Quick peek inspector: an overlay Sheet that wraps
+ * {@link QuickPeekInspector}. At ≥ desktop widths the shell renders
+ * the same component inline as a right-hand pane; see #280 for the
+ * width-responsive layout contract. The overlay supplies its own
+ * close button via `SheetContent`, so the inline Close affordance
+ * inside the inspector is suppressed with `showClose={false}`.
  */
 function QuickPeekInspectorOverlay({
   event,
   locale,
   labels,
+  buildInvestigateHref,
   onClose,
-  onInvestigate,
 }: {
   event: DetectionEvent | null;
   locale: string;
-  labels: ResultListLabels;
+  labels: QuickPeekInspectorLabels;
+  buildInvestigateHref: (event: DetectionEvent) => string | null;
   onClose: () => void;
-  onInvestigate: () => void;
 }) {
   const open = event !== null;
   const kindLabel = event
     ? (EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename)
-    : "";
-  const timeLabel = event
-    ? formatEventTime(event.time, locale, labels.unknownTime)
     : "";
   return (
     <Sheet
@@ -1735,112 +2105,40 @@ function QuickPeekInspectorOverlay({
       <SheetContent
         side="right"
         className="sm:max-w-md"
-        closeLabel={labels.quickPeekClose}
+        closeLabel={labels.close}
+        onEscapeKeyDown={(event) => {
+          // A `MorePopover` inside the overlay installs its own
+          // Escape-to-close handler. Without this guard Radix would
+          // also treat the same Escape as a Sheet-close signal,
+          // collapsing both layers together. Preventing default here
+          // lets the popover close first; a subsequent Escape — with
+          // no popover open — dismisses the Sheet.
+          if (isMorePopoverOpen()) event.preventDefault();
+        }}
       >
-        <SheetHeader>
+        {/*
+         * The Sheet primitive requires an accessible title and
+         * description for screen readers. `QuickPeekInspector`
+         * renders its own visible header (kind + time) — hide the
+         * Sheet-level ones visually but keep them in the a11y tree.
+         */}
+        <SheetHeader className="sr-only">
           <SheetTitle>{kindLabel}</SheetTitle>
-          <SheetDescription>{timeLabel}</SheetDescription>
+          <SheetDescription>{labels.summaryHeading}</SheetDescription>
         </SheetHeader>
         {event ? (
-          <QuickPeekInspectorContent
+          <QuickPeekInspector
+            key={quickPeekResetKey(event)}
             event={event}
             labels={labels}
-            onInvestigate={onInvestigate}
+            locale={locale}
+            investigateHref={buildInvestigateHref(event)}
+            onClose={onClose}
+            showClose={false}
           />
         ) : null}
       </SheetContent>
     </Sheet>
-  );
-}
-
-/**
- * Inline inspector body used by the desktop+ right-hand pane. The
- * pane header mirrors the overlay's `SheetHeader` (kind + time) and
- * carries an explicit Close affordance because there's no backdrop
- * click to dismiss the inline pane.
- */
-function QuickPeekInspectorBody({
-  event,
-  locale,
-  labels,
-  onClose,
-  onInvestigate,
-}: {
-  event: DetectionEvent;
-  locale: string;
-  labels: ResultListLabels;
-  onClose: () => void;
-  onInvestigate: () => void;
-}) {
-  const kindLabel =
-    EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
-  const timeLabel = formatEventTime(event.time, locale, labels.unknownTime);
-  return (
-    <>
-      <header className="flex items-start gap-2 border-b border-[var(--sidebar-border)] px-4 py-3">
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-foreground truncate text-sm font-semibold">
-            {kindLabel}
-          </span>
-          <span className="text-muted-foreground text-xs">{timeLabel}</span>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={labels.quickPeekClose}
-          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex size-7 items-center justify-center rounded-sm focus-visible:ring-2 focus-visible:outline-none"
-        >
-          <X className="size-4" aria-hidden="true" />
-        </button>
-      </header>
-      <QuickPeekInspectorContent
-        event={event}
-        labels={labels}
-        onInvestigate={onInvestigate}
-      />
-    </>
-  );
-}
-
-function QuickPeekInspectorContent({
-  event,
-  labels,
-  onInvestigate,
-}: {
-  event: DetectionEvent;
-  labels: ResultListLabels;
-  onInvestigate: () => void;
-}) {
-  const addressable = isEventAddressable(event);
-  const endpointSummary = formatEndpointSummary(event);
-  return (
-    <div className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-3">
-      <div className="flex items-center gap-2">
-        <Badge variant={levelBadgeVariant(event.level)} className="uppercase">
-          {labels.levelLabels[event.level] ?? event.level}
-        </Badge>
-        <span className="text-muted-foreground text-xs">
-          {labels.confidenceLabel} {event.confidence.toFixed(2)}
-        </span>
-      </div>
-      {endpointSummary ? (
-        <p className="text-foreground font-mono text-xs break-all">
-          {endpointSummary}
-        </p>
-      ) : null}
-      <p className="text-muted-foreground text-xs">
-        {event.sensor || labels.noSensor}
-      </p>
-      <Button
-        type="button"
-        size="sm"
-        onClick={onInvestigate}
-        disabled={!addressable}
-        className="mt-2 self-start"
-      >
-        {labels.rowInvestigateLabel}
-      </Button>
-    </div>
   );
 }
 

@@ -8,7 +8,8 @@ import {
   RefreshCw,
   TriangleAlert,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { MorePopover } from "@/components/detection/more-popover";
 import {
   EVENT_KIND_FRIENDLY_NAMES,
   levelBadgeVariant,
@@ -324,6 +325,19 @@ function ResultListBody({
     );
   }
 
+  // Gate row interactivity on `status === "ready"`. Reviewer Round 8:
+  // during a committed-query transition (Apply / chip × / Refresh) the
+  // shell closes the peek at dispatch, but the `loading` branch above
+  // keeps rendering the previous slice so the results region does not
+  // flash an empty panel. Leaving `onRowOpen` / `onRowInvestigate`
+  // wired through that retained-slice window would let a click on a
+  // stale row reopen Quick peek on an event the newly committed
+  // filter may no longer return — exactly the stale-inspector
+  // window #290's state contract forbids. Dropping the handlers
+  // makes the overlay button + investigate chevron disappear, so
+  // the rows render as a read-only snapshot until the fresh slice
+  // lands.
+  const rowsInteractive = state.status === "ready";
   return (
     <ul className="flex flex-col gap-2" data-slot="detection-result-list">
       {state.events.map((event, index) => {
@@ -346,8 +360,8 @@ function ResultListBody({
             event={event}
             labels={labels}
             locale={locale}
-            onRowOpen={onRowOpen}
-            onRowInvestigate={onRowInvestigate}
+            onRowOpen={rowsInteractive ? onRowOpen : undefined}
+            onRowInvestigate={rowsInteractive ? onRowInvestigate : undefined}
           />
         );
       })}
@@ -371,7 +385,13 @@ function EventRow({
   const addressing = readEventAddressing(event);
   const kindLabel =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
-  const isInteractive = typeof onRowOpen === "function";
+  // Issue #290 acceptance: selecting any row opens the Quick peek.
+  // Schema-limited subtypes (e.g. `ExtraThreat` / `WindowsThreat`)
+  // still open the inspector; the URL persistence limitation (no
+  // encodable locator → peek cannot be restored on reload) is
+  // handled separately by `openQuickPeekFor` in the shell.
+  const canOpenPeek = typeof onRowOpen === "function";
+  const isInteractive = canOpenPeek;
   // Compute the endpoint sides up front so the row can omit the
   // entire source → destination line (and its separator to sensor)
   // for subtypes whose schema exposes no addressing at all — e.g.
@@ -406,7 +426,7 @@ function EventRow({
         isInteractive && "hover:bg-accent/40 focus-within:bg-accent/40",
       )}
     >
-      {isInteractive ? (
+      {canOpenPeek ? (
         // Overlay "open Quick peek" button covers the whole row. Keeping
         // it as a sibling of the interactive controls (MorePopover,
         // investigate chevron) — instead of wrapping them — avoids
@@ -628,97 +648,20 @@ function EndpointPart({
         <MorePopover
           count={endpoint.extraAddresses.length}
           values={endpoint.extraAddresses}
-          labels={labels}
+          moreCountSuffix={labels.moreCountSuffix}
         />
       ) : null}
       {endpoint.extraPorts.length > 0 ? (
         <MorePopover
           count={endpoint.extraPorts.length}
           values={endpoint.extraPorts.map((p) => String(p))}
-          labels={labels}
+          moreCountSuffix={labels.moreCountSuffix}
         />
       ) : null}
       {country ? (
         <span className="text-muted-foreground/80 ml-1 normal-case">
           ({country})
         </span>
-      ) : null}
-    </span>
-  );
-}
-
-/**
- * Compact `+N more` control that reveals the full list of hidden
- * values on activation. Uses a minimal inline popover — clicking
- * the button toggles a panel anchored beneath it; clicking outside
- * or pressing Escape closes it. Satisfies the spec's "popover for
- * the full list" acceptance without pulling in a new Radix
- * primitive.
- */
-function MorePopover({
-  count,
-  values,
-  labels,
-}: {
-  count: number;
-  values: string[];
-  labels: ResultListLabels;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLSpanElement | null>(null);
-  // Outside-click handler is scoped to this popover's own wrapper via
-  // ref, so a click on the trigger counts as "inside" (the button's
-  // onClick still runs and toggles closed) and, with multiple popovers
-  // on the same row, clicking into another popover correctly closes
-  // this one.
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (wrapperRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const keyHandler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    document.addEventListener("keydown", keyHandler);
-    return () => {
-      document.removeEventListener("mousedown", handler);
-      document.removeEventListener("keydown", keyHandler);
-    };
-  }, [open]);
-  return (
-    <span
-      className="pointer-events-auto relative z-10 inline-flex"
-      ref={wrapperRef}
-    >
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        className="text-muted-foreground/80 hover:text-foreground focus-visible:ring-ring/50 rounded px-1 focus-visible:ring-2 focus-visible:outline-none"
-      >
-        {labels.moreCountSuffix(count)}
-      </button>
-      {open ? (
-        <div
-          role="dialog"
-          className="bg-popover text-popover-foreground absolute top-full z-20 mt-1 max-h-64 min-w-[10rem] overflow-auto rounded-md border p-2 shadow-md"
-        >
-          <ul className="flex flex-col gap-0.5 font-mono text-xs">
-            {values.map((v) => (
-              <li key={v} className="truncate">
-                {v}
-              </li>
-            ))}
-          </ul>
-        </div>
       ) : null}
     </span>
   );

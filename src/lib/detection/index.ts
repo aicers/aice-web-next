@@ -116,6 +116,7 @@ export {
   type PivotWindow,
   parsePivotSearchParams,
   pivotParamsFromFilterInput,
+  pivotWindowToPeriodKey,
   TAG_FIELDS,
   type TagField,
   TEXT_FIELDS,
