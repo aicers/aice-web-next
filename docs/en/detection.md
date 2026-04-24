@@ -31,6 +31,144 @@ The page is organized into four regions. The Results area is the
 dominant region of the workspace; the supporting regions are kept
 compact so they do not distract from the findings.
 
+### Result tabs
+
+![Detection result tabs — wireframe stand-in](../assets/detection-tabs-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The multi-tab illustration above is an SVG wireframe. Per
+    `docs/AUTHORING.md` §"Screenshot exception for
+    infrastructure-gated features" it stands in for a real capture
+    until a staging environment with seeded detection data is
+    available — the surrounding result area depends on live REview
+    data. Follow-up issue
+    [#335](https://github.com/aicers/aice-web-next/issues/335)
+    tracks the screenshot debt and will replace this wireframe
+    with a real PNG once staging is reachable.
+
+The page works with a set of **result tabs**. Each tab is a regular
+search tab that pairs one filter with its own cached result; the
+filter drawer and the active chip bar always reflect the active
+tab's filter.
+
+On page entry a single tab is auto-created with the default filter
+(**Last 1 hour**) and auto-executed. Additional tabs are meant for
+context switches, not for iterating on the current filter:
+incremental edits happen in the active tab via the filter drawer
+and Apply.
+
+New tabs are created by:
+
+- The `+` affordance on the tab bar. The new tab is populated with
+  the default filter and does **not** auto-run — hit Apply to run
+  the query.
+- The pivot affordances in the Investigation view (Phase
+  Detection-12).
+- Activating a saved or recommended filter (Phase Detection-15 /
+  -16).
+
+Up to **eight** tabs can exist simultaneously. When the cap is hit
+the `+` affordance is disabled and a tooltip explains why.
+
+Each tab carries:
+
+- **A title.** By default the title is auto-generated from a short
+  summary of the filter (for example `Last 1h · High` for a tab
+  narrowed to the last hour and the `HIGH` threat level; tabs with
+  no filter show `New tab`). Double-click the title — or, for
+  keyboard-only operators, focus the tab and press **F2** — to
+  rename it. The rename is preserved across filter edits so your
+  label does not get overwritten while you refine the tab. A `↺`
+  affordance next to a renamed title reverts to the auto-generated
+  summary; the keyboard equivalent is F2 → clear the input → Enter,
+  which commits an empty rename back to auto.
+- **A close affordance.** The `×` removes the tab — or press
+  **Delete** with the tab focused; the neighbouring tab becomes
+  active. Closing the last tab auto-creates a fresh default tab
+  (`Last 1 hour`, auto-run — the same state as cold-start page
+  entry, not a pending `+` tab) so the page never renders tab-less.
+
+Switching tabs does **not** hit the network — the cached result of
+the target tab is shown immediately, and the filter drawer + chip
+bar re-synchronise to the target tab's filter. Apply in the active
+tab replaces only that tab's cached result; the other tabs are not
+affected. Switching away from a tab also discards any unapplied
+draft in its filter drawer, so returning to the tab and reopening
+the drawer re-seeds from the committed filter rather than the
+abandoned edit.
+
+A freshness indicator on the result header shows **Updated N ago**
+relative to the tab's last successful query, with the same Refresh
+affordance that re-runs the active filter. On a fresh `+` tab that
+has never been applied, Refresh is disabled so the first query
+always goes through the drawer's Apply path — this matches the
+"the user must Apply" rule for new tabs. Refresh re-rolls the
+active tab's relative period against the wall clock before
+running, so a `Last 1 hour` tab queries the hour ending *now* even
+if you Apply it, leave it, and come back an hour later. Reopening
+the drawer after Refresh reflects the rolled window — the drawer's
+start / end inputs are re-seeded from the committed filter whenever
+the period is rolled forward, so they never lag behind the chip bar.
+
+Removing the period chip with `×` always clears the time filter
+outright — on a pending `+` tab the tab stays pending with no
+committed period or range, and on an already-run tab the next
+query runs with no time bounds. Either way the chip does not
+come back on reload: the shared URL carries a `?notime=1`
+marker for committed tabs so the SSR loader recognises the
+intentional "no time filter" state and does not resurrect
+`Last 1 hour`. Pending tabs carry `?pending=1` for the same
+reason, and `sessionStorage` mirrors both so you return to the
+exact state you left.
+
+#### Persistence across reload
+
+Tab state is split between the URL and `sessionStorage`:
+
+- The **URL** carries shareable state — everything a link recipient
+  (Slack / bookmark / reload) is expected to reproduce. The active
+  tab index (`?tab=N`) and the active tab's **full filter** —
+  period (or explicit start/end), directions, confidence range, the
+  categorical selections (levels, countries, categories, kinds,
+  learning methods), sensors, endpoint rows, and the free-form
+  source / destination / keyword / hostname / user fields — always
+  ride in the top-level params. When the whole working set fits
+  inside a pragmatic URL-length budget, every tab's filter also
+  rides along in a compact `?tabs=<json>` param so a shared link
+  reproduces the author's whole strip instead of just the active
+  one. A period chip rolls forward to "now" on load, so shared
+  links for `Last 1 hour` keep meaning "the last hour" for the
+  recipient too. A freshly-opened `+` tab that has not run yet is
+  marked with `?pending=1` so a reload reproduces the pre-query
+  empty panel instead of auto-firing the default 1-hour query. A
+  future query-language tab serialises as `?mode=query&q=<text>`;
+  the URL layer round-trips both branches of the abstract `Filter`
+  type so the persistence contract does not have to change when the
+  search-language front-end lands.
+- **`sessionStorage`** carries the private, non-shareable state —
+  every tab's filter snapshot (including the manual rename and the
+  flag that controls auto-run), any extras that overflowed the URL
+  budget, and the per-tab analytics-strip expansion flag. Other
+  per-tab UI surfaces (scroll position, row popovers, the quick-peek
+  aside) are runtime-only and are not restored on reload. None of
+  the persisted state rides on a shared link, so opening someone
+  else's URL never leaks their preferred panel layout.
+
+On load the URL wins. When the URL carries the full `?tabs=<json>`
+payload it is authoritative for the whole strip and sessionStorage
+is only consulted to overlay per-tab UI state (analytics expansion,
+manual names when the URL slot is null). When the URL only
+describes the active tab — either a shared link whose author had
+too many tabs to fit in the budget, or a pivot hand-off link — the
+stored tab set is rebased around the URL's active filter. A
+recipient who opens a single-tab shared URL in their own browser
+sees only that tab; their sessionStorage is empty. Reloading the
+page after you have built up a working set of tabs restores the
+full set and the active index. The URL is also refreshed
+immediately when the active tab changes (including `+` and close)
+so a reload never rebases the new tab around the old one's filter.
+
 ### Saved / Recommended rail
 
 A slim rail on the left lists two sections:
@@ -73,8 +211,11 @@ When the future search-language filter mode is enabled
 and the bar will instead render the query text as a single
 editable pill — the query language can express OR / NOT / regex
 that structured chips cannot represent. The pill's query editor
-lands in a later phase; until then, query-mode filters carry no
-chip-level decomposition.
+lands in a later phase; until then, the URL and sessionStorage
+decoders still round-trip the `mode: "query"` branch for forward
+compatibility, but the page boundary downgrades any such tab to
+a default-period structured tab so the chip bar and drawer never
+land on an unrenderable filter.
 
 Every chip carries an `×` affordance. Pressing `×` is a
 self-contained commit — the field is removed from the active
@@ -89,12 +230,13 @@ direction, confidence, sensor, endpoint, and categorical chips
 scroll their section into view) so you can amend the value
 before re-applying.
 
-Tag-field state and the `Source` / `Destination` values are
-persisted in the URL as comma-separated values
-(`?keywords=alpha,beta`). Refreshing the page restores these
-free-form fields, and clearing all values removes the parameter
-from the URL. The time range is not persisted in the URL, so a
-refresh falls back to the default period.
+All drawer fields are persisted in the URL so a refresh or a
+shared link reproduces the active tab's filter in full. Arrays
+(tag inputs, categorical selections, sensors) are encoded as
+comma-separated values (`?keywords=alpha,beta`); the time range
+rides on `?period=1h` for chip selections or `?start=…&end=…`
+for explicit windows. Clearing a field removes its parameter
+from the URL.
 
 ### Results
 

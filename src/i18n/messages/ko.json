@@ -791,6 +791,19 @@
     },
     "quickPeek": {
       "placeholder": "간단 미리보기가 여기에 표시됩니다."
+    },
+    "tabs": {
+      "tabBarLabel": "탐지 검색 탭",
+      "addTab": "새 탭 열기",
+      "addTabCapTooltip": "탭 한도에 도달했습니다(탭 {cap}개). 새 탭을 열려면 먼저 기존 탭을 닫으세요.",
+      "closeTab": "탭 {name} 닫기",
+      "resetName": "탭 이름을 자동 생성으로 재설정",
+      "renamePlaceholder": "탭 이름",
+      "autoNameHint": "자동 생성된 탭 이름",
+      "manualNameHint": "수동으로 변경된 탭 이름",
+      "doubleClickToRename": "두 번 클릭하여 이름 변경",
+      "autoEmptyTab": "새 탭",
+      "autoMoreSuffix": "+{count}"
     }
   },
   "events": {

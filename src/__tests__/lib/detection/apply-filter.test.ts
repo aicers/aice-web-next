@@ -105,4 +105,53 @@ describe("buildAppliedFilter", () => {
     expect(next.input.start).toBe(START);
     expect(next.input.end).toBe(END);
   });
+
+  it("omits start/end when the draft has neither set (no-time Apply)", () => {
+    // Pending `+` tab path: the operator cleared the default
+    // `Last 1 hour` chip on a new tab and hit Apply. `buildAppliedFilter`
+    // must produce a filter with no time bounds — not throw, not carry
+    // a stale prior `start`/`end` — so the first query on that tab
+    // runs as an all-time query the same way chip-removal on a
+    // committed tab does.
+    const current: Filter = { mode: "structured", input: {} };
+    const next = buildAppliedFilter(
+      current,
+      draft({ startIso: null, endIso: null, startLocal: "", endLocal: "" }),
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(Object.hasOwn(next.input, "start")).toBe(false);
+    expect(Object.hasOwn(next.input, "end")).toBe(false);
+  });
+
+  it("drops a prior start/end when the draft has neither set", () => {
+    // Safety: even if the committed filter still carries a time range
+    // (e.g. the draft got cleared programmatically mid-flow), the
+    // no-time Apply must produce a filter whose time bounds are
+    // genuinely absent — not inherited from the prior commit.
+    const current: Filter = {
+      mode: "structured",
+      input: { start: START, end: END, levels: [1] },
+    };
+    const next = buildAppliedFilter(
+      current,
+      draft({ startIso: null, endIso: null, startLocal: "", endLocal: "" }),
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(Object.hasOwn(next.input, "start")).toBe(false);
+    expect(Object.hasOwn(next.input, "end")).toBe(false);
+    expect(next.input.levels).toEqual([1]);
+  });
+
+  it("throws on a one-sided draft range", () => {
+    // The drawer's submit validator already rejects one-sided ranges.
+    // This guards the lib-layer entry point against programmatic
+    // callers that skip the drawer.
+    const current: Filter = { mode: "structured", input: {} };
+    expect(() =>
+      buildAppliedFilter(current, draft({ endIso: null, endLocal: "" })),
+    ).toThrow();
+    expect(() =>
+      buildAppliedFilter(current, draft({ startIso: null, startLocal: "" })),
+    ).toThrow();
+  });
 });

@@ -23,6 +23,13 @@ import {
   fetchSensors,
 } from "@/app/[locale]/(dashboard)/detection/sensor-actions";
 import {
+  type DetectionTabData,
+  type DetectionTabLabels,
+  DetectionTabs,
+  detectionTabDomId,
+  detectionTabPanelDomId,
+} from "@/components/detection/detection-tabs";
+import {
   ResultList,
   type ResultListLabels,
   type ResultListState,
@@ -51,6 +58,7 @@ import type { DirectionChipLabels } from "@/lib/detection/direction";
 import { readDirectionsFromInput } from "@/lib/detection/direction";
 import {
   buildEndpointChips,
+  type EndpointChip,
   type EndpointChipLabels,
   type EndpointEntry,
 } from "@/lib/detection/endpoint-filter";
@@ -68,18 +76,34 @@ import {
   type SummarizeFilterLabels,
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
+import { buildAllTabsSearchParams } from "@/lib/detection/filter-url";
 import type { PeriodKey } from "@/lib/detection/period";
+import { computePeriodRange, DEFAULT_PERIOD_KEY } from "@/lib/detection/period";
+import {
+  type AutoTabNameLabels,
+  buildAutoTabName,
+} from "@/lib/detection/tab-name";
+import {
+  ACTIVE_TAB_PARAM,
+  coerceTabForLivePage,
+  createBlankTab,
+  createDefaultTab,
+  parseTabsFromSession,
+  rehydrateTabs,
+  resolveTabPeriod,
+  serializeTabsForSession,
+  TAB_CAP,
+  TABS_SESSION_KEY,
+  type TabSnapshot,
+} from "@/lib/detection/tabs";
 import type {
   Event as DetectionEvent,
   LearningMethod,
 } from "@/lib/detection/types";
-import {
-  buildDetectionSearchParams,
-  mergePivotParams,
-  type PivotChipLabels,
-  type PivotFilterParams,
-  pivotParamsFromFilterInput,
-  type TagField,
+import type {
+  PivotChipLabels,
+  PivotFilterParams,
+  TagField,
 } from "@/lib/detection/url-filters";
 import {
   encodeEventLocator,
@@ -99,20 +123,8 @@ import type {
   SensorOption,
 } from "./sensor-multi-select";
 
-/**
- * Serializable subset of {@link PivotChipLabels} — the server page passes
- * this shape, and the client shell injects `countAggregate` (a function
- * that takes a dynamic count) on render. Function props can't cross the
- * server→client boundary, so the bound translator stays on the client.
- */
 type ChipLabelStrings = Omit<PivotChipLabels, "countAggregate">;
 
-/**
- * Serializable subset of {@link FilterDrawerLabels["attributes"]} — the
- * server page passes plain strings for each tag field, and the client
- * shell constructs the per-field `removeLabel` formatter using the
- * locale's translator.
- */
 type AttributesLabelStrings = Omit<
   FilterDrawerLabels["attributes"],
   "keywords" | "hostnames" | "userIds" | "userNames" | "userDepartments"
@@ -124,12 +136,6 @@ type AttributesLabelStrings = Omit<
   userDepartments: Omit<TagFieldLabel, "removeLabel">;
 };
 
-/**
- * Serializable subset of {@link FilterDrawerLabels} — the server page
- * passes plain strings for each tag field, and the client shell
- * constructs the per-field `removeLabel` formatter using the locale's
- * translator.
- */
 type DrawerLabelStrings = Omit<FilterDrawerLabels, "attributes"> & {
   attributes: AttributesLabelStrings;
 };
@@ -152,15 +158,22 @@ export interface DetectionShellLabels {
   confidenceChipLabel: string;
   chipLabels: ChipLabelStrings;
   drawer: DrawerLabelStrings;
-  /**
-   * Serializable subset of {@link SummarizeFilterLabels} — the server
-   * page only passes plain strings; the client shell builds the full
-   * labels (including the function-valued `formatRange` and
-   * `categoricalAggregate` formatters) using the locale translator.
-   */
   summarize: {
     sensor: string;
     sensorAggregate: string;
+  };
+  /**
+   * Multi-tab (Phase Detection-10) UI labels.
+   *
+   * Only the plain-string slice of {@link DetectionTabLabels} crosses
+   * the server→client boundary here; the two formatter callbacks
+   * (`addTabCapTooltip`, `closeTab`) are built inside the shell with
+   * `useTranslations` so server components never have to serialize
+   * functions into client-component props.
+   */
+  tabs: Omit<DetectionTabLabels, "addTabCapTooltip" | "closeTab"> & {
+    autoEmptyTab: string;
+    autoMoreSuffix: string;
   };
 }
 
@@ -168,13 +181,6 @@ export interface DetectionShellInitialResult {
   totalCount: string | null;
   error: string | null;
   events: DetectionEvent[];
-  /**
-   * Parallel to `events`: `eventKeys[i]` is the stable cursor for
-   * `events[i]`. Threaded through from the server so the result
-   * list can key rows on server identity instead of a lossy
-   * composite of content fields (which aliases when two events
-   * share the same time / endpoint tuple within one page).
-   */
   eventKeys: string[];
 }
 
@@ -185,18 +191,19 @@ interface DetectionShellProps {
   initialFilter: Filter;
   initialPeriod: PeriodKey | null;
   initialResult: DetectionShellInitialResult;
-  /** URL-only pivot params (kind, ports, proto, window). Preserved through URL round-trips for Phase Detection-12 pivot logic; not rendered as active-filter chips yet because they do not participate in the committed `EventListFilterInput`. */
   initialPivotOnly?: PivotFilterParams;
+  initialEndpoints?: readonly EndpointEntry[];
+  /**
+   * Full tab strip reconstructed from the URL. The active tab
+   * shares its filter/period/endpoints with `initialFilter` /
+   * `initialPeriod` / `initialEndpoints`, and carries the SSR
+   * `initialResult`; the others start blank and will run on
+   * demand when the operator switches to them.
+   */
+  initialTabs?: TabSnapshot[];
+  initialActiveIndex?: number;
 }
 
-/**
- * Session-cached sensor inventory. The drawer resolves this on
- * first open and reuses it for subsequent opens in the same tab,
- * so toggling the drawer repeatedly does not re-hit the REview
- * endpoint. The `status` discriminator distinguishes "not fetched
- * yet" from "fetched but endpoint absent" so the UI can tell a
- * real empty inventory from a transitional build.
- */
 export type SensorCache =
   | { status: "idle" }
   | { status: "loading" }
@@ -207,14 +214,6 @@ export type SensorCache =
     }
   | { status: "error" };
 
-/**
- * Translate the session sensor cache into the visual state the
- * Sensor control should render. The mapping is intentionally
- * distinct for each non-ready source so that the UI does not
- * conflate "endpoint genuinely absent" with "endpoint live but
- * request in flight" or "endpoint live but the last attempt
- * failed" — the reviewer concern that motivated this helper.
- */
 export function sensorStateForCache(
   cache: SensorCache,
 ): SensorMultiSelectState {
@@ -225,66 +224,23 @@ export function sensorStateForCache(
   return "loading";
 }
 
-/**
- * True when an open-drawer path should kick off a sensor fetch. An
- * in-flight request or a loaded cache is reused as-is; `idle` (never
- * fetched) and `error` (last attempt failed) both re-request so the
- * Sensor control doesn't sit in its disabled placeholder forever.
- * Shared by both the Filters button path and the chip-body path so
- * the two cannot drift.
- */
 export function shouldTriggerSensorFetch(cache: SensorCache): boolean {
   return cache.status !== "loading" && cache.status !== "loaded";
 }
 
-/**
- * Whether opening the drawer on a given chip-body focus should also
- * expand the Network/IP advanced panel. Only the endpoints aggregate
- * wants it; every other focus (period, source, direction, …) must
- * explicitly clear the flag so a prior endpoint activation doesn't
- * leak into an unrelated field on the next chip click.
- */
 export function shouldOpenEndpointPanelForFocus(
   focus: FilterChipFocus,
 ): boolean {
   return focus === "endpoints";
 }
 
-/**
- * Chip-body focus target for every Network/IP endpoint chip (both
- * the per-entry and aggregate forms). Exported so the shell and
- * tests agree on a single key — endpoint chips must route through
- * the same `openDrawerFocused` path as every other chip so the
- * drawer scrolls the Network/IP section into view. Previously the
- * endpoint chip was an exception that skipped focus entirely,
- * which the reviewer flagged in Round 7.
- */
 export const ENDPOINT_CHIP_FOCUS: FilterChipFocus = "endpoints";
 
 /**
- * State updates that must fire synchronously at the moment a
- * committed query transition is dispatched — Apply / chip × /
- * Refresh — regardless of whether the async response later
- * resolves, rejects, or is dropped as stale.
- *
- * The contract (Reviewer Round 12): bump `queryEpoch` and close
- * Quick peek at dispatch time, not after the replacement slice
- * lands. `ResultList` keeps painting the previous rows while
- * `loading` is true as long as it still has events, so deferring
- * either reset until the response lands leaves a window during
- * the round-trip where:
- *
- * - the chip bar and URL already describe the newly committed
- *   filter, but
- * - the Quick peek inspector (and its **Open investigation**
- *   button) is still pinned to a row the committed filter no
- *   longer describes, and
- * - `EventRow` / `MorePopover` state from the stale slice can be
- *   reconciled onto the replacement slice because `queryEpoch`
- *   hasn't advanced yet.
- *
- * Extracted so the dispatch-time contract can be unit-tested
- * without standing up a full DOM render of the shell.
+ * See the in-shell usage comment. Extracted so the dispatch-time
+ * contract (bump queryEpoch + clear quickPeek synchronously with the
+ * commit, not after the async response lands) can be unit-tested
+ * without standing up a full DOM render.
  */
 export function applyCommitDispatchReset(setters: {
   setQueryEpoch: (fn: (n: number) => number) => void;
@@ -292,6 +248,42 @@ export function applyCommitDispatchReset(setters: {
 }): void {
   setters.setQueryEpoch((epoch) => epoch + 1);
   setters.setQuickPeekEvent(null);
+}
+
+/**
+ * Per-tab runtime state. Combines the persisted {@link TabSnapshot}
+ * with the result-pane and drawer-draft state that lives only while
+ * the page is mounted. When the tab cap is hit or a tab is closed
+ * the runtime state is dropped along with the snapshot.
+ */
+interface TabRuntime {
+  snapshot: TabSnapshot;
+  draft: DetectionFilterDraft | null;
+  events: DetectionEvent[];
+  eventKeys: string[];
+  totalCount: string | null;
+  resultError: string | null;
+  lastUpdatedMs: number | null;
+  hasQueried: boolean;
+  loading: boolean;
+  queryEpoch: number;
+  quickPeekEvent: DetectionEvent | null;
+}
+
+function createBlankRuntime(snapshot: TabSnapshot): TabRuntime {
+  return {
+    snapshot,
+    draft: null,
+    events: [],
+    eventKeys: [],
+    totalCount: null,
+    resultError: null,
+    lastUpdatedMs: null,
+    hasQueried: false,
+    loading: false,
+    queryEpoch: 0,
+    quickPeekEvent: null,
+  };
 }
 
 export function DetectionShell({
@@ -302,20 +294,22 @@ export function DetectionShell({
   initialPeriod,
   initialResult,
   initialPivotOnly = {},
+  initialEndpoints,
+  initialTabs,
+  initialActiveIndex = 0,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
+  const tTabs = useTranslations("detection.tabs");
   const locale = useLocale();
   const pathname = usePathname();
   const router = useRouter();
-  // Build the function-valued labels for the chip remove button and the
-  // result list on this side of the server/client boundary. Function
-  // props can't cross that boundary, so the bound translator stays on
-  // the client and closes over the active locale.
+
   const removeChip = useCallback(
     (label: string) => t("removeChip", { label }),
     [t],
   );
+
   const resultListLabels = useMemo<ResultListLabels>(
     () => ({
       countWithRange: ({ range, total }) =>
@@ -376,6 +370,7 @@ export function DetectionShell({
     }),
     [t, tResults],
   );
+
   const multiSelectLabels = useMemo<FilterMultiSelectLabels>(
     () => ({
       allToggle: t("multiSelect.all"),
@@ -389,108 +384,196 @@ export function DetectionShell({
     }),
     [t],
   );
-  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+
+  // Global (not-per-tab) UI state.
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openEndpointPanelOnDrawerOpen, setOpenEndpointPanelOnDrawerOpen] =
     useState(false);
-
-  const [committedFilter, setCommittedFilter] = useState<Filter>(initialFilter);
-  const [committedPeriod, setCommittedPeriod] = useState<PeriodKey | null>(
-    initialPeriod,
-  );
-  const [committedEndpoints, setCommittedEndpoints] = useState<EndpointEntry[]>(
-    [],
-  );
-  // `pivotOnly` carries URL-only fields (kind/ports/proto/window) that
-  // arrive from the Investigation handoff. They are preserved through
-  // URL round-trips so pivot logic (Phase Detection-12) can pick them
-  // up, but they are not represented in `EventListFilterInput` and do
-  // not participate in the active filter chip bar yet — rendering them
-  // as chips would violate the "× is a self-contained commit that
-  // re-runs the query" contract while the underlying query still
-  // ignores them.
-  const pivotOnly = initialPivotOnly;
-  const [draft, setDraft] = useState<DetectionFilterDraft | null>(null);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
   });
-  // Target field for the drawer to focus after opening. `focusToken`
-  // increments on each openDrawerFocused call so repeated clicks on
-  // the same aggregate chip re-trigger the drawer's focus effect.
   const [focusField, setFocusField] = useState<DrawerFocusField | null>(null);
   const [focusToken, setFocusToken] = useState(0);
 
-  const [totalCount, setTotalCount] = useState<string | null>(
-    initialResult.totalCount,
-  );
-  const [events, setEvents] = useState<DetectionEvent[]>(initialResult.events);
-  // Parallel array of per-edge REview cursors (see
-  // `DetectionShellInitialResult.eventKeys`). Kept in lockstep with
-  // `events`: every `setEvents(x)` call is paired with a matching
-  // `setEventKeys(y)`. The cursor is used as the React row key only
-  // within a single committed slice — REview's schema documents
-  // `EventEdge.cursor` as "a cursor for use in pagination", not as a
-  // stable per-event identity across queries, so cross-commit row
-  // reuse is prevented by `queryEpoch` below rather than by the
-  // cursor value itself.
-  const [eventKeys, setEventKeys] = useState<string[]>(initialResult.eventKeys);
-  // Monotonic per-commit counter. Bumped on every committed query
-  // transition — Apply, chip removal, Refresh, and the error / zero-
-  // results branches — and composed into the React row key so
-  // `EventRow` / `MorePopover` state cannot be carried across
-  // unrelated committed queries even if REview happens to reuse a
-  // positional cursor value in the new slice. The initial slice sits
-  // on epoch `0`; the first client-side commit advances to `1`.
-  const [queryEpoch, setQueryEpoch] = useState(0);
-  const [resultError, setResultError] = useState<string | null>(
-    initialResult.error,
-  );
-  const [loading, setLoading] = useState(false);
-  const [lastUpdatedMs, setLastUpdatedMs] = useState<number | null>(
-    initialResult.error === null && initialResult.totalCount !== null
-      ? Date.now()
-      : null,
-  );
-  // Tracks whether any query has been dispatched (by the server-
-  // rendered initial load or a subsequent Apply / Refresh / chip
-  // removal). A freshly-mounted `+` tab with no successful query —
-  // e.g. the server action returned an error before the page mounted
-  // — renders the dedicated pre-query empty state instead of the
-  // generic zero-results panel.
-  const [hasQueried, setHasQueried] = useState(
-    initialResult.error === null && initialResult.totalCount !== null,
-  );
-  // Quick peek inspector (Phase Detection-18 owns the content; this
-  // shell wires the open/close contract and the jump into full
-  // Investigation). At wide widths (≥ `desktop`) the inspector docks
-  // inline as a right-hand pane; at narrower widths the same state
-  // drives an overlay drawer.
-  //
-  // The selection is cleared whenever a committed query transition
-  // replaces the result set (Apply, chip removal, Refresh, error,
-  // zero-results). REview does not expose a stable per-event identity
-  // in v1 — `EventEdge.cursor` is a pagination cursor, and the
-  // `encodeEventLocator` tuple is documented as best-effort — so a
-  // "keep inspector open and revalidate against the new slice"
-  // strategy can silently retarget the inspector at a different
-  // event when a positional cursor is reused across filters. Closing
-  // on every commit is the defensive alternative.
-  const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
-    null,
-  );
-  const isDesktop = useIsDesktopViewport();
-  // Monotonic id for the in-flight Apply; a late response whose id
-  // no longer matches is dropped so the results region can't drift
-  // away from the committed filter when the operator applies twice
-  // in quick succession.
-  const latestRequestIdRef = useRef(0);
+  // Seed tabs from the URL-derived working set (active tab plus any
+  // extras that rode along in the `tabs=<json>` param). The client
+  // side then rehydrates from sessionStorage in a one-shot effect
+  // below — doing the rehydrate in an effect (not in `useState`'s
+  // initializer) keeps the server/client markup identical on the
+  // first paint so there's no hydration mismatch when a stored tab
+  // set differs from the URL.
+  const [tabs, setTabs] = useState<TabRuntime[]>(() => {
+    const seed: TabSnapshot[] =
+      initialTabs && initialTabs.length > 0
+        ? initialTabs
+        : [
+            {
+              id: "tab-initial",
+              filter: initialFilter,
+              period: initialPeriod,
+              endpoints: initialEndpoints ? [...initialEndpoints] : [],
+              pivotOnly: initialPivotOnly,
+              name: null,
+              autoRun: true,
+              analyticsOpen: false,
+            },
+          ];
+    const activeSeed = seed[initialActiveIndex] ?? seed[0];
+    return seed.map((snapshot) => {
+      const runtime = createBlankRuntime(snapshot);
+      if (snapshot === activeSeed) {
+        runtime.events = initialResult.events;
+        runtime.eventKeys = initialResult.eventKeys;
+        runtime.totalCount = initialResult.totalCount;
+        runtime.resultError = initialResult.error;
+        runtime.lastUpdatedMs =
+          initialResult.error === null && initialResult.totalCount !== null
+            ? Date.now()
+            : null;
+        runtime.hasQueried =
+          initialResult.error === null && initialResult.totalCount !== null;
+      }
+      return runtime;
+    });
+  });
+  const [activeIndex, setActiveIndex] = useState(() => {
+    const seedLength =
+      initialTabs && initialTabs.length > 0 ? initialTabs.length : 1;
+    if (initialActiveIndex < 0 || initialActiveIndex >= seedLength) return 0;
+    return initialActiveIndex;
+  });
 
-  // Kicks off a sensor-list fetch and threads the result into the
-  // session cache. Extracted so both the initial lazy-load (on the
-  // first drawer open) and an explicit Retry click from the error
-  // state can share the same side-effect shape. Kept outside the
-  // cache updater so React Strict Mode's double-invocation of state
-  // updaters cannot trigger duplicate network requests.
+  // Mutates a specific tab by id. Uses functional updates so in-flight
+  // async responses can land without racing against tab-set changes
+  // (add/close) that may have shifted indices.
+  const updateTabById = useCallback(
+    (id: string, patch: Partial<TabRuntime>) => {
+      setTabs((prev) =>
+        prev.map((r) => (r.snapshot.id === id ? { ...r, ...patch } : r)),
+      );
+    },
+    [],
+  );
+
+  const updateSnapshotById = useCallback(
+    (id: string, patch: Partial<TabSnapshot>) => {
+      setTabs((prev) =>
+        prev.map((r) =>
+          r.snapshot.id === id
+            ? { ...r, snapshot: { ...r.snapshot, ...patch } }
+            : r,
+        ),
+      );
+    },
+    [],
+  );
+
+  // Per-tab async request tracking so a late response from one tab
+  // cannot clobber another tab that was switched to in the meantime.
+  const requestCounterRef = useRef(0);
+  const latestRequestIdByTabRef = useRef<Map<string, number>>(new Map());
+
+  // One-shot rehydration from sessionStorage. Merges stored tabs on
+  // top of the URL-driven initial tab set so a page reload restores
+  // the working set without losing the SSR-fetched result for the
+  // active tab. The writer effect below skips the first mount; if
+  // it ran there it would serialize the URL-only state with the
+  // pre-setTabs closure and clobber the stored payload before this
+  // read could load it.
+  const hydratedRef = useRef(false);
+  const tabsSerializedRef = useRef<string>("");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot rehydration — the URL-driven SSR snapshot is only authoritative on first mount, so subsequent changes to `initialFilter`/`initialPeriod`/`initialPivotOnly`/`initialResult`/`initialTabs` must NOT re-trigger this effect.
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+    if (typeof window === "undefined") return;
+    const raw = window.sessionStorage.getItem(TABS_SESSION_KEY);
+    const storedRaw = parseTabsFromSession(raw);
+    // Forward-compat: the session decoder round-trips `mode: "query"`
+    // tabs, but the live page cannot render them — downgrade here
+    // for the same reason the server page boundary does. See
+    // {@link coerceTabForLivePage}.
+    const stored = storedRaw
+      ? {
+          ...storedRaw,
+          tabs: storedRaw.tabs.map((tab) =>
+            coerceTabForLivePage(tab, DEFAULT_PERIOD_KEY),
+          ),
+        }
+      : null;
+    if (!stored) return;
+    const urlActive = readActiveTabFromUrl();
+    // Capture the URL-derived tab set from the current `tabs`
+    // state (seeded by `useState` above from `initialTabs` /
+    // `initialResult`). These snapshots are authoritative for
+    // the shareable slice; the session provides the rest plus
+    // per-tab UI state.
+    const urlTabs: TabSnapshot[] = tabs.map((r) => r.snapshot);
+    const rebased = rehydrateTabs({
+      urlTabs,
+      urlActiveIndex: urlActive,
+      session: stored,
+    });
+    // Map each rebased snapshot back to a runtime. The active tab
+    // keeps the SSR-fetched result; the others start blank and
+    // will run on demand when the operator switches to them and
+    // hits Apply (or implicitly if their `autoRun` flag is set).
+    setTabs(() =>
+      rebased.tabs.map((snapshot, index) => {
+        if (index === rebased.activeIndex) {
+          const runtime = createBlankRuntime(snapshot);
+          runtime.events = initialResult.events;
+          runtime.eventKeys = initialResult.eventKeys;
+          runtime.totalCount = initialResult.totalCount;
+          runtime.resultError = initialResult.error;
+          runtime.lastUpdatedMs =
+            initialResult.error === null && initialResult.totalCount !== null
+              ? Date.now()
+              : null;
+          runtime.hasQueried =
+            initialResult.error === null && initialResult.totalCount !== null;
+          return runtime;
+        }
+        return createBlankRuntime(snapshot);
+      }),
+    );
+    setActiveIndex(rebased.activeIndex);
+  }, []);
+
+  // Mirror the tabs array to sessionStorage on every change. Skips
+  // the initial mount: if we wrote the 1-tab SSR snapshot there, we
+  // would clobber a stored multi-tab payload before the rehydration
+  // effect above has had a chance to read it (mount-time effects
+  // fire with the pre-setTabs closure, so the writer can't see the
+  // rebased state yet). After the first render cycle the writer is
+  // the single source of truth for sessionStorage.
+  const initialMountRef = useRef(true);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (initialMountRef.current) {
+      initialMountRef.current = false;
+      return;
+    }
+    const snapshot = {
+      tabs: tabs.map((r) => r.snapshot),
+      activeIndex,
+    };
+    const serialized = serializeTabsForSession(snapshot);
+    if (serialized === tabsSerializedRef.current) return;
+    tabsSerializedRef.current = serialized;
+    try {
+      window.sessionStorage.setItem(TABS_SESSION_KEY, serialized);
+    } catch {
+      // Quota errors / Safari private mode fall-through silently — a
+      // missing session store just means the next reload starts from
+      // URL alone, which is a valid degradation.
+    }
+  }, [tabs, activeIndex]);
+
+  const activeTab = tabs[activeIndex] ?? tabs[0];
+  const activeSnapshot = activeTab.snapshot;
+  const committedFilter = activeSnapshot.filter;
+
   const triggerSensorFetch = useCallback(() => {
     setSensorCache({ status: "loading" });
     void fetchSensors().then(
@@ -513,205 +596,424 @@ export function DetectionShell({
   }, []);
 
   const openDrawer = useCallback(() => {
-    setDraft(
-      (current) =>
-        current ??
-        filterToDraft(committedFilter, committedPeriod, committedEndpoints),
-    );
-    // The Filters button opens the drawer with no focus target;
-    // chip-body activation routes through `openDrawerFocused`, which
-    // is the only path that ever sets the endpoint panel flag.
+    setTabs((prev) => {
+      const next = [...prev];
+      const current = next[activeIndex];
+      if (!current) return prev;
+      if (current.draft) return prev;
+      // Seed the drawer from a rolled-forward copy of the committed
+      // filter so a relative-period tab (`Last 1 hour`, …) shows a
+      // window ending at "now" instead of the frozen original. The
+      // rolled values live only in the draft; the committed snapshot
+      // is left untouched so the result header keeps describing the
+      // window the cached rows were actually queried against. The
+      // snapshot only rolls when a query runs (Apply / Refresh /
+      // committed chip removal).
+      const rolled = resolveTabPeriod(current.snapshot);
+      const nextDraft = filterToDraft(
+        rolled.filter,
+        rolled.period,
+        rolled.endpoints,
+      );
+      next[activeIndex] = { ...current, draft: nextDraft };
+      return next;
+    });
     setOpenEndpointPanelOnDrawerOpen(false);
     setFocusField(null);
     setDrawerOpen(true);
-    // Lazy-load the sensor inventory the first time the drawer
-    // opens, and retry on a prior transient failure so a single
-    // hiccup doesn't freeze Sensor into the "Coming soon" fallback
-    // for the rest of the tab session.
     if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
-  }, [
-    committedFilter,
-    committedPeriod,
-    committedEndpoints,
-    sensorCache,
-    triggerSensorFetch,
-  ]);
+  }, [activeIndex, sensorCache, triggerSensorFetch]);
 
-  // Re-run a committed filter without going through the drawer's
-  // Apply path. Used by both chip × removal and the result list's
-  // Refresh button — neither has a draft to normalize, so they
-  // bypass `buildAppliedFilter`. Mirrors the same monotonic
-  // request-id late-response guard that `handleApply` uses.
-  const runQueryFor = useCallback(
-    (filter: Filter) => {
-      setLoading(true);
-      setResultError(null);
-      setHasQueried(true);
-      // See `applyCommitDispatchReset` for the dispatch-time contract.
-      applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
-      const requestId = latestRequestIdRef.current + 1;
-      latestRequestIdRef.current = requestId;
+  // Run a committed filter for a specific tab, updating runtime state
+  // by id so async responses cannot clobber a different tab that was
+  // switched to in the meantime.
+  const runQueryForTab = useCallback(
+    (tabId: string, filter: Filter) => {
+      const requestId = requestCounterRef.current + 1;
+      requestCounterRef.current = requestId;
+      latestRequestIdByTabRef.current.set(tabId, requestId);
+      updateTabById(tabId, {
+        loading: true,
+        resultError: null,
+        hasQueried: true,
+        quickPeekEvent: null,
+      });
+      setTabs((prev) =>
+        prev.map((r) =>
+          r.snapshot.id === tabId ? { ...r, queryEpoch: r.queryEpoch + 1 } : r,
+        ),
+      );
       startTransition(async () => {
         try {
           const result = await runEventQuery(filter);
-          if (latestRequestIdRef.current !== requestId) return;
+          if (latestRequestIdByTabRef.current.get(tabId) !== requestId) return;
           if (result.ok) {
-            setTotalCount(result.totalCount);
-            setEvents(result.events);
-            setEventKeys(result.eventKeys);
-            setResultError(null);
-            setLastUpdatedMs(Date.now());
+            updateTabById(tabId, {
+              totalCount: result.totalCount,
+              events: result.events,
+              eventKeys: result.eventKeys,
+              resultError: null,
+              lastUpdatedMs: Date.now(),
+              loading: false,
+            });
           } else {
-            setTotalCount(null);
-            setEvents([]);
-            setEventKeys([]);
-            setResultError(labels.resultsError);
+            updateTabById(tabId, {
+              totalCount: null,
+              events: [],
+              eventKeys: [],
+              resultError: labels.resultsError,
+              loading: false,
+            });
           }
         } catch {
-          if (latestRequestIdRef.current !== requestId) return;
-          setTotalCount(null);
-          setEvents([]);
-          setEventKeys([]);
-          setResultError(labels.resultsError);
-        } finally {
-          if (latestRequestIdRef.current === requestId) {
-            setLoading(false);
-          }
+          if (latestRequestIdByTabRef.current.get(tabId) !== requestId) return;
+          updateTabById(tabId, {
+            totalCount: null,
+            events: [],
+            eventKeys: [],
+            resultError: labels.resultsError,
+            loading: false,
+          });
         }
       });
     },
-    [labels.resultsError],
+    [labels.resultsError, updateTabById],
+  );
+
+  // Write the full tab strip + `?tab=N` index to the browser URL
+  // without triggering a soft navigation. The active tab's full
+  // filter surface — period, explicit range, directions, confidence,
+  // categoricals, sensors, endpoints — always rides in the top-level
+  // params so pivot hand-off links keep working. When the working
+  // set fits inside the URL-length budget, every tab's filter also
+  // rides along in a compact `tabs=<json>` param so a shared link
+  // reproduces the author's whole strip instead of just the active
+  // one.
+  const syncUrlForTabs = useCallback(
+    (nextTabs: TabRuntime[], nextActive: number) => {
+      if (typeof window === "undefined") return;
+      const snapshots = nextTabs.map((r) => r.snapshot);
+      const { search } = buildAllTabsSearchParams({
+        tabs: snapshots,
+        activeIndex: nextActive,
+        pathname,
+      });
+      const qs = search.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(window.history.state, "", url);
+    },
+    [pathname],
   );
 
   const handleApply = useCallback(
     (applied: DetectionFilterDraft) => {
-      if (!applied.startIso || !applied.endIso) return;
-      // Only the `ready` state (sensor-list query present + loaded)
-      // permits a `sensors` value in the committed filter; every
-      // other state strips it to preserve the fallback contract.
+      // One-sided ranges are rejected by the drawer's validation.
+      // Both-null is allowed — it's the "no time filter" Apply used
+      // when the operator cleared the default period chip before
+      // first running the query on a pending `+` tab.
+      if (Boolean(applied.startIso) !== Boolean(applied.endIso)) return;
+      const current = tabs[activeIndex];
+      if (!current) return;
       const endpointLive =
         sensorCache.status === "loaded" && sensorCache.endpointAvailable;
       const next = buildAppliedFilter(
-        committedFilter,
+        current.snapshot.filter,
         applied,
         endpointLive,
         options,
       );
-      setCommittedFilter(next);
-      setCommittedPeriod(applied.period);
-      setCommittedEndpoints(applied.endpoints);
-      // Sync the cached draft with the canonical values we just
-      // committed. `applied` is the drawer's already-normalized draft
-      // (trimmed strings, normalized tag arrays), so reopening the
-      // drawer shows the same text that the filter is actually using
-      // rather than the original whitespace-padded input.
-      setDraft(applied);
+      const nextSnapshot: TabSnapshot = {
+        ...current.snapshot,
+        filter: next,
+        period: applied.period,
+        endpoints: applied.endpoints,
+        autoRun: true,
+      };
+      // Discard the submitted draft after Apply. `openDrawer` /
+      // `openDrawerFocused` only re-roll a relative period (`Last 1
+      // hour`, …) forward to "now" when the cached draft is null; if
+      // we kept `draft: applied` here, reopening the drawer twenty
+      // minutes after Apply would reuse the frozen absolute
+      // `startIso` / `endIso` captured on submit, and a subsequent
+      // re-Apply of the same tab would quietly requery the original
+      // window. Clearing the draft matches the pattern used by
+      // Refresh and chip removal (see `handleRefresh`, `handleRemoveChip`).
+      const nextTabs = tabs.map((r, i) =>
+        i === activeIndex ? { ...r, snapshot: nextSnapshot, draft: null } : r,
+      );
+      setTabs(nextTabs);
       setDrawerOpen(false);
-
-      // Mirror the free-form filter fields into the URL so a refresh
-      // restores them. Only the drawer's free-form inputs (source,
-      // destination, and the tag fields) ride in the URL today — the
-      // time range has no URL-persisted form, so a refresh falls back
-      // to the default period. The pivot-only params
-      // (kind/ports/proto/window) stay as-is — they carry no drawer
-      // state yet.
-      //
-      // Use `history.replaceState` rather than `router.replace` so the
-      // URL update doesn't trigger a soft navigation. A soft navigation
-      // would re-run this route's server page and `searchEvents()`
-      // alongside the explicit `runEventQuery(next)` below — two
-      // queries per Apply for the same filter, with the navigation
-      // result discarded because the shell keeps its own client state.
-      // `replaceState` keeps URL persistence (refresh restores the
-      // active tab) without paying for a duplicate REview round-trip.
-      if (next.mode === "structured") {
-        const merged = mergePivotParams(
-          pivotOnly,
-          pivotParamsFromFilterInput(next.input),
-        );
-        const qs = buildDetectionSearchParams(merged).toString();
-        const url = qs ? `${pathname}?${qs}` : pathname;
-        window.history.replaceState(window.history.state, "", url);
-      }
-
-      runQueryFor(next);
+      syncUrlForTabs(nextTabs, activeIndex);
+      runQueryForTab(nextSnapshot.id, next);
     },
-    [committedFilter, pivotOnly, options, pathname, runQueryFor, sensorCache],
+    [activeIndex, tabs, options, runQueryForTab, sensorCache, syncUrlForTabs],
   );
 
   const handleRemoveChip = useCallback(
     (target: ChipRemoveTarget) => {
+      const current = tabs[activeIndex];
+      if (!current) return;
       const next = removeActiveChip(
-        committedFilter,
-        committedEndpoints,
+        current.snapshot.filter,
+        current.snapshot.endpoints,
         target,
       );
-      setCommittedFilter(next.filter);
-      setCommittedEndpoints(next.endpoints);
-      // A chip removal that drops `start`/`end` would clear the
-      // committed period state too — the shell never reaches that
-      // path today (the period chip removal target is `period`),
-      // so the period stays in sync with the filter's start/end.
-      if (target.kind === "period") {
-        setCommittedPeriod(null);
-      }
-      // Drop the cached drawer draft — it was built from the
-      // pre-removal filter and would clobber the change if the
-      // operator opens the drawer next.
-      setDraft(null);
-      // Persist the removal in the URL the same way Apply does.
-      if (next.filter.mode === "structured") {
-        const merged = mergePivotParams(
-          pivotOnly,
-          pivotParamsFromFilterInput(next.filter.input),
-        );
-        const qs = buildDetectionSearchParams(merged).toString();
-        const url = qs ? `${pathname}?${qs}` : pathname;
-        window.history.replaceState(window.history.state, "", url);
-      }
-      runQueryFor(next.filter);
+      // Pending `+` tabs must go through the drawer's Apply path
+      // before running their first query (issue #281 "the user must
+      // Apply"). Chip removal on a pending tab mutates the filter but
+      // keeps the tab pending — the user still has to Apply to execute
+      // it. Already-run tabs behave as before: flip to `autoRun: true`
+      // and fire the query.
+      const wasPending = !current.snapshot.autoRun;
+      const baseSnapshot: TabSnapshot = {
+        ...current.snapshot,
+        filter: next.filter,
+        endpoints: next.endpoints,
+        period: target.kind === "period" ? null : current.snapshot.period,
+        autoRun: !wasPending,
+      };
+      // Re-roll the committed filter's window against "now" before
+      // running. Otherwise a `Last 1 hour` tab refreshed twenty
+      // minutes after first Apply would still query the original hour
+      // and the freshness chip would lie. For pending tabs we skip
+      // this: the tab is not being executed here.
+      const nextSnapshot = wasPending
+        ? baseSnapshot
+        : resolveTabPeriod(baseSnapshot);
+      const nextTabs = tabs.map((r, i) =>
+        i === activeIndex ? { ...r, snapshot: nextSnapshot, draft: null } : r,
+      );
+      setTabs(nextTabs);
+      syncUrlForTabs(nextTabs, activeIndex);
+      if (wasPending) return;
+      runQueryForTab(nextSnapshot.id, nextSnapshot.filter);
     },
-    [committedEndpoints, committedFilter, pivotOnly, pathname, runQueryFor],
+    [activeIndex, runQueryForTab, syncUrlForTabs, tabs],
   );
 
   const handleRefresh = useCallback(() => {
-    runQueryFor(committedFilter);
-  }, [committedFilter, runQueryFor]);
+    const current = tabs[activeIndex];
+    if (!current) return;
+    // Guard: a pending tab should never reach this code path — the
+    // Refresh button is disabled in that state (see `ResultList`'s
+    // `canRefresh` prop). Defend against programmatic invocations
+    // anyway so the Apply-only rule cannot be bypassed.
+    if (!current.snapshot.autoRun) return;
+    const rolled = resolveTabPeriod(current.snapshot);
+    if (rolled !== current.snapshot) {
+      // Clearing the cached drawer draft when the snapshot rolls is
+      // what keeps the drawer honest on reopen: `handleApply` seeds
+      // `draft` from the just-applied filter, and `openDrawer` only
+      // bails when a draft already exists. Without this clear, a
+      // rolled-forward tab would reopen the drawer with the frozen
+      // absolute start / end captured on first Apply, even though
+      // the committed filter (and the chip bar) show the rolled
+      // window. See PR #330 reviewer round 5.
+      const nextTabs = tabs.map((r, i) =>
+        i === activeIndex ? { ...r, snapshot: rolled, draft: null } : r,
+      );
+      setTabs(nextTabs);
+    }
+    runQueryForTab(rolled.id, rolled.filter);
+  }, [activeIndex, runQueryForTab, tabs]);
 
   const openDrawerFocused = useCallback(
     (focus: FilterChipFocus) => {
-      // Ensure the drawer has a draft to edit, then scroll-focus the
-      // matching section. `DrawerFocusField` is a superset that covers
-      // every `FilterChipFocus` value, so the cast is safe — the
-      // drawer itself no-ops on targets whose anchor isn't mounted.
-      setDraft(
-        (current) =>
-          current ??
-          filterToDraft(committedFilter, committedPeriod, committedEndpoints),
-      );
+      setTabs((prev) => {
+        const next = [...prev];
+        const current = next[activeIndex];
+        if (!current) return prev;
+        if (current.draft) return prev;
+        // See `openDrawer` — roll relative periods forward into the
+        // draft only. The committed snapshot is not touched here so
+        // the result header keeps describing the cached rows' query
+        // window until a real rerun (Apply / Refresh) lands.
+        const rolled = resolveTabPeriod(current.snapshot);
+        const nextDraft = filterToDraft(
+          rolled.filter,
+          rolled.period,
+          rolled.endpoints,
+        );
+        next[activeIndex] = { ...current, draft: nextDraft };
+        return next;
+      });
       setFocusField(focus);
-      setFocusToken((t) => t + 1);
-      // Endpoint aggregate: also expand the Network/IP advanced panel
-      // so the operator lands in the same UI as the sidebar "Advanced"
-      // affordance. For every other focus target, clear the flag so a
-      // prior endpoint activation doesn't leak into an unrelated field
-      // (e.g. Period / Source) on the next chip click.
+      setFocusToken((tk) => tk + 1);
       setOpenEndpointPanelOnDrawerOpen(shouldOpenEndpointPanelForFocus(focus));
       setDrawerOpen(true);
-      // Kick off the lazy sensor fetch on the chip-body path too, so
-      // `SensorMultiSelect` doesn't sit in its disabled "Loading
-      // sensors…" placeholder forever when the operator opens the
-      // drawer via a chip without ever having clicked Filters.
       if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
     },
-    [
-      committedFilter,
-      committedPeriod,
-      committedEndpoints,
-      sensorCache,
-      triggerSensorFetch,
-    ],
+    [activeIndex, sensorCache, triggerSensorFetch],
   );
+
+  // Clear any unapplied draft on the tab being left so reopening the
+  // drawer after returning re-seeds from the committed filter — not a
+  // stale draft that diverges from the chip bar. The issue requires
+  // every context switch to re-synchronize the drawer and chip bar to
+  // the destination tab's committed filter; without this clear,
+  // `openDrawer` / `openDrawerFocused` short-circuit on the cached
+  // draft and show the abandoned edit instead. Applies to every path
+  // that switches away from the active tab (plain select, `+`, and
+  // any future pivot / saved-filter activation).
+  const clearLeavingDraft = useCallback(
+    (source: TabRuntime[]) => {
+      const leaving = source[activeIndex];
+      if (!leaving?.draft) return source;
+      return source.map((r, i) =>
+        i === activeIndex ? { ...r, draft: null } : r,
+      );
+    },
+    [activeIndex],
+  );
+
+  // Tab bar callbacks.
+  const handleTabSelect = useCallback(
+    (index: number) => {
+      if (index === activeIndex) return;
+      const nextTabs = clearLeavingDraft(tabs);
+      if (nextTabs !== tabs) setTabs(nextTabs);
+      setActiveIndex(index);
+      // Close any open drawer on tab switch — drafts live per-tab, so
+      // the drawer's open/closed state is only coherent relative to
+      // the active tab.
+      setDrawerOpen(false);
+      syncUrlForTabs(nextTabs, index);
+    },
+    [activeIndex, clearLeavingDraft, syncUrlForTabs, tabs],
+  );
+
+  const handleTabAdd = useCallback(() => {
+    if (tabs.length >= TAB_CAP) return;
+    const defaultRange = computePeriodRange(DEFAULT_PERIOD_KEY);
+    const blank = createBlankTab({
+      filter: {
+        mode: "structured",
+        input: { start: defaultRange.start, end: defaultRange.end },
+      },
+      period: DEFAULT_PERIOD_KEY,
+    });
+    const runtime = createBlankRuntime(blank);
+    // `+` is a context switch just like `handleTabSelect`: the active
+    // tab changes to the new blank one. Drop any unapplied draft on
+    // the tab being left so returning to it (via tab click) reopens
+    // the drawer from the committed filter, not the abandoned edit.
+    const cleared = clearLeavingDraft(tabs);
+    const nextIndex = cleared.length;
+    const nextTabs = [...cleared, runtime];
+    setTabs(nextTabs);
+    setActiveIndex(nextIndex);
+    setDrawerOpen(false);
+    // The new blank tab becomes active. Write the full strip to the
+    // URL now — not on the next Apply — so a reload before the
+    // operator runs a query re-hydrates the fresh tab (with
+    // `autoRun: false` / `pending=1`) rather than the stale filter
+    // the previous active tab left in the URL.
+    syncUrlForTabs(nextTabs, nextIndex);
+  }, [clearLeavingDraft, syncUrlForTabs, tabs]);
+
+  const handleTabClose = useCallback(
+    (index: number) => {
+      const priorLength = tabs.length;
+      const priorActive = activeIndex;
+      let nextRuntimes: TabRuntime[] = [];
+      if (priorLength === 0) {
+        nextRuntimes = tabs;
+      } else if (priorLength === 1) {
+        // Closing the last tab auto-creates a fresh default tab so
+        // the page never renders tab-less. Use `createDefaultTab`, not
+        // `createBlankTab`: the issue distinguishes a default tab
+        // (auto-executes `Last 1 hour` on page entry) from a pending
+        // `+` tab (stays pending until Apply). Closing the last tab
+        // should drop the operator into the former.
+        const defaultRange = computePeriodRange(DEFAULT_PERIOD_KEY);
+        const fresh = createDefaultTab({
+          filter: {
+            mode: "structured",
+            input: { start: defaultRange.start, end: defaultRange.end },
+          },
+          period: DEFAULT_PERIOD_KEY,
+        });
+        nextRuntimes = [createBlankRuntime(fresh)];
+      } else {
+        nextRuntimes = tabs.filter((_, i) => i !== index);
+      }
+      setTabs(nextRuntimes);
+      let nextActive = priorActive;
+      if (priorLength <= 1) {
+        nextActive = 0;
+      } else if (index < priorActive) {
+        nextActive = priorActive - 1;
+      } else if (index === priorActive) {
+        nextActive = Math.min(priorActive, priorLength - 2);
+      }
+      setActiveIndex(nextActive);
+      setDrawerOpen(false);
+      // If the close changed which tab is active, refresh the URL so
+      // it describes the now-active tab — otherwise the closed tab's
+      // filter would stay in the URL and could resurrect into the
+      // neighbour on reload.
+      syncUrlForTabs(nextRuntimes, nextActive);
+    },
+    [activeIndex, syncUrlForTabs, tabs],
+  );
+
+  const handleTabRename = useCallback(
+    (index: number, nextName: string | null) => {
+      const target = tabs[index];
+      if (!target) return;
+      updateSnapshotById(target.snapshot.id, { name: nextName });
+    },
+    [tabs, updateSnapshotById],
+  );
+
+  // If the active tab just became the one we need to auto-run
+  // (switching to a tab whose snapshot was loaded from sessionStorage
+  // with autoRun and no cached result yet), kick off the query.
+  useEffect(() => {
+    const current = tabs[activeIndex];
+    if (!current) return;
+    if (
+      current.snapshot.autoRun &&
+      !current.hasQueried &&
+      !current.loading &&
+      !current.resultError
+    ) {
+      // Auto-run only gets triggered by switching to a session-
+      // restored tab that has never run. The initial tab's SSR path
+      // already populated `hasQueried`. Roll the relative period
+      // forward first so `Last 1 hour` (etc.) always queries the hour
+      // ending "now", not the window captured on the tab's last Apply.
+      const rolled = resolveTabPeriod(current.snapshot);
+      if (rolled !== current.snapshot) {
+        // Also drop any stale drawer draft cached on the runtime —
+        // without this, `openDrawer`'s existing-draft short-circuit
+        // would reopen the drawer with the pre-roll start / end the
+        // operator last Applied, even though the committed filter
+        // and chips show the rolled window. See PR #330 reviewer
+        // round 5.
+        setTabs((prev) =>
+          prev.map((r) =>
+            r.snapshot.id === current.snapshot.id
+              ? {
+                  ...r,
+                  snapshot: {
+                    ...r.snapshot,
+                    filter: rolled.filter,
+                    period: rolled.period,
+                  },
+                  draft: null,
+                }
+              : r,
+          ),
+        );
+      }
+      runQueryForTab(rolled.id, rolled.filter);
+    }
+    // The body's own guard (`!hasQueried && !loading && !resultError`)
+    // prevents re-entering once the query has been kicked off, so
+    // depending on the full `tabs` array is safe — subsequent result-
+    // state updates land with `hasQueried` true and short-circuit.
+  }, [activeIndex, tabs, runQueryForTab]);
 
   const drawerLabels = useMemo<FilterDrawerLabels>(() => {
     const withRemoveLabel = (
@@ -748,25 +1050,8 @@ export function DetectionShell({
 
   const sensorOptions: readonly SensorOption[] =
     sensorCache.status === "loaded" ? sensorCache.options : [];
-  // See `sensorStateForCache` for the intent behind each branch:
-  //   - `idle`/`loading` → "Loading sensors…" while the first
-  //     fetch resolves; this must NOT reuse "Coming soon" copy
-  //     because the endpoint may well be live.
-  //   - `error` → retryable error state with an inline Retry
-  //     button, so a transient hiccup doesn't require closing and
-  //     reopening the drawer.
-  //   - `loaded && !endpointAvailable` → "Coming soon" placeholder,
-  //     the only case where the vendored schema actually lacks the
-  //     sensor-list query.
-  //   - `loaded && endpointAvailable` → functional multi-select.
-  // `buildAppliedFilter` still gates `sensors` submission on the
-  // `ready` state, so no intermediate state leaks IDs into the
-  // committed filter.
   const sensorState = sensorStateForCache(sensorCache);
 
-  // Shared chip summariser: one `Filter → FilterChip[]` call the bar
-  // reuses everywhere. The pivot-only chips above are concatenated
-  // on render because they live outside `EventListFilterInput`.
   const summarizeLabels = useMemo<SummarizeFilterLabels>(
     () => ({
       sensor: labels.drawer.sensor.label,
@@ -794,30 +1079,79 @@ export function DetectionShell({
     }),
     [labels, t],
   );
-  const summarizedChips = useMemo<FilterChip[]>(
+
+  // Per-tab chip summariser. Each tab carries its own chip list; the
+  // active bar reads from the current tab, and the tab bar uses each
+  // tab's chips to auto-generate its title.
+  const perTabChips = useMemo<FilterChip[][]>(
     () =>
-      summarizeFilter(committedFilter, summarizeLabels, {
-        period: committedPeriod,
-        sensorOptions,
-        categoricalOptions: {
-          levels: options.levels,
-          countries: options.countries,
-          learningMethods: options.learningMethods,
-          categories: options.categories,
-          kinds: options.kinds,
-        },
-      }),
-    [committedFilter, committedPeriod, options, sensorOptions, summarizeLabels],
+      tabs.map((r) =>
+        summarizeFilter(r.snapshot.filter, summarizeLabels, {
+          period: r.snapshot.period,
+          sensorOptions,
+          categoricalOptions: {
+            levels: options.levels,
+            countries: options.countries,
+            learningMethods: options.learningMethods,
+            categories: options.categories,
+            kinds: options.kinds,
+          },
+        }),
+      ),
+    [tabs, options, sensorOptions, summarizeLabels],
   );
-  // Endpoints still flow through their richer drawer-side entries; the
-  // unified summariser covers the committed `EventListFilterInput`, but
-  // endpoint entries live parallel to it and carry the raw text the
-  // user typed.
-  const endpointChips = buildEndpointChips(
-    committedEndpoints,
-    labels.endpointChips,
+  const summarizedChips = perTabChips[activeIndex] ?? [];
+
+  // Per-tab endpoint chips. Kept separate from `perTabChips` because
+  // the active filter bar renders them in a distinct strip, but they
+  // still participate in the auto-generated tab title so two tabs
+  // differentiated only by endpoint rows don't collapse to the same
+  // auto name.
+  const perTabEndpointChips = useMemo<EndpointChip[][]>(
+    () =>
+      tabs.map((r) =>
+        buildEndpointChips(r.snapshot.endpoints, labels.endpointChips),
+      ),
+    [tabs, labels.endpointChips],
   );
+  const endpointChips = perTabEndpointChips[activeIndex] ?? [];
   const hasChips = summarizedChips.length > 0 || endpointChips.length > 0;
+
+  const autoNameLabels = useMemo<AutoTabNameLabels>(
+    () => ({
+      emptyTab: labels.tabs.autoEmptyTab,
+      separator: " · ",
+      moreSuffix: (count: number) =>
+        tTabs("autoMoreSuffix", { count }) as string,
+    }),
+    [labels.tabs.autoEmptyTab, tTabs],
+  );
+
+  // Formatter callbacks can't ride the server→client props bridge,
+  // so the shell rebuilds the full DetectionTabLabels locally from
+  // the plain-string slice it received plus `tTabs`.
+  const tabBarLabels = useMemo<DetectionTabLabels>(
+    () => ({
+      ...labels.tabs,
+      addTabCapTooltip: (cap: number) =>
+        tTabs("addTabCapTooltip", { cap }) as string,
+      closeTab: (name: string) => tTabs("closeTab", { name }) as string,
+    }),
+    [labels.tabs, tTabs],
+  );
+
+  const tabData = useMemo<DetectionTabData[]>(
+    () =>
+      tabs.map((r, index) => ({
+        snapshot: r.snapshot,
+        autoTitle: buildAutoTabName(
+          perTabChips[index] ?? [],
+          autoNameLabels,
+          perTabEndpointChips[index] ?? [],
+        ),
+      })),
+    [tabs, perTabChips, perTabEndpointChips, autoNameLabels],
+  );
 
   const resultRange = useMemo<{ start: string; end: string } | null>(() => {
     if (committedFilter.mode !== "structured") return null;
@@ -830,68 +1164,66 @@ export function DetectionShell({
   }, [committedFilter]);
 
   const resultListState: ResultListState = useMemo(() => {
-    if (loading) {
+    if (activeTab.loading) {
       return {
         status: "loading",
-        events,
-        eventKeys,
-        totalCount,
+        events: activeTab.events,
+        eventKeys: activeTab.eventKeys,
+        totalCount: activeTab.totalCount,
         range: resultRange,
-        lastUpdatedMs,
+        lastUpdatedMs: activeTab.lastUpdatedMs,
       };
     }
-    if (resultError) {
+    if (activeTab.resultError) {
       return {
         status: "error",
         events: [],
         eventKeys: [],
         totalCount: null,
         range: resultRange,
-        lastUpdatedMs,
+        lastUpdatedMs: activeTab.lastUpdatedMs,
       };
     }
-    if (!hasQueried) {
+    if (!activeTab.hasQueried) {
       return {
         status: "empty-prequery",
         events: [],
         eventKeys: [],
         totalCount: null,
         range: resultRange,
-        lastUpdatedMs,
+        lastUpdatedMs: activeTab.lastUpdatedMs,
       };
     }
     return {
       status: "ready",
-      events,
-      eventKeys,
-      totalCount,
+      events: activeTab.events,
+      eventKeys: activeTab.eventKeys,
+      totalCount: activeTab.totalCount,
       range: resultRange,
-      lastUpdatedMs,
+      lastUpdatedMs: activeTab.lastUpdatedMs,
     };
-  }, [
-    events,
-    eventKeys,
-    hasQueried,
-    lastUpdatedMs,
-    loading,
-    resultError,
-    resultRange,
-    totalCount,
-  ]);
+  }, [activeTab, resultRange]);
 
-  const handleRowOpen = useCallback((event: DetectionEvent) => {
-    setQuickPeekEvent(event);
-  }, []);
+  const setActiveDraft = useCallback(
+    (nextDraft: DetectionFilterDraft | null) => {
+      const id = activeTab?.snapshot.id;
+      if (!id) return;
+      updateTabById(id, { draft: nextDraft });
+    },
+    [activeTab, updateTabById],
+  );
+
+  const handleRowOpen = useCallback(
+    (event: DetectionEvent) => {
+      const id = activeTab?.snapshot.id;
+      if (!id) return;
+      updateTabById(id, { quickPeekEvent: event });
+    },
+    [activeTab, updateTabById],
+  );
 
   const handleRowInvestigate = useCallback(
     (event: DetectionEvent) => {
-      // Build a locator token and jump into the Investigation view.
-      // Carry the current pathname + search as `returnTo` so a
-      // non-default-locale operator who lands on `/events/<token>`
-      // can return to their filtered Detection tab. `useRouter`
-      // from `next-intl/navigation` is locale-aware — it prefixes
-      // the target path so Korean / English operators land on the
-      // right segment.
       const token = encodeEventLocator(event);
       if (!token) return;
       const search =
@@ -902,6 +1234,30 @@ export function DetectionShell({
     },
     [pathname, router],
   );
+
+  const closeQuickPeek = useCallback(() => {
+    const id = activeTab?.snapshot.id;
+    if (!id) return;
+    updateTabById(id, { quickPeekEvent: null });
+  }, [activeTab, updateTabById]);
+
+  const setActiveAnalyticsOpen = useCallback(
+    (nextOpen: boolean) => {
+      const id = activeTab?.snapshot.id;
+      if (!id) return;
+      // `analyticsOpen` lives on the snapshot (not runtime) so the
+      // state is mirrored into sessionStorage by the writer effect —
+      // reloading the page restores whichever tabs had the analytics
+      // strip expanded. Kept off the URL per the shareable/non-
+      // shareable split documented in lib/detection/tabs.ts.
+      updateSnapshotById(id, { analyticsOpen: nextOpen });
+    },
+    [activeTab, updateSnapshotById],
+  );
+
+  const isDesktop = useIsDesktopViewport();
+  const quickPeekEvent = activeTab.quickPeekEvent;
+  const analyticsOpen = activeTab.snapshot.analyticsOpen;
 
   return (
     <div className="flex gap-4">
@@ -923,6 +1279,17 @@ export function DetectionShell({
 
       <section className="flex min-w-0 flex-1 flex-col gap-4">
         <h1 className="sr-only">{title}</h1>
+
+        <DetectionTabs
+          tabs={tabData}
+          activeIndex={activeIndex}
+          cap={TAB_CAP}
+          labels={tabBarLabels}
+          onSelect={handleTabSelect}
+          onClose={handleTabClose}
+          onAdd={handleTabAdd}
+          onRename={handleTabRename}
+        />
 
         {/* Top bar: Filters affordance + active filter chip bar. */}
         <div className="flex items-center gap-3">
@@ -996,18 +1363,12 @@ export function DetectionShell({
           </div>
         </div>
 
-        {/*
-         * Results region (hero) + inline Quick peek inspector (desktop+).
-         *
-         * Layout contract (issue #280): at ≥ desktop widths, when Quick
-         * peek is open the list shrinks proportionally to the right
-         * and the inspector docks as an inline pane beside it. At
-         * narrower widths the inspector falls back to an overlay drawer
-         * (rendered below) and the list keeps its full width. Both
-         * branches reuse `QuickPeekInspectorBody` so the summary +
-         * "Open investigation" contract is defined once.
-         */}
-        <div className="flex min-h-[60vh] flex-1 gap-4">
+        <div
+          role="tabpanel"
+          id={detectionTabPanelDomId(activeTab.snapshot.id)}
+          aria-labelledby={detectionTabDomId(activeTab.snapshot.id)}
+          className="flex min-h-[60vh] flex-1 gap-4"
+        >
           <section
             aria-label={labels.resultsRegion}
             aria-live="polite"
@@ -1017,7 +1378,8 @@ export function DetectionShell({
               state={resultListState}
               labels={resultListLabels}
               locale={locale}
-              queryEpoch={queryEpoch}
+              queryEpoch={activeTab.queryEpoch}
+              canRefresh={activeTab.snapshot.autoRun}
               onRefresh={handleRefresh}
               onOpenFilters={() => openDrawer()}
               onRowOpen={handleRowOpen}
@@ -1033,18 +1395,28 @@ export function DetectionShell({
                 event={quickPeekEvent}
                 locale={locale}
                 labels={resultListLabels}
-                onClose={() => setQuickPeekEvent(null)}
+                onClose={closeQuickPeek}
                 onInvestigate={() => handleRowInvestigate(quickPeekEvent)}
               />
             </aside>
           ) : null}
         </div>
+        {tabs.map((tab) =>
+          tab.snapshot.id === activeTab.snapshot.id ? null : (
+            <div
+              key={tab.snapshot.id}
+              role="tabpanel"
+              id={detectionTabPanelDomId(tab.snapshot.id)}
+              aria-labelledby={detectionTabDomId(tab.snapshot.id)}
+              hidden
+            />
+          ),
+        )}
 
-        {/* Collapsible analytics strip (collapsed by default) */}
         <div className="rounded-lg border border-[var(--sidebar-border)]">
           <button
             type="button"
-            onClick={() => setAnalyticsOpen((open) => !open)}
+            onClick={() => setActiveAnalyticsOpen(!analyticsOpen)}
             aria-expanded={analyticsOpen}
             aria-controls="detection-analytics-panel"
             className="text-foreground flex w-full items-center gap-2 px-3 py-2 text-sm font-medium"
@@ -1072,12 +1444,12 @@ export function DetectionShell({
         </div>
       </section>
 
-      {draft ? (
+      {activeTab.draft ? (
         <FilterDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
-          draft={draft}
-          onDraftChange={setDraft}
+          draft={activeTab.draft}
+          onDraftChange={setActiveDraft}
           onApply={handleApply}
           options={options}
           labels={drawerLabels}
@@ -1095,7 +1467,7 @@ export function DetectionShell({
         event={isDesktop ? null : quickPeekEvent}
         locale={locale}
         labels={resultListLabels}
-        onClose={() => setQuickPeekEvent(null)}
+        onClose={closeQuickPeek}
         onInvestigate={() => {
           if (quickPeekEvent) handleRowInvestigate(quickPeekEvent);
         }}
@@ -1104,13 +1476,19 @@ export function DetectionShell({
   );
 }
 
-/**
- * Subscribes to the desktop media query (`≥ --breakpoint-desktop`).
- * Starts as `false` so the server render matches the narrow branch —
- * the desktop branch flips on post-mount once `matchMedia` reports
- * the real viewport width. Prevents hydration mismatch without the
- * flash-of-incorrect-layout a purely CSS-based toggle would need.
- */
+/** Read the active-tab index from the browser's current URL, or
+ * null when unset. Guarded so server-side callers don't blow up. */
+function readActiveTabFromUrl(): number | null {
+  if (typeof window === "undefined") return null;
+  const raw = new URLSearchParams(window.location.search).get(ACTIVE_TAB_PARAM);
+  if (!raw) return null;
+  // Mirror `readActiveTabIndex`'s strict parse so a hand-edited
+  // `?tab=1.5` / `?tab=1junk` does not silently activate tab 1 here.
+  if (!/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
 function useIsDesktopViewport(): boolean {
   const [isDesktop, setIsDesktop] = useState(false);
   useEffect(() => {
@@ -1124,14 +1502,6 @@ function useIsDesktopViewport(): boolean {
   return isDesktop;
 }
 
-/**
- * Narrow-viewport Quick peek inspector: an overlay sheet. Phase
- * Detection-18 owns the full contents; for v1 we render the compact
- * summary the list row already shows plus the "Open investigation"
- * jump. At ≥ desktop widths the shell renders the same body
- * ({@link QuickPeekInspectorBody}) inline as a right-hand pane,
- * matching the layout contract in issue #280.
- */
 function QuickPeekInspectorOverlay({
   event,
   locale,
@@ -1180,12 +1550,6 @@ function QuickPeekInspectorOverlay({
   );
 }
 
-/**
- * Inline inspector body used by the desktop+ right-hand pane. The
- * pane header mirrors the overlay's `SheetHeader` (kind + time) and
- * carries an explicit Close affordance because there's no backdrop
- * click to dismiss the inline pane.
- */
 function QuickPeekInspectorBody({
   event,
   locale,
@@ -1325,10 +1689,6 @@ function RemovableChip({
   onRemove?: () => void;
   removeLabel: string;
 }) {
-  // The activator and remove controls must be siblings, not nested —
-  // a <button> inside another <button> is invalid HTML and triggers a
-  // React hydration mismatch. Render the Badge as a plain span and
-  // place each button beside it inside the outer wrapper.
   const activateLabel = prefix ? `${prefix}: ${value}` : value;
   return (
     <span

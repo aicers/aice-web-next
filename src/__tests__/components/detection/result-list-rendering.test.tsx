@@ -191,6 +191,26 @@ describe("ResultList row rendering", () => {
     expect(html).not.toContain("Open investigation");
   });
 
+  it("disables the Refresh affordance when canRefresh is false", () => {
+    // Fresh `+` tabs must go through the drawer's Apply path before
+    // running their first query (issue #281). The result header is
+    // always rendered, so the Apply-only gate is enforced by
+    // disabling Refresh until the tab is no longer pending.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={{
+          ...state([]),
+          status: "empty-prequery",
+        }}
+        labels={labels()}
+        locale="en"
+        canRefresh={false}
+        onRefresh={() => {}}
+      />,
+    );
+    expect(html).toMatch(/aria-label="Refresh"[^>]*disabled/);
+  });
+
   it("renders the investigate chevron when the event is addressable", () => {
     const html = renderToStaticMarkup(
       <ResultList

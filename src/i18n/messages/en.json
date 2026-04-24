@@ -791,6 +791,19 @@
     },
     "quickPeek": {
       "placeholder": "Quick peek inspector will appear here."
+    },
+    "tabs": {
+      "tabBarLabel": "Detection search tabs",
+      "addTab": "Open a new tab",
+      "addTabCapTooltip": "Tab limit reached ({cap} tabs). Close one to open another.",
+      "closeTab": "Close tab {name}",
+      "resetName": "Reset tab name to auto-generated",
+      "renamePlaceholder": "Tab name",
+      "autoNameHint": "Auto-generated tab name",
+      "manualNameHint": "Manually renamed tab",
+      "doubleClickToRename": "Double-click to rename",
+      "autoEmptyTab": "New tab",
+      "autoMoreSuffix": "+{count}"
     }
   },
   "events": {

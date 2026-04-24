@@ -407,11 +407,16 @@ export function FilterDrawer({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (
-      !draft.startIso ||
-      !draft.endIso ||
-      Date.parse(draft.startIso) >= Date.parse(draft.endIso)
-    ) {
+    // Both-set or both-null are the only valid shapes. Both-null is a
+    // legitimate "no time filter" Apply — e.g. the operator cleared
+    // the default period chip on a pending `+` tab before first
+    // running the query. Reject one-sided ranges and inverted ranges.
+    if (draft.startIso && draft.endIso) {
+      if (Date.parse(draft.startIso) >= Date.parse(draft.endIso)) {
+        setValidationError(labels.invalidRange);
+        return;
+      }
+    } else if (draft.startIso || draft.endIso) {
       setValidationError(labels.invalidRange);
       return;
     }

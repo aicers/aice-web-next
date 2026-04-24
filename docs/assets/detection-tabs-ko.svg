@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" role="img"
+     aria-label="탐지 멀티 탭 바의 와이어프레임 대체 이미지">
+  <title>탐지 멀티 탭 바(와이어프레임 대체 이미지)</title>
+  <desc>탐지 결과 영역 위 멀티 탭 바의 스키매틱 레이아웃: 자동 생성되거나 수동으로
+        이름을 바꾼 세 개의 탭이 각각 닫기 버튼을 포함합니다. 활성 탭에는 아래쪽
+        밑줄이 표시되고, 맨 왼쪽 탭에는 이름을 자동 요약으로 되돌리는 버튼이 있습니다.
+        + 버튼은 새 빈 탭을 엽니다. 탭이 8개에 도달하면 + 버튼은 비활성화되고
+        툴팁으로 안내합니다.</desc>
+
+  <defs>
+    <style>
+      .bg        { fill: #0f1420; }
+      .panel     { fill: #151b2c; stroke: #2a3352; stroke-width: 1; }
+      .tab       { fill: #131a2c; stroke: #2a3352; stroke-width: 1; }
+      .tabActive { fill: #1d2742; stroke: #3f66c9; stroke-width: 1; }
+      .underline { fill: #3f66c9; }
+      .plus      { fill: #1d2742; stroke: #3a486b; stroke-width: 1; }
+      .plusDis   { fill: #151b2c; stroke: #2a3352; stroke-width: 1; }
+      .label     { fill: #c8d0e4; font-family: system-ui, sans-serif; font-size: 13px; }
+      .labelBold { fill: #e7ebf5; font-family: system-ui, sans-serif; font-size: 13px;
+                   font-weight: 600; }
+      .labelMu   { fill: #8e97ae; font-family: system-ui, sans-serif; font-size: 12px; }
+      .x         { fill: #6d7690; font-family: system-ui, sans-serif; font-size: 12px; }
+      .watermark { fill: #6d7690; font-family: system-ui, sans-serif; font-size: 11px;
+                   letter-spacing: 0.08em; }
+      .caption   { fill: #8e97ae; font-family: system-ui, sans-serif; font-size: 12px;
+                   font-style: italic; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="960" height="220" />
+
+  <!-- Tab bar rail -->
+  <rect class="panel" x="20" y="40" width="920" height="48" />
+
+  <!-- Tab 1: manually renamed, active -->
+  <rect class="tabActive" x="32" y="48" width="200" height="34" rx="4" ry="4" />
+  <text class="labelBold" x="48" y="70">사내망 정찰</text>
+  <text class="x" x="162" y="70">↺</text>
+  <text class="x" x="200" y="70">×</text>
+  <rect class="underline" x="32" y="82" width="200" height="2" />
+
+  <!-- Tab 2: auto-generated, inactive -->
+  <rect class="tab" x="248" y="48" width="220" height="34" rx="4" ry="4" />
+  <text class="label" x="264" y="70">Last 1h · High</text>
+  <text class="x" x="436" y="70">×</text>
+
+  <!-- Tab 3: auto-generated blank, inactive -->
+  <rect class="tab" x="484" y="48" width="140" height="34" rx="4" ry="4" />
+  <text class="label" x="500" y="70">새 탭</text>
+  <text class="x" x="592" y="70">×</text>
+
+  <!-- + affordance -->
+  <rect class="plus" x="640" y="48" width="36" height="34" rx="4" ry="4" />
+  <text class="labelBold" x="652" y="71">+</text>
+
+  <!-- Captions beneath each tab explaining the feature -->
+  <text class="caption" x="32" y="116">수동 이름 변경</text>
+  <text class="caption" x="32" y="132">→ ↺ 버튼으로 자동 요약 복원</text>
+  <text class="caption" x="248" y="116">필터 요약으로 자동 생성</text>
+  <text class="caption" x="248" y="132">(예: Last 1h · High)</text>
+  <text class="caption" x="484" y="116">빈 탭 — 기본 필터가 설정되지만</text>
+  <text class="caption" x="484" y="132">쿼리는 자동 실행되지 않음</text>
+  <text class="caption" x="640" y="116">새 탭 열기(최대 8개);</text>
+  <text class="caption" x="640" y="132">한도 도달 시 비활성·툴팁 표시</text>
+
+  <text class="watermark" x="20" y="206">와이어프레임 · 탭 전환 시 네트워크 요청 없음</text>
+</svg>

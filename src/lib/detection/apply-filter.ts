@@ -48,8 +48,15 @@ export function buildAppliedFilter(
   sensorEndpointLive: boolean = false,
   categoricalOptions?: CategoricalFilterOptions,
 ): Filter {
-  if (!applied.startIso || !applied.endIso) {
-    throw new Error("buildAppliedFilter requires both startIso and endIso");
+  // Both-set or both-null are the only valid shapes. One-sided ranges
+  // are rejected by the drawer's submit validation; this guard is for
+  // programmatic callers. Both-null is a legitimate "no time filter"
+  // Apply — e.g. Apply from a pending `+` tab whose operator cleared
+  // the default period chip before first running the query.
+  if ((applied.startIso === null) !== (applied.endIso === null)) {
+    throw new Error(
+      "buildAppliedFilter: startIso and endIso must be both set or both null",
+    );
   }
 
   const previousInput: Partial<EventListFilterInput> =
@@ -60,6 +67,12 @@ export function buildAppliedFilter(
     directions: _prevDirections,
     endpoints: _prevEndpoints,
     sensors: _prevSensors,
+    // Always strip the prior `start`/`end` so the applied draft is
+    // the sole source of truth for the time window — including the
+    // "no time filter" Apply where both are null and must be absent
+    // from the submitted input (not inherited from a prior commit).
+    start: _prevStart,
+    end: _prevEnd,
     // Strip the branch-introduced free-form fields from the previous
     // input so stale values don't survive when the drawer clears them;
     // the drawer-provided `applied` draft is the source of truth below.
@@ -97,10 +110,12 @@ export function buildAppliedFilter(
 
   const input: EventListFilterInput = {
     ...previousWithoutConfidence,
-    start: applied.startIso,
-    end: applied.endIso,
     endpoints: endpoints.length > 0 ? endpoints : null,
   };
+  if (applied.startIso && applied.endIso) {
+    input.start = applied.startIso;
+    input.end = applied.endIso;
+  }
   if (directions) {
     input.directions = directions;
   }

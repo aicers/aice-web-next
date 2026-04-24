@@ -109,6 +109,14 @@ interface ResultListProps {
    * callers that render a single slice (tests, Storybook).
    */
   queryEpoch?: number;
+  /**
+   * Whether the Refresh affordance is actionable. Fresh `+` tabs are
+   * "pending" — they must go through the drawer's Apply path before
+   * running their first query (Phase Detection-10). Disabling Refresh
+   * in that state keeps the Apply-only contract enforced even though
+   * the result header is always rendered.
+   */
+  canRefresh?: boolean;
   onRefresh: () => void;
   onOpenFilters?: () => void;
   /** Click on a row body — opens Quick peek (Phase Detection-18). */
@@ -122,6 +130,7 @@ export function ResultList({
   labels,
   locale,
   queryEpoch = 0,
+  canRefresh = true,
   onRefresh,
   onOpenFilters,
   onRowOpen,
@@ -129,7 +138,12 @@ export function ResultList({
 }: ResultListProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3">
-      <ResultListHeader state={state} labels={labels} onRefresh={onRefresh} />
+      <ResultListHeader
+        state={state}
+        labels={labels}
+        canRefresh={canRefresh}
+        onRefresh={onRefresh}
+      />
       <ResultListBody
         state={state}
         labels={labels}
@@ -147,10 +161,12 @@ export function ResultList({
 function ResultListHeader({
   state,
   labels,
+  canRefresh,
   onRefresh,
 }: {
   state: ResultListState;
   labels: ResultListLabels;
+  canRefresh: boolean;
   onRefresh: () => void;
 }) {
   const total = state.totalCount;
@@ -179,7 +195,7 @@ function ResultListHeader({
           size="sm"
           onClick={onRefresh}
           aria-label={labels.refresh}
-          disabled={state.status === "loading"}
+          disabled={state.status === "loading" || !canRefresh}
         >
           <RefreshCw
             className={cn(

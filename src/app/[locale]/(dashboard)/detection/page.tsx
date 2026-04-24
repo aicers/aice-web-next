@@ -6,17 +6,19 @@ import type { FilterMultiSelectOption } from "@/components/detection/filter-mult
 import { EVENT_KIND_FRIENDLY_NAMES } from "@/components/events/event-display-helpers";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
-  computePeriodRange,
+  coerceTabForLivePage,
   DEFAULT_PERIOD_KEY,
   type Event,
-  type EventListFilterInput,
   type Filter,
   type FlowKind,
   PERIOD_KEYS,
-  type PivotFilterParams,
-  parsePivotSearchParams,
+  parseActiveTabSearchParams,
+  parseTabsJsonParam,
+  readActiveTabIndex,
+  resolveTabPeriod,
   searchEvents,
   TAG_FIELDS,
+  type TabSnapshot,
   type TagField,
   TEXT_FIELDS,
   type TextField,
@@ -49,7 +51,33 @@ export default async function DetectionPage({
   const t = await getTranslations("detection");
   const locale = await getLocale();
   const rawParams = await searchParams;
-  const pivotParams = parsePivotSearchParams(rawParams);
+  // Reconstruct the full tab strip from the URL. Prefer the
+  // `tabs=<json>` param when it is present (the full working set
+  // rode along within the URL-length budget); otherwise fall back
+  // to the single-tab shape where the active tab is the only one
+  // encoded in the URL and sessionStorage (client-side) fills in
+  // the rest.
+  // Forward-compat `mode: "query"` tabs round-trip through the URL
+  // decoders but the live page has no query editor yet — downgrade
+  // them to a default structured tab here so the chip bar / drawer
+  // never land on an unrenderable filter. See
+  // {@link coerceTabForLivePage} for the full rationale.
+  const multiTabs = parseTabsJsonParam(rawParams);
+  const initialTabs: TabSnapshot[] = multiTabs
+    ? multiTabs.map((tab) =>
+        resolveTabPeriod(coerceTabForLivePage(tab, DEFAULT_PERIOD_KEY)),
+      )
+    : [
+        resolveTabPeriod(
+          coerceTabForLivePage(
+            snapshotFromSingleTabUrl(rawParams),
+            DEFAULT_PERIOD_KEY,
+          ),
+        ),
+      ];
+  const initialActiveIndex =
+    readActiveTabIndex(rawParams, initialTabs.length) ?? 0;
+  const activeTab = initialTabs[initialActiveIndex] ?? initialTabs[0];
   // The client shell builds chip label strings from `labels.chipLabels`
   // — including the aggregate-count formatter that closes over the
   // active locale — so the server page only needs the plain strings.
@@ -58,47 +86,33 @@ export default async function DetectionPage({
     sensorAggregate: t.raw("filters.chips.sensorAggregate") as string,
   };
 
-  const defaultRange = computePeriodRange(DEFAULT_PERIOD_KEY);
-  const initialInput: EventListFilterInput = {
-    start: defaultRange.start,
-    end: defaultRange.end,
-  };
-  if (pivotParams.source) initialInput.source = pivotParams.source;
-  if (pivotParams.destination) {
-    initialInput.destination = pivotParams.destination;
-  }
-  for (const field of TAG_FIELDS) {
-    const values = pivotParams[field];
-    if (values && values.length > 0) initialInput[field] = values;
-  }
-  const initialFilter: Filter = { mode: "structured", input: initialInput };
-
-  // Pivot-only params carry through as chip state but aren't part of
-  // the EventListFilterInput yet — they land in the Network/IP phase.
-  const initialPivotOnly: PivotFilterParams = {
-    kind: pivotParams.kind,
-    origPort: pivotParams.origPort,
-    respPort: pivotParams.respPort,
-    proto: pivotParams.proto,
-    window: pivotParams.window,
-  };
+  const initialFilter: Filter = activeTab.filter;
+  const initialPeriod = activeTab.period;
+  const initialEndpoints = activeTab.endpoints;
+  const initialPivotOnly = activeTab.pivotOnly;
 
   let initialTotal: string | null = null;
   let initialError: string | null = null;
   let initialEvents: Event[] = [];
   let initialEventKeys: string[] = [];
-  try {
-    const connection = await searchEvents(session, initialFilter, {
-      first: DEFAULT_EVENT_LIST_PAGE_SIZE,
-    });
-    initialTotal = connection.totalCount;
-    initialEvents = connection.nodes;
-    // Parallel to `nodes`: each `edges[i].cursor` is the stable
-    // server identity for `nodes[i]`. The client uses it as the
-    // row's React key so duplicate content can't collide.
-    initialEventKeys = connection.edges.map((edge) => edge.cursor);
-  } catch {
-    initialError = t("filters.resultsError");
+  // Skip the SSR fetch when the active tab is a pending `+` tab
+  // (`autoRun: false`). Otherwise a reload of a freshly-opened `+`
+  // tab would rerun the default 1-hour query and clobber the
+  // pre-query empty panel the issue acceptance calls for.
+  if (activeTab.autoRun) {
+    try {
+      const connection = await searchEvents(session, initialFilter, {
+        first: DEFAULT_EVENT_LIST_PAGE_SIZE,
+      });
+      initialTotal = connection.totalCount;
+      initialEvents = connection.nodes;
+      // Parallel to `nodes`: each `edges[i].cursor` is the stable
+      // server identity for `nodes[i]`. The client uses it as the
+      // row's React key so duplicate content can't collide.
+      initialEventKeys = connection.edges.map((edge) => edge.cursor);
+    } catch {
+      initialError = t("filters.resultsError");
+    }
   }
 
   const periodOptions = Object.fromEntries(
@@ -151,7 +165,10 @@ export default async function DetectionPage({
     <DetectionShell
       title={t("title")}
       initialFilter={initialFilter}
-      initialPeriod={DEFAULT_PERIOD_KEY}
+      initialPeriod={initialPeriod}
+      initialEndpoints={initialEndpoints}
+      initialTabs={initialTabs}
+      initialActiveIndex={initialActiveIndex}
       initialResult={{
         totalCount: initialTotal,
         error: initialError,
@@ -285,6 +302,21 @@ export default async function DetectionPage({
           },
         },
         summarize: summarizeLabels,
+        // `addTabCapTooltip` and `closeTab` are parameterised ICU
+        // messages; the shell builds them client-side with
+        // `useTranslations` so this server component never has to
+        // serialize function props.
+        tabs: {
+          tabBarLabel: t("tabs.tabBarLabel"),
+          addTab: t("tabs.addTab"),
+          resetName: t("tabs.resetName"),
+          renamePlaceholder: t("tabs.renamePlaceholder"),
+          autoNameHint: t("tabs.autoNameHint"),
+          manualNameHint: t("tabs.manualNameHint"),
+          doubleClickToRename: t("tabs.doubleClickToRename"),
+          autoEmptyTab: t("tabs.autoEmptyTab"),
+          autoMoreSuffix: t.raw("tabs.autoMoreSuffix") as string,
+        },
       }}
       initialPivotOnly={initialPivotOnly}
     />
@@ -306,6 +338,48 @@ type CountrySentinelCode = (typeof COUNTRY_SENTINEL_CODES)[number];
 
 function isCountrySentinel(code: string): code is CountrySentinelCode {
   return (COUNTRY_SENTINEL_CODES as readonly string[]).includes(code);
+}
+
+/**
+ * Decode the URL when there's no `tabs=<json>` param: the single
+ * active tab is described by the top-level search params (period /
+ * start / end / source / pivot fields / etc.).
+ *
+ * Cold-start seeding: when the URL is a committed (`autoRun`) tab
+ * that carries no period, no explicit range, and no `notime=1`
+ * marker — for example a fresh `/detection` entry or a pivot
+ * hand-off from Investigation that only specifies `source=…` — we
+ * seed the tab with `Last 1 hour` so the first query has a
+ * meaningful default window. `notime=1` tells us the operator
+ * intentionally cleared the time chip on a committed tab; in that
+ * case we respect `period: null` and query with no time bounds.
+ */
+function snapshotFromSingleTabUrl(
+  rawParams: Record<string, string | string[] | undefined>,
+): TabSnapshot {
+  const urlState = parseActiveTabSearchParams(rawParams);
+  const autoRun = urlState.autoRun ?? true;
+  const structuredInput =
+    urlState.filter.mode === "structured" ? urlState.filter.input : null;
+  const hasExplicitRange =
+    !!structuredInput && !!(structuredInput.start || structuredInput.end);
+  const timeIntentExpressed =
+    urlState.period !== null || hasExplicitRange || urlState.noTimeFilter;
+  const shouldSeedDefaultPeriod =
+    autoRun && structuredInput !== null && !timeIntentExpressed;
+  const seededPeriod = shouldSeedDefaultPeriod
+    ? DEFAULT_PERIOD_KEY
+    : urlState.period;
+  return {
+    id: "tab-initial",
+    filter: urlState.filter,
+    period: seededPeriod,
+    endpoints: urlState.endpoints,
+    pivotOnly: urlState.pivotOnly,
+    name: null,
+    autoRun,
+    analyticsOpen: false,
+  };
 }
 
 function buildFilterOptions(
