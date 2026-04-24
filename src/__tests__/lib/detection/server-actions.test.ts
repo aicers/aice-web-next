@@ -278,6 +278,148 @@ describe("detection server actions", () => {
     });
   });
 
+  // ── Tail-drift correction ──────────────────────────────────────
+  //
+  // Reviewer Round 3 #1: `searchArgsForAnchor({ kind: "tail" }, ...)`
+  // uses the caller's cached `totalCount` to narrow the partial-final-
+  // page request. If the real total drifted between navigations,
+  // REview returns a straddling window and the UI label lies.
+  // `searchEventsAtAnchor` re-queries with the freshly returned total
+  // so the rows match the labeled page under drift.
+
+  describe("searchEventsAtAnchor — tail-drift correction", () => {
+    beforeEach(() => {
+      mockHasPermission.mockResolvedValue(true);
+      mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+    });
+
+    /** Build an `eventList` payload with the requested totalCount. */
+    function buildEventList(totalCount: string) {
+      return {
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: true,
+            hasNextPage: false,
+            startCursor: "s",
+            endCursor: "e",
+          },
+          edges: [],
+          nodes: [],
+          totalCount,
+        },
+      };
+    }
+
+    it("issues one request when a non-tail anchor would never drift", async () => {
+      mockGraphqlRequest.mockResolvedValueOnce(buildEventList("1453"));
+
+      const { searchEventsAtAnchor } = await import("@/lib/detection");
+      await searchEventsAtAnchor(
+        makeSession(),
+        { mode: "structured", input: { start: null, end: null } },
+        { kind: "head" },
+        100,
+        "9999",
+      );
+
+      expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+      const [, variables] = mockGraphqlRequest.mock.calls[0];
+      expect(variables.first).toBe(100);
+      expect(variables.last).toBeNull();
+    });
+
+    it("skips the re-query when the fresh remainder matches what was asked for", async () => {
+      // Caller cached totalCount="1453" at 100/page → asks for last:53.
+      // Real total drifted to 1553 but the remainder 1553 % 100 = 53
+      // still matches. The rows REview returned are the real last
+      // page; no re-query needed. The UI re-derives the label (15→16)
+      // via `committedPageForAnchor`.
+      mockGraphqlRequest.mockResolvedValueOnce(buildEventList("1553"));
+
+      const { searchEventsAtAnchor } = await import("@/lib/detection");
+      const result = await searchEventsAtAnchor(
+        makeSession(),
+        { mode: "structured", input: { start: null, end: null } },
+        { kind: "tail" },
+        100,
+        "1453",
+      );
+
+      expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+      expect(mockGraphqlRequest.mock.calls[0][1].last).toBe(53);
+      expect(result.totalCount).toBe("1553");
+    });
+
+    it("re-queries once when the fresh total implies a different partial size", async () => {
+      // Caller cached totalCount="1453" at 100/page → asks for last:53.
+      // Real total is 1500 (remainder 0 → the last page is a full
+      // 100 rows). The helper must re-query with last:100 so the
+      // returned rows are rows 1,401–1,500, not rows 1,448–1,500.
+      mockGraphqlRequest
+        .mockResolvedValueOnce(buildEventList("1500"))
+        .mockResolvedValueOnce(buildEventList("1500"));
+
+      const { searchEventsAtAnchor } = await import("@/lib/detection");
+      await searchEventsAtAnchor(
+        makeSession(),
+        { mode: "structured", input: { start: null, end: null } },
+        { kind: "tail" },
+        100,
+        "1453",
+      );
+
+      expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+      const firstArgs = mockGraphqlRequest.mock.calls[0][1];
+      const secondArgs = mockGraphqlRequest.mock.calls[1][1];
+      expect(firstArgs.last).toBe(53);
+      expect(secondArgs.last).toBe(100);
+    });
+
+    it("performs the cold-SSR two-step when the caller has no cached total", async () => {
+      // Cold deep link for `?last=1&pageSize=100` on a 1,453-row total:
+      // first query uses `last: 100` (no partial knowledge), second
+      // query narrows to `last: 53` once the total is known.
+      mockGraphqlRequest
+        .mockResolvedValueOnce(buildEventList("1453"))
+        .mockResolvedValueOnce(buildEventList("1453"));
+
+      const { searchEventsAtAnchor } = await import("@/lib/detection");
+      await searchEventsAtAnchor(
+        makeSession(),
+        { mode: "structured", input: { start: null, end: null } },
+        { kind: "tail" },
+        100,
+        null,
+      );
+
+      expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+      expect(mockGraphqlRequest.mock.calls[0][1].last).toBe(100);
+      expect(mockGraphqlRequest.mock.calls[1][1].last).toBe(53);
+    });
+
+    it("stops correcting after two re-queries under pathological drift", async () => {
+      // Each response moves the remainder, so every corrective query
+      // would re-trigger. The cap keeps worst-case traffic bounded —
+      // we accept the rows from the last attempt and trust the UI's
+      // `committedPageForAnchor` to re-derive the page label.
+      mockGraphqlRequest
+        .mockResolvedValueOnce(buildEventList("1453")) // last=100 → correct→53
+        .mockResolvedValueOnce(buildEventList("1500")) // last=53 → correct→100
+        .mockResolvedValueOnce(buildEventList("1453")); // last=100 → correct→53; capped
+
+      const { searchEventsAtAnchor } = await import("@/lib/detection");
+      await searchEventsAtAnchor(
+        makeSession(),
+        { mode: "structured", input: { start: null, end: null } },
+        { kind: "tail" },
+        100,
+        null,
+      );
+
+      expect(mockGraphqlRequest).toHaveBeenCalledTimes(3);
+    });
+  });
+
   // ── Time series ────────────────────────────────────────────────
 
   describe("eventFrequencySeries", () => {

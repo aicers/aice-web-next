@@ -783,6 +783,20 @@
       "attackKindLabel": "Attack:",
       "quickPeekClose": "Close Quick peek"
     },
+    "pagination": {
+      "pageSizeLabel": "Rows per page",
+      "rangeIndicator": "{start}–{end} of {total}",
+      "totalOnly": "0 of {total}",
+      "pageOfTotal": "Page {page} of {total}",
+      "firstPage": "First page",
+      "previousPage": "Previous page",
+      "nextPage": "Next page",
+      "lastPage": "Last page",
+      "goToPageLabel": "Go to page",
+      "goToPagePlaceholder": "N",
+      "goToPageSubmit": "Go",
+      "walkingProgress": "Walking… page {current} of {target}"
+    },
     "analytics": {
       "toggle": "Analytics",
       "show": "Show analytics",

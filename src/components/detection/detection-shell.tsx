@@ -17,11 +17,18 @@ import {
   useRef,
   useState,
 } from "react";
-import { runEventQuery } from "@/app/[locale]/(dashboard)/detection/actions";
+import {
+  type RunEventQueryResult,
+  runEventQuery,
+} from "@/app/[locale]/(dashboard)/detection/actions";
 import {
   type FetchSensorsResult,
   fetchSensors,
 } from "@/app/[locale]/(dashboard)/detection/sensor-actions";
+import {
+  PaginationControls,
+  type PaginationControlsLabels,
+} from "@/components/detection/pagination-controls";
 import {
   ResultList,
   type ResultListLabels,
@@ -68,10 +75,22 @@ import {
   type SummarizeFilterLabels,
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
+import {
+  clearPaginationParams,
+  committedPageForAnchor,
+  INITIAL_PAGINATION_STATE,
+  type PageAnchor,
+  type PageSize,
+  type PaginationState,
+  pageAtNewSize,
+  paginationToSearchEntries,
+  totalPagesFrom,
+} from "@/lib/detection/pagination";
 import type { PeriodKey } from "@/lib/detection/period";
 import type {
   Event as DetectionEvent,
   LearningMethod,
+  PageInfo,
 } from "@/lib/detection/types";
 import {
   buildDetectionSearchParams,
@@ -152,6 +171,7 @@ export interface DetectionShellLabels {
   confidenceChipLabel: string;
   chipLabels: ChipLabelStrings;
   drawer: DrawerLabelStrings;
+  pagination: PaginationLabelStrings;
   /**
    * Serializable subset of {@link SummarizeFilterLabels} — the server
    * page only passes plain strings; the client shell builds the full
@@ -162,6 +182,23 @@ export interface DetectionShellLabels {
     sensor: string;
     sensorAggregate: string;
   };
+}
+
+/**
+ * Serializable subset of {@link PaginationControlsLabels} — the
+ * server page passes plain strings for the button names; the shell
+ * builds the function-valued formatters (range indicator,
+ * page-of-total, walking progress) using the locale translator.
+ */
+export interface PaginationLabelStrings {
+  pageSizeLabel: string;
+  firstPage: string;
+  previousPage: string;
+  nextPage: string;
+  lastPage: string;
+  goToPageLabel: string;
+  goToPagePlaceholder: string;
+  goToPageSubmit: string;
 }
 
 export interface DetectionShellInitialResult {
@@ -176,6 +213,13 @@ export interface DetectionShellInitialResult {
    * share the same time / endpoint tuple within one page).
    */
   eventKeys: string[];
+  /**
+   * `EventConnection.pageInfo` for the initial slice. `null` only
+   * when the server query errored before the shell mounted — the
+   * paginator then renders without nav affordances until the next
+   * Apply / Refresh repopulates it.
+   */
+  pageInfo: PageInfo | null;
 }
 
 interface DetectionShellProps {
@@ -187,6 +231,13 @@ interface DetectionShellProps {
   initialResult: DetectionShellInitialResult;
   /** URL-only pivot params (kind, ports, proto, window). Preserved through URL round-trips for Phase Detection-12 pivot logic; not rendered as active-filter chips yet because they do not participate in the committed `EventListFilterInput`. */
   initialPivotOnly?: PivotFilterParams;
+  /**
+   * Page size + cursor anchor parsed from the URL. A fresh
+   * `/detection` load passes {@link INITIAL_PAGINATION_STATE}; a
+   * deep-linked URL restores the persisted slice so a refresh keeps
+   * the operator on the page they were viewing.
+   */
+  initialPagination?: PaginationState;
 }
 
 /**
@@ -302,9 +353,11 @@ export function DetectionShell({
   initialPeriod,
   initialResult,
   initialPivotOnly = {},
+  initialPagination = INITIAL_PAGINATION_STATE,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
+  const tPagination = useTranslations("detection.pagination");
   const locale = useLocale();
   const pathname = usePathname();
   const router = useRouter();
@@ -460,6 +513,23 @@ export function DetectionShell({
   const [hasQueried, setHasQueried] = useState(
     initialResult.error === null && initialResult.totalCount !== null,
   );
+  const [pagination, setPagination] =
+    useState<PaginationState>(initialPagination);
+  const [pageInfo, setPageInfo] = useState<PageInfo | null>(
+    initialResult.pageInfo,
+  );
+  // Subtle progress hint for multi-step Go-to-page walks. `null`
+  // means no walk is in flight; otherwise the paginator renders a
+  // "Walking… 3 of 9" label under the Go-to-page input.
+  const [walking, setWalking] = useState<{
+    current: number;
+    target: number;
+  } | null>(null);
+  // Monotonic id for the active Go-to-page walk. A second Go submission
+  // supersedes the first — any late REview response whose walk id
+  // no longer matches is dropped so cursor drift during a multi-step
+  // walk can't leak into the committed page.
+  const latestWalkIdRef = useRef(0);
   // Quick peek inspector (Phase Detection-18 owns the content; this
   // shell wires the open/close contract and the jump into full
   // Investigation). At wide widths (≥ `desktop`) the inspector docks
@@ -484,6 +554,12 @@ export function DetectionShell({
   // away from the committed filter when the operator applies twice
   // in quick succession.
   const latestRequestIdRef = useRef(0);
+  // Mirror of the most-recent `totalCount` state so `dispatchQuery`
+  // can thread it into `runEventQuery` (for partial-final-page tail
+  // requests) without re-binding the callback every time the total
+  // refreshes — a reactive dependency would churn every downstream
+  // useCallback and can mid-flight re-create the Go-to-page walker.
+  const totalCountRef = useRef<string | null>(initialResult.totalCount);
 
   // Kicks off a sensor-list fetch and threads the result into the
   // session cache. Extracted so both the initial lazy-load (on the
@@ -537,50 +613,136 @@ export function DetectionShell({
     triggerSensorFetch,
   ]);
 
-  // Re-run a committed filter without going through the drawer's
-  // Apply path. Used by both chip × removal and the result list's
-  // Refresh button — neither has a draft to normalize, so they
-  // bypass `buildAppliedFilter`. Mirrors the same monotonic
-  // request-id late-response guard that `handleApply` uses.
-  const runQueryFor = useCallback(
-    (filter: Filter) => {
+  /**
+   * Re-run a committed filter at a specific page / anchor. Used by
+   * chip × removal, the result list's Refresh, the paginator's
+   * First/Prev/Next/Last, and each step of a Go-to-page walk. Bumps
+   * a monotonic request id so a late response from a superseded
+   * dispatch is dropped — without that guard, a quick Next → Prev
+   * could land the Prev rows on top of the Next slice.
+   *
+   * When a query-transition side effect fires (Apply, chip removal,
+   * Refresh) the paginator state is reset to page 1 before dispatch
+   * so the URL and the request agree: `head` + `page=1`.
+   */
+  const dispatchQuery = useCallback(
+    (
+      filter: Filter,
+      args: {
+        anchor: PageAnchor;
+        pageSize: PageSize;
+        page: number;
+        /**
+         * `true` for navigation within the current filter (paginator
+         * clicks, Go-to-page walk steps). `false` for committed
+         * transitions (Apply, chip removal, Refresh) — those bump
+         * queryEpoch and close Quick peek per
+         * {@link applyCommitDispatchReset}.
+         */
+        navigating: boolean;
+      },
+    ): Promise<RunEventQueryResult | null> => {
       setLoading(true);
       setResultError(null);
       setHasQueried(true);
-      // See `applyCommitDispatchReset` for the dispatch-time contract.
-      applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+      if (!args.navigating) {
+        // See `applyCommitDispatchReset` for the dispatch-time contract.
+        applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+      }
       const requestId = latestRequestIdRef.current + 1;
       latestRequestIdRef.current = requestId;
-      startTransition(async () => {
-        try {
-          const result = await runEventQuery(filter);
-          if (latestRequestIdRef.current !== requestId) return;
-          if (result.ok) {
-            setTotalCount(result.totalCount);
-            setEvents(result.events);
-            setEventKeys(result.eventKeys);
-            setResultError(null);
-            setLastUpdatedMs(Date.now());
-          } else {
+      return new Promise<RunEventQueryResult | null>((resolve) => {
+        startTransition(async () => {
+          try {
+            const result = await runEventQuery(filter, {
+              pageSize: args.pageSize,
+              anchor: args.anchor,
+              // Pass the most-recently-known total so a `tail` anchor
+              // requests the partial-final-page remainder instead of
+              // the straddling `last: pageSize` window. For head /
+              // after / before this is ignored by
+              // `searchArgsForAnchor`. Read through a ref so the
+              // dispatcher's identity doesn't churn on every total
+              // update.
+              totalCount: totalCountRef.current,
+            });
+            if (latestRequestIdRef.current !== requestId) {
+              resolve(null);
+              return;
+            }
+            if (result.ok) {
+              totalCountRef.current = result.totalCount;
+              setTotalCount(result.totalCount);
+              setEvents(result.events);
+              setEventKeys(result.eventKeys);
+              setPageInfo(result.pageInfo);
+              // For `tail` anchors, the server action's drift-
+              // correction loop may have re-queried against a total
+              // that crossed a page boundary (e.g. 1,453 → 1,553 at
+              // 100/page moves the last page from 15 to 16). Re-derive
+              // the label from the response's own `totalCount` so the
+              // page counter matches the actual rows. Other anchors
+              // keep the caller's chosen page.
+              setPagination({
+                pageSize: args.pageSize,
+                anchor: args.anchor,
+                page: committedPageForAnchor(
+                  args.anchor,
+                  args.pageSize,
+                  result.totalCount,
+                  args.page,
+                ),
+              });
+              setResultError(null);
+              setLastUpdatedMs(Date.now());
+            } else {
+              totalCountRef.current = null;
+              setTotalCount(null);
+              setEvents([]);
+              setEventKeys([]);
+              setPageInfo(null);
+              setResultError(labels.resultsError);
+            }
+            resolve(result);
+          } catch {
+            if (latestRequestIdRef.current !== requestId) {
+              resolve(null);
+              return;
+            }
+            totalCountRef.current = null;
             setTotalCount(null);
             setEvents([]);
             setEventKeys([]);
+            setPageInfo(null);
             setResultError(labels.resultsError);
+            resolve(null);
+          } finally {
+            if (latestRequestIdRef.current === requestId) {
+              setLoading(false);
+            }
           }
-        } catch {
-          if (latestRequestIdRef.current !== requestId) return;
-          setTotalCount(null);
-          setEvents([]);
-          setEventKeys([]);
-          setResultError(labels.resultsError);
-        } finally {
-          if (latestRequestIdRef.current === requestId) {
-            setLoading(false);
-          }
-        }
+        });
       });
     },
     [labels.resultsError],
+  );
+
+  // Wrapper used by the Apply / chip / Refresh paths — they all
+  // reset pagination back to page 1 (head) on transition.
+  const runQueryFor = useCallback(
+    (filter: Filter) => {
+      // Cancel any in-flight Go-to-page walk — its cursors were
+      // derived from the superseded filter.
+      latestWalkIdRef.current += 1;
+      setWalking(null);
+      void dispatchQuery(filter, {
+        anchor: { kind: "head" },
+        pageSize: pagination.pageSize,
+        page: 1,
+        navigating: false,
+      });
+    },
+    [dispatchQuery, pagination.pageSize],
   );
 
   const handleApply = useCallback(
@@ -629,14 +791,33 @@ export function DetectionShell({
           pivotOnly,
           pivotParamsFromFilterInput(next.input),
         );
-        const qs = buildDetectionSearchParams(merged).toString();
+        const search = buildDetectionSearchParams(merged);
+        // Apply resets the cursor to the start of the new filter
+        // space — stale pagination keys would point at cursors from
+        // the old filter's connection.
+        clearPaginationParams(search);
+        // Pagination itself is persisted below when the fresh query
+        // resolves; the initial URL can stay short (default page
+        // size, head anchor, no page param).
+        if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
+          search.set("pageSize", String(pagination.pageSize));
+        }
+        const qs = search.toString();
         const url = qs ? `${pathname}?${qs}` : pathname;
         window.history.replaceState(window.history.state, "", url);
       }
 
       runQueryFor(next);
     },
-    [committedFilter, pivotOnly, options, pathname, runQueryFor, sensorCache],
+    [
+      committedFilter,
+      pagination.pageSize,
+      pivotOnly,
+      options,
+      pathname,
+      runQueryFor,
+      sensorCache,
+    ],
   );
 
   const handleRemoveChip = useCallback(
@@ -665,18 +846,370 @@ export function DetectionShell({
           pivotOnly,
           pivotParamsFromFilterInput(next.filter.input),
         );
-        const qs = buildDetectionSearchParams(merged).toString();
+        const search = buildDetectionSearchParams(merged);
+        clearPaginationParams(search);
+        if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
+          search.set("pageSize", String(pagination.pageSize));
+        }
+        const qs = search.toString();
         const url = qs ? `${pathname}?${qs}` : pathname;
         window.history.replaceState(window.history.state, "", url);
       }
       runQueryFor(next.filter);
     },
-    [committedEndpoints, committedFilter, pivotOnly, pathname, runQueryFor],
+    [
+      committedEndpoints,
+      committedFilter,
+      pagination.pageSize,
+      pivotOnly,
+      pathname,
+      runQueryFor,
+    ],
+  );
+
+  /**
+   * Write the current pagination state into the URL alongside the
+   * existing filter / pivot params. Called after every successful
+   * paginator navigation so a refresh or share-this-URL lands on
+   * the same page.
+   */
+  const persistPaginationToUrl = useCallback(
+    (next: PaginationState) => {
+      if (committedFilter.mode !== "structured") return;
+      const merged = mergePivotParams(
+        pivotOnly,
+        pivotParamsFromFilterInput(committedFilter.input),
+      );
+      const search = buildDetectionSearchParams(merged);
+      clearPaginationParams(search);
+      for (const [k, v] of paginationToSearchEntries(next)) {
+        search.set(k, v);
+      }
+      const qs = search.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(window.history.state, "", url);
+    },
+    [committedFilter, pathname, pivotOnly],
+  );
+
+  /**
+   * Fire a paginator navigation (First / Prev / Next / Last /
+   * single-step Go-to-page) at the current committed filter. On
+   * success, writes the resulting pagination state into the URL so
+   * a refresh restores the same page.
+   */
+  const navigateTo = useCallback(
+    async (next: PaginationState): Promise<RunEventQueryResult | null> => {
+      // Navigation within the current filter — Apply contract does
+      // not apply. `dispatchQuery` with `navigating: true` keeps
+      // Quick peek open and does not bump queryEpoch (positional
+      // cursors change, but the committed filter is unchanged, so
+      // row-state leakage is not a risk).
+      const result = await dispatchQuery(committedFilter, {
+        anchor: next.anchor,
+        pageSize: next.pageSize,
+        page: next.page,
+        navigating: true,
+      });
+      if (result?.ok) {
+        // For `tail` navigations, re-derive the page label from the
+        // response's own `totalCount` so a URL reload lands on the
+        // same rows under the same page number even when the total
+        // drifted during the request.
+        persistPaginationToUrl({
+          ...next,
+          page: committedPageForAnchor(
+            next.anchor,
+            next.pageSize,
+            result.totalCount,
+            next.page,
+          ),
+        });
+      }
+      return result;
+    },
+    [committedFilter, dispatchQuery, persistPaginationToUrl],
   );
 
   const handleRefresh = useCallback(() => {
-    runQueryFor(committedFilter);
-  }, [committedFilter, runQueryFor]);
+    // Refresh re-runs the current slice rather than the Apply/chip
+    // contract's "reset to page 1". An operator sitting on page N
+    // who asks to refresh expects the same window with fresh data,
+    // not a silent teleport to page 1. `navigating: false` still
+    // bumps the queryEpoch so per-row state (MorePopover, focus) is
+    // cleared, matching the dispatch-time contract for committed
+    // transitions.
+    latestWalkIdRef.current += 1;
+    setWalking(null);
+    void dispatchQuery(committedFilter, {
+      anchor: pagination.anchor,
+      pageSize: pagination.pageSize,
+      page: pagination.page,
+      navigating: false,
+    }).then((result) => {
+      if (result?.ok) {
+        // A Refresh parked on a `tail` anchor can see the total shift
+        // between the previous query and this one. Persist the page
+        // number derived from the fresh total so the URL counts from
+        // the same rows the paginator is about to render.
+        persistPaginationToUrl({
+          ...pagination,
+          page: committedPageForAnchor(
+            pagination.anchor,
+            pagination.pageSize,
+            result.totalCount,
+            pagination.page,
+          ),
+        });
+      }
+    });
+  }, [committedFilter, dispatchQuery, pagination, persistPaginationToUrl]);
+
+  /**
+   * Walk the connection forward to `target` at `pageSize`, one
+   * request at a time. Shared by the Go-to-page input and the
+   * page-size selector — both need a sequential cursor walk to
+   * reach an arbitrary page without random-access support.
+   *
+   * `canResumeFromCurrent` lets Go-to-page reuse the current
+   * pagination when its target lies strictly ahead (saves steps
+   * for forward jumps). The page-size selector always walks from
+   * head because cursors are page-size scoped — reusing a cursor
+   * captured at `50/page` under a `100/page` request would drift
+   * the window off by up to one old-page worth of rows.
+   */
+  const runWalkTo = useCallback(
+    async (
+      walkId: number,
+      target: number,
+      pageSize: PageSize,
+      canResumeFromCurrent: boolean,
+    ): Promise<void> => {
+      let currentPage: number;
+      let anchorForCurrentPage: PageAnchor;
+      let currentPageInfo: PageInfo | null;
+      if (canResumeFromCurrent && pagination.page < target && pageInfo) {
+        currentPage = pagination.page;
+        anchorForCurrentPage = pagination.anchor;
+        currentPageInfo = pageInfo;
+      } else {
+        currentPage = 1;
+        anchorForCurrentPage = { kind: "head" };
+        currentPageInfo = null;
+      }
+
+      if (currentPageInfo === null) {
+        setWalking({ current: currentPage, target });
+        const seed = await dispatchQuery(committedFilter, {
+          anchor: anchorForCurrentPage,
+          pageSize,
+          page: currentPage,
+          navigating: true,
+        });
+        if (latestWalkIdRef.current !== walkId) return;
+        if (!seed?.ok) {
+          setWalking(null);
+          return;
+        }
+        currentPageInfo = seed.pageInfo;
+      }
+
+      while (currentPage < target) {
+        if (latestWalkIdRef.current !== walkId) return;
+        if (!currentPageInfo?.hasNextPage || !currentPageInfo.endCursor) {
+          // REview ran out of pages before totalCount said we
+          // should — commit whatever state we last reached and
+          // stop walking.
+          break;
+        }
+        const stepAnchor: PageAnchor = {
+          kind: "after",
+          cursor: currentPageInfo.endCursor,
+        };
+        setWalking({ current: currentPage + 1, target });
+        const step = await dispatchQuery(committedFilter, {
+          anchor: stepAnchor,
+          pageSize,
+          page: currentPage + 1,
+          navigating: true,
+        });
+        if (latestWalkIdRef.current !== walkId) return;
+        if (!step?.ok) {
+          setWalking(null);
+          return;
+        }
+        anchorForCurrentPage = stepAnchor;
+        currentPage += 1;
+        currentPageInfo = step.pageInfo;
+      }
+
+      if (latestWalkIdRef.current !== walkId) return;
+      setWalking(null);
+      persistPaginationToUrl({
+        pageSize,
+        page: currentPage,
+        anchor: anchorForCurrentPage,
+      });
+    },
+    [
+      committedFilter,
+      dispatchQuery,
+      pageInfo,
+      pagination,
+      persistPaginationToUrl,
+    ],
+  );
+
+  const handlePageSizeChange = useCallback(
+    (size: PageSize) => {
+      // Keep the operator near the first row of the current window
+      // rather than snapping to page 1: at page 3 of `50/page`
+      // (rows 101-150), switching to `100/page` lands on page 2
+      // (rows 101-200); at page 2 of `100/page`, switching to
+      // `25/page` lands on page 5. If the new target is page 1, use
+      // a head shortcut; otherwise walk from head at the new size
+      // (cursors don't port across page sizes). We intentionally do
+      // *not* collapse a target that happens to equal the current
+      // `totalPages` into a tail anchor: tail navigations re-derive
+      // the last page from the response's fresh `totalCount`, which
+      // would land on a different page than the explicit target
+      // derived from the prior window's first row when new events
+      // have arrived between queries.
+      if (size === pagination.pageSize) return;
+      const walkId = latestWalkIdRef.current + 1;
+      latestWalkIdRef.current = walkId;
+      setWalking(null);
+      const targetPage = pageAtNewSize(
+        pagination.page,
+        pagination.pageSize,
+        size,
+      );
+      if (targetPage <= 1) {
+        void navigateTo({
+          pageSize: size,
+          page: 1,
+          anchor: { kind: "head" },
+        });
+        return;
+      }
+      void runWalkTo(walkId, targetPage, size, false);
+    },
+    [navigateTo, pagination, runWalkTo],
+  );
+
+  const handleFirstPage = useCallback(() => {
+    latestWalkIdRef.current += 1;
+    setWalking(null);
+    void navigateTo({
+      pageSize: pagination.pageSize,
+      page: 1,
+      anchor: { kind: "head" },
+    });
+  }, [navigateTo, pagination.pageSize]);
+
+  const handleLastPage = useCallback(() => {
+    latestWalkIdRef.current += 1;
+    setWalking(null);
+    // Derive the "last" page number from the current total so the
+    // range indicator reads right; if the total can't be parsed
+    // (REview returned no total), fall back to page 1 + tail anchor
+    // — REview still returns the last slice, the page counter just
+    // can't display an accurate number.
+    const lastPage = totalPagesFrom(totalCount, pagination.pageSize) ?? 1;
+    void navigateTo({
+      pageSize: pagination.pageSize,
+      page: lastPage,
+      anchor: { kind: "tail" },
+    });
+  }, [navigateTo, pagination.pageSize, totalCount]);
+
+  const handleNextPage = useCallback(() => {
+    if (!pageInfo?.hasNextPage || !pageInfo.endCursor) return;
+    latestWalkIdRef.current += 1;
+    setWalking(null);
+    void navigateTo({
+      pageSize: pagination.pageSize,
+      page: pagination.page + 1,
+      anchor: { kind: "after", cursor: pageInfo.endCursor },
+    });
+  }, [navigateTo, pageInfo, pagination]);
+
+  const handlePreviousPage = useCallback(() => {
+    if (!pageInfo?.hasPreviousPage || !pageInfo.startCursor) return;
+    latestWalkIdRef.current += 1;
+    setWalking(null);
+    void navigateTo({
+      pageSize: pagination.pageSize,
+      page: Math.max(1, pagination.page - 1),
+      anchor: { kind: "before", cursor: pageInfo.startCursor },
+    });
+  }, [navigateTo, pageInfo, pagination]);
+
+  /**
+   * Jump the connection to page N. Relay cursors are opaque offsets
+   * into the result order, so there is no O(1) jump when the target
+   * lies strictly inside the window — `Go to page 50` from page 1 is
+   * 49 forward requests. This handler:
+   *
+   *   - No-ops when the target matches the current page. The walker
+   *     would otherwise drop down the "restart from head" branch and
+   *     re-walk (or re-fetch) the same slice the operator is already
+   *     looking at.
+   *   - Short-circuits to First / Last when the target is 1 or
+   *     ≥ totalPages, saving the entire walk in the two most common
+   *     cases (power users typing a small number, or clicking Last
+   *     from the middle).
+   *   - Otherwise delegates to {@link runWalkTo}, which handles the
+   *     cursor walk, progress hint, and supersession guard shared
+   *     with the page-size selector.
+   *   - Caps the target at the derived total page count so a typo
+   *     like "go to page 99999" lands on the last page instead of
+   *     walking forever.
+   */
+  const handleGoToPage = useCallback(
+    (target: number) => {
+      if (!Number.isFinite(target) || target < 1) return;
+      if (loading) return;
+
+      // Derive totalPages from the currently-known totalCount.
+      // (Unknown → no cap, so the walker stops naturally when
+      // `hasNextPage` / `hasPreviousPage` goes false.)
+      const totalPages = totalPagesFrom(totalCount, pagination.pageSize);
+      const capped =
+        totalPages !== null ? Math.min(target, totalPages) : target;
+
+      // Already on the target page — nothing to do. Without this
+      // guard the handler would fall into the walker's "restart from
+      // head" branch and re-walk the same number of pages we're
+      // already parked on.
+      if (capped === pagination.page) return;
+
+      const walkId = latestWalkIdRef.current + 1;
+      latestWalkIdRef.current = walkId;
+      setWalking(null);
+
+      // Short-circuits for the cheap cases.
+      if (capped <= 1) {
+        void navigateTo({
+          pageSize: pagination.pageSize,
+          page: 1,
+          anchor: { kind: "head" },
+        });
+        return;
+      }
+      if (totalPages !== null && capped >= totalPages) {
+        void navigateTo({
+          pageSize: pagination.pageSize,
+          page: totalPages,
+          anchor: { kind: "tail" },
+        });
+        return;
+      }
+
+      void runWalkTo(walkId, capped, pagination.pageSize, true);
+    },
+    [loading, navigateTo, pagination, runWalkTo, totalCount],
+  );
 
   const openDrawerFocused = useCallback(
     (focus: FilterChipFocus) => {
@@ -711,6 +1244,27 @@ export function DetectionShell({
       sensorCache,
       triggerSensorFetch,
     ],
+  );
+
+  const paginationLabels = useMemo<PaginationControlsLabels>(
+    () => ({
+      pageSizeLabel: labels.pagination.pageSizeLabel,
+      rangeIndicator: ({ start, end, total }) =>
+        tPagination("rangeIndicator", { start, end, total }),
+      totalOnly: ({ total }) => tPagination("totalOnly", { total }),
+      pageOfTotal: ({ page, total }) =>
+        tPagination("pageOfTotal", { page, total }),
+      firstPage: labels.pagination.firstPage,
+      previousPage: labels.pagination.previousPage,
+      nextPage: labels.pagination.nextPage,
+      lastPage: labels.pagination.lastPage,
+      goToPageLabel: labels.pagination.goToPageLabel,
+      goToPagePlaceholder: labels.pagination.goToPagePlaceholder,
+      goToPageSubmit: labels.pagination.goToPageSubmit,
+      walkingProgress: ({ current, target }) =>
+        tPagination("walkingProgress", { current, target }),
+    }),
+    [labels.pagination, tPagination],
   );
 
   const drawerLabels = useMemo<FilterDrawerLabels>(() => {
@@ -1023,6 +1577,25 @@ export function DetectionShell({
               onRowOpen={handleRowOpen}
               onRowInvestigate={handleRowInvestigate}
             />
+            {hasQueried && !resultError ? (
+              <PaginationControls
+                labels={paginationLabels}
+                locale={locale}
+                totalCount={totalCount}
+                pageSize={pagination.pageSize}
+                page={pagination.page}
+                hasPreviousPage={pageInfo?.hasPreviousPage ?? false}
+                hasNextPage={pageInfo?.hasNextPage ?? false}
+                disabled={loading}
+                walking={walking}
+                onPageSizeChange={handlePageSizeChange}
+                onFirst={handleFirstPage}
+                onPrevious={handlePreviousPage}
+                onNext={handleNextPage}
+                onLast={handleLastPage}
+                onGoToPage={handleGoToPage}
+              />
+            ) : null}
           </section>
           {isDesktop && quickPeekEvent ? (
             <aside

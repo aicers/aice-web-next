@@ -209,6 +209,77 @@ desktop widths restores the hero list to its full width once
 no row is selected. Reopening Quick peek on the row you want
 after a filter change is a single click.
 
+#### Pagination
+
+A Gmail-style paginator sits immediately below the result rows.
+It carries, from left to right, the page-size selector, the
+locale-grouped range + total indicator (`1–50 of 1,453`), the
+**First** / **Previous** page indicator / **Next** / **Last**
+controls, and a **Go to page** input for rare deep seeks.
+
+![Detection pagination controls — wireframe stand-in](../assets/detection-pagination-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The figure above is an SVG wireframe rather than a real capture,
+    on the same infrastructure-gated basis as the page-level
+    illustration. The paginator's totals come from a live REview
+    query, and the authoring worktree has no staging backend with
+    seeded detection data — per `docs/AUTHORING.md` §"Screenshot
+    exception for infrastructure-gated features", this section
+    ships a localized SVG wireframe and will be replaced with a
+    real screenshot once staging with sample data is available.
+
+- **Rows per page** toggles between `25`, `50`, `100`, and `200`.
+  The default is `50`. Changing the size keeps the operator near
+  the start of the current window: on page 3 at `50/page`
+  (rows 101–150), switching to `100/page` lands on page 2
+  (rows 101–200) instead of snapping back to page 1. Because
+  REview cursors are page-size scoped, this is accomplished by
+  walking forward from head at the new size — the same cursor
+  walk Go-to-page uses — so deep windows cost one request per
+  page traversed.
+- The **range indicator** formats totals and page bounds with
+  locale-aware grouping (for example, `1–50 of 1,453`). Totals are
+  BigInt-safe: REview returns them as strings and the UI preserves
+  that precision end-to-end, so counts beyond `2^53` still render
+  without rounding.
+- **First / Previous / Next / Last** walk adjacent windows.
+  **First** uses `first: pageSize`. **Previous** and **Next** use
+  the current page's `startCursor` / `endCursor` to paginate one
+  window at a time. **Last** narrows its request to the partial
+  final page's real row count when the total is known — on 1,453
+  rows at `100/page` it asks for `last: 53` so the window lands on
+  rows 1,401–1,453 under the `Page 15 of 15` label, rather than
+  the straddling `last: 100` window (1,354–1,453) that Relay's
+  spec returns by default. If the total has drifted since the
+  current window was loaded (new events arrived in the background,
+  for example), the paginator re-queries once with the freshly
+  returned `totalCount` so the rows, page label, and range
+  indicator all reflect the same up-to-date total. Buttons
+  auto-disable at the boundaries — First and Previous gray out at
+  the head, Next and Last gray out at the tail.
+- The **Go to page** input jumps to an explicit page number. The
+  input accepts positive integers only — scientific notation
+  (`1e3`), decimals, and signed values are rejected so the target
+  page always matches what was typed. For a target that is not 1
+  or the last page, the input walks cursors forward one request
+  at a time: page 50 from page 1 requires 49 sequential requests,
+  since Relay cursors have no O(1) jump. A subtle `Walking…
+  page N of M` hint appears under the input while the walk is in
+  flight so the operation does not look hung. A target that
+  exceeds the derived total page count is capped at the last page
+  instead of walking forever, and applies the same partial-final-
+  page + drift correction as the **Last** button.
+
+Per-tab pagination state — page size, page number, and the anchor
+cursor — is serialized into the URL alongside the filter. Refreshing
+the page (or sharing the URL) restores the exact slice you were
+viewing. Applying a new filter or removing a chip resets the
+anchor to the head of the new connection, because cursors are
+scoped to a single committed filter and carrying them across
+filters would point at stale positions.
+
 ### Analytics strip
 
 Below Results, an Analytics strip is reserved for aggregate views of

@@ -783,6 +783,20 @@
       "attackKindLabel": "공격:",
       "quickPeekClose": "간단 미리보기 닫기"
     },
+    "pagination": {
+      "pageSizeLabel": "페이지당 행",
+      "rangeIndicator": "{total}개 중 {start}–{end}",
+      "totalOnly": "{total}개 중 0",
+      "pageOfTotal": "{total} 페이지 중 {page}",
+      "firstPage": "첫 페이지",
+      "previousPage": "이전 페이지",
+      "nextPage": "다음 페이지",
+      "lastPage": "마지막 페이지",
+      "goToPageLabel": "페이지 이동",
+      "goToPagePlaceholder": "N",
+      "goToPageSubmit": "이동",
+      "walkingProgress": "이동 중… {target} 중 {current} 페이지"
+    },
     "analytics": {
       "toggle": "분석",
       "show": "분석 보기",

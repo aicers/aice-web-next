@@ -5,10 +5,11 @@ import {
   DetectionUnauthorizedError,
   type Event,
   type Filter,
+  type PageAnchor,
   type PageInfo,
-  searchEvents,
+  type PageSize,
+  searchEventsAtAnchor,
 } from "@/lib/detection";
-import { DEFAULT_EVENT_LIST_PAGE_SIZE } from "@/lib/detection/page-size";
 
 export interface RunEventQueryOk {
   ok: true;
@@ -42,27 +43,59 @@ export interface RunEventQueryErr {
 
 export type RunEventQueryResult = RunEventQueryOk | RunEventQueryErr;
 
+export interface RunEventQueryOptions {
+  /**
+   * Page size + cursor anchor for the requested slice. When omitted
+   * the action falls back to the default page size at the head of
+   * the connection — the shape a fresh Apply / Refresh produces.
+   */
+  pageSize?: PageSize;
+  anchor?: PageAnchor;
+  /**
+   * Most-recent known `EventConnection.totalCount`. Threaded into
+   * `searchEventsAtAnchor` so a `tail` anchor can request exactly the
+   * final partial page (`last: totalCount % pageSize`) instead of a
+   * straddling `last: pageSize` window. Optional — the shell has
+   * this on any paginator click after the first query; pre-first
+   * callers pass `null` and let the action fall back to
+   * `last: pageSize`. A drifted value is self-correcting:
+   * `searchEventsAtAnchor` re-queries with the freshly returned
+   * total when the first response implies a different `last`.
+   */
+  totalCount?: string | null;
+}
+
 /**
  * Client-callable wrapper around `searchEvents` for the filter
- * drawer and the result list. Returns the first-page nodes plus
- * total count and page info so the shell can render rows and a
- * count summary in one round-trip. Authorization checks live inside
- * `searchEvents` via `buildDispatchContext`; here we only resolve
- * the session and translate known error shapes into a typed
+ * drawer and the result list. Returns the page's nodes plus total
+ * count and page info so the shell can render rows, the paginator,
+ * and a count summary in one round-trip. Authorization checks live
+ * inside `searchEvents` via `buildDispatchContext`; here we only
+ * resolve the session and translate known error shapes into a typed
  * discriminated union so the client can render an error message
  * without losing the Error-class details over the RSC boundary.
  */
 export async function runEventQuery(
   filter: Filter,
-  pageSize: number = DEFAULT_EVENT_LIST_PAGE_SIZE,
+  options: RunEventQueryOptions = {},
 ): Promise<RunEventQueryResult> {
   const session = await getCurrentSession();
   if (!session) {
     return { ok: false, code: "unauthenticated" };
   }
 
+  const anchor: PageAnchor = options.anchor ?? { kind: "head" };
+  const pageSize: PageSize = options.pageSize ?? 50;
+  const totalCount: string | null = options.totalCount ?? null;
+
   try {
-    const connection = await searchEvents(session, filter, { first: pageSize });
+    const connection = await searchEventsAtAnchor(
+      session,
+      filter,
+      anchor,
+      pageSize,
+      totalCount,
+    );
     return {
       ok: true,
       totalCount: connection.totalCount,
