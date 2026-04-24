@@ -804,7 +804,47 @@
       "placeholder": "분석이 여기에 표시됩니다."
     },
     "quickPeek": {
-      "placeholder": "간단 미리보기가 여기에 표시됩니다."
+      "close": "간단 미리보기 닫기",
+      "summaryHeading": "요약",
+      "endpointsHeading": "엔드포인트",
+      "detectionMetaHeading": "탐지 정보",
+      "protocolHeading": "프로토콜",
+      "actionsHeading": "동작",
+      "sourceLabel": "출발지",
+      "destinationLabel": "목적지",
+      "sensorLabel": "센서",
+      "attackKindLabel": "공격 종류",
+      "learningMethodLabel": "AI 모델",
+      "learningMethodUnsupervised": "비지도",
+      "learningMethodSemiSupervised": "준지도",
+      "confidenceLabel": "신뢰도:",
+      "booleanTrue": "예",
+      "booleanFalse": "아니오",
+      "openInvestigation": "전체 조사 열기",
+      "openInvestigationTooltip": "전체 조사 화면을 현재 탭에서 엽니다(가운데 클릭 또는 Cmd/Ctrl-클릭으로 새 탭에서 열기).",
+      "pivotSource": "동일한 출발지 IP · 최근 24시간",
+      "pivotDestination": "동일한 목적지 IP · 최근 24시간",
+      "pivotKind": "동일한 종류 · 최근 7일",
+      "copy": "복사",
+      "copied": "복사됨",
+      "portSeparator": ":",
+      "protocolFields": {
+        "dnsQuery": "쿼리",
+        "dnsQueryType": "쿼리 유형",
+        "dnsResponseCode": "응답 코드",
+        "httpMethod": "메서드",
+        "httpHost": "호스트",
+        "httpUri": "URI",
+        "httpStatusCode": "상태 코드",
+        "tlsServerName": "서버 이름",
+        "tlsVersion": "TLS 버전",
+        "tlsJa3": "JA3",
+        "startTime": "시작 시각",
+        "endTime": "종료 시각",
+        "userList": "사용자 목록",
+        "isInternal": "내부",
+        "networkService": "서비스"
+      }
     }
   },
   "events": {

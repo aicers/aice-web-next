@@ -191,6 +191,54 @@ describe("ResultList row rendering", () => {
     expect(html).not.toContain("Open investigation");
   });
 
+  it("still renders the Quick peek row-open overlay for non-addressable events (issue #290)", () => {
+    // Round 4 feedback: the issue's acceptance says "Selecting any
+    // row opens the peek", so schema-limited subtypes (e.g.
+    // `WindowsThreat`, `ExtraThreat`) still expose the row-open
+    // overlay. The URL persistence limitation — no encodable locator
+    // means reload cannot restore the selection — is tolerated
+    // rather than used as a reason to drop the feature, and the
+    // investigate chevron continues to be hidden independently.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          baseEvent({
+            __typename: "WindowsThreat",
+            // no origAddr / respAddr — schema-limited subtype
+          } as unknown as Partial<Event>),
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Open quick peek");
+  });
+
+  it("renders the Quick peek row-open overlay for addressable events", () => {
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          baseEvent({
+            __typename: "HttpThreat",
+            origAddr: "10.0.0.5",
+            origPort: 1234,
+            respAddr: "10.0.0.6",
+            respPort: 443,
+          } as unknown as Partial<Event>),
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Open quick peek");
+  });
+
   it("renders the investigate chevron when the event is addressable", () => {
     const html = renderToStaticMarkup(
       <ResultList
@@ -212,6 +260,58 @@ describe("ResultList row rendering", () => {
     );
 
     expect(html).toContain("Open investigation");
+  });
+
+  it("drops row-open and investigate affordances while loading with a retained slice (issue #290, Reviewer Round 8)", () => {
+    // Regression: during a committed-query transition (Apply / chip ×
+    // / Refresh) the shell closes Quick peek at dispatch but keeps
+    // rendering the previous slice under `status: "loading"` so the
+    // results region does not flash. If those retained rows stayed
+    // interactive, a click during the loading window could reopen the
+    // peek on an event the newly committed filter may no longer
+    // return — re-introducing the stale-inspector window #290's state
+    // contract forbids. With the gate in place, the overlay button
+    // and investigate chevron are both absent from the retained
+    // slice.
+    const loadingRetained: ResultListState = {
+      status: "loading",
+      events: [
+        baseEvent({
+          __typename: "HttpThreat",
+          origAddr: "10.0.0.5",
+          origPort: 1234,
+          respAddr: "10.0.0.6",
+          respPort: 443,
+        } as unknown as Partial<Event>),
+      ],
+      eventKeys: ["cursor-stale-0"],
+      totalCount: "1",
+      range: { start: "1", end: "1" },
+      lastUpdatedMs: null,
+    };
+
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={loadingRetained}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {
+          throw new Error("onRowOpen must not be wired through during loading");
+        }}
+        onRowInvestigate={() => {
+          throw new Error(
+            "onRowInvestigate must not be wired through during loading",
+          );
+        }}
+      />,
+    );
+
+    // Row renders (retained-slice UX) but its interactive affordances
+    // are gone — the user cannot re-open Quick peek on the stale row.
+    expect(html).toContain("HTTP Threat");
+    expect(html).not.toContain("Open quick peek");
+    expect(html).not.toContain("Open investigation");
   });
 });
 

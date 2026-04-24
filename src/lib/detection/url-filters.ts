@@ -13,6 +13,7 @@
  * userDepartments through the URL so a page refresh restores the
  * active tab's filter state.
  */
+import type { PeriodKey } from "./period";
 import type { EventListFilterInput } from "./types";
 
 /**
@@ -59,6 +60,40 @@ const WINDOW_VALUES: readonly PivotWindow[] = ["1d", "7d"];
 
 function isPivotWindow(value: string): value is PivotWindow {
   return (WINDOW_VALUES as readonly string[]).includes(value);
+}
+
+/**
+ * Map a pivot URL `window=` value onto the drawer's {@link PeriodKey}
+ * vocabulary. `1d` matches the "last 24 hours" period chip; `7d` maps
+ * onto `1w` (last week) since the drawer speaks in calendar units.
+ * Returns `null` when the pivot carries no window so callers can fall
+ * back to the page default. Kept as a dedicated helper so the
+ * Detection server page and any future client-side pivot handlers
+ * share a single encoding.
+ */
+export function pivotWindowToPeriodKey(
+  window: PivotWindow | undefined,
+): PeriodKey | null {
+  if (window === "1d") return "1d";
+  if (window === "7d") return "1w";
+  return null;
+}
+
+/**
+ * Inverse of {@link pivotWindowToPeriodKey}. Returns the pivot URL
+ * `window=` token that round-trips the given {@link PeriodKey}, or
+ * `undefined` when the committed period has no pivot-URL
+ * representation (`30m`, `1h`, `6h`, …). Used by the URL writer to
+ * re-emit `window=` from the committed period rather than a
+ * first-render snapshot, so a period change in the drawer clears the
+ * stale pivot window on the next `history.replaceState`.
+ */
+export function periodKeyToPivotWindow(
+  period: PeriodKey | null | undefined,
+): PivotWindow | undefined {
+  if (period === "1d") return "1d";
+  if (period === "1w") return "7d";
+  return undefined;
 }
 
 function readString(
@@ -344,18 +379,24 @@ function appendArrayChips(
 }
 
 /**
- * Lift the free-form drawer fields out of a concrete filter input so
- * the shell can reuse one chip builder for both URL-seeded pivots and
- * the committed filter. Only fields this module knows how to render
- * as chips/URL params are extracted; the rest (start/end, categorical
- * inputs, network tags, etc.) stay where they are.
+ * Lift the drawer-backed fields out of the committed filter so the
+ * shell can reuse one chip builder / URL writer for both URL-seeded
+ * pivots and the committed filter. `kind` and `window` are extracted
+ * from `kinds` / the committed `period` — not from a first-render
+ * snapshot — so editing those fields in the drawer clears the stale
+ * pivot tokens on the next `history.replaceState`. Multi-kind
+ * selections have no single-valued pivot URL representation, so
+ * `kind` is only emitted when exactly one kind is committed.
  */
 export function pivotParamsFromFilterInput(
   input: EventListFilterInput,
+  period?: PeriodKey | null,
 ): PivotFilterParams {
   return {
     source: input.source ?? undefined,
     destination: input.destination ?? undefined,
+    kind: input.kinds?.length === 1 ? input.kinds[0] : undefined,
+    window: periodKeyToPivotWindow(period),
     keywords: input.keywords?.length ? input.keywords : undefined,
     hostnames: input.hostnames?.length ? input.hostnames : undefined,
     userIds: input.userIds?.length ? input.userIds : undefined,
@@ -367,26 +408,34 @@ export function pivotParamsFromFilterInput(
 }
 
 /**
- * Merge pivot-only chip fields (kind/ports/proto/window — not yet
- * wired to the filter drawer) with the free-form filter fields into
- * a single params object so {@link buildPivotChips} produces the
- * drawer-backed chips alongside the Investigation-handoff chips.
+ * Merge pivot-only chip fields (ports / proto — not yet wired to the
+ * filter drawer) with the drawer-backed filter fields into a single
+ * params object so {@link buildPivotChips} produces the drawer chips
+ * alongside the Investigation-handoff chips. Filter-side is the sole
+ * source of truth for anything the drawer owns — including `kind`
+ * and `window` once the operator edits them — so stale URL tokens
+ * are not re-emitted after a chip removal or Apply that drops them.
  */
 export function mergePivotParams(
   pivotOnly: PivotFilterParams,
   filterSide: PivotFilterParams,
 ): PivotFilterParams {
   return {
-    // Filter-side fields win for any overlap (currently source &
-    // destination) because the committed filter is the source of
-    // truth once Apply fires.
-    kind: pivotOnly.kind,
+    // Ports / proto have no filter-drawer representation yet; keep
+    // them riding through the URL via `pivotOnly` so the
+    // Investigation handoff survives until Phase Network/IP lands.
     origPort: pivotOnly.origPort,
     respPort: pivotOnly.respPort,
     proto: pivotOnly.proto,
-    window: pivotOnly.window,
-    source: filterSide.source ?? pivotOnly.source,
-    destination: filterSide.destination ?? pivotOnly.destination,
+    // Drawer-owned fields: always reflect the committed filter.
+    // `filterSide.kind` / `filterSide.window` go through verbatim
+    // (including `undefined`) rather than falling back to
+    // `pivotOnly`, since the committed filter is now the source of
+    // truth once the operator has edited kinds or the period.
+    kind: filterSide.kind,
+    window: filterSide.window,
+    source: filterSide.source,
+    destination: filterSide.destination,
     keywords: filterSide.keywords,
     hostnames: filterSide.hostnames,
     userIds: filterSide.userIds,

@@ -288,15 +288,33 @@ describe("applyCommitDispatchReset", () => {
     applyCommitDispatchReset = mod.applyCommitDispatchReset;
   });
 
+  // Helper: exercise the helper's functional `setQuickPeekEvent`
+  // setter with a caller-provided `prev` so assertions can observe
+  // what the returned value is and what `hadPeek` gets reported.
+  function runDispatch(
+    prev: unknown,
+    extras: { clearQuickPeekUrl?: ReturnType<typeof vi.fn> } = {},
+  ) {
+    const setQueryEpoch = vi.fn();
+    let finalValue: unknown = "UNSET";
+    const setQuickPeekEvent = vi.fn((fn: (p: unknown) => unknown) => {
+      finalValue = fn(prev);
+    });
+    applyCommitDispatchReset({
+      setQueryEpoch,
+      setQuickPeekEvent: setQuickPeekEvent as never,
+      clearQuickPeekUrl: extras.clearQuickPeekUrl as never,
+    });
+    return { setQueryEpoch, setQuickPeekEvent, finalValue };
+  }
+
   it("bumps the query epoch synchronously at dispatch", () => {
     // Reviewer Round 12: advancing `queryEpoch` must happen at the
     // moment the commit is dispatched, not after the replacement
     // slice resolves. Otherwise `ResultList` keeps reconciling
     // per-row state (MorePopover open/close, focus) across the
     // committed transition until the network returns.
-    const setQueryEpoch = vi.fn();
-    const setQuickPeekEvent = vi.fn();
-    applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+    const { setQueryEpoch } = runDispatch(null);
     expect(setQueryEpoch).toHaveBeenCalledTimes(1);
     const updater = setQueryEpoch.mock.calls[0]?.[0] as (n: number) => number;
     expect(typeof updater).toBe("function");
@@ -309,11 +327,264 @@ describe("applyCommitDispatchReset", () => {
     // response lands leaves a window during the round-trip where
     // the inspector and its Open investigation button still point
     // at a row the newly committed filter no longer describes.
-    const setQueryEpoch = vi.fn();
-    const setQuickPeekEvent = vi.fn();
-    applyCommitDispatchReset({ setQueryEpoch, setQuickPeekEvent });
+    const { setQuickPeekEvent, finalValue } = runDispatch({ __typename: "X" });
     expect(setQuickPeekEvent).toHaveBeenCalledTimes(1);
-    expect(setQuickPeekEvent).toHaveBeenCalledWith(null);
+    expect(finalValue).toBeNull();
+  });
+
+  it("reports hadPeek=true so the URL sink strips the token when a peek was open", () => {
+    // Reviewer Round 3: Refresh goes through `runQueryFor`, which
+    // closes the in-memory peek via this helper. Before the sink
+    // was added, the tab URL still carried the stale `?event=`
+    // token, so reload would resurrect the selection.
+    const clearQuickPeekUrl = vi.fn();
+    runDispatch({ __typename: "HttpThreat" }, { clearQuickPeekUrl });
+    expect(clearQuickPeekUrl).toHaveBeenCalledTimes(1);
+    expect(clearQuickPeekUrl).toHaveBeenCalledWith({ hadPeek: true });
+  });
+
+  it("reports hadPeek=false so the URL sink preserves the token when no peek is open", () => {
+    // Reviewer Round 7: the "reload with `?event=` → transient
+    // backend error → Refresh" sequence leaves the URL token
+    // pending a successful retry while `quickPeekEvent` stays null.
+    // Unconditionally stripping the URL on dispatch loses the
+    // selection URL state before the retry's slice can match it.
+    // The dispatch now reports `hadPeek: false` so the `runQueryFor`
+    // sink can no-op and let the post-fetch reconcile decide.
+    const clearQuickPeekUrl = vi.fn();
+    runDispatch(null, { clearQuickPeekUrl });
+    expect(clearQuickPeekUrl).toHaveBeenCalledTimes(1);
+    expect(clearQuickPeekUrl).toHaveBeenCalledWith({ hadPeek: false });
+  });
+
+  it("omits the URL sink cleanly when no sink is provided", () => {
+    // The sink is optional so existing tests and callers that do
+    // not need the URL cleanup (unit-level assertions on the
+    // state-reset contract alone) stay wire-compatible.
+    expect(() => runDispatch(null)).not.toThrow();
+  });
+});
+
+describe("quickPeekResetKey", () => {
+  let quickPeekResetKey: ShellModule["quickPeekResetKey"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    quickPeekResetKey = mod.quickPeekResetKey;
+  });
+
+  const addressable = {
+    __typename: "HttpThreat" as const,
+    sensor: "sensor-1",
+    time: "2026-04-22T00:00:00.000Z",
+    origAddr: "10.0.0.5",
+    origPort: 49152,
+    respAddr: "203.0.113.45",
+    respPort: 443,
+    proto: 6,
+    level: "HIGH" as const,
+  };
+
+  it("produces a stable key for the same event", () => {
+    // Regression (Reviewer Round 6 #1): the inspector's React `key`
+    // must not churn between renders of the same selection — that
+    // would remount on every state change and flicker the peek.
+    expect(quickPeekResetKey(addressable as never)).toBe(
+      quickPeekResetKey(addressable as never),
+    );
+  });
+
+  it("produces different keys for different addressable events", () => {
+    // Regression (Reviewer Round 6 #1): switching rows on the
+    // desktop inline pane must remount the inspector so descendant
+    // `MorePopover` panels reset to closed. Without this, the
+    // popover on the previous row can stay open on the new one.
+    const other = { ...addressable, origAddr: "10.0.0.6" };
+    expect(quickPeekResetKey(addressable as never)).not.toBe(
+      quickPeekResetKey(other as never),
+    );
+  });
+
+  it("falls back to a composite identity for unencodable events", () => {
+    // Schema-limited subtypes (e.g. `ExtraThreat`, or rows missing
+    // both source and destination IP) have no locator token but
+    // still open the Quick peek; the remount key must stay stable
+    // for those rows and still differ from other unencodable rows.
+    const extra = {
+      __typename: "ExtraThreat" as const,
+      sensor: "sensor-a",
+      time: "2026-04-22T00:00:00.000Z",
+      level: "LOW" as const,
+    };
+    const extraOther = { ...extra, time: "2026-04-22T00:00:01.000Z" };
+    expect(quickPeekResetKey(extra as never)).toBe(
+      quickPeekResetKey(extra as never),
+    );
+    expect(quickPeekResetKey(extra as never)).not.toBe(
+      quickPeekResetKey(extraOther as never),
+    );
+  });
+});
+
+describe("shouldStripStaleQuickPeekToken", () => {
+  let shouldStripStaleQuickPeekToken: ShellModule["shouldStripStaleQuickPeekToken"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldStripStaleQuickPeekToken = mod.shouldStripStaleQuickPeekToken;
+  });
+
+  it("does not strip when there is no token to begin with", () => {
+    expect(
+      shouldStripStaleQuickPeekToken({
+        tokenPresent: false,
+        matchFound: false,
+        initialErrored: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not strip when the token matches an event in the slice", () => {
+    expect(
+      shouldStripStaleQuickPeekToken({
+        tokenPresent: true,
+        matchFound: true,
+        initialErrored: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("strips when a successful slice does not contain the token", () => {
+    // The documented "close the peek silently" behavior: the slice
+    // loaded successfully but did not include the selected event.
+    expect(
+      shouldStripStaleQuickPeekToken({
+        tokenPresent: true,
+        matchFound: false,
+        initialErrored: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves the token when the initial fetch errored", () => {
+    // Regression (Reviewer Round 6 #2): a transient backend error on
+    // first load collapses the slice to `[]`, which would otherwise
+    // look identical to a confirmed mismatch. Preserving the token
+    // lets a subsequent successful reload restore the peek rather
+    // than permanently discarding the selection URL state on a
+    // single transient failure.
+    expect(
+      shouldStripStaleQuickPeekToken({
+        tokenPresent: true,
+        matchFound: false,
+        initialErrored: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("reconcileQuickPeekUrlAction", () => {
+  let reconcileQuickPeekUrlAction: ShellModule["reconcileQuickPeekUrlAction"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    reconcileQuickPeekUrlAction = mod.reconcileQuickPeekUrlAction;
+  });
+
+  it("no-ops when the URL carries no token", () => {
+    // Most Refresh calls land here: no pending restore means the
+    // post-fetch reconcile has nothing to do.
+    expect(
+      reconcileQuickPeekUrlAction({ tokenPresent: false, matchFound: false }),
+    ).toBe("noop");
+  });
+
+  it("restores the peek when a pending token matches a row in the fresh slice", () => {
+    // Regression (Reviewer Round 7): the "reload with `?event=` ->
+    // transient backend error -> Refresh -> retry succeeds" path.
+    // The URL token was preserved through dispatch because no peek
+    // was open at the time, and the successful retry now returns a
+    // slice that contains the selected event. The reconcile pins
+    // the peek so the operator's selection URL state survives.
+    expect(
+      reconcileQuickPeekUrlAction({ tokenPresent: true, matchFound: true }),
+    ).toBe("restore");
+  });
+
+  it("strips the token when a successful slice confirms it stale", () => {
+    // Regression (Reviewer Round 7): if the retry slice does not
+    // contain the selected event, this is the first successful
+    // slice that can prove the pending token stale — the mount
+    // effect is gated on `[]` and only runs once, so without this
+    // post-fetch hook the stale token would sit in the URL until
+    // a manual reload.
+    expect(
+      reconcileQuickPeekUrlAction({ tokenPresent: true, matchFound: false }),
+    ).toBe("strip");
+  });
+});
+
+describe("shouldCloseQuickPeekOnEscape", () => {
+  // Regression (Reviewer Round 13): a single Escape keypress used to
+  // fire both the `MorePopover`'s own document-level Escape handler
+  // and the shell's Quick peek Escape handler, collapsing the
+  // popover and the inspector together. The shell's predicate now
+  // skips the close whenever a popover is open, so the first Escape
+  // unwinds only the topmost layer; the second Escape dismisses the
+  // inspector.
+  let shouldCloseQuickPeekOnEscape: ShellModule["shouldCloseQuickPeekOnEscape"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldCloseQuickPeekOnEscape = mod.shouldCloseQuickPeekOnEscape;
+  });
+
+  it("skips the close while any MorePopover is open", () => {
+    expect(
+      shouldCloseQuickPeekOnEscape({
+        isDesktop: true,
+        quickPeekOpen: true,
+        morePopoverOpen: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("closes the peek on Escape when no popover is open", () => {
+    expect(
+      shouldCloseQuickPeekOnEscape({
+        isDesktop: true,
+        quickPeekOpen: true,
+        morePopoverOpen: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("no-ops when the inspector itself is closed", () => {
+    // Belt-and-braces: the shell only attaches the Escape listener
+    // while `quickPeekEvent !== null`, but the predicate should
+    // still report `false` if the listener were called with the
+    // inspector already closed (e.g. after a state transition
+    // between registration and dispatch).
+    expect(
+      shouldCloseQuickPeekOnEscape({
+        isDesktop: true,
+        quickPeekOpen: false,
+        morePopoverOpen: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("no-ops off the desktop branch", () => {
+    // The narrow overlay Sheet has its own `onEscapeKeyDown` path;
+    // the desktop inline Escape handler is not the right owner of
+    // the close behaviour there.
+    expect(
+      shouldCloseQuickPeekOnEscape({
+        isDesktop: false,
+        quickPeekOpen: true,
+        morePopoverOpen: false,
+      }),
+    ).toBe(false);
   });
 });
 

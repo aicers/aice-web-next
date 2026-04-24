@@ -10,12 +10,12 @@ import { parse } from "graphql";
  */
 
 // Per-typename inline fragments select the addressing/network fields
-// the result-list rows render (Phase Detection-9). The selection is
-// deliberately kept to a minimum — it adds origAddr / respAddr,
-// origPort / respPort, origCountry / respCountry, proto, and the ML
-// types' attackKind. Heavy payload fields (HTTP body, DNS answer,
-// FTP commands, etc.) live in EVENT_DETAIL_QUERY and are not
-// requested here.
+// the result-list rows render (Phase Detection-9) plus the small set
+// of protocol highlight fields Quick peek (Phase Detection-18) shows
+// at a glance. The selection stays minimal — a handful of fields per
+// subtype rather than the full payload the investigation view needs.
+// Heavy payload fields (HTTP body, DNS answer list, FTP commands,
+// etc.) live in EVENT_DETAIL_QUERY and are not requested here.
 export const EVENT_LIST_QUERY = parse(`
   query EventList(
     $filter: EventListFilterInput!
@@ -107,6 +107,9 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          query
+          qtype
+          rcode
         }
         ... on BlocklistFtp {
           origAddr
@@ -125,6 +128,11 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          method
+          host
+          uri
+          statusCode
+          learningMethod
         }
         ... on BlocklistKerberos {
           origAddr
@@ -233,6 +241,9 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          serverName
+          version
+          ja3
         }
         ... on CryptocurrencyMiningPool {
           origAddr
@@ -251,6 +262,10 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          query
+          qtype
+          rcode
+          learningMethod
         }
         ... on DomainGenerationAlgorithm {
           origAddr
@@ -260,6 +275,7 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          learningMethod
         }
         ... on ExternalDdos {
           origAddrs
@@ -267,9 +283,12 @@ export const EVENT_LIST_QUERY = parse(`
           respAddr
           respCountry
           proto
+          startTime
+          endTime
         }
         ... on ExtraThreat {
           attackKind
+          learningMethod
         }
         ... on FtpBruteForce {
           origAddr
@@ -278,6 +297,10 @@ export const EVENT_LIST_QUERY = parse(`
           respCountry
           respPort
           proto
+          userList
+          startTime
+          endTime
+          isInternal
         }
         ... on FtpPlainText {
           origAddr
@@ -297,6 +320,11 @@ export const EVENT_LIST_QUERY = parse(`
           respCountry
           proto
           attackKind
+          method
+          host
+          uri
+          statusCode
+          learningMethod
         }
         ... on LdapBruteForce {
           origAddr
@@ -331,6 +359,8 @@ export const EVENT_LIST_QUERY = parse(`
           respCountries
           respPort
           proto
+          startTime
+          endTime
         }
         ... on NetworkThreat {
           origAddr
@@ -341,6 +371,8 @@ export const EVENT_LIST_QUERY = parse(`
           respCountry
           proto
           attackKind
+          service
+          learningMethod
         }
         ... on NonBrowser {
           origAddr
@@ -350,6 +382,7 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          learningMethod
         }
         ... on PortScan {
           origAddr
@@ -358,6 +391,8 @@ export const EVENT_LIST_QUERY = parse(`
           respCountry
           respPorts
           proto
+          startTime
+          endTime
         }
         ... on RdpBruteForce {
           origAddr
@@ -365,6 +400,8 @@ export const EVENT_LIST_QUERY = parse(`
           respAddrs
           respCountries
           proto
+          startTime
+          endTime
         }
         ... on RepeatedHttpSessions {
           origAddr
@@ -374,6 +411,7 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          learningMethod
         }
         ... on SuspiciousTlsTraffic {
           origAddr
@@ -383,6 +421,9 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          serverName
+          version
+          ja3
         }
         ... on TorConnection {
           origAddr
@@ -392,6 +433,7 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          learningMethod
         }
         ... on TorConnectionConn {
           origAddr
@@ -401,13 +443,16 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          learningMethod
         }
         ... on UnusualDestinationPattern {
           respAddrs
           respCountries
+          learningMethod
         }
         ... on WindowsThreat {
           attackKind
+          learningMethod
         }
       }
       totalCount

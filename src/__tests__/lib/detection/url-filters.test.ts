@@ -5,7 +5,9 @@ import {
   buildPivotChips,
   mergePivotParams,
   parsePivotSearchParams,
+  periodKeyToPivotWindow,
   pivotParamsFromFilterInput,
+  pivotWindowToPeriodKey,
 } from "@/lib/detection/url-filters";
 
 const chipLabels = {
@@ -81,6 +83,52 @@ describe("parsePivotSearchParams", () => {
       parsePivotSearchParams({ hostnames: "host-a, host-b , host-a" })
         .hostnames,
     ).toEqual(["host-a", "host-b"]);
+  });
+});
+
+describe("pivotWindowToPeriodKey", () => {
+  // The Detection page feeds pivot URLs like `/detection?source=X&window=1d`
+  // through this mapping when seeding the committed filter's start/end —
+  // the reviewer flagged that Quick peek / Related Events pivots were
+  // landing on the default 1h period because the window was silently
+  // dropped. Pin the mapping so a regression in either direction
+  // (missing case, wrong period key) is caught at unit-test time
+  // rather than only surfacing as a destination-page query.
+  it("maps `1d` onto the `1d` period key", () => {
+    expect(pivotWindowToPeriodKey("1d")).toBe("1d");
+  });
+
+  it("maps `7d` onto the `1w` period key (drawer calendar vocabulary)", () => {
+    expect(pivotWindowToPeriodKey("7d")).toBe("1w");
+  });
+
+  it("returns null when no window is specified", () => {
+    expect(pivotWindowToPeriodKey(undefined)).toBeNull();
+  });
+});
+
+describe("periodKeyToPivotWindow", () => {
+  // The Detection URL writer calls this when extracting `window=`
+  // from the committed period so a drawer edit (period swap, chip
+  // removal) replaces — rather than inherits — the first-render
+  // pivot token. Pin the inverse mapping so the two sides stay in
+  // lockstep; a silent drift here would reintroduce the Round 10
+  // regression where `window=7d` stuck to the URL after the user
+  // picked a different period.
+  it("maps `1d` back to the `1d` pivot window", () => {
+    expect(periodKeyToPivotWindow("1d")).toBe("1d");
+  });
+
+  it("maps `1w` back to the `7d` pivot window", () => {
+    expect(periodKeyToPivotWindow("1w")).toBe("7d");
+  });
+
+  it("returns undefined for periods with no pivot-URL representation", () => {
+    expect(periodKeyToPivotWindow("1h")).toBeUndefined();
+    expect(periodKeyToPivotWindow("12h")).toBeUndefined();
+    expect(periodKeyToPivotWindow("1m")).toBeUndefined();
+    expect(periodKeyToPivotWindow(null)).toBeUndefined();
+    expect(periodKeyToPivotWindow(undefined)).toBeUndefined();
   });
 });
 
@@ -173,6 +221,8 @@ describe("buildPivotChips", () => {
     ).toEqual({
       source: undefined,
       destination: undefined,
+      kind: undefined,
+      window: undefined,
       keywords: undefined,
       hostnames: undefined,
       userIds: undefined,
@@ -181,25 +231,123 @@ describe("buildPivotChips", () => {
     });
   });
 
-  it("merges pivot-only params with filter-side fields, letting filter-side win for overlaps", () => {
+  it("extracts `kind` from a single-valued `kinds` and `window` from the committed period", () => {
+    expect(
+      pivotParamsFromFilterInput(
+        {
+          start: "2026-04-22T00:00:00.000Z",
+          end: "2026-04-22T01:00:00.000Z",
+          kinds: ["HttpThreat"],
+        },
+        "1w",
+      ),
+    ).toEqual({
+      source: undefined,
+      destination: undefined,
+      kind: "HttpThreat",
+      window: "7d",
+      keywords: undefined,
+      hostnames: undefined,
+      userIds: undefined,
+      userNames: undefined,
+      userDepartments: undefined,
+    });
+  });
+
+  it("drops `kind` when the committed filter carries multiple kinds — no single-valued pivot URL representation", () => {
+    expect(
+      pivotParamsFromFilterInput({
+        start: "2026-04-22T00:00:00.000Z",
+        end: "2026-04-22T01:00:00.000Z",
+        kinds: ["HttpThreat", "DnsCovertChannel"],
+      }).kind,
+    ).toBeUndefined();
+  });
+
+  it("drops `window` when the committed period has no pivot representation", () => {
+    expect(
+      pivotParamsFromFilterInput(
+        {
+          start: "2026-04-22T00:00:00.000Z",
+          end: "2026-04-22T01:00:00.000Z",
+        },
+        "1h",
+      ).window,
+    ).toBeUndefined();
+  });
+
+  it("merges pivot-only params with filter-side fields; filter-side owns the drawer-backed fields so stale `kind` / `window` can be cleared", () => {
+    // Simulates the Round 10 scenario: page loaded from
+    // `/detection?kind=HttpThreat&window=7d` (pivotOnly carries a
+    // snapshot, or carries nothing in the new shape), then the
+    // operator removes the Kind chip and picks a 1h period. The
+    // filter-side wipes both tokens; the merged URL params drop
+    // them rather than re-emitting the first-render values.
     expect(
       mergePivotParams(
-        { source: "pivot-source", kind: "HttpThreat", window: "1d" },
+        {
+          kind: "HttpThreat",
+          window: "7d",
+          origPort: 54321,
+        },
         { source: "filter-source", keywords: ["a", "b"] },
       ),
     ).toEqual({
       source: "filter-source",
       destination: undefined,
-      kind: "HttpThreat",
-      origPort: undefined,
+      kind: undefined,
+      origPort: 54321,
       respPort: undefined,
       proto: undefined,
-      window: "1d",
+      window: undefined,
       keywords: ["a", "b"],
       hostnames: undefined,
       userIds: undefined,
       userNames: undefined,
       userDepartments: undefined,
+    });
+  });
+
+  it("preserves ports / proto through the merge — they have no filter-drawer source yet", () => {
+    // Round 10 complement: ports / proto still ride through
+    // `pivotOnly` until Phase Network/IP wires them into the
+    // drawer, so they should survive an Apply that only touches
+    // drawer-backed fields.
+    expect(
+      mergePivotParams(
+        { origPort: 54321, respPort: 80, proto: 6 },
+        { source: "10.0.0.5" },
+      ),
+    ).toEqual({
+      source: "10.0.0.5",
+      destination: undefined,
+      kind: undefined,
+      origPort: 54321,
+      respPort: 80,
+      proto: 6,
+      window: undefined,
+      keywords: undefined,
+      hostnames: undefined,
+      userIds: undefined,
+      userNames: undefined,
+      userDepartments: undefined,
+    });
+  });
+
+  it("lets filter-side replace `kind` with a different value — swapping kinds in the drawer overwrites the stale pivot token", () => {
+    expect(
+      mergePivotParams(
+        { kind: "HttpThreat", window: "7d" },
+        {
+          source: undefined,
+          destination: undefined,
+          kind: "DnsCovertChannel",
+          window: "1d",
+        },
+      ),
+    ).toMatchObject({
+      kind: "DnsCovertChannel",
+      window: "1d",
     });
   });
 

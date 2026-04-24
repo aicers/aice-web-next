@@ -14,9 +14,11 @@ import {
   type FlowKind,
   type PaginationState,
   PERIOD_KEYS,
+  type PeriodKey,
   type PivotFilterParams,
   parsePaginationSearchParams,
   parsePivotSearchParams,
+  pivotWindowToPeriodKey,
   searchEventsAtAnchor,
   TAG_FIELDS,
   type TagField,
@@ -62,14 +64,27 @@ export default async function DetectionPage({
     sensorAggregate: t.raw("filters.chips.sensorAggregate") as string,
   };
 
-  const defaultRange = computePeriodRange(DEFAULT_PERIOD_KEY);
+  // Pivot links (Quick peek, Related Events, Overview Top Pivots) encode
+  // an optional `window=` and `kind=` alongside source/destination so
+  // the destination page actually narrows to the requested slice rather
+  // than landing on the default 1h / unfiltered view. Translate them
+  // into the drawer's vocabulary — `window=1d/7d` picks the matching
+  // period key and the resulting start/end, `kind=` seeds the Kinds
+  // multi-select with a single entry — so the committed query honors
+  // the pivot contract on the first render.
+  const pivotPeriod: PeriodKey =
+    pivotWindowToPeriodKey(pivotParams.window) ?? DEFAULT_PERIOD_KEY;
+  const periodRange = computePeriodRange(pivotPeriod);
   const initialInput: EventListFilterInput = {
-    start: defaultRange.start,
-    end: defaultRange.end,
+    start: periodRange.start,
+    end: periodRange.end,
   };
   if (pivotParams.source) initialInput.source = pivotParams.source;
   if (pivotParams.destination) {
     initialInput.destination = pivotParams.destination;
+  }
+  if (pivotParams.kind) {
+    initialInput.kinds = [pivotParams.kind];
   }
   for (const field of TAG_FIELDS) {
     const values = pivotParams[field];
@@ -77,14 +92,20 @@ export default async function DetectionPage({
   }
   const initialFilter: Filter = { mode: "structured", input: initialInput };
 
-  // Pivot-only params carry through as chip state but aren't part of
-  // the EventListFilterInput yet — they land in the Network/IP phase.
+  // Port / proto are not yet part of `EventListFilterInput`; they ride
+  // in the URL so Phase Network/IP can pick them up without losing the
+  // pivot target. `kind` and `window` are NOT parked here anymore —
+  // they live in `initialInput.kinds` and `initialPeriod` above, and
+  // the URL writer re-derives the `kind=` / `window=` tokens from the
+  // committed filter / period via `pivotParamsFromFilterInput`. That
+  // way an operator who removes the Kind chip or picks a different
+  // period in the drawer sees the stale tokens disappear from the
+  // URL on the next Apply / chip removal, rather than having the
+  // first-render snapshot silently restored on reload.
   const initialPivotOnly: PivotFilterParams = {
-    kind: pivotParams.kind,
     origPort: pivotParams.origPort,
     respPort: pivotParams.respPort,
     proto: pivotParams.proto,
-    window: pivotParams.window,
   };
 
   let initialTotal: string | null = null;
@@ -182,7 +203,7 @@ export default async function DetectionPage({
     <DetectionShell
       title={t("title")}
       initialFilter={initialFilter}
-      initialPeriod={DEFAULT_PERIOD_KEY}
+      initialPeriod={pivotPeriod}
       initialResult={{
         totalCount: initialTotal,
         error: initialError,
@@ -327,6 +348,82 @@ export default async function DetectionPage({
           goToPageLabel: t("pagination.goToPageLabel"),
           goToPagePlaceholder: t("pagination.goToPagePlaceholder"),
           goToPageSubmit: t("pagination.goToPageSubmit"),
+        },
+        quickPeek: {
+          close: t("quickPeek.close"),
+          summaryHeading: t("quickPeek.summaryHeading"),
+          endpointsHeading: t("quickPeek.endpointsHeading"),
+          detectionMetaHeading: t("quickPeek.detectionMetaHeading"),
+          protocolHeading: t("quickPeek.protocolHeading"),
+          actionsHeading: t("quickPeek.actionsHeading"),
+          sourceLabel: t("quickPeek.sourceLabel"),
+          destinationLabel: t("quickPeek.destinationLabel"),
+          sensorLabel: t("quickPeek.sensorLabel"),
+          attackKindLabel: t("quickPeek.attackKindLabel"),
+          learningMethodLabel: t("quickPeek.learningMethodLabel"),
+          learningMethodValues: {
+            UNSUPERVISED: t("quickPeek.learningMethodUnsupervised"),
+            SEMI_SUPERVISED: t("quickPeek.learningMethodSemiSupervised"),
+          },
+          confidenceLabel: t("quickPeek.confidenceLabel"),
+          categoryLabels: {
+            RECONNAISSANCE: t("filters.categoryOptions.RECONNAISSANCE"),
+            INITIAL_ACCESS: t("filters.categoryOptions.INITIAL_ACCESS"),
+            EXECUTION: t("filters.categoryOptions.EXECUTION"),
+            CREDENTIAL_ACCESS: t("filters.categoryOptions.CREDENTIAL_ACCESS"),
+            DISCOVERY: t("filters.categoryOptions.DISCOVERY"),
+            LATERAL_MOVEMENT: t("filters.categoryOptions.LATERAL_MOVEMENT"),
+            COMMAND_AND_CONTROL: t(
+              "filters.categoryOptions.COMMAND_AND_CONTROL",
+            ),
+            EXFILTRATION: t("filters.categoryOptions.EXFILTRATION"),
+            IMPACT: t("filters.categoryOptions.IMPACT"),
+            COLLECTION: t("filters.categoryOptions.COLLECTION"),
+            DEFENSE_EVASION: t("filters.categoryOptions.DEFENSE_EVASION"),
+            PERSISTENCE: t("filters.categoryOptions.PERSISTENCE"),
+            PRIVILEGE_ESCALATION: t(
+              "filters.categoryOptions.PRIVILEGE_ESCALATION",
+            ),
+            RESOURCE_DEVELOPMENT: t(
+              "filters.categoryOptions.RESOURCE_DEVELOPMENT",
+            ),
+          },
+          levelLabels: {
+            LOW: t("filters.levelOptions.LOW"),
+            MEDIUM: t("filters.levelOptions.MEDIUM"),
+            HIGH: t("filters.levelOptions.HIGH"),
+          },
+          protocolFields: {
+            dnsQuery: t("quickPeek.protocolFields.dnsQuery"),
+            dnsQueryType: t("quickPeek.protocolFields.dnsQueryType"),
+            dnsResponseCode: t("quickPeek.protocolFields.dnsResponseCode"),
+            httpMethod: t("quickPeek.protocolFields.httpMethod"),
+            httpHost: t("quickPeek.protocolFields.httpHost"),
+            httpUri: t("quickPeek.protocolFields.httpUri"),
+            httpStatusCode: t("quickPeek.protocolFields.httpStatusCode"),
+            tlsServerName: t("quickPeek.protocolFields.tlsServerName"),
+            tlsVersion: t("quickPeek.protocolFields.tlsVersion"),
+            tlsJa3: t("quickPeek.protocolFields.tlsJa3"),
+            startTime: t("quickPeek.protocolFields.startTime"),
+            endTime: t("quickPeek.protocolFields.endTime"),
+            userList: t("quickPeek.protocolFields.userList"),
+            isInternal: t("quickPeek.protocolFields.isInternal"),
+            networkService: t("quickPeek.protocolFields.networkService"),
+          },
+          booleanTrue: t("quickPeek.booleanTrue"),
+          booleanFalse: t("quickPeek.booleanFalse"),
+          openInvestigation: t("quickPeek.openInvestigation"),
+          openInvestigationTooltip: t("quickPeek.openInvestigationTooltip"),
+          pivotSource: t("quickPeek.pivotSource"),
+          pivotDestination: t("quickPeek.pivotDestination"),
+          pivotKind: t("quickPeek.pivotKind"),
+          copy: t("quickPeek.copy"),
+          copied: t("quickPeek.copied"),
+          countryUnknown: t("results.countryUnknown"),
+          countryUnavailable: t("results.countryUnavailable"),
+          portSeparator: t("quickPeek.portSeparator"),
+          unknownTime: t("results.unknownTime"),
+          noSensor: t("results.noSensor"),
         },
       }}
       initialPivotOnly={initialPivotOnly}
