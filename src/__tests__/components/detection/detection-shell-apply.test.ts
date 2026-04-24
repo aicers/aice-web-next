@@ -48,6 +48,18 @@ vi.mock("@/components/detection/sensor-multi-select", () => ({}));
 vi.mock("@/components/detection/result-list", () => ({
   ResultList: "div",
 }));
+vi.mock("@/components/detection/csv-export-dialog", () => ({
+  CsvExportConfirmDialog: "div",
+}));
+vi.mock("@/components/detection/use-csv-export", () => ({
+  useCsvExport: () => ({
+    status: { kind: "idle" },
+    start: vi.fn(),
+    confirmAndContinue: vi.fn(),
+    cancelConfirmation: vi.fn(),
+    dismissError: vi.fn(),
+  }),
+}));
 
 import { buildAppliedFilter } from "@/lib/detection/apply-filter";
 import type { Filter } from "@/lib/detection/filter";

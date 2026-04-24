@@ -115,8 +115,10 @@ A single header line above the list shows:
   background so you can see how stale the current view is.
 - A **Refresh** affordance that re-runs the active filter
   without going through the drawer.
-- A **Download CSV** button. The button is visible but disabled
-  in this phase; CSV export wiring lands in a later phase.
+- A **Download CSV** button that exports the active tab's
+  filtered result set. See [Export to CSV](#export-to-csv)
+  below for the column layout, the filename, and the large-
+  export confirmation flow.
 
 #### Result rows
 
@@ -683,3 +685,140 @@ for every other chip type.
 The **Save this filter** button is present alongside Apply but
 disabled in this phase. The naming flow is wired up in a later
 Detection phase.
+
+## Export to CSV
+
+The **Download CSV** button at the right of the result header
+exports the active tab's filtered result set as a CSV file. The
+download respects whatever filter is currently committed — chips
+in the active filter bar, the time range, the categorical
+selections, the free-form attribute fields, and any Network/IP
+entries are all applied. Pagination is followed server-side, so
+the file always contains the full result set rather than just
+the current page.
+
+![Detection CSV export — wireframe stand-in](../assets/detection-csv-export-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The CSV export illustration above is an SVG wireframe rather
+    than a real capture. The Detection result list renders rows
+    from a live REview query, and the authoring worktree has no
+    staging backend with seeded detection data — a PNG captured
+    here would show the empty-state panel rather than a populated
+    list. Per `docs/AUTHORING.md`'s "Screenshot exception for
+    infrastructure-gated features", this section ships a localized
+    SVG wireframe and will be replaced with a real screenshot
+    once a staging environment with sample data is available.
+
+### Columns
+
+The CSV header carries the same columns the result list shows,
+in the same order:
+
+| Column | Source |
+|---|---|
+| `Severity` | localized level — `Low` / `Medium` / `High` |
+| `Time` | event time, ISO-8601 UTC |
+| `Kind` | friendly event kind (e.g. `HTTP Threat`) |
+| `Attack Kind` | secondary attack kind for ML subtypes |
+| `Category` | localized threat category |
+| `Confidence` | detection confidence, `0.00`–`1.00` |
+| `Triage` | single triage summary token mirroring the result row, e.g. `3 policies · 0.90 max` — empty when the event has no triage scores |
+| `Source` | originator endpoint, `IP[:port] (CC)` — country code inlined as in the result row |
+| `Destination` | responder endpoint, `IP[:port] (CC)` — country code inlined as in the result row |
+| `Sensor` | sensor name |
+
+The column order is taken from the result row reading order: the
+severity badge, time, kind, attack kind, category, and confidence
+on the top line; the triage summary token; then the source → destination
+endpoints and the sensor on the lines below. Triage is emitted as a
+single cell (matching the UI's `TriageSummary`), not split across
+two columns, so a reader can line the CSV up against what the result
+list shows without re-ordering.
+
+Subtypes that don't carry a given field render the cell as
+empty — the column position is preserved, so two-sided spreadsheet
+formulas keep working across the row. Subtypes whose addressing
+arrives in plural fields (`ExternalDdos`, `MultiHostPortScan`,
+`PortScan`, `RdpBruteForce`, `UnusualDestinationPattern`) write the
+primary endpoint plus the locale's `+N` suffix — `+N more` in
+English, `+N개 더` in Korean — mirroring the exact token the result
+row renders through `ResultListLabels.moreCountSuffix`. Only the
+primary country is rendered in the `Source` / `Destination` cell —
+extras are not surfaced, because the result row does not surface
+them either. The sentinel country codes `XX` (unknown origin) and
+`ZZ` (unavailable) are mapped to the same locale-specific labels
+the result row uses.
+
+> **CSV-injection safety.** Cells whose value would otherwise begin
+> with `=`, `+`, `-`, `@`, tab, or carriage return are prefixed with
+> a single quote (`'`) so Excel and Google Sheets render them as
+> literal strings instead of evaluating them as formulas.
+
+### Filename
+
+Downloaded files are named
+`detection-events_<timestamp>_<summary>.csv`. The timestamp is the
+download moment in UTC, with colons replaced by hyphens so the
+filename survives Windows paths (e.g. `2026-04-20T15-32`). The
+summary is the active period slug when one is committed
+(`last-1h`), the explicit start/end range
+(`2026-04-20_to_2026-04-21`), or `all` when the filter has no
+time bounds.
+
+### How the download is delivered
+
+On Chromium-based browsers (Chrome, Edge, Opera, Arc), Detection
+uses the browser's native Save-As dialog so the response streams
+straight to the path you choose — the full CSV never has to fit
+in tab memory. This matters when the export is close to the hard
+per-export cap (one million events / several hundred megabytes).
+The dialog opens with the same
+`detection-events_<timestamp>_<summary>.csv` default the server
+uses in `Content-Disposition`, so the filename you see in the
+picker is the one the server streams under.
+
+On browsers that do not yet implement the File System Access API
+(Firefox, Safari), the download falls back to the browser's
+default download folder. The server still streams page-by-page
+from REview; only the final hand-off buffers in tab memory, so
+the same hard cap keeps peak memory bounded on those browsers.
+
+### Large-export guardrail
+
+When the filter matches **100 000 events or more**, the export
+pauses to confirm. The dialog quotes the matched row count and
+an estimated download size, and offers three paths:
+
+- **Continue export** — proceeds with the full export. On
+  Chromium, the native Save-As dialog opens after you click
+  Continue: the row-count confirmation always comes first so
+  you never have to pick a save path for a download you may
+  want to cancel.
+- **Cancel** — closes the dialog without downloading anything.
+- **Narrow filter** — closes the dialog and reopens the filter
+  drawer so you can tighten the time range or other dimensions
+  before retrying.
+
+This guardrail prevents accidental multi-hundred-megabyte
+downloads while still letting deliberate large exports through
+in one extra click. Exports that already exceed the one-million
+row hard cap surface the limit error directly without opening
+the save picker at all — the export would be rejected by the
+server anyway.
+
+### Errors
+
+If the export fails partway — REview connection reset, server
+error, or a mid-download transport abort — the download is
+discarded by the browser rather than landing as a partial file,
+and a banner appears below the result header explaining that the
+export could not be produced. Retry by clicking **Download CSV**
+again after the filter or backend is in a better state.
+
+Dismissing the Save As dialog on Chromium is not treated as an
+error. The export simply returns to its idle state without a
+banner — closing the save picker is how the operator cancels the
+export, so there is nothing to report. A genuine picker failure
+(permission denial, filesystem error) still surfaces the banner.
