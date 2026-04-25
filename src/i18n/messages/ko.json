@@ -153,7 +153,15 @@
       "mfa_enforcement_blocked": "MFA 등록 필요",
       "mfa_enrollment_complete": "MFA 등록 완료",
       "mfa_admin_reset": "MFA 관리자 초기화",
-      "mfa_emergency_reset": "MFA 긴급 초기화"
+      "mfa_emergency_reset": "MFA 긴급 초기화",
+      "node_create": "노드 생성",
+      "node_update": "노드 수정",
+      "node_delete": "노드 삭제",
+      "node_restart": "노드 재시작",
+      "node_shutdown": "노드 종료",
+      "node_apply": "노드 적용",
+      "service_draft_save": "서비스 초안 저장",
+      "service_set_mode": "서비스 모드 변경"
     },
     "targetTypes": {
       "account": "계정",
@@ -161,7 +169,9 @@
       "customer": "고객",
       "system_settings": "시스템 설정",
       "role": "역할",
-      "mfa": "MFA"
+      "mfa": "MFA",
+      "node": "노드",
+      "service": "서비스"
     }
   },
   "customers": {
@@ -433,6 +443,8 @@
       "audit-logs": "감사 로그",
       "dashboard": "대시보드",
       "detection": "탐지",
+      "nodes": "노드",
+      "services": "서비스",
       "system-settings": "시스템 설정"
     },
     "permissionActions": {

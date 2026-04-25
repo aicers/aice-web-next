@@ -482,4 +482,105 @@ describe("auditLog", () => {
       });
     }
   });
+
+  // ── Phase Node-1 (#307) — node/service action coverage ───────
+
+  describe("Phase Node-1 node/service action coverage", () => {
+    // The closed `AuditAction` union must accept every action documented
+    // in `decisions/node-permissions.md` so subsequent sub-issues
+    // (Node-3 / Node-4 / Node-6 / Node-9) can call `auditLog.record(...)`
+    // without casts. v1's `service.*` membership is intentionally limited
+    // to `service.draft_save` and `service.set_mode`; `service.apply` and
+    // `service.set_state` are reserved for follow-on issues that ship
+    // their own emitters.
+    const NODE_ACTIONS: AuditAction[] = [
+      "node.create",
+      "node.update",
+      "node.delete",
+      "node.restart",
+      "node.shutdown",
+      "node.apply",
+    ];
+
+    const SERVICE_ACTIONS: AuditAction[] = [
+      "service.draft_save",
+      "service.set_mode",
+    ];
+
+    for (const action of NODE_ACTIONS) {
+      it(`accepts node action without casts: ${action}`, async () => {
+        mockPoolQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+        await auditLog.record({
+          actor: "acc-1",
+          action,
+          target: "node",
+          targetId: "42",
+          details: { hostname: "node-42" },
+        });
+
+        const params = mockPoolQuery.mock.calls.at(-1)?.[1] as unknown[];
+        expect(params[1]).toBe(action);
+        expect(params[2]).toBe("node");
+        expect(params[3]).toBe("42");
+      });
+    }
+
+    for (const action of SERVICE_ACTIONS) {
+      it(`accepts service action without casts: ${action}`, async () => {
+        mockPoolQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+        await auditLog.record({
+          actor: "acc-1",
+          action,
+          target: "service",
+          targetId: "42:SENSOR",
+          details: { serviceKind: "SENSOR", nodeId: "42" },
+        });
+
+        const params = mockPoolQuery.mock.calls.at(-1)?.[1] as unknown[];
+        expect(params[1]).toBe(action);
+        expect(params[2]).toBe("service");
+        expect(params[3]).toBe("42:SENSOR");
+      });
+    }
+
+    it("composite targetId: service.* and node.* events on the same node land in distinct audit rows", async () => {
+      // The contract later sub-issues rely on: a `node.*` event keyed by
+      // `nodeId` and a `service.*` event keyed by `${nodeId}:${kind}`
+      // produce different `target_id` strings even when they share a
+      // node. Without this, multi-service drafts on the same node would
+      // collapse into a single audit target.
+      mockPoolQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+      const nodeId = "42";
+      const serviceKind = "SENSOR";
+
+      await auditLog.record({
+        actor: "acc-1",
+        action: "node.update",
+        target: "node",
+        targetId: nodeId,
+        details: { changedFields: ["hostname"] },
+      });
+
+      await auditLog.record({
+        actor: "acc-1",
+        action: "service.draft_save",
+        target: "service",
+        targetId: `${nodeId}:${serviceKind}`,
+        details: { serviceKind, nodeId },
+      });
+
+      const [nodeCall, serviceCall] = mockPoolQuery.mock.calls;
+      const nodeTargetId = (nodeCall[1] as unknown[])[3];
+      const serviceTargetId = (serviceCall[1] as unknown[])[3];
+
+      expect(nodeTargetId).toBe("42");
+      expect(serviceTargetId).toBe("42:SENSOR");
+      expect(nodeTargetId).not.toBe(serviceTargetId);
+    });
+  });
 });
