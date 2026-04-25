@@ -18,11 +18,17 @@ import { closeAdminAgent, mockServerSession } from "./mock-server-admin";
  *
  * The fixture and its paired query are declared in
  * `src/__tests__/fixtures/manifest.json` so the pre-test preflight
- * validates them against `schemas/review.graphql`. The spec
- * registers a catch-all stub via `/__admin/stubs` so every
- * `eventList` request the page issues (initial Apply + the pivot
- * tab's narrowed re-query) lands on the identity-bearing fixture
- * regardless of the time bounds the drawer composes.
+ * validates them against `schemas/review.graphql`.
+ *
+ * Stub matching is keyed on the request's `first` value: this spec
+ * navigates with `?pageSize=200`, so its `eventList` requests carry
+ * `first: 200`, which no other detection spec uses (the rest fall
+ * back to the default 50). A catch-all matcher would otherwise leak
+ * the identity rows into `detection-screenshots.spec.ts` and any
+ * other Apply-driven detection spec running in a parallel worker —
+ * the mock server is shared across workers, so once a catch-all is
+ * live every page's `eventList` query is satisfied by it. Pinning to
+ * `first: 200` keeps the stub local to this spec.
  */
 
 const session = mockServerSession();
@@ -31,6 +37,7 @@ test.beforeAll(async () => {
   await resetRateLimits();
   await session.registerStub({
     operation: "eventList",
+    matchVariables: { first: 200 },
     response: {
       kind: "fixture",
       fixture: "detection/eventList.identity.json",
@@ -54,7 +61,10 @@ test("clicking the User and Host cells opens narrowed pivot tabs", async ({
   workerPassword,
 }) => {
   await signInAndWait(page, workerUsername, workerPassword);
-  await page.goto("/detection");
+  // `?pageSize=200` keys this spec's `eventList` requests off the
+  // page-size matcher the stub registration above pins to. See the
+  // module-level docstring for the cross-spec leak this avoids.
+  await page.goto("/detection?pageSize=200");
 
   // Apply the default filter to dispatch the eventList query — without
   // Apply the shell renders the empty-prequery state and never asks
@@ -66,6 +76,15 @@ test("clicking the User and Host cells opens narrowed pivot tabs", async ({
   const drawer = page.getByRole("dialog");
   await expect(drawer.getByRole("heading", { name: "Filters" })).toBeVisible();
   await drawer.getByRole("button", { name: "Apply", exact: true }).click();
+
+  // Wait for the result list region to render — anchors the assertions
+  // below on the post-Apply state (the empty-prequery placeholder is
+  // gone, and the row list has at least the two fixture rows). Without
+  // this gate a slow CI worker can race the `User:` count assertion
+  // against the empty-prequery shell and report 0 matches.
+  const resultListRoot = page.locator('[data-slot="detection-result-list"]');
+  await expect(resultListRoot).toBeVisible({ timeout: 15_000 });
+  await expect(resultListRoot.locator("li")).toHaveCount(2);
 
   // The HttpThreat row's User cell carries the localized pivot
   // aria-label `Filter results by User name: alice@example.test`,

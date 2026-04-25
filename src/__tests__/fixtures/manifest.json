@@ -9,6 +9,6 @@
     "operation": "eventList",
     "query": "detection/eventList.identity.graphql",
     "fixture": "detection/eventList.identity.json",
-    "variables": { "filter": {}, "first": 50 }
+    "variables": { "filter": {}, "first": 200 }
   }
 ]
