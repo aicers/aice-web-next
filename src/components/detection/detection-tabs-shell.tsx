@@ -49,6 +49,7 @@ import {
   type DetectionShellStateSnapshot,
 } from "@/components/detection/detection-shell";
 import type { FilterDrawerOptions } from "@/components/detection/filter-drawer";
+import { PivotToast } from "@/components/detection/pivot-toast";
 import {
   TabBar,
   type TabBarLabels,
@@ -76,6 +77,12 @@ import {
   DEFAULT_PERIOD_KEY,
   type PeriodKey,
 } from "@/lib/detection/period";
+import {
+  openPivotTab,
+  type PivotAction,
+  type PivotPatch,
+  type PivotTabSummary,
+} from "@/lib/detection/pivot";
 import { QUICK_PEEK_EVENT_PARAM } from "@/lib/detection/quick-peek-url";
 import {
   ACTIVE_TAB_URL_PARAM,
@@ -100,6 +107,16 @@ export interface DetectionTabsShellLabels {
   tabs: TabBarLabels;
   /** Fallback label when a filter's summary produces no chips. */
   tabFallbackName: string;
+  /**
+   * Pivot feedback (Phase Detection-12). The wrapper renders the
+   * transient toast that surfaces "Already filtered" /
+   * "Tab cap reached" messages and the dismiss affordance label.
+   */
+  pivot: {
+    alreadyFiltered: (args: { value: string }) => string;
+    tabCapReached: (args: { max: number }) => string;
+    dismissToast: string;
+  };
 }
 
 export interface DetectionTabsShellProps {
@@ -341,6 +358,18 @@ export function DetectionTabsShell({
     writeTabsToSession(withLive, activeTabId);
   }, [tabs, activeTabId, withActiveSnapshot]);
 
+  // Tab id that should briefly flash to acknowledge a pivot focus
+  // gesture. The TabBar reads the value through the `flashTabId`
+  // prop and auto-clears it after the animation resolves; the
+  // wrapper resets it once the timeout fires so subsequent focus
+  // gestures re-trigger the same animation.
+  const [flashTabId, setFlashTabId] = useState<TabId | null>(null);
+  useEffect(() => {
+    if (!flashTabId) return;
+    const handle = setTimeout(() => setFlashTabId(null), 1200);
+    return () => clearTimeout(handle);
+  }, [flashTabId]);
+
   const tabBarTabs = useMemo<TabBarTab[]>(() => {
     return tabs.map((t) => {
       const displayName = t.name !== null ? t.name : deriveAutoName(t);
@@ -349,9 +378,10 @@ export function DetectionTabsShell({
         label: displayName,
         isAuto: !t.manualName,
         loading: t.result.loading,
+        flash: t.id === flashTabId,
       };
     });
-  }, [tabs, deriveAutoName]);
+  }, [tabs, deriveAutoName, flashTabId]);
 
   const handleActivate = useCallback(
     (nextId: TabId) => {
@@ -425,6 +455,72 @@ export function DetectionTabsShell({
     [withActiveSnapshot],
   );
 
+  // Transient pivot toast — `Already filtered` / `Tab cap reached`.
+  const [pivotToast, setPivotToast] = useState<string | null>(null);
+  const dismissPivotToast = useCallback(() => setPivotToast(null), []);
+
+  const handlePivot = useCallback(
+    (patch: PivotPatch) => {
+      const currentTabs = withActiveSnapshot(tabsRef.current);
+      const activeId = activeTabIdRef.current;
+      const active = currentTabs.find((t) => t.id === activeId);
+      if (!active) return;
+      const summaries: PivotTabSummary[] = currentTabs.map((t) => ({
+        id: t.id,
+        identity: { filter: t.filter, period: t.period },
+      }));
+      const action: PivotAction = openPivotTab({
+        patch,
+        active: {
+          id: active.id,
+          filter: active.filter,
+          endpoints: active.endpoints,
+          period: active.period,
+        },
+        tabs: summaries,
+        maxTabs: MAX_TABS,
+      });
+      switch (action.kind) {
+        case "toastDuplicate":
+          setPivotToast(
+            labels.pivot.alreadyFiltered({ value: action.displayValue }),
+          );
+          return;
+        case "focusTab":
+          setTabs(currentTabs);
+          setActiveTabId(action.tabId);
+          setFlashTabId(action.tabId);
+          return;
+        case "toastCapReached":
+          setPivotToast(labels.pivot.tabCapReached({ max: MAX_TABS }));
+          return;
+        case "createTab": {
+          const seed = createTabSnapshot({
+            filter: action.filter,
+            period: action.period,
+            endpoints: action.endpoints,
+          });
+          // Mark the seed as already-queried so the result list does
+          // not show "Build a filter to begin"; the shell's Apply-on-
+          // mount path is gated on `loading: true`, which we set so
+          // the resume-on-mount effect dispatches the query for us.
+          const seedWithLoad: TabSnapshot = {
+            ...seed,
+            result: {
+              ...seed.result,
+              hasQueried: true,
+              loading: true,
+            },
+          };
+          setTabs([...currentTabs, seedWithLoad]);
+          setActiveTabId(seedWithLoad.id);
+          return;
+        }
+      }
+    },
+    [labels.pivot, withActiveSnapshot],
+  );
+
   // On activeTabId transitions, rewrite the URL so a reload /
   // bookmark lands on the same active tab. The filter encoder is
   // the same one the shell uses on Apply; the shell still writes
@@ -464,6 +560,7 @@ export function DetectionTabsShell({
         title={title}
         labels={labels.shell}
         options={options}
+        onPivot={handlePivot}
         initialFilter={activeTab.filter}
         initialPeriod={activeTab.period}
         initialPivotOnly={activeTab.pivotOnly}
@@ -500,6 +597,11 @@ export function DetectionTabsShell({
         initialQuickPeekEvent={activeTab.quickPeekEvent}
         initialPendingQuickPeekToken={activeTab.pendingQuickPeekToken}
         onStateChange={handleShellStateChange}
+      />
+      <PivotToast
+        message={pivotToast}
+        onDismiss={dismissPivotToast}
+        dismissLabel={labels.pivot.dismissToast}
       />
     </div>
   );

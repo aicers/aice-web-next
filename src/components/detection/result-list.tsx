@@ -18,6 +18,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatEventTime } from "@/lib/detection/event-time";
+import {
+  THREAT_CATEGORY_KEY_BY_VALUE,
+  THREAT_CATEGORY_VALUES,
+  THREAT_LEVEL_KEY_BY_VALUE,
+  type ThreatLevelValue,
+} from "@/lib/detection/filter-options";
+import {
+  buildPivotPatch,
+  type PivotColumnKey,
+  type PivotPatch,
+} from "@/lib/detection/pivot";
 import type {
   Event,
   ThreatCategory,
@@ -75,6 +86,23 @@ export interface ResultListLabels {
   levelLabels: Record<ThreatLevel, string>;
   categoryLabels: Record<ThreatCategory, string>;
   attackKindLabel: string;
+  /**
+   * Localized template for the activation a11y label rendered on
+   * pivotable cells, e.g. `Filter results by Level: High`. The
+   * pivot affordance only renders when the parent provides
+   * `onPivot`; this label is read by screen readers as the button's
+   * `aria-label`.
+   */
+  pivotActivate: (args: { label: string; value: string }) => string;
+  pivotColumnLabels: {
+    origAddr: string;
+    respAddr: string;
+    origCountry: string;
+    respCountry: string;
+    level: string;
+    category: string;
+    kind: string;
+  };
 }
 
 export interface ResultListState {
@@ -119,6 +147,18 @@ interface ResultListProps {
   /** Click on the Investigate icon — opens the full view (Phase Detection-19). */
   onRowInvestigate?: (event: Event) => void;
   /**
+   * Pivot (drill-down) activation hook (Phase Detection-12).
+   *
+   * When provided, pivotable cells (level / kind / category /
+   * source IP / destination IP / country) render as buttons that
+   * call into this handler with a {@link PivotPatch} the multi-tab
+   * wrapper applies on top of the active tab's filter. When
+   * undefined, every cell renders as plain text — covers the
+   * single-tab storybook / standalone shell paths where there is
+   * no tab system to receive the new filter.
+   */
+  onPivot?: (patch: PivotPatch) => void;
+  /**
    * CSV export affordance wiring (Phase Detection-13). When
    * omitted, the Download button is disabled — preserves the
    * existing "feature not wired" rendering used by tests and
@@ -149,6 +189,7 @@ export function ResultList({
   onOpenFilters,
   onRowOpen,
   onRowInvestigate,
+  onPivot,
   onDownload,
   downloadRunning,
   downloadError,
@@ -180,6 +221,7 @@ export function ResultList({
         onRefresh={onRefresh}
         onRowOpen={onRowOpen}
         onRowInvestigate={onRowInvestigate}
+        onPivot={onPivot}
       />
     </div>
   );
@@ -349,6 +391,7 @@ function ResultListBody({
   onRefresh,
   onRowOpen,
   onRowInvestigate,
+  onPivot,
 }: {
   state: ResultListState;
   labels: ResultListLabels;
@@ -358,6 +401,7 @@ function ResultListBody({
   onRefresh: () => void;
   onRowOpen?: (event: Event) => void;
   onRowInvestigate?: (event: Event) => void;
+  onPivot?: (patch: PivotPatch) => void;
 }) {
   if (state.status === "loading" && state.events.length === 0) {
     return (
@@ -459,6 +503,7 @@ function ResultListBody({
             locale={locale}
             onRowOpen={rowsInteractive ? onRowOpen : undefined}
             onRowInvestigate={rowsInteractive ? onRowInvestigate : undefined}
+            onPivot={rowsInteractive ? onPivot : undefined}
           />
         );
       })}
@@ -472,12 +517,14 @@ function EventRow({
   locale,
   onRowOpen,
   onRowInvestigate,
+  onPivot,
 }: {
   event: Event;
   labels: ResultListLabels;
   locale: string;
   onRowOpen?: (event: Event) => void;
   onRowInvestigate?: (event: Event) => void;
+  onPivot?: (patch: PivotPatch) => void;
 }) {
   const addressing = readEventAddressing(event);
   const kindLabel =
@@ -516,6 +563,18 @@ function EventRow({
   // hide the affordance rather than rendering a dead control.
   const canInvestigate =
     typeof onRowInvestigate === "function" && isEventAddressable(event);
+  const pivot = onPivot;
+  // Resolve the level pivot up front so the level badge can render
+  // either as a plain Badge or as a pivot button without duplicating
+  // the value-shape coercion in the JSX.
+  const levelPatch = pivot ? buildLevelPivotPatch(event.level, labels) : null;
+  const categoryPatch =
+    pivot && event.category
+      ? buildCategoryPivotPatch(event.category, labels)
+      : null;
+  const kindPatch = pivot
+    ? buildPivotPatch("kind", { raw: event.__typename, display: kindLabel })
+    : null;
   return (
     <li
       className={cn(
@@ -538,16 +597,42 @@ function EventRow({
       <div className="pointer-events-none relative flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-            <Badge
-              variant={levelBadgeVariant(event.level)}
-              className="uppercase"
+            <PivotCell
+              patch={levelPatch}
+              onPivot={pivot}
+              ariaLabel={
+                levelPatch
+                  ? labels.pivotActivate({
+                      label: labels.pivotColumnLabels.level,
+                      value: levelPatch.displayValue,
+                    })
+                  : undefined
+              }
             >
-              {labels.levelLabels[event.level] ?? event.level}
-            </Badge>
+              <Badge
+                variant={levelBadgeVariant(event.level)}
+                className="uppercase"
+              >
+                {labels.levelLabels[event.level] ?? event.level}
+              </Badge>
+            </PivotCell>
             <span className="text-muted-foreground text-xs tabular-nums">
               {formatEventTime(event.time, locale, labels.unknownTime)}
             </span>
-            <span className="text-foreground font-medium">{kindLabel}</span>
+            <PivotCell
+              patch={kindPatch}
+              onPivot={pivot}
+              ariaLabel={
+                kindPatch
+                  ? labels.pivotActivate({
+                      label: labels.pivotColumnLabels.kind,
+                      value: kindLabel,
+                    })
+                  : undefined
+              }
+            >
+              <span className="text-foreground font-medium">{kindLabel}</span>
+            </PivotCell>
             {addressing.attackKind ? (
               // Secondary label: truncates at medium widths (the
               // `title` surfaces the full value on hover) and is
@@ -564,12 +649,23 @@ function EventRow({
               </span>
             ) : null}
             {event.category ? (
-              <Badge
-                variant="outline"
-                className="hidden font-normal sm:inline-flex"
+              <PivotCell
+                patch={categoryPatch}
+                onPivot={pivot}
+                ariaLabel={
+                  categoryPatch
+                    ? labels.pivotActivate({
+                        label: labels.pivotColumnLabels.category,
+                        value: categoryPatch.displayValue,
+                      })
+                    : undefined
+                }
+                className="hidden sm:inline-flex"
               >
-                {labels.categoryLabels[event.category] ?? event.category}
-              </Badge>
+                <Badge variant="outline" className="font-normal">
+                  {labels.categoryLabels[event.category] ?? event.category}
+                </Badge>
+              </PivotCell>
             ) : null}
             <span className="text-muted-foreground hidden text-xs sm:inline">
               <span className="mr-1">{labels.confidenceLabel}</span>
@@ -585,6 +681,7 @@ function EventRow({
                 orig={origEndpoint}
                 resp={respEndpoint}
                 labels={labels}
+                onPivot={pivot}
               />
             ) : null}
             {hasEndpoint ? (
@@ -657,10 +754,12 @@ function EndpointSummary({
   orig,
   resp,
   labels,
+  onPivot,
 }: {
   orig: EndpointDisplay | null;
   resp: EndpointDisplay | null;
   labels: ResultListLabels;
+  onPivot?: (patch: PivotPatch) => void;
 }) {
   if (!orig && !resp) return null;
   // At narrow widths the two endpoints stack vertically and the `→`
@@ -668,11 +767,21 @@ function EndpointSummary({
   // visible but drops the horizontal source → destination layout.
   return (
     <span className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center">
-      <EndpointPart endpoint={orig} labels={labels} />
+      <EndpointPart
+        endpoint={orig}
+        labels={labels}
+        onPivot={onPivot}
+        side="orig"
+      />
       <span className="text-muted-foreground/70 hidden sm:inline">
         {labels.endpointSeparator}
       </span>
-      <EndpointPart endpoint={resp} labels={labels} />
+      <EndpointPart
+        endpoint={resp}
+        labels={labels}
+        onPivot={onPivot}
+        side="resp"
+      />
     </span>
   );
 }
@@ -726,21 +835,65 @@ function pickEndpoint(
 function EndpointPart({
   endpoint,
   labels,
+  onPivot,
+  side,
 }: {
   endpoint: EndpointDisplay | null;
   labels: ResultListLabels;
+  onPivot?: (patch: PivotPatch) => void;
+  side: "orig" | "resp";
 }) {
   if (!endpoint) return <span className="text-muted-foreground/60">—</span>;
   const portLabel = endpoint.port !== null ? `:${endpoint.port}` : "";
   const country = endpoint.country
     ? formatCountryShort(endpoint.country, labels)
     : null;
+  const addrColumn: PivotColumnKey = side === "orig" ? "origAddr" : "respAddr";
+  const countryColumn: PivotColumnKey =
+    side === "orig" ? "origCountry" : "respCountry";
+  const ipPatch = onPivot
+    ? buildPivotPatch(addrColumn, {
+        raw: endpoint.address,
+        display: endpoint.address,
+      })
+    : null;
+  // Country pivots use the literal code (e.g. "KR") rather than the
+  // localized name, since the filter side stores ISO country codes.
+  // The display string still substitutes the localized sentinel
+  // ("Location unknown") when the code is `XX` / `ZZ` so the toast
+  // reads naturally.
+  const countryPatch =
+    onPivot &&
+    endpoint.country &&
+    endpoint.country !== "XX" &&
+    endpoint.country !== "ZZ"
+      ? buildPivotPatch(countryColumn, {
+          raw: endpoint.country,
+          display: endpoint.country,
+        })
+      : null;
   return (
     <span className="text-foreground inline-flex items-center gap-1 font-mono text-xs">
-      <span className="truncate" title={endpoint.address}>
-        {endpoint.address}
-        {portLabel}
-      </span>
+      <PivotCell
+        patch={ipPatch}
+        onPivot={onPivot}
+        ariaLabel={
+          ipPatch
+            ? labels.pivotActivate({
+                label:
+                  side === "orig"
+                    ? labels.pivotColumnLabels.origAddr
+                    : labels.pivotColumnLabels.respAddr,
+                value: endpoint.address,
+              })
+            : undefined
+        }
+      >
+        <span className="truncate" title={endpoint.address}>
+          {endpoint.address}
+          {portLabel}
+        </span>
+      </PivotCell>
       {endpoint.extraAddresses.length > 0 ? (
         <MorePopover
           count={endpoint.extraAddresses.length}
@@ -756,9 +909,26 @@ function EndpointPart({
         />
       ) : null}
       {country ? (
-        <span className="text-muted-foreground/80 ml-1 normal-case">
-          ({country})
-        </span>
+        <PivotCell
+          patch={countryPatch}
+          onPivot={onPivot}
+          ariaLabel={
+            countryPatch
+              ? labels.pivotActivate({
+                  label:
+                    side === "orig"
+                      ? labels.pivotColumnLabels.origCountry
+                      : labels.pivotColumnLabels.respCountry,
+                  value: country,
+                })
+              : undefined
+          }
+          className="ml-1"
+        >
+          <span className="text-muted-foreground/80 normal-case">
+            ({country})
+          </span>
+        </PivotCell>
       ) : null}
     </span>
   );
@@ -768,6 +938,84 @@ function formatCountryShort(code: string, labels: ResultListLabels): string {
   if (code === "XX") return labels.countryUnknown;
   if (code === "ZZ") return labels.countryUnavailable;
   return code;
+}
+
+/**
+ * Wraps a pivotable cell value as a button that fires `onPivot`
+ * when activated. When `patch` is null or `onPivot` is undefined
+ * the children render verbatim — covers single-tab / standalone
+ * shells and rows whose value is not pivotable in v1 (sensor,
+ * customer placeholders).
+ *
+ * The cell layers above the row's overlay button via
+ * `pointer-events-auto z-10`. The parent inner content carries
+ * `pointer-events-none` so the row-open click does not steal
+ * activation from cells the operator targets directly.
+ */
+function PivotCell({
+  patch,
+  onPivot,
+  ariaLabel,
+  className,
+  children,
+}: {
+  patch: PivotPatch | null;
+  onPivot?: (patch: PivotPatch) => void;
+  ariaLabel?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  if (!patch || !onPivot) {
+    if (className) return <span className={className}>{children}</span>;
+    return children;
+  }
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      onClick={(e) => {
+        e.stopPropagation();
+        onPivot(patch);
+      }}
+      className={cn(
+        "pointer-events-auto relative z-10 inline-flex items-center rounded-sm",
+        "hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+        "cursor-pointer",
+        className,
+      )}
+      data-slot="detection-pivot-cell"
+    >
+      {children}
+    </button>
+  );
+}
+
+function buildLevelPivotPatch(
+  level: ThreatLevel,
+  labels: ResultListLabels,
+): PivotPatch | null {
+  const levelKey = (Object.keys(THREAT_LEVEL_KEY_BY_VALUE) as string[]).find(
+    (k) => THREAT_LEVEL_KEY_BY_VALUE[Number(k) as ThreatLevelValue] === level,
+  );
+  if (!levelKey) return null;
+  return buildPivotPatch("level", {
+    raw: Number(levelKey),
+    display: labels.levelLabels[level] ?? level,
+  });
+}
+
+function buildCategoryPivotPatch(
+  category: ThreatCategory,
+  labels: ResultListLabels,
+): PivotPatch | null {
+  const matchedValue = THREAT_CATEGORY_VALUES.find(
+    (n) => THREAT_CATEGORY_KEY_BY_VALUE[n] === category,
+  );
+  if (matchedValue === undefined) return null;
+  return buildPivotPatch("category", {
+    raw: matchedValue,
+    display: labels.categoryLabels[category] ?? category,
+  });
 }
 
 function StatePanel({

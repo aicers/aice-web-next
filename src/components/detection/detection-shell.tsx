@@ -99,6 +99,7 @@ import {
   totalPagesFrom,
 } from "@/lib/detection/pagination";
 import type { PeriodKey } from "@/lib/detection/period";
+import type { PivotPatch } from "@/lib/detection/pivot";
 import {
   applyQuickPeekToken,
   readQuickPeekToken,
@@ -423,6 +424,15 @@ export interface DetectionShellProps {
    * for the contract.
    */
   onStateChange?: (snapshot: DetectionShellStateSnapshot) => void;
+  /**
+   * Pivot (drill-down) activation hook (Phase Detection-12).
+   * Forwarded straight to {@link ResultList}; the multi-tab wrapper
+   * supplies a handler that decides whether to create / focus /
+   * toast based on the patch and the rest of the tab list. When
+   * undefined, pivot affordances are hidden (single-tab / standalone
+   * shell paths).
+   */
+  onPivot?: (patch: PivotPatch) => void;
 }
 
 /**
@@ -688,6 +698,7 @@ export function DetectionShell({
   initialQuickPeekEvent = null,
   initialPendingQuickPeekToken = null,
   onStateChange,
+  onPivot,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
@@ -762,6 +773,17 @@ export function DetectionShell({
         RESOURCE_DEVELOPMENT: t("categoryOptions.RESOURCE_DEVELOPMENT"),
       },
       attackKindLabel: tResults("attackKindLabel"),
+      pivotActivate: ({ label, value }: { label: string; value: string }) =>
+        tResults("pivotActivate", { label, value }),
+      pivotColumnLabels: {
+        origAddr: tResults("pivotColumnLabels.origAddr"),
+        respAddr: tResults("pivotColumnLabels.respAddr"),
+        origCountry: tResults("pivotColumnLabels.origCountry"),
+        respCountry: tResults("pivotColumnLabels.respCountry"),
+        level: tResults("pivotColumnLabels.level"),
+        category: tResults("pivotColumnLabels.category"),
+        kind: tResults("pivotColumnLabels.kind"),
+      },
     }),
     [t, tResults],
   );
@@ -2450,6 +2472,7 @@ export function DetectionShell({
               onOpenFilters={() => openDrawer()}
               onRowOpen={handleRowOpen}
               onRowInvestigate={handleRowInvestigate}
+              onPivot={onPivot}
               onDownload={handleDownloadCsv}
               downloadRunning={csvExport.status.kind === "running"}
               downloadError={

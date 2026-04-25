@@ -804,7 +804,17 @@
       "countryUnknown": "??",
       "countryUnavailable": "—",
       "attackKindLabel": "Attack:",
-      "quickPeekClose": "Close Quick peek"
+      "quickPeekClose": "Close Quick peek",
+      "pivotActivate": "Filter results by {label}: {value}",
+      "pivotColumnLabels": {
+        "origAddr": "Source IP",
+        "respAddr": "Destination IP",
+        "origCountry": "Source country",
+        "respCountry": "Destination country",
+        "level": "Level",
+        "category": "Category",
+        "kind": "Kind"
+      }
     },
     "pagination": {
       "pageSizeLabel": "Rows per page",
@@ -877,6 +887,11 @@
       "renameTab": "Rename tab",
       "resetName": "Reset tab name",
       "fallbackName": "New tab"
+    },
+    "pivot": {
+      "alreadyFiltered": "Already filtered by {value}",
+      "tabCapReached": "Close a tab to pivot — already at the {max}-tab limit.",
+      "dismissToast": "Dismiss notification"
     }
   },
   "events": {

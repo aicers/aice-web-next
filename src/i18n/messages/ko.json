@@ -804,7 +804,17 @@
       "countryUnknown": "??",
       "countryUnavailable": "—",
       "attackKindLabel": "공격:",
-      "quickPeekClose": "간단 미리보기 닫기"
+      "quickPeekClose": "간단 미리보기 닫기",
+      "pivotActivate": "{label}: {value} 기준으로 결과 필터링",
+      "pivotColumnLabels": {
+        "origAddr": "출발지 IP",
+        "respAddr": "목적지 IP",
+        "origCountry": "출발지 국가",
+        "respCountry": "목적지 국가",
+        "level": "심각도",
+        "category": "카테고리",
+        "kind": "종류"
+      }
     },
     "pagination": {
       "pageSizeLabel": "페이지당 행",
@@ -877,6 +887,11 @@
       "renameTab": "탭 이름 바꾸기",
       "resetName": "탭 이름 초기화",
       "fallbackName": "새 탭"
+    },
+    "pivot": {
+      "alreadyFiltered": "이미 {value}(으)로 필터링되어 있습니다",
+      "tabCapReached": "이미 최대 {max}개 탭을 사용 중이라 드릴다운할 수 없습니다 — 탭을 먼저 닫아 주세요.",
+      "dismissToast": "알림 닫기"
     }
   },
   "events": {

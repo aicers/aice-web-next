@@ -60,6 +60,16 @@ function labels(): ResultListLabels {
       RESOURCE_DEVELOPMENT: "Resource Development",
     },
     attackKindLabel: "Attack:",
+    pivotActivate: ({ label, value }) => `Filter by ${label}: ${value}`,
+    pivotColumnLabels: {
+      origAddr: "Source IP",
+      respAddr: "Destination IP",
+      origCountry: "Source country",
+      respCountry: "Destination country",
+      level: "Level",
+      category: "Category",
+      kind: "Kind",
+    },
   };
 }
 

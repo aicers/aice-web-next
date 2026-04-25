@@ -23,6 +23,13 @@ export {
 } from "./errors";
 export { type Filter, toEventListFilterInput } from "./filter";
 export {
+  type FilterIdentity,
+  type FilterIdentityInput,
+  filterIdentitiesEqual,
+  filtersAreEquivalent,
+  normalizeFilterIdentity,
+} from "./filter-identity";
+export {
   CHIP_DIMENSION_CAP,
   type FilterChip,
   type SensorOption,
@@ -70,6 +77,18 @@ export {
   type PeriodKey,
   type PeriodRange,
 } from "./period";
+export {
+  applyPivotPatch,
+  buildPivotPatch,
+  type OpenPivotTabArgs,
+  openPivotTab,
+  type PivotAction,
+  type PivotApplyResult,
+  type PivotCellValue,
+  type PivotColumnKey,
+  type PivotPatch,
+  type PivotTabSummary,
+} from "./pivot";
 export {
   listSensors,
   SENSOR_LIST_ENDPOINT_AVAILABLE,

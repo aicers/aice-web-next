@@ -516,6 +516,13 @@ export default async function DetectionPage({
           resetName: t("tabs.resetName"),
         },
         tabFallbackName: t("tabs.fallbackName"),
+        pivot: {
+          alreadyFiltered: ({ value }: { value: string }) =>
+            t("pivot.alreadyFiltered", { value }),
+          tabCapReached: ({ max }: { max: number }) =>
+            t("pivot.tabCapReached", { max }),
+          dismissToast: t("pivot.dismissToast"),
+        },
       }}
     />
   );
