@@ -75,7 +75,7 @@ pub struct ExternalService {
       - manager의 `nodeStatusList` GraphQL API 가 응답을 한다면, 이는 manager 서비스가 적어도 켜져있다는 것을 의미하고, 더 나아가 이 응답이 Server Error (5xx) 가 아니라면 manager 가 정상적으로 동작하는 것이라고 할 수 있으므로, 이를 기반으로 on, off 를 판단한다.
       - **aice-web-next v1 구현 정정**: 위 문장은 원 스펙 기준 기술이며, 현재 REview 스키마는 `NodeStatus.manager: Boolean!` per-node 필드로 manager의 실행 여부를 직접 노출한다. v1 구현은 응답 health가 아닌 이 per-node boolean을 authoritative 신호로 사용하고, Status 탭 / 상세 페이지에 running / not-running 뱃지로 렌더링한다. 다른 서비스들과 달리 off/on/idle 세 상태 매핑은 manager에 적용하지 않는다.
     - external 유형 : aice-web-next 가 직접 external 서비스들에게 GraphQL query `status`를 호출하여 정상 응답이 오면 on, 에러 응답이 오면 off 라고 판단한다.
-    - agent 유형 : aice-web-next 는 manager로의 GraphQL query `nodeStatusList` 의 각 agent의  `storedStatus` 로 판단한다.
+    - agent 유형 : aice-web-next 는 manager로의 GraphQL query `nodeStatusList` 의 각 agent의 `storedStatus` 로 판단한다.
       - storedStatus == Disabled 이면 off 이다.
       - storedStatus == Unknown 이면 off 로 간주한다.
       - storedStatus == Enabled 이면 on 이다.
@@ -108,9 +108,9 @@ pub struct ExternalService {
       - `ack_transmission`
       - `retention`
       - `max_open_files` (고급설정)
-      - `max_mb_of_level_base`  (고급설정)
-      - `num_of_thread`  (고급설정)
-      - `max_subcompactions`  (고급설정)
+      - `max_mb_of_level_base` (고급설정)
+      - `num_of_thread` (고급설정)
+      - `max_subcompactions` (고급설정)
       - `peer_srv_addr` (특이사항 : Giganto cluster 관련 설정으로, 현 시점 기준, Giganto 서버 사이드 작업이 안 되어있다.)
       - `peers` (특이사항 : Giganto cluster 관련 설정으로, 현 시점 기준, Giganto 서버 사이드 작업이 안 되어있다.)
   - ti-container 서비스 :
