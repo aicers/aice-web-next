@@ -246,6 +246,42 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
       abortInFlight();
       const controller = new AbortController();
       inFlightRef.current = controller;
+
+      // Watch the save-picker promise as soon as the fetch is set up
+      // so a Save-As dismissal aborts the in-flight request
+      // immediately, even while the row-count probe or initial REview
+      // round-trip is still pending. Without this side-effect, the
+      // hook only consulted the picker outcome *after* `await fetch()`
+      // returned (Reviewer Round 1), so a Cancel during a slow
+      // preflight let the request run to completion before we
+      // noticed — defeating the manual claim that dismissing the Save
+      // As dialog aborts the underlying fetch end-to-end. The latched
+      // outcome lets the catch block below distinguish a picker
+      // cancellation (silent return-to-idle) from a real picker
+      // failure (export-failed banner), mirroring the response-path
+      // branches.
+      let pickerAbortReason: "cancelled" | "failed" | null = null;
+      void savePromise.then(
+        (target) => {
+          if (target.kind === "cancelled") {
+            pickerAbortReason = "cancelled";
+            try {
+              controller.abort();
+            } catch {
+              // best-effort
+            }
+          }
+        },
+        () => {
+          pickerAbortReason = "failed";
+          try {
+            controller.abort();
+          } catch {
+            // best-effort
+          }
+        },
+      );
+
       let response: Response;
       try {
         response = await fetch("/api/detection/export", {
@@ -279,11 +315,19 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
       } catch (err) {
         void resolveSaveOutcome();
         if (controller.signal.aborted || isAbortError(err)) {
-          // The fetch was aborted by us (picker dismissed, supersede,
-          // unmount). That is not an error — return to idle without
-          // surfacing a banner.
+          // The fetch was aborted by us (picker dismissed, picker
+          // failed, supersede, unmount). Picker cancellation and
+          // supersede/unmount are not errors — return to idle. A real
+          // picker failure (SecurityError, permission denial, etc.)
+          // is surfaced via the latched `pickerAbortReason` so the
+          // operator still sees an export-failed banner here, not a
+          // silent no-op (mirrors the response-path 200 branch).
           if (inFlightRef.current === controller) inFlightRef.current = null;
-          setStatus({ kind: "idle" });
+          if (pickerAbortReason === "failed") {
+            setStatus({ kind: "error", message: errorMessage });
+          } else {
+            setStatus({ kind: "idle" });
+          }
           return;
         }
         if (inFlightRef.current === controller) inFlightRef.current = null;
