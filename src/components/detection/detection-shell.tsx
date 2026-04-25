@@ -84,7 +84,11 @@ import {
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
 import {
-  clearPaginationParams,
+  buildSearchParamsForFilter,
+  type EncodedTabFilter,
+  type PivotExtras,
+} from "@/lib/detection/filter-url";
+import {
   committedPageForAnchor,
   INITIAL_PAGINATION_STATE,
   type PageAnchor,
@@ -105,13 +109,10 @@ import type {
   LearningMethod,
   PageInfo,
 } from "@/lib/detection/types";
-import {
-  buildDetectionSearchParams,
-  mergePivotParams,
-  type PivotChipLabels,
-  type PivotFilterParams,
-  pivotParamsFromFilterInput,
-  type TagField,
+import type {
+  PivotChipLabels,
+  PivotFilterParams,
+  TagField,
 } from "@/lib/detection/url-filters";
 import { encodeEventLocator } from "@/lib/events/event-locator";
 import { cn } from "@/lib/utils";
@@ -261,6 +262,33 @@ export interface DetectionShellInitialResult {
    * Apply / Refresh repopulates it.
    */
   pageInfo: PageInfo | null;
+  /**
+   * Reviewer Round 1 (item 3): freshness timestamp carried over from
+   * a prior tab activation so the result header keeps showing
+   * "Updated 5 minutes ago" instead of "Updated just now" the moment
+   * the operator switches back. `undefined` means "compute from the
+   * initial bootstrap" (`Date.now()` when the SSR'd query succeeded,
+   * else `null`); the multi-tab wrapper passes the cached value when
+   * remounting an inactive tab, the page leaves it undefined.
+   */
+  lastUpdatedMs?: number | null;
+  /**
+   * Reviewer Round 1 (item 3): per-tab "has any committed query
+   * dispatched yet" flag carried over from a prior tab activation
+   * so a remount keeps the pre-query empty state visible (and
+   * doesn't get confused with a fresh-load pre-query state). The
+   * page leaves it undefined and the shell derives the bootstrap
+   * value from `error` / `totalCount`.
+   */
+  hasQueried?: boolean;
+  /**
+   * Reviewer Round 1 (item 3): per-tab monotonic queryEpoch carried
+   * across tab activations so per-row state cannot accidentally
+   * carry from a prior committed query into the next one. The
+   * wrapper threads the cached value back on remount; an SSR
+   * bootstrap leaves it undefined and the shell starts from `0`.
+   */
+  queryEpoch?: number;
 }
 
 /**
@@ -620,14 +648,13 @@ export function DetectionShell({
     useState<EndpointEntry[]>(initialEndpoints);
   // `pivotOnly` carries URL-only fields that aren't yet represented
   // in the drawer — today that's `origPort` / `respPort` / `proto`,
-  // which arrive from the Investigation handoff and ride through
-  // `history.replaceState` so the pivot shape survives a reload
-  // until Phase Network/IP wires them into the drawer. `kind` and
-  // `window` were previously also parked here, but they now live in
-  // the committed filter (`input.kinds`) and `committedPeriod`; the
-  // URL writer extracts them from there via
-  // {@link pivotParamsFromFilterInput} so edits in the drawer clear
-  // stale pivot tokens on the next Apply / chip removal.
+  // which arrive from the Investigation handoff and ride through the
+  // encoded `?f=` blob so the pivot shape survives a reload until
+  // Phase Network/IP wires them into the drawer. `kind` / `window`
+  // are no longer parked here — they live in the committed filter
+  // (`input.kinds`) and `committedPeriod` and round-trip through the
+  // {@link Filter} payload directly, so a drawer edit clears any
+  // stale token on the next Apply / chip removal.
   const pivotOnly = initialPivotOnly;
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(initialDraft);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
@@ -659,25 +686,41 @@ export function DetectionShell({
   // `EventRow` / `MorePopover` state cannot be carried across
   // unrelated committed queries even if REview happens to reuse a
   // positional cursor value in the new slice. The initial slice sits
-  // on epoch `0`; the first client-side commit advances to `1`.
-  const [queryEpoch, setQueryEpoch] = useState(0);
+  // on epoch `0`; the first client-side commit advances to `1`. The
+  // multi-tab wrapper threads the cached counter back on remount so
+  // a tab switched-back-to does not silently rewind the epoch.
+  const [queryEpoch, setQueryEpoch] = useState(initialResult.queryEpoch ?? 0);
   const [resultError, setResultError] = useState<string | null>(
     initialResult.error,
   );
   const [loading, setLoading] = useState(false);
-  const [lastUpdatedMs, setLastUpdatedMs] = useState<number | null>(
-    initialResult.error === null && initialResult.totalCount !== null
+  // Reviewer Round 1 (item 3): honour the wrapper-supplied cached
+  // freshness timestamp on a tab remount. Without it, switching back
+  // to a tab that had been queried earlier would compute
+  // `Date.now()` here and the result header would read "Updated just
+  // now" even though no refresh fired — making cached results look
+  // newer than they are. Bootstrap-only loads (where the wrapper
+  // omits the cache) fall back to the SSR-completed timestamp.
+  const [lastUpdatedMs, setLastUpdatedMs] = useState<number | null>(() => {
+    if (initialResult.lastUpdatedMs !== undefined) {
+      return initialResult.lastUpdatedMs;
+    }
+    return initialResult.error === null && initialResult.totalCount !== null
       ? Date.now()
-      : null,
-  );
+      : null;
+  });
   // Tracks whether any query has been dispatched (by the server-
   // rendered initial load or a subsequent Apply / Refresh / chip
   // removal). A freshly-mounted `+` tab with no successful query —
   // e.g. the server action returned an error before the page mounted
   // — renders the dedicated pre-query empty state instead of the
-  // generic zero-results panel.
+  // generic zero-results panel. The multi-tab wrapper threads the
+  // cached value back on remount so a switched-back-to tab keeps its
+  // post-query result panel rather than reverting to the pre-query
+  // empty state.
   const [hasQueried, setHasQueried] = useState(
-    initialResult.error === null && initialResult.totalCount !== null,
+    initialResult.hasQueried ??
+      (initialResult.error === null && initialResult.totalCount !== null),
   );
   const [pagination, setPagination] =
     useState<PaginationState>(initialPagination);
@@ -1055,13 +1098,14 @@ export function DetectionShell({
       setDraft(applied);
       setDrawerOpen(false);
 
-      // Mirror the free-form filter fields into the URL so a refresh
-      // restores them. Only the drawer's free-form inputs (source,
-      // destination, and the tag fields) ride in the URL today — the
-      // time range has no URL-persisted form, so a refresh falls back
-      // to the default period. The pivot-only params
-      // (kind/ports/proto/window) stay as-is — they carry no drawer
-      // state yet.
+      // Mirror the committed filter into the URL so a refresh restores
+      // it. Reviewer Round 1 (item 1): the encoded `?f=` blob carries
+      // the entire {@link Filter} — every `EventListFilterInput` field
+      // (levels, countries, learning methods, categories, directions,
+      // confidence bounds, sensors, endpoints) plus the future
+      // `mode: "query"` branch. The legacy pivot encoder only covered a
+      // subset and silently dropped those fields; reload would lose
+      // them.
       //
       // Use `history.replaceState` rather than `router.replace` so the
       // URL update doesn't trigger a soft navigation. A soft navigation
@@ -1071,27 +1115,24 @@ export function DetectionShell({
       // result discarded because the shell keeps its own client state.
       // `replaceState` keeps URL persistence (refresh restores the
       // active tab) without paying for a duplicate REview round-trip.
-      if (next.mode === "structured") {
-        const merged = mergePivotParams(
-          pivotOnly,
-          pivotParamsFromFilterInput(next.input, applied.period),
-        );
-        const search = buildDetectionSearchParams(merged);
-        // Apply resets the cursor to the start of the new filter
-        // space — stale pagination keys would point at cursors from
-        // the old filter's connection.
-        clearPaginationParams(search);
-        // Pagination itself is persisted below when the fresh query
-        // resolves; the initial URL can stay short (default page
-        // size, head anchor, no page param).
-        if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
-          search.set("pageSize", String(pagination.pageSize));
-        }
-        preserveActiveTabParam(search);
-        const qs = search.toString();
-        const url = qs ? `${pathname}?${qs}` : pathname;
-        window.history.replaceState(window.history.state, "", url);
+      const search = buildEncodedFilterSearch({
+        filter: next,
+        period: applied.period,
+        endpoints: applied.endpoints,
+        pivotExtras: extrasFromPivotOnly(pivotOnly),
+      });
+      // Apply resets the cursor to the start of the new filter
+      // space — stale pagination keys would point at cursors from
+      // the old filter's connection. Pagination itself is persisted
+      // below when the fresh query resolves; the initial URL can stay
+      // short (default page size, head anchor, no page param).
+      if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
+        search.set("pageSize", String(pagination.pageSize));
       }
+      preserveActiveTabParam(search);
+      const qs = search.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(window.history.state, "", url);
 
       runQueryFor(next);
     },
@@ -1126,27 +1167,25 @@ export function DetectionShell({
       // pre-removal filter and would clobber the change if the
       // operator opens the drawer next.
       setDraft(null);
-      // Persist the removal in the URL the same way Apply does.
-      // The period chip removes `committedPeriod` → we pass `null` so
-      // the URL drops `window=` alongside the period itself; every
-      // other target leaves the period untouched so the current
-      // committed period still drives `window=` in the URL.
+      // Persist the removal in the URL the same way Apply does. The
+      // period chip removes `committedPeriod` → we pass `null` so the
+      // encoded blob drops the period alongside the filter itself;
+      // every other target leaves the period untouched so the
+      // current committed period still rides through.
       const nextPeriod = target.kind === "period" ? null : committedPeriod;
-      if (next.filter.mode === "structured") {
-        const merged = mergePivotParams(
-          pivotOnly,
-          pivotParamsFromFilterInput(next.filter.input, nextPeriod),
-        );
-        const search = buildDetectionSearchParams(merged);
-        clearPaginationParams(search);
-        if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
-          search.set("pageSize", String(pagination.pageSize));
-        }
-        preserveActiveTabParam(search);
-        const qs = search.toString();
-        const url = qs ? `${pathname}?${qs}` : pathname;
-        window.history.replaceState(window.history.state, "", url);
+      const search = buildEncodedFilterSearch({
+        filter: next.filter,
+        period: nextPeriod,
+        endpoints: next.endpoints,
+        pivotExtras: extrasFromPivotOnly(pivotOnly),
+      });
+      if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
+        search.set("pageSize", String(pagination.pageSize));
       }
+      preserveActiveTabParam(search);
+      const qs = search.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(window.history.state, "", url);
       runQueryFor(next.filter);
     },
     [
@@ -1168,13 +1207,12 @@ export function DetectionShell({
    */
   const persistPaginationToUrl = useCallback(
     (next: PaginationState) => {
-      if (committedFilter.mode !== "structured") return;
-      const merged = mergePivotParams(
-        pivotOnly,
-        pivotParamsFromFilterInput(committedFilter.input),
-      );
-      const search = buildDetectionSearchParams(merged);
-      clearPaginationParams(search);
+      const search = buildEncodedFilterSearch({
+        filter: committedFilter,
+        period: committedPeriod,
+        endpoints: committedEndpoints,
+        pivotExtras: extrasFromPivotOnly(pivotOnly),
+      });
       for (const [k, v] of paginationToSearchEntries(next)) {
         search.set(k, v);
       }
@@ -1183,7 +1221,7 @@ export function DetectionShell({
       const url = qs ? `${pathname}?${qs}` : pathname;
       window.history.replaceState(window.history.state, "", url);
     },
-    [committedFilter, pathname, pivotOnly],
+    [committedEndpoints, committedFilter, committedPeriod, pathname, pivotOnly],
   );
 
   /**
@@ -2425,6 +2463,32 @@ function QuickPeekInspectorOverlay({
       </SheetContent>
     </Sheet>
   );
+}
+
+/**
+ * Build a `URLSearchParams` carrying only the encoded `?f=` filter
+ * blob. Pagination, tab id, and quick-peek params are layered on top
+ * by the caller. Reviewer Round 1 (item 1): centralised so every
+ * state-mutation URL writer (Apply, chip removal, pagination) round-
+ * trips the full {@link Filter} rather than the legacy pivot subset.
+ */
+function buildEncodedFilterSearch(args: EncodedTabFilter): URLSearchParams {
+  return buildSearchParamsForFilter(args);
+}
+
+/**
+ * Narrow `PivotFilterParams` (the broader URL shape used by the
+ * Investigation handoff inbound parser) to the `PivotExtras` subset
+ * the encoded blob carries. Drawer-owned fields (kind, window,
+ * source, …) are dropped because they round-trip through the
+ * {@link Filter} payload itself.
+ */
+function extrasFromPivotOnly(pivot: PivotFilterParams): PivotExtras {
+  const out: PivotExtras = {};
+  if (pivot.origPort !== undefined) out.origPort = pivot.origPort;
+  if (pivot.respPort !== undefined) out.respPort = pivot.respPort;
+  if (pivot.proto !== undefined) out.proto = pivot.proto;
+  return out;
 }
 
 function filterToDraft(

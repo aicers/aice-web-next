@@ -134,11 +134,21 @@ Tab state is persisted so a browser reload or a mistaken
 navigation does not lose your work:
 
 - **URL search params** carry the **active tab's filter** and
-  its pagination — the shareable surface. A `?tab=<id>`
-  parameter anchors which tab is active, and a link recipient
-  opens that tab as their single bootstrap tab. URLs do NOT
-  carry the other tabs you had open; those are private to
-  your session.
+  its pagination — the shareable surface. The active filter
+  rides in a single `?f=<encoded>` parameter that round-trips
+  the full filter shape (every structured field — time range,
+  levels, countries, learning methods, categories, threat
+  kinds, directions, confidence bounds, sensors, source /
+  destination, tag inputs, endpoints — and the future query-
+  language mode). A `?tab=<id>` parameter anchors which tab is
+  active, and a link recipient opens that tab as their single
+  bootstrap tab. URLs do NOT carry the other tabs you had
+  open; those are private to your session. Outbound
+  Investigation handoff links of the older shape
+  `/detection?source=X&window=1d&kind=HttpThreat` continue to
+  bootstrap the destination tab — the page parses the legacy
+  pivot params when `?f=` is absent and flips the URL over to
+  the encoded blob on the next state mutation.
 - **`sessionStorage`** carries everything else: the full tab
   list (filter, name, manual-rename flag, endpoints,
   pagination, drawer draft, analytics expansion), so a reload
@@ -199,12 +209,15 @@ direction, confidence, sensor, endpoint, and categorical chips
 scroll their section into view) so you can amend the value
 before re-applying.
 
-Tag-field state and the `Source` / `Destination` values are
-persisted in the URL as comma-separated values
-(`?keywords=alpha,beta`). Refreshing the page restores these
-free-form fields, and clearing all values removes the parameter
-from the URL. The time range is not persisted in the URL, so a
-refresh falls back to the default period.
+The active tab's filter — every drawer field, the time range,
+the endpoint entries, and any URL-only pivot extras — is
+persisted in a single `?f=<encoded>` URL parameter, so a
+reload restores exactly what you had committed (including the
+period). Outbound Investigation pivot links keep the older
+human-readable shape (`?source=X&window=1d&keywords=alpha,beta`)
+for inbound bootstraps; the URL writer flips them over to the
+encoded blob on the next Apply / chip removal so a subsequent
+share-this-URL carries the full filter.
 
 ### Results
 

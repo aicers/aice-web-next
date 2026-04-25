@@ -56,10 +56,17 @@ vi.mock("@/lib/detection", async () => {
   const pagination = await vi.importActual<
     typeof import("@/lib/detection/pagination")
   >("@/lib/detection/pagination");
+  // Reviewer Round 1 (item 1): the page now prefers the encoded `?f=`
+  // URL blob and falls back to the legacy pivot params, so the mock
+  // also needs the new `filter-url` exports.
+  const filterUrl = await vi.importActual<
+    typeof import("@/lib/detection/filter-url")
+  >("@/lib/detection/filter-url");
   return {
     ...period,
     ...urlFilters,
     ...pagination,
+    ...filterUrl,
     searchEventsAtAnchor: mockSearchEventsAtAnchor,
     EVENT_KIND_FRIENDLY_NAMES: {},
   };

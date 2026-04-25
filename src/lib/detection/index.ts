@@ -30,6 +30,18 @@ export {
   summarizeFilter,
 } from "./filter-summary";
 export {
+  buildSearchParamsForFilter,
+  clearLegacyFilterParams,
+  type EncodedTabFilter,
+  FILTER_URL_PARAM,
+  LEGACY_FILTER_PARAM_KEYS,
+  type PivotExtras,
+  parseFilterFromUrlParam,
+  pivotExtrasFromPivotParams,
+  serializeFilterToUrlParam,
+  structuredFilter,
+} from "./filter-url";
+export {
   clearPaginationParams,
   coercePageSize,
   committedPageForAnchor,

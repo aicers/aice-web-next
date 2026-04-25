@@ -8,16 +8,21 @@ import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
   computePeriodRange,
   DEFAULT_PERIOD_KEY,
+  type EncodedTabFilter,
+  type EndpointEntry,
   type Event,
   type EventListFilterInput,
+  FILTER_URL_PARAM,
   type Filter,
   type FlowKind,
   type PaginationState,
   PERIOD_KEYS,
   type PeriodKey,
   type PivotFilterParams,
+  parseFilterFromUrlParam,
   parsePaginationSearchParams,
   parsePivotSearchParams,
+  pivotExtrasFromPivotParams,
   pivotWindowToPeriodKey,
   searchEventsAtAnchor,
   TAG_FIELDS,
@@ -54,7 +59,6 @@ export default async function DetectionPage({
   const t = await getTranslations("detection");
   const locale = await getLocale();
   const rawParams = await searchParams;
-  const pivotParams = parsePivotSearchParams(rawParams);
   let initialPagination: PaginationState =
     parsePaginationSearchParams(rawParams);
   // The client shell builds chip label strings from `labels.chipLabels`
@@ -65,49 +69,66 @@ export default async function DetectionPage({
     sensorAggregate: t.raw("filters.chips.sensorAggregate") as string,
   };
 
-  // Pivot links (Quick peek, Related Events, Overview Top Pivots) encode
-  // an optional `window=` and `kind=` alongside source/destination so
-  // the destination page actually narrows to the requested slice rather
-  // than landing on the default 1h / unfiltered view. Translate them
-  // into the drawer's vocabulary — `window=1d/7d` picks the matching
-  // period key and the resulting start/end, `kind=` seeds the Kinds
-  // multi-select with a single entry — so the committed query honors
-  // the pivot contract on the first render.
-  const pivotPeriod: PeriodKey =
-    pivotWindowToPeriodKey(pivotParams.window) ?? DEFAULT_PERIOD_KEY;
-  const periodRange = computePeriodRange(pivotPeriod);
-  const initialInput: EventListFilterInput = {
-    start: periodRange.start,
-    end: periodRange.end,
-  };
-  if (pivotParams.source) initialInput.source = pivotParams.source;
-  if (pivotParams.destination) {
-    initialInput.destination = pivotParams.destination;
+  // Phase Detection-10 persistence contract: prefer the encoded `?f=`
+  // blob (carries the full Filter — every `EventListFilterInput` field
+  // plus `mode: "query"` once the search-language phase lands) and
+  // fall back to the legacy pivot params (`source=`, `kind=`,
+  // `window=`, …) only when `?f=` is absent. The fallback exists so
+  // outbound Investigation handoff links of the shape
+  // `/detection?source=X&window=1d&kind=HttpThreat` keep bootstrapping
+  // the destination tab; on the next state mutation the URL writer
+  // flips over to `?f=` and clears the legacy fields.
+  const encodedFilter: EncodedTabFilter | null =
+    typeof rawParams[FILTER_URL_PARAM] === "string"
+      ? parseFilterFromUrlParam(rawParams[FILTER_URL_PARAM] as string)
+      : null;
+  let initialFilter: Filter;
+  let pivotPeriod: PeriodKey | null;
+  let initialPivotOnly: PivotFilterParams;
+  let initialEndpoints: EndpointEntry[];
+  if (encodedFilter) {
+    initialFilter = encodedFilter.filter;
+    pivotPeriod = encodedFilter.period;
+    initialPivotOnly = { ...encodedFilter.pivotExtras };
+    initialEndpoints = encodedFilter.endpoints;
+  } else {
+    const pivotParams = parsePivotSearchParams(rawParams);
+    // Pivot links (Quick peek, Related Events, Overview Top Pivots)
+    // encode an optional `window=` and `kind=` alongside
+    // source/destination so the destination page actually narrows to
+    // the requested slice rather than landing on the default 1h /
+    // unfiltered view. Translate them into the drawer's vocabulary —
+    // `window=1d/7d` picks the matching period key and the resulting
+    // start/end, `kind=` seeds the Kinds multi-select with a single
+    // entry — so the committed query honors the pivot contract on the
+    // first render.
+    pivotPeriod =
+      pivotWindowToPeriodKey(pivotParams.window) ?? DEFAULT_PERIOD_KEY;
+    const periodRange = computePeriodRange(pivotPeriod);
+    const initialInput: EventListFilterInput = {
+      start: periodRange.start,
+      end: periodRange.end,
+    };
+    if (pivotParams.source) initialInput.source = pivotParams.source;
+    if (pivotParams.destination) {
+      initialInput.destination = pivotParams.destination;
+    }
+    if (pivotParams.kind) {
+      initialInput.kinds = [pivotParams.kind];
+    }
+    for (const field of TAG_FIELDS) {
+      const values = pivotParams[field];
+      if (values && values.length > 0) initialInput[field] = values;
+    }
+    initialFilter = { mode: "structured", input: initialInput };
+    // Port / proto are not yet part of `EventListFilterInput`; they
+    // ride in the URL so Phase Network/IP can pick them up without
+    // losing the pivot target. They land in `initialPivotOnly` and
+    // round-trip into the encoded `?f=` blob on the next state
+    // mutation.
+    initialPivotOnly = { ...pivotExtrasFromPivotParams(pivotParams) };
+    initialEndpoints = [];
   }
-  if (pivotParams.kind) {
-    initialInput.kinds = [pivotParams.kind];
-  }
-  for (const field of TAG_FIELDS) {
-    const values = pivotParams[field];
-    if (values && values.length > 0) initialInput[field] = values;
-  }
-  const initialFilter: Filter = { mode: "structured", input: initialInput };
-
-  // Port / proto are not yet part of `EventListFilterInput`; they ride
-  // in the URL so Phase Network/IP can pick them up without losing the
-  // pivot target. `kind` and `window` are NOT parked here anymore —
-  // they live in `initialInput.kinds` and `initialPeriod` above, and
-  // the URL writer re-derives the `kind=` / `window=` tokens from the
-  // committed filter / period via `pivotParamsFromFilterInput`. That
-  // way an operator who removes the Kind chip or picks a different
-  // period in the drawer sees the stale tokens disappear from the
-  // URL on the next Apply / chip removal, rather than having the
-  // first-render snapshot silently restored on reload.
-  const initialPivotOnly: PivotFilterParams = {
-    origPort: pivotParams.origPort,
-    respPort: pivotParams.respPort,
-    proto: pivotParams.proto,
-  };
 
   let initialTotal: string | null = null;
   let initialError: string | null = null;
@@ -455,6 +476,7 @@ export default async function DetectionPage({
         filter: initialFilter,
         period: pivotPeriod,
         pivotOnly: initialPivotOnly,
+        endpoints: initialEndpoints,
         pagination: initialPagination,
         result: {
           totalCount: initialTotal,

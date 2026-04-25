@@ -42,6 +42,7 @@ import {
   type TabBarLabels,
   type TabBarTab,
 } from "@/components/detection/tab-bar";
+import type { EndpointEntry } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
 import {
   type FilterChip,
@@ -49,7 +50,11 @@ import {
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
 import {
-  clearPaginationParams,
+  buildSearchParamsForFilter,
+  type EncodedTabFilter,
+  type PivotExtras,
+} from "@/lib/detection/filter-url";
+import {
   DEFAULT_PAGE_SIZE,
   type PaginationState,
   paginationToSearchEntries,
@@ -73,12 +78,7 @@ import {
   readTabsFromSession,
   writeTabsToSession,
 } from "@/lib/detection/tabs-storage";
-import {
-  buildDetectionSearchParams,
-  mergePivotParams,
-  type PivotFilterParams,
-  pivotParamsFromFilterInput,
-} from "@/lib/detection/url-filters";
+import type { PivotFilterParams } from "@/lib/detection/url-filters";
 
 export interface DetectionTabsShellLabels {
   /** Inherits every Shell label — the wrapper forwards them unchanged. */
@@ -98,6 +98,14 @@ export interface DetectionTabsShellProps {
     filter: Filter;
     period: PeriodKey | null;
     pivotOnly: PivotFilterParams;
+    /**
+     * Rich endpoint entries restored from the encoded `?f=` URL blob.
+     * The Investigation pivot fallback path always passes `[]`; only
+     * the encoded-blob path can rebuild the typed entry list. The
+     * shell uses these to populate the Network/IP advanced panel and
+     * the endpoint chip bar on first render.
+     */
+    endpoints?: EndpointEntry[];
     pagination: PaginationState;
     result: DetectionShellInitialResult;
   };
@@ -140,10 +148,36 @@ export function DetectionTabsShell({
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
+  // Reviewer Round 1 (item 4): ref mirror of `tabs` so close-tab can
+  // compute the new active id from current state synchronously,
+  // outside any state-updater closure. Without this mirror the close
+  // handler had to read the next active id from inside a `setTabs`
+  // updater and then call `setActiveTabId(nextActive)` — but
+  // `setActiveTabId` had already captured the *old* `nextActive`
+  // value before the updater ever ran, so `activeTabId` could be
+  // left pointing at the just-closed tab.
+  const tabsRef = useRef<TabSnapshot[]>(tabs);
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
 
+  // Reviewer Round 1 (item 2): mirror the shell's live state into the
+  // React `tabs` slot, not just a ref. The ref alone meant the tab
+  // bar's auto-derived label and loading dot stayed pinned to the
+  // bootstrap snapshot until the next tab-list mutation, and
+  // `writeTabsToSession` (effect on `[tabs, activeTabId]`) never fired
+  // for a plain Apply / Refresh / query completion. Updating React
+  // state here keeps both up to date as soon as the shell commits a
+  // change.
   const handleShellStateChange = useCallback(
     (snapshot: DetectionShellStateSnapshot) => {
       shellSnapshotRef.current = snapshot;
+      const currentActiveId = activeTabIdRef.current;
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === currentActiveId ? mergeSnapshot(t, snapshot) : t,
+        ),
+      );
     },
     [],
   );
@@ -314,18 +348,26 @@ export function DetectionTabsShell({
 
   const handleCloseTab = useCallback(
     (id: TabId) => {
-      let nextActive = activeTabIdRef.current;
-      setTabs((prev) => {
-        const withLive = withActiveSnapshot(prev);
-        const result = closeTabFn(
-          { tabs: withLive, activeTabId: activeTabIdRef.current },
-          id,
-          buildDefaultTabSnapshot,
-        );
-        nextActive = result.activeTabId;
-        return result.tabs;
-      });
-      setActiveTabId(nextActive);
+      // Reviewer Round 1 (item 4): compute the close result against
+      // the ref-mirrored `tabs` synchronously rather than inside a
+      // `setTabs` updater. The previous shape relied on the updater
+      // mutating a closure variable that `setActiveTabId` had
+      // already received — `setActiveTabId(nextActive)` ran with the
+      // old value because React schedules the updater to run later,
+      // not immediately. Reading `tabsRef.current` lets both setters
+      // start from the same already-decided result.
+      const currentTabs = tabsRef.current;
+      const currentActive = activeTabIdRef.current;
+      const withLive = withActiveSnapshot(currentTabs);
+      const result = closeTabFn(
+        { tabs: withLive, activeTabId: currentActive },
+        id,
+        buildDefaultTabSnapshot,
+      );
+      setTabs(result.tabs);
+      if (result.activeTabId !== currentActive) {
+        setActiveTabId(result.activeTabId);
+      }
     },
     [withActiveSnapshot],
   );
@@ -403,6 +445,16 @@ export function DetectionTabsShell({
           events: activeTab.result.events,
           eventKeys: activeTab.result.eventKeys,
           pageInfo: activeTab.result.pageInfo,
+          // Reviewer Round 1 (item 3): thread the cached freshness
+          // metadata through so a switched-back-to tab does not
+          // silently re-stamp `Updated just now` or rewind the
+          // queryEpoch / hasQueried flags. `loading` and `walking`
+          // intentionally aren't threaded — the remount cancels any
+          // in-flight query for the prior shell instance, so a
+          // freshly-mounted shell starts at idle.
+          lastUpdatedMs: activeTab.result.lastUpdatedMs,
+          hasQueried: activeTab.result.hasQueried,
+          queryEpoch: activeTab.result.queryEpoch,
         }}
         initialEndpoints={activeTab.endpoints}
         initialDraft={activeTab.draft}
@@ -430,8 +482,32 @@ export function buildDefaultTabSnapshot(): TabSnapshot {
   return createTabSnapshot({ filter, period: DEFAULT_PERIOD_KEY });
 }
 
+/**
+ * Merge a fresh shell snapshot into an existing tab slot. Reviewer
+ * Round 1 (item 2): used by `handleShellStateChange` to mirror live
+ * state into the React `tabs` array (not just a ref) so the tab bar
+ * label, loading dot, and session persistence all stay current.
+ */
+export function mergeSnapshot(
+  tab: TabSnapshot,
+  snapshot: DetectionShellStateSnapshot,
+): TabSnapshot {
+  return {
+    ...tab,
+    filter: snapshot.filter,
+    period: snapshot.period,
+    endpoints: snapshot.endpoints,
+    pivotOnly: snapshot.pivotOnly,
+    pagination: snapshot.pagination,
+    draft: snapshot.draft,
+    analyticsOpen: snapshot.analyticsOpen,
+    quickPeekEvent: snapshot.quickPeekEvent,
+    result: snapshot.result,
+  };
+}
+
 /** Seed a TabSnapshot from the server page's SSR'd bootstrap tab. */
-function bootstrapTabToSnapshot(
+export function bootstrapTabToSnapshot(
   initialTab: DetectionTabsShellProps["initialTab"],
 ): TabSnapshot {
   const hasQueried =
@@ -442,7 +518,7 @@ function bootstrapTabToSnapshot(
     manualName: false,
     filter: initialTab.filter,
     period: initialTab.period,
-    endpoints: [],
+    endpoints: initialTab.endpoints ?? [],
     pivotOnly: initialTab.pivotOnly,
     pagination: initialTab.pagination,
     draft: null,
@@ -465,22 +541,22 @@ function bootstrapTabToSnapshot(
 
 /**
  * Compose the URL search params that describe the given tab's
- * committed filter + pagination. Mirrors the shell's Apply handler —
- * centralised here so the wrapper can rewrite the URL on tab
- * switch without re-entering the shell. Uses `tab.pivotOnly` as the
- * carrier for URL-only fields (ports/proto) not yet represented in
- * the filter drawer.
+ * committed filter + pagination. Reviewer Round 1 (item 1): the URL
+ * encoder routes the full {@link Filter} (every
+ * `EventListFilterInput` field plus the future `mode: "query"` shape)
+ * through the `?f=` blob — the legacy pivot-param encoder only
+ * covered a subset and silently dropped levels, countries, learning
+ * methods, categories, directions, confidence bounds, sensors, and
+ * endpoints from the URL.
  */
-function buildUrlSearchForTab(tab: TabSnapshot): URLSearchParams {
-  if (tab.filter.mode !== "structured") {
-    return new URLSearchParams();
-  }
-  const merged = mergePivotParams(
-    tab.pivotOnly,
-    pivotParamsFromFilterInput(tab.filter.input, tab.period),
-  );
-  const search = buildDetectionSearchParams(merged);
-  clearPaginationParams(search);
+export function buildUrlSearchForTab(tab: TabSnapshot): URLSearchParams {
+  const encoded: EncodedTabFilter = {
+    filter: tab.filter,
+    period: tab.period,
+    endpoints: tab.endpoints,
+    pivotExtras: pivotExtrasFromTab(tab.pivotOnly),
+  };
+  const search = buildSearchParamsForFilter(encoded);
   if (tab.pagination.pageSize !== DEFAULT_PAGE_SIZE) {
     search.set("pageSize", String(tab.pagination.pageSize));
   }
@@ -489,4 +565,15 @@ function buildUrlSearchForTab(tab: TabSnapshot): URLSearchParams {
     search.set(k, v);
   }
   return search;
+}
+
+/** Narrow the broader `PivotFilterParams` down to the URL-only extras
+ *  the encoded blob carries — the rest of the pivot fields round-trip
+ *  through the {@link Filter} payload itself. */
+function pivotExtrasFromTab(pivot: PivotFilterParams): PivotExtras {
+  const extras: PivotExtras = {};
+  if (pivot.origPort !== undefined) extras.origPort = pivot.origPort;
+  if (pivot.respPort !== undefined) extras.respPort = pivot.respPort;
+  if (pivot.proto !== undefined) extras.proto = pivot.proto;
+  return extras;
 }

@@ -1,0 +1,250 @@
+/**
+ * Shareable URL encoding for the Detection page's active-tab Filter.
+ *
+ * Phase Detection-10's persistence split (see `tabs.ts`) requires the
+ * URL to round-trip the abstract {@link Filter} shape — both
+ * `mode: "structured"` (every `EventListFilterInput` field) and the
+ * future `mode: "query"` branch — alongside the committed period, the
+ * rich endpoint entries, and the URL-only pivot extras (origPort,
+ * respPort, proto). The legacy pivot URL params (`source=`, `kind=`,
+ * `window=`, etc.) only cover a subset of `EventListFilterInput` and
+ * have no representation for `mode: "query"`, levels, countries,
+ * learning methods, categories, directions, confidence bounds,
+ * sensors, or endpoints — so a reload would silently drop those fields
+ * from the active tab.
+ *
+ * The encoding is a single `?f=<base64url-json>` param that carries
+ * the full Filter blob. The legacy pivot params are still parsed when
+ * `?f=` is absent so Investigation handoff links of the shape
+ * `/detection?source=X&window=1d&kind=HttpThreat` keep working as
+ * inbound bootstraps; on the next state mutation (Apply / chip × /
+ * tab switch) the URL writer flips over to `?f=` and clears the
+ * legacy fields.
+ */
+
+import type { EndpointEntry } from "./endpoint-filter";
+import type { Filter } from "./filter";
+import type { PeriodKey } from "./period";
+import type { EventListFilterInput } from "./types";
+import type { PivotFilterParams } from "./url-filters";
+
+/** URL search-param key for the encoded filter blob. */
+export const FILTER_URL_PARAM = "f";
+
+/**
+ * Schema version tag baked into every encoded payload. A deserializer
+ * that sees a different version drops the payload rather than
+ * attempting an in-place migration; the page falls back to the legacy
+ * pivot-param parser, which downgrades the active tab to its default
+ * filter rather than crashing.
+ */
+const PAYLOAD_VERSION = 1 as const;
+
+/**
+ * Pivot-only fields that survive in the URL even though they have no
+ * filter-drawer source yet (Phase Network/IP will wire them in). Kept
+ * as a narrow shape so the encoded payload never carries the
+ * filter-derived `kind` / `window` / source-of-truth fields again —
+ * those round-trip through the {@link Filter} blob.
+ */
+export interface PivotExtras {
+  origPort?: number;
+  respPort?: number;
+  proto?: number;
+}
+
+export interface EncodedTabFilter {
+  filter: Filter;
+  period: PeriodKey | null;
+  endpoints: EndpointEntry[];
+  pivotExtras: PivotExtras;
+}
+
+interface PayloadV1 extends EncodedTabFilter {
+  v: typeof PAYLOAD_VERSION;
+}
+
+/**
+ * Encode the active tab's filter state into a base64url JSON blob
+ * suitable for a single URL search param. Uses base64url so the
+ * result stays inside the URL-safe character class without any
+ * percent-encoding overhead.
+ */
+export function serializeFilterToUrlParam(args: EncodedTabFilter): string {
+  const payload: PayloadV1 = {
+    v: PAYLOAD_VERSION,
+    filter: args.filter,
+    period: args.period,
+    endpoints: args.endpoints,
+    pivotExtras: pickPivotExtras(args.pivotExtras),
+  };
+  return base64UrlEncode(JSON.stringify(payload));
+}
+
+/**
+ * Decode a `?f=` param. Returns `null` when the value is absent,
+ * malformed, or carries an unknown version — callers fall back to the
+ * legacy pivot-param parser in that case.
+ */
+export function parseFilterFromUrlParam(
+  raw: string | null | undefined,
+): EncodedTabFilter | null {
+  if (!raw) return null;
+  let json: string;
+  try {
+    json = base64UrlDecode(raw);
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!isPayloadV1(parsed)) return null;
+  return {
+    filter: parsed.filter,
+    period: parsed.period ?? null,
+    endpoints: Array.isArray(parsed.endpoints) ? parsed.endpoints : [],
+    pivotExtras: pickPivotExtras(parsed.pivotExtras ?? {}),
+  };
+}
+
+/**
+ * URL search-param keys the legacy pivot-param encoder writes — kept
+ * here so the new `?f=` writer can clear them in one shot when it
+ * takes over the URL. Stale legacy fields would otherwise survive
+ * alongside the new blob and confuse a downstream `?f=`-aware reader
+ * into thinking the URL carries two filters.
+ */
+export const LEGACY_FILTER_PARAM_KEYS: readonly string[] = [
+  "source",
+  "destination",
+  "kind",
+  "origPort",
+  "respPort",
+  "proto",
+  "window",
+  "keywords",
+  "hostnames",
+  "userIds",
+  "userNames",
+  "userDepartments",
+];
+
+/**
+ * Drop every legacy filter param from the supplied search object.
+ * Used by the URL writer right before it sets the new `?f=` blob so
+ * the URL stays canonical regardless of the inbound URL shape.
+ */
+export function clearLegacyFilterParams(search: URLSearchParams): void {
+  for (const key of LEGACY_FILTER_PARAM_KEYS) search.delete(key);
+}
+
+function pickPivotExtras(value: unknown): PivotExtras {
+  if (!value || typeof value !== "object") return {};
+  const v = value as Record<string, unknown>;
+  const out: PivotExtras = {};
+  if (typeof v.origPort === "number" && Number.isFinite(v.origPort)) {
+    out.origPort = v.origPort;
+  }
+  if (typeof v.respPort === "number" && Number.isFinite(v.respPort)) {
+    out.respPort = v.respPort;
+  }
+  if (typeof v.proto === "number" && Number.isFinite(v.proto)) {
+    out.proto = v.proto;
+  }
+  return out;
+}
+
+function isPayloadV1(value: unknown): value is PayloadV1 {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Partial<PayloadV1>;
+  if (v.v !== PAYLOAD_VERSION) return false;
+  if (!isFilter(v.filter)) return false;
+  if (
+    v.period !== null &&
+    typeof v.period !== "string" &&
+    v.period !== undefined
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isFilter(value: unknown): value is Filter {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Partial<Filter>;
+  if (v.mode === "structured") {
+    return (
+      !!(v as { input?: unknown }).input &&
+      typeof (v as { input?: unknown }).input === "object"
+    );
+  }
+  if (v.mode === "query") {
+    return typeof (v as { text?: unknown }).text === "string";
+  }
+  return false;
+}
+
+function base64UrlEncode(input: string): string {
+  // Use TextEncoder + btoa for a Unicode-safe base64. Plain `btoa`
+  // throws on multi-byte chars (e.g. KR labels in a saved query).
+  const bytes = new TextEncoder().encode(input);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlDecode(input: string): string {
+  const padded = input
+    .replace(/-/g, "+")
+    .replace(/_/g, "/")
+    // base64 requires length divisible by 4; reattach `=` padding.
+    .padEnd(input.length + ((4 - (input.length % 4)) % 4), "=");
+  const bin = atob(padded);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+/**
+ * Construct a fresh `URLSearchParams` carrying just the `?f=` blob
+ * for the supplied filter state. Callers layer pagination, tab id,
+ * and quick-peek params on top of the returned object — see
+ * `DetectionTabsShell.buildUrlSearchForTab` and
+ * `DetectionShell.handleApply`.
+ */
+export function buildSearchParamsForFilter(
+  args: EncodedTabFilter,
+): URLSearchParams {
+  const search = new URLSearchParams();
+  search.set(FILTER_URL_PARAM, serializeFilterToUrlParam(args));
+  return search;
+}
+
+/**
+ * Convenience helper for callers that already have an
+ * `EventListFilterInput` and want the wrapping `Filter` shape.
+ */
+export function structuredFilter(input: EventListFilterInput): Filter {
+  return { mode: "structured", input };
+}
+
+/**
+ * Lift the URL-only pivot params (origPort, respPort, proto) out of a
+ * legacy-style `PivotFilterParams` object — used when the page is
+ * bootstrapping from an Investigation handoff URL and we want the
+ * pivot-only fields preserved into the encoded `?f=` blob on the next
+ * state mutation.
+ */
+export function pivotExtrasFromPivotParams(
+  params: PivotFilterParams,
+): PivotExtras {
+  const out: PivotExtras = {};
+  if (params.origPort !== undefined) out.origPort = params.origPort;
+  if (params.respPort !== undefined) out.respPort = params.respPort;
+  if (params.proto !== undefined) out.proto = params.proto;
+  return out;
+}

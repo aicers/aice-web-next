@@ -57,7 +57,13 @@ export function TabBar({
   onResetName,
 }: TabBarProps) {
   const [editingId, setEditingId] = useState<TabId | null>(null);
-  const closable = tabs.length > 1;
+  // Reviewer Round 1 (item 4): the close × is always rendered, even
+  // when there is only one tab. The wrapper's `closeTab` helper
+  // auto-creates a fresh default tab when the operator closes the
+  // final one, matching the issue's accepted behaviour ("Closing the
+  // last tab auto-creates a default tab"). Hiding the affordance on
+  // the last tab made that path unreachable from the UI.
+  const closable = true;
   return (
     <div
       role="tablist"

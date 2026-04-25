@@ -54,7 +54,7 @@ describe("TabBar rendering", () => {
     expect(html).toContain("Source: 10.0.0.5");
   });
 
-  it("hides per-tab close affordance when only one tab is present (closing the last tab is the wrapper's job)", () => {
+  it("renders the per-tab close affordance even when only one tab is present so the operator can trigger the auto-create-default flow", () => {
     const html = renderToStaticMarkup(
       <TabBar
         tabs={[tab()]}
@@ -68,10 +68,11 @@ describe("TabBar rendering", () => {
         onResetName={noop}
       />,
     );
-    // The close × is hidden when there is only one tab so the
-    // operator can't accidentally orphan the workspace; closing the
-    // last tab still works through the wrapper's `closeTab` helper.
-    expect(html).not.toContain('aria-label="Close tab"');
+    // Reviewer Round 1 (item 4): closing the last tab is part of the
+    // accepted Detection-10 contract — the wrapper auto-seeds a
+    // fresh default tab in its place. Hiding the × here made the
+    // path unreachable from the UI.
+    expect(html).toContain('aria-label="Close tab"');
   });
 
   it("disables the + affordance when canAddTab is false and surfaces the at-cap label", () => {
