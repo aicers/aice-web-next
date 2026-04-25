@@ -326,6 +326,14 @@ v1에서 피벗 가능한 셀은 다음과 같습니다.
 | 목적지 IP                | `endpoints` (`direction: TO` 신규 항목)          |
 | 국가 코드                | `countries` (중복 제거)                         |
 
+피벗 엔진은 `hostname`, `userId`, `userName`, `userDepartment`,
+`direction` 칼럼도 인식하지만 Phase Detection-9 결과 행은 아직
+이들을 별도 셀로 표시하지 않습니다. 칼럼 밀도 작업과 함께 해당
+칼럼이 노출되면 추가 작업 없이 같은 어포던스가 활성화됩니다 —
+`buildPivotPatch`는 이미 해당 칼럼을 `hostnames` / `userIds` /
+`userNames` / `userDepartments` / `directions` 필터 배열에
+매핑합니다.
+
 활성 탭이 이미 그 값으로 필터링되어 있어 클릭이 단지 같은 조건을
 다시 적용하는 경우에는 토스트(`Already filtered by X`)만 잠깐
 표시되고 새 탭은 만들어지지 않습니다. 결과 필터가 다른 탭과

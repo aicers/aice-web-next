@@ -320,11 +320,20 @@ export function applyPivotPatch(
       }
       // Re-derive the submitted endpoints array from the merged
       // entries so the wire payload stays in sync with the chip bar.
-      const submitted = endpointsToEndpointInputsLite(nextEndpoints);
-      if (!submitted || submitted.length === 0) {
+      // Reviewer Round 2: the original schema payload may carry
+      // entries the `EndpointEntry` UI mirror cannot represent
+      // (today: `predefined` references to server-defined networks).
+      // Walking only the mirror would silently drop those entries
+      // and broaden the pivoted filter. Preserve them as
+      // predefined-only references — any `custom` payload they also
+      // carried is already in the mirror.
+      const customSide = endpointsToEndpointInputsLite(nextEndpoints) ?? [];
+      const preserved = preservePredefinedEndpoints(filter.input.endpoints);
+      const merged = [...preserved, ...customSide];
+      if (merged.length === 0) {
         delete input.endpoints;
       } else {
-        input.endpoints = submitted;
+        input.endpoints = merged;
       }
       break;
     }
@@ -509,6 +518,35 @@ export function openPivotTab(args: OpenPivotTabArgs): PivotAction {
  * inline it here so a pivot can run from a server-rendered or test
  * context that does not import the larger UI module surface.
  */
+/**
+ * Pull out the `predefined` references from an existing schema
+ * payload as standalone entries. The drawer's `EndpointEntry` UI
+ * mirror has no shape for predefined networks (only host / range /
+ * network), so a round-trip through the mirror would erase them.
+ * The pivot path replays this on top of the rebuilt custom side so
+ * a tab filtered by a predefined network keeps that constraint when
+ * the operator drills into a host on the same row.
+ *
+ * Strips any co-located `custom` payload — those rules are already
+ * represented in the mirror and re-emerge through
+ * {@link endpointsToEndpointInputsLite}, so duplicating them here
+ * would double-count the operator's hosts.
+ */
+function preservePredefinedEndpoints(
+  source: EventListFilterInput["endpoints"],
+): NonNullable<EventListFilterInput["endpoints"]> {
+  if (!source) return [];
+  const out: NonNullable<EventListFilterInput["endpoints"]> = [];
+  for (const entry of source) {
+    if (!entry) continue;
+    if (typeof entry.predefined !== "string") continue;
+    if (entry.predefined.length === 0) continue;
+    const direction = entry.direction ?? null;
+    out.push({ direction, predefined: entry.predefined });
+  }
+  return out;
+}
+
 function endpointsToEndpointInputsLite(
   entries: EndpointEntry[],
 ): EventListFilterInput["endpoints"] {

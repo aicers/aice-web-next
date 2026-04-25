@@ -357,6 +357,15 @@ The pivotable cells in v1:
 | Destination IP          | `endpoints` with `direction: TO` (new entry)       |
 | Country code            | `countries` (add unique)                           |
 
+The pivot engine also recognises the `hostname`, `userId`,
+`userName`, `userDepartment`, and `direction` columns, but the
+Phase Detection-9 result row does not yet render them as
+dedicated cells. Once those columns appear (planned alongside the
+column-density work), they will pick up the same affordance with
+no further plumbing — `buildPivotPatch` already maps them to the
+matching `hostnames` / `userIds` / `userNames` /
+`userDepartments` / `directions` filter arrays.
+
 A click that would only re-narrow the **active tab** by a value it
 already carries shows a transient toast — `Already filtered by X`
 — and creates no new tab. A click that targets a filter another

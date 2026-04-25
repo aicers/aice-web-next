@@ -207,6 +207,86 @@ describe("applyPivotPatch", () => {
     const result = applyPivotPatch(filter, [], patch);
     expect(result.filter).toEqual({ mode: "query", text: "free" });
   });
+
+  it("preserves predefined endpoint references on an endpointHost pivot", () => {
+    // Reviewer Round 2: a tab filtered to a predefined network has
+    // no `EndpointEntry` UI mirror entry for it, so re-emitting the
+    // wire payload purely from the mirror erased the predefined
+    // reference and broadened the filter. The pivot must keep the
+    // predefined entry alongside the freshly added custom host.
+    const patch = buildPivotPatch("origAddr", { raw: "10.0.0.5" });
+    if (!patch) throw new Error();
+    const filter = structured({
+      endpoints: [{ direction: "FROM", predefined: "net-1" }],
+    });
+    const result = applyPivotPatch(filter, [], patch);
+    if (result.filter.mode !== "structured") throw new Error();
+    expect(result.filter.input.endpoints).toEqual([
+      { direction: "FROM", predefined: "net-1" },
+      {
+        direction: "FROM",
+        custom: { hosts: ["10.0.0.5"], networks: [], ranges: [] },
+      },
+    ]);
+  });
+
+  it("keeps predefined references from the opposite direction on an endpointHost pivot", () => {
+    const patch = buildPivotPatch("respAddr", { raw: "203.0.113.7" });
+    if (!patch) throw new Error();
+    const filter = structured({
+      endpoints: [{ direction: "FROM", predefined: "net-1" }],
+    });
+    const result = applyPivotPatch(filter, [], patch);
+    if (result.filter.mode !== "structured") throw new Error();
+    expect(result.filter.input.endpoints).toEqual([
+      { direction: "FROM", predefined: "net-1" },
+      {
+        direction: "TO",
+        custom: { hosts: ["203.0.113.7"], networks: [], ranges: [] },
+      },
+    ]);
+  });
+
+  it("does not duplicate custom entries co-located with a predefined reference", () => {
+    // Schema permits direction + predefined + custom on the same
+    // entry. The custom payload is mirrored in `EndpointEntry`, so
+    // preserving the original entry verbatim would emit the same
+    // hosts twice (once via the mirror rebuild, once via the
+    // preserved entry). Strip the predefined entry down to just the
+    // predefined reference.
+    const existing: EndpointEntry = {
+      id: "id-existing",
+      raw: "10.0.0.1",
+      kind: "host",
+      host: "10.0.0.1",
+      direction: "SOURCE",
+      selected: true,
+    };
+    const patch = buildPivotPatch("origAddr", { raw: "10.0.0.5" });
+    if (!patch) throw new Error();
+    const filter = structured({
+      endpoints: [
+        {
+          direction: "FROM",
+          predefined: "net-1",
+          custom: { hosts: ["10.0.0.1"], networks: [], ranges: [] },
+        },
+      ],
+    });
+    const result = applyPivotPatch(filter, [existing], patch);
+    if (result.filter.mode !== "structured") throw new Error();
+    expect(result.filter.input.endpoints).toEqual([
+      { direction: "FROM", predefined: "net-1" },
+      {
+        direction: "FROM",
+        custom: {
+          hosts: ["10.0.0.1", "10.0.0.5"],
+          networks: [],
+          ranges: [],
+        },
+      },
+    ]);
+  });
 });
 
 describe("openPivotTab", () => {
