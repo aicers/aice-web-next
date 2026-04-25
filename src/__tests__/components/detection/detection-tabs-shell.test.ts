@@ -28,11 +28,16 @@ import {
   buildDefaultTabSnapshot,
   buildUrlSearchForTab,
   mergeSnapshot,
+  routeSnapshotToTab,
 } from "@/components/detection/detection-tabs-shell";
 import type { Filter } from "@/lib/detection/filter";
 import { parseFilterFromUrlParam } from "@/lib/detection/filter-url";
 import { INITIAL_PAGINATION_STATE } from "@/lib/detection/pagination";
-import { createTabSnapshot, type TabSnapshot } from "@/lib/detection/tabs";
+import {
+  createTabSnapshot,
+  type TabId,
+  type TabSnapshot,
+} from "@/lib/detection/tabs";
 
 const RICH_FILTER: Filter = {
   mode: "structured",
@@ -280,5 +285,127 @@ describe("buildDefaultTabSnapshot", () => {
     expect(tab.result.hasQueried).toBe(false);
     expect(tab.result.events).toEqual([]);
     expect(tab.result.lastUpdatedMs).toBeNull();
+  });
+});
+
+describe("routeSnapshotToTab — Reviewer Round 2 (item 1)", () => {
+  // The wrapper used to read `activeTabIdRef.current` inside the
+  // shell's onStateChange handler, but a remounted shell's mount-time
+  // snapshot effect fires BEFORE the parent's ref-update effect under
+  // React's child-before-parent passive ordering. That meant the
+  // incoming tab's snapshot landed in the outgoing tab's slot during
+  // an A→B switch, and switching back to A then showed B's filter.
+  // The contract is now: the routing key is the captured `targetTabId`
+  // from the render that mounted the keyed shell, so a snapshot
+  // emitted by the shell mounted as B can never write tab A.
+  const tabA = createTabSnapshot({
+    filter: { mode: "structured", input: { start: "A", end: "A" } },
+    period: "1h",
+  });
+  const tabB = createTabSnapshot({
+    filter: { mode: "structured", input: { start: "B", end: "B" } },
+    period: "12h",
+  });
+  function snapshotFor(filter: Filter): DetectionShellStateSnapshot {
+    return {
+      filter,
+      period: null,
+      endpoints: [],
+      pivotOnly: {},
+      pagination: INITIAL_PAGINATION_STATE,
+      draft: null,
+      analyticsOpen: false,
+      quickPeekEvent: null,
+      result: {
+        events: [],
+        eventKeys: [],
+        totalCount: "0",
+        pageInfo: null,
+        resultError: null,
+        lastUpdatedMs: 1_700_000_000_000,
+        hasQueried: true,
+        queryEpoch: 1,
+        loading: false,
+        walking: null,
+      },
+    };
+  }
+  const tabs = [tabA, tabB];
+
+  it("writes the snapshot only into the slot whose id matches `targetTabId`", () => {
+    const incoming = snapshotFor({
+      mode: "structured",
+      input: { start: "B-applied", end: "B-applied" },
+    });
+    const next = routeSnapshotToTab(tabs, tabB.id, incoming);
+    expect(next.find((t) => t.id === tabA.id)?.filter).toEqual(tabA.filter);
+    expect(next.find((t) => t.id === tabB.id)?.filter).toEqual(incoming.filter);
+  });
+
+  it("never leaks the incoming snapshot into a sibling tab even if the caller passes a stale id", () => {
+    // Simulates the pre-fix bug shape: a shell mounted as B emits its
+    // snapshot, but the routing helper is told to write it to tab A
+    // (the bug was the wrapper reading the still-stale ref). The
+    // contract under test is: whichever id wins routing, the OTHER
+    // tab MUST be untouched. With the captured-id wiring the wrapper
+    // can no longer hand in the wrong id at all, but we lock the
+    // surrounding helper too so a future regression in either
+    // direction fails here.
+    const incoming = snapshotFor({
+      mode: "structured",
+      input: { start: "wrong", end: "wrong" },
+    });
+    const next = routeSnapshotToTab(tabs, tabA.id, incoming);
+    expect(next.find((t) => t.id === tabB.id)?.filter).toEqual(tabB.filter);
+    expect(next.find((t) => t.id === tabA.id)?.filter).toEqual(incoming.filter);
+  });
+
+  it("returns the input list unchanged when no slot matches the target id", () => {
+    const incoming = snapshotFor(tabA.filter);
+    const next = routeSnapshotToTab(tabs, "nonexistent" as TabId, incoming);
+    expect(next).toEqual(tabs);
+  });
+});
+
+describe("buildUrlSearchForTab — Reviewer Round 2 (item 2)", () => {
+  // The wrapper's URL effect rewrites the address bar on every `tabs`
+  // change — which now includes the snapshot-mirrored
+  // `quickPeekEvent`. A `buildUrlSearchForTab` that omitted the
+  // `?event=` token would have the wrapper clobber the param the
+  // shell wrote in `writeQuickPeekToUrl`, breaking the share /
+  // refresh contract on Quick peek.
+  const httpThreatEvent = {
+    __typename: "HttpThreat",
+    time: "2026-04-25T12:00:00.000Z",
+    sensor: "sensor-1",
+    confidence: 0.81,
+    category: "LATERAL_MOVEMENT",
+    level: "HIGH",
+    triageScores: null,
+    origAddr: "10.0.0.5",
+    origPort: 49152,
+    respAddr: "203.0.113.45",
+    respPort: 443,
+    proto: 6,
+  } as unknown as TabSnapshot["quickPeekEvent"] & {};
+
+  it("emits the `event=` param when the tab carries a Quick peek selection", () => {
+    const tab: TabSnapshot = {
+      ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
+      quickPeekEvent: httpThreatEvent,
+    };
+    const search = buildUrlSearchForTab(tab);
+    expect(search.has("event")).toBe(true);
+    // Token is the same one the shell would write via
+    // `writeQuickPeekToUrl(encodeEventLocator(event))`, so refresh
+    // restores the same row even when the wrapper rewrites the URL
+    // after the snapshot mirror.
+    expect(search.get("event")?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("omits the `event=` param when the tab has no Quick peek selection", () => {
+    const tab = createTabSnapshot({ filter: RICH_FILTER, period: "1h" });
+    const search = buildUrlSearchForTab(tab);
+    expect(search.has("event")).toBe(false);
   });
 });

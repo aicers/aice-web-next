@@ -64,6 +64,7 @@ import {
   DEFAULT_PERIOD_KEY,
   type PeriodKey,
 } from "@/lib/detection/period";
+import { QUICK_PEEK_EVENT_PARAM } from "@/lib/detection/quick-peek-url";
 import {
   ACTIVE_TAB_URL_PARAM,
   autoTabName,
@@ -79,6 +80,7 @@ import {
   writeTabsToSession,
 } from "@/lib/detection/tabs-storage";
 import type { PivotFilterParams } from "@/lib/detection/url-filters";
+import { encodeEventLocator } from "@/lib/events/event-locator";
 
 export interface DetectionTabsShellLabels {
   /** Inherits every Shell label — the wrapper forwards them unchanged. */
@@ -169,17 +171,24 @@ export function DetectionTabsShell({
   // for a plain Apply / Refresh / query completion. Updating React
   // state here keeps both up to date as soon as the shell commits a
   // change.
+  //
+  // Reviewer Round 2 (item 1): the routing target is the captured
+  // `activeTabId` from this render, NOT `activeTabIdRef.current`. The
+  // wrapper keys DetectionShell by `activeTabId`, so a tab switch
+  // remounts the shell and its mount-time snapshot effect fires
+  // synchronously after commit. React's child-before-parent passive
+  // effect ordering means the child's mount snapshot lands BEFORE
+  // the parent's `useEffect(() => { activeTabIdRef.current = ... })`
+  // updates the ref — so reading the ref here would see the OUTGOING
+  // tab id and merge the incoming tab's snapshot into the outgoing
+  // tab's slot. With activeTabId in the dep list the closure rebinds
+  // on every switch and matches the keyed shell instance.
   const handleShellStateChange = useCallback(
     (snapshot: DetectionShellStateSnapshot) => {
       shellSnapshotRef.current = snapshot;
-      const currentActiveId = activeTabIdRef.current;
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.id === currentActiveId ? mergeSnapshot(t, snapshot) : t,
-        ),
-      );
+      setTabs((prev) => routeSnapshotToTab(prev, activeTabId, snapshot));
     },
-    [],
+    [activeTabId],
   );
 
   /**
@@ -297,16 +306,16 @@ export function DetectionTabsShell({
   // and analytics state are restored on reload. Result cache is NOT
   // persisted (see `tabs-storage.ts`).
   //
-  // Ordering invariant on tab switch: this effect runs after
-  // `activeTabId` has already advanced to the new tab, so it reads
-  // `withActiveSnapshot` against the *new* active id. Correctness
-  // depends on the new shell's `onStateChange` having already
-  // overwritten `shellSnapshotRef` before this fires — React flushes
-  // child effects before parent effects in a single commit, so the
-  // remounted shell's mount-time snapshot lands first and this write
-  // sees the new tab's state, not the outgoing tab's. If that
-  // child-then-parent ordering ever changes, the persistence write
-  // would copy the outgoing tab's state into the incoming tab's slot.
+  // Snapshot routing on tab switch: `handleShellStateChange` itself
+  // captures `activeTabId` directly so the in-snapshot merge writes
+  // the incoming tab's slot, not whichever tab `activeTabIdRef`
+  // happens to point at when child effects fire. This persistence
+  // pass still uses `withActiveSnapshot`, which reads from
+  // `activeTabIdRef` + `shellSnapshotRef`; both refs are advanced
+  // before this effect runs because React commits the parent's ref
+  // updates after the child's mount snapshot has already landed in
+  // `shellSnapshotRef`, so the merged write sees the new tab's
+  // state.
   useEffect(() => {
     const withLive = withActiveSnapshot(tabs);
     writeTabsToSession(withLive, activeTabId);
@@ -506,6 +515,26 @@ export function mergeSnapshot(
   };
 }
 
+/**
+ * Route a snapshot to a specific tab slot. Reviewer Round 2 (item 1):
+ * the wrapper invokes this from `handleShellStateChange` with
+ * `targetTabId` captured from the render that mounted the keyed
+ * `DetectionShell`, NOT from `activeTabIdRef.current`. The latter is
+ * advanced in a parent passive effect that fires AFTER the child
+ * shell's mount-time snapshot effect, so a routing decision based on
+ * the ref would write the incoming tab's snapshot into the outgoing
+ * tab's slot during a switch.
+ */
+export function routeSnapshotToTab(
+  prev: readonly TabSnapshot[],
+  targetTabId: TabId,
+  snapshot: DetectionShellStateSnapshot,
+): TabSnapshot[] {
+  return prev.map((t) =>
+    t.id === targetTabId ? mergeSnapshot(t, snapshot) : t,
+  );
+}
+
 /** Seed a TabSnapshot from the server page's SSR'd bootstrap tab. */
 export function bootstrapTabToSnapshot(
   initialTab: DetectionTabsShellProps["initialTab"],
@@ -548,6 +577,16 @@ export function bootstrapTabToSnapshot(
  * covered a subset and silently dropped levels, countries, learning
  * methods, categories, directions, confidence bounds, sensors, and
  * endpoints from the URL.
+ *
+ * Reviewer Round 2 (item 2): re-emit the active tab's Quick peek
+ * locator as `?event=` when present. The wrapper's URL effect runs
+ * on every `tabs` change — including the snapshot mirror of the
+ * shell's `quickPeekEvent` — and a full URL rewrite that omitted
+ * the token would clobber the `?event=` param the shell wrote in
+ * `writeQuickPeekToUrl`, breaking the share / refresh contract
+ * documented in `src/lib/detection/quick-peek-url.ts`. The token is
+ * scoped to the active tab, matching `tabs-storage.ts`'s split
+ * (Quick peek selection rides on the URL, not in sessionStorage).
  */
 export function buildUrlSearchForTab(tab: TabSnapshot): URLSearchParams {
   const encoded: EncodedTabFilter = {
@@ -563,6 +602,10 @@ export function buildUrlSearchForTab(tab: TabSnapshot): URLSearchParams {
   for (const [k, v] of paginationToSearchEntries(tab.pagination)) {
     if (k === "pageSize") continue;
     search.set(k, v);
+  }
+  if (tab.quickPeekEvent) {
+    const token = encodeEventLocator(tab.quickPeekEvent);
+    if (token) search.set(QUICK_PEEK_EVENT_PARAM, token);
   }
   return search;
 }
