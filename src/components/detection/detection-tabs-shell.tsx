@@ -1,0 +1,492 @@
+"use client";
+
+/**
+ * Multi-tab wrapper around {@link DetectionShell} (Phase Detection-10).
+ *
+ * Tab switch contract — the shell itself is single-tab: it owns the
+ * active tab's live state (filter, result, pagination, drawer draft,
+ * quick peek, etc.) and fires `onStateChange` so the wrapper can
+ * mirror the latest snapshot into its `TabSnapshot[]`. On tab switch
+ * the wrapper:
+ *
+ *   1. Reads the shell's latest reported snapshot from
+ *      `shellSnapshotRef` and parks it in the outgoing tab's slot.
+ *   2. Advances `activeTabId` and lets React remount the shell (via
+ *      `key={activeTabId}`) with the incoming tab's snapshot as its
+ *      new initial props. The remount naturally cancels any in-flight
+ *      query for the outgoing tab — React disposes the promise's
+ *      setState closures by unmounting.
+ *   3. Rewrites the URL so the active tab's filter is what a link
+ *      recipient would see. Everything else rides in
+ *      `sessionStorage` — see `src/lib/detection/tabs-storage.ts`.
+ *
+ * `+` creates a tab populated with the default filter but no
+ * auto-run; the freshly-mounted shell's `hasQueried` starts false
+ * because the empty result cache carries `totalCount: null`, so the
+ * result region renders the pre-query empty panel until the operator
+ * clicks Apply.
+ */
+
+import { usePathname } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import {
+  DetectionShell,
+  type DetectionShellInitialResult,
+  type DetectionShellLabels,
+  type DetectionShellStateSnapshot,
+} from "@/components/detection/detection-shell";
+import type { FilterDrawerOptions } from "@/components/detection/filter-drawer";
+import {
+  TabBar,
+  type TabBarLabels,
+  type TabBarTab,
+} from "@/components/detection/tab-bar";
+import type { Filter } from "@/lib/detection/filter";
+import {
+  type FilterChip,
+  type SummarizeFilterLabels,
+  summarizeFilter,
+} from "@/lib/detection/filter-summary";
+import {
+  clearPaginationParams,
+  DEFAULT_PAGE_SIZE,
+  type PaginationState,
+  paginationToSearchEntries,
+} from "@/lib/detection/pagination";
+import {
+  computePeriodRange,
+  DEFAULT_PERIOD_KEY,
+  type PeriodKey,
+} from "@/lib/detection/period";
+import {
+  ACTIVE_TAB_URL_PARAM,
+  autoTabName,
+  canAddTab as canAddTabFn,
+  closeTab as closeTabFn,
+  createTabSnapshot,
+  MAX_TABS,
+  type TabId,
+  type TabSnapshot,
+} from "@/lib/detection/tabs";
+import {
+  readTabsFromSession,
+  writeTabsToSession,
+} from "@/lib/detection/tabs-storage";
+import {
+  buildDetectionSearchParams,
+  mergePivotParams,
+  type PivotFilterParams,
+  pivotParamsFromFilterInput,
+} from "@/lib/detection/url-filters";
+
+export interface DetectionTabsShellLabels {
+  /** Inherits every Shell label — the wrapper forwards them unchanged. */
+  shell: DetectionShellLabels;
+  tabs: TabBarLabels;
+  /** Fallback label when a filter's summary produces no chips. */
+  tabFallbackName: string;
+}
+
+export interface DetectionTabsShellProps {
+  title: string;
+  labels: DetectionTabsShellLabels;
+  options: FilterDrawerOptions;
+  /** Bootstrap tab built from the URL-parsed active filter + SSR'd result. */
+  initialTab: {
+    id: TabId;
+    filter: Filter;
+    period: PeriodKey | null;
+    pivotOnly: PivotFilterParams;
+    pagination: PaginationState;
+    result: DetectionShellInitialResult;
+  };
+}
+
+/**
+ * Public entry point. Seeds the tab list from SSR (one bootstrap
+ * tab) and merges any additional tabs from sessionStorage on mount.
+ */
+export function DetectionTabsShell({
+  title,
+  labels,
+  options,
+  initialTab,
+}: DetectionTabsShellProps) {
+  const pathname = usePathname();
+
+  // Seed the tab list with the SSR bootstrap tab. The in-effect merge
+  // below folds in any additional tabs that were alive in the prior
+  // sessionStorage payload (their result caches are wiped — see the
+  // module comment in `tabs-storage.ts`).
+  const [tabs, setTabs] = useState<TabSnapshot[]>(() => [
+    bootstrapTabToSnapshot(initialTab),
+  ]);
+  const [activeTabId, setActiveTabId] = useState<TabId>(initialTab.id);
+
+  const activeTab = useMemo<TabSnapshot>(() => {
+    return tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+  }, [tabs, activeTabId]);
+
+  // Latest snapshot reported by the (currently mounted) shell. Written
+  // in an effect so it always trails one render behind live state; the
+  // one-render lag is fine because tab-switch events come from user
+  // gestures that always follow a rendered commit.
+  const shellSnapshotRef = useRef<DetectionShellStateSnapshot | null>(null);
+  // Ref mirror of `activeTabId` so memoised helpers below can resolve
+  // the current active tab without becoming stale after a setState
+  // batched with other tab updates.
+  const activeTabIdRef = useRef<TabId>(activeTabId);
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
+
+  const handleShellStateChange = useCallback(
+    (snapshot: DetectionShellStateSnapshot) => {
+      shellSnapshotRef.current = snapshot;
+    },
+    [],
+  );
+
+  /**
+   * Merge the shell's latest reported state into the `prev` tab list,
+   * returning a new tab list with the active tab's slot refreshed.
+   * Called by every tab-list mutation (switch / add / close / rename)
+   * so we never discard the shell's in-flight edits.
+   */
+  const withActiveSnapshot = useCallback(
+    (prev: readonly TabSnapshot[]): TabSnapshot[] => {
+      const currentActiveId = activeTabIdRef.current;
+      const live = shellSnapshotRef.current;
+      return prev.map((t) => {
+        if (t.id !== currentActiveId) return t;
+        if (!live) return t;
+        return {
+          ...t,
+          filter: live.filter,
+          period: live.period,
+          endpoints: live.endpoints,
+          pivotOnly: live.pivotOnly,
+          pagination: live.pagination,
+          draft: live.draft,
+          analyticsOpen: live.analyticsOpen,
+          quickPeekEvent: live.quickPeekEvent,
+          result: live.result,
+        };
+      });
+    },
+    [],
+  );
+
+  // Shared summariser labels — tab names use the chip `value` string
+  // already, so the prefix fields (`period`, `direction`, etc.) can
+  // be blank; the auto-name helper only consumes values.
+  const summarizeLabels = useMemo<SummarizeFilterLabels>(
+    () => ({
+      sensor: labels.shell.drawer.sensor.label,
+      sensorAggregate: labels.shell.summarize.sensorAggregate,
+      period: "",
+      periodOptions: labels.shell.drawer.periodOptions,
+      formatRange: ({ start, end }) => `${start} – ${end}`,
+      direction: labels.shell.directionChips.label,
+      directionValues: labels.shell.directionChips.values,
+      confidence: labels.shell.confidenceChipLabel,
+      source: labels.shell.chipLabels.source,
+      destination: labels.shell.chipLabels.destination,
+      keywords: labels.shell.chipLabels.keywords,
+      hostnames: labels.shell.chipLabels.hostnames,
+      userIds: labels.shell.chipLabels.userIds,
+      userNames: labels.shell.chipLabels.userNames,
+      userDepartments: labels.shell.chipLabels.userDepartments,
+      levels: labels.shell.drawer.fields.levels,
+      countries: labels.shell.drawer.fields.countries,
+      learningMethods: labels.shell.drawer.fields.learningMethods,
+      categories: labels.shell.drawer.fields.categories,
+      kinds: labels.shell.drawer.fields.kinds,
+      categoricalAggregate: ({ label, count }) => `${label}: ${count}`,
+    }),
+    [labels.shell],
+  );
+
+  const deriveAutoName = useCallback(
+    (tab: TabSnapshot): string => {
+      const chips: FilterChip[] = summarizeFilter(tab.filter, summarizeLabels, {
+        period: tab.period,
+        sensorOptions: [],
+        categoricalOptions: {
+          levels: options.levels,
+          countries: options.countries,
+          learningMethods: options.learningMethods,
+          categories: options.categories,
+          kinds: options.kinds,
+        },
+      });
+      return autoTabName(
+        chips.map((c) => c.value),
+        labels.tabFallbackName,
+      );
+    },
+    [summarizeLabels, options, labels.tabFallbackName],
+  );
+
+  // Rehydrate additional tabs from sessionStorage on mount. URL is
+  // the source of truth for the active tab, so the bootstrap tab
+  // stays anchored; any session-stored tab with the same id is
+  // collapsed into the bootstrap (its UX state merged in), and
+  // every other stored tab is appended as dormant. `MAX_TABS` caps
+  // the final list so a legacy payload with > 8 tabs still loads.
+  // Runs once on mount; subsequent session writes flow through the
+  // persistence effect below.
+  useEffect(() => {
+    const stored = readTabsFromSession();
+    if (!stored) return;
+    setTabs((prev) => {
+      const bootstrap = prev[0];
+      if (!bootstrap) return prev;
+      const matchingActive = stored.tabs.find((t) => t.id === bootstrap.id);
+      const others = stored.tabs.filter((t) => t.id !== bootstrap.id);
+      const mergedBootstrap: TabSnapshot = matchingActive
+        ? {
+            ...bootstrap,
+            name: matchingActive.name,
+            manualName: matchingActive.manualName,
+            draft: matchingActive.draft,
+            analyticsOpen: matchingActive.analyticsOpen,
+          }
+        : bootstrap;
+      return [mergedBootstrap, ...others].slice(0, MAX_TABS);
+    });
+  }, []);
+
+  // Persist tab state to sessionStorage on every relevant change.
+  // Captures the live active-tab snapshot so the active tab's draft
+  // and analytics state are restored on reload. Result cache is NOT
+  // persisted (see `tabs-storage.ts`).
+  //
+  // Ordering invariant on tab switch: this effect runs after
+  // `activeTabId` has already advanced to the new tab, so it reads
+  // `withActiveSnapshot` against the *new* active id. Correctness
+  // depends on the new shell's `onStateChange` having already
+  // overwritten `shellSnapshotRef` before this fires — React flushes
+  // child effects before parent effects in a single commit, so the
+  // remounted shell's mount-time snapshot lands first and this write
+  // sees the new tab's state, not the outgoing tab's. If that
+  // child-then-parent ordering ever changes, the persistence write
+  // would copy the outgoing tab's state into the incoming tab's slot.
+  useEffect(() => {
+    const withLive = withActiveSnapshot(tabs);
+    writeTabsToSession(withLive, activeTabId);
+  }, [tabs, activeTabId, withActiveSnapshot]);
+
+  const tabBarTabs = useMemo<TabBarTab[]>(() => {
+    return tabs.map((t) => {
+      const displayName = t.name !== null ? t.name : deriveAutoName(t);
+      return {
+        id: t.id,
+        label: displayName,
+        isAuto: !t.manualName,
+        loading: t.result.loading,
+      };
+    });
+  }, [tabs, deriveAutoName]);
+
+  const handleActivate = useCallback(
+    (nextId: TabId) => {
+      if (nextId === activeTabIdRef.current) return;
+      setTabs((prev) => {
+        if (!prev.some((t) => t.id === nextId)) return prev;
+        return withActiveSnapshot(prev);
+      });
+      setActiveTabId(nextId);
+    },
+    [withActiveSnapshot],
+  );
+
+  const handleAddTab = useCallback(() => {
+    const fresh = buildDefaultTabSnapshot();
+    setTabs((prev) => {
+      if (prev.length >= MAX_TABS) return prev;
+      const withLive = withActiveSnapshot(prev);
+      return [...withLive, fresh];
+    });
+    setActiveTabId(fresh.id);
+  }, [withActiveSnapshot]);
+
+  const handleCloseTab = useCallback(
+    (id: TabId) => {
+      let nextActive = activeTabIdRef.current;
+      setTabs((prev) => {
+        const withLive = withActiveSnapshot(prev);
+        const result = closeTabFn(
+          { tabs: withLive, activeTabId: activeTabIdRef.current },
+          id,
+          buildDefaultTabSnapshot,
+        );
+        nextActive = result.activeTabId;
+        return result.tabs;
+      });
+      setActiveTabId(nextActive);
+    },
+    [withActiveSnapshot],
+  );
+
+  const handleRename = useCallback(
+    (id: TabId, next: string) => {
+      setTabs((prev) => {
+        const withLive = withActiveSnapshot(prev);
+        return withLive.map((t) =>
+          t.id === id ? { ...t, name: next, manualName: true } : t,
+        );
+      });
+    },
+    [withActiveSnapshot],
+  );
+
+  const handleResetName = useCallback(
+    (id: TabId) => {
+      setTabs((prev) => {
+        const withLive = withActiveSnapshot(prev);
+        return withLive.map((t) =>
+          t.id === id ? { ...t, name: null, manualName: false } : t,
+        );
+      });
+    },
+    [withActiveSnapshot],
+  );
+
+  // On activeTabId transitions, rewrite the URL so a reload /
+  // bookmark lands on the same active tab. The filter encoder is
+  // the same one the shell uses on Apply; the shell still writes
+  // the URL on its own Apply / chip removal / pagination paths, so
+  // this effect only needs to handle the tab-switch case where the
+  // new active tab's filter may differ from what the shell last
+  // wrote.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab) return;
+    const search = buildUrlSearchForTab(tab);
+    search.set(ACTIVE_TAB_URL_PARAM, tab.id);
+    const qs = search.toString();
+    const hash = window.location.hash;
+    const url = qs ? `${pathname}?${qs}${hash}` : `${pathname}${hash}`;
+    window.history.replaceState(window.history.state, "", url);
+  }, [activeTabId, tabs, pathname]);
+
+  const canAdd = canAddTabFn(tabs);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <TabBar
+        tabs={tabBarTabs}
+        activeTabId={activeTabId}
+        canAddTab={canAdd}
+        labels={labels.tabs}
+        onActivate={handleActivate}
+        onAddTab={handleAddTab}
+        onCloseTab={handleCloseTab}
+        onRename={handleRename}
+        onResetName={handleResetName}
+      />
+      <DetectionShell
+        key={activeTabId}
+        title={title}
+        labels={labels.shell}
+        options={options}
+        initialFilter={activeTab.filter}
+        initialPeriod={activeTab.period}
+        initialPivotOnly={activeTab.pivotOnly}
+        initialPagination={activeTab.pagination}
+        initialResult={{
+          totalCount: activeTab.result.totalCount,
+          error: activeTab.result.resultError,
+          events: activeTab.result.events,
+          eventKeys: activeTab.result.eventKeys,
+          pageInfo: activeTab.result.pageInfo,
+        }}
+        initialEndpoints={activeTab.endpoints}
+        initialDraft={activeTab.draft}
+        initialAnalyticsOpen={activeTab.analyticsOpen}
+        initialQuickPeekEvent={activeTab.quickPeekEvent}
+        onStateChange={handleShellStateChange}
+      />
+    </div>
+  );
+}
+
+/**
+ * Build a fresh tab snapshot with the default filter (`Last 1 hour`).
+ * The result cache is the canonical empty cache, so the shell renders
+ * the pre-query empty state until the operator clicks Apply. Used by
+ * the `+` affordance and by `closeTab` when the operator closes the
+ * last tab.
+ */
+export function buildDefaultTabSnapshot(): TabSnapshot {
+  const range = computePeriodRange(DEFAULT_PERIOD_KEY);
+  const filter: Filter = {
+    mode: "structured",
+    input: { start: range.start, end: range.end },
+  };
+  return createTabSnapshot({ filter, period: DEFAULT_PERIOD_KEY });
+}
+
+/** Seed a TabSnapshot from the server page's SSR'd bootstrap tab. */
+function bootstrapTabToSnapshot(
+  initialTab: DetectionTabsShellProps["initialTab"],
+): TabSnapshot {
+  const hasQueried =
+    initialTab.result.error === null && initialTab.result.totalCount !== null;
+  return {
+    id: initialTab.id,
+    name: null,
+    manualName: false,
+    filter: initialTab.filter,
+    period: initialTab.period,
+    endpoints: [],
+    pivotOnly: initialTab.pivotOnly,
+    pagination: initialTab.pagination,
+    draft: null,
+    analyticsOpen: false,
+    quickPeekEvent: null,
+    result: {
+      events: initialTab.result.events,
+      eventKeys: initialTab.result.eventKeys,
+      totalCount: initialTab.result.totalCount,
+      pageInfo: initialTab.result.pageInfo,
+      resultError: initialTab.result.error,
+      lastUpdatedMs: hasQueried ? Date.now() : null,
+      hasQueried,
+      queryEpoch: 0,
+      loading: false,
+      walking: null,
+    },
+  };
+}
+
+/**
+ * Compose the URL search params that describe the given tab's
+ * committed filter + pagination. Mirrors the shell's Apply handler —
+ * centralised here so the wrapper can rewrite the URL on tab
+ * switch without re-entering the shell. Uses `tab.pivotOnly` as the
+ * carrier for URL-only fields (ports/proto) not yet represented in
+ * the filter drawer.
+ */
+function buildUrlSearchForTab(tab: TabSnapshot): URLSearchParams {
+  if (tab.filter.mode !== "structured") {
+    return new URLSearchParams();
+  }
+  const merged = mergePivotParams(
+    tab.pivotOnly,
+    pivotParamsFromFilterInput(tab.filter.input, tab.period),
+  );
+  const search = buildDetectionSearchParams(merged);
+  clearPaginationParams(search);
+  if (tab.pagination.pageSize !== DEFAULT_PAGE_SIZE) {
+    search.set("pageSize", String(tab.pagination.pageSize));
+  }
+  for (const [k, v] of paginationToSearchEntries(tab.pagination)) {
+    if (k === "pageSize") continue;
+    search.set(k, v);
+  }
+  return search;
+}

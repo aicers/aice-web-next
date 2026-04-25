@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 80" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Detection tab bar (wireframe)</title>
+  <desc id="desc">Wireframe of the multi-tab bar above the filter and result region: three tabs — an active "Last 1h · High" tab, a dormant "Source: 10.0.0.5" tab with a reset-name affordance, and a dormant "New tab" placeholder — plus a plus affordance on the right for creating a new tab. Closing a tab is a small × on each entry.</desc>
+
+  <style>
+    .bg { fill: #fafafa; }
+    .border { stroke: #e5e7eb; stroke-width: 1; }
+    .tab-inactive { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; rx: 6; ry: 6; }
+    .tab-active { fill: #ffffff; stroke: #18181b; stroke-width: 1.5; rx: 6; ry: 6; }
+    .tab-active-underline { stroke: #18181b; stroke-width: 2; }
+    .tab-label { font-size: 13px; fill: #18181b; font-weight: 500; }
+    .tab-label-inactive { font-size: 13px; fill: #52525b; font-weight: 500; }
+    .chip-icon { stroke: #71717a; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .chip-icon-muted { stroke: #a1a1aa; stroke-width: 1.3; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .add-btn { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .add-icon { stroke: #18181b; stroke-width: 1.6; fill: none; stroke-linecap: round; }
+    .muted { font-size: 11px; fill: #a1a1aa; }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="880" height="80" />
+
+  <!-- Active tab: "Last 1h · High" -->
+  <g transform="translate(16, 16)">
+    <rect class="tab-active" x="0" y="0" width="168" height="34" />
+    <line class="tab-active-underline" x1="0" y1="34" x2="168" y2="34" />
+    <text class="tab-label" x="14" y="22">Last 1h · High</text>
+    <!-- close × -->
+    <g transform="translate(142, 11)">
+      <path class="chip-icon" d="M1 1 L11 11 M11 1 L1 11" />
+    </g>
+  </g>
+
+  <!-- Dormant tab with manual name -->
+  <g transform="translate(200, 16)">
+    <rect class="tab-inactive" x="0" y="0" width="212" height="34" />
+    <text class="tab-label-inactive" x="14" y="22">Source: 10.0.0.5</text>
+    <!-- reset-name (curved arrow) -->
+    <g transform="translate(158, 11)">
+      <path class="chip-icon-muted" d="M0 4 A 4 4 0 1 0 4 0 L 4 -2 L 7 1 L 4 4" />
+    </g>
+    <!-- close × -->
+    <g transform="translate(186, 11)">
+      <path class="chip-icon-muted" d="M1 1 L11 11 M11 1 L1 11" />
+    </g>
+  </g>
+
+  <!-- Dormant placeholder "New tab" -->
+  <g transform="translate(428, 16)">
+    <rect class="tab-inactive" x="0" y="0" width="120" height="34" />
+    <text class="tab-label-inactive" x="14" y="22">New tab</text>
+    <!-- close × -->
+    <g transform="translate(94, 11)">
+      <path class="chip-icon-muted" d="M1 1 L11 11 M11 1 L1 11" />
+    </g>
+  </g>
+
+  <!-- + affordance -->
+  <g transform="translate(568, 16)">
+    <rect class="add-btn" x="0" y="0" width="34" height="34" />
+    <path class="add-icon" d="M17 10 L17 24 M10 17 L24 17" />
+  </g>
+
+  <!-- Bottom divider -->
+  <line class="border" x1="16" y1="62" x2="864" y2="62" />
+
+  <!-- Caption -->
+  <text class="muted" x="612" y="40">Cap: 8 tabs</text>
+</svg>

@@ -41,6 +41,116 @@ A slim rail on the left lists two sections:
 On narrow viewports the rail collapses to icons only. On desktop
 widths it expands to show the section headings.
 
+### Tab bar
+
+Every Detection session is organised as one or more **tabs**. Each
+tab carries its own filter, result slice, drawer draft, and UI
+state (analytics expansion, Quick peek selection), so switching
+tabs is a cheap way to hold multiple investigations in view at
+once without losing context.
+
+![Detection tab bar — wireframe stand-in](../assets/detection-tab-bar-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The tab-bar illustration above is an SVG wireframe rather than a
+    real capture. The bar sits above the filter chip bar and renders
+    alongside the same live REview-backed result list; the authoring
+    worktree has no staging backend with seeded detection data, so a
+    PNG captured here would show the empty-state panel rather than
+    a populated multi-tab session. Per `docs/AUTHORING.md`'s
+    "Screenshot exception for infrastructure-gated features", this
+    section ships localized SVG wireframes and will be replaced with
+    a real screenshot once staging with sample data is available.
+
+#### Creating tabs
+
+On page entry, Detection starts with one **default tab** on the
+**Last 1 hour** filter and auto-runs the query, so the first
+view is never empty.
+
+- The `+` affordance on the right of the tab bar creates a new
+  tab populated with the same default filter, but **does not
+  auto-run** — the tab lands on the pre-query empty state
+  ("Build a filter to begin") and the operator clicks Apply to
+  populate it.
+- Activating a saved or recommended filter (in a later Detection
+  phase), or following a pivot link (Phase Detection-12), also
+  creates a new tab pre-seeded with the target filter rather
+  than replacing the current tab.
+
+The tab cap is **8 simultaneous tabs**. At the cap the `+`
+affordance disables and surfaces a tooltip explaining that you
+need to close a tab first.
+
+#### Switching tabs
+
+Clicking a tab immediately activates it: the filter drawer and
+the active chip bar re-synchronise to the selected tab's filter,
+and the result list shows that tab's cached result. Switching
+tabs **does not hit the network** — the result you see is the
+one that was last fetched for that tab. Click **Refresh** on
+the result header, or reopen the drawer and Apply, to re-run
+the query.
+
+An **Apply** affects only the active tab — each tab holds its
+own independent result slice.
+
+#### Closing tabs
+
+Each tab exposes a × close affordance on hover. Closing an
+active tab activates its right-hand neighbour (or the left-hand
+neighbour when the closed tab was the rightmost). Closing the
+last remaining tab auto-creates a fresh default tab so the
+workspace is never empty; the fresh tab lands in the pre-query
+empty state (same as the `+` affordance) — click Apply to run
+the query.
+
+#### Tab names
+
+Tab labels are auto-derived from the tab's filter summary — a
+short dot-separated concatenation of the first two chips, e.g.
+`Last 1h · High`. The label updates as the filter changes so
+each tab in the bar remains scan-readable.
+
+Double-click a tab label (or press `Enter` on it) to rename the
+tab; press `Enter` again to commit, or `Esc` to cancel. A
+manually-renamed tab gains a small **Reset name** affordance —
+clicking it clears the manual override and lets the auto label
+take over again. Manual renames are preserved across filter
+edits: the tab stays on the name you chose even if the filter
+behind it changes.
+
+#### Freshness indicator
+
+The result header for the active tab shows **Updated _N_ ago**
+with a ticking relative timestamp, plus a **Refresh** button.
+This is a per-tab indicator — inactive tabs keep their own
+`Updated` timestamp and refresh state until you switch back.
+
+#### What persists across reloads
+
+Tab state is persisted so a browser reload or a mistaken
+navigation does not lose your work:
+
+- **URL search params** carry the **active tab's filter** and
+  its pagination — the shareable surface. A `?tab=<id>`
+  parameter anchors which tab is active, and a link recipient
+  opens that tab as their single bootstrap tab. URLs do NOT
+  carry the other tabs you had open; those are private to
+  your session.
+- **`sessionStorage`** carries everything else: the full tab
+  list (filter, name, manual-rename flag, endpoints,
+  pagination, drawer draft, analytics expansion), so a reload
+  restores all the tabs you had open. Cached events are not
+  persisted — inactive tabs return to the pre-query empty
+  state on reload and you click Apply / Refresh to re-populate.
+
+Because shareable URL state is narrower than private session
+state, the split is documented in the persistence module so
+future contributors can reason about each store's contract
+separately.
+
 ### Top bar
 
 The top of the main region holds the **Filters** button and the

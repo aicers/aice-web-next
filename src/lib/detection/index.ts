@@ -82,6 +82,29 @@ export {
   searchEvents,
   searchEventsAtAnchor,
 } from "./server-actions";
+export {
+  ACTIVE_TAB_URL_PARAM,
+  autoTabName,
+  canAddTab,
+  closeTab,
+  createTabId,
+  createTabSnapshot,
+  EMPTY_RESULT_CACHE,
+  MAX_TABS,
+  preserveActiveTabParam,
+  type ResultCache,
+  type TabId,
+  type TabSnapshot,
+} from "./tabs";
+export {
+  clearTabsFromSession,
+  type DeserializedTabs,
+  deserializeTabsFromStorage,
+  readTabsFromSession,
+  STORAGE_KEY as TABS_STORAGE_KEY,
+  serializeTabsForStorage,
+  writeTabsToSession,
+} from "./tabs-storage";
 export type {
   DateTimeScalar,
   EndpointInput,

@@ -99,6 +99,7 @@ import {
   applyQuickPeekToken,
   readQuickPeekToken,
 } from "@/lib/detection/quick-peek-url";
+import { preserveActiveTabParam } from "@/lib/detection/tabs";
 import type {
   Event as DetectionEvent,
   LearningMethod,
@@ -262,7 +263,44 @@ export interface DetectionShellInitialResult {
   pageInfo: PageInfo | null;
 }
 
-interface DetectionShellProps {
+/**
+ * Subset of the shell's reactive state that the multi-tab wrapper
+ * (`DetectionTabsShell`) needs to snapshot into the active tab's
+ * {@link TabSnapshot} slot on tab switch and session serialization.
+ * Emitted via {@link DetectionShellProps.onStateChange} whenever any
+ * included field changes.
+ *
+ * Fields outside the tab's contract — drawer-open flag, sensor cache,
+ * focus target, in-flight request ids — stay local to the shell and
+ * are not part of the snapshot. They reset on the remount a tab
+ * switch triggers, which matches the UX intent (closing the drawer
+ * on switch, re-fetching sensors lazily on first drawer open after
+ * switch).
+ */
+export interface DetectionShellStateSnapshot {
+  filter: Filter;
+  period: PeriodKey | null;
+  endpoints: EndpointEntry[];
+  pivotOnly: PivotFilterParams;
+  pagination: PaginationState;
+  draft: DetectionFilterDraft | null;
+  analyticsOpen: boolean;
+  quickPeekEvent: DetectionEvent | null;
+  result: {
+    events: DetectionEvent[];
+    eventKeys: string[];
+    totalCount: string | null;
+    pageInfo: PageInfo | null;
+    resultError: string | null;
+    lastUpdatedMs: number | null;
+    hasQueried: boolean;
+    queryEpoch: number;
+    loading: boolean;
+    walking: { current: number; target: number } | null;
+  };
+}
+
+export interface DetectionShellProps {
   title: string;
   labels: DetectionShellLabels;
   options: FilterDrawerOptions;
@@ -278,6 +316,49 @@ interface DetectionShellProps {
    * the operator on the page they were viewing.
    */
   initialPagination?: PaginationState;
+  /**
+   * Rich endpoint entries (text + direction) the operator entered in
+   * the Network/IP advanced panel. The committed filter input also
+   * carries them as `EndpointInput[]` for REview, but the panel and
+   * the endpoint chip bar work off this richer parallel list — there
+   * is no reverse path from `EndpointInput[]` back to the typed
+   * entries, so the multi-tab wrapper threads them through this prop
+   * to restore the rich representation on tab activation.
+   */
+  initialEndpoints?: EndpointEntry[];
+  /**
+   * Drawer draft carried from a prior tab-mount. When the multi-tab
+   * wrapper rehydrates an inactive tab, the draft the operator last
+   * had open in that tab's drawer is restored so reopening the
+   * drawer picks up exactly where it left off. `null` — the default
+   * — matches the fresh-load behaviour where the drawer seeds its
+   * draft on first open.
+   */
+  initialDraft?: DetectionFilterDraft | null;
+  /**
+   * Initial expansion of the analytics strip. Part of the per-tab
+   * snapshot so a rehydrated tab remembers whether the operator had
+   * the strip open.
+   */
+  initialAnalyticsOpen?: boolean;
+  /**
+   * Initial Quick peek event carried from a prior tab-mount. Pinned
+   * to the rehydrated event reference rather than re-resolved from
+   * the URL, because the URL-based restore path only describes the
+   * active tab's selection and the multi-tab wrapper rehydrates
+   * inactive tabs on remount.
+   */
+  initialQuickPeekEvent?: DetectionEvent | null;
+  /**
+   * Fired on every tab-relevant state transition so the multi-tab
+   * wrapper can mirror the active tab's live state into its
+   * `TabSnapshot[]` (for session persistence and for the save-on-
+   * switch contract). Functions that would normally drive tab-
+   * local effects — focus management, drawer open state — are NOT
+   * included in the snapshot; see {@link DetectionShellStateSnapshot}
+   * for the contract.
+   */
+  onStateChange?: (snapshot: DetectionShellStateSnapshot) => void;
 }
 
 /**
@@ -415,6 +496,11 @@ export function DetectionShell({
   initialResult,
   initialPivotOnly = {},
   initialPagination = INITIAL_PAGINATION_STATE,
+  initialEndpoints = [],
+  initialDraft = null,
+  initialAnalyticsOpen = false,
+  initialQuickPeekEvent = null,
+  onStateChange,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
@@ -521,7 +607,7 @@ export function DetectionShell({
     }),
     [labels.quickPeek, tResults],
   );
-  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [analyticsOpen, setAnalyticsOpen] = useState(initialAnalyticsOpen);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openEndpointPanelOnDrawerOpen, setOpenEndpointPanelOnDrawerOpen] =
     useState(false);
@@ -530,9 +616,8 @@ export function DetectionShell({
   const [committedPeriod, setCommittedPeriod] = useState<PeriodKey | null>(
     initialPeriod,
   );
-  const [committedEndpoints, setCommittedEndpoints] = useState<EndpointEntry[]>(
-    [],
-  );
+  const [committedEndpoints, setCommittedEndpoints] =
+    useState<EndpointEntry[]>(initialEndpoints);
   // `pivotOnly` carries URL-only fields that aren't yet represented
   // in the drawer — today that's `origPort` / `respPort` / `proto`,
   // which arrive from the Investigation handoff and ride through
@@ -544,7 +629,7 @@ export function DetectionShell({
   // {@link pivotParamsFromFilterInput} so edits in the drawer clear
   // stale pivot tokens on the next Apply / chip removal.
   const pivotOnly = initialPivotOnly;
-  const [draft, setDraft] = useState<DetectionFilterDraft | null>(null);
+  const [draft, setDraft] = useState<DetectionFilterDraft | null>(initialDraft);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
   });
@@ -627,7 +712,7 @@ export function DetectionShell({
   // event when a positional cursor is reused across filters. Closing
   // on every commit is the defensive alternative.
   const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
-    null,
+    initialQuickPeekEvent,
   );
   // Ref mirror of `quickPeekEvent` so the async `runQueryFor` success
   // path can read the latest state without becoming a dependency.
@@ -1002,6 +1087,7 @@ export function DetectionShell({
         if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
           search.set("pageSize", String(pagination.pageSize));
         }
+        preserveActiveTabParam(search);
         const qs = search.toString();
         const url = qs ? `${pathname}?${qs}` : pathname;
         window.history.replaceState(window.history.state, "", url);
@@ -1056,6 +1142,7 @@ export function DetectionShell({
         if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
           search.set("pageSize", String(pagination.pageSize));
         }
+        preserveActiveTabParam(search);
         const qs = search.toString();
         const url = qs ? `${pathname}?${qs}` : pathname;
         window.history.replaceState(window.history.state, "", url);
@@ -1091,6 +1178,7 @@ export function DetectionShell({
       for (const [k, v] of paginationToSearchEntries(next)) {
         search.set(k, v);
       }
+      preserveActiveTabParam(search);
       const qs = search.toString();
       const url = qs ? `${pathname}?${qs}` : pathname;
       window.history.replaceState(window.history.state, "", url);
@@ -1795,6 +1883,13 @@ export function DetectionShell({
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally mount-only — subsequent URL writes go through `writeQuickPeekToUrl` directly so re-running on every `events` change would fight the operator's own open/close actions.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    // Skip the URL restore when the multi-tab wrapper has already
+    // handed us a resolved peek event for this tab. The URL-encoded
+    // peek applies only to the active tab's filter; a dormant tab
+    // rehydrated from sessionStorage carries its peek via
+    // `initialQuickPeekEvent` instead, and re-reading the URL here
+    // would conflate the two and clobber the per-tab selection.
+    if (initialQuickPeekEvent) return;
     const stored = readQuickPeekToken(
       new URLSearchParams(window.location.search),
     );
@@ -1843,6 +1938,64 @@ export function DetectionShell({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [isDesktop, quickPeekEvent, closeQuickPeek]);
+
+  // Emit the current tab-relevant state to the multi-tab wrapper on
+  // every transition so the wrapper can mirror the active tab's live
+  // state into its `TabSnapshot[]`. The wrapper uses this to:
+  //   - Persist to sessionStorage so a reload restores the exact tab
+  //     set the operator had open.
+  //   - Snapshot before a tab switch, so the outgoing tab keeps its
+  //     cached result and drawer draft when the operator switches
+  //     back later.
+  // The effect fires after commit, so `shellSnapshotRef.current` in
+  // the wrapper lags live state by one render — which is the right
+  // contract for the wrapper's snapshot-on-switch path: the user has
+  // to take a rendered state before clicking a different tab.
+  useEffect(() => {
+    if (!onStateChange) return;
+    onStateChange({
+      filter: committedFilter,
+      period: committedPeriod,
+      endpoints: committedEndpoints,
+      pivotOnly,
+      pagination,
+      draft,
+      analyticsOpen,
+      quickPeekEvent,
+      result: {
+        events,
+        eventKeys,
+        totalCount,
+        pageInfo,
+        resultError,
+        lastUpdatedMs,
+        hasQueried,
+        queryEpoch,
+        loading,
+        walking,
+      },
+    });
+  }, [
+    onStateChange,
+    committedFilter,
+    committedPeriod,
+    committedEndpoints,
+    pivotOnly,
+    pagination,
+    draft,
+    analyticsOpen,
+    quickPeekEvent,
+    events,
+    eventKeys,
+    totalCount,
+    pageInfo,
+    resultError,
+    lastUpdatedMs,
+    hasQueried,
+    queryEpoch,
+    loading,
+    walking,
+  ]);
 
   return (
     <div className="flex gap-4">
