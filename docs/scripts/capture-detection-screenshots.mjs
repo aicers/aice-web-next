@@ -114,14 +114,24 @@ async function captureFor(ctx, locale) {
   await page.evaluate(() => window.scrollTo({ top: 0 }));
   await sleep(200);
 
-  // Pivot — hover the first pivot cell to surface the underline
-  // affordance. We hover (not click) so the row overlay stays clickable
-  // for the Quick peek step that follows.
-  const firstPivotBtn = page
-    .locator('button[data-slot="detection-pivot-cell"]')
-    .first();
-  await firstPivotBtn.scrollIntoViewIfNeeded();
-  await firstPivotBtn.hover({ force: true });
+  // Pivot — hover a User-cell pivot button so the underline affordance
+  // lands on the identity column the row exposes (Phase Detection-28
+  // / issue #347). The User-cell `aria-label` starts with the
+  // localized "Filter results by User name" prefix; if the current
+  // result page does not contain a row whose subtype emits `username`
+  // (HTTP-class threats, BlocklistNtlm, BlocklistRadius, FTP plain-
+  // text, WindowsThreat — see EVENT_LIST_QUERY), fall back to the
+  // first pivot cell so the figure still has a visible affordance.
+  const userPivotPrefix =
+    locale === "ko" ? "사용자 이름:" : "Filter results by User name";
+  const userPivotBtn = page.locator(
+    `button[data-slot="detection-pivot-cell"][aria-label^="${userPivotPrefix}"]`,
+  );
+  const pivotTarget = (await userPivotBtn.count())
+    ? userPivotBtn.first()
+    : page.locator('button[data-slot="detection-pivot-cell"]').first();
+  await pivotTarget.scrollIntoViewIfNeeded();
+  await pivotTarget.hover({ force: true });
   await sleep(400);
   await shoot(page, `detection-pivot-${locale}`);
   // Move the mouse away so subsequent screenshots are not affected.
