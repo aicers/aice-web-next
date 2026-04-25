@@ -9,11 +9,16 @@
 //     one customer in auth_db (resolveEffectiveCustomerIds is non-empty).
 //   - REview dataset has events somewhere in the past 3 years.
 
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { chromium } from "@playwright/test";
 
 const BASE = "http://localhost:3000";
 const VIEWPORT = { width: 1440, height: 900 };
-const OUT = "docs/assets";
+// Resolve `docs/assets/` relative to this file (under `docs/scripts/`)
+// so the script writes to the right place regardless of cwd.
+const OUT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "assets");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

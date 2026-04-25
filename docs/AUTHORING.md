@@ -249,10 +249,12 @@ Before opening a Detection PR with new screenshots:
 ### Automation reference
 
 A reusable Playwright harness lives at
-`scripts/capture-detection-screenshots.mjs` in the repository
-root. It is Detection-specific today but is the canonical
-example to copy when adding a sibling capture script for another
-feature that needs this procedure.
+`docs/scripts/capture-detection-screenshots.mjs`. It is
+Detection-specific today but is the canonical example to copy
+when adding a sibling capture script for another feature that
+needs this procedure. Sibling scripts belong under the same
+`docs/scripts/` directory so that adding or updating one keeps
+the change docs-only as far as CI's paths filter is concerned.
 It logs in, sets dark theme, walks each of the captures listed
 above, and writes the resulting PNGs into `docs/assets/`. Use it
 as a starting point when adding new Detection sections; the
