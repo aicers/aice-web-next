@@ -777,7 +777,9 @@
         "triage": "분류",
         "source": "출발지",
         "destination": "목적지",
-        "sensor": "센서"
+        "sensor": "센서",
+        "userName": "사용자",
+        "hostname": "호스트"
       },
       "refresh": "새로고침",
       "updatedJustNow": "방금 업데이트됨",
@@ -804,6 +806,8 @@
       "countryUnknown": "??",
       "countryUnavailable": "—",
       "attackKindLabel": "공격:",
+      "userNameLabel": "사용자:",
+      "hostnameLabel": "호스트:",
       "quickPeekClose": "간단 미리보기 닫기",
       "pivotActivate": "{label}: {value} 기준으로 결과 필터링",
       "pivotColumnLabels": {
@@ -813,7 +817,9 @@
         "respCountry": "목적지 국가",
         "level": "심각도",
         "category": "카테고리",
-        "kind": "종류"
+        "kind": "종류",
+        "userName": "사용자 이름",
+        "hostname": "호스트 이름"
       }
     },
     "pagination": {

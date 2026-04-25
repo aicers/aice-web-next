@@ -16,6 +16,18 @@ import { parse } from "graphql";
 // subtype rather than the full payload the investigation view needs.
 // Heavy payload fields (HTTP body, DNS answer list, FTP commands,
 // etc.) live in EVENT_DETAIL_QUERY and are not requested here.
+//
+// Subtypes that surface a Username or Host/Hostname per the schema
+// also select those fields here so the result row can render the
+// Phase Detection-28 identity columns (issue #347): the row reads
+// `username` (HTTP-class threats, BlocklistNtlm), the camelCase
+// `userName` field (BlocklistRadius), or the documented-as-
+// Username `user` field (BlocklistFtp / FtpPlainText / WindowsThreat)
+// into the userName cell, and `host` / `hostname` into the hostname
+// cell. Subtypes that do not emit either field render the cell as
+// a non-pivotable `—` token; the column position stays stable so
+// the operator can tell that the row simply has no identity to
+// pivot on.
 export const EVENT_LIST_QUERY = parse(`
   query EventList(
     $filter: EventListFilterInput!
@@ -119,6 +131,7 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          user
         }
         ... on BlocklistHttp {
           origAddr
@@ -133,6 +146,7 @@ export const EVENT_LIST_QUERY = parse(`
           uri
           statusCode
           learningMethod
+          username
         }
         ... on BlocklistKerberos {
           origAddr
@@ -187,6 +201,8 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          username
+          hostname
         }
         ... on BlocklistRadius {
           origAddr
@@ -196,6 +212,7 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          userName
         }
         ... on BlocklistRdp {
           origAddr
@@ -276,6 +293,8 @@ export const EVENT_LIST_QUERY = parse(`
           respCountry
           proto
           learningMethod
+          host
+          username
         }
         ... on ExternalDdos {
           origAddrs
@@ -310,6 +329,7 @@ export const EVENT_LIST_QUERY = parse(`
           respPort
           respCountry
           proto
+          user
         }
         ... on HttpThreat {
           origAddr
@@ -325,6 +345,7 @@ export const EVENT_LIST_QUERY = parse(`
           uri
           statusCode
           learningMethod
+          username
         }
         ... on LdapBruteForce {
           origAddr
@@ -383,6 +404,8 @@ export const EVENT_LIST_QUERY = parse(`
           respCountry
           proto
           learningMethod
+          host
+          username
         }
         ... on PortScan {
           origAddr
@@ -434,6 +457,8 @@ export const EVENT_LIST_QUERY = parse(`
           respCountry
           proto
           learningMethod
+          host
+          username
         }
         ... on TorConnectionConn {
           origAddr
@@ -453,6 +478,7 @@ export const EVENT_LIST_QUERY = parse(`
         ... on WindowsThreat {
           attackKind
           learningMethod
+          user
         }
       }
       totalCount

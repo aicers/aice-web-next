@@ -277,6 +277,8 @@ export default async function DetectionPage({
       source: t("results.csvHeaders.source"),
       destination: t("results.csvHeaders.destination"),
       sensor: t("results.csvHeaders.sensor"),
+      userName: t("results.csvHeaders.userName"),
+      hostname: t("results.csvHeaders.hostname"),
     },
     recommendedFilter: t("savedRail.recommended"),
     savedFilters: t("savedRail.saved"),

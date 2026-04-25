@@ -245,9 +245,19 @@ Each detection event renders as a compact two-line entry:
   policy count) when triage scores are present.
 - **Line 2** — `source endpoint → destination endpoint`, each
   endpoint formatted as `IP[:port] (country)`, followed by the
-  sensor name. Subtypes whose source or destination is an array
-  show the first entry plus a `+N more` button; clicking the
-  button opens an inline popover listing every hidden IP or port.
+  sensor name and a fixed pair of identity cells: a
+  `User: <username>` cell and a `Host: <hostname>` cell. Subtypes
+  whose source or destination is an array show the first entry
+  plus a `+N more` button; clicking the button opens an inline
+  popover listing every hidden IP or port. The user / host cells
+  are pivotable when the event subtype emits the underlying field
+  per the REview schema — see the [Pivot section](#pivot-drill-down-from-result-cells)
+  for the full list of subtypes that emit each field. Subtypes
+  that do not emit the field render the cell as a non-pivotable
+  `User: —` / `Host: —` token so the column position stays stable
+  across the list and the operator can tell that the row simply
+  has no identity to pivot on (rather than guessing whether the
+  column was hidden).
 
 Severity, time, and kind are present for every event subtype.
 Source IP+port and destination IP+port are present for every
@@ -332,15 +342,32 @@ The pivotable cells in v1:
 | Source IP               | `endpoints` with `direction: FROM` (new entry)     |
 | Destination IP          | `endpoints` with `direction: TO` (new entry)       |
 | Country code            | `countries` (add unique)                           |
+| User name (`User: …`)   | `userNames` (add unique)                           |
+| Hostname (`Host: …`)    | `hostnames` (add unique)                           |
 
-The pivot engine also recognises the `hostname`, `userId`,
-`userName`, `userDepartment`, and `direction` columns, but the
-Phase Detection-9 result row does not yet render them as
-dedicated cells. Once those columns appear (planned alongside the
-column-density work), they will pick up the same affordance with
-no further plumbing — `buildPivotPatch` already maps them to the
-matching `hostnames` / `userIds` / `userNames` /
-`userDepartments` / `directions` filter arrays.
+The user / host identity cells follow the sensor on the second
+line of every row. The cell is pivotable when the event subtype
+emits the underlying field per the REview schema:
+
+- **userName** — HTTP-class events (`HttpThreat`, `BlocklistHttp`,
+  `DomainGenerationAlgorithm`, `NonBrowser`, `TorConnection`) and
+  `BlocklistNtlm` carry `username`; `BlocklistRadius` carries the
+  camelCase outlier `userName`; the FTP plain-text family
+  (`BlocklistFtp`, `FtpPlainText`) and `WindowsThreat` carry the
+  documented-as-Username `user` field.
+- **hostname** — HTTP-class events carry `host`; `BlocklistNtlm`
+  carries `hostname`.
+
+Subtypes outside that set render the cell as a non-pivotable
+dash (`User: —` / `Host: —`) so the column position stays stable
+across the list and the click affordance is suppressed because
+there is no value to merge into the active filter.
+
+Three more columns the pivot engine recognises — `userId`,
+`userDepartment`, and `direction` (`FlowKind`) — are tracked in
+[issue #348](https://github.com/aicers/aice-web-next/issues/348)
+and will only become actionable once REview extends the per-event
+payload to include them. They are not surfaced in the row today.
 
 A click that would only re-narrow the **active tab** by a value it
 already carries shows a transient toast — `Already filtered by X`
@@ -856,14 +883,18 @@ in the same order:
 | `Source` | originator endpoint, `IP[:port] (CC)` — country code inlined as in the result row |
 | `Destination` | responder endpoint, `IP[:port] (CC)` — country code inlined as in the result row |
 | `Sensor` | sensor name |
+| `User` | username for subtypes that emit `username` / `userName` / `user` (HTTP-class threats, `BlocklistNtlm`, `BlocklistRadius`, `BlocklistFtp`, `FtpPlainText`, `WindowsThreat`); empty otherwise |
+| `Host` | hostname for subtypes that emit `host` / `hostname` (HTTP-class threats, `BlocklistNtlm`); empty otherwise |
 
 The column order is taken from the result row reading order: the
 severity badge, time, kind, attack kind, category, and confidence
 on the top line; the triage summary token; then the source → destination
-endpoints and the sensor on the lines below. Triage is emitted as a
-single cell (matching the UI's `TriageSummary`), not split across
-two columns, so a reader can line the CSV up against what the result
-list shows without re-ordering.
+endpoints and the sensor on the lines below; finally the trailing
+`User` and `Host` identity columns, which mirror the `User: …` /
+`Host: …` cells the row renders after the sensor. Triage is emitted
+as a single cell (matching the UI's `TriageSummary`), not split
+across two columns, so a reader can line the CSV up against what
+the result list shows without re-ordering.
 
 Subtypes that don't carry a given field render the cell as
 empty — the column position is preserved, so two-sided spreadsheet

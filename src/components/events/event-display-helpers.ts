@@ -25,6 +25,26 @@ export interface EventAddressing {
 }
 
 /**
+ * Loose identity shape carried by the curated `Event` subtypes that
+ * carry a Username or Host/Hostname per the schema. The result row
+ * renders these as Phase Detection-28 identity columns (#347): the
+ * userName cell reads `username` (HTTP-class threat events,
+ * BlocklistNtlm), the camelCase `userName` field (BlocklistRadius —
+ * spelled differently from the lowercase form the other subtypes
+ * use), or the documented-as-Username `user` field (BlocklistFtp,
+ * FtpPlainText, WindowsThreat). The hostname cell reads `host`
+ * (HTTP-class) or `hostname` (BlocklistNtlm). Subtypes that do not
+ * carry either field surface `null` here and the row falls back to
+ * a non-pivotable `—` token. #348 tracks the deferred `userId`,
+ * `userDepartment`, and `direction` columns whose schema support
+ * does not exist in the per-event payload yet.
+ */
+export interface EventIdentity {
+  userName: string | null;
+  hostname: string | null;
+}
+
+/**
  * Read the addressing fields off any `Event` subtype, falling back
  * to nulls / empty arrays for fields the subtype doesn't carry.
  * The union of fields lives in `EVENT_LIST_QUERY`.
@@ -60,6 +80,43 @@ export function readEventAddressing(event: Event | EventBase): EventAddressing {
     proto: typeof e.proto === "number" ? e.proto : null,
     attackKind: e.attackKind ?? null,
   };
+}
+
+/**
+ * Read the identity (userName / hostname) fields off any `Event`
+ * subtype. The schema spreads the userName slot across three
+ * different field names — `username` (HTTP-class, BlocklistNtlm),
+ * `userName` (BlocklistRadius — the lone camelCase outlier), and
+ * `user` (BlocklistFtp / FtpPlainText / WindowsThreat) — and the
+ * hostname slot across `host` (HTTP-class) and `hostname`
+ * (BlocklistNtlm). This helper normalizes the lookup once so the
+ * row renderer and CSV export consume the same shape. Empty
+ * strings collapse to `null` so the row's `—` fallback fires for
+ * subtypes whose schema field is present but the upstream payload
+ * left it blank (REview returns `String!` so the field is always
+ * serialized; only the contents tell us whether it carries useful
+ * data).
+ */
+export function readEventIdentity(event: Event | EventBase): EventIdentity {
+  const e = event as Partial<{
+    username: string;
+    userName: string;
+    user: string;
+    host: string;
+    hostname: string;
+  }>;
+  const userRaw = e.username ?? e.userName ?? e.user ?? null;
+  const hostRaw = e.host ?? e.hostname ?? null;
+  return {
+    userName: stringOrNull(userRaw),
+    hostname: stringOrNull(hostRaw),
+  };
+}
+
+function stringOrNull(value: string | null): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /**

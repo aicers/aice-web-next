@@ -79,7 +79,7 @@ describe("createCsvExportStream", () => {
           cursor: `c${i}`,
           node: EVENT,
         })),
-        nodes: [],
+        nodes: Array.from({ length: 5 }, () => EVENT),
         totalCount: "10",
       })
       .mockResolvedValueOnce({
@@ -88,7 +88,7 @@ describe("createCsvExportStream", () => {
           cursor: `d${i}`,
           node: EVENT,
         })),
-        nodes: [],
+        nodes: Array.from({ length: 5 }, () => EVENT),
         totalCount: "10",
       });
 
@@ -129,7 +129,7 @@ describe("createCsvExportStream", () => {
         cursor: `c${i}`,
         node: EVENT,
       })),
-      nodes: [],
+      nodes: Array.from({ length: 5 }, () => EVENT),
       totalCount: "10000",
     });
 
@@ -174,7 +174,7 @@ describe("createCsvExportStream", () => {
         cursor: `c${i}`,
         node: EVENT,
       })),
-      nodes: [],
+      nodes: Array.from({ length: 5 }, () => EVENT),
       totalCount: "10000",
     });
 
@@ -324,5 +324,84 @@ describe("createCsvExportStream", () => {
     expect(pageResolves).toBe(0);
     // No additional pages were attempted after the abort.
     expect(mockSearchEvents).toHaveBeenCalledTimes(1);
+  });
+
+  // `EVENT_LIST_QUERY` only selects the per-typename inline fragments
+  // (addressing fields, identity fields, etc.) under the `nodes` path
+  // — `edges.node` carries the bare common interface fields. Streaming
+  // CSV rows from `edges.node` would emit the new `User` / `Host`
+  // identity columns empty even when the row's typename emits those
+  // fields, because the request never asked for them on `edges.node`.
+  // This regression locks the producer to read from `connection.nodes`
+  // by mocking the two sibling paths with deliberately divergent
+  // shapes: identity-bearing rich nodes under `nodes`, and bare
+  // common-field nodes under `edges`. If the producer drifts back to
+  // iterating `edges`, the assertion on the `User` / `Host` cells in
+  // the streamed body fails.
+  it("streams identity columns from connection.nodes, not edges.node", async () => {
+    const RICH_HTTP_THREAT = {
+      __typename: "HttpThreat",
+      time: "2026-04-22T00:00:00.000Z",
+      sensor: "sensor-1",
+      confidence: 0.8,
+      category: null,
+      level: "LOW",
+      triageScores: null,
+      origAddr: "10.0.0.5",
+      origPort: 4444,
+      respAddr: "10.0.0.6",
+      respPort: 80,
+      username: "alice",
+      host: "example.test",
+    };
+    const COMMON_FIELDS_ONLY = {
+      __typename: "HttpThreat",
+      time: "2026-04-22T00:00:00.000Z",
+      sensor: "sensor-1",
+      confidence: 0.8,
+      category: null,
+      level: "LOW",
+      triageScores: null,
+    };
+    mockSearchEvents.mockResolvedValueOnce({
+      pageInfo: { hasNextPage: false, endCursor: null },
+      // `edges.node` mirrors what the EVENT_LIST_QUERY actually selects
+      // there — interface-level fields only, no identity fragments.
+      edges: [{ cursor: "c0", node: COMMON_FIELDS_ONLY }],
+      // `nodes` carries the rich per-typename selection set — this is
+      // where `username` / `host` arrive in the real response.
+      nodes: [RICH_HTTP_THREAT],
+      totalCount: "1",
+    });
+
+    const { createCsvExportStream } = await import(
+      "@/lib/detection/export-stream"
+    );
+    const stream = createCsvExportStream({
+      session: buildSession(),
+      filter: FILTER,
+      headers: HEADERS,
+      formatRowOptions: ROW_OPTIONS,
+    });
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) body += decoder.decode(value, { stream: true });
+    }
+    body += decoder.decode();
+
+    const lines = body.split("\r\n").filter((line) => line.length > 0);
+    expect(lines).toHaveLength(2); // header + 1 data row
+    const dataRow = lines[1];
+    // The trailing two columns are `User` and `Host` per
+    // `CSV_COLUMN_KEYS` / `DEFAULT_CSV_HEADERS`. They must reflect
+    // the values from `connection.nodes` — not the empty values the
+    // bare `edges.node` shape would produce.
+    const cells = dataRow.split(",");
+    expect(cells[cells.length - 2]).toBe("alice");
+    expect(cells[cells.length - 1]).toBe("example.test");
   });
 });
