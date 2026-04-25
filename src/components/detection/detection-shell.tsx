@@ -469,19 +469,23 @@ export const ENDPOINT_CHIP_FOCUS: FilterChipFocus = "endpoints";
  *
  * The contract (Reviewer Round 12): bump `queryEpoch` and close
  * Quick peek at dispatch time, not after the replacement slice
- * lands. `ResultList` keeps painting the previous rows while
- * `loading` is true as long as it still has events, so deferring
- * either reset until the response lands leaves a window during
- * the round-trip where:
+ * lands. For Refresh (same-filter re-fetch) `ResultList` keeps
+ * painting the previous rows while `loading` is true as long as it
+ * still has events — so deferring either reset until the response
+ * lands leaves a window during the round-trip where:
  *
- * - the chip bar and URL already describe the newly committed
- *   filter, but
  * - the Quick peek inspector (and its **Open investigation**
- *   button) is still pinned to a row the committed filter no
- *   longer describes, and
+ *   button) is still pinned to a row the fresh slice may no
+ *   longer return, and
  * - `EventRow` / `MorePopover` state from the stale slice can be
  *   reconciled onto the replacement slice because `queryEpoch`
  *   hasn't advanced yet.
+ *
+ * For Apply and chip × the retained-slice window does not exist:
+ * `runQueryFor` clears events / pagination synchronously before
+ * calling this helper so the tab's durable state never observes
+ * "new filter + old rows/cursor" (see Reviewer Round 3 on the
+ * multi-tab wrapper).
  *
  * Reviewer Round 3 added `clearQuickPeekUrl`: closing the in-
  * memory peek alone leaves the tab URL carrying a stale
@@ -513,6 +517,58 @@ export function applyCommitDispatchReset(setters: {
     setters.clearQuickPeekUrl?.({ hadPeek: prev !== null });
     return null;
   });
+}
+
+/**
+ * State updates that must fire synchronously when a filter-
+ * transitioning dispatch (Apply / chip ×) begins — before the async
+ * REview round-trip resolves. Reviewer Round 3: without these, a
+ * tab-switch taken mid-flight parks a transient snapshot
+ * `{ filter: NEW, pagination: OLD_CURSOR, events: OLD_ROWS,
+ * loading: true }` into the multi-tab wrapper. Two visible failures
+ * follow:
+ *
+ * - The wrapper's loading-stripping remount path renders OLD rows
+ *   as a ready cached result for the NEW filter, violating the
+ *   "each tab is a filter + result pair" contract from #281.
+ * - The wrapper's URL effect rewrites the address from the
+ *   snapshot and reintroduces stale `after=` / `before=` / `last=`
+ *   params on top of the newly committed filter.
+ *
+ * Resetting at dispatch time makes the transition atomic from the
+ * tab model's perspective: the tab's durable state flows
+ * `{ filter: NEW, pagination: HEAD, events: [], loading: true }`
+ * → `{ ..., events: FRESH, loading: false }` — never through a
+ * "new filter + old rows/cursor" midpoint.
+ *
+ * Refresh deliberately does NOT route through this helper: it
+ * re-runs the *current* filter at the *current* page, so clearing
+ * rows would flash a skeleton and break the "update in place"
+ * contract.
+ */
+export function applyTransitionReset(
+  setters: {
+    setPagination: (next: PaginationState) => void;
+    setEvents: (next: DetectionEvent[]) => void;
+    setEventKeys: (next: string[]) => void;
+    setTotalCount: (next: string | null) => void;
+    setPageInfo: (next: PageInfo | null) => void;
+    setLastUpdatedMs: (next: number | null) => void;
+    setTotalCountRef: (next: string | null) => void;
+  },
+  args: { pageSize: PageSize },
+): void {
+  setters.setPagination({
+    pageSize: args.pageSize,
+    anchor: { kind: "head" },
+    page: 1,
+  });
+  setters.setEvents([]);
+  setters.setEventKeys([]);
+  setters.setTotalCount(null);
+  setters.setPageInfo(null);
+  setters.setLastUpdatedMs(null);
+  setters.setTotalCountRef(null);
 }
 
 export function DetectionShell({
@@ -1055,14 +1111,35 @@ export function DetectionShell({
     [labels.resultsError, writeQuickPeekToUrl, reconcileQuickPeekAgainstSlice],
   );
 
-  // Wrapper used by the Apply / chip / Refresh paths — they all
-  // reset pagination back to page 1 (head) on transition.
+  // Wrapper used by the Apply and chip × paths — both commit a new
+  // filter and reset pagination back to page 1 (head) on transition.
+  // Refresh does NOT route through here: it re-runs the *current*
+  // filter at the *current* page, so it must not clear the cached
+  // result (same-filter re-fetch) and calls `dispatchQuery` directly.
   const runQueryFor = useCallback(
     (filter: Filter) => {
       // Cancel any in-flight Go-to-page walk — its cursors were
       // derived from the superseded filter.
       latestWalkIdRef.current += 1;
       setWalking(null);
+      // Reviewer Round 3: apply the atomic-transition reset so the
+      // multi-tab wrapper's snapshot never observes "new filter + old
+      // cached rows/cursor" during the async REview round-trip. See
+      // {@link applyTransitionReset} for the full contract.
+      applyTransitionReset(
+        {
+          setPagination,
+          setEvents,
+          setEventKeys,
+          setTotalCount,
+          setPageInfo,
+          setLastUpdatedMs,
+          setTotalCountRef: (v) => {
+            totalCountRef.current = v;
+          },
+        },
+        { pageSize: pagination.pageSize },
+      );
       void dispatchQuery(filter, {
         anchor: { kind: "head" },
         pageSize: pagination.pageSize,

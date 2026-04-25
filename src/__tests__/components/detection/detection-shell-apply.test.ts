@@ -377,6 +377,79 @@ describe("applyCommitDispatchReset", () => {
   });
 });
 
+describe("applyTransitionReset — Reviewer Round 3", () => {
+  // `runQueryFor` (Apply / chip ×) routes the dispatch-time reset
+  // through this helper so the multi-tab wrapper's snapshot never
+  // observes "new filter + old cached rows/cursor" during the
+  // async REview round-trip. Without these resets a tab-switch
+  // mid-Apply parked a transient snapshot
+  // `{ filter: NEW, pagination: OLD_CURSOR, events: OLD_ROWS }`
+  // into the tab, and on switch-back the wrapper's loading-stripping
+  // remount rendered the OLD rows as a ready cached result for the
+  // NEW filter — while the URL effect reintroduced stale
+  // after= / before= / last= cursors on the new filter's URL.
+  let applyTransitionReset: ShellModule["applyTransitionReset"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    applyTransitionReset = mod.applyTransitionReset;
+  });
+
+  function runReset(args: { pageSize: 25 | 50 | 100 | 200 }) {
+    const setters = {
+      setPagination: vi.fn(),
+      setEvents: vi.fn(),
+      setEventKeys: vi.fn(),
+      setTotalCount: vi.fn(),
+      setPageInfo: vi.fn(),
+      setLastUpdatedMs: vi.fn(),
+      setTotalCountRef: vi.fn(),
+    };
+    applyTransitionReset(setters, args);
+    return setters;
+  }
+
+  it("pins pagination to HEAD + page=1 at the caller's pageSize", () => {
+    const setters = runReset({ pageSize: 50 });
+    expect(setters.setPagination).toHaveBeenCalledTimes(1);
+    expect(setters.setPagination).toHaveBeenCalledWith({
+      pageSize: 50,
+      anchor: { kind: "head" },
+      page: 1,
+    });
+  });
+
+  it("preserves a non-default page size so a tab on 200/page stays at 200 after Apply", () => {
+    // Regression: a naive reset to INITIAL_PAGINATION_STATE would
+    // silently teleport the tab back to the default pageSize on
+    // every Apply — Apply is supposed to reset the cursor, not the
+    // operator's chosen page size.
+    const setters = runReset({ pageSize: 200 });
+    const call = setters.setPagination.mock.calls[0]?.[0] as {
+      pageSize: number;
+    };
+    expect(call.pageSize).toBe(200);
+  });
+
+  it("clears events / eventKeys / totalCount / pageInfo so snapshots cannot retain old rows under a new filter", () => {
+    const setters = runReset({ pageSize: 50 });
+    expect(setters.setEvents).toHaveBeenCalledWith([]);
+    expect(setters.setEventKeys).toHaveBeenCalledWith([]);
+    expect(setters.setTotalCount).toHaveBeenCalledWith(null);
+    expect(setters.setPageInfo).toHaveBeenCalledWith(null);
+  });
+
+  it("clears the totalCount ref so a mid-flight tail-anchor request does not read a stale total", () => {
+    const setters = runReset({ pageSize: 50 });
+    expect(setters.setTotalCountRef).toHaveBeenCalledWith(null);
+  });
+
+  it("clears lastUpdatedMs so a mid-flight switch-back does not show a stale 'Updated Xm ago' over an empty results panel", () => {
+    const setters = runReset({ pageSize: 50 });
+    expect(setters.setLastUpdatedMs).toHaveBeenCalledWith(null);
+  });
+});
+
 describe("quickPeekResetKey", () => {
   let quickPeekResetKey: ShellModule["quickPeekResetKey"];
 

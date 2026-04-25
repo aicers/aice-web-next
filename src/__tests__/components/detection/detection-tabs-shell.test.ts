@@ -409,3 +409,53 @@ describe("buildUrlSearchForTab — Reviewer Round 2 (item 2)", () => {
     expect(search.has("event")).toBe(false);
   });
 });
+
+describe("buildUrlSearchForTab — Reviewer Round 3 (atomic transition)", () => {
+  // The shell's `applyTransitionReset` pins pagination back to
+  // HEAD + page=1 synchronously on Apply / chip ×, so a mid-flight
+  // snapshot merged into the tab never carries a stale `after=` /
+  // `before=` / `last=` cursor under the newly committed filter.
+  // The wrapper's URL effect reads from that snapshot, so this
+  // assertion also locks the URL-writer contract: no stale
+  // pagination keys can reach the URL for a transition in flight.
+  const MID_FLIGHT_TRANSITION: TabSnapshot = {
+    ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
+    // Post-reset pagination: HEAD anchor, page 1, default page size.
+    pagination: { pageSize: 50, page: 1, anchor: { kind: "head" } },
+    result: {
+      // Post-reset result cache: no rows, no pageInfo, no total,
+      // no last-updated stamp. `loading: true` models the shell
+      // mid-flight; `loading` is intentionally NOT snapshotted
+      // back into the shell on remount.
+      events: [],
+      eventKeys: [],
+      totalCount: null,
+      pageInfo: null,
+      resultError: null,
+      lastUpdatedMs: null,
+      hasQueried: true,
+      queryEpoch: 1,
+      loading: true,
+      walking: null,
+    },
+  };
+
+  it("omits after= / before= / last= cursor keys when pagination is at HEAD (the post-reset state)", () => {
+    const search = buildUrlSearchForTab(MID_FLIGHT_TRANSITION);
+    expect(search.has("after")).toBe(false);
+    expect(search.has("before")).toBe(false);
+    expect(search.has("last")).toBe(false);
+  });
+
+  it("omits the page= key when the tab is at page 1 so a transition URL does not leak a stale cursor page", () => {
+    const search = buildUrlSearchForTab(MID_FLIGHT_TRANSITION);
+    expect(search.has("page")).toBe(false);
+  });
+
+  it("still emits the full encoded filter blob so a share-this-URL reload reproduces the operator's Apply", () => {
+    const search = buildUrlSearchForTab(MID_FLIGHT_TRANSITION);
+    expect(search.has("f")).toBe(true);
+    const decoded = parseFilterFromUrlParam(search.get("f"));
+    expect(decoded?.filter).toEqual(RICH_FILTER);
+  });
+});
