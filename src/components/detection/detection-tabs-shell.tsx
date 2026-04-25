@@ -111,10 +111,16 @@ export interface DetectionTabsShellLabels {
    * Pivot feedback (Phase Detection-12). The wrapper renders the
    * transient toast that surfaces "Already filtered" /
    * "Tab cap reached" messages and the dismiss affordance label.
+   *
+   * The template strings carry ICU-style `{value}` / `{max}`
+   * placeholders that the wrapper substitutes locally — strings cross
+   * the server→client boundary cleanly, whereas closing over
+   * `useTranslations` would serialize a function and trip Next.js's
+   * "Functions cannot be passed directly to Client Components" guard.
    */
   pivot: {
-    alreadyFiltered: (args: { value: string }) => string;
-    tabCapReached: (args: { max: number }) => string;
+    alreadyFilteredTemplate: string;
+    tabCapReachedTemplate: string;
     dismissToast: string;
   };
 }
@@ -483,7 +489,10 @@ export function DetectionTabsShell({
       switch (action.kind) {
         case "toastDuplicate":
           setPivotToast(
-            labels.pivot.alreadyFiltered({ value: action.displayValue }),
+            labels.pivot.alreadyFilteredTemplate.replace(
+              "{value}",
+              action.displayValue,
+            ),
           );
           return;
         case "focusTab":
@@ -492,7 +501,12 @@ export function DetectionTabsShell({
           setFlashTabId(action.tabId);
           return;
         case "toastCapReached":
-          setPivotToast(labels.pivot.tabCapReached({ max: MAX_TABS }));
+          setPivotToast(
+            labels.pivot.tabCapReachedTemplate.replace(
+              "{max}",
+              String(MAX_TABS),
+            ),
+          );
           return;
         case "createTab": {
           const seed = createTabSnapshot({
