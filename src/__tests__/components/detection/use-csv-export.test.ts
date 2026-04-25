@@ -69,12 +69,37 @@ function resetStateEntries(initial: CsvExportStatus) {
   stateEntries.push(pendingEntry);
 }
 
+// Per-render bookkeeping for `useRef` so the same ref object is
+// returned on subsequent calls of the hook, mirroring React's own
+// guarantee. The list is reset alongside `useState` ordering before
+// each hook invocation in `loadHook`.
+const refEntries: Array<{ current: unknown }> = [];
+function resetRefEntries() {
+  refEntries.length = 0;
+}
+
 vi.mock("react", () => {
-  let idx = 0;
+  let stateIdx = 0;
+  let refIdx = 0;
   return {
     useCallback: (fn: unknown) => fn,
+    // Effects are fire-and-forget in this stub; the export hook only
+    // uses `useEffect` for an unmount-cleanup that the tests do not
+    // exercise. A no-op keeps the call site type-compatible without
+    // dragging in React's effect scheduler.
+    useEffect: (_fn: unknown, _deps?: unknown) => {},
+    useRef: <T>(initial: T) => {
+      const entry = refEntries[refIdx];
+      if (entry) {
+        refIdx += 1;
+        return entry as { current: T };
+      }
+      const fresh: { current: T } = { current: initial };
+      refEntries[refIdx++] = fresh as { current: unknown };
+      return fresh;
+    },
     useState: (initial: unknown) => {
-      const entry = stateEntries[idx++];
+      const entry = stateEntries[stateIdx++];
       if (!entry) {
         throw new Error("unexpected extra useState call");
       }
@@ -89,9 +114,10 @@ vi.mock("react", () => {
       }
       return [entry.value, entry.setter];
     },
-    // Reset the idx between hook calls.
+    // Reset the indices between hook calls.
     __resetReact: () => {
-      idx = 0;
+      stateIdx = 0;
+      refIdx = 0;
     },
   };
 });
@@ -102,6 +128,7 @@ async function loadHook() {
     __resetReact: () => void;
   };
   reactMod.__resetReact();
+  resetRefEntries();
   return mod.useCsvExport;
 }
 

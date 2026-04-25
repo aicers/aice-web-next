@@ -207,4 +207,122 @@ describe("createCsvExportStream", () => {
     const later = mockSearchEvents.mock.calls.length;
     expect(later - fetchesBeforeAbort).toBeLessThanOrEqual(1);
   });
+
+  // The pre-#342 export waited for the in-flight page to complete
+  // before checking the cancel flag, so a Cancel mid-stream still
+  // burned tens of seconds on the active REview round-trip. The fix
+  // forwards the abort signal into each `searchEvents` page request
+  // so the in-flight page rejects with `AbortError` and the loop
+  // exits within one microtask of the abort. These tests pin both
+  // halves of that contract: the signal reaches `searchEvents`, and
+  // an in-flight rejection is treated as a clean cancel rather than
+  // a producer-side error.
+  it("forwards the upstream abort signal into each searchEvents page request", async () => {
+    mockSearchEvents.mockResolvedValue({
+      pageInfo: { hasNextPage: false, endCursor: null },
+      edges: [],
+      nodes: [],
+      totalCount: "0",
+    });
+
+    const { createCsvExportStream } = await import(
+      "@/lib/detection/export-stream"
+    );
+    const controller = new AbortController();
+    const stream = createCsvExportStream({
+      session: buildSession(),
+      filter: FILTER,
+      headers: HEADERS,
+      formatRowOptions: ROW_OPTIONS,
+      signal: controller.signal,
+    });
+
+    const reader = stream.getReader();
+    await reader.read(); // header
+    await reader.read(); // forces page fetch
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+
+    // searchEvents was called with (session, filter, args, signal).
+    // The 4th argument must be the AbortSignal we passed in so that
+    // graphqlRequest can forward it to undici.
+    expect(mockSearchEvents).toHaveBeenCalled();
+    for (const call of mockSearchEvents.mock.calls) {
+      expect(call[3]).toBe(controller.signal);
+    }
+  });
+
+  it("ends the in-flight page promptly when the signal aborts mid-fetch", async () => {
+    // Simulate a slow REview page: the resolver never resolves on
+    // its own; it only rejects when the forwarded AbortSignal fires.
+    let pageResolves = 0;
+    let pageRejects = 0;
+    mockSearchEvents.mockImplementation(
+      (
+        _session: unknown,
+        _filter: unknown,
+        _args: unknown,
+        signal?: AbortSignal,
+      ) =>
+        new Promise((resolve, reject) => {
+          if (!signal) {
+            // Without forwarding, the producer would block forever.
+            // Track this so a regression to "signal not threaded"
+            // surfaces as a leaked never-resolving fetch.
+            return;
+          }
+          if (signal.aborted) {
+            pageRejects += 1;
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              pageRejects += 1;
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+          void resolve;
+          void (() => {
+            pageResolves += 1;
+          });
+        }),
+    );
+
+    const { createCsvExportStream } = await import(
+      "@/lib/detection/export-stream"
+    );
+    const controller = new AbortController();
+    const stream = createCsvExportStream({
+      session: buildSession(),
+      filter: FILTER,
+      headers: HEADERS,
+      formatRowOptions: ROW_OPTIONS,
+      signal: controller.signal,
+    });
+
+    const reader = stream.getReader();
+    await reader.read(); // header
+    const dataReadPromise = reader.read(); // triggers the in-flight page fetch
+    // Yield so the pull() loop has time to enter the awaited page.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockSearchEvents).toHaveBeenCalledTimes(1);
+
+    controller.abort();
+    // The page promise should now reject promptly with AbortError;
+    // the stream's catch block must treat it as a clean cancel
+    // (controller.close()) rather than a producer error so the next
+    // read resolves to `{ done: true }`.
+    const result = await dataReadPromise;
+    expect(result.done).toBe(true);
+    expect(pageRejects).toBe(1);
+    expect(pageResolves).toBe(0);
+    // No additional pages were attempted after the abort.
+    expect(mockSearchEvents).toHaveBeenCalledTimes(1);
+  });
 });

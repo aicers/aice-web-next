@@ -33,6 +33,23 @@ interface RequestContext {
   customerIds?: number[];
 }
 
+/**
+ * Dispatch a GraphQL request to REview through the mTLS-authenticated
+ * undici dispatcher with a freshly-signed Context JWT.
+ *
+ * `signal` is optional: pass an `AbortSignal` to cancel the in-flight
+ * request mid-flight. `graphql-request` forwards the signal to its
+ * underlying `fetch`, which in turn flows into `undiciFetch` via the
+ * spread of `init`, so abort propagates all the way to the wire (the
+ * mTLS dispatcher does not buffer the request body in a way that
+ * bypasses undici's native cancellation). Long-running operations —
+ * CSV export, large `eventList` pages, future search-language queries
+ * — should accept and forward an `AbortSignal` so a user-initiated
+ * Cancel terminates the request promptly instead of waiting for the
+ * current page to complete. Fast operations (counters, location
+ * lookups) may pass `undefined` since cancellation is not useful
+ * within their typical latency window.
+ */
 export async function graphqlRequest<
   TData,
   TVars extends Record<string, unknown> = Record<string, never>,
@@ -40,6 +57,7 @@ export async function graphqlRequest<
   document: DocumentNode,
   variables: TVars | undefined,
   context: RequestContext,
+  signal?: AbortSignal,
 ): Promise<TData> {
   // Defense-in-depth: the TypeScript signature already rejects strings, but a
   // runtime check guards against `as any` / `unknown` casts that smuggle one
@@ -62,6 +80,7 @@ export async function graphqlRequest<
     requestHeaders: {
       Authorization: `Bearer ${token}`,
     },
+    signal,
   });
 }
 

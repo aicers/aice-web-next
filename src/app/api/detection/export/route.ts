@@ -175,7 +175,11 @@ export const POST = withAuth(
     const confirmedLargeExport = body.confirmedLargeExport === true;
 
     try {
-      const totalCount = await fetchExportRowCount(session, filter);
+      const totalCount = await fetchExportRowCount(
+        session,
+        filter,
+        request.signal,
+      );
       const asNumber = Number.parseInt(totalCount, 10);
       if (Number.isFinite(asNumber) && asNumber > CSV_EXPORT_MAX_ROWS) {
         // Hard ceiling: fail loudly instead of silently truncating
