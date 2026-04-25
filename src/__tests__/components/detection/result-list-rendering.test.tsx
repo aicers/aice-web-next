@@ -264,6 +264,43 @@ describe("ResultList row rendering", () => {
     expect(html).toContain("Open investigation");
   });
 
+  it("disables the Refresh button in `empty-prequery` so a `+`-created tab cannot bypass Apply (issue #281, Reviewer Round 7)", () => {
+    // A new tab seeded by `+` lands in `empty-prequery` until Apply
+    // runs the first query. The header Refresh affordance must stay
+    // disabled in that state — otherwise a click on Refresh would
+    // dispatch the seeded default filter and populate results without
+    // the operator opening the drawer / clicking Apply, contradicting
+    // #281 ("`+` does not auto-run").
+    const prequeryState: ResultListState = {
+      status: "empty-prequery",
+      events: [],
+      eventKeys: [],
+      totalCount: null,
+      range: null,
+      lastUpdatedMs: null,
+    };
+
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={prequeryState}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {
+          throw new Error(
+            "Refresh must not fire while the tab is in empty-prequery",
+          );
+        }}
+        onOpenFilters={() => {}}
+      />,
+    );
+
+    // The Refresh button renders but is disabled.
+    expect(html).toMatch(/<button[^>]*aria-label="Refresh"[^>]*disabled/);
+    // The pre-query empty-state CTA still routes the operator to the
+    // drawer.
+    expect(html).toContain("Open filters");
+  });
+
   it("drops row-open and investigate affordances while loading with a retained slice (issue #290, Reviewer Round 8)", () => {
     // Regression: during a committed-query transition (Apply / chip ×
     // / Refresh) the shell closes Quick peek at dispatch but keeps

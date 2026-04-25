@@ -228,13 +228,20 @@ function ResultListHeader({
           lastUpdatedMs={state.lastUpdatedMs}
           labels={labels}
         />
+        {/*
+         * Refresh stays disabled in `empty-prequery` so a `+`-created
+         * tab cannot run its first query without going through Apply
+         * (#281: new tabs must not auto-run).
+         */}
         <Button
           type="button"
           variant="ghost"
           size="sm"
           onClick={onRefresh}
           aria-label={labels.refresh}
-          disabled={state.status === "loading"}
+          disabled={
+            state.status === "loading" || state.status === "empty-prequery"
+          }
         >
           <RefreshCw
             className={cn(

@@ -237,7 +237,9 @@ A single header line above the list shows:
 - An **Updated _N_ ago** label that refreshes itself in the
   background so you can see how stale the current view is.
 - A **Refresh** affordance that re-runs the active filter
-  without going through the drawer.
+  without going through the drawer. Refresh is disabled on a
+  newly-created (`+`) tab until the first Apply, so the operator
+  always opens the drawer once before any results appear.
 - A **Download CSV** button that exports the active tab's
   filtered result set. See [Export to CSV](#export-to-csv)
   below for the column layout, the filename, and the large-

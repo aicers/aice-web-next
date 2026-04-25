@@ -1469,6 +1469,14 @@ export function DetectionShell({
     // bumps the queryEpoch so per-row state (MorePopover, focus) is
     // cleared, matching the dispatch-time contract for committed
     // transitions.
+    //
+    // Short-circuit when the tab has not yet run its first query: a
+    // `+`-created tab seeded with the default filter must reach its
+    // first result through Apply, not through Refresh (#281). The
+    // header button is already disabled for `empty-prequery`, but a
+    // programmatic caller (e.g. the error retry panel reused before
+    // a successful query) must not bypass the contract either.
+    if (!hasQueried) return;
     latestWalkIdRef.current += 1;
     setWalking(null);
     void dispatchQuery(committedFilter, {
@@ -1493,7 +1501,13 @@ export function DetectionShell({
         });
       }
     });
-  }, [committedFilter, dispatchQuery, pagination, persistPaginationToUrl]);
+  }, [
+    committedFilter,
+    dispatchQuery,
+    hasQueried,
+    pagination,
+    persistPaginationToUrl,
+  ]);
 
   /**
    * Walk the connection forward to `target` at `pageSize`, one
