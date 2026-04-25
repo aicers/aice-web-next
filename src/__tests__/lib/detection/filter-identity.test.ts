@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Filter } from "@/lib/detection/filter";
 import {
+  analyticsFilterIdentity,
   filterIdentitiesEqual,
   filtersAreEquivalent,
   normalizeFilterIdentity,
@@ -305,5 +306,58 @@ describe("filtersAreEquivalent / filterIdentitiesEqual", () => {
       period: "1h",
     });
     expect(filterIdentitiesEqual(a, b)).toBe(true);
+  });
+});
+
+describe("analyticsFilterIdentity", () => {
+  it("treats two windows that share a relative period chip but different ISO bounds as distinct", () => {
+    // Reviewer Round 2 (P2 freshness): re-applying `Last 1 hour`
+    // recomputes new ISO bounds but leaves the period chip the
+    // same. The pivot identity (period: "1h") would collapse both
+    // windows together; analytics must treat them as distinct so
+    // the open strip refetches against the new window.
+    const a = analyticsFilterIdentity(
+      structured({ start: ISO_A_START, end: ISO_A_END }),
+    );
+    const b = analyticsFilterIdentity(
+      structured({
+        start: "2026-04-25T05:00:00.000Z",
+        end: "2026-04-25T06:00:00.000Z",
+      }),
+    );
+    expect(a).not.toBe(b);
+    // For contrast, the pivot identity (with the period key) does
+    // collapse the two — that is the precise lossiness the
+    // analytics identity has to escape.
+    const pivotA = normalizeFilterIdentity({
+      filter: structured({ start: ISO_A_START, end: ISO_A_END }),
+      period: "1h",
+    });
+    const pivotB = normalizeFilterIdentity({
+      filter: structured({
+        start: "2026-04-25T05:00:00.000Z",
+        end: "2026-04-25T06:00:00.000Z",
+      }),
+      period: "1h",
+    });
+    expect(pivotA).toBe(pivotB);
+  });
+
+  it("returns the same identity for two structurally-identical filters", () => {
+    const a = analyticsFilterIdentity(
+      structured({
+        start: ISO_A_START,
+        end: ISO_A_END,
+        kinds: ["HttpThreat"],
+      }),
+    );
+    const b = analyticsFilterIdentity(
+      structured({
+        start: ISO_A_START,
+        end: ISO_A_END,
+        kinds: ["HttpThreat"],
+      }),
+    );
+    expect(a).toBe(b);
   });
 });

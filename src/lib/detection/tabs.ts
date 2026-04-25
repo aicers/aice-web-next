@@ -38,6 +38,12 @@
  * have to be rewritten when search-language mode lands.
  */
 
+import {
+  type AnalyticsDimension,
+  type AnalyticsTopN,
+  DEFAULT_ANALYTICS_DIMENSION,
+  DEFAULT_ANALYTICS_TOP_N,
+} from "./analytics";
 import type { EndpointEntry } from "./endpoint-filter";
 import type { Filter } from "./filter";
 import type { DetectionFilterDraft } from "./filter-draft";
@@ -162,6 +168,20 @@ export interface TabSnapshot {
    */
   readonly draft: DetectionFilterDraft | null;
   readonly analyticsOpen: boolean;
+  /**
+   * Reviewer Round 1 (P2 per-tab state): dimension currently shown
+   * in the analytics strip's selector. Survives a tab switch (the
+   * shell remounts, so without this snapshot field the selection
+   * resets to the default) and a reload (round-tripped through
+   * `tabs-storage.ts`).
+   */
+  readonly analyticsDimension: AnalyticsDimension;
+  /**
+   * Reviewer Round 1 (P2 per-tab state): Top N count currently
+   * shown in the analytics strip. Same per-tab + per-reload
+   * persistence contract as {@link analyticsDimension}.
+   */
+  readonly analyticsTopN: AnalyticsTopN;
   /**
    * Currently-open Quick peek inspector event, or null when no peek
    * is open. Stored as the full event so a tab switch can restore
@@ -308,6 +328,8 @@ export function createTabSnapshot(args: {
     pagination: args.pagination ?? INITIAL_PAGINATION_STATE,
     draft: null,
     analyticsOpen: false,
+    analyticsDimension: DEFAULT_ANALYTICS_DIMENSION,
+    analyticsTopN: DEFAULT_ANALYTICS_TOP_N,
     quickPeekEvent: null,
     pendingQuickPeekToken: null,
     result: EMPTY_RESULT_CACHE,

@@ -129,6 +129,22 @@ export function filtersAreEquivalent(
   return normalizeFilterIdentity(a) === normalizeFilterIdentity(b);
 }
 
+/**
+ * Identity used by the Phase Detection-14 analytics strip's fetch
+ * effect and in-memory cache.
+ *
+ * Intentionally diverges from the multi-tab pivot identity: it always
+ * canonicalizes the literal `start` / `end` ISO pair (i.e. `period: null`).
+ * Re-applying the same relative period chip — for example clicking
+ * `Last 1 hour` again from the drawer — recomputes new ISO bounds
+ * and replaces the result-list filter; the open analytics strip must
+ * refetch against the new window, so the period-collapsing pivot
+ * identity is too lossy here.
+ */
+export function analyticsFilterIdentity(filter: Filter): FilterIdentity {
+  return normalizeFilterIdentity({ filter, period: null });
+}
+
 interface NormalizedStructuredInput {
   /** Set when `period` is non-null. Replaces literal start / end. */
   periodKey?: PeriodKey;

@@ -453,18 +453,24 @@ test("analytics strip starts collapsed and toggles open", async ({
   await signInAndWait(page, workerUsername, workerPassword);
   await page.goto("/detection");
 
-  const toggle = page.getByRole("button", { name: /Analytics/i });
+  const toggle = page.getByRole("button", { name: /Top N & Time Series/i });
   await expect(toggle).toBeVisible({ timeout: 10_000 });
 
-  // Collapsed by default: aria-expanded="false" and panel absent.
+  // Collapsed by default: aria-expanded="false". The panel container is
+  // always in the DOM (it carries `aria-controls`), but its inner content
+  // only renders when expanded — the dimension dropdown stays hidden.
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(page.locator("#detection-analytics-panel")).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: /Dimension/i })).toHaveCount(
+    0,
+  );
 
   await toggle.click();
 
-  // After click: aria-expanded="true" and placeholder panel present.
+  // After click: aria-expanded="true" and the dimension selector renders.
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByText("Analytics will appear here.")).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: /Dimension/i }),
+  ).toBeVisible();
 });
 
 // ── Localization ─────────────────────────────────────────────────

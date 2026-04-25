@@ -588,11 +588,117 @@ anchor to the head of the new connection, because cursors are
 scoped to a single committed filter and carrying them across
 filters would point at stale positions.
 
-### Analytics strip
+### Top N & Time Series analytics
 
-Below Results, an Analytics strip is reserved for aggregate views of
-the current result set. It is collapsed by default; clicking the `▸`
-affordance reveals an empty placeholder panel in this phase.
+Below Results, an analytics strip surfaces two aggregate views of the
+active tab's filter: a **Top N** breakdown by the dimension you pick
+and an **Event frequency** time series over the filter's time range.
+
+![Detection analytics strip](../assets/detection-analytics-en.png)
+
+The strip is **collapsed by default**. Clicking the `▸ Top N & Time
+Series` affordance expands it inline below the result list. The
+result list keeps its full width and stays the focus of the page —
+expanding the strip never covers or shrinks the rows.
+
+The collapse state, the selected dimension, and the Top N count are
+**per-tab** and persist across reloads in the same browser session.
+Switching tabs re-renders the strip against the active tab's filter
+and remembers each tab's open / collapsed state, dimension, and
+count independently.
+
+#### Lazy fetching
+
+The strip does **not** hit the server while it is collapsed. The
+first time you expand it in a given tab, both queries dispatch in
+parallel. Subsequent committed filter changes (Apply, chip removal)
+re-fetch automatically while the strip is open. Re-applying the
+same relative period (e.g. clicking **Last 1 hour** again from the
+drawer) recomputes the time window, so the strip refetches against
+the new bounds even though the period chip text is unchanged.
+
+Collapsing the strip aborts any in-flight fetch. Reopening it with
+the same filter / dimension / Top N reuses the cached payload and
+skips the network round-trip; if any of those inputs changed while
+the strip was closed, the next expansion fetches fresh data. The
+**Retry** button on the error state always bypasses the cache.
+
+#### Dimension selector
+
+Pick the dimension that powers the Top N chart from the dropdown:
+
+- **Source IP** (`origAddr`)
+- **Destination IP** (`respAddr`)
+- **Country** — combined originator + responder country codes; the
+  REview sentinel codes `XX` (location unknown) and `ZZ` (location
+  database unavailable) appear with localized labels.
+- **Threat Category** — MITRE-style category labels.
+- **Threat Level** — `Low`, `Medium`, `High`.
+- **Threat Name** — the canonical event subtype name (`HttpThreat`,
+  `PortScan`, …).
+
+The **Top** selector controls how many rows the chart shows: `5`,
+`10` (default), or `20`. Each row is a horizontal bar proportional
+to the dimension's largest count.
+
+#### Event frequency time series
+
+The right-hand chart plots the event frequency for the filter's
+time range. The bucket size is auto-derived from the range:
+
+| Range | Bucket |
+|---|---|
+| ≤ 3 hours | 1 minute |
+| ≤ 1 day | 10 minutes |
+| ≤ 1 week | 1 hour |
+| ≤ 1 month | 6 hours |
+| ≤ 3 months | 1 day |
+| ≤ 1 year | 1 week |
+| larger | ~30 days |
+
+The chart's caption shows the filter's start / end (UTC, compact
+form) and the active bucket size so it is easy to read what the
+chart spans even after a filter edit.
+
+#### Pivoting from chart rows
+
+For the dimensions whose values map cleanly onto a single
+`EventListFilterInput` field — Source IP, Destination IP, Threat
+Category, Threat Level, and Threat Name — clicking a Top N row
+opens (or focuses) a tab narrowed to that value. The behaviour
+matches the result-list pivot contract from
+[Pivot (drill-down) from result cells](#pivot-drill-down-from-result-cells):
+already-narrowed filters surface a "Already filtered by …" toast
+instead of duplicating a tab. Country rows are not clickable
+because REview's `eventCountsByCountry` mixes originator and
+responder rows and a single click cannot decide between
+`origCountry` and `respCountry`.
+
+#### Loading, empty, and error states
+
+The strip surfaces its own panel for each transient state, distinct
+from the result list:
+
+- **Loading** — both queries are in flight.
+- **Empty** — both queries returned zero rows. The strip recommends
+  broadening the filter rather than the result list's "open
+  filters" affordance, because the result list is already showing
+  the same zero-events condition.
+- **Error** — REview rejected one of the queries; a `Retry` button
+  re-issues the pair without affecting the result list.
+- **Forbidden** — your account lacks `detection:read`. The same
+  permission already gates the result list, so this state is
+  reached only when the role changes between the page load and the
+  strip's first expansion.
+
+#### Chart implementation note
+
+The Top N chart and the event-frequency time series both render via
+[Recharts](https://recharts.org/). Recharts also ships
+`<FunnelChart>`, `<Sankey>`, and stacked `<Bar stackId>`, which is
+the criterion the upcoming Triage menu funnel view requires — so
+the same dependency will cover both phases without introducing a
+second charting library.
 
 ## Filter drawer
 

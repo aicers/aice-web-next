@@ -147,6 +147,8 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       pagination: { ...INITIAL_PAGINATION_STATE, page: 5 },
       draft: null,
       analyticsOpen: true,
+      analyticsDimension: "srcIp",
+      analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
       result: {
@@ -173,6 +175,42 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
     expect(merged.result.queryEpoch).toBe(7);
   });
 
+  // Reviewer Round 1 (P2 per-tab state): the multi-tab wrapper has to
+  // persist the analytics selector so a tab switch / reload restores
+  // the operator's chosen dimension / Top N. The snapshot merge is
+  // the bridge from live shell state into the React `tabs` array.
+  it("copies analyticsDimension and analyticsTopN from the snapshot into the tab", () => {
+    const tab = createTabSnapshot({ filter: RICH_FILTER, period: "1h" });
+    const snapshot: DetectionShellStateSnapshot = {
+      filter: RICH_FILTER,
+      period: "1h",
+      endpoints: [],
+      pivotOnly: {},
+      pagination: INITIAL_PAGINATION_STATE,
+      draft: null,
+      analyticsOpen: true,
+      analyticsDimension: "country",
+      analyticsTopN: 20,
+      quickPeekEvent: null,
+      pendingQuickPeekToken: null,
+      result: {
+        events: [],
+        eventKeys: [],
+        totalCount: "0",
+        pageInfo: null,
+        resultError: null,
+        lastUpdatedMs: 1_700_000_000_000,
+        hasQueried: true,
+        queryEpoch: 1,
+        loading: false,
+        walking: null,
+      },
+    };
+    const merged = mergeSnapshot(tab, snapshot);
+    expect(merged.analyticsDimension).toBe("country");
+    expect(merged.analyticsTopN).toBe(20);
+  });
+
   it("preserves the existing tab id, name, and manual-rename bit", () => {
     const tab: TabSnapshot = {
       ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
@@ -187,6 +225,8 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       pagination: INITIAL_PAGINATION_STATE,
       draft: null,
       analyticsOpen: false,
+      analyticsDimension: "srcIp",
+      analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
       result: {
@@ -326,6 +366,8 @@ describe("routeSnapshotToTab — Reviewer Round 2 (item 1)", () => {
       pagination: INITIAL_PAGINATION_STATE,
       draft: null,
       analyticsOpen: false,
+      analyticsDimension: "srcIp",
+      analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
       result: {
@@ -547,6 +589,8 @@ describe("mergeSnapshot — Reviewer Round 9 (pending token round-trip)", () => 
       pagination: INITIAL_PAGINATION_STATE,
       draft: null,
       analyticsOpen: false,
+      analyticsDimension: "srcIp",
+      analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: "pending-token-xyz",
       result: {
@@ -580,6 +624,8 @@ describe("mergeSnapshot — Reviewer Round 9 (pending token round-trip)", () => 
       pagination: INITIAL_PAGINATION_STATE,
       draft: null,
       analyticsOpen: false,
+      analyticsDimension: "srcIp",
+      analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
       result: {
@@ -625,6 +671,33 @@ describe("mergeStoredTabsOnRehydrate — Reviewer Round 6 (item 1)", () => {
     const stored = [tabA, tabB, tabC];
     const merged = mergeStoredTabsOnRehydrate([tabB], stored);
     expect(merged.map((t) => t.id)).toEqual([tabA.id, tabB.id, tabC.id]);
+  });
+
+  // Reviewer Round 1 (P2 per-tab state): the rehydrate merge has to
+  // promote the stored tab's analytics dimension / Top N onto the
+  // fresh URL bootstrap, otherwise the operator would see the
+  // selector reset to the default after every reload.
+  it("restores analyticsDimension and analyticsTopN from the matched stored slot onto the bootstrap", () => {
+    const stored: TabSnapshot = {
+      ...tabB,
+      analyticsOpen: true,
+      analyticsDimension: "country",
+      analyticsTopN: 20,
+    };
+    const bootstrap: TabSnapshot = {
+      ...tabB,
+      analyticsOpen: false,
+      analyticsDimension: "srcIp",
+      analyticsTopN: 10,
+    };
+    const merged = mergeStoredTabsOnRehydrate(
+      [bootstrap],
+      [tabA, stored, tabC],
+    );
+    const slot = merged.find((t) => t.id === tabB.id);
+    expect(slot?.analyticsOpen).toBe(true);
+    expect(slot?.analyticsDimension).toBe("country");
+    expect(slot?.analyticsTopN).toBe(20);
   });
 
   it("uses the bootstrap's URL-authoritative filter for the matched slot", () => {
