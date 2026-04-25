@@ -28,6 +28,7 @@ import {
   buildDefaultTabSnapshot,
   buildUrlSearchForTab,
   mergeSnapshot,
+  mergeStoredTabsOnRehydrate,
   routeSnapshotToTab,
 } from "@/components/detection/detection-tabs-shell";
 import type { Filter } from "@/lib/detection/filter";
@@ -407,6 +408,80 @@ describe("buildUrlSearchForTab — Reviewer Round 2 (item 2)", () => {
     const tab = createTabSnapshot({ filter: RICH_FILTER, period: "1h" });
     const search = buildUrlSearchForTab(tab);
     expect(search.has("event")).toBe(false);
+  });
+});
+
+describe("mergeStoredTabsOnRehydrate — Reviewer Round 6 (item 1)", () => {
+  // The previous shape always returned [bootstrap, ...others], which
+  // moved the active tab to the front of the bar on every reload —
+  // breaking the "Reload restores the tab set and active index"
+  // acceptance item and changing neighbour-close semantics.
+  const tabA = createTabSnapshot({
+    filter: { mode: "structured", input: { start: "A", end: "A" } },
+    period: "1h",
+  });
+  const tabB = createTabSnapshot({
+    filter: { mode: "structured", input: { start: "B", end: "B" } },
+    period: "12h",
+  });
+  const tabC = createTabSnapshot({
+    filter: { mode: "structured", input: { start: "C", end: "C" } },
+    period: "1d",
+  });
+
+  it("preserves stored order when the URL bootstrap matches a non-front stored slot", () => {
+    // URL bootstrap is B (the previously active tab). Stored order is
+    // [A, B, C]. Without the fix the merged list would have been
+    // [B, A, C]; with the fix it stays [A, B, C].
+    const stored = [tabA, tabB, tabC];
+    const merged = mergeStoredTabsOnRehydrate([tabB], stored);
+    expect(merged.map((t) => t.id)).toEqual([tabA.id, tabB.id, tabC.id]);
+  });
+
+  it("uses the bootstrap's URL-authoritative filter for the matched slot", () => {
+    // The reload's `?f=` blob may carry an updated filter (e.g. an
+    // Apply that committed right before the reload). The merge keeps
+    // that filter — only the UX-only fields (name, manualName, draft,
+    // analyticsOpen) come from the stored slot.
+    const bootstrap: TabSnapshot = {
+      ...tabB,
+      filter: {
+        mode: "structured",
+        input: { start: "B-applied", end: "B-applied" },
+      },
+    };
+    const stored = [tabA, { ...tabB, name: "Renamed", manualName: true }, tabC];
+    const merged = mergeStoredTabsOnRehydrate([bootstrap], stored);
+    const slot = merged.find((t) => t.id === tabB.id);
+    expect(slot?.filter).toEqual(bootstrap.filter);
+    expect(slot?.name).toBe("Renamed");
+    expect(slot?.manualName).toBe(true);
+  });
+
+  it("prepends the bootstrap when no stored tab matches (shared-link landing on a session with tabs)", () => {
+    const bootstrap = createTabSnapshot({
+      filter: { mode: "structured", input: { start: "shared", end: "shared" } },
+      period: "1h",
+    });
+    const merged = mergeStoredTabsOnRehydrate([bootstrap], [tabA, tabB]);
+    expect(merged.map((t) => t.id)).toEqual([bootstrap.id, tabA.id, tabB.id]);
+  });
+
+  it("caps the merged list at MAX_TABS so a legacy > 8 payload still loads", () => {
+    const many = Array.from({ length: 12 }, (_, i) =>
+      createTabSnapshot({
+        filter: { mode: "structured", input: { start: `${i}`, end: `${i}` } },
+        period: "1h",
+      }),
+    );
+    const merged = mergeStoredTabsOnRehydrate([many[0]], many);
+    expect(merged.length).toBe(8);
+    // The matched slot survives — it's at index 0 of the stored list.
+    expect(merged[0].id).toBe(many[0].id);
+  });
+
+  it("returns the bootstrap list unchanged when the bootstrap is empty", () => {
+    expect(mergeStoredTabsOnRehydrate([], [tabA])).toEqual([]);
   });
 });
 

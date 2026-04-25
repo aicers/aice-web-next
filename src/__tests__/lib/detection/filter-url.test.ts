@@ -162,6 +162,202 @@ describe("serializeFilterToUrlParam / parseFilterFromUrlParam", () => {
   });
 });
 
+describe("parseFilterFromUrlParam — Reviewer Round 6 (item 2) deep validation", () => {
+  // `?f=` is shareable URL input; a malformed payload that previously
+  // passed the shallow `isFilter` check could crash later helpers (e.g.
+  // chip / draft helpers calling `.filter(...)` on `categories: string`).
+  // The decoder now coerces every EventListFilterInput field to its
+  // schema-declared shape, dropping anything that doesn't match.
+  it("drops a non-array `categories` field rather than crashing", () => {
+    const encoded = btoaUrl(
+      JSON.stringify({
+        v: 1,
+        filter: {
+          mode: "structured",
+          input: {
+            start: "2026-04-25T00:00:00.000Z",
+            end: "2026-04-25T01:00:00.000Z",
+            categories: "not-an-array",
+          },
+        },
+      }),
+    );
+    const decoded = parseFilterFromUrlParam(encoded);
+    expect(decoded?.filter.mode).toBe("structured");
+    if (decoded?.filter.mode !== "structured") return;
+    expect(decoded.filter.input.categories).toBeUndefined();
+    expect(decoded.filter.input.start).toBe("2026-04-25T00:00:00.000Z");
+    expect(decoded.filter.input.end).toBe("2026-04-25T01:00:00.000Z");
+  });
+
+  it("drops non-string entries from string array fields", () => {
+    const encoded = btoaUrl(
+      JSON.stringify({
+        v: 1,
+        filter: {
+          mode: "structured",
+          input: {
+            keywords: ["valid", 42, null, "also-valid", { nested: true }],
+            hostnames: "not-an-array",
+            kinds: ["HttpThreat", 99],
+          },
+        },
+      }),
+    );
+    const decoded = parseFilterFromUrlParam(encoded);
+    if (decoded?.filter.mode !== "structured") {
+      throw new Error("expected structured filter");
+    }
+    expect(decoded.filter.input.keywords).toEqual(["valid", "also-valid"]);
+    expect(decoded.filter.input.hostnames).toBeUndefined();
+    expect(decoded.filter.input.kinds).toEqual(["HttpThreat"]);
+  });
+
+  it("drops non-finite numbers from levels and the confidence bounds", () => {
+    const encoded = btoaUrl(
+      JSON.stringify({
+        v: 1,
+        filter: {
+          mode: "structured",
+          input: {
+            levels: [3, "two", null, Number.NaN, 1],
+            confidenceMin: "abc",
+            confidenceMax: 0.9,
+          },
+        },
+      }),
+    );
+    const decoded = parseFilterFromUrlParam(encoded);
+    if (decoded?.filter.mode !== "structured") {
+      throw new Error("expected structured filter");
+    }
+    expect(decoded.filter.input.levels).toEqual([3, 1]);
+    expect(decoded.filter.input.confidenceMin).toBeUndefined();
+    expect(decoded.filter.input.confidenceMax).toBe(0.9);
+  });
+
+  it("drops unknown enum values from directions and learningMethods", () => {
+    const encoded = btoaUrl(
+      JSON.stringify({
+        v: 1,
+        filter: {
+          mode: "structured",
+          input: {
+            directions: ["INBOUND", "SIDEWAYS", "OUTBOUND"],
+            learningMethods: ["UNSUPERVISED", "BOGUS"],
+          },
+        },
+      }),
+    );
+    const decoded = parseFilterFromUrlParam(encoded);
+    if (decoded?.filter.mode !== "structured") {
+      throw new Error("expected structured filter");
+    }
+    expect(decoded.filter.input.directions).toEqual(["INBOUND", "OUTBOUND"]);
+    expect(decoded.filter.input.learningMethods).toEqual(["UNSUPERVISED"]);
+  });
+
+  it("drops endpoints with missing or wrong-typed fields rather than crashing downstream", () => {
+    const encoded = btoaUrl(
+      JSON.stringify({
+        v: 1,
+        filter: {
+          mode: "structured",
+          input: {
+            endpoints: [
+              {
+                direction: "FROM",
+                custom: { hosts: ["1.1.1.1"], networks: [], ranges: [] },
+              },
+              "not-an-object",
+              { direction: "FROM", custom: { hosts: 42 } },
+            ],
+          },
+        },
+      }),
+    );
+    const decoded = parseFilterFromUrlParam(encoded);
+    if (decoded?.filter.mode !== "structured") {
+      throw new Error("expected structured filter");
+    }
+    expect(decoded.filter.input.endpoints).toHaveLength(2);
+    expect(decoded.filter.input.endpoints?.[0].direction).toBe("FROM");
+    expect(decoded.filter.input.endpoints?.[0].custom?.hosts).toEqual([
+      "1.1.1.1",
+    ]);
+    // The non-array `hosts: 42` is coerced to an empty array rather
+    // than passing the string straight through to the BFF.
+    expect(decoded.filter.input.endpoints?.[1].direction).toBe("FROM");
+    expect(decoded.filter.input.endpoints?.[1].custom?.hosts).toEqual([]);
+  });
+
+  it("drops the top-level `endpoints` array entries that are missing required fields", () => {
+    const encoded = btoaUrl(
+      JSON.stringify({
+        v: 1,
+        filter: {
+          mode: "structured",
+          input: {},
+        },
+        endpoints: [
+          {
+            id: "ep-ok",
+            raw: "10.1.1.1",
+            kind: "host",
+            host: "10.1.1.1",
+            direction: "SOURCE",
+            selected: true,
+          },
+          { id: "ep-no-kind", raw: "x", direction: "BOTH", selected: true },
+          { id: "ep-bad-dir", raw: "x", kind: "host", direction: "BOGUS" },
+          "not-an-object",
+        ],
+      }),
+    );
+    const decoded = parseFilterFromUrlParam(encoded);
+    expect(decoded?.endpoints).toHaveLength(1);
+    expect(decoded?.endpoints[0].id).toBe("ep-ok");
+  });
+
+  it("rejects an unknown period rather than passing it through as a string", () => {
+    const encoded = btoaUrl(
+      JSON.stringify({
+        v: 1,
+        filter: { mode: "structured", input: {} },
+        period: "not-a-period",
+      }),
+    );
+    const decoded = parseFilterFromUrlParam(encoded);
+    expect(decoded?.period).toBeNull();
+  });
+
+  it("returns a structured filter with all fields stripped rather than null when input is empty-after-coercion", () => {
+    // Even if every field was malformed, an empty input is a valid
+    // filter. The decoder downgrades to that rather than null so the
+    // page renders the default-window result instead of the legacy
+    // pivot fallback.
+    const encoded = btoaUrl(
+      JSON.stringify({
+        v: 1,
+        filter: {
+          mode: "structured",
+          input: {
+            categories: "bad",
+            levels: "bad",
+            kinds: 42,
+          },
+        },
+      }),
+    );
+    const decoded = parseFilterFromUrlParam(encoded);
+    expect(decoded).not.toBeNull();
+    if (decoded?.filter.mode !== "structured") {
+      throw new Error("expected structured filter");
+    }
+    expect(decoded.filter.input).toEqual({});
+  });
+});
+
 describe("buildSearchParamsForFilter", () => {
   it("emits a single `?f=` param carrying the encoded blob", () => {
     const search = buildSearchParamsForFilter({

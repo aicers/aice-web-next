@@ -285,32 +285,28 @@ export function DetectionTabsShell({
   );
 
   // Rehydrate additional tabs from sessionStorage on mount. URL is
-  // the source of truth for the active tab, so the bootstrap tab
-  // stays anchored; any session-stored tab with the same id is
-  // collapsed into the bootstrap (its UX state merged in), and
-  // every other stored tab is appended as dormant. `MAX_TABS` caps
-  // the final list so a legacy payload with > 8 tabs still loads.
-  // Runs once on mount; subsequent session writes flow through the
-  // persistence effect below.
+  // the source of truth for the active tab's filter and result, so
+  // the bootstrap tab's filter / period / pagination / result win;
+  // sessionStorage supplies the rest of the tab list and the
+  // bootstrap's UX-only fields (name, manualName, draft,
+  // analyticsOpen). `MAX_TABS` caps the final list so a legacy
+  // payload with > 8 tabs still loads. Runs once on mount;
+  // subsequent session writes flow through the persistence effect
+  // below.
+  //
+  // Reviewer Round 6 (item 1): when the URL bootstrap id matches a
+  // stored tab, replace that tab's slot in-place so the stored tab
+  // order is preserved. The previous shape always returned
+  // `[mergedBootstrap, ...others]`, which moved the active tab to
+  // the front of the bar on every reload — breaking the "Reload
+  // restores the tab set and active index" acceptance item and
+  // changing neighbour-close semantics after each reload (closing
+  // the active tab now activated whoever just got bumped to index
+  // 1, not the original neighbour).
   useEffect(() => {
     const stored = readTabsFromSession();
     if (!stored) return;
-    setTabs((prev) => {
-      const bootstrap = prev[0];
-      if (!bootstrap) return prev;
-      const matchingActive = stored.tabs.find((t) => t.id === bootstrap.id);
-      const others = stored.tabs.filter((t) => t.id !== bootstrap.id);
-      const mergedBootstrap: TabSnapshot = matchingActive
-        ? {
-            ...bootstrap,
-            name: matchingActive.name,
-            manualName: matchingActive.manualName,
-            draft: matchingActive.draft,
-            analyticsOpen: matchingActive.analyticsOpen,
-          }
-        : bootstrap;
-      return [mergedBootstrap, ...others].slice(0, MAX_TABS);
-    });
+    setTabs((prev) => mergeStoredTabsOnRehydrate(prev, stored.tabs));
   }, []);
 
   // Persist tab state to sessionStorage on every relevant change.
@@ -554,6 +550,41 @@ export function routeSnapshotToTab(
   return prev.map((t) =>
     t.id === targetTabId ? mergeSnapshot(t, snapshot) : t,
   );
+}
+
+/**
+ * Merge the bootstrap tab (URL-authoritative filter / period /
+ * pagination / result) with the previously stored tab list, used by
+ * the mount-time rehydration effect. When the bootstrap id matches a
+ * stored tab the slot is replaced in-place so the saved order is
+ * preserved (Reviewer Round 6 item 1); otherwise the bootstrap is
+ * prepended and stored tabs ride alongside as dormant siblings (a
+ * shared link landing in a session that already has tabs).
+ *
+ * Pure helper so tests can pin the merge contract independently of
+ * React's effect ordering.
+ */
+export function mergeStoredTabsOnRehydrate(
+  bootstrapTabs: readonly TabSnapshot[],
+  storedTabs: readonly TabSnapshot[],
+): TabSnapshot[] {
+  const bootstrap = bootstrapTabs[0];
+  if (!bootstrap) return [...bootstrapTabs];
+  const matchIndex = storedTabs.findIndex((t) => t.id === bootstrap.id);
+  if (matchIndex >= 0) {
+    const matched = storedTabs[matchIndex];
+    const mergedBootstrap: TabSnapshot = {
+      ...bootstrap,
+      name: matched.name,
+      manualName: matched.manualName,
+      draft: matched.draft,
+      analyticsOpen: matched.analyticsOpen,
+    };
+    const next = [...storedTabs];
+    next[matchIndex] = mergedBootstrap;
+    return next.slice(0, MAX_TABS);
+  }
+  return [bootstrap, ...storedTabs].slice(0, MAX_TABS);
 }
 
 /** Seed a TabSnapshot from the server page's SSR'd bootstrap tab. */

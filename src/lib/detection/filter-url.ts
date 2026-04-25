@@ -24,8 +24,16 @@
 
 import type { EndpointEntry } from "./endpoint-filter";
 import type { Filter } from "./filter";
-import type { PeriodKey } from "./period";
-import type { EventListFilterInput } from "./types";
+import { PERIOD_KEYS, type PeriodKey } from "./period";
+import type {
+  EndpointInput,
+  EventListFilterInput,
+  FlowKind,
+  HostNetworkGroupInput,
+  IpRangeInput,
+  LearningMethod,
+  TrafficDirection,
+} from "./types";
 import type { PivotFilterParams } from "./url-filters";
 
 /** URL search-param key for the encoded filter blob. */
@@ -85,6 +93,18 @@ export function serializeFilterToUrlParam(args: EncodedTabFilter): string {
  * Decode a `?f=` param. Returns `null` when the value is absent,
  * malformed, or carries an unknown version — callers fall back to the
  * legacy pivot-param parser in that case.
+ *
+ * Reviewer Round 6 (item 2): the decoder deep-validates the
+ * structured filter shape rather than handing the raw object straight
+ * through. `?f=` is shareable URL input, so any caller can craft a
+ * malformed payload — for example
+ * `{filter: {mode: "structured", input: {categories: "not-an-array"}}}`
+ * — that previously passed the shallow `mode + input` check and then
+ * crashed later when chip / draft helpers called array methods on the
+ * coerced field. The coercion below drops every field that does not
+ * match the {@link EventListFilterInput} contract so the worst a bad
+ * link can do is silently downgrade to the default filter, never
+ * throw inside a render.
  */
 export function parseFilterFromUrlParam(
   raw: string | null | undefined,
@@ -103,10 +123,12 @@ export function parseFilterFromUrlParam(
     return null;
   }
   if (!isPayloadV1(parsed)) return null;
+  const filter = coerceFilter(parsed.filter);
+  if (!filter) return null;
   return {
-    filter: parsed.filter,
-    period: parsed.period ?? null,
-    endpoints: Array.isArray(parsed.endpoints) ? parsed.endpoints : [],
+    filter,
+    period: coercePeriodKey(parsed.period),
+    endpoints: coerceEndpointEntries(parsed.endpoints),
     pivotExtras: pickPivotExtras(parsed.pivotExtras ?? {}),
   };
 }
@@ -186,6 +208,206 @@ function isFilter(value: unknown): value is Filter {
     return typeof (v as { text?: unknown }).text === "string";
   }
   return false;
+}
+
+/**
+ * Reviewer Round 6 (item 2): coerce a parsed `?f=` payload's filter
+ * field into a strict {@link Filter}. The shallow `isFilter` check
+ * only verifies `mode` and that `input` is an object — it would
+ * happily pass `{ categories: "not-an-array" }` straight through to
+ * the chip / draft helpers, where `.filter(...)` on a string then
+ * throws inside the render. The coercion below walks every
+ * `EventListFilterInput` field and drops any that does not match the
+ * generated schema's type. Returns `null` only when the outer shape
+ * is unrecoverable (unknown mode, missing query text); a structured
+ * filter with all fields stripped is still a valid filter.
+ */
+function coerceFilter(value: unknown): Filter | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as { mode?: unknown; input?: unknown; text?: unknown };
+  if (v.mode === "structured") {
+    if (!v.input || typeof v.input !== "object") return null;
+    return {
+      mode: "structured",
+      input: coerceEventListFilterInput(v.input),
+    };
+  }
+  if (v.mode === "query") {
+    if (typeof v.text !== "string") return null;
+    return { mode: "query", text: v.text };
+  }
+  return null;
+}
+
+const FLOW_KIND_VALUES = new Set<FlowKind>(["INBOUND", "OUTBOUND", "INTERNAL"]);
+const LEARNING_METHOD_VALUES = new Set<LearningMethod>([
+  "UNSUPERVISED",
+  "SEMI_SUPERVISED",
+]);
+const TRAFFIC_DIRECTION_VALUES = new Set<TrafficDirection>(["FROM", "TO"]);
+
+function coerceEventListFilterInput(value: object): EventListFilterInput {
+  const v = value as Record<string, unknown>;
+  const out: EventListFilterInput = {};
+  if (typeof v.start === "string") out.start = v.start;
+  if (typeof v.end === "string") out.end = v.end;
+  if (typeof v.source === "string") out.source = v.source;
+  if (typeof v.destination === "string") out.destination = v.destination;
+  const stringArrayFields = [
+    "customers",
+    "keywords",
+    "networkTags",
+    "sensors",
+    "os",
+    "devices",
+    "hostnames",
+    "userIds",
+    "userNames",
+    "userDepartments",
+    "countries",
+    "kinds",
+    "triagePolicies",
+  ] as const;
+  for (const key of stringArrayFields) {
+    const arr = filterStringArray(v[key]);
+    if (arr) out[key] = arr;
+  }
+  const numberArrayFields = ["levels"] as const;
+  for (const key of numberArrayFields) {
+    const arr = filterNumberArray(v[key]);
+    if (arr) out[key] = arr;
+  }
+  if (Array.isArray(v.categories)) {
+    out.categories = v.categories.filter(
+      (item): item is number | null =>
+        item === null || typeof item === "number",
+    );
+  }
+  if (Array.isArray(v.directions)) {
+    out.directions = v.directions.filter(
+      (item): item is FlowKind =>
+        typeof item === "string" && FLOW_KIND_VALUES.has(item as FlowKind),
+    );
+  }
+  if (Array.isArray(v.learningMethods)) {
+    out.learningMethods = v.learningMethods.filter(
+      (item): item is LearningMethod =>
+        typeof item === "string" &&
+        LEARNING_METHOD_VALUES.has(item as LearningMethod),
+    );
+  }
+  if (typeof v.confidenceMin === "number" && Number.isFinite(v.confidenceMin)) {
+    out.confidenceMin = v.confidenceMin;
+  }
+  if (typeof v.confidenceMax === "number" && Number.isFinite(v.confidenceMax)) {
+    out.confidenceMax = v.confidenceMax;
+  }
+  if (Array.isArray(v.endpoints)) {
+    const eps = v.endpoints
+      .map(coerceEndpointInput)
+      .filter((ep): ep is EndpointInput => ep !== null);
+    if (eps.length > 0) out.endpoints = eps;
+  }
+  return out;
+}
+
+function filterStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function filterNumberArray(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter(
+    (item): item is number => typeof item === "number" && Number.isFinite(item),
+  );
+}
+
+function coerceEndpointInput(value: unknown): EndpointInput | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const out: EndpointInput = {};
+  if (
+    typeof v.direction === "string" &&
+    TRAFFIC_DIRECTION_VALUES.has(v.direction as TrafficDirection)
+  ) {
+    out.direction = v.direction as TrafficDirection;
+  } else if (v.direction === null) {
+    out.direction = null;
+  }
+  if (typeof v.predefined === "string") out.predefined = v.predefined;
+  const custom = coerceHostNetworkGroup(v.custom);
+  if (custom) out.custom = custom;
+  return out;
+}
+
+function coerceHostNetworkGroup(value: unknown): HostNetworkGroupInput | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  return {
+    hosts: filterStringArray(v.hosts) ?? [],
+    networks: filterStringArray(v.networks) ?? [],
+    ranges: Array.isArray(v.ranges)
+      ? v.ranges.map(coerceIpRange).filter((r): r is IpRangeInput => r !== null)
+      : [],
+  };
+}
+
+function coerceIpRange(value: unknown): IpRangeInput | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.start !== "string" || typeof v.end !== "string") return null;
+  return { start: v.start, end: v.end };
+}
+
+function coercePeriodKey(value: unknown): PeriodKey | null {
+  if (typeof value !== "string") return null;
+  return PERIOD_KEYS.includes(value as PeriodKey) ? (value as PeriodKey) : null;
+}
+
+/**
+ * Coerce the raw `endpoints` array on the payload into a clean
+ * {@link EndpointEntry}[] — these are the rich client-side entries
+ * that drive the Network/IP advanced panel, distinct from the
+ * generated `EndpointInput[]` that ship inside `filter.input`.
+ */
+function coerceEndpointEntries(value: unknown): EndpointEntry[] {
+  if (!Array.isArray(value)) return [];
+  const out: EndpointEntry[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const c = candidate as Record<string, unknown>;
+    if (typeof c.id !== "string") continue;
+    if (typeof c.raw !== "string") continue;
+    if (c.kind !== "host" && c.kind !== "range" && c.kind !== "network") {
+      continue;
+    }
+    if (
+      c.direction !== "BOTH" &&
+      c.direction !== "SOURCE" &&
+      c.direction !== "DESTINATION"
+    ) {
+      continue;
+    }
+    if (typeof c.selected !== "boolean") continue;
+    const entry: EndpointEntry = {
+      id: c.id,
+      raw: c.raw,
+      kind: c.kind,
+      direction: c.direction,
+      selected: c.selected,
+    };
+    if (c.kind === "host" && typeof c.host === "string") entry.host = c.host;
+    if (c.kind === "network" && typeof c.network === "string") {
+      entry.network = c.network;
+    }
+    if (c.kind === "range") {
+      const range = coerceIpRange(c.range);
+      if (range) entry.range = range;
+    }
+    out.push(entry);
+  }
+  return out;
 }
 
 function base64UrlEncode(input: string): string {
