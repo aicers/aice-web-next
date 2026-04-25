@@ -586,6 +586,43 @@ export function applyTransitionReset(
 }
 
 /**
+ * Reviewer Round 5: invalidate any in-flight committed-query dispatch
+ * (paginator step / Apply / Refresh) and any in-flight Go-to-page
+ * walk by advancing the monotonic ids that gate their late-arrival
+ * checks. Used by the shell's unmount cleanup so an Apply / Refresh
+ * / paginator click that the operator started in tab A — and then
+ * abandoned by switching to tab B before the response landed —
+ * cannot run global URL side effects under the next tab's id.
+ *
+ * Without the bump the resolved request still passes the request-id
+ * check inside `dispatchQuery` and runs:
+ *
+ * - {@link reconcileQuickPeekAgainstSlice}, which can strip the
+ *   currently-active tab's `?event=` token; and
+ * - the `navigateTo` / `handleRefresh` continuations, which call
+ *   `persistPaginationToUrl` to rewrite the URL from the unmounted
+ *   shell's filter / pagination while `preserveActiveTabParam`
+ *   copies the **current** `?tab=`. The address bar then ends up
+ *   with B's tab id paired with A's filter / page, and reload or
+ *   share reproduces the wrong active tab state.
+ *
+ * Bumping both ids on unmount short-circuits the in-flight callback
+ * so abandoned requests cannot touch global URL state; the resumed
+ * shell on switch-back owns the replacement query and URL via
+ * {@link shouldResumeQueryOnMount}.
+ *
+ * Extracted as a pure helper so the unmount contract can be unit-
+ * tested without standing up the shell's full client runtime.
+ */
+export function invalidateInFlightOnUnmount(refs: {
+  latestRequestIdRef: { current: number };
+  latestWalkIdRef: { current: number };
+}): void {
+  refs.latestRequestIdRef.current += 1;
+  refs.latestWalkIdRef.current += 1;
+}
+
+/**
  * Reviewer Round 4 (item 1): true when a freshly-mounted shell's
  * snapshot indicates the prior shell instance had a committed query
  * in flight.
@@ -1217,6 +1254,21 @@ export function DetectionShell({
       page: initialPagination.page,
       navigating: true,
     });
+  }, []);
+
+  // Reviewer Round 5: invalidate any in-flight dispatch / walk on
+  // unmount. The multi-tab wrapper unmounts the shell on tab switch;
+  // without the bump, an Apply / Refresh / paginator request started
+  // in tab A still passes the request-id check after tab B has taken
+  // over and runs global URL side effects under B's `?tab=`. See
+  // {@link invalidateInFlightOnUnmount} for the full contract.
+  useEffect(() => {
+    return () => {
+      invalidateInFlightOnUnmount({
+        latestRequestIdRef,
+        latestWalkIdRef,
+      });
+    };
   }, []);
 
   const handleApply = useCallback(

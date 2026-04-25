@@ -450,6 +450,64 @@ describe("applyTransitionReset — Reviewer Round 3", () => {
   });
 });
 
+describe("invalidateInFlightOnUnmount — Reviewer Round 5", () => {
+  // The multi-tab wrapper unmounts the shell on tab switch. An Apply
+  // / Refresh / paginator request that was in flight when the switch
+  // happened still resolves into the unmounted shell's closures —
+  // and would otherwise pass the `latestRequestIdRef` / walk-id
+  // checks and run global URL side effects (Quick peek strip,
+  // pagination persist) under the **next** tab's `?tab=`. Bumping
+  // both refs on unmount short-circuits those continuations so the
+  // operator's address bar cannot end up with B's tab id paired
+  // with A's filter / page.
+  let invalidateInFlightOnUnmount: ShellModule["invalidateInFlightOnUnmount"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    invalidateInFlightOnUnmount = mod.invalidateInFlightOnUnmount;
+  });
+
+  it("advances the request id so an in-flight dispatch is dropped", () => {
+    // Regression: without the bump, the resolved Promise's success
+    // branch passes `latestRequestIdRef.current === requestId` and
+    // calls `reconcileQuickPeekAgainstSlice`, which mutates the
+    // currently-active tab's `?event=` URL token.
+    const refs = {
+      latestRequestIdRef: { current: 4 },
+      latestWalkIdRef: { current: 0 },
+    };
+    invalidateInFlightOnUnmount(refs);
+    expect(refs.latestRequestIdRef.current).toBe(5);
+  });
+
+  it("advances the walk id so a Go-to-page walker drops its remaining steps", () => {
+    // Regression: a multi-step walk's `persistPaginationToUrl` call
+    // is gated on `latestWalkIdRef.current === walkId`. Without the
+    // bump the walker would also write the unmounted tab's filter
+    // into the URL under the new active tab's id.
+    const refs = {
+      latestRequestIdRef: { current: 0 },
+      latestWalkIdRef: { current: 7 },
+    };
+    invalidateInFlightOnUnmount(refs);
+    expect(refs.latestWalkIdRef.current).toBe(8);
+  });
+
+  it("advances both ids in a single call", () => {
+    // The cleanup fires once per unmount and must invalidate every
+    // continuation that gates on either id; otherwise a paginator
+    // walk in flight at unmount-time could still touch the URL even
+    // though the next dispatch was correctly dropped.
+    const refs = {
+      latestRequestIdRef: { current: 1 },
+      latestWalkIdRef: { current: 1 },
+    };
+    invalidateInFlightOnUnmount(refs);
+    expect(refs.latestRequestIdRef.current).toBe(2);
+    expect(refs.latestWalkIdRef.current).toBe(2);
+  });
+});
+
 describe("shouldResumeQueryOnMount — Reviewer Round 4 (item 1)", () => {
   // When the operator applies a filter in tab A and switches to tab B
   // before the request resolves, the wrapper unmounts tab A's shell.
