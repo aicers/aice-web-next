@@ -229,7 +229,11 @@ describe("bootstrapTabToSnapshot — Reviewer Round 1 (item 3)", () => {
     expect(tab.result.lastUpdatedMs ?? 0).toBeGreaterThanOrEqual(before);
   });
 
-  it("leaves lastUpdatedMs / hasQueried unset when the SSR query errored", () => {
+  it("marks hasQueried true (with no lastUpdatedMs) when the SSR query errored — Reviewer Round 8 (item 1)", () => {
+    // The bootstrap tab always attempts the first query, so a
+    // failure still counts as "this tab has run a query". Without
+    // this, the Round 7 `!hasQueried` guard on `handleRefresh` would
+    // strand the error panel's Retry button as a no-op.
     const tab = bootstrapTabToSnapshot({
       id: "boot",
       filter: RICH_FILTER,
@@ -244,7 +248,8 @@ describe("bootstrapTabToSnapshot — Reviewer Round 1 (item 3)", () => {
         pageInfo: null,
       },
     });
-    expect(tab.result.hasQueried).toBe(false);
+    expect(tab.result.hasQueried).toBe(true);
+    expect(tab.result.resultError).toBe("boom");
     expect(tab.result.lastUpdatedMs).toBeNull();
   });
 

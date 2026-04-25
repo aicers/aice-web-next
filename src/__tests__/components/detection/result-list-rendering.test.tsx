@@ -301,6 +301,39 @@ describe("ResultList row rendering", () => {
     expect(html).toContain("Open filters");
   });
 
+  it("keeps the Refresh button enabled in the `error` state so a failed bootstrap query can be retried (issue #281, Reviewer Round 8 item 1)", () => {
+    // Page entry always attempts the first query. When that fails,
+    // `bootstrapTabToSnapshot` now marks the tab as `hasQueried`
+    // (without setting `lastUpdatedMs`), so the result list lands on
+    // `status: "error"` rather than `empty-prequery`. The header
+    // Refresh affordance must stay enabled in that state — otherwise
+    // both it and the in-panel Retry button (which share the same
+    // `onRefresh` handler) would render as visible-but-dead controls.
+    const errorState: ResultListState = {
+      status: "error",
+      events: [],
+      eventKeys: [],
+      totalCount: null,
+      range: null,
+      lastUpdatedMs: null,
+    };
+
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={errorState}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onOpenFilters={() => {}}
+      />,
+    );
+
+    // The Refresh button renders without the `disabled` attribute.
+    expect(html).toMatch(/<button[^>]*aria-label="Refresh"(?![^>]*disabled)/);
+    // The error panel still surfaces the in-panel Retry CTA.
+    expect(html).toContain("Retry");
+  });
+
   it("drops row-open and investigate affordances while loading with a retained slice (issue #290, Reviewer Round 8)", () => {
     // Regression: during a committed-query transition (Apply / chip ×
     // / Refresh) the shell closes Quick peek at dispatch but keeps

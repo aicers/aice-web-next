@@ -1473,9 +1473,13 @@ export function DetectionShell({
     // Short-circuit when the tab has not yet run its first query: a
     // `+`-created tab seeded with the default filter must reach its
     // first result through Apply, not through Refresh (#281). The
-    // header button is already disabled for `empty-prequery`, but a
-    // programmatic caller (e.g. the error retry panel reused before
-    // a successful query) must not bypass the contract either.
+    // header button is already disabled for `empty-prequery`, so this
+    // mostly guards programmatic callers. Reviewer Round 8 (item 1):
+    // a bootstrap tab whose initial auto-query failed is *not*
+    // `!hasQueried` — `bootstrapTabToSnapshot` marks it `hasQueried`
+    // so the in-panel Retry button (which calls back through this
+    // handler) can re-issue the query against the same filter /
+    // anchor instead of being a no-op.
     if (!hasQueried) return;
     latestWalkIdRef.current += 1;
     setWalking(null);

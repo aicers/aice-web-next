@@ -154,7 +154,10 @@ navigation does not lose your work:
   pagination, drawer draft, analytics expansion), so a reload
   restores all the tabs you had open. Cached events are not
   persisted — inactive tabs return to the pre-query empty
-  state on reload and you click Apply / Refresh to re-populate.
+  state on reload and you click **Apply** to re-populate.
+  Refresh stays disabled for a tab in the pre-query empty
+  state (matching the `+`-affordance "no auto-run" rule), so
+  the first query after rehydrate always goes through Apply.
 
 Because shareable URL state is narrower than private session
 state, the split is documented in the persistence module so

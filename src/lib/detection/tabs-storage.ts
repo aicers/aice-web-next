@@ -16,7 +16,10 @@
  *   on its own — persisting N tabs' worth of events would risk a
  *   quota exception every Apply. The shell sets `hasQueried: false`
  *   on rehydrated inactive tabs so the operator sees the pre-query
- *   empty state and can click Apply / Refresh to populate.
+ *   empty state and clicks Apply to populate. Refresh is intentionally
+ *   disabled in that state (matching the `+`-affordance "no auto-run"
+ *   contract from #281), so the first post-rehydrate query for an
+ *   inactive tab always goes through Apply.
  * - The Quick peek selection (held on the URL via `?event=`, scoped
  *   to the active tab).
  *

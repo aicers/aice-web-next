@@ -25,7 +25,10 @@
  *   activated rather than show stale events from a prior session. The
  *   shell flips `hasQueried` back to `false` on rehydrated inactive
  *   tabs so the pre-query empty state invites the operator to click
- *   Apply or Refresh.
+ *   Apply. Refresh is intentionally disabled while a tab is in the
+ *   pre-query empty state (matching the `+`-affordance "no auto-run"
+ *   contract from #281), so the first post-rehydrate query always
+ *   goes through Apply.
  *
  * A tab's `filter` is the abstract `Filter` from Phase Detection-2 —
  * a discriminated union `{ mode: "structured"; input } | { mode:

@@ -591,7 +591,20 @@ export function mergeStoredTabsOnRehydrate(
 export function bootstrapTabToSnapshot(
   initialTab: DetectionTabsShellProps["initialTab"],
 ): TabSnapshot {
-  const hasQueried =
+  // Reviewer Round 8 (item 1): the page entry always attempts the
+  // first query — see `searchEventsAtAnchor` in
+  // `src/app/[locale]/(dashboard)/detection/page.tsx`. Both the
+  // success and the failure case count as "this tab has run a query",
+  // so `hasQueried` is true on either branch. Keeping it tied to a
+  // successful `totalCount` would strand a transient backend failure
+  // on the bootstrap tab in the error panel: the Round 7 `!hasQueried`
+  // guard on `handleRefresh` would short-circuit both the header
+  // Refresh button and the error-state Retry button, leaving the
+  // operator with visible retry controls that do nothing. The
+  // `+`-affordance flow runs `buildDefaultTabSnapshot`, which keeps
+  // `hasQueried: false` for the genuine "never queried" case the
+  // Round 7 guard protects.
+  const succeededFirstQuery =
     initialTab.result.error === null && initialTab.result.totalCount !== null;
   return {
     id: initialTab.id,
@@ -611,8 +624,8 @@ export function bootstrapTabToSnapshot(
       totalCount: initialTab.result.totalCount,
       pageInfo: initialTab.result.pageInfo,
       resultError: initialTab.result.error,
-      lastUpdatedMs: hasQueried ? Date.now() : null,
-      hasQueried,
+      lastUpdatedMs: succeededFirstQuery ? Date.now() : null,
+      hasQueried: succeededFirstQuery || initialTab.result.error !== null,
       queryEpoch: 0,
       loading: false,
       walking: null,
