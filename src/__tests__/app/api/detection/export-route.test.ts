@@ -76,11 +76,12 @@ function buildSession(): AuthSession {
   };
 }
 
-function makeRequest(body: unknown): NextRequest {
+function makeRequest(body: unknown, signal?: AbortSignal): NextRequest {
   return new NextRequest("http://localhost:3000/api/detection/export", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
 }
 
@@ -510,6 +511,76 @@ describe("POST /api/detection/export", () => {
     expect(disposition).not.toContain('evil.csv"');
     expect(disposition).toMatch(/^attachment; filename="detection-events_/);
     expect(disposition).toContain("last-1h");
+  });
+
+  // The route forwards `request.signal` into both `fetchExportRowCount`
+  // and `createCsvExportStream`, so a client disconnect (or an explicit
+  // `controller.abort()` from the export hook) propagates all the way
+  // through `searchEvents` → `graphqlRequest` → undici. Without that
+  // wiring the route would still finish whichever REview page was
+  // in-flight — the regression #342 fixed.
+  it("forwards request.signal into searchEvents calls", async () => {
+    const event = {
+      __typename: "HttpThreat",
+      time: "2026-04-22T00:00:00.000Z",
+      sensor: "sensor-1",
+      confidence: 0.8,
+      category: null,
+      level: "LOW",
+      triageScores: null,
+      origAddr: "10.0.0.5",
+      respAddr: "10.0.0.6",
+    };
+    mockSearchEvents
+      .mockResolvedValueOnce({
+        pageInfo: { hasNextPage: false, endCursor: null },
+        edges: [],
+        nodes: [],
+        totalCount: "1",
+      })
+      .mockResolvedValueOnce({
+        pageInfo: { hasNextPage: false, endCursor: null },
+        edges: [{ cursor: "a", node: event }],
+        nodes: [event],
+        totalCount: "1",
+      });
+
+    const { POST } = await import("@/app/api/detection/export/route");
+    const controller = new AbortController();
+
+    const res = await POST(
+      makeRequest(
+        {
+          filter: VALID_FILTER,
+          headers: buildHeaders(),
+          formatRowOptions: ROW_OPTIONS,
+        },
+        controller.signal,
+      ),
+      { params: Promise.resolve({}) },
+    );
+    expect(res.status).toBe(200);
+    // Drain the body so the streaming page actually fires.
+    await res.text();
+
+    // searchEvents is called twice: once for the count probe and once
+    // for the streaming page. Both must receive a non-null AbortSignal
+    // that is wired to the request's signal so an in-flight REview
+    // round-trip aborts immediately when the client disconnects.
+    // Identity check is unreliable because NextRequest wraps the
+    // underlying signal with its own AbortSignal — assert abort
+    // propagation instead.
+    expect(mockSearchEvents).toHaveBeenCalledTimes(2);
+    for (const call of mockSearchEvents.mock.calls) {
+      const observed = call[3] as AbortSignal | undefined;
+      expect(observed).toBeInstanceOf(AbortSignal);
+      expect(observed?.aborted).toBe(false);
+    }
+    controller.abort();
+    for (const call of mockSearchEvents.mock.calls) {
+      const observed = call[3] as AbortSignal;
+      expect(observed.aborted).toBe(true);
+    }
   });
 
   it("allows the export when confirmedLargeExport is true even at the threshold", async () => {

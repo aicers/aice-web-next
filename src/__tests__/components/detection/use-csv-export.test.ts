@@ -302,4 +302,72 @@ describe("useCsvExport — Reviewer Round 10 local gating", () => {
     // synchronously and the server's 409 / 413 remains the backstop.
     expect(startSavePickerMock).toHaveBeenCalledTimes(1);
   });
+
+  // Closing the Chromium Save-As picker, dismissing the large-export
+  // confirmation dialog, or unmounting the export hook each abort the
+  // in-flight fetch via the per-request AbortController. That abort
+  // surfaces as a fetch rejection inside `runExport`'s try/catch — the
+  // hook must distinguish "we cancelled this ourselves" from a real
+  // network failure and silently return to `idle` so the operator does
+  // not see a spurious error banner. Without this branch, every Cancel
+  // flashed an "export failed" message even though the user had just
+  // walked away. See `use-csv-export.ts` lines 281-291.
+  it("returns to idle without surfacing an error when the in-flight fetch aborts", async () => {
+    const { fetchMock } = setup();
+    // First start the picker promise; then make fetch hang until the
+    // controller fires, at which point it rejects with AbortError.
+    startSavePickerMock.mockReturnValue(new Promise(() => {}));
+    fetchMock.mockImplementation(
+      (_url: string, init: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return;
+          if (signal.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+
+    const useCsvExport = await loadHook();
+    const options = {
+      buildPayload: makePayload,
+      errorMessage: "export failed",
+      getKnownTotalCount: () => null,
+    };
+    const hook = useCsvExport(options);
+
+    hook.start();
+    // After the click the hook is in `running` while the fetch hangs.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const fetchInit = fetchMock.mock.calls[0][1] as { signal?: AbortSignal };
+    expect(fetchInit.signal).toBeInstanceOf(AbortSignal);
+
+    // Re-render so the latest hook closure observes the running state,
+    // then dismiss the confirmation. This path calls `abortInFlight()`,
+    // which fires the AbortController the running fetch is wired to.
+    const reactMod = (await import("react")) as unknown as {
+      __resetReact: () => void;
+    };
+    reactMod.__resetReact();
+    const hookAfterRunning = useCsvExport(options);
+    hookAfterRunning.cancelConfirmation();
+
+    // Yield twice so runExport's catch block has time to observe the
+    // AbortError and flip the status back to idle.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const [statusEntry] = stateEntries as [StateEntry<CsvExportStatus>];
+    expect(statusEntry.value.kind).toBe("idle");
+    expect(fetchInit.signal?.aborted).toBe(true);
+  });
 });
