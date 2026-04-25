@@ -60,6 +60,16 @@ function labels(): ResultListLabels {
       RESOURCE_DEVELOPMENT: "Resource Development",
     },
     attackKindLabel: "Attack:",
+    pivotActivate: ({ label, value }) => `Filter by ${label}: ${value}`,
+    pivotColumnLabels: {
+      origAddr: "Source IP",
+      respAddr: "Destination IP",
+      origCountry: "Source country",
+      respCountry: "Destination country",
+      level: "Level",
+      category: "Category",
+      kind: "Kind",
+    },
   };
 }
 
@@ -384,6 +394,212 @@ describe("ResultList row rendering", () => {
     expect(html).toContain("HTTP Threat");
     expect(html).not.toContain("Open quick peek");
     expect(html).not.toContain("Open investigation");
+  });
+});
+
+describe("ResultList pivot affordances (Reviewer Round 1)", () => {
+  // Round 1 feedback: the pivot button wiring on result cells (issue
+  // #283 acceptance: "Pivotable cell values render as clickable
+  // affordances [...] keyboard-focusable") had no React-surface
+  // tests. The pure pivot logic (`buildPivotPatch`,
+  // `applyPivotPatch`, `openPivotTab`) was covered, but a regression
+  // that dropped the `<button>` wrapper or the `data-slot` /
+  // aria-label plumbing would still pass. These tests lock the
+  // structural contract so a refactor cannot collapse the cell back
+  // into a plain `<span>` without failing here.
+
+  function pivotableHttpThreatRow(): Event {
+    return baseEvent({
+      __typename: "HttpThreat",
+      origAddr: "10.0.0.5",
+      origPort: 1234,
+      respAddr: "203.0.113.45",
+      respPort: 443,
+      origCountry: "KR",
+      respCountry: "US",
+      level: "HIGH",
+      category: "LATERAL_MOVEMENT",
+    } as unknown as Partial<Event>);
+  }
+
+  it("renders pivotable cells (level / kind / category / origAddr / respAddr / origCountry / respCountry) as `<button>` elements when `onPivot` is wired", () => {
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([pivotableHttpThreatRow()])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    // Each pivotable column renders a button carrying the structural
+    // data-slot attribute so the chip set can be located in the DOM.
+    const slotMatches = html.match(/data-slot="detection-pivot-cell"/g);
+    // Level + kind + category + origAddr + respAddr + origCountry +
+    // respCountry = 7 cells for a fully-addressable HttpThreat row.
+    expect(slotMatches?.length ?? 0).toBeGreaterThanOrEqual(7);
+    // All matches must be on `<button>` elements — never `<span>` —
+    // so the operator can activate them with mouse, Enter, or Space.
+    expect(html).toMatch(
+      /<button[^>]*type="button"[^>]*data-slot="detection-pivot-cell"/,
+    );
+    expect(html).not.toMatch(/<span[^>]*data-slot="detection-pivot-cell"/);
+  });
+
+  it("renders pivot buttons with localized aria-labels for each pivotable column", () => {
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([pivotableHttpThreatRow()])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    // The labels fixture renders `pivotActivate({label, value})` as
+    // "Filter by <label>: <value>"; assert one a11y label per column.
+    expect(html).toContain('aria-label="Filter by Level: High"');
+    expect(html).toContain('aria-label="Filter by Kind: HTTP Threat"');
+    expect(html).toContain('aria-label="Filter by Category: Lateral Movement"');
+    expect(html).toContain('aria-label="Filter by Source IP: 10.0.0.5"');
+    expect(html).toContain(
+      'aria-label="Filter by Destination IP: 203.0.113.45"',
+    );
+    expect(html).toContain('aria-label="Filter by Source country: KR"');
+    expect(html).toContain('aria-label="Filter by Destination country: US"');
+  });
+
+  it("does NOT render pivotable cells as buttons when `onPivot` is undefined (single-tab / standalone shell paths)", () => {
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([pivotableHttpThreatRow()])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+      />,
+    );
+
+    // No pivot cell is emitted at all — the rendering helper falls
+    // through to the children-only branch when `onPivot` is missing.
+    expect(html).not.toContain('data-slot="detection-pivot-cell"');
+    // No pivot aria-labels either — the verbatim text path doesn't
+    // wrap children in a button, so screen readers see the badge /
+    // value text directly without a "Filter by …" affordance.
+    expect(html).not.toMatch(/aria-label="Filter by/);
+  });
+
+  it("hides the country pivot for the sentinel codes `XX` / `ZZ` (issue #283 — country pivots are no-ops for unknown / unavailable)", () => {
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          baseEvent({
+            __typename: "HttpThreat",
+            origAddr: "10.0.0.5",
+            origPort: 1234,
+            respAddr: "203.0.113.45",
+            respPort: 443,
+            origCountry: "XX",
+            respCountry: "ZZ",
+          } as unknown as Partial<Event>),
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    // The localised sentinel display strings still render as plain
+    // text (so the operator sees the row), but no pivot button is
+    // wrapped around them — clicking would be a useless no-op.
+    expect(html).toContain("(??)");
+    expect(html).toContain("(—)");
+    expect(html).not.toMatch(/aria-label="Filter by Source country: XX"/);
+    expect(html).not.toMatch(/aria-label="Filter by Destination country: ZZ"/);
+  });
+
+  it("never nests a pivot button inside the row-open overlay button (invalid HTML, intercepts cell activation)", () => {
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([pivotableHttpThreatRow()])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    // The row-open overlay renders as a `<button aria-label="Open
+    // quick peek">…</button>`. Pivot buttons must be siblings of the
+    // overlay, not children — nesting interactive controls is
+    // invalid HTML and would route cell clicks back through the row
+    // overlay (re-opening Quick peek instead of pivoting). The same
+    // structural guard #290 used for the +N more popover.
+    expect(html).not.toMatch(
+      /aria-label="Open quick peek"[^>]*>[^<]*<button[^>]*data-slot="detection-pivot-cell"/,
+    );
+    // Belt-and-braces: no button nests inside any other button.
+    expect(html).not.toMatch(/<button[^>]*>[^<]*<button/);
+  });
+
+  it("layers the pivot button above the row overlay so direct clicks do not bubble through (z-10 / pointer-events-auto)", () => {
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([pivotableHttpThreatRow()])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    // The pivot cell carries `pointer-events-auto` and `z-10`; the
+    // parent row content is `pointer-events-none` so the row-open
+    // overlay receives clicks only when they are NOT on a pivot
+    // cell. Locking the class names guards the regression where a
+    // refactor drops the layering and the row overlay starts
+    // intercepting cell clicks again.
+    expect(html).toMatch(
+      /<button[^>]*class="[^"]*pointer-events-auto[^"]*z-10[^"]*"[^>]*data-slot="detection-pivot-cell"/,
+    );
+    // Outer row content is pointer-events-none so the row-open
+    // overlay (positioned beneath the content) gets the click.
+    expect(html).toMatch(/class="pointer-events-none relative/);
+  });
+
+  it("drops pivot buttons during the loading retained-slice window (issue #290 stale-row contract)", () => {
+    // Same gate that drops `onRowOpen` / `onRowInvestigate` while a
+    // committed-query transition is in flight: pivoting from a stale
+    // row would let the operator open / focus a tab whose filter
+    // narrows by a value that the newly committed slice may no longer
+    // contain. Drop the affordance until the fresh slice lands.
+    const loadingRetained: ResultListState = {
+      status: "loading",
+      events: [pivotableHttpThreatRow()],
+      eventKeys: ["cursor-stale-0"],
+      totalCount: "1",
+      range: { start: "1", end: "1" },
+      lastUpdatedMs: null,
+    };
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={loadingRetained}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onRowOpen={() => {}}
+        onPivot={() => {
+          throw new Error("onPivot must not be wired during loading");
+        }}
+      />,
+    );
+
+    expect(html).not.toContain('data-slot="detection-pivot-cell"');
+    expect(html).not.toMatch(/aria-label="Filter by/);
   });
 });
 

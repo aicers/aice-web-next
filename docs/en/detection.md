@@ -324,6 +324,65 @@ selection for these rows (the token cannot be encoded), so a
 reload or shared link restores the peek only for selections that
 do round-trip through the locator.
 
+### Pivot (drill-down) from result cells
+
+![Pivot affordance — wireframe stand-in](../assets/detection-pivot-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The figure above is an SVG wireframe rather than a real
+    capture. The pivot cells annotate live detection rows
+    returned by REview, and the authoring worktree has no staging
+    backend with seeded data. Per `docs/AUTHORING.md`'s
+    "Screenshot exception for infrastructure-gated features",
+    this section ships a localized SVG wireframe and will be
+    replaced with a real screenshot once staging is available.
+
+Pivotable cell values render as in-line buttons — hover reveals an
+underline and the cursor flips to a pointer. Activating a cell
+narrows the active filter by that value and opens it in a new tab,
+or focuses an existing tab with a brief flash if one already
+carries the resulting filter. Pivots inherit the active tab's
+relative period (e.g. **Last 1 hour**), so two clicks from a
+1-hour tab pivot into a 1-hour tab.
+
+The pivotable cells in v1:
+
+| Cell                    | Filter field merged                                |
+| ----------------------- | -------------------------------------------------- |
+| Severity badge          | `levels` (add unique)                              |
+| Threat name (Kind)      | `kinds` (add unique)                               |
+| Category badge          | `categories` (add unique)                          |
+| Source IP               | `endpoints` with `direction: FROM` (new entry)     |
+| Destination IP          | `endpoints` with `direction: TO` (new entry)       |
+| Country code            | `countries` (add unique)                           |
+
+The pivot engine also recognises the `hostname`, `userId`,
+`userName`, `userDepartment`, and `direction` columns, but the
+Phase Detection-9 result row does not yet render them as
+dedicated cells. Once those columns appear (planned alongside the
+column-density work), they will pick up the same affordance with
+no further plumbing — `buildPivotPatch` already maps them to the
+matching `hostnames` / `userIds` / `userNames` /
+`userDepartments` / `directions` filter arrays.
+
+A click that would only re-narrow the **active tab** by a value it
+already carries shows a transient toast — `Already filtered by X`
+— and creates no new tab. A click that targets a filter another
+tab already represents focuses that tab and flashes its label
+briefly so the operator sees which tab now holds focus. A click
+that would push past the 8-tab limit shows a cap-reached toast
+instead of opening a tab; close one first.
+
+The buttons are keyboard-reachable: tab to the cell, press **Enter**
+or **Space** to activate. The cell itself layers above the row's
+overlay button, so a click on the cell does not also open Quick
+peek — the row-open click only fires on the row body around the
+cells. Country pivots are skipped for the sentinel codes `XX`
+(unknown) and `ZZ` (unavailable) since they are not real ISO
+codes; clicking those values is a no-op. Right-click context-menu
+pivots and exclusion (NOT) pivots are out of scope for v1.
+
 ## Quick peek inspector
 
 Selecting a row opens the **Quick peek** inspector — a compact

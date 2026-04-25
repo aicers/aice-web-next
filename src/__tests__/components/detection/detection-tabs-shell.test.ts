@@ -29,11 +29,14 @@ import {
   buildUrlSearchForTab,
   mergeSnapshot,
   mergeStoredTabsOnRehydrate,
+  resolvePivotEffect,
   routeSnapshotToTab,
 } from "@/components/detection/detection-tabs-shell";
+import type { EndpointEntry } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
 import { parseFilterFromUrlParam } from "@/lib/detection/filter-url";
 import { INITIAL_PAGINATION_STATE } from "@/lib/detection/pagination";
+import type { PivotAction } from "@/lib/detection/pivot";
 import {
   createTabSnapshot,
   type TabId,
@@ -718,5 +721,141 @@ describe("buildUrlSearchForTab — Reviewer Round 3 (atomic transition)", () => 
     expect(search.has("f")).toBe(true);
     const decoded = parseFilterFromUrlParam(search.get("f"));
     expect(decoded?.filter).toEqual(RICH_FILTER);
+  });
+});
+
+describe("resolvePivotEffect — Reviewer Round 1 (toast / focus / create / cap wiring)", () => {
+  // The wrapper's `handlePivot` callback used to inline the
+  // PivotAction → side-effect mapping, leaving the React surface
+  // (toast contents / flash + focus / append-and-activate) covered
+  // only indirectly through the pure `openPivotTab` tests. Round 1
+  // feedback called this out — these tests pin the contract directly
+  // so a regression in the mapping fails here instead of slipping
+  // through to a manual trace.
+
+  const TEMPLATES = {
+    alreadyFilteredTemplate: "Already filtered by {value}",
+    tabCapReachedTemplate: "Tab cap reached ({max} max)",
+    maxTabs: 8,
+  };
+  const TAB_A = createTabSnapshot({
+    filter: { mode: "structured", input: { kinds: ["HttpThreat"] } },
+    period: "1h",
+  });
+  const TAB_B = createTabSnapshot({
+    filter: { mode: "structured", input: { countries: ["KR"] } },
+    period: "1h",
+  });
+
+  it("substitutes the clicked value into the duplicate-toast template (toastDuplicate → toast)", () => {
+    const action: PivotAction = {
+      kind: "toastDuplicate",
+      displayValue: "10.0.0.5",
+    };
+    const effect = resolvePivotEffect(action, [TAB_A], TEMPLATES);
+    expect(effect.kind).toBe("toast");
+    if (effect.kind !== "toast") return;
+    expect(effect.message).toBe("Already filtered by 10.0.0.5");
+  });
+
+  it("substitutes `{max}` into the cap-reached template (toastCapReached → toast)", () => {
+    const action: PivotAction = {
+      kind: "toastCapReached",
+      displayValue: "ignored",
+    };
+    const effect = resolvePivotEffect(action, [TAB_A], TEMPLATES);
+    expect(effect.kind).toBe("toast");
+    if (effect.kind !== "toast") return;
+    expect(effect.message).toBe("Tab cap reached (8 max)");
+  });
+
+  it("activates the matching tab and flashes its label (focusTab → focus)", () => {
+    // The wrapper consumes both `activeTabId` and `flashTabId` from
+    // the same effect object — they must point at the SAME tab so
+    // the operator sees the cue land on the tab they just got
+    // focused. The handler also re-applies `currentTabs` so any
+    // shell-side snapshot edit batched alongside the pivot click
+    // is not dropped on the floor.
+    const action: PivotAction = {
+      kind: "focusTab",
+      tabId: TAB_B.id,
+      displayValue: "KR",
+    };
+    const effect = resolvePivotEffect(action, [TAB_A, TAB_B], TEMPLATES);
+    expect(effect.kind).toBe("focus");
+    if (effect.kind !== "focus") return;
+    expect(effect.activeTabId).toBe(TAB_B.id);
+    expect(effect.flashTabId).toBe(TAB_B.id);
+    expect(effect.tabs.map((t) => t.id)).toEqual([TAB_A.id, TAB_B.id]);
+  });
+
+  it("appends a fresh tab pre-marked for auto-run (createTab → create)", () => {
+    // The seed must be marked `hasQueried: true` + `loading: true` so
+    // the shell's resume-on-mount effect runs the pivoted query
+    // automatically — issue #283: "create a new tab with the target
+    // filter, auto-execute, and activate it". Without `loading: true`
+    // the new tab would land in the pre-query empty state and the
+    // operator would have to click Apply manually.
+    const targetFilter: Filter = {
+      mode: "structured",
+      input: { kinds: ["HttpThreat"], countries: ["KR"] },
+    };
+    const targetEndpoints: EndpointEntry[] = [
+      {
+        id: "e-1",
+        raw: "10.0.0.5",
+        kind: "host",
+        host: "10.0.0.5",
+        direction: "SOURCE",
+        selected: true,
+      },
+    ];
+    const action: PivotAction = {
+      kind: "createTab",
+      filter: targetFilter,
+      endpoints: targetEndpoints,
+      period: "1h",
+      displayValue: "KR",
+    };
+    const effect = resolvePivotEffect(action, [TAB_A], TEMPLATES);
+    expect(effect.kind).toBe("create");
+    if (effect.kind !== "create") return;
+    // The fresh tab is appended after the live tab list (preserving
+    // the existing tab order) and the activeTabId is set to it.
+    expect(effect.tabs).toHaveLength(2);
+    expect(effect.tabs[0].id).toBe(TAB_A.id);
+    const seed = effect.tabs[1];
+    expect(effect.activeTabId).toBe(seed.id);
+    expect(seed.filter).toEqual(targetFilter);
+    expect(seed.endpoints).toEqual(targetEndpoints);
+    expect(seed.period).toBe("1h");
+    // Auto-run handshake — the resume-on-mount effect requires both
+    // flags so the shell does not show the pre-query empty state.
+    expect(seed.result.hasQueried).toBe(true);
+    expect(seed.result.loading).toBe(true);
+  });
+
+  it("does not mutate the input tab list (focus / create return fresh arrays)", () => {
+    const focusAction: PivotAction = {
+      kind: "focusTab",
+      tabId: TAB_B.id,
+      displayValue: "KR",
+    };
+    const createAction: PivotAction = {
+      kind: "createTab",
+      filter: { mode: "structured", input: { countries: ["KR"] } },
+      endpoints: [],
+      period: null,
+      displayValue: "KR",
+    };
+    const original = [TAB_A, TAB_B];
+    const focused = resolvePivotEffect(focusAction, original, TEMPLATES);
+    const created = resolvePivotEffect(createAction, original, TEMPLATES);
+    if (focused.kind === "focus") expect(focused.tabs).not.toBe(original);
+    if (created.kind === "create") expect(created.tabs).not.toBe(original);
+    // Original list is untouched in either branch.
+    expect(original).toHaveLength(2);
+    expect(original[0]).toBe(TAB_A);
+    expect(original[1]).toBe(TAB_B);
   });
 });

@@ -37,6 +37,14 @@ export interface TabBarTab {
    * query is discoverable.
    */
   loading: boolean;
+  /**
+   * Pivot focus cue (Phase Detection-12). The wrapper sets this
+   * briefly when activating an existing tab via a pivot, so the
+   * tab label flashes long enough for the operator to register
+   * which tab now holds focus. Auto-clears in the wrapper after
+   * the animation duration.
+   */
+  flash?: boolean;
 }
 
 export interface TabBarProps {
@@ -196,11 +204,17 @@ function TabEntry({
         onStartEdit();
       }}
       className={cn(
-        "group flex shrink-0 items-center gap-1 rounded-t-md border-b-2 px-3 py-1.5 text-sm",
+        "group flex shrink-0 items-center gap-1 rounded-t-md border-b-2 px-3 py-1.5 text-sm transition-colors",
         active
           ? "border-foreground bg-background text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground",
+        // Pivot focus cue (Phase Detection-12): briefly tint the
+        // active tab's background so the operator sees which tab
+        // now holds focus after a same-filter pivot. Auto-clears
+        // in the wrapper after a fixed timeout.
+        tab.flash && "bg-accent/60",
       )}
+      data-flash={tab.flash ? "true" : undefined}
     >
       {editing ? (
         <input

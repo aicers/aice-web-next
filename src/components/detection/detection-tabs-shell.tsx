@@ -49,6 +49,7 @@ import {
   type DetectionShellStateSnapshot,
 } from "@/components/detection/detection-shell";
 import type { FilterDrawerOptions } from "@/components/detection/filter-drawer";
+import { PivotToast } from "@/components/detection/pivot-toast";
 import {
   TabBar,
   type TabBarLabels,
@@ -76,6 +77,12 @@ import {
   DEFAULT_PERIOD_KEY,
   type PeriodKey,
 } from "@/lib/detection/period";
+import {
+  openPivotTab,
+  type PivotAction,
+  type PivotPatch,
+  type PivotTabSummary,
+} from "@/lib/detection/pivot";
 import { QUICK_PEEK_EVENT_PARAM } from "@/lib/detection/quick-peek-url";
 import {
   ACTIVE_TAB_URL_PARAM,
@@ -100,6 +107,22 @@ export interface DetectionTabsShellLabels {
   tabs: TabBarLabels;
   /** Fallback label when a filter's summary produces no chips. */
   tabFallbackName: string;
+  /**
+   * Pivot feedback (Phase Detection-12). The wrapper renders the
+   * transient toast that surfaces "Already filtered" /
+   * "Tab cap reached" messages and the dismiss affordance label.
+   *
+   * The template strings carry ICU-style `{value}` / `{max}`
+   * placeholders that the wrapper substitutes locally — strings cross
+   * the server→client boundary cleanly, whereas closing over
+   * `useTranslations` would serialize a function and trip Next.js's
+   * "Functions cannot be passed directly to Client Components" guard.
+   */
+  pivot: {
+    alreadyFilteredTemplate: string;
+    tabCapReachedTemplate: string;
+    dismissToast: string;
+  };
 }
 
 export interface DetectionTabsShellProps {
@@ -341,6 +364,18 @@ export function DetectionTabsShell({
     writeTabsToSession(withLive, activeTabId);
   }, [tabs, activeTabId, withActiveSnapshot]);
 
+  // Tab id that should briefly flash to acknowledge a pivot focus
+  // gesture. The TabBar reads the value through the `flashTabId`
+  // prop and auto-clears it after the animation resolves; the
+  // wrapper resets it once the timeout fires so subsequent focus
+  // gestures re-trigger the same animation.
+  const [flashTabId, setFlashTabId] = useState<TabId | null>(null);
+  useEffect(() => {
+    if (!flashTabId) return;
+    const handle = setTimeout(() => setFlashTabId(null), 1200);
+    return () => clearTimeout(handle);
+  }, [flashTabId]);
+
   const tabBarTabs = useMemo<TabBarTab[]>(() => {
     return tabs.map((t) => {
       const displayName = t.name !== null ? t.name : deriveAutoName(t);
@@ -349,9 +384,10 @@ export function DetectionTabsShell({
         label: displayName,
         isAuto: !t.manualName,
         loading: t.result.loading,
+        flash: t.id === flashTabId,
       };
     });
-  }, [tabs, deriveAutoName]);
+  }, [tabs, deriveAutoName, flashTabId]);
 
   const handleActivate = useCallback(
     (nextId: TabId) => {
@@ -425,6 +461,54 @@ export function DetectionTabsShell({
     [withActiveSnapshot],
   );
 
+  // Transient pivot toast — `Already filtered` / `Tab cap reached`.
+  const [pivotToast, setPivotToast] = useState<string | null>(null);
+  const dismissPivotToast = useCallback(() => setPivotToast(null), []);
+
+  const handlePivot = useCallback(
+    (patch: PivotPatch) => {
+      const currentTabs = withActiveSnapshot(tabsRef.current);
+      const activeId = activeTabIdRef.current;
+      const active = currentTabs.find((t) => t.id === activeId);
+      if (!active) return;
+      const summaries: PivotTabSummary[] = currentTabs.map((t) => ({
+        id: t.id,
+        identity: { filter: t.filter, period: t.period },
+      }));
+      const action: PivotAction = openPivotTab({
+        patch,
+        active: {
+          id: active.id,
+          filter: active.filter,
+          endpoints: active.endpoints,
+          period: active.period,
+        },
+        tabs: summaries,
+        maxTabs: MAX_TABS,
+      });
+      const effect = resolvePivotEffect(action, currentTabs, {
+        alreadyFilteredTemplate: labels.pivot.alreadyFilteredTemplate,
+        tabCapReachedTemplate: labels.pivot.tabCapReachedTemplate,
+        maxTabs: MAX_TABS,
+      });
+      switch (effect.kind) {
+        case "toast":
+          setPivotToast(effect.message);
+          return;
+        case "focus":
+          setTabs(effect.tabs);
+          setActiveTabId(effect.activeTabId);
+          setFlashTabId(effect.flashTabId);
+          return;
+        case "create":
+          setTabs(effect.tabs);
+          setActiveTabId(effect.activeTabId);
+          return;
+      }
+    },
+    [labels.pivot, withActiveSnapshot],
+  );
+
   // On activeTabId transitions, rewrite the URL so a reload /
   // bookmark lands on the same active tab. The filter encoder is
   // the same one the shell uses on Apply; the shell still writes
@@ -464,6 +548,7 @@ export function DetectionTabsShell({
         title={title}
         labels={labels.shell}
         options={options}
+        onPivot={handlePivot}
         initialFilter={activeTab.filter}
         initialPeriod={activeTab.period}
         initialPivotOnly={activeTab.pivotOnly}
@@ -501,8 +586,97 @@ export function DetectionTabsShell({
         initialPendingQuickPeekToken={activeTab.pendingQuickPeekToken}
         onStateChange={handleShellStateChange}
       />
+      <PivotToast
+        message={pivotToast}
+        onDismiss={dismissPivotToast}
+        dismissLabel={labels.pivot.dismissToast}
+      />
     </div>
   );
+}
+
+/**
+ * Side-effect intent the React handler should apply when a pivot
+ * action resolves. Pure / serializable so the toast / focus / create
+ * branches can be unit-tested independently of React's state machinery
+ * (Reviewer Round 1 follow-up: the wiring used to live inline in the
+ * `handlePivot` callback, where the only way to exercise it was through
+ * the `openPivotTab` helper's pure tests + a hope that the React
+ * surface still wired the result correctly).
+ */
+export type PivotEffect =
+  | { kind: "toast"; message: string }
+  | {
+      kind: "focus";
+      tabs: TabSnapshot[];
+      activeTabId: TabId;
+      flashTabId: TabId;
+    }
+  | { kind: "create"; tabs: TabSnapshot[]; activeTabId: TabId };
+
+export interface ResolvePivotEffectOptions {
+  /** ICU-style template carrying a `{value}` placeholder. */
+  alreadyFilteredTemplate: string;
+  /** ICU-style template carrying a `{max}` placeholder. */
+  tabCapReachedTemplate: string;
+  maxTabs: number;
+}
+
+/**
+ * Translate a {@link PivotAction} into the {@link PivotEffect} the
+ * React handler applies. Pure: the only side effect is allocating
+ * the seed tab on the `createTab` branch.
+ */
+export function resolvePivotEffect(
+  action: PivotAction,
+  currentTabs: readonly TabSnapshot[],
+  opts: ResolvePivotEffectOptions,
+): PivotEffect {
+  switch (action.kind) {
+    case "toastDuplicate":
+      return {
+        kind: "toast",
+        message: opts.alreadyFilteredTemplate.replace(
+          "{value}",
+          action.displayValue,
+        ),
+      };
+    case "focusTab":
+      return {
+        kind: "focus",
+        tabs: [...currentTabs],
+        activeTabId: action.tabId,
+        flashTabId: action.tabId,
+      };
+    case "toastCapReached":
+      return {
+        kind: "toast",
+        message: opts.tabCapReachedTemplate.replace(
+          "{max}",
+          String(opts.maxTabs),
+        ),
+      };
+    case "createTab": {
+      const seed = createTabSnapshot({
+        filter: action.filter,
+        period: action.period,
+        endpoints: action.endpoints,
+      });
+      // Mark the seed as already-queried so the result list does
+      // not show "Build a filter to begin"; the shell's Apply-on-
+      // mount path is gated on `loading: true`, which we set so
+      // the resume-on-mount effect dispatches the query for us.
+      const seedWithLoad: TabSnapshot = {
+        ...seed,
+        result: { ...seed.result, hasQueried: true, loading: true },
+      };
+      return {
+        kind: "create",
+        tabs: [...currentTabs, seedWithLoad],
+        activeTabId: seedWithLoad.id,
+      };
+    }
+  }
 }
 
 /**

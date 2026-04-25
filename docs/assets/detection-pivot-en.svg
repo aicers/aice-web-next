@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" width="720" height="360" role="img" aria-labelledby="title desc">
+  <title id="title">Detection — Pivot (drill-down) from result cells</title>
+  <desc id="desc">Wireframe stand-in showing pivotable cells (severity badge, kind label, category badge, source IP, destination IP, country code) in a Detection result row. Activating a cell opens the active tab's filter narrowed by that value in a new tab, focuses an existing tab if one already carries the filter, or shows a toast when the click would only re-narrow the active tab or exceed the 8-tab cap.</desc>
+  <style>
+    .frame { fill: none; stroke: #c2c8d0; stroke-width: 1; }
+    .panel { fill: #ffffff; stroke: #c2c8d0; }
+    .row { fill: #ffffff; stroke: #d4dae2; rx: 6; ry: 6; }
+    .label { font: 12px ui-sans-serif, system-ui, sans-serif; fill: #2b3440; }
+    .small { font: 11px ui-sans-serif, system-ui, sans-serif; fill: #5b6675; }
+    .strong { font: 600 12px ui-sans-serif, system-ui, sans-serif; fill: #1a2230; }
+    .pivot { font: 600 12px ui-sans-serif, system-ui, sans-serif; fill: #1a4f9b; text-decoration: underline; }
+    .badge-high { fill: #fde8e8; stroke: #d04848; }
+    .badge-cat { fill: none; stroke: #b6bcc6; }
+    .badge-text { font: 10px ui-sans-serif, system-ui, sans-serif; fill: #1a2230; }
+    .badge-text-light { font: 10px ui-sans-serif, system-ui, sans-serif; fill: #1a4f9b; }
+    .arrow { fill: #5b6675; }
+    .toast { fill: #1a2230; stroke: #1a2230; rx: 6; ry: 6; }
+    .toast-text { font: 12px ui-sans-serif, system-ui, sans-serif; fill: #ffffff; }
+    .tab-flash { fill: #d4ddee; stroke: #6b87b6; rx: 4; ry: 4; }
+    .caption { font: italic 11px ui-sans-serif, system-ui, sans-serif; fill: #5b6675; }
+  </style>
+
+  <rect class="frame" x="0.5" y="0.5" width="719" height="359"/>
+
+  <!-- Tabs row with one flashed tab -->
+  <g transform="translate(20,16)">
+    <rect class="row" x="0" y="0" width="120" height="26"/>
+    <text class="strong" x="12" y="17">Last 1 hour</text>
+    <rect class="tab-flash" x="130" y="0" width="160" height="26"/>
+    <text class="strong" x="142" y="17">Last 1 hour · 10.0.0.5</text>
+    <text class="small" x="300" y="17">＋</text>
+  </g>
+
+  <!-- Result row -->
+  <g transform="translate(20,64)">
+    <rect class="row" x="0" y="0" width="680" height="76"/>
+
+    <!-- Severity badge (pivotable) -->
+    <rect class="badge-high" x="12" y="12" width="48" height="20" rx="10" ry="10"/>
+    <text class="badge-text" x="22" y="26">HIGH</text>
+
+    <!-- Time -->
+    <text class="small" x="72" y="26">15:23:44</text>
+
+    <!-- Kind label (pivotable) -->
+    <text class="pivot" x="146" y="26">HTTP Threat</text>
+
+    <!-- Category badge (pivotable) -->
+    <rect class="badge-cat" x="232" y="12" width="120" height="20" rx="10" ry="10"/>
+    <text class="badge-text-light" x="242" y="26">Lateral Movement</text>
+
+    <text class="small" x="362" y="26">Conf: 0.86</text>
+
+    <!-- Endpoint summary -->
+    <text class="pivot" x="12" y="56">10.0.0.5:443</text>
+    <text class="badge-text-light" x="98" y="56">(US)</text>
+    <text class="arrow" x="124" y="56">→</text>
+    <text class="pivot" x="138" y="56">203.0.113.45:80</text>
+    <text class="badge-text-light" x="240" y="56">(KR)</text>
+    <text class="small" x="280" y="56">·</text>
+    <text class="small" x="294" y="56">sensor-01</text>
+
+    <text class="caption" x="600" y="56">› investigate</text>
+  </g>
+
+  <!-- Annotations -->
+  <g transform="translate(20,160)">
+    <text class="strong" x="0" y="0">Hover or focus a pivotable cell:</text>
+    <text class="label" x="0" y="20">• Severity, Kind, Category — narrow the active filter by that</text>
+    <text class="label" x="0" y="36">  threat dimension.</text>
+    <text class="label" x="0" y="56">• Source IP, Destination IP — append a new endpoint rule</text>
+    <text class="label" x="0" y="72">  with the matching direction (FROM / TO).</text>
+    <text class="label" x="0" y="92">• Country (next to an IP) — add the country code to the</text>
+    <text class="label" x="0" y="108">  countries filter.</text>
+  </g>
+
+  <!-- Toast preview -->
+  <g transform="translate(440,260)">
+    <rect class="toast" x="0" y="0" width="260" height="48"/>
+    <text class="toast-text" x="14" y="20">Already filtered by 10.0.0.5</text>
+    <text class="toast-text" x="14" y="38" font-size="10">Tap × or wait for auto-dismiss</text>
+  </g>
+  <text class="caption" x="440" y="252">Toast: same-filter pivot</text>
+</svg>

@@ -516,6 +516,15 @@ export default async function DetectionPage({
           resetName: t("tabs.resetName"),
         },
         tabFallbackName: t("tabs.fallbackName"),
+        pivot: {
+          // Pass ICU templates as plain strings so the server→client
+          // boundary stays serialization-safe; the client wrapper does
+          // a single `.replace("{value}", …)` / `.replace("{max}", …)`
+          // before showing the toast.
+          alreadyFilteredTemplate: t.raw("pivot.alreadyFiltered") as string,
+          tabCapReachedTemplate: t.raw("pivot.tabCapReached") as string,
+          dismissToast: t("pivot.dismissToast"),
+        },
       }}
     />
   );
