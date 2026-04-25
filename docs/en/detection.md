@@ -9,21 +9,7 @@ built-in roles Security Monitor, Tenant Administrator, and System
 Administrator receive this permission by default. Custom roles that
 grant `detection:read` also qualify.
 
-![Detection page — wireframe stand-in](../assets/detection-en.svg)
-
-!!! note "Wireframe stand-in"
-
-    The page-level illustration above is an SVG wireframe rather than a
-    real capture. The Detection page renders its hero count from a live
-    REview query, and the authoring worktree has no staging backend with
-    seeded detection data — a PNG captured here would show the
-    `Could not load detection results.` error state. Per
-    `docs/AUTHORING.md`'s "Screenshot exception for
-    infrastructure-gated features", this page ships a localized SVG
-    wireframe and will be replaced with a real screenshot once a
-    staging environment with sample data is available. The filter
-    drawer capture further down is a real PNG — the drawer is
-    client-rendered and does not depend on backend data.
+![Detection page](../assets/detection-en.png)
 
 ## Layout
 
@@ -326,17 +312,7 @@ do round-trip through the locator.
 
 ### Pivot (drill-down) from result cells
 
-![Pivot affordance — wireframe stand-in](../assets/detection-pivot-en.svg)
-
-!!! note "Wireframe stand-in"
-
-    The figure above is an SVG wireframe rather than a real
-    capture. The pivot cells annotate live detection rows
-    returned by REview, and the authoring worktree has no staging
-    backend with seeded data. Per `docs/AUTHORING.md`'s
-    "Screenshot exception for infrastructure-gated features",
-    this section ships a localized SVG wireframe and will be
-    replaced with a real screenshot once staging is available.
+![Pivot affordance](../assets/detection-pivot-en.png)
 
 Pivotable cell values render as in-line buttons — hover reveals an
 underline and the cursor flips to a pointer. Activating a cell
@@ -389,17 +365,7 @@ Selecting a row opens the **Quick peek** inspector — a compact
 summary of the event that stays in context with the result list
 so you can triage without leaving the tab.
 
-![Quick peek inspector — wireframe stand-in](../assets/detection-quick-peek-en.svg)
-
-!!! note "Wireframe stand-in"
-
-    The figure above is an SVG wireframe rather than a real
-    capture. Quick peek reads its content from live detection
-    events returned by REview, and the authoring worktree has no
-    staging backend with seeded data. Per `docs/AUTHORING.md`'s
-    "Screenshot exception for infrastructure-gated features", this
-    page ships a localized SVG wireframe and will be replaced with
-    a real screenshot once staging is available.
+![Quick peek inspector](../assets/detection-quick-peek-en.png)
 
 ### Responsive surface
 
@@ -543,18 +509,7 @@ locale-grouped range + total indicator (`1–50 of 1,453`), the
 **First** / **Previous** page indicator / **Next** / **Last**
 controls, and a **Go to page** input for rare deep seeks.
 
-![Detection pagination controls — wireframe stand-in](../assets/detection-pagination-en.svg)
-
-!!! note "Wireframe stand-in"
-
-    The figure above is an SVG wireframe rather than a real capture,
-    on the same infrastructure-gated basis as the page-level
-    illustration. The paginator's totals come from a live REview
-    query, and the authoring worktree has no staging backend with
-    seeded detection data — per `docs/AUTHORING.md` §"Screenshot
-    exception for infrastructure-gated features", this section
-    ships a localized SVG wireframe and will be replaced with a
-    real screenshot once staging with sample data is available.
+![Detection pagination controls](../assets/detection-pagination-en.png)
 
 - **Rows per page** toggles between `25`, `50`, `100`, and `200`.
   The default is `50`. Changing the size keeps the operator near
@@ -755,14 +710,7 @@ multi-select with the same interaction pattern:
   explicit list and still emits chips, since the seed list is not
   exhaustive.
 
-![Detection filter drawer — categorical filters wireframe](../assets/detection-drawer-categorical-en.svg)
-
-The figure above is an SVG wireframe stand-in for the expanded
-categorical section. It is shipped under `docs/AUTHORING.md`
-§"Screenshot exception for infrastructure-gated features"; replace
-it with a PNG capture (`detection-drawer-categorical-en.png`) once
-a staging environment with a seeded REview session is available to
-render all five fields in their expanded state.
+![Detection filter drawer — categorical filters](../assets/detection-drawer-categorical-en.png)
 
 The five categorical fields are:
 
@@ -889,19 +837,7 @@ entries are all applied. Pagination is followed server-side, so
 the file always contains the full result set rather than just
 the current page.
 
-![Detection CSV export — wireframe stand-in](../assets/detection-csv-export-en.svg)
-
-!!! note "Wireframe stand-in"
-
-    The CSV export illustration above is an SVG wireframe rather
-    than a real capture. The Detection result list renders rows
-    from a live REview query, and the authoring worktree has no
-    staging backend with seeded detection data — a PNG captured
-    here would show the empty-state panel rather than a populated
-    list. Per `docs/AUTHORING.md`'s "Screenshot exception for
-    infrastructure-gated features", this section ships a localized
-    SVG wireframe and will be replaced with a real screenshot
-    once a staging environment with sample data is available.
+![Detection CSV export](../assets/detection-csv-export-en.png)
 
 ### Columns
 
