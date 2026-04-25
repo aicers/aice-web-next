@@ -54,6 +54,22 @@ export class CsvExportPaginationError extends Error {
   }
 }
 
+/**
+ * Detect whether an error is an `AbortError` thrown by `fetch` /
+ * `undici` after a forwarded `AbortSignal` fires. `graphql-request`
+ * surfaces the underlying fetch rejection unchanged, so the
+ * conventional `name === "AbortError"` check is enough — both
+ * `DOMException` (browser fetch) and `undici`'s own `AbortError`
+ * carry that name.
+ */
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "AbortError" ||
+      (err as { code?: string }).code === "ABORT_ERR")
+  );
+}
+
 export interface CsvExportOptions {
   session: AuthSession;
   filter: Filter;
@@ -156,10 +172,21 @@ export function createCsvExportStream(
             controller.close();
             return;
           }
-          const connection = await searchEvents(session, filter, {
-            first: CSV_EXPORT_PAGE_SIZE,
-            after,
-          });
+          const connection = await searchEvents(
+            session,
+            filter,
+            {
+              first: CSV_EXPORT_PAGE_SIZE,
+              after,
+            },
+            // Forward the upstream abort signal into the page request
+            // so REview itself sees the cancel and the in-flight page
+            // rejects with `AbortError` instead of running to
+            // completion (#342). The previous behaviour stopped the
+            // pagination loop only after the current page returned,
+            // which could be tens of seconds for a large filter.
+            signal,
+          );
           // Re-check after the await in case the consumer went away
           // (save picker dismissed, client disconnected) while we
           // were waiting on REview. Dropping the fetched page here
@@ -206,6 +233,18 @@ export function createCsvExportStream(
           }
         }
       } catch (err) {
+        // An in-flight `searchEvents` rejecting with `AbortError`
+        // because the user cancelled (or the client disconnected) is
+        // not a producer-side failure — it is the cancellation we
+        // asked for by forwarding `signal` into the page request
+        // (#342). Close the stream cleanly in that case so the
+        // surrounding route does not surface a spurious error; only a
+        // genuine producer failure (REview hiccup, pagination drift)
+        // should reach `controller.error(...)`.
+        if (cancelled && isAbortError(err)) {
+          controller.close();
+          return;
+        }
         controller.error(err);
       }
     },
@@ -230,7 +269,8 @@ export function createCsvExportStream(
 export async function fetchExportRowCount(
   session: AuthSession,
   filter: Filter,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const connection = await searchEvents(session, filter, { first: 1 });
+  const connection = await searchEvents(session, filter, { first: 1 }, signal);
   return connection.totalCount;
 }

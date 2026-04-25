@@ -146,6 +146,7 @@ export async function searchEvents(
   session: AuthSession,
   filter: Filter,
   args: SearchEventsArgs = {},
+  signal?: AbortSignal,
 ): Promise<EventConnection> {
   const ctx = await buildDispatchContext(session, filter);
   const data = await graphqlRequest<EventListResult, EventListVariables>(
@@ -158,6 +159,7 @@ export async function searchEvents(
       before: args.before ?? null,
     },
     { role: ctx.role, customerIds: ctx.customerIds },
+    signal,
   );
   return data.eventList;
 }
@@ -190,9 +192,10 @@ export async function searchEventsAtAnchor(
   anchor: PageAnchor,
   pageSize: PageSize,
   knownTotal: string | null = null,
+  signal?: AbortSignal,
 ): Promise<EventConnection> {
   let args = searchArgsForAnchor(anchor, pageSize, knownTotal);
-  let connection = await searchEvents(session, filter, args);
+  let connection = await searchEvents(session, filter, args, signal);
   if (anchor.kind !== "tail") return connection;
   for (let attempt = 0; attempt < TAIL_DRIFT_MAX_CORRECTIONS; attempt++) {
     const corrected = searchArgsForAnchor(
@@ -202,7 +205,7 @@ export async function searchEventsAtAnchor(
     );
     if (corrected.last === args.last) break;
     args = corrected;
-    connection = await searchEvents(session, filter, args);
+    connection = await searchEvents(session, filter, args, signal);
   }
   return connection;
 }
@@ -213,12 +216,14 @@ async function dispatchCounter<TPayload>(
   first: number,
   document: DocumentNode,
   extract: (data: Record<string, TPayload>) => TPayload,
+  signal?: AbortSignal,
 ): Promise<TPayload> {
   const ctx = await buildDispatchContext(session, filter);
   const data = await graphqlRequest<Record<string, TPayload>, CounterVariables>(
     document,
     { filter: ctx.filter, first },
     { role: ctx.role, customerIds: ctx.customerIds },
+    signal,
   );
   return extract(data);
 }
@@ -227,6 +232,7 @@ export async function countEventsByCategory(
   session: AuthSession,
   filter: Filter,
   first: number,
+  signal?: AbortSignal,
 ): Promise<U8EventCounter> {
   return dispatchCounter<U8EventCounter>(
     session,
@@ -234,6 +240,7 @@ export async function countEventsByCategory(
     first,
     EVENT_COUNTS_BY_CATEGORY_QUERY,
     (d) => (d as unknown as EventCountsByCategoryResult).eventCountsByCategory,
+    signal,
   );
 }
 
@@ -241,6 +248,7 @@ export async function countEventsByLevel(
   session: AuthSession,
   filter: Filter,
   first: number,
+  signal?: AbortSignal,
 ): Promise<U8EventCounter> {
   return dispatchCounter<U8EventCounter>(
     session,
@@ -248,6 +256,7 @@ export async function countEventsByLevel(
     first,
     EVENT_COUNTS_BY_LEVEL_QUERY,
     (d) => (d as unknown as EventCountsByLevelResult).eventCountsByLevel,
+    signal,
   );
 }
 
@@ -255,6 +264,7 @@ export async function countEventsByCountry(
   session: AuthSession,
   filter: Filter,
   first: number,
+  signal?: AbortSignal,
 ): Promise<StringEventCounter> {
   return dispatchCounter<StringEventCounter>(
     session,
@@ -262,6 +272,7 @@ export async function countEventsByCountry(
     first,
     EVENT_COUNTS_BY_COUNTRY_QUERY,
     (d) => (d as unknown as EventCountsByCountryResult).eventCountsByCountry,
+    signal,
   );
 }
 
@@ -269,6 +280,7 @@ export async function countEventsByKind(
   session: AuthSession,
   filter: Filter,
   first: number,
+  signal?: AbortSignal,
 ): Promise<StringEventCounter> {
   return dispatchCounter<StringEventCounter>(
     session,
@@ -276,6 +288,7 @@ export async function countEventsByKind(
     first,
     EVENT_COUNTS_BY_KIND_QUERY,
     (d) => (d as unknown as EventCountsByKindResult).eventCountsByKind,
+    signal,
   );
 }
 
@@ -283,6 +296,7 @@ export async function countEventsByIpAddress(
   session: AuthSession,
   filter: Filter,
   first: number,
+  signal?: AbortSignal,
 ): Promise<StringEventCounter> {
   return dispatchCounter<StringEventCounter>(
     session,
@@ -291,6 +305,7 @@ export async function countEventsByIpAddress(
     EVENT_COUNTS_BY_IP_ADDRESS_QUERY,
     (d) =>
       (d as unknown as EventCountsByIpAddressResult).eventCountsByIpAddress,
+    signal,
   );
 }
 
@@ -298,6 +313,7 @@ export async function countEventsByOriginatorIpAddress(
   session: AuthSession,
   filter: Filter,
   first: number,
+  signal?: AbortSignal,
 ): Promise<StringEventCounter> {
   return dispatchCounter<StringEventCounter>(
     session,
@@ -307,6 +323,7 @@ export async function countEventsByOriginatorIpAddress(
     (d) =>
       (d as unknown as EventCountsByOriginatorIpAddressResult)
         .eventCountsByOriginatorIpAddress,
+    signal,
   );
 }
 
@@ -314,6 +331,7 @@ export async function countEventsByResponderIpAddress(
   session: AuthSession,
   filter: Filter,
   first: number,
+  signal?: AbortSignal,
 ): Promise<StringEventCounter> {
   return dispatchCounter<StringEventCounter>(
     session,
@@ -323,6 +341,7 @@ export async function countEventsByResponderIpAddress(
     (d) =>
       (d as unknown as EventCountsByResponderIpAddressResult)
         .eventCountsByResponderIpAddress,
+    signal,
   );
 }
 
@@ -371,6 +390,7 @@ export function locatorToEventListFilter(
 export async function fetchEventByLocator(
   session: AuthSession,
   locator: EventLocator,
+  signal?: AbortSignal,
 ): Promise<EventDetailResolution> {
   const ctx = await buildDispatchContext(session, {
     mode: "structured",
@@ -380,6 +400,7 @@ export async function fetchEventByLocator(
     EVENT_DETAIL_QUERY,
     { filter: ctx.filter },
     { role: ctx.role, customerIds: ctx.customerIds },
+    signal,
   );
   const nodes = data.eventList.nodes;
   const totalCount = data.eventList.totalCount;
@@ -398,6 +419,7 @@ export async function fetchEventByLocator(
 export async function lookupIpLocation(
   session: AuthSession,
   address: string,
+  signal?: AbortSignal,
 ): Promise<IpLocationResult["ipLocation"]> {
   const ctx = await buildDispatchContext(session, {
     mode: "structured",
@@ -408,6 +430,7 @@ export async function lookupIpLocation(
       IP_LOCATION_QUERY,
       { address },
       { role: ctx.role, customerIds: ctx.customerIds },
+      signal,
     );
     return data.ipLocation;
   } catch {
@@ -419,6 +442,7 @@ export async function eventFrequencySeries(
   session: AuthSession,
   filter: Filter,
   period: number,
+  signal?: AbortSignal,
 ): Promise<number[]> {
   const ctx = await buildDispatchContext(session, filter);
   const data = await graphqlRequest<
@@ -428,6 +452,7 @@ export async function eventFrequencySeries(
     EVENT_FREQUENCY_SERIES_QUERY,
     { filter: ctx.filter, period },
     { role: ctx.role, customerIds: ctx.customerIds },
+    signal,
   );
   return data.eventFrequencySeries;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { SaveTarget } from "@/components/detection/csv-download";
 import type {
   CsvExportPayload,
   CsvExportStatus,
@@ -69,12 +70,37 @@ function resetStateEntries(initial: CsvExportStatus) {
   stateEntries.push(pendingEntry);
 }
 
+// Per-render bookkeeping for `useRef` so the same ref object is
+// returned on subsequent calls of the hook, mirroring React's own
+// guarantee. The list is reset alongside `useState` ordering before
+// each hook invocation in `loadHook`.
+const refEntries: Array<{ current: unknown }> = [];
+function resetRefEntries() {
+  refEntries.length = 0;
+}
+
 vi.mock("react", () => {
-  let idx = 0;
+  let stateIdx = 0;
+  let refIdx = 0;
   return {
     useCallback: (fn: unknown) => fn,
+    // Effects are fire-and-forget in this stub; the export hook only
+    // uses `useEffect` for an unmount-cleanup that the tests do not
+    // exercise. A no-op keeps the call site type-compatible without
+    // dragging in React's effect scheduler.
+    useEffect: (_fn: unknown, _deps?: unknown) => {},
+    useRef: <T>(initial: T) => {
+      const entry = refEntries[refIdx];
+      if (entry) {
+        refIdx += 1;
+        return entry as { current: T };
+      }
+      const fresh: { current: T } = { current: initial };
+      refEntries[refIdx++] = fresh as { current: unknown };
+      return fresh;
+    },
     useState: (initial: unknown) => {
-      const entry = stateEntries[idx++];
+      const entry = stateEntries[stateIdx++];
       if (!entry) {
         throw new Error("unexpected extra useState call");
       }
@@ -89,9 +115,10 @@ vi.mock("react", () => {
       }
       return [entry.value, entry.setter];
     },
-    // Reset the idx between hook calls.
+    // Reset the indices between hook calls.
     __resetReact: () => {
-      idx = 0;
+      stateIdx = 0;
+      refIdx = 0;
     },
   };
 });
@@ -102,6 +129,7 @@ async function loadHook() {
     __resetReact: () => void;
   };
   reactMod.__resetReact();
+  resetRefEntries();
   return mod.useCsvExport;
 }
 
@@ -192,14 +220,13 @@ describe("useCsvExport — Reviewer Round 10 local gating", () => {
   });
 
   it("opens the save picker synchronously on Continue when the large-export gate deferred it", async () => {
-    setup();
+    const { fetchMock } = setup();
+    fetchMock.mockReturnValue(new Promise(() => {}));
     startSavePickerMock.mockReturnValue(
       new Promise(() => {
         /* never resolves — we only care that the picker was invoked */
       }),
     );
-    const { fetchMock } = setup();
-    fetchMock.mockReturnValue(new Promise(() => {}));
     const useCsvExport = await loadHook();
     const options = {
       buildPayload: makePayload,
@@ -274,5 +301,147 @@ describe("useCsvExport — Reviewer Round 10 local gating", () => {
     // Unknown count: we cannot gate locally, so the picker opens
     // synchronously and the server's 409 / 413 remains the backstop.
     expect(startSavePickerMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Closing the Chromium Save-As picker, dismissing the large-export
+  // confirmation dialog, or unmounting the export hook each abort the
+  // in-flight fetch via the per-request AbortController. That abort
+  // surfaces as a fetch rejection inside `runExport`'s try/catch — the
+  // hook must distinguish "we cancelled this ourselves" from a real
+  // network failure and silently return to `idle` so the operator does
+  // not see a spurious error banner. Without this branch, every Cancel
+  // flashed an "export failed" message even though the user had just
+  // walked away. See `use-csv-export.ts` lines 281-291.
+  it("returns to idle without surfacing an error when the in-flight fetch aborts", async () => {
+    const { fetchMock } = setup();
+    // First start the picker promise; then make fetch hang until the
+    // controller fires, at which point it rejects with AbortError.
+    startSavePickerMock.mockReturnValue(new Promise(() => {}));
+    fetchMock.mockImplementation(
+      (_url: string, init: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return;
+          if (signal.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+
+    const useCsvExport = await loadHook();
+    const options = {
+      buildPayload: makePayload,
+      errorMessage: "export failed",
+      getKnownTotalCount: () => null,
+    };
+    const hook = useCsvExport(options);
+
+    hook.start();
+    // After the click the hook is in `running` while the fetch hangs.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const fetchInit = fetchMock.mock.calls[0][1] as { signal?: AbortSignal };
+    expect(fetchInit.signal).toBeInstanceOf(AbortSignal);
+
+    // Re-render so the latest hook closure observes the running state,
+    // then dismiss the confirmation. This path calls `abortInFlight()`,
+    // which fires the AbortController the running fetch is wired to.
+    const reactMod = (await import("react")) as unknown as {
+      __resetReact: () => void;
+    };
+    reactMod.__resetReact();
+    const hookAfterRunning = useCsvExport(options);
+    hookAfterRunning.cancelConfirmation();
+
+    // Yield twice so runExport's catch block has time to observe the
+    // AbortError and flip the status back to idle.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const [statusEntry] = stateEntries as [StateEntry<CsvExportStatus>];
+    expect(statusEntry.value.kind).toBe("idle");
+    expect(fetchInit.signal?.aborted).toBe(true);
+  });
+
+  // Reviewer Round 1 caught a real gap: dismissing the Chromium Save
+  // As dialog while the preflight `fetch()` is still in-flight (e.g.
+  // during the row-count probe or a slow initial REview round-trip)
+  // did not abort the controller until *after* `await fetch()`
+  // returned, because `resolveSaveOutcome()` was only consulted from
+  // the response-handling branches. The hook now watches the save
+  // picker as soon as the request is set up, so a cancelled picker
+  // aborts the in-flight fetch promptly — matching the manual claim
+  // that dismissing the Save As dialog forwards the abort signal all
+  // the way into REview's in-flight `eventList` request.
+  it("aborts the in-flight fetch promptly when the save picker is dismissed mid-fetch", async () => {
+    const { fetchMock } = setup();
+
+    let resolvePicker: (target: SaveTarget) => void = () => {};
+    const pickerPromise = new Promise<SaveTarget>((resolve) => {
+      resolvePicker = resolve;
+    });
+    startSavePickerMock.mockReturnValue(pickerPromise);
+
+    fetchMock.mockImplementation(
+      (_url: string, init: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return;
+          if (signal.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+
+    const useCsvExport = await loadHook();
+    const hook = useCsvExport({
+      buildPayload: makePayload,
+      errorMessage: "export failed",
+      // Unknown count → the picker opens synchronously on click and
+      // `runExport` is invoked with a still-pending pickerPromise.
+      getKnownTotalCount: () => null,
+    });
+
+    hook.start();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const fetchInit = fetchMock.mock.calls[0][1] as { signal?: AbortSignal };
+    expect(fetchInit.signal).toBeInstanceOf(AbortSignal);
+    expect(fetchInit.signal?.aborted).toBe(false);
+
+    // Operator dismisses the Save As dialog while the preflight is
+    // still pending (e.g. row-count probe + slow REview page).
+    resolvePicker({ kind: "cancelled" });
+
+    // Yield so the picker-watcher `.then` runs before we assert.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetchInit.signal?.aborted).toBe(true);
+
+    // Yield more so runExport's catch block can flip status to idle
+    // after the AbortError surfaces from `await fetch()`.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const [statusEntry] = stateEntries as [StateEntry<CsvExportStatus>];
+    expect(statusEntry.value.kind).toBe("idle");
   });
 });

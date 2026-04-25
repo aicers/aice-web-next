@@ -941,6 +941,20 @@ row hard cap surface the limit error directly without opening
 the save picker at all — the export would be rejected by the
 server anyway.
 
+### Cancelling an in-flight export
+
+Cancelling an in-flight export now terminates the active REview
+page rather than waiting for it to complete. Whether you cancel by
+clicking **Cancel** on the large-export confirmation, dismissing
+the Chromium Save As dialog, or closing the tab, the underlying
+fetch is aborted and the signal is forwarded all the way through
+the server's pagination loop into the in-flight `eventList`
+request — so the export stops within a small bounded delay
+instead of running the current page (up to 500 events) to
+completion. The previous behaviour cancelled the loop only at the
+next page boundary; a Cancel mid-page could still burn tens of
+seconds on the active REview round-trip on a large filter.
+
 ### Errors
 
 If the export fails partway — REview connection reset, server

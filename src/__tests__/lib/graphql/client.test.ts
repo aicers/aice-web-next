@@ -276,4 +276,84 @@ describe("graphql client", () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
+
+  // ── AbortSignal forwarding ───────────────────────────────────────
+  //
+  // Long-running REview queries (CSV export pagination, future search-
+  // language mode, large `eventList` pages) need to be cancellable
+  // mid-flight so the user-initiated Cancel terminates the in-flight
+  // page rather than waiting for it to complete. The signal threads
+  // through `graphql-request` into the underlying fetch — and from
+  // there into undici via the spread of `init` in the custom fetch.
+
+  describe("abort signal forwarding", () => {
+    it("forwards the supplied AbortSignal to the underlying fetch", async () => {
+      const controller = new AbortController();
+
+      await client.graphqlRequest(
+        Q_HELLO,
+        undefined,
+        { role: "admin" },
+        controller.signal,
+      );
+
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const [, init] = fetchSpy.mock.calls[0];
+      expect(init.signal).toBe(controller.signal);
+    });
+
+    it("rejects promptly when the signal aborts before a slow response", async () => {
+      // Mimic a slow REview response: the fetch resolves only when the
+      // signal aborts. graphql-request should reject the request with
+      // an AbortError as soon as the signal fires, instead of waiting
+      // for the fake server to finish.
+      fetchSpy.mockImplementationOnce((_input, init) => {
+        return new Promise((resolve, reject) => {
+          const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
+          if (!signal) {
+            // Without forwarding, the request would just hang.
+            return;
+          }
+          if (signal.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+          // Never resolve on its own — the test relies on the abort
+          // path firing the reject.
+          void resolve;
+        });
+      });
+
+      const controller = new AbortController();
+      const requestPromise = client.graphqlRequest(
+        Q_HELLO,
+        undefined,
+        { role: "admin" },
+        controller.signal,
+      );
+
+      // Schedule the abort on a microtask so the request is in-flight
+      // when the signal fires.
+      queueMicrotask(() => controller.abort());
+
+      await expect(requestPromise).rejects.toThrow(/abort/i);
+    });
+
+    it("omits signal from the fetch init when the caller did not supply one", async () => {
+      await client.graphqlRequest(Q_HELLO, undefined, { role: "admin" });
+
+      const [, init] = fetchSpy.mock.calls[0];
+      // graphql-request must not synthesize a signal of its own when
+      // none was passed, so other server actions retain their existing
+      // (uncancellable) semantics.
+      expect(init.signal).toBeUndefined();
+    });
+  });
 });

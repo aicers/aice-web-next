@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   type SaveTarget,
@@ -127,6 +127,20 @@ interface PendingConfirmation {
 type SaveOutcome = SaveTarget | { kind: "failed" };
 
 /**
+ * Detect whether an error came from `fetch`/`AbortController` after the
+ * caller aborted the request. Browsers throw `DOMException` named
+ * `"AbortError"`; Node-style fetches mirror that name. Anything else
+ * is a real network or stream failure.
+ */
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "AbortError" ||
+      (err as { code?: string }).code === "ABORT_ERR")
+  );
+}
+
+/**
  * Orchestrates the CSV export round-trip on the client. Owns the
  * three user-visible phases:
  *
@@ -171,6 +185,36 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
   const [status, setStatus] = useState<CsvExportStatus>({ kind: "idle" });
   const [pendingConfirmation, setPendingConfirmation] =
     useState<PendingConfirmation | null>(null);
+  // Tracks the AbortController for any in-flight `fetch("/api/detection/export",
+  // ...)` so cancellation paths (picker dismissed / failed mid-flight,
+  // confirmation cancelled while the preflight is still pending,
+  // component unmount) can abort the request end-to-end. The route
+  // observes the abort via `request.signal` and the export stream
+  // forwards it into each `searchEvents` page request, so REview itself
+  // sees the cancel and rejects the in-flight page promptly instead of
+  // running it to completion (#342). Stored as a ref so the in-flight
+  // controller is shared across `runExport` invocations and the
+  // `cancelConfirmation` / unmount cleanup paths without going through
+  // re-renders.
+  const inFlightRef = useRef<AbortController | null>(null);
+  const abortInFlight = useCallback(() => {
+    const controller = inFlightRef.current;
+    if (!controller) return;
+    inFlightRef.current = null;
+    try {
+      controller.abort();
+    } catch {
+      // best-effort: AbortController.abort() never throws in practice,
+      // but we don't want a stray exception here to swallow the
+      // surrounding state transition.
+    }
+  }, []);
+  // On unmount, abort any in-flight export so we don't leave the
+  // server streaming pages into a tab that no longer cares about the
+  // body. Without this, a tab close that happens before the response
+  // body would cancel naturally still leaves the route's pagination
+  // loop fetching pages until `request.signal` notices the disconnect.
+  useEffect(() => () => abortInFlight(), [abortInFlight]);
 
   const runExport = useCallback(
     async (
@@ -195,6 +239,49 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
       };
       if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
 
+      // Abort any earlier in-flight request before starting a new one
+      // so a quick double-click on Download CSV (or a Continue after a
+      // 409 round-trip) does not leave an orphan fetch streaming on
+      // the server.
+      abortInFlight();
+      const controller = new AbortController();
+      inFlightRef.current = controller;
+
+      // Watch the save-picker promise as soon as the fetch is set up
+      // so a Save-As dismissal aborts the in-flight request
+      // immediately, even while the row-count probe or initial REview
+      // round-trip is still pending. Without this side-effect, the
+      // hook only consulted the picker outcome *after* `await fetch()`
+      // returned (Reviewer Round 1), so a Cancel during a slow
+      // preflight let the request run to completion before we
+      // noticed — defeating the manual claim that dismissing the Save
+      // As dialog aborts the underlying fetch end-to-end. The latched
+      // outcome lets the catch block below distinguish a picker
+      // cancellation (silent return-to-idle) from a real picker
+      // failure (export-failed banner), mirroring the response-path
+      // branches.
+      let pickerAbortReason: "cancelled" | "failed" | null = null;
+      void savePromise.then(
+        (target) => {
+          if (target.kind === "cancelled") {
+            pickerAbortReason = "cancelled";
+            try {
+              controller.abort();
+            } catch {
+              // best-effort
+            }
+          }
+        },
+        () => {
+          pickerAbortReason = "failed";
+          try {
+            controller.abort();
+          } catch {
+            // best-effort
+          }
+        },
+      );
+
       let response: Response;
       try {
         response = await fetch("/api/detection/export", {
@@ -214,12 +301,46 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
             // though the route quoted a timestamped/summarized name.
             filename,
           }),
+          // The signal threads cancellation end-to-end (#342): a
+          // dismissed save picker, a fresh Download click that
+          // supersedes this one, or unmount calls
+          // `controller.abort()`, which fires the route's
+          // `request.signal` and propagates into each `searchEvents`
+          // page request through `graphqlRequest`. Without this the
+          // browser would only signal cancellation when the body
+          // stream is cancelled, leaving any in-flight REview page
+          // running to completion.
+          signal: controller.signal,
         });
-      } catch {
+      } catch (err) {
         void resolveSaveOutcome();
+        if (controller.signal.aborted || isAbortError(err)) {
+          // The fetch was aborted by us (picker dismissed, picker
+          // failed, supersede, unmount). Picker cancellation and
+          // supersede/unmount are not errors — return to idle. A real
+          // picker failure (SecurityError, permission denial, etc.)
+          // is surfaced via the latched `pickerAbortReason` so the
+          // operator still sees an export-failed banner here, not a
+          // silent no-op (mirrors the response-path 200 branch).
+          if (inFlightRef.current === controller) inFlightRef.current = null;
+          if (pickerAbortReason === "failed") {
+            setStatus({ kind: "error", message: errorMessage });
+          } else {
+            setStatus({ kind: "idle" });
+          }
+          return;
+        }
+        if (inFlightRef.current === controller) inFlightRef.current = null;
         setStatus({ kind: "error", message: errorMessage });
         return;
       }
+
+      // The fetch resolved with response headers — we no longer hold
+      // an in-flight controller for the preflight stage. Subsequent
+      // body streaming has its own cancellation path
+      // (`response.body?.cancel()` / `controller.abort()` for the
+      // streaming branches).
+      if (inFlightRef.current === controller) inFlightRef.current = null;
 
       if (response.status === 409) {
         const json = (await response.json().catch(() => null)) as Record<
@@ -292,6 +413,19 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
       const saveOutcome = await resolveSaveOutcome();
       try {
         if (saveOutcome.kind === "cancelled" || saveOutcome.kind === "failed") {
+          // Aborting the fetch fires the route's `request.signal`,
+          // which propagates into the export stream's pagination loop
+          // and through `graphqlRequest` into REview's in-flight page
+          // (#342). `response.body?.cancel()` alone only stops the
+          // body once a chunk arrives; aborting the fetch ends both
+          // the connection and any pending REview round-trip.
+          try {
+            controller.abort();
+          } catch {
+            // best-effort; controller.abort() never throws in
+            // practice, but a stray exception here would mask the
+            // surrounding state transition.
+          }
           try {
             await response.body?.cancel();
           } catch {
@@ -314,11 +448,18 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
         setStatus({ kind: "idle" });
         setPendingConfirmation(null);
         onSuccess?.(totalCount);
-      } catch {
+      } catch (err) {
+        if (controller.signal.aborted || isAbortError(err)) {
+          // Body streaming was aborted by us (e.g. unmount or a
+          // supersede). The download is gone — return to idle.
+          setStatus({ kind: "idle" });
+          setPendingConfirmation(null);
+          return;
+        }
         setStatus({ kind: "error", message: errorMessage });
       }
     },
-    [errorMessage, formatLimitExceededMessage, onSuccess],
+    [abortInFlight, errorMessage, formatLimitExceededMessage, onSuccess],
   );
 
   const start = useCallback(() => {
@@ -431,9 +572,16 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
   }, [pendingConfirmation, runExport]);
 
   const cancelConfirmation = useCallback(() => {
+    // Abort any in-flight fetch the dialog was raised over (e.g. the
+    // server-surfaced 409 path, where the preflight has already
+    // resolved but a body fetch could still be racing). Without this
+    // a Cancel click would clear the UI while leaving the request
+    // streaming on the server until it noticed the client disconnect
+    // — defeating the point of cancelling.
+    abortInFlight();
     setPendingConfirmation(null);
     setStatus({ kind: "idle" });
-  }, []);
+  }, [abortInFlight]);
 
   const dismissError = useCallback(() => {
     setStatus({ kind: "idle" });
