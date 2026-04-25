@@ -13,13 +13,21 @@
  *
  * - Array fields (`kinds`, `levels`, `categories`, `countries`,
  *   `directions`, `learningMethods`, `keywords`, `hostnames`,
- *   `userIds`, `userNames`, `userDepartments`, `sensors`) are
- *   sorted (numeric for `levels` / `categories`, lexicographic for
- *   the rest) and deduplicated. Empty arrays drop out.
+ *   `userIds`, `userNames`, `userDepartments`, `sensors`,
+ *   `customers`, `networkTags`, `os`, `devices`, `triagePolicies`)
+ *   are sorted (numeric for `levels` / `categories`, lexicographic
+ *   for the rest) and deduplicated. Empty arrays drop out. Reviewer
+ *   Round 1: every schema-backed `EventListFilterInput` field is
+ *   represented so two tabs that differ only by `customers`,
+ *   `networkTags`, `os`, `devices`, or `triagePolicies` are not
+ *   collapsed together by the pivot toast / focus path.
  * - `endpoints[]` is normalized by sorting each
  *   `HostNetworkGroupInput.hosts` / `networks` and each
- *   `IpRangeInput` tuple, then ordering the entries by
- *   `direction` (FROM → TO → null). Empty entries are dropped.
+ *   `IpRangeInput` tuple, ordering the entries by `direction`
+ *   (FROM → TO → null), and (Reviewer Round 1) carrying through
+ *   `EndpointInput.predefined` so two tabs that differ only by the
+ *   referenced predefined network compare unequal. Empty entries
+ *   are dropped.
  * - Scalar string fields (`source`, `destination`) drop when empty.
  * - Numeric bounds (`confidenceMin` / `confidenceMax`) drop when
  *   undefined.
@@ -134,6 +142,11 @@ interface NormalizedStructuredInput {
   userNames?: string[];
   userDepartments?: string[];
   sensors?: string[];
+  customers?: string[];
+  networkTags?: string[];
+  os?: string[];
+  devices?: string[];
+  triagePolicies?: string[];
   countries?: string[];
   kinds?: string[];
   levels?: number[];
@@ -147,6 +160,13 @@ interface NormalizedStructuredInput {
 
 interface NormalizedEndpoint {
   direction: TrafficDirection | null;
+  /**
+   * `EndpointInput.predefined` — id of a server-defined network
+   * group. Carried through verbatim so two tabs that select different
+   * predefined networks compare unequal even when their `custom`
+   * payloads happen to match.
+   */
+  predefined?: string;
   hosts: string[];
   networks: string[];
   ranges: { start: string; end: string }[];
@@ -182,6 +202,15 @@ function normalizeStructuredInput(
     uniqueSortedStrings(input.userDepartments),
   );
   setIfNonEmpty(out, "sensors", uniqueSortedStrings(input.sensors));
+  setIfNonEmpty(out, "customers", uniqueSortedStrings(input.customers));
+  setIfNonEmpty(out, "networkTags", uniqueSortedStrings(input.networkTags));
+  setIfNonEmpty(out, "os", uniqueSortedStrings(input.os));
+  setIfNonEmpty(out, "devices", uniqueSortedStrings(input.devices));
+  setIfNonEmpty(
+    out,
+    "triagePolicies",
+    uniqueSortedStrings(input.triagePolicies),
+  );
   setIfNonEmpty(out, "countries", uniqueSortedStrings(input.countries));
   setIfNonEmpty(out, "kinds", uniqueSortedStrings(input.kinds));
   setIfNonEmpty(out, "levels", uniqueSortedNumbers(input.levels));
@@ -237,27 +266,46 @@ function normalizeStructuredInput(
 function normalizeEndpoints(entries: EndpointInput[]): NormalizedEndpoint[] {
   const out: NormalizedEndpoint[] = [];
   for (const entry of entries) {
-    const custom = entry.custom;
-    if (!custom) continue;
-    const hosts = uniqueSortedStrings(custom.hosts) ?? [];
-    const networks = uniqueSortedStrings(custom.networks) ?? [];
-    const ranges = normalizeRanges(custom.ranges);
-    if (hosts.length === 0 && networks.length === 0 && ranges.length === 0) {
+    const custom = entry.custom ?? null;
+    const hosts = custom ? (uniqueSortedStrings(custom.hosts) ?? []) : [];
+    const networks = custom ? (uniqueSortedStrings(custom.networks) ?? []) : [];
+    const ranges = custom ? normalizeRanges(custom.ranges) : [];
+    const predefined =
+      typeof entry.predefined === "string" && entry.predefined.length > 0
+        ? entry.predefined
+        : undefined;
+    // Reviewer Round 1: a predefined-only endpoint (no custom payload)
+    // is a valid filter slot — keep it instead of dropping it on the
+    // floor like the prior shape did. The "drop empties" rule only
+    // applies when the entry carries no information at all.
+    if (
+      hosts.length === 0 &&
+      networks.length === 0 &&
+      ranges.length === 0 &&
+      !predefined
+    ) {
       continue;
     }
-    out.push({
+    const normalized: NormalizedEndpoint = {
       direction: entry.direction ?? null,
       hosts,
       networks,
       ranges,
-    });
+    };
+    if (predefined) normalized.predefined = predefined;
+    out.push(normalized);
   }
   out.sort((a, b) => {
     const ka = a.direction ?? "__null__";
     const kb = b.direction ?? "__null__";
-    return (
-      (TRAFFIC_DIRECTION_ORDER[ka] ?? 99) - (TRAFFIC_DIRECTION_ORDER[kb] ?? 99)
-    );
+    const directionOrder =
+      (TRAFFIC_DIRECTION_ORDER[ka] ?? 99) - (TRAFFIC_DIRECTION_ORDER[kb] ?? 99);
+    if (directionOrder !== 0) return directionOrder;
+    // Tiebreak on `predefined` so two same-direction entries that
+    // differ only by predefined id sort deterministically.
+    const pa = a.predefined ?? "";
+    const pb = b.predefined ?? "";
+    return pa.localeCompare(pb);
   });
   return out;
 }

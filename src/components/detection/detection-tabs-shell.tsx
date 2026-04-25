@@ -486,50 +486,24 @@ export function DetectionTabsShell({
         tabs: summaries,
         maxTabs: MAX_TABS,
       });
-      switch (action.kind) {
-        case "toastDuplicate":
-          setPivotToast(
-            labels.pivot.alreadyFilteredTemplate.replace(
-              "{value}",
-              action.displayValue,
-            ),
-          );
+      const effect = resolvePivotEffect(action, currentTabs, {
+        alreadyFilteredTemplate: labels.pivot.alreadyFilteredTemplate,
+        tabCapReachedTemplate: labels.pivot.tabCapReachedTemplate,
+        maxTabs: MAX_TABS,
+      });
+      switch (effect.kind) {
+        case "toast":
+          setPivotToast(effect.message);
           return;
-        case "focusTab":
-          setTabs(currentTabs);
-          setActiveTabId(action.tabId);
-          setFlashTabId(action.tabId);
+        case "focus":
+          setTabs(effect.tabs);
+          setActiveTabId(effect.activeTabId);
+          setFlashTabId(effect.flashTabId);
           return;
-        case "toastCapReached":
-          setPivotToast(
-            labels.pivot.tabCapReachedTemplate.replace(
-              "{max}",
-              String(MAX_TABS),
-            ),
-          );
+        case "create":
+          setTabs(effect.tabs);
+          setActiveTabId(effect.activeTabId);
           return;
-        case "createTab": {
-          const seed = createTabSnapshot({
-            filter: action.filter,
-            period: action.period,
-            endpoints: action.endpoints,
-          });
-          // Mark the seed as already-queried so the result list does
-          // not show "Build a filter to begin"; the shell's Apply-on-
-          // mount path is gated on `loading: true`, which we set so
-          // the resume-on-mount effect dispatches the query for us.
-          const seedWithLoad: TabSnapshot = {
-            ...seed,
-            result: {
-              ...seed.result,
-              hasQueried: true,
-              loading: true,
-            },
-          };
-          setTabs([...currentTabs, seedWithLoad]);
-          setActiveTabId(seedWithLoad.id);
-          return;
-        }
       }
     },
     [labels.pivot, withActiveSnapshot],
@@ -619,6 +593,90 @@ export function DetectionTabsShell({
       />
     </div>
   );
+}
+
+/**
+ * Side-effect intent the React handler should apply when a pivot
+ * action resolves. Pure / serializable so the toast / focus / create
+ * branches can be unit-tested independently of React's state machinery
+ * (Reviewer Round 1 follow-up: the wiring used to live inline in the
+ * `handlePivot` callback, where the only way to exercise it was through
+ * the `openPivotTab` helper's pure tests + a hope that the React
+ * surface still wired the result correctly).
+ */
+export type PivotEffect =
+  | { kind: "toast"; message: string }
+  | {
+      kind: "focus";
+      tabs: TabSnapshot[];
+      activeTabId: TabId;
+      flashTabId: TabId;
+    }
+  | { kind: "create"; tabs: TabSnapshot[]; activeTabId: TabId };
+
+export interface ResolvePivotEffectOptions {
+  /** ICU-style template carrying a `{value}` placeholder. */
+  alreadyFilteredTemplate: string;
+  /** ICU-style template carrying a `{max}` placeholder. */
+  tabCapReachedTemplate: string;
+  maxTabs: number;
+}
+
+/**
+ * Translate a {@link PivotAction} into the {@link PivotEffect} the
+ * React handler applies. Pure: the only side effect is allocating
+ * the seed tab on the `createTab` branch.
+ */
+export function resolvePivotEffect(
+  action: PivotAction,
+  currentTabs: readonly TabSnapshot[],
+  opts: ResolvePivotEffectOptions,
+): PivotEffect {
+  switch (action.kind) {
+    case "toastDuplicate":
+      return {
+        kind: "toast",
+        message: opts.alreadyFilteredTemplate.replace(
+          "{value}",
+          action.displayValue,
+        ),
+      };
+    case "focusTab":
+      return {
+        kind: "focus",
+        tabs: [...currentTabs],
+        activeTabId: action.tabId,
+        flashTabId: action.tabId,
+      };
+    case "toastCapReached":
+      return {
+        kind: "toast",
+        message: opts.tabCapReachedTemplate.replace(
+          "{max}",
+          String(opts.maxTabs),
+        ),
+      };
+    case "createTab": {
+      const seed = createTabSnapshot({
+        filter: action.filter,
+        period: action.period,
+        endpoints: action.endpoints,
+      });
+      // Mark the seed as already-queried so the result list does
+      // not show "Build a filter to begin"; the shell's Apply-on-
+      // mount path is gated on `loading: true`, which we set so
+      // the resume-on-mount effect dispatches the query for us.
+      const seedWithLoad: TabSnapshot = {
+        ...seed,
+        result: { ...seed.result, hasQueried: true, loading: true },
+      };
+      return {
+        kind: "create",
+        tabs: [...currentTabs, seedWithLoad],
+        activeTabId: seedWithLoad.id,
+      };
+    }
+  }
 }
 
 /**
