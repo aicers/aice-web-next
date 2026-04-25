@@ -328,6 +328,18 @@ export interface DetectionShellStateSnapshot {
   draft: DetectionFilterDraft | null;
   analyticsOpen: boolean;
   quickPeekEvent: DetectionEvent | null;
+  /**
+   * Reviewer Round 9: pending Quick peek URL token the shell has
+   * decoded but not yet resolved against a successful slice. Mirrors
+   * the same field on `TabSnapshot` so the multi-tab wrapper can
+   * round-trip the URL token across its mount-time URL rewrite when
+   * the bootstrap query errored. Always null when
+   * {@link quickPeekEvent} is non-null. Cleared as soon as the shell
+   * either resolves the token (matched event → quick peek opened) or
+   * proves it stale (no match against a successful slice → URL
+   * stripped).
+   */
+  pendingQuickPeekToken: string | null;
   result: {
     events: DetectionEvent[];
     eventKeys: string[];
@@ -391,6 +403,16 @@ export interface DetectionShellProps {
    * inactive tabs on remount.
    */
   initialQuickPeekEvent?: DetectionEvent | null;
+  /**
+   * Reviewer Round 9: pending Quick peek URL token captured by the
+   * SSR bootstrap so the multi-tab wrapper can re-emit `?event=` on
+   * its mount-time URL rewrite while the shell's first slice is in
+   * an errored-without-proof state. The shell seeds local state
+   * from this prop so its later restore-vs-strip reconciliation can
+   * use the captured token even after the URL itself has been
+   * rewritten by other tab mutations.
+   */
+  initialPendingQuickPeekToken?: string | null;
   /**
    * Fired on every tab-relevant state transition so the multi-tab
    * wrapper can mirror the active tab's live state into its
@@ -664,6 +686,7 @@ export function DetectionShell({
   initialDraft = null,
   initialAnalyticsOpen = false,
   initialQuickPeekEvent = null,
+  initialPendingQuickPeekToken = null,
   onStateChange,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
@@ -898,6 +921,19 @@ export function DetectionShell({
   const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
     initialQuickPeekEvent,
   );
+  // Reviewer Round 9: pending Quick peek URL token captured from the
+  // SSR bootstrap (or a prior tab activation) so the multi-tab
+  // wrapper can re-emit `?event=` from the snapshot while the shell
+  // has not yet been able to resolve the token against a successful
+  // slice. Cleared as soon as the shell either restores the peek
+  // (match found) or proves the token stale (URL stripped). The
+  // wrapper's `buildUrlSearchForTab` falls through to this token
+  // when `quickPeekEvent` is null, so its mount-time URL rewrite
+  // does not clobber the URL token before Retry / Refresh can
+  // reconcile it.
+  const [pendingQuickPeekToken, setPendingQuickPeekToken] = useState<
+    string | null
+  >(initialPendingQuickPeekToken);
   // Ref mirror of `quickPeekEvent` so the async `runQueryFor` success
   // path can read the latest state without becoming a dependency.
   // Reviewer Round 7: used to gate the post-Refresh URL reconcile so
@@ -988,6 +1024,14 @@ export function DetectionShell({
     const nextSearch = applyQuickPeekToken(window.location.search, token);
     const url = `${window.location.pathname}${nextSearch}${window.location.hash}`;
     window.history.replaceState(window.history.state, "", url);
+    // Reviewer Round 9: any explicit URL write supersedes the
+    // pending-token placeholder. Stripping the URL clears pending so
+    // the wrapper's `buildUrlSearchForTab` does not re-emit a
+    // just-removed token; setting a new token clears pending so the
+    // wrapper falls back to encoding the new `quickPeekEvent`'s
+    // locator (which the open-peek path always sets in the same
+    // gesture).
+    setPendingQuickPeekToken(null);
   }, []);
 
   // Match-or-strip leg of the mount-restore contract, run against a
@@ -1027,6 +1071,10 @@ export function DetectionShell({
         // showing an inspector describing a row the new filter does
         // not return.
         if (current) setQuickPeekEvent(null);
+        // Reviewer Round 9: a successful slice with no probe token is
+        // also the canonical "this tab has no pending peek" state, so
+        // clear any stale pending placeholder.
+        setPendingQuickPeekToken(null);
         return;
       }
       const match = nextEvents.find(
@@ -1042,12 +1090,22 @@ export function DetectionShell({
         // renders use the latest event identity.
         if (action === "restore" && !current) setQuickPeekEvent(match);
         else if (current && current !== match) setQuickPeekEvent(match);
+        // Reviewer Round 9: the pending placeholder is now resolved
+        // to a concrete event — clear it so the wrapper encodes the
+        // event's locator on the next URL write rather than the raw
+        // pending token.
+        setPendingQuickPeekToken(null);
         return;
       }
       // Token present but the fresh slice does not contain it: strip
       // the URL token and close any stale in-memory peek.
       if (action === "strip") writeQuickPeekToUrl(null);
       if (current) setQuickPeekEvent(null);
+      // Reviewer Round 9: even when `action !== "strip"` (no URL
+      // token but an in-memory peek that lost its row), pending can
+      // now be cleared because either branch above decided the
+      // peek's fate against a successful slice.
+      setPendingQuickPeekToken(null);
     },
     [writeQuickPeekToUrl],
   );
@@ -2147,12 +2205,20 @@ export function DetectionShell({
     const stored = readQuickPeekToken(
       new URLSearchParams(window.location.search),
     );
-    if (!stored) return;
+    if (!stored) {
+      // Reviewer Round 9: pending mirrors the URL token, so an absent
+      // URL token always implies an absent pending placeholder.
+      setPendingQuickPeekToken(null);
+      return;
+    }
     const match = events.find(
       (evt) => encodeEventLocator(evt) === stored.token,
     );
     if (match) {
       setQuickPeekEvent(match);
+      // Reviewer Round 9: a resolved peek supersedes pending — the
+      // wrapper's URL writer encodes the peek's locator from now on.
+      setPendingQuickPeekToken(null);
       return;
     }
     if (
@@ -2162,8 +2228,20 @@ export function DetectionShell({
         initialErrored: initialResult.error !== null,
       })
     ) {
+      // `writeQuickPeekToUrl(null)` already clears pending — see the
+      // setter for the rationale.
       writeQuickPeekToUrl(null);
+      return;
     }
+    // Reviewer Round 9: errored-without-proof path. The URL token is
+    // intentionally preserved (the empty errored slice cannot prove
+    // the token stale); seed pending from the URL so the multi-tab
+    // wrapper's `buildUrlSearchForTab` can re-emit `?event=` on its
+    // mount-time URL rewrite. Without this seeding, the wrapper's
+    // first replaceState would clobber the URL token before
+    // `reconcileQuickPeekAgainstSlice` could decide restore vs.
+    // strip on a later successful Retry / Refresh.
+    setPendingQuickPeekToken(stored.token);
   }, []);
 
   // Escape dismisses the desktop inline Quick peek pane. The narrow
@@ -2216,6 +2294,7 @@ export function DetectionShell({
       draft,
       analyticsOpen,
       quickPeekEvent,
+      pendingQuickPeekToken,
       result: {
         events,
         eventKeys,
@@ -2239,6 +2318,7 @@ export function DetectionShell({
     draft,
     analyticsOpen,
     quickPeekEvent,
+    pendingQuickPeekToken,
     events,
     eventKeys,
     totalCount,

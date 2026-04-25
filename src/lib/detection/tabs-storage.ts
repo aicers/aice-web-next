@@ -22,6 +22,10 @@
  *   inactive tab always goes through Apply.
  * - The Quick peek selection (held on the URL via `?event=`, scoped
  *   to the active tab).
+ * - The Reviewer Round 9 pending Quick peek token (transient
+ *   bootstrap-only signal; the URL itself is the source of truth on
+ *   rehydration, so the token is recomputed by the page on the next
+ *   reload from the URL).
  *
  * Schema versioning: payloads are tagged with a `version` literal;
  * the deserializer drops any payload whose version does not match
@@ -89,6 +93,7 @@ function hydrateStoredTab(stored: StoredTab): TabSnapshot {
   return {
     ...stored,
     quickPeekEvent: null,
+    pendingQuickPeekToken: null,
     result: EMPTY_RESULT_CACHE,
   };
 }

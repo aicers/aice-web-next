@@ -172,6 +172,22 @@ export interface TabSnapshot {
    * reloaded tab is re-queried.
    */
   readonly quickPeekEvent: DetectionEvent | null;
+  /**
+   * Reviewer Round 9: pending Quick peek URL token the shell has not
+   * yet been able to resolve against a successful slice. Set when the
+   * SSR bootstrap query errors (or finishes empty) so the URL's
+   * `?event=<locator>` token cannot be matched against the empty
+   * events list — the shell intentionally preserves the URL token in
+   * that state because the failed slice has not proven the token
+   * stale. The field round-trips through the multi-tab wrapper so a
+   * mount-time URL rewrite does not clobber the token before
+   * Retry / Refresh can reconcile it; the shell clears it when a
+   * later successful slice either restores the peek (match found) or
+   * strips the URL (match-not-found). Always null when
+   * {@link quickPeekEvent} is non-null because a resolved peek
+   * supersedes the pending placeholder.
+   */
+  readonly pendingQuickPeekToken: string | null;
   readonly result: ResultCache;
 }
 
@@ -293,6 +309,7 @@ export function createTabSnapshot(args: {
     draft: null,
     analyticsOpen: false,
     quickPeekEvent: null,
+    pendingQuickPeekToken: null,
     result: EMPTY_RESULT_CACHE,
   };
 }

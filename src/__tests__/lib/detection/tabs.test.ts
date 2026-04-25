@@ -100,6 +100,15 @@ describe("createTabSnapshot", () => {
     expect(tab.name).toBeNull();
     expect(tab.manualName).toBe(false);
   });
+
+  it("starts with no pending Quick peek token (Reviewer Round 9)", () => {
+    // Pending lives only on the bootstrap tab (seeded by the page
+    // from `?event=`). The `+` affordance and close-tab auto-create
+    // path go through `createTabSnapshot`, neither of which has a
+    // bootstrap URL token to inherit.
+    const tab = createTabSnapshot({ filter: FILTER_1H, period: "1h" });
+    expect(tab.pendingQuickPeekToken).toBeNull();
+  });
 });
 
 describe("preserveActiveTabParam", () => {

@@ -41,8 +41,10 @@ import {
   THREAT_LEVEL_KEY_BY_VALUE,
   THREAT_LEVEL_VALUES,
 } from "@/lib/detection/filter-options";
+import { QUICK_PEEK_EVENT_PARAM } from "@/lib/detection/quick-peek-url";
 import { createTabId, type TabId } from "@/lib/detection/tabs";
 import type { LearningMethod, PageInfo } from "@/lib/detection/types";
+import { decodeEventLocator } from "@/lib/events/event-locator";
 
 interface DetectionPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -235,6 +237,22 @@ export default async function DetectionPage({
     typeof rawTab === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(rawTab)
       ? rawTab
       : createTabId();
+
+  // Reviewer Round 9: capture the Quick peek `?event=<locator>` token
+  // server-side and seed it as `pendingQuickPeekToken` on the
+  // bootstrap tab. The multi-tab wrapper's mount-time URL effect
+  // re-emits this token when `quickPeekEvent` is null, so a shared
+  // link whose first slice errors keeps the URL token intact while
+  // the operator's Retry / Refresh runs — without this seed, the
+  // wrapper's first replaceState would clobber the token before the
+  // recovered slice could match it. Strict-validate the token via
+  // `decodeEventLocator` so a tampered or malformed `?event=` value
+  // is treated as no token rather than round-tripped indefinitely.
+  const rawEventToken = rawParams[QUICK_PEEK_EVENT_PARAM];
+  const initialQuickPeekToken: string | null =
+    typeof rawEventToken === "string" && decodeEventLocator(rawEventToken)
+      ? rawEventToken
+      : null;
 
   const shellLabels = {
     exportConfirm: {
@@ -485,6 +503,7 @@ export default async function DetectionPage({
           eventKeys: initialEventKeys,
           pageInfo: initialPageInfo,
         },
+        quickPeekToken: initialQuickPeekToken,
       }}
       labels={{
         shell: shellLabels,

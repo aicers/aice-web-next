@@ -72,6 +72,19 @@ describe("serializeTabsForStorage / deserializeTabsFromStorage", () => {
     expect(decoded?.tabs[0].result.totalCount).toBeNull();
   });
 
+  it("does not persist the pending Quick peek token (Reviewer Round 9)", () => {
+    // The token is a transient bootstrap-only signal — the URL itself
+    // is the source of truth on rehydration, so the page recomputes
+    // the token from `?event=` on the next reload. Persisting it
+    // would risk re-emitting a stale token after the URL has been
+    // intentionally stripped by another tab's reconcile.
+    const tab = makeTab({ pendingQuickPeekToken: "token-from-bootstrap" });
+    const decoded = deserializeTabsFromStorage(
+      serializeTabsForStorage([tab], tab.id),
+    );
+    expect(decoded?.tabs[0].pendingQuickPeekToken).toBeNull();
+  });
+
   it("returns null for a null / empty input", () => {
     expect(deserializeTabsFromStorage(null)).toBeNull();
     expect(deserializeTabsFromStorage("")).toBeNull();

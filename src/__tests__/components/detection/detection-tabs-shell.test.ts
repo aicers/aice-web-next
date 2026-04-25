@@ -145,6 +145,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       draft: null,
       analyticsOpen: true,
       quickPeekEvent: null,
+      pendingQuickPeekToken: null,
       result: {
         events: [],
         eventKeys: [],
@@ -184,6 +185,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       draft: null,
       analyticsOpen: false,
       quickPeekEvent: null,
+      pendingQuickPeekToken: null,
       result: {
         events: [],
         eventKeys: [],
@@ -322,6 +324,7 @@ describe("routeSnapshotToTab — Reviewer Round 2 (item 1)", () => {
       draft: null,
       analyticsOpen: false,
       quickPeekEvent: null,
+      pendingQuickPeekToken: null,
       result: {
         events: [],
         eventKeys: [],
@@ -413,6 +416,184 @@ describe("buildUrlSearchForTab — Reviewer Round 2 (item 2)", () => {
     const tab = createTabSnapshot({ filter: RICH_FILTER, period: "1h" });
     const search = buildUrlSearchForTab(tab);
     expect(search.has("event")).toBe(false);
+  });
+});
+
+describe("buildUrlSearchForTab — Reviewer Round 9 (pending token round-trip)", () => {
+  // The wrapper's mount-time URL effect rewrites the address bar from
+  // the tab snapshot. When a shared link's first slice errors, the
+  // shell intentionally preserves the URL `?event=` token (the empty
+  // errored slice cannot prove the token stale), but the snapshot's
+  // `quickPeekEvent` is still null because no event has been
+  // resolved. Without `pendingQuickPeekToken` round-tripping, the
+  // wrapper would clobber the URL on its first replaceState — the
+  // operator would lose the locator before Retry could match it
+  // against the recovered slice.
+  const resolvedEvent = {
+    __typename: "HttpThreat",
+    time: "2026-04-25T12:00:00.000Z",
+    sensor: "sensor-1",
+    confidence: 0.81,
+    category: "LATERAL_MOVEMENT",
+    level: "HIGH",
+    triageScores: null,
+    origAddr: "10.0.0.5",
+    origPort: 49152,
+    respAddr: "203.0.113.45",
+    respPort: 443,
+    proto: 6,
+  } as unknown as TabSnapshot["quickPeekEvent"] & {};
+
+  it("emits the pending token when `quickPeekEvent` is null but `pendingQuickPeekToken` is set", () => {
+    const tab: TabSnapshot = {
+      ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
+      quickPeekEvent: null,
+      pendingQuickPeekToken: "pending-token-abc",
+    };
+    const search = buildUrlSearchForTab(tab);
+    expect(search.get("event")).toBe("pending-token-abc");
+  });
+
+  it("prefers the resolved `quickPeekEvent` locator over `pendingQuickPeekToken` when both are present", () => {
+    // Once the shell resolves the URL token to a concrete event,
+    // pending should already have been cleared. This case is
+    // defensive — if both fields end up set together (e.g. a future
+    // refactor neglects to clear pending), the URL writer should
+    // still encode the resolved peek's locator so the address bar
+    // matches the inspector's currently-open row.
+    const tab: TabSnapshot = {
+      ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
+      quickPeekEvent: resolvedEvent,
+      pendingQuickPeekToken: "stale-pending",
+    };
+    const search = buildUrlSearchForTab(tab);
+    const emitted = search.get("event");
+    expect(emitted).not.toBe("stale-pending");
+    expect(emitted?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("omits `event=` when both `quickPeekEvent` and `pendingQuickPeekToken` are null", () => {
+    const tab: TabSnapshot = {
+      ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
+      quickPeekEvent: null,
+      pendingQuickPeekToken: null,
+    };
+    const search = buildUrlSearchForTab(tab);
+    expect(search.has("event")).toBe(false);
+  });
+});
+
+describe("bootstrapTabToSnapshot — Reviewer Round 9 (pending token seed)", () => {
+  it("carries `quickPeekToken` from the SSR bootstrap into `pendingQuickPeekToken`", () => {
+    // The page reads `?event=<locator>` from `searchParams`,
+    // strict-validates it via `decodeEventLocator`, and threads it
+    // through `initialTab.quickPeekToken`. The bootstrap helper
+    // promotes it to the tab's pending field so the wrapper's URL
+    // effect can re-emit the token instead of stripping it during
+    // an errored-bootstrap reload.
+    const tab = bootstrapTabToSnapshot({
+      id: "boot",
+      filter: RICH_FILTER,
+      period: "1h",
+      pivotOnly: {},
+      pagination: INITIAL_PAGINATION_STATE,
+      result: {
+        totalCount: null,
+        error: "boom",
+        events: [],
+        eventKeys: [],
+        pageInfo: null,
+      },
+      quickPeekToken: "ssr-validated-token",
+    });
+    expect(tab.pendingQuickPeekToken).toBe("ssr-validated-token");
+  });
+
+  it("seeds `pendingQuickPeekToken: null` when the URL carried no `?event=` param", () => {
+    const tab = bootstrapTabToSnapshot({
+      id: "boot",
+      filter: RICH_FILTER,
+      period: "1h",
+      pivotOnly: {},
+      pagination: INITIAL_PAGINATION_STATE,
+      result: {
+        totalCount: "10",
+        error: null,
+        events: [],
+        eventKeys: [],
+        pageInfo: null,
+      },
+    });
+    expect(tab.pendingQuickPeekToken).toBeNull();
+  });
+});
+
+describe("mergeSnapshot — Reviewer Round 9 (pending token round-trip)", () => {
+  it("copies `pendingQuickPeekToken` from the shell snapshot into the tab", () => {
+    // When the shell's mount-restore effect seeds the pending token
+    // (errored bootstrap path) and emits the next snapshot, the
+    // wrapper's tab slot must receive the pending field — otherwise
+    // a later URL write would lose the placeholder and the wrapper
+    // would clobber `?event=` on the next tabs change.
+    const tab = createTabSnapshot({ filter: RICH_FILTER, period: "1h" });
+    const snapshot: DetectionShellStateSnapshot = {
+      filter: RICH_FILTER,
+      period: "1h",
+      endpoints: [],
+      pivotOnly: {},
+      pagination: INITIAL_PAGINATION_STATE,
+      draft: null,
+      analyticsOpen: false,
+      quickPeekEvent: null,
+      pendingQuickPeekToken: "pending-token-xyz",
+      result: {
+        events: [],
+        eventKeys: [],
+        totalCount: null,
+        pageInfo: null,
+        resultError: "boom",
+        lastUpdatedMs: null,
+        hasQueried: true,
+        queryEpoch: 0,
+        loading: false,
+        walking: null,
+      },
+    };
+    const merged = mergeSnapshot(tab, snapshot);
+    expect(merged.pendingQuickPeekToken).toBe("pending-token-xyz");
+    expect(merged.quickPeekEvent).toBeNull();
+  });
+
+  it("clears `pendingQuickPeekToken` when the shell resolves the peek and emits the cleared snapshot", () => {
+    const tab: TabSnapshot = {
+      ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
+      pendingQuickPeekToken: "pending-token-xyz",
+    };
+    const snapshot: DetectionShellStateSnapshot = {
+      filter: RICH_FILTER,
+      period: "1h",
+      endpoints: [],
+      pivotOnly: {},
+      pagination: INITIAL_PAGINATION_STATE,
+      draft: null,
+      analyticsOpen: false,
+      quickPeekEvent: null,
+      pendingQuickPeekToken: null,
+      result: {
+        events: [],
+        eventKeys: [],
+        totalCount: "0",
+        pageInfo: null,
+        resultError: null,
+        lastUpdatedMs: 1_700_000_000_000,
+        hasQueried: true,
+        queryEpoch: 1,
+        loading: false,
+        walking: null,
+      },
+    };
+    const merged = mergeSnapshot(tab, snapshot);
+    expect(merged.pendingQuickPeekToken).toBeNull();
   });
 });
 

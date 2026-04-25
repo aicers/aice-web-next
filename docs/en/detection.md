@@ -455,7 +455,12 @@ an event in the current result slice. When the restored token
 does not match any event in the current slice (pagination
 shifted, filter narrowed, event aged out), the token is stripped
 from the URL on mount and the peek stays closed rather than
-opening on an arbitrary row. Clicking Refresh or committing any
+opening on an arbitrary row. If the first slice fails to load
+(e.g. a transient backend error on a shared link), the URL token
+is preserved across the error panel and the multi-tab wrapper's
+URL rewrites until the operator's next successful Retry / Refresh
+— that successful slice is what decides whether to restore the
+peek or strip the now-stale token. Clicking Refresh or committing any
 new query clears the `event` parameter from the URL so a
 subsequent reload lands on a clean slate rather than resurrecting
 the stale selection. The URL write uses `history.replaceState`,

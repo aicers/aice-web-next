@@ -122,6 +122,17 @@ export interface DetectionTabsShellProps {
     endpoints?: EndpointEntry[];
     pagination: PaginationState;
     result: DetectionShellInitialResult;
+    /**
+     * Reviewer Round 9: raw Quick peek URL token captured from the
+     * server-parsed `?event=` param. The wrapper seeds the bootstrap
+     * tab's `pendingQuickPeekToken` from this so the mount-time URL
+     * effect re-emits the token rather than dropping it on the
+     * floor. The shell's mount-restore reconciliation later resolves
+     * it against the first slice (match → restore peek) or strips it
+     * (proven stale). `null` when the URL carries no `?event=` param
+     * or the token failed strict validation server-side.
+     */
+    quickPeekToken?: string | null;
   };
 }
 
@@ -226,6 +237,7 @@ export function DetectionTabsShell({
           draft: live.draft,
           analyticsOpen: live.analyticsOpen,
           quickPeekEvent: live.quickPeekEvent,
+          pendingQuickPeekToken: live.pendingQuickPeekToken,
           result: live.result,
         };
       });
@@ -486,6 +498,7 @@ export function DetectionTabsShell({
         initialDraft={activeTab.draft}
         initialAnalyticsOpen={activeTab.analyticsOpen}
         initialQuickPeekEvent={activeTab.quickPeekEvent}
+        initialPendingQuickPeekToken={activeTab.pendingQuickPeekToken}
         onStateChange={handleShellStateChange}
       />
     </div>
@@ -528,6 +541,7 @@ export function mergeSnapshot(
     draft: snapshot.draft,
     analyticsOpen: snapshot.analyticsOpen,
     quickPeekEvent: snapshot.quickPeekEvent,
+    pendingQuickPeekToken: snapshot.pendingQuickPeekToken,
     result: snapshot.result,
   };
 }
@@ -618,6 +632,15 @@ export function bootstrapTabToSnapshot(
     draft: null,
     analyticsOpen: false,
     quickPeekEvent: null,
+    // Reviewer Round 9: seed the pending token from the server-parsed
+    // URL param. The wrapper's `buildUrlSearchForTab` falls through to
+    // this value when `quickPeekEvent` is null, so the mount-time URL
+    // rewrite preserves `?event=<token>` until the shell's mount-
+    // restore reconciliation decides restore vs. strip on a later
+    // successful slice. Without this seed, an errored bootstrap
+    // would have the wrapper clobber the URL token before Retry
+    // could match it against the recovered slice.
+    pendingQuickPeekToken: initialTab.quickPeekToken ?? null,
     result: {
       events: initialTab.result.events,
       eventKeys: initialTab.result.eventKeys,
@@ -652,6 +675,17 @@ export function bootstrapTabToSnapshot(
  * documented in `src/lib/detection/quick-peek-url.ts`. The token is
  * scoped to the active tab, matching `tabs-storage.ts`'s split
  * (Quick peek selection rides on the URL, not in sessionStorage).
+ *
+ * Reviewer Round 9: when `quickPeekEvent` is null but the tab still
+ * carries a `pendingQuickPeekToken` (the SSR bootstrap captured a
+ * URL `?event=` token that has not yet been resolved against a
+ * successful slice), re-emit the raw pending token. This keeps the
+ * wrapper's mount-time URL rewrite from clobbering the URL token
+ * before the shell's later restore-vs-strip reconciliation runs on
+ * a successful Retry / Refresh. Once the shell resolves the token
+ * (matched event → setQuickPeekEvent + clear pending) or proves it
+ * stale (URL stripped + clear pending), the snapshot's pending
+ * field returns to null and this branch becomes a no-op.
  */
 export function buildUrlSearchForTab(tab: TabSnapshot): URLSearchParams {
   const encoded: EncodedTabFilter = {
@@ -671,6 +705,8 @@ export function buildUrlSearchForTab(tab: TabSnapshot): URLSearchParams {
   if (tab.quickPeekEvent) {
     const token = encodeEventLocator(tab.quickPeekEvent);
     if (token) search.set(QUICK_PEEK_EVENT_PARAM, token);
+  } else if (tab.pendingQuickPeekToken) {
+    search.set(QUICK_PEEK_EVENT_PARAM, tab.pendingQuickPeekToken);
   }
   return search;
 }
