@@ -57,6 +57,51 @@ describe("serializeTabsForStorage / deserializeTabsFromStorage", () => {
     expect(roundTripped?.pagination).toEqual(tab.pagination);
   });
 
+  // Reviewer Round 1 (P2 per-tab state): the dimension and Top N
+  // selection now ride alongside `analyticsOpen` so a reload restores
+  // the operator's exact view, not just whether the strip was open.
+  it("round-trips analyticsDimension and analyticsTopN", () => {
+    const tab = makeTab({
+      analyticsOpen: true,
+      analyticsDimension: "country",
+      analyticsTopN: 20,
+    });
+    const json = serializeTabsForStorage([tab], tab.id);
+    const decoded = deserializeTabsFromStorage(json);
+    const roundTripped = decoded?.tabs[0];
+    expect(roundTripped?.analyticsDimension).toBe("country");
+    expect(roundTripped?.analyticsTopN).toBe(20);
+  });
+
+  // The legacy stored payload (pre Reviewer Round 1) does not carry
+  // these fields; the deserializer must fall back to defaults rather
+  // than handing back an undefined-typed snapshot that would crash
+  // the analytics strip's selector.
+  it("falls back to defaults when stored payload omits analyticsDimension / analyticsTopN", () => {
+    const legacyPayload = JSON.stringify({
+      version: 1,
+      activeTabId: "legacy",
+      tabs: [
+        {
+          id: "legacy",
+          name: null,
+          manualName: false,
+          filter: FILTER_1H,
+          period: "1h",
+          endpoints: [],
+          pivotOnly: {},
+          pagination: { pageSize: 50, page: 1, anchor: { kind: "head" } },
+          draft: null,
+          analyticsOpen: true,
+        },
+      ],
+    });
+    const decoded = deserializeTabsFromStorage(legacyPayload);
+    const tab = decoded?.tabs[0];
+    expect(tab?.analyticsDimension).toBe("srcIp");
+    expect(tab?.analyticsTopN).toBe(10);
+  });
+
   it("strips the cached events so sessionStorage stays within quota", () => {
     const fakeEvent = {
       __typename: "PortScan",

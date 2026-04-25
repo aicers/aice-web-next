@@ -831,10 +831,38 @@
       "walkingProgress": "이동 중… {target} 중 {current} 페이지"
     },
     "analytics": {
-      "toggle": "분석",
+      "toggle": "Top N · 시계열",
       "show": "분석 보기",
       "hide": "분석 숨기기",
-      "placeholder": "분석이 여기에 표시됩니다."
+      "dimensionLabel": "기준",
+      "dimensionOptions": {
+        "srcIp": "출발지 IP",
+        "dstIp": "목적지 IP",
+        "country": "국가",
+        "category": "위협 카테고리",
+        "level": "위협 등급",
+        "kind": "위협 이름"
+      },
+      "topNLabel": "상위",
+      "topNChartTitleTemplate": "{dimension} 상위",
+      "timeSeriesTitle": "이벤트 빈도",
+      "countSuffixTemplate": "이벤트 {count}건",
+      "bucketLabelTemplate": "구간: {period}",
+      "periodSecondsTemplate": "{n}초",
+      "periodMinutesTemplate": "{n}분",
+      "periodHoursTemplate": "{n}시간",
+      "periodDaysTemplate": "{n}일",
+      "periodWeeksTemplate": "{n}주",
+      "loadingTitle": "분석을 불러오는 중…",
+      "loadingDescription": "현재 필터에 대한 상위 항목과 이벤트 빈도 시계열을 가져오고 있습니다.",
+      "errorTitle": "분석을 불러올 수 없습니다",
+      "errorDescription": "분석 서비스가 응답하지 않았습니다. 다시 시도해 주세요.",
+      "errorRetry": "다시 시도",
+      "forbiddenTitle": "권한 없음",
+      "forbiddenDescription": "탐지 분석을 볼 수 있는 권한이 없습니다.",
+      "emptyTitle": "일치하는 이벤트가 없습니다",
+      "emptyDescription": "선택한 기간에 현재 필터와 일치하는 이벤트가 없습니다.",
+      "pivotActivateTemplate": "{label}: {value} 기준으로 결과를 좁힙니다"
     },
     "quickPeek": {
       "close": "간단 미리보기 닫기",

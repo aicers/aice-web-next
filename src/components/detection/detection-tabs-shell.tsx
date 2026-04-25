@@ -55,6 +55,10 @@ import {
   type TabBarLabels,
   type TabBarTab,
 } from "@/components/detection/tab-bar";
+import {
+  DEFAULT_ANALYTICS_DIMENSION,
+  DEFAULT_ANALYTICS_TOP_N,
+} from "@/lib/detection/analytics";
 import type { EndpointEntry } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
 import {
@@ -259,6 +263,8 @@ export function DetectionTabsShell({
           pagination: live.pagination,
           draft: live.draft,
           analyticsOpen: live.analyticsOpen,
+          analyticsDimension: live.analyticsDimension,
+          analyticsTopN: live.analyticsTopN,
           quickPeekEvent: live.quickPeekEvent,
           pendingQuickPeekToken: live.pendingQuickPeekToken,
           result: live.result,
@@ -582,6 +588,8 @@ export function DetectionTabsShell({
         initialEndpoints={activeTab.endpoints}
         initialDraft={activeTab.draft}
         initialAnalyticsOpen={activeTab.analyticsOpen}
+        initialAnalyticsDimension={activeTab.analyticsDimension}
+        initialAnalyticsTopN={activeTab.analyticsTopN}
         initialQuickPeekEvent={activeTab.quickPeekEvent}
         initialPendingQuickPeekToken={activeTab.pendingQuickPeekToken}
         onStateChange={handleShellStateChange}
@@ -714,6 +722,8 @@ export function mergeSnapshot(
     pagination: snapshot.pagination,
     draft: snapshot.draft,
     analyticsOpen: snapshot.analyticsOpen,
+    analyticsDimension: snapshot.analyticsDimension,
+    analyticsTopN: snapshot.analyticsTopN,
     quickPeekEvent: snapshot.quickPeekEvent,
     pendingQuickPeekToken: snapshot.pendingQuickPeekToken,
     result: snapshot.result,
@@ -767,6 +777,8 @@ export function mergeStoredTabsOnRehydrate(
       manualName: matched.manualName,
       draft: matched.draft,
       analyticsOpen: matched.analyticsOpen,
+      analyticsDimension: matched.analyticsDimension,
+      analyticsTopN: matched.analyticsTopN,
     };
     const next = [...storedTabs];
     next[matchIndex] = mergedBootstrap;
@@ -805,6 +817,8 @@ export function bootstrapTabToSnapshot(
     pagination: initialTab.pagination,
     draft: null,
     analyticsOpen: false,
+    analyticsDimension: DEFAULT_ANALYTICS_DIMENSION,
+    analyticsTopN: DEFAULT_ANALYTICS_TOP_N,
     quickPeekEvent: null,
     // Reviewer Round 9: seed the pending token from the server-parsed
     // URL param. The wrapper's `buildUrlSearchForTab` falls through to

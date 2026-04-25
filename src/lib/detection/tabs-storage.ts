@@ -36,6 +36,14 @@
  * private session-scoped store.
  */
 
+import {
+  type AnalyticsDimension,
+  type AnalyticsTopN,
+  DEFAULT_ANALYTICS_DIMENSION,
+  DEFAULT_ANALYTICS_TOP_N,
+  isAnalyticsDimension,
+  isAnalyticsTopN,
+} from "./analytics";
 import type { EndpointEntry } from "./endpoint-filter";
 import type { Filter } from "./filter";
 import type { DetectionFilterDraft } from "./filter-draft";
@@ -62,6 +70,15 @@ interface StoredTab {
   pagination: PaginationState;
   draft: DetectionFilterDraft | null;
   analyticsOpen: boolean;
+  /**
+   * Reviewer Round 1 (P2 per-tab state): the dimension currently
+   * shown in the analytics strip's selector. Optional in the
+   * stored payload so a v1 session that pre-dates this field
+   * still rehydrates — missing values fall back to the default.
+   */
+  analyticsDimension?: AnalyticsDimension;
+  /** See {@link analyticsDimension}; same opt-in upgrade path. */
+  analyticsTopN?: AnalyticsTopN;
 }
 
 interface StoredPayload {
@@ -82,6 +99,8 @@ function toStoredTab(tab: TabSnapshot): StoredTab {
     pagination: tab.pagination,
     draft: tab.draft,
     analyticsOpen: tab.analyticsOpen,
+    analyticsDimension: tab.analyticsDimension,
+    analyticsTopN: tab.analyticsTopN,
   };
 }
 
@@ -92,6 +111,12 @@ function toStoredTab(tab: TabSnapshot): StoredTab {
 function hydrateStoredTab(stored: StoredTab): TabSnapshot {
   return {
     ...stored,
+    analyticsDimension: isAnalyticsDimension(stored.analyticsDimension)
+      ? stored.analyticsDimension
+      : DEFAULT_ANALYTICS_DIMENSION,
+    analyticsTopN: isAnalyticsTopN(stored.analyticsTopN)
+      ? stored.analyticsTopN
+      : DEFAULT_ANALYTICS_TOP_N,
     quickPeekEvent: null,
     pendingQuickPeekToken: null,
     result: EMPTY_RESULT_CACHE,

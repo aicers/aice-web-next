@@ -831,10 +831,38 @@
       "walkingProgress": "Walking… page {current} of {target}"
     },
     "analytics": {
-      "toggle": "Analytics",
+      "toggle": "Top N & Time Series",
       "show": "Show analytics",
       "hide": "Hide analytics",
-      "placeholder": "Analytics will appear here."
+      "dimensionLabel": "Dimension",
+      "dimensionOptions": {
+        "srcIp": "Source IP",
+        "dstIp": "Destination IP",
+        "country": "Country",
+        "category": "Threat Category",
+        "level": "Threat Level",
+        "kind": "Threat Name"
+      },
+      "topNLabel": "Top",
+      "topNChartTitleTemplate": "Top by {dimension}",
+      "timeSeriesTitle": "Event frequency",
+      "countSuffixTemplate": "{count} events",
+      "bucketLabelTemplate": "Bucket: {period}",
+      "periodSecondsTemplate": "{n}s",
+      "periodMinutesTemplate": "{n}m",
+      "periodHoursTemplate": "{n}h",
+      "periodDaysTemplate": "{n}d",
+      "periodWeeksTemplate": "{n}w",
+      "loadingTitle": "Loading analytics…",
+      "loadingDescription": "Fetching the Top N counts and the event frequency series for the active filter.",
+      "errorTitle": "Couldn't load analytics",
+      "errorDescription": "The analytics service failed to respond. Please retry.",
+      "errorRetry": "Retry",
+      "forbiddenTitle": "Not permitted",
+      "forbiddenDescription": "Your account doesn't have permission to view detection analytics.",
+      "emptyTitle": "No matching events",
+      "emptyDescription": "The active filter doesn't match any events in the selected time range.",
+      "pivotActivateTemplate": "Filter results by {label}: {value}"
     },
     "quickPeek": {
       "close": "Close Quick peek",

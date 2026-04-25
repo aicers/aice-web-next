@@ -5,6 +5,18 @@ export {
   removeActiveChip,
 } from "./active-filters";
 export {
+  ANALYTICS_DIMENSIONS,
+  ANALYTICS_TOP_N_OPTIONS,
+  type AnalyticsDimension,
+  type AnalyticsTopN,
+  computeFrequencyPeriodSeconds,
+  DEFAULT_ANALYTICS_DIMENSION,
+  DEFAULT_ANALYTICS_TOP_N,
+  filterTimeRangeSeconds,
+  isAnalyticsDimension,
+  isAnalyticsTopN,
+} from "./analytics";
+export {
   buildEndpointChips,
   createEndpointEntryId,
   ENDPOINT_CHIP_AGGREGATE_THRESHOLD,
@@ -23,6 +35,7 @@ export {
 } from "./errors";
 export { type Filter, toEventListFilterInput } from "./filter";
 export {
+  analyticsFilterIdentity,
   type FilterIdentity,
   type FilterIdentityInput,
   filterIdentitiesEqual,

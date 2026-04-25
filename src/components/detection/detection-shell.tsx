@@ -29,6 +29,10 @@ import {
   CsvExportConfirmDialog,
   type CsvExportConfirmLabels,
 } from "@/components/detection/csv-export-dialog";
+import {
+  DetectionAnalytics,
+  type DetectionAnalyticsLabels,
+} from "@/components/detection/detection-analytics";
 import { isMorePopoverOpen } from "@/components/detection/more-popover";
 import {
   PaginationControls,
@@ -62,6 +66,12 @@ import {
   type ChipRemoveTarget,
   removeActiveChip,
 } from "@/lib/detection/active-filters";
+import {
+  type AnalyticsDimension,
+  type AnalyticsTopN,
+  DEFAULT_ANALYTICS_DIMENSION,
+  DEFAULT_ANALYTICS_TOP_N,
+} from "@/lib/detection/analytics";
 import { buildAppliedFilter } from "@/lib/detection/apply-filter";
 import type { DirectionChipLabels } from "@/lib/detection/direction";
 import { readDirectionsFromInput } from "@/lib/detection/direction";
@@ -77,6 +87,7 @@ import {
   type DetectionFilterDraft,
   isoToLocalInput,
 } from "@/lib/detection/filter-draft";
+import { analyticsFilterIdentity } from "@/lib/detection/filter-identity";
 import {
   type FilterChip,
   type FilterChipFocus,
@@ -176,6 +187,43 @@ export type QuickPeekLabelStrings = Omit<
   "triageSummary" | "moreCountSuffix"
 >;
 
+/**
+ * Serializable subset of {@link DetectionAnalyticsLabels}. The
+ * server page passes ICU templates as plain strings; this shell
+ * binds them into the function-valued formatters
+ * (`countSuffix`, `bucketLabel`, `pivotActivate`, period values)
+ * using the active locale's translator before the analytics
+ * component is rendered.
+ */
+export interface AnalyticsLabelStrings {
+  dimensionLabel: string;
+  dimensionOptions: DetectionAnalyticsLabels["dimensionOptions"];
+  topNLabel: string;
+  topNChartTitleTemplate: string;
+  timeSeriesTitle: string;
+  countSuffixTemplate: string;
+  bucketLabelTemplate: string;
+  periodSecondsTemplate: string;
+  periodMinutesTemplate: string;
+  periodHoursTemplate: string;
+  periodDaysTemplate: string;
+  periodWeeksTemplate: string;
+  loadingTitle: string;
+  loadingDescription: string;
+  errorTitle: string;
+  errorDescription: string;
+  errorRetry: string;
+  forbiddenTitle: string;
+  forbiddenDescription: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  levelLabels: DetectionAnalyticsLabels["levelLabels"];
+  categoryLabels: DetectionAnalyticsLabels["categoryLabels"];
+  countryUnknown: string;
+  countryUnavailable: string;
+  pivotActivateTemplate: string;
+}
+
 export interface DetectionShellLabels {
   /**
    * CSV export affordance labels — confirmation dialog copy, the
@@ -207,7 +255,13 @@ export interface DetectionShellLabels {
   analyticsToggle: string;
   analyticsShow: string;
   analyticsHide: string;
-  analyticsPlaceholder: string;
+  /**
+   * Serializable subset of {@link DetectionAnalyticsLabels} — the
+   * server page passes plain strings; the client shell builds the
+   * function-valued formatters (count suffix, period descriptors,
+   * pivot a11y label) using the locale translator.
+   */
+  analytics: AnalyticsLabelStrings;
   directionChips: DirectionChipLabels;
   endpointChips: EndpointChipLabels;
   confidenceChipLabel: string;
@@ -328,6 +382,16 @@ export interface DetectionShellStateSnapshot {
   pagination: PaginationState;
   draft: DetectionFilterDraft | null;
   analyticsOpen: boolean;
+  /**
+   * Reviewer Round 1 (P2 per-tab state): selector value the
+   * analytics strip currently shows. Carries a default for fresh
+   * tabs but the shell's `setAnalyticsDimension` flips it to the
+   * operator's choice; the multi-tab wrapper mirrors it into the
+   * tab snapshot so a switch / reload restores the same selection.
+   */
+  analyticsDimension: AnalyticsDimension;
+  /** See {@link analyticsDimension} — same per-tab restore contract. */
+  analyticsTopN: AnalyticsTopN;
   quickPeekEvent: DetectionEvent | null;
   /**
    * Reviewer Round 9: pending Quick peek URL token the shell has
@@ -396,6 +460,15 @@ export interface DetectionShellProps {
    * the strip open.
    */
   initialAnalyticsOpen?: boolean;
+  /**
+   * Initial dimension shown in the analytics strip. Reviewer Round 1
+   * (P2): per-tab — the wrapper rebuilds the shell on tab switch, so
+   * the selector value rides on a snapshot field rather than on
+   * `DetectionAnalytics`'s local React state.
+   */
+  initialAnalyticsDimension?: AnalyticsDimension;
+  /** Initial Top N count shown in the analytics strip. See {@link initialAnalyticsDimension}. */
+  initialAnalyticsTopN?: AnalyticsTopN;
   /**
    * Initial Quick peek event carried from a prior tab-mount. Pinned
    * to the rehydrated event reference rather than re-resolved from
@@ -695,6 +768,8 @@ export function DetectionShell({
   initialEndpoints = [],
   initialDraft = null,
   initialAnalyticsOpen = false,
+  initialAnalyticsDimension = DEFAULT_ANALYTICS_DIMENSION,
+  initialAnalyticsTopN = DEFAULT_ANALYTICS_TOP_N,
   initialQuickPeekEvent = null,
   initialPendingQuickPeekToken = null,
   onStateChange,
@@ -816,7 +891,54 @@ export function DetectionShell({
     }),
     [labels.quickPeek, tResults],
   );
+  // Bind the analytics strip's plain-string templates into their
+  // function-valued shapes here on the client. The server page only
+  // supplies ICU strings + the categorical (level / category) label
+  // tables; the formatter closures below close over the locale's
+  // translator and so cannot cross the server→client boundary.
+  const analyticsLabels = useMemo<DetectionAnalyticsLabels>(() => {
+    const a = labels.analytics;
+    return {
+      dimensionLabel: a.dimensionLabel,
+      dimensionOptions: a.dimensionOptions,
+      topNLabel: a.topNLabel,
+      topNChartTitleTemplate: a.topNChartTitleTemplate,
+      timeSeriesTitle: a.timeSeriesTitle,
+      countSuffix: (count: number) =>
+        a.countSuffixTemplate.replace("{count}", count.toLocaleString(locale)),
+      bucketLabel: (period: string) =>
+        a.bucketLabelTemplate.replace("{period}", period),
+      periodValues: {
+        seconds: (n) => a.periodSecondsTemplate.replace("{n}", String(n)),
+        minutes: (n) => a.periodMinutesTemplate.replace("{n}", String(n)),
+        hours: (n) => a.periodHoursTemplate.replace("{n}", String(n)),
+        days: (n) => a.periodDaysTemplate.replace("{n}", String(n)),
+        weeks: (n) => a.periodWeeksTemplate.replace("{n}", String(n)),
+      },
+      loadingTitle: a.loadingTitle,
+      loadingDescription: a.loadingDescription,
+      errorTitle: a.errorTitle,
+      errorDescription: a.errorDescription,
+      errorRetry: a.errorRetry,
+      forbiddenTitle: a.forbiddenTitle,
+      forbiddenDescription: a.forbiddenDescription,
+      emptyTitle: a.emptyTitle,
+      emptyDescription: a.emptyDescription,
+      levelLabels: a.levelLabels,
+      categoryLabels: a.categoryLabels,
+      countryUnknown: a.countryUnknown,
+      countryUnavailable: a.countryUnavailable,
+      pivotActivate: ({ label, value }) =>
+        a.pivotActivateTemplate
+          .replace("{label}", label)
+          .replace("{value}", value),
+    };
+  }, [labels.analytics, locale]);
   const [analyticsOpen, setAnalyticsOpen] = useState(initialAnalyticsOpen);
+  const [analyticsDimension, setAnalyticsDimension] =
+    useState<AnalyticsDimension>(initialAnalyticsDimension);
+  const [analyticsTopN, setAnalyticsTopN] =
+    useState<AnalyticsTopN>(initialAnalyticsTopN);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openEndpointPanelOnDrawerOpen, setOpenEndpointPanelOnDrawerOpen] =
     useState(false);
@@ -837,6 +959,18 @@ export function DetectionShell({
   // {@link Filter} payload directly, so a drawer edit clears any
   // stale token on the next Apply / chip removal.
   const pivotOnly = initialPivotOnly;
+  // Reviewer Round 2 (P2 freshness): the analytics strip must use a
+  // dedicated identity that pins the literal `start` / `end` pair —
+  // re-applying the same relative period chip ("Last 1 hour") from
+  // the drawer recomputes new ISO bounds, replaces the result-list
+  // filter, and the open strip must refetch against the new window.
+  // The multi-tab pivot identity collapses period-equivalent windows
+  // together and is too lossy for that contract. See
+  // {@link analyticsFilterIdentity}.
+  const analyticsFilterIdentityValue = useMemo(
+    () => analyticsFilterIdentity(committedFilter),
+    [committedFilter],
+  );
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(initialDraft);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
@@ -2315,6 +2449,8 @@ export function DetectionShell({
       pagination,
       draft,
       analyticsOpen,
+      analyticsDimension,
+      analyticsTopN,
       quickPeekEvent,
       pendingQuickPeekToken,
       result: {
@@ -2339,6 +2475,8 @@ export function DetectionShell({
     pagination,
     draft,
     analyticsOpen,
+    analyticsDimension,
+    analyticsTopN,
     quickPeekEvent,
     pendingQuickPeekToken,
     events,
@@ -2548,14 +2686,19 @@ export function DetectionShell({
               {analyticsOpen ? labels.analyticsHide : labels.analyticsShow}
             </span>
           </button>
-          {analyticsOpen ? (
-            <div
-              id="detection-analytics-panel"
-              className="text-muted-foreground border-t border-[var(--sidebar-border)] px-3 py-4 text-sm"
-            >
-              {labels.analyticsPlaceholder}
-            </div>
-          ) : null}
+          <div id="detection-analytics-panel">
+            <DetectionAnalytics
+              open={analyticsOpen}
+              filter={committedFilter}
+              filterIdentity={analyticsFilterIdentityValue}
+              labels={analyticsLabels}
+              dimension={analyticsDimension}
+              topN={analyticsTopN}
+              onDimensionChange={setAnalyticsDimension}
+              onTopNChange={setAnalyticsTopN}
+              onPivot={onPivot}
+            />
+          </div>
         </div>
       </section>
 
