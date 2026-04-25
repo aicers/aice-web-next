@@ -1,6 +1,7 @@
 import {
   EVENT_KIND_FRIENDLY_NAMES,
   readEventAddressing,
+  readEventIdentity,
 } from "@/components/events/event-display-helpers";
 
 import type { Filter } from "./filter";
@@ -43,16 +44,21 @@ export const CSV_EXPORT_MAX_ROWS = 1_000_000;
  * header row is written. Mirrors the visible columns rendered by
  * `ResultList` in left-to-right reading order: the severity badge /
  * time / kind / attack kind / category / confidence / triage token
- * on the top line (`result-list.tsx` → `ResultRow`), followed by
- * the source → destination endpoint line and the sensor. Country
+ * on the top line (`result-list.tsx` → `EventRow`), followed by
+ * the source → destination endpoint line, the sensor, and the
+ * Phase Detection-28 identity columns (userName, hostname). Country
  * is inlined into the source/destination tokens instead of being
  * split into separate columns, and triage is emitted as a single
  * cell mirroring the `TriageSummary` token ("{count} policies ·
  * {max} max"), rather than the previous two-column split, so the
  * export matches the #284 contract of "CSV columns match the
- * currently visible result columns in the same order". When a new
- * column is added to the UI, a matching entry here keeps the
- * download in sync.
+ * currently visible result columns in the same order". The
+ * userName / hostname cells follow `IdentitySummary`'s placement
+ * after the sensor on the second line and write `""` (empty cell)
+ * for subtypes whose schema does not emit the field — the same
+ * `—` fallback the UI uses, but rendered as an empty cell so the
+ * column position never shifts. When a new column is added to the
+ * UI, a matching entry here keeps the download in sync.
  */
 export const CSV_COLUMN_KEYS = [
   "level",
@@ -65,6 +71,8 @@ export const CSV_COLUMN_KEYS = [
   "source",
   "destination",
   "sensor",
+  "userName",
+  "hostname",
 ] as const;
 
 export type CsvColumnKey = (typeof CSV_COLUMN_KEYS)[number];
@@ -331,6 +339,7 @@ export function formatCsvRow(
     event.triageScores,
     options.triageSummaryTemplate,
   );
+  const identity = readEventIdentity(event);
   return joinDataRow([
     level,
     event.time ?? "",
@@ -342,6 +351,8 @@ export function formatCsvRow(
     source,
     destination,
     event.sensor ?? "",
+    identity.userName ?? "",
+    identity.hostname ?? "",
   ]);
 }
 
@@ -362,6 +373,8 @@ export const DEFAULT_CSV_HEADERS: CsvColumnHeaders = {
   source: "Source",
   destination: "Destination",
   sensor: "Sensor",
+  userName: "User",
+  hostname: "Host",
 };
 
 /**

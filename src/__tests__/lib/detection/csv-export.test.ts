@@ -42,10 +42,11 @@ describe("formatCsvHeader", () => {
     const cells = header.replace(/\r\n$/, "").split(",");
     expect(cells.length).toBe(CSV_COLUMN_KEYS.length);
     // Column order mirrors the result row's left-to-right reading
-    // order (severity badge first, sensor last). Lock the ends so
-    // drift either way is caught.
+    // order (severity badge first, hostname last after the Phase
+    // Detection-28 identity columns). Lock the ends so drift either
+    // way is caught.
     expect(cells[0]).toBe(DEFAULT_CSV_HEADERS.level);
-    expect(cells[cells.length - 1]).toBe(DEFAULT_CSV_HEADERS.sensor);
+    expect(cells[cells.length - 1]).toBe(DEFAULT_CSV_HEADERS.hostname);
   });
 
   it("mirrors the result row's column order exactly", () => {
@@ -60,6 +61,8 @@ describe("formatCsvHeader", () => {
       "source",
       "destination",
       "sensor",
+      "userName",
+      "hostname",
     ]);
   });
 });
@@ -349,7 +352,9 @@ describe("formatCsvRow", () => {
     expect(cells[6]).toBe("3 policies · 0.90 max");
     // Source / destination land after triage, not before it — the
     // result row shows triage on the top line and endpoints below.
-    expect(cells.length).toBe(10);
+    // The Phase Detection-28 identity columns (userName, hostname)
+    // tail the row at indices 10 / 11.
+    expect(cells.length).toBe(12);
   });
 
   it("leaves the triage cell empty when no scores are present", () => {
@@ -360,6 +365,113 @@ describe("formatCsvRow", () => {
     const row = formatCsvRow(event, ROW_OPTIONS);
     const cells = row.replace(/\r\n$/, "").split(",");
     expect(cells[6]).toBe("");
+  });
+
+  it("emits userName / hostname cells from the Phase Detection-28 identity columns", () => {
+    // HttpThreat carries both `username` and `host` per the schema.
+    // The CSV must surface them at the trailing identity slots so a
+    // download mirrors the result row's userName / hostname cells.
+    const event = buildEvent({
+      origAddr: "10.0.0.5",
+      origPort: 1234,
+      origCountry: "US",
+      respAddr: "10.0.0.6",
+      respPort: 443,
+      respCountry: "KR",
+      username: "jdoe",
+      host: "mail.example.com",
+    } as unknown as Partial<Event>);
+    const row = formatCsvRow(event, ROW_OPTIONS);
+    const cells = row.replace(/\r\n$/, "").split(",");
+    expect(cells.length).toBe(12);
+    expect(cells[10]).toBe("jdoe");
+    expect(cells[11]).toBe("mail.example.com");
+  });
+
+  it("falls back to the schema's `user` and `hostname` field names for FTP / NTLM subtypes", () => {
+    // BlocklistFtp uses `user` (documented as Username) and has no
+    // host/hostname. BlocklistNtlm uses `hostname`. The CSV reader
+    // must coalesce both onto the same userName / hostname columns.
+    const ftpRow = formatCsvRow(
+      buildEvent({
+        __typename: "BlocklistFtp",
+        origAddr: "10.0.0.5",
+        respAddr: "10.0.0.6",
+        user: "alice",
+      } as unknown as Partial<Event>),
+      ROW_OPTIONS,
+    );
+    const ftpCells = ftpRow.replace(/\r\n$/, "").split(",");
+    expect(ftpCells[10]).toBe("alice");
+    expect(ftpCells[11]).toBe("");
+
+    const ntlmRow = formatCsvRow(
+      buildEvent({
+        __typename: "BlocklistNtlm",
+        origAddr: "10.0.0.5",
+        respAddr: "10.0.0.6",
+        hostname: "client01.corp.local",
+      } as unknown as Partial<Event>),
+      ROW_OPTIONS,
+    );
+    const ntlmCells = ntlmRow.replace(/\r\n$/, "").split(",");
+    expect(ntlmCells[10]).toBe("");
+    expect(ntlmCells[11]).toBe("client01.corp.local");
+  });
+
+  it("reads the camelCase `userName` field on BlocklistRadius (the schema outlier)", () => {
+    // BlocklistRadius is the only curated subtype that uses the
+    // camelCase `userName` field. The CSV exporter must coalesce
+    // it onto the userName column the same way as the lowercase
+    // `username` and `user` variants. Locks the
+    // `readEventIdentity` fall-through against a refactor that
+    // drops the camelCase branch.
+    const row = formatCsvRow(
+      buildEvent({
+        __typename: "BlocklistRadius",
+        origAddr: "10.0.0.5",
+        respAddr: "10.0.0.6",
+        userName: "radius-user",
+      } as unknown as Partial<Event>),
+      ROW_OPTIONS,
+    );
+    const cells = row.replace(/\r\n$/, "").split(",");
+    expect(cells[10]).toBe("radius-user");
+    expect(cells[11]).toBe("");
+  });
+
+  it("reads the `user` field on WindowsThreat (no host/hostname)", () => {
+    // WindowsThreat surfaces `user` (documented as Username) but
+    // no host/hostname field. The CSV exporter must coalesce it
+    // onto the userName column and leave the hostname column
+    // empty — the same shape the result row renders.
+    const row = formatCsvRow(
+      buildEvent({
+        __typename: "WindowsThreat",
+        user: "DOMAIN\\agent",
+      } as unknown as Partial<Event>),
+      ROW_OPTIONS,
+    );
+    const cells = row.replace(/\r\n$/, "").split(",");
+    expect(cells[10]).toBe("DOMAIN\\agent");
+    expect(cells[11]).toBe("");
+  });
+
+  it("leaves the identity columns empty for subtypes whose schema emits neither field", () => {
+    // BlocklistConn carries no userName / host / hostname. The
+    // column position must stay put — cells[10] and cells[11] are
+    // empty, mirroring the row's `—` fallback as a blank cell so
+    // downstream tooling sees a fixed column layout.
+    const event = buildEvent({
+      __typename: "BlocklistConn",
+      origAddr: "10.0.0.5",
+      respAddr: "10.0.0.6",
+    } as unknown as Partial<Event>);
+    const row = formatCsvRow(event, ROW_OPTIONS);
+    const cells = row.replace(/\r\n$/, "").split(",");
+    expect(cells.length).toBe(12);
+    expect(cells[10]).toBe("");
+    expect(cells[11]).toBe("");
   });
 
   it("neutralises spreadsheet-formula injection in event-derived cells", () => {

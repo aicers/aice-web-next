@@ -12,8 +12,10 @@ import { useEffect, useState } from "react";
 import { MorePopover } from "@/components/detection/more-popover";
 import {
   EVENT_KIND_FRIENDLY_NAMES,
+  type EventIdentity,
   levelBadgeVariant,
   readEventAddressing,
+  readEventIdentity,
 } from "@/components/events/event-display-helpers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,13 +43,30 @@ import { cn } from "@/lib/utils";
 /**
  * Phase Detection-9 result list. Renders a compact two-line entry
  * per event (severity / time / kind / confidence / triage on line 1;
- * `source → destination` plus sensor on line 2). The component only
- * presents — fetching, sort, pagination (Phase Detection-11) and
- * pivot wiring (Phase Detection-12) live elsewhere.
+ * `source → destination` plus sensor and the identity cells on line
+ * 2). The component only presents — fetching, sort, pagination
+ * (Phase Detection-11) and pivot wiring (Phase Detection-12) live
+ * elsewhere.
  *
  * The header area sits above the list with the result count + range,
  * the Download CSV affordance (wiring in Phase Detection-13), and an
  * `Updated <relative>` line with a Refresh button.
+ *
+ * Identity columns (Phase Detection-28 / #347): the second line
+ * carries `User: …` and `Host: …` cells after the sensor on every
+ * row. When the event subtype emits the underlying field per the
+ * REview schema (the subtypes select them in `EVENT_LIST_QUERY` —
+ * HTTP-class threats, `BlocklistNtlm`, `BlocklistRadius`, FTP
+ * plain-text events, `WindowsThreat`), the cell renders as a
+ * pivotable button that activates the same `userName` / `hostname`
+ * patches the pivot library already maps. Subtypes that do not
+ * emit the field render the cell as a non-pivotable `User: —` /
+ * `Host: —` token so the column position stays stable across the
+ * list — #280's density rules still hold because severity, time,
+ * and endpoints never depend on either cell. The remaining three
+ * pivot columns mapped by the engine (`userId`, `userDepartment`,
+ * `direction`) are deferred to #348 because the per-event payload
+ * does not carry them yet.
  */
 
 export interface ResultListLabels {
@@ -102,7 +121,22 @@ export interface ResultListLabels {
     level: string;
     category: string;
     kind: string;
+    userName: string;
+    hostname: string;
   };
+  /**
+   * Per-locale prefix labels for the userName / hostname identity
+   * cells (#347). Rendered as a small muted preamble before the
+   * value so the operator can tell which column the cell belongs
+   * to without a header row — e.g. `User: jdoe` / `Host:
+   * mail.example.com`. Subtypes whose schema does not emit the
+   * field render the cell as a non-pivotable `<prefix> —` token
+   * (e.g. `User: —`) so the column position stays stable across
+   * the list and the operator can tell that the row simply has no
+   * identity to pivot on.
+   */
+  userNameLabel: string;
+  hostnameLabel: string;
 }
 
 export interface ResultListState {
@@ -150,12 +184,13 @@ interface ResultListProps {
    * Pivot (drill-down) activation hook (Phase Detection-12).
    *
    * When provided, pivotable cells (level / kind / category /
-   * source IP / destination IP / country) render as buttons that
-   * call into this handler with a {@link PivotPatch} the multi-tab
-   * wrapper applies on top of the active tab's filter. When
-   * undefined, every cell renders as plain text — covers the
-   * single-tab storybook / standalone shell paths where there is
-   * no tab system to receive the new filter.
+   * source IP / destination IP / country / userName / hostname)
+   * render as buttons that call into this handler with a
+   * {@link PivotPatch} the multi-tab wrapper applies on top of the
+   * active tab's filter. When undefined, every cell renders as
+   * plain text — covers the single-tab storybook / standalone
+   * shell paths where there is no tab system to receive the new
+   * filter.
    */
   onPivot?: (patch: PivotPatch) => void;
   /**
@@ -527,6 +562,7 @@ function EventRow({
   onPivot?: (patch: PivotPatch) => void;
 }) {
   const addressing = readEventAddressing(event);
+  const identity = readEventIdentity(event);
   const kindLabel =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
   // Issue #290 acceptance: selecting any row opens the Quick peek.
@@ -575,6 +611,20 @@ function EventRow({
   const kindPatch = pivot
     ? buildPivotPatch("kind", { raw: event.__typename, display: kindLabel })
     : null;
+  const userNamePatch =
+    pivot && identity.userName
+      ? buildPivotPatch("userName", {
+          raw: identity.userName,
+          display: identity.userName,
+        })
+      : null;
+  const hostnamePatch =
+    pivot && identity.hostname
+      ? buildPivotPatch("hostname", {
+          raw: identity.hostname,
+          display: identity.hostname,
+        })
+      : null;
   return (
     <li
       className={cn(
@@ -690,6 +740,13 @@ function EventRow({
               </span>
             ) : null}
             <span className="truncate">{event.sensor || labels.noSensor}</span>
+            <IdentitySummary
+              identity={identity}
+              userNamePatch={userNamePatch}
+              hostnamePatch={hostnamePatch}
+              labels={labels}
+              onPivot={pivot}
+            />
           </div>
         </div>
         {canInvestigate ? (
@@ -783,6 +840,102 @@ function EndpointSummary({
         side="resp"
       />
     </span>
+  );
+}
+
+/**
+ * Render the userName / hostname identity cells for an event row
+ * (Phase Detection-28 / #347). Each cell renders as a labelled
+ * pivot button (e.g. `User: jdoe`) when the event subtype emits the
+ * underlying field; subtypes whose schema does not emit the field
+ * render the cell as a non-pivotable `User: —` / `Host: —` token
+ * so the column position stays stable across the result list and
+ * the operator can tell that the row simply has no identity to
+ * pivot on (rather than guessing whether the column was hidden).
+ * #280's responsive density rules stay intact — severity, time,
+ * and endpoints never depend on either cell.
+ */
+function IdentitySummary({
+  identity,
+  userNamePatch,
+  hostnamePatch,
+  labels,
+  onPivot,
+}: {
+  identity: EventIdentity;
+  userNamePatch: PivotPatch | null;
+  hostnamePatch: PivotPatch | null;
+  labels: ResultListLabels;
+  onPivot?: (patch: PivotPatch) => void;
+}) {
+  return (
+    <>
+      <span className="text-muted-foreground/70 hidden sm:inline">·</span>
+      <IdentityCell
+        prefix={labels.userNameLabel}
+        value={identity.userName}
+        patch={userNamePatch}
+        ariaLabel={
+          userNamePatch && identity.userName
+            ? labels.pivotActivate({
+                label: labels.pivotColumnLabels.userName,
+                value: identity.userName,
+              })
+            : undefined
+        }
+        onPivot={onPivot}
+      />
+      <span className="text-muted-foreground/70 hidden sm:inline">·</span>
+      <IdentityCell
+        prefix={labels.hostnameLabel}
+        value={identity.hostname}
+        patch={hostnamePatch}
+        ariaLabel={
+          hostnamePatch && identity.hostname
+            ? labels.pivotActivate({
+                label: labels.pivotColumnLabels.hostname,
+                value: identity.hostname,
+              })
+            : undefined
+        }
+        onPivot={onPivot}
+      />
+    </>
+  );
+}
+
+function IdentityCell({
+  prefix,
+  value,
+  patch,
+  ariaLabel,
+  onPivot,
+}: {
+  prefix: string;
+  value: string | null;
+  patch: PivotPatch | null;
+  ariaLabel?: string;
+  onPivot?: (patch: PivotPatch) => void;
+}) {
+  // Subtypes whose schema does not emit the field render `prefix —`
+  // as plain text so the column position stays stable across rows;
+  // the dash is intentionally non-pivotable because there is no
+  // value to merge into the active filter.
+  if (!value) {
+    return (
+      <span className="inline-flex items-center">
+        <span className="text-muted-foreground/70 mr-1">{prefix}</span>
+        <span className="text-muted-foreground/60">—</span>
+      </span>
+    );
+  }
+  return (
+    <PivotCell patch={patch} onPivot={onPivot} ariaLabel={ariaLabel}>
+      <span className="text-muted-foreground/70 mr-1">{prefix}</span>
+      <span className="text-foreground truncate" title={value}>
+        {value}
+      </span>
+    </PivotCell>
   );
 }
 

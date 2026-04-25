@@ -151,6 +151,8 @@ function makePayload(): CsvExportPayload {
       source: "Source",
       destination: "Destination",
       sensor: "Sensor",
+      userName: "User",
+      hostname: "Host",
     },
     formatRowOptions: {
       levelLabels: {},

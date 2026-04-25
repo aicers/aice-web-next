@@ -777,7 +777,9 @@
         "triage": "Triage",
         "source": "Source",
         "destination": "Destination",
-        "sensor": "Sensor"
+        "sensor": "Sensor",
+        "userName": "User",
+        "hostname": "Host"
       },
       "refresh": "Refresh",
       "updatedJustNow": "Updated just now",
@@ -804,6 +806,8 @@
       "countryUnknown": "??",
       "countryUnavailable": "—",
       "attackKindLabel": "Attack:",
+      "userNameLabel": "User:",
+      "hostnameLabel": "Host:",
       "quickPeekClose": "Close Quick peek",
       "pivotActivate": "Filter results by {label}: {value}",
       "pivotColumnLabels": {
@@ -813,7 +817,9 @@
         "respCountry": "Destination country",
         "level": "Level",
         "category": "Category",
-        "kind": "Kind"
+        "kind": "Kind",
+        "userName": "User name",
+        "hostname": "Hostname"
       }
     },
     "pagination": {

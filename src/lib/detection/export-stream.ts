@@ -193,7 +193,19 @@ export function createCsvExportStream(
           // costs one extra round-trip but avoids encoding + holding
           // 500 rows we'll never ship.
           if (cancelled) return;
-          for (const edge of connection.edges) {
+          // Stream rows from `connection.nodes`, not
+          // `connection.edges[].node`. `EVENT_LIST_QUERY` selects the
+          // per-typename inline fragments (addressing fields, identity
+          // fields, etc.) only under the `nodes` path; the `edges.node`
+          // path receives just the common interface fields. Iterating
+          // edges would emit the new `User` / `Host` columns empty
+          // even when the row's typename emits those fields, because
+          // the request never asked for them on `edges.node`. The
+          // result list itself reads `connection.nodes` for the same
+          // reason — see `app/[locale]/(dashboard)/detection/page.tsx`.
+          // Pagination still uses `pageInfo.endCursor` (below) so this
+          // does not change cursor semantics.
+          for (const node of connection.nodes) {
             if (emitted >= CSV_EXPORT_MAX_ROWS) {
               // Preflight should reject counts above the cap before
               // we start streaming — reaching this point means the
@@ -202,9 +214,7 @@ export function createCsvExportStream(
               // rather than accepting a silently truncated 200.
               throw new CsvExportRowLimitExceededError();
             }
-            pending.push(
-              encoder.encode(formatCsvRow(edge.node, formatRowOptions)),
-            );
+            pending.push(encoder.encode(formatCsvRow(node, formatRowOptions)));
             emitted += 1;
           }
           if (!connection.pageInfo.hasNextPage) {

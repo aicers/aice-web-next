@@ -60,6 +60,8 @@ function labels(): ResultListLabels {
       RESOURCE_DEVELOPMENT: "Resource Development",
     },
     attackKindLabel: "Attack:",
+    userNameLabel: "User:",
+    hostnameLabel: "Host:",
     pivotActivate: ({ label, value }) => `Filter by ${label}: ${value}`,
     pivotColumnLabels: {
       origAddr: "Source IP",
@@ -69,6 +71,8 @@ function labels(): ResultListLabels {
       level: "Level",
       category: "Category",
       kind: "Kind",
+      userName: "User name",
+      hostname: "Hostname",
     },
   };
 }
@@ -600,6 +604,257 @@ describe("ResultList pivot affordances (Reviewer Round 1)", () => {
 
     expect(html).not.toContain('data-slot="detection-pivot-cell"');
     expect(html).not.toMatch(/aria-label="Filter by/);
+  });
+});
+
+describe("ResultList identity columns (issue #347)", () => {
+  // Phase Detection-28 surfaces the userName / hostname identity
+  // cells as pivotable buttons on subtypes whose schema emits
+  // those fields. The pivot library (#283 / PR #346) already maps
+  // the column keys; these tests lock the row-rendering side so a
+  // refactor cannot drop the cells, and assert the dash fallback
+  // for subtypes whose schema does not emit either field.
+
+  function httpThreatWithIdentity(): Event {
+    return {
+      __typename: "HttpThreat",
+      time: "2026-04-22T00:00:00.000Z",
+      sensor: "sensor-1",
+      confidence: 0.8,
+      category: "LATERAL_MOVEMENT",
+      level: "HIGH",
+      triageScores: null,
+      origAddr: "10.0.0.5",
+      origPort: 1234,
+      respAddr: "203.0.113.45",
+      respPort: 443,
+      origCountry: "KR",
+      respCountry: "US",
+      username: "jdoe",
+      host: "mail.example.com",
+    } as unknown as Event;
+  }
+
+  it("renders pivotable userName + hostname cells when the event subtype emits username + host", () => {
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([httpThreatWithIdentity()])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Filter by User name: jdoe"');
+    expect(html).toContain('aria-label="Filter by Hostname: mail.example.com"');
+    // The userName label prefix renders so the operator can tell
+    // the cell apart from the hostname cell without a header row.
+    expect(html).toContain("User:");
+    expect(html).toContain("Host:");
+    expect(html).toContain("jdoe");
+    expect(html).toContain("mail.example.com");
+  });
+
+  it("renders userName + hostname as plain text when onPivot is undefined", () => {
+    // Single-tab / standalone shell paths still surface the values
+    // — they just do not wrap them in pivot buttons.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([httpThreatWithIdentity()])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+      />,
+    );
+    expect(html).toContain("jdoe");
+    expect(html).toContain("mail.example.com");
+    expect(html).not.toMatch(/aria-label="Filter by User name/);
+    expect(html).not.toMatch(/aria-label="Filter by Hostname/);
+  });
+
+  it("renders both identity cells as non-pivotable `—` for subtypes whose schema emits neither field", () => {
+    // BlocklistConn is one of many subtypes the schema does not
+    // expose `username` / `user` / `host` / `hostname` on. Per
+    // #347's acceptance the row must still render the column slots
+    // — `User: —` and `Host: —` — so the column position stays
+    // stable across the list, but no pivot affordance is wired
+    // because there is no value to merge.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          {
+            __typename: "BlocklistConn",
+            time: "2026-04-22T00:00:00.000Z",
+            sensor: "sensor-2",
+            confidence: 0.5,
+            category: null,
+            level: "LOW",
+            triageScores: null,
+            origAddr: "10.0.0.5",
+            respAddr: "10.0.0.6",
+          } as unknown as Event,
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    expect(html).not.toMatch(/aria-label="Filter by User name/);
+    expect(html).not.toMatch(/aria-label="Filter by Hostname/);
+    // The dash placeholder slots are present so the column position
+    // stays fixed across rows even when the subtype carries no
+    // identity data.
+    expect(html).toContain("User:");
+    expect(html).toContain("Host:");
+    expect(html).toContain("—");
+    // The row's other pivot affordances still render — locking
+    // that the new cells did not break the row layout.
+    expect(html).toContain('aria-label="Filter by Source IP: 10.0.0.5"');
+  });
+
+  it("renders the userName cell pivotable and the hostname cell as `—` when the schema emits username but no host/hostname", () => {
+    // BlocklistFtp surfaces `user` (documented as Username) but no
+    // host/hostname field. The row should pivot on userName and
+    // render the hostname cell as a non-pivotable `Host: —` token.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          {
+            __typename: "BlocklistFtp",
+            time: "2026-04-22T00:00:00.000Z",
+            sensor: "sensor-3",
+            confidence: 0.5,
+            category: null,
+            level: "LOW",
+            triageScores: null,
+            origAddr: "10.0.0.5",
+            respAddr: "10.0.0.6",
+            user: "alice",
+          } as unknown as Event,
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Filter by User name: alice"');
+    expect(html).not.toMatch(/aria-label="Filter by Hostname/);
+    expect(html).toContain("alice");
+    // Hostname cell present but renders as `—`.
+    expect(html).toContain("Host:");
+    expect(html).toContain("—");
+  });
+
+  it("renders the hostname cell pivotable and the userName cell as `—` when the schema emits hostname but no user/username", () => {
+    // BlocklistNtlm exposes both, but the row must still surface
+    // hostname-only events when the upstream payload leaves
+    // username blank. Empty string collapses to null and the cell
+    // renders as `User: —` non-pivotable.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          {
+            __typename: "BlocklistNtlm",
+            time: "2026-04-22T00:00:00.000Z",
+            sensor: "sensor-4",
+            confidence: 0.5,
+            category: null,
+            level: "LOW",
+            triageScores: null,
+            origAddr: "10.0.0.5",
+            respAddr: "10.0.0.6",
+            username: "",
+            hostname: "client01.corp.local",
+          } as unknown as Event,
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    expect(html).not.toMatch(/aria-label="Filter by User name/);
+    expect(html).toContain(
+      'aria-label="Filter by Hostname: client01.corp.local"',
+    );
+    expect(html).toContain("client01.corp.local");
+    // userName cell present but renders as `—`.
+    expect(html).toContain("User:");
+    expect(html).toContain("—");
+  });
+
+  it("reads the camelCase `userName` field on BlocklistRadius (the schema outlier)", () => {
+    // BlocklistRadius is the only curated subtype that uses the
+    // camelCase `userName` field (every other identity-bearing
+    // subtype uses lowercase `username` or `user`). Locks the
+    // `readEventIdentity` fall-through so a refactor that drops
+    // the camelCase branch does not silently make BlocklistRadius
+    // rows non-pivotable on userName.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          {
+            __typename: "BlocklistRadius",
+            time: "2026-04-22T00:00:00.000Z",
+            sensor: "sensor-5",
+            confidence: 0.5,
+            category: null,
+            level: "LOW",
+            triageScores: null,
+            origAddr: "10.0.0.5",
+            respAddr: "10.0.0.6",
+            userName: "radius-user",
+          } as unknown as Event,
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Filter by User name: radius-user"');
+    expect(html).toContain("radius-user");
+  });
+
+  it("reads the `user` field on WindowsThreat", () => {
+    // WindowsThreat is host-/agent-side and exposes a `user` field
+    // (documented as Username). The row drops the source →
+    // destination line because the subtype has no addressing, but
+    // the userName cell still pivots — the dash fallback applies
+    // only when the schema does not emit any username variant.
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={state([
+          {
+            __typename: "WindowsThreat",
+            time: "2026-04-22T00:00:00.000Z",
+            sensor: "sensor-6",
+            confidence: 0.5,
+            category: null,
+            level: "LOW",
+            triageScores: null,
+            user: "DOMAIN\\agent",
+          } as unknown as Event,
+        ])}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onPivot={() => {}}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Filter by User name: DOMAIN\\agent"');
+    expect(html).toContain("DOMAIN\\agent");
+    // No host/hostname on WindowsThreat — the cell renders as `—`.
+    expect(html).not.toMatch(/aria-label="Filter by Hostname/);
+    expect(html).toContain("Host:");
   });
 });
 

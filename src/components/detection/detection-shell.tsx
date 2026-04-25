@@ -783,7 +783,11 @@ export function DetectionShell({
         level: tResults("pivotColumnLabels.level"),
         category: tResults("pivotColumnLabels.category"),
         kind: tResults("pivotColumnLabels.kind"),
+        userName: tResults("pivotColumnLabels.userName"),
+        hostname: tResults("pivotColumnLabels.hostname"),
       },
+      userNameLabel: tResults("userNameLabel"),
+      hostnameLabel: tResults("hostnameLabel"),
     }),
     [t, tResults],
   );
@@ -1877,6 +1881,8 @@ export function DetectionShell({
         source: tResults("csvHeaders.source"),
         destination: tResults("csvHeaders.destination"),
         sensor: tResults("csvHeaders.sensor"),
+        userName: tResults("csvHeaders.userName"),
+        hostname: tResults("csvHeaders.hostname"),
       } as const;
       return {
         filter: committedFilter,
