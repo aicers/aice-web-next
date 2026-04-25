@@ -4,6 +4,12 @@ import { Plus, RotateCcw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { TabId } from "@/lib/detection/tabs";
 import { cn } from "@/lib/utils";
 
@@ -94,18 +100,46 @@ export function TabBar({
           />
         ))}
       </div>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label={canAddTab ? labels.newTab : labels.newTabAtCap}
-        title={canAddTab ? labels.newTab : labels.newTabAtCap}
-        disabled={!canAddTab}
-        onClick={onAddTab}
-        className="shrink-0"
-      >
-        <Plus className="size-4" aria-hidden="true" />
-      </Button>
+      {canAddTab ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={labels.newTab}
+          onClick={onAddTab}
+          className="shrink-0"
+        >
+          <Plus className="size-4" aria-hidden="true" />
+        </Button>
+      ) : (
+        // Reviewer Round 4 (item 3): the cap state uses the Radix
+        // Tooltip primitive, not a bare HTML `title` — `title` on a
+        // disabled control is not dependably surfaced on all
+        // platforms and is not keyboard-reachable. `aria-disabled`
+        // (rather than `disabled`) keeps the button focusable so the
+        // cap reason is surfaced to keyboard users too, and the
+        // onClick guard makes the control non-actionable.
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={labels.newTabAtCap}
+                aria-disabled
+                onClick={(e) => {
+                  e.preventDefault();
+                }}
+                className="shrink-0 cursor-not-allowed opacity-50"
+              >
+                <Plus className="size-4" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{labels.newTabAtCap}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
     </div>
   );
 }
@@ -148,6 +182,19 @@ function TabEntry({
       aria-selected={active}
       tabIndex={active ? 0 : -1}
       data-state={active ? "active" : "inactive"}
+      onKeyDown={(e) => {
+        // Reviewer Round 4 (item 2): when focus lands on the role=tab
+        // wrapper (the canonical ARIA tab element) rather than the
+        // inner button, Enter must still open rename so the
+        // documented keyboard contract is reachable by keyboard users.
+        // Ignore key events bubbling up from within the editing input
+        // so a commit there is not mistaken for a fresh rename trigger.
+        if (editing) return;
+        if (e.key !== "Enter") return;
+        if (e.target !== e.currentTarget) return;
+        e.preventDefault();
+        onStartEdit();
+      }}
       className={cn(
         "group flex shrink-0 items-center gap-1 rounded-t-md border-b-2 px-3 py-1.5 text-sm",
         active
@@ -178,6 +225,18 @@ function TabEntry({
           type="button"
           onClick={onActivate}
           onDoubleClick={onStartEdit}
+          onKeyDown={(e) => {
+            // Reviewer Round 4 (item 2): Enter on a focused tab opens
+            // rename, matching the documented keyboard contract.
+            // `preventDefault` short-circuits the button's native
+            // Enter→click so the tab does not also re-activate; the
+            // click path stays the primary way to activate and single-
+            // click still routes through `onClick` above.
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onStartEdit();
+            }
+          }}
           title={tab.label}
           className="max-w-48 truncate text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >

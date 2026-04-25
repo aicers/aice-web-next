@@ -20,6 +20,18 @@
  *      recipient would see. Everything else rides in
  *      `sessionStorage` — see `src/lib/detection/tabs-storage.ts`.
  *
+ * Resuming an in-flight query across tab switches (Reviewer Round 4
+ * item 1): because the remount path cancels the prior shell's
+ * dispatch, a tab switched away mid-Apply (or mid-Refresh / mid-
+ * paginator click) would otherwise end up with an empty post-reset
+ * cache even though the operator clicked Apply. To avoid silently
+ * dropping the request, the wrapper threads the snapshot's
+ * `result.loading: true` flag through `initialResult.loading`; the
+ * newly-mounted shell's `shouldResumeQueryOnMount` effect then
+ * re-issues the same query at the snapshot's pagination. The tab's
+ * cache receives the fresh rows on the rerun instead of on the
+ * abandoned response.
+ *
  * `+` creates a tab populated with the default filter but no
  * auto-run; the freshly-mounted shell's `hasQueried` starts false
  * because the empty result cache carries `totalCount: null`, so the
@@ -457,13 +469,22 @@ export function DetectionTabsShell({
           // Reviewer Round 1 (item 3): thread the cached freshness
           // metadata through so a switched-back-to tab does not
           // silently re-stamp `Updated just now` or rewind the
-          // queryEpoch / hasQueried flags. `loading` and `walking`
-          // intentionally aren't threaded — the remount cancels any
-          // in-flight query for the prior shell instance, so a
-          // freshly-mounted shell starts at idle.
+          // queryEpoch / hasQueried flags.
           lastUpdatedMs: activeTab.result.lastUpdatedMs,
           hasQueried: activeTab.result.hasQueried,
           queryEpoch: activeTab.result.queryEpoch,
+          // Reviewer Round 4 (item 1): thread `loading` back so a tab
+          // remounted mid-Apply / mid-Refresh / mid-paginator click
+          // resumes the query instead of dropping it on the floor.
+          // The keyed remount naturally cancelled the prior shell's
+          // in-flight request (React discarded its setState closures),
+          // but the tab's cache never received the fresh rows. The
+          // new shell's `shouldResumeQueryOnMount` effect re-issues
+          // the same query at the snapshot's pagination. `walking` is
+          // intentionally not threaded — Go-to-page walk progress
+          // resets on remount and the operator can re-trigger a walk
+          // if needed.
+          loading: activeTab.result.loading,
         }}
         initialEndpoints={activeTab.endpoints}
         initialDraft={activeTab.draft}

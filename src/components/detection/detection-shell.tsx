@@ -289,6 +289,20 @@ export interface DetectionShellInitialResult {
    * bootstrap leaves it undefined and the shell starts from `0`.
    */
   queryEpoch?: number;
+  /**
+   * Reviewer Round 4 (item 1): per-tab "is a committed query
+   * currently in flight" flag carried across tab activations. When
+   * the operator clicks Apply / Refresh / a paginator step in tab
+   * A and switches to tab B before the request resolves, the
+   * wrapper unmounts tab A's shell — its async response then
+   * lands in a dead React tree and the tab's cache never receives
+   * the fresh rows. Threading `loading: true` back into the
+   * remount triggers {@link shouldResumeQueryOnMount}: the new
+   * shell re-issues the same query against the snapshot's
+   * pagination so the in-flight Apply is not silently dropped.
+   * SSR bootstrap leaves it undefined; the shell defaults to false.
+   */
+  loading?: boolean;
 }
 
 /**
@@ -571,6 +585,35 @@ export function applyTransitionReset(
   setters.setTotalCountRef(null);
 }
 
+/**
+ * Reviewer Round 4 (item 1): true when a freshly-mounted shell's
+ * snapshot indicates the prior shell instance had a committed query
+ * in flight.
+ *
+ * The multi-tab wrapper mirrors `result.loading: true` into the
+ * outgoing tab's slot when the operator switches away mid-Apply
+ * (or mid-Refresh / mid-pagination). Without resuming, the original
+ * request resolves into the unmounted shell — the tab cache never
+ * receives the fresh rows, and switching back yields the post-
+ * `applyTransitionReset` empty result for the new filter rather
+ * than the query result.
+ *
+ * Resume semantics: re-issue the same query at the snapshot's
+ * pagination with `navigating: true`. `applyTransitionReset` has
+ * already pinned pagination to HEAD + page=1 for the Apply / chip
+ * × path, so the resumed call lands at head; for Refresh /
+ * paginator clicks the snapshot retains the user's current page,
+ * which is the right anchor to re-fetch.
+ *
+ * Extracted as a pure helper so the resume contract can be unit-
+ * tested without standing up the shell's full client runtime.
+ */
+export function shouldResumeQueryOnMount(
+  loading: boolean | undefined,
+): boolean {
+  return loading === true;
+}
+
 export function DetectionShell({
   title,
   labels,
@@ -749,7 +792,12 @@ export function DetectionShell({
   const [resultError, setResultError] = useState<string | null>(
     initialResult.error,
   );
-  const [loading, setLoading] = useState(false);
+  // Reviewer Round 4 (item 1): seed `loading` from the snapshot so a
+  // tab remounted mid-Apply (or mid-Refresh / mid-pagination) keeps
+  // showing the loading skeleton until the resume effect below
+  // re-issues the request. SSR bootstrap leaves `initialResult.loading`
+  // undefined and the shell starts at idle.
+  const [loading, setLoading] = useState(initialResult.loading ?? false);
   // Reviewer Round 1 (item 3): honour the wrapper-supplied cached
   // freshness timestamp on a tab remount. Without it, switching back
   // to a tab that had been queried earlier would compute
@@ -1149,6 +1197,27 @@ export function DetectionShell({
     },
     [dispatchQuery, pagination.pageSize],
   );
+
+  // Reviewer Round 4 (item 1): resume an in-flight committed query
+  // when a tab the operator switched away from mid-Apply (or mid-
+  // Refresh / mid-pagination) is remounted. The wrapper threads the
+  // snapshot's `loading: true` flag back through `initialResult.loading`;
+  // if present, re-issue the same query at the snapshot's pagination
+  // so the original Apply is not silently dropped. Re-dispatch lands
+  // through `dispatchQuery` with `navigating: true` because the
+  // dispatch-time reset (epoch bump, peek clear) was already applied
+  // by the original commit.
+  //
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only — the snapshot's `loading` flag is read once on first render; subsequent state changes flow through normal dispatch paths.
+  useEffect(() => {
+    if (!shouldResumeQueryOnMount(initialResult.loading)) return;
+    void dispatchQuery(initialFilter, {
+      anchor: initialPagination.anchor,
+      pageSize: initialPagination.pageSize,
+      page: initialPagination.page,
+      navigating: true,
+    });
+  }, []);
 
   const handleApply = useCallback(
     (applied: DetectionFilterDraft) => {

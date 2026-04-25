@@ -89,11 +89,26 @@ describe("TabBar rendering", () => {
         onResetName={noop}
       />,
     );
-    // The + button takes the at-cap label so the tooltip explains
-    // why it's disabled.
-    expect(html).toMatch(
-      /aria-label="Close a tab to open a new one \(maximum 8 open\)\."[^>]*disabled/,
+    // Reviewer Round 4 (item 3): the cap state uses aria-disabled
+    // (not the native `disabled` attribute) so the button stays
+    // focusable and the Radix tooltip trigger can surface the cap
+    // reason to keyboard users. The at-cap label also moves off the
+    // raw `title` attribute onto the Tooltip primitive.
+    expect(html).toContain(
+      'aria-label="Close a tab to open a new one (maximum 8 open)."',
     );
+    expect(html).toMatch(/aria-disabled/);
+    // The native `disabled` attribute is intentionally absent from
+    // the + button so it stays keyboard-focusable for tooltip
+    // discovery. `disabled="…"` as an attribute would appear
+    // surrounded by whitespace; the Tailwind classes
+    // `disabled:pointer-events-none` / `disabled:opacity-50` are
+    // class names, never rendered as attributes.
+    const plusButton = html.match(
+      /<button[^>]*aria-label="Close a tab to open a new one \(maximum 8 open\)\.[^>]*>/,
+    );
+    expect(plusButton).not.toBeNull();
+    expect(plusButton?.[0]).not.toMatch(/\sdisabled(\s|=|>)/);
   });
 
   it("renders the Reset name affordance only for manually-renamed tabs", () => {

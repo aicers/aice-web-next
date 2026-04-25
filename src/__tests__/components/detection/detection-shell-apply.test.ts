@@ -450,6 +450,44 @@ describe("applyTransitionReset — Reviewer Round 3", () => {
   });
 });
 
+describe("shouldResumeQueryOnMount — Reviewer Round 4 (item 1)", () => {
+  // When the operator applies a filter in tab A and switches to tab B
+  // before the request resolves, the wrapper unmounts tab A's shell.
+  // The in-flight REview response then lands in a dead React tree —
+  // its setState closures are no-ops under the unmounted instance, so
+  // tab A's cache never receives the fresh rows. The wrapper now
+  // threads the snapshot's `loading: true` flag back into
+  // `initialResult.loading`, and this predicate decides whether a
+  // freshly-mounted shell should resume the query by re-issuing the
+  // same request at the snapshot's pagination.
+  let shouldResumeQueryOnMount: (loading: boolean | undefined) => boolean;
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldResumeQueryOnMount = mod.shouldResumeQueryOnMount;
+  });
+
+  it("resumes when the snapshot flagged an in-flight committed query", () => {
+    // Tab A was mid-Apply when the operator switched to tab B; on
+    // switch-back, the shell must re-dispatch so the request is not
+    // silently dropped.
+    expect(shouldResumeQueryOnMount(true)).toBe(true);
+  });
+
+  it("does not resume when the snapshot was idle", () => {
+    // The common case — every tab switch that did not catch a
+    // committed query mid-flight should land at a plain cache hit
+    // without hitting the network.
+    expect(shouldResumeQueryOnMount(false)).toBe(false);
+  });
+
+  it("does not resume when the snapshot flag is absent (SSR bootstrap)", () => {
+    // The server page seeds the initial result without a `loading`
+    // field; a bootstrap tab must not auto-redispatch on first mount.
+    expect(shouldResumeQueryOnMount(undefined)).toBe(false);
+  });
+});
+
 describe("quickPeekResetKey", () => {
   let quickPeekResetKey: ShellModule["quickPeekResetKey"];
 
