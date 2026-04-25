@@ -228,13 +228,20 @@ function ResultListHeader({
           lastUpdatedMs={state.lastUpdatedMs}
           labels={labels}
         />
+        {/*
+         * Refresh stays disabled in `empty-prequery` so a `+`-created
+         * tab cannot run its first query without going through Apply
+         * (#281: new tabs must not auto-run).
+         */}
         <Button
           type="button"
           variant="ghost"
           size="sm"
           onClick={onRefresh}
           aria-label={labels.refresh}
-          disabled={state.status === "loading"}
+          disabled={
+            state.status === "loading" || state.status === "empty-prequery"
+          }
         >
           <RefreshCw
             className={cn(
@@ -414,17 +421,19 @@ function ResultListBody({
   }
 
   // Gate row interactivity on `status === "ready"`. Reviewer Round 8:
-  // during a committed-query transition (Apply / chip × / Refresh) the
-  // shell closes the peek at dispatch, but the `loading` branch above
-  // keeps rendering the previous slice so the results region does not
-  // flash an empty panel. Leaving `onRowOpen` / `onRowInvestigate`
-  // wired through that retained-slice window would let a click on a
-  // stale row reopen Quick peek on an event the newly committed
-  // filter may no longer return — exactly the stale-inspector
-  // window #290's state contract forbids. Dropping the handlers
-  // makes the overlay button + investigate chevron disappear, so
-  // the rows render as a read-only snapshot until the fresh slice
-  // lands.
+  // for same-filter Refresh the shell closes the peek at dispatch but
+  // the `loading` branch above keeps rendering the previous slice so
+  // the results region does not flash an empty panel. Leaving
+  // `onRowOpen` / `onRowInvestigate` wired through that retained-
+  // slice window would let a click on a stale row reopen Quick peek
+  // on an event the fresh slice may no longer return — exactly the
+  // stale-inspector window #290's state contract forbids. Dropping
+  // the handlers makes the overlay button + investigate chevron
+  // disappear, so the rows render as a read-only snapshot until the
+  // fresh slice lands. Reviewer Round 3 removed the equivalent
+  // window for Apply / chip × (the shell now clears events
+  // synchronously on those paths), so this gate's hot target is the
+  // Refresh case.
   const rowsInteractive = state.status === "ready";
   return (
     <ul className="flex flex-col gap-2" data-slot="detection-result-list">

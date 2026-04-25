@@ -868,6 +868,15 @@
         "isInternal": "내부",
         "networkService": "서비스"
       }
+    },
+    "tabs": {
+      "tablist": "탐지 결과 탭",
+      "newTab": "새 탭",
+      "newTabAtCap": "새 탭을 열려면 탭을 닫으세요 (최대 8개까지 열 수 있습니다).",
+      "closeTab": "탭 닫기",
+      "renameTab": "탭 이름 바꾸기",
+      "resetName": "탭 이름 초기화",
+      "fallbackName": "새 탭"
     }
   },
   "events": {

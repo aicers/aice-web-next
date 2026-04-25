@@ -84,7 +84,11 @@ import {
   summarizeFilter,
 } from "@/lib/detection/filter-summary";
 import {
-  clearPaginationParams,
+  buildSearchParamsForFilter,
+  type EncodedTabFilter,
+  type PivotExtras,
+} from "@/lib/detection/filter-url";
+import {
   committedPageForAnchor,
   INITIAL_PAGINATION_STATE,
   type PageAnchor,
@@ -99,18 +103,16 @@ import {
   applyQuickPeekToken,
   readQuickPeekToken,
 } from "@/lib/detection/quick-peek-url";
+import { preserveActiveTabParam } from "@/lib/detection/tabs";
 import type {
   Event as DetectionEvent,
   LearningMethod,
   PageInfo,
 } from "@/lib/detection/types";
-import {
-  buildDetectionSearchParams,
-  mergePivotParams,
-  type PivotChipLabels,
-  type PivotFilterParams,
-  pivotParamsFromFilterInput,
-  type TagField,
+import type {
+  PivotChipLabels,
+  PivotFilterParams,
+  TagField,
 } from "@/lib/detection/url-filters";
 import { encodeEventLocator } from "@/lib/events/event-locator";
 import { cn } from "@/lib/utils";
@@ -260,9 +262,99 @@ export interface DetectionShellInitialResult {
    * Apply / Refresh repopulates it.
    */
   pageInfo: PageInfo | null;
+  /**
+   * Reviewer Round 1 (item 3): freshness timestamp carried over from
+   * a prior tab activation so the result header keeps showing
+   * "Updated 5 minutes ago" instead of "Updated just now" the moment
+   * the operator switches back. `undefined` means "compute from the
+   * initial bootstrap" (`Date.now()` when the SSR'd query succeeded,
+   * else `null`); the multi-tab wrapper passes the cached value when
+   * remounting an inactive tab, the page leaves it undefined.
+   */
+  lastUpdatedMs?: number | null;
+  /**
+   * Reviewer Round 1 (item 3): per-tab "has any committed query
+   * dispatched yet" flag carried over from a prior tab activation
+   * so a remount keeps the pre-query empty state visible (and
+   * doesn't get confused with a fresh-load pre-query state). The
+   * page leaves it undefined and the shell derives the bootstrap
+   * value from `error` / `totalCount`.
+   */
+  hasQueried?: boolean;
+  /**
+   * Reviewer Round 1 (item 3): per-tab monotonic queryEpoch carried
+   * across tab activations so per-row state cannot accidentally
+   * carry from a prior committed query into the next one. The
+   * wrapper threads the cached value back on remount; an SSR
+   * bootstrap leaves it undefined and the shell starts from `0`.
+   */
+  queryEpoch?: number;
+  /**
+   * Reviewer Round 4 (item 1): per-tab "is a committed query
+   * currently in flight" flag carried across tab activations. When
+   * the operator clicks Apply / Refresh / a paginator step in tab
+   * A and switches to tab B before the request resolves, the
+   * wrapper unmounts tab A's shell — its async response then
+   * lands in a dead React tree and the tab's cache never receives
+   * the fresh rows. Threading `loading: true` back into the
+   * remount triggers {@link shouldResumeQueryOnMount}: the new
+   * shell re-issues the same query against the snapshot's
+   * pagination so the in-flight Apply is not silently dropped.
+   * SSR bootstrap leaves it undefined; the shell defaults to false.
+   */
+  loading?: boolean;
 }
 
-interface DetectionShellProps {
+/**
+ * Subset of the shell's reactive state that the multi-tab wrapper
+ * (`DetectionTabsShell`) needs to snapshot into the active tab's
+ * {@link TabSnapshot} slot on tab switch and session serialization.
+ * Emitted via {@link DetectionShellProps.onStateChange} whenever any
+ * included field changes.
+ *
+ * Fields outside the tab's contract — drawer-open flag, sensor cache,
+ * focus target, in-flight request ids — stay local to the shell and
+ * are not part of the snapshot. They reset on the remount a tab
+ * switch triggers, which matches the UX intent (closing the drawer
+ * on switch, re-fetching sensors lazily on first drawer open after
+ * switch).
+ */
+export interface DetectionShellStateSnapshot {
+  filter: Filter;
+  period: PeriodKey | null;
+  endpoints: EndpointEntry[];
+  pivotOnly: PivotFilterParams;
+  pagination: PaginationState;
+  draft: DetectionFilterDraft | null;
+  analyticsOpen: boolean;
+  quickPeekEvent: DetectionEvent | null;
+  /**
+   * Reviewer Round 9: pending Quick peek URL token the shell has
+   * decoded but not yet resolved against a successful slice. Mirrors
+   * the same field on `TabSnapshot` so the multi-tab wrapper can
+   * round-trip the URL token across its mount-time URL rewrite when
+   * the bootstrap query errored. Always null when
+   * {@link quickPeekEvent} is non-null. Cleared as soon as the shell
+   * either resolves the token (matched event → quick peek opened) or
+   * proves it stale (no match against a successful slice → URL
+   * stripped).
+   */
+  pendingQuickPeekToken: string | null;
+  result: {
+    events: DetectionEvent[];
+    eventKeys: string[];
+    totalCount: string | null;
+    pageInfo: PageInfo | null;
+    resultError: string | null;
+    lastUpdatedMs: number | null;
+    hasQueried: boolean;
+    queryEpoch: number;
+    loading: boolean;
+    walking: { current: number; target: number } | null;
+  };
+}
+
+export interface DetectionShellProps {
   title: string;
   labels: DetectionShellLabels;
   options: FilterDrawerOptions;
@@ -278,6 +370,59 @@ interface DetectionShellProps {
    * the operator on the page they were viewing.
    */
   initialPagination?: PaginationState;
+  /**
+   * Rich endpoint entries (text + direction) the operator entered in
+   * the Network/IP advanced panel. The committed filter input also
+   * carries them as `EndpointInput[]` for REview, but the panel and
+   * the endpoint chip bar work off this richer parallel list — there
+   * is no reverse path from `EndpointInput[]` back to the typed
+   * entries, so the multi-tab wrapper threads them through this prop
+   * to restore the rich representation on tab activation.
+   */
+  initialEndpoints?: EndpointEntry[];
+  /**
+   * Drawer draft carried from a prior tab-mount. When the multi-tab
+   * wrapper rehydrates an inactive tab, the draft the operator last
+   * had open in that tab's drawer is restored so reopening the
+   * drawer picks up exactly where it left off. `null` — the default
+   * — matches the fresh-load behaviour where the drawer seeds its
+   * draft on first open.
+   */
+  initialDraft?: DetectionFilterDraft | null;
+  /**
+   * Initial expansion of the analytics strip. Part of the per-tab
+   * snapshot so a rehydrated tab remembers whether the operator had
+   * the strip open.
+   */
+  initialAnalyticsOpen?: boolean;
+  /**
+   * Initial Quick peek event carried from a prior tab-mount. Pinned
+   * to the rehydrated event reference rather than re-resolved from
+   * the URL, because the URL-based restore path only describes the
+   * active tab's selection and the multi-tab wrapper rehydrates
+   * inactive tabs on remount.
+   */
+  initialQuickPeekEvent?: DetectionEvent | null;
+  /**
+   * Reviewer Round 9: pending Quick peek URL token captured by the
+   * SSR bootstrap so the multi-tab wrapper can re-emit `?event=` on
+   * its mount-time URL rewrite while the shell's first slice is in
+   * an errored-without-proof state. The shell seeds local state
+   * from this prop so its later restore-vs-strip reconciliation can
+   * use the captured token even after the URL itself has been
+   * rewritten by other tab mutations.
+   */
+  initialPendingQuickPeekToken?: string | null;
+  /**
+   * Fired on every tab-relevant state transition so the multi-tab
+   * wrapper can mirror the active tab's live state into its
+   * `TabSnapshot[]` (for session persistence and for the save-on-
+   * switch contract). Functions that would normally drive tab-
+   * local effects — focus management, drawer open state — are NOT
+   * included in the snapshot; see {@link DetectionShellStateSnapshot}
+   * for the contract.
+   */
+  onStateChange?: (snapshot: DetectionShellStateSnapshot) => void;
 }
 
 /**
@@ -360,19 +505,23 @@ export const ENDPOINT_CHIP_FOCUS: FilterChipFocus = "endpoints";
  *
  * The contract (Reviewer Round 12): bump `queryEpoch` and close
  * Quick peek at dispatch time, not after the replacement slice
- * lands. `ResultList` keeps painting the previous rows while
- * `loading` is true as long as it still has events, so deferring
- * either reset until the response lands leaves a window during
- * the round-trip where:
+ * lands. For Refresh (same-filter re-fetch) `ResultList` keeps
+ * painting the previous rows while `loading` is true as long as it
+ * still has events — so deferring either reset until the response
+ * lands leaves a window during the round-trip where:
  *
- * - the chip bar and URL already describe the newly committed
- *   filter, but
  * - the Quick peek inspector (and its **Open investigation**
- *   button) is still pinned to a row the committed filter no
- *   longer describes, and
+ *   button) is still pinned to a row the fresh slice may no
+ *   longer return, and
  * - `EventRow` / `MorePopover` state from the stale slice can be
  *   reconciled onto the replacement slice because `queryEpoch`
  *   hasn't advanced yet.
+ *
+ * For Apply and chip × the retained-slice window does not exist:
+ * `runQueryFor` clears events / pagination synchronously before
+ * calling this helper so the tab's durable state never observes
+ * "new filter + old rows/cursor" (see Reviewer Round 3 on the
+ * multi-tab wrapper).
  *
  * Reviewer Round 3 added `clearQuickPeekUrl`: closing the in-
  * memory peek alone leaves the tab URL carrying a stale
@@ -406,6 +555,124 @@ export function applyCommitDispatchReset(setters: {
   });
 }
 
+/**
+ * State updates that must fire synchronously when a filter-
+ * transitioning dispatch (Apply / chip ×) begins — before the async
+ * REview round-trip resolves. Reviewer Round 3: without these, a
+ * tab-switch taken mid-flight parks a transient snapshot
+ * `{ filter: NEW, pagination: OLD_CURSOR, events: OLD_ROWS,
+ * loading: true }` into the multi-tab wrapper. Two visible failures
+ * follow:
+ *
+ * - The wrapper's loading-stripping remount path renders OLD rows
+ *   as a ready cached result for the NEW filter, violating the
+ *   "each tab is a filter + result pair" contract from #281.
+ * - The wrapper's URL effect rewrites the address from the
+ *   snapshot and reintroduces stale `after=` / `before=` / `last=`
+ *   params on top of the newly committed filter.
+ *
+ * Resetting at dispatch time makes the transition atomic from the
+ * tab model's perspective: the tab's durable state flows
+ * `{ filter: NEW, pagination: HEAD, events: [], loading: true }`
+ * → `{ ..., events: FRESH, loading: false }` — never through a
+ * "new filter + old rows/cursor" midpoint.
+ *
+ * Refresh deliberately does NOT route through this helper: it
+ * re-runs the *current* filter at the *current* page, so clearing
+ * rows would flash a skeleton and break the "update in place"
+ * contract.
+ */
+export function applyTransitionReset(
+  setters: {
+    setPagination: (next: PaginationState) => void;
+    setEvents: (next: DetectionEvent[]) => void;
+    setEventKeys: (next: string[]) => void;
+    setTotalCount: (next: string | null) => void;
+    setPageInfo: (next: PageInfo | null) => void;
+    setLastUpdatedMs: (next: number | null) => void;
+    setTotalCountRef: (next: string | null) => void;
+  },
+  args: { pageSize: PageSize },
+): void {
+  setters.setPagination({
+    pageSize: args.pageSize,
+    anchor: { kind: "head" },
+    page: 1,
+  });
+  setters.setEvents([]);
+  setters.setEventKeys([]);
+  setters.setTotalCount(null);
+  setters.setPageInfo(null);
+  setters.setLastUpdatedMs(null);
+  setters.setTotalCountRef(null);
+}
+
+/**
+ * Reviewer Round 5: invalidate any in-flight committed-query dispatch
+ * (paginator step / Apply / Refresh) and any in-flight Go-to-page
+ * walk by advancing the monotonic ids that gate their late-arrival
+ * checks. Used by the shell's unmount cleanup so an Apply / Refresh
+ * / paginator click that the operator started in tab A — and then
+ * abandoned by switching to tab B before the response landed —
+ * cannot run global URL side effects under the next tab's id.
+ *
+ * Without the bump the resolved request still passes the request-id
+ * check inside `dispatchQuery` and runs:
+ *
+ * - {@link reconcileQuickPeekAgainstSlice}, which can strip the
+ *   currently-active tab's `?event=` token; and
+ * - the `navigateTo` / `handleRefresh` continuations, which call
+ *   `persistPaginationToUrl` to rewrite the URL from the unmounted
+ *   shell's filter / pagination while `preserveActiveTabParam`
+ *   copies the **current** `?tab=`. The address bar then ends up
+ *   with B's tab id paired with A's filter / page, and reload or
+ *   share reproduces the wrong active tab state.
+ *
+ * Bumping both ids on unmount short-circuits the in-flight callback
+ * so abandoned requests cannot touch global URL state; the resumed
+ * shell on switch-back owns the replacement query and URL via
+ * {@link shouldResumeQueryOnMount}.
+ *
+ * Extracted as a pure helper so the unmount contract can be unit-
+ * tested without standing up the shell's full client runtime.
+ */
+export function invalidateInFlightOnUnmount(refs: {
+  latestRequestIdRef: { current: number };
+  latestWalkIdRef: { current: number };
+}): void {
+  refs.latestRequestIdRef.current += 1;
+  refs.latestWalkIdRef.current += 1;
+}
+
+/**
+ * Reviewer Round 4 (item 1): true when a freshly-mounted shell's
+ * snapshot indicates the prior shell instance had a committed query
+ * in flight.
+ *
+ * The multi-tab wrapper mirrors `result.loading: true` into the
+ * outgoing tab's slot when the operator switches away mid-Apply
+ * (or mid-Refresh / mid-pagination). Without resuming, the original
+ * request resolves into the unmounted shell — the tab cache never
+ * receives the fresh rows, and switching back yields the post-
+ * `applyTransitionReset` empty result for the new filter rather
+ * than the query result.
+ *
+ * Resume semantics: re-issue the same query at the snapshot's
+ * pagination with `navigating: true`. `applyTransitionReset` has
+ * already pinned pagination to HEAD + page=1 for the Apply / chip
+ * × path, so the resumed call lands at head; for Refresh /
+ * paginator clicks the snapshot retains the user's current page,
+ * which is the right anchor to re-fetch.
+ *
+ * Extracted as a pure helper so the resume contract can be unit-
+ * tested without standing up the shell's full client runtime.
+ */
+export function shouldResumeQueryOnMount(
+  loading: boolean | undefined,
+): boolean {
+  return loading === true;
+}
+
 export function DetectionShell({
   title,
   labels,
@@ -415,6 +682,12 @@ export function DetectionShell({
   initialResult,
   initialPivotOnly = {},
   initialPagination = INITIAL_PAGINATION_STATE,
+  initialEndpoints = [],
+  initialDraft = null,
+  initialAnalyticsOpen = false,
+  initialQuickPeekEvent = null,
+  initialPendingQuickPeekToken = null,
+  onStateChange,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
@@ -521,7 +794,7 @@ export function DetectionShell({
     }),
     [labels.quickPeek, tResults],
   );
-  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [analyticsOpen, setAnalyticsOpen] = useState(initialAnalyticsOpen);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openEndpointPanelOnDrawerOpen, setOpenEndpointPanelOnDrawerOpen] =
     useState(false);
@@ -530,21 +803,19 @@ export function DetectionShell({
   const [committedPeriod, setCommittedPeriod] = useState<PeriodKey | null>(
     initialPeriod,
   );
-  const [committedEndpoints, setCommittedEndpoints] = useState<EndpointEntry[]>(
-    [],
-  );
+  const [committedEndpoints, setCommittedEndpoints] =
+    useState<EndpointEntry[]>(initialEndpoints);
   // `pivotOnly` carries URL-only fields that aren't yet represented
   // in the drawer — today that's `origPort` / `respPort` / `proto`,
-  // which arrive from the Investigation handoff and ride through
-  // `history.replaceState` so the pivot shape survives a reload
-  // until Phase Network/IP wires them into the drawer. `kind` and
-  // `window` were previously also parked here, but they now live in
-  // the committed filter (`input.kinds`) and `committedPeriod`; the
-  // URL writer extracts them from there via
-  // {@link pivotParamsFromFilterInput} so edits in the drawer clear
-  // stale pivot tokens on the next Apply / chip removal.
+  // which arrive from the Investigation handoff and ride through the
+  // encoded `?f=` blob so the pivot shape survives a reload until
+  // Phase Network/IP wires them into the drawer. `kind` / `window`
+  // are no longer parked here — they live in the committed filter
+  // (`input.kinds`) and `committedPeriod` and round-trip through the
+  // {@link Filter} payload directly, so a drawer edit clears any
+  // stale token on the next Apply / chip removal.
   const pivotOnly = initialPivotOnly;
-  const [draft, setDraft] = useState<DetectionFilterDraft | null>(null);
+  const [draft, setDraft] = useState<DetectionFilterDraft | null>(initialDraft);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
   });
@@ -574,25 +845,46 @@ export function DetectionShell({
   // `EventRow` / `MorePopover` state cannot be carried across
   // unrelated committed queries even if REview happens to reuse a
   // positional cursor value in the new slice. The initial slice sits
-  // on epoch `0`; the first client-side commit advances to `1`.
-  const [queryEpoch, setQueryEpoch] = useState(0);
+  // on epoch `0`; the first client-side commit advances to `1`. The
+  // multi-tab wrapper threads the cached counter back on remount so
+  // a tab switched-back-to does not silently rewind the epoch.
+  const [queryEpoch, setQueryEpoch] = useState(initialResult.queryEpoch ?? 0);
   const [resultError, setResultError] = useState<string | null>(
     initialResult.error,
   );
-  const [loading, setLoading] = useState(false);
-  const [lastUpdatedMs, setLastUpdatedMs] = useState<number | null>(
-    initialResult.error === null && initialResult.totalCount !== null
+  // Reviewer Round 4 (item 1): seed `loading` from the snapshot so a
+  // tab remounted mid-Apply (or mid-Refresh / mid-pagination) keeps
+  // showing the loading skeleton until the resume effect below
+  // re-issues the request. SSR bootstrap leaves `initialResult.loading`
+  // undefined and the shell starts at idle.
+  const [loading, setLoading] = useState(initialResult.loading ?? false);
+  // Reviewer Round 1 (item 3): honour the wrapper-supplied cached
+  // freshness timestamp on a tab remount. Without it, switching back
+  // to a tab that had been queried earlier would compute
+  // `Date.now()` here and the result header would read "Updated just
+  // now" even though no refresh fired — making cached results look
+  // newer than they are. Bootstrap-only loads (where the wrapper
+  // omits the cache) fall back to the SSR-completed timestamp.
+  const [lastUpdatedMs, setLastUpdatedMs] = useState<number | null>(() => {
+    if (initialResult.lastUpdatedMs !== undefined) {
+      return initialResult.lastUpdatedMs;
+    }
+    return initialResult.error === null && initialResult.totalCount !== null
       ? Date.now()
-      : null,
-  );
+      : null;
+  });
   // Tracks whether any query has been dispatched (by the server-
   // rendered initial load or a subsequent Apply / Refresh / chip
   // removal). A freshly-mounted `+` tab with no successful query —
   // e.g. the server action returned an error before the page mounted
   // — renders the dedicated pre-query empty state instead of the
-  // generic zero-results panel.
+  // generic zero-results panel. The multi-tab wrapper threads the
+  // cached value back on remount so a switched-back-to tab keeps its
+  // post-query result panel rather than reverting to the pre-query
+  // empty state.
   const [hasQueried, setHasQueried] = useState(
-    initialResult.error === null && initialResult.totalCount !== null,
+    initialResult.hasQueried ??
+      (initialResult.error === null && initialResult.totalCount !== null),
   );
   const [pagination, setPagination] =
     useState<PaginationState>(initialPagination);
@@ -627,8 +919,21 @@ export function DetectionShell({
   // event when a positional cursor is reused across filters. Closing
   // on every commit is the defensive alternative.
   const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
-    null,
+    initialQuickPeekEvent,
   );
+  // Reviewer Round 9: pending Quick peek URL token captured from the
+  // SSR bootstrap (or a prior tab activation) so the multi-tab
+  // wrapper can re-emit `?event=` from the snapshot while the shell
+  // has not yet been able to resolve the token against a successful
+  // slice. Cleared as soon as the shell either restores the peek
+  // (match found) or proves the token stale (URL stripped). The
+  // wrapper's `buildUrlSearchForTab` falls through to this token
+  // when `quickPeekEvent` is null, so its mount-time URL rewrite
+  // does not clobber the URL token before Retry / Refresh can
+  // reconcile it.
+  const [pendingQuickPeekToken, setPendingQuickPeekToken] = useState<
+    string | null
+  >(initialPendingQuickPeekToken);
   // Ref mirror of `quickPeekEvent` so the async `runQueryFor` success
   // path can read the latest state without becoming a dependency.
   // Reviewer Round 7: used to gate the post-Refresh URL reconcile so
@@ -719,6 +1024,14 @@ export function DetectionShell({
     const nextSearch = applyQuickPeekToken(window.location.search, token);
     const url = `${window.location.pathname}${nextSearch}${window.location.hash}`;
     window.history.replaceState(window.history.state, "", url);
+    // Reviewer Round 9: any explicit URL write supersedes the
+    // pending-token placeholder. Stripping the URL clears pending so
+    // the wrapper's `buildUrlSearchForTab` does not re-emit a
+    // just-removed token; setting a new token clears pending so the
+    // wrapper falls back to encoding the new `quickPeekEvent`'s
+    // locator (which the open-peek path always sets in the same
+    // gesture).
+    setPendingQuickPeekToken(null);
   }, []);
 
   // Match-or-strip leg of the mount-restore contract, run against a
@@ -758,6 +1071,10 @@ export function DetectionShell({
         // showing an inspector describing a row the new filter does
         // not return.
         if (current) setQuickPeekEvent(null);
+        // Reviewer Round 9: a successful slice with no probe token is
+        // also the canonical "this tab has no pending peek" state, so
+        // clear any stale pending placeholder.
+        setPendingQuickPeekToken(null);
         return;
       }
       const match = nextEvents.find(
@@ -773,12 +1090,22 @@ export function DetectionShell({
         // renders use the latest event identity.
         if (action === "restore" && !current) setQuickPeekEvent(match);
         else if (current && current !== match) setQuickPeekEvent(match);
+        // Reviewer Round 9: the pending placeholder is now resolved
+        // to a concrete event — clear it so the wrapper encodes the
+        // event's locator on the next URL write rather than the raw
+        // pending token.
+        setPendingQuickPeekToken(null);
         return;
       }
       // Token present but the fresh slice does not contain it: strip
       // the URL token and close any stale in-memory peek.
       if (action === "strip") writeQuickPeekToUrl(null);
       if (current) setQuickPeekEvent(null);
+      // Reviewer Round 9: even when `action !== "strip"` (no URL
+      // token but an in-memory peek that lost its row), pending can
+      // now be cleared because either branch above decided the
+      // peek's fate against a successful slice.
+      setPendingQuickPeekToken(null);
     },
     [writeQuickPeekToUrl],
   );
@@ -927,14 +1254,35 @@ export function DetectionShell({
     [labels.resultsError, writeQuickPeekToUrl, reconcileQuickPeekAgainstSlice],
   );
 
-  // Wrapper used by the Apply / chip / Refresh paths — they all
-  // reset pagination back to page 1 (head) on transition.
+  // Wrapper used by the Apply and chip × paths — both commit a new
+  // filter and reset pagination back to page 1 (head) on transition.
+  // Refresh does NOT route through here: it re-runs the *current*
+  // filter at the *current* page, so it must not clear the cached
+  // result (same-filter re-fetch) and calls `dispatchQuery` directly.
   const runQueryFor = useCallback(
     (filter: Filter) => {
       // Cancel any in-flight Go-to-page walk — its cursors were
       // derived from the superseded filter.
       latestWalkIdRef.current += 1;
       setWalking(null);
+      // Reviewer Round 3: apply the atomic-transition reset so the
+      // multi-tab wrapper's snapshot never observes "new filter + old
+      // cached rows/cursor" during the async REview round-trip. See
+      // {@link applyTransitionReset} for the full contract.
+      applyTransitionReset(
+        {
+          setPagination,
+          setEvents,
+          setEventKeys,
+          setTotalCount,
+          setPageInfo,
+          setLastUpdatedMs,
+          setTotalCountRef: (v) => {
+            totalCountRef.current = v;
+          },
+        },
+        { pageSize: pagination.pageSize },
+      );
       void dispatchQuery(filter, {
         anchor: { kind: "head" },
         pageSize: pagination.pageSize,
@@ -944,6 +1292,42 @@ export function DetectionShell({
     },
     [dispatchQuery, pagination.pageSize],
   );
+
+  // Reviewer Round 4 (item 1): resume an in-flight committed query
+  // when a tab the operator switched away from mid-Apply (or mid-
+  // Refresh / mid-pagination) is remounted. The wrapper threads the
+  // snapshot's `loading: true` flag back through `initialResult.loading`;
+  // if present, re-issue the same query at the snapshot's pagination
+  // so the original Apply is not silently dropped. Re-dispatch lands
+  // through `dispatchQuery` with `navigating: true` because the
+  // dispatch-time reset (epoch bump, peek clear) was already applied
+  // by the original commit.
+  //
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only — the snapshot's `loading` flag is read once on first render; subsequent state changes flow through normal dispatch paths.
+  useEffect(() => {
+    if (!shouldResumeQueryOnMount(initialResult.loading)) return;
+    void dispatchQuery(initialFilter, {
+      anchor: initialPagination.anchor,
+      pageSize: initialPagination.pageSize,
+      page: initialPagination.page,
+      navigating: true,
+    });
+  }, []);
+
+  // Reviewer Round 5: invalidate any in-flight dispatch / walk on
+  // unmount. The multi-tab wrapper unmounts the shell on tab switch;
+  // without the bump, an Apply / Refresh / paginator request started
+  // in tab A still passes the request-id check after tab B has taken
+  // over and runs global URL side effects under B's `?tab=`. See
+  // {@link invalidateInFlightOnUnmount} for the full contract.
+  useEffect(() => {
+    return () => {
+      invalidateInFlightOnUnmount({
+        latestRequestIdRef,
+        latestWalkIdRef,
+      });
+    };
+  }, []);
 
   const handleApply = useCallback(
     (applied: DetectionFilterDraft) => {
@@ -970,13 +1354,14 @@ export function DetectionShell({
       setDraft(applied);
       setDrawerOpen(false);
 
-      // Mirror the free-form filter fields into the URL so a refresh
-      // restores them. Only the drawer's free-form inputs (source,
-      // destination, and the tag fields) ride in the URL today — the
-      // time range has no URL-persisted form, so a refresh falls back
-      // to the default period. The pivot-only params
-      // (kind/ports/proto/window) stay as-is — they carry no drawer
-      // state yet.
+      // Mirror the committed filter into the URL so a refresh restores
+      // it. Reviewer Round 1 (item 1): the encoded `?f=` blob carries
+      // the entire {@link Filter} — every `EventListFilterInput` field
+      // (levels, countries, learning methods, categories, directions,
+      // confidence bounds, sensors, endpoints) plus the future
+      // `mode: "query"` branch. The legacy pivot encoder only covered a
+      // subset and silently dropped those fields; reload would lose
+      // them.
       //
       // Use `history.replaceState` rather than `router.replace` so the
       // URL update doesn't trigger a soft navigation. A soft navigation
@@ -986,26 +1371,24 @@ export function DetectionShell({
       // result discarded because the shell keeps its own client state.
       // `replaceState` keeps URL persistence (refresh restores the
       // active tab) without paying for a duplicate REview round-trip.
-      if (next.mode === "structured") {
-        const merged = mergePivotParams(
-          pivotOnly,
-          pivotParamsFromFilterInput(next.input, applied.period),
-        );
-        const search = buildDetectionSearchParams(merged);
-        // Apply resets the cursor to the start of the new filter
-        // space — stale pagination keys would point at cursors from
-        // the old filter's connection.
-        clearPaginationParams(search);
-        // Pagination itself is persisted below when the fresh query
-        // resolves; the initial URL can stay short (default page
-        // size, head anchor, no page param).
-        if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
-          search.set("pageSize", String(pagination.pageSize));
-        }
-        const qs = search.toString();
-        const url = qs ? `${pathname}?${qs}` : pathname;
-        window.history.replaceState(window.history.state, "", url);
+      const search = buildEncodedFilterSearch({
+        filter: next,
+        period: applied.period,
+        endpoints: applied.endpoints,
+        pivotExtras: extrasFromPivotOnly(pivotOnly),
+      });
+      // Apply resets the cursor to the start of the new filter
+      // space — stale pagination keys would point at cursors from
+      // the old filter's connection. Pagination itself is persisted
+      // below when the fresh query resolves; the initial URL can stay
+      // short (default page size, head anchor, no page param).
+      if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
+        search.set("pageSize", String(pagination.pageSize));
       }
+      preserveActiveTabParam(search);
+      const qs = search.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(window.history.state, "", url);
 
       runQueryFor(next);
     },
@@ -1040,26 +1423,25 @@ export function DetectionShell({
       // pre-removal filter and would clobber the change if the
       // operator opens the drawer next.
       setDraft(null);
-      // Persist the removal in the URL the same way Apply does.
-      // The period chip removes `committedPeriod` → we pass `null` so
-      // the URL drops `window=` alongside the period itself; every
-      // other target leaves the period untouched so the current
-      // committed period still drives `window=` in the URL.
+      // Persist the removal in the URL the same way Apply does. The
+      // period chip removes `committedPeriod` → we pass `null` so the
+      // encoded blob drops the period alongside the filter itself;
+      // every other target leaves the period untouched so the
+      // current committed period still rides through.
       const nextPeriod = target.kind === "period" ? null : committedPeriod;
-      if (next.filter.mode === "structured") {
-        const merged = mergePivotParams(
-          pivotOnly,
-          pivotParamsFromFilterInput(next.filter.input, nextPeriod),
-        );
-        const search = buildDetectionSearchParams(merged);
-        clearPaginationParams(search);
-        if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
-          search.set("pageSize", String(pagination.pageSize));
-        }
-        const qs = search.toString();
-        const url = qs ? `${pathname}?${qs}` : pathname;
-        window.history.replaceState(window.history.state, "", url);
+      const search = buildEncodedFilterSearch({
+        filter: next.filter,
+        period: nextPeriod,
+        endpoints: next.endpoints,
+        pivotExtras: extrasFromPivotOnly(pivotOnly),
+      });
+      if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
+        search.set("pageSize", String(pagination.pageSize));
       }
+      preserveActiveTabParam(search);
+      const qs = search.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(window.history.state, "", url);
       runQueryFor(next.filter);
     },
     [
@@ -1081,21 +1463,21 @@ export function DetectionShell({
    */
   const persistPaginationToUrl = useCallback(
     (next: PaginationState) => {
-      if (committedFilter.mode !== "structured") return;
-      const merged = mergePivotParams(
-        pivotOnly,
-        pivotParamsFromFilterInput(committedFilter.input),
-      );
-      const search = buildDetectionSearchParams(merged);
-      clearPaginationParams(search);
+      const search = buildEncodedFilterSearch({
+        filter: committedFilter,
+        period: committedPeriod,
+        endpoints: committedEndpoints,
+        pivotExtras: extrasFromPivotOnly(pivotOnly),
+      });
       for (const [k, v] of paginationToSearchEntries(next)) {
         search.set(k, v);
       }
+      preserveActiveTabParam(search);
       const qs = search.toString();
       const url = qs ? `${pathname}?${qs}` : pathname;
       window.history.replaceState(window.history.state, "", url);
     },
-    [committedFilter, pathname, pivotOnly],
+    [committedEndpoints, committedFilter, committedPeriod, pathname, pivotOnly],
   );
 
   /**
@@ -1145,6 +1527,18 @@ export function DetectionShell({
     // bumps the queryEpoch so per-row state (MorePopover, focus) is
     // cleared, matching the dispatch-time contract for committed
     // transitions.
+    //
+    // Short-circuit when the tab has not yet run its first query: a
+    // `+`-created tab seeded with the default filter must reach its
+    // first result through Apply, not through Refresh (#281). The
+    // header button is already disabled for `empty-prequery`, so this
+    // mostly guards programmatic callers. Reviewer Round 8 (item 1):
+    // a bootstrap tab whose initial auto-query failed is *not*
+    // `!hasQueried` — `bootstrapTabToSnapshot` marks it `hasQueried`
+    // so the in-panel Retry button (which calls back through this
+    // handler) can re-issue the query against the same filter /
+    // anchor instead of being a no-op.
+    if (!hasQueried) return;
     latestWalkIdRef.current += 1;
     setWalking(null);
     void dispatchQuery(committedFilter, {
@@ -1169,7 +1563,13 @@ export function DetectionShell({
         });
       }
     });
-  }, [committedFilter, dispatchQuery, pagination, persistPaginationToUrl]);
+  }, [
+    committedFilter,
+    dispatchQuery,
+    hasQueried,
+    pagination,
+    persistPaginationToUrl,
+  ]);
 
   /**
    * Walk the connection forward to `target` at `pageSize`, one
@@ -1795,15 +2195,30 @@ export function DetectionShell({
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally mount-only — subsequent URL writes go through `writeQuickPeekToUrl` directly so re-running on every `events` change would fight the operator's own open/close actions.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    // Skip the URL restore when the multi-tab wrapper has already
+    // handed us a resolved peek event for this tab. The URL-encoded
+    // peek applies only to the active tab's filter; a dormant tab
+    // rehydrated from sessionStorage carries its peek via
+    // `initialQuickPeekEvent` instead, and re-reading the URL here
+    // would conflate the two and clobber the per-tab selection.
+    if (initialQuickPeekEvent) return;
     const stored = readQuickPeekToken(
       new URLSearchParams(window.location.search),
     );
-    if (!stored) return;
+    if (!stored) {
+      // Reviewer Round 9: pending mirrors the URL token, so an absent
+      // URL token always implies an absent pending placeholder.
+      setPendingQuickPeekToken(null);
+      return;
+    }
     const match = events.find(
       (evt) => encodeEventLocator(evt) === stored.token,
     );
     if (match) {
       setQuickPeekEvent(match);
+      // Reviewer Round 9: a resolved peek supersedes pending — the
+      // wrapper's URL writer encodes the peek's locator from now on.
+      setPendingQuickPeekToken(null);
       return;
     }
     if (
@@ -1813,8 +2228,20 @@ export function DetectionShell({
         initialErrored: initialResult.error !== null,
       })
     ) {
+      // `writeQuickPeekToUrl(null)` already clears pending — see the
+      // setter for the rationale.
       writeQuickPeekToUrl(null);
+      return;
     }
+    // Reviewer Round 9: errored-without-proof path. The URL token is
+    // intentionally preserved (the empty errored slice cannot prove
+    // the token stale); seed pending from the URL so the multi-tab
+    // wrapper's `buildUrlSearchForTab` can re-emit `?event=` on its
+    // mount-time URL rewrite. Without this seeding, the wrapper's
+    // first replaceState would clobber the URL token before
+    // `reconcileQuickPeekAgainstSlice` could decide restore vs.
+    // strip on a later successful Retry / Refresh.
+    setPendingQuickPeekToken(stored.token);
   }, []);
 
   // Escape dismisses the desktop inline Quick peek pane. The narrow
@@ -1843,6 +2270,66 @@ export function DetectionShell({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [isDesktop, quickPeekEvent, closeQuickPeek]);
+
+  // Emit the current tab-relevant state to the multi-tab wrapper on
+  // every transition so the wrapper can mirror the active tab's live
+  // state into its `TabSnapshot[]`. The wrapper uses this to:
+  //   - Persist to sessionStorage so a reload restores the exact tab
+  //     set the operator had open.
+  //   - Snapshot before a tab switch, so the outgoing tab keeps its
+  //     cached result and drawer draft when the operator switches
+  //     back later.
+  // The effect fires after commit, so `shellSnapshotRef.current` in
+  // the wrapper lags live state by one render — which is the right
+  // contract for the wrapper's snapshot-on-switch path: the user has
+  // to take a rendered state before clicking a different tab.
+  useEffect(() => {
+    if (!onStateChange) return;
+    onStateChange({
+      filter: committedFilter,
+      period: committedPeriod,
+      endpoints: committedEndpoints,
+      pivotOnly,
+      pagination,
+      draft,
+      analyticsOpen,
+      quickPeekEvent,
+      pendingQuickPeekToken,
+      result: {
+        events,
+        eventKeys,
+        totalCount,
+        pageInfo,
+        resultError,
+        lastUpdatedMs,
+        hasQueried,
+        queryEpoch,
+        loading,
+        walking,
+      },
+    });
+  }, [
+    onStateChange,
+    committedFilter,
+    committedPeriod,
+    committedEndpoints,
+    pivotOnly,
+    pagination,
+    draft,
+    analyticsOpen,
+    quickPeekEvent,
+    pendingQuickPeekToken,
+    events,
+    eventKeys,
+    totalCount,
+    pageInfo,
+    resultError,
+    lastUpdatedMs,
+    hasQueried,
+    queryEpoch,
+    loading,
+    walking,
+  ]);
 
   return (
     <div className="flex gap-4">
@@ -2272,6 +2759,32 @@ function QuickPeekInspectorOverlay({
       </SheetContent>
     </Sheet>
   );
+}
+
+/**
+ * Build a `URLSearchParams` carrying only the encoded `?f=` filter
+ * blob. Pagination, tab id, and quick-peek params are layered on top
+ * by the caller. Reviewer Round 1 (item 1): centralised so every
+ * state-mutation URL writer (Apply, chip removal, pagination) round-
+ * trips the full {@link Filter} rather than the legacy pivot subset.
+ */
+function buildEncodedFilterSearch(args: EncodedTabFilter): URLSearchParams {
+  return buildSearchParamsForFilter(args);
+}
+
+/**
+ * Narrow `PivotFilterParams` (the broader URL shape used by the
+ * Investigation handoff inbound parser) to the `PivotExtras` subset
+ * the encoded blob carries. Drawer-owned fields (kind, window,
+ * source, …) are dropped because they round-trip through the
+ * {@link Filter} payload itself.
+ */
+function extrasFromPivotOnly(pivot: PivotFilterParams): PivotExtras {
+  const out: PivotExtras = {};
+  if (pivot.origPort !== undefined) out.origPort = pivot.origPort;
+  if (pivot.respPort !== undefined) out.respPort = pivot.respPort;
+  if (pivot.proto !== undefined) out.proto = pivot.proto;
+  return out;
 }
 
 function filterToDraft(

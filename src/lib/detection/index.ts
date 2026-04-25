@@ -30,6 +30,18 @@ export {
   summarizeFilter,
 } from "./filter-summary";
 export {
+  buildSearchParamsForFilter,
+  clearLegacyFilterParams,
+  type EncodedTabFilter,
+  FILTER_URL_PARAM,
+  LEGACY_FILTER_PARAM_KEYS,
+  type PivotExtras,
+  parseFilterFromUrlParam,
+  pivotExtrasFromPivotParams,
+  serializeFilterToUrlParam,
+  structuredFilter,
+} from "./filter-url";
+export {
   clearPaginationParams,
   coercePageSize,
   committedPageForAnchor,
@@ -82,6 +94,29 @@ export {
   searchEvents,
   searchEventsAtAnchor,
 } from "./server-actions";
+export {
+  ACTIVE_TAB_URL_PARAM,
+  autoTabName,
+  canAddTab,
+  closeTab,
+  createTabId,
+  createTabSnapshot,
+  EMPTY_RESULT_CACHE,
+  MAX_TABS,
+  preserveActiveTabParam,
+  type ResultCache,
+  type TabId,
+  type TabSnapshot,
+} from "./tabs";
+export {
+  clearTabsFromSession,
+  type DeserializedTabs,
+  deserializeTabsFromStorage,
+  readTabsFromSession,
+  STORAGE_KEY as TABS_STORAGE_KEY,
+  serializeTabsForStorage,
+  writeTabsToSession,
+} from "./tabs-storage";
 export type {
   DateTimeScalar,
   EndpointInput,

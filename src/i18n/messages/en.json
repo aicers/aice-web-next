@@ -868,6 +868,15 @@
         "isInternal": "Internal",
         "networkService": "Service"
       }
+    },
+    "tabs": {
+      "tablist": "Detection result tabs",
+      "newTab": "New tab",
+      "newTabAtCap": "Close a tab to open a new one (maximum 8 open).",
+      "closeTab": "Close tab",
+      "renameTab": "Rename tab",
+      "resetName": "Reset tab name",
+      "fallbackName": "New tab"
     }
   },
   "events": {

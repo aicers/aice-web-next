@@ -377,6 +377,175 @@ describe("applyCommitDispatchReset", () => {
   });
 });
 
+describe("applyTransitionReset — Reviewer Round 3", () => {
+  // `runQueryFor` (Apply / chip ×) routes the dispatch-time reset
+  // through this helper so the multi-tab wrapper's snapshot never
+  // observes "new filter + old cached rows/cursor" during the
+  // async REview round-trip. Without these resets a tab-switch
+  // mid-Apply parked a transient snapshot
+  // `{ filter: NEW, pagination: OLD_CURSOR, events: OLD_ROWS }`
+  // into the tab, and on switch-back the wrapper's loading-stripping
+  // remount rendered the OLD rows as a ready cached result for the
+  // NEW filter — while the URL effect reintroduced stale
+  // after= / before= / last= cursors on the new filter's URL.
+  let applyTransitionReset: ShellModule["applyTransitionReset"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    applyTransitionReset = mod.applyTransitionReset;
+  });
+
+  function runReset(args: { pageSize: 25 | 50 | 100 | 200 }) {
+    const setters = {
+      setPagination: vi.fn(),
+      setEvents: vi.fn(),
+      setEventKeys: vi.fn(),
+      setTotalCount: vi.fn(),
+      setPageInfo: vi.fn(),
+      setLastUpdatedMs: vi.fn(),
+      setTotalCountRef: vi.fn(),
+    };
+    applyTransitionReset(setters, args);
+    return setters;
+  }
+
+  it("pins pagination to HEAD + page=1 at the caller's pageSize", () => {
+    const setters = runReset({ pageSize: 50 });
+    expect(setters.setPagination).toHaveBeenCalledTimes(1);
+    expect(setters.setPagination).toHaveBeenCalledWith({
+      pageSize: 50,
+      anchor: { kind: "head" },
+      page: 1,
+    });
+  });
+
+  it("preserves a non-default page size so a tab on 200/page stays at 200 after Apply", () => {
+    // Regression: a naive reset to INITIAL_PAGINATION_STATE would
+    // silently teleport the tab back to the default pageSize on
+    // every Apply — Apply is supposed to reset the cursor, not the
+    // operator's chosen page size.
+    const setters = runReset({ pageSize: 200 });
+    const call = setters.setPagination.mock.calls[0]?.[0] as {
+      pageSize: number;
+    };
+    expect(call.pageSize).toBe(200);
+  });
+
+  it("clears events / eventKeys / totalCount / pageInfo so snapshots cannot retain old rows under a new filter", () => {
+    const setters = runReset({ pageSize: 50 });
+    expect(setters.setEvents).toHaveBeenCalledWith([]);
+    expect(setters.setEventKeys).toHaveBeenCalledWith([]);
+    expect(setters.setTotalCount).toHaveBeenCalledWith(null);
+    expect(setters.setPageInfo).toHaveBeenCalledWith(null);
+  });
+
+  it("clears the totalCount ref so a mid-flight tail-anchor request does not read a stale total", () => {
+    const setters = runReset({ pageSize: 50 });
+    expect(setters.setTotalCountRef).toHaveBeenCalledWith(null);
+  });
+
+  it("clears lastUpdatedMs so a mid-flight switch-back does not show a stale 'Updated Xm ago' over an empty results panel", () => {
+    const setters = runReset({ pageSize: 50 });
+    expect(setters.setLastUpdatedMs).toHaveBeenCalledWith(null);
+  });
+});
+
+describe("invalidateInFlightOnUnmount — Reviewer Round 5", () => {
+  // The multi-tab wrapper unmounts the shell on tab switch. An Apply
+  // / Refresh / paginator request that was in flight when the switch
+  // happened still resolves into the unmounted shell's closures —
+  // and would otherwise pass the `latestRequestIdRef` / walk-id
+  // checks and run global URL side effects (Quick peek strip,
+  // pagination persist) under the **next** tab's `?tab=`. Bumping
+  // both refs on unmount short-circuits those continuations so the
+  // operator's address bar cannot end up with B's tab id paired
+  // with A's filter / page.
+  let invalidateInFlightOnUnmount: ShellModule["invalidateInFlightOnUnmount"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    invalidateInFlightOnUnmount = mod.invalidateInFlightOnUnmount;
+  });
+
+  it("advances the request id so an in-flight dispatch is dropped", () => {
+    // Regression: without the bump, the resolved Promise's success
+    // branch passes `latestRequestIdRef.current === requestId` and
+    // calls `reconcileQuickPeekAgainstSlice`, which mutates the
+    // currently-active tab's `?event=` URL token.
+    const refs = {
+      latestRequestIdRef: { current: 4 },
+      latestWalkIdRef: { current: 0 },
+    };
+    invalidateInFlightOnUnmount(refs);
+    expect(refs.latestRequestIdRef.current).toBe(5);
+  });
+
+  it("advances the walk id so a Go-to-page walker drops its remaining steps", () => {
+    // Regression: a multi-step walk's `persistPaginationToUrl` call
+    // is gated on `latestWalkIdRef.current === walkId`. Without the
+    // bump the walker would also write the unmounted tab's filter
+    // into the URL under the new active tab's id.
+    const refs = {
+      latestRequestIdRef: { current: 0 },
+      latestWalkIdRef: { current: 7 },
+    };
+    invalidateInFlightOnUnmount(refs);
+    expect(refs.latestWalkIdRef.current).toBe(8);
+  });
+
+  it("advances both ids in a single call", () => {
+    // The cleanup fires once per unmount and must invalidate every
+    // continuation that gates on either id; otherwise a paginator
+    // walk in flight at unmount-time could still touch the URL even
+    // though the next dispatch was correctly dropped.
+    const refs = {
+      latestRequestIdRef: { current: 1 },
+      latestWalkIdRef: { current: 1 },
+    };
+    invalidateInFlightOnUnmount(refs);
+    expect(refs.latestRequestIdRef.current).toBe(2);
+    expect(refs.latestWalkIdRef.current).toBe(2);
+  });
+});
+
+describe("shouldResumeQueryOnMount — Reviewer Round 4 (item 1)", () => {
+  // When the operator applies a filter in tab A and switches to tab B
+  // before the request resolves, the wrapper unmounts tab A's shell.
+  // The in-flight REview response then lands in a dead React tree —
+  // its setState closures are no-ops under the unmounted instance, so
+  // tab A's cache never receives the fresh rows. The wrapper now
+  // threads the snapshot's `loading: true` flag back into
+  // `initialResult.loading`, and this predicate decides whether a
+  // freshly-mounted shell should resume the query by re-issuing the
+  // same request at the snapshot's pagination.
+  let shouldResumeQueryOnMount: (loading: boolean | undefined) => boolean;
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldResumeQueryOnMount = mod.shouldResumeQueryOnMount;
+  });
+
+  it("resumes when the snapshot flagged an in-flight committed query", () => {
+    // Tab A was mid-Apply when the operator switched to tab B; on
+    // switch-back, the shell must re-dispatch so the request is not
+    // silently dropped.
+    expect(shouldResumeQueryOnMount(true)).toBe(true);
+  });
+
+  it("does not resume when the snapshot was idle", () => {
+    // The common case — every tab switch that did not catch a
+    // committed query mid-flight should land at a plain cache hit
+    // without hitting the network.
+    expect(shouldResumeQueryOnMount(false)).toBe(false);
+  });
+
+  it("does not resume when the snapshot flag is absent (SSR bootstrap)", () => {
+    // The server page seeds the initial result without a `loading`
+    // field; a bootstrap tab must not auto-redispatch on first mount.
+    expect(shouldResumeQueryOnMount(undefined)).toBe(false);
+  });
+});
+
 describe("quickPeekResetKey", () => {
   let quickPeekResetKey: ShellModule["quickPeekResetKey"];
 

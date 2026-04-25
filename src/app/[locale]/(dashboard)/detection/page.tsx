@@ -1,6 +1,6 @@
 import { getLocale, getTranslations } from "next-intl/server";
 
-import { DetectionShell } from "@/components/detection/detection-shell";
+import { DetectionTabsShell } from "@/components/detection/detection-tabs-shell";
 import type { FilterDrawerOptions } from "@/components/detection/filter-drawer";
 import type { FilterMultiSelectOption } from "@/components/detection/filter-multi-select";
 import { EVENT_KIND_FRIENDLY_NAMES } from "@/components/events/event-display-helpers";
@@ -8,16 +8,21 @@ import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
   computePeriodRange,
   DEFAULT_PERIOD_KEY,
+  type EncodedTabFilter,
+  type EndpointEntry,
   type Event,
   type EventListFilterInput,
+  FILTER_URL_PARAM,
   type Filter,
   type FlowKind,
   type PaginationState,
   PERIOD_KEYS,
   type PeriodKey,
   type PivotFilterParams,
+  parseFilterFromUrlParam,
   parsePaginationSearchParams,
   parsePivotSearchParams,
+  pivotExtrasFromPivotParams,
   pivotWindowToPeriodKey,
   searchEventsAtAnchor,
   TAG_FIELDS,
@@ -36,7 +41,10 @@ import {
   THREAT_LEVEL_KEY_BY_VALUE,
   THREAT_LEVEL_VALUES,
 } from "@/lib/detection/filter-options";
+import { QUICK_PEEK_EVENT_PARAM } from "@/lib/detection/quick-peek-url";
+import { createTabId, type TabId } from "@/lib/detection/tabs";
 import type { LearningMethod, PageInfo } from "@/lib/detection/types";
+import { decodeEventLocator } from "@/lib/events/event-locator";
 
 interface DetectionPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -53,7 +61,6 @@ export default async function DetectionPage({
   const t = await getTranslations("detection");
   const locale = await getLocale();
   const rawParams = await searchParams;
-  const pivotParams = parsePivotSearchParams(rawParams);
   let initialPagination: PaginationState =
     parsePaginationSearchParams(rawParams);
   // The client shell builds chip label strings from `labels.chipLabels`
@@ -64,49 +71,66 @@ export default async function DetectionPage({
     sensorAggregate: t.raw("filters.chips.sensorAggregate") as string,
   };
 
-  // Pivot links (Quick peek, Related Events, Overview Top Pivots) encode
-  // an optional `window=` and `kind=` alongside source/destination so
-  // the destination page actually narrows to the requested slice rather
-  // than landing on the default 1h / unfiltered view. Translate them
-  // into the drawer's vocabulary — `window=1d/7d` picks the matching
-  // period key and the resulting start/end, `kind=` seeds the Kinds
-  // multi-select with a single entry — so the committed query honors
-  // the pivot contract on the first render.
-  const pivotPeriod: PeriodKey =
-    pivotWindowToPeriodKey(pivotParams.window) ?? DEFAULT_PERIOD_KEY;
-  const periodRange = computePeriodRange(pivotPeriod);
-  const initialInput: EventListFilterInput = {
-    start: periodRange.start,
-    end: periodRange.end,
-  };
-  if (pivotParams.source) initialInput.source = pivotParams.source;
-  if (pivotParams.destination) {
-    initialInput.destination = pivotParams.destination;
+  // Phase Detection-10 persistence contract: prefer the encoded `?f=`
+  // blob (carries the full Filter — every `EventListFilterInput` field
+  // plus `mode: "query"` once the search-language phase lands) and
+  // fall back to the legacy pivot params (`source=`, `kind=`,
+  // `window=`, …) only when `?f=` is absent. The fallback exists so
+  // outbound Investigation handoff links of the shape
+  // `/detection?source=X&window=1d&kind=HttpThreat` keep bootstrapping
+  // the destination tab; on the next state mutation the URL writer
+  // flips over to `?f=` and clears the legacy fields.
+  const encodedFilter: EncodedTabFilter | null =
+    typeof rawParams[FILTER_URL_PARAM] === "string"
+      ? parseFilterFromUrlParam(rawParams[FILTER_URL_PARAM] as string)
+      : null;
+  let initialFilter: Filter;
+  let pivotPeriod: PeriodKey | null;
+  let initialPivotOnly: PivotFilterParams;
+  let initialEndpoints: EndpointEntry[];
+  if (encodedFilter) {
+    initialFilter = encodedFilter.filter;
+    pivotPeriod = encodedFilter.period;
+    initialPivotOnly = { ...encodedFilter.pivotExtras };
+    initialEndpoints = encodedFilter.endpoints;
+  } else {
+    const pivotParams = parsePivotSearchParams(rawParams);
+    // Pivot links (Quick peek, Related Events, Overview Top Pivots)
+    // encode an optional `window=` and `kind=` alongside
+    // source/destination so the destination page actually narrows to
+    // the requested slice rather than landing on the default 1h /
+    // unfiltered view. Translate them into the drawer's vocabulary —
+    // `window=1d/7d` picks the matching period key and the resulting
+    // start/end, `kind=` seeds the Kinds multi-select with a single
+    // entry — so the committed query honors the pivot contract on the
+    // first render.
+    pivotPeriod =
+      pivotWindowToPeriodKey(pivotParams.window) ?? DEFAULT_PERIOD_KEY;
+    const periodRange = computePeriodRange(pivotPeriod);
+    const initialInput: EventListFilterInput = {
+      start: periodRange.start,
+      end: periodRange.end,
+    };
+    if (pivotParams.source) initialInput.source = pivotParams.source;
+    if (pivotParams.destination) {
+      initialInput.destination = pivotParams.destination;
+    }
+    if (pivotParams.kind) {
+      initialInput.kinds = [pivotParams.kind];
+    }
+    for (const field of TAG_FIELDS) {
+      const values = pivotParams[field];
+      if (values && values.length > 0) initialInput[field] = values;
+    }
+    initialFilter = { mode: "structured", input: initialInput };
+    // Port / proto are not yet part of `EventListFilterInput`; they
+    // ride in the URL so Phase Network/IP can pick them up without
+    // losing the pivot target. They land in `initialPivotOnly` and
+    // round-trip into the encoded `?f=` blob on the next state
+    // mutation.
+    initialPivotOnly = { ...pivotExtrasFromPivotParams(pivotParams) };
+    initialEndpoints = [];
   }
-  if (pivotParams.kind) {
-    initialInput.kinds = [pivotParams.kind];
-  }
-  for (const field of TAG_FIELDS) {
-    const values = pivotParams[field];
-    if (values && values.length > 0) initialInput[field] = values;
-  }
-  const initialFilter: Filter = { mode: "structured", input: initialInput };
-
-  // Port / proto are not yet part of `EventListFilterInput`; they ride
-  // in the URL so Phase Network/IP can pick them up without losing the
-  // pivot target. `kind` and `window` are NOT parked here anymore —
-  // they live in `initialInput.kinds` and `initialPeriod` above, and
-  // the URL writer re-derives the `kind=` / `window=` tokens from the
-  // committed filter / period via `pivotParamsFromFilterInput`. That
-  // way an operator who removes the Kind chip or picks a different
-  // period in the drawer sees the stale tokens disappear from the
-  // URL on the next Apply / chip removal, rather than having the
-  // first-render snapshot silently restored on reload.
-  const initialPivotOnly: PivotFilterParams = {
-    origPort: pivotParams.origPort,
-    respPort: pivotParams.respPort,
-    proto: pivotParams.proto,
-  };
 
   let initialTotal: string | null = null;
   let initialError: string | null = null;
@@ -199,259 +223,300 @@ export default async function DetectionPage({
     ]),
   ) as Record<TagField, { label: string; placeholder: string }>;
 
+  // Anchor the bootstrap tab to the URL-supplied `?tab=<id>` token
+  // when present so a reload / bookmark reuses the same tab id. The
+  // client-side wrapper checks this id against sessionStorage to
+  // decide whether to promote a stored payload onto the bootstrap
+  // tab (matching id → the reload case, restore UX state) or keep
+  // the bootstrap fresh (mismatched id → link share, ignore prior
+  // session). Raw `tab` values from the URL are accepted as-is
+  // modulo a character-class filter so a malicious caller can't
+  // inject fragment-breaking tokens.
+  const rawTab = rawParams.tab;
+  const tabId: TabId =
+    typeof rawTab === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(rawTab)
+      ? rawTab
+      : createTabId();
+
+  // Reviewer Round 9: capture the Quick peek `?event=<locator>` token
+  // server-side and seed it as `pendingQuickPeekToken` on the
+  // bootstrap tab. The multi-tab wrapper's mount-time URL effect
+  // re-emits this token when `quickPeekEvent` is null, so a shared
+  // link whose first slice errors keeps the URL token intact while
+  // the operator's Retry / Refresh runs — without this seed, the
+  // wrapper's first replaceState would clobber the token before the
+  // recovered slice could match it. Strict-validate the token via
+  // `decodeEventLocator` so a tampered or malformed `?event=` value
+  // is treated as no token rather than round-tripped indefinitely.
+  const rawEventToken = rawParams[QUICK_PEEK_EVENT_PARAM];
+  const initialQuickPeekToken: string | null =
+    typeof rawEventToken === "string" && decodeEventLocator(rawEventToken)
+      ? rawEventToken
+      : null;
+
+  const shellLabels = {
+    exportConfirm: {
+      title: t("results.exportConfirm.title"),
+      descriptionTemplate: t.raw("results.exportConfirm.description") as string,
+      continueLabel: t("results.exportConfirm.continue"),
+      cancelLabel: t("results.exportConfirm.cancel"),
+      narrowFilterLabel: t("results.exportConfirm.narrowFilter"),
+    },
+    exportErrorMessage: t("results.downloadErrorDescription"),
+    exportLimitExceededTemplate: t.raw(
+      "results.downloadLimitExceededDescription",
+    ) as string,
+    exportColumnHeaders: {
+      level: t("results.csvHeaders.level"),
+      time: t("results.csvHeaders.time"),
+      kind: t("results.csvHeaders.kind"),
+      attackKind: t("results.csvHeaders.attackKind"),
+      category: t("results.csvHeaders.category"),
+      confidence: t("results.csvHeaders.confidence"),
+      triage: t("results.csvHeaders.triage"),
+      source: t("results.csvHeaders.source"),
+      destination: t("results.csvHeaders.destination"),
+      sensor: t("results.csvHeaders.sensor"),
+    },
+    recommendedFilter: t("savedRail.recommended"),
+    savedFilters: t("savedRail.saved"),
+    railPlaceholder: t("savedRail.placeholder"),
+    filtersOpen: t("filters.open"),
+    activeChipsEmpty: t("filters.activeChipsEmpty"),
+    resultsRegion: t("filters.resultsRegion"),
+    resultsLoading: t("filters.resultsLoading"),
+    resultsError: t("filters.resultsError"),
+    analyticsToggle: t("analytics.toggle"),
+    analyticsShow: t("analytics.show"),
+    analyticsHide: t("analytics.hide"),
+    analyticsPlaceholder: t("analytics.placeholder"),
+    directionChips: {
+      label: t("filters.directionChipLabel"),
+      values: directionChipValues,
+    },
+    endpointChips: {
+      source: t("filters.endpoint.chipSource"),
+      destination: t("filters.endpoint.chipDestination"),
+      aggregate: t.raw("filters.endpoint.chipAggregate") as string,
+    },
+    confidenceChipLabel: t("filters.confidenceChipLabel"),
+    chipLabels: {
+      source: t("filters.chips.source"),
+      destination: t("filters.chips.destination"),
+      kind: t("filters.chips.kind"),
+      origPort: t("filters.chips.origPort"),
+      respPort: t("filters.chips.respPort"),
+      proto: t("filters.chips.proto"),
+      window: t("filters.chips.window"),
+      windowLastDay: t("filters.chips.windowLastDay"),
+      windowLastWeek: t("filters.chips.windowLastWeek"),
+      keywords: t("filters.chips.keywords"),
+      hostnames: t("filters.chips.hostnames"),
+      userIds: t("filters.chips.userIds"),
+      userNames: t("filters.chips.userNames"),
+      userDepartments: t("filters.chips.userDepartments"),
+    },
+    drawer: {
+      title: t("filters.drawerTitle"),
+      description: t("filters.drawerDescription"),
+      periodLabel: t("filters.periodLabel"),
+      periodOptions,
+      timeRangeLabel: t("filters.timeRangeLabel"),
+      startLabel: t("filters.startLabel"),
+      endLabel: t("filters.endLabel"),
+      directionLabel: t("filters.directionLabel"),
+      directionOptions,
+      confidenceLabel: t("filters.confidenceLabel"),
+      confidenceMinLabel: t("filters.confidenceMinLabel"),
+      confidenceMaxLabel: t("filters.confidenceMaxLabel"),
+      attributesLegend: t("filters.attributesLegend"),
+      attributes: {
+        source: textFieldLabels.source,
+        destination: textFieldLabels.destination,
+        keywords: tagFieldLabels.keywords,
+        hostnames: tagFieldLabels.hostnames,
+        userIds: tagFieldLabels.userIds,
+        userNames: tagFieldLabels.userNames,
+        userDepartments: tagFieldLabels.userDepartments,
+      },
+      apply: t("filters.apply"),
+      saveThisFilter: t("filters.saveThisFilter"),
+      saveThisFilterComingSoon: t("filters.saveThisFilterComingSoon"),
+      invalidRange: t("filters.invalidRange"),
+      close: t("filters.close"),
+      endpointLabel: t("filters.endpoint.label"),
+      endpointAdvanced: t("filters.endpoint.advanced"),
+      endpointEmpty: t("filters.endpoint.empty"),
+      endpointCount: t.raw("filters.endpoint.count") as string,
+      endpointPanel: {
+        title: t("filters.endpoint.panelTitle"),
+        description: t("filters.endpoint.panelDescription"),
+        close: t("filters.endpoint.close"),
+        savedSectionTitle: t("filters.endpoint.savedSectionTitle"),
+        savedEmpty: t("filters.endpoint.savedEmpty"),
+        savedHelp: t("filters.endpoint.savedHelp"),
+        customSectionTitle: t("filters.endpoint.customSectionTitle"),
+        customEmpty: t("filters.endpoint.customEmpty"),
+        inputLabel: t("filters.endpoint.inputLabel"),
+        inputPlaceholder: t("filters.endpoint.inputPlaceholder"),
+        addEntry: t("filters.endpoint.addEntry"),
+        invalidInput: t("filters.endpoint.invalidInput"),
+        invalidInputExamples: t("filters.endpoint.invalidInputExamples"),
+        countBadge: t.raw("filters.endpoint.countBadge") as string,
+        directionLabel: t("filters.endpoint.directionLabel"),
+        directionBoth: t("filters.endpoint.directionBoth"),
+        directionSource: t("filters.endpoint.directionSource"),
+        directionDestination: t("filters.endpoint.directionDestination"),
+        batchSetDirection: t("filters.endpoint.batchSetDirection"),
+        selectAll: t("filters.endpoint.selectAll"),
+        removeEntry: t("filters.endpoint.removeEntry"),
+        done: t("filters.endpoint.done"),
+      },
+      customerLabel: t("filters.customerLabel"),
+      customerComingSoon: t("filters.customerComingSoon"),
+      customerComingSoonHint: t("filters.customerComingSoonHint"),
+      sensor: {
+        label: t("filters.sensor.label"),
+        placeholder: t("filters.sensor.placeholder"),
+        searchPlaceholder: t("filters.sensor.searchPlaceholder"),
+        selectAll: t("filters.sensor.selectAll"),
+        clearAll: t("filters.sensor.clearAll"),
+        empty: t("filters.sensor.empty"),
+        noMatches: t("filters.sensor.noMatches"),
+        selectedSummary: t.raw("filters.sensor.selectedSummary") as string,
+        removeSelection: t.raw("filters.sensor.removeSelection") as string,
+        comingSoonLabel: t("filters.sensor.comingSoonLabel"),
+        comingSoonHint: t("filters.sensor.comingSoonHint"),
+        loadingLabel: t("filters.sensor.loadingLabel"),
+        loadingHint: t("filters.sensor.loadingHint"),
+        errorLabel: t("filters.sensor.errorLabel"),
+        errorHint: t("filters.sensor.errorHint"),
+        retry: t("filters.sensor.retry"),
+      },
+      categoricalSectionLabel: t("filters.categoricalSectionLabel"),
+      fields: {
+        levels: t("filters.fields.levels"),
+        countries: t("filters.fields.countries"),
+        learningMethods: t("filters.fields.learningMethods"),
+        categories: t("filters.fields.categories"),
+        kinds: t("filters.fields.kinds"),
+      },
+    },
+    summarize: summarizeLabels,
+    pagination: {
+      pageSizeLabel: t("pagination.pageSizeLabel"),
+      firstPage: t("pagination.firstPage"),
+      previousPage: t("pagination.previousPage"),
+      nextPage: t("pagination.nextPage"),
+      lastPage: t("pagination.lastPage"),
+      goToPageLabel: t("pagination.goToPageLabel"),
+      goToPagePlaceholder: t("pagination.goToPagePlaceholder"),
+      goToPageSubmit: t("pagination.goToPageSubmit"),
+    },
+    quickPeek: {
+      close: t("quickPeek.close"),
+      summaryHeading: t("quickPeek.summaryHeading"),
+      endpointsHeading: t("quickPeek.endpointsHeading"),
+      detectionMetaHeading: t("quickPeek.detectionMetaHeading"),
+      protocolHeading: t("quickPeek.protocolHeading"),
+      actionsHeading: t("quickPeek.actionsHeading"),
+      sourceLabel: t("quickPeek.sourceLabel"),
+      destinationLabel: t("quickPeek.destinationLabel"),
+      sensorLabel: t("quickPeek.sensorLabel"),
+      attackKindLabel: t("quickPeek.attackKindLabel"),
+      learningMethodLabel: t("quickPeek.learningMethodLabel"),
+      learningMethodValues: {
+        UNSUPERVISED: t("quickPeek.learningMethodUnsupervised"),
+        SEMI_SUPERVISED: t("quickPeek.learningMethodSemiSupervised"),
+      },
+      confidenceLabel: t("quickPeek.confidenceLabel"),
+      categoryLabels: {
+        RECONNAISSANCE: t("filters.categoryOptions.RECONNAISSANCE"),
+        INITIAL_ACCESS: t("filters.categoryOptions.INITIAL_ACCESS"),
+        EXECUTION: t("filters.categoryOptions.EXECUTION"),
+        CREDENTIAL_ACCESS: t("filters.categoryOptions.CREDENTIAL_ACCESS"),
+        DISCOVERY: t("filters.categoryOptions.DISCOVERY"),
+        LATERAL_MOVEMENT: t("filters.categoryOptions.LATERAL_MOVEMENT"),
+        COMMAND_AND_CONTROL: t("filters.categoryOptions.COMMAND_AND_CONTROL"),
+        EXFILTRATION: t("filters.categoryOptions.EXFILTRATION"),
+        IMPACT: t("filters.categoryOptions.IMPACT"),
+        COLLECTION: t("filters.categoryOptions.COLLECTION"),
+        DEFENSE_EVASION: t("filters.categoryOptions.DEFENSE_EVASION"),
+        PERSISTENCE: t("filters.categoryOptions.PERSISTENCE"),
+        PRIVILEGE_ESCALATION: t("filters.categoryOptions.PRIVILEGE_ESCALATION"),
+        RESOURCE_DEVELOPMENT: t("filters.categoryOptions.RESOURCE_DEVELOPMENT"),
+      },
+      levelLabels: {
+        LOW: t("filters.levelOptions.LOW"),
+        MEDIUM: t("filters.levelOptions.MEDIUM"),
+        HIGH: t("filters.levelOptions.HIGH"),
+      },
+      protocolFields: {
+        dnsQuery: t("quickPeek.protocolFields.dnsQuery"),
+        dnsQueryType: t("quickPeek.protocolFields.dnsQueryType"),
+        dnsResponseCode: t("quickPeek.protocolFields.dnsResponseCode"),
+        httpMethod: t("quickPeek.protocolFields.httpMethod"),
+        httpHost: t("quickPeek.protocolFields.httpHost"),
+        httpUri: t("quickPeek.protocolFields.httpUri"),
+        httpStatusCode: t("quickPeek.protocolFields.httpStatusCode"),
+        tlsServerName: t("quickPeek.protocolFields.tlsServerName"),
+        tlsVersion: t("quickPeek.protocolFields.tlsVersion"),
+        tlsJa3: t("quickPeek.protocolFields.tlsJa3"),
+        startTime: t("quickPeek.protocolFields.startTime"),
+        endTime: t("quickPeek.protocolFields.endTime"),
+        userList: t("quickPeek.protocolFields.userList"),
+        isInternal: t("quickPeek.protocolFields.isInternal"),
+        networkService: t("quickPeek.protocolFields.networkService"),
+      },
+      booleanTrue: t("quickPeek.booleanTrue"),
+      booleanFalse: t("quickPeek.booleanFalse"),
+      openInvestigation: t("quickPeek.openInvestigation"),
+      openInvestigationTooltip: t("quickPeek.openInvestigationTooltip"),
+      pivotSource: t("quickPeek.pivotSource"),
+      pivotDestination: t("quickPeek.pivotDestination"),
+      pivotKind: t("quickPeek.pivotKind"),
+      copy: t("quickPeek.copy"),
+      copied: t("quickPeek.copied"),
+      countryUnknown: t("results.countryUnknown"),
+      countryUnavailable: t("results.countryUnavailable"),
+      portSeparator: t("quickPeek.portSeparator"),
+      unknownTime: t("results.unknownTime"),
+      noSensor: t("results.noSensor"),
+    },
+  };
+
   return (
-    <DetectionShell
+    <DetectionTabsShell
       title={t("title")}
-      initialFilter={initialFilter}
-      initialPeriod={pivotPeriod}
-      initialResult={{
-        totalCount: initialTotal,
-        error: initialError,
-        events: initialEvents,
-        eventKeys: initialEventKeys,
-        pageInfo: initialPageInfo,
-      }}
-      initialPagination={initialPagination}
       options={options}
-      labels={{
-        exportConfirm: {
-          title: t("results.exportConfirm.title"),
-          descriptionTemplate: t.raw(
-            "results.exportConfirm.description",
-          ) as string,
-          continueLabel: t("results.exportConfirm.continue"),
-          cancelLabel: t("results.exportConfirm.cancel"),
-          narrowFilterLabel: t("results.exportConfirm.narrowFilter"),
+      initialTab={{
+        id: tabId,
+        filter: initialFilter,
+        period: pivotPeriod,
+        pivotOnly: initialPivotOnly,
+        endpoints: initialEndpoints,
+        pagination: initialPagination,
+        result: {
+          totalCount: initialTotal,
+          error: initialError,
+          events: initialEvents,
+          eventKeys: initialEventKeys,
+          pageInfo: initialPageInfo,
         },
-        exportErrorMessage: t("results.downloadErrorDescription"),
-        exportLimitExceededTemplate: t.raw(
-          "results.downloadLimitExceededDescription",
-        ) as string,
-        exportColumnHeaders: {
-          level: t("results.csvHeaders.level"),
-          time: t("results.csvHeaders.time"),
-          kind: t("results.csvHeaders.kind"),
-          attackKind: t("results.csvHeaders.attackKind"),
-          category: t("results.csvHeaders.category"),
-          confidence: t("results.csvHeaders.confidence"),
-          triage: t("results.csvHeaders.triage"),
-          source: t("results.csvHeaders.source"),
-          destination: t("results.csvHeaders.destination"),
-          sensor: t("results.csvHeaders.sensor"),
-        },
-        recommendedFilter: t("savedRail.recommended"),
-        savedFilters: t("savedRail.saved"),
-        railPlaceholder: t("savedRail.placeholder"),
-        filtersOpen: t("filters.open"),
-        activeChipsEmpty: t("filters.activeChipsEmpty"),
-        resultsRegion: t("filters.resultsRegion"),
-        resultsLoading: t("filters.resultsLoading"),
-        resultsError: t("filters.resultsError"),
-        analyticsToggle: t("analytics.toggle"),
-        analyticsShow: t("analytics.show"),
-        analyticsHide: t("analytics.hide"),
-        analyticsPlaceholder: t("analytics.placeholder"),
-        directionChips: {
-          label: t("filters.directionChipLabel"),
-          values: directionChipValues,
-        },
-        endpointChips: {
-          source: t("filters.endpoint.chipSource"),
-          destination: t("filters.endpoint.chipDestination"),
-          aggregate: t.raw("filters.endpoint.chipAggregate") as string,
-        },
-        confidenceChipLabel: t("filters.confidenceChipLabel"),
-        chipLabels: {
-          source: t("filters.chips.source"),
-          destination: t("filters.chips.destination"),
-          kind: t("filters.chips.kind"),
-          origPort: t("filters.chips.origPort"),
-          respPort: t("filters.chips.respPort"),
-          proto: t("filters.chips.proto"),
-          window: t("filters.chips.window"),
-          windowLastDay: t("filters.chips.windowLastDay"),
-          windowLastWeek: t("filters.chips.windowLastWeek"),
-          keywords: t("filters.chips.keywords"),
-          hostnames: t("filters.chips.hostnames"),
-          userIds: t("filters.chips.userIds"),
-          userNames: t("filters.chips.userNames"),
-          userDepartments: t("filters.chips.userDepartments"),
-        },
-        drawer: {
-          title: t("filters.drawerTitle"),
-          description: t("filters.drawerDescription"),
-          periodLabel: t("filters.periodLabel"),
-          periodOptions,
-          timeRangeLabel: t("filters.timeRangeLabel"),
-          startLabel: t("filters.startLabel"),
-          endLabel: t("filters.endLabel"),
-          directionLabel: t("filters.directionLabel"),
-          directionOptions,
-          confidenceLabel: t("filters.confidenceLabel"),
-          confidenceMinLabel: t("filters.confidenceMinLabel"),
-          confidenceMaxLabel: t("filters.confidenceMaxLabel"),
-          attributesLegend: t("filters.attributesLegend"),
-          attributes: {
-            source: textFieldLabels.source,
-            destination: textFieldLabels.destination,
-            keywords: tagFieldLabels.keywords,
-            hostnames: tagFieldLabels.hostnames,
-            userIds: tagFieldLabels.userIds,
-            userNames: tagFieldLabels.userNames,
-            userDepartments: tagFieldLabels.userDepartments,
-          },
-          apply: t("filters.apply"),
-          saveThisFilter: t("filters.saveThisFilter"),
-          saveThisFilterComingSoon: t("filters.saveThisFilterComingSoon"),
-          invalidRange: t("filters.invalidRange"),
-          close: t("filters.close"),
-          endpointLabel: t("filters.endpoint.label"),
-          endpointAdvanced: t("filters.endpoint.advanced"),
-          endpointEmpty: t("filters.endpoint.empty"),
-          endpointCount: t.raw("filters.endpoint.count") as string,
-          endpointPanel: {
-            title: t("filters.endpoint.panelTitle"),
-            description: t("filters.endpoint.panelDescription"),
-            close: t("filters.endpoint.close"),
-            savedSectionTitle: t("filters.endpoint.savedSectionTitle"),
-            savedEmpty: t("filters.endpoint.savedEmpty"),
-            savedHelp: t("filters.endpoint.savedHelp"),
-            customSectionTitle: t("filters.endpoint.customSectionTitle"),
-            customEmpty: t("filters.endpoint.customEmpty"),
-            inputLabel: t("filters.endpoint.inputLabel"),
-            inputPlaceholder: t("filters.endpoint.inputPlaceholder"),
-            addEntry: t("filters.endpoint.addEntry"),
-            invalidInput: t("filters.endpoint.invalidInput"),
-            invalidInputExamples: t("filters.endpoint.invalidInputExamples"),
-            countBadge: t.raw("filters.endpoint.countBadge") as string,
-            directionLabel: t("filters.endpoint.directionLabel"),
-            directionBoth: t("filters.endpoint.directionBoth"),
-            directionSource: t("filters.endpoint.directionSource"),
-            directionDestination: t("filters.endpoint.directionDestination"),
-            batchSetDirection: t("filters.endpoint.batchSetDirection"),
-            selectAll: t("filters.endpoint.selectAll"),
-            removeEntry: t("filters.endpoint.removeEntry"),
-            done: t("filters.endpoint.done"),
-          },
-          customerLabel: t("filters.customerLabel"),
-          customerComingSoon: t("filters.customerComingSoon"),
-          customerComingSoonHint: t("filters.customerComingSoonHint"),
-          sensor: {
-            label: t("filters.sensor.label"),
-            placeholder: t("filters.sensor.placeholder"),
-            searchPlaceholder: t("filters.sensor.searchPlaceholder"),
-            selectAll: t("filters.sensor.selectAll"),
-            clearAll: t("filters.sensor.clearAll"),
-            empty: t("filters.sensor.empty"),
-            noMatches: t("filters.sensor.noMatches"),
-            selectedSummary: t.raw("filters.sensor.selectedSummary") as string,
-            removeSelection: t.raw("filters.sensor.removeSelection") as string,
-            comingSoonLabel: t("filters.sensor.comingSoonLabel"),
-            comingSoonHint: t("filters.sensor.comingSoonHint"),
-            loadingLabel: t("filters.sensor.loadingLabel"),
-            loadingHint: t("filters.sensor.loadingHint"),
-            errorLabel: t("filters.sensor.errorLabel"),
-            errorHint: t("filters.sensor.errorHint"),
-            retry: t("filters.sensor.retry"),
-          },
-          categoricalSectionLabel: t("filters.categoricalSectionLabel"),
-          fields: {
-            levels: t("filters.fields.levels"),
-            countries: t("filters.fields.countries"),
-            learningMethods: t("filters.fields.learningMethods"),
-            categories: t("filters.fields.categories"),
-            kinds: t("filters.fields.kinds"),
-          },
-        },
-        summarize: summarizeLabels,
-        pagination: {
-          pageSizeLabel: t("pagination.pageSizeLabel"),
-          firstPage: t("pagination.firstPage"),
-          previousPage: t("pagination.previousPage"),
-          nextPage: t("pagination.nextPage"),
-          lastPage: t("pagination.lastPage"),
-          goToPageLabel: t("pagination.goToPageLabel"),
-          goToPagePlaceholder: t("pagination.goToPagePlaceholder"),
-          goToPageSubmit: t("pagination.goToPageSubmit"),
-        },
-        quickPeek: {
-          close: t("quickPeek.close"),
-          summaryHeading: t("quickPeek.summaryHeading"),
-          endpointsHeading: t("quickPeek.endpointsHeading"),
-          detectionMetaHeading: t("quickPeek.detectionMetaHeading"),
-          protocolHeading: t("quickPeek.protocolHeading"),
-          actionsHeading: t("quickPeek.actionsHeading"),
-          sourceLabel: t("quickPeek.sourceLabel"),
-          destinationLabel: t("quickPeek.destinationLabel"),
-          sensorLabel: t("quickPeek.sensorLabel"),
-          attackKindLabel: t("quickPeek.attackKindLabel"),
-          learningMethodLabel: t("quickPeek.learningMethodLabel"),
-          learningMethodValues: {
-            UNSUPERVISED: t("quickPeek.learningMethodUnsupervised"),
-            SEMI_SUPERVISED: t("quickPeek.learningMethodSemiSupervised"),
-          },
-          confidenceLabel: t("quickPeek.confidenceLabel"),
-          categoryLabels: {
-            RECONNAISSANCE: t("filters.categoryOptions.RECONNAISSANCE"),
-            INITIAL_ACCESS: t("filters.categoryOptions.INITIAL_ACCESS"),
-            EXECUTION: t("filters.categoryOptions.EXECUTION"),
-            CREDENTIAL_ACCESS: t("filters.categoryOptions.CREDENTIAL_ACCESS"),
-            DISCOVERY: t("filters.categoryOptions.DISCOVERY"),
-            LATERAL_MOVEMENT: t("filters.categoryOptions.LATERAL_MOVEMENT"),
-            COMMAND_AND_CONTROL: t(
-              "filters.categoryOptions.COMMAND_AND_CONTROL",
-            ),
-            EXFILTRATION: t("filters.categoryOptions.EXFILTRATION"),
-            IMPACT: t("filters.categoryOptions.IMPACT"),
-            COLLECTION: t("filters.categoryOptions.COLLECTION"),
-            DEFENSE_EVASION: t("filters.categoryOptions.DEFENSE_EVASION"),
-            PERSISTENCE: t("filters.categoryOptions.PERSISTENCE"),
-            PRIVILEGE_ESCALATION: t(
-              "filters.categoryOptions.PRIVILEGE_ESCALATION",
-            ),
-            RESOURCE_DEVELOPMENT: t(
-              "filters.categoryOptions.RESOURCE_DEVELOPMENT",
-            ),
-          },
-          levelLabels: {
-            LOW: t("filters.levelOptions.LOW"),
-            MEDIUM: t("filters.levelOptions.MEDIUM"),
-            HIGH: t("filters.levelOptions.HIGH"),
-          },
-          protocolFields: {
-            dnsQuery: t("quickPeek.protocolFields.dnsQuery"),
-            dnsQueryType: t("quickPeek.protocolFields.dnsQueryType"),
-            dnsResponseCode: t("quickPeek.protocolFields.dnsResponseCode"),
-            httpMethod: t("quickPeek.protocolFields.httpMethod"),
-            httpHost: t("quickPeek.protocolFields.httpHost"),
-            httpUri: t("quickPeek.protocolFields.httpUri"),
-            httpStatusCode: t("quickPeek.protocolFields.httpStatusCode"),
-            tlsServerName: t("quickPeek.protocolFields.tlsServerName"),
-            tlsVersion: t("quickPeek.protocolFields.tlsVersion"),
-            tlsJa3: t("quickPeek.protocolFields.tlsJa3"),
-            startTime: t("quickPeek.protocolFields.startTime"),
-            endTime: t("quickPeek.protocolFields.endTime"),
-            userList: t("quickPeek.protocolFields.userList"),
-            isInternal: t("quickPeek.protocolFields.isInternal"),
-            networkService: t("quickPeek.protocolFields.networkService"),
-          },
-          booleanTrue: t("quickPeek.booleanTrue"),
-          booleanFalse: t("quickPeek.booleanFalse"),
-          openInvestigation: t("quickPeek.openInvestigation"),
-          openInvestigationTooltip: t("quickPeek.openInvestigationTooltip"),
-          pivotSource: t("quickPeek.pivotSource"),
-          pivotDestination: t("quickPeek.pivotDestination"),
-          pivotKind: t("quickPeek.pivotKind"),
-          copy: t("quickPeek.copy"),
-          copied: t("quickPeek.copied"),
-          countryUnknown: t("results.countryUnknown"),
-          countryUnavailable: t("results.countryUnavailable"),
-          portSeparator: t("quickPeek.portSeparator"),
-          unknownTime: t("results.unknownTime"),
-          noSensor: t("results.noSensor"),
-        },
+        quickPeekToken: initialQuickPeekToken,
       }}
-      initialPivotOnly={initialPivotOnly}
+      labels={{
+        shell: shellLabels,
+        tabs: {
+          tablist: t("tabs.tablist"),
+          newTab: t("tabs.newTab"),
+          newTabAtCap: t("tabs.newTabAtCap"),
+          closeTab: t("tabs.closeTab"),
+          renameTab: t("tabs.renameTab"),
+          resetName: t("tabs.resetName"),
+        },
+        tabFallbackName: t("tabs.fallbackName"),
+      }}
     />
   );
 }

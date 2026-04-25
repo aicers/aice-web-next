@@ -264,6 +264,76 @@ describe("ResultList row rendering", () => {
     expect(html).toContain("Open investigation");
   });
 
+  it("disables the Refresh button in `empty-prequery` so a `+`-created tab cannot bypass Apply (issue #281, Reviewer Round 7)", () => {
+    // A new tab seeded by `+` lands in `empty-prequery` until Apply
+    // runs the first query. The header Refresh affordance must stay
+    // disabled in that state — otherwise a click on Refresh would
+    // dispatch the seeded default filter and populate results without
+    // the operator opening the drawer / clicking Apply, contradicting
+    // #281 ("`+` does not auto-run").
+    const prequeryState: ResultListState = {
+      status: "empty-prequery",
+      events: [],
+      eventKeys: [],
+      totalCount: null,
+      range: null,
+      lastUpdatedMs: null,
+    };
+
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={prequeryState}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {
+          throw new Error(
+            "Refresh must not fire while the tab is in empty-prequery",
+          );
+        }}
+        onOpenFilters={() => {}}
+      />,
+    );
+
+    // The Refresh button renders but is disabled.
+    expect(html).toMatch(/<button[^>]*aria-label="Refresh"[^>]*disabled/);
+    // The pre-query empty-state CTA still routes the operator to the
+    // drawer.
+    expect(html).toContain("Open filters");
+  });
+
+  it("keeps the Refresh button enabled in the `error` state so a failed bootstrap query can be retried (issue #281, Reviewer Round 8 item 1)", () => {
+    // Page entry always attempts the first query. When that fails,
+    // `bootstrapTabToSnapshot` now marks the tab as `hasQueried`
+    // (without setting `lastUpdatedMs`), so the result list lands on
+    // `status: "error"` rather than `empty-prequery`. The header
+    // Refresh affordance must stay enabled in that state — otherwise
+    // both it and the in-panel Retry button (which share the same
+    // `onRefresh` handler) would render as visible-but-dead controls.
+    const errorState: ResultListState = {
+      status: "error",
+      events: [],
+      eventKeys: [],
+      totalCount: null,
+      range: null,
+      lastUpdatedMs: null,
+    };
+
+    const html = renderToStaticMarkup(
+      <ResultList
+        state={errorState}
+        labels={labels()}
+        locale="en"
+        onRefresh={() => {}}
+        onOpenFilters={() => {}}
+      />,
+    );
+
+    // The Refresh button renders without the `disabled` attribute.
+    expect(html).toMatch(/<button[^>]*aria-label="Refresh"(?![^>]*disabled)/);
+    // The error panel still surfaces the in-panel Retry CTA.
+    expect(html).toContain("Retry");
+  });
+
   it("drops row-open and investigate affordances while loading with a retained slice (issue #290, Reviewer Round 8)", () => {
     // Regression: during a committed-query transition (Apply / chip ×
     // / Refresh) the shell closes Quick peek at dispatch but keeps
