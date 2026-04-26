@@ -47,6 +47,7 @@ import {
   type DetectionShellInitialResult,
   type DetectionShellLabels,
   type DetectionShellStateSnapshot,
+  derivePeriodForFilter,
 } from "@/components/detection/detection-shell";
 import type { FilterDrawerOptions } from "@/components/detection/filter-drawer";
 import { PivotToast } from "@/components/detection/pivot-toast";
@@ -55,6 +56,7 @@ import {
   type TabBarLabels,
   type TabBarTab,
 } from "@/components/detection/tab-bar";
+import { useSavedFilters } from "@/components/detection/use-saved-filters";
 import {
   DEFAULT_ANALYTICS_DIMENSION,
   DEFAULT_ANALYTICS_TOP_N,
@@ -407,6 +409,34 @@ export function DetectionTabsShell({
     [withActiveSnapshot],
   );
 
+  // Personal saved filters are owned at the wrapper level so the
+  // rail stays consistent across every tab and a save in one tab
+  // shows up in another tab's rail. Each shell instance reads from
+  // this single shared instance via props.
+  const savedFiltersState = useSavedFilters();
+
+  const handleLoadSavedFilterInNewTab = useCallback(
+    (filter: Filter) => {
+      const period = derivePeriodForFilter(filter);
+      setTabs((prev) => {
+        if (prev.length >= MAX_TABS) return prev;
+        const withLive = withActiveSnapshot(prev);
+        const seed = createTabSnapshot({ filter, period, endpoints: [] });
+        // Same trick the pivot create branch uses: mark the seed as
+        // already-queried + loading so the resume-on-mount effect
+        // dispatches the query for us instead of stranding the new
+        // tab on the pre-query empty state ("Build a filter to begin").
+        const seedWithLoad: TabSnapshot = {
+          ...seed,
+          result: { ...seed.result, hasQueried: true, loading: true },
+        };
+        setActiveTabId(seedWithLoad.id);
+        return [...withLive, seedWithLoad];
+      });
+    },
+    [withActiveSnapshot],
+  );
+
   const handleAddTab = useCallback(() => {
     const fresh = buildDefaultTabSnapshot();
     setTabs((prev) => {
@@ -593,6 +623,8 @@ export function DetectionTabsShell({
         initialQuickPeekEvent={activeTab.quickPeekEvent}
         initialPendingQuickPeekToken={activeTab.pendingQuickPeekToken}
         onStateChange={handleShellStateChange}
+        savedFilters={savedFiltersState}
+        onLoadSavedFilterInNewTab={handleLoadSavedFilterInNewTab}
       />
       <PivotToast
         message={pivotToast}

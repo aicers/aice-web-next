@@ -87,7 +87,13 @@ export interface FilterDrawerLabels {
   confidenceMaxLabel: string;
   apply: string;
   saveThisFilter: string;
-  saveThisFilterComingSoon: string;
+  /**
+   * Tooltip surfaced when the "Save this filter" affordance is
+   * disabled — the parent did not wire `onSaveRequest`. Kept as a
+   * separate label so the disabled-state messaging can be tuned per
+   * release without crossing the active button label.
+   */
+  saveThisFilterDisabled: string;
   invalidRange: string;
   close: string;
   endpointLabel: string;
@@ -210,6 +216,15 @@ interface FilterDrawerProps {
    * refocus reliably.
    */
   focusToken?: number;
+  /**
+   * Click handler for the "Save this filter" affordance. When provided
+   * the button is enabled and bubbles the current draft (already
+   * normalized for submit) up to the parent so the Save dialog can
+   * open with a sensible default name. `undefined` keeps the button
+   * disabled — the same contract Phase Detection-3 shipped before
+   * Phase Detection-15 wired this.
+   */
+  onSaveRequest?: (draft: DetectionFilterDraft) => void;
 }
 
 /**
@@ -235,6 +250,7 @@ export function FilterDrawer({
   onSensorRetry,
   focusField = null,
   focusToken = 0,
+  onSaveRequest,
 }: FilterDrawerProps) {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [endpointPanelOpen, setEndpointPanelOpen] = useState(false);
@@ -804,9 +820,15 @@ export function FilterDrawer({
               <Button
                 type="button"
                 variant="outline"
-                disabled
-                aria-disabled="true"
-                title={labels.saveThisFilterComingSoon}
+                disabled={!onSaveRequest}
+                aria-disabled={!onSaveRequest ? "true" : undefined}
+                title={
+                  !onSaveRequest ? labels.saveThisFilterDisabled : undefined
+                }
+                onClick={() => {
+                  if (!onSaveRequest) return;
+                  onSaveRequest(normalizeDraftForSubmit(draft));
+                }}
               >
                 {labels.saveThisFilter}
               </Button>

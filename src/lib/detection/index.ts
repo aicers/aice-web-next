@@ -103,6 +103,19 @@ export {
   type PivotTabSummary,
 } from "./pivot";
 export {
+  deleteSavedFilter,
+  insertSavedFilter,
+  listSavedFiltersForAccount,
+  normalizeSavedFilterName,
+  renameSavedFilter,
+  SAVED_FILTER_JSON_MAX_BYTES,
+  SAVED_FILTER_NAME_MAX,
+  type SavedFilter,
+  SavedFilterDuplicateNameError,
+  SavedFilterNotFoundError,
+  validateSavedFilterName,
+} from "./saved-filters";
+export {
   listSensors,
   SENSOR_LIST_ENDPOINT_AVAILABLE,
   type Sensor,

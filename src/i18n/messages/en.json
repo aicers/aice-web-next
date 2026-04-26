@@ -551,7 +551,54 @@
     "savedRail": {
       "recommended": "Recommended Filter",
       "saved": "Saved Filters",
-      "placeholder": "No filters yet."
+      "placeholder": "No filters yet.",
+      "savedEmpty": "Save a filter to keep it here.",
+      "savedLoading": "Loading saved filters…",
+      "savedError": "Could not load saved filters.",
+      "menuLabel": "Saved filter actions for {name}",
+      "loadInNewTab": "Load in new tab",
+      "loadInCurrentTab": "Load in current tab",
+      "rename": "Rename",
+      "delete": "Delete",
+      "deleteConfirm": {
+        "title": "Delete saved filter?",
+        "description": "{name} will be removed from your saved filters. This cannot be undone.",
+        "cancel": "Cancel",
+        "confirm": "Delete",
+        "error": "Could not delete the saved filter."
+      },
+      "renameDialog": {
+        "title": "Rename saved filter",
+        "description": "Choose a new name for this saved filter.",
+        "nameLabel": "Name",
+        "namePlaceholder": "Saved filter name",
+        "cancel": "Cancel",
+        "submit": "Rename",
+        "submitting": "Renaming…",
+        "errors": {
+          "empty": "Name cannot be empty.",
+          "duplicate": "You already have a saved filter with this name.",
+          "tooLong": "Name is too long.",
+          "server": "Could not rename the saved filter.",
+          "unauthenticated": "Sign in again to manage saved filters."
+        }
+      }
+    },
+    "saveFilterDialog": {
+      "title": "Save this filter",
+      "description": "Saved filters appear in the rail on the left and can be loaded later.",
+      "nameLabel": "Name",
+      "namePlaceholder": "Saved filter name",
+      "cancel": "Cancel",
+      "submit": "Save",
+      "submitting": "Saving…",
+      "errors": {
+        "empty": "Name cannot be empty.",
+        "duplicate": "You already have a saved filter with this name.",
+        "tooLong": "Name is too long.",
+        "server": "Could not save the filter.",
+        "unauthenticated": "Sign in again to save filters."
+      }
     },
     "filters": {
       "open": "Filters",
@@ -648,7 +695,7 @@
       },
       "apply": "Apply",
       "saveThisFilter": "Save this filter",
-      "saveThisFilterComingSoon": "Saving filters is wired up in a later phase.",
+      "saveThisFilterDisabled": "Saving is unavailable in this view.",
       "invalidRange": "End must be later than start.",
       "activeChipsEmpty": "No filter applied.",
       "activeRange": "{start} – {end}",

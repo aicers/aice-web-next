@@ -22,10 +22,83 @@ compact so they do not distract from the findings.
 A slim rail on the left lists two sections:
 
 - **Recommended Filter** — curated starting points.
-- **Saved Filters** — filters you have saved yourself.
+- **Saved Filters** — personal filters you have saved yourself.
 
 On narrow viewports the rail collapses to icons only. On desktop
 widths it expands to show the section headings.
+
+#### Saving a filter
+
+Open the filter drawer, configure the filter you want to keep, and
+click **Save this filter** in the drawer footer. A naming dialog
+opens pre-populated with an auto-generated name from the filter
+summary (e.g. `Last 1h · High`); accept the suggestion or type a
+new one and click **Save**.
+
+Names are personal and must be unique within your account — the
+dialog reports an inline error if you reuse a name. Saving the
+filter does not run the query; the saved entry shows up in the
+**Saved Filters** rail immediately and remains available across
+reloads.
+
+![Save filter dialog — wireframe stand-in](../assets/detection-save-filter-dialog-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The figure above is an SVG wireframe rather than a real
+    capture. A PNG capture for this dialog will be added in a
+    follow-up once the local REview setup is wired into this
+    feature's screenshot batch (see `docs/AUTHORING.md` →
+    "Live REview screenshot procedure").
+
+#### Loading a saved filter
+
+Each row in the **Saved Filters** rail acts on the active workspace
+when you interact with it:
+
+- **Click the row** (or pick **Load in new tab** from the row's `⋮`
+  menu) — the default action — opens a new tab pre-seeded with the
+  saved filter and auto-runs the query, leaving the tab you were on
+  untouched. This matches the tab-bar contract that tabs are for
+  context switches.
+- **Load in current tab** (from the row's `⋮` menu) replaces the
+  active tab's filter with the saved filter and re-runs the query.
+  The active tab's pagination resets to the first page; the rest
+  of the workspace (analytics expansion, Quick peek selection)
+  follows the standard Apply contract.
+
+The filter loads with all of its committed fields applied —
+including the time range, levels, sensors, source / destination,
+direction, confidence bounds, country / category / kind / learning-
+method selections, and Network / IP endpoints carried in the
+filter payload.
+
+#### Renaming and deleting
+
+The `⋮` menu on each saved-filter row also exposes:
+
+- **Rename** — opens a dialog pre-populated with the current name.
+  Submit a new unique name; duplicate names surface the same inline
+  error as the save dialog.
+- **Delete** — opens a confirmation dialog. Confirming removes the
+  saved filter; the action cannot be undone in v1 (no version
+  history). Open tabs that were loaded from this filter are not
+  affected — the tab keeps its own copy of the filter state.
+
+![Saved Filters rail — wireframe stand-in](../assets/detection-saved-filters-rail-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The rail illustration above is an SVG wireframe rather than a
+    real capture. The same screenshot follow-up that covers the
+    Save dialog will add a real PNG here.
+
+#### Scope and limits
+
+Saved filters are **personal in v1** — only you can see and manage
+the filters you have saved. Tenant or team sharing is not yet
+supported. The full filter payload is stored, so a saved filter
+will load correctly on any device once you sign in.
 
 ### Tab bar
 
