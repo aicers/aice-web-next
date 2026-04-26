@@ -42,6 +42,7 @@ import {
   THREAT_LEVEL_VALUES,
 } from "@/lib/detection/filter-options";
 import { QUICK_PEEK_EVENT_PARAM } from "@/lib/detection/quick-peek-url";
+import { RECOMMENDED_PRESETS } from "@/lib/detection/recommended-filters";
 import { createTabId, type TabId } from "@/lib/detection/tabs";
 import type { LearningMethod, PageInfo } from "@/lib/detection/types";
 import { decodeEventLocator } from "@/lib/events/event-locator";
@@ -283,6 +284,18 @@ export default async function DetectionPage({
     recommendedFilter: t("savedRail.recommended"),
     savedFilters: t("savedRail.saved"),
     railPlaceholder: t("savedRail.placeholder"),
+    // Resolve every preset's localized name on the server so the
+    // client shell stays render-only over the read-only preset list.
+    // Name keys live under `detection.recommendedFilters.<nameKey>`
+    // and are paired with the preset's stable id so the rail can
+    // look them up without re-importing the i18n bundle.
+    recommendedPresetNames: Object.fromEntries(
+      RECOMMENDED_PRESETS.map((preset) => [
+        preset.id,
+        t(`recommendedFilters.${preset.nameKey}`),
+      ]),
+    ) as Record<string, string>,
+    recommendedEmptyHint: t("savedRail.recommendedEmpty"),
     savedFiltersRail: {
       title: t("savedRail.saved"),
       emptyHint: t("savedRail.savedEmpty"),

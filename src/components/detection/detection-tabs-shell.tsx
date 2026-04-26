@@ -94,6 +94,11 @@ import {
 } from "@/lib/detection/pivot";
 import { QUICK_PEEK_EVENT_PARAM } from "@/lib/detection/quick-peek-url";
 import {
+  buildRecommendedFilter,
+  RECOMMENDED_PRESETS,
+  type RecommendedPreset,
+} from "@/lib/detection/recommended-filters";
+import {
   ACTIVE_TAB_URL_PARAM,
   autoTabName,
   canAddTab as canAddTabFn,
@@ -425,8 +430,19 @@ export function DetectionTabsShell({
   const [pivotToast, setPivotToast] = useState<string | null>(null);
   const dismissPivotToast = useCallback(() => setPivotToast(null), []);
 
-  const handleLoadSavedFilterInNewTab = useCallback(
-    (filter: Filter) => {
+  // Shared "load filter in new tab" core. Both the saved-filter and
+  // recommended-preset paths funnel through this helper so the cap
+  // toast, endpoint rehydration, and resume-on-mount seeding stay
+  // identical. The two callers differ only in how they source the
+  // tab's period metadata: saved filters re-derive it from the
+  // filter's start / end (the persisted shape carries no period
+  // field), while recommended presets pass `preset.period` straight
+  // through — re-deriving it from freshly-built timestamps risks a
+  // millisecond drift between the build clock and the
+  // `matchesPeriodKey` clock that would silently null the period
+  // chip.
+  const loadFilterInNewTab = useCallback(
+    (filter: Filter, period: PeriodKey | null) => {
       // Rehydrate `EndpointEntry[]` from `filter.input.endpoints` so
       // the new tab's chip bar / drawer match the saved Network/IP
       // rules. Stranding `endpoints: []` here makes the very next
@@ -436,7 +452,6 @@ export function DetectionTabsShell({
         filter.mode === "structured"
           ? endpointEntriesFromEndpointInputs(filter.input.endpoints)
           : [];
-      const period = derivePeriodForFilter(filter);
       const effect = resolveLoadSavedFilterEffect(filter, tabsRef.current, {
         tabCapReachedTemplate: labels.pivot.tabCapReachedTemplate,
         maxTabs: MAX_TABS,
@@ -456,6 +471,37 @@ export function DetectionTabsShell({
       setActiveTabId(seedWithLoad.id);
     },
     [labels.pivot.tabCapReachedTemplate, withActiveSnapshot],
+  );
+
+  const handleLoadSavedFilterInNewTab = useCallback(
+    (filter: Filter) => {
+      loadFilterInNewTab(filter, derivePeriodForFilter(filter));
+    },
+    [loadFilterInNewTab],
+  );
+
+  // Recommended-filter activation routes through the same load-in-new-
+  // tab path Saved Filters use (Phase Detection-16). The preset is
+  // resolved at activation time so the tab's start / end pair is
+  // relative to "now" rather than frozen at page load — a preset
+  // bound to `3y` opened at 9am today commits the same window the
+  // period chip would compute. Read-only in v1: no current-tab
+  // activation, no rename / delete affordances.
+  //
+  // Reviewer Round 1: thread `preset.period` directly into the tab
+  // creation path instead of re-deriving from the freshly-built
+  // start / end pair. `derivePeriodForFilter` would call
+  // `matchesPeriodKey` with its own `new Date()`, and any
+  // millisecond drift from the clock used inside
+  // `buildRecommendedFilter` would null the period — leaving the
+  // drawer / chip / tab summary unable to recognise a preset
+  // described as "Time period = last N years".
+  const handleLoadRecommendedFilterInNewTab = useCallback(
+    (preset: RecommendedPreset) => {
+      const filter = buildRecommendedFilter(preset);
+      loadFilterInNewTab(filter, preset.period);
+    },
+    [loadFilterInNewTab],
   );
 
   const handleAddTab = useCallback(() => {
@@ -642,6 +688,8 @@ export function DetectionTabsShell({
         onStateChange={handleShellStateChange}
         savedFilters={savedFiltersState}
         onLoadSavedFilterInNewTab={handleLoadSavedFilterInNewTab}
+        recommendedPresets={RECOMMENDED_PRESETS}
+        onLoadRecommendedFilterInNewTab={handleLoadRecommendedFilterInNewTab}
       />
       <PivotToast
         message={pivotToast}

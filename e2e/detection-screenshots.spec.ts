@@ -219,6 +219,66 @@ test.describe
         animations: "disabled",
       });
     });
+
+    // The Recommended Filter rail is fully client-side: presets are
+    // declared in `src/lib/detection/recommended-filters.ts` and never
+    // hit the database, so this capture is deterministic on any
+    // signed-in account regardless of REview state.
+    test("EN recommended filters rail", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await signInAndWait(page, workerUsername, workerPassword);
+      await page.goto("/detection");
+
+      const rail = page.getByRole("region", { name: "Recommended Filter" });
+      await expect(rail).toBeVisible();
+      await expect(
+        rail.getByRole("button", { name: "3 years", exact: true }),
+      ).toBeVisible();
+      await expect(
+        rail.getByRole("button", { name: "1 year, Inbound", exact: true }),
+      ).toBeVisible();
+      await expect(
+        rail.getByRole("button", { name: "1 year", exact: true }),
+      ).toBeVisible();
+      await rail.screenshot({
+        path: path.join(
+          ASSETS_DIR,
+          "detection-recommended-filters-rail-en.png",
+        ),
+        animations: "disabled",
+      });
+    });
+
+    test("KO recommended filters rail", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await page.goto("/ko/detection");
+
+      const rail = page.getByRole("region", { name: "추천 필터" });
+      await expect(rail).toBeVisible();
+      await expect(
+        rail.getByRole("button", { name: "최근 3년", exact: true }),
+      ).toBeVisible();
+      await expect(
+        rail.getByRole("button", { name: "최근 1년, 인바운드", exact: true }),
+      ).toBeVisible();
+      await expect(
+        rail.getByRole("button", { name: "최근 1년", exact: true }),
+      ).toBeVisible();
+      await rail.screenshot({
+        path: path.join(
+          ASSETS_DIR,
+          "detection-recommended-filters-rail-ko.png",
+        ),
+        animations: "disabled",
+      });
+    });
   });
 
 async function saveOneFilter(
