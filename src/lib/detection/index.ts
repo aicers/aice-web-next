@@ -29,6 +29,7 @@ export {
   endpointsToEndpointInputs,
   type ParsedEndpoint,
   parseEndpointInput,
+  preservePredefinedEndpointInputs,
 } from "./endpoint-filter";
 export {
   DetectionNotImplementedError,

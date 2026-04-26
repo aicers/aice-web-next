@@ -65,6 +65,13 @@ direction, confidence bounds, country / category / kind / learning-
 method selections, and Network / IP endpoints carried in the
 filter payload.
 
+If the workspace already has the maximum 8 tabs open when you
+click a row or pick **Load in new tab**, the rail surfaces the
+same "close a tab to load — already at the 8-tab limit" toast
+the pivot path uses instead of silently no-opping. **Load in
+current tab** is unaffected by the cap because it does not
+create a new tab.
+
 #### Renaming and deleting
 
 The `⋮` menu on each saved-filter row also exposes:
@@ -119,14 +126,18 @@ view is never empty.
   auto-run** — the tab lands on the pre-query empty state
   ("Build a filter to begin") and the operator clicks Apply to
   populate it.
-- Activating a saved or recommended filter (in a later Detection
-  phase), or following a pivot link (Phase Detection-12), also
-  creates a new tab pre-seeded with the target filter rather
-  than replacing the current tab.
+- Activating a **saved filter** from the slim left rail (default
+  click — see "Saved Filters" above) or following a **pivot
+  link** (Phase Detection-12) also creates a new tab pre-seeded
+  with the target filter rather than replacing the current tab.
+  Recommended filters follow the same contract once the
+  recommendations surface lands.
 
 The tab cap is **8 simultaneous tabs**. At the cap the `+`
 affordance disables and surfaces a tooltip explaining that you
-need to close a tab first.
+need to close a tab first; saved-filter activation and pivot
+links surface the same cap message in a transient toast instead
+of silently no-opping.
 
 #### Switching tabs
 
@@ -1014,9 +1025,11 @@ for every other chip type.
 
 ### Save this filter
 
-The **Save this filter** button is present alongside Apply but
-disabled in this phase. The naming flow is wired up in a later
-Detection phase.
+The **Save this filter** button sits alongside Apply in the
+filter drawer footer. Clicking it opens the naming dialog seeded
+with the auto-generated filter summary; submitting persists the
+filter to your personal **Saved Filters** rail. See "Saved
+Filters" above for the full save / load / rename / delete flow.
 
 ## Export to CSV
 

@@ -31,7 +31,11 @@
  * filter schema cannot express them in v1.
  */
 
-import { createEndpointEntryId, type EndpointEntry } from "./endpoint-filter";
+import {
+  createEndpointEntryId,
+  type EndpointEntry,
+  preservePredefinedEndpointInputs,
+} from "./endpoint-filter";
 import type { Filter } from "./filter";
 import {
   type FilterIdentityInput,
@@ -328,7 +332,9 @@ export function applyPivotPatch(
       // predefined-only references — any `custom` payload they also
       // carried is already in the mirror.
       const customSide = endpointsToEndpointInputsLite(nextEndpoints) ?? [];
-      const preserved = preservePredefinedEndpoints(filter.input.endpoints);
+      const preserved = preservePredefinedEndpointInputs(
+        filter.input.endpoints,
+      );
       const merged = [...preserved, ...customSide];
       if (merged.length === 0) {
         delete input.endpoints;
@@ -518,35 +524,6 @@ export function openPivotTab(args: OpenPivotTabArgs): PivotAction {
  * inline it here so a pivot can run from a server-rendered or test
  * context that does not import the larger UI module surface.
  */
-/**
- * Pull out the `predefined` references from an existing schema
- * payload as standalone entries. The drawer's `EndpointEntry` UI
- * mirror has no shape for predefined networks (only host / range /
- * network), so a round-trip through the mirror would erase them.
- * The pivot path replays this on top of the rebuilt custom side so
- * a tab filtered by a predefined network keeps that constraint when
- * the operator drills into a host on the same row.
- *
- * Strips any co-located `custom` payload — those rules are already
- * represented in the mirror and re-emerge through
- * {@link endpointsToEndpointInputsLite}, so duplicating them here
- * would double-count the operator's hosts.
- */
-function preservePredefinedEndpoints(
-  source: EventListFilterInput["endpoints"],
-): NonNullable<EventListFilterInput["endpoints"]> {
-  if (!source) return [];
-  const out: NonNullable<EventListFilterInput["endpoints"]> = [];
-  for (const entry of source) {
-    if (!entry) continue;
-    if (typeof entry.predefined !== "string") continue;
-    if (entry.predefined.length === 0) continue;
-    const direction = entry.direction ?? null;
-    out.push({ direction, predefined: entry.predefined });
-  }
-  return out;
-}
-
 function endpointsToEndpointInputsLite(
   entries: EndpointEntry[],
 ): EventListFilterInput["endpoints"] {

@@ -324,3 +324,34 @@ function trafficDirectionToEndpointEntryDirection(
   if (direction === "TO") return "DESTINATION";
   return "BOTH";
 }
+
+/**
+ * Pull out the `predefined` references from an existing schema
+ * payload as standalone entries. The drawer's `EndpointEntry` UI
+ * mirror has no shape for predefined networks (only host / range /
+ * network), so a round-trip through the mirror would erase them.
+ * Both the pivot path and the drawer Apply path replay this on top
+ * of the rebuilt custom side so a filter that selects a predefined
+ * network keeps that constraint when the operator drills into a
+ * host on the same row, opens/applies the drawer, or saves /
+ * reloads the filter.
+ *
+ * Strips any co-located `custom` payload — those rules are already
+ * represented in the mirror and re-emerge through
+ * `endpointsToEndpointInputs`, so duplicating them here would
+ * double-count the operator's hosts.
+ */
+export function preservePredefinedEndpointInputs(
+  source: readonly EndpointInput[] | null | undefined,
+): EndpointInput[] {
+  if (!source) return [];
+  const out: EndpointInput[] = [];
+  for (const entry of source) {
+    if (!entry) continue;
+    if (typeof entry.predefined !== "string") continue;
+    if (entry.predefined.length === 0) continue;
+    const direction = entry.direction ?? null;
+    out.push({ direction, predefined: entry.predefined });
+  }
+  return out;
+}

@@ -8,6 +8,7 @@ import {
   endpointEntriesFromEndpointInputs,
   endpointsToEndpointInputs,
   parseEndpointInput,
+  preservePredefinedEndpointInputs,
 } from "@/lib/detection";
 
 const CHIP_LABELS: EndpointChipLabels = {
@@ -243,6 +244,47 @@ describe("endpointEntriesFromEndpointInputs", () => {
     expect(endpointEntriesFromEndpointInputs(null)).toEqual([]);
     expect(endpointEntriesFromEndpointInputs(undefined)).toEqual([]);
     expect(endpointEntriesFromEndpointInputs([])).toEqual([]);
+  });
+});
+
+describe("preservePredefinedEndpointInputs", () => {
+  it("extracts predefined-only entries with their direction", () => {
+    expect(
+      preservePredefinedEndpointInputs([
+        { direction: "FROM", predefined: "net-1" },
+        { direction: null, predefined: "net-2" },
+      ]),
+    ).toEqual([
+      { direction: "FROM", predefined: "net-1" },
+      { direction: null, predefined: "net-2" },
+    ]);
+  });
+
+  it("strips co-located custom payload so the mirror does not double-count rules", () => {
+    expect(
+      preservePredefinedEndpointInputs([
+        {
+          direction: "TO",
+          predefined: "net-1",
+          custom: { hosts: ["10.0.0.1"], networks: [], ranges: [] },
+        },
+      ]),
+    ).toEqual([{ direction: "TO", predefined: "net-1" }]);
+  });
+
+  it("skips custom-only and empty / nullish entries", () => {
+    expect(
+      preservePredefinedEndpointInputs([
+        {
+          direction: "FROM",
+          custom: { hosts: ["10.0.0.1"], networks: [], ranges: [] },
+        },
+        { direction: null, predefined: "" },
+      ]),
+    ).toEqual([]);
+    expect(preservePredefinedEndpointInputs(null)).toEqual([]);
+    expect(preservePredefinedEndpointInputs(undefined)).toEqual([]);
+    expect(preservePredefinedEndpointInputs([])).toEqual([]);
   });
 });
 

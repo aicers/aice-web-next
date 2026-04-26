@@ -418,9 +418,15 @@ export function DetectionTabsShell({
   // this single shared instance via props.
   const savedFiltersState = useSavedFilters();
 
+  // Transient toast — surfaces `Already filtered` / `Tab cap reached`
+  // for both the pivot path and saved-filter activation. Declared
+  // above the saved-filter handler so the cap branch can dispatch
+  // the same toast the pivot path uses.
+  const [pivotToast, setPivotToast] = useState<string | null>(null);
+  const dismissPivotToast = useCallback(() => setPivotToast(null), []);
+
   const handleLoadSavedFilterInNewTab = useCallback(
     (filter: Filter) => {
-      const period = derivePeriodForFilter(filter);
       // Rehydrate `EndpointEntry[]` from `filter.input.endpoints` so
       // the new tab's chip bar / drawer match the saved Network/IP
       // rules. Stranding `endpoints: []` here makes the very next
@@ -430,23 +436,26 @@ export function DetectionTabsShell({
         filter.mode === "structured"
           ? endpointEntriesFromEndpointInputs(filter.input.endpoints)
           : [];
+      const period = derivePeriodForFilter(filter);
+      const effect = resolveLoadSavedFilterEffect(filter, tabsRef.current, {
+        tabCapReachedTemplate: labels.pivot.tabCapReachedTemplate,
+        maxTabs: MAX_TABS,
+        period,
+        endpoints,
+      });
+      if (effect.kind === "toast") {
+        setPivotToast(effect.message);
+        return;
+      }
+      const seedWithLoad = effect.tab;
       setTabs((prev) => {
         if (prev.length >= MAX_TABS) return prev;
         const withLive = withActiveSnapshot(prev);
-        const seed = createTabSnapshot({ filter, period, endpoints });
-        // Same trick the pivot create branch uses: mark the seed as
-        // already-queried + loading so the resume-on-mount effect
-        // dispatches the query for us instead of stranding the new
-        // tab on the pre-query empty state ("Build a filter to begin").
-        const seedWithLoad: TabSnapshot = {
-          ...seed,
-          result: { ...seed.result, hasQueried: true, loading: true },
-        };
-        setActiveTabId(seedWithLoad.id);
         return [...withLive, seedWithLoad];
       });
+      setActiveTabId(seedWithLoad.id);
     },
-    [withActiveSnapshot],
+    [labels.pivot.tabCapReachedTemplate, withActiveSnapshot],
   );
 
   const handleAddTab = useCallback(() => {
@@ -508,10 +517,6 @@ export function DetectionTabsShell({
     },
     [withActiveSnapshot],
   );
-
-  // Transient pivot toast — `Already filtered` / `Tab cap reached`.
-  const [pivotToast, setPivotToast] = useState<string | null>(null);
-  const dismissPivotToast = useCallback(() => setPivotToast(null), []);
 
   const handlePivot = useCallback(
     (patch: PivotPatch) => {
@@ -729,6 +734,62 @@ export function resolvePivotEffect(
       };
     }
   }
+}
+
+/**
+ * Pure decision helper for the "Load saved filter in new tab" path.
+ * Mirrors the pivot path's `resolvePivotEffect` shape so the React
+ * handler stays a thin dispatcher. At the cap returns a `toast`
+ * effect carrying the same `tabCapReached` template the pivot path
+ * uses; otherwise returns a `create` effect with the seeded tab
+ * already pre-marked `hasQueried + loading` so the resume-on-mount
+ * effect dispatches the query for us.
+ *
+ * Predefined endpoint references in `filter.input.endpoints` survive
+ * intact through the (empty) endpoint mirror returned here — the
+ * mirror only feeds the chip bar / drawer; the dispatched query
+ * still uses `filter.input.endpoints` directly, and the next drawer
+ * Apply replays predefined refs via `preservePredefinedEndpointInputs`
+ * inside `buildAppliedFilter`.
+ */
+export type LoadSavedFilterEffect =
+  | { kind: "toast"; message: string }
+  | { kind: "create"; tab: TabSnapshot };
+
+export interface ResolveLoadSavedFilterEffectOptions {
+  /** ICU-style template carrying a `{max}` placeholder. */
+  tabCapReachedTemplate: string;
+  maxTabs: number;
+  /** Period key derived from the saved filter. */
+  period: PeriodKey | null;
+  /** Rich endpoint mirror rehydrated from `filter.input.endpoints`. */
+  endpoints: EndpointEntry[];
+}
+
+export function resolveLoadSavedFilterEffect(
+  filter: Filter,
+  currentTabs: readonly TabSnapshot[],
+  opts: ResolveLoadSavedFilterEffectOptions,
+): LoadSavedFilterEffect {
+  if (currentTabs.length >= opts.maxTabs) {
+    return {
+      kind: "toast",
+      message: opts.tabCapReachedTemplate.replace(
+        "{max}",
+        String(opts.maxTabs),
+      ),
+    };
+  }
+  const seed = createTabSnapshot({
+    filter,
+    period: opts.period,
+    endpoints: opts.endpoints,
+  });
+  const seedWithLoad: TabSnapshot = {
+    ...seed,
+    result: { ...seed.result, hasQueried: true, loading: true },
+  };
+  return { kind: "create", tab: seedWithLoad };
 }
 
 /**

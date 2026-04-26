@@ -29,6 +29,7 @@ import {
   buildUrlSearchForTab,
   mergeSnapshot,
   mergeStoredTabsOnRehydrate,
+  resolveLoadSavedFilterEffect,
   resolvePivotEffect,
   routeSnapshotToTab,
 } from "@/components/detection/detection-tabs-shell";
@@ -930,5 +931,72 @@ describe("resolvePivotEffect — Reviewer Round 1 (toast / focus / create / cap 
     expect(original).toHaveLength(2);
     expect(original[0]).toBe(TAB_A);
     expect(original[1]).toBe(TAB_B);
+  });
+});
+
+describe("resolveLoadSavedFilterEffect — Reviewer Round 2 (cap toast vs. create)", () => {
+  // The wrapper's saved-filter activation handler used to silently
+  // no-op at the 8-tab cap; the rail row and "Load in new tab" menu
+  // item stayed enabled, so the operator saw nothing happen. Round 2
+  // feedback called this out — these tests pin the cap-vs-create
+  // contract directly so the React handler can stay a thin
+  // dispatcher around this pure function.
+  const FILTER: Filter = {
+    mode: "structured",
+    input: { kinds: ["HttpThreat"] },
+  };
+  const TAB = createTabSnapshot({
+    filter: { mode: "structured", input: { countries: ["KR"] } },
+    period: "1h",
+  });
+
+  it("emits a `tabCapReached` toast when the tab list is at the cap", () => {
+    const tabs = Array.from({ length: 8 }, () => TAB);
+    const effect = resolveLoadSavedFilterEffect(FILTER, tabs, {
+      tabCapReachedTemplate: "Tab cap reached ({max} max)",
+      maxTabs: 8,
+      period: null,
+      endpoints: [],
+    });
+    expect(effect).toEqual({
+      kind: "toast",
+      message: "Tab cap reached (8 max)",
+    });
+  });
+
+  it("seeds a fresh tab pre-marked hasQueried + loading so resume-on-mount runs the query", () => {
+    const effect = resolveLoadSavedFilterEffect(FILTER, [TAB], {
+      tabCapReachedTemplate: "Tab cap reached ({max} max)",
+      maxTabs: 8,
+      period: "1h",
+      endpoints: [],
+    });
+    expect(effect.kind).toBe("create");
+    if (effect.kind !== "create") return;
+    expect(effect.tab.filter).toEqual(FILTER);
+    expect(effect.tab.period).toBe("1h");
+    expect(effect.tab.result.hasQueried).toBe(true);
+    expect(effect.tab.result.loading).toBe(true);
+  });
+
+  it("threads the rehydrated endpoint mirror onto the seed tab", () => {
+    const endpoints: EndpointEntry[] = [
+      {
+        id: "1",
+        raw: "10.0.0.1",
+        kind: "host",
+        host: "10.0.0.1",
+        direction: "SOURCE",
+        selected: true,
+      },
+    ];
+    const effect = resolveLoadSavedFilterEffect(FILTER, [TAB], {
+      tabCapReachedTemplate: "Tab cap reached ({max} max)",
+      maxTabs: 8,
+      period: null,
+      endpoints,
+    });
+    if (effect.kind !== "create") throw new Error("expected create branch");
+    expect(effect.tab.endpoints).toEqual(endpoints);
   });
 });

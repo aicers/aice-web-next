@@ -1,5 +1,8 @@
 import { directionsForFilterInput } from "./direction";
-import { endpointsToEndpointInputs } from "./endpoint-filter";
+import {
+  endpointsToEndpointInputs,
+  preservePredefinedEndpointInputs,
+} from "./endpoint-filter";
 import type { Filter } from "./filter";
 import {
   type MultiSelectOptionRef,
@@ -93,7 +96,19 @@ export function buildAppliedFilter(
       : previousRest;
 
   const directions = directionsForFilterInput(applied.directions);
-  const endpoints = endpointsToEndpointInputs(applied.endpoints);
+  // Predefined endpoint references (e.g. server-defined network groups)
+  // have no shape in the `EndpointEntry` UI mirror, so the drawer
+  // draft cannot represent them. Pull them off the previous filter
+  // input and replay them on top of the rebuilt custom side — the
+  // pivot path does the same for the same reason. Without this, an
+  // Apply (or saved-filter Save) against a filter carrying a
+  // predefined endpoint would silently broaden the filter by writing
+  // `endpoints: null` (or only the custom slice).
+  const preservedPredefined = preservePredefinedEndpointInputs(
+    previousInput.endpoints,
+  );
+  const customEndpoints = endpointsToEndpointInputs(applied.endpoints);
+  const endpoints = [...preservedPredefined, ...customEndpoints];
 
   const input: EventListFilterInput = {
     ...previousWithoutConfidence,
