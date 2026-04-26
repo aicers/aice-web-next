@@ -153,6 +153,7 @@ function messageForCode(
     case "unauthenticated":
       return labels.errors.unauthenticated;
     case "not-found":
+    case "unsupported-mode":
     case "server-error":
       return labels.errors.server;
   }

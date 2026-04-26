@@ -122,6 +122,16 @@ describe("saved-filter server actions", () => {
         filter: SAVED.filter,
       });
     });
+
+    it("rejects non-structured filters with unsupported-mode", async () => {
+      mockGetCurrentSession.mockResolvedValue({ accountId: "acct-1" });
+      const result = await actions.saveFilter("query mode", {
+        mode: "query",
+        text: "level:high",
+      });
+      expect(result).toEqual({ ok: false, code: "unsupported-mode" });
+      expect(mockInsertSavedFilter).not.toHaveBeenCalled();
+    });
   });
 
   describe("renameFilter", () => {

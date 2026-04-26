@@ -98,22 +98,11 @@ describe("saved-filters lib", () => {
       expect(result.map((r) => r.name)).toEqual(["ok-row"]);
     });
 
-    it("rebuilds query-mode rows so the forward-compat seat is exercised", async () => {
-      mockQuery.mockResolvedValue({
-        rowCount: 1,
-        rows: [
-          {
-            id: "11111111-1111-1111-1111-111111111111",
-            name: "Query: HighRiskHosts",
-            mode: "query",
-            filter_json: { text: "level:high" },
-            created_at: "2026-01-01T00:00:00Z",
-            updated_at: "2026-01-01T00:00:00Z",
-          },
-        ],
-      });
-      const [entry] = await mod.listSavedFiltersForAccount("acct-1");
-      expect(entry.filter).toEqual({ mode: "query", text: "level:high" });
+    it("scopes the SQL to mode = 'structured' so a future query row stays out of the v1 rail", async () => {
+      mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
+      await mod.listSavedFiltersForAccount("acct-1");
+      const [sql] = mockQuery.mock.calls[0];
+      expect(String(sql)).toContain("mode = 'structured'");
     });
   });
 

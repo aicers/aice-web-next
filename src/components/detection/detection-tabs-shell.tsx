@@ -61,7 +61,10 @@ import {
   DEFAULT_ANALYTICS_DIMENSION,
   DEFAULT_ANALYTICS_TOP_N,
 } from "@/lib/detection/analytics";
-import type { EndpointEntry } from "@/lib/detection/endpoint-filter";
+import {
+  type EndpointEntry,
+  endpointEntriesFromEndpointInputs,
+} from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
 import {
   type FilterChip,
@@ -418,10 +421,19 @@ export function DetectionTabsShell({
   const handleLoadSavedFilterInNewTab = useCallback(
     (filter: Filter) => {
       const period = derivePeriodForFilter(filter);
+      // Rehydrate `EndpointEntry[]` from `filter.input.endpoints` so
+      // the new tab's chip bar / drawer match the saved Network/IP
+      // rules. Stranding `endpoints: []` here makes the very next
+      // drawer Apply rebuild the input from an empty draft and
+      // silently drop the saved endpoints.
+      const endpoints =
+        filter.mode === "structured"
+          ? endpointEntriesFromEndpointInputs(filter.input.endpoints)
+          : [];
       setTabs((prev) => {
         if (prev.length >= MAX_TABS) return prev;
         const withLive = withActiveSnapshot(prev);
-        const seed = createTabSnapshot({ filter, period, endpoints: [] });
+        const seed = createTabSnapshot({ filter, period, endpoints });
         // Same trick the pivot create branch uses: mark the seed as
         // already-queried + loading so the resume-on-mount effect
         // dispatches the query for us instead of stranding the new

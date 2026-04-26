@@ -141,7 +141,16 @@ export function validateSavedFilterName(
   return null;
 }
 
-/** Returns the current account's saved filters, newest update first. */
+/**
+ * Returns the current account's saved filters, newest update first.
+ *
+ * v1 rail only surfaces `mode = 'structured'` rows. The `'query'`
+ * branch is reserved for the future search-language phase; until the
+ * load path can drive it, hiding the row keeps it out of the
+ * activatable rail rather than letting a click error out. The
+ * `saveFilter` action also rejects non-structured submissions, so
+ * rows of other modes only exist if a future migration writes them.
+ */
 export async function listSavedFiltersForAccount(
   accountId: string,
 ): Promise<SavedFilter[]> {
@@ -149,6 +158,7 @@ export async function listSavedFiltersForAccount(
     `SELECT id, name, mode, filter_json, created_at, updated_at
        FROM saved_filter
       WHERE owner_account_id = $1
+        AND mode = 'structured'
    ORDER BY updated_at DESC, name ASC`,
     [accountId],
   );

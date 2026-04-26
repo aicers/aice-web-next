@@ -41,15 +41,7 @@ filter does not run the query; the saved entry shows up in the
 **Saved Filters** rail immediately and remains available across
 reloads.
 
-![Save filter dialog — wireframe stand-in](../assets/detection-save-filter-dialog-en.svg)
-
-!!! note "Wireframe stand-in"
-
-    The figure above is an SVG wireframe rather than a real
-    capture. A PNG capture for this dialog will be added in a
-    follow-up once the local REview setup is wired into this
-    feature's screenshot batch (see `docs/AUTHORING.md` →
-    "Live REview screenshot procedure").
+![Save filter dialog](../assets/detection-save-filter-dialog-en.png)
 
 #### Loading a saved filter
 
@@ -85,13 +77,7 @@ The `⋮` menu on each saved-filter row also exposes:
   history). Open tabs that were loaded from this filter are not
   affected — the tab keeps its own copy of the filter state.
 
-![Saved Filters rail — wireframe stand-in](../assets/detection-saved-filters-rail-en.svg)
-
-!!! note "Wireframe stand-in"
-
-    The rail illustration above is an SVG wireframe rather than a
-    real capture. The same screenshot follow-up that covers the
-    Save dialog will add a real PNG here.
+![Saved Filters rail](../assets/detection-saved-filters-rail-en.png)
 
 #### Scope and limits
 

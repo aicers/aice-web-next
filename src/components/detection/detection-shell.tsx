@@ -88,6 +88,7 @@ import {
   buildEndpointChips,
   type EndpointChipLabels,
   type EndpointEntry,
+  endpointEntriesFromEndpointInputs,
 } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
 import {
@@ -1667,23 +1668,29 @@ export function DetectionShell({
    * indistinguishable from re-applying it from the drawer — the
    * draft is dropped so the next drawer open rebuilds from the
    * loaded filter, the period chip is re-derived via
-   * {@link matchesPeriodKey}, and rich endpoint entries are reset
-   * to `[]` (the typed `filter.input.endpoints` still drives the
-   * query — see the v1 limitation in `decisions/saved-filters.md`).
+   * {@link matchesPeriodKey}, and rich endpoint entries are
+   * rehydrated from `filter.input.endpoints` so the chip bar /
+   * drawer stay in sync. Without rehydration the next drawer Apply
+   * would rebuild `input.endpoints` from an empty draft and silently
+   * clear the saved Network/IP rules.
    */
   const loadFilterIntoCurrentTab = useCallback(
     (filter: Filter) => {
       const period = derivePeriodForFilter(filter);
+      const endpoints =
+        filter.mode === "structured"
+          ? endpointEntriesFromEndpointInputs(filter.input.endpoints)
+          : [];
       setCommittedFilter(filter);
       setCommittedPeriod(period);
-      setCommittedEndpoints([]);
+      setCommittedEndpoints(endpoints);
       setDraft(null);
       setDrawerOpen(false);
 
       const search = buildEncodedFilterSearch({
         filter,
         period,
-        endpoints: [],
+        endpoints,
         pivotExtras: extrasFromPivotOnly(pivotOnly),
       });
       if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {

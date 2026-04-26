@@ -39,14 +39,7 @@ Security Monitor, Tenant Administrator, System Administrator는 이
 실행하지 않습니다. 저장된 항목은 즉시 **저장된 필터** 레일에
 나타나며, 다시 로드해도 그대로 유지됩니다.
 
-![필터 저장 대화상자 — 와이어프레임 스탠드인](../assets/detection-save-filter-dialog-ko.svg)
-
-!!! note "와이어프레임 스탠드인"
-
-    위 그림은 실제 캡처가 아닌 SVG 와이어프레임입니다. 본
-    기능의 PNG 캡처는 로컬 REview 캡처 절차에 본 화면을
-    포함하는 후속 작업에서 추가됩니다 (`docs/AUTHORING.md`의
-    "Live REview screenshot procedure" 참고).
+![필터 저장 대화상자](../assets/detection-save-filter-dialog-ko.png)
 
 #### 저장된 필터 불러오기
 
@@ -79,13 +72,7 @@ Security Monitor, Tenant Administrator, System Administrator는 이
   이 필터로 불러온 열려 있는 탭은 영향을 받지 않습니다 —
   탭은 자체 필터 상태 사본을 유지합니다.
 
-![저장된 필터 레일 — 와이어프레임 스탠드인](../assets/detection-saved-filters-rail-ko.svg)
-
-!!! note "와이어프레임 스탠드인"
-
-    위 레일 그림은 실제 캡처가 아닌 SVG 와이어프레임입니다.
-    저장 대화상자와 동일한 스크린샷 후속 작업에서 실제 PNG로
-    교체됩니다.
+![저장된 필터 레일](../assets/detection-saved-filters-rail-ko.png)
 
 #### 범위 및 제한
 

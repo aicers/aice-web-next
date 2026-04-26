@@ -25,6 +25,7 @@ export {
   type EndpointEntry,
   type EndpointEntryDirection,
   type EndpointEntryKind,
+  endpointEntriesFromEndpointInputs,
   endpointsToEndpointInputs,
   type ParsedEndpoint,
   parseEndpointInput,

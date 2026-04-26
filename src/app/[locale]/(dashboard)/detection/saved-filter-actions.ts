@@ -24,6 +24,7 @@ export type SavedFilterErrorCode =
   | "unauthenticated"
   | "duplicate-name"
   | "invalid-name"
+  | "unsupported-mode"
   | "not-found"
   | "server-error";
 
@@ -56,6 +57,14 @@ export async function saveFilter(
 ): Promise<SavedFilterMutateResult> {
   const session = await getCurrentSession();
   if (!session) return { ok: false, code: "unauthenticated" };
+  // v1 only persists `mode = 'structured'`; the `'query'` value is a
+  // forward-compat seat reserved for the future search-language phase.
+  // Reject any other mode at the action boundary so a crafted client
+  // payload cannot land an unloadable row that the rail then has to
+  // hide on read.
+  if (filter.mode !== "structured") {
+    return { ok: false, code: "unsupported-mode" };
+  }
   const trimmed = normalizeSavedFilterName(name);
   if (validateSavedFilterName(trimmed) !== null) {
     return { ok: false, code: "invalid-name" };
