@@ -407,13 +407,16 @@ export function NodeListTable({
           <Table data-testid="nodes-table">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[44px] pl-4">
-                  <Checkbox
-                    checked={allSelected}
-                    onCheckedChange={toggleAll}
-                    aria-label={t("selectAll")}
-                  />
-                </TableHead>
+                {canDelete && (
+                  <TableHead className="w-[44px] pl-4">
+                    <Checkbox
+                      checked={allSelected}
+                      onCheckedChange={toggleAll}
+                      aria-label={t("selectAll")}
+                      data-testid="nodes-select-all"
+                    />
+                  </TableHead>
+                )}
                 <SortableHeader label={t("columns.name")} />
                 <TableHead>{t("columns.customer")}</TableHead>
                 <TableHead>{t("columns.description")}</TableHead>
@@ -446,7 +449,7 @@ export function NodeListTable({
               {filteredRows.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={13}
+                    colSpan={canDelete ? 13 : 12}
                     className="text-muted-foreground py-8 text-center text-sm"
                   >
                     {rows.length === 0 ? t("empty") : t("noResults")}
@@ -470,7 +473,7 @@ export function NodeListTable({
                       : null
                   }
                   selected={selected.has(row.id)}
-                  onSelect={() => toggleOne(row.id)}
+                  onSelect={canDelete ? () => toggleOne(row.id) : null}
                   onEdit={
                     canEdit
                       ? () =>
@@ -609,7 +612,10 @@ interface NodeListRowProps {
   customerName: string;
   draftCustomerName: string | null;
   selected: boolean;
-  onSelect: () => void;
+  // `null` when the caller lacks `nodes:delete`. The checkbox cell is
+  // omitted entirely in that case so a read-only viewer never sees the
+  // first step of the bulk-delete affordance.
+  onSelect: (() => void) | null;
   onEdit: (() => void) | null;
   onDelete: (() => void) | null;
 }
@@ -651,14 +657,17 @@ function NodeListRow({
       data-pending={row.hasPending ? "true" : "false"}
       onClick={onRowClick}
     >
-      <TableCell className="pl-4">
-        <Checkbox
-          checked={selected}
-          onCheckedChange={onSelect}
-          onClick={stopRowNav}
-          aria-label={t("selectRow")}
-        />
-      </TableCell>
+      {onSelect && (
+        <TableCell className="pl-4">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={onSelect}
+            onClick={stopRowNav}
+            aria-label={t("selectRow")}
+            data-testid="nodes-row-checkbox"
+          />
+        </TableCell>
+      )}
       <TableCell className="font-medium">
         <div className="flex items-center gap-2">
           <RowLink id={row.id} onClick={stopRowNav}>

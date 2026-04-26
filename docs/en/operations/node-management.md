@@ -88,6 +88,10 @@ successful deletion writes one `node.delete` audit entry with the
 node's id and `{ hostname }` in `details`. Failed deletions do not emit
 an audit entry.
 
+The checkbox column is hidden entirely for callers without
+`nodes:delete` (Security Monitor), so a read-only viewer never sees the
+first step of the bulk-delete flow.
+
 ## Per-row Edit / Delete
 
 The row kebab menu offers **Edit** (opens the create/edit dialog) and

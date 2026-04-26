@@ -77,17 +77,14 @@ export default async function NodesSettingsPage() {
     ]);
     rows = buildNodeRows(nodeConn, statusConn);
   } catch (err) {
+    // Only the explicit `ManagerUnavailableError` (raised by
+    // `withManagerErrorMapping` when the underlying transport / DNS /
+    // mTLS fails) maps to the offline panel. GraphQL validation,
+    // schema-drift, or upstream business errors surface as
+    // `graphql-request` `ClientError`s and must propagate so Next.js
+    // can render its standard error boundary — silently masking those
+    // as "manager offline" would hide real bugs from operators.
     if (err instanceof ManagerUnavailableError) {
-      managerOffline = true;
-    } else if (
-      err instanceof Error &&
-      (err.constructor.name === "ClientError" || "response" in err)
-    ) {
-      // graphql-request ClientError surfaces upstream GraphQL errors at
-      // the same severity as a transport failure from the user's view —
-      // the manager is reachable but cannot answer. Render the offline
-      // panel rather than a 500. Diagnostics stay in the server log.
-      console.error("[nodes/settings] failed to load nodes:", err);
       managerOffline = true;
     } else {
       throw err;

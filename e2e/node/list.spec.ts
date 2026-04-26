@@ -264,19 +264,19 @@ test.describe("Node settings list page", () => {
     workerUsername,
     workerPassword,
   }) => {
+    // Use `connectionFailure` (socket hang-up) rather than `errors`. The
+    // page only renders the offline panel for `ManagerUnavailableError`,
+    // which is raised by `withManagerErrorMapping` on transport-level
+    // failures. A 200 with `errors[]` would surface as a `ClientError`
+    // and is intentionally allowed to propagate so unrelated query
+    // failures are not silently masked as "manager offline".
     await stubSession.registerStub({
       operation: "nodeList",
-      response: {
-        kind: "errors",
-        errors: [{ message: "manager offline" }],
-      },
+      response: { kind: "connectionFailure" },
     });
     await stubSession.registerStub({
       operation: "nodeStatusList",
-      response: {
-        kind: "errors",
-        errors: [{ message: "manager offline" }],
-      },
+      response: { kind: "connectionFailure" },
     });
 
     await signInAndWait(page, workerUsername, workerPassword);
@@ -285,7 +285,13 @@ test.describe("Node settings list page", () => {
     await expect(page.getByTestId("manager-unavailable-panel")).toBeVisible();
   });
 
-  test("Security Monitor cannot see the Add button", async ({ page }) => {
+  test("Security Monitor sees no write affordances (Add / row checkboxes / row menu)", async ({
+    page,
+  }) => {
+    // The acceptance criterion requires Security Monitor to see no Add /
+    // Edit / Delete affordances. The bulk-select column is the first step
+    // of the bulk-delete flow, so read-only viewers must not see it
+    // either — otherwise they can pick rows that produce no floating bar.
     await stubSession.registerStub({
       operation: "nodeList",
       response: {
@@ -309,6 +315,13 @@ test.describe("Node settings list page", () => {
     await navigateToList(page);
     await expect(page.getByTestId("nodes-table")).toBeVisible();
     await expect(page.getByTestId("nodes-add-button")).toHaveCount(0);
+    // Bulk-select column (header + per-row checkboxes) is hidden, so the
+    // floating bulk-delete bar can never surface for a read-only viewer.
+    await expect(page.getByTestId("nodes-select-all")).toHaveCount(0);
+    await expect(page.getByTestId("nodes-row-checkbox")).toHaveCount(0);
+    // Per-row kebab (the Edit / Delete entry point) is hidden because
+    // both `onEdit` and `onDelete` resolve to `null` for this caller.
+    await expect(page.getByTestId("nodes-row-menu")).toHaveCount(0);
   });
 
   test("Tenant Admin only sees their customer's nodes and no tenant filter dropdown", async ({

@@ -50,7 +50,14 @@ export interface StubMatcher {
 
 export type StubResolver =
   | { kind: "fixture"; data: unknown }
-  | { kind: "errors"; errors: { message: string }[] };
+  | { kind: "errors"; errors: { message: string }[] }
+  // Destroy the underlying socket without writing a response. Undici then
+  // surfaces this to the client as `ECONNRESET` / `socket hang up`, which
+  // `withManagerErrorMapping` translates into `ManagerUnavailableError`.
+  // Use this kind to exercise the offline-panel branch in tests; a 200
+  // with `errors[]` would only produce a `ClientError`, which the page
+  // is expected to let propagate as an unexpected failure.
+  | { kind: "connectionFailure" };
 
 interface RegisteredStub {
   matcher: StubMatcher;
@@ -209,7 +216,8 @@ export interface AdminStubRequest {
   scope?: string;
   response:
     | { kind: "fixture"; fixture: string }
-    | { kind: "errors"; errors: { message: string }[] };
+    | { kind: "errors"; errors: { message: string }[] }
+    | { kind: "connectionFailure" };
 }
 
 export interface MockServerTlsOptions {
@@ -321,6 +329,7 @@ function resolveAdminStub(
   declaredFixtures: Map<string, Set<string>>,
 ): StubResolver {
   if (req.response.kind === "errors") return req.response;
+  if (req.response.kind === "connectionFailure") return req.response;
   const path = req.response.fixture;
   const declaredOps = declaredFixtures.get(path);
   if (!declaredOps) {
@@ -568,6 +577,16 @@ export async function startMockServer(
     }
     if (stub.kind === "errors") {
       jsonResponse(res, 200, { errors: stub.errors });
+      return;
+    }
+    if (stub.kind === "connectionFailure") {
+      // Hang up the socket without writing a response so undici raises
+      // `ECONNRESET` / `socket hang up` on the client. This is the only
+      // path that exercises `ManagerUnavailableError` end-to-end —
+      // `kind: "errors"` returns a 200 (a `ClientError`, not a transport
+      // failure), and a clean close after `res.end()` would still satisfy
+      // the request.
+      req.socket.destroy();
       return;
     }
     // Execute against the schema with the fixture as the root value so the
