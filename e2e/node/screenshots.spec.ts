@@ -9,9 +9,21 @@
  * replacing the SVG wireframe placeholders that shipped with the
  * initial Phase Node-3 PR.
  *
+ * **This spec is opt-in and is skipped by `pnpm e2e`.**
+ *
+ * The `beforeEach` here registers catch-all `nodeList` /
+ * `nodeStatusList` stubs against the shared mock-server registry. Stub
+ * resolution does not filter by `mockServerSession` scope, so a parallel
+ * Playwright worker running `e2e/node/list.spec.ts` could otherwise
+ * race against these catch-alls — the manager-offline test in
+ * particular would receive the populated fixture and fail. Gating the
+ * tests on `CAPTURE_SCREENSHOTS=1` keeps them out of the default e2e
+ * suite entirely (no stub registration, no race surface).
+ *
  * Run manually with:
  *
- *   pnpm exec playwright test --config=e2e/playwright.config.ts \
+ *   CAPTURE_SCREENSHOTS=1 pnpm exec playwright test \
+ *     --config=e2e/playwright.config.ts \
  *     e2e/node/screenshots.spec.ts
  */
 import path from "node:path";
@@ -35,6 +47,13 @@ test.beforeEach(async () => {
 
 test.describe
   .serial("Node manual screenshots", () => {
+    // Opt-in only. Without this guard, the catch-all stubs registered
+    // below leak into `e2e/node/list.spec.ts` runs in a sibling worker.
+    test.skip(
+      process.env.CAPTURE_SCREENSHOTS !== "1",
+      "Manual screenshot capture — set CAPTURE_SCREENSHOTS=1 to run.",
+    );
+
     const stubSession = mockServerSession();
 
     test.beforeEach(async () => {

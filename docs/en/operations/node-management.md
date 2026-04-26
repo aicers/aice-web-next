@@ -77,7 +77,7 @@ appear on the Manager cell.
 ## Bulk delete
 
 Left-side row checkboxes select one or more rows. Once any row is
-selected, a floating bar at the bottom of the page surfaces:
+selected, a floating bar at the top of the page surfaces:
 
 - "N selected" counter.
 - A **Delete selected** action that opens a confirmation modal.

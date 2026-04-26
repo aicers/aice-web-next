@@ -488,7 +488,7 @@ export function NodeListTable({
 
         {selected.size > 0 && canDelete && (
           <section
-            className="bg-card fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-3 shadow-lg"
+            className="bg-card fixed top-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-3 shadow-lg"
             data-testid="nodes-bulk-bar"
             aria-label="Bulk actions"
           >

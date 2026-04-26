@@ -145,6 +145,78 @@ describe("buildNodeRows", () => {
     expect(rows[0].serviceCells.unsupervised.state).toBe("manual");
   });
 
+  it("classifies an applied-manual Sensor (config: '', draft: null) as Manual", () => {
+    // Per `decisions/node-field-catalog.md` §60-63, Configure Manually
+    // mode for Piglet / Hog / Crusher is encoded as the empty TOML
+    // string. After apply, the same sentinel can land on `config`.
+    // The cell must render as Manual — not Configured-here.
+    const rows = buildNodeRows(
+      nodeConnection([
+        {
+          node: {
+            id: "applied-manual-1",
+            name: "n",
+            nameDraft: null,
+            profile: { customerId: "1", description: "", hostname: "h.lan" },
+            profileDraft: null,
+            agents: [
+              {
+                node: 1,
+                key: "n-sensor",
+                kind: "SENSOR",
+                status: "ENABLED",
+                config: "",
+                draft: null,
+              },
+            ],
+            externalServices: [],
+          },
+        },
+      ]),
+      statusConnection([]),
+    );
+
+    expect(rows[0].serviceCells.sensor.state).toBe("manual");
+    expect(rows[0].hasPending).toBe(false);
+  });
+
+  it("classifies a pending switch to manual (draft: '') as Manual", () => {
+    // Pending mode flip from Configured-here to Manual: the user has
+    // a non-empty applied config but the draft is the empty sentinel.
+    // The cell must render as Manual (no draft / apply affordance) —
+    // not Configured-here · Pending. The row-level pending badge still
+    // fires because `hasPending` derives from any agent draft diverging
+    // from applied state, regardless of cell classification.
+    const rows = buildNodeRows(
+      nodeConnection([
+        {
+          node: {
+            id: "pending-manual-1",
+            name: "n",
+            nameDraft: null,
+            profile: { customerId: "1", description: "", hostname: "h.lan" },
+            profileDraft: null,
+            agents: [
+              {
+                node: 1,
+                key: "n-sensor",
+                kind: "SENSOR",
+                status: "ENABLED",
+                config: "[piglet] retention = '7d'",
+                draft: "",
+              },
+            ],
+            externalServices: [],
+          },
+        },
+      ]),
+      statusConnection([]),
+    );
+
+    expect(rows[0].serviceCells.sensor.state).toBe("manual");
+    expect(rows[0].hasPending).toBe(true);
+  });
+
   it("flags an external-service draft as configured-here-pending", () => {
     const rows = buildNodeRows(
       nodeConnection([

@@ -110,13 +110,22 @@ export function buildNodeRows(
       const column = AGENT_TO_COLUMN[agent.kind];
       if (!column) continue;
       const hasDraft = agent.draft !== null && agent.draft !== agent.config;
+      // `decisions/node-field-catalog.md` §60-63: Configure Manually mode
+      // for Piglet / Hog / Crusher is encoded as `draft = Some("")` and,
+      // after apply, `config = ""`. Reading the *effective* state (draft
+      // when present, otherwise applied) classifies both applied-manual
+      // (`config: ""`, `draft: null`) and pending-manual (non-empty
+      // applied with `draft: ""`) as the Manual cell — the issue's
+      // "Configure Manually services render as Manual" requirement.
+      const effective = agent.draft !== null ? agent.draft : agent.config;
+      const isManualConfig = effective === null || effective === "";
       const state = ALWAYS_MANUAL_COLUMNS.has(column)
         ? "manual"
-        : agent.config !== null
-          ? hasDraft
+        : isManualConfig
+          ? "manual"
+          : hasDraft
             ? "configured-here-pending"
-            : "configured-here"
-          : "manual";
+            : "configured-here";
       cells[column] = { state, hasDraft };
     }
 
