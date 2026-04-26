@@ -23,6 +23,12 @@
     "variables": { "first": 999 }
   },
   {
+    "operation": "nodeList",
+    "query": "node/nodeList.populated.graphql",
+    "fixture": "node/nodeList.tenant1.json",
+    "variables": { "first": 998 }
+  },
+  {
     "operation": "nodeStatusList",
     "query": "node/nodeStatusList.empty.graphql",
     "fixture": "node/nodeStatusList.empty.json"
@@ -32,5 +38,11 @@
     "query": "node/nodeStatusList.populated.graphql",
     "fixture": "node/nodeStatusList.populated.json",
     "variables": { "first": 999 }
+  },
+  {
+    "operation": "nodeStatusList",
+    "query": "node/nodeStatusList.populated.graphql",
+    "fixture": "node/nodeStatusList.tenant1.json",
+    "variables": { "first": 998 }
   }
 ]

@@ -30,6 +30,12 @@ export interface NodeRow {
   serviceCells: Record<ServiceColumnKey, ServiceCell>;
   manager: boolean | null;
   ping: number | null;
+  // Whether the initial `nodeStatusList` snapshot included this row.
+  // Distinct from `ping`: a node that returned a status row but is
+  // currently dead has `hasStatus: true` and `ping: null`. Without this
+  // separation an all-dead snapshot would leave the alive/dead chips
+  // disabled even though the data did arrive.
+  hasStatus: boolean;
 }
 
 export type ServiceColumnKey =
@@ -139,6 +145,7 @@ export function buildNodeRows(
       anyExternalDraft;
 
     const status = statusById.get(node.id);
+    const hasStatus = status !== undefined;
 
     return {
       id: node.id,
@@ -169,6 +176,7 @@ export function buildNodeRows(
       serviceCells: cells,
       manager: status?.manager ?? null,
       ping: status?.ping ?? null,
+      hasStatus,
     };
   });
 }

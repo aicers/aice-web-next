@@ -240,7 +240,55 @@ describe("buildNodeRows", () => {
 
     expect(rows[0].manager).toBe(true);
     expect(rows[0].ping).toBe(5.5);
+    expect(rows[0].hasStatus).toBe(true);
     expect(rows[1].manager).toBeNull();
     expect(rows[1].ping).toBeNull();
+    expect(rows[1].hasStatus).toBe(false);
+  });
+
+  it("marks hasStatus true even when ping is null (dead node)", () => {
+    // The alive/dead chips read `hasStatus` to decide availability,
+    // not `ping !== null`. A node that returns a status row with
+    // `ping: null` is data — the chips must enable the dead facet
+    // for it. Without this distinction an all-dead snapshot would
+    // disable both chips and hide its own data.
+    const rows = buildNodeRows(
+      nodeConnection([
+        {
+          node: {
+            id: "7",
+            name: "eta",
+            nameDraft: null,
+            profile: { customerId: "1", description: "", hostname: "h.lan" },
+            profileDraft: null,
+            agents: [],
+            externalServices: [],
+          },
+        },
+      ]),
+      statusConnection([
+        {
+          node: {
+            id: "7",
+            name: "eta",
+            nameDraft: null,
+            profile: null,
+            profileDraft: null,
+            cpuUsage: null,
+            totalMemory: null,
+            usedMemory: null,
+            totalDiskSpace: null,
+            usedDiskSpace: null,
+            manager: false,
+            agents: [],
+            externalServices: [],
+            ping: null,
+          },
+        },
+      ]),
+    );
+
+    expect(rows[0].ping).toBeNull();
+    expect(rows[0].hasStatus).toBe(true);
   });
 });

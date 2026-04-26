@@ -285,6 +285,105 @@ export async function listNodeStatuses(
   return data.nodeStatusList;
 }
 
+// Cap the cursor walk so a misbehaving manager (no-op cursor, missing
+// `hasNextPage: false`) cannot hang the page indefinitely. 50 pages at
+// `pageSize: 200` covers up to 10k nodes — well above any realistic
+// deployment; the cap exists strictly as a runaway guard.
+const PAGINATION_PAGE_LIMIT = 50;
+const DEFAULT_PAGE_SIZE = 200;
+
+/**
+ * Walk every page of a connection-shaped manager query, accumulating
+ * the edges into a single connection. The list page renders every node
+ * the caller can see, so a single `first: N` window would silently drop
+ * tail nodes once N is exceeded. The Phase Node-2 `listNodes` /
+ * `listNodeStatuses` helpers stay single-page (callers like the detail
+ * page or polling hook may want one window only); this helper layers
+ * pagination on top.
+ */
+async function paginate<T>(
+  pageFetcher: (args: NodePageArgs) => Promise<{
+    edges: T[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    totalCount: string;
+  }>,
+  pageSize: number,
+): Promise<{ edges: T[]; totalCount: string }> {
+  const aggregated: T[] = [];
+  let cursor: string | null = null;
+  let totalCount = "0";
+  for (let i = 0; i < PAGINATION_PAGE_LIMIT; i += 1) {
+    const page: {
+      edges: T[];
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      totalCount: string;
+    } = await pageFetcher({
+      first: pageSize,
+      ...(cursor !== null ? { after: cursor } : {}),
+    });
+    aggregated.push(...page.edges);
+    totalCount = page.totalCount;
+    if (!page.pageInfo.hasNextPage || !page.pageInfo.endCursor) {
+      return { edges: aggregated, totalCount };
+    }
+    cursor = page.pageInfo.endCursor;
+  }
+  return { edges: aggregated, totalCount };
+}
+
+/**
+ * Page through `nodeList` until every node is loaded. Returns a
+ * connection-shaped result so existing consumers (`buildNodeRows`)
+ * keep working unchanged.
+ */
+export async function listAllNodes(
+  session: AuthSession,
+  signal?: AbortSignal,
+  pageSize: number = DEFAULT_PAGE_SIZE,
+): Promise<NodeConnection> {
+  const result = await paginate(
+    (args) => listNodes(session, args, signal),
+    pageSize,
+  );
+  return {
+    edges: result.edges,
+    totalCount: result.totalCount,
+    pageInfo: {
+      hasPreviousPage: false,
+      hasNextPage: false,
+      startCursor: null,
+      endCursor: null,
+    },
+  };
+}
+
+/**
+ * Page through `nodeStatusList` until every status row is loaded. The
+ * list-page join requires per-row Manager / ping data for every node
+ * the page renders, so a truncated status fetch would leave tail rows
+ * with `manager: null` / `ping: null` even though the manager is up.
+ */
+export async function listAllNodeStatuses(
+  session: AuthSession,
+  signal?: AbortSignal,
+  pageSize: number = DEFAULT_PAGE_SIZE,
+): Promise<NodeStatusConnection> {
+  const result = await paginate(
+    (args) => listNodeStatuses(session, args, signal),
+    pageSize,
+  );
+  return {
+    edges: result.edges,
+    totalCount: result.totalCount,
+    pageInfo: {
+      hasPreviousPage: false,
+      hasNextPage: false,
+      startCursor: null,
+      endCursor: null,
+    },
+  };
+}
+
 interface InsertNodeVariables extends Record<string, unknown> {
   name: string;
   customerId: string;

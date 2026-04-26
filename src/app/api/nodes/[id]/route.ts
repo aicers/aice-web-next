@@ -54,8 +54,9 @@ export const DELETE = withAuth(
       throw err;
     }
 
+    let deletedIds: string[];
     try {
-      await removeNodes(session, [nodeId]);
+      deletedIds = await removeNodes(session, [nodeId]);
     } catch (err) {
       if (err instanceof NodeNotFoundError) {
         return NextResponse.json({ error: "Node not found" }, { status: 404 });
@@ -70,6 +71,18 @@ export const DELETE = withAuth(
         );
       }
       throw err;
+    }
+
+    // Failed deletes must not emit an audit entry (Phase Node-3
+    // acceptance). The manager mutation can resolve successfully but
+    // return a subset / empty `removeNodes` list — for example if the
+    // node was already gone or the manager refused the id post-scope-
+    // check. Treat absence from the deleted-id list as a failure.
+    if (!deletedIds.includes(nodeId)) {
+      return NextResponse.json(
+        { error: "Node was not deleted" },
+        { status: 409 },
+      );
     }
 
     await auditLog.record({

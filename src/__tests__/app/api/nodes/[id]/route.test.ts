@@ -192,6 +192,34 @@ describe("DELETE /api/nodes/[id]", () => {
     expect(mockAuditRecord).not.toHaveBeenCalled();
   });
 
+  it("emits no audit entry and returns 409 when removeNodes returns no deleted ids", async () => {
+    // Phase Node-3 acceptance: failed deletes must not emit audit
+    // events. The manager mutation can resolve cleanly but report an
+    // empty / subset deleted-id list (e.g., the node disappeared
+    // between getNode and the delete, or the manager refused it
+    // post-scope-check). Treat absence from the deleted list as a
+    // failure — no audit, non-success status.
+    mockGetNode.mockResolvedValue(sampleNode);
+    mockRemoveNodes.mockResolvedValue([]);
+
+    const { DELETE } = await import("@/app/api/nodes/[id]/route");
+    const response = await DELETE(makeRequest(), makeContext());
+
+    expect(response.status).toBe(409);
+    expect(mockAuditRecord).not.toHaveBeenCalled();
+  });
+
+  it("emits no audit entry when removeNodes returns a different id", async () => {
+    mockGetNode.mockResolvedValue(sampleNode);
+    mockRemoveNodes.mockResolvedValue(["some-other-id"]);
+
+    const { DELETE } = await import("@/app/api/nodes/[id]/route");
+    const response = await DELETE(makeRequest(), makeContext());
+
+    expect(response.status).toBe(409);
+    expect(mockAuditRecord).not.toHaveBeenCalled();
+  });
+
   it("falls back to the draft hostname when no profile is committed", async () => {
     mockGetNode.mockResolvedValue({
       ...sampleNode,

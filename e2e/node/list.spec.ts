@@ -311,26 +311,29 @@ test.describe("Node settings list page", () => {
     await expect(page.getByTestId("nodes-add-button")).toHaveCount(0);
   });
 
-  test("Tenant Admin sees the list but no tenant filter dropdown", async ({
+  test("Tenant Admin only sees their customer's nodes and no tenant filter dropdown", async ({
     page,
   }) => {
     // Tenant Admin holds full node CRUD but no `customers:access-all`.
-    // Cross-tenant scoping is enforced upstream at review-web (mocked
-    // here), so the meaningful client-visible signal is that the
-    // System-Admin-only "Customer" filter dropdown is absent — the
-    // user is implicitly scoped to their assigned customers.
+    // The mock returns a tenant-1-scoped node payload (alpha + beta)
+    // with no customer-2 row. We assert two things:
+    //   1. the list does NOT include a cross-tenant row (gamma-node);
+    //   2. the System-Admin-only "Customer" filter dropdown is absent.
+    // (1) verifies that when review-web filters out cross-tenant nodes
+    // the page renders the filtered set; (2) is the visible UI signal
+    // for the role downgrade.
     await stubSession.registerStub({
       operation: "nodeList",
       response: {
         kind: "fixture",
-        fixture: "node/nodeList.populated.json",
+        fixture: "node/nodeList.tenant1.json",
       },
     });
     await stubSession.registerStub({
       operation: "nodeStatusList",
       response: {
         kind: "fixture",
-        fixture: "node/nodeStatusList.populated.json",
+        fixture: "node/nodeStatusList.tenant1.json",
       },
     });
 
@@ -342,6 +345,18 @@ test.describe("Node settings list page", () => {
     await navigateToList(page);
 
     await expect(page.getByTestId("nodes-table")).toBeVisible();
+    // Tenant-scoped rows are present.
+    await expect(
+      page.getByTestId("nodes-row").filter({ hasText: "alpha-node" }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("nodes-row").filter({ hasText: "beta-node-renamed" }),
+    ).toBeVisible();
+    // Cross-tenant row must not surface.
+    await expect(
+      page.getByTestId("nodes-row").filter({ hasText: "gamma-node" }),
+    ).toHaveCount(0);
+    await expect(page.getByText("gamma-node")).toHaveCount(0);
     // Tenant Admin retains write affordances within their scope.
     await expect(page.getByTestId("nodes-add-button")).toBeVisible();
     // System-Admin-only tenant filter must not appear.

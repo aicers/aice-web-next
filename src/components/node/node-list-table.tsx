@@ -111,8 +111,12 @@ export function NodeListTable({
     return map;
   }, [customers]);
 
-  const hasAnyPing = useMemo(
-    () => rows.some((row) => row.ping !== null),
+  // The alive/dead chips track whether the initial `nodeStatusList`
+  // snapshot arrived for any row, NOT whether any row currently has a
+  // ping value. An all-dead snapshot is still data — leaving the chips
+  // disabled in that case would hide the dead facet from the user.
+  const hasStatusSnapshot = useMemo(
+    () => rows.some((row) => row.hasStatus),
     [rows],
   );
 
@@ -152,7 +156,11 @@ export function NodeListTable({
       next = next.filter((row) => {
         if (statusFacets.has("pending") && row.hasPending) return true;
         if (statusFacets.has("alive") && row.ping !== null) return true;
-        if (statusFacets.has("dead") && row.ping === null && hasAnyPing) {
+        // "dead" requires status data for the row (so an absent
+        // `nodeStatusList` row reads as "unknown" rather than dead).
+        // Falling back to `hasAnyPing` would have hidden every node
+        // when the entire snapshot returned `ping: null`.
+        if (statusFacets.has("dead") && row.hasStatus && row.ping === null) {
           return true;
         }
         return false;
@@ -173,15 +181,7 @@ export function NodeListTable({
     }
 
     return next;
-  }, [
-    rows,
-    search,
-    tenantFilter,
-    statusFacets,
-    customerNameById,
-    sort,
-    hasAnyPing,
-  ]);
+  }, [rows, search, tenantFilter, statusFacets, customerNameById, sort]);
 
   const pendingCount = useMemo(
     () => rows.filter((row) => row.hasPending).length,
@@ -359,18 +359,18 @@ export function NodeListTable({
               active={statusFacets.has("pending")}
               onClick={() => toggleStatusFacet("pending")}
             />
-            <StatusChipDisabledIfNoPing
+            <StatusChipDisabledIfNoStatus
               label={t("aliveFilterChip")}
               tooltip={t("statusFilterAliveDisabled")}
               active={statusFacets.has("alive")}
-              hasPing={hasAnyPing}
+              hasStatus={hasStatusSnapshot}
               onClick={() => toggleStatusFacet("alive")}
             />
-            <StatusChipDisabledIfNoPing
+            <StatusChipDisabledIfNoStatus
               label={t("deadFilterChip")}
               tooltip={t("statusFilterDeadDisabled")}
               active={statusFacets.has("dead")}
-              hasPing={hasAnyPing}
+              hasStatus={hasStatusSnapshot}
               onClick={() => toggleStatusFacet("dead")}
             />
           </fieldset>
@@ -624,32 +624,48 @@ function NodeListRow({
   onDelete,
 }: NodeListRowProps) {
   const t = useTranslations("nodes.list");
+  const router = useRouter();
+
+  // Issue #309 calls out "clicking the row navigates to /nodes/[id]".
+  // The Name cell's <Link> still owns href / keyboard navigation; this
+  // mouse-only handler extends the click target to the rest of the row.
+  // Interactive descendants (checkbox, kebab trigger / menu items, the
+  // existing link) call `stopPropagation` so the row navigation does
+  // not pre-empt them.
+  const onRowClick = useCallback(() => {
+    router.push(`/nodes/${row.id}`);
+  }, [router, row.id]);
+
+  const stopRowNav = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+  }, []);
 
   return (
     <TableRow
       className={cn(
-        "relative",
+        "relative cursor-pointer",
         row.hasPending && "border-l-2 border-amber-500",
       )}
       data-testid="nodes-row"
       data-row-id={row.id}
       data-pending={row.hasPending ? "true" : "false"}
+      onClick={onRowClick}
     >
       <TableCell className="pl-4">
         <Checkbox
           checked={selected}
           onCheckedChange={onSelect}
+          onClick={stopRowNav}
           aria-label={t("selectRow")}
         />
       </TableCell>
       <TableCell className="font-medium">
-        <RowLink id={row.id}>
-          <ValueWithDraft
-            applied={row.appliedName}
-            draft={row.draftName}
-            showPending={row.hasPending}
-          />
-        </RowLink>
+        <div className="flex items-center gap-2">
+          <RowLink id={row.id} onClick={stopRowNav}>
+            <ValueWithDraft applied={row.appliedName} draft={row.draftName} />
+          </RowLink>
+          {row.hasPending && <RowPendingBadge />}
+        </div>
       </TableCell>
       <TableCell>
         <ValueWithDraft applied={customerName} draft={draftCustomerName} />
@@ -683,6 +699,7 @@ function NodeListRow({
                 size="icon-xs"
                 aria-label={t("rowMenuLabel")}
                 data-testid="nodes-row-menu"
+                onClick={stopRowNav}
               >
                 <MoreVertical className="h-4 w-4" />
               </Button>
@@ -712,12 +729,21 @@ function NodeListRow({
   );
 }
 
-function RowLink({ id, children }: { id: string; children: React.ReactNode }) {
+function RowLink({
+  id,
+  children,
+  onClick,
+}: {
+  id: string;
+  children: React.ReactNode;
+  onClick?: (event: React.MouseEvent) => void;
+}) {
   return (
     <Link
       href={`/nodes/${id}`}
       className="hover:text-primary outline-none focus-visible:underline"
       data-testid="nodes-row-link"
+      onClick={onClick}
     >
       {children}
     </Link>
@@ -727,11 +753,9 @@ function RowLink({ id, children }: { id: string; children: React.ReactNode }) {
 function ValueWithDraft({
   applied,
   draft,
-  showPending,
 }: {
   applied: string;
   draft: string | null;
-  showPending?: boolean;
 }) {
   const t = useTranslations("nodes.list");
 
@@ -747,19 +771,21 @@ function ValueWithDraft({
       >
         {applied}
       </span>
-      <span className="text-foreground inline-flex items-center gap-1.5">
-        <span>{draft}</span>
-        {showPending && (
-          <Badge
-            variant="outline"
-            className="border-amber-500 px-1.5 py-0 text-[10px] uppercase tracking-wide text-amber-700"
-            data-testid="nodes-row-pending-badge"
-          >
-            {t("pendingBadge")}
-          </Badge>
-        )}
-      </span>
+      <span className="text-foreground">{draft}</span>
     </div>
+  );
+}
+
+function RowPendingBadge() {
+  const t = useTranslations("nodes.list");
+  return (
+    <Badge
+      variant="outline"
+      className="border-amber-500 px-1.5 py-0 text-[10px] uppercase tracking-wide text-amber-700"
+      data-testid="nodes-row-pending-badge"
+    >
+      {t("pendingBadge")}
+    </Badge>
   );
 }
 
@@ -880,20 +906,20 @@ function StatusChip({
   );
 }
 
-function StatusChipDisabledIfNoPing({
+function StatusChipDisabledIfNoStatus({
   label,
   tooltip,
   active,
-  hasPing,
+  hasStatus,
   onClick,
 }: {
   label: string;
   tooltip: string;
   active: boolean;
-  hasPing: boolean;
+  hasStatus: boolean;
   onClick: () => void;
 }) {
-  if (hasPing) {
+  if (hasStatus) {
     return <StatusChip label={label} active={active} onClick={onClick} />;
   }
 

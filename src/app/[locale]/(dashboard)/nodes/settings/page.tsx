@@ -7,7 +7,7 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 import { query } from "@/lib/db/client";
 import { ManagerUnavailableError } from "@/lib/node/errors";
-import { listNodeStatuses, listNodes } from "@/lib/node/server-actions";
+import { listAllNodeStatuses, listAllNodes } from "@/lib/node/server-actions";
 
 interface CustomerOption {
   id: string;
@@ -65,9 +65,15 @@ export default async function NodesSettingsPage() {
   let rows: NodeRow[] | null = null;
   let managerOffline = false;
   try {
+    // The list page must render every node the caller can see (Phase
+    // Node-3 acceptance). Paginate both `nodeList` and `nodeStatusList`
+    // through their `pageInfo.hasNextPage` so search / filter / delete
+    // operate on the full set, not a truncated 200-node window. The
+    // status fetch needs the same treatment so the alive/dead facet and
+    // Manager column are joined for every rendered row.
     const [nodeConn, statusConn] = await Promise.all([
-      listNodes(session, { first: 200 }),
-      listNodeStatuses(session, { first: 200 }),
+      listAllNodes(session),
+      listAllNodeStatuses(session),
     ]);
     rows = buildNodeRows(nodeConn, statusConn);
   } catch (err) {
