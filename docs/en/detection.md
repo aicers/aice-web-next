@@ -22,10 +22,76 @@ compact so they do not distract from the findings.
 A slim rail on the left lists two sections:
 
 - **Recommended Filter** — curated starting points.
-- **Saved Filters** — filters you have saved yourself.
+- **Saved Filters** — personal filters you have saved yourself.
 
 On narrow viewports the rail collapses to icons only. On desktop
 widths it expands to show the section headings.
+
+#### Saving a filter
+
+Open the filter drawer, configure the filter you want to keep, and
+click **Save this filter** in the drawer footer. A naming dialog
+opens pre-populated with an auto-generated name from the filter
+summary (e.g. `Last 1h · High`); accept the suggestion or type a
+new one and click **Save**.
+
+Names are personal and must be unique within your account — the
+dialog reports an inline error if you reuse a name. Saving the
+filter does not run the query; the saved entry shows up in the
+**Saved Filters** rail immediately and remains available across
+reloads.
+
+![Save filter dialog](../assets/detection-save-filter-dialog-en.png)
+
+#### Loading a saved filter
+
+Each row in the **Saved Filters** rail acts on the active workspace
+when you interact with it:
+
+- **Click the row** (or pick **Load in new tab** from the row's `⋮`
+  menu) — the default action — opens a new tab pre-seeded with the
+  saved filter and auto-runs the query, leaving the tab you were on
+  untouched. This matches the tab-bar contract that tabs are for
+  context switches.
+- **Load in current tab** (from the row's `⋮` menu) replaces the
+  active tab's filter with the saved filter and re-runs the query.
+  The active tab's pagination resets to the first page; the rest
+  of the workspace (analytics expansion, Quick peek selection)
+  follows the standard Apply contract.
+
+The filter loads with all of its committed fields applied —
+including the time range, levels, sensors, source / destination,
+direction, confidence bounds, country / category / kind / learning-
+method selections, and Network / IP endpoints carried in the
+filter payload.
+
+If the workspace already has the maximum 8 tabs open when you
+click a row or pick **Load in new tab**, the rail surfaces the
+same "close a tab to load — already at the 8-tab limit" toast
+the pivot path uses instead of silently no-opping. **Load in
+current tab** is unaffected by the cap because it does not
+create a new tab.
+
+#### Renaming and deleting
+
+The `⋮` menu on each saved-filter row also exposes:
+
+- **Rename** — opens a dialog pre-populated with the current name.
+  Submit a new unique name; duplicate names surface the same inline
+  error as the save dialog.
+- **Delete** — opens a confirmation dialog. Confirming removes the
+  saved filter; the action cannot be undone in v1 (no version
+  history). Open tabs that were loaded from this filter are not
+  affected — the tab keeps its own copy of the filter state.
+
+![Saved Filters rail](../assets/detection-saved-filters-rail-en.png)
+
+#### Scope and limits
+
+Saved filters are **personal in v1** — only you can see and manage
+the filters you have saved. Tenant or team sharing is not yet
+supported. The full filter payload is stored, so a saved filter
+will load correctly on any device once you sign in.
 
 ### Tab bar
 
@@ -60,14 +126,18 @@ view is never empty.
   auto-run** — the tab lands on the pre-query empty state
   ("Build a filter to begin") and the operator clicks Apply to
   populate it.
-- Activating a saved or recommended filter (in a later Detection
-  phase), or following a pivot link (Phase Detection-12), also
-  creates a new tab pre-seeded with the target filter rather
-  than replacing the current tab.
+- Activating a **saved filter** from the slim left rail (default
+  click — see "Saved Filters" above) or following a **pivot
+  link** (Phase Detection-12) also creates a new tab pre-seeded
+  with the target filter rather than replacing the current tab.
+  Recommended filters follow the same contract once the
+  recommendations surface lands.
 
 The tab cap is **8 simultaneous tabs**. At the cap the `+`
 affordance disables and surfaces a tooltip explaining that you
-need to close a tab first.
+need to close a tab first; saved-filter activation and pivot
+links surface the same cap message in a transient toast instead
+of silently no-opping.
 
 #### Switching tabs
 
@@ -955,9 +1025,16 @@ for every other chip type.
 
 ### Save this filter
 
-The **Save this filter** button is present alongside Apply but
-disabled in this phase. The naming flow is wired up in a later
-Detection phase.
+The **Save this filter** button sits alongside Apply in the
+filter drawer footer. Clicking it opens the naming dialog seeded
+with the auto-generated filter summary; submitting persists the
+filter to your personal **Saved Filters** rail. See "Saved
+Filters" above for the full save / load / rename / delete flow.
+
+Save shares the same time-range gate as Apply: if start/end is
+missing or end is not strictly later than start, the inline range
+error appears and the naming dialog never opens, so a draft
+Apply rejects can never be persisted as a saved filter.
 
 ## Export to CSV
 

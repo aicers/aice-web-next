@@ -166,6 +166,19 @@ export function applyManualEnd(
 }
 
 /**
+ * Whether the draft's time range is acceptable for submission.
+ * Apply and Save share this gate so a draft that Apply would reject
+ * (missing or reversed start/end) cannot be persisted as a saved
+ * filter via the drawer's Save button.
+ */
+export function isDraftRangeValid(
+  draft: Pick<DetectionFilterDraft, "startIso" | "endIso">,
+): boolean {
+  if (!draft.startIso || !draft.endIso) return false;
+  return Date.parse(draft.startIso) < Date.parse(draft.endIso);
+}
+
+/**
  * Whether the draft's confidence range equals the `[0, 1]` default
  * (i.e. no confidence filter should be submitted). Shared between
  * the drawer and the filter-assembly helper so both agree on the

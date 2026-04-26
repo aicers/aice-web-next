@@ -128,9 +128,12 @@ test("filter drawer opens from the Filters button and exposes chips + inputs", a
   const applyButton = page.getByRole("button", { name: "Apply", exact: true });
   await expect(applyButton).toBeEnabled();
 
-  // Save this filter is stubbed in this phase.
-  const saveButton = page.getByRole("button", { name: "Save this filter" });
-  await expect(saveButton).toBeDisabled();
+  // Save this filter is wired in Phase Detection-15: the drawer button
+  // is enabled because the saved-filters hook owns the rail in this
+  // page. The save dialog itself is exercised by the unit + action
+  // tests under `src/__tests__`; the drawer affordance just opens it.
+  const saveButton = drawer.getByRole("button", { name: "Save this filter" });
+  await expect(saveButton).toBeEnabled();
 
   // Picking a different chip toggles its pressed state.
   const weekChip = drawer.getByRole("button", { name: "Last 1 week" });

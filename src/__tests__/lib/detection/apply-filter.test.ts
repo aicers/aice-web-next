@@ -105,4 +105,65 @@ describe("buildAppliedFilter", () => {
     expect(next.input.start).toBe(START);
     expect(next.input.end).toBe(END);
   });
+
+  it("preserves predefined endpoint references that the draft cannot represent", () => {
+    // Reviewer Round 2: predefined endpoint groups have no shape in
+    // `EndpointEntry`, so a saved filter (or any current filter)
+    // carrying `{ direction, predefined }` would be silently dropped
+    // when the drawer Apply rebuilt `endpoints` from the draft. The
+    // pivot path preserves them; this path now does the same.
+    const current: Filter = {
+      mode: "structured",
+      input: {
+        start: "2026-04-22T10:00:00.000Z",
+        end: "2026-04-22T11:00:00.000Z",
+        endpoints: [
+          { direction: "FROM", predefined: "net-1" },
+          {
+            direction: "TO",
+            custom: { hosts: ["10.0.0.5"], networks: [], ranges: [] },
+          },
+        ],
+      },
+    };
+    const next = buildAppliedFilter(current, draft());
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(next.input.endpoints).toEqual([
+      { direction: "FROM", predefined: "net-1" },
+    ]);
+  });
+
+  it("re-emits predefined endpoints alongside rebuilt custom rules", () => {
+    const current: Filter = {
+      mode: "structured",
+      input: {
+        start: "2026-04-22T10:00:00.000Z",
+        end: "2026-04-22T11:00:00.000Z",
+        endpoints: [{ direction: null, predefined: "net-2" }],
+      },
+    };
+    const next = buildAppliedFilter(
+      current,
+      draft({
+        endpoints: [
+          {
+            id: "1",
+            raw: "10.0.0.1",
+            kind: "host",
+            host: "10.0.0.1",
+            direction: "SOURCE",
+            selected: true,
+          },
+        ],
+      }),
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(next.input.endpoints).toEqual([
+      { direction: null, predefined: "net-2" },
+      {
+        direction: "FROM",
+        custom: { hosts: ["10.0.0.1"], networks: [], ranges: [] },
+      },
+    ]);
+  });
 });

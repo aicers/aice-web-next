@@ -194,6 +194,21 @@ export async function resetAccountDefaults(username: string): Promise<void> {
 }
 
 /**
+ * Drop every personal saved filter for the named account. Used by
+ * the screenshot spec to put the rail in a deterministic state
+ * before populating it for each capture.
+ */
+export async function deleteSavedFiltersForAccount(
+  username: string,
+): Promise<void> {
+  await pool.query(
+    `DELETE FROM saved_filter
+     WHERE owner_account_id = (SELECT id FROM accounts WHERE username = $1)`,
+    [username],
+  );
+}
+
+/**
  * Set `last_active_at` to a time in the past to simulate idle timeout.
  * Only affects non-revoked sessions.
  */

@@ -25,6 +25,7 @@ import {
   CONFIDENCE_STEP,
   type DetectionFilterDraft,
   formatConfidenceInput,
+  isDraftRangeValid,
   isoToLocalInput,
   normalizeDraftForSubmit,
   setConfidenceMax,
@@ -87,7 +88,13 @@ export interface FilterDrawerLabels {
   confidenceMaxLabel: string;
   apply: string;
   saveThisFilter: string;
-  saveThisFilterComingSoon: string;
+  /**
+   * Tooltip surfaced when the "Save this filter" affordance is
+   * disabled — the parent did not wire `onSaveRequest`. Kept as a
+   * separate label so the disabled-state messaging can be tuned per
+   * release without crossing the active button label.
+   */
+  saveThisFilterDisabled: string;
   invalidRange: string;
   close: string;
   endpointLabel: string;
@@ -210,6 +217,15 @@ interface FilterDrawerProps {
    * refocus reliably.
    */
   focusToken?: number;
+  /**
+   * Click handler for the "Save this filter" affordance. When provided
+   * the button is enabled and bubbles the current draft (already
+   * normalized for submit) up to the parent so the Save dialog can
+   * open with a sensible default name. `undefined` keeps the button
+   * disabled — the same contract Phase Detection-3 shipped before
+   * Phase Detection-15 wired this.
+   */
+  onSaveRequest?: (draft: DetectionFilterDraft) => void;
 }
 
 /**
@@ -235,6 +251,7 @@ export function FilterDrawer({
   onSensorRetry,
   focusField = null,
   focusToken = 0,
+  onSaveRequest,
 }: FilterDrawerProps) {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [endpointPanelOpen, setEndpointPanelOpen] = useState(false);
@@ -405,28 +422,33 @@ export function FilterDrawer({
     onDraftChange({ ...draft, [field]: value });
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (
-      !draft.startIso ||
-      !draft.endIso ||
-      Date.parse(draft.startIso) >= Date.parse(draft.endIso)
-    ) {
+  // Shared range gate for Apply and Save: rejects missing or reversed
+  // start/end the same way for both paths, surfaces the inline range
+  // error, and canonicalises the transient confidence text so a still-
+  // focused input (Apply via Enter, Save via click) doesn't leak a
+  // partial value like "0." into the next reopen of the drawer.
+  function commitRangeGate(): boolean {
+    if (!isDraftRangeValid(draft)) {
       setValidationError(labels.invalidRange);
-      return;
+      return false;
     }
-    // Submit via Enter doesn't fire blur on the focused confidence
-    // input, so an intermediate value like "0." or "" would otherwise
-    // stay in the transient text after the drawer closes. The drawer
-    // is kept mounted by the shell and reopened with the same draft,
-    // so without this sync the next open would show stale raw text
-    // while the committed filter already used the fallback numeric.
-    // Clear the focus refs so a re-focus after reopen starts clean.
     minFocusedRef.current = false;
     maxFocusedRef.current = false;
     setConfidenceMinText(formatConfidenceInput(draft.confidenceMin));
     setConfidenceMaxText(formatConfidenceInput(draft.confidenceMax));
+    return true;
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!commitRangeGate()) return;
     onApply(normalizeDraftForSubmit(draft));
+  }
+
+  function handleSaveClick() {
+    if (!onSaveRequest) return;
+    if (!commitRangeGate()) return;
+    onSaveRequest(normalizeDraftForSubmit(draft));
   }
 
   const endpointCount = draft.endpoints.filter((e) => e.selected).length;
@@ -804,9 +826,12 @@ export function FilterDrawer({
               <Button
                 type="button"
                 variant="outline"
-                disabled
-                aria-disabled="true"
-                title={labels.saveThisFilterComingSoon}
+                disabled={!onSaveRequest}
+                aria-disabled={!onSaveRequest ? "true" : undefined}
+                title={
+                  !onSaveRequest ? labels.saveThisFilterDisabled : undefined
+                }
+                onClick={handleSaveClick}
               >
                 {labels.saveThisFilter}
               </Button>

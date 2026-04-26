@@ -48,10 +48,19 @@ import {
   type ResultListState,
 } from "@/components/detection/result-list";
 import {
+  SaveFilterDialog,
+  type SaveFilterDialogLabels,
+} from "@/components/detection/save-filter-dialog";
+import {
+  SavedFiltersRail,
+  type SavedFiltersRailLabels,
+} from "@/components/detection/saved-filters-rail";
+import {
   type CsvExportPayload,
   useCsvExport,
 } from "@/components/detection/use-csv-export";
 import { useCsvExportTotalCountGetter } from "@/components/detection/use-render-synced-ref";
+import type { UseSavedFiltersResult } from "@/components/detection/use-saved-filters";
 import { EVENT_KIND_FRIENDLY_NAMES } from "@/components/events/event-display-helpers";
 import { Button } from "@/components/ui/button";
 import {
@@ -79,6 +88,7 @@ import {
   buildEndpointChips,
   type EndpointChipLabels,
   type EndpointEntry,
+  endpointEntriesFromEndpointInputs,
 } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
 import {
@@ -109,13 +119,20 @@ import {
   paginationToSearchEntries,
   totalPagesFrom,
 } from "@/lib/detection/pagination";
-import type { PeriodKey } from "@/lib/detection/period";
+import {
+  DEFAULT_PERIOD_KEY,
+  matchesPeriodKey,
+  type PeriodKey,
+} from "@/lib/detection/period";
 import type { PivotPatch } from "@/lib/detection/pivot";
 import {
   applyQuickPeekToken,
   readQuickPeekToken,
 } from "@/lib/detection/quick-peek-url";
-import { preserveActiveTabParam } from "@/lib/detection/tabs";
+import {
+  autoTabName as autoTabNameFromChips,
+  preserveActiveTabParam,
+} from "@/lib/detection/tabs";
 import type {
   Event as DetectionEvent,
   LearningMethod,
@@ -224,6 +241,35 @@ export interface AnalyticsLabelStrings {
   pivotActivateTemplate: string;
 }
 
+/**
+ * Serializable subset of {@link SavedFiltersRailLabels} — the server
+ * page passes plain strings. The function-valued `menuLabel`
+ * formatter (it carries a dynamic `{name}` arg) is bound on the
+ * client side using the active locale's translator before being
+ * threaded into the rail.
+ */
+export interface SavedFiltersRailLabelStrings {
+  title: string;
+  emptyHint: string;
+  loadingHint: string;
+  loadErrorHint: string;
+  /** ICU template carrying `{name}` for the per-row menu trigger. */
+  menuLabelTemplate: string;
+  loadInNewTab: string;
+  loadInCurrentTab: string;
+  rename: string;
+  delete: string;
+  deleteConfirm: {
+    title: string;
+    /** ICU template carrying `{name}` for the body copy. */
+    descriptionTemplate: string;
+    cancel: string;
+    confirm: string;
+    error: string;
+  };
+  renameDialog: SaveFilterDialogLabels;
+}
+
 export interface DetectionShellLabels {
   /**
    * CSV export affordance labels — confirmation dialog copy, the
@@ -247,6 +293,21 @@ export interface DetectionShellLabels {
   recommendedFilter: string;
   savedFilters: string;
   railPlaceholder: string;
+  /**
+   * Serializable subset of {@link SavedFiltersRailLabels} — the
+   * server page passes plain strings (the menu a11y label is an ICU
+   * template carrying `{name}`); the shell binds the function-valued
+   * `menuLabel` formatter using the active locale's translator before
+   * the rail is rendered. Includes templates / strings for the
+   * embedded rename and delete confirmation dialogs.
+   */
+  savedFiltersRail: SavedFiltersRailLabelStrings;
+  /**
+   * Labels for the "Save this filter" dialog opened from the filter
+   * drawer footer. Plain strings — the dialog handles its own
+   * inline error rendering.
+   */
+  saveFilterDialog: SaveFilterDialogLabels;
   filtersOpen: string;
   activeChipsEmpty: string;
   resultsRegion: string;
@@ -506,6 +567,23 @@ export interface DetectionShellProps {
    * shell paths).
    */
   onPivot?: (patch: PivotPatch) => void;
+  /**
+   * Personal saved-filters state owned by the multi-tab wrapper
+   * (Phase Detection-15). Threaded down so the rail stays consistent
+   * across tabs and a save in one tab refreshes every tab's rail.
+   * `undefined` keeps the rail in its placeholder shape — used by the
+   * standalone shell tests that do not exercise the saved-filters
+   * rail.
+   */
+  savedFilters?: UseSavedFiltersResult;
+  /**
+   * Activation hook for "Load in new tab" / per-row default click on
+   * a saved filter. The wrapper creates a new tab pre-seeded with the
+   * supplied filter and auto-runs the query so the new tab lands
+   * populated rather than on the pre-query empty state — matching the
+   * pivot tab-create contract.
+   */
+  onLoadSavedFilterInNewTab?: (filter: Filter) => void;
 }
 
 /**
@@ -756,6 +834,24 @@ export function shouldResumeQueryOnMount(
   return loading === true;
 }
 
+/**
+ * Re-derive the period key from a saved filter's start / end pair.
+ * Saved filter payloads only persist the structured `EventListFilterInput`
+ * (per the issue's data model), so the rich `period` field in the
+ * tab snapshot is not stored — we recompute it on load so the period
+ * chip lights up when the saved range exactly matches one of the
+ * preset windows. Query-mode filters return `null` (no period chip
+ * to highlight). The {@link matchesPeriodKey} helper keeps the
+ * comparison exact, so a user-edited range that happens to fall in
+ * a preset's neighbourhood does not spuriously re-stamp the chip.
+ */
+export function derivePeriodForFilter(filter: Filter): PeriodKey | null {
+  if (filter.mode !== "structured") return null;
+  const { start, end } = filter.input;
+  if (typeof start !== "string" || typeof end !== "string") return null;
+  return matchesPeriodKey({ start, end });
+}
+
 export function DetectionShell({
   title,
   labels,
@@ -774,6 +870,8 @@ export function DetectionShell({
   initialPendingQuickPeekToken = null,
   onStateChange,
   onPivot,
+  savedFilters,
+  onLoadSavedFilterInNewTab,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
@@ -1563,6 +1661,95 @@ export function DetectionShell({
     ],
   );
 
+  /**
+   * Replace the active tab's committed filter with a saved-filter
+   * payload and re-run the query. Mirrors the {@link handleApply}
+   * URL / cache-reset contract so loading a saved filter is
+   * indistinguishable from re-applying it from the drawer — the
+   * draft is dropped so the next drawer open rebuilds from the
+   * loaded filter, the period chip is re-derived via
+   * {@link matchesPeriodKey}, and rich endpoint entries are
+   * rehydrated from `filter.input.endpoints` so the chip bar /
+   * drawer stay in sync. Without rehydration the next drawer Apply
+   * would rebuild `input.endpoints` from an empty draft and silently
+   * clear the saved Network/IP rules.
+   */
+  const loadFilterIntoCurrentTab = useCallback(
+    (filter: Filter) => {
+      const period = derivePeriodForFilter(filter);
+      const endpoints =
+        filter.mode === "structured"
+          ? endpointEntriesFromEndpointInputs(filter.input.endpoints)
+          : [];
+      setCommittedFilter(filter);
+      setCommittedPeriod(period);
+      setCommittedEndpoints(endpoints);
+      setDraft(null);
+      setDrawerOpen(false);
+
+      const search = buildEncodedFilterSearch({
+        filter,
+        period,
+        endpoints,
+        pivotExtras: extrasFromPivotOnly(pivotOnly),
+      });
+      if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
+        search.set("pageSize", String(pagination.pageSize));
+      }
+      preserveActiveTabParam(search);
+      const qs = search.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(window.history.state, "", url);
+
+      runQueryFor(filter);
+    },
+    [pagination.pageSize, pathname, pivotOnly, runQueryFor],
+  );
+
+  // Save dialog state — opened from the drawer's "Save this filter"
+  // button. The dialog opens with the draft normalized into a
+  // {@link Filter} so the saved payload exactly matches what an
+  // immediate Apply would commit, and a chip-based default name so
+  // the operator can confirm without typing.
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [saveDialogFilter, setSaveDialogFilter] = useState<Filter | null>(null);
+  const [saveDialogDefaultName, setSaveDialogDefaultName] = useState("");
+
+  const handleSaveSubmit = useCallback(
+    async (name: string) => {
+      if (!savedFilters || !saveDialogFilter) {
+        return { ok: false as const, code: "server-error" as const };
+      }
+      const result = await savedFilters.save(name, saveDialogFilter);
+      if (result.ok) {
+        return { ok: true as const };
+      }
+      return { ok: false as const, code: result.code };
+    },
+    [saveDialogFilter, savedFilters],
+  );
+
+  // Bind the rail's function-valued labels (the per-row menu a11y
+  // formatter takes a dynamic `name` arg) using the active locale's
+  // translator on this side of the server→client boundary.
+  const railLabels = useMemo<SavedFiltersRailLabels>(() => {
+    const railStrings = labels.savedFiltersRail;
+    return {
+      title: railStrings.title,
+      emptyHint: railStrings.emptyHint,
+      loadingHint: railStrings.loadingHint,
+      loadErrorHint: railStrings.loadErrorHint,
+      menuLabel: (name: string) =>
+        railStrings.menuLabelTemplate.replace("{name}", name),
+      loadInNewTab: railStrings.loadInNewTab,
+      loadInCurrentTab: railStrings.loadInCurrentTab,
+      rename: railStrings.rename,
+      delete: railStrings.delete,
+      deleteConfirm: railStrings.deleteConfirm,
+      renameDialog: railStrings.renameDialog,
+    };
+  }, [labels.savedFiltersRail]);
+
   const handleRemoveChip = useCallback(
     (target: ChipRemoveTarget) => {
       const next = removeActiveChip(
@@ -2217,6 +2404,50 @@ export function DetectionShell({
   );
   const hasChips = summarizedChips.length > 0 || endpointChips.length > 0;
 
+  // Save dialog opens with the draft normalized to a Filter so the
+  // saved payload exactly matches what an immediate Apply would
+  // commit. Defined here because the chip summariser + sensor
+  // options are declared just above; placing the callback any
+  // earlier would reference variables before their declaration.
+  const handleSaveRequest = useCallback(
+    (applied: DetectionFilterDraft) => {
+      const endpointLive =
+        sensorCache.status === "loaded" && sensorCache.endpointAvailable;
+      const next = buildAppliedFilter(
+        committedFilter,
+        applied,
+        endpointLive,
+        options,
+      );
+      const chips = summarizeFilter(next, summarizeLabels, {
+        period: applied.period,
+        sensorOptions,
+        categoricalOptions: {
+          levels: options.levels,
+          countries: options.countries,
+          learningMethods: options.learningMethods,
+          categories: options.categories,
+          kinds: options.kinds,
+        },
+      });
+      const defaultName = autoTabNameFromChips(
+        chips.map((c) => c.value),
+        labels.drawer.periodOptions[DEFAULT_PERIOD_KEY],
+      );
+      setSaveDialogFilter(next);
+      setSaveDialogDefaultName(defaultName);
+      setSaveDialogOpen(true);
+    },
+    [
+      committedFilter,
+      labels.drawer.periodOptions,
+      options,
+      sensorCache,
+      sensorOptions,
+      summarizeLabels,
+    ],
+  );
+
   const resultRange = useMemo<{ start: string; end: string } | null>(() => {
     if (committedFilter.mode !== "structured") return null;
     const { start, end } = committedFilter.input;
@@ -2508,11 +2739,24 @@ export function DetectionShell({
           title={labels.recommendedFilter}
           placeholder={labels.railPlaceholder}
         />
-        <RailSection
-          icon={<Bookmark className="size-4" />}
-          title={labels.savedFilters}
-          placeholder={labels.railPlaceholder}
-        />
+        {savedFilters ? (
+          <SavedFiltersRail
+            state={savedFilters}
+            labels={railLabels}
+            onLoadInCurrentTab={(filter) =>
+              loadFilterIntoCurrentTab(filter.filter)
+            }
+            onLoadInNewTab={(filter) =>
+              onLoadSavedFilterInNewTab?.(filter.filter)
+            }
+          />
+        ) : (
+          <RailSection
+            icon={<Bookmark className="size-4" />}
+            title={labels.savedFilters}
+            placeholder={labels.railPlaceholder}
+          />
+        )}
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col gap-4">
@@ -2724,6 +2968,20 @@ export function DetectionShell({
           onSensorRetry={triggerSensorFetch}
           focusField={focusField}
           focusToken={focusToken}
+          onSaveRequest={savedFilters ? handleSaveRequest : undefined}
+        />
+      ) : null}
+
+      {savedFilters ? (
+        <SaveFilterDialog
+          open={saveDialogOpen && saveDialogFilter !== null}
+          onOpenChange={(open) => {
+            setSaveDialogOpen(open);
+            if (!open) setSaveDialogFilter(null);
+          }}
+          defaultName={saveDialogDefaultName}
+          labels={labels.saveFilterDialog}
+          onSubmit={handleSaveSubmit}
         />
       ) : null}
 

@@ -4,8 +4,11 @@ import {
   buildEndpointChips,
   type EndpointChipLabels,
   type EndpointEntry,
+  type EndpointInput,
+  endpointEntriesFromEndpointInputs,
   endpointsToEndpointInputs,
   parseEndpointInput,
+  preservePredefinedEndpointInputs,
 } from "@/lib/detection";
 
 const CHIP_LABELS: EndpointChipLabels = {
@@ -166,6 +169,122 @@ describe("endpointsToEndpointInputs", () => {
     ];
     const result = endpointsToEndpointInputs(entries);
     expect(result.map((e) => e.direction)).toEqual(["FROM", "TO"]);
+  });
+});
+
+describe("endpointEntriesFromEndpointInputs", () => {
+  it("expands hosts/networks/ranges back into one selected entry per rule", () => {
+    const entries = endpointEntriesFromEndpointInputs([
+      {
+        direction: "FROM",
+        custom: {
+          hosts: ["10.0.0.1"],
+          networks: ["10.0.0.0/24"],
+          ranges: [{ start: "10.1.1.1", end: "10.1.1.20" }],
+        },
+      },
+      {
+        direction: "TO",
+        custom: { hosts: ["10.0.0.2"], networks: [], ranges: [] },
+      },
+      {
+        direction: null,
+        custom: { hosts: ["10.0.0.3"], networks: [], ranges: [] },
+      },
+    ]);
+    expect(entries).toHaveLength(5);
+    expect(entries.every((e) => e.selected)).toBe(true);
+    expect(
+      entries.map((e) => ({ kind: e.kind, direction: e.direction })),
+    ).toEqual([
+      { kind: "host", direction: "SOURCE" },
+      { kind: "network", direction: "SOURCE" },
+      { kind: "range", direction: "SOURCE" },
+      { kind: "host", direction: "DESTINATION" },
+      { kind: "host", direction: "BOTH" },
+    ]);
+    const range = entries[2];
+    expect(range.range).toEqual({ start: "10.1.1.1", end: "10.1.1.20" });
+    expect(range.raw).toBe("10.1.1.1 - 10.1.1.20");
+  });
+
+  it("round-trips through endpointsToEndpointInputs without losing rules", () => {
+    const inputs: EndpointInput[] = [
+      {
+        direction: null,
+        custom: { hosts: ["10.0.0.0"], networks: ["10.0.0.0/24"], ranges: [] },
+      },
+      {
+        direction: "FROM",
+        custom: {
+          hosts: [],
+          networks: [],
+          ranges: [{ start: "10.1.1.1", end: "10.1.1.20" }],
+        },
+      },
+      {
+        direction: "TO",
+        custom: { hosts: ["10.0.0.9"], networks: [], ranges: [] },
+      },
+    ];
+    const rebuilt = endpointsToEndpointInputs(
+      endpointEntriesFromEndpointInputs(inputs),
+    );
+    expect(rebuilt).toEqual(inputs);
+  });
+
+  it("skips predefined-only entries since the EndpointEntry mirror has no shape for them", () => {
+    const entries = endpointEntriesFromEndpointInputs([
+      { direction: null, predefined: "predefined-id" },
+    ]);
+    expect(entries).toEqual([]);
+  });
+
+  it("handles a null/undefined input safely", () => {
+    expect(endpointEntriesFromEndpointInputs(null)).toEqual([]);
+    expect(endpointEntriesFromEndpointInputs(undefined)).toEqual([]);
+    expect(endpointEntriesFromEndpointInputs([])).toEqual([]);
+  });
+});
+
+describe("preservePredefinedEndpointInputs", () => {
+  it("extracts predefined-only entries with their direction", () => {
+    expect(
+      preservePredefinedEndpointInputs([
+        { direction: "FROM", predefined: "net-1" },
+        { direction: null, predefined: "net-2" },
+      ]),
+    ).toEqual([
+      { direction: "FROM", predefined: "net-1" },
+      { direction: null, predefined: "net-2" },
+    ]);
+  });
+
+  it("strips co-located custom payload so the mirror does not double-count rules", () => {
+    expect(
+      preservePredefinedEndpointInputs([
+        {
+          direction: "TO",
+          predefined: "net-1",
+          custom: { hosts: ["10.0.0.1"], networks: [], ranges: [] },
+        },
+      ]),
+    ).toEqual([{ direction: "TO", predefined: "net-1" }]);
+  });
+
+  it("skips custom-only and empty / nullish entries", () => {
+    expect(
+      preservePredefinedEndpointInputs([
+        {
+          direction: "FROM",
+          custom: { hosts: ["10.0.0.1"], networks: [], ranges: [] },
+        },
+        { direction: null, predefined: "" },
+      ]),
+    ).toEqual([]);
+    expect(preservePredefinedEndpointInputs(null)).toEqual([]);
+    expect(preservePredefinedEndpointInputs(undefined)).toEqual([]);
+    expect(preservePredefinedEndpointInputs([])).toEqual([]);
   });
 });
 

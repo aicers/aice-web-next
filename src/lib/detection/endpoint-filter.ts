@@ -254,3 +254,104 @@ export function createEndpointEntryId(): string {
   idCounter += 1;
   return `endpoint-${Date.now().toString(36)}-${idCounter.toString(36)}`;
 }
+
+/**
+ * Inverse of {@link endpointsToEndpointInputs}: expand a GraphQL
+ * `EndpointInput[]` payload back into the rich `EndpointEntry[]` the
+ * drawer and chip bar render from. Used by the saved-filter load
+ * paths so the active-tab chip bar and drawer stay in sync with
+ * `filter.input.endpoints` rather than collapsing to an empty list
+ * (which would cause the very next drawer Apply to silently clear
+ * the saved Network/IP rules).
+ *
+ * Predefined-network entries (`{ predefined }`) have no
+ * representation in {@link EndpointEntry}, so they are skipped
+ * here — they survive intact inside `filter.input.endpoints`, which
+ * is the source of truth for the dispatched query. Any rule a row
+ * is built from re-emerges through `endpointsToEndpointInputs` on
+ * the next Apply, mirroring the round-trip the pivot path performs.
+ */
+export function endpointEntriesFromEndpointInputs(
+  inputs: readonly EndpointInput[] | null | undefined,
+): EndpointEntry[] {
+  if (!inputs || inputs.length === 0) return [];
+  const out: EndpointEntry[] = [];
+  for (const entry of inputs) {
+    if (!entry?.custom) continue;
+    const direction = trafficDirectionToEndpointEntryDirection(
+      entry.direction ?? null,
+    );
+    for (const host of entry.custom.hosts ?? []) {
+      out.push({
+        id: createEndpointEntryId(),
+        raw: host,
+        kind: "host",
+        host,
+        direction,
+        selected: true,
+      });
+    }
+    for (const network of entry.custom.networks ?? []) {
+      out.push({
+        id: createEndpointEntryId(),
+        raw: network,
+        kind: "network",
+        network,
+        direction,
+        selected: true,
+      });
+    }
+    for (const range of entry.custom.ranges ?? []) {
+      if (!range || typeof range.start !== "string") continue;
+      if (typeof range.end !== "string") continue;
+      out.push({
+        id: createEndpointEntryId(),
+        raw: `${range.start} - ${range.end}`,
+        kind: "range",
+        range: { start: range.start, end: range.end },
+        direction,
+        selected: true,
+      });
+    }
+  }
+  return out;
+}
+
+function trafficDirectionToEndpointEntryDirection(
+  direction: TrafficDirection | null,
+): EndpointEntryDirection {
+  if (direction === "FROM") return "SOURCE";
+  if (direction === "TO") return "DESTINATION";
+  return "BOTH";
+}
+
+/**
+ * Pull out the `predefined` references from an existing schema
+ * payload as standalone entries. The drawer's `EndpointEntry` UI
+ * mirror has no shape for predefined networks (only host / range /
+ * network), so a round-trip through the mirror would erase them.
+ * Both the pivot path and the drawer Apply path replay this on top
+ * of the rebuilt custom side so a filter that selects a predefined
+ * network keeps that constraint when the operator drills into a
+ * host on the same row, opens/applies the drawer, or saves /
+ * reloads the filter.
+ *
+ * Strips any co-located `custom` payload — those rules are already
+ * represented in the mirror and re-emerge through
+ * `endpointsToEndpointInputs`, so duplicating them here would
+ * double-count the operator's hosts.
+ */
+export function preservePredefinedEndpointInputs(
+  source: readonly EndpointInput[] | null | undefined,
+): EndpointInput[] {
+  if (!source) return [];
+  const out: EndpointInput[] = [];
+  for (const entry of source) {
+    if (!entry) continue;
+    if (typeof entry.predefined !== "string") continue;
+    if (entry.predefined.length === 0) continue;
+    const direction = entry.direction ?? null;
+    out.push({ direction, predefined: entry.predefined });
+  }
+  return out;
+}
