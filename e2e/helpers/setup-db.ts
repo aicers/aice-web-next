@@ -383,6 +383,36 @@ export async function deleteCustomersByPrefix(prefix: string): Promise<void> {
 }
 
 /**
+ * Ensure at least one row exists in `customers` so callers with
+ * `customers:access-all` resolve to a non-empty `customer_ids` scope
+ * (`resolveEffectiveCustomerIds` rejects empty scopes for Detection).
+ * Idempotent: inserts once, returns the existing row id thereafter.
+ *
+ * Skips the customer-database provisioning that the
+ * `/api/customers` route runs — REview is mocked, so nothing reads
+ * the per-tenant database. Callers that hand off to the live
+ * provisioner must use the API instead.
+ */
+export async function ensureCustomerExists(
+  name: string,
+  databaseName?: string,
+): Promise<number> {
+  const dbName = databaseName ?? `${name.toLowerCase()}_db`;
+  const existing = await pool.query<{ id: number }>(
+    "SELECT id FROM customers WHERE database_name = $1",
+    [dbName],
+  );
+  if (existing.rows.length > 0) return existing.rows[0].id;
+  const { rows } = await pool.query<{ id: number }>(
+    `INSERT INTO customers (name, description, database_name, status)
+     VALUES ($1, $2, $3, 'active')
+     RETURNING id`,
+    [name, "E2E seeded customer (no provisioned database)", dbName],
+  );
+  return rows[0].id;
+}
+
+/**
  * Assign a customer to an account via direct DB insert.
  */
 export async function assignCustomerToAccount(

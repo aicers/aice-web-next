@@ -1,6 +1,6 @@
 import { expect, test } from "./fixtures";
 import { resetRateLimits, signInAndWait } from "./helpers/auth";
-import { resetAccountDefaults } from "./helpers/setup-db";
+import { ensureCustomerExists, resetAccountDefaults } from "./helpers/setup-db";
 import { closeAdminAgent, mockServerSession } from "./mock-server-admin";
 
 /**
@@ -35,6 +35,13 @@ const session = mockServerSession();
 
 test.beforeAll(async () => {
   await resetRateLimits();
+  // Detection's SSR fetch goes through `resolveEffectiveCustomerIds`,
+  // which throws when the `customers` table is empty even for callers
+  // with `customers:access-all`. CI's e2e auth_db has no seeded
+  // customers (the suite never needed any until this spec started
+  // depending on the result-list rendering), so seed one before the
+  // first navigation. Idempotent: re-running the suite reuses the row.
+  await ensureCustomerExists("E2E Detection Pivot", "e2e_detection_pivot_db");
   await session.registerStub({
     operation: "eventList",
     matchVariables: { first: 200 },
