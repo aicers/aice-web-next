@@ -1031,6 +1031,11 @@ with the auto-generated filter summary; submitting persists the
 filter to your personal **Saved Filters** rail. See "Saved
 Filters" above for the full save / load / rename / delete flow.
 
+Save shares the same time-range gate as Apply: if start/end is
+missing or end is not strictly later than start, the inline range
+error appears and the naming dialog never opens, so a draft
+Apply rejects can never be persisted as a saved filter.
+
 ## Export to CSV
 
 The **Download CSV** button at the right of the result header

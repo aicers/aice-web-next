@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyConfidenceMin,
+  applyManualEnd,
+  applyManualStart,
   CONFIDENCE_DEFAULT_MAX,
   CONFIDENCE_DEFAULT_MIN,
   type DetectionFilterDraft,
   formatConfidenceInput,
+  isDraftRangeValid,
+  isoToLocalInput,
+  normalizeDraftForSubmit,
   setConfidenceMin,
 } from "@/lib/detection/filter-draft";
 
@@ -196,6 +201,98 @@ describe("filter-drawer confidence input interaction", () => {
 
       h = onSubmit(h);
       expect(h.text).toBe("0.00");
+    });
+  });
+
+  // Round 5 P2 regression: the Save button used to call
+  // `onSaveRequest(normalizeDraftForSubmit(draft))` directly, so a
+  // reversed-range draft (or one with a cleared start/end) opened the
+  // naming dialog and could be persisted even though Apply rejected
+  // the same input with the inline range error. The drawer now routes
+  // both the Apply form-submit and the Save click through a shared
+  // `commitRangeGate()` whose logic is `isDraftRangeValid(draft)` plus
+  // the transient-text canonicalisation. This block mirrors that gate
+  // so the contract is locked in at the lib boundary.
+  describe("save path shares the apply range gate", () => {
+    interface SaveHarness {
+      draft: DetectionFilterDraft;
+      validationError: string | null;
+      saved: DetectionFilterDraft | null;
+    }
+
+    function commitRangeGate(h: SaveHarness): {
+      ok: boolean;
+      next: SaveHarness;
+    } {
+      if (!isDraftRangeValid(h.draft)) {
+        return {
+          ok: false,
+          next: { ...h, validationError: "invalid range" },
+        };
+      }
+      return { ok: true, next: { ...h, validationError: null } };
+    }
+
+    function clickSave(h: SaveHarness): SaveHarness {
+      const { ok, next } = commitRangeGate(h);
+      if (!ok) return next;
+      return { ...next, saved: normalizeDraftForSubmit(next.draft) };
+    }
+
+    function rangedDraft(): DetectionFilterDraft {
+      const startIso = "2026-04-22T11:00:00.000Z";
+      const endIso = "2026-04-22T12:00:00.000Z";
+      return {
+        ...base(),
+        startLocal: isoToLocalInput(startIso),
+        endLocal: isoToLocalInput(endIso),
+        startIso,
+        endIso,
+      };
+    }
+
+    it("opens the naming dialog only for valid forward ranges", () => {
+      const h: SaveHarness = {
+        draft: rangedDraft(),
+        validationError: null,
+        saved: null,
+      };
+      const out = clickSave(h);
+      expect(out.validationError).toBeNull();
+      expect(out.saved).not.toBeNull();
+      expect(out.saved?.startIso).toBe(h.draft.startIso);
+      expect(out.saved?.endIso).toBe(h.draft.endIso);
+    });
+
+    it("rejects a reversed range with the inline error and never calls onSaveRequest", () => {
+      // Start from a valid forward range, then move End backwards
+      // so end < start. Apply already rejects this; Save must too.
+      const draft = rangedDraft();
+      const reversed = applyManualEnd(
+        draft,
+        isoToLocalInput("2026-04-22T10:00:00.000Z"),
+      );
+      const h: SaveHarness = {
+        draft: reversed,
+        validationError: null,
+        saved: null,
+      };
+      const out = clickSave(h);
+      expect(out.validationError).toBe("invalid range");
+      expect(out.saved).toBeNull();
+    });
+
+    it("rejects a cleared start with the inline error and never calls onSaveRequest", () => {
+      const draft = rangedDraft();
+      const clearedStart = applyManualStart(draft, "");
+      const h: SaveHarness = {
+        draft: clearedStart,
+        validationError: null,
+        saved: null,
+      };
+      const out = clickSave(h);
+      expect(out.validationError).toBe("invalid range");
+      expect(out.saved).toBeNull();
     });
   });
 });

@@ -8,6 +8,7 @@ import {
   type DetectionFilterDraft,
   formatConfidenceInput,
   isConfidenceDefault,
+  isDraftRangeValid,
   isoToLocalInput,
   localInputToIso,
   normalizeDraftForSubmit,
@@ -220,6 +221,43 @@ describe("filter-draft helpers", () => {
     expect(out.period).toBeNull();
     expect(out.startIso).toBe(startIso);
     expect(out.endIso).toBe(endIso);
+  });
+
+  // The drawer's Apply and Save buttons share `commitRangeGate`, which
+  // delegates to `isDraftRangeValid`. A regression on this helper is
+  // why a reversed-range draft used to slip through Save and persist a
+  // saved filter that Apply would have rejected (Round 5 P2).
+  it("isDraftRangeValid rejects missing or reversed start/end", () => {
+    expect(isDraftRangeValid({ startIso: null, endIso: null })).toBe(false);
+    expect(
+      isDraftRangeValid({ startIso: null, endIso: "2026-04-22T12:00:00.000Z" }),
+    ).toBe(false);
+    expect(
+      isDraftRangeValid({
+        startIso: "2026-04-22T11:00:00.000Z",
+        endIso: null,
+      }),
+    ).toBe(false);
+    // Reversed range — Apply rejects this with the inline range error.
+    expect(
+      isDraftRangeValid({
+        startIso: "2026-04-22T13:00:00.000Z",
+        endIso: "2026-04-22T12:00:00.000Z",
+      }),
+    ).toBe(false);
+    // Equal endpoints are also rejected — REview requires start < end.
+    expect(
+      isDraftRangeValid({
+        startIso: "2026-04-22T12:00:00.000Z",
+        endIso: "2026-04-22T12:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      isDraftRangeValid({
+        startIso: "2026-04-22T11:00:00.000Z",
+        endIso: "2026-04-22T12:00:00.000Z",
+      }),
+    ).toBe(true);
   });
 
   // Regression: normalize is idempotent, which is what lets the shell

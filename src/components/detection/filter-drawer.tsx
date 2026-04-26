@@ -25,6 +25,7 @@ import {
   CONFIDENCE_STEP,
   type DetectionFilterDraft,
   formatConfidenceInput,
+  isDraftRangeValid,
   isoToLocalInput,
   normalizeDraftForSubmit,
   setConfidenceMax,
@@ -421,28 +422,33 @@ export function FilterDrawer({
     onDraftChange({ ...draft, [field]: value });
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (
-      !draft.startIso ||
-      !draft.endIso ||
-      Date.parse(draft.startIso) >= Date.parse(draft.endIso)
-    ) {
+  // Shared range gate for Apply and Save: rejects missing or reversed
+  // start/end the same way for both paths, surfaces the inline range
+  // error, and canonicalises the transient confidence text so a still-
+  // focused input (Apply via Enter, Save via click) doesn't leak a
+  // partial value like "0." into the next reopen of the drawer.
+  function commitRangeGate(): boolean {
+    if (!isDraftRangeValid(draft)) {
       setValidationError(labels.invalidRange);
-      return;
+      return false;
     }
-    // Submit via Enter doesn't fire blur on the focused confidence
-    // input, so an intermediate value like "0." or "" would otherwise
-    // stay in the transient text after the drawer closes. The drawer
-    // is kept mounted by the shell and reopened with the same draft,
-    // so without this sync the next open would show stale raw text
-    // while the committed filter already used the fallback numeric.
-    // Clear the focus refs so a re-focus after reopen starts clean.
     minFocusedRef.current = false;
     maxFocusedRef.current = false;
     setConfidenceMinText(formatConfidenceInput(draft.confidenceMin));
     setConfidenceMaxText(formatConfidenceInput(draft.confidenceMax));
+    return true;
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!commitRangeGate()) return;
     onApply(normalizeDraftForSubmit(draft));
+  }
+
+  function handleSaveClick() {
+    if (!onSaveRequest) return;
+    if (!commitRangeGate()) return;
+    onSaveRequest(normalizeDraftForSubmit(draft));
   }
 
   const endpointCount = draft.endpoints.filter((e) => e.selected).length;
@@ -825,10 +831,7 @@ export function FilterDrawer({
                 title={
                   !onSaveRequest ? labels.saveThisFilterDisabled : undefined
                 }
-                onClick={() => {
-                  if (!onSaveRequest) return;
-                  onSaveRequest(normalizeDraftForSubmit(draft));
-                }}
+                onClick={handleSaveClick}
               >
                 {labels.saveThisFilter}
               </Button>
