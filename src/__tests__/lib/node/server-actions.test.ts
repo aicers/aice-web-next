@@ -45,6 +45,17 @@ function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
   } as AuthSession;
 }
 
+/**
+ * Build a stub `hasPermission` that reflects an arbitrary permission
+ * grant set. Use this to drive split-role tests (e.g. holding
+ * `nodes:read` but not `services:read`).
+ */
+function grantOnly(
+  ...granted: string[]
+): (roles: string[], permission: string) => Promise<boolean> {
+  return async (_roles, permission) => granted.includes(permission);
+}
+
 beforeEach(() => {
   mockHasPermission.mockReset();
   mockResolveEffectiveCustomerIds.mockReset();
@@ -180,6 +191,112 @@ describe("manager server actions — permission boundary", () => {
   });
 });
 
+// ── Combined node + service permission gate (Phase Node-1 page rule) ─
+
+describe("combined node/service permission gate", () => {
+  it("listNodes rejects a caller holding nodes:read but missing services:read", async () => {
+    mockHasPermission.mockImplementation(grantOnly("nodes:read"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const { listNodes, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(listNodes(makeSession())).rejects.toBeInstanceOf(
+      NodePermissionError,
+    );
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("getNode rejects a caller holding services:read but missing nodes:read", async () => {
+    mockHasPermission.mockImplementation(grantOnly("services:read"));
+    const { getNode, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(getNode(makeSession(), "n-1")).rejects.toBeInstanceOf(
+      NodePermissionError,
+    );
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("listNodeStatuses rejects a caller missing services:read", async () => {
+    mockHasPermission.mockImplementation(grantOnly("nodes:read"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const { listNodeStatuses, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(listNodeStatuses(makeSession())).rejects.toBeInstanceOf(
+      NodePermissionError,
+    );
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("insertNode rejects a caller holding nodes:write but missing services:write", async () => {
+    mockHasPermission.mockImplementation(grantOnly("nodes:write"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    const { insertNode, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      insertNode(makeSession(), {
+        name: "x",
+        customerId: "5",
+        description: "",
+        hostname: "h",
+        agents: [],
+        externalServices: [],
+      }),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("updateNodeDraft rejects a caller holding services:write but missing nodes:write", async () => {
+    mockHasPermission.mockImplementation(grantOnly("services:write"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    const { updateNodeDraft, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      updateNodeDraft(
+        makeSession(),
+        "n-1",
+        {
+          name: "x",
+          nameDraft: null,
+          profile: { customerId: "5", description: "", hostname: "h" },
+          profileDraft: null,
+          agents: [],
+          externalServices: [],
+        },
+        {
+          nameDraft: "x",
+          profileDraft: { customerId: "5", description: "", hostname: "h" },
+          agents: null,
+          externalServices: null,
+        },
+      ),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("applyNode rejects a caller holding nodes:write but missing services:write", async () => {
+    mockHasPermission.mockImplementation(grantOnly("nodes:write"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    const { applyNode, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      applyNode(makeSession(), "n-1", {
+        name: "x",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      }),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+});
+
 // ── Tenant scope boundary ──────────────────────────────────────────
 
 describe("tenant scope boundary", () => {
@@ -226,24 +343,144 @@ describe("tenant scope boundary", () => {
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 
-  it("rejects a tenant admin scoped to customer 5 from applying a node into customer 7", async () => {
+  it("rejects a tenant admin scoped to customer 5 from applying a node when the canonical record belongs to customer 7 (forged-payload defence)", async () => {
+    // Caller holds the right permissions and is in scope for customer 5.
+    // The id `n-7` belongs to customer 7. The forged payload claims to
+    // be an in-scope (customer 5) update — the BFF must verify against
+    // the canonical record fetched by id, not the payload.
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
-
-    const { applyNode, NodePermissionError } = await import(
-      "@/lib/node/server-actions"
-    );
-    await expect(
-      applyNode(makeSession(), "n-1", {
-        name: "x",
+    mockGraphqlRequest.mockResolvedValue({
+      node: {
+        id: "n-7",
+        name: "n",
         nameDraft: null,
         profile: { customerId: "7", description: "", hostname: "h" },
         profileDraft: null,
         agents: [],
         externalServices: [],
+      },
+    });
+
+    const { applyNode, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      applyNode(makeSession(), "n-7", {
+        name: "x",
+        nameDraft: null,
+        // Forged: claims customer 5 to bypass payload-based scope check.
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
       }),
     ).rejects.toBeInstanceOf(NodePermissionError);
-    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    // The canonical fetch is allowed, but the apply mutation must not
+    // have been dispatched.
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "node" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  it("rejects a tenant admin scoped to customer 5 from updating a node draft when the canonical record belongs to customer 7", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue({
+      node: {
+        id: "n-7",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "7", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+
+    const { updateNodeDraft, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      updateNodeDraft(
+        makeSession(),
+        "n-7",
+        {
+          name: "x",
+          nameDraft: null,
+          // Forged: claims customer 5 in the `old` payload.
+          profile: { customerId: "5", description: "", hostname: "h" },
+          profileDraft: null,
+          agents: [],
+          externalServices: [],
+        },
+        {
+          nameDraft: "x",
+          profileDraft: { customerId: "5", description: "", hostname: "h" },
+          agents: null,
+          externalServices: null,
+        },
+      ),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  it("permits a tenant admin to apply a node that is in their scope", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    // First call: canonical-node fetch.
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-5",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+    // Second call: applyNode mutation result.
+    mockGraphqlRequest.mockResolvedValueOnce({ applyNode: "n-5" });
+
+    const { applyNode } = await import("@/lib/node/server-actions");
+    const result = await applyNode(makeSession(), "n-5", {
+      name: "x",
+      nameDraft: null,
+      profile: { customerId: "5", description: "", hostname: "h" },
+      profileDraft: null,
+      agents: [],
+      externalServices: [],
+    });
+    expect(result).toBe("n-5");
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("System Administrator skips the canonical-node fetch on apply (no extra round trip)", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+    mockGraphqlRequest.mockResolvedValueOnce({ applyNode: "n-1" });
+
+    const { applyNode } = await import("@/lib/node/server-actions");
+    const result = await applyNode(
+      makeSession({ roles: ["System Administrator"] }),
+      "n-1",
+      {
+        name: "x",
+        nameDraft: null,
+        profile: null,
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    );
+    expect(result).toBe("n-1");
+    // Only the mutation was dispatched — no canonical-node fetch.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,15 +1,18 @@
 import "server-only";
 
-import type { AuthSession } from "@/lib/auth/jwt";
+import { gigantoClient, tivanClient } from "@/lib/graphql/external-client";
 
 import type { DispatchContext } from "./dispatch-context";
-import { getGigantoConfig, getTivanConfig } from "./server-actions";
+import { withExternalErrorMapping } from "./error-mapping";
+import { GIGANTO_CONFIG_QUERY, TIVAN_CONFIG_QUERY } from "./queries";
 import type {
   AgentKind,
   ExternalServiceKind,
   GigantoConfig,
+  GigantoConfigResult,
   Node,
   TivanConfig,
+  TivanConfigResult,
 } from "./types";
 
 /**
@@ -19,19 +22,19 @@ import type {
  * in `decisions/node-and-service-mgmt.md`:
  *
  *   - **agent** kinds (`UNSUPERVISED`, `SEMI_SUPERVISED`, `SENSOR`,
- *     `TIME_SERIES_GENERATOR`) → read from review-web via the Node
- *     payload already returned by `getNode` / `listNodes`. The
- *     `agents[]` entries carry both `config` (applied) and `draft`
- *     directly, so no additional dispatch is needed.
+ *     `TIME_SERIES_GENERATOR`) → review-web. The `agents[]` entries
+ *     on the Node payload (already returned by `getNode` /
+ *     `listNodes`) carry both `config` (applied) and `draft` directly,
+ *     so no additional dispatch is needed.
  *   - **external** kinds (`DATA_STORE`, `TI_CONTAINER`) → applied
  *     config is fetched from the service's own `config` query (Giganto
- *     or Tivan, never review-web). The draft, however, is still
- *     stored on review-web and surfaces on the Node payload via
+ *     or Tivan, never review-web). The draft is still stored on
+ *     review-web and surfaces on the Node payload via
  *     `externalServices[].draft`.
- *   - **manager** kind has no per-service applied / draft surface in
- *     v1 — review-web does not expose it. Calls for `MANAGER` raise
- *     `Error("Not implemented in v1")` rather than silently returning
- *     null, so a UI mistake surfaces loudly during development.
+ *   - **manager** kind → review-web. v1 review-web does not expose a
+ *     per-node manager config or draft surface, so both reads return
+ *     `null`. The dispatch entry is preserved so callers can iterate
+ *     over all seven service kinds without a special case.
  *
  * Write operations are NOT exposed here. Phase Node-9 composes
  * node-scoped writes (`applyNode` + the two `updateConfig` follow-ups)
@@ -41,16 +44,18 @@ import type {
  * with Phase Node-12 (#333). See the service-dispatch comment in
  * `decisions/node-and-service-mgmt.md` for the full rationale.
  *
- * The dispatch context is the first argument by convention — never
- * re-derive tenant scope here. Caller is expected to have already
- * built it via `buildDispatchContext` and verified the node is in
- * scope before calling these helpers.
+ * The dispatch context is the first argument by convention and is
+ * threaded directly to the underlying GraphQL client — these helpers
+ * never re-derive tenant scope or call other server actions that
+ * would. Callers must have already built `ctx` via
+ * `buildDispatchContext` and verified the node is in scope before
+ * invoking these helpers.
  */
 
 /**
  * The full union of service kinds aice-web-next can dispatch on.
  * `MANAGER` is included so the type-dispatch table is exhaustive
- * even though the read path for it is unimplemented in v1.
+ * across all seven services the v1 UI surfaces.
  */
 export type ServiceKind = AgentKind | ExternalServiceKind | "MANAGER";
 
@@ -75,42 +80,66 @@ export function isExternalKind(kind: ServiceKind): kind is ExternalServiceKind {
 }
 
 /**
- * Read the applied config for a single service on a node. The
- * node payload (already fetched from review-web) is passed in so the
- * agent path does not duplicate a `getNode` call; only the external
- * path opens a fresh GraphQL connection (to Giganto or Tivan).
+ * Read the applied config for a single service on a node. The Node
+ * payload (already fetched from review-web) is passed in so the
+ * agent/manager paths do not duplicate a `getNode` call; only the
+ * external path opens a fresh GraphQL connection (to Giganto or
+ * Tivan), and it routes through `gigantoClient` / `tivanClient`
+ * with the dispatch context — never through the manager server
+ * actions, which would re-derive the tenant scope.
  *
  * Returns `null` if the service entry is present but its applied
- * config is empty (agent in 'directly configured' mode, or external
- * never applied). Throws for `MANAGER` because the v1 schema does
- * not expose it.
+ * config is empty (agent in 'directly configured' mode, external
+ * never applied) or if the kind is `MANAGER` (no per-node manager
+ * config in v1).
  */
 export async function getApplied(
   ctx: DispatchContext,
-  session: AuthSession,
   node: Node,
   kind: ServiceKind,
   signal?: AbortSignal,
 ): Promise<string | GigantoConfig | TivanConfig | null> {
-  void ctx; // Tenant scope is enforced by the caller before this runs.
   if (isAgentKind(kind)) {
     const agent = node.agents.find((a) => a.kind === kind);
     return agent?.config ?? null;
   }
   if (isExternalKind(kind)) {
-    if (kind === "DATA_STORE") return getGigantoConfig(session, signal);
-    return getTivanConfig(session, signal);
+    const requestContext = { role: ctx.role, customerIds: ctx.customerIds };
+    if (kind === "DATA_STORE") {
+      const data = await withExternalErrorMapping(
+        "DATA_STORE",
+        gigantoClient<GigantoConfigResult>(
+          GIGANTO_CONFIG_QUERY,
+          undefined,
+          requestContext,
+          signal,
+        ),
+      );
+      return data.config;
+    }
+    const data = await withExternalErrorMapping(
+      "TI_CONTAINER",
+      tivanClient<TivanConfigResult>(
+        TIVAN_CONFIG_QUERY,
+        undefined,
+        requestContext,
+        signal,
+      ),
+    );
+    return data.config;
   }
-  throw new Error(
-    "getApplied: MANAGER service kind has no applied-config surface in v1.",
-  );
+  // MANAGER: review-web does not expose a per-node manager config in
+  // v1 (decisions/node-and-service-mgmt.md). Returning null keeps the
+  // dispatch table exhaustive without inventing a phantom read path.
+  return null;
 }
 
 /**
  * Read the draft config for a single service on a node. Drafts live
  * on review-web for both agent and external kinds, so this never
  * dispatches to Giganto or Tivan — the entire result is read off the
- * Node payload that the caller already has in hand.
+ * Node payload that the caller already has in hand. `MANAGER` has no
+ * draft surface in v1 (no editing path) so it returns `null`.
  */
 export function getDraft(
   ctx: DispatchContext,
@@ -126,5 +155,6 @@ export function getDraft(
     const service = node.externalServices.find((s) => s.kind === kind);
     return service?.draft ?? null;
   }
-  throw new Error("getDraft: MANAGER service kind has no draft surface in v1.");
+  // MANAGER: see getApplied — no per-node manager draft in v1.
+  return null;
 }

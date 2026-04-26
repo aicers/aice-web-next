@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthSession } from "@/lib/auth/jwt";
 import type { DispatchContext } from "@/lib/node/dispatch-context";
 
 const mockHasPermission = vi.hoisted(() => vi.fn());
@@ -25,24 +24,6 @@ vi.mock("@/lib/graphql/external-client", () => ({
   gigantoClient: mockGigantoClient,
   tivanClient: mockTivanClient,
 }));
-
-const makeSession: () => AuthSession = () =>
-  ({
-    accountId: "a",
-    sessionId: "s",
-    roles: ["Tenant Administrator"],
-    tokenVersion: 1,
-    mustChangePassword: false,
-    mustEnrollMfa: false,
-    iat: 0,
-    exp: 0,
-    sessionIp: "127.0.0.1",
-    sessionUserAgent: "test",
-    sessionBrowserFingerprint: "test",
-    needsReauth: false,
-    sessionCreatedAt: new Date(0),
-    sessionLastActiveAt: new Date(0),
-  }) as AuthSession;
 
 const ctx: DispatchContext = {
   role: "Tenant Administrator",
@@ -118,37 +99,27 @@ const nodeWithAllServices = {
   ],
 };
 
-describe("service-dispatch — type routing", () => {
+describe("service-dispatch — type routing across all seven services", () => {
   it("getApplied for every agent kind reads the agent's config off the Node payload (no network call)", async () => {
     const { getApplied } = await import("@/lib/node/service-dispatch");
+    expect(await getApplied(ctx, nodeWithAllServices, "UNSUPERVISED")).toBe(
+      "applied-unsupervised",
+    );
+    expect(await getApplied(ctx, nodeWithAllServices, "SEMI_SUPERVISED")).toBe(
+      "applied-semi",
+    );
+    expect(await getApplied(ctx, nodeWithAllServices, "SENSOR")).toBe(
+      "applied-sensor",
+    );
     expect(
-      await getApplied(ctx, makeSession(), nodeWithAllServices, "UNSUPERVISED"),
-    ).toBe("applied-unsupervised");
-    expect(
-      await getApplied(
-        ctx,
-        makeSession(),
-        nodeWithAllServices,
-        "SEMI_SUPERVISED",
-      ),
-    ).toBe("applied-semi");
-    expect(
-      await getApplied(ctx, makeSession(), nodeWithAllServices, "SENSOR"),
-    ).toBe("applied-sensor");
-    expect(
-      await getApplied(
-        ctx,
-        makeSession(),
-        nodeWithAllServices,
-        "TIME_SERIES_GENERATOR",
-      ),
+      await getApplied(ctx, nodeWithAllServices, "TIME_SERIES_GENERATOR"),
     ).toBe("applied-tsg");
     expect(mockGigantoClient).not.toHaveBeenCalled();
     expect(mockTivanClient).not.toHaveBeenCalled();
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 
-  it("getApplied for DATA_STORE dispatches via gigantoClient and never via review-web", async () => {
+  it("getApplied for DATA_STORE dispatches via gigantoClient with the supplied DispatchContext (never re-derives scope)", async () => {
     mockGigantoClient.mockResolvedValue({
       config: {
         ingestSrvAddr: "i",
@@ -165,13 +136,21 @@ describe("service-dispatch — type routing", () => {
       },
     });
     const { getApplied } = await import("@/lib/node/service-dispatch");
-    await getApplied(ctx, makeSession(), nodeWithAllServices, "DATA_STORE");
+    await getApplied(ctx, nodeWithAllServices, "DATA_STORE");
     expect(mockGigantoClient).toHaveBeenCalledTimes(1);
+    expect(mockGigantoClient.mock.calls[0]?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
     expect(mockTivanClient).not.toHaveBeenCalled();
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    // Helper must not pull tenant scope or a permission check from
+    // somewhere other than the supplied context.
+    expect(mockResolveEffectiveCustomerIds).not.toHaveBeenCalled();
+    expect(mockHasPermission).not.toHaveBeenCalled();
   });
 
-  it("getApplied for TI_CONTAINER dispatches via tivanClient and never via review-web", async () => {
+  it("getApplied for TI_CONTAINER dispatches via tivanClient with the supplied DispatchContext", async () => {
     mockTivanClient.mockResolvedValue({
       config: {
         graphqlSrvAddr: ":1",
@@ -181,20 +160,29 @@ describe("service-dispatch — type routing", () => {
       },
     });
     const { getApplied } = await import("@/lib/node/service-dispatch");
-    await getApplied(ctx, makeSession(), nodeWithAllServices, "TI_CONTAINER");
+    await getApplied(ctx, nodeWithAllServices, "TI_CONTAINER");
     expect(mockTivanClient).toHaveBeenCalledTimes(1);
+    expect(mockTivanClient.mock.calls[0]?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
     expect(mockGigantoClient).not.toHaveBeenCalled();
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    expect(mockResolveEffectiveCustomerIds).not.toHaveBeenCalled();
+    expect(mockHasPermission).not.toHaveBeenCalled();
+  });
+
+  it("getApplied for MANAGER routes to review-web (the Node payload) and returns null in v1", async () => {
+    const { getApplied } = await import("@/lib/node/service-dispatch");
+    // v1 review-web does not expose a per-node manager config; the
+    // call resolves to null without dispatching to any backend.
+    expect(await getApplied(ctx, nodeWithAllServices, "MANAGER")).toBeNull();
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+    expect(mockTivanClient).not.toHaveBeenCalled();
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 
-  it("getApplied for MANAGER throws (not implemented in v1)", async () => {
-    const { getApplied } = await import("@/lib/node/service-dispatch");
-    await expect(
-      getApplied(ctx, makeSession(), nodeWithAllServices, "MANAGER"),
-    ).rejects.toThrow();
-  });
-
-  it("getDraft for every kind reads off the Node payload (manager-side, no network call)", async () => {
+  it("getDraft for every kind (including MANAGER) reads off the Node payload (manager-side, no network call)", async () => {
     const { getDraft } = await import("@/lib/node/service-dispatch");
     expect(getDraft(ctx, nodeWithAllServices, "UNSUPERVISED")).toBe(
       "draft-unsupervised",
@@ -212,6 +200,7 @@ describe("service-dispatch — type routing", () => {
     expect(getDraft(ctx, nodeWithAllServices, "TI_CONTAINER")).toBe(
       "draft-tivan",
     );
+    expect(getDraft(ctx, nodeWithAllServices, "MANAGER")).toBeNull();
     expect(mockGigantoClient).not.toHaveBeenCalled();
     expect(mockTivanClient).not.toHaveBeenCalled();
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
