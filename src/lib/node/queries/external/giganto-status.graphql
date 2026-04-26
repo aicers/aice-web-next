@@ -1,0 +1,16 @@
+# Validates against schemas/giganto.graphql.
+#
+# Giganto additionally exposes `stop`, `reboot`, and `shutdown` mutations
+# (signals to the running daemon); v1 of the Node management layer does
+# not surface them. Add a sibling document and wire it through
+# `gigantoClient()` if a future phase needs to expose them.
+query GigantoStatus {
+  status {
+    name
+    cpuUsage
+    totalMemory
+    usedMemory
+    diskUsedBytes
+    diskAvailableBytes
+  }
+}

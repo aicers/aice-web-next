@@ -1,0 +1,17 @@
+mutation InsertNode(
+  $name: String!
+  $customerId: ID!
+  $description: String!
+  $hostname: String!
+  $agents: [AgentDraftInput!]!
+  $externalServices: [ExternalServiceInput!]!
+) {
+  insertNode(
+    name: $name
+    customerId: $customerId
+    description: $description
+    hostname: $hostname
+    agents: $agents
+    externalServices: $externalServices
+  )
+}

@@ -1,0 +1,216 @@
+# Vendored Tivan GraphQL SDL.
+#
+# This file is manually maintained. See the "Backend schema versions"
+# section of README.md for the update procedure. Its contents must match
+# the Tivan release tagged in schemas/tivan.version.
+#
+# Captured from Tivan 0.3.1 (the upstream Tivan repository defines its
+# schema in Rust via `async-graphql` rather than shipping an SDL file;
+# this file is the SDL emitted by Tivan 0.3.1's `Schema::sdl()` —
+# see tivan/src/graphql.rs at tag 0.3.1). aice-web-next opens its own
+# mTLS connection straight to Tivan's GraphQL endpoint — these calls do
+# not go through review-web.
+
+# Indicates that an Input Object is a OneOf Input Object (and thus requires exactly one of its field be provided)
+directive @oneOf on INPUT_OBJECT
+
+type CampaignData {
+  commonData: CommonData!
+  firstSeen: String!
+  lastSeen: String!
+  contributor: [String!]
+  version: String!
+}
+
+type CampaignType {
+  detailData: CampaignData!
+  refData: RefData!
+}
+
+type CommonData {
+  id: String!
+  externalId: String!
+  name: String!
+  description: String!
+  createdTime: String!
+  modifiedTime: String!
+}
+
+type ComponentData {
+  name: String!
+  description: String!
+  parentSource: String!
+}
+
+type ComponentType {
+  detailData: ComponentData!
+  sourceName: String!
+  refData: RefData!
+}
+
+type Config {
+  graphqlSrvAddr: String!
+  translateMitre: String!
+  excelData: String
+  originMitre: String
+}
+
+type GroupData {
+  commonData: CommonData!
+  associatedGroup: [String!]
+  contributor: [String!]
+  version: String!
+}
+
+type GroupsType {
+  detailData: GroupData!
+  refData: RefData!
+}
+
+type MatricesType {
+  tacticsData: SummaryType!
+  childTechniques: [SummaryType!]!
+}
+
+type MitigationData {
+  commonData: CommonData!
+  version: String!
+}
+
+type MitigationsType {
+  detailData: MitigationData!
+  refData: RefData!
+}
+
+type Mutation {
+  # Updates the config with the given `new` config. It involves reloading the module with the
+  # new config.
+  #
+  # # Errors
+  #
+  # Returns an error if the `new` is empty. In addition, it returns an error if the `new` is
+  # invalid. The `new` config is invalid if the `translate_mitre` does not exist or is not a
+  # file. If the `new` is the same as the current config, it returns an error.
+  updateConfig(old: String!, new: String!): Config!
+  stop: Boolean!
+  reboot: Boolean!
+  shutdown: Boolean!
+}
+
+type Query {
+  matrices: [MatricesType!]!
+  detailTactics(id: String!): TacticsType!
+  detailTechniques(id: String!): TechniquesType!
+  detailSource(id: String!): SourceType!
+  detailComponent(id: String!): ComponentType!
+  detailMitigations(id: String!): MitigationsType!
+  detailGroup(id: String!): GroupsType!
+  detailSoftware(id: String!): SoftwareType!
+  detailCampaign(id: String!): CampaignType!
+  config: Config!
+  status: Status!
+  ping: Boolean!
+}
+
+type RefData {
+  techniques: [SummaryTechType!]
+  group: [SummaryType!]
+  software: [SummaryType!]
+  campaign: [SummaryType!]
+  mitigation: [SummaryType!]
+  sourceComponent: [SummarySourceType!]
+}
+
+type SoftwareData {
+  commonData: CommonData!
+  associatedSoft: [String!]
+  softType: String!
+  platform: [String!]
+  contributor: [String!]
+  version: String!
+}
+
+type SoftwareType {
+  detailData: SoftwareData!
+  refData: RefData!
+}
+
+type SourceData {
+  commonData: CommonData!
+  platform: [String!]!
+  contributor: [String!]
+  version: String!
+  collectionLayer: [String!]!
+}
+
+type SourceType {
+  detailData: SourceData!
+}
+
+# System status including hostname and resource usage.
+type Status {
+  # The hostname of the system.
+  name: String!
+
+  # The average CPU usage in percent.
+  cpuUsage: Float!
+
+  # The RAM size in bytes.
+  totalMemory: Int!
+
+  # The amount of used RAM in bytes.
+  usedMemory: Int!
+
+  # The disk space in bytes that is currently used.
+  diskUsedBytes: Int!
+
+  # The disk space in bytes that is available to non-root users.
+  diskAvailableBytes: Int!
+}
+
+type SummaryComponentType {
+  id: String!
+  name: String!
+  description: String!
+}
+
+type SummarySourceType {
+  summaryData: SummaryType!
+  componentData: [SummaryComponentType!]!
+}
+
+type SummaryTechType {
+  summaryData: SummaryType!
+  parentTech: String
+}
+
+type SummaryType {
+  id: String!
+  externalId: String!
+  name: String!
+  description: String!
+}
+
+type TacticsData {
+  commonData: CommonData!
+}
+
+type TacticsType {
+  detailData: TacticsData!
+  refData: RefData!
+}
+
+type TechniquesData {
+  commonData: CommonData!
+  rootName: [String!]!
+  isSubtech: Boolean!
+  parentTech: String
+  platform: [String!]!
+  contributor: [String!]
+  version: String!
+}
+
+type TechniquesType {
+  detailData: TechniquesData!
+  refData: RefData!
+}

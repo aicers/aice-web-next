@@ -1,0 +1,3 @@
+mutation NodeReboot($hostname: String!) {
+  nodeReboot(hostname: $hostname)
+}

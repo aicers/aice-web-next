@@ -1,0 +1,3 @@
+mutation UpdateNodeDraft($id: ID!, $old: NodeInput!, $new: NodeDraftInput!) {
+  updateNodeDraft(id: $id, old: $old, new: $new)
+}

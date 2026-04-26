@@ -6,17 +6,10 @@ import { fetch as undiciFetch } from "undici";
 
 import { getAgent, signContextJwt } from "@/lib/mtls";
 
-let client: GraphQLClient | null = null;
+const clientsByEndpoint = new Map<string, GraphQLClient>();
 
-function getClient(): GraphQLClient {
-  if (client) return client;
-
-  const endpoint = process.env.REVIEW_GRAPHQL_ENDPOINT;
-  if (!endpoint) {
-    throw new Error("Missing environment variable: REVIEW_GRAPHQL_ENDPOINT");
-  }
-
-  client = new GraphQLClient(endpoint, {
+function buildClient(endpoint: string): GraphQLClient {
+  return new GraphQLClient(endpoint, {
     fetch: async (input, init) => {
       const agent = await getAgent();
       return undiciFetch(
@@ -25,7 +18,22 @@ function getClient(): GraphQLClient {
       ) as unknown as Response;
     },
   });
+}
+
+function getClient(endpoint: string): GraphQLClient {
+  const cached = clientsByEndpoint.get(endpoint);
+  if (cached) return cached;
+  const client = buildClient(endpoint);
+  clientsByEndpoint.set(endpoint, client);
   return client;
+}
+
+function getReviewEndpoint(): string {
+  const endpoint = process.env.REVIEW_GRAPHQL_ENDPOINT;
+  if (!endpoint) {
+    throw new Error("Missing environment variable: REVIEW_GRAPHQL_ENDPOINT");
+  }
+  return endpoint;
 }
 
 interface RequestContext {
@@ -34,26 +42,34 @@ interface RequestContext {
 }
 
 /**
- * Dispatch a GraphQL request to REview through the mTLS-authenticated
- * undici dispatcher with a freshly-signed Context JWT.
+ * Dispatch a GraphQL request to an arbitrary endpoint through the
+ * mTLS-authenticated undici dispatcher with a freshly-signed Context
+ * JWT. The endpoint-specific clients are cached per endpoint so we
+ * don't rebuild a `GraphQLClient` on every call, but they share the
+ * same mTLS state from `@/lib/mtls`.
+ *
+ * This is the building block for both `graphqlRequest` (default
+ * REview manager call site) and the per-service callers in
+ * `src/lib/graphql/external-client.ts` (Giganto / Tivan). The
+ * endpoint is passed at the boundary so that:
+ *
+ *  - Detection's existing call sites continue to work unchanged via
+ *    the wrapper below, and
+ *  - the Node management layer can dispatch directly to Giganto and
+ *    Tivan without relaying through review-web — the mTLS + Context
+ *    JWT contract is the same for every backend, only the URL
+ *    differs.
  *
  * `signal` is optional: pass an `AbortSignal` to cancel the in-flight
  * request mid-flight. `graphql-request` forwards the signal to its
  * underlying `fetch`, which in turn flows into `undiciFetch` via the
- * spread of `init`, so abort propagates all the way to the wire (the
- * mTLS dispatcher does not buffer the request body in a way that
- * bypasses undici's native cancellation). Long-running operations —
- * CSV export, large `eventList` pages, future search-language queries
- * — should accept and forward an `AbortSignal` so a user-initiated
- * Cancel terminates the request promptly instead of waiting for the
- * current page to complete. Fast operations (counters, location
- * lookups) may pass `undefined` since cancellation is not useful
- * within their typical latency window.
+ * spread of `init`, so abort propagates all the way to the wire.
  */
-export async function graphqlRequest<
+export async function graphqlRequestTo<
   TData,
   TVars extends Record<string, unknown> = Record<string, never>,
 >(
+  endpoint: string,
   document: DocumentNode,
   variables: TVars | undefined,
   context: RequestContext,
@@ -61,18 +77,18 @@ export async function graphqlRequest<
 ): Promise<TData> {
   // Defense-in-depth: the TypeScript signature already rejects strings, but a
   // runtime check guards against `as any` / `unknown` casts that smuggle one
-  // through. All REview queries must be parsed DocumentNodes so the
-  // schema-validation test can validate them against schemas/review.graphql.
+  // through. All queries must be parsed DocumentNodes so the
+  // schema-validation test can validate them against the right vendored SDL.
   if (typeof document === "string") {
     throw new TypeError(
-      "graphqlRequest: raw query strings are not allowed. Keep queries in " +
+      "graphqlRequestTo: raw query strings are not allowed. Keep queries in " +
         "a checked-in .graphql file (validated by CI) and parse them with " +
         "`parse()` or import them through graphql-codegen.",
     );
   }
 
   const token = await signContextJwt(context.role, context.customerIds);
-  const gqlClient = getClient();
+  const gqlClient = getClient(endpoint);
 
   return gqlClient.request<TData>({
     document,
@@ -84,6 +100,37 @@ export async function graphqlRequest<
   });
 }
 
+/**
+ * Dispatch a GraphQL request to the default REview (manager) endpoint
+ * resolved from `REVIEW_GRAPHQL_ENDPOINT`. This is the call site for
+ * Detection, Triage, and the manager half of Node management. External
+ * services (Giganto, Tivan) use `graphqlRequestTo` via the
+ * `external-client.ts` callers — they are not relayed through this
+ * wrapper.
+ *
+ * Long-running operations — CSV export, large `eventList` pages,
+ * future search-language queries — should accept and forward an
+ * `AbortSignal` so a user-initiated Cancel terminates the request
+ * promptly instead of waiting for the current page to complete.
+ */
+export async function graphqlRequest<
+  TData,
+  TVars extends Record<string, unknown> = Record<string, never>,
+>(
+  document: DocumentNode,
+  variables: TVars | undefined,
+  context: RequestContext,
+  signal?: AbortSignal,
+): Promise<TData> {
+  return graphqlRequestTo<TData, TVars>(
+    getReviewEndpoint(),
+    document,
+    variables,
+    context,
+    signal,
+  );
+}
+
 export function resetClient(): void {
-  client = null;
+  clientsByEndpoint.clear();
 }

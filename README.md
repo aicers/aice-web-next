@@ -38,7 +38,9 @@ Copy `.env.example` to `.env.local` and fill in the values:
 | `DATABASE_URL` | PostgreSQL connection string for `auth_db` |
 | `DATABASE_ADMIN_URL` | Admin connection to create databases at runtime |
 | `AUDIT_DATABASE_URL` | PostgreSQL connection string for `audit_db` |
-| `REVIEW_GRAPHQL_ENDPOINT` | `review-web` GraphQL endpoint URL |
+| `REVIEW_GRAPHQL_ENDPOINT` | `review-web` (manager) GraphQL endpoint URL |
+| `GIGANTO_GRAPHQL_ENDPOINT` | Giganto GraphQL endpoint URL (direct mTLS, not proxied through review-web) |
+| `TIVAN_GRAPHQL_ENDPOINT` | Tivan GraphQL endpoint URL (direct mTLS, not proxied through review-web) |
 | `MTLS_CERT_PATH` | Path to the mTLS client certificate |
 | `MTLS_KEY_PATH` | Path to the mTLS private key |
 | `MTLS_CA_PATH` | Path to the mTLS CA certificate |
@@ -89,15 +91,19 @@ src/
 ## Backend schema versions
 
 The `schemas/` directory holds vendored GraphQL SDL from the backends this
-BFF targets:
+BFF targets. Each backend has its own SDL file because the Node management
+layer dispatches directly to each service rather than relaying through
+review-web — every query document must validate against the SDL of the
+service that will actually answer it.
 
 | File | Backend | Scope |
 |------|---------|-------|
-| `schemas/review.graphql` | `review-web` (REview) | Detection and Triage menus |
-| `schemas/review.version` | — | Semver or commit SHA the SDL corresponds to |
-
-Future: when the Event menu lands, `schemas/giganto.graphql` and
-`schemas/giganto.version` will follow the same pattern for Giganto.
+| `schemas/review.graphql` | `review-web` (REview, the manager) | Detection, Triage, and Node management menus |
+| `schemas/review.version` | — | Semver of the REview release the SDL corresponds to |
+| `schemas/giganto.graphql` | Giganto (data store) | Per-service `status` / `config` / `updateConfig` for the Giganto external service |
+| `schemas/giganto.version` | — | Semver of the Giganto release the SDL corresponds to |
+| `schemas/tivan.graphql` | Tivan (TI container) | Per-service `status` / `config` / `updateConfig` for the Tivan external service |
+| `schemas/tivan.version` | — | Semver of the Tivan release the SDL corresponds to |
 
 These files are **manually provided** by the engineer doing the update —
 there is no auto-fetch script. The manual review step is intentional, so
@@ -107,7 +113,11 @@ production.
 ### CI validation
 
 Every CI run validates every GraphQL query document the BFF can send
-against the vendored `schemas/review.graphql`. The check lives in
+against the correct vendored SDL — manager queries against
+`schemas/review.graphql`, Giganto queries against
+`schemas/giganto.graphql`, and Tivan queries against
+`schemas/tivan.graphql`. A query validated against the wrong SDL must
+fail. The check lives in
 `src/__tests__/lib/graphql/schema-validation.test.ts` and covers:
 
 - every `.graphql` / `.gql` file under `src/`, and
@@ -145,6 +155,8 @@ from a `.graphql` file, an inline `gql` template, or a `parse("…")`
 call — fails CI with a message pointing back to this section.
 
 ### Update procedure
+
+#### REview (`schemas/review.graphql`)
 
 1. Obtain the target REview SDL by whatever means are available. There
    is no canonical location yet; REview does not currently ship an SDL
@@ -195,6 +207,48 @@ call — fails CI with a message pointing back to this section.
    that forgets this step is caught at PR time.
 6. Commit the schema, version file, and regenerated types together.
    Call out any breaking-change mitigation in the PR description.
+
+#### Giganto (`schemas/giganto.graphql`)
+
+Giganto ships its SDL alongside its source tree at
+`giganto/src/graphql/client/schema/schema.graphql`. To update:
+
+1. Check out the desired Giganto release tag.
+2. Copy `giganto/src/graphql/client/schema/schema.graphql` over
+   `schemas/giganto.graphql`. Preserve the header comment that records
+   the source and version.
+3. Write the version (semver) into `schemas/giganto.version`.
+4. Review `git diff schemas/` and update Giganto query documents in
+   `src/lib/node/queries/external/giganto-*.graphql` if any field has
+   been renamed or removed.
+
+#### Tivan (`schemas/tivan.graphql`)
+
+Tivan defines its schema in Rust via `async-graphql` and does not ship
+an SDL file. To update, dump the SDL the same way as REview from a
+Tivan checkout:
+
+```rust
+// examples/dump_sdl.rs in a tivan checkout
+use async_graphql::{EmptySubscription, Schema};
+use tivan::graphql::{Mutation, Query};
+
+fn main() {
+    let schema = Schema::build(Query::default(), Mutation::default(), EmptySubscription).finish();
+    println!("{}", schema.sdl());
+}
+```
+
+The current `schemas/tivan.graphql` was produced this way at tag
+`0.3.1`. As with REview, the schema types may need to have their
+visibility temporarily widened to `pub` for the dump to compile.
+
+1. Replace `schemas/tivan.graphql` with the new SDL (preserve the
+   header comment).
+2. Write the version (semver) into `schemas/tivan.version`.
+3. Review `git diff schemas/` and update Tivan query documents in
+   `src/lib/node/queries/external/tivan-*.graphql` if any field has
+   been renamed or removed.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system overview and
 the `decisions/` directory for detailed design records.

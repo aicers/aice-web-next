@@ -4,9 +4,10 @@
 # section of README.md for the update procedure. Its contents must match
 # the REview release tagged in schemas/review.version.
 #
-# Generated from review-web 0.30.1 (commit 238b837) with the
-# `auth-mtls` feature enabled, which is how aice-web-next talks to
-# REview. See README.md for the exact reproduction steps.
+# Captured from REview 0.47.0 (which pins review-web 0.30.1 as its
+# GraphQL surface) with the `auth-mtls` feature enabled, which is how
+# aice-web-next talks to REview. See README.md for the exact
+# reproduction steps.
 
 type Agent {
 	node: Int!

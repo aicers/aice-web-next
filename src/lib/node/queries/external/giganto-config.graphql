@@ -1,0 +1,15 @@
+query FetchGigantoConfig {
+  config {
+    ingestSrvAddr
+    publishSrvAddr
+    graphqlSrvAddr
+    retention
+    exportDir
+    dataDir
+    maxOpenFiles
+    maxMbOfLevelBase
+    numOfThread
+    maxSubcompactions
+    ackTransmission
+  }
+}
