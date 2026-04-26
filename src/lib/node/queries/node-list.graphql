@@ -1,3 +1,4 @@
+# requires: node-fields.graphql
 query NodeList($first: Int, $after: String, $last: Int, $before: String) {
   nodeList(first: $first, after: $after, last: $last, before: $before) {
     edges {
@@ -12,36 +13,5 @@ query NodeList($first: Int, $after: String, $last: Int, $before: String) {
       endCursor
     }
     totalCount
-  }
-}
-
-fragment NodeFields on Node {
-  id
-  name
-  nameDraft
-  profile {
-    customerId
-    description
-    hostname
-  }
-  profileDraft {
-    customerId
-    description
-    hostname
-  }
-  agents {
-    node
-    key
-    kind
-    status
-    config
-    draft
-  }
-  externalServices {
-    node
-    key
-    kind
-    status
-    draft
   }
 }

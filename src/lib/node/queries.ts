@@ -23,10 +23,47 @@ import { type DocumentNode, parse } from "graphql";
 
 const QUERIES_DIR = path.join(__dirname, "queries");
 
-function loadDocument(relativePath: string): DocumentNode {
+/**
+ * Operations declare fragment dependencies via a header line of the
+ * form `# requires: <relative-path>`. Each referenced file is read
+ * from disk, transitively resolved, and prepended to the operation
+ * source before parsing — so a fragment shared by multiple operations
+ * (e.g. `node-fields.graphql`) lives in exactly one source-of-truth
+ * `.graphql` file and the schema-validation test sees the same
+ * composed document the runtime does.
+ */
+const REQUIRES_DIRECTIVE = /^#\s*requires:\s*(\S+)\s*$/;
+
+function readRequires(source: string): string[] {
+  const requires: string[] = [];
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "") continue;
+    if (!line.startsWith("#")) break;
+    const match = REQUIRES_DIRECTIVE.exec(line);
+    if (match?.[1]) requires.push(match[1]);
+  }
+  return requires;
+}
+
+function composeSource(
+  relativePath: string,
+  visited: Set<string> = new Set(),
+): string {
+  if (visited.has(relativePath)) return "";
+  visited.add(relativePath);
   const full = path.join(QUERIES_DIR, relativePath);
   const source = readFileSync(full, "utf8");
-  return parse(source);
+  const dependencies = readRequires(source).map((req) =>
+    path.posix.join(path.posix.dirname(relativePath), req),
+  );
+  const parts = dependencies.map((dep) => composeSource(dep, visited));
+  parts.push(source);
+  return parts.join("\n");
+}
+
+function loadDocument(relativePath: string): DocumentNode {
+  return parse(composeSource(relativePath));
 }
 
 // ── Manager (review-web) operations ────────────────────────────────

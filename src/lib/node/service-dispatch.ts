@@ -88,10 +88,19 @@ export function isExternalKind(kind: ServiceKind): kind is ExternalServiceKind {
  * with the dispatch context — never through the manager server
  * actions, which would re-derive the tenant scope.
  *
- * Returns `null` if the service entry is present but its applied
- * config is empty (agent in 'directly configured' mode, external
- * never applied) or if the kind is `MANAGER` (no per-node manager
- * config in v1).
+ * The external path is gated on the node's actual service membership
+ * (`node.externalServices[].kind`). Without that gate, asking for a
+ * service the node does not host would still open the deployment-
+ * global Giganto/Tivan endpoint and surface its config as if the node
+ * had it. v1 deployments are single-Giganto / single-Tivan, so the
+ * external endpoint URL is shared across all nodes — only the
+ * per-node `externalServices[]` membership distinguishes which nodes
+ * host which kinds.
+ *
+ * Returns `null` if the service entry is absent on this node, or
+ * present but its applied config is empty (agent in 'directly
+ * configured' mode, external never applied), or if the kind is
+ * `MANAGER` (no per-node manager config in v1).
  */
 export async function getApplied(
   ctx: DispatchContext,
@@ -104,6 +113,8 @@ export async function getApplied(
     return agent?.config ?? null;
   }
   if (isExternalKind(kind)) {
+    const service = node.externalServices.find((s) => s.kind === kind);
+    if (!service) return null;
     const requestContext = { role: ctx.role, customerIds: ctx.customerIds };
     if (kind === "DATA_STORE") {
       const data = await withExternalErrorMapping(

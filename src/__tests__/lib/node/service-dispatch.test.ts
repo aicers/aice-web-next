@@ -182,6 +182,39 @@ describe("service-dispatch — type routing across all seven services", () => {
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 
+  it("getApplied returns null without a network call when the requested external service is absent on the node", async () => {
+    // The deployment-global Giganto endpoint is shared by every node,
+    // so calling it for a node that does not host DATA_STORE would
+    // surface the deployment's Giganto config as if the node had it.
+    // The membership gate must short-circuit that.
+    const nodeWithoutDataStore = {
+      ...nodeWithAllServices,
+      externalServices: nodeWithAllServices.externalServices.filter(
+        (s) => s.kind !== "DATA_STORE",
+      ),
+    };
+    const { getApplied } = await import("@/lib/node/service-dispatch");
+    expect(
+      await getApplied(ctx, nodeWithoutDataStore, "DATA_STORE"),
+    ).toBeNull();
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+    expect(mockTivanClient).not.toHaveBeenCalled();
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+
+    const nodeWithoutTiContainer = {
+      ...nodeWithAllServices,
+      externalServices: nodeWithAllServices.externalServices.filter(
+        (s) => s.kind !== "TI_CONTAINER",
+      ),
+    };
+    expect(
+      await getApplied(ctx, nodeWithoutTiContainer, "TI_CONTAINER"),
+    ).toBeNull();
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+    expect(mockTivanClient).not.toHaveBeenCalled();
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
   it("getDraft for every kind (including MANAGER) reads off the Node payload (manager-side, no network call)", async () => {
     const { getDraft } = await import("@/lib/node/service-dispatch");
     expect(getDraft(ctx, nodeWithAllServices, "UNSUPERVISED")).toBe(

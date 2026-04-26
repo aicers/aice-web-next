@@ -119,6 +119,169 @@ describe("manager server actions — happy path", () => {
     const node = await getNode(makeSession(), "n-1");
     expect(node.id).toBe("n-1");
   });
+
+  it("listNodeStatuses dispatches via graphqlRequest with materialized scope", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+    mockGraphqlRequest.mockResolvedValue({
+      nodeStatusList: {
+        edges: [],
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: false,
+          startCursor: null,
+          endCursor: null,
+        },
+        totalCount: "0",
+      },
+    });
+
+    const { listNodeStatuses } = await import("@/lib/node/server-actions");
+    const conn = await listNodeStatuses(makeSession(), {
+      last: 5,
+      before: "x",
+    });
+
+    expect(conn.totalCount).toBe("0");
+    const call = mockGraphqlRequest.mock.calls.at(-1);
+    expect(call?.[1]).toEqual({
+      first: null,
+      after: null,
+      last: 5,
+      before: "x",
+    });
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1, 2],
+    });
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+    expect(mockTivanClient).not.toHaveBeenCalled();
+  });
+
+  it("insertNode dispatches via graphqlRequest with the supplied payload and returns the new id", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue({ insertNode: "n-new" });
+
+    const args = {
+      name: "n",
+      customerId: "5",
+      description: "d",
+      hostname: "h",
+      agents: [],
+      externalServices: [],
+    };
+    const { insertNode } = await import("@/lib/node/server-actions");
+    const id = await insertNode(makeSession(), args);
+
+    expect(id).toBe("n-new");
+    const call = mockGraphqlRequest.mock.calls.at(-1);
+    expect(call?.[1]).toEqual(args);
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [5],
+    });
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+    expect(mockTivanClient).not.toHaveBeenCalled();
+  });
+
+  it("updateNodeDraft fetches the canonical node, then dispatches the mutation with id/old/new", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    // 1st call: canonical-node fetch by id.
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-5",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+    // 2nd call: updateNodeDraft mutation.
+    mockGraphqlRequest.mockResolvedValueOnce({ updateNodeDraft: "n-5" });
+
+    const oldNode = {
+      name: "n",
+      nameDraft: null,
+      profile: { customerId: "5", description: "", hostname: "h" },
+      profileDraft: null,
+      agents: [],
+      externalServices: [],
+    };
+    const newDraft = {
+      nameDraft: "n2",
+      profileDraft: { customerId: "5", description: "d", hostname: "h" },
+      agents: null,
+      externalServices: null,
+    };
+
+    const { updateNodeDraft } = await import("@/lib/node/server-actions");
+    const result = await updateNodeDraft(
+      makeSession(),
+      "n-5",
+      oldNode,
+      newDraft,
+    );
+
+    expect(result).toBe("n-5");
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+    const mutation = mockGraphqlRequest.mock.calls.at(-1);
+    expect(mutation?.[1]).toEqual({ id: "n-5", old: oldNode, new: newDraft });
+    expect(mutation?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [5],
+    });
+  });
+
+  it("removeNodes dispatches via graphqlRequest with the id list and returns the manager's id list", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    mockGraphqlRequest.mockResolvedValue({ removeNodes: ["n-1", "n-2"] });
+
+    const { removeNodes } = await import("@/lib/node/server-actions");
+    const result = await removeNodes(makeSession(), ["n-1", "n-2"]);
+
+    expect(result).toEqual(["n-1", "n-2"]);
+    const call = mockGraphqlRequest.mock.calls.at(-1);
+    expect(call?.[1]).toEqual({ ids: ["n-1", "n-2"] });
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
+  });
+
+  it("nodeReboot dispatches by hostname (not id) and returns the manager's reply", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    mockGraphqlRequest.mockResolvedValue({ nodeReboot: "host-1" });
+
+    const { nodeReboot } = await import("@/lib/node/server-actions");
+    const result = await nodeReboot(makeSession(), "host-1");
+
+    expect(result).toBe("host-1");
+    const call = mockGraphqlRequest.mock.calls.at(-1);
+    expect(call?.[1]).toEqual({ hostname: "host-1" });
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
+  });
+
+  it("nodeShutdown dispatches by hostname (not id) and returns the manager's reply", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    mockGraphqlRequest.mockResolvedValue({ nodeShutdown: "host-1" });
+
+    const { nodeShutdown } = await import("@/lib/node/server-actions");
+    const result = await nodeShutdown(makeSession(), "host-1");
+
+    expect(result).toBe("host-1");
+    const call = mockGraphqlRequest.mock.calls.at(-1);
+    expect(call?.[1]).toEqual({ hostname: "host-1" });
+  });
 });
 
 describe("external service server actions — happy path", () => {
@@ -159,6 +322,121 @@ describe("external service server actions — happy path", () => {
     const cfg = await updateTivanConfig(makeSession(), "old", "new");
     expect(cfg.graphqlSrvAddr).toBe(":1");
     expect(mockTivanClient).toHaveBeenCalledTimes(1);
+    const call = mockTivanClient.mock.calls[0];
+    expect(call?.[1]).toEqual({ old: "old", new: "new" });
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("getGigantoConfig dispatches via gigantoClient and returns the unwrapped config", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const config = {
+      ingestSrvAddr: "i",
+      publishSrvAddr: "p",
+      graphqlSrvAddr: "g",
+      retention: "1d",
+      exportDir: "/e",
+      dataDir: "/d",
+      maxOpenFiles: 1,
+      maxMbOfLevelBase: "1",
+      numOfThread: 1,
+      maxSubcompactions: "1",
+      ackTransmission: 1,
+    };
+    mockGigantoClient.mockResolvedValue({ config });
+
+    const { getGigantoConfig } = await import("@/lib/node/server-actions");
+    expect(await getGigantoConfig(makeSession())).toEqual(config);
+    const call = mockGigantoClient.mock.calls[0];
+    expect(call?.[1]).toBeUndefined();
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
+    expect(mockTivanClient).not.toHaveBeenCalled();
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("updateGigantoConfig dispatches via gigantoClient with old/new and returns the unwrapped config", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const config = {
+      ingestSrvAddr: "i2",
+      publishSrvAddr: "p2",
+      graphqlSrvAddr: "g2",
+      retention: "2d",
+      exportDir: "/e",
+      dataDir: "/d",
+      maxOpenFiles: 1,
+      maxMbOfLevelBase: "1",
+      numOfThread: 1,
+      maxSubcompactions: "1",
+      ackTransmission: 1,
+    };
+    mockGigantoClient.mockResolvedValue({ updateConfig: config });
+
+    const { updateGigantoConfig } = await import("@/lib/node/server-actions");
+    expect(await updateGigantoConfig(makeSession(), "old", "new")).toEqual(
+      config,
+    );
+    const call = mockGigantoClient.mock.calls[0];
+    expect(call?.[1]).toEqual({ old: "old", new: "new" });
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
+    expect(mockTivanClient).not.toHaveBeenCalled();
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("getTivanStatus dispatches via tivanClient and returns the unwrapped status", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const status = {
+      name: "t",
+      cpuUsage: 1,
+      totalMemory: 1,
+      usedMemory: 1,
+      diskUsedBytes: 1,
+      diskAvailableBytes: 1,
+    };
+    mockTivanClient.mockResolvedValue({ status });
+
+    const { getTivanStatus } = await import("@/lib/node/server-actions");
+    expect(await getTivanStatus(makeSession())).toEqual(status);
+    const call = mockTivanClient.mock.calls[0];
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("getTivanConfig dispatches via tivanClient and returns the unwrapped config", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const config = {
+      graphqlSrvAddr: ":1",
+      translateMitre: "x",
+      excelData: null,
+      originMitre: null,
+    };
+    mockTivanClient.mockResolvedValue({ config });
+
+    const { getTivanConfig } = await import("@/lib/node/server-actions");
+    expect(await getTivanConfig(makeSession())).toEqual(config);
+    const call = mockTivanClient.mock.calls[0];
+    expect(call?.[1]).toBeUndefined();
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
+    expect(mockGigantoClient).not.toHaveBeenCalled();
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 });
@@ -565,6 +843,86 @@ describe("graceful-degradation error mapping", () => {
       "@/lib/node/server-actions"
     );
     await expect(listNodes(makeSession())).rejects.not.toBeInstanceOf(
+      ManagerUnavailableError,
+    );
+  });
+
+  it("translates a missing-node GraphQL error from getNode into NodeNotFoundError", async () => {
+    // review-web declares `node(id: ID!): Node!` as non-nullable; a
+    // missing id surfaces as a rejected `graphql-request` promise
+    // carrying a `response.errors[]` array — never as `{ node: null }`.
+    // The wrapper must translate to the typed 404 so Phase Node-9's
+    // stale-conflict replay can detect it.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    const notFound = Object.assign(new Error("Node not found"), {
+      response: {
+        errors: [
+          {
+            message: "Node n-missing was not found",
+            extensions: { code: "NOT_FOUND" },
+          },
+        ],
+      },
+    });
+    mockGraphqlRequest.mockRejectedValue(notFound);
+
+    const { getNode, NodeNotFoundError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(getNode(makeSession(), "n-missing")).rejects.toBeInstanceOf(
+      NodeNotFoundError,
+    );
+  });
+
+  it("translates a missing-node error during applyNode's canonical preflight into NodeNotFoundError", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    const notFound = Object.assign(new Error("not found"), {
+      response: {
+        errors: [{ message: "node does not exist" }],
+      },
+    });
+    mockGraphqlRequest.mockRejectedValue(notFound);
+
+    const { applyNode, NodeNotFoundError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      applyNode(makeSession(), "n-missing", {
+        name: "x",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      }),
+    ).rejects.toBeInstanceOf(NodeNotFoundError);
+    // The mutation must not have been dispatched.
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "node" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  it("does not remap a generic GraphQL error from getNode to NodeNotFoundError", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    // A generic resolver error (e.g., 500 / authn) carries an errors[]
+    // array but no not-found marker. It must NOT be cast as 404.
+    const generic = Object.assign(new Error("internal server error"), {
+      response: {
+        errors: [{ message: "internal server error" }],
+      },
+    });
+    mockGraphqlRequest.mockRejectedValue(generic);
+
+    const { getNode, NodeNotFoundError, ManagerUnavailableError } =
+      await import("@/lib/node/server-actions");
+    await expect(getNode(makeSession(), "n-1")).rejects.not.toBeInstanceOf(
+      NodeNotFoundError,
+    );
+    await expect(getNode(makeSession(), "n-1")).rejects.not.toBeInstanceOf(
       ManagerUnavailableError,
     );
   });

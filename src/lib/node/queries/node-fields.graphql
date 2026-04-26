@@ -1,0 +1,36 @@
+# Single source for the Node selection used by both `node-list.graphql`
+# (list view, status flows) and `node-detail.graphql` (detail page,
+# Phase Node-9 stale-conflict replay). The two operations compose this
+# fragment via `# requires:` headers in queries.ts and the schema-
+# validation test, so a field added here flows to both call sites
+# without a hand-edit.
+fragment NodeFields on Node {
+  id
+  name
+  nameDraft
+  profile {
+    customerId
+    description
+    hostname
+  }
+  profileDraft {
+    customerId
+    description
+    hostname
+  }
+  agents {
+    node
+    key
+    kind
+    status
+    config
+    draft
+  }
+  externalServices {
+    node
+    key
+    kind
+    status
+    draft
+  }
+}

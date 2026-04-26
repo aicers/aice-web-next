@@ -14,6 +14,7 @@ import {
 import {
   withExternalErrorMapping,
   withManagerErrorMapping,
+  withNodeNotFoundMapping,
 } from "./error-mapping";
 import {
   ExternalServiceUnavailableError,
@@ -122,6 +123,14 @@ export interface NodePageArgs {
  * targeting an out-of-scope `id` (the BFF must never trust the payload
  * for the scope decision). Returns the Node payload so the caller can
  * also use it for any other authoritative checks.
+ *
+ * Error mapping order: not-found before manager-unavailable. Review-web
+ * declares `node(id: ID!): Node!` as non-nullable, so a missing id
+ * surfaces as a rejected `graphql-request` promise carrying GraphQL
+ * errors (NOT as `{ node: null }`). The not-found mapper inspects the
+ * thrown error's `response.errors[]` and is a no-op for connection
+ * failures, so the manager-unavailable mapper still catches transport
+ * errors after it.
  */
 async function fetchCanonicalNode(
   ctx: DispatchContext,
@@ -129,13 +138,19 @@ async function fetchCanonicalNode(
   signal?: AbortSignal,
 ): Promise<ManagerNode> {
   const data = await withManagerErrorMapping(
-    graphqlRequest<NodeDetailResult, { id: string }>(
-      NODE_DETAIL_QUERY,
-      { id },
-      { role: ctx.role, customerIds: ctx.customerIds },
-      signal,
+    withNodeNotFoundMapping(
+      graphqlRequest<NodeDetailResult, { id: string }>(
+        NODE_DETAIL_QUERY,
+        { id },
+        { role: ctx.role, customerIds: ctx.customerIds },
+        signal,
+      ),
+      id,
     ),
   );
+  // Defense-in-depth: should be unreachable because review-web's
+  // schema makes `node` non-nullable, but if a future schema change
+  // were to widen it, this check still surfaces the 404 cleanly.
   if (!data.node) {
     throw new NodeNotFoundError(`Node ${id} was not found.`);
   }

@@ -115,6 +115,66 @@ function findQueryDocuments(root: string): string[] {
   );
 }
 
+/**
+ * Operation files declare fragment dependencies via a leading
+ * `# requires: <relative-path>` header line. The runtime composes
+ * referenced files into a single document at parse time
+ * (`src/lib/node/queries.ts`); the schema-validation test mirrors
+ * that composition so a fragment shared between multiple operations
+ * (e.g. `node-fields.graphql`) lives in exactly one file and validates
+ * once via the composed document. Fragment-only partials are skipped
+ * from standalone validation — `NoUnusedFragmentsRule` would otherwise
+ * reject them — and their correctness is enforced through every
+ * operation that requires them.
+ */
+const REQUIRES_DIRECTIVE = /^#\s*requires:\s*(\S+)\s*$/;
+
+function readRequires(source: string): string[] {
+  const requires: string[] = [];
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "") continue;
+    if (!line.startsWith("#")) break;
+    const match = REQUIRES_DIRECTIVE.exec(line);
+    if (match?.[1]) requires.push(match[1]);
+  }
+  return requires;
+}
+
+function resolveDependencies(filePath: string): string[] {
+  const visited = new Set<string>();
+  const order: string[] = [];
+  const visit = (p: string): void => {
+    const key = path.resolve(p);
+    if (visited.has(key)) return;
+    visited.add(key);
+    const source = readFileSync(p, "utf8");
+    for (const req of readRequires(source)) {
+      visit(path.resolve(path.dirname(p), req));
+    }
+    order.push(p);
+  };
+  visit(filePath);
+  return order;
+}
+
+function composeQueryDocument(filePath: string): string {
+  return resolveDependencies(filePath)
+    .map((p) => readFileSync(p, "utf8"))
+    .join("\n");
+}
+
+function collectPartialPaths(roots: string[]): Set<string> {
+  const partials = new Set<string>();
+  for (const root of roots) {
+    const source = readFileSync(root, "utf8");
+    for (const req of readRequires(source)) {
+      partials.add(path.resolve(path.dirname(root), req));
+    }
+  }
+  return partials;
+}
+
 function findSourceFiles(root: string): string[] {
   return walk(
     root,
@@ -403,17 +463,21 @@ describe("vendored REview GraphQL schema", () => {
     tivan: tivanSchema,
   };
   const documents = findQueryDocuments(QUERY_ROOT);
+  const partialPaths = collectPartialPaths(documents);
+  const operationDocuments = documents.filter(
+    (doc) => !partialPaths.has(path.resolve(doc)),
+  );
 
-  if (documents.length === 0) {
+  if (operationDocuments.length === 0) {
     it("no runtime GraphQL query documents to validate (yet)", () => {
-      expect(documents).toEqual([]);
+      expect(operationDocuments).toEqual([]);
     });
   } else {
-    describe.each(documents)("query document", (doc) => {
+    describe.each(operationDocuments)("query document", (doc) => {
       const rel = path.relative(REPO_ROOT, doc);
       const { schema: target, sdl } = pickSchemaForQueryFile(doc, schemas);
       it(`validates ${rel} against ${sdl}`, () => {
-        const source = readFileSync(doc, "utf8");
+        const source = composeQueryDocument(doc);
         const failure = validateQueryDocumentSource(rel, source, target, sdl);
         if (failure) throw new Error(failure);
       });

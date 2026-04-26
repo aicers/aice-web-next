@@ -1,40 +1,6 @@
+# requires: node-fields.graphql
 query NodeDetail($id: ID!) {
   node(id: $id) {
     ...NodeFields
-  }
-}
-
-# Kept in sync with node-list.graphql by hand. Both selections must
-# share the same shape so the detail page and the list page render
-# identical Node payloads, and so Phase Node-9's stale-conflict replay
-# can refetch the canonical NodeInput from this query.
-fragment NodeFields on Node {
-  id
-  name
-  nameDraft
-  profile {
-    customerId
-    description
-    hostname
-  }
-  profileDraft {
-    customerId
-    description
-    hostname
-  }
-  agents {
-    node
-    key
-    kind
-    status
-    config
-    draft
-  }
-  externalServices {
-    node
-    key
-    kind
-    status
-    draft
   }
 }
