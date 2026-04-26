@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   SavedFilterDuplicateNameError,
+  SavedFilterInvalidError,
   SavedFilterNotFoundError,
 } from "@/lib/detection/saved-filters";
 
@@ -131,6 +132,23 @@ describe("saved-filter server actions", () => {
       });
       expect(result).toEqual({ ok: false, code: "unsupported-mode" });
       expect(mockInsertSavedFilter).not.toHaveBeenCalled();
+    });
+
+    // Reviewer Round 3 — a malformed structured payload (e.g.
+    // crafted client sending `keywords: "not-an-array"`) is sanitized
+    // by the write-side coerce inside `insertSavedFilter`. If somehow
+    // the lib throws `SavedFilterInvalidError` (outer shape
+    // unrecoverable), the action surfaces the generic `server-error`
+    // rather than leaking a discriminated code for a flow the UI
+    // never produces.
+    it("translates SavedFilterInvalidError into server-error", async () => {
+      mockGetCurrentSession.mockResolvedValue({ accountId: "acct-1" });
+      mockInsertSavedFilter.mockRejectedValue(new SavedFilterInvalidError());
+      const result = await actions.saveFilter("malformed", {
+        mode: "structured",
+        input: {},
+      });
+      expect(result).toEqual({ ok: false, code: "server-error" });
     });
   });
 

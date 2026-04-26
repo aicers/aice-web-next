@@ -80,6 +80,10 @@ export async function saveFilter(
     if (err instanceof SavedFilterDuplicateNameError) {
       return { ok: false, code: "duplicate-name" };
     }
+    // SavedFilterInvalidError (the runtime shape coerce inside
+    // `insertSavedFilter` rejected an unrecoverable outer shape) and
+    // any unexpected DB failure both fall through to the generic
+    // `server-error` code so the dialog renders its generic message.
     return { ok: false, code: "server-error" };
   }
 }

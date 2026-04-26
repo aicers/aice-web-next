@@ -104,6 +104,41 @@ describe("saved-filters lib", () => {
       const [sql] = mockQuery.mock.calls[0];
       expect(String(sql)).toContain("mode = 'structured'");
     });
+
+    // Reviewer Round 3 — the read path also coerces stored
+    // `filter_json` so a row that was persisted before the write-side
+    // coerce was wired (or any payload corrupted out-of-band) cannot
+    // crash the chip / draft helpers. Bad fields are dropped; the rest
+    // of the row still loads.
+    it("coerces malformed structured filter_json on read so a bad row does not crash the rail", async () => {
+      mockQuery.mockResolvedValue({
+        rowCount: 1,
+        rows: [
+          {
+            id: "11111111-1111-1111-1111-111111111111",
+            name: "legacy-malformed",
+            mode: "structured",
+            filter_json: {
+              keywords: "not-an-array",
+              categories: "not-an-array",
+              levels: [3],
+            },
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const result = await mod.listSavedFiltersForAccount("acct-1");
+      expect(result).toEqual([
+        {
+          id: "11111111-1111-1111-1111-111111111111",
+          name: "legacy-malformed",
+          filter: { mode: "structured", input: { levels: [3] } },
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ]);
+    });
   });
 
   describe("insertSavedFilter", () => {
@@ -163,6 +198,63 @@ describe("saved-filters lib", () => {
           filter: { mode: "query", text: huge },
         }),
       ).rejects.toThrow("Saved filter payload exceeds size limit");
+    });
+
+    // Reviewer Round 3 — the action layer rejects a non-`structured`
+    // mode, but a structured filter whose inner `input` carries a
+    // schema-violating field (e.g. `keywords: "not-an-array"`) used to
+    // pass straight through `JSON.stringify(filter.input)` and land a
+    // crashable row. The runtime coerce inside `storedPayloadFromFilter`
+    // now drops the bad field before the row is written.
+    it("sanitizes malformed structured fields before insert", async () => {
+      mockQuery.mockResolvedValue({
+        rowCount: 1,
+        rows: [
+          {
+            id: "11111111-1111-1111-1111-111111111111",
+            name: "malformed",
+            mode: "structured",
+            filter_json: { levels: [3] },
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      await mod.insertSavedFilter({
+        accountId: "acct-1",
+        name: "malformed",
+        // Cast through `unknown` to simulate a crafted client payload
+        // whose `EventListFilterInput` shape violates the typed UI's
+        // contract — what the runtime coerce has to defend against.
+        filter: {
+          mode: "structured",
+          input: {
+            keywords: "not-an-array",
+            categories: "not-an-array",
+            levels: [3],
+          },
+        } as unknown as import("@/lib/detection").Filter,
+      });
+      const [, params] = mockQuery.mock.calls[0];
+      // The persisted JSON keeps the valid `levels` field and drops
+      // every malformed one — never a `keywords: "not-an-array"`.
+      expect(params?.[3]).toBe(JSON.stringify({ levels: [3] }));
+    });
+
+    it("throws SavedFilterInvalidError when the outer filter shape is unrecoverable", async () => {
+      await expect(
+        mod.insertSavedFilter({
+          accountId: "acct-1",
+          name: "bad-shape",
+          // Direct lib call that bypasses the action's mode guard —
+          // exercise the defense-in-depth coerce inside the lib.
+          filter: {
+            mode: "structured",
+            input: null,
+          } as unknown as import("@/lib/detection").Filter,
+        }),
+      ).rejects.toBeInstanceOf(mod.SavedFilterInvalidError);
+      expect(mockQuery).not.toHaveBeenCalled();
     });
   });
 

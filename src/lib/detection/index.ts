@@ -114,6 +114,7 @@ export {
   SAVED_FILTER_NAME_MAX,
   type SavedFilter,
   SavedFilterDuplicateNameError,
+  SavedFilterInvalidError,
   SavedFilterNotFoundError,
   validateSavedFilterName,
 } from "./saved-filters";

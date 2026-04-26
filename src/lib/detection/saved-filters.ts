@@ -1,13 +1,12 @@
 import "server-only";
 
 import { query } from "@/lib/db/client";
-
 import type { Filter } from "./filter";
+import { coerceEventListFilterInput, coerceFilter } from "./filter-coerce";
 import {
   SAVED_FILTER_JSON_MAX_BYTES,
   SAVED_FILTER_NAME_MAX,
 } from "./saved-filters-constants";
-import type { EventListFilterInput } from "./types";
 
 export {
   SAVED_FILTER_JSON_MAX_BYTES,
@@ -56,6 +55,21 @@ export class SavedFilterNotFoundError extends Error {
   }
 }
 
+/**
+ * Marker error thrown when the inbound {@link Filter} payload fails
+ * the runtime shape check — the outer mode/input shape is not
+ * recoverable. Server actions translate this into the same
+ * `server-error` code used for unexpected DB failures because the
+ * client UI cannot send a malformed filter through normal flows;
+ * only a crafted authenticated request reaches this branch.
+ */
+export class SavedFilterInvalidError extends Error {
+  constructor() {
+    super("Saved filter payload failed runtime shape validation");
+    this.name = "SavedFilterInvalidError";
+  }
+}
+
 const PG_UNIQUE_VIOLATION = "23505";
 
 interface SavedFilterRow {
@@ -88,6 +102,14 @@ function toIso(value: Date | string): string {
  * typed {@link Filter}. Unknown modes return `null` so list paths
  * can drop the row without throwing — a future read of a row written
  * by a newer server release stays safe rather than crashing the rail.
+ *
+ * Reviewer Round 3 (saved-filter shape validation): the structured
+ * branch routes `filter_json` through {@link coerceEventListFilterInput}
+ * so a row with a malformed field (e.g. `keywords: "not-an-array"`
+ * planted by a crafted client before the write-side coerce was in
+ * place, or a payload corrupted out-of-band) cannot crash the chip
+ * bar / drawer when the rail loads it. Bad fields are dropped; the
+ * surviving filter is still valid.
  */
 function filterFromStoredPayload(
   mode: string,
@@ -99,7 +121,7 @@ function filterFromStoredPayload(
     }
     return {
       mode: "structured",
-      input: payload as EventListFilterInput,
+      input: coerceEventListFilterInput(payload),
     };
   }
   if (mode === "query") {
@@ -116,15 +138,26 @@ function filterFromStoredPayload(
  * v1 callers always pass `mode: "structured"`; the `mode: "query"`
  * branch is exercised by the codepath today as a forward-compat
  * test surface even though no UI emits it.
+ *
+ * Reviewer Round 3 (saved-filter shape validation): the structured
+ * branch routes the inbound filter through {@link coerceFilter} so a
+ * crafted client cannot persist a malformed `EventListFilterInput`
+ * (e.g. `{ keywords: "not-an-array" }`) that would later crash the
+ * chip / draft helpers. Throws {@link SavedFilterInvalidError} when
+ * the outer shape is unrecoverable.
  */
 function storedPayloadFromFilter(filter: Filter): {
   mode: string;
   json: string;
 } {
-  if (filter.mode === "structured") {
-    return { mode: "structured", json: JSON.stringify(filter.input) };
+  const coerced = coerceFilter(filter);
+  if (!coerced) {
+    throw new SavedFilterInvalidError();
   }
-  return { mode: "query", json: JSON.stringify({ text: filter.text }) };
+  if (coerced.mode === "structured") {
+    return { mode: "structured", json: JSON.stringify(coerced.input) };
+  }
+  return { mode: "query", json: JSON.stringify({ text: coerced.text }) };
 }
 
 export function normalizeSavedFilterName(raw: string): string {
