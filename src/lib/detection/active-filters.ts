@@ -22,6 +22,7 @@ import { directionsForFilterInput, FLOW_KINDS } from "./direction";
 import {
   type EndpointEntry,
   endpointsToEndpointInputs,
+  preservePredefinedEndpointInputs,
 } from "./endpoint-filter";
 import type { Filter } from "./filter";
 import { CONFIDENCE_DEFAULT_MAX, CONFIDENCE_DEFAULT_MIN } from "./filter-draft";
@@ -188,7 +189,18 @@ export function removeActiveChip(
       // hides the removed rule while the dispatched query still
       // carries it, and the operator sees the filtered-out rows
       // "come back" on the next render.
-      const submitted = endpointsToEndpointInputs(next);
+      //
+      // Predefined endpoint references (server-defined network groups)
+      // have no `EndpointEntry` mirror, so removing a visible custom
+      // chip must replay them on top of the rebuilt custom side or
+      // the re-run query silently broadens the filter. `endpointAll`
+      // intentionally clears every endpoint constraint, predefined
+      // included, so it does not need this preservation.
+      const preservedPredefined = preservePredefinedEndpointInputs(
+        filter.input.endpoints,
+      );
+      const customEndpoints = endpointsToEndpointInputs(next);
+      const submitted = [...preservedPredefined, ...customEndpoints];
       if (submitted.length === 0) delete input.endpoints;
       else input.endpoints = submitted;
       return { filter: { mode: "structured", input }, endpoints: next };

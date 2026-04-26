@@ -207,6 +207,127 @@ describe("removeActiveChip", () => {
     expect(result.endpoints).toEqual([]);
   });
 
+  it("preserves predefined endpoint refs when removing a single custom endpoint chip", () => {
+    // Reviewer Round 4: a saved filter carrying both a predefined
+    // network group and a visible custom host must not silently drop
+    // the predefined ref when the operator removes the visible chip.
+    // The mirror has no shape for `predefined`, so the helper has to
+    // replay it on top of the rebuilt custom side — same contract as
+    // the Apply path.
+    const customHost: EndpointEntry = {
+      id: "ep-1",
+      raw: "10.0.0.5",
+      kind: "host",
+      host: "10.0.0.5",
+      direction: "DESTINATION",
+      selected: true,
+    };
+    const filter: Filter = {
+      mode: "structured",
+      input: {
+        ...baseFilter.input,
+        endpoints: [
+          { direction: "FROM", predefined: "net-1" },
+          {
+            direction: "TO",
+            custom: { hosts: ["10.0.0.5"], networks: [], ranges: [] },
+          },
+        ],
+      },
+    };
+    const result = removeActiveChip(filter, [customHost], {
+      kind: "endpointEntry",
+      entryId: "ep-1",
+    });
+    expect(result.endpoints).toEqual([]);
+    if (result.filter.mode !== "structured") throw new Error("unreachable");
+    expect(result.filter.input.endpoints).toEqual([
+      { direction: "FROM", predefined: "net-1" },
+    ]);
+  });
+
+  it("preserves predefined endpoint refs when removing one of several custom endpoint chips", () => {
+    const e1: EndpointEntry = {
+      id: "ep-1",
+      raw: "10.0.0.5",
+      kind: "host",
+      host: "10.0.0.5",
+      direction: "BOTH",
+      selected: true,
+    };
+    const e2: EndpointEntry = {
+      id: "ep-2",
+      raw: "192.168.1.0/24",
+      kind: "network",
+      network: "192.168.1.0/24",
+      direction: "SOURCE",
+      selected: true,
+    };
+    const filter: Filter = {
+      mode: "structured",
+      input: {
+        ...baseFilter.input,
+        endpoints: [
+          { direction: null, predefined: "net-1" },
+          {
+            direction: null,
+            custom: { hosts: ["10.0.0.5"], networks: [], ranges: [] },
+          },
+          {
+            direction: "FROM",
+            custom: { hosts: [], networks: ["192.168.1.0/24"], ranges: [] },
+          },
+        ],
+      },
+    };
+    const result = removeActiveChip(filter, [e1, e2], {
+      kind: "endpointEntry",
+      entryId: "ep-1",
+    });
+    expect(result.endpoints).toEqual([e2]);
+    if (result.filter.mode !== "structured") throw new Error("unreachable");
+    expect(result.filter.input.endpoints).toEqual([
+      { direction: null, predefined: "net-1" },
+      {
+        direction: "FROM",
+        custom: { hosts: [], networks: ["192.168.1.0/24"], ranges: [] },
+      },
+    ]);
+  });
+
+  it("clears predefined endpoint refs along with custom chips on aggregate removal", () => {
+    // The aggregate × means "no endpoint constraints at all" — the
+    // reviewer noted this is intentionally distinct from the
+    // single-chip path, so confirm it still wipes predefined refs too.
+    const customHost: EndpointEntry = {
+      id: "ep-1",
+      raw: "10.0.0.5",
+      kind: "host",
+      host: "10.0.0.5",
+      direction: "BOTH",
+      selected: true,
+    };
+    const filter: Filter = {
+      mode: "structured",
+      input: {
+        ...baseFilter.input,
+        endpoints: [
+          { direction: "FROM", predefined: "net-1" },
+          {
+            direction: null,
+            custom: { hosts: ["10.0.0.5"], networks: [], ranges: [] },
+          },
+        ],
+      },
+    };
+    const result = removeActiveChip(filter, [customHost], {
+      kind: "endpointAll",
+    });
+    expect(result.endpoints).toEqual([]);
+    if (result.filter.mode !== "structured") throw new Error("unreachable");
+    expect(result.filter.input.endpoints).toBeUndefined();
+  });
+
   it("clears query text on queryPill removal", () => {
     const filter: Filter = { mode: "query", text: "level:HIGH" };
     const result = removeActiveChip(filter, [], { kind: "queryPill" });
