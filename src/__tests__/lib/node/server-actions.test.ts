@@ -239,15 +239,40 @@ describe("manager server actions — happy path", () => {
   it("removeNodes dispatches via graphqlRequest with the id list and returns the manager's id list", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
-    mockGraphqlRequest.mockResolvedValue({ removeNodes: ["n-1", "n-2"] });
+    // Preflight per id (in-scope), then the delete mutation.
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-1",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "1", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-2",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "1", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+    mockGraphqlRequest.mockResolvedValueOnce({
+      removeNodes: ["n-1", "n-2"],
+    });
 
     const { removeNodes } = await import("@/lib/node/server-actions");
     const result = await removeNodes(makeSession(), ["n-1", "n-2"]);
 
     expect(result).toEqual(["n-1", "n-2"]);
-    const call = mockGraphqlRequest.mock.calls.at(-1);
-    expect(call?.[1]).toEqual({ ids: ["n-1", "n-2"] });
-    expect(call?.[2]).toEqual({
+    const mutation = mockGraphqlRequest.mock.calls.at(-1);
+    expect(mutation?.[1]).toEqual({ ids: ["n-1", "n-2"] });
+    expect(mutation?.[2]).toEqual({
       role: "Tenant Administrator",
       customerIds: [1],
     });
@@ -281,11 +306,15 @@ describe("manager server actions — happy path", () => {
     expect(result).toBe("host-1");
     const call = mockGraphqlRequest.mock.calls.at(-1);
     expect(call?.[1]).toEqual({ hostname: "host-1" });
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
   });
 });
 
 describe("external service server actions — happy path", () => {
-  it("getGigantoStatus dispatches via gigantoClient", async () => {
+  it("getGigantoStatus dispatches via gigantoClient with the materialized scope and no variables", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
     mockGigantoClient.mockResolvedValue({
@@ -303,6 +332,13 @@ describe("external service server actions — happy path", () => {
     const status = await getGigantoStatus(makeSession());
     expect(status.name).toBe("g");
     expect(mockGigantoClient).toHaveBeenCalledTimes(1);
+    const call = mockGigantoClient.mock.calls[0];
+    expect(call?.[1]).toBeUndefined();
+    expect(call?.[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [1],
+    });
+    expect(mockTivanClient).not.toHaveBeenCalled();
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 
@@ -759,6 +795,277 @@ describe("tenant scope boundary", () => {
     expect(result).toBe("n-1");
     // Only the mutation was dispatched — no canonical-node fetch.
     expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a tenant admin who saves a draft with no proposed customer (profileDraft: null)", async () => {
+    // Without this gate, the canonical preflight would pass for an
+    // in-scope node, and `updateNodeDraft` would dispatch a draft that
+    // blanks out the customer — moving the node into a "customerless"
+    // state that this same module treats as System-Administrator-only
+    // on read. The write side has to symmetrically refuse.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-5",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+
+    const { updateNodeDraft, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      updateNodeDraft(
+        makeSession(),
+        "n-5",
+        {
+          name: "n",
+          nameDraft: null,
+          profile: { customerId: "5", description: "", hostname: "h" },
+          profileDraft: null,
+          agents: [],
+          externalServices: [],
+        },
+        {
+          nameDraft: "n2",
+          profileDraft: null,
+          agents: null,
+          externalServices: null,
+        },
+      ),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    // Only the canonical preflight ran; no mutation dispatched.
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  it("permits a System Administrator to save a customerless draft", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+    mockGraphqlRequest.mockResolvedValueOnce({ updateNodeDraft: "n-1" });
+
+    const { updateNodeDraft } = await import("@/lib/node/server-actions");
+    const result = await updateNodeDraft(
+      makeSession({ roles: ["System Administrator"] }),
+      "n-1",
+      {
+        name: "n",
+        nameDraft: null,
+        profile: null,
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+      {
+        nameDraft: "n2",
+        profileDraft: null,
+        agents: null,
+        externalServices: null,
+      },
+    );
+    expect(result).toBe("n-1");
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a tenant admin who applies a customerless target (profile: null and profileDraft: null)", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-5",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+
+    const { applyNode, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      applyNode(makeSession(), "n-5", {
+        name: "x",
+        nameDraft: null,
+        profile: null,
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      }),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "node" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(0);
+  });
+});
+
+// ── removeNodes preflight scope ────────────────────────────────────
+
+describe("removeNodes — canonical-id preflight", () => {
+  it("rejects a tenant admin scoped to customer 5 from deleting a node owned by customer 7", async () => {
+    // Caller holds nodes:delete and is in scope for customer 5; the id
+    // `n-7` belongs to customer 7. The BFF must reject before the
+    // delete mutation reaches the wire.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-7",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "7", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+
+    const { removeNodes, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(removeNodes(makeSession(), ["n-7"])).rejects.toBeInstanceOf(
+      NodePermissionError,
+    );
+    // No `removeNodes` mutation dispatched.
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "ids" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  it("rejects a tenant admin if any single id in a batch is out of scope", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    // First id in scope, second id out of scope. The preflight must
+    // reject the whole batch — partial deletes silently skipping
+    // out-of-scope ids would mask a permission failure.
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-5",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-7",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "7", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+
+    const { removeNodes, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      removeNodes(makeSession(), ["n-5", "n-7"]),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "ids" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  it("translates a missing-id during the removeNodes preflight into NodeNotFoundError", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    const notFound = Object.assign(new Error("not found"), {
+      response: {
+        errors: [
+          {
+            message: "Node n-missing was not found",
+            extensions: { code: "NOT_FOUND" },
+          },
+        ],
+      },
+    });
+    mockGraphqlRequest.mockRejectedValueOnce(notFound);
+
+    const { removeNodes, NodeNotFoundError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      removeNodes(makeSession(), ["n-missing"]),
+    ).rejects.toBeInstanceOf(NodeNotFoundError);
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "ids" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  it("permits a tenant admin to delete in-scope nodes (preflight + mutation)", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    // Two preflight fetches, one for each id.
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-5a",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-5b",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+    mockGraphqlRequest.mockResolvedValueOnce({
+      removeNodes: ["n-5a", "n-5b"],
+    });
+
+    const { removeNodes } = await import("@/lib/node/server-actions");
+    const result = await removeNodes(makeSession(), ["n-5a", "n-5b"]);
+    expect(result).toEqual(["n-5a", "n-5b"]);
+    // Two preflights + the one delete mutation.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(3);
+  });
+
+  it("System Administrator skips the canonical-node preflight on removeNodes", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+    mockGraphqlRequest.mockResolvedValueOnce({
+      removeNodes: ["n-1", "n-2"],
+    });
+
+    const { removeNodes } = await import("@/lib/node/server-actions");
+    const result = await removeNodes(
+      makeSession({ roles: ["System Administrator"] }),
+      ["n-1", "n-2"],
+    );
+    expect(result).toEqual(["n-1", "n-2"]);
+    // Only the mutation, no preflight round trips.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+    const call = mockGraphqlRequest.mock.calls[0];
+    expect(call?.[1]).toEqual({ ids: ["n-1", "n-2"] });
   });
 });
 

@@ -344,7 +344,11 @@ interface UpdateNodeDraftVariables extends Record<string, unknown> {
  * with an out-of-scope `id` and an in-scope `customerId` in the
  * payload to slip a draft past the BFF gate. We additionally enforce
  * that the proposed draft does not move the node to a customer
- * outside the caller's scope.
+ * outside the caller's scope, and reject a non-System-Administrator
+ * caller who proposes a customerless target state (`profileDraft:
+ * null`) — a customerless node is treated as System-Administrator-
+ * only on read (see `enforceNodeScope`), so the write side must
+ * symmetrically refuse to create one outside that role.
  *
  * Combined `nodes:write + services:write` gate: `updateNodeDraft`
  * touches both node metadata and per-service drafts in a single
@@ -365,9 +369,17 @@ export async function updateNodeDraft(
   await assertCanonicalNodeInScope(ctx, id, signal);
   // Defense-in-depth: a caller in scope for the existing node must
   // not be able to rewrite its draft to point at a different
-  // customer outside their scope.
+  // customer outside their scope, nor blank out the customer entirely.
   const newCustomer = newDraft.profileDraft?.customerId;
-  if (newCustomer !== undefined) assertNodeInScope(ctx, Number(newCustomer));
+  if (newCustomer === undefined) {
+    if (ctx.role !== SYSTEM_ADMINISTRATOR) {
+      throw new NodePermissionError(
+        "Proposed draft has no customer scope; only System Administrators can save customerless drafts.",
+      );
+    }
+  } else {
+    assertNodeInScope(ctx, Number(newCustomer));
+  }
   const data = await withManagerErrorMapping(
     graphqlRequest<{ updateNodeDraft: string }, UpdateNodeDraftVariables>(
       UPDATE_NODE_DRAFT_MUTATION,
@@ -383,6 +395,24 @@ interface RemoveNodesVariables extends Record<string, unknown> {
   ids: string[];
 }
 
+/**
+ * Delete one or more nodes by id.
+ *
+ * Tenant scope is verified against the **canonical** node fetched by
+ * each `id` from review-web before the delete mutation reaches the
+ * wire. Delete is destructive and the BFF receives raw ids from the
+ * client; without this preflight a Tenant Administrator scoped to
+ * customer X could submit ids belonging to customer Y and review-web
+ * would receive the delete (it might reject by its own scope filter,
+ * but the BFF tenant-scope contract — "no out-of-scope mutation
+ * reaches the wire" — would already be broken).
+ *
+ * System Administrators skip the preflight (no extra round trips for
+ * the global-delete case) because `assertCanonicalNodeInScope` is a
+ * no-op for them. Missing ids surface as `NodeNotFoundError` via the
+ * shared not-found mapping; out-of-scope ids surface as
+ * `NodePermissionError`.
+ */
 export async function removeNodes(
   session: AuthSession,
   ids: string[],
@@ -390,6 +420,11 @@ export async function removeNodes(
 ): Promise<string[]> {
   await requireAllPermissions(session, [NODES_DELETE]);
   const ctx = await buildDispatchContext(session);
+  if (ctx.role !== SYSTEM_ADMINISTRATOR) {
+    for (const id of ids) {
+      await assertCanonicalNodeInScope(ctx, id, signal);
+    }
+  }
   const data = await withManagerErrorMapping(
     graphqlRequest<RemoveNodesResult, RemoveNodesVariables>(
       REMOVE_NODES_MUTATION,
@@ -417,7 +452,11 @@ interface ApplyNodeVariables extends Record<string, unknown> {
  * `id` (not the submitted `node.profile?.customerId`) so a forged
  * payload cannot bypass the BFF gate. We additionally enforce that
  * the proposed apply does not move the node to a customer outside
- * the caller's scope.
+ * the caller's scope, and reject a non-System-Administrator caller
+ * who proposes a customerless target state (both `node.profile` and
+ * `node.profileDraft` null) — a customerless node is treated as
+ * System-Administrator-only on read (see `enforceNodeScope`), so the
+ * apply path must symmetrically refuse to promote the node into one.
  *
  * Combined `nodes:write + services:write` gate: a node-level apply
  * promotes both the node-metadata draft and the per-service drafts
@@ -433,11 +472,20 @@ export async function applyNode(
   await requireAllPermissions(session, [NODES_WRITE, SERVICES_WRITE]);
   const ctx = await buildDispatchContext(session);
   await assertCanonicalNodeInScope(ctx, id, signal);
-  if (node.profile?.customerId !== undefined) {
-    assertNodeInScope(ctx, Number(node.profile.customerId));
+  const profileCustomer = node.profile?.customerId;
+  const draftCustomer = node.profileDraft?.customerId;
+  if (profileCustomer === undefined && draftCustomer === undefined) {
+    if (ctx.role !== SYSTEM_ADMINISTRATOR) {
+      throw new NodePermissionError(
+        "Apply target has no customer scope; only System Administrators can apply customerless nodes.",
+      );
+    }
   }
-  if (node.profileDraft?.customerId !== undefined) {
-    assertNodeInScope(ctx, Number(node.profileDraft.customerId));
+  if (profileCustomer !== undefined) {
+    assertNodeInScope(ctx, Number(profileCustomer));
+  }
+  if (draftCustomer !== undefined) {
+    assertNodeInScope(ctx, Number(draftCustomer));
   }
   const data = await withManagerErrorMapping(
     graphqlRequest<ApplyNodeResult, ApplyNodeVariables>(
