@@ -1,0 +1,96 @@
+{
+  "nodeStatusList": {
+    "edges": [
+      {
+        "node": {
+          "id": "11",
+          "name": "alpha-node",
+          "nameDraft": null,
+          "profile": {
+            "customerId": "1",
+            "description": "Primary sensor cluster",
+            "hostname": "alpha.lan"
+          },
+          "profileDraft": null,
+          "cpuUsage": 12.5,
+          "totalMemory": "17179869184",
+          "usedMemory": "8589934592",
+          "totalDiskSpace": "1099511627776",
+          "usedDiskSpace": "274877906944",
+          "manager": true,
+          "agents": [
+            {
+              "kind": "SENSOR",
+              "storedStatus": "ENABLED",
+              "config": "[sensor]\nname = \"alpha\"\n",
+              "draft": null
+            }
+          ],
+          "externalServices": [
+            {
+              "kind": "DATA_STORE",
+              "storedStatus": "ENABLED",
+              "draft": null
+            }
+          ],
+          "ping": 3.2
+        }
+      },
+      {
+        "node": {
+          "id": "12",
+          "name": "beta-node",
+          "nameDraft": "beta-node-renamed",
+          "profile": {
+            "customerId": "1",
+            "description": "Beta with pending change",
+            "hostname": "beta.lan"
+          },
+          "profileDraft": {
+            "customerId": "1",
+            "description": "Beta with pending change",
+            "hostname": "beta-new.lan"
+          },
+          "cpuUsage": null,
+          "totalMemory": null,
+          "usedMemory": null,
+          "totalDiskSpace": null,
+          "usedDiskSpace": null,
+          "manager": false,
+          "agents": [],
+          "externalServices": [],
+          "ping": null
+        }
+      },
+      {
+        "node": {
+          "id": "13",
+          "name": "gamma-node",
+          "nameDraft": null,
+          "profile": {
+            "customerId": "2",
+            "description": "Tenant B node",
+            "hostname": "gamma.lan"
+          },
+          "profileDraft": null,
+          "cpuUsage": 4.2,
+          "totalMemory": "8589934592",
+          "usedMemory": "1073741824",
+          "totalDiskSpace": "549755813888",
+          "usedDiskSpace": "53687091200",
+          "manager": true,
+          "agents": [],
+          "externalServices": [],
+          "ping": 14.0
+        }
+      }
+    ],
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": "11",
+      "endCursor": "13"
+    },
+    "totalCount": "3"
+  }
+}

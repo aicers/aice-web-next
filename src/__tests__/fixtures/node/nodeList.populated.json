@@ -1,0 +1,121 @@
+{
+  "nodeList": {
+    "edges": [
+      {
+        "node": {
+          "id": "11",
+          "name": "alpha-node",
+          "nameDraft": null,
+          "profile": {
+            "customerId": "1",
+            "description": "Primary sensor cluster",
+            "hostname": "alpha.lan"
+          },
+          "profileDraft": null,
+          "agents": [
+            {
+              "node": 11,
+              "key": "alpha-sensor",
+              "kind": "SENSOR",
+              "status": "ENABLED",
+              "config": "[sensor]\nname = \"alpha\"\n",
+              "draft": null
+            },
+            {
+              "node": 11,
+              "key": "alpha-unsupervised",
+              "kind": "UNSUPERVISED",
+              "status": "ENABLED",
+              "config": null,
+              "draft": null
+            }
+          ],
+          "externalServices": [
+            {
+              "node": 11,
+              "key": "alpha-data-store",
+              "kind": "DATA_STORE",
+              "status": "ENABLED",
+              "draft": null
+            }
+          ]
+        }
+      },
+      {
+        "node": {
+          "id": "12",
+          "name": "beta-node",
+          "nameDraft": "beta-node-renamed",
+          "profile": {
+            "customerId": "1",
+            "description": "Beta with pending change",
+            "hostname": "beta.lan"
+          },
+          "profileDraft": {
+            "customerId": "1",
+            "description": "Beta with pending change",
+            "hostname": "beta-new.lan"
+          },
+          "agents": [
+            {
+              "node": 12,
+              "key": "beta-sensor",
+              "kind": "SENSOR",
+              "status": "ENABLED",
+              "config": "[sensor]\nname = \"beta\"\n",
+              "draft": "[sensor]\nname = \"beta-pending\"\n"
+            }
+          ],
+          "externalServices": []
+        }
+      },
+      {
+        "node": {
+          "id": "13",
+          "name": "gamma-node",
+          "nameDraft": null,
+          "profile": {
+            "customerId": "2",
+            "description": "Tenant B node",
+            "hostname": "gamma.lan"
+          },
+          "profileDraft": null,
+          "agents": [
+            {
+              "node": 13,
+              "key": "gamma-sensor",
+              "kind": "SENSOR",
+              "status": "ENABLED",
+              "config": "[sensor]\nname = \"gamma\"\n",
+              "draft": null
+            },
+            {
+              "node": 13,
+              "key": "gamma-semi",
+              "kind": "SEMI_SUPERVISED",
+              "status": "ENABLED",
+              "config": "[semi]\n",
+              "draft": null
+            }
+          ],
+          "externalServices": [
+            {
+              "node": 13,
+              "key": "gamma-ti",
+              "kind": "TI_CONTAINER",
+              "status": "ENABLED",
+              "draft": null
+            }
+          ]
+        }
+      }
+    ],
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": "11",
+      "endCursor": "13"
+    },
+    "totalCount": "3"
+  }
+}

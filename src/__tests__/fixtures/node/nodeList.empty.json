@@ -1,0 +1,12 @@
+{
+  "nodeList": {
+    "edges": [],
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": null,
+      "endCursor": null
+    },
+    "totalCount": "0"
+  }
+}

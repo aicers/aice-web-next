@@ -10,5 +10,27 @@
     "query": "detection/eventList.identity.graphql",
     "fixture": "detection/eventList.identity.json",
     "variables": { "filter": {}, "first": 200 }
+  },
+  {
+    "operation": "nodeList",
+    "query": "node/nodeList.empty.graphql",
+    "fixture": "node/nodeList.empty.json"
+  },
+  {
+    "operation": "nodeList",
+    "query": "node/nodeList.populated.graphql",
+    "fixture": "node/nodeList.populated.json",
+    "variables": { "first": 999 }
+  },
+  {
+    "operation": "nodeStatusList",
+    "query": "node/nodeStatusList.empty.graphql",
+    "fixture": "node/nodeStatusList.empty.json"
+  },
+  {
+    "operation": "nodeStatusList",
+    "query": "node/nodeStatusList.populated.graphql",
+    "fixture": "node/nodeStatusList.populated.json",
+    "variables": { "first": 999 }
   }
 ]

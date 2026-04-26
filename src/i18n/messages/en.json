@@ -68,6 +68,7 @@
     "detection": "Detection",
     "triage": "Triage",
     "report": "Report",
+    "nodes": "Nodes",
     "settings": "Settings",
     "audit-logs": "Audit Logs"
   },
@@ -172,6 +173,73 @@
       "mfa": "MFA",
       "node": "Node",
       "service": "Service"
+    }
+  },
+  "nodes": {
+    "title": "Nodes",
+    "tabs": {
+      "status": "Status",
+      "settings": "Settings"
+    },
+    "list": {
+      "noResults": "No nodes match the current filter.",
+      "empty": "No nodes have been created.",
+      "pendingSummary": "{count, plural, =0 {No pending changes} one {# node with pending changes} other {# nodes with pending changes}}",
+      "search": "Search by name, hostname, or customer",
+      "sortLabel": "Sort by",
+      "sortNewest": "Newest",
+      "sortName": "Name (A→Z)",
+      "sortHostname": "Hostname",
+      "addNode": "Add",
+      "allCustomers": "All customers",
+      "tenantFilterLabel": "Customer",
+      "selectAll": "Select all",
+      "selectRow": "Select row",
+      "rowMenuLabel": "Row actions",
+      "edit": "Edit",
+      "delete": "Delete",
+      "selectedSummary": "{count} selected",
+      "bulkDelete": "Delete selected",
+      "deleteConfirmTitle": "Delete node",
+      "deleteConfirmDescription": "{hostname} will be removed permanently. This action cannot be undone.",
+      "deleteBulkConfirmTitle": "Delete {count} nodes",
+      "deleteBulkConfirmDescription": "The selected nodes will be removed permanently. This action cannot be undone.",
+      "deleteCancel": "Cancel",
+      "deleteConfirm": "Delete",
+      "deleteError": "Some nodes could not be deleted.",
+      "pendingBadge": "Pending",
+      "appliedLabel": "Applied",
+      "pendingFilterChip": "Pending",
+      "aliveFilterChip": "Alive",
+      "deadFilterChip": "Dead",
+      "statusFiltersLabel": "Status",
+      "statusFilterAliveDisabled": "Live status not yet available.",
+      "statusFilterDeadDisabled": "Live status not yet available.",
+      "managerRunning": "Running",
+      "managerNotRunning": "Not running",
+      "noHostname": "—",
+      "manualLabel": "Manual",
+      "configuredHere": "Configured here",
+      "configuredManually": "Configured manually",
+      "notConfigured": "Not configured",
+      "columns": {
+        "name": "Name",
+        "customer": "Customer",
+        "description": "Description",
+        "hostname": "Hostname",
+        "sensor": "Sensor",
+        "dataStore": "Data Store",
+        "tiContainer": "TI Container",
+        "unsupervised": "Unsupervised",
+        "semiSupervised": "Semi-supervised",
+        "timeSeries": "Time Series",
+        "manager": "Manager"
+      }
+    },
+    "managerUnavailable": {
+      "title": "Cannot reach manager",
+      "description": "The manager (review-web) is unreachable. Nodes cannot be listed or modified until the connection is restored.",
+      "retry": "Try again"
     }
   },
   "customers": {

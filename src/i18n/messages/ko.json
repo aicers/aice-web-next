@@ -68,6 +68,7 @@
     "detection": "탐지",
     "triage": "분류",
     "report": "보고서",
+    "nodes": "노드",
     "settings": "설정",
     "audit-logs": "감사 로그"
   },
@@ -172,6 +173,73 @@
       "mfa": "MFA",
       "node": "노드",
       "service": "서비스"
+    }
+  },
+  "nodes": {
+    "title": "노드",
+    "tabs": {
+      "status": "상태",
+      "settings": "설정"
+    },
+    "list": {
+      "noResults": "조건에 맞는 노드가 없습니다.",
+      "empty": "등록된 노드가 없습니다.",
+      "pendingSummary": "{count, plural, =0 {대기 중인 변경 없음} other {대기 중인 변경 #건}}",
+      "search": "이름, 호스트명 또는 고객으로 검색",
+      "sortLabel": "정렬",
+      "sortNewest": "최신순",
+      "sortName": "이름순",
+      "sortHostname": "호스트명순",
+      "addNode": "추가",
+      "allCustomers": "모든 고객",
+      "tenantFilterLabel": "고객",
+      "selectAll": "전체 선택",
+      "selectRow": "행 선택",
+      "rowMenuLabel": "행 동작",
+      "edit": "수정",
+      "delete": "삭제",
+      "selectedSummary": "{count}개 선택됨",
+      "bulkDelete": "선택 삭제",
+      "deleteConfirmTitle": "노드 삭제",
+      "deleteConfirmDescription": "{hostname}이(가) 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+      "deleteBulkConfirmTitle": "노드 {count}개 삭제",
+      "deleteBulkConfirmDescription": "선택한 노드가 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+      "deleteCancel": "취소",
+      "deleteConfirm": "삭제",
+      "deleteError": "일부 노드를 삭제하지 못했습니다.",
+      "pendingBadge": "대기 중",
+      "appliedLabel": "적용됨",
+      "pendingFilterChip": "대기 중",
+      "aliveFilterChip": "정상",
+      "deadFilterChip": "응답 없음",
+      "statusFiltersLabel": "상태",
+      "statusFilterAliveDisabled": "실시간 상태가 아직 준비되지 않았습니다.",
+      "statusFilterDeadDisabled": "실시간 상태가 아직 준비되지 않았습니다.",
+      "managerRunning": "실행 중",
+      "managerNotRunning": "중지됨",
+      "noHostname": "—",
+      "manualLabel": "수동",
+      "configuredHere": "이 화면에서 구성됨",
+      "configuredManually": "수동으로 구성됨",
+      "notConfigured": "구성되지 않음",
+      "columns": {
+        "name": "이름",
+        "customer": "고객",
+        "description": "설명",
+        "hostname": "호스트명",
+        "sensor": "센서",
+        "dataStore": "데이터 저장소",
+        "tiContainer": "TI 컨테이너",
+        "unsupervised": "비지도 학습",
+        "semiSupervised": "반지도 학습",
+        "timeSeries": "시계열",
+        "manager": "매니저"
+      }
+    },
+    "managerUnavailable": {
+      "title": "매니저에 연결할 수 없습니다",
+      "description": "매니저(review-web)에 연결할 수 없습니다. 연결이 복구되기 전까지 노드를 조회하거나 수정할 수 없습니다.",
+      "retry": "다시 시도"
     }
   },
   "customers": {
