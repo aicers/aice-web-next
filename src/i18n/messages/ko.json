@@ -552,6 +552,7 @@
       "recommended": "추천 필터",
       "saved": "저장된 필터",
       "placeholder": "아직 필터가 없습니다.",
+      "recommendedEmpty": "구성된 추천 필터가 없습니다.",
       "savedEmpty": "필터를 저장하면 여기에 표시됩니다.",
       "savedLoading": "저장된 필터를 불러오는 중…",
       "savedError": "저장된 필터를 불러오지 못했습니다.",
@@ -583,6 +584,11 @@
           "unauthenticated": "저장된 필터를 관리하려면 다시 로그인하세요."
         }
       }
+    },
+    "recommendedFilters": {
+      "last3Years": "최근 3년",
+      "last1YearInbound": "최근 1년, 인바운드",
+      "last1Year": "최근 1년"
     },
     "saveFilterDialog": {
       "title": "이 필터 저장",

@@ -94,6 +94,11 @@ import {
 } from "@/lib/detection/pivot";
 import { QUICK_PEEK_EVENT_PARAM } from "@/lib/detection/quick-peek-url";
 import {
+  buildRecommendedFilter,
+  RECOMMENDED_PRESETS,
+  type RecommendedPreset,
+} from "@/lib/detection/recommended-filters";
+import {
   ACTIVE_TAB_URL_PARAM,
   autoTabName,
   canAddTab as canAddTabFn,
@@ -458,6 +463,21 @@ export function DetectionTabsShell({
     [labels.pivot.tabCapReachedTemplate, withActiveSnapshot],
   );
 
+  // Recommended-filter activation routes through the same load-in-new-
+  // tab path Saved Filters use (Phase Detection-16). The preset is
+  // resolved at activation time so the tab's start / end pair is
+  // relative to "now" rather than frozen at page load — a preset
+  // bound to `3y` opened at 9am today commits the same window the
+  // period chip would compute. Read-only in v1: no current-tab
+  // activation, no rename / delete affordances.
+  const handleLoadRecommendedFilterInNewTab = useCallback(
+    (preset: RecommendedPreset) => {
+      const filter = buildRecommendedFilter(preset);
+      handleLoadSavedFilterInNewTab(filter);
+    },
+    [handleLoadSavedFilterInNewTab],
+  );
+
   const handleAddTab = useCallback(() => {
     const fresh = buildDefaultTabSnapshot();
     setTabs((prev) => {
@@ -642,6 +662,8 @@ export function DetectionTabsShell({
         onStateChange={handleShellStateChange}
         savedFilters={savedFiltersState}
         onLoadSavedFilterInNewTab={handleLoadSavedFilterInNewTab}
+        recommendedPresets={RECOMMENDED_PRESETS}
+        onLoadRecommendedFilterInNewTab={handleLoadRecommendedFilterInNewTab}
       />
       <PivotToast
         message={pivotToast}

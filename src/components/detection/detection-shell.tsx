@@ -43,6 +43,10 @@ import {
   type QuickPeekInspectorLabels,
 } from "@/components/detection/quick-peek-inspector";
 import {
+  RecommendedFiltersRail,
+  type RecommendedFiltersRailLabels,
+} from "@/components/detection/recommended-filters-rail";
+import {
   ResultList,
   type ResultListLabels,
   type ResultListState,
@@ -129,6 +133,7 @@ import {
   applyQuickPeekToken,
   readQuickPeekToken,
 } from "@/lib/detection/quick-peek-url";
+import type { RecommendedPreset } from "@/lib/detection/recommended-filters";
 import {
   autoTabName as autoTabNameFromChips,
   preserveActiveTabParam,
@@ -293,6 +298,16 @@ export interface DetectionShellLabels {
   recommendedFilter: string;
   savedFilters: string;
   railPlaceholder: string;
+  /**
+   * Localized display name for each {@link RecommendedPreset}, keyed
+   * by `preset.id`. Built on the server page from
+   * `detection.recommendedFilters.<nameKey>` so the rail can render
+   * names without hauling `useTranslations` into a presentation
+   * component.
+   */
+  recommendedPresetNames: Record<string, string>;
+  /** Sub-line shown below the Recommended Filter heading when the preset list is empty. */
+  recommendedEmptyHint: string;
   /**
    * Serializable subset of {@link SavedFiltersRailLabels} — the
    * server page passes plain strings (the menu a11y label is an ICU
@@ -584,6 +599,23 @@ export interface DetectionShellProps {
    * pivot tab-create contract.
    */
   onLoadSavedFilterInNewTab?: (filter: Filter) => void;
+  /**
+   * System-provided recommended presets to render in the slim left
+   * rail (Phase Detection-16). Read-only in v1: each row activates a
+   * one-click broad view in a new tab. The shell stays render-only
+   * over the list; the wrapper builds the concrete {@link Filter}
+   * from the preset and threads it through the same "load in new tab"
+   * path Saved Filters use. `undefined` keeps the rail in the
+   * placeholder shape used by the standalone shell tests.
+   */
+  recommendedPresets?: readonly RecommendedPreset[];
+  /**
+   * Activation hook for the Recommended Filter rail. Same contract
+   * as {@link onLoadSavedFilterInNewTab}: the wrapper creates a new
+   * tab pre-seeded with the preset's filter and auto-runs the
+   * query so the tab lands populated.
+   */
+  onLoadRecommendedFilterInNewTab?: (preset: RecommendedPreset) => void;
 }
 
 /**
@@ -872,6 +904,8 @@ export function DetectionShell({
   onPivot,
   savedFilters,
   onLoadSavedFilterInNewTab,
+  recommendedPresets,
+  onLoadRecommendedFilterInNewTab,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
@@ -1749,6 +1783,20 @@ export function DetectionShell({
       renameDialog: railStrings.renameDialog,
     };
   }, [labels.savedFiltersRail]);
+
+  const recommendedRailLabels = useMemo<RecommendedFiltersRailLabels>(
+    () => ({
+      title: labels.recommendedFilter,
+      emptyHint: labels.recommendedEmptyHint,
+      presetName: (preset) =>
+        labels.recommendedPresetNames[preset.id] ?? preset.id,
+    }),
+    [
+      labels.recommendedFilter,
+      labels.recommendedEmptyHint,
+      labels.recommendedPresetNames,
+    ],
+  );
 
   const handleRemoveChip = useCallback(
     (target: ChipRemoveTarget) => {
@@ -2734,11 +2782,19 @@ export function DetectionShell({
         aria-label={labels.savedFilters}
         className="flex w-14 shrink-0 flex-col gap-6 border-r border-[var(--sidebar-border)] pr-2 desktop:w-60 desktop:pr-4"
       >
-        <RailSection
-          icon={<Star className="size-4" />}
-          title={labels.recommendedFilter}
-          placeholder={labels.railPlaceholder}
-        />
+        {recommendedPresets && onLoadRecommendedFilterInNewTab ? (
+          <RecommendedFiltersRail
+            presets={recommendedPresets}
+            labels={recommendedRailLabels}
+            onActivate={onLoadRecommendedFilterInNewTab}
+          />
+        ) : (
+          <RailSection
+            icon={<Star className="size-4" />}
+            title={labels.recommendedFilter}
+            placeholder={labels.railPlaceholder}
+          />
+        )}
         {savedFilters ? (
           <SavedFiltersRail
             state={savedFilters}

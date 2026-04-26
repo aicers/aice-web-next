@@ -552,6 +552,7 @@
       "recommended": "Recommended Filter",
       "saved": "Saved Filters",
       "placeholder": "No filters yet.",
+      "recommendedEmpty": "No recommended filters configured.",
       "savedEmpty": "Save a filter to keep it here.",
       "savedLoading": "Loading saved filters…",
       "savedError": "Could not load saved filters.",
@@ -583,6 +584,11 @@
           "unauthenticated": "Sign in again to manage saved filters."
         }
       }
+    },
+    "recommendedFilters": {
+      "last3Years": "3 years",
+      "last1YearInbound": "1 year, Inbound",
+      "last1Year": "1 year"
     },
     "saveFilterDialog": {
       "title": "Save this filter",

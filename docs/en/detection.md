@@ -27,6 +27,41 @@ A slim rail on the left lists two sections:
 On narrow viewports the rail collapses to icons only. On desktop
 widths it expands to show the section headings.
 
+#### Recommended filters
+
+The **Recommended Filter** section ships a curated set of broad
+starting points so a new operator can land on a populated view with
+one click instead of building a filter from scratch. The initial
+v1 list mirrors the broad-lookback presets the team agreed on in
+the umbrella:
+
+- **3 years** — Time period set to the last 3 years, no other
+  narrowing.
+- **1 year, Inbound** — Time period set to the last 1 year,
+  Direction restricted to **Outside → Inside**.
+- **1 year** — Time period set to the last 1 year, no other
+  narrowing.
+
+Activating a row opens the preset in a **new tab** (matching the
+default activation contract Saved Filters use) and auto-runs the
+query so the new tab lands populated. The current tab is left
+untouched, the same way the pivot path and saved-filter activation
+behave. Hitting the 8-tab cap surfaces the same "close a tab to
+load — already at the 8-tab limit" toast the rest of the workspace
+uses; nothing is silently dropped.
+
+The preset's start / end is resolved at activation time relative
+to "now," so the filter committed today reflects the same window
+the **Period** chip would compute today — not whatever window was
+current when the page first rendered.
+
+Recommended filters are **system-provided and read-only** in v1:
+the rail exposes no rename / delete / save affordances. Per-tenant
+recommendation lists and an admin UI to manage the set are tracked
+as future work.
+
+![Recommended Filter rail](../assets/detection-recommended-filters-rail-en.png)
+
 #### Saving a filter
 
 Open the filter drawer, configure the filter you want to keep, and
@@ -126,12 +161,11 @@ view is never empty.
   auto-run** — the tab lands on the pre-query empty state
   ("Build a filter to begin") and the operator clicks Apply to
   populate it.
-- Activating a **saved filter** from the slim left rail (default
-  click — see "Saved Filters" above) or following a **pivot
-  link** (Phase Detection-12) also creates a new tab pre-seeded
-  with the target filter rather than replacing the current tab.
-  Recommended filters follow the same contract once the
-  recommendations surface lands.
+- Activating a **saved filter** or a **recommended filter** from
+  the slim left rail (default click — see "Saved Filters" and
+  "Recommended filters" above) or following a **pivot link**
+  (Phase Detection-12) also creates a new tab pre-seeded with the
+  target filter rather than replacing the current tab.
 
 The tab cap is **8 simultaneous tabs**. At the cap the `+`
 affordance disables and surfaces a tooltip explaining that you
