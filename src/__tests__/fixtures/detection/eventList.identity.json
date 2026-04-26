@@ -1,0 +1,78 @@
+{
+  "eventList": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": "cursor-http-threat-1",
+      "endCursor": "cursor-blocklist-conn-1"
+    },
+    "edges": [
+      {
+        "cursor": "cursor-http-threat-1",
+        "node": {
+          "__typename": "HttpThreat",
+          "time": "2026-04-22T12:00:00+00:00",
+          "sensor": "sensor-east-1",
+          "confidence": 0.92,
+          "category": "INITIAL_ACCESS",
+          "level": "HIGH",
+          "triageScores": [{ "policyId": 1, "score": 0.92 }]
+        }
+      },
+      {
+        "cursor": "cursor-blocklist-conn-1",
+        "node": {
+          "__typename": "BlocklistConn",
+          "time": "2026-04-22T11:55:00+00:00",
+          "sensor": "sensor-east-1",
+          "confidence": 0.41,
+          "category": "RECONNAISSANCE",
+          "level": "MEDIUM",
+          "triageScores": null
+        }
+      }
+    ],
+    "nodes": [
+      {
+        "__typename": "HttpThreat",
+        "time": "2026-04-22T12:00:00+00:00",
+        "sensor": "sensor-east-1",
+        "confidence": 0.92,
+        "category": "INITIAL_ACCESS",
+        "level": "HIGH",
+        "triageScores": [{ "policyId": 1, "score": 0.92 }],
+        "origAddr": "10.0.0.5",
+        "origPort": 51344,
+        "origCountry": "KR",
+        "respAddr": "203.0.113.45",
+        "respPort": 80,
+        "respCountry": "US",
+        "proto": 6,
+        "attackKind": "Malicious Traffic",
+        "method": "GET",
+        "host": "phish.example.test",
+        "uri": "/login",
+        "statusCode": 200,
+        "learningMethod": "SEMI_SUPERVISED",
+        "username": "alice@example.test"
+      },
+      {
+        "__typename": "BlocklistConn",
+        "time": "2026-04-22T11:55:00+00:00",
+        "sensor": "sensor-east-1",
+        "confidence": 0.41,
+        "category": "RECONNAISSANCE",
+        "level": "MEDIUM",
+        "triageScores": null,
+        "origAddr": "10.0.0.6",
+        "origPort": 60044,
+        "origCountry": "KR",
+        "respAddr": "198.51.100.10",
+        "respPort": 4444,
+        "respCountry": "RU",
+        "proto": 6
+      }
+    ],
+    "totalCount": "2"
+  }
+}

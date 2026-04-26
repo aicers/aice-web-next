@@ -4,5 +4,11 @@
     "query": "detection/eventList.empty.graphql",
     "fixture": "detection/eventList.empty.json",
     "variables": { "filter": {}, "first": 10 }
+  },
+  {
+    "operation": "eventList",
+    "query": "detection/eventList.identity.graphql",
+    "fixture": "detection/eventList.identity.json",
+    "variables": { "filter": {}, "first": 200 }
   }
 ]

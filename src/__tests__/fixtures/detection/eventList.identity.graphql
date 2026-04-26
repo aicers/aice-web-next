@@ -1,0 +1,63 @@
+query EventListIdentity($filter: EventListFilterInput!, $first: Int) {
+  eventList(filter: $filter, first: $first) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      cursor
+      node {
+        __typename
+        time
+        sensor
+        confidence
+        category
+        level
+        triageScores {
+          policyId
+          score
+        }
+      }
+    }
+    nodes {
+      __typename
+      time
+      sensor
+      confidence
+      category
+      level
+      triageScores {
+        policyId
+        score
+      }
+      ... on HttpThreat {
+        origAddr
+        origPort
+        origCountry
+        respAddr
+        respPort
+        respCountry
+        proto
+        attackKind
+        method
+        host
+        uri
+        statusCode
+        learningMethod
+        username
+      }
+      ... on BlocklistConn {
+        origAddr
+        origPort
+        origCountry
+        respAddr
+        respPort
+        respCountry
+        proto
+      }
+    }
+    totalCount
+  }
+}

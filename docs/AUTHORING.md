@@ -137,6 +137,20 @@ REview data.
      (REview's `validate_client_cert` requires four-part DNS SAN
      with `aice-web-next` as the second part) plus
      `extendedKeyUsage=clientAuth,serverAuth`.
+
+   > **Don't reuse production-style certs whose server SAN is
+   > only the four-part DNS** (e.g. `001.review.review-host.test.local`
+   > with no `localhost` SAN). The BFF connects to
+   > `https://localhost:8443/graphql` per the `.env.local` template
+   > below, so the TLS handshake checks `localhost` against the
+   > server cert's SAN — a four-part-DNS-only cert will fail
+   > hostname verification. If you must reuse such certs (e.g.
+   > a shared Bootroot test bundle), regenerate the server leaf
+   > with a `DNS:localhost` SAN added, or add the four-part DNS
+   > to `/etc/hosts` (`127.0.0.1 001.review.review-host.test.local`)
+   > and point `REVIEW_GRAPHQL_ENDPOINT` at the four-part name.
+   > The fresh `data/dev-tls/review-cert.pem` recipe above sidesteps
+   > the issue entirely.
 3. Copy the REview dataset into `data/review/` so the database
    files live under the worktree, and create a `data/review.toml`
    that pins:
