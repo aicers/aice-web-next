@@ -1,0 +1,17 @@
+# requires: node-fields.graphql
+query NodeList($first: Int, $after: String, $last: Int, $before: String) {
+  nodeList(first: $first, after: $after, last: $last, before: $before) {
+    edges {
+      node {
+        ...NodeFields
+      }
+    }
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    totalCount
+  }
+}

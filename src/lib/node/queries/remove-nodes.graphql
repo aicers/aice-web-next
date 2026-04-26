@@ -1,0 +1,3 @@
+mutation RemoveNodes($ids: [ID!]!) {
+  removeNodes(ids: $ids)
+}

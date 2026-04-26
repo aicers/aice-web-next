@@ -14,7 +14,45 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SCHEMA_PATH = path.join(REPO_ROOT, "schemas/review.graphql");
 const VERSION_PATH = path.join(REPO_ROOT, "schemas/review.version");
+const GIGANTO_SCHEMA_PATH = path.join(REPO_ROOT, "schemas/giganto.graphql");
+const GIGANTO_VERSION_PATH = path.join(REPO_ROOT, "schemas/giganto.version");
+const TIVAN_SCHEMA_PATH = path.join(REPO_ROOT, "schemas/tivan.graphql");
+const TIVAN_VERSION_PATH = path.join(REPO_ROOT, "schemas/tivan.version");
 const QUERY_ROOT = path.join(REPO_ROOT, "src");
+
+/**
+ * Per-SDL routing for `.graphql` files under `src/lib/node/queries/`.
+ *
+ * Manager queries validate against `schemas/review.graphql`; Giganto
+ * queries against `schemas/giganto.graphql`; Tivan queries against
+ * `schemas/tivan.graphql`. A document validated against the wrong SDL
+ * must fail — this is the contract the per-service direct-dispatch
+ * design relies on.
+ *
+ * Inline GraphQL in TypeScript sources is unconditionally validated
+ * against the manager SDL, since the only inline-parse() callers in
+ * the repo are Detection / Triage / Node-management server actions
+ * that target review-web. External-service queries live in `.graphql`
+ * files (never inline) so the path-based routing below picks them up.
+ */
+function pickSchemaForQueryFile(
+  doc: string,
+  schemas: {
+    review: GraphQLSchema;
+    giganto: GraphQLSchema;
+    tivan: GraphQLSchema;
+  },
+): { schema: GraphQLSchema; sdl: string } {
+  const rel = path.relative(REPO_ROOT, doc);
+  const base = path.basename(doc);
+  if (rel.startsWith("src/lib/node/queries/external/")) {
+    if (base.startsWith("giganto-"))
+      return { schema: schemas.giganto, sdl: "schemas/giganto.graphql" };
+    if (base.startsWith("tivan-"))
+      return { schema: schemas.tivan, sdl: "schemas/tivan.graphql" };
+  }
+  return { schema: schemas.review, sdl: "schemas/review.graphql" };
+}
 const SKIP_DIRS = new Set([
   "node_modules",
   ".next",
@@ -38,6 +76,16 @@ const GQL_TAG_MODULES = new Set([
 
 function loadSchema(): GraphQLSchema {
   const sdl = readFileSync(SCHEMA_PATH, "utf8");
+  return buildSchema(sdl);
+}
+
+function loadGigantoSchema(): GraphQLSchema {
+  const sdl = readFileSync(GIGANTO_SCHEMA_PATH, "utf8");
+  return buildSchema(sdl);
+}
+
+function loadTivanSchema(): GraphQLSchema {
+  const sdl = readFileSync(TIVAN_SCHEMA_PATH, "utf8");
   return buildSchema(sdl);
 }
 
@@ -67,6 +115,66 @@ function findQueryDocuments(root: string): string[] {
   );
 }
 
+/**
+ * Operation files declare fragment dependencies via a leading
+ * `# requires: <relative-path>` header line. The runtime composes
+ * referenced files into a single document at parse time
+ * (`src/lib/node/queries.ts`); the schema-validation test mirrors
+ * that composition so a fragment shared between multiple operations
+ * (e.g. `node-fields.graphql`) lives in exactly one file and validates
+ * once via the composed document. Fragment-only partials are skipped
+ * from standalone validation — `NoUnusedFragmentsRule` would otherwise
+ * reject them — and their correctness is enforced through every
+ * operation that requires them.
+ */
+const REQUIRES_DIRECTIVE = /^#\s*requires:\s*(\S+)\s*$/;
+
+function readRequires(source: string): string[] {
+  const requires: string[] = [];
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "") continue;
+    if (!line.startsWith("#")) break;
+    const match = REQUIRES_DIRECTIVE.exec(line);
+    if (match?.[1]) requires.push(match[1]);
+  }
+  return requires;
+}
+
+function resolveDependencies(filePath: string): string[] {
+  const visited = new Set<string>();
+  const order: string[] = [];
+  const visit = (p: string): void => {
+    const key = path.resolve(p);
+    if (visited.has(key)) return;
+    visited.add(key);
+    const source = readFileSync(p, "utf8");
+    for (const req of readRequires(source)) {
+      visit(path.resolve(path.dirname(p), req));
+    }
+    order.push(p);
+  };
+  visit(filePath);
+  return order;
+}
+
+function composeQueryDocument(filePath: string): string {
+  return resolveDependencies(filePath)
+    .map((p) => readFileSync(p, "utf8"))
+    .join("\n");
+}
+
+function collectPartialPaths(roots: string[]): Set<string> {
+  const partials = new Set<string>();
+  for (const root of roots) {
+    const source = readFileSync(root, "utf8");
+    for (const req of readRequires(source)) {
+      partials.add(path.resolve(path.dirname(root), req));
+    }
+  }
+  return partials;
+}
+
 function findSourceFiles(root: string): string[] {
   return walk(
     root,
@@ -74,6 +182,18 @@ function findSourceFiles(root: string): string[] {
       name.endsWith(".ts") || name.endsWith(".tsx") || name.endsWith(".mts"),
   );
 }
+
+/**
+ * Files that legitimately call `parse(fs.readFileSync(...))` to load
+ * a checked-in `.graphql` document at module init. These callers are
+ * exempt from the "dynamic GraphQL construction" rule because their
+ * input is a static, checked-in file — already validated against the
+ * correct SDL by the per-SDL `.graphql` walking test above. The
+ * runtime hazard the rule guards against is interpolating user input
+ * or runtime-assembled strings into a query, which is not what these
+ * loaders do.
+ */
+const STATIC_QUERY_LOADERS = new Set<string>(["src/lib/node/queries.ts"]);
 
 interface StaticDoc {
   text: string;
@@ -247,6 +367,7 @@ function validateQueryDocumentSource(
   rel: string,
   source: string,
   schema: GraphQLSchema,
+  sdlName = "schemas/review.graphql",
 ): string | null {
   let document: ReturnType<typeof parse>;
   try {
@@ -258,9 +379,9 @@ function validateQueryDocumentSource(
   if (errors.length === 0) return null;
   const message = errors.map((e) => `  - ${e.message}`).join("\n");
   return (
-    `GraphQL validation failed for ${rel}:\n${message}\n\n` +
-    "If REview's schema has changed, update schemas/review.graphql " +
-    "and schemas/review.version together in the same PR. See the " +
+    `GraphQL validation failed for ${rel} (SDL: ${sdlName}):\n${message}\n\n` +
+    `If the upstream schema has changed, update ${sdlName} (and its ` +
+    "sibling .version file) together in the same PR. See the " +
     '"Backend schema versions" section of README.md for the procedure.'
   );
 }
@@ -315,29 +436,66 @@ describe("vendored REview GraphQL schema", () => {
     expect(content.length).toBeGreaterThan(0);
   });
 
-  const schema = loadSchema();
-  const documents = findQueryDocuments(QUERY_ROOT);
+  it("schemas/giganto.graphql parses as a valid SDL", () => {
+    expect(() => loadGigantoSchema()).not.toThrow();
+  });
 
-  if (documents.length === 0) {
+  it("schemas/giganto.version is present and non-empty", () => {
+    const content = readFileSync(GIGANTO_VERSION_PATH, "utf8").trim();
+    expect(content.length).toBeGreaterThan(0);
+  });
+
+  it("schemas/tivan.graphql parses as a valid SDL", () => {
+    expect(() => loadTivanSchema()).not.toThrow();
+  });
+
+  it("schemas/tivan.version is present and non-empty", () => {
+    const content = readFileSync(TIVAN_VERSION_PATH, "utf8").trim();
+    expect(content.length).toBeGreaterThan(0);
+  });
+
+  const schema = loadSchema();
+  const gigantoSchema = loadGigantoSchema();
+  const tivanSchema = loadTivanSchema();
+  const schemas = {
+    review: schema,
+    giganto: gigantoSchema,
+    tivan: tivanSchema,
+  };
+  const documents = findQueryDocuments(QUERY_ROOT);
+  const partialPaths = collectPartialPaths(documents);
+  const operationDocuments = documents.filter(
+    (doc) => !partialPaths.has(path.resolve(doc)),
+  );
+
+  if (operationDocuments.length === 0) {
     it("no runtime GraphQL query documents to validate (yet)", () => {
-      expect(documents).toEqual([]);
+      expect(operationDocuments).toEqual([]);
     });
   } else {
-    describe.each(documents)("query document", (doc) => {
+    describe.each(operationDocuments)("query document", (doc) => {
       const rel = path.relative(REPO_ROOT, doc);
-      it(`validates ${rel} against schemas/review.graphql`, () => {
-        const source = readFileSync(doc, "utf8");
-        const failure = validateQueryDocumentSource(rel, source, schema);
+      const { schema: target, sdl } = pickSchemaForQueryFile(doc, schemas);
+      it(`validates ${rel} against ${sdl}`, () => {
+        const source = composeQueryDocument(doc);
+        const failure = validateQueryDocumentSource(rel, source, target, sdl);
         if (failure) throw new Error(failure);
       });
     });
   }
 
-  it("validates inline GraphQL documents in TypeScript sources", () => {
+  it("validates inline GraphQL documents in TypeScript sources against the manager SDL", () => {
+    // Inline GraphQL in `.ts` / `.tsx` is unconditionally manager-bound:
+    // the only inline-parse callers in the repo are review-web targets.
+    // External-service queries live in `.graphql` files (per-SDL routed
+    // above), so a stray external query inlined in TypeScript would fail
+    // here against `schemas/review.graphql` — which is the right
+    // outcome.
     const failures: string[] = [];
     for (const file of findSourceFiles(QUERY_ROOT)) {
-      const source = readFileSync(file, "utf8");
       const rel = path.relative(REPO_ROOT, file);
+      if (STATIC_QUERY_LOADERS.has(rel)) continue;
+      const source = readFileSync(file, "utf8");
       failures.push(...validateInlineSource(rel, file, source, schema));
     }
     if (failures.length > 0) {
@@ -348,6 +506,37 @@ describe("vendored REview GraphQL schema", () => {
           "procedure.",
       );
     }
+  });
+
+  it("a Giganto query validated against the manager SDL fails (negative path)", () => {
+    // A Giganto-only query like `status { diskUsedBytes }` references
+    // a type / field that does not exist on review-web, so routing it
+    // against the wrong SDL must fail validation. This guards against
+    // a regression that would silently widen the manager SDL with
+    // external-service fields, or that would accidentally route an
+    // external query through the manager bucket.
+    const gigantoQuery = "query { status { name diskUsedBytes } }";
+    const errors = validate(schema, parse(gigantoQuery));
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("a manager query validated against the Giganto SDL fails (negative path)", () => {
+    const managerQuery = "query { nodeList { totalCount } }";
+    const errors = validate(gigantoSchema, parse(managerQuery));
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("a Tivan query validated against the Giganto SDL fails (negative path)", () => {
+    // Tivan exposes the ATT&CK-matrices surface (`matrices`,
+    // `detailTactics`, etc.) that Giganto does not. A query that
+    // selects `matrices { tacticsData { id } }` validates against
+    // Tivan but fails against Giganto, so cross-routing is detected.
+    const tivanQuery =
+      "query { matrices { tacticsData { id } childTechniques { id } } }";
+    expect(validate(tivanSchema, parse(tivanQuery)).length).toBe(0);
+    expect(validate(gigantoSchema, parse(tivanQuery)).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("rejects a malformed inline query through the collector+validator harness", () => {
@@ -400,7 +589,7 @@ describe("vendored REview GraphQL schema", () => {
       }
       expect(failures).toHaveLength(1);
       expect(failures[0]).toMatch(/fieldThatDoesNotExist/);
-      expect(failures[0]).toMatch(/schemas\/review\.graphql/);
+      expect(failures[0]).toMatch(/SDL: schemas\/review\.graphql/);
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });
     }

@@ -1,0 +1,16 @@
+# Validates against schemas/tivan.graphql.
+#
+# Tivan additionally exposes `stop`, `reboot`, and `shutdown` mutations
+# for remote control; v1 of the Node management layer does not surface
+# them. Add a sibling document and wire it through `tivanClient()` if a
+# future phase needs to expose them.
+query TivanStatus {
+  status {
+    name
+    cpuUsage
+    totalMemory
+    usedMemory
+    diskUsedBytes
+    diskAvailableBytes
+  }
+}

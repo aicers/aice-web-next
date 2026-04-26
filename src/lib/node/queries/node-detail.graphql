@@ -1,0 +1,6 @@
+# requires: node-fields.graphql
+query NodeDetail($id: ID!) {
+  node(id: $id) {
+    ...NodeFields
+  }
+}

@@ -1,0 +1,3 @@
+mutation NodeShutdown($hostname: String!) {
+  nodeShutdown(hostname: $hostname)
+}
