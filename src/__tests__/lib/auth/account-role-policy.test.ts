@@ -56,6 +56,51 @@ describe("account-role-policy", () => {
     expect(policy.maxCustomerAssignments).toBe(1);
   });
 
+  it("treats the built-in Security Monitor permission set after #307 as equivalent", () => {
+    // The built-in Security Monitor role gains `nodes:read` and
+    // `services:read` from migration 0022 (#307). Without these in the
+    // allow-list, Security Monitor accounts would silently lose
+    // `tenantManageable: true` after the migration runs and Tenant
+    // Administrators could no longer create or manage them.
+    const policy = deriveAccountRolePolicy({
+      id: 9,
+      name: "Security Monitor",
+      permissions: [
+        "audit-logs:read",
+        "dashboard:read",
+        "detection:read",
+        "nodes:read",
+        "services:read",
+      ],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(true);
+    expect(policy.tenantManageable).toBe(true);
+    expect(policy.maxCustomerAssignments).toBe(1);
+  });
+
+  it("does not treat nodes:write as Security Monitor-equivalent", () => {
+    const policy = deriveAccountRolePolicy({
+      id: 10,
+      name: "Custom Node Operator",
+      permissions: ["nodes:read", "nodes:write"],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(false);
+    expect(policy.tenantManageable).toBe(false);
+  });
+
+  it("does not treat services:write as Security Monitor-equivalent", () => {
+    const policy = deriveAccountRolePolicy({
+      id: 11,
+      name: "Custom Service Editor",
+      permissions: ["services:read", "services:write"],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(false);
+    expect(policy.tenantManageable).toBe(false);
+  });
+
   it("does not treat dashboard:write as Security Monitor-equivalent", () => {
     // dashboard:write is not read-only — it gates session revocation
     // (src/app/api/dashboard/sessions/[sid]/revoke/route.ts). A custom

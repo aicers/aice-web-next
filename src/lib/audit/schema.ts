@@ -58,6 +58,31 @@ type MfaAction =
   | "mfa.admin.reset"
   | "mfa.emergency.reset";
 
+/**
+ * Node event actions (#307).
+ *
+ * `node.apply` is the v1 node-level bulk apply path; per-service apply
+ * (`service.apply`) is reserved for Phase Node-12 (#333) and is not added
+ * here so that no member exists without an emitter.
+ */
+type NodeAction =
+  | "node.create"
+  | "node.update"
+  | "node.delete"
+  | "node.restart"
+  | "node.shutdown"
+  | "node.apply";
+
+/**
+ * Service event actions (#307).
+ *
+ * v1 ships only `service.draft_save` and `service.set_mode`. The reserved
+ * actions `service.apply` (Phase Node-12 / #333) and `service.set_state`
+ * (Phase Node-8 PR 3 / #317) are deliberately NOT added here — each follow-on
+ * issue extends this union alongside its emitter to avoid dead-code drift.
+ */
+type ServiceAction = "service.draft_save" | "service.set_mode";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
@@ -67,7 +92,9 @@ export type AuditAction =
   | CustomerAction
   | SystemSettingsAction
   | RoleAction
-  | MfaAction;
+  | MfaAction
+  | NodeAction
+  | ServiceAction;
 
 /** Target entity types for audit events. */
 export type AuditTargetType =
@@ -76,7 +103,9 @@ export type AuditTargetType =
   | "customer"
   | "system_settings"
   | "role"
-  | "mfa";
+  | "mfa"
+  | "node"
+  | "service";
 
 /** Canonical runtime list of supported audit actions. */
 export const AUDIT_ACTIONS = [
@@ -122,6 +151,14 @@ export const AUDIT_ACTIONS = [
   "mfa.enrollment.complete",
   "mfa.admin.reset",
   "mfa.emergency.reset",
+  "node.create",
+  "node.update",
+  "node.delete",
+  "node.restart",
+  "node.shutdown",
+  "node.apply",
+  "service.draft_save",
+  "service.set_mode",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */
@@ -132,4 +169,6 @@ export const AUDIT_TARGET_TYPES = [
   "system_settings",
   "role",
   "mfa",
+  "node",
+  "service",
 ] as const satisfies readonly AuditTargetType[];

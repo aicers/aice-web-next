@@ -153,7 +153,15 @@
       "mfa_enforcement_blocked": "MFA enrollment required",
       "mfa_enrollment_complete": "MFA enrollment complete",
       "mfa_admin_reset": "MFA admin reset",
-      "mfa_emergency_reset": "MFA emergency reset"
+      "mfa_emergency_reset": "MFA emergency reset",
+      "node_create": "Node create",
+      "node_update": "Node update",
+      "node_delete": "Node delete",
+      "node_restart": "Node restart",
+      "node_shutdown": "Node shutdown",
+      "node_apply": "Node apply",
+      "service_draft_save": "Service draft save",
+      "service_set_mode": "Service mode change"
     },
     "targetTypes": {
       "account": "Account",
@@ -161,7 +169,9 @@
       "customer": "Customer",
       "system_settings": "System Settings",
       "role": "Role",
-      "mfa": "MFA"
+      "mfa": "MFA",
+      "node": "Node",
+      "service": "Service"
     }
   },
   "customers": {
@@ -433,6 +443,8 @@
       "audit-logs": "Audit Logs",
       "dashboard": "Dashboard",
       "detection": "Detection",
+      "nodes": "Nodes",
+      "services": "Services",
       "system-settings": "System Settings"
     },
     "permissionActions": {

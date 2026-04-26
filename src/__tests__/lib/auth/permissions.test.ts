@@ -137,6 +137,86 @@ describe("permissions", () => {
     });
   });
 
+  // The migration `0022_node_service_permissions.sql` grants the five
+  // node/service permissions to the three built-in roles per
+  // `decisions/node-permissions.md`. The unit-level cache layer is an
+  // in-memory mirror of the role_permissions rows that migration writes,
+  // so seeding the mock with the same row sets we expect from a fresh
+  // bootstrap lets us assert the documented `hasPermission` contract
+  // without standing up a real database.
+  describe("hasPermission — built-in roles (#307)", () => {
+    const SYSTEM_ADMIN_PERMS = [
+      "nodes:read",
+      "nodes:write",
+      "nodes:delete",
+      "services:read",
+      "services:write",
+    ];
+
+    const TENANT_ADMIN_PERMS = [
+      "nodes:read",
+      "nodes:write",
+      "nodes:delete",
+      "services:read",
+      "services:write",
+    ];
+
+    const SECURITY_MONITOR_PERMS = ["nodes:read", "services:read"];
+
+    it("System Administrator holds all five node/service permissions", async () => {
+      mockPoolQuery.mockResolvedValue({
+        rows: SYSTEM_ADMIN_PERMS.map((permission) => ({ permission })),
+      });
+
+      for (const permission of SYSTEM_ADMIN_PERMS) {
+        expect(
+          await permissions.hasPermission(["System Administrator"], permission),
+        ).toBe(true);
+      }
+    });
+
+    it("Tenant Administrator holds the same five node/service permissions", async () => {
+      mockPoolQuery.mockResolvedValue({
+        rows: TENANT_ADMIN_PERMS.map((permission) => ({ permission })),
+      });
+
+      for (const permission of TENANT_ADMIN_PERMS) {
+        expect(
+          await permissions.hasPermission(["Tenant Administrator"], permission),
+        ).toBe(true);
+      }
+    });
+
+    it("Security Monitor holds only nodes:read and services:read", async () => {
+      mockPoolQuery.mockResolvedValue({
+        rows: SECURITY_MONITOR_PERMS.map((permission) => ({ permission })),
+      });
+
+      expect(
+        await permissions.hasPermission(["Security Monitor"], "nodes:read"),
+      ).toBe(true);
+      expect(
+        await permissions.hasPermission(["Security Monitor"], "services:read"),
+      ).toBe(true);
+    });
+
+    it("Security Monitor lacks every node/service write or delete permission", async () => {
+      mockPoolQuery.mockResolvedValue({
+        rows: SECURITY_MONITOR_PERMS.map((permission) => ({ permission })),
+      });
+
+      for (const permission of [
+        "nodes:write",
+        "nodes:delete",
+        "services:write",
+      ]) {
+        expect(
+          await permissions.hasPermission(["Security Monitor"], permission),
+        ).toBe(false);
+      }
+    });
+  });
+
   describe("invalidatePermissionCache", () => {
     it("clears a specific role from cache", async () => {
       mockPoolQuery.mockResolvedValue({

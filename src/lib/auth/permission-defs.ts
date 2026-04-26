@@ -19,6 +19,8 @@ export const ALL_PERMISSIONS = {
   "audit-logs": ["audit-logs:read"],
   dashboard: ["dashboard:read", "dashboard:write"],
   detection: ["detection:read"],
+  nodes: ["nodes:read", "nodes:write", "nodes:delete"],
+  services: ["services:read", "services:write"],
   "system-settings": ["system-settings:read", "system-settings:write"],
 } as const;
 
