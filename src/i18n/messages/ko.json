@@ -181,6 +181,10 @@
       "status": "상태",
       "settings": "설정"
     },
+    "forbidden": {
+      "title": "403 — 권한 없음",
+      "description": "노드 관리 화면을 보려면 nodes:read 와 services:read 권한이 모두 필요합니다."
+    },
     "list": {
       "noResults": "조건에 맞는 노드가 없습니다.",
       "empty": "등록된 노드가 없습니다.",
@@ -240,6 +244,41 @@
       "title": "매니저에 연결할 수 없습니다",
       "description": "매니저(review-web)에 연결할 수 없습니다. 연결이 복구되기 전까지 노드를 조회하거나 수정할 수 없습니다.",
       "retry": "다시 시도"
+    },
+    "status": {
+      "empty": "표시할 노드가 없습니다.",
+      "lastUpdated": "마지막 갱신 {time}",
+      "staleHint": "마지막 갱신 {time} (오래됨 — 다음 갱신을 기다리는 중)",
+      "rowMenuLabel": "노드 동작",
+      "restart": "재시작",
+      "shutdown": "종료",
+      "cancel": "취소",
+      "restartConfirmTitle": "노드 재시작",
+      "restartConfirmDescription": "{hostname}을(를) 즉시 재시작합니다. 활성 연결이 끊어집니다.",
+      "shutdownConfirmTitle": "노드 종료",
+      "shutdownConfirmDescription": "{hostname}을(를) 즉시 종료합니다. 자동으로 다시 시작되지 않습니다.",
+      "controlError": "작업을 완료할 수 없습니다.",
+      "noData": "—",
+      "servicePlaceholder": "서비스 상태가 아직 준비되지 않았습니다",
+      "columns": {
+        "name": "노드",
+        "cpu": "CPU",
+        "memory": "메모리",
+        "disk": "디스크",
+        "manager": "매니저"
+      },
+      "serviceColumns": {
+        "sensor": "센서",
+        "dataStore": "데이터 저장소",
+        "tiContainer": "TI 컨테이너",
+        "unsupervised": "비지도 학습",
+        "semiSupervised": "반지도 학습",
+        "timeSeries": "시계열"
+      }
+    },
+    "detail": {
+      "title": "노드 상세",
+      "placeholder": "Apply All Pending 동작을 포함한 전체 노드 상세 대시보드는 Phase Node-5에서 제공될 예정입니다."
     }
   },
   "customers": {

@@ -91,6 +91,16 @@ export default defineConfig({
         "webauthn.spec.ts",
         "webauthn-profile.spec.ts",
         "webauthn-sign-in.spec.ts",
+        // Node specs share `nodeStatusList` catch-all stubs against the
+        // global mock-server registry; running them in parallel across
+        // workers lets one spec's catch-all hijack another spec's
+        // polling response (the populated → tenant1 / populated → alive
+        // swaps land last-registered-wins and overwrite the polling
+        // buffer in unrelated tests). Hoist them into their own chained
+        // projects below so only one node spec's catch-alls are live at
+        // any given time.
+        "node/list.spec.ts",
+        "node/status.spec.ts",
       ],
       use: { ...devices["Desktop Chrome"] },
     },
@@ -98,6 +108,24 @@ export default defineConfig({
       name: "serial",
       testMatch: ["system-settings.spec.ts"],
       dependencies: ["parallel"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // Node specs register catch-all `nodeList` / `nodeStatusList` stubs
+    // (e.g. the tenant-admin test swaps to `tenant1.json`, the live
+    // polling test swaps to `alive.json`). Stub resolution does not
+    // filter by `mockServerSession` scope, so two node specs running on
+    // separate workers leak each other's fixtures into their polling
+    // responses. Chain the two specs so one runs after the other; the
+    // other suites stay parallel.
+    {
+      name: "node-status",
+      testMatch: ["node/status.spec.ts"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "node-list",
+      testMatch: ["node/list.spec.ts"],
+      dependencies: ["node-status"],
       use: { ...devices["Desktop Chrome"] },
     },
     // These suites mutate the global mfa_policy row. Running them

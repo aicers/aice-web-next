@@ -181,6 +181,10 @@
       "status": "Status",
       "settings": "Settings"
     },
+    "forbidden": {
+      "title": "403 — Forbidden",
+      "description": "Your account does not have the permissions required to view Node management. Both nodes:read and services:read are required."
+    },
     "list": {
       "noResults": "No nodes match the current filter.",
       "empty": "No nodes have been created.",
@@ -240,6 +244,41 @@
       "title": "Cannot reach manager",
       "description": "The manager (review-web) is unreachable. Nodes cannot be listed or modified until the connection is restored.",
       "retry": "Try again"
+    },
+    "status": {
+      "empty": "No nodes are currently visible.",
+      "lastUpdated": "Last updated {time}",
+      "staleHint": "Last updated {time} (stale — waiting for the next refresh)",
+      "rowMenuLabel": "Node actions",
+      "restart": "Restart",
+      "shutdown": "Shutdown",
+      "cancel": "Cancel",
+      "restartConfirmTitle": "Restart node",
+      "restartConfirmDescription": "{hostname} will be restarted now. Active connections will be interrupted.",
+      "shutdownConfirmTitle": "Shut down node",
+      "shutdownConfirmDescription": "{hostname} will be shut down now. The node will not come back up automatically.",
+      "controlError": "The action could not be completed.",
+      "noData": "—",
+      "servicePlaceholder": "Service status not yet available",
+      "columns": {
+        "name": "Node",
+        "cpu": "CPU",
+        "memory": "Memory",
+        "disk": "Disk",
+        "manager": "Manager"
+      },
+      "serviceColumns": {
+        "sensor": "Sensor",
+        "dataStore": "Data Store",
+        "tiContainer": "TI Container",
+        "unsupervised": "Unsupervised",
+        "semiSupervised": "Semi-supervised",
+        "timeSeries": "Time Series"
+      }
+    },
+    "detail": {
+      "title": "Node detail",
+      "placeholder": "The full node detail dashboard, including the Apply All Pending action, will be delivered in Phase Node-5."
     }
   },
   "customers": {

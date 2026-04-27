@@ -13,6 +13,7 @@ import {
 import { useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
 
+import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
 import {
   AlertDialog,
@@ -55,6 +56,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useNodeStatusPolling } from "@/hooks/use-node-status-polling";
 import { Link, useRouter } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 
@@ -105,23 +107,57 @@ export function NodeListTable({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Live polling samples: the segment-scoped driver in
+  // `nodes/(gate)/layout.tsx` keeps the per-node buffer fresh; this
+  // component is a read-only consumer so it does not double-drive the
+  // loop. Once any sample has landed (`capturedAt !== null`) the
+  // polling snapshot is authoritative — rows that the manager no
+  // longer reports project to "no current status" (`hasStatus: false`,
+  // `ping: null`, `manager: null`) instead of reusing the SSR-seeded
+  // values. Without this an initially-alive node would stay in the
+  // Alive facet forever even after the manager pruned it from the
+  // status list, which violates the Phase Node-6 contract that the
+  // facets switch from the seeded snapshot to live polling data.
+  const polling = useNodeStatusPolling({ enabled: false });
+  const liveRows = useMemo<NodeRow[]>(() => {
+    if (polling.capturedAt === null) return rows;
+    return rows.map((row) => {
+      const live = polling.byNodeId.get(row.id)?.latest;
+      if (!live) {
+        return {
+          ...row,
+          manager: null,
+          ping: null,
+          hasStatus: false,
+        };
+      }
+      return {
+        ...row,
+        manager: live.manager,
+        ping: live.ping,
+        hasStatus: true,
+      };
+    });
+  }, [rows, polling.capturedAt, polling.byNodeId]);
+
   const customerNameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const customer of customers) map.set(customer.id, customer.name);
     return map;
   }, [customers]);
 
-  // The alive/dead chips track whether the initial `nodeStatusList`
-  // snapshot arrived for any row, NOT whether any row currently has a
-  // ping value. An all-dead snapshot is still data — leaving the chips
-  // disabled in that case would hide the dead facet from the user.
+  // The alive/dead chips track whether either the initial
+  // `nodeStatusList` snapshot or a live polling sample arrived for any
+  // row, NOT whether any row currently has a ping value. An all-dead
+  // snapshot is still data — leaving the chips disabled in that case
+  // would hide the dead facet from the user.
   const hasStatusSnapshot = useMemo(
-    () => rows.some((row) => row.hasStatus),
-    [rows],
+    () => liveRows.some((row) => row.hasStatus),
+    [liveRows],
   );
 
   const filteredRows = useMemo(() => {
-    let next = [...rows];
+    let next = [...liveRows];
 
     const term = search.trim().toLowerCase();
     if (term) {
@@ -181,11 +217,11 @@ export function NodeListTable({
     }
 
     return next;
-  }, [rows, search, tenantFilter, statusFacets, customerNameById, sort]);
+  }, [liveRows, search, tenantFilter, statusFacets, customerNameById, sort]);
 
   const pendingCount = useMemo(
-    () => rows.filter((row) => row.hasPending).length,
-    [rows],
+    () => liveRows.filter((row) => row.hasPending).length,
+    [liveRows],
   );
 
   const allSelected =
@@ -307,6 +343,18 @@ export function NodeListTable({
     // changing this control's surface.
     router.push("/nodes/settings?dialog=create");
   }, [router]);
+
+  // Mid-session manager outage: the SSR path renders the offline panel
+  // when the initial `nodeStatusList` walk fails, but a manager that
+  // drops AFTER hydration only flips the polling store's
+  // `isManagerUnreachable` flag. Swap to the same fallback panel here
+  // so the Settings list does not freeze on a stale snapshot. The check
+  // sits below all hook calls so the early return does not violate the
+  // Rules of Hooks. The next successful poll clears the flag and the
+  // panel disappears without a reload.
+  if (polling.isManagerUnreachable) {
+    return <ManagerUnavailablePanel />;
+  }
 
   return (
     <TooltipProvider>

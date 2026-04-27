@@ -753,6 +753,59 @@ describe("combined node/service permission gate", () => {
       getNodeAuditMetadata(makeSession(), "n-1"),
     ).rejects.toBeInstanceOf(NodePermissionError);
   });
+
+  it("getNodeControlMetadata succeeds for a caller holding nodes:write only", async () => {
+    // Round 1 review fix: the restart / shutdown control path is
+    // gated on `nodes:write` only. Routing the hostname / customerId
+    // lookup through `getNode` would force the combined
+    // `nodes:read + services:read` gate, which would 403 a custom
+    // role that legitimately holds `nodes:write` without the read
+    // pair. The slim metadata helper preserves the contract.
+    mockHasPermission.mockImplementation(grantOnly("nodes:write"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue({
+      node: {
+        id: "n-1",
+        profile: { customerId: "5", hostname: "h" },
+        profileDraft: null,
+      },
+    });
+    const { getNodeControlMetadata } = await import(
+      "@/lib/node/server-actions"
+    );
+    const meta = await getNodeControlMetadata(makeSession(), "n-1");
+    expect(meta.profile?.hostname).toBe("h");
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("getNodeControlMetadata rejects a caller missing nodes:write", async () => {
+    mockHasPermission.mockImplementation(grantOnly("nodes:read"));
+    const { getNodeControlMetadata, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      getNodeControlMetadata(makeSession(), "n-1"),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("getNodeControlMetadata rejects an out-of-scope tenant admin", async () => {
+    mockHasPermission.mockImplementation(grantOnly("nodes:write"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue({
+      node: {
+        id: "n-1",
+        profile: { customerId: "7", hostname: "h" },
+        profileDraft: null,
+      },
+    });
+    const { getNodeControlMetadata, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      getNodeControlMetadata(makeSession(), "n-1"),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+  });
 });
 
 // ── Tenant scope boundary ──────────────────────────────────────────

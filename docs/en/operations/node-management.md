@@ -1,14 +1,16 @@
 # Node management
 
-This page documents the **Settings** tab of the Nodes feature. Node and
-service status, restart, shutdown, and the per-service configuration
-editors are owned by later phases of the same feature and will be
-documented as those land.
+This page documents the **Status** and **Settings** tabs of the Nodes
+feature. The per-service configuration editors and the per-service
+on/off control are owned by later phases of the same feature and will
+be documented as those land.
 
 ## Permissions
 
-The Settings tab is reachable only with **both** `nodes:read` and
-`services:read`. A custom role missing either receives a 403 redirect.
+Both tabs are reachable only with **both** `nodes:read` and
+`services:read`. A custom role missing either receives an HTTP 403
+response with the URL preserved; the layout renders a localized
+"forbidden" panel instead of the table.
 Built-in roles already pair the two:
 
 - **System Administrator** — full read/write/delete across all customers.
@@ -186,3 +188,66 @@ expected to surface a reconciliation choice to the user — discard the
 local edits and reload, or keep the edits and refresh the baseline —
 rather than retrying automatically. The visual surface for that
 choice is owned by the sibling sub-issue that ships the dialog.
+
+## Status tab
+
+![Status · Nodes status](../../assets/node-status-en.png)
+
+The Status tab is the default landing for `/nodes`. It renders one row
+per node the caller has access to, with live resource bars driven by a
+client-side polling loop and a node-level control menu.
+
+### Columns
+
+- **Node** — name and hostname, taken from the latest snapshot.
+- **CPU**, **Memory**, **Disk** — progress bars. Bars colour amber at
+  `≥ 80%` and red at `≥ 95%`.
+- **Manager** — derived directly from `NodeStatus.manager` returned by
+  `nodeStatusList`. Reads **Running** when `true`, **Not running**
+  when `false`.
+- Six per-service placeholder columns (Sensor, Data Store, TI Container,
+  Unsupervised, Semi-supervised, Time Series) — Phase Node-7 fills
+  these with on / off / idle status.
+- A row-level kebab opens the **Restart** / **Shutdown** control menu.
+
+### Polling
+
+The table refreshes every `NEXT_PUBLIC_NODE_STATUS_POLL_MS`
+milliseconds (default `10000`, clamped to `[5000, 300000]`). When the
+tab is hidden, polling pauses; on resume, the hook issues a single
+one-shot refresh before the regular cadence resumes. A "Last updated"
+indicator above the table reports the timestamp of the most recent
+sample, and switches to a "stale" hint when the gap exceeds twice the
+polling interval. The hook does not synthesise filler samples — gaps
+appear as honest data loss in the rolling buffer.
+
+### Restart / Shutdown
+
+Both actions live behind the row's kebab menu and require
+`nodes:write`. Security Monitor accounts see the row but no control
+menu. Each action opens a confirmation modal; on confirm, the BFF
+calls `nodeReboot(hostname)` or `nodeShutdown(hostname)` and writes a
+single `node.restart` / `node.shutdown` audit entry with the hostname
+in `details`. Hostname is resolved from the node id server-side, so a
+forged hostname cannot bypass tenant scope.
+
+### Row navigation
+
+The Status tab does **not** carry an Apply button. Clicking anywhere
+on the row outside the kebab menu navigates to the node's detail
+route at `/nodes/[id]`; the node name doubles as a keyboard-focusable
+link to the same target. In this release the detail route only
+renders a placeholder card — the per-node dashboard with pending-edit
+review and the **Apply All Pending** action is delivered by Phase
+Node-5 (a follow-up). v1's single apply entry point will live on
+that detail dashboard once Phase Node-5 lands; until then no apply
+affordance is reachable from the Status tab.
+
+### Manager offline
+
+The Status tab uses the same fallback panel as the Settings tab when
+the manager is unreachable. The fallback also kicks in mid-session: if
+the manager drops after the first paint, the next polling tick
+returns 503 and the table area swaps to the panel rather than
+freezing on a stale snapshot. The panel disappears as soon as a
+subsequent poll succeeds.

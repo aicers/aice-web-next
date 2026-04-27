@@ -44,5 +44,17 @@
     "query": "node/nodeStatusList.populated.graphql",
     "fixture": "node/nodeStatusList.tenant1.json",
     "variables": { "first": 998 }
+  },
+  {
+    "operation": "nodeStatusList",
+    "query": "node/nodeStatusList.populated.graphql",
+    "fixture": "node/nodeStatusList.alive.json",
+    "variables": { "first": 997 }
+  },
+  {
+    "operation": "nodeStatusList",
+    "query": "node/nodeStatusList.populated.graphql",
+    "fixture": "node/nodeStatusList.alphaOnly.json",
+    "variables": { "first": 996 }
   }
 ]

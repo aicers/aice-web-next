@@ -12,6 +12,14 @@ const nextConfig: NextConfig = {
     "/api/nodes/**/*": ["./src/lib/node/queries/**/*"],
     "/[locale]/(dashboard)/nodes/**/*": ["./src/lib/node/queries/**/*"],
   },
+  experimental: {
+    // Enables the navigation `forbidden()` helper used by the Node
+    // Status / Settings tabs to surface a real HTTP 403 (with the
+    // sibling `forbidden.tsx` UI) when the caller is missing the
+    // `nodes:read + services:read` combined gate, instead of silently
+    // bouncing them off the route.
+    authInterrupts: true,
+  },
 };
 
 const withNextIntl = createNextIntlPlugin();

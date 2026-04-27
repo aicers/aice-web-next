@@ -438,14 +438,232 @@ test.describe("Node settings list page", () => {
     await expect(page).toHaveURL(/\/nodes\/settings\?dialog=edit&id=/);
   });
 
-  test("missing services:read produces a 403 redirect", async ({ page }) => {
+  test("missing services:read produces a 403", async ({ page }) => {
     await page.goto("/sign-in");
     await signIn(page, MISSING_SERVICES_USERNAME, PASSWORD);
     await page.waitForURL((url) => !url.pathname.endsWith("/sign-in"), {
       timeout: 10_000,
     });
-    await page.goto("/nodes/settings");
-    // The layout redirects unauthorized callers off the route.
-    await expect(page).not.toHaveURL(/\/nodes\/settings/);
+    const response = await page.goto("/nodes/settings");
+    // The `(gate)` route-group layout calls `forbidden()` so the URL
+    // stays put, the sibling `nodes/forbidden.tsx` renders, and the
+    // response carries status 403 (issue acceptance). The gate is a
+    // child of `/nodes` (so the throw is caught by the localised
+    // boundary) and sits above every loading.tsx (so the throw lands
+    // before any Suspense fallback streams and the headers can lock
+    // at 200).
+    expect(response?.status()).toBe(403);
+    await expect(page).toHaveURL(/\/nodes\/settings/);
+    await expect(page.getByTestId("nodes-forbidden")).toBeVisible();
+  });
+
+  test("alive/dead facet picks up live polling: a dead node moves to alive without reload", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Acceptance criterion: the Settings list `alive` / `dead` facets
+    // switch from the initial one-shot ping snapshot to live polling
+    // data once Phase Node-6's hook is running. Verified by rendering
+    // the list with a stale `dead` node, swapping the mock to bring
+    // the node back up, advancing past one polling interval, and
+    // asserting the node moves out of the `dead` filter without a
+    // full reload. The hook exposes the live snapshot through the
+    // module-level store the table re-projects, so the row's facet
+    // membership flips as soon as the next polled sample lands.
+    test.setTimeout(60_000);
+
+    await stubSession.registerStub({
+      operation: "nodeList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeList.populated.json",
+      },
+    });
+    // Initial snapshot: beta-node is dead (ping null, manager false).
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.populated.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToList(page);
+
+    const betaRow = page
+      .getByTestId("nodes-row")
+      .filter({ hasText: "beta-node-renamed" });
+    await expect(betaRow).toBeVisible();
+
+    // Engage the Dead facet. With the populated stub in force, beta is
+    // the only dead node and survives the filter.
+    await page.getByRole("button", { name: "Dead" }).click();
+    await expect(betaRow).toBeVisible();
+
+    // Swap the stub so the next polled sample reports beta as alive
+    // (ping non-null, manager true). Catch-all stubs resolve
+    // last-registered-wins, so this overrides the populated catch-all
+    // for any subsequent `nodeStatusList` request.
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.alive.json",
+      },
+    });
+
+    // Polling cadence in dev defaults to NEXT_PUBLIC_NODE_STATUS_POLL_MS
+    // (10s). Once the next interval tick fires, the polling hook re-
+    // projects beta over the row, the row carries `ping !== null`, and
+    // the Dead filter no longer matches. We assert the absence rather
+    // than a reload — Playwright's polling expect waits up to 20s for
+    // the row to disappear from the filtered set.
+    await expect(betaRow).toHaveCount(0, { timeout: 20_000 });
+
+    // Switching to the Alive facet should now surface beta — proof
+    // that the row carries the new sample, not just that the dead
+    // filter no longer matches.
+    await page.getByRole("button", { name: "Dead" }).click();
+    await page.getByRole("button", { name: "Alive" }).click();
+    await expect(betaRow).toBeVisible();
+  });
+
+  test("alive/dead facet picks up live polling: a node pruned from the manager leaves the alive facet", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Companion to the dead→alive test above. The previous case proved
+    // the polling path replaces seeded SSR ping/manager values for rows
+    // that are still present in the live snapshot. This test pins the
+    // missing-row case the SSR fallback used to mask: when the manager
+    // prunes a node from `nodeStatusList`, the Settings list must drop
+    // it from the Alive facet (and not silently keep it pinned to the
+    // SSR-seeded values) once the polling snapshot is authoritative.
+    test.setTimeout(60_000);
+
+    await stubSession.registerStub({
+      operation: "nodeList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeList.populated.json",
+      },
+    });
+    // Initial snapshot: alpha + beta + gamma all reported. Alpha and
+    // gamma are alive; beta is dead.
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.populated.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToList(page);
+
+    const alphaRow = page
+      .getByTestId("nodes-row")
+      .filter({ hasText: "alpha-node" });
+    const gammaRow = page
+      .getByTestId("nodes-row")
+      .filter({ hasText: "gamma-node" });
+    await expect(alphaRow).toBeVisible();
+    await expect(gammaRow).toBeVisible();
+
+    // With the populated snapshot in force, the Alive facet keeps both
+    // alpha and gamma.
+    await page.getByRole("button", { name: "Alive" }).click();
+    await expect(alphaRow).toBeVisible();
+    await expect(gammaRow).toBeVisible();
+
+    // Swap the stub so the next polled sample only includes alpha.
+    // The manager has effectively pruned beta and gamma from the
+    // status list (e.g. they failed to report in this window). Once
+    // the polling snapshot is authoritative, gamma must leave the
+    // Alive facet — its `ping !== null` was seeded by the SSR snapshot
+    // and is no longer current.
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.alphaOnly.json",
+      },
+    });
+
+    // After the next polling tick (default 10s cadence), gamma should
+    // disappear from the Alive filter. Polls under Playwright's expect
+    // wait up to 20s.
+    await expect(gammaRow).toHaveCount(0, { timeout: 20_000 });
+    // Alpha is still in the live snapshot, so it remains in Alive.
+    await expect(alphaRow).toBeVisible();
+
+    // Cross-check: gamma is also not in Dead — a missing live row
+    // projects to "no current status" (`hasStatus: false`,
+    // `ping: null`, `manager: null`) rather than reusing the SSR
+    // values, so it does not satisfy the Dead facet's
+    // `hasStatus && ping === null` predicate either.
+    await page.getByRole("button", { name: "Alive" }).click();
+    await page.getByRole("button", { name: "Dead" }).click();
+    await expect(gammaRow).toHaveCount(0);
+  });
+
+  test("manager dropping after first paint swaps the Settings list to the offline panel", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Companion to the SSR-path coverage above. The Settings page
+    // mounts the table from a healthy `nodeStatusList` response; once
+    // the polling loop is running, a manager outage shows up as a 503
+    // on `/api/nodes/status` and flips the polling store's
+    // `isManagerUnreachable` flag. The table must swap to the same
+    // "Cannot reach manager" panel the SSR path uses, instead of
+    // freezing on the now-stale snapshot.
+    test.setTimeout(60_000);
+
+    await stubSession.registerStub({
+      operation: "nodeList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeList.populated.json",
+      },
+    });
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.populated.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToList(page);
+
+    // Initial paint succeeds — table is up, panel is absent.
+    await expect(page.getByTestId("nodes-table")).toBeVisible();
+    await expect(page.getByTestId("manager-unavailable-panel")).toHaveCount(0);
+
+    // Intercept the polling hook's `/api/nodes/status` calls and force
+    // a 503 so the next tick flips `isManagerUnreachable` on the store.
+    // We route only the API endpoint the polling fetcher hits, leaving
+    // the SSR path untouched (the SSR fetch already completed).
+    await page.route("**/api/nodes/status", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Manager unavailable" }),
+      });
+    });
+
+    // After the next polling tick (10s default cadence), the table
+    // disappears and the offline panel renders. Polls under
+    // Playwright's expect wait up to 20s.
+    await expect(page.getByTestId("manager-unavailable-panel")).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByTestId("nodes-table")).toHaveCount(0);
   });
 });

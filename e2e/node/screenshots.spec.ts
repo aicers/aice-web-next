@@ -34,6 +34,11 @@ import {
   signInAndWait,
   signInAndWaitKo,
 } from "../helpers/auth";
+import {
+  assignCustomerToAccount,
+  ensureCustomerExists,
+  getAccountId,
+} from "../helpers/setup-db";
 import { closeAdminAgent, mockServerSession } from "../mock-server-admin";
 
 const VIEWPORT = { width: 1440, height: 900 } as const;
@@ -55,6 +60,24 @@ test.describe
     );
 
     const stubSession = mockServerSession();
+
+    test.beforeAll(async ({ workerUsername }) => {
+      // The Node BFF rejects callers with no customer scope unless they
+      // are System Administrators (`buildDispatchContext` throws
+      // NodePermissionError). The worker role grants every permission
+      // but is not literally "System Administrator", so we must wire a
+      // customer assignment for the worker before any node page loads.
+      // The list/status specs do this themselves and tear it down in
+      // their `afterAll`; the screenshot spec is opt-in and isolated,
+      // so we recreate the assignment here.
+      const customerId = await ensureCustomerExists("e2e-screenshots-customer");
+      try {
+        const accountId = await getAccountId(workerUsername);
+        await assignCustomerToAccount(accountId, customerId);
+      } catch {
+        // Already linked or absent.
+      }
+    });
 
     test.beforeEach(async () => {
       await stubSession.registerStub({
@@ -81,6 +104,9 @@ test.describe
     test("EN node list", async ({ page, workerUsername, workerPassword }) => {
       await signInAndWait(page, workerUsername, workerPassword);
       await page.goto("/nodes/settings");
+      // Wait out the streaming Suspense placeholder so `nodes-table`
+      // resolves to a single element (matches `e2e/node/list.spec.ts`).
+      await page.waitForFunction(() => !document.getElementById("S:0"));
 
       await expect(page.getByTestId("nodes-table")).toBeVisible({
         timeout: 10_000,
@@ -97,6 +123,7 @@ test.describe
     test("KO node list", async ({ page, workerUsername, workerPassword }) => {
       await signInAndWaitKo(page, workerUsername, workerPassword);
       await page.goto("/ko/nodes/settings");
+      await page.waitForFunction(() => !document.getElementById("S:0"));
 
       await expect(page.getByTestId("nodes-table")).toBeVisible({
         timeout: 10_000,
@@ -104,6 +131,36 @@ test.describe
       await expect(page.getByTestId("nodes-row").first()).toBeVisible();
       await page.screenshot({
         path: path.join(ASSETS_DIR, "node-list-ko.png"),
+        animations: "disabled",
+      });
+    });
+
+    test("EN node status", async ({ page, workerUsername, workerPassword }) => {
+      await signInAndWait(page, workerUsername, workerPassword);
+      await page.goto("/nodes");
+      await page.waitForFunction(() => !document.getElementById("S:0"));
+
+      await expect(page.getByTestId("node-status-table")).toBeVisible({
+        timeout: 10_000,
+      });
+      await expect(page.getByTestId("node-status-row").first()).toBeVisible();
+      await page.screenshot({
+        path: path.join(ASSETS_DIR, "node-status-en.png"),
+        animations: "disabled",
+      });
+    });
+
+    test("KO node status", async ({ page, workerUsername, workerPassword }) => {
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await page.goto("/ko/nodes");
+      await page.waitForFunction(() => !document.getElementById("S:0"));
+
+      await expect(page.getByTestId("node-status-table")).toBeVisible({
+        timeout: 10_000,
+      });
+      await expect(page.getByTestId("node-status-row").first()).toBeVisible();
+      await page.screenshot({
+        path: path.join(ASSETS_DIR, "node-status-ko.png"),
         animations: "disabled",
       });
     });

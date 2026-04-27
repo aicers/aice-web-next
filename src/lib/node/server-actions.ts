@@ -271,6 +271,40 @@ export async function getNodeAuditMetadata(
   signal?: AbortSignal,
 ): Promise<NodeAuditMetadata> {
   await requireAllPermissions(session, [NODES_DELETE]);
+  return fetchSlimNodeMetadata(session, id, signal);
+}
+
+/**
+ * Fetch the slim hostname/customerId payload for a node by id, gated
+ * on `nodes:write` only.
+ *
+ * Mirrors `getNodeAuditMetadata` but for the `nodeReboot` /
+ * `nodeShutdown` write paths. The control mutations need the hostname
+ * (the manager mutation key) and the customerId (for the audit entry);
+ * routing this through `getNode` would require the combined
+ * `nodes:read + services:read` gate, locking out a custom role that
+ * legitimately holds `nodes:write` without the read pair. The
+ * `node-audit-metadata.graphql` document selects only the same slim
+ * profile fields, so the same combined-gate carve-out applies.
+ *
+ * Tenant scope still goes through the canonical-node fetch — a Tenant
+ * Administrator must not control an out-of-scope node even with the
+ * write grant.
+ */
+export async function getNodeControlMetadata(
+  session: AuthSession,
+  id: string,
+  signal?: AbortSignal,
+): Promise<NodeAuditMetadata> {
+  await requireAllPermissions(session, [NODES_WRITE]);
+  return fetchSlimNodeMetadata(session, id, signal);
+}
+
+async function fetchSlimNodeMetadata(
+  session: AuthSession,
+  id: string,
+  signal?: AbortSignal,
+): Promise<NodeAuditMetadata> {
   const ctx = await buildDispatchContext(session);
   const data = await withManagerErrorMapping(
     withNodeNotFoundMapping(
