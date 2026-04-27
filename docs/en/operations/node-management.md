@@ -107,67 +107,79 @@ continue to render so the caller can navigate elsewhere.
 
 ## Saving drafts
 
-The Edit dialog never writes directly to the manager. Each Save
-records a *draft* — a proposed next state — that you can review on
-the list page and promote with Apply when ready. Saving a draft
-requires both `nodes:write` and `services:write`; built-in **Tenant
-Administrator** and **System Administrator** roles already pair the
-two.
+This section documents the **save-draft server action** that lives in
+the BFF. The Edit dialog UI that calls into it ships in a sibling
+Phase Node-9 sub-issue and is not yet renderable on this branch, so
+nothing on this branch lets an operator save a draft from the UI.
+What is documented below is the contract the dialog and any other
+caller (scripts, automation) will rely on once the dialog ships, and
+the audit rows operators will see when saves start landing.
 
-> **Screenshot debt.** The Edit dialog UI itself ships in a sibling
-> Phase Node-9 sub-issue and is not yet renderable on this branch,
-> so this section documents only the BFF mechanics that govern Save.
-> The dialog and reconciliation-prompt PNG captures will be added by
-> the same sibling PR that builds the dialog; per
-> `docs/AUTHORING.md` they will be captured against a mocked GraphQL
-> endpoint rather than via the live-REview procedure.
+> **Screenshot debt.** The Edit dialog and the stale-conflict
+> reconciliation prompt are owned by the sibling sub-issue that builds
+> the editing UI. PNG captures of the save happy path and the
+> reconciliation prompt will be appended to this section by that
+> sub-issue's PR, per `docs/AUTHORING.md`.
 
-### What Save sends
+### Permissions
 
-When you click **Save**, the BFF dispatches one
-`updateNodeDraft(id, old, new)` call to the manager. The `old` snapshot
-is the applied state the dialog opened against; the `new` payload
-carries the proposed name, profile, agents, and external-service
-drafts. The manager performs a compare-and-swap: if `old` no longer
-matches the latest applied state on the server, the call is rejected
-as a stale conflict (see below) and your local edits are *not*
-silently overwritten.
+The save-draft action requires **both** `nodes:write` and
+`services:write`. Calls missing either permission are rejected at the
+BFF boundary with a typed `NodePermissionError` before any GraphQL
+dispatch reaches the manager. Built-in **Tenant Administrator** and
+**System Administrator** roles already pair the two; **Security
+Monitor** has neither. Customer scope is enforced by the manager DB
+via the dispatch context's `customer_ids`; out-of-scope nodes surface
+to the caller as a typed `NodeNotFoundError`.
 
-### What you see in the audit log
+### CAS contract (`updateNodeDraft(id, old, new)`)
 
-Every Save emits one **`service.draft_save`** audit entry per service
-whose draft string actually changed in this Save. A Save that touches
-two services emits two entries; a Save that only changes node
-metadata (name / customer / description / hostname) emits zero
-`service.draft_save` entries. Each row carries
+Each save dispatches one `updateNodeDraft(id, old, new)` call to the
+manager. The `old` value is the applied state the caller opened
+against; the `new` value carries the proposed name, profile, agents,
+and external-service drafts. The manager performs a compare-and-swap:
+if `old` no longer matches the latest applied state on the server,
+the call is rejected as a *stale conflict* and the user's edits are
+not silently overwritten.
+
+### `service.draft_save` audit emission
+
+A successful save emits one **`service.draft_save`** audit entry per
+service whose draft string actually changed. A save that touches two
+services emits two entries; a save that only changes node metadata
+(name / customer / description / hostname) emits zero
+`service.draft_save` entries. Each entry carries
 `targetId = "${nodeId}:${serviceKind}"` and
 `details = { serviceKind, nodeId }`, so operators can filter the audit
-log to a single service on a single node.
+log to a single service on a single node. Saves that fail at the
+permission boundary, the customer-scope check, or with a double
+stale-conflict (see below) emit **no** `service.draft_save` rows.
 
-### Stale-conflict reconciliation
+### Stale-conflict replay
 
-If another writer (a teammate, a script, a parallel browser tab)
-saves a draft on the same node between when your dialog opened and
-when you click **Save**, the first attempt rejects with a stale
-conflict. The BFF transparently re-reads the current node state,
-rebases your edits **per editable field** on top of that fresh
-baseline, and replays the call once. The rebase is field-granular,
-not row-granular: if you edited only a service's draft string and
-another writer flipped that same service's status, the replay sends
-your draft *and* the concurrent writer's status. The same applies to
-profile subfields (customer / description / hostname). You do **not**
-see anything during a successful single replay — the Save dialog
-simply reports success.
+When the first `updateNodeDraft` call is rejected with the documented
+stale-conflict shape (see `decisions/node-conflict-patterns.md`),
+the BFF transparently re-reads the current node, rebases the caller's
+intent on top of that fresh baseline, and replays the call once. The
+rebase is **field-granular**, not row-granular: if the caller edited
+only a service's `draft` and a concurrent writer flipped only that
+same service's `status`, the replay sends `{fresh status, user
+draft}`. The same per-field merge applies to profile subfields
+(`customerId`, `description`, `hostname`). Whole-row fallback applies
+only when the caller adds or clears an entry, since there is no fresh
+subfield to interpolate against.
 
-When the replay also conflicts (a third writer landed in between),
-the dialog stops and surfaces a reconciliation prompt with two
-options:
+If the rebased payload already matches the fresh canonical state
+byte-for-byte over the editable surface — the case a redundant retry
+of the same payload produces — the replay mutation is **not**
+dispatched and no extra audit is emitted.
 
-- **Discard** — drop your unsaved edits and reload the dialog
-  against the latest applied state.
-- **Re-edit** — keep your edits in the dialog but refresh the
-  baseline; you can then review the field-level differences against
-  the latest server state and click Save again.
+### `StaleConflictError` on double conflict
 
-A double-conflicted Save emits **no** `service.draft_save` audit
-entry — only successful saves are audited.
+When the replay also rejects with the stale-conflict shape, the
+server action stops, throws a typed `StaleConflictError`, and emits
+no audit. Callers (the Edit dialog and any future automation) are
+expected to surface a reconciliation choice to the user — discard the
+local edits and reload, or keep the edits and refresh the baseline —
+rather than retrying automatically. The visual surface for that
+choice is owned by the sibling sub-issue that ships the dialog.
