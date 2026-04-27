@@ -21,7 +21,15 @@ import { type DocumentNode, parse } from "graphql";
  * about.
  */
 
-const QUERIES_DIR = path.join(__dirname, "queries");
+// Resolved from `process.cwd()` rather than `__dirname` because
+// Turbopack rewrites `__dirname` to a virtual `/ROOT/...` path during
+// route bundling, which does not exist on the real filesystem when
+// Next.js collects page data from the bundled module. `process.cwd()`
+// is the project root in dev, build, and tests; in standalone runtime
+// it is the standalone output directory, which the
+// `outputFileTracingIncludes` entry in `next.config.ts` populates with
+// the same relative `src/lib/node/queries/` tree.
+const QUERIES_DIR = path.join(process.cwd(), "src", "lib", "node", "queries");
 
 /**
  * Operations declare fragment dependencies via a header line of the
@@ -70,6 +78,9 @@ function loadDocument(relativePath: string): DocumentNode {
 
 export const NODE_LIST_QUERY = loadDocument("node-list.graphql");
 export const NODE_DETAIL_QUERY = loadDocument("node-detail.graphql");
+export const NODE_AUDIT_METADATA_QUERY = loadDocument(
+  "node-audit-metadata.graphql",
+);
 export const NODE_STATUS_LIST_QUERY = loadDocument("node-status-list.graphql");
 export const INSERT_NODE_MUTATION = loadDocument("insert-node.graphql");
 export const UPDATE_NODE_DRAFT_MUTATION = loadDocument(

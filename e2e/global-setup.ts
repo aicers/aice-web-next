@@ -83,6 +83,11 @@ const ALL_PERMISSIONS = [
   "dashboard:read",
   "dashboard:write",
   "detection:read",
+  "nodes:read",
+  "nodes:write",
+  "nodes:delete",
+  "services:read",
+  "services:write",
 ];
 
 async function ensureWorkerAccounts(): Promise<void> {

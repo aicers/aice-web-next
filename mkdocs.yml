@@ -27,6 +27,8 @@ plugins:
             - Getting Started: getting-started.md
             - Detection: detection.md
             - Event Investigation: event-investigation.md
+            - Operations:
+                - Node management: operations/node-management.md
             - Settings: settings.md
         - locale: ko
           name: 한국어
@@ -36,12 +38,16 @@ plugins:
             - Getting Started: getting-started.md
             - Detection: detection.md
             - Event Investigation: event-investigation.md
+            - Operations:
+                - Node management: operations/node-management.md
             - Settings: settings.md
           nav_translations:
             Overview: 개요
             Getting Started: 시작하기
             Detection: 탐지
             Event Investigation: 이벤트 조사
+            Operations: 운영
+            Node management: 노드 관리
             Settings: 설정
 
 extra_css:

@@ -158,6 +158,82 @@ describe("manager server actions — happy path", () => {
     expect(mockTivanClient).not.toHaveBeenCalled();
   });
 
+  it("listAllNodes follows hasNextPage to page through every node", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValueOnce({
+      nodeList: {
+        edges: [{ node: { id: "n-1" } }, { node: { id: "n-2" } }],
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: true,
+          startCursor: "n-1",
+          endCursor: "n-2",
+        },
+        totalCount: "3",
+      },
+    });
+    mockGraphqlRequest.mockResolvedValueOnce({
+      nodeList: {
+        edges: [{ node: { id: "n-3" } }],
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: false,
+          startCursor: "n-3",
+          endCursor: "n-3",
+        },
+        totalCount: "3",
+      },
+    });
+
+    const { listAllNodes } = await import("@/lib/node/server-actions");
+    const conn = await listAllNodes(makeSession(), undefined, 2);
+
+    expect(conn.edges.map((e) => e.node.id)).toEqual(["n-1", "n-2", "n-3"]);
+    expect(conn.totalCount).toBe("3");
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+    const firstCall = mockGraphqlRequest.mock.calls.at(0);
+    const secondCall = mockGraphqlRequest.mock.calls.at(1);
+    expect(firstCall?.[1]).toMatchObject({ first: 2, after: null });
+    expect(secondCall?.[1]).toMatchObject({ first: 2, after: "n-2" });
+  });
+
+  it("listAllNodeStatuses follows hasNextPage to page through every status row", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValueOnce({
+      nodeStatusList: {
+        edges: [{ node: { id: "n-1" } }],
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: true,
+          startCursor: "n-1",
+          endCursor: "n-1",
+        },
+        totalCount: "2",
+      },
+    });
+    mockGraphqlRequest.mockResolvedValueOnce({
+      nodeStatusList: {
+        edges: [{ node: { id: "n-2" } }],
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: false,
+          startCursor: "n-2",
+          endCursor: "n-2",
+        },
+        totalCount: "2",
+      },
+    });
+
+    const { listAllNodeStatuses } = await import("@/lib/node/server-actions");
+    const conn = await listAllNodeStatuses(makeSession(), undefined, 1);
+
+    expect(conn.edges.map((e) => e.node.id)).toEqual(["n-1", "n-2"]);
+    expect(conn.totalCount).toBe("2");
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+  });
+
   it("insertNode dispatches via graphqlRequest with the supplied payload and returns the new id", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
@@ -608,6 +684,59 @@ describe("combined node/service permission gate", () => {
       }),
     ).rejects.toBeInstanceOf(NodePermissionError);
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("getNodeAuditMetadata succeeds for a caller holding nodes:delete only", async () => {
+    // Round 4 invariant: the delete-scoped audit metadata helper must
+    // not require `nodes:read` or `services:read`. The destructive
+    // grant is the only permission gate; tenant scope is enforced
+    // separately against the canonical-node payload.
+    mockHasPermission.mockImplementation(grantOnly("nodes:delete"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue({
+      node: {
+        id: "n-1",
+        profile: { customerId: "5", hostname: "h" },
+        profileDraft: null,
+      },
+    });
+    const { getNodeAuditMetadata } = await import("@/lib/node/server-actions");
+    const meta = await getNodeAuditMetadata(makeSession(), "n-1");
+    expect(meta.profile?.hostname).toBe("h");
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("getNodeAuditMetadata rejects a caller missing nodes:delete", async () => {
+    mockHasPermission.mockImplementation(grantOnly("nodes:read"));
+    const { getNodeAuditMetadata, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      getNodeAuditMetadata(makeSession(), "n-1"),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("getNodeAuditMetadata rejects an out-of-scope tenant admin", async () => {
+    // Tenant Administrator scoped to customer 5 must not be able to
+    // read audit metadata for a node owned by customer 7. The scope
+    // check runs against the canonical-node payload returned by
+    // review-web, mirroring `getNode`.
+    mockHasPermission.mockImplementation(grantOnly("nodes:delete"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue({
+      node: {
+        id: "n-1",
+        profile: { customerId: "7", hostname: "h" },
+        profileDraft: null,
+      },
+    });
+    const { getNodeAuditMetadata, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      getNodeAuditMetadata(makeSession(), "n-1"),
+    ).rejects.toBeInstanceOf(NodePermissionError);
   });
 });
 

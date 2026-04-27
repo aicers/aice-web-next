@@ -1,0 +1,51 @@
+query NodeStatusListPopulated(
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  nodeStatusList(first: $first, after: $after, last: $last, before: $before) {
+    edges {
+      node {
+        id
+        name
+        nameDraft
+        profile {
+          customerId
+          description
+          hostname
+        }
+        profileDraft {
+          customerId
+          description
+          hostname
+        }
+        cpuUsage
+        totalMemory
+        usedMemory
+        totalDiskSpace
+        usedDiskSpace
+        manager
+        agents {
+          kind
+          storedStatus
+          config
+          draft
+        }
+        externalServices {
+          kind
+          storedStatus
+          draft
+        }
+        ping
+      }
+    }
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    totalCount
+  }
+}

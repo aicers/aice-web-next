@@ -28,6 +28,7 @@ import {
   GIGANTO_STATUS_QUERY,
   GIGANTO_UPDATE_CONFIG_MUTATION,
   INSERT_NODE_MUTATION,
+  NODE_AUDIT_METADATA_QUERY,
   NODE_DETAIL_QUERY,
   NODE_LIST_QUERY,
   NODE_REBOOT_MUTATION,
@@ -49,6 +50,8 @@ import type {
   GigantoUpdateConfigResult,
   InsertNodeResult,
   Node as ManagerNode,
+  NodeAuditMetadata,
+  NodeAuditMetadataResult,
   NodeConnection,
   NodeDetailResult,
   NodeDraftInput,
@@ -240,6 +243,72 @@ export async function getNode(
   return node;
 }
 
+/**
+ * Fetch the slim audit-metadata payload for a node by id, gated on
+ * `nodes:delete` only.
+ *
+ * The DELETE route needs `hostname` + `customerId` to populate the
+ * `node.delete` audit entry, but routing that through `getNode` would
+ * also require `nodes:read + services:read` (the combined-gate rule
+ * for the full mixed-surface read). That would force every custom
+ * role with `nodes:delete` to also hold the read scopes, which
+ * `decisions/node-permissions.md` does not require. The dedicated
+ * `node-audit-metadata.graphql` document selects only the profile
+ * fields the audit entry uses, so the helper is permissioned strictly
+ * on the destructive grant and the combined-gate rationale (mixed
+ * service surface) does not apply.
+ *
+ * Tenant-scope still goes through the canonical-node fetch via
+ * review-web — a Tenant Administrator must not be able to read audit
+ * metadata for an out-of-scope node, even one they could legitimately
+ * delete (which they cannot — they'd 403 at the same scope check).
+ * Error-mapping order matches `fetchCanonicalNode`: not-found before
+ * manager-unavailable, with a defense-in-depth `null` check.
+ */
+export async function getNodeAuditMetadata(
+  session: AuthSession,
+  id: string,
+  signal?: AbortSignal,
+): Promise<NodeAuditMetadata> {
+  await requireAllPermissions(session, [NODES_DELETE]);
+  const ctx = await buildDispatchContext(session);
+  const data = await withManagerErrorMapping(
+    withNodeNotFoundMapping(
+      graphqlRequest<NodeAuditMetadataResult, { id: string }>(
+        NODE_AUDIT_METADATA_QUERY,
+        { id },
+        { role: ctx.role, customerIds: ctx.customerIds },
+        signal,
+      ),
+      id,
+    ),
+  );
+  if (!data.node) {
+    throw new NodeNotFoundError(`Node ${id} was not found.`);
+  }
+  enforceAuditMetadataScope(ctx, data.node);
+  return data.node;
+}
+
+function enforceAuditMetadataScope(
+  ctx: DispatchContext,
+  node: NodeAuditMetadata,
+): void {
+  // Mirrors `enforceNodeScope` for the slim audit payload. The two
+  // helpers are kept separate because `NodeAuditMetadata` is a
+  // structurally narrower shape than `ManagerNode` and we do not want
+  // a future widen of the audit payload to silently grant access to a
+  // service field via the shared scope-check.
+  const customerId = node.profile?.customerId ?? node.profileDraft?.customerId;
+  if (customerId === undefined) {
+    if (ctx.role === SYSTEM_ADMINISTRATOR) return;
+    throw new NodePermissionError(
+      "Node carries no customer scope; only System Administrators can read it.",
+    );
+  }
+  assertNodeInScope(ctx, Number(customerId));
+}
+
 function enforceNodeScope(ctx: DispatchContext, node: ManagerNode): void {
   // The profile field is null for nodes whose draft has never been
   // applied; in that case there is no committed customer to check
@@ -283,6 +352,105 @@ export async function listNodeStatuses(
     ),
   );
   return data.nodeStatusList;
+}
+
+// Cap the cursor walk so a misbehaving manager (no-op cursor, missing
+// `hasNextPage: false`) cannot hang the page indefinitely. 50 pages at
+// `pageSize: 200` covers up to 10k nodes — well above any realistic
+// deployment; the cap exists strictly as a runaway guard.
+const PAGINATION_PAGE_LIMIT = 50;
+const DEFAULT_PAGE_SIZE = 200;
+
+/**
+ * Walk every page of a connection-shaped manager query, accumulating
+ * the edges into a single connection. The list page renders every node
+ * the caller can see, so a single `first: N` window would silently drop
+ * tail nodes once N is exceeded. The Phase Node-2 `listNodes` /
+ * `listNodeStatuses` helpers stay single-page (callers like the detail
+ * page or polling hook may want one window only); this helper layers
+ * pagination on top.
+ */
+async function paginate<T>(
+  pageFetcher: (args: NodePageArgs) => Promise<{
+    edges: T[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    totalCount: string;
+  }>,
+  pageSize: number,
+): Promise<{ edges: T[]; totalCount: string }> {
+  const aggregated: T[] = [];
+  let cursor: string | null = null;
+  let totalCount = "0";
+  for (let i = 0; i < PAGINATION_PAGE_LIMIT; i += 1) {
+    const page: {
+      edges: T[];
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      totalCount: string;
+    } = await pageFetcher({
+      first: pageSize,
+      ...(cursor !== null ? { after: cursor } : {}),
+    });
+    aggregated.push(...page.edges);
+    totalCount = page.totalCount;
+    if (!page.pageInfo.hasNextPage || !page.pageInfo.endCursor) {
+      return { edges: aggregated, totalCount };
+    }
+    cursor = page.pageInfo.endCursor;
+  }
+  return { edges: aggregated, totalCount };
+}
+
+/**
+ * Page through `nodeList` until every node is loaded. Returns a
+ * connection-shaped result so existing consumers (`buildNodeRows`)
+ * keep working unchanged.
+ */
+export async function listAllNodes(
+  session: AuthSession,
+  signal?: AbortSignal,
+  pageSize: number = DEFAULT_PAGE_SIZE,
+): Promise<NodeConnection> {
+  const result = await paginate(
+    (args) => listNodes(session, args, signal),
+    pageSize,
+  );
+  return {
+    edges: result.edges,
+    totalCount: result.totalCount,
+    pageInfo: {
+      hasPreviousPage: false,
+      hasNextPage: false,
+      startCursor: null,
+      endCursor: null,
+    },
+  };
+}
+
+/**
+ * Page through `nodeStatusList` until every status row is loaded. The
+ * list-page join requires per-row Manager / ping data for every node
+ * the page renders, so a truncated status fetch would leave tail rows
+ * with `manager: null` / `ping: null` even though the manager is up.
+ */
+export async function listAllNodeStatuses(
+  session: AuthSession,
+  signal?: AbortSignal,
+  pageSize: number = DEFAULT_PAGE_SIZE,
+): Promise<NodeStatusConnection> {
+  const result = await paginate(
+    (args) => listNodeStatuses(session, args, signal),
+    pageSize,
+  );
+  return {
+    edges: result.edges,
+    totalCount: result.totalCount,
+    pageInfo: {
+      hasPreviousPage: false,
+      hasNextPage: false,
+      startCursor: null,
+      endCursor: null,
+    },
+  };
 }
 
 interface InsertNodeVariables extends Record<string, unknown> {

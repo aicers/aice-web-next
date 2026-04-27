@@ -206,6 +206,24 @@ export interface NodeDetailResult {
   node: Node;
 }
 
+/**
+ * Slim Node payload shape returned by `node-audit-metadata.graphql`.
+ * Carries only the fields needed to populate a `node.delete` audit
+ * entry (hostname + customerId), so the delete-scoped helper that uses
+ * it can be permissioned on `nodes:delete` alone — without pulling in
+ * the service-draft surface that motivates the combined gate on
+ * `getNode` / `node-detail.graphql`.
+ */
+export interface NodeAuditMetadata {
+  id: string;
+  profile: { customerId: string; hostname: string } | null;
+  profileDraft: { customerId: string; hostname: string } | null;
+}
+
+export interface NodeAuditMetadataResult {
+  node: NodeAuditMetadata;
+}
+
 export interface NodeStatusListResult {
   nodeStatusList: NodeStatusConnection;
 }

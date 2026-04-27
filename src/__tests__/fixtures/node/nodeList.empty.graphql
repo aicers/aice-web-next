@@ -1,0 +1,43 @@
+query NodeListEmpty($first: Int, $after: String, $last: Int, $before: String) {
+  nodeList(first: $first, after: $after, last: $last, before: $before) {
+    edges {
+      node {
+        id
+        name
+        nameDraft
+        profile {
+          customerId
+          description
+          hostname
+        }
+        profileDraft {
+          customerId
+          description
+          hostname
+        }
+        agents {
+          node
+          key
+          kind
+          status
+          config
+          draft
+        }
+        externalServices {
+          node
+          key
+          kind
+          status
+          draft
+        }
+      }
+    }
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    totalCount
+  }
+}

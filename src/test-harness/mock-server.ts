@@ -50,7 +50,15 @@ export interface StubMatcher {
 
 export type StubResolver =
   | { kind: "fixture"; data: unknown }
-  | { kind: "errors"; errors: { message: string }[] };
+  | { kind: "errors"; errors: { message: string }[] }
+  // Half-close the underlying socket with a FIN before any HTTP response
+  // is written. undici sees an unexpected EOF and surfaces this to the
+  // client as `socket hang up` (`UND_ERR_SOCKET`), which
+  // `withManagerErrorMapping` translates into `ManagerUnavailableError`.
+  // Use this kind to exercise the offline-panel branch in tests; a 200
+  // with `errors[]` would only produce a `ClientError`, which the page
+  // is expected to let propagate as an unexpected failure.
+  | { kind: "connectionFailure" };
 
 interface RegisteredStub {
   matcher: StubMatcher;
@@ -209,7 +217,8 @@ export interface AdminStubRequest {
   scope?: string;
   response:
     | { kind: "fixture"; fixture: string }
-    | { kind: "errors"; errors: { message: string }[] };
+    | { kind: "errors"; errors: { message: string }[] }
+    | { kind: "connectionFailure" };
 }
 
 export interface MockServerTlsOptions {
@@ -321,6 +330,7 @@ function resolveAdminStub(
   declaredFixtures: Map<string, Set<string>>,
 ): StubResolver {
   if (req.response.kind === "errors") return req.response;
+  if (req.response.kind === "connectionFailure") return req.response;
   const path = req.response.fixture;
   const declaredOps = declaredFixtures.get(path);
   if (!declaredOps) {
@@ -568,6 +578,27 @@ export async function startMockServer(
     }
     if (stub.kind === "errors") {
       jsonResponse(res, 200, { errors: stub.errors });
+      return;
+    }
+    if (stub.kind === "connectionFailure") {
+      // Half-close the underlying TCP socket with a FIN before any HTTP
+      // response is written. undici sees an unexpected EOF and raises a
+      // `socket hang up` (`UND_ERR_SOCKET`) — a transport-level failure
+      // that `withManagerErrorMapping` translates into
+      // `ManagerUnavailableError`. This is the only path that exercises
+      // the offline-panel branch end-to-end: `kind: "errors"` returns a
+      // 200 (a `ClientError`, not a transport failure), and a clean
+      // `res.end()` would still satisfy the request.
+      //
+      // We deliberately use `socket.end()` (FIN) rather than
+      // `socket.destroy()` (RST). A TLS keep-alive socket reset by the
+      // peer can leak an unhandled `aborted` / `ECONNRESET` on the dev
+      // server's connection pool — Next.js surfaces that as
+      // `uncaughtException`, destabilizing the worker and causing
+      // unrelated tests scheduled after the offline scenario to time out
+      // at random. A graceful FIN avoids the reset path entirely while
+      // still giving undici the same `socket hang up` rejection.
+      res.socket?.end();
       return;
     }
     // Execute against the schema with the fixture as the root value so the
