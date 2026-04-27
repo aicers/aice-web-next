@@ -237,7 +237,6 @@ export async function _internal_confirmApplyAttempt(
   args: ConfirmApplyAttemptArgs,
 ): Promise<ApplyAttemptRow> {
   const { session, attemptId, dispatcher, draftReader } = args;
-  void args.expectedDraftFingerprint;
 
   const initialRow = await readApplyAttempt(attemptId);
   if (!initialRow) {
@@ -264,18 +263,22 @@ export async function _internal_confirmApplyAttempt(
     throw new StalePlanError(`Apply attempt ${attemptId} has expired.`);
   }
 
-  // Step 2: read-only status check.
+  // Step 2: read-only status check. Recovery from `failed_retryable`
+  // is explicit via `_internal_retryDispatch(dispatchId)`; a plain
+  // confirm against a soft-failed row returns the persisted state
+  // (idempotent), it does NOT auto-resume execution.
   switch (initialRow.status) {
     case "pending":
-    case "failed_retryable":
-      // Eligible to claim — fall through to step 4.
+      // Eligible to claim — fall through to step 3.
       break;
     case "executing":
       throw new ApplyAttemptBusyError(
         `Apply attempt ${attemptId} is currently executing.`,
       );
     case "succeeded":
-      // Idempotent success — return the persisted row unchanged.
+    case "failed_retryable":
+      // Idempotent — return the persisted row unchanged. Resuming a
+      // soft-failed attempt is the retry entrypoint's job.
       return initialRow;
     case "failed_terminal":
       throw new ApplyAttemptTerminalError(
@@ -292,7 +295,20 @@ export async function _internal_confirmApplyAttempt(
     }
   }
 
-  // Step 3 (advisory hint, no-op).
+  // Step 3: optional pre-claim fingerprint hint. Compares the caller-
+  // supplied hint against the persisted fingerprint without re-reading
+  // the manager DB — a cheap drift signal. Mismatch is non-fatal per
+  // the umbrella (drift may settle between pre-claim and post-claim
+  // recompute), so we only log; only step 5b is authoritative.
+  if (args.expectedDraftFingerprint !== undefined) {
+    const persistedHex = initialRow.draftFingerprint.toString("hex");
+    if (persistedHex !== args.expectedDraftFingerprint.toLowerCase()) {
+      console.warn(
+        `[apply-attempt] confirm pre-claim fingerprint hint mismatch for ${attemptId} (advisory only).`,
+      );
+    }
+  }
+
   // Step 4: atomic claim.
   const correlationId = randomUUID();
   const claim = await tryClaim(attemptId, correlationId, "confirm", null);
@@ -405,12 +421,17 @@ export async function _internal_retryDispatch(
  * that races between our SELECT and UPDATE is rejected by SQL rather
  * than by app-code state.
  *
- * Predicates:
+ * Predicates (all enforced in the UPDATE WHERE, not just the read):
  *   - executing_lock IS NULL
- *   - status IN ('pending', 'failed_retryable')
  *   - now() <= expires_at
- *   - (retry only) JSON containment: target dispatch is
- *     `failed_retryable`
+ *   - confirm: status = 'pending'
+ *   - retry:   status = 'failed_retryable'
+ *              AND a JSON-path predicate that the target dispatch is
+ *              still `failed_retryable` at SQL evaluation time. This
+ *              closes the gap between step 2b's app-level read and the
+ *              actual claim — if a competing call flipped the target
+ *              dispatch's state in between, SQL rejects the claim and
+ *              the 0-row branch resolves by observed row status.
  *
  * Returns the row as-claimed, or `null` if the claim failed.
  */
@@ -425,9 +446,8 @@ async function tryClaim(
     if (!current) return null;
     if (current.executingLock !== null) return null;
     if (current.expiresAt.getTime() < Date.now()) return null;
-    if (current.status !== "pending" && current.status !== "failed_retryable") {
-      return null;
-    }
+    if (mode === "confirm" && current.status !== "pending") return null;
+    if (mode === "retry" && current.status !== "failed_retryable") return null;
     if (mode === "retry") {
       const target = current.plannedDispatches.find(
         (d) => d.dispatchId === retryDispatchId,
@@ -441,22 +461,56 @@ async function tryClaim(
       retryDispatchId,
     );
 
-    const result = await client.query(
-      `
-      UPDATE apply_attempts
-      SET status = 'executing',
-          executing_lock = $1,
-          claim_started_at = NOW(),
-          planned_dispatches = $2::jsonb
-      WHERE attempt_id = $3
-        AND executing_lock IS NULL
-        AND status IN ('pending', 'failed_retryable')
-        AND NOW() <= expires_at
-      RETURNING attempt_id
-      `,
-      [correlationId, JSON.stringify(newDispatches), attemptId],
-    );
-    if (result.rowCount !== 1) return null;
+    if (mode === "confirm") {
+      const result = await client.query(
+        `
+        UPDATE apply_attempts
+        SET status = 'executing',
+            executing_lock = $1,
+            claim_started_at = NOW(),
+            planned_dispatches = $2::jsonb
+        WHERE attempt_id = $3
+          AND executing_lock IS NULL
+          AND status = 'pending'
+          AND NOW() <= expires_at
+        RETURNING attempt_id
+        `,
+        [correlationId, JSON.stringify(newDispatches), attemptId],
+      );
+      if (result.rowCount !== 1) return null;
+    } else {
+      // Retry: the JSON-path predicate `$[*] ? (@.dispatchId == $id &&
+      // @.state == "failed_retryable")` ensures another concurrent call
+      // that already promoted this dispatch out of `failed_retryable`
+      // (e.g. a winning retry whose executor flipped it to `in_flight`
+      // / `succeeded`) cannot have its claim shadowed by ours.
+      const result = await client.query(
+        `
+        UPDATE apply_attempts
+        SET status = 'executing',
+            executing_lock = $1,
+            claim_started_at = NOW(),
+            planned_dispatches = $2::jsonb
+        WHERE attempt_id = $3
+          AND executing_lock IS NULL
+          AND status = 'failed_retryable'
+          AND NOW() <= expires_at
+          AND jsonb_path_exists(
+                planned_dispatches,
+                '$[*] ? (@.dispatchId == $id && @.state == "failed_retryable")',
+                jsonb_build_object('id', $4::text)
+              )
+        RETURNING attempt_id
+        `,
+        [
+          correlationId,
+          JSON.stringify(newDispatches),
+          attemptId,
+          retryDispatchId,
+        ],
+      );
+      if (result.rowCount !== 1) return null;
+    }
     return await readApplyAttempt(attemptId, client);
   });
 }
@@ -477,10 +531,12 @@ function advanceForClaim(
       };
     });
   }
+  // Confirm only operates on `pending` rows where every dispatch is
+  // `queued` — pick the first and promote it.
   let advanced = false;
   return dispatches.map((d) => {
     if (advanced) return d;
-    if (d.state === "queued" || d.state === "failed_retryable") {
+    if (d.state === "queued") {
       advanced = true;
       return {
         ...d,

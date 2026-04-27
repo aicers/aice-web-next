@@ -400,6 +400,68 @@ describe("Lifecycle — APPLY_DISPATCH_MAX_ATTEMPTS cap cascades to failed_termi
   });
 });
 
+describe("Lifecycle — confirm against failed_retryable is idempotent", () => {
+  it("returns the persisted row without dispatching; recovery from failed_retryable is the retry entrypoint's job", async () => {
+    const node = snapshot();
+    const fp = computeDraftFingerprint(node);
+    const ext1Id = randomUUID();
+    const ext2Id = randomUUID();
+    const dispatches: PlannedDispatch[] = [
+      {
+        dispatchId: randomUUID(),
+        kind: "MANAGER",
+        state: "succeeded",
+        attemptCount: 1,
+        lastError: null,
+      },
+      {
+        dispatchId: ext1Id,
+        kind: "DATA_STORE",
+        state: "failed_retryable",
+        attemptCount: 1,
+        lastError: "boom",
+        new: "{a}",
+      },
+      {
+        dispatchId: ext2Id,
+        kind: "TI_CONTAINER",
+        state: "queued",
+        attemptCount: 0,
+        lastError: null,
+        new: "{b}",
+      },
+    ];
+    const originalExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    const attemptId = await insertAttempt({
+      fingerprint: fp.bytes,
+      plannedDispatches: dispatches,
+      status: "failed_retryable",
+      expiresAt: originalExpiresAt,
+    });
+    const recorder = makeRecorder();
+    const result = await _internal_confirmApplyAttempt({
+      session: makeSession(),
+      attemptId,
+      dispatcher: makeDispatcher(recorder),
+      draftReader: makeReader(node),
+    });
+    expect(result.status).toBe("failed_retryable");
+    // The DB row is untouched: no claim, no executor pass.
+    expect(recorder.managerCalls).toBe(0);
+    expect(recorder.externalCalls).toHaveLength(0);
+    const row = await readRow(attemptId);
+    expect(row.status).toBe("failed_retryable");
+    expect(row.executing_lock).toBeNull();
+    expect(row.claim_started_at).toBeNull();
+    expect(
+      Math.abs(row.expires_at.getTime() - originalExpiresAt.getTime()),
+    ).toBeLessThan(1000);
+    // Per-dispatch state is unchanged.
+    expect(row.planned_dispatches[1].state).toBe("failed_retryable");
+    expect(row.planned_dispatches[2].state).toBe("queued");
+  });
+});
+
 describe("Lifecycle — busy / terminal / stale / expired observation", () => {
   it("ApplyAttemptBusyError when the row is already executing", async () => {
     const node = snapshot();
