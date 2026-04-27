@@ -14,12 +14,14 @@ import { NodeNotFoundError, NodePermissionError } from "./errors";
 import { NODE_DETAIL_QUERY } from "./queries";
 import { updateNodeDraft } from "./server-actions";
 import type {
+  AgentDraftInput,
   AgentInput,
   ExternalServiceInput,
   Node as ManagerNode,
   NodeDetailResult,
   NodeDraftInput,
   NodeInput,
+  NodeProfileInput,
 } from "./types";
 
 /**
@@ -245,6 +247,137 @@ function resolveAuditCustomer(
   return undefined;
 }
 
+function profilesEqual(
+  a: NodeProfileInput | null,
+  b: NodeProfileInput | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.customerId === b.customerId &&
+    a.description === b.description &&
+    a.hostname === b.hostname
+  );
+}
+
+/**
+ * Rebase the user's intended draft on top of a freshly-read canonical
+ * node. The returned draft is what should be sent to `updateNodeDraft`
+ * on the replay attempt: every field the user actually edited is
+ * preserved at the user's value; every field the user left alone takes
+ * the latest server value, so a concurrent writer's edit on an
+ * untouched field/service is **not** clobbered by replaying the
+ * user's stale snapshot of it.
+ *
+ * Why this matters: `agents` and `externalServices` in `NodeDraftInput`
+ * are replacement payloads — sending the user's whole list back
+ * verbatim would overwrite a sibling service's draft that another
+ * writer changed concurrently. We diff per-(kind, key) draft string
+ * (the field a save-draft can change) to decide which entries to
+ * forward at the user's value vs. swap in the fresh value.
+ */
+function rebaseDraftOnFresh(
+  originalOld: NodeInput,
+  originalNew: NodeDraftInput,
+  freshOld: NodeInput,
+): NodeDraftInput {
+  const userOldName = originalOld.nameDraft ?? originalOld.name;
+  const freshName = freshOld.nameDraft ?? freshOld.name;
+  const userTouchedName = originalNew.nameDraft !== userOldName;
+  const nameDraft = userTouchedName ? originalNew.nameDraft : freshName;
+
+  const userOldProfile = originalOld.profileDraft ?? originalOld.profile;
+  const freshProfile = freshOld.profileDraft ?? freshOld.profile;
+  const userTouchedProfile = !profilesEqual(
+    originalNew.profileDraft,
+    userOldProfile,
+  );
+  const profileDraft = userTouchedProfile
+    ? originalNew.profileDraft
+    : freshProfile;
+
+  let agents: AgentDraftInput[] | null = null;
+  if (originalNew.agents !== null) {
+    const oldDraftByKey = new Map<string, string | null>();
+    for (const a of originalOld.agents) {
+      oldDraftByKey.set(`${a.kind}::${a.key}`, a.draft ?? null);
+    }
+    const freshByKey = new Map<string, AgentInput>();
+    for (const a of freshOld.agents) {
+      freshByKey.set(`${a.kind}::${a.key}`, a);
+    }
+    agents = originalNew.agents.map((proposed) => {
+      const id = `${proposed.kind}::${proposed.key}`;
+      const userPriorDraft = oldDraftByKey.get(id) ?? null;
+      const proposedDraft = proposed.draft ?? null;
+      const userTouched = proposedDraft !== userPriorDraft;
+      if (userTouched) return proposed;
+      const fresh = freshByKey.get(id);
+      if (fresh) {
+        return {
+          kind: proposed.kind,
+          key: proposed.key,
+          status: proposed.status,
+          draft: fresh.draft ?? null,
+        };
+      }
+      return proposed;
+    });
+  }
+
+  let externalServices: ExternalServiceInput[] | null = null;
+  if (originalNew.externalServices !== null) {
+    const oldDraftByKey = new Map<string, string | null>();
+    for (const e of originalOld.externalServices) {
+      oldDraftByKey.set(`${e.kind}::${e.key}`, e.draft ?? null);
+    }
+    const freshByKey = new Map<string, ExternalServiceInput>();
+    for (const e of freshOld.externalServices) {
+      freshByKey.set(`${e.kind}::${e.key}`, e);
+    }
+    externalServices = originalNew.externalServices.map((proposed) => {
+      const id = `${proposed.kind}::${proposed.key}`;
+      const userPriorDraft = oldDraftByKey.get(id) ?? null;
+      const proposedDraft = proposed.draft ?? null;
+      const userTouched = proposedDraft !== userPriorDraft;
+      if (userTouched) return proposed;
+      const fresh = freshByKey.get(id);
+      if (fresh) {
+        return {
+          kind: proposed.kind,
+          key: proposed.key,
+          status: proposed.status,
+          draft: fresh.draft ?? null,
+        };
+      }
+      return proposed;
+    });
+  }
+
+  return { nameDraft, profileDraft, agents, externalServices };
+}
+
+/**
+ * True when every field of `draft` already matches the corresponding
+ * field of `freshOld` — i.e. the proposed save would write the same
+ * values the server already has. The replay path uses this to short-
+ * circuit a redundant mutation (see the idempotence note on
+ * `saveDraft`): if a user retries `saveDraft` with the same payload
+ * after a successful first call, the rebased draft will be a no-op
+ * against the fresh state, and we return success without dispatching
+ * the second mutation or emitting a duplicate audit row.
+ */
+function isNoOpAgainstFresh(
+  freshOld: NodeInput,
+  draft: NodeDraftInput,
+): boolean {
+  const freshName = freshOld.nameDraft ?? freshOld.name;
+  if (draft.nameDraft !== freshName) return false;
+  const freshProfile = freshOld.profileDraft ?? freshOld.profile;
+  if (!profilesEqual(draft.profileDraft, freshProfile)) return false;
+  return diffChangedServices(freshOld, draft).length === 0;
+}
+
 async function emitDraftSaveAudits(
   session: AuthSession,
   nodeId: string,
@@ -290,15 +423,14 @@ async function emitDraftSaveAudits(
  *    replays successfully emits the audits **once** (against the
  *    replay `old`, not the original).
  *
- * Idempotence: this function does not de-duplicate at the BFF — the
- * CAS contract on review-web is the durable idempotence boundary. A
- * caller that retries `saveDraft` with the same `(id, old, new)` after
- * a successful first call will stale-conflict on the second attempt
- * (because `old` no longer matches), the replay will re-read and
- * apply the user's intent on top of the now-current state, and the
- * audit emission will reflect the actual diff between the fresh `old`
- * and `new` (which is empty when the new state already matches the
- * draft — zero audits emitted on the redundant retry).
+ * Idempotence: a caller that retries `saveDraft` with the same
+ * `(id, old, new)` after a successful first call will stale-conflict
+ * on the second attempt (because `old` no longer matches the server
+ * state). The replay re-reads the canonical node, rebases the user's
+ * intent on top of that fresh baseline, and — when the rebased draft
+ * already matches the fresh state byte-for-byte — short-circuits
+ * before dispatching the redundant mutation. Net effect: the redundant
+ * retry writes nothing and emits zero additional audits.
  */
 export async function saveDraft(
   session: AuthSession,
@@ -330,28 +462,43 @@ export async function saveDraft(
   }
 
   // Single replay path. We rebuild `old` from a fresh canonical fetch
-  // and re-issue the same `newDraft` — the user's intent did not
-  // change, only the baseline against which the CAS check runs. A
-  // second stale-conflict is propagated as a typed error so the UI
-  // can ask the user to re-edit.
+  // and **rebase** the user's intended draft on top of that fresh
+  // baseline (see `rebaseDraftOnFresh`) so a concurrent writer's edit
+  // on a field/service the user did not touch is preserved rather than
+  // clobbered by replaying the user's stale snapshot. The audit then
+  // reflects the true diff between fresh-old and the rebased draft —
+  // never the user's original payload.
+  //
+  // A second stale-conflict on the rebased dispatch is propagated as a
+  // typed `StaleConflictError` so the UI can ask the user to re-edit.
   const ctx = await buildDispatchContext(session);
   const fresh = await fetchNodeForReplay(ctx, id, signal);
   const replayOld = nodeToInput(fresh);
+  const rebased = rebaseDraftOnFresh(oldNode, newDraft, replayOld);
+
+  // Idempotence short-circuit: when the rebased draft already matches
+  // the fresh server state, the user's intent has been fulfilled by a
+  // concurrent writer (typically: the same caller retrying after a
+  // successful first save). Skip the redundant mutation entirely so
+  // a retry writes once and audits once across the pair of calls.
+  if (isNoOpAgainstFresh(replayOld, rebased)) {
+    return id;
+  }
 
   try {
     const result = await updateNodeDraft(
       session,
       id,
       replayOld,
-      newDraft,
+      rebased,
       signal,
     );
-    const changes = diffChangedServices(replayOld, newDraft);
+    const changes = diffChangedServices(replayOld, rebased);
     await emitDraftSaveAudits(
       session,
       id,
       changes,
-      resolveAuditCustomer(replayOld, newDraft),
+      resolveAuditCustomer(replayOld, rebased),
     );
     return result;
   } catch (err) {

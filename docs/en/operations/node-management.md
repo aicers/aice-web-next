@@ -137,8 +137,7 @@ Every Save emits one **`service.draft_save`** audit entry per service
 whose draft string actually changed in this Save. A Save that touches
 two services emits two entries; a Save that only changes node
 metadata (name / customer / description / hostname) emits zero
-`service.draft_save` entries — node-metadata-only changes are tracked
-under `node.update`. Each `service.draft_save` row carries
+`service.draft_save` entries. Each row carries
 `targetId = "${nodeId}:${serviceKind}"` and
 `details = { serviceKind, nodeId }`, so operators can filter the audit
 log to a single service on a single node.

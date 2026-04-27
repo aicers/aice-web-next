@@ -61,21 +61,33 @@ function canonicalNodePayload(
   nodeId: string,
   customerId: string,
   overrides: Partial<{
+    name: string;
+    nameDraft: string | null;
     agents: unknown[];
     externalServices: unknown[];
-    profile: { customerId: string; description: string; hostname: string };
+    profile: {
+      customerId: string;
+      description: string;
+      hostname: string;
+    } | null;
+    profileDraft: {
+      customerId: string;
+      description: string;
+      hostname: string;
+    } | null;
   }> = {},
 ): unknown {
   return {
     node: {
       id: nodeId,
-      name: "n",
-      nameDraft: null,
+      name: overrides.name ?? "n",
+      nameDraft: overrides.nameDraft === undefined ? null : overrides.nameDraft,
       profile:
         overrides.profile === undefined
           ? { customerId, description: "", hostname: "h" }
           : overrides.profile,
-      profileDraft: null,
+      profileDraft:
+        overrides.profileDraft === undefined ? null : overrides.profileDraft,
       agents: overrides.agents ?? [],
       externalServices: overrides.externalServices ?? [],
     },
@@ -147,10 +159,51 @@ describe("saveDraft — permission boundary", () => {
 // ── Customer scope boundary ─────────────────────────────────────────
 
 describe("saveDraft — customer scope", () => {
-  it("rejects a tenant admin scoped to customer 5 from saving against a node owned by customer 7", async () => {
+  it("surfaces a manager-DB scope rejection as a typed NodeNotFoundError, never as a raw GraphQL error", async () => {
+    // The acceptance contract: customer scope is enforced at the manager-
+    // DB layer through the JWT context built by `buildDispatchContext`.
+    // When review-web's `customer_ids` filter rejects an out-of-scope
+    // node, the manager surfaces it as a NOT_FOUND-shaped GraphQL error
+    // (review-web does not reveal the existence of out-of-scope rows).
+    // The BFF must map that into a typed error so callers can render a
+    // 404, not a generic "GraphQL error" toast.
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
-    // Canonical-node fetch returns a node belonging to customer 7.
+    const scopeReject = Object.assign(new Error("forbidden"), {
+      response: {
+        errors: [
+          {
+            message: "node not found",
+            extensions: { code: "NOT_FOUND" },
+          },
+        ],
+      },
+    });
+    mockGraphqlRequest.mockRejectedValueOnce(scopeReject);
+
+    const { saveDraft } = await import("@/lib/node/draft");
+    const { NodeNotFoundError } = await import("@/lib/node/errors");
+
+    await expect(
+      saveDraft(makeSession(), "n-7", makeOldNode(), makeNewDraft()),
+    ).rejects.toBeInstanceOf(NodeNotFoundError);
+
+    // Only the canonical-node fetch ran; no mutation was dispatched.
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(0);
+    expect(mockAuditRecord).not.toHaveBeenCalled();
+  });
+
+  it("defense-in-depth: rejects with NodePermissionError if review-web ever leaks an out-of-scope node payload", async () => {
+    // Belt-and-braces: even if a future review-web build leaked an
+    // out-of-scope node through the canonical fetch (instead of the
+    // documented NOT_FOUND surfacing), the BFF must still refuse the
+    // mutation. This guards the BFF tenant-scope contract independent
+    // of the upstream filter.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-7", "7"));
 
     const { saveDraft } = await import("@/lib/node/draft");
@@ -160,7 +213,6 @@ describe("saveDraft — customer scope", () => {
       saveDraft(makeSession(), "n-7", makeOldNode(), makeNewDraft()),
     ).rejects.toBeInstanceOf(NodePermissionError);
 
-    // The mutation must not have been dispatched — only the canonical fetch.
     const mutationCalls = mockGraphqlRequest.mock.calls.filter(
       (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
     );
@@ -406,6 +458,128 @@ describe("saveDraft — stale-conflict replay", () => {
     expect(mockAuditRecord).not.toHaveBeenCalled();
   });
 
+  it("preserves a concurrent writer's edit on an untouched service when replaying after a stale-conflict", async () => {
+    // The user edited only SENSOR A; a concurrent writer changed
+    // SENSOR B's draft between dialog-open and Save. The first
+    // mutation stale-conflicts on the CAS check. The replay must
+    // forward the user's intent for A and the *fresh* value for B —
+    // it must not replay the user's stale snapshot of B and clobber
+    // the concurrent writer's edit.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+
+    const oldNode = makeOldNode({
+      agents: [
+        {
+          kind: "SENSOR",
+          key: "a",
+          status: "ENABLED",
+          config: null,
+          draft: "A-old",
+        },
+        {
+          kind: "SENSOR",
+          key: "b",
+          status: "ENABLED",
+          config: null,
+          draft: "B-old",
+        },
+      ],
+    });
+    const newDraft = makeNewDraft({
+      agents: [
+        { kind: "SENSOR", key: "a", status: "ENABLED", draft: "A-new-by-user" },
+        // User did NOT touch B — they sent B's draft string back unchanged.
+        { kind: "SENSOR", key: "b", status: "ENABLED", draft: "B-old" },
+      ],
+    });
+
+    // 1: canonical-fetch on the first updateNodeDraft (success).
+    mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
+    // 2: mutation #1 (stale-conflict).
+    const staleErr = Object.assign(new Error("conflict"), {
+      response: { errors: [{ message: "concurrent modification on node" }] },
+    });
+    mockGraphqlRequest.mockRejectedValueOnce(staleErr);
+    // 3: replay re-fetch — the canonical state shows that a concurrent
+    //    writer changed B from "B-old" to "B-by-other-writer". A is
+    //    still at the original "A-old".
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", {
+        agents: [
+          {
+            kind: "SENSOR",
+            key: "a",
+            status: "ENABLED",
+            config: null,
+            draft: "A-old",
+          },
+          {
+            kind: "SENSOR",
+            key: "b",
+            status: "ENABLED",
+            config: null,
+            draft: "B-by-other-writer",
+          },
+        ],
+      }),
+    );
+    // 4: canonical-fetch on the replay updateNodeDraft (success).
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", {
+        agents: [
+          {
+            kind: "SENSOR",
+            key: "a",
+            status: "ENABLED",
+            config: null,
+            draft: "A-old",
+          },
+          {
+            kind: "SENSOR",
+            key: "b",
+            status: "ENABLED",
+            config: null,
+            draft: "B-by-other-writer",
+          },
+        ],
+      }),
+    );
+    // 5: replay mutation (success). Capture the variables so we can
+    //    verify the dispatched payload preserved B-by-other-writer.
+    mockGraphqlRequest.mockResolvedValueOnce({ updateNodeDraft: "n-5" });
+
+    const { saveDraft } = await import("@/lib/node/draft");
+    const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
+    expect(result).toBe("n-5");
+
+    // The replay mutation is the last graphqlRequest call whose
+    // variables carry `old`/`new`.
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
+    );
+    // Two mutation calls: the original (stale-conflict) and the replay.
+    expect(mutationCalls).toHaveLength(2);
+    const replayVars = mutationCalls[1][1] as {
+      new: NodeDraftInput;
+    };
+    const sentB = replayVars.new.agents?.find((a) => a.key === "b");
+    expect(sentB?.draft).toBe("B-by-other-writer");
+    const sentA = replayVars.new.agents?.find((a) => a.key === "a");
+    // A — which the user did edit — is forwarded at the user's value.
+    expect(sentA?.draft).toBe("A-new-by-user");
+
+    // Audit fires once for SENSOR A (the only diff against fresh-old).
+    expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "service.draft_save",
+        targetId: "n-5:SENSOR",
+        details: { serviceKind: "SENSOR", nodeId: "n-5" },
+      }),
+    );
+  });
+
   it("does not retry a non-stale GraphQL error (e.g. validation) — propagates the original error and emits no audit", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
@@ -425,7 +599,7 @@ describe("saveDraft — stale-conflict replay", () => {
 // ── Idempotence ────────────────────────────────────────────────────
 
 describe("saveDraft — idempotence on redundant retry", () => {
-  it("a second saveDraft with the same payload after a successful first call replays against the fresh state and emits zero additional audits when the diff is empty", async () => {
+  it("a second saveDraft with the same payload after a successful first call dispatches no replay mutation and emits zero additional audits", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
 
@@ -455,9 +629,10 @@ describe("saveDraft — idempotence on redundant retry", () => {
     // Second saveDraft with the same payload: server now has the new
     // draft applied, so the user-supplied `old` no longer matches. The
     // first attempt stale-conflicts; the replay re-reads the fresh
-    // state (which already has the proposed draft) and re-applies. The
-    // diff between the fresh `old` and `newDraft` is empty, so no
-    // additional audit row is emitted.
+    // state (which already has the proposed SENSOR draft and the
+    // proposed nameDraft / profileDraft). Rebasing the user's intent
+    // onto fresh produces a no-op, so the replay path short-circuits
+    // — no second mutation, no extra audit.
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     const staleErr = Object.assign(new Error("stale"), {
       response: {
@@ -465,10 +640,11 @@ describe("saveDraft — idempotence on redundant retry", () => {
       },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr);
-    // Replay re-fetch — the fresh node already carries the proposed
-    // SENSOR draft, so the diff against newDraft is empty.
+    // Replay re-fetch — fresh state matches the proposed save in full.
     mockGraphqlRequest.mockResolvedValueOnce(
       canonicalNodePayload("n-5", "5", {
+        nameDraft: "n2",
+        profileDraft: { customerId: "5", description: "d", hostname: "h" },
         agents: [
           {
             kind: "SENSOR",
@@ -480,10 +656,15 @@ describe("saveDraft — idempotence on redundant retry", () => {
         ],
       }),
     );
-    mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
-    mockGraphqlRequest.mockResolvedValueOnce({ updateNodeDraft: "n-5" });
+
+    const callsBeforeRetry = mockGraphqlRequest.mock.calls.length;
 
     await saveDraft(makeSession(), "n-5", oldNode, newDraft);
+
+    // The retry consumed the canonical-fetch (1) + the stale-conflict
+    // mutation (2) + the replay re-fetch (3) — but NO replay mutation.
+    const callsAfter = mockGraphqlRequest.mock.calls.length;
+    expect(callsAfter - callsBeforeRetry).toBe(3);
     // Still only the original audit row from the first call.
     expect(mockAuditRecord).toHaveBeenCalledTimes(1);
   });
