@@ -50,6 +50,11 @@ Copy `.env.example` to `.env.local` and fill in the values:
 | `INIT_ADMIN_USERNAME` | Initial System Administrator username |
 | `INIT_ADMIN_PASSWORD` | Initial System Administrator password |
 | `DEFAULT_LOCALE` | Default locale (`en` or `ko`) |
+| `APPLY_ATTEMPT_TTL_MS` | Execution deadline for a non-terminal apply attempt (default: 30 minutes) |
+| `APPLY_ATTEMPT_RETENTION_MS` | Retention horizon for a terminal apply attempt before hard-delete (default: 7 days) |
+| `APPLY_EXECUTING_STALE_MS` | Stale-lock recovery threshold for `executing` apply attempts (default: 2.5 hours) |
+| `APPLY_DISPATCH_MAX_ATTEMPTS` | Per-dispatch retry cap before `failed_terminal` (default: 3) |
+| `APPLY_INTERNAL_CLEANUP_TOKEN` | Shared secret for `POST /api/internal/apply-attempts/cleanup`; route refuses every request if unset |
 
 ## Scripts
 

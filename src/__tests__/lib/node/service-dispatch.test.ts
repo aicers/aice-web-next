@@ -28,6 +28,7 @@ vi.mock("@/lib/graphql/external-client", () => ({
 const ctx: DispatchContext = {
   role: "Tenant Administrator",
   customerIds: [1],
+  hasGlobalScope: false,
 };
 
 beforeEach(() => {

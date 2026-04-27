@@ -1,0 +1,376 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { AuthSession } from "@/lib/auth/jwt";
+
+const mockHasPermission = vi.hoisted(() => vi.fn());
+const mockResolveEffectiveCustomerIds = vi.hoisted(() => vi.fn());
+const mockGraphqlRequest = vi.hoisted(() => vi.fn());
+const mockQuery = vi.hoisted(() => vi.fn());
+const mockGetCurrentSession = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/auth/permissions", () => ({
+  hasPermission: mockHasPermission,
+}));
+
+vi.mock("@/lib/auth/customer-scope", () => ({
+  resolveEffectiveCustomerIds: mockResolveEffectiveCustomerIds,
+}));
+
+vi.mock("@/lib/auth/session", () => ({
+  getCurrentSession: mockGetCurrentSession,
+}));
+
+vi.mock("@/lib/graphql/client", () => ({
+  graphqlRequest: mockGraphqlRequest,
+}));
+
+vi.mock("@/lib/db/client", () => ({
+  query: mockQuery,
+  withTransaction: vi.fn(),
+}));
+
+/**
+ * Default `hasPermission` for a tenant-scoped caller: grants the
+ * Node-management write verbs, denies `customers:access-all`. Tests
+ * that need a globally-scoped caller (system administrator path)
+ * override with `mockHasPermission.mockResolvedValue(true)` or a
+ * permission-aware implementation.
+ */
+const tenantScopedPermissions = async (
+  _roles: string[],
+  permission: string,
+): Promise<boolean> => permission !== "customers:access-all";
+
+function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
+  return {
+    accountId: "00000000-0000-0000-0000-000000000001",
+    sessionId: "session-1",
+    roles: ["Tenant Administrator"],
+    tokenVersion: 1,
+    mustChangePassword: false,
+    mustEnrollMfa: false,
+    iat: 0,
+    exp: 0,
+    sessionIp: "127.0.0.1",
+    sessionUserAgent: "test",
+    sessionBrowserFingerprint: "test",
+    needsReauth: false,
+    sessionCreatedAt: new Date(0),
+    sessionLastActiveAt: new Date(0),
+    ...overrides,
+  } as AuthSession;
+}
+
+function nodePayload(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    node: {
+      id: "node-1",
+      name: "n",
+      nameDraft: "n-draft",
+      profile: { customerId: "5", description: "", hostname: "h" },
+      profileDraft: null,
+      agents: [],
+      externalServices: [],
+      ...overrides,
+    },
+  };
+}
+
+beforeEach(() => {
+  mockHasPermission.mockReset();
+  mockResolveEffectiveCustomerIds.mockReset();
+  mockGraphqlRequest.mockReset();
+  mockQuery.mockReset();
+  mockGetCurrentSession.mockReset();
+  mockGetCurrentSession.mockResolvedValue(makeSession());
+});
+
+describe("createApplyAttempt — happy path", () => {
+  it("persists a new pending row with frozen external dispatches and the manager dispatch (no frozen `new`)", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        externalServices: [
+          {
+            kind: "DATA_STORE",
+            key: "k1",
+            status: "ENABLED",
+            draft: "{cfg:1}",
+          },
+          {
+            kind: "TI_CONTAINER",
+            key: "k2",
+            status: "ENABLED",
+            draft: "{cfg:2}",
+          },
+        ],
+      }),
+    );
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    mockQuery.mockResolvedValue({
+      rows: [{ created_at: new Date(), expires_at: expiresAt }],
+      rowCount: 1,
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const result = await createApplyAttempt({
+      nodeId: "node-1",
+    });
+
+    expect(result.attemptId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(result.draftFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.expiresAt).toBe(expiresAt.toISOString());
+
+    // Plan shape: 1 manager + 2 external; manager has no `new`.
+    expect(result.plannedDispatches).toHaveLength(3);
+    const manager = result.plannedDispatches[0];
+    expect(manager.kind).toBe("MANAGER");
+    expect("new" in manager).toBe(false);
+    expect(manager.state).toBe("queued");
+    expect(manager.attemptCount).toBe(0);
+
+    const ext1 = result.plannedDispatches[1];
+    expect(ext1.kind).toBe("DATA_STORE");
+    expect("new" in ext1).toBe(true);
+    if (ext1.kind === "DATA_STORE" || ext1.kind === "TI_CONTAINER") {
+      expect(ext1.new).toBe("{cfg:1}");
+    }
+
+    const ext2 = result.plannedDispatches[2];
+    expect(ext2.kind).toBe("TI_CONTAINER");
+    if (ext2.kind === "DATA_STORE" || ext2.kind === "TI_CONTAINER") {
+      expect(ext2.new).toBe("{cfg:2}");
+    }
+
+    // INSERT was called with the right column shape.
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toMatch(/INSERT INTO apply_attempts/);
+    expect(params?.[0]).toBe(result.attemptId);
+    expect(params?.[1]).toBe("node-1");
+    expect(params?.[4]).toBe("00000000-0000-0000-0000-000000000001");
+
+    // Manager mutation MUST NOT be invoked during create.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("excludes external services with no draft from the plan", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        externalServices: [
+          { kind: "DATA_STORE", key: "k1", status: "ENABLED", draft: null },
+          { kind: "TI_CONTAINER", key: "k2", status: "ENABLED", draft: "{x}" },
+        ],
+      }),
+    );
+    mockQuery.mockResolvedValue({
+      rows: [{ created_at: new Date(), expires_at: new Date() }],
+      rowCount: 1,
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const result = await createApplyAttempt({
+      nodeId: "node-1",
+    });
+
+    expect(result.plannedDispatches).toHaveLength(2);
+    expect(result.plannedDispatches[0].kind).toBe("MANAGER");
+    expect(result.plannedDispatches[1].kind).toBe("TI_CONTAINER");
+  });
+});
+
+describe("createApplyAttempt — permission boundary", () => {
+  it("rejects a caller missing nodes:write before any DB or GraphQL call", async () => {
+    mockHasPermission.mockImplementation(
+      async (_roles, perm) => perm === "services:write",
+    );
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    await expect(createApplyAttempt({ nodeId: "node-1" })).rejects.toThrow(
+      /nodes:write/,
+    );
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects a caller missing services:write before any DB or GraphQL call", async () => {
+    mockHasPermission.mockImplementation(
+      async (_roles, perm) => perm === "nodes:write",
+    );
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    await expect(createApplyAttempt({ nodeId: "node-1" })).rejects.toThrow(
+      /services:write/,
+    );
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects when customer scope excludes the node (BFF defense-in-depth: upstream returned the out-of-scope payload)", async () => {
+    // Tenant-scoped caller: grants nodes/services:write but NOT
+    // customers:access-all, so the post-read scope check is exercised.
+    mockHasPermission.mockImplementation(tenantScopedPermissions);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([99]);
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        profile: { customerId: "5", description: "", hostname: "h" },
+      }),
+    );
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    await expect(createApplyAttempt({ nodeId: "node-1" })).rejects.toThrow(
+      /scope/,
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects with NodePermissionError when review-web filters the out-of-scope node to null", async () => {
+    // Production review-web filters `node(id)` reads against the
+    // caller's `customer_ids` from the Context JWT; an out-of-scope
+    // node comes back as `{ node: null }`. The umbrella's
+    // createApplyAttempt acceptance requires this to surface as
+    // NodePermissionError, not NodeNotFoundError, so the same scope-
+    // exclusion class produces the same error type regardless of
+    // whether review-web filtered upstream or the BFF caught it
+    // post-read.
+    mockHasPermission.mockImplementation(tenantScopedPermissions);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([99]);
+    mockGraphqlRequest.mockResolvedValue({ node: null });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodePermissionError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt({ nodeId: "node-1" }),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects with NodePermissionError when review-web throws a NOT_FOUND GraphQL error for the filtered node", async () => {
+    // The other production shape: review-web's resolver throws when
+    // the `node(id): Node!` non-nullable resolves to nothing under
+    // the caller's filter. `withNodeNotFoundMapping` surfaces that as
+    // `NodeNotFoundError`; we remap to `NodePermissionError` for
+    // createApplyAttempt because the BFF cannot distinguish "doesn't
+    // exist" from "filtered for scope" without privilege escalation,
+    // and the umbrella requires scope exclusion to be a permission
+    // boundary on this entrypoint.
+    mockHasPermission.mockImplementation(tenantScopedPermissions);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([99]);
+    const upstreamError = Object.assign(new Error("node not found"), {
+      response: {
+        errors: [
+          {
+            message: "node not found",
+            extensions: { code: "NOT_FOUND" },
+          },
+        ],
+      },
+    });
+    mockGraphqlRequest.mockRejectedValue(upstreamError);
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodePermissionError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt({ nodeId: "node-1" }),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("preserves NodeNotFoundError for globally-scoped callers when review-web returns null (no scope boundary)", async () => {
+    // A globally-scoped caller (carrying `customers:access-all`) has
+    // no tenant-scope boundary to collapse missing-vs-filtered into. A
+    // genuinely missing node (deleted / typoed id) should keep its
+    // not-found semantics rather than being weakened into a 403-shaped
+    // permission error. This mirrors `getNode`'s behaviour for the
+    // same caller. The bypass is keyed off the effective permission,
+    // not the audit-only role string — so a multi-role account where
+    // "System Administrator" is not the first role (or any custom
+    // role granting `customers:access-all`) takes the same path.
+    mockGetCurrentSession.mockResolvedValue(
+      makeSession({ roles: ["Custom Auditor", "System Administrator"] }),
+    );
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+    mockGraphqlRequest.mockResolvedValue({ node: null });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodeNotFoundError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt({ nodeId: "node-1" }),
+    ).rejects.toBeInstanceOf(NodeNotFoundError);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("preserves NodeNotFoundError for globally-scoped callers when review-web throws NOT_FOUND (no scope boundary)", async () => {
+    // The other shape — upstream throws — must also retain its real
+    // not-found outcome for globally-scoped callers.
+    mockGetCurrentSession.mockResolvedValue(
+      makeSession({ roles: ["System Administrator"] }),
+    );
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+    const upstreamError = Object.assign(new Error("node not found"), {
+      response: {
+        errors: [
+          {
+            message: "node not found",
+            extensions: { code: "NOT_FOUND" },
+          },
+        ],
+      },
+    });
+    mockGraphqlRequest.mockRejectedValue(upstreamError);
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodeNotFoundError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt({ nodeId: "node-1" }),
+    ).rejects.toBeInstanceOf(NodeNotFoundError);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unauthenticated caller before any DB or GraphQL call", async () => {
+    // The action MUST resolve the session inside the server boundary
+    // — never trust a caller-supplied session blob. A client-side
+    // forgery that sends a roles array would otherwise widen the
+    // permission/scope checks. Verified by an unauthenticated session
+    // (cookie missing or invalid) producing `NodePermissionError`
+    // before any read or write.
+    mockGetCurrentSession.mockResolvedValue(null);
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodePermissionError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt({ nodeId: "node-1" }),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockHasPermission).not.toHaveBeenCalled();
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe("createApplyAttempt — read path uses the production GraphQL transport", () => {
+  it("hits graphqlRequest from @/lib/graphql/client (not a swapped-in reader)", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue(nodePayload());
+    mockQuery.mockResolvedValue({
+      rows: [{ created_at: new Date(), expires_at: new Date() }],
+      rowCount: 1,
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    await createApplyAttempt({ nodeId: "node-1" });
+
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+    // Same call shape as getNode: variables `{ id }`, context `{ role, customerIds }`.
+    const call = mockGraphqlRequest.mock.calls[0];
+    expect(call[1]).toEqual({ id: "node-1" });
+    expect(call[2]).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [5],
+    });
+  });
+});
