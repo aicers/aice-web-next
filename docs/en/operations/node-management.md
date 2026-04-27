@@ -107,18 +107,20 @@ continue to render so the caller can navigate elsewhere.
 
 ## Saving drafts
 
-The Edit dialog never writes directly to the manager. Each Save records
-a *draft* — a proposed next state — that you can review on the list
-page and promote with Apply when ready. Saving a draft requires both
-`nodes:write` and `services:write`; built-in **Tenant Administrator**
-and **System Administrator** roles already pair the two.
+The Edit dialog never writes directly to the manager. Each Save
+records a *draft* — a proposed next state — that you can review on
+the list page and promote with Apply when ready. Saving a draft
+requires both `nodes:write` and `services:write`; built-in **Tenant
+Administrator** and **System Administrator** roles already pair the
+two.
 
-![Save-draft happy path — wireframe](../../assets/node-save-draft-happy-en.svg)
-
-The figure above is an SVG wireframe stand-in. The Edit dialog itself
-is built by a sibling Phase Node-9 sub-issue; once that lands, this
-figure should be replaced with a real PNG capture from the local
-REview procedure documented in `docs/AUTHORING.md`.
+> **Screenshot debt.** The Edit dialog UI itself ships in a sibling
+> Phase Node-9 sub-issue and is not yet renderable on this branch,
+> so this section documents only the BFF mechanics that govern Save.
+> The dialog and reconciliation-prompt PNG captures will be added by
+> the same sibling PR that builds the dialog; per
+> `docs/AUTHORING.md` they will be captured against a mocked GraphQL
+> endpoint rather than via the live-REview procedure.
 
 ### What Save sends
 
@@ -147,19 +149,19 @@ log to a single service on a single node.
 If another writer (a teammate, a script, a parallel browser tab)
 saves a draft on the same node between when your dialog opened and
 when you click **Save**, the first attempt rejects with a stale
-conflict. The BFF transparently re-reads the current node state and
-replays your edit once on top of that fresh baseline. You do **not**
+conflict. The BFF transparently re-reads the current node state,
+rebases your edits **per editable field** on top of that fresh
+baseline, and replays the call once. The rebase is field-granular,
+not row-granular: if you edited only a service's draft string and
+another writer flipped that same service's status, the replay sends
+your draft *and* the concurrent writer's status. The same applies to
+profile subfields (customer / description / hostname). You do **not**
 see anything during a successful single replay — the Save dialog
 simply reports success.
 
-![Stale-conflict reconciliation prompt — wireframe](../../assets/node-save-draft-conflict-en.svg)
-
-The figure above is an SVG wireframe stand-in for the same reason as
-the happy-path figure: the Edit dialog UI ships in a sibling Phase
-Node-9 sub-issue.
-
 When the replay also conflicts (a third writer landed in between),
-the dialog stops and shows a reconciliation prompt:
+the dialog stops and surfaces a reconciliation prompt with two
+options:
 
 - **Discard** — drop your unsaved edits and reload the dialog
   against the latest applied state.

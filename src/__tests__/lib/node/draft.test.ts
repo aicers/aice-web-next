@@ -749,6 +749,148 @@ describe("saveDraft — stale-conflict replay", () => {
     expect(sentA?.draft).toBe("A-new");
   });
 
+  it("merges profile subfields per-field on replay: user edits description only, concurrent writer edits hostname", async () => {
+    // Field-granular profile rebase. The user changed only
+    // `profileDraft.description`; a concurrent writer changed only
+    // `profileDraft.hostname`. The replay must forward the user's
+    // description and the fresh hostname — not replay the user's
+    // whole stale `profileDraft`, which would clobber the concurrent
+    // hostname change.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+
+    const oldNode = makeOldNode({
+      profile: { customerId: "5", description: "old-desc", hostname: "h1" },
+    });
+    const newDraft = makeNewDraft({
+      // Only description differs from oldNode.profile (the user's baseline).
+      profileDraft: {
+        customerId: "5",
+        description: "user-new-desc",
+        hostname: "h1",
+      },
+    });
+
+    // 1: canonical-fetch on first updateNodeDraft.
+    mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
+    // 2: mutation #1 (stale-conflict).
+    const staleErr = Object.assign(new Error("conflict"), {
+      response: { errors: [{ message: "concurrent modification on node" }] },
+    });
+    mockGraphqlRequest.mockRejectedValueOnce(staleErr);
+    // 3: replay re-fetch — fresh hostname is "h2-by-other-writer";
+    //    description is still "old-desc" (concurrent writer left it).
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", {
+        profile: {
+          customerId: "5",
+          description: "old-desc",
+          hostname: "h2-by-other-writer",
+        },
+      }),
+    );
+    // 4: canonical-fetch on the replay updateNodeDraft.
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", {
+        profile: {
+          customerId: "5",
+          description: "old-desc",
+          hostname: "h2-by-other-writer",
+        },
+      }),
+    );
+    // 5: replay mutation success.
+    mockGraphqlRequest.mockResolvedValueOnce({ updateNodeDraft: "n-5" });
+
+    const { saveDraft } = await import("@/lib/node/draft");
+    await saveDraft(makeSession(), "n-5", oldNode, newDraft);
+
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(2);
+    const replayVars = mutationCalls[1][1] as { new: NodeDraftInput };
+    // The replay sends the user's description AND the fresh hostname.
+    expect(replayVars.new.profileDraft).toEqual({
+      customerId: "5",
+      description: "user-new-desc",
+      hostname: "h2-by-other-writer",
+    });
+  });
+
+  it("merges service subfields per-field on replay: user edits draft only, concurrent writer flips status on the same entry", async () => {
+    // Field-granular service rebase. The user changed only the
+    // SENSOR `a` draft string; a concurrent writer flipped that same
+    // SENSOR `a` from ENABLED to DISABLED. The replay must forward
+    // the user's draft AND the fresh status — not replay the user's
+    // whole stale row, which would re-enable the concurrent writer's
+    // disablement.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+
+    const oldNode = makeOldNode({
+      agents: [
+        {
+          kind: "SENSOR",
+          key: "a",
+          status: "ENABLED",
+          config: null,
+          draft: "A-old",
+        },
+      ],
+    });
+    const newDraft = makeNewDraft({
+      agents: [
+        // User changed draft only; status forwarded unchanged.
+        { kind: "SENSOR", key: "a", status: "ENABLED", draft: "A-new-by-user" },
+      ],
+    });
+
+    mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
+    const staleErr = Object.assign(new Error("conflict"), {
+      response: { errors: [{ message: "concurrent modification on node" }] },
+    });
+    mockGraphqlRequest.mockRejectedValueOnce(staleErr);
+    const freshAgents = [
+      // Concurrent writer flipped status only; draft unchanged.
+      {
+        kind: "SENSOR",
+        key: "a",
+        status: "DISABLED",
+        config: null,
+        draft: "A-old",
+      },
+    ];
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", { agents: freshAgents }),
+    );
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", { agents: freshAgents }),
+    );
+    mockGraphqlRequest.mockResolvedValueOnce({ updateNodeDraft: "n-5" });
+
+    const { saveDraft } = await import("@/lib/node/draft");
+    await saveDraft(makeSession(), "n-5", oldNode, newDraft);
+
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(2);
+    const replayVars = mutationCalls[1][1] as { new: NodeDraftInput };
+    const sentA = replayVars.new.agents?.find((a) => a.key === "a");
+    expect(sentA?.status).toBe("DISABLED");
+    expect(sentA?.draft).toBe("A-new-by-user");
+
+    // Audit fires once for SENSOR (the user's draft change vs. fresh).
+    expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "service.draft_save",
+        targetId: "n-5:SENSOR",
+      }),
+    );
+  });
+
   it("does not retry a non-stale GraphQL error (e.g. validation) — propagates the original error and emits no audit", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);

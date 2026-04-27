@@ -269,23 +269,38 @@ function profilesEqual(
  * on an untouched field/service is **not** clobbered by replaying the
  * user's stale snapshot of it.
  *
+ * Granularity is per-editable-field, not per row:
+ *
+ * - **Profile** (`customerId`, `description`, `hostname`): each field
+ *   is merged independently. If the user edited `description` and a
+ *   concurrent writer changed `hostname`, the replay sends the user's
+ *   `description` and the fresh `hostname`. Whole-profile fallback
+ *   only kicks in when the user *added* or *cleared* the profile
+ *   entry, since there is no fresh field to merge against.
+ * - **Agents / external services** (`status`, `draft`): the same
+ *   per-field merge. If the user edited a service's `draft` and a
+ *   concurrent writer flipped that same service's `status`, the
+ *   replay sends `{ status: fresh, draft: user }`.
+ *
  * Why this matters: `agents` and `externalServices` in `NodeDraftInput`
  * are replacement payloads — sending the user's whole list back
  * verbatim would overwrite a sibling service that another writer
- * changed concurrently. The list rebase therefore walks the **fresh**
- * list as the base (so concurrent additions are preserved and untouched
- * services carry the fresh `status` + `draft`, not the user's stale
- * values), then folds in the user's actual edits on matching entries
- * and any new entries the user added.
+ * changed concurrently, and replaying a row at row-granularity would
+ * still clobber an untouched-subfield concurrent change. The list
+ * rebase therefore walks the **fresh** list as the base (so concurrent
+ * additions are preserved and untouched services carry fresh `status`
+ * + `draft`, not the user's stale values), then folds in the user's
+ * actual edits on matching entries at field granularity, plus any
+ * new entries the user added.
  *
  * Concurrent-edit semantics for list entries, by case (identity is
  * `(kind, key)`):
  *
- * - Entry in fresh AND in user's new list:
- *   - User touched (status or draft differs vs. originalOld): take the
- *     user's value (their explicit intent wins).
- *   - User did not touch: take fresh's value (preserves any concurrent
- *     status flip / draft change on this entry).
+ * - Entry in fresh AND in user's new list: per-field merge — the
+ *   user's value wins for any field they actually changed vs.
+ *   originalOld; the fresh value wins for any field they did not
+ *   change (preserving a concurrent status flip on a user-edited
+ *   draft, and vice versa).
  * - Entry in fresh, NOT in user's new list:
  *   - Was in originalOld → user explicitly removed it: drop.
  *   - Was NOT in originalOld → concurrent writer added it: preserve.
@@ -306,13 +321,11 @@ function rebaseDraftOnFresh(
 
   const userOldProfile = originalOld.profileDraft ?? originalOld.profile;
   const freshProfile = freshOld.profileDraft ?? freshOld.profile;
-  const userTouchedProfile = !profilesEqual(
-    originalNew.profileDraft,
+  const profileDraft = mergeProfile(
     userOldProfile,
+    originalNew.profileDraft,
+    freshProfile,
   );
-  const profileDraft = userTouchedProfile
-    ? originalNew.profileDraft
-    : freshProfile;
 
   const agents =
     originalNew.agents === null
@@ -335,22 +348,104 @@ function rebaseDraftOnFresh(
   return { nameDraft, profileDraft, agents, externalServices };
 }
 
-function agentTouched(
-  proposed: AgentDraftInput,
-  prior: AgentInput | undefined,
-): boolean {
-  if (prior === undefined) return true;
-  if (proposed.status !== prior.status) return true;
-  return (proposed.draft ?? null) !== (prior.draft ?? null);
+/**
+ * Per-field profile merge for the replay path. Each field
+ * (`customerId`, `description`, `hostname`) is taken from the user
+ * when they actually changed it vs. `userOldProfile`, and from
+ * `freshProfile` otherwise — so a concurrent writer's edit on a
+ * subfield the user left alone survives instead of being overwritten
+ * by the user's stale snapshot.
+ *
+ * Whole-row fallback applies only at the boundaries of the field
+ * merge: if the user added or cleared the profile entry (one of
+ * `userOldProfile` / `userNewProfile` is null), or if fresh has no
+ * profile to merge against, the user's intent wins as a single unit
+ * because there is no per-field baseline to interpolate with.
+ */
+function mergeProfile(
+  userOldProfile: NodeProfileInput | null,
+  userNewProfile: NodeProfileInput | null,
+  freshProfile: NodeProfileInput | null,
+): NodeProfileInput | null {
+  if (profilesEqual(userNewProfile, userOldProfile)) return freshProfile;
+  if (
+    userOldProfile === null ||
+    userNewProfile === null ||
+    freshProfile === null
+  ) {
+    return userNewProfile;
+  }
+  return {
+    customerId:
+      userNewProfile.customerId !== userOldProfile.customerId
+        ? userNewProfile.customerId
+        : freshProfile.customerId,
+    description:
+      userNewProfile.description !== userOldProfile.description
+        ? userNewProfile.description
+        : freshProfile.description,
+    hostname:
+      userNewProfile.hostname !== userOldProfile.hostname
+        ? userNewProfile.hostname
+        : freshProfile.hostname,
+  };
 }
 
-function externalServiceTouched(
-  proposed: ExternalServiceInput,
+/**
+ * Per-field agent merge. When the user edited only one of `status`
+ * or `draft` and a concurrent writer changed the other on the same
+ * entry, the replay forwards the user's value for the field they
+ * actually touched and the fresh value for the field they didn't.
+ *
+ * `prior === undefined` means the user is adding an entry whose
+ * `(kind, key)` also exists in fresh (concurrent same-key add). The
+ * user's intent is the only signal for the editable fields, so we
+ * forward their full row in that fallback case.
+ */
+function mergeAgentEntry(
+  user: AgentDraftInput,
+  prior: AgentInput | undefined,
+  fresh: AgentInput,
+): AgentDraftInput {
+  if (prior === undefined) {
+    return {
+      kind: fresh.kind,
+      key: fresh.key,
+      status: user.status,
+      draft: user.draft ?? null,
+    };
+  }
+  const statusTouched = user.status !== prior.status;
+  const draftTouched = (user.draft ?? null) !== (prior.draft ?? null);
+  return {
+    kind: fresh.kind,
+    key: fresh.key,
+    status: statusTouched ? user.status : fresh.status,
+    draft: draftTouched ? (user.draft ?? null) : (fresh.draft ?? null),
+  };
+}
+
+function mergeExternalServiceEntry(
+  user: ExternalServiceInput,
   prior: ExternalServiceInput | undefined,
-): boolean {
-  if (prior === undefined) return true;
-  if (proposed.status !== prior.status) return true;
-  return (proposed.draft ?? null) !== (prior.draft ?? null);
+  fresh: ExternalServiceInput,
+): ExternalServiceInput {
+  if (prior === undefined) {
+    return {
+      kind: fresh.kind,
+      key: fresh.key,
+      status: user.status,
+      draft: user.draft ?? null,
+    };
+  }
+  const statusTouched = user.status !== prior.status;
+  const draftTouched = (user.draft ?? null) !== (prior.draft ?? null);
+  return {
+    kind: fresh.kind,
+    key: fresh.key,
+    status: statusTouched ? user.status : fresh.status,
+    draft: draftTouched ? (user.draft ?? null) : (fresh.draft ?? null),
+  };
 }
 
 function rebaseAgentList(
@@ -381,16 +476,7 @@ function rebaseAgentList(
       });
       continue;
     }
-    if (agentTouched(userProposed, oldByKey.get(id))) {
-      result.push(userProposed);
-    } else {
-      result.push({
-        kind: f.kind,
-        key: f.key,
-        status: f.status,
-        draft: f.draft ?? null,
-      });
-    }
+    result.push(mergeAgentEntry(userProposed, oldByKey.get(id), f));
   }
 
   for (const userProposed of originalNew) {
@@ -431,16 +517,7 @@ function rebaseExternalServiceList(
       });
       continue;
     }
-    if (externalServiceTouched(userProposed, oldByKey.get(id))) {
-      result.push(userProposed);
-    } else {
-      result.push({
-        kind: f.kind,
-        key: f.key,
-        status: f.status,
-        draft: f.draft ?? null,
-      });
-    }
+    result.push(mergeExternalServiceEntry(userProposed, oldByKey.get(id), f));
   }
 
   for (const userProposed of originalNew) {
