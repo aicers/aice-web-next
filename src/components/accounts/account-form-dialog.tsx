@@ -81,7 +81,13 @@ export function AccountFormDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset form when dialog opens/changes
+  // Reset form when dialog opens/changes. We deliberately do NOT
+  // depend on `roles` here: the parent fetches roles asynchronously
+  // and a late-arriving roles array would otherwise re-trigger this
+  // effect mid-edit and clobber a partially-filled form (e.g. after
+  // the user has already typed username/password). The role select
+  // is hidden in edit mode and `roleId` is unused there, so the
+  // edit branch doesn't need to look at `roles` at all.
   useEffect(() => {
     if (open) {
       if (account) {
@@ -89,8 +95,6 @@ export function AccountFormDialog({
         setDisplayName(account.display_name);
         setEmail(account.email ?? "");
         setPhone(account.phone ?? "");
-        const matchRole = roles.find((r) => r.name === account.role_name);
-        setRoleId(matchRole ? String(matchRole.id) : "");
         setSelectedCustomerIds([]);
       } else {
         setUsername("");
@@ -103,7 +107,7 @@ export function AccountFormDialog({
       }
       setError(null);
     }
-  }, [open, account, roles]);
+  }, [open, account]);
 
   const selectedRole = roles.find((r) => String(r.id) === roleId);
   const hasSingleCustomerLimit = selectedRole?.max_customer_assignments === 1;
