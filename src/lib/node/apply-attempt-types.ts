@@ -76,7 +76,16 @@ export interface ApplyAttemptRow {
   nodeId: string;
   draftFingerprint: Buffer;
   plannedDispatches: PlannedDispatch[];
-  createdBy: string;
+  /**
+   * Owner of the row. NULL only when the creator's account was deleted
+   * AND the row was preserved by the round-8 audit-recovery rule
+   * (`status = 'succeeded' AND succeeded_audit_completed_at IS NULL`).
+   * For every other code path the column is non-NULL — the
+   * BEFORE-DELETE trigger on `accounts` deletes non-audit-pending
+   * rows outright, and `audit_actor` carries the snapshot used by
+   * audit recovery regardless of cascade fate.
+   */
+  createdBy: string | null;
   createdAt: Date;
   expiresAt: Date;
   executingLock: string | null;

@@ -134,6 +134,13 @@ export async function createApplyAttempt(
   const ttlMs = getAttemptTtlMs();
 
   const attemptId = randomUUID();
+  // `audit_actor` is a non-cascading snapshot of the creator's id
+  // (round 8). The audit-recovery sweep reads it for the `node.apply`
+  // actor field, so deleting the creator account between the
+  // `succeeded` commit and `succeeded_audit_completed_at` does not
+  // strip the actor from a pending recovery (`created_by` is set to
+  // NULL by the FK SET NULL action in that case, which is what makes
+  // a follow-up confirm/retry surface `ApplyAttemptNotFoundError`).
   const insert = await query<{ created_at: Date; expires_at: Date }>(
     `
     INSERT INTO apply_attempts (
@@ -142,6 +149,7 @@ export async function createApplyAttempt(
       draft_fingerprint,
       planned_dispatches,
       created_by,
+      audit_actor,
       expires_at,
       status
     )
@@ -150,6 +158,7 @@ export async function createApplyAttempt(
       $2,
       $3,
       $4::jsonb,
+      $5,
       $5,
       NOW() + ($6 || ' milliseconds')::interval,
       'pending'

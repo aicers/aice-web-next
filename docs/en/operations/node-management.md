@@ -189,6 +189,286 @@ local edits and reload, or keep the edits and refresh the baseline —
 rather than retrying automatically. The visual surface for that
 choice is owned by the sibling sub-issue that ships the dialog.
 
+## Bulk apply
+
+This section documents the **bulk-apply executor** that promotes a
+node's pending drafts in one operation. The user-facing modal that
+opens this flow ships in a sibling Phase Node-9 sub-issue and is not
+yet renderable on this branch; what is documented below is the
+contract the modal and any other caller will rely on once it ships,
+and the audit row operators will see when applies start landing.
+
+> **Screenshot debt.** The Apply preview modal, the lifecycle
+> badges, and the retry / rebuild prompts are owned by the sibling
+> sub-issue that ships the modal UI. Captures of the apply happy
+> path, the partial-failure prompt, and the rebuild-prompt state
+> will be appended to this section by that sub-issue's PR per
+> `docs/AUTHORING.md`.
+
+### What bulk apply does
+
+Bulk apply runs a two-phase fan-out behind a single user
+confirmation:
+
+1. **Manager step.** Dispatches the upstream `applyNode` mutation,
+   which atomically promotes every pending draft on the node
+   (name, profile, agents, external services) to applied state in
+   the manager DB.
+2. **External step.** For each external service that had a pending
+   `draft` at apply-build time (Giganto for `DATA_STORE`, Tivan for
+   `TI_CONTAINER`), dispatches the upstream `updateConfig(old,
+   new)` mutation against the service. `old` is read fresh from the
+   service on every dispatch (including retries); `new` is the
+   frozen draft string captured at apply-build time and never
+   re-read.
+
+The dispatches run sequentially in a fixed order: manager first,
+then each external in plan order. A failure at any step stops the
+fan-out — the next dispatch only runs after the previous one
+succeeds.
+
+### Permissions and tenant scope
+
+Bulk apply requires both **`nodes:write`** and **`services:write`**.
+The combined gate is enforced at every confirm and every retry
+(not just at apply-build time): a caller whose permissions or
+customer scope changed between building and confirming the apply
+is rejected with a typed `NodePermissionError` before any GraphQL
+dispatch reaches the wire.
+
+The recheck is performed at two layers:
+
+1. **Tenant-scope materialisation.** Every confirm and every retry
+   rebuilds the dispatch context from the caller's current session,
+   re-deriving `customer_ids` (and `customers:access-all` if the
+   caller holds it). A caller whose tenant scope resolves to empty
+   without `customers:access-all` is rejected before any node is
+   read.
+2. **Node-specific scope assertion (and existence check).** The
+   wrapper then re-reads the canonical node from the manager DB
+   **only when the row is in a status that can still reach a
+   dispatcher** — `pending` for confirm, `failed_retryable` for
+   retry. For terminal / idempotent statuses (`succeeded`,
+   `failed_terminal`, `stale`, `expired`, `executing`) the lifecycle
+   either returns the persisted row idempotently or rejects without
+   dispatching anything, so the canonical-node read is unnecessary
+   and would wrongly turn an idempotent re-confirm of an already-
+   `succeeded` row into `NodeNotFoundError` once the node is later
+   deleted (round 8). Skipping the read for these statuses also
+   preserves the audit-recovery finish path: a follow-up confirm /
+   retry against a `succeeded` row whose audit emission never
+   completed can still drive `node.apply` to durable, even after the
+   node has been deleted.
+
+   For tenant-scoped callers, the wrapper re-derives the node's
+   `customerId` and asserts it against the caller's *current*
+   materialised scope. For globally-scoped callers
+   (`customers:access-all`), the wrapper performs the same read but
+   only as an **existence check** — there is no tenant boundary to
+   enforce, but the read still ensures the node has not been
+   deleted between confirm and a subsequent retry. This is critical
+   for `retryDispatch` whose target is an external service: the
+   external dispatcher otherwise talks to the deployment-global
+   Giganto / Tivan endpoints with no per-node guard of its own.
+   Without this wrapper-level recheck, an actor whose customer
+   scope shrank between confirm and retry could keep driving
+   `updateConfig` against an out-of-scope node, and a globally-
+   scoped actor could keep driving `updateConfig` against a
+   *deleted* node (and emit `node.apply` for it). A forged client
+   payload cannot bypass the check because the `customerId` and
+   the existence verdict are both read from the manager DB, not
+   trusted from the request. For tenant-scoped callers, both
+   possible review-web responses for an out-of-scope node — a
+   filtered `null` payload *and* a `NOT_FOUND` GraphQL error — are
+   mapped to `NodePermissionError` (mirroring the create-attempt
+   surface), so the wrapper never leaks "this node exists but you
+   cannot see it" semantics back to the caller. For globally-
+   scoped callers a deleted-node read surfaces as
+   `NodeNotFoundError` (no scope-shrunk semantics to hide).
+
+A bulk apply is **single-actor**: only the account that built the
+plan can confirm or retry it. Another account presenting the same
+`attemptId` is rejected as `ApplyAttemptNotFoundError` (the BFF
+does not leak whether the row exists).
+
+### Lifecycle states
+
+A confirmed apply progresses through one **resumable** state and
+three **terminal** states. Only `succeeded`, `failed_terminal`,
+and `stale` are terminal — `failed_retryable` is the resumable,
+non-terminal state inside the original time window:
+
+- **`failed_retryable`** *(resumable, non-terminal)* — a transient
+  external failure stopped the fan-out within the original time
+  window. The same actor can call the retry path
+  (`retryDispatch({ attemptId, dispatchId })`) to resume from the
+  failed dispatch. The frozen `new` from apply-build time is
+  replayed; only `old` is re-read fresh. The manager step is
+  **not** re-run if it already succeeded. Successive retries
+  within the per-dispatch cap drive the row to either `succeeded`
+  or `failed_terminal`. The original window is preserved across
+  soft fails — a retry submitted past the window surfaces as a
+  stale-plan error.
+- **`succeeded`** *(terminal)* — all dispatches landed. A single
+  `node.apply` audit row is emitted (see below). The row is
+  retained for an operator-readable interval and then hard-deleted
+  by the cleanup sweep.
+- **`failed_terminal`** *(terminal)* — the per-dispatch retry cap
+  has been exhausted, the recovery sweep abandoned a stuck claim,
+  or the row TTL-terminalised past `expires_at`. The row will not
+  transition further; the operator must rebuild the plan from a
+  fresh preview. The modal surfaces a "rebuild" prompt for this
+  state.
+- **`stale`** *(terminal)* — drift between the apply-build and
+  apply-confirm fingerprints. Written by the executor when the
+  post-claim fingerprint recompute (step 5b) detects the
+  mismatch survived; the call rejects with a typed
+  `StalePlanError`. No manager mutation is sent and no external
+  mutation is sent. A pre-claim hint that drift has settled by
+  the time of the post-claim recompute is honored — the
+  recompute is authoritative. The modal also surfaces the
+  "rebuild" prompt for this state.
+
+### `node.apply` audit emission
+
+A successful apply emits exactly **one** `node.apply` audit row,
+regardless of how many calls it took to reach `succeeded` (a
+single `confirmApplyAttempt`, a confirm followed by one or more
+`retryDispatch` calls, or even an idempotent re-confirm of an
+already-`succeeded` row from a double-clicked button). The
+"exactly once" contract is enforced by two complementary layers:
+
+**Layer A — schema-level dedupe (authoritative).** `audit_logs`
+carries a partial unique index on
+`(correlation_id) WHERE action = 'node.apply' AND correlation_id
+IS NOT NULL`. Both the wrapper and the cleanup-sweep recovery pass
+the attempt UUID as `correlation_id` on every `node.apply` row, so
+a duplicate insert from any source — concurrent caller, recovery
+sweep, partially-failed prior call, process restart — is rejected
+by the database with a `unique_violation` (PG SQLSTATE 23505). This
+is the guarantee that no two `node.apply` rows can exist for the
+same attempt; it does not depend on coordination between the
+wrapper and the cleanup sweep.
+
+**Layer B — slot coordination (avoid the wasted INSERT).** Two
+columns on `apply_attempts` serialise the common case so the
+duplicate-violation path is the rare exception:
+
+1. `succeeded_audit_emitted_at` — atomically test-and-set
+   (`NULL → NOW()`) under a `status='succeeded' AND emitted_at IS
+   NULL` guard. Only the caller whose `UPDATE` matches a row may
+   emit. Concurrent racers and idempotent re-confirms both observe
+   `rowCount = 0` and skip emission.
+2. `succeeded_audit_completed_at` — set after the audit row is
+   durably written to the audit DB. This makes the emission
+   *durable*: once `completed_at` is set, the slot can never be
+   released.
+
+If the audit DB write fails synchronously *and* the failure is not
+a duplicate-violation, the wrapper releases the slot (clearing
+`succeeded_audit_emitted_at` back to `NULL` under a `completed_at
+IS NULL` guard) so a follow-up confirm/retry can re-attempt. On a
+duplicate-violation the slot is left claimed and `completed_at` is
+marked instead — the audit row is already durable, releasing would
+just invite the next call to attempt the same insert and get
+rejected again. If the process dies between the slot claim and the
+audit write, the cleanup sweep's `recoverPendingNodeApplyAudits`
+pass picks the row up after the staleness window
+(`APPLY_EXECUTING_STALE_MS`) elapses, re-emits the audit using the
+row's persisted metadata (`audit_actor` → actor, planned dispatches
+→ `appliedServices`, `node_id` → `targetId`, `attempt_id` →
+`correlationId`), and marks `completed_at`. If the original audit
+row already landed before the crash, the recovery sweep observes
+the same duplicate-violation and marks `completed_at` without
+re-inserting.
+
+**Cascade-delete and audit recovery (round 8).** Until round 8 the
+`apply_attempts.created_by` foreign key on `accounts` was
+`ON DELETE CASCADE`, so deleting the creator account would remove
+the attempt row out from under the recovery sweep — a row that
+reached `succeeded` but never made it through
+`succeeded_audit_completed_at` could end up with zero `node.apply`
+entries. Round 8 decouples the cascade observable from audit-
+recovery durability:
+
+- `audit_actor UUID NOT NULL` is a non-FK snapshot of the creator's
+  account id taken at insert time. The recovery sweep reads this
+  column for the audit `actor` field, so deleting the account
+  cannot strip the actor from a pending recovery.
+- The `created_by` FK switches from `ON DELETE CASCADE` to `ON
+  DELETE SET NULL`. A `BEFORE DELETE` trigger on `accounts` runs
+  first and explicitly deletes `apply_attempts` rows that are NOT
+  succeeded-audit-pending, so the umbrella's "cascade-delete
+  removes the attempt row" behavior still holds for the common
+  case (`failed_retryable`, `pending`, `failed_terminal`, etc.).
+  Rows whose `status = 'succeeded' AND
+  succeeded_audit_completed_at IS NULL` survive with `created_by`
+  set to NULL; the lifecycle's ownership check
+  (`row.createdBy !== session.accountId`) then rejects any follow-
+  up confirm or retry as `ApplyAttemptNotFoundError` — the
+  observable surface a user sees is unchanged — while the recovery
+  sweep keeps the row visible and emits `node.apply` using the
+  snapshotted `audit_actor`.
+
+**Recovery covers two windows (round 6).** The cleanup sweep's
+candidate `SELECT` matches both failure modes:
+
+1. **Slot claimed, completion never landed.** A wrapper claimed the
+   slot but the audit insert or `completed_at` marker never landed
+   (audit-DB transient or process death after the claim). Predicate:
+   `succeeded_audit_emitted_at IS NOT NULL AND
+   succeeded_audit_completed_at IS NULL` past the staleness window.
+2. **Slot never claimed.** The lifecycle committed `status =
+   'succeeded'` but the wrapper crashed before reaching
+   `claimNodeApplyAuditSlot`, leaving both audit columns `NULL`.
+   Without this branch the row would sit `succeeded` forever with no
+   `node.apply` audit; only a manual re-confirm could rescue it.
+   Predicate: `succeeded_audit_emitted_at IS NULL` plus a derived
+   `succeeded_at` (≈ `expires_at - APPLY_ATTEMPT_RETENTION_MS`)
+   older than the staleness window. For this branch the recovery
+   sweep claims the slot itself before emitting; if a wrapper
+   arrives concurrently and wins the claim, the sweep skips and the
+   wrapper drives the row.
+
+**Purge ordering (round 6).** The retention sweep
+(`purgeRetained`) hard-deletes terminal rows past their retention
+deadline, but it now exempts `succeeded` rows whose
+`succeeded_audit_completed_at IS NULL`. This stops a prolonged
+audit-DB outage from purging an audit-incomplete row before the
+recovery sweep gets a chance to finish it; the row remains
+recoverable until `completed_at` is set, then the next purge sweep
+removes it. The cleanup orchestrator also runs audit recovery
+*before* purge in the same pass, so the audit-DB-healthy case
+recovers in a single cycle instead of waiting one cycle for the
+exemption to clear.
+
+**Recovery-sweep failure handling.** A transient audit-DB error
+during a recovery pass leaves the slot CLAIMED (it does *not* clear
+`succeeded_audit_emitted_at` back to `NULL`). Leaving the slot
+claimed lets the next sweep re-pick the same row; the staleness
+window only grows wider. The same rule applies if the post-insert
+`completed_at` UPDATE itself throws: the audit row is already
+durable, so the slot stays claimed and the next sweep observes the
+schema-level duplicate-violation and marks `completed_at` via the
+dedupe path. Together these layers turn the emission contract
+from "at most once" into "exactly once per attempt that reaches
+`succeeded`".
+
+The audit row carries:
+
+- `actor` — the account that confirmed the apply.
+- `action` — `"node.apply"`.
+- `target` — `"node"`.
+- `targetId` — the node id (not a composite key).
+- `details.appliedServices` — the list of external service kinds
+  that were dispatched (`["DATA_STORE"]`, `["TI_CONTAINER"]`, or
+  both, in plan order).
+
+A confirmed apply that settles to `failed_retryable`,
+`failed_terminal`, or `stale` emits **no** `node.apply` row. v1
+does not emit a `service.apply` audit per external — that audit is
+reserved for Phase Node-12 (#333).
+
 ## Status tab
 
 ![Status · Nodes status](../../assets/node-status-en.png)
