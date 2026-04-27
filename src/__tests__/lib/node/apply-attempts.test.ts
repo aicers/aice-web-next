@@ -256,6 +256,54 @@ describe("createApplyAttempt — permission boundary", () => {
     ).rejects.toBeInstanceOf(NodePermissionError);
     expect(mockQuery).not.toHaveBeenCalled();
   });
+
+  it("preserves NodeNotFoundError for System Administrator callers when review-web returns null (no scope boundary)", async () => {
+    // System Administrator is the privileged caller — there is no
+    // tenant-scope boundary to collapse missing-vs-filtered into. A
+    // genuinely missing node (deleted / typoed id) should keep its
+    // not-found semantics rather than being weakened into a 403-shaped
+    // permission error. This mirrors `getNode`'s behaviour for the
+    // same caller.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+    mockGraphqlRequest.mockResolvedValue({ node: null });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodeNotFoundError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt(makeSession({ roles: ["System Administrator"] }), {
+        nodeId: "node-1",
+      }),
+    ).rejects.toBeInstanceOf(NodeNotFoundError);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("preserves NodeNotFoundError for System Administrator callers when review-web throws NOT_FOUND (no scope boundary)", async () => {
+    // The other shape — upstream throws — must also retain its real
+    // not-found outcome for system administrators.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+    const upstreamError = Object.assign(new Error("node not found"), {
+      response: {
+        errors: [
+          {
+            message: "node not found",
+            extensions: { code: "NOT_FOUND" },
+          },
+        ],
+      },
+    });
+    mockGraphqlRequest.mockRejectedValue(upstreamError);
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodeNotFoundError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt(makeSession({ roles: ["System Administrator"] }), {
+        nodeId: "node-1",
+      }),
+    ).rejects.toBeInstanceOf(NodeNotFoundError);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
 });
 
 describe("createApplyAttempt — read path uses the production GraphQL transport", () => {

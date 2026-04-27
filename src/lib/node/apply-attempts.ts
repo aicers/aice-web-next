@@ -167,25 +167,31 @@ async function requireBothPermissions(session: AuthSession): Promise<void> {
 /**
  * Read the canonical Node payload for plan construction.
  *
- * Scope semantics on this entrypoint differ from `getNode` deliberately.
- * `getNode` distinguishes "not found" from "out of scope" by surfacing
- * `NodeNotFoundError` for both upstream-null and upstream-throws-NotFound
- * paths (review-web's scope filter resolves a missing-or-out-of-scope
- * node to the same shape, and the BFF cannot tell them apart without
- * privilege escalation). The umbrella's createApplyAttempt acceptance
- * is stricter — scope exclusion MUST surface as `NodePermissionError`,
- * not `NodeNotFoundError`. Since the BFF cannot distinguish "doesn't
- * exist" from "filtered for scope" when review-web returns null, we
- * collapse both into `NodePermissionError` for this server action only:
- * the node either truly doesn't exist (in which case the caller has no
- * apply business with it) or it exists but is out of the caller's
- * customer scope. Either way, an out-of-scope/missing node is treated
- * as a permission boundary on the create-attempt surface, mirroring the
- * review-web filter contract. System-Administrator callers are NOT
- * exempt — we do not have a separate system-actor probe here, and the
- * `nodes:write + services:write` gate already restricts who can reach
- * this code path, so the additional fidelity of `NodeNotFoundError` is
- * not worth the privilege-escalation seam.
+ * Scope semantics on this entrypoint differ from `getNode` deliberately
+ * for tenant-scoped callers. `getNode` distinguishes "not found" from
+ * "out of scope" by surfacing `NodeNotFoundError` for both upstream-null
+ * and upstream-throws-NotFound paths (review-web's scope filter resolves
+ * a missing-or-out-of-scope node to the same shape, and the BFF cannot
+ * tell them apart without privilege escalation). The umbrella's
+ * createApplyAttempt acceptance is stricter — scope exclusion MUST
+ * surface as `NodePermissionError`, not `NodeNotFoundError` — but only
+ * for callers who actually have a tenant-scope boundary.
+ *
+ * For tenant-scoped callers, the BFF cannot distinguish "doesn't exist"
+ * from "filtered for scope" when review-web returns null, so we collapse
+ * both into `NodePermissionError`: the node either truly doesn't exist
+ * (in which case the caller has no apply business with it) or it exists
+ * but is out of the caller's customer scope. Either way it is a
+ * permission boundary on the create-attempt surface.
+ *
+ * For System Administrator callers, no scope boundary applies — they
+ * are the privileged caller in the first place — so we preserve the
+ * real not-found semantics by letting `NodeNotFoundError` and the
+ * `data.node === null` shape flow through unchanged. Collapsing them
+ * into `NodePermissionError` for system admins would weaken the
+ * outcome of a deleted/typoed node ID into a 403-shaped error even
+ * though no scope boundary was crossed, and would diverge from
+ * `getNode`'s behaviour for the same caller.
  *
  * The post-read `enforceNodeScope` defense-in-depth check still catches
  * the older review-web case where the upstream returns an out-of-scope
@@ -197,6 +203,7 @@ async function readCanonicalNode(
   id: string,
   signal: AbortSignal | undefined,
 ): Promise<Node> {
+  const isSystemAdmin = ctx.role === SYSTEM_ADMINISTRATOR;
   let data: NodeDetailResult;
   try {
     data = await withManagerErrorMapping(
@@ -212,6 +219,9 @@ async function readCanonicalNode(
     );
   } catch (err) {
     if (err instanceof NodeNotFoundError) {
+      if (isSystemAdmin) {
+        throw err;
+      }
       throw new NodePermissionError(
         `Node ${id} is not in the caller's customer scope.`,
       );
@@ -219,6 +229,9 @@ async function readCanonicalNode(
     throw err;
   }
   if (!data.node) {
+    if (isSystemAdmin) {
+      throw new NodeNotFoundError(`Node ${id} was not found.`);
+    }
     throw new NodePermissionError(
       `Node ${id} is not in the caller's customer scope.`,
     );

@@ -257,6 +257,15 @@ export async function _internal_confirmApplyAttempt(
   // clock, so a row that the host thinks is expired but the DB clock
   // does not (clock skew) will return 0 affected rows and we fall
   // through to the normal classification + claim flow.
+  //
+  // We track whether the SQL helper actually ran so the
+  // `failed_retryable` idempotent branch below does NOT take a fresh
+  // `Date.now()` snapshot — that previously left a boundary gap where
+  // the second snapshot could disagree with the first and skip the
+  // SQL-authoritative check entirely. If the helper ran here and
+  // returned 0, PG has already confirmed in-window; otherwise the
+  // failed_retryable branch must run the helper itself.
+  let sqlExpiryConfirmedInWindow = false;
   if (
     (initialRow.status === "pending" ||
       initialRow.status === "failed_retryable") &&
@@ -267,6 +276,7 @@ export async function _internal_confirmApplyAttempt(
     if (affected > 0) {
       throw new StalePlanError(`Apply attempt ${attemptId} has expired.`);
     }
+    sqlExpiryConfirmedInWindow = true;
   }
 
   // Step 2: read-only status check. Recovery from `failed_retryable`
@@ -288,18 +298,21 @@ export async function _internal_confirmApplyAttempt(
       return initialRow;
     case "failed_retryable": {
       // Idempotent return path — but we must defend against host-
-      // clock-behind-PG here: step 2a's app-clock fast-path above did
-      // NOT fire (host thinks the row is in-window) and the switch
-      // would otherwise hand the caller a stale soft-failed row that
-      // PostgreSQL has already crossed `expires_at` for. Run the SQL-
-      // authoritative `terminaliseExpiredAttempt` (its WHERE pins
+      // clock-behind-PG here. If step 2a's helper didn't run (host
+      // thinks the row is in-window), PG may already have crossed
+      // `expires_at` and the switch would otherwise hand the caller a
+      // stale soft-failed row. Run the SQL-authoritative
+      // `terminaliseExpiredAttempt` (its WHERE pins
       // `NOW() > expires_at`) so PG's clock decides: 0 rows → row
       // really is in-window per SQL, return idempotently; >0 rows →
       // PG had already expired the row, surface `StalePlanError` in
-      // the same call (umbrella same-call rule). Resuming execution
-      // from a soft-failed attempt is the retry entrypoint's job in
-      // either case.
-      if (initialRow.expiresAt.getTime() >= Date.now()) {
+      // the same call (umbrella same-call rule). We use the
+      // `sqlExpiryConfirmedInWindow` flag instead of re-snapshotting
+      // `Date.now()` — re-snapshotting opened a boundary gap where
+      // the second comparison could disagree with the first and skip
+      // the SQL check entirely. Resuming execution from a soft-failed
+      // attempt is the retry entrypoint's job in either case.
+      if (!sqlExpiryConfirmedInWindow) {
         const affected = await terminaliseExpiredAttempt(undefined, initialRow);
         if (affected > 0) {
           throw new StalePlanError(`Apply attempt ${attemptId} has expired.`);

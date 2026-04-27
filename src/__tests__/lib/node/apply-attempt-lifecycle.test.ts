@@ -149,6 +149,92 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     expect(dispatcher.external).not.toHaveBeenCalled();
     expect(draftReader.readNodeDraft).not.toHaveBeenCalled();
   });
+
+  it("still consults PG when expires_at is exactly equal to Date.now() at step 2a (boundary case — no second Date.now() snapshot)", async () => {
+    // Boundary case the Round-5 review flagged. The previous shape
+    // used a second `Date.now()` snapshot inside the failed_retryable
+    // branch; if `expiresAt === now` at step 2a (so the `<` test fails
+    // and the helper does not run) but a few ms later the second
+    // snapshot ticks past expiresAt (so the `>=` test in the
+    // failed_retryable branch also fails), neither branch ran the
+    // SQL-authoritative helper and the row was returned idempotently.
+    // The fix replaces the second Date.now() snapshot with a flag
+    // tracking whether step 2a's helper ran, so the failed_retryable
+    // branch always consults PG when step 2a did not.
+    //
+    // We model the boundary by giving the persisted row an
+    // `expires_at` exactly equal to `Date.now()` (so `expiresAt < now`
+    // is false at step 2a — the host-clock fast-path does NOT run).
+    // The SQL-authoritative helper then runs in the failed_retryable
+    // branch, and we mock it as matching 1 row (PG decided expired).
+    // Result: StalePlanError in the same call, regardless of the
+    // boundary timing.
+    const expiresAtBoundary = new Date(Date.now());
+    mockQuery.mockResolvedValueOnce({
+      rows: [persistedRow({ expires_at: expiresAtBoundary })],
+      rowCount: 1,
+    });
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const dispatcher = {
+      manager: vi.fn(),
+      external: vi.fn(),
+    };
+    const draftReader = { readNodeDraft: vi.fn() };
+    const { _internal_confirmApplyAttempt } = await import(
+      "@/lib/node/apply-attempt-lifecycle"
+    );
+    await expect(
+      _internal_confirmApplyAttempt({
+        session: makeSession(),
+        attemptId: ATTEMPT_ID,
+        dispatcher,
+        draftReader,
+      }),
+    ).rejects.toThrow(/expired/);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockWithTransaction).not.toHaveBeenCalled();
+    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.external).not.toHaveBeenCalled();
+    expect(draftReader.readNodeDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not double-consult PG when step 2a's helper already confirmed in-window (avoids redundant SQL call)", async () => {
+    // When step 2a fires (host clock thinks the row is past
+    // expires_at) and the SQL helper returns 0 rows (PG says
+    // in-window), the failed_retryable branch should fall through to
+    // the idempotent return WITHOUT running the helper again. The
+    // sqlExpiryConfirmedInWindow flag tracks this so we do not double-
+    // consult PG on every failed_retryable confirm.
+    const pastExpires = new Date(Date.now() - 30_000);
+    mockQuery.mockResolvedValueOnce({
+      rows: [persistedRow({ expires_at: pastExpires })],
+      rowCount: 1,
+    });
+    // step 2a's helper: PG says in-window (0 rows).
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const dispatcher = {
+      manager: vi.fn(),
+      external: vi.fn(),
+    };
+    const draftReader = { readNodeDraft: vi.fn() };
+    const { _internal_confirmApplyAttempt } = await import(
+      "@/lib/node/apply-attempt-lifecycle"
+    );
+    const result = await _internal_confirmApplyAttempt({
+      session: makeSession(),
+      attemptId: ATTEMPT_ID,
+      dispatcher,
+      draftReader,
+    });
+    expect(result.status).toBe("failed_retryable");
+    // Step-1 read + step-2a helper only — no second helper call from
+    // the failed_retryable branch.
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockWithTransaction).not.toHaveBeenCalled();
+    expect(dispatcher.manager).not.toHaveBeenCalled();
+  });
 });
 
 describe("_internal_confirmApplyAttempt — step 3 fingerprint hint", () => {
