@@ -34,31 +34,23 @@ async function loadCustomerOptions(
   }
 }
 
+// The combined `nodes:read + services:read` gate runs in the parent
+// `(gate)/layout.tsx` so `forbidden()` lands above any Suspense and
+// surfaces a real HTTP 403. This page only computes the write/delete
+// flags it needs to drive the toolbar and row affordances.
 export default async function NodesSettingsPage() {
   const session = await getCurrentSession();
   if (!session) {
     redirect("/sign-in");
   }
 
-  const [
-    canReadNodes,
-    canReadServices,
-    canWriteNodes,
-    canWriteServices,
-    canDelete,
-    accessAll,
-  ] = await Promise.all([
-    hasPermission(session.roles, "nodes:read"),
-    hasPermission(session.roles, "services:read"),
-    hasPermission(session.roles, "nodes:write"),
-    hasPermission(session.roles, "services:write"),
-    hasPermission(session.roles, "nodes:delete"),
-    hasPermission(session.roles, "customers:access-all"),
-  ]);
-
-  if (!canReadNodes || !canReadServices) {
-    redirect("/");
-  }
+  const [canWriteNodes, canWriteServices, canDelete, accessAll] =
+    await Promise.all([
+      hasPermission(session.roles, "nodes:write"),
+      hasPermission(session.roles, "services:write"),
+      hasPermission(session.roles, "nodes:delete"),
+      hasPermission(session.roles, "customers:access-all"),
+    ]);
 
   const customers = await loadCustomerOptions(session.accountId, accessAll);
 
