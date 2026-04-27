@@ -104,3 +104,69 @@ hidden for callers without `nodes:write` / `services:write` and
 When the upstream manager is unreachable, the table area is replaced
 with a "Cannot reach manager" panel. The sidebar and the Nodes tab bar
 continue to render so the caller can navigate elsewhere.
+
+## Saving drafts
+
+The Edit dialog never writes directly to the manager. Each Save records
+a *draft* — a proposed next state — that you can review on the list
+page and promote with Apply when ready. Saving a draft requires both
+`nodes:write` and `services:write`; built-in **Tenant Administrator**
+and **System Administrator** roles already pair the two.
+
+![Save-draft happy path — wireframe](../../assets/node-save-draft-happy-en.svg)
+
+The figure above is an SVG wireframe stand-in. The Edit dialog itself
+is built by a sibling Phase Node-9 sub-issue; once that lands, this
+figure should be replaced with a real PNG capture from the local
+REview procedure documented in `docs/AUTHORING.md`.
+
+### What Save sends
+
+When you click **Save**, the BFF dispatches one
+`updateNodeDraft(id, old, new)` call to the manager. The `old` snapshot
+is the applied state the dialog opened against; the `new` payload
+carries the proposed name, profile, agents, and external-service
+drafts. The manager performs a compare-and-swap: if `old` no longer
+matches the latest applied state on the server, the call is rejected
+as a stale conflict (see below) and your local edits are *not*
+silently overwritten.
+
+### What you see in the audit log
+
+Every Save emits one **`service.draft_save`** audit entry per service
+whose draft string actually changed in this Save. A Save that touches
+two services emits two entries; a Save that only changes node
+metadata (name / customer / description / hostname) emits zero
+`service.draft_save` entries — node-metadata-only changes are tracked
+under `node.update`. Each `service.draft_save` row carries
+`targetId = "${nodeId}:${serviceKind}"` and
+`details = { serviceKind, nodeId }`, so operators can filter the audit
+log to a single service on a single node.
+
+### Stale-conflict reconciliation
+
+If another writer (a teammate, a script, a parallel browser tab)
+saves a draft on the same node between when your dialog opened and
+when you click **Save**, the first attempt rejects with a stale
+conflict. The BFF transparently re-reads the current node state and
+replays your edit once on top of that fresh baseline. You do **not**
+see anything during a successful single replay — the Save dialog
+simply reports success.
+
+![Stale-conflict reconciliation prompt — wireframe](../../assets/node-save-draft-conflict-en.svg)
+
+The figure above is an SVG wireframe stand-in for the same reason as
+the happy-path figure: the Edit dialog UI ships in a sibling Phase
+Node-9 sub-issue.
+
+When the replay also conflicts (a third writer landed in between),
+the dialog stops and shows a reconciliation prompt:
+
+- **Discard** — drop your unsaved edits and reload the dialog
+  against the latest applied state.
+- **Re-edit** — keep your edits in the dialog but refresh the
+  baseline; you can then review the field-level differences against
+  the latest server state and click Save again.
+
+A double-conflicted Save emits **no** `service.draft_save` audit
+entry — only successful saves are audited.

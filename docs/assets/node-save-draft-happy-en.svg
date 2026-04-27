@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Save-draft happy path — wireframe</title>
+  <desc id="desc">Wireframe of the Edit Node dialog after a successful Save: the dialog has closed, the list row shows a Pending badge, and a toast confirms the draft save with a per-service audit hint.</desc>
+
+  <style>
+    .page { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .panel { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .chip { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .badge-pending { fill: #fef3c7; stroke: #b45309; stroke-width: 1; rx: 4; ry: 4; }
+    .toast-ok { fill: #ecfdf5; stroke: #047857; stroke-width: 1; rx: 6; ry: 6; }
+    .btn { fill: #ffffff; stroke: #3f3f46; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-primary { fill: #1d4ed8; stroke: #1d4ed8; stroke-width: 1; rx: 4; ry: 4; }
+    .placeholder { fill: #fafafa; stroke: #d4d4d8; stroke-dasharray: 4 3; stroke-width: 1; rx: 6; ry: 6; }
+    .h1 { font-size: 18px; font-weight: 600; fill: #18181b; }
+    .h2 { font-size: 13px; font-weight: 600; fill: #18181b; }
+    .lbl { font-size: 12px; fill: #52525b; }
+    .val { font-size: 12px; fill: #18181b; }
+    .muted { font-size: 11px; fill: #71717a; }
+    .struck { font-size: 12px; fill: #a1a1aa; text-decoration: line-through; }
+    .note { font-size: 11px; font-style: italic; fill: #a16207; }
+    .toast-text { font-size: 12px; font-weight: 500; fill: #047857; }
+    .badge-text { font-size: 11px; font-weight: 600; fill: #b45309; }
+  </style>
+
+  <rect x="0" y="0" width="900" height="560" fill="#fafafa" />
+  <rect x="16" y="16" width="868" height="528" class="page" rx="8" ry="8" />
+
+  <!-- Section heading -->
+  <g transform="translate(40, 48)">
+    <text class="h1">Settings · Nodes</text>
+    <text class="muted" x="0" y="20">After Save: dialog closed, draft persisted, list row reflects pending change.</text>
+  </g>
+
+  <!-- List header -->
+  <g transform="translate(40, 100)">
+    <rect x="0" y="0" width="820" height="32" class="chip" />
+    <text class="h2" x="16" y="20">Name</text>
+    <text class="h2" x="220" y="20">Customer</text>
+    <text class="h2" x="380" y="20">Hostname</text>
+    <text class="h2" x="560" y="20">Services</text>
+    <text class="h2" x="720" y="20">Manager</text>
+  </g>
+
+  <!-- Pending row -->
+  <g transform="translate(40, 140)">
+    <rect x="0" y="0" width="820" height="60" class="panel" />
+    <rect x="0" y="0" width="6" height="60" fill="#b45309" />
+    <rect x="16" y="14" width="60" height="20" class="badge-pending" />
+    <text x="46" y="28" text-anchor="middle" class="badge-text">Pending</text>
+    <text class="val" x="86" y="28">node-alpha</text>
+    <text class="muted" x="86" y="46">edge cluster · seoul</text>
+    <text class="val" x="220" y="36">Acme Corp</text>
+    <text class="val" x="380" y="36">node-alpha.local</text>
+    <g transform="translate(560, 18)">
+      <rect x="0" y="0" width="14" height="14" rx="3" ry="3" fill="#10b981" />
+      <circle cx="18" cy="3" r="3" fill="#f59e0b" />
+      <text class="muted" x="28" y="11">Sensor (draft)</text>
+      <rect x="0" y="22" width="14" height="14" rx="3" ry="3" fill="#10b981" />
+      <text class="muted" x="22" y="33">Data Store</text>
+    </g>
+    <text class="val" x="720" y="36">Running</text>
+  </g>
+
+  <!-- Toast: Save success -->
+  <g transform="translate(540, 220)">
+    <rect x="0" y="0" width="320" height="74" class="toast-ok" />
+    <text class="toast-text" x="16" y="22">✓ Draft saved.</text>
+    <text class="muted" x="16" y="42">1 service.draft_save audit entry written</text>
+    <text class="muted" x="16" y="58">(Sensor · node-alpha).</text>
+  </g>
+
+  <!-- Audit hint -->
+  <g transform="translate(40, 260)">
+    <rect x="0" y="0" width="500" height="100" class="placeholder" />
+    <text class="h2" x="16" y="22">Audit log preview</text>
+    <text class="muted" x="16" y="44">action: service.draft_save</text>
+    <text class="muted" x="16" y="60">target: service · targetId: ${nodeId}:SENSOR</text>
+    <text class="muted" x="16" y="76">details: { serviceKind: "SENSOR", nodeId }</text>
+    <text class="muted" x="16" y="92">actor: current account · sid: current session</text>
+  </g>
+
+  <!-- Apply hint -->
+  <g transform="translate(40, 380)">
+    <text class="lbl">The pending draft stays in the row until an operator promotes it</text>
+    <text class="lbl" y="16">via Apply (covered by a sibling Phase Node-9 sub-issue).</text>
+  </g>
+
+  <!-- Wireframe note -->
+  <g transform="translate(40, 500)">
+    <text class="note">Wireframe stand-in — replace with a real PNG capture once the Edit dialog UI ships.</text>
+  </g>
+</svg>
