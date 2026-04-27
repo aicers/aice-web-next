@@ -580,6 +580,175 @@ describe("saveDraft — stale-conflict replay", () => {
     );
   });
 
+  it("preserves a concurrent writer's newly added service (fresh-only key) when replaying after a stale-conflict", async () => {
+    // Edge case: between dialog-open and Save, another writer added a
+    // brand-new service the user has never seen. Because `agents` is a
+    // replacement payload, replaying the user's snapshot would silently
+    // delete the newly added service. The replay must walk the fresh
+    // list as the base, so the new entry survives.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+
+    const oldNode = makeOldNode({
+      agents: [
+        {
+          kind: "SENSOR",
+          key: "a",
+          status: "ENABLED",
+          config: null,
+          draft: "A-old",
+        },
+      ],
+    });
+    const newDraft = makeNewDraft({
+      agents: [
+        { kind: "SENSOR", key: "a", status: "ENABLED", draft: "A-new-by-user" },
+      ],
+    });
+
+    // 1: canonical-fetch on first updateNodeDraft.
+    mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
+    // 2: mutation #1 (stale-conflict).
+    const staleErr = Object.assign(new Error("conflict"), {
+      response: { errors: [{ message: "concurrent modification on node" }] },
+    });
+    mockGraphqlRequest.mockRejectedValueOnce(staleErr);
+    // 3: replay re-fetch — concurrent writer added SENSOR c.
+    const freshAgents = [
+      {
+        kind: "SENSOR",
+        key: "a",
+        status: "ENABLED",
+        config: null,
+        draft: "A-old",
+      },
+      {
+        kind: "SENSOR",
+        key: "c",
+        status: "ENABLED",
+        config: null,
+        draft: "C-by-other-writer",
+      },
+    ];
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", { agents: freshAgents }),
+    );
+    // 4: canonical-fetch on the replay updateNodeDraft.
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", { agents: freshAgents }),
+    );
+    // 5: replay mutation success.
+    mockGraphqlRequest.mockResolvedValueOnce({ updateNodeDraft: "n-5" });
+
+    const { saveDraft } = await import("@/lib/node/draft");
+    const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
+    expect(result).toBe("n-5");
+
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(2);
+    const replayVars = mutationCalls[1][1] as { new: NodeDraftInput };
+    const sentAgents = replayVars.new.agents ?? [];
+    // The fresh-only SENSOR c is included with the concurrent writer's
+    // value; SENSOR a still carries the user's edit.
+    const sentC = sentAgents.find((a) => a.key === "c");
+    expect(sentC?.draft).toBe("C-by-other-writer");
+    const sentA = sentAgents.find((a) => a.key === "a");
+    expect(sentA?.draft).toBe("A-new-by-user");
+    expect(sentAgents).toHaveLength(2);
+
+    // Audit fires once for SENSOR (only A's draft changed against fresh).
+    expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "service.draft_save",
+        targetId: "n-5:SENSOR",
+      }),
+    );
+  });
+
+  it("preserves a concurrent writer's status flip on an untouched service when replaying", async () => {
+    // Edge case: another writer flipped SENSOR b's status from ENABLED
+    // to DISABLED between dialog-open and Save. The user did not touch
+    // B (same status, same draft as originalOld). The replay must
+    // forward the *fresh* status for B, not the user's stale snapshot.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+
+    const oldNode = makeOldNode({
+      agents: [
+        {
+          kind: "SENSOR",
+          key: "a",
+          status: "ENABLED",
+          config: null,
+          draft: "A-old",
+        },
+        {
+          kind: "SENSOR",
+          key: "b",
+          status: "ENABLED",
+          config: null,
+          draft: "B-old",
+        },
+      ],
+    });
+    const newDraft = makeNewDraft({
+      agents: [
+        { kind: "SENSOR", key: "a", status: "ENABLED", draft: "A-new" },
+        // User did not touch B — same status, same draft.
+        { kind: "SENSOR", key: "b", status: "ENABLED", draft: "B-old" },
+      ],
+    });
+
+    mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
+    const staleErr = Object.assign(new Error("conflict"), {
+      response: { errors: [{ message: "concurrent modification on node" }] },
+    });
+    mockGraphqlRequest.mockRejectedValueOnce(staleErr);
+    const freshAgents = [
+      {
+        kind: "SENSOR",
+        key: "a",
+        status: "ENABLED",
+        config: null,
+        draft: "A-old",
+      },
+      {
+        kind: "SENSOR",
+        key: "b",
+        status: "DISABLED",
+        config: null,
+        draft: "B-old",
+      },
+    ];
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", { agents: freshAgents }),
+    );
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", { agents: freshAgents }),
+    );
+    mockGraphqlRequest.mockResolvedValueOnce({ updateNodeDraft: "n-5" });
+
+    const { saveDraft } = await import("@/lib/node/draft");
+    const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
+    expect(result).toBe("n-5");
+
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(2);
+    const replayVars = mutationCalls[1][1] as { new: NodeDraftInput };
+    const sentAgents = replayVars.new.agents ?? [];
+    const sentB = sentAgents.find((a) => a.key === "b");
+    expect(sentB?.status).toBe("DISABLED");
+    expect(sentB?.draft).toBe("B-old");
+    const sentA = sentAgents.find((a) => a.key === "a");
+    expect(sentA?.status).toBe("ENABLED");
+    expect(sentA?.draft).toBe("A-new");
+  });
+
   it("does not retry a non-stale GraphQL error (e.g. validation) — propagates the original error and emits no audit", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);

@@ -264,17 +264,35 @@ function profilesEqual(
  * Rebase the user's intended draft on top of a freshly-read canonical
  * node. The returned draft is what should be sent to `updateNodeDraft`
  * on the replay attempt: every field the user actually edited is
- * preserved at the user's value; every field the user left alone takes
- * the latest server value, so a concurrent writer's edit on an
- * untouched field/service is **not** clobbered by replaying the
+ * preserved at the user's value; every field/service the user left
+ * alone takes the latest server value, so a concurrent writer's edit
+ * on an untouched field/service is **not** clobbered by replaying the
  * user's stale snapshot of it.
  *
  * Why this matters: `agents` and `externalServices` in `NodeDraftInput`
  * are replacement payloads — sending the user's whole list back
- * verbatim would overwrite a sibling service's draft that another
- * writer changed concurrently. We diff per-(kind, key) draft string
- * (the field a save-draft can change) to decide which entries to
- * forward at the user's value vs. swap in the fresh value.
+ * verbatim would overwrite a sibling service that another writer
+ * changed concurrently. The list rebase therefore walks the **fresh**
+ * list as the base (so concurrent additions are preserved and untouched
+ * services carry the fresh `status` + `draft`, not the user's stale
+ * values), then folds in the user's actual edits on matching entries
+ * and any new entries the user added.
+ *
+ * Concurrent-edit semantics for list entries, by case (identity is
+ * `(kind, key)`):
+ *
+ * - Entry in fresh AND in user's new list:
+ *   - User touched (status or draft differs vs. originalOld): take the
+ *     user's value (their explicit intent wins).
+ *   - User did not touch: take fresh's value (preserves any concurrent
+ *     status flip / draft change on this entry).
+ * - Entry in fresh, NOT in user's new list:
+ *   - Was in originalOld → user explicitly removed it: drop.
+ *   - Was NOT in originalOld → concurrent writer added it: preserve.
+ * - Entry in user's new list, NOT in fresh:
+ *   - Was in originalOld → concurrent writer removed it: drop (the
+ *     user did not act on the removal; honor the concurrent delete).
+ *   - Was NOT in originalOld → user added it: keep.
  */
 function rebaseDraftOnFresh(
   originalOld: NodeInput,
@@ -296,65 +314,143 @@ function rebaseDraftOnFresh(
     ? originalNew.profileDraft
     : freshProfile;
 
-  let agents: AgentDraftInput[] | null = null;
-  if (originalNew.agents !== null) {
-    const oldDraftByKey = new Map<string, string | null>();
-    for (const a of originalOld.agents) {
-      oldDraftByKey.set(`${a.kind}::${a.key}`, a.draft ?? null);
-    }
-    const freshByKey = new Map<string, AgentInput>();
-    for (const a of freshOld.agents) {
-      freshByKey.set(`${a.kind}::${a.key}`, a);
-    }
-    agents = originalNew.agents.map((proposed) => {
-      const id = `${proposed.kind}::${proposed.key}`;
-      const userPriorDraft = oldDraftByKey.get(id) ?? null;
-      const proposedDraft = proposed.draft ?? null;
-      const userTouched = proposedDraft !== userPriorDraft;
-      if (userTouched) return proposed;
-      const fresh = freshByKey.get(id);
-      if (fresh) {
-        return {
-          kind: proposed.kind,
-          key: proposed.key,
-          status: proposed.status,
-          draft: fresh.draft ?? null,
-        };
-      }
-      return proposed;
-    });
-  }
+  const agents =
+    originalNew.agents === null
+      ? null
+      : rebaseAgentList(
+          originalOld.agents,
+          originalNew.agents,
+          freshOld.agents,
+        );
 
-  let externalServices: ExternalServiceInput[] | null = null;
-  if (originalNew.externalServices !== null) {
-    const oldDraftByKey = new Map<string, string | null>();
-    for (const e of originalOld.externalServices) {
-      oldDraftByKey.set(`${e.kind}::${e.key}`, e.draft ?? null);
-    }
-    const freshByKey = new Map<string, ExternalServiceInput>();
-    for (const e of freshOld.externalServices) {
-      freshByKey.set(`${e.kind}::${e.key}`, e);
-    }
-    externalServices = originalNew.externalServices.map((proposed) => {
-      const id = `${proposed.kind}::${proposed.key}`;
-      const userPriorDraft = oldDraftByKey.get(id) ?? null;
-      const proposedDraft = proposed.draft ?? null;
-      const userTouched = proposedDraft !== userPriorDraft;
-      if (userTouched) return proposed;
-      const fresh = freshByKey.get(id);
-      if (fresh) {
-        return {
-          kind: proposed.kind,
-          key: proposed.key,
-          status: proposed.status,
-          draft: fresh.draft ?? null,
-        };
-      }
-      return proposed;
-    });
-  }
+  const externalServices =
+    originalNew.externalServices === null
+      ? null
+      : rebaseExternalServiceList(
+          originalOld.externalServices,
+          originalNew.externalServices,
+          freshOld.externalServices,
+        );
 
   return { nameDraft, profileDraft, agents, externalServices };
+}
+
+function agentTouched(
+  proposed: AgentDraftInput,
+  prior: AgentInput | undefined,
+): boolean {
+  if (prior === undefined) return true;
+  if (proposed.status !== prior.status) return true;
+  return (proposed.draft ?? null) !== (prior.draft ?? null);
+}
+
+function externalServiceTouched(
+  proposed: ExternalServiceInput,
+  prior: ExternalServiceInput | undefined,
+): boolean {
+  if (prior === undefined) return true;
+  if (proposed.status !== prior.status) return true;
+  return (proposed.draft ?? null) !== (prior.draft ?? null);
+}
+
+function rebaseAgentList(
+  originalOld: AgentInput[],
+  originalNew: AgentDraftInput[],
+  fresh: AgentInput[],
+): AgentDraftInput[] {
+  const oldByKey = new Map<string, AgentInput>();
+  for (const a of originalOld) oldByKey.set(`${a.kind}::${a.key}`, a);
+  const newByKey = new Map<string, AgentDraftInput>();
+  for (const a of originalNew) newByKey.set(`${a.kind}::${a.key}`, a);
+
+  const result: AgentDraftInput[] = [];
+  const seen = new Set<string>();
+
+  for (const f of fresh) {
+    const id = `${f.kind}::${f.key}`;
+    seen.add(id);
+    const userProposed = newByKey.get(id);
+    if (userProposed === undefined) {
+      // Not in user's list — either user removed it, or concurrent add.
+      if (oldByKey.has(id)) continue;
+      result.push({
+        kind: f.kind,
+        key: f.key,
+        status: f.status,
+        draft: f.draft ?? null,
+      });
+      continue;
+    }
+    if (agentTouched(userProposed, oldByKey.get(id))) {
+      result.push(userProposed);
+    } else {
+      result.push({
+        kind: f.kind,
+        key: f.key,
+        status: f.status,
+        draft: f.draft ?? null,
+      });
+    }
+  }
+
+  for (const userProposed of originalNew) {
+    const id = `${userProposed.kind}::${userProposed.key}`;
+    if (seen.has(id)) continue;
+    // Not in fresh: concurrent removal (drop) vs. user-add (keep).
+    if (oldByKey.has(id)) continue;
+    result.push(userProposed);
+  }
+
+  return result;
+}
+
+function rebaseExternalServiceList(
+  originalOld: ExternalServiceInput[],
+  originalNew: ExternalServiceInput[],
+  fresh: ExternalServiceInput[],
+): ExternalServiceInput[] {
+  const oldByKey = new Map<string, ExternalServiceInput>();
+  for (const e of originalOld) oldByKey.set(`${e.kind}::${e.key}`, e);
+  const newByKey = new Map<string, ExternalServiceInput>();
+  for (const e of originalNew) newByKey.set(`${e.kind}::${e.key}`, e);
+
+  const result: ExternalServiceInput[] = [];
+  const seen = new Set<string>();
+
+  for (const f of fresh) {
+    const id = `${f.kind}::${f.key}`;
+    seen.add(id);
+    const userProposed = newByKey.get(id);
+    if (userProposed === undefined) {
+      if (oldByKey.has(id)) continue;
+      result.push({
+        kind: f.kind,
+        key: f.key,
+        status: f.status,
+        draft: f.draft ?? null,
+      });
+      continue;
+    }
+    if (externalServiceTouched(userProposed, oldByKey.get(id))) {
+      result.push(userProposed);
+    } else {
+      result.push({
+        kind: f.kind,
+        key: f.key,
+        status: f.status,
+        draft: f.draft ?? null,
+      });
+    }
+  }
+
+  for (const userProposed of originalNew) {
+    const id = `${userProposed.kind}::${userProposed.key}`;
+    if (seen.has(id)) continue;
+    if (oldByKey.has(id)) continue;
+    result.push(userProposed);
+  }
+
+  return result;
 }
 
 /**
@@ -375,7 +471,38 @@ function isNoOpAgainstFresh(
   if (draft.nameDraft !== freshName) return false;
   const freshProfile = freshOld.profileDraft ?? freshOld.profile;
   if (!profilesEqual(draft.profileDraft, freshProfile)) return false;
-  return diffChangedServices(freshOld, draft).length === 0;
+
+  if (draft.agents !== null) {
+    if (draft.agents.length !== freshOld.agents.length) return false;
+    const freshByKey = new Map<string, AgentInput>();
+    for (const a of freshOld.agents) {
+      freshByKey.set(`${a.kind}::${a.key}`, a);
+    }
+    for (const proposed of draft.agents) {
+      const fresh = freshByKey.get(`${proposed.kind}::${proposed.key}`);
+      if (!fresh) return false;
+      if (proposed.status !== fresh.status) return false;
+      if ((proposed.draft ?? null) !== (fresh.draft ?? null)) return false;
+    }
+  }
+
+  if (draft.externalServices !== null) {
+    if (draft.externalServices.length !== freshOld.externalServices.length) {
+      return false;
+    }
+    const freshByKey = new Map<string, ExternalServiceInput>();
+    for (const e of freshOld.externalServices) {
+      freshByKey.set(`${e.kind}::${e.key}`, e);
+    }
+    for (const proposed of draft.externalServices) {
+      const fresh = freshByKey.get(`${proposed.kind}::${proposed.key}`);
+      if (!fresh) return false;
+      if (proposed.status !== fresh.status) return false;
+      if ((proposed.draft ?? null) !== (fresh.draft ?? null)) return false;
+    }
+  }
+
+  return true;
 }
 
 async function emitDraftSaveAudits(
