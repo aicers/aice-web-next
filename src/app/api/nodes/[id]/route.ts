@@ -6,7 +6,7 @@ import { auditLog } from "@/lib/audit/logger";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import {
-  getNode,
+  getNodeAuditMetadata,
   ManagerUnavailableError,
   NodeNotFoundError,
   NodePermissionError,
@@ -21,8 +21,13 @@ import {
  * side as N parallel calls so each deletion produces its own entry,
  * matching the per-target audit contract from `decisions/node-permissions.md`.
  *
- * Requires `nodes:delete`. The underlying `removeNodes` server action
- * enforces tenant scope before reaching review-web.
+ * Requires `nodes:delete` only. The audit metadata pre-fetch routes
+ * through `getNodeAuditMetadata`, which is permissioned strictly on
+ * `nodes:delete` — using `getNode` here would force every custom role
+ * with `nodes:delete` to also hold `nodes:read + services:read` (the
+ * combined-gate rule for the full mixed-surface read), which the
+ * permission decision does not require. The underlying `removeNodes`
+ * server action enforces tenant scope before reaching review-web.
  */
 export const DELETE = withAuth(
   async (request, context, session) => {
@@ -34,7 +39,7 @@ export const DELETE = withAuth(
     let hostname = "";
     let customerId: number | undefined;
     try {
-      const node = await getNode(session, nodeId);
+      const node = await getNodeAuditMetadata(session, nodeId);
       hostname = node.profile?.hostname ?? node.profileDraft?.hostname ?? "";
       const cid = node.profile?.customerId ?? node.profileDraft?.customerId;
       if (cid !== undefined) customerId = Number(cid);

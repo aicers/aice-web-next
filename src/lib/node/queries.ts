@@ -78,6 +78,9 @@ function loadDocument(relativePath: string): DocumentNode {
 
 export const NODE_LIST_QUERY = loadDocument("node-list.graphql");
 export const NODE_DETAIL_QUERY = loadDocument("node-detail.graphql");
+export const NODE_AUDIT_METADATA_QUERY = loadDocument(
+  "node-audit-metadata.graphql",
+);
 export const NODE_STATUS_LIST_QUERY = loadDocument("node-status-list.graphql");
 export const INSERT_NODE_MUTATION = loadDocument("insert-node.graphql");
 export const UPDATE_NODE_DRAFT_MUTATION = loadDocument(

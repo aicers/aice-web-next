@@ -646,6 +646,26 @@ function NodeListRow({
     event.stopPropagation();
   }, []);
 
+  // Radix's `DropdownMenuContent` portals its items to the document
+  // root, so they are no longer DOM descendants of the row — but React
+  // synthetic events still bubble through the React owner tree and
+  // would reach `onRowClick` after the menu item runs. Wrap each item
+  // handler so the row-level navigation cannot pre-empt the per-row
+  // Edit / Delete intent (e.g. delete modal disappearing because the
+  // route swapped underneath).
+  const wrapMenuHandler = useCallback(
+    (handler: (() => void) | null) =>
+      handler
+        ? (event: React.MouseEvent) => {
+            event.stopPropagation();
+            handler();
+          }
+        : undefined,
+    [],
+  );
+  const onEditMenu = wrapMenuHandler(onEdit);
+  const onDeleteMenu = wrapMenuHandler(onDelete);
+
   return (
     <TableRow
       className={cn(
@@ -713,16 +733,16 @@ function NodeListRow({
                 <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {onEdit && (
-                <DropdownMenuItem onClick={onEdit}>
+            <DropdownMenuContent align="end" onClick={stopRowNav}>
+              {onEditMenu && (
+                <DropdownMenuItem onClick={onEditMenu}>
                   <Pencil className="mr-2 h-4 w-4" />
                   {t("edit")}
                 </DropdownMenuItem>
               )}
-              {onDelete && (
+              {onDeleteMenu && (
                 <DropdownMenuItem
-                  onClick={onDelete}
+                  onClick={onDeleteMenu}
                   className="text-destructive focus:text-destructive"
                   data-testid="nodes-row-delete"
                 >

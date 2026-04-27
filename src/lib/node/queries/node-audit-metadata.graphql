@@ -1,0 +1,19 @@
+# Minimal Node selection used by the delete-scoped audit metadata
+# helper: just the profile fields the audit entry needs (hostname,
+# customerId). Excludes `agents` / `externalServices` so the helper can
+# legitimately be permissioned on `nodes:delete` alone — there is no
+# service-draft surface in this payload to motivate the combined
+# `nodes:read + services:read` gate that `node-detail.graphql` carries.
+query NodeAuditMetadata($id: ID!) {
+  node(id: $id) {
+    id
+    profile {
+      customerId
+      hostname
+    }
+    profileDraft {
+      customerId
+      hostname
+    }
+  }
+}

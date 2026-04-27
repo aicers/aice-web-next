@@ -15,7 +15,7 @@ interface WithAuthOptions {
 
 const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockHasPermission = vi.hoisted(() => vi.fn());
-const mockGetNode = vi.hoisted(() => vi.fn());
+const mockGetNodeAuditMetadata = vi.hoisted(() => vi.fn());
 const mockRemoveNodes = vi.hoisted(() => vi.fn());
 
 let currentSession: AuthSession;
@@ -59,7 +59,9 @@ vi.mock("@/lib/node/server-actions", async () => {
     );
   return {
     ...actual,
-    getNode: vi.fn((...args: unknown[]) => mockGetNode(...args)),
+    getNodeAuditMetadata: vi.fn((...args: unknown[]) =>
+      mockGetNodeAuditMetadata(...args),
+    ),
     removeNodes: vi.fn((...args: unknown[]) => mockRemoveNodes(...args)),
   };
 });
@@ -111,13 +113,13 @@ describe("DELETE /api/nodes/[id]", () => {
   beforeEach(() => {
     currentSession = adminSession;
     mockAuditRecord.mockReset();
-    mockGetNode.mockReset();
+    mockGetNodeAuditMetadata.mockReset();
     mockRemoveNodes.mockReset();
     mockHasPermission.mockReset().mockResolvedValue(true);
   });
 
   it("emits one node.delete audit entry on success", async () => {
-    mockGetNode.mockResolvedValue(sampleNode);
+    mockGetNodeAuditMetadata.mockResolvedValue(sampleNode);
     mockRemoveNodes.mockResolvedValue([sampleNode.id]);
 
     const { DELETE } = await import("@/app/api/nodes/[id]/route");
@@ -142,7 +144,9 @@ describe("DELETE /api/nodes/[id]", () => {
 
   it("returns 404 and emits no audit entry when the node is gone before delete", async () => {
     const { NodeNotFoundError } = await import("@/lib/node/errors");
-    mockGetNode.mockRejectedValue(new NodeNotFoundError("missing"));
+    mockGetNodeAuditMetadata.mockRejectedValue(
+      new NodeNotFoundError("missing"),
+    );
 
     const { DELETE } = await import("@/app/api/nodes/[id]/route");
     const response = await DELETE(makeRequest("999"), makeContext("999"));
@@ -154,7 +158,7 @@ describe("DELETE /api/nodes/[id]", () => {
 
   it("returns 503 and emits no audit entry when the manager is unreachable", async () => {
     const { ManagerUnavailableError } = await import("@/lib/node/errors");
-    mockGetNode.mockResolvedValue(sampleNode);
+    mockGetNodeAuditMetadata.mockResolvedValue(sampleNode);
     mockRemoveNodes.mockRejectedValue(
       new ManagerUnavailableError("manager offline"),
     );
@@ -168,7 +172,7 @@ describe("DELETE /api/nodes/[id]", () => {
 
   it("returns 403 when the upstream rejects on permission grounds", async () => {
     const { NodePermissionError } = await import("@/lib/node/errors");
-    mockGetNode.mockResolvedValue(sampleNode);
+    mockGetNodeAuditMetadata.mockResolvedValue(sampleNode);
     mockRemoveNodes.mockRejectedValue(new NodePermissionError("out of scope"));
 
     const { DELETE } = await import("@/app/api/nodes/[id]/route");
@@ -187,7 +191,7 @@ describe("DELETE /api/nodes/[id]", () => {
     const response = await DELETE(makeRequest(), makeContext());
 
     expect(response.status).toBe(403);
-    expect(mockGetNode).not.toHaveBeenCalled();
+    expect(mockGetNodeAuditMetadata).not.toHaveBeenCalled();
     expect(mockRemoveNodes).not.toHaveBeenCalled();
     expect(mockAuditRecord).not.toHaveBeenCalled();
   });
@@ -199,7 +203,7 @@ describe("DELETE /api/nodes/[id]", () => {
     // between getNode and the delete, or the manager refused it
     // post-scope-check). Treat absence from the deleted list as a
     // failure — no audit, non-success status.
-    mockGetNode.mockResolvedValue(sampleNode);
+    mockGetNodeAuditMetadata.mockResolvedValue(sampleNode);
     mockRemoveNodes.mockResolvedValue([]);
 
     const { DELETE } = await import("@/app/api/nodes/[id]/route");
@@ -210,7 +214,7 @@ describe("DELETE /api/nodes/[id]", () => {
   });
 
   it("emits no audit entry when removeNodes returns a different id", async () => {
-    mockGetNode.mockResolvedValue(sampleNode);
+    mockGetNodeAuditMetadata.mockResolvedValue(sampleNode);
     mockRemoveNodes.mockResolvedValue(["some-other-id"]);
 
     const { DELETE } = await import("@/app/api/nodes/[id]/route");
@@ -220,8 +224,29 @@ describe("DELETE /api/nodes/[id]", () => {
     expect(mockAuditRecord).not.toHaveBeenCalled();
   });
 
+  it("succeeds for a caller holding nodes:delete only (no nodes:read or services:read)", async () => {
+    // Round 4 finding: the audit metadata pre-fetch must not force the
+    // caller to hold `nodes:read` + `services:read` in addition to
+    // `nodes:delete`. With the route now routing through
+    // `getNodeAuditMetadata` (gated on `nodes:delete` only),
+    // a custom role with just `nodes:delete` reaches the delete and
+    // emits exactly one audit entry on success.
+    mockHasPermission.mockImplementation(
+      async (_roles: string[], perm: string) => perm === "nodes:delete",
+    );
+    mockGetNodeAuditMetadata.mockResolvedValue(sampleNode);
+    mockRemoveNodes.mockResolvedValue([sampleNode.id]);
+
+    const { DELETE } = await import("@/app/api/nodes/[id]/route");
+    const response = await DELETE(makeRequest(), makeContext());
+
+    expect(response.status).toBe(200);
+    expect(mockGetNodeAuditMetadata).toHaveBeenCalledTimes(1);
+    expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+  });
+
   it("falls back to the draft hostname when no profile is committed", async () => {
-    mockGetNode.mockResolvedValue({
+    mockGetNodeAuditMetadata.mockResolvedValue({
       ...sampleNode,
       profile: null,
       profileDraft: {

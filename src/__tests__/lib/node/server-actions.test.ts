@@ -685,6 +685,59 @@ describe("combined node/service permission gate", () => {
     ).rejects.toBeInstanceOf(NodePermissionError);
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
+
+  it("getNodeAuditMetadata succeeds for a caller holding nodes:delete only", async () => {
+    // Round 4 invariant: the delete-scoped audit metadata helper must
+    // not require `nodes:read` or `services:read`. The destructive
+    // grant is the only permission gate; tenant scope is enforced
+    // separately against the canonical-node payload.
+    mockHasPermission.mockImplementation(grantOnly("nodes:delete"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue({
+      node: {
+        id: "n-1",
+        profile: { customerId: "5", hostname: "h" },
+        profileDraft: null,
+      },
+    });
+    const { getNodeAuditMetadata } = await import("@/lib/node/server-actions");
+    const meta = await getNodeAuditMetadata(makeSession(), "n-1");
+    expect(meta.profile?.hostname).toBe("h");
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("getNodeAuditMetadata rejects a caller missing nodes:delete", async () => {
+    mockHasPermission.mockImplementation(grantOnly("nodes:read"));
+    const { getNodeAuditMetadata, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      getNodeAuditMetadata(makeSession(), "n-1"),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("getNodeAuditMetadata rejects an out-of-scope tenant admin", async () => {
+    // Tenant Administrator scoped to customer 5 must not be able to
+    // read audit metadata for a node owned by customer 7. The scope
+    // check runs against the canonical-node payload returned by
+    // review-web, mirroring `getNode`.
+    mockHasPermission.mockImplementation(grantOnly("nodes:delete"));
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue({
+      node: {
+        id: "n-1",
+        profile: { customerId: "7", hostname: "h" },
+        profileDraft: null,
+      },
+    });
+    const { getNodeAuditMetadata, NodePermissionError } = await import(
+      "@/lib/node/server-actions"
+    );
+    await expect(
+      getNodeAuditMetadata(makeSession(), "n-1"),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+  });
 });
 
 // ── Tenant scope boundary ──────────────────────────────────────────

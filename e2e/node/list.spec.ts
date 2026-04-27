@@ -385,6 +385,59 @@ test.describe("Node settings list page", () => {
     await expect(page.getByLabel("Customer")).toHaveCount(0);
   });
 
+  test("row-menu Edit/Delete do not also navigate to /nodes/[id]", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Regression: the whole row carries an `onClick` that pushes
+    // `/nodes/[id]`. Radix portals the dropdown content out of the row
+    // DOM, but React synthetic events still bubble through the React
+    // owner tree, so without explicit stopPropagation a kebab click on
+    // Edit or Delete would also trigger the row navigation. That would
+    // overwrite the edit query-param push and tear down the delete
+    // confirmation modal mid-render. This test verifies neither happens.
+    await stubSession.registerStub({
+      operation: "nodeList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeList.populated.json",
+      },
+    });
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.populated.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToList(page);
+
+    const alpha = page
+      .getByTestId("nodes-row")
+      .filter({ hasText: "alpha-node" });
+    await expect(alpha).toBeVisible();
+
+    // Click kebab → Delete and assert the confirm modal is visible and
+    // the URL stayed on /nodes/settings (no row-nav side effect).
+    await alpha.getByTestId("nodes-row-menu").click();
+    await page.getByTestId("nodes-row-delete").click();
+    await expect(page.getByText("Delete node")).toBeVisible();
+    await expect(page).toHaveURL(/\/nodes\/settings(\?|$)/);
+    // Close the modal and reopen the menu for the Edit assertion.
+    await page.keyboard.press("Escape");
+    await expect(page.getByText("Delete node")).toHaveCount(0);
+
+    await alpha.getByTestId("nodes-row-menu").click();
+    await page.getByText("Edit", { exact: true }).click();
+    // Edit pushes a query param under /nodes/settings; the row click
+    // would have replaced this with /nodes/<id>. Verify the query-param
+    // navigation survived.
+    await expect(page).toHaveURL(/\/nodes\/settings\?dialog=edit&id=/);
+  });
+
   test("missing services:read produces a 403 redirect", async ({ page }) => {
     await page.goto("/sign-in");
     await signIn(page, MISSING_SERVICES_USERNAME, PASSWORD);

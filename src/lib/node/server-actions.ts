@@ -28,6 +28,7 @@ import {
   GIGANTO_STATUS_QUERY,
   GIGANTO_UPDATE_CONFIG_MUTATION,
   INSERT_NODE_MUTATION,
+  NODE_AUDIT_METADATA_QUERY,
   NODE_DETAIL_QUERY,
   NODE_LIST_QUERY,
   NODE_REBOOT_MUTATION,
@@ -49,6 +50,8 @@ import type {
   GigantoUpdateConfigResult,
   InsertNodeResult,
   Node as ManagerNode,
+  NodeAuditMetadata,
+  NodeAuditMetadataResult,
   NodeConnection,
   NodeDetailResult,
   NodeDraftInput,
@@ -238,6 +241,72 @@ export async function getNode(
   const node = await fetchCanonicalNode(ctx, id, signal);
   enforceNodeScope(ctx, node);
   return node;
+}
+
+/**
+ * Fetch the slim audit-metadata payload for a node by id, gated on
+ * `nodes:delete` only.
+ *
+ * The DELETE route needs `hostname` + `customerId` to populate the
+ * `node.delete` audit entry, but routing that through `getNode` would
+ * also require `nodes:read + services:read` (the combined-gate rule
+ * for the full mixed-surface read). That would force every custom
+ * role with `nodes:delete` to also hold the read scopes, which
+ * `decisions/node-permissions.md` does not require. The dedicated
+ * `node-audit-metadata.graphql` document selects only the profile
+ * fields the audit entry uses, so the helper is permissioned strictly
+ * on the destructive grant and the combined-gate rationale (mixed
+ * service surface) does not apply.
+ *
+ * Tenant-scope still goes through the canonical-node fetch via
+ * review-web — a Tenant Administrator must not be able to read audit
+ * metadata for an out-of-scope node, even one they could legitimately
+ * delete (which they cannot — they'd 403 at the same scope check).
+ * Error-mapping order matches `fetchCanonicalNode`: not-found before
+ * manager-unavailable, with a defense-in-depth `null` check.
+ */
+export async function getNodeAuditMetadata(
+  session: AuthSession,
+  id: string,
+  signal?: AbortSignal,
+): Promise<NodeAuditMetadata> {
+  await requireAllPermissions(session, [NODES_DELETE]);
+  const ctx = await buildDispatchContext(session);
+  const data = await withManagerErrorMapping(
+    withNodeNotFoundMapping(
+      graphqlRequest<NodeAuditMetadataResult, { id: string }>(
+        NODE_AUDIT_METADATA_QUERY,
+        { id },
+        { role: ctx.role, customerIds: ctx.customerIds },
+        signal,
+      ),
+      id,
+    ),
+  );
+  if (!data.node) {
+    throw new NodeNotFoundError(`Node ${id} was not found.`);
+  }
+  enforceAuditMetadataScope(ctx, data.node);
+  return data.node;
+}
+
+function enforceAuditMetadataScope(
+  ctx: DispatchContext,
+  node: NodeAuditMetadata,
+): void {
+  // Mirrors `enforceNodeScope` for the slim audit payload. The two
+  // helpers are kept separate because `NodeAuditMetadata` is a
+  // structurally narrower shape than `ManagerNode` and we do not want
+  // a future widen of the audit payload to silently grant access to a
+  // service field via the shared scope-check.
+  const customerId = node.profile?.customerId ?? node.profileDraft?.customerId;
+  if (customerId === undefined) {
+    if (ctx.role === SYSTEM_ADMINISTRATOR) return;
+    throw new NodePermissionError(
+      "Node carries no customer scope; only System Administrators can read it.",
+    );
+  }
+  assertNodeInScope(ctx, Number(customerId));
 }
 
 function enforceNodeScope(ctx: DispatchContext, node: ManagerNode): void {
