@@ -190,7 +190,7 @@ describe("createApplyAttempt — permission boundary", () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
-  it("rejects when customer scope excludes the node", async () => {
+  it("rejects when customer scope excludes the node (BFF defense-in-depth: upstream returned the out-of-scope payload)", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([99]);
     mockGraphqlRequest.mockResolvedValue(
@@ -202,6 +202,58 @@ describe("createApplyAttempt — permission boundary", () => {
     await expect(
       createApplyAttempt(makeSession(), { nodeId: "node-1" }),
     ).rejects.toThrow(/scope/);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects with NodePermissionError when review-web filters the out-of-scope node to null", async () => {
+    // Production review-web filters `node(id)` reads against the
+    // caller's `customer_ids` from the Context JWT; an out-of-scope
+    // node comes back as `{ node: null }`. The umbrella's
+    // createApplyAttempt acceptance requires this to surface as
+    // NodePermissionError, not NodeNotFoundError, so the same scope-
+    // exclusion class produces the same error type regardless of
+    // whether review-web filtered upstream or the BFF caught it
+    // post-read.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([99]);
+    mockGraphqlRequest.mockResolvedValue({ node: null });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodePermissionError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt(makeSession(), { nodeId: "node-1" }),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects with NodePermissionError when review-web throws a NOT_FOUND GraphQL error for the filtered node", async () => {
+    // The other production shape: review-web's resolver throws when
+    // the `node(id): Node!` non-nullable resolves to nothing under
+    // the caller's filter. `withNodeNotFoundMapping` surfaces that as
+    // `NodeNotFoundError`; we remap to `NodePermissionError` for
+    // createApplyAttempt because the BFF cannot distinguish "doesn't
+    // exist" from "filtered for scope" without privilege escalation,
+    // and the umbrella requires scope exclusion to be a permission
+    // boundary on this entrypoint.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([99]);
+    const upstreamError = Object.assign(new Error("node not found"), {
+      response: {
+        errors: [
+          {
+            message: "node not found",
+            extensions: { code: "NOT_FOUND" },
+          },
+        ],
+      },
+    });
+    mockGraphqlRequest.mockRejectedValue(upstreamError);
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodePermissionError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt(makeSession(), { nodeId: "node-1" }),
+    ).rejects.toBeInstanceOf(NodePermissionError);
     expect(mockQuery).not.toHaveBeenCalled();
   });
 });

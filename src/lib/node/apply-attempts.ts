@@ -164,24 +164,64 @@ async function requireBothPermissions(session: AuthSession): Promise<void> {
   }
 }
 
+/**
+ * Read the canonical Node payload for plan construction.
+ *
+ * Scope semantics on this entrypoint differ from `getNode` deliberately.
+ * `getNode` distinguishes "not found" from "out of scope" by surfacing
+ * `NodeNotFoundError` for both upstream-null and upstream-throws-NotFound
+ * paths (review-web's scope filter resolves a missing-or-out-of-scope
+ * node to the same shape, and the BFF cannot tell them apart without
+ * privilege escalation). The umbrella's createApplyAttempt acceptance
+ * is stricter — scope exclusion MUST surface as `NodePermissionError`,
+ * not `NodeNotFoundError`. Since the BFF cannot distinguish "doesn't
+ * exist" from "filtered for scope" when review-web returns null, we
+ * collapse both into `NodePermissionError` for this server action only:
+ * the node either truly doesn't exist (in which case the caller has no
+ * apply business with it) or it exists but is out of the caller's
+ * customer scope. Either way, an out-of-scope/missing node is treated
+ * as a permission boundary on the create-attempt surface, mirroring the
+ * review-web filter contract. System-Administrator callers are NOT
+ * exempt — we do not have a separate system-actor probe here, and the
+ * `nodes:write + services:write` gate already restricts who can reach
+ * this code path, so the additional fidelity of `NodeNotFoundError` is
+ * not worth the privilege-escalation seam.
+ *
+ * The post-read `enforceNodeScope` defense-in-depth check still catches
+ * the older review-web case where the upstream returns an out-of-scope
+ * payload (no scope filtering at the upstream, BFF rejects post-read).
+ * That path has always surfaced `NodePermissionError` and is unchanged.
+ */
 async function readCanonicalNode(
   ctx: DispatchContext,
   id: string,
   signal: AbortSignal | undefined,
 ): Promise<Node> {
-  const data = await withManagerErrorMapping(
-    withNodeNotFoundMapping(
-      graphqlRequest<NodeDetailResult, { id: string }>(
-        NODE_DETAIL_QUERY,
-        { id },
-        { role: ctx.role, customerIds: ctx.customerIds },
-        signal,
+  let data: NodeDetailResult;
+  try {
+    data = await withManagerErrorMapping(
+      withNodeNotFoundMapping(
+        graphqlRequest<NodeDetailResult, { id: string }>(
+          NODE_DETAIL_QUERY,
+          { id },
+          { role: ctx.role, customerIds: ctx.customerIds },
+          signal,
+        ),
+        id,
       ),
-      id,
-    ),
-  );
+    );
+  } catch (err) {
+    if (err instanceof NodeNotFoundError) {
+      throw new NodePermissionError(
+        `Node ${id} is not in the caller's customer scope.`,
+      );
+    }
+    throw err;
+  }
   if (!data.node) {
-    throw new NodeNotFoundError(`Node ${id} was not found.`);
+    throw new NodePermissionError(
+      `Node ${id} is not in the caller's customer scope.`,
+    );
   }
   return data.node;
 }

@@ -73,8 +73,17 @@ function persistedRow(
 }
 
 describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () => {
-  it("returns the persisted row unchanged when status is failed_retryable; no claim attempted; no dispatcher call", async () => {
-    mockQuery.mockResolvedValue({ rows: [persistedRow()], rowCount: 1 });
+  it("returns the persisted row unchanged when status is failed_retryable AND PG says the row is still in-window; no claim attempted; no dispatcher call", async () => {
+    // Step-1 read returns the failed_retryable row.
+    mockQuery.mockResolvedValueOnce({
+      rows: [persistedRow()],
+      rowCount: 1,
+    });
+    // Idempotent-return SQL-authoritative terminalise: PG agrees the
+    // row is in-window, so the helper's `NOW() > expires_at` WHERE
+    // matches 0 rows and we fall through to the idempotent return.
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
     const dispatcher = {
       manager: vi.fn(),
       external: vi.fn(),
@@ -90,8 +99,51 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
       draftReader,
     });
     expect(result.status).toBe("failed_retryable");
-    // Only the step-1 read; no executor / no claim transaction.
-    expect(mockQuery).toHaveBeenCalledTimes(1);
+    // Step-1 read + idempotent-return SQL-authoritative terminalise.
+    // No executor and no claim transaction.
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockWithTransaction).not.toHaveBeenCalled();
+    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.external).not.toHaveBeenCalled();
+    expect(draftReader.readNodeDraft).not.toHaveBeenCalled();
+  });
+
+  it("surfaces StalePlanError in the same call when PG has crossed expires_at but the host clock has not yet (clock-skew gap)", async () => {
+    // The reviewer's Round-4 case: a `failed_retryable` row whose
+    // `expires_at` has passed per PG but not yet per the host's
+    // `Date.now()`. The step-2a app-clock fast-path doesn't fire, so
+    // without an extra defense the `failed_retryable` switch branch
+    // would idempotently return the persisted soft-failed row. The
+    // SQL-authoritative terminalise call inside that branch is what
+    // turns this into a `StalePlanError` in the same call.
+    const futureExpires = new Date(Date.now() + 30_000);
+    mockQuery.mockResolvedValueOnce({
+      rows: [persistedRow({ expires_at: futureExpires })],
+      rowCount: 1,
+    });
+    // SQL-authoritative terminalise: PG decided the row is past
+    // `expires_at` (NOW() > expires_at), 1 row affected.
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const dispatcher = {
+      manager: vi.fn(),
+      external: vi.fn(),
+    };
+    const draftReader = { readNodeDraft: vi.fn() };
+    const { _internal_confirmApplyAttempt } = await import(
+      "@/lib/node/apply-attempt-lifecycle"
+    );
+    await expect(
+      _internal_confirmApplyAttempt({
+        session: makeSession(),
+        attemptId: ATTEMPT_ID,
+        dispatcher,
+        draftReader,
+      }),
+    ).rejects.toThrow(/expired/);
+    // Step-1 read + SQL terminalise. No claim transaction; no
+    // dispatcher call; no draft reader call.
+    expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockWithTransaction).not.toHaveBeenCalled();
     expect(dispatcher.manager).not.toHaveBeenCalled();
     expect(dispatcher.external).not.toHaveBeenCalled();

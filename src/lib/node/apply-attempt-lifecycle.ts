@@ -275,17 +275,38 @@ export async function _internal_confirmApplyAttempt(
   // (idempotent), it does NOT auto-resume execution.
   switch (initialRow.status) {
     case "pending":
-      // Eligible to claim — fall through to step 3.
+      // Eligible to claim — fall through to step 3. (The host-clock-
+      // behind-PG case is caught by step 4's `NOW() <= expires_at`
+      // claim predicate + `resolveLostClaim`'s SQL-authoritative
+      // terminalise, so no extra check needed here.)
       break;
     case "executing":
       throw new ApplyAttemptBusyError(
         `Apply attempt ${attemptId} is currently executing.`,
       );
     case "succeeded":
-    case "failed_retryable":
-      // Idempotent — return the persisted row unchanged. Resuming a
-      // soft-failed attempt is the retry entrypoint's job.
       return initialRow;
+    case "failed_retryable": {
+      // Idempotent return path — but we must defend against host-
+      // clock-behind-PG here: step 2a's app-clock fast-path above did
+      // NOT fire (host thinks the row is in-window) and the switch
+      // would otherwise hand the caller a stale soft-failed row that
+      // PostgreSQL has already crossed `expires_at` for. Run the SQL-
+      // authoritative `terminaliseExpiredAttempt` (its WHERE pins
+      // `NOW() > expires_at`) so PG's clock decides: 0 rows → row
+      // really is in-window per SQL, return idempotently; >0 rows →
+      // PG had already expired the row, surface `StalePlanError` in
+      // the same call (umbrella same-call rule). Resuming execution
+      // from a soft-failed attempt is the retry entrypoint's job in
+      // either case.
+      if (initialRow.expiresAt.getTime() >= Date.now()) {
+        const affected = await terminaliseExpiredAttempt(undefined, initialRow);
+        if (affected > 0) {
+          throw new StalePlanError(`Apply attempt ${attemptId} has expired.`);
+        }
+      }
+      return initialRow;
+    }
     case "failed_terminal":
       throw new ApplyAttemptTerminalError(
         `Apply attempt ${attemptId} is failed_terminal.`,
@@ -352,6 +373,9 @@ export async function _internal_retryDispatch(
   // Step 2a: expiry short-circuit. Same SQL-authoritative check as
   // confirm — the app-clock comparison is only a fast-path hint; the
   // helper's `NOW() > expires_at` predicate is what actually decides.
+  // The host-clock-behind-PG case (host thinks in-window, PG has
+  // expired) is caught by step 4's `NOW() <= expires_at` claim
+  // predicate + `resolveLostClaim`'s SQL-authoritative terminalise.
   if (
     (initialRow.status === "pending" ||
       initialRow.status === "failed_retryable") &&
