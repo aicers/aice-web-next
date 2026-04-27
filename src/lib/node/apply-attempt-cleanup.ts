@@ -123,10 +123,16 @@ function rowFromDb(raw: RawAttemptRow): ApplyAttemptRow {
  * rewriting the row's deadline to the retention horizon for the
  * upcoming hard-delete sweep.
  *
- * Guarded `WHERE executing_lock IS NULL AND status = $source`. A
- * concurrent claim (or another cleanup writer) racing this UPDATE
- * sees zero affected rows; the caller treats 0 as "row was already
- * claimed / terminalised / deleted" and does NOT retry. Returns the
+ * Guarded `WHERE executing_lock IS NULL AND status = $source AND
+ * NOW() > expires_at`. The expiry predicate is evaluated by SQL
+ * against PostgreSQL's clock — not the Node app clock — so a confirm
+ * whose host clock is ahead of Postgres cannot terminate a row early,
+ * and a confirm whose host clock is behind cannot miss an already-
+ * expired row (the lifecycle module re-runs this helper from
+ * `resolveLostClaim()` to recover that case). A concurrent claim (or
+ * another cleanup writer) racing this UPDATE sees zero affected rows;
+ * the caller treats 0 as "row was already claimed / terminalised /
+ * deleted / not yet expired in SQL" and does NOT retry. Returns the
  * affected row count.
  */
 export async function terminaliseExpiredAttempt(
@@ -171,6 +177,7 @@ export async function terminaliseExpiredAttempt(
       WHERE attempt_id = $1
         AND executing_lock IS NULL
         AND status = $5
+        AND NOW() > expires_at
     `;
     params = [
       row.attemptId,
@@ -187,6 +194,7 @@ export async function terminaliseExpiredAttempt(
       WHERE attempt_id = $1
         AND executing_lock IS NULL
         AND status = $4
+        AND NOW() > expires_at
     `;
     params = [row.attemptId, targetStatus, String(retentionMs), row.status];
   }

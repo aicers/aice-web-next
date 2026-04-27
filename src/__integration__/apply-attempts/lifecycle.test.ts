@@ -959,4 +959,85 @@ describe("Cleanup — terminaliseExpiredAttempt helper", () => {
     });
     expect(affected).toBe(0);
   });
+
+  it("returns 0 when the row's expires_at is still in the future (SQL NOW() guard)", async () => {
+    // Defends against host-clock skew: a caller that thinks the row
+    // is expired (because Date.now() is ahead of Postgres NOW()) must
+    // not be able to flip the row early. The helper's WHERE pins
+    // `NOW() > expires_at` so a row whose deadline has not yet passed
+    // by the DB clock is a no-op.
+    const fp = Buffer.alloc(32);
+    const attemptId = await insertAttempt({
+      fingerprint: fp,
+      plannedDispatches: [],
+      status: "pending",
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+    });
+    const affected = await terminaliseExpiredAttempt(undefined, {
+      attemptId,
+      status: "pending",
+    });
+    expect(affected).toBe(0);
+    const row = await readRow(attemptId);
+    expect(row.status).toBe("pending");
+  });
+});
+
+describe("Lifecycle — writeStaleAndClear loser-write rejection", () => {
+  it("when recovery clears executing_lock between 5b and 5c, surfaces ApplyAttemptBusyError instead of falsely reporting stale", async () => {
+    // Simulates the race the umbrella's loser-write rule guards
+    // against: 5b detects drift, but before writeStaleAndClear runs
+    // the recovery sweep clears our executing_lock (and typically
+    // sets the row to failed_terminal). The guarded UPDATE returns
+    // 0 rows; the executor must signal lost-claim, not "stale".
+    const original = snapshot();
+    const drifted = snapshot({ name: "drifted-different" });
+    const fpOriginal = computeDraftFingerprint(original);
+    const dispatches: PlannedDispatch[] = [
+      {
+        dispatchId: randomUUID(),
+        kind: "MANAGER",
+        state: "queued",
+        attemptCount: 0,
+        lastError: null,
+      },
+    ];
+    const attemptId = await insertAttempt({
+      fingerprint: fpOriginal.bytes,
+      plannedDispatches: dispatches,
+      status: "pending",
+    });
+
+    // Reader returns drifted state AND, before the executor can run
+    // its guarded stale UPDATE, simulates a recovery sweep that
+    // clears the lock and flips the row to failed_terminal. This
+    // sequencing is deterministic because writeStaleAndClear runs
+    // synchronously after readNodeDraft resolves.
+    const racingReader: ManagerDraftReader = {
+      async readNodeDraft() {
+        await pool.query(
+          `UPDATE apply_attempts
+             SET executing_lock = NULL,
+                 claim_started_at = NULL,
+                 status = 'failed_terminal'
+           WHERE attempt_id = $1`,
+          [attemptId],
+        );
+        return drifted;
+      },
+    };
+    const recorder = makeRecorder();
+    await expect(
+      _internal_confirmApplyAttempt({
+        session: makeSession(),
+        attemptId,
+        dispatcher: makeDispatcher(recorder),
+        draftReader: racingReader,
+      }),
+    ).rejects.toThrow(/lost its claim|executing/);
+    expect(recorder.managerCalls).toBe(0);
+    // Row stayed at whatever recovery wrote — NOT 'stale'.
+    const row = await readRow(attemptId);
+    expect(row.status).toBe("failed_terminal");
+  });
 });

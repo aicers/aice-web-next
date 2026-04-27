@@ -192,6 +192,13 @@ describe("Atomic claim SQL — predicates", () => {
       rows: [persistedRow()],
       rowCount: 1,
     });
+    // resolveLostClaim now runs an SQL-authoritative
+    // `terminaliseExpiredAttempt` (NOW() > expires_at predicate) for
+    // pending / failed_retryable rows with a NULL executing_lock — so
+    // a row that the host thinks is in-window but PostgreSQL has
+    // already expired is still terminalised. With a future
+    // expires_at this UPDATE matches 0 rows.
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const { _internal_retryDispatch } = await import(
       "@/lib/node/apply-attempt-lifecycle"
@@ -240,6 +247,9 @@ describe("Atomic claim SQL — predicates", () => {
       rows: [persistedRow({ status: "pending" })],
       rowCount: 1,
     });
+    // resolveLostClaim's SQL-authoritative expiry helper — future
+    // expires_at on this row, so the helper matches 0.
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const { _internal_confirmApplyAttempt } = await import(
       "@/lib/node/apply-attempt-lifecycle"
@@ -261,5 +271,166 @@ describe("Atomic claim SQL — predicates", () => {
     const [sql] = updateCall as [string];
     expect(sql).toMatch(/AND status = 'pending'/);
     expect(sql).not.toMatch(/IN \('pending', 'failed_retryable'\)/);
+  });
+});
+
+describe("resolveLostClaim — SQL-authoritative expiry", () => {
+  it("converts a lost claim to StalePlanError when the SQL helper says the row was past expires_at, even with future expires_at on the host clock", async () => {
+    // Models the clock-skew case the umbrella requires us to handle:
+    // step-4's `NOW() <= expires_at` rejected the claim because the
+    // DB clock crossed expires_at — but the host clock has not yet,
+    // so the app-row snapshot still shows a future deadline. The
+    // SQL-authoritative `terminaliseExpiredAttempt` is what decides:
+    // when its UPDATE matches >0 rows, resolveLostClaim must surface
+    // StalePlanError (not ApplyAttemptBusyError, not an idempotent
+    // failed_retryable return).
+    mockQuery.mockResolvedValueOnce({
+      rows: [persistedRow({ status: "pending" })],
+      rowCount: 1,
+    });
+    const txQuery = vi.fn();
+    txQuery.mockResolvedValueOnce({
+      rows: [persistedRow({ status: "pending" })],
+      rowCount: 1,
+    });
+    txQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    mockWithTransaction.mockImplementationOnce(
+      async (fn: (c: unknown) => Promise<unknown>) => fn({ query: txQuery }),
+    );
+    // resolveLostClaim re-read.
+    mockQuery.mockResolvedValueOnce({
+      rows: [persistedRow({ status: "pending" })],
+      rowCount: 1,
+    });
+    // SQL-authoritative terminaliseExpiredAttempt: DB says expired → 1 row.
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    const { _internal_confirmApplyAttempt } = await import(
+      "@/lib/node/apply-attempt-lifecycle"
+    );
+    await expect(
+      _internal_confirmApplyAttempt({
+        session: makeSession(),
+        attemptId: ATTEMPT_ID,
+        dispatcher: { manager: vi.fn(), external: vi.fn() },
+        draftReader: { readNodeDraft: vi.fn() },
+      }),
+    ).rejects.toThrow(/expired/);
+  });
+});
+
+describe("writeStaleAndClear — loser-write rejection", () => {
+  it("throws ApplyAttemptBusyError when the guarded UPDATE matches 0 rows (recovery cleared the lock between 5b and 5c)", async () => {
+    // The full path: confirm → claim → manager dispatch → 5b drift
+    // detected → writeStaleAndClear UPDATE matches 0 rows because
+    // the recovery sweep cleared executing_lock first. Per the
+    // umbrella's loser-write rule the executor must abort with the
+    // lost-claim signal — it must NOT report a successful `stale`
+    // outcome over what recovery wrote.
+    const fp = Buffer.alloc(32);
+    // Top-level read: pending + matching fingerprint, future TTL.
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        persistedRow({
+          status: "pending",
+          draft_fingerprint: fp,
+          planned_dispatches: [
+            {
+              dispatchId: "dd111111-1111-1111-1111-111111111111",
+              kind: "MANAGER",
+              state: "queued",
+              attemptCount: 0,
+              lastError: null,
+            },
+          ],
+        }),
+      ],
+      rowCount: 1,
+    });
+
+    const txQueries: Array<{ rows: unknown[]; rowCount: number }> = [];
+    const txQuery = vi.fn(
+      async () => txQueries.shift() ?? { rows: [], rowCount: 0 },
+    );
+
+    let txCallIdx = 0;
+    mockWithTransaction.mockImplementation(
+      async (fn: (c: unknown) => Promise<unknown>) => {
+        txCallIdx += 1;
+        if (txCallIdx === 1) {
+          // tryClaim transaction: SELECT + UPDATE (success) + final SELECT.
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "pending",
+                draft_fingerprint: fp,
+                planned_dispatches: [
+                  {
+                    dispatchId: "dd111111-1111-1111-1111-111111111111",
+                    kind: "MANAGER",
+                    state: "queued",
+                    attemptCount: 0,
+                    lastError: null,
+                  },
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "executing",
+                draft_fingerprint: fp,
+                executing_lock: "lock-1",
+                planned_dispatches: [
+                  {
+                    dispatchId: "dd111111-1111-1111-1111-111111111111",
+                    kind: "MANAGER",
+                    state: "in_flight",
+                    attemptCount: 1,
+                    lastError: null,
+                  },
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        } else if (txCallIdx === 2) {
+          // writeStaleAndClear transaction: 0 rows (recovery cleared lock).
+          txQueries.push({ rows: [], rowCount: 0 });
+        }
+        return fn({ query: txQuery });
+      },
+    );
+
+    const drifted = {
+      id: "node-1",
+      name: "drifted",
+      nameDraft: null,
+      profile: null,
+      profileDraft: null,
+      agents: [],
+      externalServices: [],
+    };
+    const { _internal_confirmApplyAttempt } = await import(
+      "@/lib/node/apply-attempt-lifecycle"
+    );
+    const dispatcher = { manager: vi.fn(), external: vi.fn() };
+    await expect(
+      _internal_confirmApplyAttempt({
+        session: makeSession(),
+        attemptId: ATTEMPT_ID,
+        dispatcher,
+        draftReader: {
+          async readNodeDraft() {
+            return drifted;
+          },
+        },
+      }),
+    ).rejects.toThrow(/lost its claim/);
+    // Manager dispatcher never invoked — drift caught at 5b before 5d.
+    expect(dispatcher.manager).not.toHaveBeenCalled();
   });
 });

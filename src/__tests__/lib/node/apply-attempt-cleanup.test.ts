@@ -69,7 +69,7 @@ describe("terminaliseExpiredAttempt", () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
-  it("WHERE clause guards on executing_lock IS NULL and source status", async () => {
+  it("WHERE clause guards on executing_lock IS NULL, source status, and SQL NOW() > expires_at", async () => {
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
     const { terminaliseExpiredAttempt } = await import(
       "@/lib/node/apply-attempt-cleanup"
@@ -82,6 +82,23 @@ describe("terminaliseExpiredAttempt", () => {
     expect(sql).toMatch(/WHERE attempt_id = \$1/);
     expect(sql).toMatch(/AND executing_lock IS NULL/);
     expect(sql).toMatch(/AND status = \$/);
+    // The expiry decision is delegated to PostgreSQL's clock, not the
+    // host process's `Date.now()`. Without this predicate a host clock
+    // ahead of the DB could terminate a row that is still in-window.
+    expect(sql).toMatch(/AND NOW\(\) > expires_at/);
+  });
+
+  it("failed_retryable cascade SQL also guards on NOW() > expires_at", async () => {
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+    const { terminaliseExpiredAttempt } = await import(
+      "@/lib/node/apply-attempt-cleanup"
+    );
+    await terminaliseExpiredAttempt(undefined, {
+      attemptId: "att-1",
+      status: "failed_retryable",
+    });
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toMatch(/AND NOW\(\) > expires_at/);
   });
 });
 

@@ -252,15 +252,21 @@ export async function _internal_confirmApplyAttempt(
 
   // Step 2a: expiry short-circuit. Run BEFORE classification so an
   // expired pending row doesn't transit through the busy/terminal
-  // check.
+  // check. The app-clock test below is only a fast-path hint — the
+  // SQL helper's WHERE pins `NOW() > expires_at` against PostgreSQL's
+  // clock, so a row that the host thinks is expired but the DB clock
+  // does not (clock skew) will return 0 affected rows and we fall
+  // through to the normal classification + claim flow.
   if (
     (initialRow.status === "pending" ||
       initialRow.status === "failed_retryable") &&
     initialRow.expiresAt.getTime() < Date.now() &&
     initialRow.executingLock === null
   ) {
-    await terminaliseExpiredAttempt(undefined, initialRow);
-    throw new StalePlanError(`Apply attempt ${attemptId} has expired.`);
+    const affected = await terminaliseExpiredAttempt(undefined, initialRow);
+    if (affected > 0) {
+      throw new StalePlanError(`Apply attempt ${attemptId} has expired.`);
+    }
   }
 
   // Step 2: read-only status check. Recovery from `failed_retryable`
@@ -343,15 +349,19 @@ export async function _internal_retryDispatch(
     );
   }
 
-  // Step 2a: expiry short-circuit.
+  // Step 2a: expiry short-circuit. Same SQL-authoritative check as
+  // confirm — the app-clock comparison is only a fast-path hint; the
+  // helper's `NOW() > expires_at` predicate is what actually decides.
   if (
     (initialRow.status === "pending" ||
       initialRow.status === "failed_retryable") &&
     initialRow.expiresAt.getTime() < Date.now() &&
     initialRow.executingLock === null
   ) {
-    await terminaliseExpiredAttempt(undefined, initialRow);
-    throw new StalePlanError(`Apply attempt ${attemptId} has expired.`);
+    const affected = await terminaliseExpiredAttempt(undefined, initialRow);
+    if (affected > 0) {
+      throw new StalePlanError(`Apply attempt ${attemptId} has expired.`);
+    }
   }
 
   // Step 2: row-level status check.
@@ -445,7 +455,10 @@ async function tryClaim(
     const current = await readApplyAttempt(attemptId, client);
     if (!current) return null;
     if (current.executingLock !== null) return null;
-    if (current.expiresAt.getTime() < Date.now()) return null;
+    // Expiry is enforced by SQL on the UPDATE WHERE (`NOW() <=
+    // expires_at`). Comparing `expires_at` to `Date.now()` here would
+    // re-decide expiry against the host clock and could short-circuit
+    // a row that PostgreSQL still considers in-window. Let SQL decide.
     if (mode === "confirm" && current.status !== "pending") return null;
     if (mode === "retry" && current.status !== "failed_retryable") return null;
     if (mode === "retry") {
@@ -562,16 +575,24 @@ async function resolveLostClaim(attemptId: string): Promise<ApplyAttemptRow> {
   }
 
   // Step 4 0-row gap branch: executing_lock IS NULL && now() > expires_at.
-  // Same-call terminalisation per umbrella.
+  // Same-call terminalisation per umbrella. Expiry is decided by SQL
+  // here — the helper's WHERE pins `NOW() > expires_at` against
+  // PostgreSQL's clock, so an already-expired row that the host clock
+  // disagrees with is still terminalised. We always run the helper
+  // when the row is `pending`/`failed_retryable` and unclaimed and
+  // route to `StalePlanError` only when SQL agrees the row was
+  // actually past `expires_at` (rowCount > 0). On rowCount = 0 we
+  // fall through to the normal observed-status mapping below.
   if (
     current.executingLock === null &&
-    current.expiresAt.getTime() < Date.now() &&
     (current.status === "pending" || current.status === "failed_retryable")
   ) {
-    await terminaliseExpiredAttempt(undefined, current);
-    throw new StalePlanError(
-      `Apply attempt ${attemptId} expired before claim.`,
-    );
+    const affected = await terminaliseExpiredAttempt(undefined, current);
+    if (affected > 0) {
+      throw new StalePlanError(
+        `Apply attempt ${attemptId} expired before claim.`,
+      );
+    }
   }
 
   switch (current.status) {
@@ -639,7 +660,18 @@ async function runExecutor(
       dispatchSucceeded = true;
     } catch (err) {
       if (err instanceof StalePlanError) {
-        await writeStaleAndClear(row, correlationId);
+        const wrote = await writeStaleAndClear(row, correlationId);
+        if (!wrote) {
+          // The recovery sweep cleared our `executing_lock` between
+          // 5b's drift detection and the guarded UPDATE. The
+          // persisted row reflects whatever the winner wrote
+          // (typically `failed_terminal` from recovery), not `stale`.
+          // Per the umbrella's loser-write rule, surface a lost-claim
+          // signal instead of falsely reporting `StalePlanError`.
+          throw new ApplyAttemptBusyError(
+            `Executor for attempt ${row.attemptId} lost its claim.`,
+          );
+        }
         throw err;
       }
       dispatchError = err instanceof Error ? err : new Error(String(err));
@@ -723,16 +755,21 @@ async function runOneDispatch(
 
 /**
  * Guarded UPDATE: write status='stale', clear executing_lock and
- * claim_started_at, rewrite expires_at to retention horizon. Skips
- * if our correlation_id no longer holds the row.
+ * claim_started_at, rewrite expires_at to retention horizon. Returns
+ * `true` iff our correlation_id still held the row at the moment of
+ * the write. A `false` result means the recovery sweep cleared the
+ * lock between step 5b's drift detection and this UPDATE — the
+ * caller MUST treat that as a lost-claim abort (per the umbrella's
+ * "guarded UPDATE returning 0 rows aborts the executor without
+ * retry" rule), NOT report a successful `stale` outcome.
  */
 async function writeStaleAndClear(
   row: ApplyAttemptRow,
   correlationId: string,
-): Promise<void> {
+): Promise<boolean> {
   const retentionMs = getAttemptRetentionMs();
-  await withTransaction(async (client) => {
-    await client.query(
+  return await withTransaction(async (client) => {
+    const result = await client.query(
       `
       UPDATE apply_attempts
       SET status = 'stale',
@@ -744,6 +781,7 @@ async function writeStaleAndClear(
       `,
       [row.attemptId, String(retentionMs), correlationId],
     );
+    return (result.rowCount ?? 0) === 1;
   });
 }
 
