@@ -23,7 +23,6 @@ import {
   NodePermissionError,
 } from "./errors";
 import {
-  APPLY_NODE_MUTATION,
   GIGANTO_CONFIG_QUERY,
   GIGANTO_STATUS_QUERY,
   GIGANTO_UPDATE_CONFIG_MUTATION,
@@ -42,7 +41,6 @@ import {
 } from "./queries";
 import type {
   AgentDraftInput,
-  ApplyNodeResult,
   ExternalServiceInput,
   GigantoConfig,
   GigantoConfigResult,
@@ -638,67 +636,15 @@ export async function removeNodes(
   return data.removeNodes;
 }
 
-interface ApplyNodeVariables extends Record<string, unknown> {
-  id: string;
-  node: NodeInput;
-}
-
 /**
- * Apply a node's pending draft to the canonical NodeInput shape. The
- * caller is responsible for assembling `node` (typically by composing
- * the existing applied state with the new draft); Phase Node-9 owns
- * the bulk-apply orchestration that follows up an `applyNode` with
- * the per-service `updateConfig` dispatches.
- *
- * Tenant scope is verified against the **canonical** node fetched by
- * `id` (not the submitted `node.profile?.customerId`) so a forged
- * payload cannot bypass the BFF gate. We additionally enforce that
- * the proposed apply does not move the node to a customer outside
- * the caller's scope, and reject a non-System-Administrator caller
- * who proposes a customerless target state (both `node.profile` and
- * `node.profileDraft` null) — a customerless node is treated as
- * System-Administrator-only on read (see `enforceNodeScope`), so the
- * apply path must symmetrically refuse to promote the node into one.
- *
- * Combined `nodes:write + services:write` gate: a node-level apply
- * promotes both the node-metadata draft and the per-service drafts
- * in a single mutation (review-web's `applyNode` contract), so both
- * scopes are required.
+ * The previous `applyNode(session, id, node, signal?)` wrapper has
+ * been relocated to `src/lib/node/apply.ts` and renamed to
+ * `_internal_applyNodeViaManager` (#361 / Phase Node-9c). The
+ * user-facing entry point for applying a node's pending drafts is
+ * now `confirmApplyAttempt` from `apply-actions.ts`, which routes
+ * through the `ApplyAttempt` lifecycle. The renamed helper is the
+ * only sanctioned caller of the upstream `applyNode` mutation.
  */
-export async function applyNode(
-  session: AuthSession,
-  id: string,
-  node: NodeInput,
-  signal?: AbortSignal,
-): Promise<string> {
-  await requireAllPermissions(session, [NODES_WRITE, SERVICES_WRITE]);
-  const ctx = await buildDispatchContext(session);
-  await assertCanonicalNodeInScope(ctx, id, signal);
-  const profileCustomer = node.profile?.customerId;
-  const draftCustomer = node.profileDraft?.customerId;
-  if (profileCustomer === undefined && draftCustomer === undefined) {
-    if (ctx.role !== SYSTEM_ADMINISTRATOR) {
-      throw new NodePermissionError(
-        "Apply target has no customer scope; only System Administrators can apply customerless nodes.",
-      );
-    }
-  }
-  if (profileCustomer !== undefined) {
-    assertNodeInScope(ctx, Number(profileCustomer));
-  }
-  if (draftCustomer !== undefined) {
-    assertNodeInScope(ctx, Number(draftCustomer));
-  }
-  const data = await withManagerErrorMapping(
-    graphqlRequest<ApplyNodeResult, ApplyNodeVariables>(
-      APPLY_NODE_MUTATION,
-      { id, node },
-      { role: ctx.role, customerIds: ctx.customerIds },
-      signal,
-    ),
-  );
-  return data.applyNode;
-}
 
 interface NodeRebootVariables extends Record<string, unknown> {
   hostname: string;

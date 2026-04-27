@@ -8,7 +8,10 @@ import { defineConfig } from "vitest/config";
  *
  * Migrations must already be applied (the tests assume the
  * `apply_attempts` table from `migrations/auth/0023_apply_attempts.sql`
- * exists in the target DB).
+ * exists in the target DB, plus the round-1 once-only-emission slot
+ * from `0024_apply_attempts_succeeded_audit_emitted_at.sql` and the
+ * round-2 emission-recovery slot from
+ * `0025_apply_attempts_succeeded_audit_completed_at.sql`).
  */
 export default defineConfig({
   resolve: {

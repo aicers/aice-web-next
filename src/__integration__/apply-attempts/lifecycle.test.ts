@@ -157,17 +157,19 @@ async function insertAttempt(opts: {
   createdBy?: string;
 }): Promise<string> {
   const attemptId = opts.attemptId ?? randomUUID();
+  const owner = opts.createdBy ?? testActorId;
   await pool.query(
     `INSERT INTO apply_attempts (
        attempt_id, node_id, draft_fingerprint, planned_dispatches,
-       created_by, expires_at, executing_lock, claim_started_at, status
-     ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)`,
+       created_by, audit_actor, expires_at, executing_lock, claim_started_at, status
+     ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10)`,
     [
       attemptId,
       opts.nodeId ?? "node-1",
       opts.fingerprint,
       JSON.stringify(opts.plannedDispatches),
-      opts.createdBy ?? testActorId,
+      owner,
+      owner,
       opts.expiresAt ?? new Date(Date.now() + 30 * 60 * 1000),
       opts.executingLock ?? null,
       opts.claimStartedAt ?? null,

@@ -682,24 +682,12 @@ describe("combined node/service permission gate", () => {
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 
-  it("applyNode rejects a caller holding nodes:write but missing services:write", async () => {
-    mockHasPermission.mockImplementation(grantOnly("nodes:write"));
-    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
-    const { applyNode, NodePermissionError } = await import(
-      "@/lib/node/server-actions"
-    );
-    await expect(
-      applyNode(makeSession(), "n-1", {
-        name: "x",
-        nameDraft: null,
-        profile: { customerId: "5", description: "", hostname: "h" },
-        profileDraft: null,
-        agents: [],
-        externalServices: [],
-      }),
-    ).rejects.toBeInstanceOf(NodePermissionError);
-    expect(mockGraphqlRequest).not.toHaveBeenCalled();
-  });
+  // (The legacy `applyNode rejects a caller holding nodes:write but
+  // missing services:write` test was removed in #361. The combined-
+  // gate check moved to `confirmApplyAttempt` in `apply-actions.ts`
+  // and is covered by the apply-actions test suite; the renamed
+  // `_internal_applyNodeViaManager` is only reachable through that
+  // gate.)
 
   it("getNodeAuditMetadata succeeds for a caller holding nodes:delete only", async () => {
     // Round 4 invariant: the delete-scoped audit metadata helper must
@@ -873,11 +861,10 @@ describe("tenant scope boundary", () => {
       },
     });
 
-    const { applyNode, NodePermissionError } = await import(
-      "@/lib/node/server-actions"
-    );
+    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
+    const { NodePermissionError } = await import("@/lib/node/server-actions");
     await expect(
-      applyNode(makeSession(), "n-7", {
+      _internal_applyNodeViaManager(makeSession(), "n-7", {
         name: "x",
         nameDraft: null,
         // Forged: claims customer 5 to bypass payload-based scope check.
@@ -941,7 +928,11 @@ describe("tenant scope boundary", () => {
   });
 
   it("permits a tenant admin to apply a node that is in their scope", async () => {
-    mockHasPermission.mockResolvedValue(true);
+    // Tenant-scoped: must NOT carry `customers:access-all`, otherwise
+    // `assertCanonicalNodeInScope` would (correctly) skip the canonical
+    // preflight as a privileged-bypass and the test would no longer
+    // exercise the in-scope tenant-admin path.
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     // First call: canonical-node fetch.
     mockGraphqlRequest.mockResolvedValueOnce({
@@ -958,8 +949,8 @@ describe("tenant scope boundary", () => {
     // Second call: applyNode mutation result.
     mockGraphqlRequest.mockResolvedValueOnce({ applyNode: "n-5" });
 
-    const { applyNode } = await import("@/lib/node/server-actions");
-    const result = await applyNode(makeSession(), "n-5", {
+    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
+    const result = await _internal_applyNodeViaManager(makeSession(), "n-5", {
       name: "x",
       nameDraft: null,
       profile: { customerId: "5", description: "", hostname: "h" },
@@ -976,8 +967,8 @@ describe("tenant scope boundary", () => {
     mockResolveEffectiveCustomerIds.mockResolvedValue([]);
     mockGraphqlRequest.mockResolvedValueOnce({ applyNode: "n-1" });
 
-    const { applyNode } = await import("@/lib/node/server-actions");
-    const result = await applyNode(
+    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
+    const result = await _internal_applyNodeViaManager(
       makeSession({ roles: ["System Administrator"] }),
       "n-1",
       {
@@ -1073,7 +1064,10 @@ describe("tenant scope boundary", () => {
   });
 
   it("rejects a tenant admin who applies a customerless target (profile: null and profileDraft: null)", async () => {
-    mockHasPermission.mockResolvedValue(true);
+    // Tenant-scoped — explicitly NOT global. The customerless guard
+    // keys off `hasGlobalScope`, so a blanket `mockResolvedValue(true)`
+    // would (correctly) bypass it.
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     mockGraphqlRequest.mockResolvedValueOnce({
       node: {
@@ -1087,11 +1081,10 @@ describe("tenant scope boundary", () => {
       },
     });
 
-    const { applyNode, NodePermissionError } = await import(
-      "@/lib/node/server-actions"
-    );
+    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
+    const { NodePermissionError } = await import("@/lib/node/server-actions");
     await expect(
-      applyNode(makeSession(), "n-5", {
+      _internal_applyNodeViaManager(makeSession(), "n-5", {
         name: "x",
         nameDraft: null,
         profile: null,
@@ -1380,7 +1373,9 @@ describe("graceful-degradation error mapping", () => {
   });
 
   it("translates a missing-node error during applyNode's canonical preflight into NodeNotFoundError", async () => {
-    mockHasPermission.mockResolvedValue(true);
+    // Tenant-scoped so the canonical-node preflight actually runs
+    // (`hasGlobalScope` callers skip it).
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     const notFound = Object.assign(new Error("not found"), {
       response: {
@@ -1389,11 +1384,10 @@ describe("graceful-degradation error mapping", () => {
     });
     mockGraphqlRequest.mockRejectedValue(notFound);
 
-    const { applyNode, NodeNotFoundError } = await import(
-      "@/lib/node/server-actions"
-    );
+    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
+    const { NodeNotFoundError } = await import("@/lib/node/server-actions");
     await expect(
-      applyNode(makeSession(), "n-missing", {
+      _internal_applyNodeViaManager(makeSession(), "n-missing", {
         name: "x",
         nameDraft: null,
         profile: { customerId: "5", description: "", hostname: "h" },

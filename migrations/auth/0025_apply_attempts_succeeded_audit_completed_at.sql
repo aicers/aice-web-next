@@ -1,0 +1,57 @@
+-- Phase Node-9c (#361, review round 2): audit-emission recovery slot.
+--
+-- Round 1 added `succeeded_audit_emitted_at` so the wrapper test-and-
+-- sets a single audit-emission slot, but that column alone only
+-- guarantees "at most once": if the audit DB write fails after the
+-- slot was claimed, or the process dies between the slot UPDATE and
+-- the audit insert, the row is left with `emitted_at IS NOT NULL`
+-- forever and no `node.apply` audit ever lands.
+--
+-- This second column distinguishes "slot claimed, write pending" from
+-- "slot claimed, write confirmed":
+--
+--   - `succeeded_audit_emitted_at` = NULL  → slot is available;
+--                                            any caller may claim it.
+--   - `emitted_at` set, `completed_at` NULL → slot claimed by some
+--                                            caller; the audit insert
+--                                            either is in flight or
+--                                            failed mid-flight.
+--   - `emitted_at` set, `completed_at` set  → audit insert confirmed
+--                                            durable.
+--
+-- The wrapper:
+--
+--   1. Calls `claimNodeApplyAuditSlot(attemptId)` → atomic UPDATE that
+--      flips `emitted_at` NULL → NOW() under the
+--      `status='succeeded' AND emitted_at IS NULL` guard. Only the
+--      first racer wins.
+--   2. On a winning claim, runs `auditLog.record(...)`.
+--      - On success → `markNodeApplyAuditCompleted(attemptId)` sets
+--        `completed_at = NOW()`.
+--      - On a non-duplicate failure → `releaseNodeApplyAuditSlot`
+--        flips `emitted_at` back to NULL under the
+--        `completed_at IS NULL` guard, so a user-driven follow-up
+--        confirm/retry can re-claim. The cleanup sweep's recovery
+--        pass cannot recover a released slot — its candidate SELECT
+--        requires `succeeded_audit_emitted_at IS NOT NULL` — so
+--        release is reserved for the wrapper's user-facing path
+--        where the operator is right there to retry.
+--
+-- The cleanup sweep's `recoverPendingNodeApplyAudits` pass finds rows
+-- whose claim has been "in flight" for longer than
+-- `APPLY_EXECUTING_STALE_MS` (the same staleness threshold the
+-- lifecycle uses for `executing_lock` recovery), re-emits the audit
+-- using the row's persisted metadata (created_by → actor, planned
+-- dispatches → appliedServices), and marks `completed_at`. On a
+-- transient audit-DB error during recovery the sweep deliberately
+-- leaves the slot CLAIMED (no release) so the next sweep re-picks
+-- the same row through the same predicate; releasing would remove
+-- the row from every future recovery pass and permanently disable
+-- automatic recovery after a single transient failure (round-4
+-- finding). This handles the process-death edge case the round-2
+-- reviewer flagged with the round-4 durability rule.
+--
+-- Idempotent: safe to re-run.
+
+ALTER TABLE apply_attempts
+  ADD COLUMN IF NOT EXISTS succeeded_audit_completed_at TIMESTAMPTZ;
