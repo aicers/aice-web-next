@@ -135,12 +135,15 @@ to the caller as a typed `NodeNotFoundError`.
 ### CAS contract (`updateNodeDraft(id, old, new)`)
 
 Each save dispatches one `updateNodeDraft(id, old, new)` call to the
-manager. The `old` value is the applied state the caller opened
-against; the `new` value carries the proposed name, profile, agents,
-and external-service drafts. The manager performs a compare-and-swap:
-if `old` no longer matches the latest applied state on the server,
-the call is rejected as a *stale conflict* and the user's edits are
-not silently overwritten.
+manager. The `old` value is the **full node snapshot** the caller
+opened against — applied state *and* current drafts (name draft,
+profile draft, per-service `status` and `draft`); the `new` value
+carries the proposed name, profile, agents, and external-service
+drafts. The manager performs a compare-and-swap on that whole
+snapshot: if the current server snapshot no longer matches `old` —
+including a concurrent draft-only edit by another writer — the call
+is rejected as a *stale conflict* and the user's edits are not
+silently overwritten.
 
 ### `service.draft_save` audit emission
 
