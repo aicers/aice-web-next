@@ -202,7 +202,15 @@ describe("saveDraft — customer scope", () => {
     // documented NOT_FOUND surfacing), the BFF must still refuse the
     // mutation. This guards the BFF tenant-scope contract independent
     // of the upstream filter.
-    mockHasPermission.mockResolvedValue(true);
+    //
+    // Grant only the write permissions saveDraft needs — explicitly
+    // NOT `customers:access-all`, since this defense-in-depth scenario
+    // models a tenant-scoped caller (a globally-scoped caller is
+    // legitimately allowed to touch any customer, so the leak would
+    // not be a leak for them).
+    mockHasPermission.mockImplementation(
+      grantOnly("nodes:write", "services:write"),
+    );
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-7", "7"));
 
