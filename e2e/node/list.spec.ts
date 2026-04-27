@@ -42,6 +42,15 @@ const NODE_PERMS_TENANT_ADMIN = [
 
 async function navigateToList(page: Page): Promise<void> {
   await page.goto("/nodes/settings");
+  // The page is wrapped in a React Suspense boundary (its sibling
+  // `loading.tsx` defines the fallback). Streamed RSC content lives
+  // inside `<div hidden id="S:0">` until the inline `$RC(...)` bootstrap
+  // moves it into the visible tree, and during that window every
+  // `data-testid` resolves to two elements — the streaming clone trips
+  // Playwright's strict-mode locator check on the first assertion.
+  // Wait for the placeholder to be removed before asserting on rendered
+  // content so each test sees a stable single-rendered DOM.
+  await page.waitForFunction(() => !document.getElementById("S:0"));
 }
 
 test.describe("Node settings list page", () => {
