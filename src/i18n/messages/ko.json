@@ -279,6 +279,174 @@
     "detail": {
       "title": "노드 상세",
       "placeholder": "Apply All Pending 동작을 포함한 전체 노드 상세 대시보드는 Phase Node-5에서 제공될 예정입니다."
+    },
+    "serviceLabels": {
+      "sensor": "센서",
+      "data-store": "데이터 저장소",
+      "ti-container": "TI 컨테이너",
+      "semi-supervised": "준지도 학습 엔진",
+      "time-series": "시계열 생성기",
+      "unsupervised": "비지도 학습 엔진"
+    },
+    "forms": {
+      "common": {
+        "dataStoreIp": "데이터 저장소 IP",
+        "dataStorePort": "데이터 저장소 포트",
+        "dataStoreHostname": "데이터 저장소 호스트명",
+        "emptyListHint": "모두 선택하면 모두 활성화되고, 모두 해제하면 모두 비활성화됩니다.",
+        "optional": "(선택)"
+      },
+      "portChip": {
+        "standard": "(표준)",
+        "addPort": "포트 추가",
+        "removePort": "포트 {port} 제거",
+        "errors": {
+          "invalid": "포트는 0과 65535 사이의 정수여야 합니다.",
+          "duplicate": "이미 추가된 포트입니다."
+        }
+      },
+      "sensor": {
+        "legend": "센서",
+        "pciBusAddresses": "PCI 버스 주소",
+        "pciBusAddressesPlaceholder": "0000:00:1f.6, 0000:01:00.0",
+        "protocols": "프로토콜",
+        "ftpPorts": "FTP 포트",
+        "httpPorts": "HTTP 포트",
+        "httpsPorts": "HTTPS 포트",
+        "sshPorts": "SSH 포트",
+        "dumpItems": "덤프 항목",
+        "dumpHttpContentTypes": "덤프 HTTP 콘텐츠 유형",
+        "pcapMaxSize": "최대 PCAP 크기 (MB)",
+        "protocolLabels": {
+          "bootp": "BOOTP",
+          "conn": "Connection",
+          "dns": "DNS",
+          "ftp": "FTP",
+          "http": "HTTP",
+          "https": "HTTPS",
+          "kerberos": "KERBEROS",
+          "ldap": "LDAP",
+          "mqtt": "MQTT",
+          "nfs": "NFS",
+          "radius": "RADIUS",
+          "rdp": "RDP",
+          "smb": "SMB",
+          "smtp": "SMTP",
+          "ssh": "SSH"
+        },
+        "dumpItemLabels": {
+          "pcap": "패킷 저장",
+          "eml": "SMTP 파일 저장",
+          "ftp": "FTP 파일 저장",
+          "http": "HTTP 파일 저장"
+        },
+        "dumpHttpLabels": {
+          "office": "MS Office",
+          "exe": "실행 파일",
+          "pdf": "PDF",
+          "txt": "텍스트",
+          "vbs": "Visual Basic Script"
+        }
+      },
+      "semiSupervised": {
+        "legend": "반지도 학습 엔진",
+        "protocols": "프로토콜",
+        "models": "모델",
+        "sensors": "센서",
+        "noSensors": "사용 가능한 센서 노드가 없습니다.",
+        "protocolLabels": {
+          "bootp": "BOOTP",
+          "conn": "Connection",
+          "dns": "DNS",
+          "dhcp": "DHCP",
+          "rdp": "RDP",
+          "http": "HTTP",
+          "smtp": "SMTP",
+          "ntlm": "NTLM",
+          "kerberos": "KERBEROS",
+          "ssh": "SSH",
+          "dce_rpc": "DCE/RPC",
+          "ftp": "FTP",
+          "mqtt": "MQTT",
+          "ldap": "LDAP",
+          "radius": "RADIUS",
+          "tls": "TLS",
+          "smb": "SMB",
+          "nfs": "NFS"
+        }
+      },
+      "dataStore": {
+        "legend": "데이터 저장소",
+        "receiveIp": "수신 IP",
+        "receivePort": "수신 포트",
+        "sendIp": "송신 IP",
+        "sendPort": "송신 포트",
+        "webIp": "웹 IP",
+        "webPort": "웹 포트",
+        "ackTransmission": "상태 확인 주기 (수신 데이터당)",
+        "advancedOptions": "고급 옵션",
+        "retentionPeriod": "보존 기간",
+        "retentionValue": "보존 값",
+        "retentionUnit": "보존 단위",
+        "retentionUnitDays": "일",
+        "retentionUnitWeeks": "주",
+        "retentionUnitMonths": "개월",
+        "maxLevelBase": "Max Level Base (MB)",
+        "maxSubcompactions": "최대 Sub-compactions",
+        "parallelismLevel": "병렬 처리 수준",
+        "maxOpenFiles": "최대 열린 파일 수"
+      },
+      "tiContainer": {
+        "legend": "TI 컨테이너",
+        "webIp": "웹 IP",
+        "webPort": "웹 포트"
+      },
+      "timeSeries": {
+        "legend": "시계열 생성기",
+        "dataStoreIp": "데이터 저장소 IP",
+        "receivePort": "수신 포트",
+        "sendPort": "송신 포트"
+      },
+      "unsupervisedEngine": {
+        "title": "비지도 학습 엔진",
+        "description": "이 서비스는 노드의 로컬 TOML 파일에서 구성을 읽으며, aice-web-next에서는 이를 조회하거나 편집할 수 없습니다."
+      },
+      "activeModels": {
+        "DnsCovertChannel": "DNS Covert Channel",
+        "TorConnection": "Tor Connection",
+        "DomainGenerationAlgorithm": "Domain Generation Algorithm",
+        "FtpPlainText": "FTP Plain Text",
+        "LdapPlainText": "LDAP Plain Text",
+        "CryptocurrencyMiningPool": "Cryptocurrency Mining Pool",
+        "LockyRansomware": "Locky Ransomware",
+        "SuspiciousTlsTraffic": "Suspicious TLS Traffic",
+        "NonBrowser": "Non Browser",
+        "RepeatedHttpSessions": "Repeated Http Sessions",
+        "RdpBruteForce": "Rdp Brute Force",
+        "FtpBruteForce": "Ftp Brute Force",
+        "PortScan": "Port Scan",
+        "MultiHostPortScan": "Multi Host Port Scan",
+        "LdapBruteForce": "Ldap Brute Force",
+        "ExternalDdos": "External Ddos",
+        "BlocklistDns": "Blocklist Dns",
+        "BlocklistConn": "Blocklist Conn",
+        "BlocklistDceRpc": "Blocklist Dce Rpc",
+        "BlocklistFtp": "Blocklist Ftp",
+        "BlocklistHttp": "Blocklist Http",
+        "BlocklistKerberos": "Blocklist Kerberos",
+        "BlocklistLdap": "Blocklist Ldap",
+        "BlocklistMalformedDns": "Blocklist Malformed Dns",
+        "BlocklistMqtt": "Blocklist Mqtt",
+        "BlocklistNfs": "Blocklist Nfs",
+        "BlocklistNtlm": "Blocklist Ntlm",
+        "BlocklistRadius": "Blocklist Radius",
+        "BlocklistRdp": "Blocklist Rdp",
+        "BlocklistSmb": "Blocklist Smb",
+        "BlocklistSmtp": "Blocklist Smtp",
+        "BlocklistSsh": "Blocklist Ssh",
+        "BlocklistTls": "Blocklist Tls",
+        "UnusualDestinationPattern": "Unusual Destination Pattern"
+      }
     }
   },
   "customers": {

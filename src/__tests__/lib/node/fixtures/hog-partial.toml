@@ -1,0 +1,10 @@
+active_protocols = ["http", "ssh", "tls"]
+active_sensors = ["sensor-a", "sensor-b"]
+active_models = ["dns covert channel", "tor connection"]
+giganto_name = "data-store-1"
+giganto_publish_srv_addr = "10.0.0.1:38371"
+cryptocurrency_mining_pool = "/opt/clumit/share/semi_supervised/cryptocurrency.json"
+log_path = "/opt/clumit/log/semi_supervised.log"
+export_dir = "/opt/clumit/var/semi_supervised/export"
+model_dir = "/opt/clumit/var/semi_supervised/models"
+services_path = "/opt/clumit/var/semi_supervised/services"

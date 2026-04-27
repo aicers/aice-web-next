@@ -1,0 +1,17 @@
+dpdk_args = ""
+dpdk_inputs = ["0000:00:1f.6"]
+dpdk_outputs = ["0000:00:1f.6"]
+src_mac = "00:00:00:00:00:00"
+dst_mac = "00:00:00:00:00:00"
+dump_dir = "/opt/clumit/var/sensor"
+log_path = "/opt/clumit/log/sensor.log"
+dump_items = ["pcap", "http"]
+dump_http_content_types = ["pdf", "txt"]
+giganto_ingest_srv_addr = "10.0.0.1:38370"
+giganto_name = "data-store-1"
+pcap_max_size = 1000
+protocols = ["http", "ssh"]
+http_ports = [80, 8000, 8080]
+https_ports = [443]
+ssh_ports = [22]
+ftp_ports = [21]

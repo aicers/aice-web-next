@@ -1,0 +1,5 @@
+giganto_name = "data-store-1"
+giganto_ingest_srv_addr = "10.0.0.1:38370"
+giganto_publish_srv_addr = "10.0.0.1:38371"
+last_timestamp_data = "/opt/clumit/var/time_series_generator/time_data.json"
+log_path = "/opt/clumit/log/time_series_generator.log"

@@ -279,6 +279,174 @@
     "detail": {
       "title": "Node detail",
       "placeholder": "The full node detail dashboard, including the Apply All Pending action, will be delivered in Phase Node-5."
+    },
+    "serviceLabels": {
+      "sensor": "Sensor",
+      "data-store": "Data Store",
+      "ti-container": "TI Container",
+      "semi-supervised": "Semi-supervised Engine",
+      "time-series": "Time Series Generator",
+      "unsupervised": "Unsupervised Engine"
+    },
+    "forms": {
+      "common": {
+        "dataStoreIp": "Data Store IP",
+        "dataStorePort": "Data Store Port",
+        "dataStoreHostname": "Data Store Hostname",
+        "emptyListHint": "Leave all checked to enable everything; leave none checked to disable.",
+        "optional": "(optional)"
+      },
+      "portChip": {
+        "standard": "(standard)",
+        "addPort": "Add port",
+        "removePort": "Remove port {port}",
+        "errors": {
+          "invalid": "Port must be an integer between 0 and 65535.",
+          "duplicate": "Port already added."
+        }
+      },
+      "sensor": {
+        "legend": "Sensor",
+        "pciBusAddresses": "PCI Bus Addresses",
+        "pciBusAddressesPlaceholder": "0000:00:1f.6, 0000:01:00.0",
+        "protocols": "Protocols",
+        "ftpPorts": "FTP Ports",
+        "httpPorts": "HTTP Ports",
+        "httpsPorts": "HTTPS Ports",
+        "sshPorts": "SSH Ports",
+        "dumpItems": "Dump Items",
+        "dumpHttpContentTypes": "Dump HTTP Content Types",
+        "pcapMaxSize": "Max PCAP Size (MB)",
+        "protocolLabels": {
+          "bootp": "BOOTP",
+          "conn": "Connection",
+          "dns": "DNS",
+          "ftp": "FTP",
+          "http": "HTTP",
+          "https": "HTTPS",
+          "kerberos": "KERBEROS",
+          "ldap": "LDAP",
+          "mqtt": "MQTT",
+          "nfs": "NFS",
+          "radius": "RADIUS",
+          "rdp": "RDP",
+          "smb": "SMB",
+          "smtp": "SMTP",
+          "ssh": "SSH"
+        },
+        "dumpItemLabels": {
+          "pcap": "Save Packets",
+          "eml": "Save SMTP Files",
+          "ftp": "Save FTP Files",
+          "http": "Save HTTP Files"
+        },
+        "dumpHttpLabels": {
+          "office": "MS Office",
+          "exe": "Executable",
+          "pdf": "PDF",
+          "txt": "Text",
+          "vbs": "Visual Basic Script"
+        }
+      },
+      "semiSupervised": {
+        "legend": "Semi-supervised Engine",
+        "protocols": "Protocols",
+        "models": "Models",
+        "sensors": "Sensors",
+        "noSensors": "No sensor-bearing nodes are available.",
+        "protocolLabels": {
+          "bootp": "BOOTP",
+          "conn": "Connection",
+          "dns": "DNS",
+          "dhcp": "DHCP",
+          "rdp": "RDP",
+          "http": "HTTP",
+          "smtp": "SMTP",
+          "ntlm": "NTLM",
+          "kerberos": "KERBEROS",
+          "ssh": "SSH",
+          "dce_rpc": "DCE/RPC",
+          "ftp": "FTP",
+          "mqtt": "MQTT",
+          "ldap": "LDAP",
+          "radius": "RADIUS",
+          "tls": "TLS",
+          "smb": "SMB",
+          "nfs": "NFS"
+        }
+      },
+      "dataStore": {
+        "legend": "Data Store",
+        "receiveIp": "Receive IP",
+        "receivePort": "Receive Port",
+        "sendIp": "Send IP",
+        "sendPort": "Send Port",
+        "webIp": "Web IP",
+        "webPort": "Web Port",
+        "ackTransmission": "Health Check Interval (per data reception)",
+        "advancedOptions": "Advanced Options",
+        "retentionPeriod": "Retention Period",
+        "retentionValue": "Retention value",
+        "retentionUnit": "Retention unit",
+        "retentionUnitDays": "days",
+        "retentionUnitWeeks": "weeks",
+        "retentionUnitMonths": "months",
+        "maxLevelBase": "Max Level Base (MB)",
+        "maxSubcompactions": "Max Sub-compactions",
+        "parallelismLevel": "Parallelism Level",
+        "maxOpenFiles": "Max Open Files"
+      },
+      "tiContainer": {
+        "legend": "TI Container",
+        "webIp": "Web IP",
+        "webPort": "Web Port"
+      },
+      "timeSeries": {
+        "legend": "Time Series Generator",
+        "dataStoreIp": "Data Store IP",
+        "receivePort": "Receive Port",
+        "sendPort": "Send Port"
+      },
+      "unsupervisedEngine": {
+        "title": "Unsupervised Engine",
+        "description": "This service reads its configuration from a local TOML file on the node; aice-web-next cannot inspect or edit it."
+      },
+      "activeModels": {
+        "DnsCovertChannel": "DNS Covert Channel",
+        "TorConnection": "Tor Connection",
+        "DomainGenerationAlgorithm": "Domain Generation Algorithm",
+        "FtpPlainText": "FTP Plain Text",
+        "LdapPlainText": "LDAP Plain Text",
+        "CryptocurrencyMiningPool": "Cryptocurrency Mining Pool",
+        "LockyRansomware": "Locky Ransomware",
+        "SuspiciousTlsTraffic": "Suspicious TLS Traffic",
+        "NonBrowser": "Non Browser",
+        "RepeatedHttpSessions": "Repeated Http Sessions",
+        "RdpBruteForce": "Rdp Brute Force",
+        "FtpBruteForce": "Ftp Brute Force",
+        "PortScan": "Port Scan",
+        "MultiHostPortScan": "Multi Host Port Scan",
+        "LdapBruteForce": "Ldap Brute Force",
+        "ExternalDdos": "External Ddos",
+        "BlocklistDns": "Blocklist Dns",
+        "BlocklistConn": "Blocklist Conn",
+        "BlocklistDceRpc": "Blocklist Dce Rpc",
+        "BlocklistFtp": "Blocklist Ftp",
+        "BlocklistHttp": "Blocklist Http",
+        "BlocklistKerberos": "Blocklist Kerberos",
+        "BlocklistLdap": "Blocklist Ldap",
+        "BlocklistMalformedDns": "Blocklist Malformed Dns",
+        "BlocklistMqtt": "Blocklist Mqtt",
+        "BlocklistNfs": "Blocklist Nfs",
+        "BlocklistNtlm": "Blocklist Ntlm",
+        "BlocklistRadius": "Blocklist Radius",
+        "BlocklistRdp": "Blocklist Rdp",
+        "BlocklistSmb": "Blocklist Smb",
+        "BlocklistSmtp": "Blocklist Smtp",
+        "BlocklistSsh": "Blocklist Ssh",
+        "BlocklistTls": "Blocklist Tls",
+        "UnusualDestinationPattern": "Unusual Destination Pattern"
+      }
     }
   },
   "customers": {
