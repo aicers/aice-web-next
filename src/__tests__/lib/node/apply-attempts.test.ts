@@ -6,6 +6,7 @@ const mockHasPermission = vi.hoisted(() => vi.fn());
 const mockResolveEffectiveCustomerIds = vi.hoisted(() => vi.fn());
 const mockGraphqlRequest = vi.hoisted(() => vi.fn());
 const mockQuery = vi.hoisted(() => vi.fn());
+const mockGetCurrentSession = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/permissions", () => ({
   hasPermission: mockHasPermission,
@@ -13,6 +14,10 @@ vi.mock("@/lib/auth/permissions", () => ({
 
 vi.mock("@/lib/auth/customer-scope", () => ({
   resolveEffectiveCustomerIds: mockResolveEffectiveCustomerIds,
+}));
+
+vi.mock("@/lib/auth/session", () => ({
+  getCurrentSession: mockGetCurrentSession,
 }));
 
 vi.mock("@/lib/graphql/client", () => ({
@@ -23,6 +28,18 @@ vi.mock("@/lib/db/client", () => ({
   query: mockQuery,
   withTransaction: vi.fn(),
 }));
+
+/**
+ * Default `hasPermission` for a tenant-scoped caller: grants the
+ * Node-management write verbs, denies `customers:access-all`. Tests
+ * that need a globally-scoped caller (system administrator path)
+ * override with `mockHasPermission.mockResolvedValue(true)` or a
+ * permission-aware implementation.
+ */
+const tenantScopedPermissions = async (
+  _roles: string[],
+  permission: string,
+): Promise<boolean> => permission !== "customers:access-all";
 
 function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
   return {
@@ -66,6 +83,8 @@ beforeEach(() => {
   mockResolveEffectiveCustomerIds.mockReset();
   mockGraphqlRequest.mockReset();
   mockQuery.mockReset();
+  mockGetCurrentSession.mockReset();
+  mockGetCurrentSession.mockResolvedValue(makeSession());
 });
 
 describe("createApplyAttempt — happy path", () => {
@@ -97,7 +116,7 @@ describe("createApplyAttempt — happy path", () => {
     });
 
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
-    const result = await createApplyAttempt(makeSession(), {
+    const result = await createApplyAttempt({
       nodeId: "node-1",
     });
 
@@ -155,7 +174,7 @@ describe("createApplyAttempt — happy path", () => {
     });
 
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
-    const result = await createApplyAttempt(makeSession(), {
+    const result = await createApplyAttempt({
       nodeId: "node-1",
     });
 
@@ -171,9 +190,9 @@ describe("createApplyAttempt — permission boundary", () => {
       async (_roles, perm) => perm === "services:write",
     );
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
-    await expect(
-      createApplyAttempt(makeSession(), { nodeId: "node-1" }),
-    ).rejects.toThrow(/nodes:write/);
+    await expect(createApplyAttempt({ nodeId: "node-1" })).rejects.toThrow(
+      /nodes:write/,
+    );
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
     expect(mockQuery).not.toHaveBeenCalled();
   });
@@ -183,15 +202,17 @@ describe("createApplyAttempt — permission boundary", () => {
       async (_roles, perm) => perm === "nodes:write",
     );
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
-    await expect(
-      createApplyAttempt(makeSession(), { nodeId: "node-1" }),
-    ).rejects.toThrow(/services:write/);
+    await expect(createApplyAttempt({ nodeId: "node-1" })).rejects.toThrow(
+      /services:write/,
+    );
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
   it("rejects when customer scope excludes the node (BFF defense-in-depth: upstream returned the out-of-scope payload)", async () => {
-    mockHasPermission.mockResolvedValue(true);
+    // Tenant-scoped caller: grants nodes/services:write but NOT
+    // customers:access-all, so the post-read scope check is exercised.
+    mockHasPermission.mockImplementation(tenantScopedPermissions);
     mockResolveEffectiveCustomerIds.mockResolvedValue([99]);
     mockGraphqlRequest.mockResolvedValue(
       nodePayload({
@@ -199,9 +220,9 @@ describe("createApplyAttempt — permission boundary", () => {
       }),
     );
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
-    await expect(
-      createApplyAttempt(makeSession(), { nodeId: "node-1" }),
-    ).rejects.toThrow(/scope/);
+    await expect(createApplyAttempt({ nodeId: "node-1" })).rejects.toThrow(
+      /scope/,
+    );
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
@@ -214,14 +235,14 @@ describe("createApplyAttempt — permission boundary", () => {
     // exclusion class produces the same error type regardless of
     // whether review-web filtered upstream or the BFF caught it
     // post-read.
-    mockHasPermission.mockResolvedValue(true);
+    mockHasPermission.mockImplementation(tenantScopedPermissions);
     mockResolveEffectiveCustomerIds.mockResolvedValue([99]);
     mockGraphqlRequest.mockResolvedValue({ node: null });
 
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
     const { NodePermissionError } = await import("@/lib/node/errors");
     await expect(
-      createApplyAttempt(makeSession(), { nodeId: "node-1" }),
+      createApplyAttempt({ nodeId: "node-1" }),
     ).rejects.toBeInstanceOf(NodePermissionError);
     expect(mockQuery).not.toHaveBeenCalled();
   });
@@ -235,7 +256,7 @@ describe("createApplyAttempt — permission boundary", () => {
     // exist" from "filtered for scope" without privilege escalation,
     // and the umbrella requires scope exclusion to be a permission
     // boundary on this entrypoint.
-    mockHasPermission.mockResolvedValue(true);
+    mockHasPermission.mockImplementation(tenantScopedPermissions);
     mockResolveEffectiveCustomerIds.mockResolvedValue([99]);
     const upstreamError = Object.assign(new Error("node not found"), {
       response: {
@@ -252,18 +273,24 @@ describe("createApplyAttempt — permission boundary", () => {
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
     const { NodePermissionError } = await import("@/lib/node/errors");
     await expect(
-      createApplyAttempt(makeSession(), { nodeId: "node-1" }),
+      createApplyAttempt({ nodeId: "node-1" }),
     ).rejects.toBeInstanceOf(NodePermissionError);
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
-  it("preserves NodeNotFoundError for System Administrator callers when review-web returns null (no scope boundary)", async () => {
-    // System Administrator is the privileged caller — there is no
-    // tenant-scope boundary to collapse missing-vs-filtered into. A
+  it("preserves NodeNotFoundError for globally-scoped callers when review-web returns null (no scope boundary)", async () => {
+    // A globally-scoped caller (carrying `customers:access-all`) has
+    // no tenant-scope boundary to collapse missing-vs-filtered into. A
     // genuinely missing node (deleted / typoed id) should keep its
     // not-found semantics rather than being weakened into a 403-shaped
     // permission error. This mirrors `getNode`'s behaviour for the
-    // same caller.
+    // same caller. The bypass is keyed off the effective permission,
+    // not the audit-only role string — so a multi-role account where
+    // "System Administrator" is not the first role (or any custom
+    // role granting `customers:access-all`) takes the same path.
+    mockGetCurrentSession.mockResolvedValue(
+      makeSession({ roles: ["Custom Auditor", "System Administrator"] }),
+    );
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([]);
     mockGraphqlRequest.mockResolvedValue({ node: null });
@@ -271,16 +298,17 @@ describe("createApplyAttempt — permission boundary", () => {
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
     const { NodeNotFoundError } = await import("@/lib/node/errors");
     await expect(
-      createApplyAttempt(makeSession({ roles: ["System Administrator"] }), {
-        nodeId: "node-1",
-      }),
+      createApplyAttempt({ nodeId: "node-1" }),
     ).rejects.toBeInstanceOf(NodeNotFoundError);
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
-  it("preserves NodeNotFoundError for System Administrator callers when review-web throws NOT_FOUND (no scope boundary)", async () => {
+  it("preserves NodeNotFoundError for globally-scoped callers when review-web throws NOT_FOUND (no scope boundary)", async () => {
     // The other shape — upstream throws — must also retain its real
-    // not-found outcome for system administrators.
+    // not-found outcome for globally-scoped callers.
+    mockGetCurrentSession.mockResolvedValue(
+      makeSession({ roles: ["System Administrator"] }),
+    );
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([]);
     const upstreamError = Object.assign(new Error("node not found"), {
@@ -298,10 +326,27 @@ describe("createApplyAttempt — permission boundary", () => {
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
     const { NodeNotFoundError } = await import("@/lib/node/errors");
     await expect(
-      createApplyAttempt(makeSession({ roles: ["System Administrator"] }), {
-        nodeId: "node-1",
-      }),
+      createApplyAttempt({ nodeId: "node-1" }),
     ).rejects.toBeInstanceOf(NodeNotFoundError);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unauthenticated caller before any DB or GraphQL call", async () => {
+    // The action MUST resolve the session inside the server boundary
+    // — never trust a caller-supplied session blob. A client-side
+    // forgery that sends a roles array would otherwise widen the
+    // permission/scope checks. Verified by an unauthenticated session
+    // (cookie missing or invalid) producing `NodePermissionError`
+    // before any read or write.
+    mockGetCurrentSession.mockResolvedValue(null);
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { NodePermissionError } = await import("@/lib/node/errors");
+    await expect(
+      createApplyAttempt({ nodeId: "node-1" }),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    expect(mockHasPermission).not.toHaveBeenCalled();
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
     expect(mockQuery).not.toHaveBeenCalled();
   });
 });
@@ -317,7 +362,7 @@ describe("createApplyAttempt — read path uses the production GraphQL transport
     });
 
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
-    await createApplyAttempt(makeSession(), { nodeId: "node-1" });
+    await createApplyAttempt({ nodeId: "node-1" });
 
     expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
     // Same call shape as getNode: variables `{ id }`, context `{ role, customerIds }`.

@@ -29,6 +29,7 @@
 import { randomUUID } from "node:crypto";
 import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
+import { getCurrentSession } from "@/lib/auth/session";
 import { query } from "@/lib/db/client";
 import { graphqlRequest } from "@/lib/graphql/client";
 
@@ -45,7 +46,6 @@ import {
   assertNodeInScope,
   buildDispatchContext,
   type DispatchContext,
-  SYSTEM_ADMINISTRATOR,
 } from "./dispatch-context";
 import {
   withManagerErrorMapping,
@@ -61,24 +61,37 @@ const SERVICES_WRITE = "services:write";
 /**
  * Build and persist a new apply plan for the given node.
  *
+ * Signature is `({ nodeId })` because this is a client-callable
+ * `"use server"` action: the Next.js client serializes whatever
+ * argument the caller passes into the network request, so the action
+ * MUST resolve and verify the session inside the server action rather
+ * than trusting a caller-supplied `AuthSession` object — otherwise a
+ * forged `roles: ["System Administrator"]` would short-circuit every
+ * permission and scope gate below. We mirror the convention used by
+ * other client-callable actions (e.g. `runEventQuery` in
+ * `src/app/[locale]/(dashboard)/detection/actions.ts`) and call
+ * `getCurrentSession()` from the request cookie.
+ *
  * Steps:
- *   1. Permission check — `nodes:write` AND `services:write`. Both
+ *   1. Resolve current session from the request cookie. Reject
+ *      unauthenticated callers with `NodePermissionError`.
+ *   2. Permission check — `nodes:write` AND `services:write`. Both
  *      gates are required because an apply plan touches both node-
  *      metadata and per-service drafts (umbrella combined-gate rule).
- *   2. Build dispatch context — materialises tenant scope. Fails for
+ *   3. Build dispatch context — materialises tenant scope. Fails for
  *      callers with no resolvable customer scope.
- *   3. Read the canonical Node from review-web via the production
+ *   4. Read the canonical Node from review-web via the production
  *      manager GraphQL transport (#308). The read path is the same
  *      `graphqlRequest` call site as `getNode`, so the test harness
  *      seam (`vi.mock("@/lib/graphql/client")`) catches it without
  *      a swapped-in reader.
- *   4. Defense-in-depth: assert the node is in the caller's customer
+ *   5. Defense-in-depth: assert the node is in the caller's customer
  *      scope (`assertNodeInScope`).
- *   5. Build the plan: a single `MANAGER` dispatch (no frozen `new`,
+ *   6. Build the plan: a single `MANAGER` dispatch (no frozen `new`,
  *      re-derived per attempt at step 5d) followed by one external
  *      dispatch per pending external-service draft (each with its
  *      frozen `new`).
- *   6. Compute `draftFingerprint` over the involved manager-DB draft
+ *   7. Compute `draftFingerprint` over the involved manager-DB draft
  *      state in canonical key order. Persist the row with
  *      `status = 'pending'`, `executing_lock = NULL`, `claim_started_at = NULL`,
  *      `expires_at = now() + APPLY_ATTEMPT_TTL_MS`,
@@ -86,26 +99,36 @@ const SERVICES_WRITE = "services:write";
  *      `{ attemptId, plannedDispatches, draftFingerprint, expiresAt }`.
  */
 export async function createApplyAttempt(
-  session: AuthSession,
   args: { nodeId: string },
   signal?: AbortSignal,
 ): Promise<CreateApplyAttemptResult> {
-  // Step 1: combined permission gate.
+  // Step 1: resolve session inside the server action. The argument
+  // shape is `{ nodeId }` only — never trust a caller-supplied
+  // session blob, which a malicious client could forge over the
+  // server-action wire to widen its own permissions or scope.
+  const session = await getCurrentSession();
+  if (!session) {
+    throw new NodePermissionError(
+      "Authenticated session required to create an apply attempt.",
+    );
+  }
+
+  // Step 2: combined permission gate.
   await requireBothPermissions(session);
 
-  // Step 2: build dispatch context.
+  // Step 3: build dispatch context.
   const ctx = await buildDispatchContext(session);
 
-  // Step 3: read canonical node from manager (production GraphQL read).
+  // Step 4: read canonical node from manager (production GraphQL read).
   const node = await readCanonicalNode(ctx, args.nodeId, signal);
 
-  // Step 4: defense-in-depth scope check.
+  // Step 5: defense-in-depth scope check.
   enforceNodeScope(ctx, node);
 
-  // Step 5: build plan.
+  // Step 6: build plan.
   const plannedDispatches = buildPlannedDispatches(node);
 
-  // Step 6: fingerprint + persist.
+  // Step 7: fingerprint + persist.
   const snapshot = projectNodeSnapshot(node);
   const fingerprint = computeDraftFingerprint(snapshot);
   const ttlMs = getAttemptTtlMs();
@@ -184,14 +207,15 @@ async function requireBothPermissions(session: AuthSession): Promise<void> {
  * but is out of the caller's customer scope. Either way it is a
  * permission boundary on the create-attempt surface.
  *
- * For System Administrator callers, no scope boundary applies — they
- * are the privileged caller in the first place — so we preserve the
- * real not-found semantics by letting `NodeNotFoundError` and the
- * `data.node === null` shape flow through unchanged. Collapsing them
- * into `NodePermissionError` for system admins would weaken the
- * outcome of a deleted/typoed node ID into a 403-shaped error even
- * though no scope boundary was crossed, and would diverge from
- * `getNode`'s behaviour for the same caller.
+ * The "is the caller globally-scoped?" decision is keyed off
+ * `ctx.hasGlobalScope` (driven by the `customers:access-all`
+ * permission), not the audit-only `role` string. A multi-role account
+ * where `"System Administrator"` is not the first role, or any custom
+ * role granting `customers:access-all`, must take the privileged
+ * not-found path — collapsing them into `NodePermissionError` would
+ * weaken the outcome of a deleted/typoed node ID into a 403-shaped
+ * error even though no scope boundary was crossed, and would diverge
+ * from `getNode`'s behaviour for the same caller.
  *
  * The post-read `enforceNodeScope` defense-in-depth check still catches
  * the older review-web case where the upstream returns an out-of-scope
@@ -203,7 +227,7 @@ async function readCanonicalNode(
   id: string,
   signal: AbortSignal | undefined,
 ): Promise<Node> {
-  const isSystemAdmin = ctx.role === SYSTEM_ADMINISTRATOR;
+  const callerHasGlobalScope = ctx.hasGlobalScope;
   let data: NodeDetailResult;
   try {
     data = await withManagerErrorMapping(
@@ -219,7 +243,7 @@ async function readCanonicalNode(
     );
   } catch (err) {
     if (err instanceof NodeNotFoundError) {
-      if (isSystemAdmin) {
+      if (callerHasGlobalScope) {
         throw err;
       }
       throw new NodePermissionError(
@@ -229,7 +253,7 @@ async function readCanonicalNode(
     throw err;
   }
   if (!data.node) {
-    if (isSystemAdmin) {
+    if (callerHasGlobalScope) {
       throw new NodeNotFoundError(`Node ${id} was not found.`);
     }
     throw new NodePermissionError(
@@ -242,9 +266,9 @@ async function readCanonicalNode(
 function enforceNodeScope(ctx: DispatchContext, node: Node): void {
   const customerId = node.profile?.customerId ?? node.profileDraft?.customerId;
   if (customerId === undefined) {
-    if (ctx.role === SYSTEM_ADMINISTRATOR) return;
+    if (ctx.hasGlobalScope) return;
     throw new NodePermissionError(
-      "Node carries no customer scope; only System Administrators can create apply attempts for it.",
+      "Node carries no customer scope; only globally-scoped callers can create apply attempts for it.",
     );
   }
   assertNodeInScope(ctx, Number(customerId));

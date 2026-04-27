@@ -32,9 +32,14 @@ import {
  */
 
 const mockGraphqlRequest = vi.hoisted(() => vi.fn());
+const mockGetCurrentSession = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/graphql/client", () => ({
   graphqlRequest: mockGraphqlRequest,
+}));
+
+vi.mock("@/lib/auth/session", () => ({
+  getCurrentSession: mockGetCurrentSession,
 }));
 
 const DATABASE_URL =
@@ -74,6 +79,8 @@ afterEach(async () => {
 
 beforeEach(() => {
   mockGraphqlRequest.mockReset();
+  mockGetCurrentSession.mockReset();
+  mockGetCurrentSession.mockResolvedValue(makeSession());
 });
 
 function makeSession(): AuthSession {
@@ -148,7 +155,7 @@ describe("createApplyAttempt — DB-backed insert + read-back", () => {
     });
 
     const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
-    const result = await createApplyAttempt(makeSession(), {
+    const result = await createApplyAttempt({
       nodeId: "node-1",
     });
 

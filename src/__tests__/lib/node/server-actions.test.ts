@@ -56,6 +56,21 @@ function grantOnly(
   return async (_roles, permission) => granted.includes(permission);
 }
 
+/**
+ * Tenant-scoped permission stub: grants every permission EXCEPT
+ * `customers:access-all`, so the caller still has to fall through the
+ * tenant-scope check (`assertNodeInScope` / the empty-scope guard in
+ * `buildDispatchContext`). Tests that exercise the tenant-scope
+ * boundary use this in place of a blanket `mockResolvedValue(true)` —
+ * a blanket `true` would silently widen the caller into a globally-
+ * scoped principal and cause the boundary test to short-circuit past
+ * the very check it is trying to verify.
+ */
+const tenantScopedHasPermission = async (
+  _roles: string[],
+  permission: string,
+): Promise<boolean> => permission !== "customers:access-all";
+
 beforeEach(() => {
   mockHasPermission.mockReset();
   mockResolveEffectiveCustomerIds.mockReset();
@@ -568,8 +583,8 @@ describe("manager server actions — permission boundary", () => {
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 
-  it("rejects a non-System-Administrator with empty customer_ids before dispatching", async () => {
-    mockHasPermission.mockResolvedValue(true);
+  it("rejects a caller without customers:access-all and empty customer_ids before dispatching", async () => {
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([]);
     const { listNodes, NodePermissionError } = await import(
       "@/lib/node/server-actions"
@@ -744,7 +759,7 @@ describe("combined node/service permission gate", () => {
 
 describe("tenant scope boundary", () => {
   it("rejects a tenant admin scoped to customer 5 from reading a node owned by customer 7", async () => {
-    mockHasPermission.mockResolvedValue(true);
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     mockGraphqlRequest.mockResolvedValue({
       node: {
@@ -767,7 +782,7 @@ describe("tenant scope boundary", () => {
   });
 
   it("rejects a tenant admin scoped to customer 5 from inserting a node into customer 7", async () => {
-    mockHasPermission.mockResolvedValue(true);
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
 
     const { insertNode, NodePermissionError } = await import(
@@ -791,7 +806,7 @@ describe("tenant scope boundary", () => {
     // The id `n-7` belongs to customer 7. The forged payload claims to
     // be an in-scope (customer 5) update — the BFF must verify against
     // the canonical record fetched by id, not the payload.
-    mockHasPermission.mockResolvedValue(true);
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     mockGraphqlRequest.mockResolvedValue({
       node: {
@@ -828,7 +843,7 @@ describe("tenant scope boundary", () => {
   });
 
   it("rejects a tenant admin scoped to customer 5 from updating a node draft when the canonical record belongs to customer 7", async () => {
-    mockHasPermission.mockResolvedValue(true);
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     mockGraphqlRequest.mockResolvedValue({
       node: {
@@ -1046,7 +1061,7 @@ describe("removeNodes — canonical-id preflight", () => {
     // Caller holds nodes:delete and is in scope for customer 5; the id
     // `n-7` belongs to customer 7. The BFF must reject before the
     // delete mutation reaches the wire.
-    mockHasPermission.mockResolvedValue(true);
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     mockGraphqlRequest.mockResolvedValueOnce({
       node: {
@@ -1074,7 +1089,7 @@ describe("removeNodes — canonical-id preflight", () => {
   });
 
   it("rejects a tenant admin if any single id in a batch is out of scope", async () => {
-    mockHasPermission.mockResolvedValue(true);
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     // First id in scope, second id out of scope. The preflight must
     // reject the whole batch — partial deletes silently skipping
