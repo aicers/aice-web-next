@@ -69,10 +69,21 @@ async function ensureJwtSigningKey(): Promise<void> {
 }
 
 async function waitForServer(url: string, timeoutMs: number): Promise<void> {
+  // Probe an API route, not `/`. The integration suite drives `/api/...`
+  // handlers, none of which import the locale layout. The locale layout
+  // pulls in `next/font/google` and turbopack tries to fetch Google
+  // fonts during compilation; when CI's network to fonts.gstatic.com
+  // is flaky the layout compile fails and `GET /` returns 500 even
+  // though every API route is still serving fine. Probing an API route
+  // decouples readiness from font availability.
+  const probe = new URL("/api/auth/me", url).toString();
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(url, { redirect: "manual" });
+      const res = await fetch(probe, { redirect: "manual" });
+      // 401 (unauthenticated) is the expected response — anything
+      // < 500 means the route compiled and the server is processing
+      // requests.
       if (res.status < 500) return;
     } catch {
       // server not ready yet
