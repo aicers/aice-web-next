@@ -447,6 +447,107 @@ describe("ApplyPreviewModal", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  // A Rebuild click whose `createApplyAttempt` promise is still in
+  // flight when the modal is closed (and then reopened) MUST NOT
+  // overwrite the freshly-opened attempt when it eventually resolves.
+  // The open-time effect and the buildPlan callback share a generation
+  // counter so a stale resolution from a previous open cycle is dropped
+  // instead of writing into the new cycle's state.
+  it("a Rebuild from a previous open cycle does not overwrite a fresh attempt after close+reopen", async () => {
+    const reopenedAttemptId = makeAttemptId("3");
+    const reopenedResult = makePlanResult(reopenedAttemptId);
+    const stalePlan = makePlanResult(makeAttemptId("9"));
+    let resolveStaleRebuild:
+      | ((value: CreateApplyAttemptResult) => void)
+      | undefined;
+    const create = vi
+      .fn<(args: { nodeId: string }) => Promise<CreateApplyAttemptResult>>()
+      .mockRejectedValueOnce(new Error("initial failure"))
+      .mockImplementationOnce(
+        () =>
+          new Promise<CreateApplyAttemptResult>((resolve) => {
+            resolveStaleRebuild = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(reopenedResult);
+    const succeededDispatches = makeDispatches().map((d) => ({
+      ...d,
+      state: "succeeded" as const,
+    }));
+    const confirm = vi
+      .fn()
+      .mockResolvedValue(
+        makeRow(reopenedAttemptId, succeededDispatches, "succeeded"),
+      );
+    function ReopenHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <NextIntlClientProvider locale="en" messages={enMessages}>
+          <button
+            type="button"
+            data-testid="reopen"
+            onClick={() => setOpen(true)}
+          >
+            reopen
+          </button>
+          <ApplyPreviewModal
+            open={open}
+            onOpenChange={setOpen}
+            nodeId="node-1"
+            actions={{
+              createApplyAttempt: create,
+              confirmApplyAttempt: confirm,
+              retryDispatch: vi.fn(),
+            }}
+          />
+        </NextIntlClientProvider>
+      );
+    }
+    render(<ReopenHarness />);
+    // (1) Initial open: hits the error path because the first create
+    // call rejects. The error footer surfaces a Rebuild button.
+    await screen.findByTestId("apply-preview-plan-error");
+    const rebuildButton = screen.getAllByRole("button", { name: /Rebuild/ })[0];
+    // (2) Click Rebuild: starts the second create call, which we hold
+    // open by capturing its resolver above.
+    await act(async () => {
+      fireEvent.click(rebuildButton);
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    // (3) While the Rebuild promise is still pending the modal is in
+    // the loading phase; its footer renders a Cancel button. Clicking
+    // it closes the modal — exactly the race the reviewer described.
+    const cancelButton = await screen.findByRole("button", { name: /Cancel/ });
+    await act(async () => {
+      fireEvent.click(cancelButton);
+    });
+    // (4) Reopen the modal. The open-time effect fires the third
+    // create call, which resolves immediately to `reopenedResult`.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("reopen"));
+    });
+    await screen.findByText("Manager (applyNode)");
+    expect(create).toHaveBeenCalledTimes(3);
+    // (5) Now resolve the stale Rebuild promise. If the generation
+    // guard is missing, this would call `setPhase` with `stalePlan`
+    // and overwrite the reopen's attempt. With the guard, it is
+    // dropped.
+    await act(async () => {
+      resolveStaleRebuild?.(stalePlan);
+    });
+    // The reopen's plan must still be the active one. We prove the
+    // active attemptId by clicking Apply and asserting confirm is
+    // called with the reopen's attemptId, not the stale one.
+    const applyButton = await screen.findByTestId("apply-preview-apply");
+    await act(async () => {
+      fireEvent.click(applyButton);
+    });
+    expect(confirm).toHaveBeenCalledWith({ attemptId: reopenedAttemptId });
+    expect(confirm).not.toHaveBeenCalledWith({
+      attemptId: makeAttemptId("9"),
+    });
+  });
+
   // Accessibility checks — equivalent to axe-core's role / aria-modal /
   // labelled-by rules plus the Escape-during-executing assertion the
   // issue calls out. The modal wraps Radix Dialog, which provides a

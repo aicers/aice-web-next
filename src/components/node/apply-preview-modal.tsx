@@ -152,10 +152,24 @@ export function ApplyPreviewModal({
     actionsRef.current = actions;
   }, [actions]);
 
+  // Monotonic request generation shared by the open-time effect and
+  // the user-driven Rebuild path. Any in-flight `createApplyAttempt`
+  // captures the current value; on resolve it drops its result if the
+  // generation has moved on. The generation moves on whenever (a) a
+  // new fetch starts, or (b) the modal is unmounted/closed (the open
+  // effect's cleanup bumps it). This prevents a stale Rebuild promise
+  // from a previous open cycle (or from an overlapping Rebuild) from
+  // overwriting a fresher attempt after close → reopen, or after the
+  // user clicks Rebuild twice.
+  const requestIdRef = useRef(0);
+
   const buildPlan = useCallback(async () => {
+    const myId = requestIdRef.current + 1;
+    requestIdRef.current = myId;
     setPhase({ kind: "loading" });
     try {
       const result = await actionsRef.current.createApplyAttempt({ nodeId });
+      if (myId !== requestIdRef.current) return;
       setPhase({
         kind: "planned",
         attemptId: result.attemptId,
@@ -163,6 +177,7 @@ export function ApplyPreviewModal({
         expiresAt: result.expiresAt,
       });
     } catch (err) {
+      if (myId !== requestIdRef.current) return;
       setPhase({
         kind: "error",
         message: err instanceof Error ? err.message : String(err),
@@ -177,12 +192,13 @@ export function ApplyPreviewModal({
   // above for why `actions` is not a dependency.
   useEffect(() => {
     if (!open) return;
-    let cancelled = false;
+    const myId = requestIdRef.current + 1;
+    requestIdRef.current = myId;
     setPhase({ kind: "loading" });
     actionsRef.current
       .createApplyAttempt({ nodeId })
       .then((result) => {
-        if (cancelled) return;
+        if (myId !== requestIdRef.current) return;
         setPhase({
           kind: "planned",
           attemptId: result.attemptId,
@@ -191,14 +207,18 @@ export function ApplyPreviewModal({
         });
       })
       .catch((err: unknown) => {
-        if (cancelled) return;
+        if (myId !== requestIdRef.current) return;
         setPhase({
           kind: "error",
           message: err instanceof Error ? err.message : String(err),
         });
       });
     return () => {
-      cancelled = true;
+      // On close (or remount) bump the generation so any pending
+      // createApplyAttempt — whether started here or from a Rebuild
+      // click during this open cycle — drops its result instead of
+      // writing into the next open cycle's state.
+      requestIdRef.current += 1;
     };
   }, [open, nodeId]);
 
