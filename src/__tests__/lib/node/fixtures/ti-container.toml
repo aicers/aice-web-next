@@ -1,0 +1,4 @@
+graphql_srv_addr = "10.0.0.1:8444"
+translate_mitre = "/opt/clumit/share/ti_container/translation_mitre.json"
+excel_data = "/opt/clumit/share/ti_container/data.xlsx"
+origin_mitre = "/opt/clumit/share/ti_container/data.json"

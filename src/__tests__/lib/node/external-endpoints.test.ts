@@ -59,19 +59,24 @@ describe("external-endpoints", () => {
  *
  * The check greps the Node management code for any reference to
  * `graphql_srv_addr` (snake_case, the field name in node config TOML)
- * and asserts there is none. The TypeScript type
- * `graphqlSrvAddr` (camelCase) is fine because that is the GraphQL
+ * outside of comments and string literals. A property access like
+ * `node.graphql_srv_addr` would be a real signal worth catching.
+ *
+ * String-literal occurrences are tolerated because Phase Node-10's
+ * service serialisers legitimately emit `"graphql_srv_addr = ..."`
+ * as part of building a draft TOML payload — that is the inverse of
+ * a URL lookup and is the correct path. The TypeScript type
+ * `graphqlSrvAddr` (camelCase) is also fine — that is the GraphQL
  * field on `GigantoConfig` / `TivanConfig` returned by the per-service
- * `config` query — which is the correct read path; a hit on
- * snake_case would mean someone is parsing the config TOML to look up
- * a URL.
+ * `config` query, which is the correct read path.
  */
 /**
  * Strip block (`/* … *​/`) and line (`//`) comments from a TypeScript
  * source so the dispatch-URL provenance check below ignores docstring
  * mentions of the field name and only flags real code references.
- * Quoted strings are left intact — a `"graphql_srv_addr"` literal in
- * code would be a real signal worth catching.
+ * Quoted strings are also stripped so legitimate emission of the
+ * snake_case field as a TOML key by Phase Node-10's serialisers does
+ * not trip the property-access check.
  */
 function stripTsComments(source: string): string {
   let out = "";
@@ -91,13 +96,10 @@ function stripTsComments(source: string): string {
     }
     if (ch === '"' || ch === "'" || ch === "`") {
       const quote = ch;
-      out += ch;
       i++;
       while (i < source.length) {
         const c = source[i];
-        out += c;
         if (c === "\\" && i + 1 < source.length) {
-          out += source[i + 1];
           i += 2;
           continue;
         }

@@ -65,3 +65,7 @@ mkdocs.tmp.yml
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Rust draft-capture tool — only the build cache is excluded;
+# Cargo.lock is committed so fixture regeneration is reproducible.
+/tools/draft-capture/target/
