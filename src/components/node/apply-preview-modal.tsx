@@ -122,7 +122,6 @@ type Phase =
       attemptId: string;
       dispatches: DispatchView[];
       expiresAt: string;
-      retryingDispatchId: string | null;
     }
   | {
       kind: "executed";
@@ -216,12 +215,20 @@ export function ApplyPreviewModal({
   const handleApply = useCallback(async () => {
     if (phase.kind !== "planned") return;
     const { attemptId, dispatches, expiresAt } = phase;
+    // confirmApplyAttempt is one-shot — the BFF does not stream
+    // per-dispatch progress while it walks the plan. Promote every
+    // currently-`queued` row to `in_flight` for the duration of the
+    // call so the UI surfaces "running" instead of leaving every row
+    // in the pre-confirm `queued` state. The settled per-dispatch
+    // states from the resolved row replace these on completion.
+    const inFlight = dispatches.map((d) =>
+      d.state === "queued" ? { ...d, state: "in_flight" as const } : d,
+    );
     setPhase({
       kind: "executing",
       attemptId,
-      dispatches,
+      dispatches: inFlight,
       expiresAt,
-      retryingDispatchId: null,
     });
     try {
       const result = await actionsRef.current.confirmApplyAttempt({
@@ -246,12 +253,22 @@ export function ApplyPreviewModal({
     async (dispatchId: string) => {
       if (phase.kind !== "executed") return;
       const { attemptId, dispatches, expiresAt } = phase;
+      // Mark only the retried row as `in_flight` (and clear its prior
+      // `lastError` so the failed-state badge does not visually shadow
+      // the running state). Other dispatches keep their settled state —
+      // a `failed_retryable` resume rule may advance an unrelated
+      // `queued` row, but until retryDispatch resolves the row the user
+      // clicked is the only one we know is currently in flight.
+      const inFlight = dispatches.map((d) =>
+        d.dispatchId === dispatchId
+          ? { ...d, state: "in_flight" as const, lastError: null }
+          : d,
+      );
       setPhase({
         kind: "executing",
         attemptId,
-        dispatches,
+        dispatches: inFlight,
         expiresAt,
-        retryingDispatchId: dispatchId,
       });
       try {
         const result = await actionsRef.current.retryDispatch({
@@ -386,9 +403,6 @@ function ApplyPreviewBody({
               phase.status === "failed_retryable" &&
               dispatch.state === "failed_retryable"
             }
-            isRetrying={
-              isExecuting && phase.retryingDispatchId === dispatch.dispatchId
-            }
             onRetry={() => onRetry(dispatch.dispatchId)}
           />
         ))}
@@ -411,7 +425,6 @@ interface DispatchRowProps {
   dispatch: DispatchView;
   isPlanned: boolean;
   canRetry: boolean;
-  isRetrying: boolean;
   onRetry: () => void;
 }
 
@@ -419,7 +432,6 @@ function DispatchRow({
   dispatch,
   isPlanned,
   canRetry,
-  isRetrying,
   onRetry,
 }: DispatchRowProps) {
   const t = useTranslations("nodes.applyPreview");
@@ -466,7 +478,7 @@ function DispatchRow({
           aria-label={`${t("retry")} – ${kindLabel}`}
           data-testid={`apply-preview-retry-${dispatch.dispatchId}`}
         >
-          {isRetrying ? t("retrying") : t("retry")}
+          {t("retry")}
         </Button>
       )}
     </li>

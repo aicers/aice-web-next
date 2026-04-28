@@ -292,7 +292,6 @@
       "close": "Close",
       "cancel": "Cancel",
       "retry": "Retry",
-      "retrying": "Retrying…",
       "succeededHeading": "All dispatches succeeded.",
       "terminalHeading": "Apply could not complete.",
       "retryableHeading": "A dispatch failed; retry it from this row, or rebuild the preview to start over.",

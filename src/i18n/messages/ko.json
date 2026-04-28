@@ -292,7 +292,6 @@
       "close": "닫기",
       "cancel": "취소",
       "retry": "다시 시도",
-      "retrying": "다시 시도 중…",
       "succeededHeading": "모든 디스패치가 성공했습니다.",
       "terminalHeading": "적용을 완료할 수 없습니다.",
       "retryableHeading": "디스패치가 실패했습니다. 해당 행에서 다시 시도하거나 미리보기를 다시 빌드하세요.",

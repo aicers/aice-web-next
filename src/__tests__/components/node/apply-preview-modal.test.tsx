@@ -499,6 +499,131 @@ describe("ApplyPreviewModal", () => {
       expect(retryButton).toBeTruthy();
     });
 
+    it("promotes queued dispatches to in_flight while confirmApplyAttempt is pending", async () => {
+      const attemptId = makeAttemptId("c");
+      const create = vi.fn().mockResolvedValue(makePlanResult(attemptId));
+      let resolveConfirm: ((row: ApplyAttemptRow) => void) | undefined;
+      const succeededDispatches = makeDispatches().map((d) => ({
+        ...d,
+        state: "succeeded" as const,
+      }));
+      const confirm = vi.fn().mockImplementation(
+        () =>
+          new Promise<ApplyAttemptRow>((resolve) => {
+            resolveConfirm = resolve;
+          }),
+      );
+      renderModal({
+        createApplyAttempt: create,
+        confirmApplyAttempt: confirm,
+        retryDispatch: vi.fn(),
+      });
+      const applyButton = await screen.findByTestId("apply-preview-apply");
+      await act(async () => {
+        fireEvent.click(applyButton);
+      });
+      // Mid-flight: every queued row must surface as `in_flight` so the
+      // user sees per-dispatch progress while the BFF processes the
+      // plan. The pre-confirm `queued` state would be misleading.
+      await screen.findByTestId("apply-preview-applying");
+      const managerRow = screen.getByTestId("apply-preview-dispatch-d-manager");
+      const dataStoreRow = screen.getByTestId(
+        "apply-preview-dispatch-d-data-store",
+      );
+      const tivanRow = screen.getByTestId("apply-preview-dispatch-d-tivan");
+      expect(managerRow.getAttribute("data-state")).toBe("in_flight");
+      expect(dataStoreRow.getAttribute("data-state")).toBe("in_flight");
+      expect(tivanRow.getAttribute("data-state")).toBe("in_flight");
+      expect(
+        screen.getByTestId("apply-preview-dispatch-state-d-manager")
+          .textContent,
+      ).toMatch(/In flight/);
+      // Settle: the resolved row's settled states replace the synthetic
+      // in_flight projection.
+      await act(async () => {
+        resolveConfirm?.(makeRow(attemptId, succeededDispatches, "succeeded"));
+      });
+      await screen.findByText(/All dispatches succeeded/);
+      expect(
+        screen
+          .getByTestId("apply-preview-dispatch-d-manager")
+          .getAttribute("data-state"),
+      ).toBe("succeeded");
+    });
+
+    it("marks only the retried dispatch as in_flight while retryDispatch is pending", async () => {
+      const attemptId = makeAttemptId("d");
+      const create = vi.fn().mockResolvedValue(makePlanResult(attemptId));
+      const failedDispatches = makeDispatches();
+      failedDispatches[0] = { ...failedDispatches[0], state: "succeeded" };
+      failedDispatches[1] = {
+        ...failedDispatches[1],
+        state: "failed_retryable",
+        lastError: "transient",
+      };
+      // failedDispatches[2] stays queued — sequential-advance invariant.
+      const confirm = vi
+        .fn()
+        .mockResolvedValue(
+          makeRow(attemptId, failedDispatches, "failed_retryable"),
+        );
+      let resolveRetry: ((row: ApplyAttemptRow) => void) | undefined;
+      const retry = vi.fn().mockImplementation(
+        () =>
+          new Promise<ApplyAttemptRow>((resolve) => {
+            resolveRetry = resolve;
+          }),
+      );
+      renderModal({
+        createApplyAttempt: create,
+        confirmApplyAttempt: confirm,
+        retryDispatch: retry,
+      });
+      const applyButton = await screen.findByTestId("apply-preview-apply");
+      await act(async () => {
+        fireEvent.click(applyButton);
+      });
+      const retryButton = await screen.findByTestId(
+        "apply-preview-retry-d-data-store",
+      );
+      await act(async () => {
+        fireEvent.click(retryButton);
+      });
+      // Only the retried dispatch flips to in_flight; the manager row
+      // stays succeeded and the queued tivan row stays queued (the
+      // resume rule will only advance it after the retried row settles).
+      await screen.findByTestId("apply-preview-applying");
+      expect(
+        screen
+          .getByTestId("apply-preview-dispatch-d-manager")
+          .getAttribute("data-state"),
+      ).toBe("succeeded");
+      expect(
+        screen
+          .getByTestId("apply-preview-dispatch-d-data-store")
+          .getAttribute("data-state"),
+      ).toBe("in_flight");
+      expect(
+        screen
+          .getByTestId("apply-preview-dispatch-d-tivan")
+          .getAttribute("data-state"),
+      ).toBe("queued");
+      // Prior failure error is cleared on the retried row while running
+      // so the failure badge does not visually shadow the in-flight
+      // state.
+      expect(
+        screen.queryByTestId("apply-preview-dispatch-error-d-data-store"),
+      ).toBeNull();
+      const succeededAll = makeDispatches().map((d) => ({
+        ...d,
+        state: "succeeded" as const,
+      }));
+      await act(async () => {
+        resolveRetry?.(makeRow(attemptId, succeededAll, "succeeded"));
+      });
+      await screen.findByText(/All dispatches succeeded/);
+    });
+
     it("Escape during execution does not close the modal; Escape after settling does", async () => {
       const attemptId = makeAttemptId("b");
       const create = vi.fn().mockResolvedValue(makePlanResult(attemptId));

@@ -507,17 +507,25 @@ changes" message and disables Apply.
 Clicking **Apply** calls `confirmApplyAttempt({ attemptId })`. While
 the call is in flight the modal:
 
-- Disables the close (X) button and ignores Escape — the underlying
-  BFF call cannot be cancelled, so dismissing the UI mid-flight
-  would orphan the row in `executing`.
+- Ignores Escape and outside-clicks — the underlying BFF call cannot
+  be cancelled, so dismissing the UI mid-flight would orphan the row
+  in `executing`.
+- Promotes every still-`queued` row to **In flight** so the user can
+  see the BFF is currently processing the plan. The settled
+  per-dispatch states from the resolved row replace this projection
+  on completion.
 - Shows the **Applying…** label on the action button.
 
-When the call returns, each row renders one of five states:
+Each row renders one of five states. **Queued** is shown both before
+the user clicks Apply (the planned-list view) and after a settled
+`failed_retryable` attempt — under the sequential-advance rule from
+#359 a failure halts the sequence with subsequent dispatches still
+`queued`, awaiting resume on a successful retry.
 
 | State | Meaning |
 | :-- | :-- |
-| **Queued** | Not yet started (only seen mid-flight, never on a settled plan). |
-| **In flight** | Dispatch is running. |
+| **Queued** | Not yet started — shown on the planned list before Apply, and on dispatches after a `failed_retryable` row that have not been advanced by the resume rule yet. |
+| **In flight** | Dispatch is running (or, while `confirmApplyAttempt` / `retryDispatch` is pending, the modal's projection of "currently being processed by the BFF"). |
 | **Succeeded** | Dispatch returned successfully. |
 | **Failed (retryable)** | Soft failure; the row offers a **Retry** button. |
 | **Failed (terminal)** | Cap exhausted, abandoned, or stale-lock recovery cascade — no Retry. |
