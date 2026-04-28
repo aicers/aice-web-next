@@ -632,3 +632,177 @@ the manager drops after the first paint, the next polling tick
 returns 503 and the table area swaps to the panel rather than
 freezing on a stale snapshot. The panel disappears as soon as a
 subsequent poll succeeds.
+
+## Operating apply attempts (cleanup, runbook)
+
+This section is for operators who watch the `apply_attempts` table
+and the deployment-side scheduler that drives its cleanup. The
+user-facing meaning of the lifecycle states (`failed_retryable` vs
+`failed_terminal`, retry vs rebuild) is documented above under
+[Bulk apply](#bulk-apply) and [Apply preview](#apply-preview); this
+section maps the same states to operational symptoms and to the
+runbook entry that keeps the table healthy.
+
+### Row lifetimes (TTL and retention)
+
+Every row in `apply_attempts` carries an `expires_at` cap and is
+hard-deleted some time after that cap passes:
+
+- **30 minutes** (`APPLY_ATTEMPT_TTL_MS`) — non-terminal rows
+  (`pending`, `executing`, `failed_retryable`) cannot live longer
+  than this. Past `expires_at` the cleanup sweep terminalises them
+  (`pending → expired`, `failed_retryable → failed_terminal`); the
+  user must rebuild the plan from a fresh preview.
+- **7 days** (`APPLY_ATTEMPT_RETENTION_MS`) — every terminal row
+  (`succeeded`, `failed_terminal`, `stale`, `expired`) is retained
+  for this long after `expires_at` so an operator can still inspect
+  it during incident review. Past the retention deadline the
+  cleanup sweep hard-deletes the row.
+- **2.5 hours** (`APPLY_EXECUTING_STALE_MS`) — an `executing` row
+  whose `claim_started_at` ages past this is treated as a stuck
+  claim. The recovery phase of the cleanup sweep flips it to
+  `failed_terminal` and cascades the in-flight + remaining queued
+  dispatches to `failed_terminal` with the abandonment `lastError`.
+  The user sees the modal's rebuild prompt on a subsequent visit.
+
+The retention horizon does **not** apply to `succeeded` rows whose
+`succeeded_audit_completed_at IS NULL` — those rows are exempt from
+purge until the recovery sweep has emitted the corresponding
+`node.apply` audit (see the audit-emission contract documented
+above under [Bulk apply](#bulk-apply)). The exemption keeps a
+prolonged audit-DB outage from purging an audit-incomplete row
+before the recovery sweep gets a chance to finish it.
+
+### Cleanup endpoint
+
+The cleanup sweep is exposed as the route handler at
+`POST /api/internal/apply-attempts/cleanup`. The deployment
+scheduler must drive the route on a fixed cadence; the startup +
+inline pre-create sweep fallback is **not** the active path,
+because it silently skips cleanup whenever the Next.js process is
+idle — unsafe on multi-instance deployments where one instance is
+idle and another is creating attempts.
+
+The route is **internal-token guarded**. Every request must carry
+`Authorization: Bearer <APPLY_INTERNAL_CLEANUP_TOKEN>`. The shared
+secret is constant-time-compared to avoid a timing oracle. If the
+env var is unset, the route refuses every request — the deployment
+must explicitly set the token before scheduling. The handler runs
+as a system actor and never reads the manager DB or dispatches to
+external services; the recorder acceptance test asserts zero
+outbound GraphQL during a pass.
+
+A successful pass returns HTTP 200 with the per-sweep counters:
+
+![Cleanup endpoint sample request and response](../../assets/node-apply-cleanup-response-en.svg)
+
+The four counters report what each sweep did in this pass:
+
+| Counter | Meaning |
+| :-- | :-- |
+| `recovered` | Stale-lock rows flipped to `failed_terminal` after `claim_started_at` aged past `APPLY_EXECUTING_STALE_MS`. |
+| `expired` | Rows TTL-terminalised: `pending → expired` and `failed_retryable → failed_terminal`. |
+| `purged` | Terminal rows hard-deleted past their retention deadline (excluding the `succeeded` / audit-incomplete carve-out). |
+| `auditsRecovered` | `succeeded` rows whose `node.apply` audit was driven to durable by the recovery pass (covers both slot-claimed-but-not-completed and slot-never-claimed windows). |
+
+A failed pass returns HTTP 500 with `{ "error": "<message>" }`.
+HTTP 401 indicates the bearer token is missing or wrong.
+
+### Runbook entry — schedule the cleanup endpoint
+
+Add the cleanup route to the deployment scheduler in your release
+runbook. The recommended cadence is **every 5 minutes**: this is
+well below the 30-minute non-terminal TTL window, so a transient
+scheduler outage of one or two cycles cannot cause a non-terminal
+row to outlive its `expires_at` unobserved.
+
+1. Provision a strong random token for `APPLY_INTERNAL_CLEANUP_TOKEN`.
+   Treat it like any other internal secret — store it in your
+   secrets manager, rotate on a normal cadence, never check it in.
+2. Set the env var on every BFF instance and on the scheduler that
+   calls the route. The defaults for the three TTL knobs ship in
+   `.env.example` and are read at runtime, so leaving the env vars
+   unset is the supported "use the documented default" path:
+
+    ```text
+    APPLY_ATTEMPT_TTL_MS=1800000         # 30 min
+    APPLY_ATTEMPT_RETENTION_MS=604800000 # 7 days
+    APPLY_EXECUTING_STALE_MS=9000000     # 2.5 h
+    APPLY_INTERNAL_CLEANUP_TOKEN=        # set per environment
+    ```
+
+    Override only when the deployment has a documented reason
+    (long-running external dispatchers may want a longer
+    `APPLY_EXECUTING_STALE_MS`; a compliance window shorter than
+    7 days may want a smaller `APPLY_ATTEMPT_RETENTION_MS`).
+
+3. Wire a recurring caller (cron, Kubernetes `CronJob`, GitHub
+   Actions schedule, etc.) that issues:
+
+    ```bash
+    curl -fsS -X POST \
+      -H "Authorization: Bearer $APPLY_INTERNAL_CLEANUP_TOKEN" \
+      "$BFF_BASE_URL/api/internal/apply-attempts/cleanup"
+    ```
+
+4. Verify the first scheduled run by tailing the scheduler logs and
+   confirming the JSON body parses to the four counters above. A
+   healthy first run on a quiet deployment usually reports all-zero
+   counters; a non-zero `recovered` or `expired` on a first run
+   after a long outage is expected and should drop back to zero on
+   subsequent passes.
+
+### Observability and alerts
+
+Operators should monitor the cleanup pass like any other periodic
+sweep:
+
+- **HTTP failure rate.** Treat any non-200 response from the
+  cleanup route as an incident. 401 means the token rotated without
+  the scheduler being updated; 500 means the database transaction
+  threw and should surface a stack trace in BFF logs.
+- **`recovered > 0` alert.** A non-zero `recovered` count means at
+  least one `executing` row was older than 2.5 h and got abandoned.
+  This should be rare in a healthy deployment; a sustained non-zero
+  trend points at executor crashes between claim and commit, not at
+  user behaviour.
+- **`auditsRecovered > 0` alert.** A non-zero count means at least
+  one `succeeded` row needed the recovery sweep to drive its
+  `node.apply` audit to durable. Investigate audit-DB latency or
+  BFF-process lifecycle; sustained values point at audit-DB
+  pressure rather than apply-side bugs.
+- **Pass duration.** A pass is a state-machine transaction plus a
+  separate audit-recovery loop and a retention transaction; on a
+  healthy deployment the whole call returns in well under a second.
+  Long-running passes signal lock contention with the lifecycle
+  module.
+
+### Mapping lifecycle states to operational symptoms
+
+When reading incident logs against the `apply_attempts` table, the
+row-level state names map to symptoms as follows. The user-side
+meaning of each state is documented under [Bulk apply](#bulk-apply)
+and is not restated here.
+
+| Row state | Operator symptom |
+| :-- | :-- |
+| `failed_retryable` | Transient external failure within the original 30-min window. The same row will resume on the next user click; no operator action needed unless the soft-fail rate climbs. |
+| `failed_terminal` | Per-dispatch retry cap exhausted, recovery-sweep abandonment, or TTL terminalisation. The dispatch's `lastError` carries the abandonment reason. |
+| `stale` | Drift between apply-build and apply-confirm fingerprints — the canonical node changed between preview and confirm. No manager mutation and no external mutation were sent. |
+| `expired` | Row aged past `expires_at` while still `pending` (user opened the modal and walked away for >30 min). No mutations were sent. |
+
+The audit row with `action = 'node.apply'` and
+`correlation_id = <attempt-id>` is the operator-side proof that an
+apply ran end-to-end. Its absence on a row that reached `succeeded`
+is recovered automatically by the next cleanup pass via
+`auditsRecovered`; if that counter stays non-zero across many
+passes, the audit DB is the suspect.
+
+### Modal screenshots
+
+Modal-state captures (planned dispatches, `failed_retryable` with
+Retry, `failed_terminal` with Rebuild) live with the [Apply
+preview](#apply-preview) section above and are not duplicated
+here. Operators triaging a stuck row should open the same modal
+the user sees — every state visible to the user is documented
+there.
