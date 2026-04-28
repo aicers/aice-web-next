@@ -59,7 +59,12 @@ describe("POST /api/internal/apply-attempts/cleanup", () => {
 
   it("returns 200 with the per-sweep counts when the bearer token verifies", async () => {
     mockVerifyToken.mockReturnValue(true);
-    mockRunCleanup.mockResolvedValue({ recovered: 1, expired: 2, purged: 3 });
+    mockRunCleanup.mockResolvedValue({
+      recovered: 1,
+      expired: 2,
+      purged: 3,
+      auditsRecovered: 4,
+    });
     const { POST } = await import(
       "@/app/api/internal/apply-attempts/cleanup/route"
     );
@@ -69,6 +74,7 @@ describe("POST /api/internal/apply-attempts/cleanup", () => {
       recovered: 1,
       expired: 2,
       purged: 3,
+      auditsRecovered: 4,
     });
     expect(mockVerifyToken).toHaveBeenCalledWith("right-token");
     expect(mockRunCleanup).toHaveBeenCalledTimes(1);
@@ -76,7 +82,12 @@ describe("POST /api/internal/apply-attempts/cleanup", () => {
 
   it("trims whitespace around the bearer value before verifying", async () => {
     mockVerifyToken.mockReturnValue(true);
-    mockRunCleanup.mockResolvedValue({ recovered: 0, expired: 0, purged: 0 });
+    mockRunCleanup.mockResolvedValue({
+      recovered: 0,
+      expired: 0,
+      purged: 0,
+      auditsRecovered: 0,
+    });
     const { POST } = await import(
       "@/app/api/internal/apply-attempts/cleanup/route"
     );
