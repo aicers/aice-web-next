@@ -469,6 +469,107 @@ A confirmed apply that settles to `failed_retryable`,
 does not emit a `service.apply` audit per external — that audit is
 reserved for Phase Node-12 (#333).
 
+## Apply preview
+
+The **Apply preview** modal is the operator's checkpoint between
+saving drafts and confirming the apply. It opens in two phases — a
+read-only **planned dispatches** list, and a live **per-dispatch
+status** view once the operator clicks **Apply**.
+
+The figures below are wireframe stand-ins per the
+infrastructure-gated screenshot exception in `docs/AUTHORING.md`:
+the modal does not yet have a mount point on the node detail page
+(owned by Phase Node-5 / #311), and the bulk-apply mock manager /
+external endpoints used by the e2e harness are tracked separately.
+Real PNG captures of all three states will replace these wireframes
+in the same PR that lands the detail-page mount.
+
+### Planned dispatches (before execution)
+
+![Apply preview — planned dispatches (wireframe)](../../assets/node-apply-preview-planned-en.svg)
+
+Opening the modal calls `createApplyAttempt({ nodeId })`. The BFF
+returns the planned dispatch list — the **top-level dispatches the
+BFF itself orchestrates**: the upstream `applyNode` mutation followed
+by one `updateConfig` per external service whose draft is pending at
+plan-build time. Internal review-web execution stages are not
+surfaced; the modal only renders the dispatch sequence the BFF will
+issue.
+
+Each row shows the dispatch kind label
+(`Manager (applyNode)` / `Data Store (updateConfig)` /
+`TI Container (updateConfig)`). The **Apply** button is enabled when
+at least one dispatch is planned; an empty plan renders a "no pending
+changes" message and disables Apply.
+
+### Per-dispatch status (during and after execution)
+
+Clicking **Apply** calls `confirmApplyAttempt({ attemptId })`. While
+the call is in flight the modal:
+
+- Ignores Escape and outside-clicks — the underlying BFF call cannot
+  be cancelled, so dismissing the UI mid-flight would orphan the row
+  in `executing`.
+- Promotes only the **first** still-`queued` row to **In flight**,
+  mirroring the BFF's sequential-advance rule (`advanceForClaim` in
+  `apply-attempt-lifecycle.ts`). Later rows stay **Queued** until the
+  executor commits the running row and advances the next one.
+  Marking every row in flight would imply parallel execution the
+  state machine does not perform.
+- Shows the **Applying…** label on the action button.
+
+Each row renders one of five states. **Queued** is shown before the
+user clicks Apply (the planned-list view), on later dispatches while
+the leading row is still in flight, and on dispatches after a settled
+`failed_retryable` row — under the sequential-advance rule from #359
+a failure halts the sequence with subsequent dispatches still
+`queued`, awaiting resume on a successful retry.
+
+| State | Meaning |
+| :-- | :-- |
+| **Queued** | Not yet started — shown on the planned list before Apply, on later dispatches while an earlier row is in flight, and on dispatches after a `failed_retryable` row that have not been advanced by the resume rule yet. |
+| **In flight** | Dispatch is running. While `confirmApplyAttempt` is pending the modal projects this state on the first still-`queued` row; while `retryDispatch` is pending it projects this state on the retried row only. |
+| **Succeeded** | Dispatch returned successfully. |
+| **Failed (retryable)** | Soft failure; the row offers a **Retry** button. |
+| **Failed (terminal)** | Cap exhausted, abandoned, or stale-lock recovery cascade — no Retry. |
+
+State colours are: green for **Succeeded**, sky for **In flight**,
+amber for **Failed (retryable)**, red for **Failed (terminal)**, and
+muted for **Queued**.
+
+### Retry vs. Rebuild
+
+![Apply preview — failed_retryable with Retry (wireframe)](../../assets/node-apply-preview-retryable-en.svg)
+
+![Apply preview — failed_terminal with Rebuild guidance (wireframe)](../../assets/node-apply-preview-terminal-en.svg)
+
+A failed dispatch presents one of two recovery paths:
+
+- **Retry** — visible only when the dispatch is in
+  `failed_retryable`. Clicking the row's Retry button calls
+  `retryDispatch({ attemptId, dispatchId })` against the same
+  `attemptId`. The state-machine guarantees at most one
+  `failed_retryable` per attempt at any time (sequential advance with
+  stop-on-first-failure), so the modal never renders more than one
+  Retry button on the same plan. On retry success the resume rule in
+  `_internal_retryDispatch` advances the next `queued` dispatch
+  automatically — no second click is needed.
+- **Rebuild** — required when the row settles to `failed_terminal`,
+  the plan has gone `stale` / `expired`, or the modal could not even
+  fetch a plan. Rebuild discards the current `attemptId` and re-runs
+  `createApplyAttempt({ nodeId })` to obtain a fresh plan against the
+  latest manager-DB drafts. The modal explicitly tells the operator
+  to "Rebuild the preview to apply" when a row is in
+  `failed_terminal`; no Retry button is offered on terminal rows.
+
+### Accessibility
+
+The modal carries `role="dialog"` and uses Radix's focus trap so tab
+navigation stays within the dialog. Escape closes the modal only
+when not executing; per-row Retry buttons carry an accessible name
+naming the dispatch kind so screen readers can disambiguate
+("Retry – Data Store (updateConfig)").
+
 ## Status tab
 
 ![Status · Nodes status](../../assets/node-status-en.png)

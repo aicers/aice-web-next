@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 480" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Noto Sans CJK KR', 'Apple SD Gothic Neo', sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">적용 미리보기 모달 — 예정된 디스패치 (와이어프레임)</title>
+  <desc id="desc">운영자가 적용 미리보기 모달을 처음 열었을 때의 와이어프레임. 헤더는 "적용 미리보기" 와 BFF 디스패치 시퀀스만 표시된다는 부제. 본문에는 매니저 (applyNode), 데이터 저장소 (updateConfig), TI 컨테이너 (updateConfig) 세 개의 예정된 디스패치가 순서대로 나열된다. 푸터는 취소와 적용 버튼이며, 예정된 디스패치가 하나 이상 있어 적용은 활성 상태.</desc>
+
+  <style>
+    .scrim { fill: #18181b; fill-opacity: 0.55; }
+    .modal { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 10; ry: 10; }
+    .divider { stroke: #e5e7eb; stroke-width: 1; }
+    .row-list { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .btn { fill: #ffffff; stroke: #3f3f46; stroke-width: 1; rx: 6; ry: 6; }
+    .btn-primary { fill: #18181b; stroke: #18181b; stroke-width: 1; rx: 6; ry: 6; }
+    .h1 { font-size: 18px; font-weight: 600; fill: #18181b; }
+    .sub { font-size: 12px; fill: #52525b; }
+    .heading { font-size: 13px; font-weight: 600; fill: #18181b; }
+    .row-label { font-size: 13px; font-weight: 500; fill: #18181b; }
+    .btn-text { font-size: 13px; fill: #18181b; }
+    .btn-primary-text { font-size: 13px; fill: #ffffff; font-weight: 500; }
+    .muted { font-size: 11px; fill: #71717a; font-style: italic; }
+  </style>
+
+  <rect class="scrim" x="0" y="0" width="880" height="480" />
+  <rect class="modal" x="120" y="40" width="640" height="400" />
+
+  <g transform="translate(150, 76)">
+    <text class="h1">적용 미리보기</text>
+    <text class="sub" y="22">확정 전에 BFF가 실행할 디스패치를 검토하세요.</text>
+    <text class="sub" y="40">디스패치 시퀀스만 표시되며, review-web 내부 단계는 표시되지 않습니다.</text>
+  </g>
+  <line class="divider" x1="150" y1="140" x2="730" y2="140" />
+
+  <g transform="translate(150, 168)">
+    <text class="heading">예정된 디스패치</text>
+  </g>
+
+  <rect class="row-list" x="150" y="184" width="580" height="156" />
+  <g transform="translate(166, 200)">
+    <text class="row-label">매니저 (applyNode)</text>
+  </g>
+  <line class="divider" x1="150" y1="232" x2="730" y2="232" />
+  <g transform="translate(166, 248)">
+    <text class="row-label">데이터 저장소 (updateConfig)</text>
+  </g>
+  <line class="divider" x1="150" y1="280" x2="730" y2="280" />
+  <g transform="translate(166, 296)">
+    <text class="row-label">TI 컨테이너 (updateConfig)</text>
+  </g>
+
+  <line class="divider" x1="150" y1="372" x2="730" y2="372" />
+  <g transform="translate(540, 388)">
+    <rect class="btn" x="0" y="0" width="80" height="34" />
+    <text class="btn-text" x="40" y="22" text-anchor="middle">취소</text>
+    <rect class="btn-primary" x="92" y="0" width="80" height="34" />
+    <text class="btn-primary-text" x="132" y="22" text-anchor="middle">적용</text>
+  </g>
+
+  <text class="muted" x="160" y="438">와이어프레임 대체본 — 매뉴얼의 스크린샷 부족 안내 참조.</text>
+</svg>

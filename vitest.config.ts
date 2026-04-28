@@ -32,7 +32,10 @@ export default defineConfig({
         test: {
           name: "dom",
           environment: "jsdom",
-          include: ["src/__tests__/components/node/forms/**/*.test.{ts,tsx}"],
+          include: [
+            "src/__tests__/components/node/forms/**/*.test.{ts,tsx}",
+            "src/__tests__/components/node/apply-preview-modal.test.tsx",
+          ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
       },
@@ -49,6 +52,7 @@ export default defineConfig({
             ".worktrees",
             "src/__integration__",
             "src/__tests__/components/node/forms/**/*.test.{ts,tsx}",
+            "src/__tests__/components/node/apply-preview-modal.test.tsx",
           ],
         },
       },
