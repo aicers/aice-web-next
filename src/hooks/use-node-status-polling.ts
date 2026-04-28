@@ -649,6 +649,36 @@ export function __pushNodeStatusSample(
   applySample({ capturedAt, pollIntervalMs, edges });
 }
 
+/**
+ * Seed the polling buffer from the SSR snapshot on first table mount.
+ *
+ * The polling driver intentionally does NOT issue a client-side
+ * `getNodeStatusList()` on bootstrap (the SSR pages already paid that
+ * cost) — the first client tick lands at the first `pollIntervalMs`
+ * boundary. Without this seed, per-row signals derived from the rolling
+ * buffer (the per-service `on / off / idle` cells, the detail-page
+ * service cards) would render as `absent` placeholders for up to a full
+ * polling interval after the first paint, even though the SSR payload
+ * already carried the agents / external services for every row.
+ *
+ * The seed is a no-op when the buffer already holds a sample at or
+ * after `capturedAt`, so a remount after a real poll has landed cannot
+ * shadow the fresher data with the stale SSR snapshot.
+ */
+export function seedNodeStatusFromSnapshot(
+  capturedAt: Date,
+  edges: NodeStatus[],
+  pollIntervalMs: number = DEFAULT_POLL_MS,
+): void {
+  if (
+    snapshot.capturedAt !== null &&
+    snapshot.capturedAt.getTime() >= capturedAt.getTime()
+  ) {
+    return;
+  }
+  applySample({ capturedAt, pollIntervalMs, edges });
+}
+
 export function __getNodeStatusSnapshot(): {
   isPolling: boolean;
   isStale: boolean;

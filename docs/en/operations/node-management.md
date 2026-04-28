@@ -586,9 +586,10 @@ client-side polling loop and a node-level control menu.
 - **Manager** — derived directly from `NodeStatus.manager` returned by
   `nodeStatusList`. Reads **Running** when `true`, **Not running**
   when `false`.
-- Six per-service placeholder columns (Sensor, Data Store, TI Container,
-  Unsupervised, Semi-supervised, Time Series) — Phase Node-7 fills
-  these with on / off / idle status.
+- Six per-service columns (Sensor, Data Store, TI Container,
+  Unsupervised, Semi-supervised, Time Series) — each cell renders an
+  **on / off / idle** badge derived from the service's signal. See
+  [Status legend](#status-legend) below for the per-type rules.
 - A row-level kebab opens the **Restart** / **Shutdown** control menu.
 
 ### Polling
@@ -617,12 +618,66 @@ forged hostname cannot bypass tenant scope.
 The Status tab does **not** carry an Apply button. Clicking anywhere
 on the row outside the kebab menu navigates to the node's detail
 route at `/nodes/[id]`; the node name doubles as a keyboard-focusable
-link to the same target. In this release the detail route only
-renders a placeholder card — the per-node dashboard with pending-edit
-review and the **Apply All Pending** action is delivered by Phase
-Node-5 (a follow-up). v1's single apply entry point will live on
-that detail dashboard once Phase Node-5 lands; until then no apply
-affordance is reachable from the Status tab.
+link to the same target. The detail route surfaces the per-node
+service-status cards described in [Status legend](#status-legend) —
+one card per service (Sensor, Unsupervised, Semi-supervised, Time
+Series, Data Store, TI Container) with the on / off / idle badge,
+diagnostic tooltip, and a per-card "Last checked Xs ago" footer that
+ticks with the relevant signal (the per-node poll for agent cards,
+each external probe for its own card). The per-node dashboard with
+pending-edit review and the **Apply All Pending** action is delivered
+by Phase Node-5 (a follow-up); v1's single apply entry point will
+live on that detail dashboard once Phase Node-5 lands. Until then no
+apply affordance is reachable from the Status tab.
+
+### Status legend
+
+Each per-service cell renders one of three states. The state vocabulary
+is shared across the Status tab and the per-node detail-page service
+cards.
+
+| State | Visual | Meaning |
+|-------|--------|---------|
+| **On** | green dot | Service is enabled and reporting healthy. |
+| **Off** | grey dot | Service is disabled, unreachable, or the node is dead. |
+| **Idle** | amber dot | Agent has reported a transient failure (currently `RELOAD_FAILED`). External services do not use this state in v1. |
+
+Per-type signal rules:
+
+- **Agent services** (Sensor, Unsupervised, Semi-supervised, Time
+  Series) read directly from `NodeStatus.agents[].storedStatus`:
+
+    | `storedStatus` | Cell |
+    |----------------|------|
+    | `ENABLED` | On |
+    | `DISABLED` | Off |
+    | `UNKNOWN` | Off |
+    | `RELOAD_FAILED` | Idle |
+
+- **External services** (Data Store, TI Container) dispatch the
+  service's own `status` GraphQL query each polling cycle. A
+  successful response renders **On**; any error — connection refused,
+  HTTP 500, GraphQL `errors[]`, schema mismatch — renders **Off**.
+  External services have no Idle state in v1. Probes are staggered so
+  Giganto and Tivan are not hit on the same tick; the per-service
+  cadence defaults to `NEXT_PUBLIC_NODE_STATUS_POLL_MS`.
+
+- **Dead-node override** — when the node's `ping` is `null` (the node
+  has not answered the manager's most recent ping), every per-service
+  cell collapses to **Off** regardless of the raw signal. The Manager
+  badge has its own ping signal and is unaffected.
+
+- **Tooltip** — hover over a cell to see the raw underlying signal
+  ("Agent reports Disabled", "External service unreachable", "Node has
+  not responded; service status forced off") for diagnosis without
+  opening the detail page.
+
+The Manager badge in the same row is owned separately by Phase Node-6
+and is *not* part of the per-service vocabulary above. It is derived
+directly from `NodeStatus.manager: Boolean!` returned by
+`nodeStatusList`.
+
+![Status row with the Sensor agent in Idle state](../../assets/node-status-legend-en.png)
 
 ### Manager offline
 

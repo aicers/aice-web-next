@@ -34,26 +34,50 @@ import {
 } from "@/components/ui/table";
 import {
   type NodeStatusBuffer,
+  seedNodeStatusFromSnapshot,
   useNodeStatusPolling,
 } from "@/hooks/use-node-status-polling";
+import { useServiceStatus } from "@/hooks/use-service-status";
 import { Link, useRouter } from "@/i18n/navigation";
+import type { NodeStatus } from "@/lib/node/types";
 import { cn } from "@/lib/utils";
 
 import { SERVICE_COLUMN_ORDER } from "./node-list-types";
 import type { NodeStatusRowSnapshot } from "./node-status-row";
+import { ServiceStatusBadge } from "./service-status-badge";
 
 interface NodeStatusTableProps {
   initialRows: NodeStatusRowSnapshot[];
+  /**
+   * Full SSR `nodeStatusList` payload. Carries the per-node agents and
+   * external services that drive the per-service `on / off / idle`
+   * cells. Seeded into the polling buffer on first mount so the cells
+   * render immediately from the SSR snapshot rather than waiting for
+   * the first client poll to land (which can be up to one full
+   * `pollIntervalMs` after the first paint).
+   */
+  initialEdges: NodeStatus[];
   /** Initial capture timestamp (server-rendered ISO string). */
   initialCapturedAt: string;
   /** Whether the caller can issue restart / shutdown actions. */
   canControl: boolean;
+  /**
+   * Whether the caller holds `services:read`. Threaded through so the
+   * per-row `useServiceStatus` hook can run its defence-in-depth check
+   * with the same permission tuple as the page-level gate. The
+   * `(gate)/layout.tsx` enforces this layout-wide; this prop exists so
+   * the table cannot accidentally render service cells for a future
+   * caller that bypasses the layout.
+   */
+  canReadServices: boolean;
 }
 
 export function NodeStatusTable({
   initialRows,
+  initialEdges,
   initialCapturedAt,
   canControl,
+  canReadServices,
 }: NodeStatusTableProps) {
   const t = useTranslations("nodes.status");
 
@@ -61,6 +85,47 @@ export function NodeStatusTable({
   // by `NodeStatusPollingDriver` mounted in `nodes/(gate)/layout.tsx`
   // so the rolling buffer survives `/nodes` ↔ `/nodes/[id]` navigation.
   const polling = useNodeStatusPolling({ enabled: false });
+
+  // Seed the polling buffer from the SSR payload on first mount. The
+  // driver intentionally defers the first client tick until the first
+  // `pollIntervalMs` boundary; without this seed the per-service cells
+  // would still benefit from the SSR fallback below on first paint,
+  // but a subsequent re-render before the first poll lands would lose
+  // the `lastSampleAt` history `segmentBoundary` calculations rely on.
+  useEffect(() => {
+    if (initialEdges.length === 0) return;
+    seedNodeStatusFromSnapshot(new Date(initialCapturedAt), initialEdges);
+  }, [initialCapturedAt, initialEdges]);
+
+  // Per-row SSR `NodeStatus` lookup. Threaded into each row's
+  // `useServiceStatus(..., { initialNodeStatus })` so the truthful
+  // per-service state lands in the server-rendered HTML itself —
+  // matching the cold-load fix the detail page already carries. The
+  // seed effect above only runs after hydration, so without this map
+  // the SSR snapshot and pre-hydration client render still paint
+  // `absent` em-dashes in the configured service columns until the
+  // seed lands. Mirrors the lookup `NodeDetailServiceCards` performs
+  // for its single-node case.
+  const initialEdgeById = useMemo(() => {
+    const map = new Map<string, NodeStatus>();
+    for (const edge of initialEdges) map.set(edge.id, edge);
+    return map;
+  }, [initialEdges]);
+  const initialCapturedAtDate = useMemo(() => {
+    const parsed = new Date(initialCapturedAt);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [initialCapturedAt]);
+
+  // The external Giganto / Tivan probe loop is driven by
+  // `ExternalServiceProbeDriver` mounted in
+  // `nodes/(gate)/(probe)/layout.tsx`, scoped to the routes that
+  // actually render service-status UI (Status tab + detail page) so
+  // probes do not fire on `/nodes/settings`. Both pages share the
+  // `(probe)` layout, so intra-segment navigation (`/nodes` ↔
+  // `/nodes/[id]`) preserves the driver mount and the snapshot is
+  // never reset to `unknown` between pages. Per-row
+  // `useServiceStatus` consumers pass `enabled: false`, so they read
+  // from the shared store without spinning up parallel loops.
 
   // Row topology is driven by the latest polled snapshot, not frozen
   // to the server-rendered list. `getNodeStatusList` is a point-in-
@@ -232,6 +297,9 @@ export function NodeStatusTable({
                 row={row}
                 buffer={polling.byNodeId.get(row.id) ?? null}
                 canControl={canControl}
+                canReadServices={canReadServices}
+                initialNodeStatus={initialEdgeById.get(row.id) ?? null}
+                initialCapturedAt={initialCapturedAtDate}
                 onRestart={() => setRestartTarget(row)}
                 onShutdown={() => setShutdownTarget(row)}
               />
@@ -322,6 +390,9 @@ interface NodeStatusRowProps {
   row: NodeStatusRowSnapshot;
   buffer: NodeStatusBuffer | null;
   canControl: boolean;
+  canReadServices: boolean;
+  initialNodeStatus: NodeStatus | null;
+  initialCapturedAt: Date | null;
   onRestart: () => void;
   onShutdown: () => void;
 }
@@ -329,6 +400,9 @@ interface NodeStatusRowProps {
 function NodeStatusRow({
   row,
   canControl,
+  canReadServices,
+  initialNodeStatus,
+  initialCapturedAt,
   onRestart,
   onShutdown,
 }: NodeStatusRowProps) {
@@ -402,17 +476,12 @@ function NodeStatusRow({
       <TableCell className="text-center">
         <ManagerBadge manager={row.manager} />
       </TableCell>
-      {SERVICE_COLUMN_ORDER.map((column) => (
-        <TableCell key={column} className="text-center">
-          <span
-            className="text-muted-foreground text-xs"
-            data-testid={`node-status-service-${column}`}
-            title={t("servicePlaceholder")}
-          >
-            —
-          </span>
-        </TableCell>
-      ))}
+      <ServiceCells
+        row={row}
+        canReadServices={canReadServices}
+        initialNodeStatus={initialNodeStatus}
+        initialCapturedAt={initialCapturedAt}
+      />
       <TableCell>
         {canControl && (
           <DropdownMenu>
@@ -552,6 +621,83 @@ function ManagerBadge({ manager }: { manager: boolean | null }) {
     >
       {t("managerNotRunning")}
     </Badge>
+  );
+}
+
+interface ServiceCellsProps {
+  row: NodeStatusRowSnapshot;
+  canReadServices: boolean;
+  initialNodeStatus: NodeStatus | null;
+  initialCapturedAt: Date | null;
+}
+
+/**
+ * Render the six per-service cells for one row. Each cell pulls its
+ * status from `useServiceStatus(row.id)`, which composes the polling
+ * buffer (agents) with the global external probes (Giganto / Tivan).
+ *
+ * `initialNodeStatus` / `initialCapturedAt` thread the matching SSR
+ * `nodeStatusList` edge into the hook so the truthful per-service
+ * state lands in the server-rendered HTML itself, instead of waiting
+ * for hydration to run the seed effect that copies the SSR payload
+ * into the polling buffer. Without this, a cold load of `/nodes`
+ * server-renders every configured service column as the `absent`
+ * em-dash placeholder and only flips to the real badge after
+ * hydration — same first-paint truthfulness gap the detail page
+ * already addresses.
+ *
+ * Defence-in-depth: the hook throws `NodePermissionError` when
+ * `canReadServices` is false; the page-level gate already enforces
+ * `services:read`, so in production this branch never trips.
+ */
+function ServiceCells({
+  row,
+  canReadServices,
+  initialNodeStatus,
+  initialCapturedAt,
+}: ServiceCellsProps) {
+  const t = useTranslations("nodes.status");
+  const result = useServiceStatus(row.id, {
+    canRead: canReadServices,
+    enabled: false,
+    initialNodeStatus,
+    initialCapturedAt,
+  });
+
+  return (
+    <>
+      {SERVICE_COLUMN_ORDER.map((column) => {
+        const entry = result.entries[column];
+        // `absent` covers two cases: the polling buffer has no live
+        // snapshot for this node yet (pre-first-poll), or the node's
+        // live snapshot does not configure this service at all. Both
+        // render as the em-dash placeholder — the cell only carries a
+        // real on / off / idle badge when the node actually exposes a
+        // matching agent or external service.
+        if (entry.reason.kind === "absent") {
+          return (
+            <TableCell key={column} className="text-center">
+              <span
+                className="text-muted-foreground text-xs"
+                data-testid={`node-status-service-${column}`}
+                title={t("servicePlaceholder")}
+              >
+                —
+              </span>
+            </TableCell>
+          );
+        }
+        return (
+          <TableCell key={column} className="text-center">
+            <ServiceStatusBadge
+              status={entry.status}
+              reason={entry.reason}
+              testId={`node-status-service-${column}`}
+            />
+          </TableCell>
+        );
+      })}
+    </>
   );
 }
 

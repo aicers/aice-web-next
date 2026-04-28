@@ -164,4 +164,77 @@ test.describe
         animations: "disabled",
       });
     });
+
+    // Status legend captures: a single Status row whose Sensor column is
+    // in `idle` state, used by the manual's `### Status legend`
+    // subsection. Drives the mock through the `serviceVariants`
+    // fixture (the only fixture that includes a `RELOAD_FAILED`
+    // agent), then crops the screenshot to just the agent-idle row so
+    // the asset shows the Idle badge in context without the rest of
+    // the table chrome.
+    test("EN node status legend (idle row)", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.clear();
+      await stubSession.registerStub({
+        operation: "nodeStatusList",
+        response: {
+          kind: "fixture",
+          fixture: "node/nodeStatusList.serviceVariants.json",
+        },
+      });
+      await signInAndWait(page, workerUsername, workerPassword);
+      await page.goto("/nodes");
+      await page.waitForFunction(() => !document.getElementById("S:0"));
+
+      await expect(page.getByTestId("node-status-table")).toBeVisible({
+        timeout: 10_000,
+      });
+      const idleRow = page
+        .getByTestId("node-status-row")
+        .filter({ hasText: "agent-idle.lan" });
+      await expect(idleRow).toBeVisible();
+      await expect(
+        idleRow.getByTestId("node-status-service-sensor"),
+      ).toHaveAttribute("data-status", "idle");
+      await idleRow.screenshot({
+        path: path.join(ASSETS_DIR, "node-status-legend-en.png"),
+        animations: "disabled",
+      });
+    });
+
+    test("KO node status legend (idle row)", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.clear();
+      await stubSession.registerStub({
+        operation: "nodeStatusList",
+        response: {
+          kind: "fixture",
+          fixture: "node/nodeStatusList.serviceVariants.json",
+        },
+      });
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await page.goto("/ko/nodes");
+      await page.waitForFunction(() => !document.getElementById("S:0"));
+
+      await expect(page.getByTestId("node-status-table")).toBeVisible({
+        timeout: 10_000,
+      });
+      const idleRow = page
+        .getByTestId("node-status-row")
+        .filter({ hasText: "agent-idle.lan" });
+      await expect(idleRow).toBeVisible();
+      await expect(
+        idleRow.getByTestId("node-status-service-sensor"),
+      ).toHaveAttribute("data-status", "idle");
+      await idleRow.screenshot({
+        path: path.join(ASSETS_DIR, "node-status-legend-ko.png"),
+        animations: "disabled",
+      });
+    });
   });

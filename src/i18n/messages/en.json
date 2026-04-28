@@ -274,6 +274,30 @@
         "unsupervised": "Unsupervised",
         "semiSupervised": "Semi-supervised",
         "timeSeries": "Time Series"
+      },
+      "serviceStatus": {
+        "labels": {
+          "on": "On",
+          "off": "Off",
+          "idle": "Idle"
+        },
+        "tooltips": {
+          "agent": {
+            "ENABLED": "Agent reports Enabled",
+            "DISABLED": "Agent reports Disabled",
+            "RELOAD_FAILED": "Agent reload failed",
+            "UNKNOWN": "Agent status is unknown"
+          },
+          "external": {
+            "on": "External service reachable",
+            "off": "External service unreachable",
+            "unknown": "External service not yet checked"
+          },
+          "deadNode": "Node has not responded; service status forced off",
+          "absent": "Service is not configured on this node"
+        },
+        "lastChecked": "Last checked {seconds}s ago",
+        "lastCheckedNever": "Awaiting first check"
       }
     },
     "detail": {

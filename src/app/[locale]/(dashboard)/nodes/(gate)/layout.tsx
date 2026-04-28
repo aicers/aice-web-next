@@ -46,11 +46,21 @@ export default async function NodesGateLayout({
     forbidden();
   }
 
-  // Single segment-scoped polling driver. Page-level callers within
-  // the gate (Status table, Settings list, detail page) consume the
-  // shared store via `useNodeStatusPolling({ enabled: false })`, so
-  // navigation between them does not bounce the driver count through
-  // zero and clear the 60-sample history.
+  // Single segment-scoped polling driver for the per-node status
+  // signal. Page-level callers within the gate (Status table, Settings
+  // list, detail page) consume the shared store via
+  // `useNodeStatusPolling({ enabled: false })`, so navigation between
+  // them does not bounce `driverCount` through zero — which would
+  // otherwise wipe the 60-sample node history. The Settings list reads
+  // the same store for its alive/dead facet and Manager column, so the
+  // node-status driver is correctly scoped to the whole gate segment.
+  //
+  // The external Giganto / Tivan probe driver is intentionally NOT
+  // mounted here. It lives in the narrower `(probe)/layout.tsx`
+  // sub-route group below so probes only fire on the routes that
+  // actually render service-status UI (`/nodes` Status tab, `/nodes/[id]`
+  // detail page) and not on `/nodes/settings`, which has no
+  // service-status consumer.
   return (
     <>
       <NodeStatusPollingDriver />

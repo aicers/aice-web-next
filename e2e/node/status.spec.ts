@@ -279,6 +279,299 @@ test.describe("Node Status tab", () => {
     );
   });
 
+  test("renders an On / Off / Idle service badge for each agent storedStatus variant", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Phase Node-7 (#313) acceptance: drive the mock GraphQL through
+    // each `storedStatus` variant and assert the rendered label. The
+    // serviceVariants fixture pairs one node per variant (ENABLED, /
+    // DISABLED, RELOAD_FAILED, UNKNOWN) plus a dead-node row, so a
+    // single navigation covers the full mapping table.
+    await stubSession.clear();
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.serviceVariants.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToStatus(page);
+    await expect(page.getByTestId("node-status-table")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const expectations: Array<{
+      hostname: string;
+      label: string;
+      status: "on" | "off" | "idle";
+    }> = [
+      { hostname: "agent-on.lan", label: "On", status: "on" },
+      { hostname: "agent-off.lan", label: "Off", status: "off" },
+      { hostname: "agent-idle.lan", label: "Idle", status: "idle" },
+      { hostname: "agent-unknown.lan", label: "Off", status: "off" },
+      // Dead-node override: ENABLED on the wire, but `ping === null`
+      // forces the cell to Off regardless.
+      { hostname: "dead.lan", label: "Off", status: "off" },
+    ];
+
+    for (const exp of expectations) {
+      const row = page
+        .getByTestId("node-status-row")
+        .filter({ hasText: exp.hostname });
+      const cell = row.getByTestId("node-status-service-sensor");
+      await expect(cell).toHaveAttribute("data-status", exp.status);
+      await expect(cell).toContainText(exp.label);
+    }
+
+    // Round-3 dead-node-override regression: the dead.lan fixture only
+    // enumerates a SENSOR agent and no external services, so the
+    // previous behaviour left the other five service cells as
+    // placeholder em-dashes. The override now collapses every one of
+    // the six agent / external cells to Off — matching the issue
+    // contract that a non-responding node cannot be trusted to
+    // enumerate its own services.
+    const deadRow = page
+      .getByTestId("node-status-row")
+      .filter({ hasText: "dead.lan" });
+    for (const kind of [
+      "sensor",
+      "unsupervised",
+      "semiSupervised",
+      "timeSeries",
+      "dataStore",
+      "tiContainer",
+    ]) {
+      const cell = deadRow.getByTestId(`node-status-service-${kind}`);
+      await expect(cell).toHaveAttribute("data-status", "off");
+      await expect(cell).toContainText("Off");
+    }
+  });
+
+  test("cold-load /nodes/[id] renders the service cards from SSR (no Off-with-absent flash, server HTML included)", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Regression for #313 review rounds 1 & 2: opening a detail URL
+    // directly (without first visiting the Status tab) used to render
+    // every service card as Off / absent for up to a full polling
+    // interval, because the polling driver intentionally defers its
+    // first client tick. The detail page now both seeds the shared
+    // polling buffer from its own SSR `nodeStatusList` payload AND
+    // threads the matching SSR `NodeStatus` into `useServiceStatus`
+    // as a first-paint fallback — so the truthful state lands in the
+    // server-rendered HTML, not just after hydration runs the seed
+    // effect.
+    await stubSession.clear();
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.serviceVariants.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    // Hit the detail URL through the same authenticated context to
+    // capture the server HTML response *before* the browser runs any
+    // hydration code. The body must already carry
+    // `data-status="on"` for the sensor card — round 2 specifically
+    // called out that the previous fix only corrected the post-
+    // hydration state. Use `request.get` with manual redirects so we
+    // capture the rendered detail page rather than a sign-in bounce.
+    const ssr = await page.context().request.get("/nodes/21", {
+      maxRedirects: 0,
+      headers: { Accept: "text/html" },
+    });
+    expect(ssr.status()).toBe(200);
+    const ssrBody = await ssr.text();
+    // Sensor card is the agent-on signal in the serviceVariants
+    // fixture; the SSR response must already mark its badge as `on`.
+    // The badge has a unique `data-testid` so we can scan for the
+    // wrapping tag and read its `data-status` attribute directly,
+    // without depending on the surrounding card markup or attribute
+    // ordering.
+    const tagMatch = ssrBody.match(
+      /<[^>]*data-testid="node-detail-service-sensor"[^>]*>/,
+    );
+    expect(tagMatch).not.toBeNull();
+    const statusAttr = tagMatch?.[0].match(/data-status="([^"]+)"/);
+    expect(statusAttr?.[1]).toBe("on");
+
+    // Then exercise the rendered page to confirm hydration matches
+    // the SSR-rendered state (no client-side flip).
+    await page.goto("/nodes/21");
+    await page.waitForFunction(() => !document.getElementById("S:0"));
+
+    await expect(page.getByTestId("node-detail-service-cards")).toBeVisible({
+      timeout: 30_000,
+    });
+    const sensorCard = page.getByTestId("node-detail-service-card-sensor");
+    await expect(sensorCard).toBeVisible();
+    await expect(
+      sensorCard.getByTestId("node-detail-service-sensor"),
+    ).toHaveAttribute("data-status", "on");
+  });
+
+  test("cold-load /nodes Status table renders truthful service cells in the SSR HTML (no absent flash)", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Regression for #313 review round 6 #1: opening `/nodes`
+    // directly used to server-render every configured service column
+    // as the `absent` em-dash placeholder, even though the page already
+    // fetches the SSR `nodeStatusList` payload. The fix threads the
+    // matching SSR `NodeStatus` from `initialEdges` into the per-row
+    // `useServiceStatus(...)` so the truthful badge lands in the
+    // server-rendered HTML itself — same first-paint truthfulness
+    // pattern the detail page already carries.
+    await stubSession.clear();
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.serviceVariants.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    // Capture the server HTML response *before* any hydration runs.
+    // Without the fix, the server body for `/nodes` only carries
+    // `node-status-service-sensor` as the absent-placeholder span (no
+    // `data-status` attribute), and the agent-on row's `On` badge does
+    // not appear until hydration runs the seed effect.
+    const ssr = await page.context().request.get("/nodes", {
+      maxRedirects: 0,
+      headers: { Accept: "text/html" },
+    });
+    expect(ssr.status()).toBe(200);
+    const ssrBody = await ssr.text();
+
+    // The serviceVariants fixture maps row 21 → ENABLED (`on`), row 22
+    // → DISABLED, row 23 → RELOAD_FAILED (`idle`), row 24 → UNKNOWN
+    // (`off`), row 25 → dead-node override (`off`). Only the row-21
+    // sensor cell is `on`, so a presence check on `data-status="on"`
+    // for any `node-status-service-sensor` element in the SSR body is
+    // a unique signal that the agent-on row painted its badge during
+    // SSR rather than after hydration.
+    const sensorCellMatches = ssrBody.matchAll(
+      /<[^>]*data-testid="node-status-service-sensor"[^>]*>/g,
+    );
+    const sensorStatuses = Array.from(sensorCellMatches, (match) => {
+      const statusAttr = match[0].match(/data-status="([^"]+)"/);
+      return statusAttr?.[1] ?? "absent";
+    });
+    expect(sensorStatuses).toContain("on");
+    // Also assert at least one cell is `idle` so the test catches a
+    // regression that paints `On` everywhere via a stale snapshot
+    // instead of from the per-row SSR payload.
+    expect(sensorStatuses).toContain("idle");
+
+    // Then exercise the rendered page to confirm hydration matches the
+    // SSR-rendered state (no client-side flip from On → off → on).
+    await page.goto("/nodes");
+    await page.waitForFunction(() => !document.getElementById("S:0"));
+    await expect(page.getByTestId("node-status-table")).toBeVisible({
+      timeout: 15_000,
+    });
+    const onRow = page
+      .getByTestId("node-status-row")
+      .filter({ hasText: "agent-on.lan" });
+    await expect(
+      onRow.getByTestId("node-status-service-sensor"),
+    ).toHaveAttribute("data-status", "on");
+  });
+
+  test("intra-segment navigation preserves the external-probe snapshot (no stale-Off flash)", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Round-4 review #1 (#313): the external Giganto / Tivan probe
+    // store used to be driven by the page-level `useExternalServiceProbes`
+    // call inside `NodeStatusTable` / `NodeDetailServiceCards`. React
+    // runs page cleanup BEFORE the next page mounts on intra-segment
+    // navigation, so a Status-row click → `/nodes/[id]` bounced
+    // `probeDriverCount` through 0 and the last-unmount cleanup wiped
+    // both probes back to `unknown`. Because `mapExternalStatus("unknown")`
+    // renders `off`, the detail page first-painted Giganto / Tivan as
+    // `Off` even when the row had just shown them `On`.
+    //
+    // The probe driver now lives in `nodes/(gate)/(probe)/layout.tsx`
+    // — a sub-route group shared by the Status tab (`/nodes`) and the
+    // detail page (`/nodes/[id]`) but not `/nodes/settings`. Status ↔
+    // Detail navigation preserves that layout, so the probe snapshot
+    // survives. Verify by forcing Giganto to `on` via the BFF probe
+    // route, waiting for the Status row to register `on`, navigating
+    // to the detail page, and asserting the dataStore card is still
+    // `on` immediately — without waiting for the probe loop to re-fire
+    // on the new page.
+    //
+    // Use the `populated` fixture (alpha-node enumerates a DATA_STORE
+    // external service); the `serviceVariants` fixture intentionally
+    // omits external services to focus on agent storedStatus rows.
+    await page.route(
+      "**/api/services/external/giganto/status",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ok: true }),
+        });
+      },
+    );
+    await page.route("**/api/services/external/tivan/status", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ok: true }),
+      });
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToStatus(page);
+    await expect(page.getByTestId("node-status-table")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Wait for the dataStore probe to land `on` on the alpha-node row.
+    // The `populated` fixture's alpha-node row carries the DATA_STORE
+    // external service, so its cell is a real badge once the probe
+    // replies.
+    const onRow = page
+      .getByTestId("node-status-row")
+      .filter({ hasText: "alpha-node" });
+    await expect(
+      onRow.getByTestId("node-status-service-dataStore"),
+    ).toHaveAttribute("data-status", "on", { timeout: 30_000 });
+
+    const rowId = await onRow.getAttribute("data-row-id");
+    expect(rowId).toBeTruthy();
+
+    // Click into the detail page. Without the segment-scoped driver,
+    // the navigation would tear the probe store down to `unknown` and
+    // the dataStore card would first-paint as `off` until the next
+    // probe boundary lands. With the fix, the snapshot survives and
+    // the card paints `on` right away.
+    await onRow.getByTestId("node-status-row-link").click();
+    await expect(page).toHaveURL(new RegExp(`/nodes/${rowId}(\\?|/|$)`));
+
+    const dataStoreCard = page.getByTestId(
+      "node-detail-service-card-dataStore",
+    );
+    await expect(dataStoreCard).toBeVisible({ timeout: 30_000 });
+    await expect(
+      dataStoreCard.getByTestId("node-detail-service-dataStore"),
+    ).toHaveAttribute("data-status", "on");
+  });
+
   test("Restart surfaces a transport-level fetch failure as controlError", async ({
     page,
     workerUsername,
