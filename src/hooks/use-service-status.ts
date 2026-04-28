@@ -244,6 +244,15 @@ let probeAborts: Array<AbortController | null> = [];
 // avoid. Mirrors the `inFlight` guard the node-status poller uses.
 let probeInFlight: boolean[] = [];
 let activeProbeFetcher: typeof defaultProbeFetcher = defaultProbeFetcher;
+// Live cadence + visibilitychange handler so the loop can be started
+// (or restarted) when the tab becomes visible. Without these the
+// driver could mount while the tab is already hidden, install no
+// `visibilitychange` listener, and never arm any timers — leaving
+// every external badge stuck on `unknown` (rendered as `Off`) for
+// the rest of the session. Matches the resume path
+// `useNodeStatusPolling` already uses.
+let probeVisibilityHandler: (() => void) | null = null;
+let activeProbeIntervals: Record<ExternalServiceKindKey, number> | null = null;
 
 const PROBE_KINDS: readonly ExternalServiceKindKey[] = [
   "dataStore",
@@ -298,6 +307,7 @@ function startProbeLoop(
   intervalsByKind: Record<ExternalServiceKindKey, number>,
 ): void {
   clearProbeTimers();
+  activeProbeIntervals = intervalsByKind;
   probeTimers = PROBE_KINDS.map(() => null);
   probeAborts = PROBE_KINDS.map(() => null);
   probeInFlight = PROBE_KINDS.map(() => false);
@@ -401,9 +411,15 @@ export function useExternalServiceProbes(
       dataStore: dataStoreInterval,
       tiContainer: tiContainerInterval,
     };
+    activeProbeIntervals = localIntervals;
     if (probeDriverCount === 1) {
       // Debounce the first effect so React 19 strict-effects double-
-      // invoke does not start two loops.
+      // invoke does not start two loops. The bootstrap intentionally
+      // bails out when the tab is already hidden — the
+      // `visibilitychange` handler installed below kicks the loop off
+      // when the tab is later revealed (otherwise a driver mounted on
+      // a hidden tab never arms its timers and every external badge
+      // would stay on `unknown`/`Off` for the rest of the session).
       const id = setTimeout(() => {
         if (
           typeof document !== "undefined" &&
@@ -413,12 +429,37 @@ export function useExternalServiceProbes(
         }
         startProbeLoop(localIntervals);
       }, 0);
+
+      probeVisibilityHandler = () => {
+        if (typeof document === "undefined") return;
+        if (document.visibilityState === "hidden") {
+          stopProbeLoop();
+          return;
+        }
+        const intervals = activeProbeIntervals ?? localIntervals;
+        startProbeLoop(intervals);
+      };
+      if (typeof document !== "undefined") {
+        document.addEventListener("visibilitychange", probeVisibilityHandler);
+      }
+
       return () => {
         clearTimeout(id);
         probeDriverCount -= 1;
         if (probeDriverCount <= 0) {
           probeDriverCount = 0;
           stopProbeLoop();
+          if (
+            probeVisibilityHandler !== null &&
+            typeof document !== "undefined"
+          ) {
+            document.removeEventListener(
+              "visibilitychange",
+              probeVisibilityHandler,
+            );
+          }
+          probeVisibilityHandler = null;
+          activeProbeIntervals = null;
           resetExternalProbeStoreForUnmount();
         }
       };
@@ -428,6 +469,17 @@ export function useExternalServiceProbes(
       if (probeDriverCount <= 0) {
         probeDriverCount = 0;
         stopProbeLoop();
+        if (
+          probeVisibilityHandler !== null &&
+          typeof document !== "undefined"
+        ) {
+          document.removeEventListener(
+            "visibilitychange",
+            probeVisibilityHandler,
+          );
+        }
+        probeVisibilityHandler = null;
+        activeProbeIntervals = null;
         resetExternalProbeStoreForUnmount();
       }
     };
