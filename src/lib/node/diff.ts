@@ -137,7 +137,15 @@ function valuesEqual(
 
 function renderValue(value: TomlScalar | TomlScalar[] | undefined): string {
   if (value === undefined) return "";
-  if (Array.isArray(value)) return value.map(renderScalar).join(", ");
+  if (Array.isArray(value)) {
+    // Render explicit empty arrays as the TOML wire literal `[]` so the
+    // diff preserves the asymmetric empty-list rule in
+    // `src/lib/node/services/empty-list.ts`: a missing key means "all
+    // enabled", while `[]` means "enable none". Collapsing to `""` here
+    // would render that intentional change blank in the diff UI.
+    if (value.length === 0) return "[]";
+    return value.map(renderScalar).join(", ");
+  }
   return renderScalar(value);
 }
 

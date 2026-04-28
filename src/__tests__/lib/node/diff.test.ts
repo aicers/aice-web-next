@@ -126,6 +126,23 @@ describe("diffServiceConfig", () => {
     expect(diff.map((d) => d.fieldPath)).toEqual(["beta", "gamma"]);
   });
 
+  it("renders an explicit empty array as the wire literal `[]`", () => {
+    // `null` (absent key) means "all enabled" while `[]` means "enable
+    // none" per `src/lib/node/services/empty-list.ts`. The diff must
+    // preserve this distinction instead of collapsing `[]` to `""`.
+    const diff = diffServiceConfig(
+      'protocols = ["dns", "http"]\n',
+      "protocols = []\n",
+    );
+    expect(diff).toEqual([
+      { fieldPath: "protocols", applied: "dns, http", draft: "[]" },
+    ]);
+    const added = diffServiceConfig(null, "protocols = []\n");
+    expect(added).toEqual([
+      { fieldPath: "protocols", applied: null, draft: "[]" },
+    ]);
+  });
+
   it("handles boolean and integer rendering symmetrically", () => {
     const diff = diffServiceConfig(
       "flag = false\ncount = 1\n",
