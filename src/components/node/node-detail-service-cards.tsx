@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { seedNodeStatusFromSnapshot } from "@/hooks/use-node-status-polling";
 import {
@@ -56,9 +56,12 @@ export function NodeDetailServiceCards({
   useExternalServiceProbes({ enabled: canReadServices });
 
   // Seed the shared polling buffer from the SSR snapshot. Mirrors
-  // what `NodeStatusTable` does on the Status tab — without it, the
-  // `absent` placeholder shows for up to one polling interval after
-  // a direct hit on `/nodes/[id]`.
+  // what `NodeStatusTable` does on the Status tab — populates the
+  // rolling buffer so subsequent polls can compute `segmentBoundary`
+  // honestly and so the Status tab benefits from this navigation
+  // when the user pivots back. The first-paint correctness no longer
+  // depends on this effect: `useServiceStatus` reads from the
+  // `initialNodeStatus` fallback below for the same render.
   useEffect(() => {
     if (!initialEdges || initialEdges.length === 0 || !initialCapturedAt) {
       return;
@@ -66,9 +69,25 @@ export function NodeDetailServiceCards({
     seedNodeStatusFromSnapshot(new Date(initialCapturedAt), initialEdges);
   }, [initialCapturedAt, initialEdges]);
 
+  // The matching SSR snapshot for *this* node. Threaded into
+  // `useServiceStatus` so the first render — both server-side and
+  // pre-hydration on the client — paints the truthful per-service
+  // state instead of the empty-store `Off / absent` flash.
+  const initialNodeStatus = useMemo<NodeStatus | null>(() => {
+    if (!initialEdges) return null;
+    return initialEdges.find((edge) => edge.id === nodeId) ?? null;
+  }, [initialEdges, nodeId]);
+  const initialCapturedAtDate = useMemo<Date | null>(() => {
+    if (!initialCapturedAt) return null;
+    const parsed = new Date(initialCapturedAt);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [initialCapturedAt]);
+
   const result = useServiceStatus(nodeId, {
     canRead: canReadServices,
     enabled: false,
+    initialNodeStatus,
+    initialCapturedAt: initialCapturedAtDate,
   });
 
   return (

@@ -15,6 +15,7 @@ import {
   type ServiceStatus,
   type ServiceStatusEntryMap,
 } from "@/lib/node/service-status";
+import type { NodeStatus } from "@/lib/node/types";
 
 /**
  * Default polling cadence for the per-external-service probe. Mirrors
@@ -25,6 +26,18 @@ import {
 const DEFAULT_PROBE_MS = 10_000;
 const PROBE_MS_MIN = 5_000;
 const PROBE_MS_MAX = 300_000;
+
+/**
+ * Override shape accepted by {@link useExternalServiceProbes} and
+ * {@link useServiceStatus}. A bare number is applied to every external
+ * probe; a per-service partial record lets Giganto and Tivan poll at
+ * different cadences (issue #313 explicitly asks for "configurable
+ * per-service interval"). Missing keys fall back to the env-derived
+ * default.
+ */
+export type ProbeIntervalOverride =
+  | number
+  | Partial<Record<ExternalServiceKindKey, number>>;
 
 function readProbeIntervalMs(override?: number): number {
   const raw =
@@ -42,6 +55,26 @@ function readProbeIntervalMs(override?: number): number {
   if (parsed < PROBE_MS_MIN) return PROBE_MS_MIN;
   if (parsed > PROBE_MS_MAX) return PROBE_MS_MAX;
   return parsed;
+}
+
+/**
+ * Resolve the per-kind probe interval map. The single-number form is
+ * mirrored to every external service; the record form lets each service
+ * carry its own cadence. Each value is clamped through
+ * {@link readProbeIntervalMs} so a misconfigured override cannot
+ * hammer Giganto / Tivan, regardless of which form the caller used.
+ */
+function resolveProbeIntervals(
+  override?: ProbeIntervalOverride,
+): Record<ExternalServiceKindKey, number> {
+  if (typeof override === "object" && override !== null) {
+    return {
+      dataStore: readProbeIntervalMs(override.dataStore),
+      tiContainer: readProbeIntervalMs(override.tiContainer),
+    };
+  }
+  const single = readProbeIntervalMs(override);
+  return { dataStore: single, tiContainer: single };
 }
 
 // ── External-probe store ─────────────────────────────────────────
@@ -116,6 +149,30 @@ export function __setExternalProbeOutcome(
   setExternalProbe(kind, outcome, checkedAt);
 }
 
+/**
+ * Test-only entry into the module-level probe loop driver. The
+ * production driver is `useExternalServiceProbes`, which threads the
+ * same `startProbeLoop` call through React's effect lifecycle; the
+ * project ships without `@testing-library/react`, so unit tests bypass
+ * React entirely and exercise the loop directly. Use with vitest fake
+ * timers + a fetcher mock.
+ */
+export function __startProbeLoopForTests(
+  intervals: Record<ExternalServiceKindKey, number>,
+  fetcher: (
+    kind: ExternalServiceKindKey,
+    signal?: AbortSignal,
+  ) => Promise<ExternalProbeOutcome>,
+): void {
+  activeProbeFetcher = fetcher;
+  startProbeLoop(intervals);
+}
+
+export function __stopProbeLoopForTests(): void {
+  stopProbeLoop();
+  activeProbeFetcher = defaultProbeFetcher;
+}
+
 // ── Probe fetcher ────────────────────────────────────────────────
 
 interface ProbeResponse {
@@ -156,6 +213,13 @@ async function defaultProbeFetcher(
 let probeDriverCount = 0;
 let probeTimers: Array<ReturnType<typeof setTimeout> | null> = [];
 let probeAborts: Array<AbortController | null> = [];
+// Per-service in-flight guard. Without this a probe that takes longer
+// than its `probeIntervalMs` to resolve would have the next interval
+// tick start a second concurrent fetch for the same service —
+// stacking requests against a slow / wedged Giganto or Tivan and
+// reintroducing the hammering this issue is explicitly trying to
+// avoid. Mirrors the `inFlight` guard the node-status poller uses.
+let probeInFlight: boolean[] = [];
 let activeProbeFetcher: typeof defaultProbeFetcher = defaultProbeFetcher;
 
 const PROBE_KINDS: readonly ExternalServiceKindKey[] = [
@@ -174,6 +238,7 @@ function clearProbeTimers(): void {
     const abort = probeAborts[i];
     if (abort !== null && abort !== undefined) abort.abort();
     probeAborts[i] = null;
+    probeInFlight[i] = false;
   }
 }
 
@@ -187,6 +252,11 @@ async function runProbe(
   ) {
     return;
   }
+  // Per-service in-flight skip: if the previous probe for this kind
+  // has not resolved yet, drop this tick rather than stacking a
+  // second request. The next interval boundary picks it back up.
+  if (probeInFlight[index]) return;
+  probeInFlight[index] = true;
   const abort = new AbortController();
   probeAborts[index] = abort;
   try {
@@ -196,20 +266,30 @@ async function runProbe(
     if (err instanceof DOMException && err.name === "AbortError") return;
     setExternalProbe(kind, "off", new Date());
   } finally {
+    probeInFlight[index] = false;
     if (probeAborts[index] === abort) probeAborts[index] = null;
   }
 }
 
-function startProbeLoop(intervalMs: number): void {
+function startProbeLoop(
+  intervalsByKind: Record<ExternalServiceKindKey, number>,
+): void {
   clearProbeTimers();
   probeTimers = PROBE_KINDS.map(() => null);
   probeAborts = PROBE_KINDS.map(() => null);
-  // Stagger: spread the first dispatch of each probe across the
-  // interval so Giganto and Tivan never fire on the same tick. Each
-  // probe then fires every `intervalMs` from its own offset.
-  const stagger = Math.floor(intervalMs / PROBE_KINDS.length);
+  probeInFlight = PROBE_KINDS.map(() => false);
+  // Stagger the first dispatch so Giganto and Tivan never fire on the
+  // same first tick. The offset is computed against the smallest
+  // configured cadence so per-service overrides cannot collapse the
+  // stagger window. After the first dispatch each probe runs on its
+  // own `setInterval(...)` at its own cadence.
+  const minInterval = Math.min(
+    ...PROBE_KINDS.map((kind) => intervalsByKind[kind]),
+  );
+  const stagger = Math.floor(minInterval / PROBE_KINDS.length);
   PROBE_KINDS.forEach((kind, index) => {
     const startDelay = index * stagger;
+    const intervalMs = intervalsByKind[kind];
     probeTimers[index] = setTimeout(() => {
       void runProbe(kind, index);
       probeTimers[index] = setInterval(() => {
@@ -224,8 +304,12 @@ function stopProbeLoop(): void {
 }
 
 interface UseExternalServiceProbesOptions {
-  /** Override the env-derived probe interval (clamped). */
-  probeIntervalMs?: number;
+  /**
+   * Override the env-derived probe interval (clamped). A bare number
+   * applies to every external probe; a per-service partial record
+   * lets Giganto and Tivan poll at different cadences.
+   */
+  probeIntervalMs?: ProbeIntervalOverride;
   /** Inject a custom fetcher (used by tests). */
   fetcher?: typeof defaultProbeFetcher;
   /**
@@ -241,9 +325,10 @@ interface UseExternalServiceProbesOptions {
  * outcome map. The loop is single-driver (ref-counted) so multiple
  * consumers do not each fire their own probes.
  *
- * Staggering: the first dispatch of each probe is offset by
- * `intervalMs / 2` so Giganto and Tivan never hit on the same tick.
- * Subsequent dispatches keep that offset.
+ * Staggering: the first dispatch of each probe is offset by a fraction
+ * of the smallest configured cadence so Giganto and Tivan never hit on
+ * the same first tick. After that each probe runs on its own
+ * `setInterval` at its own per-service cadence.
  */
 export function useExternalServiceProbes(
   options: UseExternalServiceProbesOptions = {},
@@ -253,7 +338,9 @@ export function useExternalServiceProbes(
     getExternalProbeSnapshot,
     () => externalProbeInitial,
   );
-  const intervalMs = readProbeIntervalMs(options.probeIntervalMs);
+  const intervals = resolveProbeIntervals(options.probeIntervalMs);
+  const dataStoreInterval = intervals.dataStore;
+  const tiContainerInterval = intervals.tiContainer;
   const enabled = options.enabled ?? true;
   const fetcherRef = useRef(options.fetcher ?? defaultProbeFetcher);
   fetcherRef.current = options.fetcher ?? defaultProbeFetcher;
@@ -262,6 +349,10 @@ export function useExternalServiceProbes(
     if (!enabled || typeof window === "undefined") return;
     activeProbeFetcher = fetcherRef.current;
     probeDriverCount += 1;
+    const localIntervals: Record<ExternalServiceKindKey, number> = {
+      dataStore: dataStoreInterval,
+      tiContainer: tiContainerInterval,
+    };
     if (probeDriverCount === 1) {
       // Debounce the first effect so React 19 strict-effects double-
       // invoke does not start two loops.
@@ -272,7 +363,7 @@ export function useExternalServiceProbes(
         ) {
           return;
         }
-        startProbeLoop(intervalMs);
+        startProbeLoop(localIntervals);
       }, 0);
       return () => {
         clearTimeout(id);
@@ -290,7 +381,7 @@ export function useExternalServiceProbes(
         stopProbeLoop();
       }
     };
-  }, [enabled, intervalMs]);
+  }, [enabled, dataStoreInterval, tiContainerInterval]);
 
   return snapshot;
 }
@@ -315,8 +406,32 @@ interface UseServiceStatusOptions {
   canRead: boolean;
   /** Driver toggle for the external-probe loop. */
   enabled?: boolean;
-  probeIntervalMs?: number;
+  /**
+   * Per-service probe interval override. A bare number applies to
+   * every external probe; a per-service partial record lets Giganto
+   * and Tivan poll at different cadences.
+   */
+  probeIntervalMs?: ProbeIntervalOverride;
   fetcher?: typeof defaultProbeFetcher;
+  /**
+   * SSR-rendered `NodeStatus` for `nodeId`, used as the first-paint
+   * fallback when the client polling buffer has not yet observed this
+   * node. Without this, a cold load of `/nodes/[id]` server-renders
+   * (and hydrates) every card as `Off / absent` because the shared
+   * polling store starts empty on the server snapshot, even when the
+   * SSR `getNodeStatusList()` payload already carried this node's
+   * agents and external services. Page-level callers thread the
+   * matching edge in; the Status tab leaves this undefined and reads
+   * from the seeded buffer.
+   */
+  initialNodeStatus?: NodeStatus | null;
+  /**
+   * Server `capturedAt` paired with {@link initialNodeStatus}. Used
+   * as the agent "last checked" timestamp until the first client poll
+   * lands. Ignored when the polling buffer already carries a sample
+   * for this node.
+   */
+  initialCapturedAt?: Date | null;
 }
 
 export interface UseServiceStatusResult {
@@ -375,10 +490,19 @@ export function useServiceStatus(
     probeIntervalMs: options.probeIntervalMs,
     fetcher: options.fetcher,
   });
+  const initialNodeStatus = options.initialNodeStatus ?? null;
+  const initialCapturedAt = options.initialCapturedAt ?? null;
 
   return useMemo<UseServiceStatusResult>(() => {
     const buf = polling.byNodeId.get(nodeId) ?? null;
-    const live = buf?.latest ?? null;
+    // Fall back to the SSR-rendered `NodeStatus` when the polling
+    // buffer has nothing for this node yet. Without this fallback the
+    // first paint (server *and* client pre-effect) renders every card
+    // as `Off / absent`, because the shared polling store starts
+    // empty on the server snapshot and the seed effect only runs
+    // after hydration. Once a real poll lands, `buf.latest` takes
+    // over.
+    const live = buf?.latest ?? initialNodeStatus;
     const entries = composeServiceStatusEntries({
       live,
       externalProbes: probes.outcomes,
@@ -390,7 +514,7 @@ export function useServiceStatus(
     // timestamp; external cards carry their own probe timestamp so a
     // Giganto probe does not refresh the TI Container footer (and
     // vice versa) when the probes are staggered.
-    const nodeSampleAt = buf?.lastSampleAt ?? null;
+    const nodeSampleAt = buf?.lastSampleAt ?? initialCapturedAt;
     const lastCheckedByService = {} as Record<ServiceKind, Date | null>;
     for (const kind of AGENT_SERVICE_KINDS) {
       lastCheckedByService[kind] = nodeSampleAt;
@@ -400,5 +524,12 @@ export function useServiceStatus(
     }
 
     return { status, entries, lastCheckedByService };
-  }, [nodeId, polling.byNodeId, probes.outcomes, probes.lastCheckedAt]);
+  }, [
+    nodeId,
+    polling.byNodeId,
+    probes.outcomes,
+    probes.lastCheckedAt,
+    initialNodeStatus,
+    initialCapturedAt,
+  ]);
 }

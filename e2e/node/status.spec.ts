@@ -328,19 +328,21 @@ test.describe("Node Status tab", () => {
     }
   });
 
-  test("cold-load /nodes/[id] seeds the service cards from SSR (no Off-with-absent flash)", async ({
+  test("cold-load /nodes/[id] renders the service cards from SSR (no Off-with-absent flash, server HTML included)", async ({
     page,
     workerUsername,
     workerPassword,
   }) => {
-    // Regression for #313 review round 1: opening a detail URL
-    // directly (without first visiting the Status tab) used to
-    // render every service card as Off / absent for up to a full
-    // polling interval, because the polling driver intentionally
-    // defers its first client tick. The detail page now seeds the
-    // shared polling buffer from its own SSR `nodeStatusList`
-    // payload, so the agent-on row's Sensor card paints in `on`
-    // immediately instead of waiting for the next tick.
+    // Regression for #313 review rounds 1 & 2: opening a detail URL
+    // directly (without first visiting the Status tab) used to render
+    // every service card as Off / absent for up to a full polling
+    // interval, because the polling driver intentionally defers its
+    // first client tick. The detail page now both seeds the shared
+    // polling buffer from its own SSR `nodeStatusList` payload AND
+    // threads the matching SSR `NodeStatus` into `useServiceStatus`
+    // as a first-paint fallback — so the truthful state lands in the
+    // server-rendered HTML, not just after hydration runs the seed
+    // effect.
     await stubSession.clear();
     await stubSession.registerStub({
       operation: "nodeStatusList",
@@ -351,9 +353,35 @@ test.describe("Node Status tab", () => {
     });
 
     await signInAndWait(page, workerUsername, workerPassword);
-    // Navigate directly to the agent-on detail page (id: "21" in
-    // serviceVariants), bypassing the Status tab so the seed must
-    // come from this page's own SSR payload.
+
+    // Hit the detail URL through the same authenticated context to
+    // capture the server HTML response *before* the browser runs any
+    // hydration code. The body must already carry
+    // `data-status="on"` for the sensor card — round 2 specifically
+    // called out that the previous fix only corrected the post-
+    // hydration state. Use `request.get` with manual redirects so we
+    // capture the rendered detail page rather than a sign-in bounce.
+    const ssr = await page.context().request.get("/nodes/21", {
+      maxRedirects: 0,
+      headers: { Accept: "text/html" },
+    });
+    expect(ssr.status()).toBe(200);
+    const ssrBody = await ssr.text();
+    // Sensor card is the agent-on signal in the serviceVariants
+    // fixture; the SSR response must already mark its badge as `on`.
+    // The badge has a unique `data-testid` so we can scan for the
+    // wrapping tag and read its `data-status` attribute directly,
+    // without depending on the surrounding card markup or attribute
+    // ordering.
+    const tagMatch = ssrBody.match(
+      /<[^>]*data-testid="node-detail-service-sensor"[^>]*>/,
+    );
+    expect(tagMatch).not.toBeNull();
+    const statusAttr = tagMatch?.[0].match(/data-status="([^"]+)"/);
+    expect(statusAttr?.[1]).toBe("on");
+
+    // Then exercise the rendered page to confirm hydration matches
+    // the SSR-rendered state (no client-side flip).
     await page.goto("/nodes/21");
     await page.waitForFunction(() => !document.getElementById("S:0"));
 
