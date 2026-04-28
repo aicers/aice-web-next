@@ -23,7 +23,11 @@ import {
  * timing oracle. If the env var is unset the route refuses every
  * request — the deployment must explicitly set the token.
  *
- * Response body: `{ recovered, expired, purged }` (per-sweep counts).
+ * Response body: `{ recovered, expired, purged, auditsRecovered }`
+ * (per-sweep counts). `auditsRecovered` is the number of `succeeded`
+ * rows whose `node.apply` audit had not yet been emitted at the time
+ * of the sweep and which the audit-recovery pass re-emitted before
+ * the retention purge ran (see `recoverPendingNodeApplyAudits`).
  *
  * Cleanup security: the helper runs as a system actor and never reads
  * or writes the manager DB and never dispatches to external services.
