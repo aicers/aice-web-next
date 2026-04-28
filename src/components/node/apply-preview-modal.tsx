@@ -236,14 +236,22 @@ export function ApplyPreviewModal({
     if (phase.kind !== "planned") return;
     const { attemptId, dispatches, expiresAt } = phase;
     // confirmApplyAttempt is one-shot — the BFF does not stream
-    // per-dispatch progress while it walks the plan. Promote every
-    // currently-`queued` row to `in_flight` for the duration of the
-    // call so the UI surfaces "running" instead of leaving every row
-    // in the pre-confirm `queued` state. The settled per-dispatch
-    // states from the resolved row replace these on completion.
-    const inFlight = dispatches.map((d) =>
-      d.state === "queued" ? { ...d, state: "in_flight" as const } : d,
-    );
+    // per-dispatch progress while it walks the plan. Mirror the BFF's
+    // sequential-advance rule (`advanceForClaim` in
+    // `apply-attempt-lifecycle.ts`): on confirm only the first queued
+    // row is promoted to `in_flight`; later rows stay `queued` until
+    // the executor commits the running row and advances the next one.
+    // Marking every queued row in flight would imply parallel
+    // execution, which the state machine does not perform.
+    let promoted = false;
+    const inFlight = dispatches.map((d) => {
+      if (promoted) return d;
+      if (d.state === "queued") {
+        promoted = true;
+        return { ...d, state: "in_flight" as const };
+      }
+      return d;
+    });
     setPhase({
       kind: "executing",
       attemptId,

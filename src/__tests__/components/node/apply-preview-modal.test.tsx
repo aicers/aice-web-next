@@ -600,7 +600,7 @@ describe("ApplyPreviewModal", () => {
       expect(retryButton).toBeTruthy();
     });
 
-    it("promotes queued dispatches to in_flight while confirmApplyAttempt is pending", async () => {
+    it("promotes only the first queued dispatch to in_flight while confirmApplyAttempt is pending", async () => {
       const attemptId = makeAttemptId("c");
       const create = vi.fn().mockResolvedValue(makePlanResult(attemptId));
       let resolveConfirm: ((row: ApplyAttemptRow) => void) | undefined;
@@ -623,9 +623,12 @@ describe("ApplyPreviewModal", () => {
       await act(async () => {
         fireEvent.click(applyButton);
       });
-      // Mid-flight: every queued row must surface as `in_flight` so the
-      // user sees per-dispatch progress while the BFF processes the
-      // plan. The pre-confirm `queued` state would be misleading.
+      // Mid-flight: only the first queued row promotes to `in_flight`,
+      // mirroring the BFF's sequential-advance rule (`advanceForClaim`
+      // in `apply-attempt-lifecycle.ts`). Marking every row in flight
+      // would imply parallel execution the state machine does not
+      // perform — and would mislead the user when an early failure
+      // halts the sequence with later rows never started.
       await screen.findByTestId("apply-preview-applying");
       const managerRow = screen.getByTestId("apply-preview-dispatch-d-manager");
       const dataStoreRow = screen.getByTestId(
@@ -633,12 +636,16 @@ describe("ApplyPreviewModal", () => {
       );
       const tivanRow = screen.getByTestId("apply-preview-dispatch-d-tivan");
       expect(managerRow.getAttribute("data-state")).toBe("in_flight");
-      expect(dataStoreRow.getAttribute("data-state")).toBe("in_flight");
-      expect(tivanRow.getAttribute("data-state")).toBe("in_flight");
+      expect(dataStoreRow.getAttribute("data-state")).toBe("queued");
+      expect(tivanRow.getAttribute("data-state")).toBe("queued");
       expect(
         screen.getByTestId("apply-preview-dispatch-state-d-manager")
           .textContent,
       ).toMatch(/In flight/);
+      expect(
+        screen.getByTestId("apply-preview-dispatch-state-d-data-store")
+          .textContent,
+      ).toMatch(/Queued/);
       // Settle: the resolved row's settled states replace the synthetic
       // in_flight projection.
       await act(async () => {

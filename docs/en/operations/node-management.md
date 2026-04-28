@@ -510,22 +510,25 @@ the call is in flight the modal:
 - Ignores Escape and outside-clicks — the underlying BFF call cannot
   be cancelled, so dismissing the UI mid-flight would orphan the row
   in `executing`.
-- Promotes every still-`queued` row to **In flight** so the user can
-  see the BFF is currently processing the plan. The settled
-  per-dispatch states from the resolved row replace this projection
-  on completion.
+- Promotes only the **first** still-`queued` row to **In flight**,
+  mirroring the BFF's sequential-advance rule (`advanceForClaim` in
+  `apply-attempt-lifecycle.ts`). Later rows stay **Queued** until the
+  executor commits the running row and advances the next one.
+  Marking every row in flight would imply parallel execution the
+  state machine does not perform.
 - Shows the **Applying…** label on the action button.
 
-Each row renders one of five states. **Queued** is shown both before
-the user clicks Apply (the planned-list view) and after a settled
-`failed_retryable` attempt — under the sequential-advance rule from
-#359 a failure halts the sequence with subsequent dispatches still
+Each row renders one of five states. **Queued** is shown before the
+user clicks Apply (the planned-list view), on later dispatches while
+the leading row is still in flight, and on dispatches after a settled
+`failed_retryable` row — under the sequential-advance rule from #359
+a failure halts the sequence with subsequent dispatches still
 `queued`, awaiting resume on a successful retry.
 
 | State | Meaning |
 | :-- | :-- |
-| **Queued** | Not yet started — shown on the planned list before Apply, and on dispatches after a `failed_retryable` row that have not been advanced by the resume rule yet. |
-| **In flight** | Dispatch is running (or, while `confirmApplyAttempt` / `retryDispatch` is pending, the modal's projection of "currently being processed by the BFF"). |
+| **Queued** | Not yet started — shown on the planned list before Apply, on later dispatches while an earlier row is in flight, and on dispatches after a `failed_retryable` row that have not been advanced by the resume rule yet. |
+| **In flight** | Dispatch is running. While `confirmApplyAttempt` is pending the modal projects this state on the first still-`queued` row; while `retryDispatch` is pending it projects this state on the retried row only. |
 | **Succeeded** | Dispatch returned successfully. |
 | **Failed (retryable)** | Soft failure; the row offers a **Retry** button. |
 | **Failed (terminal)** | Cap exhausted, abandoned, or stale-lock recovery cascade — no Retry. |
