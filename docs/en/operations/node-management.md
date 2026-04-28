@@ -694,7 +694,7 @@ outbound GraphQL during a pass.
 
 A successful pass returns HTTP 200 with the per-sweep counters:
 
-![Cleanup endpoint sample request and response](../../assets/node-apply-cleanup-response-en.svg)
+![Cleanup endpoint sample request and response](../../assets/node-apply-cleanup-response-en.png)
 
 The four counters report what each sweep did in this pass:
 
@@ -721,8 +721,9 @@ row to outlive its `expires_at` unobserved.
    secrets manager, rotate on a normal cadence, never check it in.
 2. Set the env var on every BFF instance and on the scheduler that
    calls the route. The defaults for the three TTL knobs ship in
-   `.env.example` and are read at runtime, so leaving the env vars
-   unset is the supported "use the documented default" path:
+   [`.env.example`](https://github.com/aicers/aice-web-next/blob/main/.env.example)
+   and are read at runtime, so leaving the env vars unset is the
+   supported "use the documented default" path:
 
     ```text
     APPLY_ATTEMPT_TTL_MS=1800000         # 30 min
@@ -806,3 +807,13 @@ preview](#apply-preview) section above and are not duplicated
 here. Operators triaging a stuck row should open the same modal
 the user sees — every state visible to the user is documented
 there.
+
+The Apply preview figures currently ship as the wireframe stand-ins
+that #362 produced under the infrastructure-gated screenshot
+exception in `docs/AUTHORING.md` (the modal does not yet have a
+mount point on the node detail page — owned by Phase Node-5 / #311).
+This ops section deliberately reuses those same wireframes rather
+than re-capturing them; the real PNG captures will replace the
+Apply preview wireframes in the same PR that lands the detail-page
+mount, and this section will inherit the upgrade automatically
+because it links to those figures by reference.
