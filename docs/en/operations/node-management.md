@@ -517,12 +517,17 @@ forged hostname cannot bypass tenant scope.
 The Status tab does **not** carry an Apply button. Clicking anywhere
 on the row outside the kebab menu navigates to the node's detail
 route at `/nodes/[id]`; the node name doubles as a keyboard-focusable
-link to the same target. In this release the detail route only
-renders a placeholder card — the per-node dashboard with pending-edit
-review and the **Apply All Pending** action is delivered by Phase
-Node-5 (a follow-up). v1's single apply entry point will live on
-that detail dashboard once Phase Node-5 lands; until then no apply
-affordance is reachable from the Status tab.
+link to the same target. The detail route surfaces the per-node
+service-status cards described in [Status legend](#status-legend) —
+one card per service (Sensor, Unsupervised, Semi-supervised, Time
+Series, Data Store, TI Container) with the on / off / idle badge,
+diagnostic tooltip, and a per-card "Last checked Xs ago" footer that
+ticks with the relevant signal (the per-node poll for agent cards,
+each external probe for its own card). The per-node dashboard with
+pending-edit review and the **Apply All Pending** action is delivered
+by Phase Node-5 (a follow-up); v1's single apply entry point will
+live on that detail dashboard once Phase Node-5 lands. Until then no
+apply affordance is reachable from the Status tab.
 
 ### Status legend
 

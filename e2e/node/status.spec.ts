@@ -418,6 +418,77 @@ test.describe("Node Status tab", () => {
     ).toHaveAttribute("data-status", "on");
   });
 
+  test("cold-load /nodes Status table renders truthful service cells in the SSR HTML (no absent flash)", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Regression for #313 review round 6 #1: opening `/nodes`
+    // directly used to server-render every configured service column
+    // as the `absent` em-dash placeholder, even though the page already
+    // fetches the SSR `nodeStatusList` payload. The fix threads the
+    // matching SSR `NodeStatus` from `initialEdges` into the per-row
+    // `useServiceStatus(...)` so the truthful badge lands in the
+    // server-rendered HTML itself — same first-paint truthfulness
+    // pattern the detail page already carries.
+    await stubSession.clear();
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.serviceVariants.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    // Capture the server HTML response *before* any hydration runs.
+    // Without the fix, the server body for `/nodes` only carries
+    // `node-status-service-sensor` as the absent-placeholder span (no
+    // `data-status` attribute), and the agent-on row's `On` badge does
+    // not appear until hydration runs the seed effect.
+    const ssr = await page.context().request.get("/nodes", {
+      maxRedirects: 0,
+      headers: { Accept: "text/html" },
+    });
+    expect(ssr.status()).toBe(200);
+    const ssrBody = await ssr.text();
+
+    // The serviceVariants fixture maps row 21 → ENABLED (`on`), row 22
+    // → DISABLED, row 23 → RELOAD_FAILED (`idle`), row 24 → UNKNOWN
+    // (`off`), row 25 → dead-node override (`off`). Only the row-21
+    // sensor cell is `on`, so a presence check on `data-status="on"`
+    // for any `node-status-service-sensor` element in the SSR body is
+    // a unique signal that the agent-on row painted its badge during
+    // SSR rather than after hydration.
+    const sensorCellMatches = ssrBody.matchAll(
+      /<[^>]*data-testid="node-status-service-sensor"[^>]*>/g,
+    );
+    const sensorStatuses = Array.from(sensorCellMatches, (match) => {
+      const statusAttr = match[0].match(/data-status="([^"]+)"/);
+      return statusAttr?.[1] ?? "absent";
+    });
+    expect(sensorStatuses).toContain("on");
+    // Also assert at least one cell is `idle` so the test catches a
+    // regression that paints `On` everywhere via a stale snapshot
+    // instead of from the per-row SSR payload.
+    expect(sensorStatuses).toContain("idle");
+
+    // Then exercise the rendered page to confirm hydration matches the
+    // SSR-rendered state (no client-side flip from On → off → on).
+    await page.goto("/nodes");
+    await page.waitForFunction(() => !document.getElementById("S:0"));
+    await expect(page.getByTestId("node-status-table")).toBeVisible({
+      timeout: 15_000,
+    });
+    const onRow = page
+      .getByTestId("node-status-row")
+      .filter({ hasText: "agent-on.lan" });
+    await expect(
+      onRow.getByTestId("node-status-service-sensor"),
+    ).toHaveAttribute("data-status", "on");
+  });
+
   test("intra-segment navigation preserves the external-probe snapshot (no stale-Off flash)", async ({
     page,
     workerUsername,

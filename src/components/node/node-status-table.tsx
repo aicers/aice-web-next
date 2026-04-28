@@ -89,13 +89,32 @@ export function NodeStatusTable({
   // Seed the polling buffer from the SSR payload on first mount. The
   // driver intentionally defers the first client tick until the first
   // `pollIntervalMs` boundary; without this seed the per-service cells
-  // would render as `absent` placeholders for up to a full polling
-  // interval after the first paint, even though the SSR snapshot
-  // already carried each row's agents and external services.
+  // would still benefit from the SSR fallback below on first paint,
+  // but a subsequent re-render before the first poll lands would lose
+  // the `lastSampleAt` history `segmentBoundary` calculations rely on.
   useEffect(() => {
     if (initialEdges.length === 0) return;
     seedNodeStatusFromSnapshot(new Date(initialCapturedAt), initialEdges);
   }, [initialCapturedAt, initialEdges]);
+
+  // Per-row SSR `NodeStatus` lookup. Threaded into each row's
+  // `useServiceStatus(..., { initialNodeStatus })` so the truthful
+  // per-service state lands in the server-rendered HTML itself —
+  // matching the cold-load fix the detail page already carries. The
+  // seed effect above only runs after hydration, so without this map
+  // the SSR snapshot and pre-hydration client render still paint
+  // `absent` em-dashes in the configured service columns until the
+  // seed lands. Mirrors the lookup `NodeDetailServiceCards` performs
+  // for its single-node case.
+  const initialEdgeById = useMemo(() => {
+    const map = new Map<string, NodeStatus>();
+    for (const edge of initialEdges) map.set(edge.id, edge);
+    return map;
+  }, [initialEdges]);
+  const initialCapturedAtDate = useMemo(() => {
+    const parsed = new Date(initialCapturedAt);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [initialCapturedAt]);
 
   // The external Giganto / Tivan probe loop is driven by
   // `ExternalServiceProbeDriver` mounted in `nodes/(gate)/layout.tsx`
@@ -277,6 +296,8 @@ export function NodeStatusTable({
                 buffer={polling.byNodeId.get(row.id) ?? null}
                 canControl={canControl}
                 canReadServices={canReadServices}
+                initialNodeStatus={initialEdgeById.get(row.id) ?? null}
+                initialCapturedAt={initialCapturedAtDate}
                 onRestart={() => setRestartTarget(row)}
                 onShutdown={() => setShutdownTarget(row)}
               />
@@ -368,6 +389,8 @@ interface NodeStatusRowProps {
   buffer: NodeStatusBuffer | null;
   canControl: boolean;
   canReadServices: boolean;
+  initialNodeStatus: NodeStatus | null;
+  initialCapturedAt: Date | null;
   onRestart: () => void;
   onShutdown: () => void;
 }
@@ -376,6 +399,8 @@ function NodeStatusRow({
   row,
   canControl,
   canReadServices,
+  initialNodeStatus,
+  initialCapturedAt,
   onRestart,
   onShutdown,
 }: NodeStatusRowProps) {
@@ -449,7 +474,12 @@ function NodeStatusRow({
       <TableCell className="text-center">
         <ManagerBadge manager={row.manager} />
       </TableCell>
-      <ServiceCells row={row} canReadServices={canReadServices} />
+      <ServiceCells
+        row={row}
+        canReadServices={canReadServices}
+        initialNodeStatus={initialNodeStatus}
+        initialCapturedAt={initialCapturedAt}
+      />
       <TableCell>
         {canControl && (
           <DropdownMenu>
@@ -595,6 +625,8 @@ function ManagerBadge({ manager }: { manager: boolean | null }) {
 interface ServiceCellsProps {
   row: NodeStatusRowSnapshot;
   canReadServices: boolean;
+  initialNodeStatus: NodeStatus | null;
+  initialCapturedAt: Date | null;
 }
 
 /**
@@ -602,15 +634,32 @@ interface ServiceCellsProps {
  * status from `useServiceStatus(row.id)`, which composes the polling
  * buffer (agents) with the global external probes (Giganto / Tivan).
  *
+ * `initialNodeStatus` / `initialCapturedAt` thread the matching SSR
+ * `nodeStatusList` edge into the hook so the truthful per-service
+ * state lands in the server-rendered HTML itself, instead of waiting
+ * for hydration to run the seed effect that copies the SSR payload
+ * into the polling buffer. Without this, a cold load of `/nodes`
+ * server-renders every configured service column as the `absent`
+ * em-dash placeholder and only flips to the real badge after
+ * hydration — same first-paint truthfulness gap the detail page
+ * already addresses.
+ *
  * Defence-in-depth: the hook throws `NodePermissionError` when
  * `canReadServices` is false; the page-level gate already enforces
  * `services:read`, so in production this branch never trips.
  */
-function ServiceCells({ row, canReadServices }: ServiceCellsProps) {
+function ServiceCells({
+  row,
+  canReadServices,
+  initialNodeStatus,
+  initialCapturedAt,
+}: ServiceCellsProps) {
   const t = useTranslations("nodes.status");
   const result = useServiceStatus(row.id, {
     canRead: canReadServices,
     enabled: false,
+    initialNodeStatus,
+    initialCapturedAt,
   });
 
   return (
