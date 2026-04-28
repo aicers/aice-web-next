@@ -130,7 +130,11 @@ function setExternalProbe(
   emitExternalProbe();
 }
 
-/** Test-only reset hook — mirrors `__resetNodeStatusStore`. */
+/**
+ * Test-only reset hook — mirrors `__resetNodeStatusStore`. Same body
+ * the production unmount path uses, so a renderless unit test can
+ * exercise the round-3 "reset on last unmount" guarantee.
+ */
 export function __resetExternalProbeStore(): void {
   externalProbeSnapshot = {
     outcomes: { dataStore: "unknown", tiContainer: "unknown" },
@@ -138,6 +142,25 @@ export function __resetExternalProbeStore(): void {
     version: externalProbeSnapshot.version + 1,
   };
   emitExternalProbe();
+}
+
+/** Test-only snapshot reader for renderless assertions. */
+export function __getExternalProbeStoreSnapshot(): {
+  outcomes: Record<ExternalServiceKindKey, ExternalProbeOutcome>;
+  lastCheckedAt: Record<ExternalServiceKindKey, Date | null>;
+  version: number;
+} {
+  return externalProbeSnapshot;
+}
+
+/**
+ * Test-only entry point for the production "last driver unmount"
+ * cleanup. The renderless unit test bypasses React, so this exposes
+ * the exact reset the `useExternalServiceProbes` cleanup invokes when
+ * `probeDriverCount` reaches zero.
+ */
+export function __simulateLastDriverUnmountForTests(): void {
+  resetExternalProbeStoreForUnmount();
 }
 
 /** Test helper: imperatively push a probe outcome. */
@@ -303,6 +326,31 @@ function stopProbeLoop(): void {
   clearProbeTimers();
 }
 
+/**
+ * Reset the external-probe snapshot to its `unknown` initial state on
+ * the last driver unmount. Mirrors `resetStoreForUnmount()` in
+ * `use-node-status-polling.ts`: the snapshot is module-level and
+ * survives across React re-renders by design (so the Status table and
+ * the detail page observe the same probes), but it should not survive
+ * across SPA route changes that leave the Nodes area entirely.
+ *
+ * Without this reset, returning to `/nodes` after navigating away would
+ * paint stale `on` / `off` Giganto / Tivan results from a previous
+ * visit before any fresh probe ran — defeating the round-3 expectation
+ * that the per-service first paint reflects the current session, not a
+ * cached one. The node-status poller already solved this exact "old
+ * client snapshot shadows new first paint" problem; the external-probe
+ * store now matches.
+ */
+function resetExternalProbeStoreForUnmount(): void {
+  externalProbeSnapshot = {
+    outcomes: { dataStore: "unknown", tiContainer: "unknown" },
+    lastCheckedAt: { dataStore: null, tiContainer: null },
+    version: externalProbeSnapshot.version + 1,
+  };
+  emitExternalProbe();
+}
+
 interface UseExternalServiceProbesOptions {
   /**
    * Override the env-derived probe interval (clamped). A bare number
@@ -371,6 +419,7 @@ export function useExternalServiceProbes(
         if (probeDriverCount <= 0) {
           probeDriverCount = 0;
           stopProbeLoop();
+          resetExternalProbeStoreForUnmount();
         }
       };
     }
@@ -379,6 +428,7 @@ export function useExternalServiceProbes(
       if (probeDriverCount <= 0) {
         probeDriverCount = 0;
         stopProbeLoop();
+        resetExternalProbeStoreForUnmount();
       }
     };
   }, [enabled, dataStoreInterval, tiContainerInterval]);

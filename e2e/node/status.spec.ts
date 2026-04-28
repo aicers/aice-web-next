@@ -326,6 +326,29 @@ test.describe("Node Status tab", () => {
       await expect(cell).toHaveAttribute("data-status", exp.status);
       await expect(cell).toContainText(exp.label);
     }
+
+    // Round-3 dead-node-override regression: the dead.lan fixture only
+    // enumerates a SENSOR agent and no external services, so the
+    // previous behaviour left the other five service cells as
+    // placeholder em-dashes. The override now collapses every one of
+    // the six agent / external cells to Off — matching the issue
+    // contract that a non-responding node cannot be trusted to
+    // enumerate its own services.
+    const deadRow = page
+      .getByTestId("node-status-row")
+      .filter({ hasText: "dead.lan" });
+    for (const kind of [
+      "sensor",
+      "unsupervised",
+      "semiSupervised",
+      "timeSeries",
+      "dataStore",
+      "tiContainer",
+    ]) {
+      const cell = deadRow.getByTestId(`node-status-service-${kind}`);
+      await expect(cell).toHaveAttribute("data-status", "off");
+      await expect(cell).toContainText("Off");
+    }
   });
 
   test("cold-load /nodes/[id] renders the service cards from SSR (no Off-with-absent flash, server HTML included)", async ({

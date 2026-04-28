@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  __getExternalProbeStoreSnapshot,
   __resetExternalProbeStore,
   __setExternalProbeOutcome,
+  __simulateLastDriverUnmountForTests,
   __startProbeLoopForTests,
   __stopProbeLoopForTests,
   useServiceStatus,
@@ -147,5 +149,39 @@ describe("external probe loop", () => {
 
     // Sanity check: every recorded timestamp belongs to the run.
     for (const c of calls) expect(c.at).toBeGreaterThanOrEqual(start);
+  });
+});
+
+describe("external probe store — last-unmount reset", () => {
+  // Round-3 review #2 (#313): when the last `useExternalServiceProbes`
+  // consumer unmounts, the probe loop is stopped *and* the snapshot is
+  // reset to `unknown`. Without the reset, returning to `/nodes` after
+  // navigating away would paint a stale `on` / `off` Giganto / Tivan
+  // result from a previous visit before any fresh probe ran. Mirrors
+  // the `resetStoreForUnmount` carve-out the node-status poller already
+  // applies for the same reason.
+  beforeEach(() => {
+    __resetExternalProbeStore();
+  });
+
+  it("resets the probe snapshot when the last driver unmounts", () => {
+    __setExternalProbeOutcome("dataStore", "on");
+    __setExternalProbeOutcome("tiContainer", "off");
+    expect(__getExternalProbeStoreSnapshot().outcomes).toEqual({
+      dataStore: "on",
+      tiContainer: "off",
+    });
+
+    __simulateLastDriverUnmountForTests();
+
+    const after = __getExternalProbeStoreSnapshot();
+    expect(after.outcomes).toEqual({
+      dataStore: "unknown",
+      tiContainer: "unknown",
+    });
+    expect(after.lastCheckedAt).toEqual({
+      dataStore: null,
+      tiContainer: null,
+    });
   });
 });

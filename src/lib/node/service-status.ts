@@ -248,44 +248,60 @@ function emptyEntries(): ServiceStatusEntryMap {
  * Behaviour:
  *  - `live === null` → every cell is `absent` (pre-first-poll, or the
  *    node has dropped out of the latest snapshot).
+ *  - `live.ping === null` (dead node) → every one of the six agent /
+ *    external cells collapses to `off` with reason `{ kind: "deadNode" }`,
+ *    even when the node's live snapshot does not enumerate that
+ *    service. A non-responding node cannot be trusted to list its
+ *    own services, and the issue contract requires the row to render
+ *    `Off` across the board rather than a mix of `Off` + placeholder.
  *  - For each agent in `live.agents`, the matching column carries
- *    `mapAgentStatus(storedStatus)` clamped by the dead-node override.
+ *    `mapAgentStatus(storedStatus)`.
  *  - For each external service in `live.externalServices`, the matching
- *    column carries `mapExternalStatus(outcome)` clamped by the
- *    dead-node override.
- *  - When `live.ping === null` (dead node), the reason is reported as
- *    `{ kind: "deadNode" }` so the tooltip explains the override.
+ *    column carries `mapExternalStatus(outcome)`.
  */
 export function composeServiceStatusEntries(
   input: ComposeServiceStatusInput,
 ): ServiceStatusEntryMap {
-  const entries = emptyEntries();
   const live = input.live;
-  if (!live) return entries;
+  if (!live) return emptyEntries();
   const ping = live.ping;
+  // Dead-node override applies to *every* agent / external cell —
+  // including services missing from `live.agents` /
+  // `live.externalServices`, since a non-responding node cannot be
+  // trusted to enumerate its own services. Without this carve-out,
+  // a sparse dead row would show one `Off` cell next to placeholder
+  // em-dashes, contradicting the issue's "force every service to off"
+  // contract.
+  if (ping === null) {
+    const deadEntry: ServiceStatusEntry = {
+      status: "off",
+      reason: { kind: "deadNode" },
+    };
+    return {
+      sensor: deadEntry,
+      unsupervised: deadEntry,
+      semiSupervised: deadEntry,
+      timeSeries: deadEntry,
+      dataStore: deadEntry,
+      tiContainer: deadEntry,
+    };
+  }
+  const entries = emptyEntries();
   for (const agent of live.agents) {
     const key = AGENT_KIND_TO_SERVICE[agent.kind];
     if (!key) continue;
-    const raw = mapAgentStatus(agent.storedStatus);
-    const status = applyDeadNodeOverride(ping, raw);
     entries[key] = {
-      status,
-      reason:
-        ping === null
-          ? { kind: "deadNode" }
-          : { kind: "agent", storedStatus: agent.storedStatus },
+      status: mapAgentStatus(agent.storedStatus),
+      reason: { kind: "agent", storedStatus: agent.storedStatus },
     };
   }
   for (const ext of live.externalServices) {
     const key = EXTERNAL_KIND_TO_SERVICE[ext.kind];
     if (!key) continue;
     const outcome = input.externalProbes[key];
-    const raw = mapExternalStatus(outcome);
-    const status = applyDeadNodeOverride(ping, raw);
     entries[key] = {
-      status,
-      reason:
-        ping === null ? { kind: "deadNode" } : { kind: "external", outcome },
+      status: mapExternalStatus(outcome),
+      reason: { kind: "external", outcome },
     };
   }
   return entries;

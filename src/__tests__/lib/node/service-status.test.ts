@@ -156,6 +156,11 @@ describe("composeServiceStatusEntries", () => {
   });
 
   it("forces every agent / external cell to off when ping is null (dead node)", () => {
+    // Dead-node override must collapse every one of the six cells —
+    // including services that the node does not enumerate in its
+    // live snapshot. A non-responding node cannot be trusted to list
+    // its own services, so the row must render `Off` across the
+    // board rather than a mix of `Off` + placeholder em-dashes.
     const result = call({
       live: {
         ping: null,
@@ -167,12 +172,30 @@ describe("composeServiceStatusEntries", () => {
       },
       externalProbes: { dataStore: "on", tiContainer: "on" },
     });
-    expect(result.sensor.status).toBe("off");
-    expect(result.sensor.reason.kind).toBe("deadNode");
-    expect(result.semiSupervised.status).toBe("off");
-    expect(result.semiSupervised.reason.kind).toBe("deadNode");
-    expect(result.dataStore.status).toBe("off");
-    expect(result.dataStore.reason.kind).toBe("deadNode");
+    for (const kind of ALL_SERVICE_KINDS) {
+      expect(result[kind].status).toBe("off");
+      expect(result[kind].reason.kind).toBe("deadNode");
+    }
+  });
+
+  it("forces all six cells to off even when the dead node's live snapshot enumerates none of them", () => {
+    // Round 3 regression: previously the override only flipped the
+    // services that appeared in `live.agents` / `live.externalServices`,
+    // so a sparse dead row showed one `Off` cell next to five
+    // placeholder em-dashes. Now every column collapses regardless
+    // of what the node reports.
+    const result = call({
+      live: {
+        ping: null,
+        agents: [],
+        externalServices: [],
+      },
+      externalProbes: { dataStore: "on", tiContainer: "on" },
+    });
+    for (const kind of ALL_SERVICE_KINDS) {
+      expect(result[kind].status).toBe("off");
+      expect(result[kind].reason.kind).toBe("deadNode");
+    }
   });
 
   it("leaves columns absent when the node does not configure that service", () => {
