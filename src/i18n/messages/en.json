@@ -280,6 +280,40 @@
       "title": "Node detail",
       "placeholder": "The full node detail dashboard, including the Apply All Pending action, will be delivered in Phase Node-5."
     },
+    "applyPreview": {
+      "title": "Apply preview",
+      "description": "Review the dispatches the BFF will run before confirming. Only the dispatch sequence is shown — internal review-web steps are not.",
+      "loading": "Building plan…",
+      "loadFailed": "Could not build the apply plan.",
+      "rebuildToRecover": "Rebuild the preview to apply.",
+      "rebuild": "Rebuild",
+      "apply": "Apply",
+      "applying": "Applying…",
+      "close": "Close",
+      "cancel": "Cancel",
+      "retry": "Retry",
+      "retrying": "Retrying…",
+      "succeededHeading": "All dispatches succeeded.",
+      "terminalHeading": "Apply could not complete.",
+      "retryableHeading": "A dispatch failed; retry it from this row, or rebuild the preview to start over.",
+      "plannedHeading": "Planned dispatches",
+      "executingHeading": "Dispatches in progress",
+      "dispatchKind": {
+        "MANAGER": "Manager (applyNode)",
+        "DATA_STORE": "Data Store (updateConfig)",
+        "TI_CONTAINER": "TI Container (updateConfig)"
+      },
+      "stateLabel": {
+        "queued": "Queued",
+        "in_flight": "In flight",
+        "succeeded": "Succeeded",
+        "failed_retryable": "Failed (retryable)",
+        "failed_terminal": "Failed (terminal)"
+      },
+      "errorLabel": "Error",
+      "noPendingChanges": "There are no pending changes to apply.",
+      "expiresAt": "This plan expires at {time}."
+    },
     "serviceLabels": {
       "sensor": "Sensor",
       "data-store": "Data Store",
