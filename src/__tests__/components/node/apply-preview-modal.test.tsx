@@ -329,4 +329,96 @@ describe("ApplyPreviewModal", () => {
     expect(container.textContent).not.toContain("ingest_srv_addr");
     expect(container.textContent).not.toContain("graphql_srv_addr");
   });
+
+  // Accessibility checks — equivalent to axe-core's role / aria-modal /
+  // labelled-by rules plus the Escape-during-executing assertion the
+  // issue calls out. The modal wraps Radix Dialog, which provides a
+  // focus trap via FocusScope; we assert the externally-observable
+  // contract (role + aria + Escape suppression) here.
+  describe("accessibility", () => {
+    it("renders role='dialog' with a labelled title and description", async () => {
+      const create = vi
+        .fn()
+        .mockResolvedValue(makePlanResult(makeAttemptId("1")));
+      renderModal({
+        createApplyAttempt: create,
+        confirmApplyAttempt: vi.fn(),
+        retryDispatch: vi.fn(),
+      });
+      const dialog = await screen.findByRole("dialog");
+      const labelledBy = dialog.getAttribute("aria-labelledby") ?? "";
+      const describedBy = dialog.getAttribute("aria-describedby") ?? "";
+      expect(labelledBy).not.toBe("");
+      expect(describedBy).not.toBe("");
+      expect(document.getElementById(labelledBy)?.textContent).toBeTruthy();
+      expect(document.getElementById(describedBy)?.textContent).toBeTruthy();
+    });
+
+    it("retry buttons carry an accessible name naming the dispatch kind", async () => {
+      const attemptId = makeAttemptId("a");
+      const create = vi.fn().mockResolvedValue(makePlanResult(attemptId));
+      const dispatches = makeDispatches();
+      dispatches[0] = { ...dispatches[0], state: "succeeded" };
+      dispatches[1] = {
+        ...dispatches[1],
+        state: "failed_retryable",
+        lastError: "boom",
+      };
+      const confirm = vi
+        .fn()
+        .mockResolvedValue(makeRow(attemptId, dispatches, "failed_retryable"));
+      renderModal({
+        createApplyAttempt: create,
+        confirmApplyAttempt: confirm,
+        retryDispatch: vi.fn(),
+      });
+      const applyButton = await screen.findByTestId("apply-preview-apply");
+      await act(async () => {
+        fireEvent.click(applyButton);
+      });
+      const retryButton = await screen.findByRole("button", {
+        name: /Retry – Data Store \(updateConfig\)/,
+      });
+      expect(retryButton).toBeTruthy();
+    });
+
+    it("Escape during execution does not close the modal; Escape after settling does", async () => {
+      const attemptId = makeAttemptId("b");
+      const create = vi.fn().mockResolvedValue(makePlanResult(attemptId));
+      let resolveConfirm: ((row: ApplyAttemptRow) => void) | undefined;
+      const succeededDispatches = makeDispatches().map((d) => ({
+        ...d,
+        state: "succeeded" as const,
+      }));
+      const confirm = vi.fn().mockImplementation(
+        () =>
+          new Promise<ApplyAttemptRow>((resolve) => {
+            resolveConfirm = resolve;
+          }),
+      );
+      renderModal({
+        createApplyAttempt: create,
+        confirmApplyAttempt: confirm,
+        retryDispatch: vi.fn(),
+      });
+      const applyButton = await screen.findByTestId("apply-preview-apply");
+      await act(async () => {
+        fireEvent.click(applyButton);
+      });
+      // Mid-flight: dialog must stay open on Escape.
+      await screen.findByTestId("apply-preview-applying");
+      const dialog = screen.getByRole("dialog");
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeTruthy();
+      // Settle the call; Escape now closes.
+      await act(async () => {
+        resolveConfirm?.(makeRow(attemptId, succeededDispatches, "succeeded"));
+      });
+      await screen.findByTestId("apply-preview-done");
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+    });
+  });
 });
