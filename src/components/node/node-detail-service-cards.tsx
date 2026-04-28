@@ -137,11 +137,14 @@ function LastCheckedFooter({
   templateKey,
 }: LastCheckedFooterProps) {
   const t = useTranslations("nodes.status.serviceStatus");
-  const [now, setNow] = useState(() => Date.now());
-  // Tick the relative clock once a second so the "Last checked Xs ago"
-  // string stays honest between polls. The interval is independent of
-  // the polling cadence — operators expect the timer to tick visibly.
+  // Defer reading `Date.now()` to a post-mount effect so the first
+  // render is deterministic across SSR and client hydration. Reading
+  // it inline (even via `useState(() => Date.now())`) produces a
+  // server/client skew of up to a second and trips React's hydration
+  // mismatch warning on cold loads of `/nodes/[id]`.
+  const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
+    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(id);
   }, []);
@@ -156,9 +159,12 @@ function LastCheckedFooter({
       </p>
     );
   }
+  // Pre-hydration: anchor `now` to `lastCheckedAt` so the string
+  // renders as "0s ago" on both sides of the SSR/client boundary.
+  const referenceNow = now ?? lastCheckedAt.getTime();
   const seconds = Math.max(
     0,
-    Math.round((now - lastCheckedAt.getTime()) / 1000),
+    Math.round((referenceNow - lastCheckedAt.getTime()) / 1000),
   );
   return (
     <p
