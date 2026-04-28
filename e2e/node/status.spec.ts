@@ -418,6 +418,86 @@ test.describe("Node Status tab", () => {
     ).toHaveAttribute("data-status", "on");
   });
 
+  test("intra-segment navigation preserves the external-probe snapshot (no stale-Off flash)", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Round-4 review #1 (#313): the external Giganto / Tivan probe
+    // store used to be driven by the page-level `useExternalServiceProbes`
+    // call inside `NodeStatusTable` / `NodeDetailServiceCards`. React
+    // runs page cleanup BEFORE the next page mounts on intra-segment
+    // navigation, so a Status-row click → `/nodes/[id]` bounced
+    // `probeDriverCount` through 0 and the last-unmount cleanup wiped
+    // both probes back to `unknown`. Because `mapExternalStatus("unknown")`
+    // renders `off`, the detail page first-painted Giganto / Tivan as
+    // `Off` even when the row had just shown them `On`.
+    //
+    // The probe driver now lives in `nodes/(gate)/layout.tsx` so the
+    // snapshot survives every intra-segment navigation. Verify by
+    // forcing Giganto to `on` via the BFF probe route, waiting for the
+    // Status row to register `on`, navigating to the detail page, and
+    // asserting the dataStore card is still `on` immediately —
+    // without waiting for the probe loop to re-fire on the new page.
+    //
+    // Use the `populated` fixture (alpha-node enumerates a DATA_STORE
+    // external service); the `serviceVariants` fixture intentionally
+    // omits external services to focus on agent storedStatus rows.
+    await page.route(
+      "**/api/services/external/giganto/status",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ok: true }),
+        });
+      },
+    );
+    await page.route("**/api/services/external/tivan/status", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ok: true }),
+      });
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToStatus(page);
+    await expect(page.getByTestId("node-status-table")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Wait for the dataStore probe to land `on` on the alpha-node row.
+    // The `populated` fixture's alpha-node row carries the DATA_STORE
+    // external service, so its cell is a real badge once the probe
+    // replies.
+    const onRow = page
+      .getByTestId("node-status-row")
+      .filter({ hasText: "alpha-node" });
+    await expect(
+      onRow.getByTestId("node-status-service-dataStore"),
+    ).toHaveAttribute("data-status", "on", { timeout: 30_000 });
+
+    const rowId = await onRow.getAttribute("data-row-id");
+    expect(rowId).toBeTruthy();
+
+    // Click into the detail page. Without the segment-scoped driver,
+    // the navigation would tear the probe store down to `unknown` and
+    // the dataStore card would first-paint as `off` until the next
+    // probe boundary lands. With the fix, the snapshot survives and
+    // the card paints `on` right away.
+    await onRow.getByTestId("node-status-row-link").click();
+    await expect(page).toHaveURL(new RegExp(`/nodes/${rowId}(\\?|/|$)`));
+
+    const dataStoreCard = page.getByTestId(
+      "node-detail-service-card-dataStore",
+    );
+    await expect(dataStoreCard).toBeVisible({ timeout: 30_000 });
+    await expect(
+      dataStoreCard.getByTestId("node-detail-service-dataStore"),
+    ).toHaveAttribute("data-status", "on");
+  });
+
   test("Restart surfaces a transport-level fetch failure as controlError", async ({
     page,
     workerUsername,

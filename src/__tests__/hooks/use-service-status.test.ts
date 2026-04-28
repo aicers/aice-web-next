@@ -7,6 +7,7 @@ import {
   __simulateLastDriverUnmountForTests,
   __startProbeLoopForTests,
   __stopProbeLoopForTests,
+  composeLastCheckedByService,
   useServiceStatus,
 } from "@/hooks/use-service-status";
 import { NodePermissionError } from "@/lib/node/errors";
@@ -149,6 +150,87 @@ describe("external probe loop", () => {
 
     // Sanity check: every recorded timestamp belongs to the run.
     for (const c of calls) expect(c.at).toBeGreaterThanOrEqual(start);
+  });
+});
+
+describe("composeLastCheckedByService", () => {
+  // Round-4 review #2 (#313): the agent footer must NOT fabricate a
+  // "Last checked Xs ago" timestamp on the cold-load
+  // `ManagerUnavailableError` path. The detail page used to default
+  // `initialCapturedAt` to `new Date().toISOString()` even when the
+  // SSR fetch failed, which leaked into every agent card as
+  // "Last checked 0s ago" while the page actually had no live sample.
+  // The page now leaves `initialCapturedAt` undefined on that path,
+  // and this helper additionally gates the SSR fallback on having a
+  // real `live` payload as defence-in-depth.
+
+  const probeLastCheckedAt = {
+    dataStore: null,
+    tiContainer: null,
+  } as const;
+
+  it("returns null for every agent kind when no live data is available", () => {
+    // Cold-load `ManagerUnavailableError` path: even if a future
+    // caller threads a non-null `initialCapturedAt`, the absence of
+    // live data must keep the agent footer on `lastCheckedNever`.
+    const map = composeLastCheckedByService({
+      bufferSampleAt: null,
+      initialCapturedAt: new Date("2026-04-28T00:00:00Z"),
+      hasLive: false,
+      probeLastCheckedAt,
+    });
+    expect(map.sensor).toBeNull();
+    expect(map.unsupervised).toBeNull();
+    expect(map.semiSupervised).toBeNull();
+    expect(map.timeSeries).toBeNull();
+  });
+
+  it("uses initialCapturedAt for agent kinds when a live payload exists but the buffer is empty", () => {
+    // Cold-load happy path: SSR `getNodeStatusList()` succeeded and
+    // threaded both `initialNodeStatus` and `initialCapturedAt`. The
+    // agent footer renders the SSR timestamp until the first client
+    // poll lands and `bufferSampleAt` takes over.
+    const at = new Date("2026-04-28T00:00:00Z");
+    const map = composeLastCheckedByService({
+      bufferSampleAt: null,
+      initialCapturedAt: at,
+      hasLive: true,
+      probeLastCheckedAt,
+    });
+    expect(map.sensor).toBe(at);
+    expect(map.unsupervised).toBe(at);
+    expect(map.semiSupervised).toBe(at);
+    expect(map.timeSeries).toBe(at);
+  });
+
+  it("prefers bufferSampleAt over the SSR fallback once a poll has landed", () => {
+    const fallback = new Date("2026-04-28T00:00:00Z");
+    const fresh = new Date("2026-04-28T00:00:30Z");
+    const map = composeLastCheckedByService({
+      bufferSampleAt: fresh,
+      initialCapturedAt: fallback,
+      hasLive: true,
+      probeLastCheckedAt,
+    });
+    expect(map.sensor).toBe(fresh);
+  });
+
+  it("threads the per-kind probe timestamp for external services without sharing the agent timestamp", () => {
+    // Round-1 fix: external cards must NOT borrow the agent
+    // `bufferSampleAt`. A staggered Giganto probe firing at +0s does
+    // not refresh the TI Container card whose own probe has not
+    // landed yet.
+    const sampleAt = new Date("2026-04-28T00:00:30Z");
+    const giganto = new Date("2026-04-28T00:00:31Z");
+    const map = composeLastCheckedByService({
+      bufferSampleAt: sampleAt,
+      initialCapturedAt: null,
+      hasLive: true,
+      probeLastCheckedAt: { dataStore: giganto, tiContainer: null },
+    });
+    expect(map.dataStore).toBe(giganto);
+    expect(map.tiContainer).toBeNull();
+    expect(map.sensor).toBe(sampleAt);
   });
 });
 

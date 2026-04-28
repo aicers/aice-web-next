@@ -37,10 +37,7 @@ import {
   seedNodeStatusFromSnapshot,
   useNodeStatusPolling,
 } from "@/hooks/use-node-status-polling";
-import {
-  useExternalServiceProbes,
-  useServiceStatus,
-} from "@/hooks/use-service-status";
+import { useServiceStatus } from "@/hooks/use-service-status";
 import { Link, useRouter } from "@/i18n/navigation";
 import type { NodeStatus } from "@/lib/node/types";
 import { cn } from "@/lib/utils";
@@ -100,13 +97,14 @@ export function NodeStatusTable({
     seedNodeStatusFromSnapshot(new Date(initialCapturedAt), initialEdges);
   }, [initialCapturedAt, initialEdges]);
 
-  // Drive the external-probe loop once for the whole table. Per-row
-  // `useServiceStatus` consumers run with `enabled: false` against the
-  // shared store, so a 100-row table does not spin up 100 probe loops.
-  // The driver is gated on `canReadServices` so the loop stays dormant
-  // for callers that lack the permission (defence-in-depth alongside
-  // the per-row check).
-  useExternalServiceProbes({ enabled: canReadServices });
+  // The external Giganto / Tivan probe loop is driven by
+  // `ExternalServiceProbeDriver` mounted in `nodes/(gate)/layout.tsx`
+  // so the snapshot survives intra-segment navigation (`/nodes` ↔
+  // `/nodes/[id]`) without bouncing the driver count through zero and
+  // resetting Giganto / Tivan outcomes to `unknown` between pages.
+  // Per-row `useServiceStatus` consumers pass `enabled: false`, so
+  // they read from the shared store without spinning up parallel
+  // loops.
 
   // Row topology is driven by the latest polled snapshot, not frozen
   // to the server-rendered list. `getNodeStatusList` is a point-in-

@@ -55,8 +55,14 @@ export default async function NodeDetailPage({
   // tick recovers — so we swallow it here rather than collapsing
   // the whole detail page to the manager-offline panel that lives
   // on the Status tab.
+  // `initialCapturedAt` stays undefined until we successfully observe
+  // a real `nodeStatusList` payload. Fabricating `new Date().toISOString()`
+  // on the `ManagerUnavailableError` path (or any other early-return
+  // branch) leaks down to the per-card "Last checked Xs ago" footer
+  // and makes the cold-load detail page claim a successful service
+  // read happened when it did not.
   let initialEdges: NodeStatus[] = [];
-  let initialCapturedAt = new Date().toISOString();
+  let initialCapturedAt: string | undefined;
   if (canReadServices) {
     try {
       const result = await getNodeStatusList(session);

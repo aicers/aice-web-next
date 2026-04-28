@@ -558,20 +558,12 @@ export function useServiceStatus(
       externalProbes: probes.outcomes,
     });
     const status: ServiceStatusMap = entriesToStatusMap(entries);
-
-    // Key the "last checked" timestamp to the signal that actually
-    // refreshed each card. Agent cards share the per-node poll
-    // timestamp; external cards carry their own probe timestamp so a
-    // Giganto probe does not refresh the TI Container footer (and
-    // vice versa) when the probes are staggered.
-    const nodeSampleAt = buf?.lastSampleAt ?? initialCapturedAt;
-    const lastCheckedByService = {} as Record<ServiceKind, Date | null>;
-    for (const kind of AGENT_SERVICE_KINDS) {
-      lastCheckedByService[kind] = nodeSampleAt;
-    }
-    for (const kind of EXTERNAL_SERVICE_KINDS) {
-      lastCheckedByService[kind] = probes.lastCheckedAt[kind];
-    }
+    const lastCheckedByService = composeLastCheckedByService({
+      bufferSampleAt: buf?.lastSampleAt ?? null,
+      initialCapturedAt,
+      hasLive: live !== null,
+      probeLastCheckedAt: probes.lastCheckedAt,
+    });
 
     return { status, entries, lastCheckedByService };
   }, [
@@ -582,4 +574,47 @@ export function useServiceStatus(
     initialNodeStatus,
     initialCapturedAt,
   ]);
+}
+
+interface ComposeLastCheckedByServiceInput {
+  /** `lastSampleAt` from the polling buffer for this node, if any. */
+  bufferSampleAt: Date | null;
+  /** SSR `capturedAt` paired with `initialNodeStatus`, if any. */
+  initialCapturedAt: Date | null;
+  /**
+   * Whether a real `live` payload is available — either from the
+   * polling buffer or the SSR fallback. The agent footer must stay
+   * on `lastCheckedNever` when this is `false`, even if the page
+   * accidentally threads a non-null `initialCapturedAt`. Without the
+   * gate, the cold-load `ManagerUnavailableError` path (where the SSR
+   * fetch failed but the page still set `initialCapturedAt = new
+   * Date()`) painted "Last checked 0s ago" on every agent card and
+   * counted upward — falsely claiming a successful service read.
+   */
+  hasLive: boolean;
+  probeLastCheckedAt: Record<ExternalServiceKindKey, Date | null>;
+}
+
+/**
+ * Pure helper for the per-card "last checked" timestamp map. Lifted
+ * out of `useServiceStatus` so the agent-fallback gate (round 4 #2)
+ * can be exercised directly without a React render.
+ *
+ * Agent cards share the per-node poll timestamp; external cards carry
+ * their own probe timestamp so a Giganto probe does not refresh the TI
+ * Container footer (and vice versa) when the probes are staggered.
+ */
+export function composeLastCheckedByService(
+  input: ComposeLastCheckedByServiceInput,
+): Record<ServiceKind, Date | null> {
+  const nodeSampleAt =
+    input.bufferSampleAt ?? (input.hasLive ? input.initialCapturedAt : null);
+  const lastCheckedByService = {} as Record<ServiceKind, Date | null>;
+  for (const kind of AGENT_SERVICE_KINDS) {
+    lastCheckedByService[kind] = nodeSampleAt;
+  }
+  for (const kind of EXTERNAL_SERVICE_KINDS) {
+    lastCheckedByService[kind] = input.probeLastCheckedAt[kind];
+  }
+  return lastCheckedByService;
 }

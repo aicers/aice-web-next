@@ -1,5 +1,6 @@
 import { forbidden, redirect } from "next/navigation";
 
+import { ExternalServiceProbeDriver } from "@/components/node/external-service-probe-driver";
 import { NodeStatusPollingDriver } from "@/components/node/node-status-polling-driver";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
@@ -46,14 +47,20 @@ export default async function NodesGateLayout({
     forbidden();
   }
 
-  // Single segment-scoped polling driver. Page-level callers within
-  // the gate (Status table, Settings list, detail page) consume the
-  // shared store via `useNodeStatusPolling({ enabled: false })`, so
-  // navigation between them does not bounce the driver count through
-  // zero and clear the 60-sample history.
+  // Single segment-scoped polling driver + external probe driver.
+  // Page-level callers within the gate (Status table, Settings list,
+  // detail page) consume the shared stores via
+  // `useNodeStatusPolling({ enabled: false })` /
+  // `useExternalServiceProbes({ enabled: false })`, so navigation
+  // between them does not bounce either driver count through zero —
+  // which would otherwise wipe the 60-sample node history or reset
+  // the Giganto / Tivan probe outcomes to `unknown` (and, since
+  // `mapExternalStatus("unknown")` renders `off`, paint a stale-Off
+  // flash on the next page).
   return (
     <>
       <NodeStatusPollingDriver />
+      <ExternalServiceProbeDriver />
       {children}
     </>
   );

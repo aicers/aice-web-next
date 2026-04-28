@@ -4,10 +4,7 @@ import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useState } from "react";
 
 import { seedNodeStatusFromSnapshot } from "@/hooks/use-node-status-polling";
-import {
-  useExternalServiceProbes,
-  useServiceStatus,
-} from "@/hooks/use-service-status";
+import { useServiceStatus } from "@/hooks/use-service-status";
 import { ALL_SERVICE_KINDS } from "@/lib/node/service-status";
 import type { NodeStatus } from "@/lib/node/types";
 
@@ -50,10 +47,13 @@ export function NodeDetailServiceCards({
 }: NodeDetailServiceCardsProps) {
   const t = useTranslations("nodes");
   const tStatus = useTranslations("nodes.status.serviceStatus");
-  // Detail page may be entered cold (no Status tab visit first), so
-  // drive the probe loop here too. The driver is ref-counted, so when
-  // both surfaces mount, only one loop runs.
-  useExternalServiceProbes({ enabled: canReadServices });
+  // The external Giganto / Tivan probe loop is driven by
+  // `ExternalServiceProbeDriver` mounted in `nodes/(gate)/layout.tsx`,
+  // so the snapshot survives intra-segment navigation (e.g. Status row
+  // → detail page) without bouncing the driver count through zero and
+  // resetting both outcomes to `unknown` (which would first-paint Off
+  // until the next probe lands). The card consumes the shared store
+  // via `useServiceStatus(..., { enabled: false })` below.
 
   // Seed the shared polling buffer from the SSR snapshot. Mirrors
   // what `NodeStatusTable` does on the Status tab — populates the
