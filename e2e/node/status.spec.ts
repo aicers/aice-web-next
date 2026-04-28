@@ -504,12 +504,15 @@ test.describe("Node Status tab", () => {
     // renders `off`, the detail page first-painted Giganto / Tivan as
     // `Off` even when the row had just shown them `On`.
     //
-    // The probe driver now lives in `nodes/(gate)/layout.tsx` so the
-    // snapshot survives every intra-segment navigation. Verify by
-    // forcing Giganto to `on` via the BFF probe route, waiting for the
-    // Status row to register `on`, navigating to the detail page, and
-    // asserting the dataStore card is still `on` immediately —
-    // without waiting for the probe loop to re-fire on the new page.
+    // The probe driver now lives in `nodes/(gate)/(probe)/layout.tsx`
+    // — a sub-route group shared by the Status tab (`/nodes`) and the
+    // detail page (`/nodes/[id]`) but not `/nodes/settings`. Status ↔
+    // Detail navigation preserves that layout, so the probe snapshot
+    // survives. Verify by forcing Giganto to `on` via the BFF probe
+    // route, waiting for the Status row to register `on`, navigating
+    // to the detail page, and asserting the dataStore card is still
+    // `on` immediately — without waiting for the probe loop to re-fire
+    // on the new page.
     //
     // Use the `populated` fixture (alpha-node enumerates a DATA_STORE
     // external service); the `serviceVariants` fixture intentionally

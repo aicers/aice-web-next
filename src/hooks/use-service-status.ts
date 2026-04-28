@@ -372,8 +372,9 @@ interface UseExternalServiceProbesOptions {
   fetcher?: typeof defaultProbeFetcher;
   /**
    * If false, the controller never starts the loop. Page-level
-   * consumers within the same `nodes/(gate)/layout.tsx` segment pass
-   * `enabled: false` so they only consume the shared store.
+   * consumers within the `nodes/(gate)/(probe)/layout.tsx` sub-segment
+   * pass `enabled: false` so they only consume the shared store
+   * driven by `ExternalServiceProbeDriver`.
    */
   enabled?: boolean;
 }

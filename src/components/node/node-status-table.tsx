@@ -117,13 +117,15 @@ export function NodeStatusTable({
   }, [initialCapturedAt]);
 
   // The external Giganto / Tivan probe loop is driven by
-  // `ExternalServiceProbeDriver` mounted in `nodes/(gate)/layout.tsx`
-  // so the snapshot survives intra-segment navigation (`/nodes` ↔
-  // `/nodes/[id]`) without bouncing the driver count through zero and
-  // resetting Giganto / Tivan outcomes to `unknown` between pages.
-  // Per-row `useServiceStatus` consumers pass `enabled: false`, so
-  // they read from the shared store without spinning up parallel
-  // loops.
+  // `ExternalServiceProbeDriver` mounted in
+  // `nodes/(gate)/(probe)/layout.tsx`, scoped to the routes that
+  // actually render service-status UI (Status tab + detail page) so
+  // probes do not fire on `/nodes/settings`. Both pages share the
+  // `(probe)` layout, so intra-segment navigation (`/nodes` ↔
+  // `/nodes/[id]`) preserves the driver mount and the snapshot is
+  // never reset to `unknown` between pages. Per-row
+  // `useServiceStatus` consumers pass `enabled: false`, so they read
+  // from the shared store without spinning up parallel loops.
 
   // Row topology is driven by the latest polled snapshot, not frozen
   // to the server-rendered list. `getNodeStatusList` is a point-in-

@@ -48,12 +48,13 @@ export function NodeDetailServiceCards({
   const t = useTranslations("nodes");
   const tStatus = useTranslations("nodes.status.serviceStatus");
   // The external Giganto / Tivan probe loop is driven by
-  // `ExternalServiceProbeDriver` mounted in `nodes/(gate)/layout.tsx`,
-  // so the snapshot survives intra-segment navigation (e.g. Status row
-  // → detail page) without bouncing the driver count through zero and
-  // resetting both outcomes to `unknown` (which would first-paint Off
-  // until the next probe lands). The card consumes the shared store
-  // via `useServiceStatus(..., { enabled: false })` below.
+  // `ExternalServiceProbeDriver` mounted in
+  // `nodes/(gate)/(probe)/layout.tsx`, so the snapshot survives
+  // intra-segment navigation (e.g. Status row → detail page) without
+  // bouncing the driver count through zero and resetting both outcomes
+  // to `unknown` (which would first-paint Off until the next probe
+  // lands). The card consumes the shared store via
+  // `useServiceStatus(..., { enabled: false })` below.
 
   // Seed the shared polling buffer from the SSR snapshot. Mirrors
   // what `NodeStatusTable` does on the Status tab — populates the

@@ -1,6 +1,5 @@
 import { forbidden, redirect } from "next/navigation";
 
-import { ExternalServiceProbeDriver } from "@/components/node/external-service-probe-driver";
 import { NodeStatusPollingDriver } from "@/components/node/node-status-polling-driver";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
@@ -47,20 +46,24 @@ export default async function NodesGateLayout({
     forbidden();
   }
 
-  // Single segment-scoped polling driver + external probe driver.
-  // Page-level callers within the gate (Status table, Settings list,
-  // detail page) consume the shared stores via
-  // `useNodeStatusPolling({ enabled: false })` /
-  // `useExternalServiceProbes({ enabled: false })`, so navigation
-  // between them does not bounce either driver count through zero —
-  // which would otherwise wipe the 60-sample node history or reset
-  // the Giganto / Tivan probe outcomes to `unknown` (and, since
-  // `mapExternalStatus("unknown")` renders `off`, paint a stale-Off
-  // flash on the next page).
+  // Single segment-scoped polling driver for the per-node status
+  // signal. Page-level callers within the gate (Status table, Settings
+  // list, detail page) consume the shared store via
+  // `useNodeStatusPolling({ enabled: false })`, so navigation between
+  // them does not bounce `driverCount` through zero — which would
+  // otherwise wipe the 60-sample node history. The Settings list reads
+  // the same store for its alive/dead facet and Manager column, so the
+  // node-status driver is correctly scoped to the whole gate segment.
+  //
+  // The external Giganto / Tivan probe driver is intentionally NOT
+  // mounted here. It lives in the narrower `(probe)/layout.tsx`
+  // sub-route group below so probes only fire on the routes that
+  // actually render service-status UI (`/nodes` Status tab, `/nodes/[id]`
+  // detail page) and not on `/nodes/settings`, which has no
+  // service-status consumer.
   return (
     <>
       <NodeStatusPollingDriver />
-      <ExternalServiceProbeDriver />
       {children}
     </>
   );
