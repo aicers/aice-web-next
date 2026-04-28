@@ -7,12 +7,12 @@
  * point of view:
  *
  *   - On open, calls `createApplyAttempt({ nodeId })` and renders the
- *     returned `plannedDispatches` list before any execution. The
- *     frozen `new` payloads in those dispatches are NOT carried in
- *     client state — only `attemptId`, `dispatchId`, and the per-row
- *     `state` / `lastError` are read on subsequent updates.
- *   - On Apply, calls `confirmApplyAttempt({ attemptId })` and renders
- *     per-dispatch state from the returned row.
+ *     returned plan as a client-only view model. The frozen `new` / `old`
+ *     payloads on external dispatches are stripped at the boundary —
+ *     only `attemptId`, `dispatchId`, `kind`, `state`, `attemptCount`,
+ *     and `lastError` ever reach React state.
+ *   - On Apply, calls `confirmApplyAttempt({ attemptId })` and rebuilds
+ *     the per-row view model from the returned row.
  *   - On per-row Retry (visible only when that dispatch is in
  *     `failed_retryable`), calls
  *     `retryDispatch({ attemptId, dispatchId })`.
@@ -37,7 +37,7 @@
  */
 
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -51,6 +51,7 @@ import {
 import type {
   ApplyAttemptRow,
   CreateApplyAttemptResult,
+  DispatchState,
   PlannedDispatch,
 } from "@/lib/node/apply-attempt-types";
 import { cn } from "@/lib/utils";
@@ -80,25 +81,53 @@ export interface ApplyPreviewModalProps {
   actions: ApplyPreviewActions;
 }
 
+/**
+ * Client-only view of a single planned dispatch. Deliberately omits
+ * the `new` / `old` fields that `ExternalPlannedDispatch` carries on
+ * the wire — those frozen payloads must never enter React state per
+ * the durability contract from #362.
+ */
+interface DispatchView {
+  dispatchId: string;
+  kind: PlannedDispatch["kind"];
+  state: DispatchState;
+  attemptCount: number;
+  lastError: string | null;
+}
+
+function toDispatchView(dispatch: PlannedDispatch): DispatchView {
+  return {
+    dispatchId: dispatch.dispatchId,
+    kind: dispatch.kind,
+    state: dispatch.state,
+    attemptCount: dispatch.attemptCount,
+    lastError: dispatch.lastError,
+  };
+}
+
+function toDispatchViews(dispatches: PlannedDispatch[]): DispatchView[] {
+  return dispatches.map(toDispatchView);
+}
+
 type Phase =
   | { kind: "loading" }
   | {
       kind: "planned";
       attemptId: string;
-      plannedDispatches: PlannedDispatch[];
+      dispatches: DispatchView[];
       expiresAt: string;
     }
   | {
       kind: "executing";
       attemptId: string;
-      plannedDispatches: PlannedDispatch[];
+      dispatches: DispatchView[];
       expiresAt: string;
       retryingDispatchId: string | null;
     }
   | {
       kind: "executed";
       attemptId: string;
-      plannedDispatches: PlannedDispatch[];
+      dispatches: DispatchView[];
       expiresAt: string;
       status: ApplyAttemptRow["status"];
     }
@@ -113,14 +142,25 @@ export function ApplyPreviewModal({
   const t = useTranslations("nodes.applyPreview");
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
 
+  // Hold the latest `actions` in a ref so the open-time effect can be
+  // keyed on `open` / `nodeId` only. A parent that re-renders with a
+  // freshly-allocated `actions` object (the common case for inline
+  // `{ createApplyAttempt, ... }` props) MUST NOT retrigger the
+  // open-time effect — that would discard the live attemptId and
+  // create a duplicate plan on the BFF.
+  const actionsRef = useRef(actions);
+  useEffect(() => {
+    actionsRef.current = actions;
+  }, [actions]);
+
   const buildPlan = useCallback(async () => {
     setPhase({ kind: "loading" });
     try {
-      const result = await actions.createApplyAttempt({ nodeId });
+      const result = await actionsRef.current.createApplyAttempt({ nodeId });
       setPhase({
         kind: "planned",
         attemptId: result.attemptId,
-        plannedDispatches: result.plannedDispatches,
+        dispatches: toDispatchViews(result.plannedDispatches),
         expiresAt: result.expiresAt,
       });
     } catch (err) {
@@ -129,23 +169,25 @@ export function ApplyPreviewModal({
         message: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [actions, nodeId]);
+  }, [nodeId]);
 
   // Open / close lifecycle. Building the plan happens once per open;
   // closing wipes attemptId from client state so re-opening always
-  // takes a fresh path through createApplyAttempt.
+  // takes a fresh path through createApplyAttempt. Dependencies are
+  // intentionally limited to `open` and `nodeId` — see actionsRef
+  // above for why `actions` is not a dependency.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setPhase({ kind: "loading" });
-    actions
+    actionsRef.current
       .createApplyAttempt({ nodeId })
       .then((result) => {
         if (cancelled) return;
         setPhase({
           kind: "planned",
           attemptId: result.attemptId,
-          plannedDispatches: result.plannedDispatches,
+          dispatches: toDispatchViews(result.plannedDispatches),
           expiresAt: result.expiresAt,
         });
       })
@@ -159,7 +201,7 @@ export function ApplyPreviewModal({
     return () => {
       cancelled = true;
     };
-  }, [open, nodeId, actions]);
+  }, [open, nodeId]);
 
   const isExecuting = phase.kind === "executing";
 
@@ -173,20 +215,22 @@ export function ApplyPreviewModal({
 
   const handleApply = useCallback(async () => {
     if (phase.kind !== "planned") return;
-    const { attemptId, plannedDispatches, expiresAt } = phase;
+    const { attemptId, dispatches, expiresAt } = phase;
     setPhase({
       kind: "executing",
       attemptId,
-      plannedDispatches,
+      dispatches,
       expiresAt,
       retryingDispatchId: null,
     });
     try {
-      const result = await actions.confirmApplyAttempt({ attemptId });
+      const result = await actionsRef.current.confirmApplyAttempt({
+        attemptId,
+      });
       setPhase({
         kind: "executed",
         attemptId: result.attemptId,
-        plannedDispatches: result.plannedDispatches,
+        dispatches: toDispatchViews(result.plannedDispatches),
         expiresAt: expiresAt,
         status: result.status,
       });
@@ -196,25 +240,28 @@ export function ApplyPreviewModal({
         message: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [actions, phase]);
+  }, [phase]);
 
   const handleRetry = useCallback(
     async (dispatchId: string) => {
       if (phase.kind !== "executed") return;
-      const { attemptId, plannedDispatches, expiresAt } = phase;
+      const { attemptId, dispatches, expiresAt } = phase;
       setPhase({
         kind: "executing",
         attemptId,
-        plannedDispatches,
+        dispatches,
         expiresAt,
         retryingDispatchId: dispatchId,
       });
       try {
-        const result = await actions.retryDispatch({ attemptId, dispatchId });
+        const result = await actionsRef.current.retryDispatch({
+          attemptId,
+          dispatchId,
+        });
         setPhase({
           kind: "executed",
           attemptId: result.attemptId,
-          plannedDispatches: result.plannedDispatches,
+          dispatches: toDispatchViews(result.plannedDispatches),
           expiresAt,
           status: result.status,
         });
@@ -225,7 +272,7 @@ export function ApplyPreviewModal({
         });
       }
     },
-    [actions, phase],
+    [phase],
   );
 
   return (
@@ -314,7 +361,7 @@ function ApplyPreviewBody({
           ? "terminalHeading"
           : "retryableHeading";
 
-  if (phase.plannedDispatches.length === 0) {
+  if (phase.dispatches.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">{t("noPendingChanges")}</p>
     );
@@ -329,7 +376,7 @@ function ApplyPreviewBody({
         </p>
       )}
       <ul className="divide-y rounded-md border">
-        {phase.plannedDispatches.map((dispatch) => (
+        {phase.dispatches.map((dispatch) => (
           <DispatchRow
             key={dispatch.dispatchId}
             dispatch={dispatch}
@@ -361,7 +408,7 @@ function ApplyPreviewBody({
 }
 
 interface DispatchRowProps {
-  dispatch: PlannedDispatch;
+  dispatch: DispatchView;
   isPlanned: boolean;
   canRetry: boolean;
   isRetrying: boolean;
@@ -461,7 +508,7 @@ function ApplyPreviewFooter({
     );
   }
   if (phase.kind === "planned") {
-    const empty = phase.plannedDispatches.length === 0;
+    const empty = phase.dispatches.length === 0;
     return (
       <>
         <Button type="button" variant="outline" onClick={onClose}>

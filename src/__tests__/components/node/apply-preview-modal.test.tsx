@@ -330,6 +330,123 @@ describe("ApplyPreviewModal", () => {
     expect(container.textContent).not.toContain("graphql_srv_addr");
   });
 
+  // The frozen `new` / `old` payloads must not enter React state at
+  // all — not just be hidden from the DOM. We use unique sentinel
+  // strings on the wire payload and assert that they never appear
+  // anywhere in the rendered subtree (DOM text, attributes, hidden
+  // inputs, data-*) across the full Apply → Retry interaction. The
+  // strict view-model boundary in `toDispatchView` is what makes this
+  // hold; widening the view model to include `new` / `old` would
+  // surface the sentinel via data-* attributes the assertion below
+  // sweeps.
+  it("strips frozen 'new' / 'old' payloads at the state boundary", async () => {
+    const attemptId = makeAttemptId("1");
+    const sentinelNew = "__SENTINEL_NEW_PAYLOAD__bfca9e";
+    const sentinelOld = "__SENTINEL_OLD_PAYLOAD__bfca9e";
+    const planned: PlannedDispatch[] = [
+      {
+        dispatchId: "d-manager",
+        kind: "MANAGER",
+        state: "queued",
+        attemptCount: 0,
+        lastError: null,
+      },
+      {
+        dispatchId: "d-data-store",
+        kind: "DATA_STORE",
+        state: "queued",
+        attemptCount: 0,
+        lastError: null,
+        new: sentinelNew,
+        old: sentinelOld,
+      },
+    ];
+    const create = vi.fn().mockResolvedValue({
+      attemptId,
+      plannedDispatches: planned,
+      draftFingerprint: "deadbeef",
+      expiresAt: "2099-12-31T23:59:59.999Z",
+    });
+    const failedExternal = planned.map((d, i) =>
+      i === 1
+        ? { ...d, state: "failed_retryable" as const, lastError: "boom" }
+        : { ...d, state: "succeeded" as const },
+    );
+    const confirm = vi
+      .fn()
+      .mockResolvedValue(
+        makeRow(attemptId, failedExternal, "failed_retryable"),
+      );
+    const { container } = renderModal({
+      createApplyAttempt: create,
+      confirmApplyAttempt: confirm,
+      retryDispatch: vi.fn(),
+    });
+    const applyButton = await screen.findByTestId("apply-preview-apply");
+    expect(container.outerHTML).not.toContain(sentinelNew);
+    expect(container.outerHTML).not.toContain(sentinelOld);
+    await act(async () => {
+      fireEvent.click(applyButton);
+    });
+    await screen.findByTestId("apply-preview-retry-d-data-store");
+    // After Apply settles to failed_retryable the dispatch row, the
+    // state-bearing parent, the executing-phase scratch state, and any
+    // captured props are all in scope. None may surface the sentinel.
+    expect(container.outerHTML).not.toContain(sentinelNew);
+    expect(container.outerHTML).not.toContain(sentinelOld);
+  });
+
+  // A common parent will pass `actions={{ create..., confirm..., retry... }}`
+  // inline, allocating a fresh object every render. That must not
+  // retrigger the open-time `createApplyAttempt` — doing so would
+  // discard the live attemptId and create a duplicate plan on the
+  // BFF on every parent re-render.
+  it("does not re-create the attempt when the parent re-renders with a new actions object", async () => {
+    const attemptId = makeAttemptId("1");
+    const create = vi.fn().mockResolvedValue(makePlanResult(attemptId));
+    function ReRenderingHarness() {
+      const [tick, setTick] = useState(0);
+      // Build a fresh `actions` object on every render, mirroring the
+      // common inline-prop pattern in real call sites.
+      const actions: ApplyPreviewActions = {
+        createApplyAttempt: create,
+        confirmApplyAttempt: vi.fn(),
+        retryDispatch: vi.fn(),
+      };
+      return (
+        <NextIntlClientProvider locale="en" messages={enMessages}>
+          <button
+            type="button"
+            data-testid="parent-rerender"
+            onClick={() => setTick((value) => value + 1)}
+          >
+            tick {tick}
+          </button>
+          <ApplyPreviewModal
+            open={true}
+            onOpenChange={() => {}}
+            nodeId="node-1"
+            actions={actions}
+          />
+        </NextIntlClientProvider>
+      );
+    }
+    render(<ReRenderingHarness />);
+    await waitFor(() => {
+      expect(create).toHaveBeenCalledTimes(1);
+    });
+    // Force several parent re-renders. A naive effect keyed on
+    // `actions` would call create again on every tick.
+    for (let i = 0; i < 3; i += 1) {
+      const button = screen.getByTestId("parent-rerender");
+      await act(async () => {
+        fireEvent.click(button);
+      });
+    }
+    // No additional create calls.
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
   // Accessibility checks — equivalent to axe-core's role / aria-modal /
   // labelled-by rules plus the Escape-during-executing assertion the
   // issue calls out. The modal wraps Radix Dialog, which provides a

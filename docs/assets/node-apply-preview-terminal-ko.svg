@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 540" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Noto Sans CJK KR', 'Apple SD Gothic Neo', sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">적용 미리보기 모달 — failed_terminal 와 다시 빌드 안내 (와이어프레임)</title>
+  <desc id="desc">적용이 failed_terminal 로 정착한 직후의 모달 와이어프레임. 매니저 행은 성공(녹색), 데이터 저장소 와 TI 컨테이너 행은 모두 실패(복구 불가)(빨강) 와 읽기 전용 오류 메시지. 다시 시도 버튼은 노출되지 않는다. 상단에 "적용하려면 미리보기를 다시 빌드하세요" 라는 안내가 있고, 행 목록 아래에 다시 빌드 버튼이 표시된다. 푸터는 닫기 버튼만.</desc>
+
+  <style>
+    .scrim { fill: #18181b; fill-opacity: 0.55; }
+    .modal { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 10; ry: 10; }
+    .divider { stroke: #e5e7eb; stroke-width: 1; }
+    .row-list { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 6; ry: 6; }
+    .btn { fill: #ffffff; stroke: #3f3f46; stroke-width: 1; rx: 6; ry: 6; }
+    .h1 { font-size: 18px; font-weight: 600; fill: #18181b; }
+    .sub { font-size: 12px; fill: #52525b; }
+    .heading { font-size: 13px; font-weight: 600; fill: #18181b; }
+    .guidance { font-size: 12px; fill: #18181b; }
+    .row-label { font-size: 13px; font-weight: 500; fill: #18181b; }
+    .state-succeeded { font-size: 11px; fill: #059669; }
+    .state-terminal { font-size: 11px; fill: #b91c1c; }
+    .err { font-size: 11px; fill: #b91c1c; }
+    .btn-text { font-size: 13px; fill: #18181b; }
+    .muted { font-size: 11px; fill: #71717a; font-style: italic; }
+  </style>
+
+  <rect class="scrim" x="0" y="0" width="880" height="540" />
+  <rect class="modal" x="80" y="32" width="720" height="476" />
+
+  <g transform="translate(112, 68)">
+    <text class="h1">적용 미리보기</text>
+    <text class="sub" y="22">적용을 완료할 수 없습니다.</text>
+  </g>
+  <line class="divider" x1="112" y1="116" x2="768" y2="116" />
+
+  <g transform="translate(112, 144)">
+    <text class="guidance">적용하려면 미리보기를 다시 빌드하세요.</text>
+  </g>
+
+  <rect class="row-list" x="112" y="160" width="656" height="208" />
+
+  <g transform="translate(128, 176)">
+    <text class="row-label">매니저 (applyNode)</text>
+    <text class="state-succeeded" y="18">성공</text>
+  </g>
+  <line class="divider" x1="112" y1="224" x2="768" y2="224" />
+
+  <g transform="translate(128, 240)">
+    <text class="row-label">데이터 저장소 (updateConfig)</text>
+    <text class="state-terminal" y="18">실패 (복구 불가)</text>
+    <text class="err" y="36">오류: 한도 도달</text>
+  </g>
+  <line class="divider" x1="112" y1="304" x2="768" y2="304" />
+
+  <g transform="translate(128, 320)">
+    <text class="row-label">TI 컨테이너 (updateConfig)</text>
+    <text class="state-terminal" y="18">실패 (복구 불가)</text>
+  </g>
+
+  <g transform="translate(112, 384)">
+    <rect class="btn" x="0" y="0" width="100" height="34" />
+    <text class="btn-text" x="50" y="22" text-anchor="middle">다시 빌드</text>
+  </g>
+
+  <line class="divider" x1="112" y1="440" x2="768" y2="440" />
+  <g transform="translate(688, 456)">
+    <rect class="btn" x="0" y="0" width="80" height="34" />
+    <text class="btn-text" x="40" y="22" text-anchor="middle">닫기</text>
+  </g>
+
+  <text class="muted" x="120" y="498">와이어프레임 대체본 — 매뉴얼의 스크린샷 부족 안내 참조.</text>
+</svg>

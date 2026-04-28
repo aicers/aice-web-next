@@ -476,16 +476,17 @@ saving drafts and confirming the apply. It opens in two phases — a
 read-only **planned dispatches** list, and a live **per-dispatch
 status** view once the operator clicks **Apply**.
 
-> **Screenshot debt.** The modal does not yet have a mount point on
-> the node detail page — the detail page is owned by Phase Node-5
-> (#311), and the bulk-apply mock manager / external endpoints used
-> by the PR's e2e harness are tracked separately. Real PNG captures
-> of the planned-dispatch list, the `failed_retryable` row with a
-> Retry button, and the `failed_terminal` row with the Rebuild
-> guidance will land alongside the detail-page mount point per the
-> infrastructure-gated screenshot exception in `docs/AUTHORING.md`.
+The figures below are wireframe stand-ins per the
+infrastructure-gated screenshot exception in `docs/AUTHORING.md`:
+the modal does not yet have a mount point on the node detail page
+(owned by Phase Node-5 / #311), and the bulk-apply mock manager /
+external endpoints used by the e2e harness are tracked separately.
+Real PNG captures of all three states will replace these wireframes
+in the same PR that lands the detail-page mount.
 
 ### Planned dispatches (before execution)
+
+![Apply preview — planned dispatches (wireframe)](../../assets/node-apply-preview-planned-en.svg)
 
 Opening the modal calls `createApplyAttempt({ nodeId })`. The BFF
 returns the planned dispatch list — the **top-level dispatches the
@@ -526,6 +527,10 @@ amber for **Failed (retryable)**, red for **Failed (terminal)**, and
 muted for **Queued**.
 
 ### Retry vs. Rebuild
+
+![Apply preview — failed_retryable with Retry (wireframe)](../../assets/node-apply-preview-retryable-en.svg)
+
+![Apply preview — failed_terminal with Rebuild guidance (wireframe)](../../assets/node-apply-preview-terminal-en.svg)
 
 A failed dispatch presents one of two recovery paths:
 
