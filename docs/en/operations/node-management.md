@@ -645,29 +645,41 @@ runbook entry that keeps the table healthy.
 
 ### Row lifetimes (TTL and retention)
 
-Every row in `apply_attempts` carries an `expires_at` cap and is
-hard-deleted some time after that cap passes:
+Every row in `apply_attempts` carries an `expires_at` cap. The cap
+is rewritten on each lifecycle transition, so its meaning depends
+on the row's current status:
 
-- **30 minutes** (`APPLY_ATTEMPT_TTL_MS`) — non-terminal rows
-  (`pending`, `executing`, `failed_retryable`) cannot live longer
-  than this. Past `expires_at` the cleanup sweep terminalises them
-  (`pending → expired`, `failed_retryable → failed_terminal`); the
-  user must rebuild the plan from a fresh preview.
-- **7 days** (`APPLY_ATTEMPT_RETENTION_MS`) — every terminal row
-  (`succeeded`, `failed_terminal`, `stale`, `expired`) is retained
-  for this long after `expires_at` so an operator can still inspect
-  it during incident review. Past the retention deadline the
-  cleanup sweep hard-deletes the row.
-- **2.5 hours** (`APPLY_EXECUTING_STALE_MS`) — an `executing` row
-  whose `claim_started_at` ages past this is treated as a stuck
-  claim. The recovery phase of the cleanup sweep flips it to
-  `failed_terminal` and cascades the in-flight + remaining queued
-  dispatches to `failed_terminal` with the abandonment `lastError`.
-  The user sees the modal's rebuild prompt on a subsequent visit.
+- **30 minutes** (`APPLY_ATTEMPT_TTL_MS`) — when a row is created
+  it is `pending` and `expires_at` is set to creation + 30 min.
+  This TTL applies only while the row is `pending` or, after a
+  retryable failure, `failed_retryable`. Past `expires_at` the
+  cleanup TTL sweep terminalises those two statuses (`pending →
+  expired`, `failed_retryable → failed_terminal`) and rewrites
+  `expires_at` to the retention horizon below; the user must
+  rebuild the plan from a fresh preview.
+- **2.5 hours** (`APPLY_EXECUTING_STALE_MS`) — `executing` rows
+  are **not** subject to the 30-minute TTL. The atomic claim
+  promotes a `pending` row to `executing` without rewriting
+  `expires_at`, but the TTL sweep skips any row holding an
+  `executing_lock`, so an `executing` row may legitimately
+  outlive the original 30-minute deadline until it either
+  completes (transition to `succeeded` / `failed_retryable` /
+  `failed_terminal`) or its `claim_started_at` ages past
+  `APPLY_EXECUTING_STALE_MS`. The recovery sweep then treats it
+  as a stuck claim, flips the row to `failed_terminal`, and
+  cascades the in-flight + remaining queued dispatches to
+  `failed_terminal` with the abandonment `lastError`. The user
+  sees the modal's rebuild prompt on a subsequent visit.
+- **7 days** (`APPLY_ATTEMPT_RETENTION_MS`) — every terminal
+  transition (`succeeded`, `failed_terminal`, `stale`, `expired`)
+  rewrites `expires_at = NOW() + retentionMs`. Retention is
+  therefore measured **from the moment the row became terminal**,
+  not from the original 30-minute deadline. The retention sweep
+  hard-deletes terminal rows once `NOW() > expires_at` again.
 
-The retention horizon does **not** apply to `succeeded` rows whose
-`succeeded_audit_completed_at IS NULL` — those rows are exempt from
-purge until the recovery sweep has emitted the corresponding
+The retention sweep does **not** purge `succeeded` rows whose
+`succeeded_audit_completed_at IS NULL` — those rows are exempt
+until the recovery sweep has emitted the corresponding
 `node.apply` audit (see the audit-emission contract documented
 above under [Bulk apply](#bulk-apply)). The exemption keeps a
 prolonged audit-DB outage from purging an audit-incomplete row
