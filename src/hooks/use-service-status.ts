@@ -5,7 +5,9 @@ import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useNodeStatusPolling } from "@/hooks/use-node-status-polling";
 import { NodePermissionError } from "@/lib/node/errors";
 import {
+  AGENT_SERVICE_KINDS,
   composeServiceStatusEntries,
+  EXTERNAL_SERVICE_KINDS,
   type ExternalProbeOutcome,
   type ExternalServiceKindKey,
   entriesToStatusMap,
@@ -321,12 +323,22 @@ export interface UseServiceStatusResult {
   status: ServiceStatusMap;
   entries: ServiceStatusEntryMap;
   /**
-   * Most recent timestamp at which *any* signal feeding this node was
-   * refreshed: the latest of the polling `lastSampleAt` for this node
-   * and the latest external probe `lastCheckedAt` (across both kinds).
-   * Used by the detail page's "Last checked Xs ago" footer.
+   * Per-card "last checked" timestamp keyed to the relevant signal:
+   *
+   *  - Agent services (`sensor`, `unsupervised`, `semiSupervised`,
+   *    `timeSeries`) carry the per-node poll's `lastSampleAt`. Every
+   *    agent on a given node refreshes on the same `nodeStatusList`
+   *    tick, so they share the same timestamp.
+   *  - External services (`dataStore`, `tiContainer`) carry their own
+   *    probe's `lastCheckedAt`. The probes are staggered, so each card
+   *    advances independently and the unrelated probe firing does
+   *    *not* refresh a card whose own signal has not been re-read.
+   *
+   * Used by the detail page's "Last checked Xs ago" footer so a
+   * Giganto probe never refreshes the TI Container card's timer (and
+   * vice versa).
    */
-  lastCheckedAt: Date | null;
+  lastCheckedByService: Record<ServiceKind, Date | null>;
 }
 
 /**
@@ -373,23 +385,20 @@ export function useServiceStatus(
     });
     const status: ServiceStatusMap = entriesToStatusMap(entries);
 
-    const candidates: Array<Date | null> = [
-      buf?.lastSampleAt ?? null,
-      probes.lastCheckedAt.dataStore,
-      probes.lastCheckedAt.tiContainer,
-    ];
-    let latest: Date | null = null;
-    for (const c of candidates) {
-      if (c === null) continue;
-      if (latest === null || c.getTime() > latest.getTime()) latest = c;
+    // Key the "last checked" timestamp to the signal that actually
+    // refreshed each card. Agent cards share the per-node poll
+    // timestamp; external cards carry their own probe timestamp so a
+    // Giganto probe does not refresh the TI Container footer (and
+    // vice versa) when the probes are staggered.
+    const nodeSampleAt = buf?.lastSampleAt ?? null;
+    const lastCheckedByService = {} as Record<ServiceKind, Date | null>;
+    for (const kind of AGENT_SERVICE_KINDS) {
+      lastCheckedByService[kind] = nodeSampleAt;
+    }
+    for (const kind of EXTERNAL_SERVICE_KINDS) {
+      lastCheckedByService[kind] = probes.lastCheckedAt[kind];
     }
 
-    return { status, entries, lastCheckedAt: latest };
-  }, [
-    nodeId,
-    polling.byNodeId,
-    probes.outcomes,
-    probes.lastCheckedAt.dataStore,
-    probes.lastCheckedAt.tiContainer,
-  ]);
+    return { status, entries, lastCheckedByService };
+  }, [nodeId, polling.byNodeId, probes.outcomes, probes.lastCheckedAt]);
 }

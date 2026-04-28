@@ -3,17 +3,29 @@
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
+import { seedNodeStatusFromSnapshot } from "@/hooks/use-node-status-polling";
 import {
   useExternalServiceProbes,
   useServiceStatus,
 } from "@/hooks/use-service-status";
 import { ALL_SERVICE_KINDS } from "@/lib/node/service-status";
+import type { NodeStatus } from "@/lib/node/types";
 
 import { ServiceStatusBadge } from "./service-status-badge";
 
 interface NodeDetailServiceCardsProps {
   nodeId: string;
   canReadServices: boolean;
+  /**
+   * SSR-rendered `nodeStatusList` snapshot from `getNodeStatusList()`.
+   * Seeded into the shared polling buffer on first mount so a cold
+   * load of `/nodes/[id]` (no Status tab visit first) does not render
+   * every card as `absent` for up to a full poll interval. Empty when
+   * the caller lacks `services:read` or the manager is unreachable.
+   */
+  initialEdges?: NodeStatus[];
+  /** Initial capture timestamp (server-rendered ISO string). */
+  initialCapturedAt?: string;
 }
 
 /**
@@ -33,6 +45,8 @@ interface NodeDetailServiceCardsProps {
 export function NodeDetailServiceCards({
   nodeId,
   canReadServices,
+  initialEdges,
+  initialCapturedAt,
 }: NodeDetailServiceCardsProps) {
   const t = useTranslations("nodes");
   const tStatus = useTranslations("nodes.status.serviceStatus");
@@ -40,6 +54,18 @@ export function NodeDetailServiceCards({
   // drive the probe loop here too. The driver is ref-counted, so when
   // both surfaces mount, only one loop runs.
   useExternalServiceProbes({ enabled: canReadServices });
+
+  // Seed the shared polling buffer from the SSR snapshot. Mirrors
+  // what `NodeStatusTable` does on the Status tab — without it, the
+  // `absent` placeholder shows for up to one polling interval after
+  // a direct hit on `/nodes/[id]`.
+  useEffect(() => {
+    if (!initialEdges || initialEdges.length === 0 || !initialCapturedAt) {
+      return;
+    }
+    seedNodeStatusFromSnapshot(new Date(initialCapturedAt), initialEdges);
+  }, [initialCapturedAt, initialEdges]);
+
   const result = useServiceStatus(nodeId, {
     canRead: canReadServices,
     enabled: false,
@@ -69,7 +95,7 @@ export function NodeDetailServiceCards({
               />
             </header>
             <LastCheckedFooter
-              lastCheckedAt={result.lastCheckedAt}
+              lastCheckedAt={result.lastCheckedByService[kind]}
               never={tStatus("lastCheckedNever")}
               templateKey="lastChecked"
             />

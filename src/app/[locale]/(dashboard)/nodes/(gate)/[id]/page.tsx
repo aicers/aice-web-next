@@ -4,6 +4,9 @@ import { getTranslations } from "next-intl/server";
 import { NodeDetailServiceCards } from "@/components/node/node-detail-service-cards";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
+import { ManagerUnavailableError } from "@/lib/node/errors";
+import { getNodeStatusList } from "@/lib/node/status";
+import type { NodeStatus } from "@/lib/node/types";
 
 // Phase Node-6 (this PR) makes the Status row navigational: clicking
 // a row pushes `/nodes/[id]`. The full per-node detail dashboard and
@@ -39,6 +42,33 @@ export default async function NodeDetailPage({
   // check carries the same permission tuple as the page-level gate.
   const canReadServices = await hasPermission(session.roles, "services:read");
 
+  // SSR-seed the polling buffer for cold loads of `/nodes/[id]`.
+  // The polling driver intentionally defers its first client tick
+  // until the first `pollIntervalMs` boundary, and the detail page
+  // can be entered directly (bookmark, deep link) without first
+  // visiting the Status tab. Without this seed every service card
+  // would render the `absent` placeholder for up to a full polling
+  // interval after the first paint, even though `nodeStatusList`
+  // already carries the agents / external services for this node.
+  // A `ManagerUnavailableError` on the seed path is non-fatal — the
+  // cards fall back to the absent placeholder and the next polling
+  // tick recovers — so we swallow it here rather than collapsing
+  // the whole detail page to the manager-offline panel that lives
+  // on the Status tab.
+  let initialEdges: NodeStatus[] = [];
+  let initialCapturedAt = new Date().toISOString();
+  if (canReadServices) {
+    try {
+      const result = await getNodeStatusList(session);
+      initialCapturedAt = result.capturedAt;
+      initialEdges = result.edges;
+    } catch (err) {
+      if (!(err instanceof ManagerUnavailableError)) {
+        throw err;
+      }
+    }
+  }
+
   return (
     <div className="space-y-4">
       <section
@@ -52,7 +82,12 @@ export default async function NodeDetailPage({
         </header>
         <p className="text-muted-foreground text-sm">{t("placeholder")}</p>
       </section>
-      <NodeDetailServiceCards nodeId={id} canReadServices={canReadServices} />
+      <NodeDetailServiceCards
+        nodeId={id}
+        canReadServices={canReadServices}
+        initialEdges={initialEdges}
+        initialCapturedAt={initialCapturedAt}
+      />
     </div>
   );
 }

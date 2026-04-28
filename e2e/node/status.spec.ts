@@ -328,6 +328,45 @@ test.describe("Node Status tab", () => {
     }
   });
 
+  test("cold-load /nodes/[id] seeds the service cards from SSR (no Off-with-absent flash)", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Regression for #313 review round 1: opening a detail URL
+    // directly (without first visiting the Status tab) used to
+    // render every service card as Off / absent for up to a full
+    // polling interval, because the polling driver intentionally
+    // defers its first client tick. The detail page now seeds the
+    // shared polling buffer from its own SSR `nodeStatusList`
+    // payload, so the agent-on row's Sensor card paints in `on`
+    // immediately instead of waiting for the next tick.
+    await stubSession.clear();
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.serviceVariants.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    // Navigate directly to the agent-on detail page (id: "21" in
+    // serviceVariants), bypassing the Status tab so the seed must
+    // come from this page's own SSR payload.
+    await page.goto("/nodes/21");
+    await page.waitForFunction(() => !document.getElementById("S:0"));
+
+    await expect(page.getByTestId("node-detail-service-cards")).toBeVisible({
+      timeout: 30_000,
+    });
+    const sensorCard = page.getByTestId("node-detail-service-card-sensor");
+    await expect(sensorCard).toBeVisible();
+    await expect(
+      sensorCard.getByTestId("node-detail-service-sensor"),
+    ).toHaveAttribute("data-status", "on");
+  });
+
   test("Restart surfaces a transport-level fetch failure as controlError", async ({
     page,
     workerUsername,

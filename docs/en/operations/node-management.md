@@ -571,13 +571,7 @@ and is *not* part of the per-service vocabulary above. It is derived
 directly from `NodeStatus.manager: Boolean!` returned by
 `nodeStatusList`.
 
-![Status row with the Sensor agent in Idle state (wireframe stand-in)](../../assets/node-status-legend-en.svg)
-
-> The capture above is an SVG wireframe stand-in until a live
-> idle-state Status row can be photographed against the real backend
-> (current authoring environment cannot reproduce a `RELOAD_FAILED`
-> agent against a running deployment). It will be replaced with a
-> PNG capture in a follow-up.
+![Status row with the Sensor agent in Idle state](../../assets/node-status-legend-en.png)
 
 ### Manager offline
 
