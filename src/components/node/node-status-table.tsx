@@ -36,11 +36,16 @@ import {
   type NodeStatusBuffer,
   useNodeStatusPolling,
 } from "@/hooks/use-node-status-polling";
+import {
+  useExternalServiceProbes,
+  useServiceStatus,
+} from "@/hooks/use-service-status";
 import { Link, useRouter } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 
 import { SERVICE_COLUMN_ORDER } from "./node-list-types";
 import type { NodeStatusRowSnapshot } from "./node-status-row";
+import { ServiceStatusBadge } from "./service-status-badge";
 
 interface NodeStatusTableProps {
   initialRows: NodeStatusRowSnapshot[];
@@ -48,12 +53,22 @@ interface NodeStatusTableProps {
   initialCapturedAt: string;
   /** Whether the caller can issue restart / shutdown actions. */
   canControl: boolean;
+  /**
+   * Whether the caller holds `services:read`. Threaded through so the
+   * per-row `useServiceStatus` hook can run its defence-in-depth check
+   * with the same permission tuple as the page-level gate. The
+   * `(gate)/layout.tsx` enforces this layout-wide; this prop exists so
+   * the table cannot accidentally render service cells for a future
+   * caller that bypasses the layout.
+   */
+  canReadServices: boolean;
 }
 
 export function NodeStatusTable({
   initialRows,
   initialCapturedAt,
   canControl,
+  canReadServices,
 }: NodeStatusTableProps) {
   const t = useTranslations("nodes.status");
 
@@ -61,6 +76,14 @@ export function NodeStatusTable({
   // by `NodeStatusPollingDriver` mounted in `nodes/(gate)/layout.tsx`
   // so the rolling buffer survives `/nodes` ↔ `/nodes/[id]` navigation.
   const polling = useNodeStatusPolling({ enabled: false });
+
+  // Drive the external-probe loop once for the whole table. Per-row
+  // `useServiceStatus` consumers run with `enabled: false` against the
+  // shared store, so a 100-row table does not spin up 100 probe loops.
+  // The driver is gated on `canReadServices` so the loop stays dormant
+  // for callers that lack the permission (defence-in-depth alongside
+  // the per-row check).
+  useExternalServiceProbes({ enabled: canReadServices });
 
   // Row topology is driven by the latest polled snapshot, not frozen
   // to the server-rendered list. `getNodeStatusList` is a point-in-
@@ -232,6 +255,7 @@ export function NodeStatusTable({
                 row={row}
                 buffer={polling.byNodeId.get(row.id) ?? null}
                 canControl={canControl}
+                canReadServices={canReadServices}
                 onRestart={() => setRestartTarget(row)}
                 onShutdown={() => setShutdownTarget(row)}
               />
@@ -322,6 +346,7 @@ interface NodeStatusRowProps {
   row: NodeStatusRowSnapshot;
   buffer: NodeStatusBuffer | null;
   canControl: boolean;
+  canReadServices: boolean;
   onRestart: () => void;
   onShutdown: () => void;
 }
@@ -329,6 +354,7 @@ interface NodeStatusRowProps {
 function NodeStatusRow({
   row,
   canControl,
+  canReadServices,
   onRestart,
   onShutdown,
 }: NodeStatusRowProps) {
@@ -402,17 +428,7 @@ function NodeStatusRow({
       <TableCell className="text-center">
         <ManagerBadge manager={row.manager} />
       </TableCell>
-      {SERVICE_COLUMN_ORDER.map((column) => (
-        <TableCell key={column} className="text-center">
-          <span
-            className="text-muted-foreground text-xs"
-            data-testid={`node-status-service-${column}`}
-            title={t("servicePlaceholder")}
-          >
-            —
-          </span>
-        </TableCell>
-      ))}
+      <ServiceCells row={row} canReadServices={canReadServices} />
       <TableCell>
         {canControl && (
           <DropdownMenu>
@@ -552,6 +568,64 @@ function ManagerBadge({ manager }: { manager: boolean | null }) {
     >
       {t("managerNotRunning")}
     </Badge>
+  );
+}
+
+interface ServiceCellsProps {
+  row: NodeStatusRowSnapshot;
+  canReadServices: boolean;
+}
+
+/**
+ * Render the six per-service cells for one row. Each cell pulls its
+ * status from `useServiceStatus(row.id)`, which composes the polling
+ * buffer (agents) with the global external probes (Giganto / Tivan).
+ *
+ * Defence-in-depth: the hook throws `NodePermissionError` when
+ * `canReadServices` is false; the page-level gate already enforces
+ * `services:read`, so in production this branch never trips.
+ */
+function ServiceCells({ row, canReadServices }: ServiceCellsProps) {
+  const t = useTranslations("nodes.status");
+  const result = useServiceStatus(row.id, {
+    canRead: canReadServices,
+    enabled: false,
+  });
+
+  return (
+    <>
+      {SERVICE_COLUMN_ORDER.map((column) => {
+        const entry = result.entries[column];
+        // `absent` covers two cases: the polling buffer has no live
+        // snapshot for this node yet (pre-first-poll), or the node's
+        // live snapshot does not configure this service at all. Both
+        // render as the em-dash placeholder — the cell only carries a
+        // real on / off / idle badge when the node actually exposes a
+        // matching agent or external service.
+        if (entry.reason.kind === "absent") {
+          return (
+            <TableCell key={column} className="text-center">
+              <span
+                className="text-muted-foreground text-xs"
+                data-testid={`node-status-service-${column}`}
+                title={t("servicePlaceholder")}
+              >
+                —
+              </span>
+            </TableCell>
+          );
+        }
+        return (
+          <TableCell key={column} className="text-center">
+            <ServiceStatusBadge
+              status={entry.status}
+              reason={entry.reason}
+              testId={`node-status-service-${column}`}
+            />
+          </TableCell>
+        );
+      })}
+    </>
   );
 }
 

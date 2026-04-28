@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 
+import { NodeDetailServiceCards } from "@/components/node/node-detail-service-cards";
+import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 
 // Phase Node-6 (this PR) makes the Status row navigational: clicking
@@ -31,18 +33,26 @@ export default async function NodeDetailPage({
 
   const { id } = await params;
   const t = await getTranslations("nodes.detail");
+  // Layout already enforces the combined `nodes:read + services:read`
+  // gate, so this read is effectively always `true`. Threading it
+  // explicitly so the per-card `useServiceStatus` defence-in-depth
+  // check carries the same permission tuple as the page-level gate.
+  const canReadServices = await hasPermission(session.roles, "services:read");
 
   return (
-    <section
-      className="space-y-4 rounded-lg border bg-card p-6"
-      data-testid="node-detail-placeholder"
-      data-node-id={id}
-    >
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold">{t("title")}</h1>
-        <p className="text-muted-foreground text-sm font-mono">{id}</p>
-      </header>
-      <p className="text-muted-foreground text-sm">{t("placeholder")}</p>
-    </section>
+    <div className="space-y-4">
+      <section
+        className="space-y-4 rounded-lg border bg-card p-6"
+        data-testid="node-detail-placeholder"
+        data-node-id={id}
+      >
+        <header className="space-y-1">
+          <h1 className="text-xl font-semibold">{t("title")}</h1>
+          <p className="text-muted-foreground text-sm font-mono">{id}</p>
+        </header>
+        <p className="text-muted-foreground text-sm">{t("placeholder")}</p>
+      </section>
+      <NodeDetailServiceCards nodeId={id} canReadServices={canReadServices} />
+    </div>
   );
 }

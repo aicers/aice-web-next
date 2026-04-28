@@ -22,6 +22,13 @@ export default async function NodesStatusPage() {
   }
 
   const canWriteNodes = await hasPermission(session.roles, "nodes:write");
+  // The `(gate)` layout already enforces `services:read` for every
+  // route under `/nodes`, so this read is effectively always `true`
+  // for any caller that reaches the table. We thread it explicitly
+  // anyway so the per-row `useServiceStatus` defence-in-depth check
+  // is driven by the same permission tuple as the rest of the page,
+  // not by an implicit assumption about the layout gate.
+  const canReadServices = await hasPermission(session.roles, "services:read");
 
   let initialRows: NodeStatusRowSnapshot[] = [];
   let initialCapturedAt = new Date().toISOString();
@@ -52,6 +59,7 @@ export default async function NodesStatusPage() {
       initialRows={initialRows}
       initialCapturedAt={initialCapturedAt}
       canControl={canWriteNodes}
+      canReadServices={canReadServices}
     />
   );
 }

@@ -279,6 +279,55 @@ test.describe("Node Status tab", () => {
     );
   });
 
+  test("renders an On / Off / Idle service badge for each agent storedStatus variant", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Phase Node-7 (#313) acceptance: drive the mock GraphQL through
+    // each `storedStatus` variant and assert the rendered label. The
+    // serviceVariants fixture pairs one node per variant (ENABLED, /
+    // DISABLED, RELOAD_FAILED, UNKNOWN) plus a dead-node row, so a
+    // single navigation covers the full mapping table.
+    await stubSession.clear();
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.serviceVariants.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToStatus(page);
+    await expect(page.getByTestId("node-status-table")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const expectations: Array<{
+      hostname: string;
+      label: string;
+      status: "on" | "off" | "idle";
+    }> = [
+      { hostname: "agent-on.lan", label: "On", status: "on" },
+      { hostname: "agent-off.lan", label: "Off", status: "off" },
+      { hostname: "agent-idle.lan", label: "Idle", status: "idle" },
+      { hostname: "agent-unknown.lan", label: "Off", status: "off" },
+      // Dead-node override: ENABLED on the wire, but `ping === null`
+      // forces the cell to Off regardless.
+      { hostname: "dead.lan", label: "Off", status: "off" },
+    ];
+
+    for (const exp of expectations) {
+      const row = page
+        .getByTestId("node-status-row")
+        .filter({ hasText: exp.hostname });
+      const cell = row.getByTestId("node-status-service-sensor");
+      await expect(cell).toHaveAttribute("data-status", exp.status);
+      await expect(cell).toContainText(exp.label);
+    }
+  });
+
   test("Restart surfaces a transport-level fetch failure as controlError", async ({
     page,
     workerUsername,

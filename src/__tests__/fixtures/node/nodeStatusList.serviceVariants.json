@@ -1,0 +1,158 @@
+{
+  "nodeStatusList": {
+    "edges": [
+      {
+        "node": {
+          "id": "21",
+          "name": "agent-enabled",
+          "nameDraft": null,
+          "profile": {
+            "customerId": "1",
+            "description": "Agent reports ENABLED",
+            "hostname": "agent-on.lan"
+          },
+          "profileDraft": null,
+          "cpuUsage": 5.0,
+          "totalMemory": "1024",
+          "usedMemory": "256",
+          "totalDiskSpace": "2048",
+          "usedDiskSpace": "512",
+          "manager": true,
+          "agents": [
+            {
+              "kind": "SENSOR",
+              "storedStatus": "ENABLED",
+              "config": null,
+              "draft": null
+            }
+          ],
+          "externalServices": [],
+          "ping": 1.5
+        }
+      },
+      {
+        "node": {
+          "id": "22",
+          "name": "agent-disabled",
+          "nameDraft": null,
+          "profile": {
+            "customerId": "1",
+            "description": "Agent reports DISABLED",
+            "hostname": "agent-off.lan"
+          },
+          "profileDraft": null,
+          "cpuUsage": 5.0,
+          "totalMemory": "1024",
+          "usedMemory": "256",
+          "totalDiskSpace": "2048",
+          "usedDiskSpace": "512",
+          "manager": true,
+          "agents": [
+            {
+              "kind": "SENSOR",
+              "storedStatus": "DISABLED",
+              "config": null,
+              "draft": null
+            }
+          ],
+          "externalServices": [],
+          "ping": 1.5
+        }
+      },
+      {
+        "node": {
+          "id": "23",
+          "name": "agent-reload-failed",
+          "nameDraft": null,
+          "profile": {
+            "customerId": "1",
+            "description": "Agent reports RELOAD_FAILED",
+            "hostname": "agent-idle.lan"
+          },
+          "profileDraft": null,
+          "cpuUsage": 5.0,
+          "totalMemory": "1024",
+          "usedMemory": "256",
+          "totalDiskSpace": "2048",
+          "usedDiskSpace": "512",
+          "manager": true,
+          "agents": [
+            {
+              "kind": "SENSOR",
+              "storedStatus": "RELOAD_FAILED",
+              "config": null,
+              "draft": null
+            }
+          ],
+          "externalServices": [],
+          "ping": 1.5
+        }
+      },
+      {
+        "node": {
+          "id": "24",
+          "name": "agent-unknown",
+          "nameDraft": null,
+          "profile": {
+            "customerId": "1",
+            "description": "Agent reports UNKNOWN",
+            "hostname": "agent-unknown.lan"
+          },
+          "profileDraft": null,
+          "cpuUsage": 5.0,
+          "totalMemory": "1024",
+          "usedMemory": "256",
+          "totalDiskSpace": "2048",
+          "usedDiskSpace": "512",
+          "manager": true,
+          "agents": [
+            {
+              "kind": "SENSOR",
+              "storedStatus": "UNKNOWN",
+              "config": null,
+              "draft": null
+            }
+          ],
+          "externalServices": [],
+          "ping": 1.5
+        }
+      },
+      {
+        "node": {
+          "id": "25",
+          "name": "dead-node",
+          "nameDraft": null,
+          "profile": {
+            "customerId": "1",
+            "description": "Ping is null — dead-node override applies",
+            "hostname": "dead.lan"
+          },
+          "profileDraft": null,
+          "cpuUsage": null,
+          "totalMemory": null,
+          "usedMemory": null,
+          "totalDiskSpace": null,
+          "usedDiskSpace": null,
+          "manager": false,
+          "agents": [
+            {
+              "kind": "SENSOR",
+              "storedStatus": "ENABLED",
+              "config": null,
+              "draft": null
+            }
+          ],
+          "externalServices": [],
+          "ping": null
+        }
+      }
+    ],
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": "21",
+      "endCursor": "25"
+    },
+    "totalCount": "5"
+  }
+}

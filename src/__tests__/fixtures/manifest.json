@@ -56,5 +56,11 @@
     "query": "node/nodeStatusList.populated.graphql",
     "fixture": "node/nodeStatusList.alphaOnly.json",
     "variables": { "first": 996 }
+  },
+  {
+    "operation": "nodeStatusList",
+    "query": "node/nodeStatusList.populated.graphql",
+    "fixture": "node/nodeStatusList.serviceVariants.json",
+    "variables": { "first": 995 }
   }
 ]
