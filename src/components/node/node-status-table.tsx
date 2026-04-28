@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/table";
 import {
   type NodeStatusBuffer,
+  seedNodeStatusFromSnapshot,
   useNodeStatusPolling,
 } from "@/hooks/use-node-status-polling";
 import {
@@ -41,6 +42,7 @@ import {
   useServiceStatus,
 } from "@/hooks/use-service-status";
 import { Link, useRouter } from "@/i18n/navigation";
+import type { NodeStatus } from "@/lib/node/types";
 import { cn } from "@/lib/utils";
 
 import { SERVICE_COLUMN_ORDER } from "./node-list-types";
@@ -49,6 +51,15 @@ import { ServiceStatusBadge } from "./service-status-badge";
 
 interface NodeStatusTableProps {
   initialRows: NodeStatusRowSnapshot[];
+  /**
+   * Full SSR `nodeStatusList` payload. Carries the per-node agents and
+   * external services that drive the per-service `on / off / idle`
+   * cells. Seeded into the polling buffer on first mount so the cells
+   * render immediately from the SSR snapshot rather than waiting for
+   * the first client poll to land (which can be up to one full
+   * `pollIntervalMs` after the first paint).
+   */
+  initialEdges: NodeStatus[];
   /** Initial capture timestamp (server-rendered ISO string). */
   initialCapturedAt: string;
   /** Whether the caller can issue restart / shutdown actions. */
@@ -66,6 +77,7 @@ interface NodeStatusTableProps {
 
 export function NodeStatusTable({
   initialRows,
+  initialEdges,
   initialCapturedAt,
   canControl,
   canReadServices,
@@ -76,6 +88,17 @@ export function NodeStatusTable({
   // by `NodeStatusPollingDriver` mounted in `nodes/(gate)/layout.tsx`
   // so the rolling buffer survives `/nodes` ↔ `/nodes/[id]` navigation.
   const polling = useNodeStatusPolling({ enabled: false });
+
+  // Seed the polling buffer from the SSR payload on first mount. The
+  // driver intentionally defers the first client tick until the first
+  // `pollIntervalMs` boundary; without this seed the per-service cells
+  // would render as `absent` placeholders for up to a full polling
+  // interval after the first paint, even though the SSR snapshot
+  // already carried each row's agents and external services.
+  useEffect(() => {
+    if (initialEdges.length === 0) return;
+    seedNodeStatusFromSnapshot(new Date(initialCapturedAt), initialEdges);
+  }, [initialCapturedAt, initialEdges]);
 
   // Drive the external-probe loop once for the whole table. Per-row
   // `useServiceStatus` consumers run with `enabled: false` against the

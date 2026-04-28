@@ -10,6 +10,7 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 import { ManagerUnavailableError } from "@/lib/node/errors";
 import { getNodeStatusList } from "@/lib/node/status";
+import type { NodeStatus } from "@/lib/node/types";
 
 // The combined `nodes:read + services:read` gate runs in the parent
 // `(gate)/layout.tsx` so `forbidden()` lands above any Suspense and
@@ -31,11 +32,13 @@ export default async function NodesStatusPage() {
   const canReadServices = await hasPermission(session.roles, "services:read");
 
   let initialRows: NodeStatusRowSnapshot[] = [];
+  let initialEdges: NodeStatus[] = [];
   let initialCapturedAt = new Date().toISOString();
   let managerOffline = false;
   try {
     const result = await getNodeStatusList(session);
     initialCapturedAt = result.capturedAt;
+    initialEdges = result.edges;
     initialRows = result.edges.map(nodeStatusToRow);
   } catch (err) {
     // The fallback panel is reserved for transport failures
@@ -57,6 +60,7 @@ export default async function NodesStatusPage() {
   return (
     <NodeStatusTable
       initialRows={initialRows}
+      initialEdges={initialEdges}
       initialCapturedAt={initialCapturedAt}
       canControl={canWriteNodes}
       canReadServices={canReadServices}
