@@ -548,6 +548,279 @@ describe("ApplyPreviewModal", () => {
     });
   });
 
+  // A `confirmApplyAttempt` (or `retryDispatch`) call whose promise is
+  // still in flight when the modal is force-closed by the parent — and
+  // then reopened — MUST NOT overwrite the freshly-opened attempt when
+  // it eventually resolves. The modal's own Escape/outside-click guard
+  // suppresses dismiss attempts while executing, but a controlled
+  // parent that sets `open={false}` directly bypasses that guard, so
+  // the generation counter has to cover the confirm and retry paths
+  // too — not just plan-building.
+  it("a confirmApplyAttempt from a previous open cycle does not overwrite a fresh attempt after force-close + reopen", async () => {
+    const initialAttemptId = makeAttemptId("1");
+    const reopenedAttemptId = makeAttemptId("2");
+    const create = vi
+      .fn<(args: { nodeId: string }) => Promise<CreateApplyAttemptResult>>()
+      .mockResolvedValueOnce(makePlanResult(initialAttemptId))
+      .mockResolvedValueOnce(makePlanResult(reopenedAttemptId));
+    let resolveStaleConfirm: ((row: ApplyAttemptRow) => void) | undefined;
+    const staleSucceeded = makeDispatches().map((d) => ({
+      ...d,
+      state: "succeeded" as const,
+    }));
+    const confirm = vi
+      .fn<(args: { attemptId: string }) => Promise<ApplyAttemptRow>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<ApplyAttemptRow>((resolve) => {
+            resolveStaleConfirm = resolve;
+          }),
+      )
+      .mockResolvedValue(
+        makeRow(reopenedAttemptId, staleSucceeded, "succeeded"),
+      );
+    function ForceCloseHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <NextIntlClientProvider locale="en" messages={enMessages}>
+          <button
+            type="button"
+            data-testid="force-close"
+            onClick={() => setOpen(false)}
+          >
+            close
+          </button>
+          <button
+            type="button"
+            data-testid="reopen"
+            onClick={() => setOpen(true)}
+          >
+            reopen
+          </button>
+          <ApplyPreviewModal
+            open={open}
+            onOpenChange={setOpen}
+            nodeId="node-1"
+            actions={{
+              createApplyAttempt: create,
+              confirmApplyAttempt: confirm,
+              retryDispatch: vi.fn(),
+            }}
+          />
+        </NextIntlClientProvider>
+      );
+    }
+    render(<ForceCloseHarness />);
+    // (1) Initial open: plan loads with `initialAttemptId`.
+    await screen.findByText("Manager (applyNode)");
+    // (2) Click Apply: stale confirm is held by capturing its resolver.
+    const applyButton = await screen.findByTestId("apply-preview-apply");
+    await act(async () => {
+      fireEvent.click(applyButton);
+    });
+    expect(confirm).toHaveBeenCalledWith({ attemptId: initialAttemptId });
+    await screen.findByTestId("apply-preview-applying");
+    // (3) Parent force-closes mid-flight (bypassing the modal's own
+    // Escape guard, which the controlled `open` prop allows).
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("force-close"));
+    });
+    // (4) Reopen — open-time effect runs and resolves to the new plan.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("reopen"));
+    });
+    await screen.findByText("Manager (applyNode)");
+    expect(create).toHaveBeenCalledTimes(2);
+    // (5) Resolve the stale confirm last. Without the generation guard
+    // on the confirm path, this would call setPhase with the stale
+    // executed state and replace the reopen's planned rows.
+    await act(async () => {
+      resolveStaleConfirm?.(
+        makeRow(initialAttemptId, staleSucceeded, "succeeded"),
+      );
+    });
+    // The reopen's planned phase must still be active. Apply is still
+    // visible (executed phase would have surfaced the Done button), and
+    // clicking it issues a confirm against the reopen's attemptId.
+    const applyAgain = await screen.findByTestId("apply-preview-apply");
+    await act(async () => {
+      fireEvent.click(applyAgain);
+    });
+    expect(confirm).toHaveBeenLastCalledWith({
+      attemptId: reopenedAttemptId,
+    });
+  });
+
+  it("a retryDispatch from a previous open cycle does not overwrite a fresh attempt after force-close + reopen", async () => {
+    const initialAttemptId = makeAttemptId("1");
+    const reopenedAttemptId = makeAttemptId("2");
+    const create = vi
+      .fn<(args: { nodeId: string }) => Promise<CreateApplyAttemptResult>>()
+      .mockResolvedValueOnce(makePlanResult(initialAttemptId))
+      .mockResolvedValueOnce(makePlanResult(reopenedAttemptId));
+    const failedDispatches = makeDispatches();
+    failedDispatches[0] = { ...failedDispatches[0], state: "succeeded" };
+    failedDispatches[1] = {
+      ...failedDispatches[1],
+      state: "failed_retryable",
+      lastError: "transient",
+    };
+    const confirm = vi
+      .fn()
+      .mockResolvedValue(
+        makeRow(initialAttemptId, failedDispatches, "failed_retryable"),
+      );
+    let resolveStaleRetry: ((row: ApplyAttemptRow) => void) | undefined;
+    const staleSucceeded = makeDispatches().map((d) => ({
+      ...d,
+      state: "succeeded" as const,
+    }));
+    const retry = vi.fn().mockImplementation(
+      () =>
+        new Promise<ApplyAttemptRow>((resolve) => {
+          resolveStaleRetry = resolve;
+        }),
+    );
+    function ForceCloseHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <NextIntlClientProvider locale="en" messages={enMessages}>
+          <button
+            type="button"
+            data-testid="force-close"
+            onClick={() => setOpen(false)}
+          >
+            close
+          </button>
+          <button
+            type="button"
+            data-testid="reopen"
+            onClick={() => setOpen(true)}
+          >
+            reopen
+          </button>
+          <ApplyPreviewModal
+            open={open}
+            onOpenChange={setOpen}
+            nodeId="node-1"
+            actions={{
+              createApplyAttempt: create,
+              confirmApplyAttempt: confirm,
+              retryDispatch: retry,
+            }}
+          />
+        </NextIntlClientProvider>
+      );
+    }
+    render(<ForceCloseHarness />);
+    // (1) Initial open + Apply settles to failed_retryable.
+    const applyButton = await screen.findByTestId("apply-preview-apply");
+    await act(async () => {
+      fireEvent.click(applyButton);
+    });
+    const retryButton = await screen.findByTestId(
+      "apply-preview-retry-d-data-store",
+    );
+    // (2) Click Retry: stale retry held by capturing its resolver.
+    await act(async () => {
+      fireEvent.click(retryButton);
+    });
+    await screen.findByTestId("apply-preview-applying");
+    expect(retry).toHaveBeenCalledWith({
+      attemptId: initialAttemptId,
+      dispatchId: "d-data-store",
+    });
+    // (3) Force-close, then (4) reopen.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("force-close"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("reopen"));
+    });
+    await screen.findByText("Manager (applyNode)");
+    expect(create).toHaveBeenCalledTimes(2);
+    // (5) Resolve the stale retry last — must be dropped.
+    await act(async () => {
+      resolveStaleRetry?.(
+        makeRow(initialAttemptId, staleSucceeded, "succeeded"),
+      );
+    });
+    // Reopen's planned phase still active: Apply is shown, and the
+    // executed-phase "succeeded" header from the stale retry is not.
+    expect(screen.queryByText(/All dispatches succeeded/)).toBeNull();
+    const applyAgain = await screen.findByTestId("apply-preview-apply");
+    await act(async () => {
+      fireEvent.click(applyAgain);
+    });
+    expect(confirm).toHaveBeenLastCalledWith({
+      attemptId: reopenedAttemptId,
+    });
+  });
+
+  // On close, the modal must synchronously reset its phase to
+  // `loading` so a subsequent reopen does not flash the previous
+  // attempt's planned/executed rows before the new open-time effect
+  // runs createApplyAttempt and replaces them.
+  it("clears phase on close so reopen does not flash the previous attempt's rows", async () => {
+    const create = vi
+      .fn<(args: { nodeId: string }) => Promise<CreateApplyAttemptResult>>()
+      .mockResolvedValueOnce(makePlanResult(makeAttemptId("1")));
+    let resolveSecond: ((value: CreateApplyAttemptResult) => void) | undefined;
+    create.mockImplementationOnce(
+      () =>
+        new Promise<CreateApplyAttemptResult>((resolve) => {
+          resolveSecond = resolve;
+        }),
+    );
+    function ReopenHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <NextIntlClientProvider locale="en" messages={enMessages}>
+          <button
+            type="button"
+            data-testid="force-close"
+            onClick={() => setOpen(false)}
+          >
+            close
+          </button>
+          <button
+            type="button"
+            data-testid="reopen"
+            onClick={() => setOpen(true)}
+          >
+            reopen
+          </button>
+          <ApplyPreviewModal
+            open={open}
+            onOpenChange={setOpen}
+            nodeId="node-1"
+            actions={{
+              createApplyAttempt: create,
+              confirmApplyAttempt: vi.fn(),
+              retryDispatch: vi.fn(),
+            }}
+          />
+        </NextIntlClientProvider>
+      );
+    }
+    render(<ReopenHarness />);
+    await screen.findByText("Manager (applyNode)");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("force-close"));
+    });
+    // Reopen and hold the second create call open. The modal must be
+    // in the loading phase — NOT briefly showing the previous plan.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("reopen"));
+    });
+    expect(screen.getByTestId("apply-preview-loading")).toBeTruthy();
+    expect(screen.queryByText("Manager (applyNode)")).toBeNull();
+    await act(async () => {
+      resolveSecond?.(makePlanResult(makeAttemptId("2")));
+    });
+    await screen.findByText("Manager (applyNode)");
+  });
+
   // Accessibility checks — equivalent to axe-core's role / aria-modal /
   // labelled-by rules plus the Escape-during-executing assertion the
   // issue calls out. The modal wraps Radix Dialog, which provides a
