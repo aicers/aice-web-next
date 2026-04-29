@@ -1,0 +1,6 @@
+# REview 0.47.0
+# Repro: two concurrent updateNodeDraft(id, old, new) calls with the same
+# `old` snapshot; the second call returns this message after the first
+# committed and changed the canonical state.
+# Source: review-web/src/graphql/node/crud.rs (updateNodeDraft CAS check).
+the node was modified by another writer; please retry

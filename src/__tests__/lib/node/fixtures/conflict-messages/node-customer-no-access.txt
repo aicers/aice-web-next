@@ -1,0 +1,5 @@
+# REview 0.47.0
+# Repro: insertNode(customerId: "5", ...) as a Tenant Administrator
+# whose JWT customer_ids does not include 5.
+# Source: review-web/src/graphql/node/crud.rs (customer-scope guard).
+no access to customer 5

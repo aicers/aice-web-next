@@ -62,5 +62,11 @@
     "query": "node/nodeStatusList.populated.graphql",
     "fixture": "node/nodeStatusList.serviceVariants.json",
     "variables": { "first": 995 }
+  },
+  {
+    "operation": "node",
+    "query": "node/nodeDetail.alpha.graphql",
+    "fixture": "node/nodeDetail.alpha.json",
+    "variables": { "id": "11" }
   }
 ]

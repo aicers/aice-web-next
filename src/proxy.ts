@@ -8,8 +8,27 @@ import { AUTH_COOKIE_NAME, isPublicPath } from "./lib/auth/proxy-auth";
 
 const intlMiddleware = createMiddleware(routing);
 
+/**
+ * Header used to forward the original request URL to RSC server
+ * components, so layouts (which don't receive `searchParams`) can apply
+ * search-param-scoped guards above any Suspense boundary. The Node
+ * settings page wraps its async work in a `loading.tsx` Suspense, so a
+ * `forbidden()` thrown from inside the page lands after headers commit
+ * at 200; reading this header in `nodes/(gate)/layout.tsx` lets the
+ * mixed-permission write gate enforce the `?dialog=edit&id=…` HTTP 403
+ * contract before the loading fallback streams.
+ */
+export const REQUEST_URL_HEADER = "x-request-url";
+
 export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Forward the request URL on every request — public and protected
+  // alike — so the gate layouts can read it via `headers()` regardless
+  // of which auth path was taken. Mutating `request.headers` in-place
+  // before calling `intlMiddleware(request)` propagates to the RSC
+  // request that next-intl forwards.
+  request.headers.set(REQUEST_URL_HEADER, request.nextUrl.toString());
 
   // Public paths: skip auth, run locale middleware
   if (isPublicPath(pathname)) {

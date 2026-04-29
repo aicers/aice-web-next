@@ -11,9 +11,10 @@ import {
   Trash2,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
+import { NodeEditDialog } from "@/components/node/node-edit-dialog";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
 import {
   AlertDialog,
@@ -58,6 +59,8 @@ import {
 } from "@/components/ui/tooltip";
 import { useNodeStatusPolling } from "@/hooks/use-node-status-polling";
 import { Link, useRouter } from "@/i18n/navigation";
+import type { SensorNodeOption } from "@/lib/node/sensor-list";
+import type { Node as ManagerNode } from "@/lib/node/types";
 import { cn } from "@/lib/utils";
 
 import {
@@ -78,6 +81,28 @@ interface NodeListTableProps {
   canEdit: boolean;
   canDelete: boolean;
   showTenantFilter: boolean;
+  /**
+   * Canonical node payload to seed the edit dialog with on mount. The
+   * settings page resolves this server-side from the `?dialog=edit&id=…`
+   * URL so the dialog opens pre-populated without a second round-trip;
+   * a stale or out-of-scope id arrives here as `null` and the table
+   * just renders normally.
+   */
+  initialEditNode?: ManagerNode | null;
+  /**
+   * Sensor-bearing nodes the dialog forwards to the Hog
+   * (Semi-supervised Engine) form so it can render its
+   * `active_sensors` checklist. Empty when no node carries a sensor
+   * agent — the form renders its empty-state copy in that case.
+   */
+  sensorOptions?: readonly SensorNodeOption[];
+  /**
+   * Applied external-service configs (Giganto / Tivan) projected to
+   * TOML, keyed by registry kind, for the edit dialog to seed
+   * external sections that have `draft: null` on the node. Resolved
+   * server-side by the Settings page; only relevant in edit mode.
+   */
+  appliedExternalDrafts?: Readonly<Record<string, string>>;
 }
 
 type SortKey = "newest" | "name" | "hostname";
@@ -91,6 +116,9 @@ export function NodeListTable({
   canEdit,
   canDelete,
   showTenantFilter,
+  initialEditNode = null,
+  sensorOptions,
+  appliedExternalDrafts,
 }: NodeListTableProps) {
   const t = useTranslations("nodes.list");
   const router = useRouter();
@@ -106,6 +134,20 @@ export function NodeListTable({
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Inline create + edit. The settings page resolves the edit target
+  // server-side from `?dialog=edit&id=…` so the canonical node arrives
+  // as `initialEditNode`; the dialog opens automatically when that
+  // resolves to a node.
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editNode, setEditNode] = useState<ManagerNode | null>(initialEditNode);
+
+  // When the URL changes to a different edit target, swap to the new
+  // canonical payload. Resetting to `null` (Cancel / Save → URL cleaned
+  // up) falls through to the dialog's own close path below.
+  useEffect(() => {
+    setEditNode(initialEditNode);
+  }, [initialEditNode]);
 
   // Live polling samples: the segment-scoped driver in
   // `nodes/(gate)/layout.tsx` keeps the per-node buffer fresh; this
@@ -338,11 +380,26 @@ export function NodeListTable({
   }, [performDelete, selected, t]);
 
   const onAddClick = useCallback(() => {
-    // Phase Node-4 will open the create dialog. For now navigate to a
-    // placeholder query param so the dialog flow can be wired without
-    // changing this control's surface.
-    router.push("/nodes/settings?dialog=create");
-  }, [router]);
+    setCreateDialogOpen(true);
+  }, []);
+
+  const existingNames = useMemo(() => {
+    const out: string[] = [];
+    for (const row of rows) {
+      if (row.draftName) out.push(row.draftName);
+      out.push(row.appliedName);
+    }
+    return out;
+  }, [rows]);
+
+  const existingHostnames = useMemo(() => {
+    const out: string[] = [];
+    for (const row of rows) {
+      if (row.draftHostname) out.push(row.draftHostname);
+      if (row.appliedHostname) out.push(row.appliedHostname);
+    }
+    return out;
+  }, [rows]);
 
   // Mid-session manager outage: the SSR path renders the offline panel
   // when the initial `nodeStatusList` walk fails, but a manager that
@@ -563,6 +620,49 @@ export function NodeListTable({
               {t("deleteCancel")}
             </Button>
           </section>
+        )}
+
+        {canCreate && (
+          <NodeEditDialog
+            open={createDialogOpen}
+            onOpenChange={setCreateDialogOpen}
+            mode="create"
+            customers={customers}
+            existingNames={existingNames}
+            existingHostnames={existingHostnames}
+            sensorOptions={sensorOptions}
+            onSuccess={() => router.refresh()}
+          />
+        )}
+
+        {canEdit && editNode && (
+          <NodeEditDialog
+            // Re-keying on the node id forces a fresh dialog instance
+            // when the user navigates between two different edit
+            // targets — RHF's `defaultValues` only seeds on first
+            // mount, so without this a quick switch would leak the
+            // previous node's metadata into the form.
+            key={editNode.id}
+            open={true}
+            onOpenChange={(open) => {
+              if (!open) {
+                setEditNode(null);
+                router.replace("/nodes/settings");
+              }
+            }}
+            mode="edit"
+            node={editNode}
+            customers={customers}
+            existingNames={existingNames}
+            existingHostnames={existingHostnames}
+            sensorOptions={sensorOptions}
+            appliedExternalDrafts={appliedExternalDrafts}
+            onSuccess={() => {
+              setEditNode(null);
+              router.replace("/nodes/settings");
+              router.refresh();
+            }}
+          />
         )}
 
         <AlertDialog

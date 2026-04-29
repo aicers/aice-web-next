@@ -1,8 +1,39 @@
+import { headers } from "next/headers";
 import { forbidden, redirect } from "next/navigation";
 
 import { NodeStatusPollingDriver } from "@/components/node/node-status-polling-driver";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
+import { REQUEST_URL_HEADER } from "@/proxy";
+
+/**
+ * Returns true when the request URL matches the dialog-edit pattern
+ * AND the caller is missing one of the write scopes — i.e. the layout
+ * should call `forbidden()` to surface HTTP 403. Kept as a pure helper
+ * so `forbidden()`'s framework throw doesn't get swallowed by a wider
+ * try/catch around URL parsing. Returns false on malformed URLs.
+ */
+function shouldForbidEditDialog(
+  requestUrl: string,
+  canWriteNodes: boolean,
+  canWriteServices: boolean,
+): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(requestUrl);
+  } catch {
+    return false;
+  }
+  const isSettings = parsed.pathname.endsWith("/nodes/settings");
+  const isDialogEdit = parsed.searchParams.get("dialog") === "edit";
+  const editId = parsed.searchParams.get("id");
+  return (
+    isSettings &&
+    isDialogEdit &&
+    !!editId &&
+    (!canWriteNodes || !canWriteServices)
+  );
+}
 
 // Centralised `nodes:read + services:read` gate for both Node tabs.
 //
@@ -37,12 +68,39 @@ export default async function NodesGateLayout({
     redirect("/sign-in");
   }
 
-  const [canReadNodes, canReadServices] = await Promise.all([
-    hasPermission(session.roles, "nodes:read"),
-    hasPermission(session.roles, "services:read"),
-  ]);
+  const [canReadNodes, canReadServices, canWriteNodes, canWriteServices] =
+    await Promise.all([
+      hasPermission(session.roles, "nodes:read"),
+      hasPermission(session.roles, "services:read"),
+      hasPermission(session.roles, "nodes:write"),
+      hasPermission(session.roles, "services:write"),
+    ]);
 
   if (!canReadNodes || !canReadServices) {
+    forbidden();
+  }
+
+  // Mixed-permission write contract: callers missing either
+  // `nodes:write` or `services:write` cannot reach the create/edit
+  // dialog. The Add button is hidden in the page below, but a direct
+  // navigation to `?dialog=edit&id=…` must reject with HTTP 403 (issue
+  // acceptance). The check has to live here — not in the page —
+  // because `settings/loading.tsx` defines a Suspense boundary around
+  // the page body, so a page-level `forbidden()` lands after headers
+  // commit at 200. Layouts sit above the loading.tsx Suspense, so the
+  // throw aborts streaming and the response carries 403.
+  //
+  // Layouts don't receive `searchParams`, so we recover the original
+  // URL from the `x-request-url` header that `proxy.ts` forwards on
+  // every request. Falling back to no-check when the header is absent
+  // keeps the layout robust against a stray internal RSC re-render
+  // that didn't pass through middleware (the page-level guard still
+  // runs as a defense-in-depth back-stop).
+  const requestUrl = (await headers()).get(REQUEST_URL_HEADER);
+  if (
+    requestUrl &&
+    shouldForbidEditDialog(requestUrl, canWriteNodes, canWriteServices)
+  ) {
     forbidden();
   }
 

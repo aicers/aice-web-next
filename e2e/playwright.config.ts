@@ -101,6 +101,7 @@ export default defineConfig({
         // any given time.
         "node/list.spec.ts",
         "node/status.spec.ts",
+        "node/create-edit.spec.ts",
       ],
       use: { ...devices["Desktop Chrome"] },
     },
@@ -126,6 +127,12 @@ export default defineConfig({
       name: "node-list",
       testMatch: ["node/list.spec.ts"],
       dependencies: ["node-status"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "node-create-edit",
+      testMatch: ["node/create-edit.spec.ts"],
+      dependencies: ["node-list"],
       use: { ...devices["Desktop Chrome"] },
     },
     // These suites mutate the global mfa_policy row. Running them

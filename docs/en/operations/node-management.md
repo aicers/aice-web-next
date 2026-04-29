@@ -107,21 +107,114 @@ When the upstream manager is unreachable, the table area is replaced
 with a "Cannot reach manager" panel. The sidebar and the Nodes tab bar
 continue to render so the caller can navigate elsewhere.
 
+## Creating and editing a node
+
+The **Add** button on the Settings list opens the create/edit dialog;
+the **Edit** option in the per-row kebab menu opens the same dialog
+pre-populated with the canonical node payload. Both surfaces require
+**both** `nodes:write` and `services:write`. A caller missing either
+permission does not see the **Add** button and is rejected with HTTP
+403 if they navigate directly to the edit URL.
+
+![Create node dialog with Sensor enabled](../../assets/node-create-en.png)
+
+### Node metadata
+
+The top of the dialog collects the four metadata fields documented in
+`decisions/node-field-catalog.md`:
+
+- **Name** — required, max 32 characters, unique across nodes. The
+  uniqueness pre-check runs against the list currently visible; the
+  manager confirms on save and the dialog scrolls back to the field
+  on conflict.
+- **Customer** — required, single-select. Tenant Administrators see
+  only the customers their account is assigned to; System
+  Administrators see every customer.
+- **Description** — optional, max 64 characters.
+- **Hostname** — required, max 64 characters, lowercase
+  `[a-z0-9-.]` only, no leading/trailing `.` / `-`, no consecutive
+  specials.
+
+Inline errors appear under each field as the user types; a
+server-reported conflict scrolls back to the field with the upstream
+message inline.
+
+### Service accordion
+
+Below the metadata block, every service has a collapsible section.
+The header carries:
+
+- A **checkbox** that enables or disables the service's membership on
+  this node — i.e., whether the node hosts the service at all. This
+  is a configuration decision, distinct from the per-service runtime
+  on/off control that Phase Node-8 will introduce.
+- For Sensor, Semi-supervised Engine, and Time Series Generator: a
+  **Configure here / Manually** switch. When set to **Manually**,
+  the panel collapses into an informative card —
+  *"This service reads its configuration from a local TOML file on
+  the node; aice-web-next cannot inspect or edit it."* — and the
+  draft sent to the manager is an empty string. **Unsupervised
+  Engine** always shows the informative card; it has no switch.
+
+### Cancel and Save
+
+Clicking **Cancel** discards every edit and emits no audit entries —
+toggling the configuration mode and then cancelling does **not**
+produce a `service.set_mode` row. Clicking **Save** runs form-wide
+validation and, only on full pass, dispatches the create / update
+mutation through the BFF.
+
+A successful create emits exactly one `node.create` audit row. A
+successful edit emits one `node.update` row **only** when at least
+one of `name`, `customer`, `description`, or `hostname` changed; an
+edit that touches only service drafts emits zero `node.update` rows
+(the per-service `service.draft_save` rows from Phase Node-9 are
+emitted instead). When the user toggled an agent service's
+**Configure here / Manually** switch and the save succeeded, one
+`service.set_mode` row is emitted per net-changed service.
+
+### Server-conflict mapping
+
+REview's GraphQL surface returns plain-text error messages for
+uniqueness and scope conflicts. The BFF matches each message against
+the pattern table in `decisions/node-conflict-patterns.md` and routes
+the typed error to the correct field:
+
+- **Name uniqueness** → inline under the Name field.
+- **Hostname uniqueness** → inline under the Hostname field.
+- **Customer scope / not found** → inline under the Customer field.
+- **Stale conflict on update** → the dialog renders a dedicated
+  reconciliation prompt with **Discard my edits and reload** and
+  **Keep editing** actions, separate from the generic footer banner.
+  The Phase Node-9 server action drives the underlying single-shot
+  replay; the prompt only appears when that replay also conflicts
+  (see *Saving drafts* below). Both actions hit `GET /api/nodes/[id]`
+  to refresh the canonical baseline before continuing — **Discard**
+  re-seeds the form against the freshly-fetched node (the user's
+  in-flight edits are dropped); **Keep editing** preserves edits the
+  user made but rebases untouched node-metadata fields onto the
+  refreshed baseline, so the next save reflects the current server
+  state for fields the user did not change instead of overwriting
+  them with the pre-refresh value. The baseline is also refreshed
+  so the next save's `old` payload matches the current server
+  state instead of re-tripping the same CAS check. The dialog
+  stays open in both cases, and Save is disabled while the
+  refresh is in flight.
+- **Agent not found** → the BFF maps the upstream `agent <key> not
+  found` message back to the service registry kind via
+  `serviceKindFromAgentNotFound` and the dialog pins the inline error
+  inside that accordion section. If the identifier does not match a
+  known agent, the message falls through to the form-level banner.
+
+Unmatched messages surface as a single form-level banner above the
+footer.
+
 ## Saving drafts
 
 This section documents the **save-draft server action** that lives in
-the BFF. The Edit dialog UI that calls into it ships in a sibling
-Phase Node-9 sub-issue and is not yet renderable on this branch, so
-nothing on this branch lets an operator save a draft from the UI.
-What is documented below is the contract the dialog and any other
-caller (scripts, automation) will rely on once the dialog ships, and
-the audit rows operators will see when saves start landing.
-
-> **Screenshot debt.** The Edit dialog and the stale-conflict
-> reconciliation prompt are owned by the sibling sub-issue that builds
-> the editing UI. PNG captures of the save happy path and the
-> reconciliation prompt will be appended to this section by that
-> sub-issue's PR, per `docs/AUTHORING.md`.
+the BFF. The Edit dialog UI from the section above is the primary
+caller; the contract documented here also applies to scripts and
+automation.
 
 ### Permissions
 
@@ -188,6 +281,26 @@ expected to surface a reconciliation choice to the user — discard the
 local edits and reload, or keep the edits and refresh the baseline —
 rather than retrying automatically. The visual surface for that
 choice is owned by the sibling sub-issue that ships the dialog.
+
+### Edit dialog — save happy path and stale-conflict prompt
+
+The Edit dialog discharges the screenshot debt deferred by Phase
+Node-9b (PR #366). The save happy-path capture below shows the
+post-save state outcome: the dialog has closed, the Settings list
+is restored, and the `node.update` / `service.draft_save` audit
+entries the section above describes have been emitted by the BFF.
+The capture is taken after the dialog unmounts on a successful
+save rather than during the in-flight edit, so the asset reflects
+"the save succeeded" rather than "the save is about to be
+attempted":
+
+![Edit dialog save happy path](../../assets/node-save-happy-en.png)
+
+The stale-conflict reconciliation prompt — surfaced when the BFF's
+single-shot replay also hits the CAS check — captured under the
+mocked-GraphQL path documented in `docs/AUTHORING.md`:
+
+![Stale-conflict reconciliation prompt](../../assets/node-stale-conflict-en.png)
 
 ## Bulk apply
 

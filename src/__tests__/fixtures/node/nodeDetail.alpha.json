@@ -1,0 +1,40 @@
+{
+  "node": {
+    "id": "11",
+    "name": "alpha-node",
+    "nameDraft": null,
+    "profile": {
+      "customerId": "1",
+      "description": "Primary sensor cluster",
+      "hostname": "alpha.lan"
+    },
+    "profileDraft": null,
+    "agents": [
+      {
+        "node": 11,
+        "key": "alpha-sensor",
+        "kind": "SENSOR",
+        "status": "ENABLED",
+        "config": "dpdk_args = \"\"\ndpdk_inputs = [\"0000:00:1f.6\"]\ndpdk_outputs = [\"0000:00:1f.6\"]\nsrc_mac = \"00:00:00:00:00:00\"\ndst_mac = \"00:00:00:00:00:00\"\ndump_dir = \"/opt/clumit/var/sensor\"\nlog_path = \"/opt/clumit/log/sensor.log\"\ngiganto_ingest_srv_addr = \"10.0.0.1:38370\"\ngiganto_name = \"alpha-store\"\npcap_max_size = 1000\nprotocols = [\"http\", \"ssh\"]\nhttp_ports = [80]\nhttps_ports = [443]\nssh_ports = [22]\nftp_ports = [21]\ndump_items = [\"pcap\"]\ndump_http_content_types = [\"pdf\"]\n",
+        "draft": null
+      },
+      {
+        "node": 11,
+        "key": "alpha-unsupervised",
+        "kind": "UNSUPERVISED",
+        "status": "ENABLED",
+        "config": null,
+        "draft": null
+      }
+    ],
+    "externalServices": [
+      {
+        "node": 11,
+        "key": "alpha-data-store",
+        "kind": "DATA_STORE",
+        "status": "ENABLED",
+        "draft": null
+      }
+    ]
+  }
+}

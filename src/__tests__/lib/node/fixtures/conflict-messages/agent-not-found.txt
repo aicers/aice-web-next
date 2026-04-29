@@ -1,0 +1,5 @@
+# REview 0.47.0
+# Repro: updateNodeDraft with an agents[].key that does not match any
+# agent currently registered against the node.
+# Source: review-web/src/graphql/node/agent.rs.
+agent piglet not found on node 42
