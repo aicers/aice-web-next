@@ -74,5 +74,25 @@
     "query": "node/nodeDetail.alpha.graphql",
     "fixture": "node/nodeDetail.agentEnabled.json",
     "variables": { "id": "21" }
+  },
+  {
+    "operation": "applyNode",
+    "query": "node/applyNode.success.graphql",
+    "fixture": "node/applyNode.success.json",
+    "variables": {
+      "id": "11",
+      "node": {
+        "name": "alpha-node",
+        "nameDraft": null,
+        "profile": {
+          "customerId": "1",
+          "description": "Primary sensor cluster",
+          "hostname": "alpha.lan"
+        },
+        "profileDraft": null,
+        "agents": [],
+        "externalServices": []
+      }
+    }
   }
 ]
