@@ -598,14 +598,21 @@ export function useServiceStatus(
 
   return useMemo<UseServiceStatusResult>(() => {
     const buf = polling.byNodeId.get(nodeId) ?? null;
-    // Fall back to the SSR-rendered `NodeStatus` when the polling
-    // buffer has nothing for this node yet. Without this fallback the
-    // first paint (server *and* client pre-effect) renders every card
-    // as `Off / absent`, because the shared polling store starts
-    // empty on the server snapshot and the seed effect only runs
-    // after hydration. Once a real poll lands, `buf.latest` takes
-    // over.
-    const live = buf?.latest ?? initialNodeStatus;
+    // Fall back to the SSR-rendered `NodeStatus` only when the polling
+    // buffer has no entry for this node at all. Without that fallback
+    // the first paint (server *and* client pre-effect) would render
+    // every card as `Off / absent`, because the shared polling store
+    // starts empty on the server snapshot and the seed effect only
+    // runs after hydration.
+    //
+    // Once a buffer entry exists, trust it — even when
+    // `latest === null`. The polling layer uses `latest === null` to
+    // signal "this node was absent from the most recent snapshot"
+    // while preserving sample history; collapsing that back to the
+    // SSR `initialNodeStatus` would keep feeding the badges stale
+    // pre-disappearance state instead of the absent / dead-node
+    // outcome the operator should see.
+    const live = buf ? buf.latest : initialNodeStatus;
     const entries = composeServiceStatusEntries({
       live,
       externalProbes: probes.outcomes,

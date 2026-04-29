@@ -105,8 +105,16 @@ export function NodeDetailDashboard({
 
   const buffer: NodeStatusBuffer | null = polling.byNodeId.get(node.id) ?? null;
 
-  // Live snapshot priority: real polled buffer > SSR initial snapshot.
-  const live: NodeStatus | null = buffer?.latest ?? initialNodeStatus ?? null;
+  // Live snapshot priority: once the polling store has a buffer entry
+  // for this node, trust it as the source of truth — even when
+  // `latest === null`, which the polling layer uses to mean "this node
+  // was absent from the most recent snapshot". Falling back to
+  // `initialNodeStatus` in that case would freeze the dashboard on
+  // pre-disappearance data and lie about the live state. The SSR
+  // snapshot is only consulted before any buffer entry exists.
+  const live: NodeStatus | null = buffer
+    ? buffer.latest
+    : (initialNodeStatus ?? null);
 
   // The polling buffer is seeded from the SSR snapshot in the effect
   // below, but that effect does not run until after hydration. To

@@ -103,10 +103,15 @@ export function NodeDetailServiceGrid({
   // snapshot — every other badge on this page consumes the shared
   // polling buffer, and a Manager-card-only divergence would lie about
   // the running state after a visibility-resume one-shot or a normal
-  // poll tick.
+  // poll tick. Once a buffer entry exists for this node, trust it
+  // even when `latest === null` (the polling layer uses that to mean
+  // "absent from the most recent snapshot"). Falling back to the SSR
+  // snapshot in that case would keep the badge frozen on stale state.
   const polling = useNodeStatusPolling({ enabled: false });
-  const liveStatus: NodeStatus | null =
-    polling.byNodeId.get(node.id)?.latest ?? initialNodeStatus ?? null;
+  const managerBuffer = polling.byNodeId.get(node.id);
+  const liveStatus: NodeStatus | null = managerBuffer
+    ? managerBuffer.latest
+    : (initialNodeStatus ?? null);
   const managerRunning = liveStatus?.manager ?? false;
 
   const agentByKind = useMemo(() => {

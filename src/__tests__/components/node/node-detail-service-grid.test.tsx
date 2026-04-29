@@ -180,6 +180,25 @@ describe("NodeDetailServiceGrid — manager + unsupervised", () => {
     );
   });
 
+  it("Manager card honours latest === null when the node disappears from a later poll", () => {
+    // The polling layer marks `latest === null` when this node is
+    // absent from the most recent snapshot, while keeping sample
+    // history intact. The Manager card must reflect that absence
+    // rather than snapping back to the (now stale) SSR snapshot.
+    const ssrStatus = makeStatus({ manager: true });
+    const firstSample = makeStatus({ manager: true });
+    __pushNodeStatusSample(new Date("2026-04-29T08:00:00.000Z"), [firstSample]);
+    // Subsequent snapshot omits node-1 entirely → buffer entry stays
+    // but `latest` becomes null.
+    __pushNodeStatusSample(new Date("2026-04-29T08:00:10.000Z"), []);
+    renderGrid({ initialNodeStatus: ssrStatus });
+    const card = screen.getByTestId("node-detail-manager-card");
+    expect(card.getAttribute("data-running")).toBe("false");
+    expect(screen.getByTestId("node-detail-manager-badge").textContent).toBe(
+      enMessages.nodes.detail.services.managerNotRunning,
+    );
+  });
+
   it("renders the Unsupervised card with the footnote and no tabs", () => {
     const node = makeNode({ agents: [UNSUPERVISED_AGENT] });
     renderGrid({ node });

@@ -295,6 +295,41 @@ describe("NodeDetailDashboard — last applied + ping last seen", () => {
     expect(lastSeen.textContent ?? "").toMatch(/\d/);
   });
 
+  it("renders the dead badge when the node disappears from a later snapshot", () => {
+    // The polling layer marks `latest === null` when this node is
+    // absent from the most recent snapshot but preserves sample
+    // history. The dashboard must surface that absence (alive=false)
+    // rather than collapsing back to the SSR `initialNodeStatus`,
+    // which would render an alive badge on a node that is no longer
+    // reporting.
+    const aliveSample: NodeStatus = {
+      id: "node-1",
+      name: "alpha",
+      nameDraft: null,
+      profile: null,
+      profileDraft: null,
+      cpuUsage: null,
+      totalMemory: null,
+      usedMemory: null,
+      totalDiskSpace: null,
+      usedDiskSpace: null,
+      manager: true,
+      agents: [],
+      externalServices: [],
+      ping: 0.04,
+    };
+    __pushNodeStatusSample(new Date("2026-04-29T08:00:00.000Z"), [aliveSample]);
+    // Subsequent poll omits node-1: buffer survives, `latest` flips
+    // to null.
+    __pushNodeStatusSample(new Date("2026-04-29T08:00:10.000Z"), []);
+    renderDashboard({ initialNodeStatus: aliveSample });
+    const badge = screen.getByTestId("node-detail-ping");
+    expect(badge.getAttribute("data-ping")).toBe("dead");
+    // The "Last seen" line still walks back through the buffered
+    // samples to surface the most recent successful ping.
+    expect(screen.getByTestId("node-detail-ping-last-seen")).toBeTruthy();
+  });
+
   it("renders the dead badge with the most recent successful-ping timestamp", () => {
     const aliveSample: NodeStatus = {
       id: "node-1",
