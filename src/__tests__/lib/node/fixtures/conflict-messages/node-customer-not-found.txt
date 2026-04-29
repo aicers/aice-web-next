@@ -1,0 +1,5 @@
+# REview 0.47.0
+# Repro: insertNode(customerId: "999999", ...) where 999999 does not
+# exist in the customer table.
+# Source: review-web/src/graphql/node/crud.rs (customer-scope guard).
+customer 999999 not found

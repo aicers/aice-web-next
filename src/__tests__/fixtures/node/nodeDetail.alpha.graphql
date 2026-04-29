@@ -1,0 +1,32 @@
+query NodeDetail($id: ID!) {
+  node(id: $id) {
+    id
+    name
+    nameDraft
+    profile {
+      customerId
+      description
+      hostname
+    }
+    profileDraft {
+      customerId
+      description
+      hostname
+    }
+    agents {
+      node
+      key
+      kind
+      status
+      config
+      draft
+    }
+    externalServices {
+      node
+      key
+      kind
+      status
+      draft
+    }
+  }
+}

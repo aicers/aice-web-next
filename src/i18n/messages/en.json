@@ -345,6 +345,48 @@
       "time-series": "Time Series Generator",
       "unsupervised": "Unsupervised Engine"
     },
+    "dialog": {
+      "titleCreate": "Add node",
+      "titleEdit": "Edit node",
+      "servicesHeading": "Services",
+      "cancel": "Cancel",
+      "save": "Save",
+      "saving": "Saving…",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "manualCard": "This service reads its configuration from a local TOML file on the node; aice-web-next cannot inspect or edit it.",
+      "fields": {
+        "name": "Name",
+        "customer": "Customer",
+        "customerPlaceholder": "Select a customer",
+        "description": "Description",
+        "hostname": "Hostname"
+      },
+      "modes": {
+        "here": "Configure here",
+        "manually": "Manually",
+        "toggle": "Configuration mode"
+      },
+      "errors": {
+        "nameTaken": "A node with this name already exists.",
+        "hostnameTaken": "A node with this hostname already exists.",
+        "generic": "Could not save the node.",
+        "serviceFallback": "{message} (service: {serviceKind})"
+      },
+      "validation": {
+        "required": "Required",
+        "tooLong": "Must be at most {max} characters",
+        "disallowedChar": "Disallowed character",
+        "noWhitespace": "No leading/trailing whitespace",
+        "invalidHostname": "Invalid hostname"
+      },
+      "stale": {
+        "title": "The node was modified by someone else",
+        "discard": "Discard my edits and reload",
+        "keep": "Keep editing",
+        "refreshing": "Refreshing…"
+      }
+    },
     "forms": {
       "common": {
         "dataStoreIp": "Data Store IP",

@@ -1,0 +1,5 @@
+# REview 0.47.0
+# Repro: insertNode(hostname: "host-1", ...) twice with different names
+# under the same customer; the second call returns this message.
+# Source: review-web/src/graphql/node/crud.rs (hostname uniqueness check).
+hostname host-1 already in use

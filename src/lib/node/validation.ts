@@ -135,41 +135,90 @@ export function retentionDuration(value: string): boolean {
 
 // ── Zod refinements ───────────────────────────────────────────────
 
-export const nodeNameSchema = (max = 32) =>
-  z
-    .string()
-    .min(1, "Required")
-    .max(max, `Must be at most ${max} characters`)
-    .refine(disallowXss, "Disallowed character")
-    .refine(noLeadingTrailingWhitespace, "No leading/trailing whitespace");
+/**
+ * Localizable messages for the schema-level error strings. Each builder
+ * accepts an optional `messages` object so the dialog can pass through
+ * pre-translated strings from `useTranslations("nodes.dialog.validation")`,
+ * keeping the rule layer pure of locale knowledge. Defaults are the
+ * historic English literals so the per-service form schemas (Phase
+ * Node-10) and unit tests keep working without modification — the
+ * dialog's metadata form is the surface that the issue's "Hardcode
+ * nothing" requirement covers.
+ */
+export interface NodeValidationMessages {
+  required?: string;
+  tooLong?: (max: number) => string;
+  disallowedChar?: string;
+  noWhitespace?: string;
+  invalidHostname?: string;
+}
 
-export const nodeDescriptionSchema = (max = 64) =>
-  z
-    .string()
-    .max(max, `Must be at most ${max} characters`)
-    .refine(disallowXss, "Disallowed character")
-    .refine(noLeadingTrailingWhitespace, "No leading/trailing whitespace");
+const DEFAULT_MESSAGES: Required<NodeValidationMessages> = {
+  required: "Required",
+  tooLong: (max: number) => `Must be at most ${max} characters`,
+  disallowedChar: "Disallowed character",
+  noWhitespace: "No leading/trailing whitespace",
+  invalidHostname: "Invalid hostname",
+};
 
-export const nodeHostnameSchema = (max = 64) =>
-  z
+function withDefaults(
+  messages?: NodeValidationMessages,
+): Required<NodeValidationMessages> {
+  return { ...DEFAULT_MESSAGES, ...messages };
+}
+
+export const nodeNameSchema = (max = 32, messages?: NodeValidationMessages) => {
+  const m = withDefaults(messages);
+  return z
     .string()
-    .min(1, "Required")
-    .max(max, `Must be at most ${max} characters`)
-    .refine(nodeHostnameChars, "Invalid hostname");
+    .min(1, m.required)
+    .max(max, m.tooLong(max))
+    .refine(disallowXss, m.disallowedChar)
+    .refine(noLeadingTrailingWhitespace, m.noWhitespace);
+};
+
+export const nodeDescriptionSchema = (
+  max = 64,
+  messages?: NodeValidationMessages,
+) => {
+  const m = withDefaults(messages);
+  return z
+    .string()
+    .max(max, m.tooLong(max))
+    .refine(disallowXss, m.disallowedChar)
+    .refine(noLeadingTrailingWhitespace, m.noWhitespace);
+};
+
+export const nodeHostnameSchema = (
+  max = 64,
+  messages?: NodeValidationMessages,
+) => {
+  const m = withDefaults(messages);
+  return z
+    .string()
+    .min(1, m.required)
+    .max(max, m.tooLong(max))
+    .refine(nodeHostnameChars, m.invalidHostname);
+};
 
 /**
  * Hostname schema for fields the catalog marks `Option<string>`. An
  * empty string is accepted (it serialises as an absent key); any
  * non-empty value still has to satisfy the regular hostname rule.
  */
-export const nodeHostnameOptionalSchema = (max = 64) =>
-  z
+export const nodeHostnameOptionalSchema = (
+  max = 64,
+  messages?: NodeValidationMessages,
+) => {
+  const m = withDefaults(messages);
+  return z
     .string()
-    .max(max, `Must be at most ${max} characters`)
+    .max(max, m.tooLong(max))
     .refine(
       (value) => value.length === 0 || nodeHostnameChars(value),
-      "Invalid hostname",
+      m.invalidHostname,
     );
+};
 
 export const ipV4Schema = z
   .string()

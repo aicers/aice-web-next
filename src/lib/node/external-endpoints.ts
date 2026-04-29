@@ -1,5 +1,7 @@
 import "server-only";
 
+import { ExternalServiceUnavailableError } from "./errors";
+
 /**
  * Per-deployment endpoint URLs for the external services aice-web-next
  * dispatches to directly (Giganto and Tivan). Every external-service
@@ -17,6 +19,13 @@ import "server-only";
  * only after the umbrella explicitly approves it. Until then, the
  * dispatch URL is environment configuration, never derived from a
  * node's stored `graphql_srv_addr`.
+ *
+ * A deployment with the env var unset is one that has not provisioned
+ * the corresponding external service at all. Treating that as
+ * `ExternalServiceUnavailableError` lets the same graceful-degradation
+ * paths that handle a transient network outage also cover the
+ * not-deployed case — the Edit dialog falls through to defaults
+ * instead of crashing the settings page.
  */
 
 const GIGANTO_ENV = "GIGANTO_GRAPHQL_ENDPOINT";
@@ -25,7 +34,10 @@ const TIVAN_ENV = "TIVAN_GRAPHQL_ENDPOINT";
 export function getGigantoEndpoint(): string {
   const url = process.env[GIGANTO_ENV];
   if (!url) {
-    throw new Error(`Missing environment variable: ${GIGANTO_ENV}`);
+    throw new ExternalServiceUnavailableError(
+      "DATA_STORE",
+      `Missing environment variable: ${GIGANTO_ENV}`,
+    );
   }
   return url;
 }
@@ -33,7 +45,10 @@ export function getGigantoEndpoint(): string {
 export function getTivanEndpoint(): string {
   const url = process.env[TIVAN_ENV];
   if (!url) {
-    throw new Error(`Missing environment variable: ${TIVAN_ENV}`);
+    throw new ExternalServiceUnavailableError(
+      "TI_CONTAINER",
+      `Missing environment variable: ${TIVAN_ENV}`,
+    );
   }
   return url;
 }

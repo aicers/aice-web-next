@@ -345,6 +345,48 @@
       "time-series": "시계열 생성기",
       "unsupervised": "비지도 학습 엔진"
     },
+    "dialog": {
+      "titleCreate": "노드 추가",
+      "titleEdit": "노드 편집",
+      "servicesHeading": "서비스",
+      "cancel": "취소",
+      "save": "저장",
+      "saving": "저장 중…",
+      "expand": "펼치기",
+      "collapse": "접기",
+      "manualCard": "이 서비스는 노드의 로컬 TOML 파일에서 설정을 읽습니다. aice-web-next에서는 확인하거나 편집할 수 없습니다.",
+      "fields": {
+        "name": "이름",
+        "customer": "고객",
+        "customerPlaceholder": "고객을 선택하세요",
+        "description": "설명",
+        "hostname": "호스트명"
+      },
+      "modes": {
+        "here": "여기서 설정",
+        "manually": "수동",
+        "toggle": "설정 모드"
+      },
+      "errors": {
+        "nameTaken": "이미 사용 중인 이름입니다.",
+        "hostnameTaken": "이미 사용 중인 호스트명입니다.",
+        "generic": "노드를 저장하지 못했습니다.",
+        "serviceFallback": "{message} (서비스: {serviceKind})"
+      },
+      "validation": {
+        "required": "필수 입력 항목입니다.",
+        "tooLong": "{max}자 이내로 입력해 주세요.",
+        "disallowedChar": "허용되지 않는 문자가 포함되어 있습니다.",
+        "noWhitespace": "앞뒤 공백을 제거해 주세요.",
+        "invalidHostname": "유효하지 않은 호스트명입니다."
+      },
+      "stale": {
+        "title": "다른 사용자가 노드를 수정했습니다",
+        "discard": "내 편집을 버리고 새로고침",
+        "keep": "계속 편집",
+        "refreshing": "새로고침 중…"
+      }
+    },
     "forms": {
       "common": {
         "dataStoreIp": "데이터 저장소 IP",

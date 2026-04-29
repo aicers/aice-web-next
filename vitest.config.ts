@@ -35,6 +35,8 @@ export default defineConfig({
           include: [
             "src/__tests__/components/node/forms/**/*.test.{ts,tsx}",
             "src/__tests__/components/node/apply-preview-modal.test.tsx",
+            "src/__tests__/components/node/node-edit-dialog-reopen.test.tsx",
+            "src/__tests__/components/node/node-edit-dialog-sensor-pool-refresh.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -53,6 +55,8 @@ export default defineConfig({
             "src/__integration__",
             "src/__tests__/components/node/forms/**/*.test.{ts,tsx}",
             "src/__tests__/components/node/apply-preview-modal.test.tsx",
+            "src/__tests__/components/node/node-edit-dialog-reopen.test.tsx",
+            "src/__tests__/components/node/node-edit-dialog-sensor-pool-refresh.test.tsx",
           ],
         },
       },

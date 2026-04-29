@@ -28,6 +28,25 @@ const NODE_PERMS_READ_ONLY = ["nodes:read", "services:read", "customers:read"];
 
 const NODE_PERMS_MISSING_SERVICES = ["nodes:read", "customers:read"];
 
+// Mixed-permission write contract callers (issue #310 Round 6): the
+// dialog is a write surface for both node metadata (`nodes:write`) and
+// service drafts (`services:write`). A caller holding only one of the
+// two must see the list (read scopes pass) but never reach the dialog —
+// the Add button is hidden and `?dialog=edit&id=…` rejects with HTTP
+// 403. Two role shapes pin both halves of the partial-write surface.
+const NODE_PERMS_NODES_WRITE_ONLY = [
+  "nodes:read",
+  "services:read",
+  "customers:read",
+  "nodes:write",
+];
+const NODE_PERMS_SERVICES_WRITE_ONLY = [
+  "nodes:read",
+  "services:read",
+  "customers:read",
+  "services:write",
+];
+
 // Tenant Administrator parity: full node CRUD inside the assigned
 // customer scope, but no `customers:access-all`. The Settings list
 // must hide the customer (tenant) filter dropdown for this caller.
@@ -65,6 +84,10 @@ test.describe("Node settings list page", () => {
   let TENANT_ADMIN_ROLE: string;
   let ADMIN_FULL_ROLE: string;
   let ADMIN_FULL_USERNAME: string;
+  let NODES_WRITE_ONLY_USERNAME: string;
+  let NODES_WRITE_ONLY_ROLE: string;
+  let SERVICES_WRITE_ONLY_USERNAME: string;
+  let SERVICES_WRITE_ONLY_ROLE: string;
   const PASSWORD = "TestPass1234!";
 
   test.beforeAll(async ({ workerPrefix: wp, workerUsername }) => {
@@ -74,15 +97,21 @@ test.describe("Node settings list page", () => {
     MISSING_SERVICES_USERNAME = `${TEST_PREFIX}missing-services`;
     TENANT_ADMIN_USERNAME = `${TEST_PREFIX}tenant-admin`;
     ADMIN_FULL_USERNAME = `${TEST_PREFIX}admin-full`;
+    NODES_WRITE_ONLY_USERNAME = `${TEST_PREFIX}nodes-write-only`;
+    SERVICES_WRITE_ONLY_USERNAME = `${TEST_PREFIX}services-write-only`;
     SECMON_ROLE = `${TEST_PREFIX}role-secmon`;
     MISSING_SERVICES_ROLE = `${TEST_PREFIX}role-missing-services`;
     TENANT_ADMIN_ROLE = `${TEST_PREFIX}role-tenant-admin`;
     ADMIN_FULL_ROLE = `${TEST_PREFIX}role-admin-full`;
+    NODES_WRITE_ONLY_ROLE = `${TEST_PREFIX}role-nodes-write-only`;
+    SERVICES_WRITE_ONLY_ROLE = `${TEST_PREFIX}role-services-write-only`;
 
     await deleteTestAccount(SECMON_USERNAME);
     await deleteTestAccount(MISSING_SERVICES_USERNAME);
     await deleteTestAccount(TENANT_ADMIN_USERNAME);
     await deleteTestAccount(ADMIN_FULL_USERNAME);
+    await deleteTestAccount(NODES_WRITE_ONLY_USERNAME);
+    await deleteTestAccount(SERVICES_WRITE_ONLY_USERNAME);
     await deleteRolesByPrefix(`${TEST_PREFIX}role-`);
     await deleteCustomersByPrefix(TEST_PREFIX);
 
@@ -90,6 +119,11 @@ test.describe("Node settings list page", () => {
     await createTestRole(MISSING_SERVICES_ROLE, NODE_PERMS_MISSING_SERVICES);
     await createTestRole(TENANT_ADMIN_ROLE, NODE_PERMS_TENANT_ADMIN);
     await createTestRole(ADMIN_FULL_ROLE, NODE_PERMS_FULL);
+    await createTestRole(NODES_WRITE_ONLY_ROLE, NODE_PERMS_NODES_WRITE_ONLY);
+    await createTestRole(
+      SERVICES_WRITE_ONLY_ROLE,
+      NODE_PERMS_SERVICES_WRITE_ONLY,
+    );
 
     await createTestAccount(SECMON_USERNAME, PASSWORD, SECMON_ROLE);
     await createTestAccount(
@@ -99,6 +133,16 @@ test.describe("Node settings list page", () => {
     );
     await createTestAccount(TENANT_ADMIN_USERNAME, PASSWORD, TENANT_ADMIN_ROLE);
     await createTestAccount(ADMIN_FULL_USERNAME, PASSWORD, ADMIN_FULL_ROLE);
+    await createTestAccount(
+      NODES_WRITE_ONLY_USERNAME,
+      PASSWORD,
+      NODES_WRITE_ONLY_ROLE,
+    );
+    await createTestAccount(
+      SERVICES_WRITE_ONLY_USERNAME,
+      PASSWORD,
+      SERVICES_WRITE_ONLY_ROLE,
+    );
 
     // Assign every test account a customer so dispatch context is non-empty.
     const customerId = await ensureCustomerExists(`${TEST_PREFIX}customer`);
@@ -107,6 +151,8 @@ test.describe("Node settings list page", () => {
       MISSING_SERVICES_USERNAME,
       TENANT_ADMIN_USERNAME,
       ADMIN_FULL_USERNAME,
+      NODES_WRITE_ONLY_USERNAME,
+      SERVICES_WRITE_ONLY_USERNAME,
       workerUsername,
     ]) {
       try {
@@ -125,6 +171,8 @@ test.describe("Node settings list page", () => {
     await deleteTestAccount(MISSING_SERVICES_USERNAME);
     await deleteTestAccount(TENANT_ADMIN_USERNAME);
     await deleteTestAccount(ADMIN_FULL_USERNAME);
+    await deleteTestAccount(NODES_WRITE_ONLY_USERNAME);
+    await deleteTestAccount(SERVICES_WRITE_ONLY_USERNAME);
     await deleteRolesByPrefix(`${TEST_PREFIX}role-`);
     await deleteCustomersByPrefix(TEST_PREFIX);
   });
@@ -454,6 +502,91 @@ test.describe("Node settings list page", () => {
     // at 200).
     expect(response?.status()).toBe(403);
     await expect(page).toHaveURL(/\/nodes\/settings/);
+    await expect(page.getByTestId("nodes-forbidden")).toBeVisible();
+  });
+
+  test("nodes:write only — Add hidden, ?dialog=edit URL returns 403", async ({
+    page,
+  }) => {
+    // Round 6 reviewer's missing coverage: a partial-write caller (one
+    // of `nodes:write` / `services:write`) must clear the read gate and
+    // see the list, but the dialog must remain unreachable. Verify both
+    // halves of the contract end-to-end:
+    //   1. the Add button affordance is hidden (issue acceptance);
+    //   2. a direct `?dialog=edit&id=…` navigation returns HTTP 403.
+    // The unit tests on `src/app/api/nodes/route.ts` already cover the
+    // POST/PATCH side; this test is the page-level path the issue
+    // explicitly assigns to Phase Node-4.
+    await stubSession.registerStub({
+      operation: "nodeList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeList.populated.json",
+      },
+    });
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.populated.json",
+      },
+    });
+
+    await page.goto("/sign-in");
+    await signIn(page, NODES_WRITE_ONLY_USERNAME, PASSWORD);
+    await page.waitForURL((url) => !url.pathname.endsWith("/sign-in"), {
+      timeout: 10_000,
+    });
+    await navigateToList(page);
+
+    await expect(page.getByTestId("nodes-table")).toBeVisible();
+    // Add affordance must be absent — `canCreate = canWriteNodes &&
+    // canWriteServices` evaluates to false here.
+    await expect(page.getByTestId("nodes-add-button")).toHaveCount(0);
+
+    // Direct edit URL: page calls `forbidden()` before fetching the
+    // node, so the response carries 403 and `nodes/forbidden.tsx`
+    // renders.
+    const response = await page.goto("/nodes/settings?dialog=edit&id=11");
+    expect(response?.status()).toBe(403);
+    await expect(page.getByTestId("nodes-forbidden")).toBeVisible();
+  });
+
+  test("services:write only — Add hidden, ?dialog=edit URL returns 403", async ({
+    page,
+  }) => {
+    // Inverse partial-write shape: `services:write` granted but
+    // `nodes:write` missing. Same expectation — Add hidden, edit URL
+    // 403. Pinning both halves of the partial-write surface protects
+    // against a future regression where the gate is implemented as an
+    // OR instead of an AND on the two scopes.
+    await stubSession.registerStub({
+      operation: "nodeList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeList.populated.json",
+      },
+    });
+    await stubSession.registerStub({
+      operation: "nodeStatusList",
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeStatusList.populated.json",
+      },
+    });
+
+    await page.goto("/sign-in");
+    await signIn(page, SERVICES_WRITE_ONLY_USERNAME, PASSWORD);
+    await page.waitForURL((url) => !url.pathname.endsWith("/sign-in"), {
+      timeout: 10_000,
+    });
+    await navigateToList(page);
+
+    await expect(page.getByTestId("nodes-table")).toBeVisible();
+    await expect(page.getByTestId("nodes-add-button")).toHaveCount(0);
+
+    const response = await page.goto("/nodes/settings?dialog=edit&id=11");
+    expect(response?.status()).toBe(403);
     await expect(page.getByTestId("nodes-forbidden")).toBeVisible();
   });
 

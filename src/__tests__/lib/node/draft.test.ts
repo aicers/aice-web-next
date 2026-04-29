@@ -1,7 +1,36 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthSession } from "@/lib/auth/jwt";
 import type { NodeDraftInput, NodeInput } from "@/lib/node/types";
+
+// Reuse the captured stale-conflict fixture so the replay path's match
+// detection stays in lockstep with `conflict-patterns.ts` and its
+// fixture-exclusivity test (`conflict-patterns.test.ts`). Without this
+// shared source, a REview wording change could be picked up by the
+// dialog adapter while `saveDraft`'s stale recogniser silently kept
+// matching the old string — Round 7 reviewer item.
+const STALE_CONFLICT_FIXTURE = (() => {
+  const raw = readFileSync(
+    path.join(
+      process.cwd(),
+      "src",
+      "__tests__",
+      "lib",
+      "node",
+      "fixtures",
+      "conflict-messages",
+      "stale-conflict.txt",
+    ),
+    "utf8",
+  );
+  return raw
+    .split(/\r?\n/)
+    .filter((line) => !line.startsWith("#"))
+    .join("\n")
+    .trim();
+})();
 
 const mockHasPermission = vi.hoisted(() => vi.fn());
 const mockResolveEffectiveCustomerIds = vi.hoisted(() => vi.fn());
@@ -279,7 +308,7 @@ describe("saveDraft — per-service audit emission", () => {
 
     const { saveDraft } = await import("@/lib/node/draft");
     const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
-    expect(result).toBe("n-5");
+    expect(result).toMatchObject({ id: "n-5", persisted: true });
 
     expect(mockAuditRecord).toHaveBeenCalledTimes(2);
     expect(mockAuditRecord).toHaveBeenCalledWith(
@@ -328,7 +357,7 @@ describe("saveDraft — per-service audit emission", () => {
       }),
       makeNewDraft({ agents: null, externalServices: null }),
     );
-    expect(result).toBe("n-5");
+    expect(result).toMatchObject({ id: "n-5", persisted: true });
     expect(mockAuditRecord).not.toHaveBeenCalled();
   });
 
@@ -396,7 +425,7 @@ describe("saveDraft — stale-conflict replay", () => {
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     const staleErr = Object.assign(new Error("stale state on the server"), {
       response: {
-        errors: [{ message: "the node was modified concurrently" }],
+        errors: [{ message: STALE_CONFLICT_FIXTURE }],
       },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr);
@@ -418,7 +447,7 @@ describe("saveDraft — stale-conflict replay", () => {
 
     const { saveDraft } = await import("@/lib/node/draft");
     const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
-    expect(result).toBe("n-5");
+    expect(result).toMatchObject({ id: "n-5", persisted: true });
     // Audit must fire exactly once for the SENSOR service — the replay
     // succeeded, the original attempt failed; we never double-emit.
     expect(mockAuditRecord).toHaveBeenCalledTimes(1);
@@ -448,13 +477,13 @@ describe("saveDraft — stale-conflict replay", () => {
     // 5. mutation #2 (stale-conflict).
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     const staleErr1 = Object.assign(new Error("conflict"), {
-      response: { errors: [{ message: "concurrent modification detected" }] },
+      response: { errors: [{ message: STALE_CONFLICT_FIXTURE }] },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr1);
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     const staleErr2 = Object.assign(new Error("stale read"), {
-      response: { errors: [{ message: "stale view of node draft" }] },
+      response: { errors: [{ message: STALE_CONFLICT_FIXTURE }] },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr2);
 
@@ -506,7 +535,7 @@ describe("saveDraft — stale-conflict replay", () => {
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     // 2: mutation #1 (stale-conflict).
     const staleErr = Object.assign(new Error("conflict"), {
-      response: { errors: [{ message: "concurrent modification on node" }] },
+      response: { errors: [{ message: STALE_CONFLICT_FIXTURE }] },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr);
     // 3: replay re-fetch — the canonical state shows that a concurrent
@@ -559,7 +588,7 @@ describe("saveDraft — stale-conflict replay", () => {
 
     const { saveDraft } = await import("@/lib/node/draft");
     const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
-    expect(result).toBe("n-5");
+    expect(result).toMatchObject({ id: "n-5", persisted: true });
 
     // The replay mutation is the last graphqlRequest call whose
     // variables carry `old`/`new`.
@@ -618,7 +647,7 @@ describe("saveDraft — stale-conflict replay", () => {
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     // 2: mutation #1 (stale-conflict).
     const staleErr = Object.assign(new Error("conflict"), {
-      response: { errors: [{ message: "concurrent modification on node" }] },
+      response: { errors: [{ message: STALE_CONFLICT_FIXTURE }] },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr);
     // 3: replay re-fetch — concurrent writer added SENSOR c.
@@ -650,7 +679,7 @@ describe("saveDraft — stale-conflict replay", () => {
 
     const { saveDraft } = await import("@/lib/node/draft");
     const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
-    expect(result).toBe("n-5");
+    expect(result).toMatchObject({ id: "n-5", persisted: true });
 
     const mutationCalls = mockGraphqlRequest.mock.calls.filter(
       (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
@@ -712,7 +741,7 @@ describe("saveDraft — stale-conflict replay", () => {
 
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     const staleErr = Object.assign(new Error("conflict"), {
-      response: { errors: [{ message: "concurrent modification on node" }] },
+      response: { errors: [{ message: STALE_CONFLICT_FIXTURE }] },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr);
     const freshAgents = [
@@ -741,7 +770,7 @@ describe("saveDraft — stale-conflict replay", () => {
 
     const { saveDraft } = await import("@/lib/node/draft");
     const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
-    expect(result).toBe("n-5");
+    expect(result).toMatchObject({ id: "n-5", persisted: true });
 
     const mutationCalls = mockGraphqlRequest.mock.calls.filter(
       (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
@@ -783,7 +812,7 @@ describe("saveDraft — stale-conflict replay", () => {
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     // 2: mutation #1 (stale-conflict).
     const staleErr = Object.assign(new Error("conflict"), {
-      response: { errors: [{ message: "concurrent modification on node" }] },
+      response: { errors: [{ message: STALE_CONFLICT_FIXTURE }] },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr);
     // 3: replay re-fetch — fresh hostname is "h2-by-other-writer";
@@ -856,7 +885,7 @@ describe("saveDraft — stale-conflict replay", () => {
 
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     const staleErr = Object.assign(new Error("conflict"), {
-      response: { errors: [{ message: "concurrent modification on node" }] },
+      response: { errors: [{ message: STALE_CONFLICT_FIXTURE }] },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr);
     const freshAgents = [
@@ -897,6 +926,81 @@ describe("saveDraft — stale-conflict replay", () => {
         targetId: "n-5:SENSOR",
       }),
     );
+  });
+
+  it("collapses a user agent draft that matches the fresh applied config to a no-op on the replay path", async () => {
+    // Round 19 reviewer's defense-in-depth case: the user's draft
+    // happens to equal the canonical applied config (e.g. a Keep-editing
+    // reconcile where a concurrent writer applied the same change).
+    // Before this fix, `mergeAgentEntry` only compared `user.draft`
+    // against `fresh.draft` and forwarded the user's string verbatim,
+    // so the manager would persist a phantom pending draft that
+    // re-states the applied config. The merge now collapses `user.draft
+    // === fresh.config` (with `fresh.draft === null`) to `null`, which
+    // — combined with `isNoOpAgainstFresh` — short-circuits the replay
+    // mutation entirely.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+
+    const APPLIED = '[sensor]\nname = "alpha"\n';
+    const oldNode = makeOldNode({
+      agents: [
+        {
+          kind: "SENSOR",
+          key: "s1",
+          status: "ENABLED",
+          // The user's snapshot when they opened the dialog: draft was
+          // pending, not yet applied.
+          config: null,
+          draft: "user-pending-pre-apply",
+        },
+      ],
+    });
+    const newDraft = makeNewDraft({
+      // No node-metadata changes — only an agent draft submission.
+      nameDraft: "n",
+      profileDraft: { customerId: "5", description: "", hostname: "h" },
+      agents: [
+        // The user's resolved draft happens to match the applied config.
+        { kind: "SENSOR", key: "s1", status: "ENABLED", draft: APPLIED },
+      ],
+    });
+
+    // 1: canonical-fetch on first updateNodeDraft.
+    mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
+    // 2: mutation #1 (stale-conflict).
+    const staleErr = Object.assign(new Error("conflict"), {
+      response: { errors: [{ message: STALE_CONFLICT_FIXTURE }] },
+    });
+    mockGraphqlRequest.mockRejectedValueOnce(staleErr);
+    // 3: replay re-fetch — concurrent writer applied the user's intent,
+    //    so fresh has `draft: null, config: APPLIED`.
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", {
+        agents: [
+          {
+            kind: "SENSOR",
+            key: "s1",
+            status: "ENABLED",
+            config: APPLIED,
+            draft: null,
+          },
+        ],
+      }),
+    );
+
+    const { saveDraft } = await import("@/lib/node/draft");
+    const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
+
+    // No replay mutation is dispatched — the rebased draft normalises to
+    // a no-op against fresh, so saveDraft short-circuits.
+    const mutationCalls = mockGraphqlRequest.mock.calls.filter(
+      (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
+    );
+    expect(mutationCalls).toHaveLength(1); // only the first (stale) call
+    expect(result).toMatchObject({ id: "n-5", persisted: false });
+    // No service.draft_save audit either — nothing was written.
+    expect(mockAuditRecord).not.toHaveBeenCalled();
   });
 
   it("does not retry a non-stale GraphQL error (e.g. validation) — propagates the original error and emits no audit", async () => {
@@ -955,7 +1059,7 @@ describe("saveDraft — idempotence on redundant retry", () => {
     mockGraphqlRequest.mockResolvedValueOnce(canonicalNodePayload("n-5", "5"));
     const staleErr = Object.assign(new Error("stale"), {
       response: {
-        errors: [{ message: "the node was modified by another writer" }],
+        errors: [{ message: STALE_CONFLICT_FIXTURE }],
       },
     });
     mockGraphqlRequest.mockRejectedValueOnce(staleErr);
@@ -978,7 +1082,12 @@ describe("saveDraft — idempotence on redundant retry", () => {
 
     const callsBeforeRetry = mockGraphqlRequest.mock.calls.length;
 
-    await saveDraft(makeSession(), "n-5", oldNode, newDraft);
+    const retryResult = await saveDraft(
+      makeSession(),
+      "n-5",
+      oldNode,
+      newDraft,
+    );
 
     // The retry consumed the canonical-fetch (1) + the stale-conflict
     // mutation (2) + the replay re-fetch (3) — but NO replay mutation.
@@ -986,5 +1095,8 @@ describe("saveDraft — idempotence on redundant retry", () => {
     expect(callsAfter - callsBeforeRetry).toBe(3);
     // Still only the original audit row from the first call.
     expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+    // The no-op replay reports `persisted: false` so outer audit
+    // layers (e.g. updateNodeWithAudit) can skip their derived rows.
+    expect(retryResult).toMatchObject({ id: "n-5", persisted: false });
   });
 });

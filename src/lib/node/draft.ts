@@ -5,6 +5,7 @@ import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
 import { graphqlRequest } from "@/lib/graphql/client";
 
+import { mapConflictError, NodeStaleConflictError } from "./conflict-patterns";
 import { buildDispatchContext, type DispatchContext } from "./dispatch-context";
 import {
   withManagerErrorMapping,
@@ -32,10 +33,13 @@ import type {
  * propagates as this typed error so the UI can present a reconciliation
  * prompt — discard local edits, or re-apply on top of the latest state.
  *
- * Detection regex is documented in `decisions/node-conflict-patterns.md`.
- * When Phase Node-4 (#310) lands `src/lib/node/conflict-patterns.ts`
- * with the captured fixtures, this helper should migrate to that
- * authoritative module so version-bump regressions surface in one place.
+ * Detection runs through `mapConflictError` from
+ * `src/lib/node/conflict-patterns.ts`, which is the single authoritative
+ * adapter for REview's plain-text GraphQL error messages. Reusing that
+ * adapter keeps the dialog (PATCH path) and the stale-replay path in
+ * lockstep — a future REview wording change is fixed in one place
+ * (`PATTERNS` + the captured `conflict-messages` fixtures) and both
+ * surfaces follow.
  */
 export class StaleConflictError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -44,30 +48,8 @@ export class StaleConflictError extends Error {
   }
 }
 
-const STALE_CONFLICT_REGEX =
-  /(concurrent modification|node was modified|stale)\b/i;
-
-interface GraphQLLikeError {
-  message?: string;
-}
-
 function isStaleConflictError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const direct =
-    typeof (error as { message?: unknown }).message === "string"
-      ? (error as { message: string }).message
-      : "";
-  if (STALE_CONFLICT_REGEX.test(direct)) return true;
-  const response = (error as { response?: { errors?: unknown } }).response;
-  const errors = Array.isArray(response?.errors)
-    ? (response.errors as GraphQLLikeError[])
-    : null;
-  if (!errors || errors.length === 0) return false;
-  return errors.some((e) =>
-    typeof e?.message === "string"
-      ? STALE_CONFLICT_REGEX.test(e.message)
-      : false,
-  );
+  return mapConflictError(error) instanceof NodeStaleConflictError;
 }
 
 const NODES_WRITE = "nodes:write";
@@ -402,6 +384,32 @@ function mergeProfile(
  * user's intent is the only signal for the editable fields, so we
  * forward their full row in that fallback case.
  */
+/**
+ * Normalize a user-proposed agent draft against the freshly-read
+ * applied baseline. When the user's draft string equals the canonical
+ * applied config byte-for-byte, the proposed change is a no-op for that
+ * agent — collapse it to `null` so the manager does not persist a
+ * phantom pending draft and `diffChangedServices` does not emit a
+ * spurious `service.draft_save` audit. Defense in depth alongside the
+ * client-side `buildDraftSubmission` baseline check: any caller (not
+ * just our dialog) that posts a draft equal to the applied config gets
+ * the same no-op semantics here.
+ *
+ * Only collapses to `null` when the fresh state has no pending draft
+ * (`fresh.draft === null`); when a pending draft exists the user-
+ * proposed value is forwarded unchanged, leaving the existing
+ * draft-vs-draft comparison to do its job.
+ */
+function normalizeAgentDraftAgainstFresh(
+  userDraft: string | null,
+  fresh: AgentInput,
+): string | null {
+  if (userDraft === null) return null;
+  if (fresh.draft !== null) return userDraft;
+  if (fresh.config === null) return userDraft;
+  return userDraft === fresh.config ? null : userDraft;
+}
+
 function mergeAgentEntry(
   user: AgentDraftInput,
   prior: AgentInput | undefined,
@@ -412,16 +420,19 @@ function mergeAgentEntry(
       kind: fresh.kind,
       key: fresh.key,
       status: user.status,
-      draft: user.draft ?? null,
+      draft: normalizeAgentDraftAgainstFresh(user.draft ?? null, fresh),
     };
   }
   const statusTouched = user.status !== prior.status;
   const draftTouched = (user.draft ?? null) !== (prior.draft ?? null);
+  const mergedDraft = draftTouched
+    ? normalizeAgentDraftAgainstFresh(user.draft ?? null, fresh)
+    : (fresh.draft ?? null);
   return {
     kind: fresh.kind,
     key: fresh.key,
     status: statusTouched ? user.status : fresh.status,
-    draft: draftTouched ? (user.draft ?? null) : (fresh.draft ?? null),
+    draft: mergedDraft,
   };
 }
 
@@ -614,12 +625,14 @@ async function emitDraftSaveAudits(
  * 2. Call `updateNodeDraft` (which performs its own canonical-node
  *    scope check, customer-scope guard, and dispatches the mutation).
  * 3. If the call rejects with the documented stale-conflict shape
- *    (`/(concurrent modification|node was modified|stale)\b/i` — see
- *    `decisions/node-conflict-patterns.md`), re-read the current node
- *    from review-web, rebuild `old` from the fresh state, and replay
- *    the same caller-supplied `newDraft` once. A second stale-conflict
- *    propagates as `StaleConflictError` so the UI can present a
- *    reconciliation prompt; non-stale errors propagate unchanged.
+ *    (matched by `mapConflictError` against the patterns documented in
+ *    `decisions/node-conflict-patterns.md` and exercised by the captured
+ *    fixtures under `src/__tests__/lib/node/fixtures/conflict-messages/`),
+ *    re-read the current node from review-web, rebuild `old` from the
+ *    fresh state, and replay the same caller-supplied `newDraft` once.
+ *    A second stale-conflict propagates as `StaleConflictError` so the
+ *    UI can present a reconciliation prompt; non-stale errors propagate
+ *    unchanged.
  * 4. On success, emit one `service.draft_save` audit per service
  *    whose draft string actually changed against the `old` that was
  *    ultimately accepted by the manager. A save with only node-
@@ -635,14 +648,38 @@ async function emitDraftSaveAudits(
  * already matches the fresh state byte-for-byte — short-circuits
  * before dispatching the redundant mutation. Net effect: the redundant
  * retry writes nothing and emits zero additional audits.
+ *
+ * The returned `persisted` flag tells outer audit layers
+ * (`updateNodeWithAudit`) whether this call actually dispatched a
+ * mutation. A no-op replay returns `{ persisted: false }` so callers
+ * skip their own derived audits — `node.update` and
+ * `service.set_mode` rows must not fire when nothing was written.
+ *
+ * When `persisted` is true, `effectiveOld` and `effectiveDraft` carry
+ * the `(old, new)` pair the manager actually accepted — equal to the
+ * caller's inputs on the success path, but on the replay path equal to
+ * the freshly-fetched baseline and the rebased draft. Outer audit
+ * layers must derive `node.update.changedFields` and the
+ * `service.set_mode` diff from these values, never from the caller's
+ * stale inputs: a partial replay can persist a strict subset of the
+ * caller's intended changes (a concurrent writer applied the rest
+ * first), and auditing the caller's inputs would over-report the
+ * change set and can scope rows under a stale customer.
  */
+export interface SaveDraftResult {
+  id: string;
+  persisted: boolean;
+  effectiveOld: NodeInput;
+  effectiveDraft: NodeDraftInput;
+}
+
 export async function saveDraft(
   session: AuthSession,
   id: string,
   oldNode: NodeInput,
   newDraft: NodeDraftInput,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<SaveDraftResult> {
   await assertWritePermissions(session);
 
   try {
@@ -660,7 +697,12 @@ export async function saveDraft(
       changes,
       resolveAuditCustomer(oldNode, newDraft),
     );
-    return result;
+    return {
+      id: result,
+      persisted: true,
+      effectiveOld: oldNode,
+      effectiveDraft: newDraft,
+    };
   } catch (err) {
     if (!isStaleConflictError(err)) throw err;
   }
@@ -686,7 +728,12 @@ export async function saveDraft(
   // successful first save). Skip the redundant mutation entirely so
   // a retry writes once and audits once across the pair of calls.
   if (isNoOpAgainstFresh(replayOld, rebased)) {
-    return id;
+    return {
+      id,
+      persisted: false,
+      effectiveOld: replayOld,
+      effectiveDraft: rebased,
+    };
   }
 
   try {
@@ -704,7 +751,12 @@ export async function saveDraft(
       changes,
       resolveAuditCustomer(replayOld, rebased),
     );
-    return result;
+    return {
+      id: result,
+      persisted: true,
+      effectiveOld: replayOld,
+      effectiveDraft: rebased,
+    };
   } catch (err) {
     if (isStaleConflictError(err)) {
       throw new StaleConflictError(
