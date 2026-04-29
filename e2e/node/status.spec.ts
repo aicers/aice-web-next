@@ -196,12 +196,10 @@ test.describe("Node Status tab", () => {
   }) => {
     // The Status row is the read-only entry point into the
     // detail-page Apply All Pending flow; the row carries an onClick
-    // that pushes `/nodes/[id]`. Phase Node-5 owns the full detail
-    // dashboard, so this PR ships a thin placeholder route that
-    // renders the node identity header — enough that row navigation
-    // lands on a real page (not the framework 404) and the
-    // `data-testid="node-detail-placeholder"` element is here for
-    // Phase Node-5 to replace in-place.
+    // that pushes `/nodes/[id]`. Phase Node-5a (#376) ships the real
+    // detail page that supersedes the earlier placeholder, so this
+    // assertion targets the `node-detail-page` testid that the new
+    // route exposes.
     await signInAndWait(page, workerUsername, workerPassword);
     await navigateToStatus(page);
 
@@ -214,12 +212,12 @@ test.describe("Node Status tab", () => {
     // Click outside the kebab menu so the row click handler runs.
     await alpha.getByTestId("node-status-row-link").click();
     await expect(page).toHaveURL(new RegExp(`/nodes/${alphaId}(\\?|/|$)`));
-    // Destination is a real route — the placeholder header renders
-    // and carries the node id so Phase Node-5 can swap the body.
-    await expect(page.getByTestId("node-detail-placeholder")).toBeVisible({
+    // Destination is a real route — the detail page renders and
+    // carries the node id on its root container.
+    await expect(page.getByTestId("node-detail-page")).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByTestId("node-detail-placeholder")).toHaveAttribute(
+    await expect(page.getByTestId("node-detail-page")).toHaveAttribute(
       "data-node-id",
       alphaId ?? "",
     );
@@ -374,6 +372,19 @@ test.describe("Node Status tab", () => {
         fixture: "node/nodeStatusList.serviceVariants.json",
       },
     });
+    // Phase Node-5a's detail page server-fetches the canonical Node
+    // payload via `getNode` before rendering — without a NodeDetail
+    // stub the SSR returns 500. The agentEnabled fixture carries id
+    // "21" with a SENSOR agent matching the serviceVariants fixture
+    // above.
+    await stubSession.registerStub({
+      operation: "node",
+      matchVariables: { id: "21" },
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeDetail.agentEnabled.json",
+      },
+    });
 
     await signInAndWait(page, workerUsername, workerPassword);
 
@@ -408,7 +419,7 @@ test.describe("Node Status tab", () => {
     await page.goto("/nodes/21");
     await page.waitForFunction(() => !document.getElementById("S:0"));
 
-    await expect(page.getByTestId("node-detail-service-cards")).toBeVisible({
+    await expect(page.getByTestId("node-detail-service-grid")).toBeVisible({
       timeout: 30_000,
     });
     const sensorCard = page.getByTestId("node-detail-service-card-sensor");

@@ -1,0 +1,24 @@
+{
+  "node": {
+    "id": "21",
+    "name": "agent-enabled",
+    "nameDraft": null,
+    "profile": {
+      "customerId": "1",
+      "description": "Agent reports ENABLED",
+      "hostname": "agent-on.lan"
+    },
+    "profileDraft": null,
+    "agents": [
+      {
+        "node": 21,
+        "key": "agent-enabled-sensor",
+        "kind": "SENSOR",
+        "status": "ENABLED",
+        "config": null,
+        "draft": null
+      }
+    ],
+    "externalServices": []
+  }
+}
