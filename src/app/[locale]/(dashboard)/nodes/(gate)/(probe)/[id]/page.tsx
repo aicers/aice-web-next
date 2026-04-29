@@ -12,6 +12,7 @@ import {
 } from "@/lib/node/applied-config-toml";
 import { confirmApplyAttempt, retryDispatch } from "@/lib/node/apply-actions";
 import { createApplyAttempt } from "@/lib/node/apply-attempts";
+import { getLastAppliedAt } from "@/lib/node/apply-history";
 import {
   ExternalServiceUnavailableError,
   ManagerUnavailableError,
@@ -175,25 +176,35 @@ export default async function NodeDetailPage({
   // the first `pollIntervalMs` boundary, and the detail page can be
   // entered directly (bookmark, deep link) without first visiting the
   // Status tab. A `ManagerUnavailableError` on the seed path is
-  // non-fatal — the dashboard falls back to its empty sparkline state
-  // and the next polling tick recovers.
+  // non-fatal — `getNode()` has already succeeded, so the dashboard
+  // still renders the metadata + service grid; only the live-status
+  // widgets fall back to their empty state and recover on the next
+  // poll tick (or when the polling driver flips
+  // `isManagerUnreachable` mid-session).
   let initialEdges: NodeStatus[] = [];
   let initialCapturedAt: string | null = null;
-  let initialManagerUnreachable = false;
   if (canReadServices) {
     try {
       const result = await getNodeStatusList(session);
       initialCapturedAt = result.capturedAt;
       initialEdges = result.edges;
     } catch (err) {
-      if (err instanceof ManagerUnavailableError) {
-        initialManagerUnreachable = true;
-      } else {
-        throw err;
-      }
+      if (!(err instanceof ManagerUnavailableError)) throw err;
     }
   }
   const initialNodeStatus = initialEdges.find((edge) => edge.id === id) ?? null;
+
+  // Last successful apply finalisation timestamp, derived from the
+  // local `apply_attempts` audit metadata. Independent of manager
+  // reachability so the metadata card is populated even during a
+  // manager outage.
+  let lastAppliedAt: string | null = null;
+  try {
+    const value = await getLastAppliedAt(id);
+    lastAppliedAt = value !== null ? value.toISOString() : null;
+  } catch {
+    lastAppliedAt = null;
+  }
 
   const canEdit = canWriteNodes && canWriteServices;
   const canApply = canWriteNodes && canWriteServices;
@@ -210,7 +221,7 @@ export default async function NodeDetailPage({
         initialNodeStatus={initialNodeStatus}
         initialCapturedAt={initialCapturedAt}
         initialEdges={initialEdges}
-        initialManagerUnreachable={initialManagerUnreachable}
+        lastAppliedAt={lastAppliedAt}
         applyActions={{
           createApplyAttempt,
           confirmApplyAttempt,

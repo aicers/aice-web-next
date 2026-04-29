@@ -123,10 +123,21 @@ export function ResourceSparkline({
   useEffect(() => {
     setHydrated(true);
   }, []);
-  const lastSampleLabel =
-    hydrated && lastSampleAt !== null
-      ? t("lastSampleAt", { time: lastSampleAt.toLocaleTimeString() })
+  // The progress bar's numeric label appends `lastSampleAt` only while
+  // the buffer is stale — that's the rule from #312 / #376. Defer the
+  // locale formatting until after hydration so SSR and the first
+  // client paint agree on the markup.
+  const staleStamp =
+    hydrated && isStale && lastSampleAt !== null
+      ? lastSampleAt.toLocaleTimeString()
       : null;
+
+  const latestSample = samples.length > 0 ? samples[samples.length - 1] : null;
+  const latestRatio =
+    latestSample !== null ? ratioFor(metric, latestSample) : null;
+  const numericLabel = formatNumericLabel(t, metric, latestSample);
+  const labelWithStamp =
+    staleStamp !== null ? `${numericLabel} · ${staleStamp}` : numericLabel;
 
   const segments = buildSegments(points);
   const lastPoint = points.length > 0 ? points[points.length - 1] : null;
@@ -205,14 +216,109 @@ export function ResourceSparkline({
           />
         )}
       </svg>
-      {lastSampleLabel && (
-        <p
-          className="text-muted-foreground text-xs"
-          data-testid={`node-detail-sparkline-last-${metric}`}
-        >
-          {lastSampleLabel}
-        </p>
+      {latestSample !== null && (
+        <ResourceProgressBar
+          ratio={latestRatio}
+          label={labelWithStamp}
+          isStale={isStale}
+          testId={`node-detail-sparkline-progress-${metric}`}
+        />
       )}
+    </div>
+  );
+}
+
+function formatBytes(raw: string): string {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  if (n >= 1024 ** 4) return `${(n / 1024 ** 4).toFixed(1)} TB`;
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+function formatNumericLabel(
+  t: (key: string, params?: Record<string, string | number>) => string,
+  metric: ResourceMetric,
+  sample: NodeStatusSample | null,
+): string {
+  if (sample === null) return t("noSamples");
+  if (metric === "cpu") {
+    if (sample.cpuUsage === null) return t("noSamples");
+    return t("cpuValue", { percent: sample.cpuUsage.toFixed(1) });
+  }
+  if (metric === "memory") {
+    if (sample.totalMemory === null || sample.usedMemory === null) {
+      return t("noSamples");
+    }
+    return t("memoryValue", {
+      used: formatBytes(sample.usedMemory),
+      total: formatBytes(sample.totalMemory),
+    });
+  }
+  if (sample.totalDiskSpace === null || sample.usedDiskSpace === null) {
+    return t("noSamples");
+  }
+  return t("diskValue", {
+    used: formatBytes(sample.usedDiskSpace),
+    total: formatBytes(sample.totalDiskSpace),
+  });
+}
+
+function ResourceProgressBar({
+  ratio,
+  label,
+  isStale,
+  testId,
+}: {
+  ratio: number | null;
+  label: string;
+  isStale: boolean;
+  testId: string;
+}) {
+  const pct = ratio !== null ? Math.min(100, Math.max(0, ratio * 100)) : null;
+  const severity =
+    pct === null
+      ? "none"
+      : pct >= 95
+        ? "critical"
+        : pct >= 80
+          ? "warning"
+          : "ok";
+  return (
+    <div
+      className="flex flex-col gap-1"
+      data-testid={testId}
+      data-severity={severity}
+      data-stale={isStale ? "true" : "false"}
+    >
+      <div className="bg-muted relative h-1.5 w-full overflow-hidden rounded">
+        {pct !== null && (
+          <div
+            className={cn(
+              "h-full rounded",
+              severity === "critical" && "bg-destructive",
+              severity === "warning" && "bg-amber-500",
+              severity === "ok" && "bg-emerald-600",
+              isStale && "opacity-60",
+            )}
+            style={{ width: `${pct}%` }}
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          />
+        )}
+      </div>
+      <span
+        className={cn(
+          "text-muted-foreground text-xs",
+          isStale && "text-amber-600",
+        )}
+      >
+        {label}
+      </span>
     </div>
   );
 }

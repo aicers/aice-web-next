@@ -48,8 +48,12 @@ interface NodeDetailDashboardProps {
   initialCapturedAt: string | null;
   /** Full SSR `nodeStatusList` payload for the polling buffer seed. */
   initialEdges: NodeStatus[];
-  /** True when the SSR seed call hit ManagerUnavailableError. */
-  initialManagerUnreachable: boolean;
+  /**
+   * ISO-8601 timestamp of the last successful bulk apply for this node,
+   * derived from the local `apply_attempts` audit metadata. `null` when
+   * no bulk apply has ever finalised.
+   */
+  lastAppliedAt: string | null;
   /**
    * Server actions powering the Apply preview modal. Threaded as a
    * prop so the page (a server component) can wire production
@@ -78,7 +82,7 @@ export function NodeDetailDashboard({
   initialNodeStatus,
   initialCapturedAt,
   initialEdges,
-  initialManagerUnreachable,
+  lastAppliedAt,
   applyActions,
 }: NodeDetailDashboardProps) {
   const tMeta = useTranslations("nodes.detail.metadata");
@@ -205,16 +209,39 @@ export function NodeDetailDashboard({
 
   const [applyPreviewOpen, setApplyPreviewOpen] = useState(false);
 
-  // Mid-session manager outage: the SSR path may have rendered the
-  // dashboard against a stale snapshot when manager dropped after the
-  // initial fetch. Swap to the same fallback panel here.
-  if (initialManagerUnreachable || polling.isManagerUnreachable) {
+  // Mid-session manager outage: when the polling driver flips
+  // `isManagerUnreachable` (HTTP 503 from `/api/nodes/status` after the
+  // first paint), swap to the fallback panel so the page does not keep
+  // rendering a frozen snapshot. A failure on the SSR seed path is
+  // intentionally NOT surfaced here — `getNode()` has already
+  // succeeded, so the metadata + service grid stay rendered and the
+  // sparklines fall back to their empty state until the next poll
+  // recovers.
+  if (polling.isManagerUnreachable) {
     return <ManagerUnavailablePanel />;
   }
 
   const pending = hasPendingChanges(node);
   const ping = live?.ping ?? null;
   const alive = ping !== null;
+  // Walk back from the most recent buffered sample to find the last
+  // sample that carried a non-null ping. The badge shows that
+  // capturedAt as "Last seen ..." so the operator can see when the
+  // node was actually reachable, even when the latest sample is dead.
+  const lastSuccessfulPingAt = ((): Date | null => {
+    if (!buffer) {
+      if (initialNodeStatus?.ping !== null && initialCapturedAt) {
+        const parsed = new Date(initialCapturedAt);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+      return null;
+    }
+    for (let i = buffer.samples.length - 1; i >= 0; i -= 1) {
+      const sample = buffer.samples[i];
+      if (sample.ping !== null) return sample.capturedAt;
+    }
+    return null;
+  })();
 
   const hostname = node.profileDraft?.hostname ?? node.profile?.hostname ?? "";
   const description =
@@ -234,7 +261,10 @@ export function NodeDetailDashboard({
           </h1>
           <p className="text-muted-foreground text-sm font-mono">{node.id}</p>
           <div className="flex flex-wrap items-center gap-2">
-            <PingBadge alive={alive} pingValue={ping} />
+            <PingBadge
+              alive={alive}
+              lastSuccessfulPingAt={lastSuccessfulPingAt}
+            />
             {pending ? (
               <Badge
                 variant="outline"
@@ -332,6 +362,7 @@ export function NodeDetailDashboard({
           value={description || tMeta("noDescription")}
           testId="node-detail-meta-description"
         />
+        <LastAppliedField lastAppliedAt={lastAppliedAt} />
       </dl>
 
       <div
@@ -452,16 +483,22 @@ function MetadataField({
 
 function PingBadge({
   alive,
-  pingValue,
+  lastSuccessfulPingAt,
 }: {
   alive: boolean;
-  pingValue: number | null;
+  lastSuccessfulPingAt: Date | null;
 }) {
   const t = useTranslations("nodes.detail.ping");
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     setHydrated(true);
   }, []);
+  // Render the locale-formatted timestamp only after hydration so SSR
+  // and the first client paint agree on the markup.
+  const timeLabel =
+    hydrated && lastSuccessfulPingAt !== null
+      ? lastSuccessfulPingAt.toLocaleTimeString()
+      : null;
   if (alive) {
     return (
       <span
@@ -471,9 +508,13 @@ function PingBadge({
       >
         <Wifi className="h-3 w-3" aria-hidden="true" />
         <span>{t("alive")}</span>
-        {pingValue !== null && (
-          <span className="text-muted-foreground">
-            {hydrated ? ` · ${(pingValue * 1000).toFixed(0)}ms` : ""}
+        {timeLabel !== null && (
+          <span
+            className="text-muted-foreground"
+            data-testid="node-detail-ping-last-seen"
+          >
+            {" · "}
+            {t("lastSeen", { time: timeLabel })}
           </span>
         )}
       </span>
@@ -486,8 +527,51 @@ function PingBadge({
       data-ping="dead"
     >
       <WifiOff className="h-3 w-3" aria-hidden="true" />
-      {t("dead")}
+      <span>{t("dead")}</span>
+      {timeLabel !== null ? (
+        <span
+          className="text-rose-800/70"
+          data-testid="node-detail-ping-last-seen"
+        >
+          {" · "}
+          {t("lastSeen", { time: timeLabel })}
+        </span>
+      ) : (
+        <span
+          className="text-rose-800/70"
+          data-testid="node-detail-ping-never-seen"
+        >
+          {" · "}
+          {t("neverSeen")}
+        </span>
+      )}
     </span>
+  );
+}
+
+function LastAppliedField({ lastAppliedAt }: { lastAppliedAt: string | null }) {
+  const t = useTranslations("nodes.detail.metadata");
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+  // Defer locale formatting until after hydration so SSR and the first
+  // client paint agree on the markup.
+  const value =
+    hydrated && lastAppliedAt !== null
+      ? t("lastAppliedAt", { time: new Date(lastAppliedAt).toLocaleString() })
+      : t("neverApplied");
+  return (
+    <div className="space-y-1">
+      <dt className="text-muted-foreground text-xs">{t("lastApplied")}</dt>
+      <dd
+        className="text-sm"
+        data-testid="node-detail-meta-last-applied"
+        data-iso={lastAppliedAt ?? ""}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
 

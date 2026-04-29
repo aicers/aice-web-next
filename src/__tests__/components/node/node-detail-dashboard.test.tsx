@@ -3,7 +3,11 @@ import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodeDetailDashboard } from "@/components/node/node-detail-dashboard";
-import { __resetNodeStatusStore } from "@/hooks/use-node-status-polling";
+import {
+  __pushNodeStatusSample,
+  __resetNodeStatusStore,
+  __setNodeStatusManagerUnreachable,
+} from "@/hooks/use-node-status-polling";
 import enMessages from "@/i18n/messages/en.json";
 import type { Node as ManagerNode, NodeStatus } from "@/lib/node/types";
 
@@ -61,7 +65,7 @@ function renderDashboard(
         initialNodeStatus={null}
         initialCapturedAt={null}
         initialEdges={[]}
-        initialManagerUnreachable={false}
+        lastAppliedAt={null}
         applyActions={NOOP_APPLY_ACTIONS}
         {...props}
       />
@@ -200,13 +204,147 @@ describe("NodeDetailDashboard — manager offline", () => {
   });
   afterEach(() => {
     __resetNodeStatusStore();
+    __setNodeStatusManagerUnreachable(false);
   });
 
-  it("renders the offline panel (NOT 403) when initialManagerUnreachable=true", () => {
-    renderDashboard({ initialManagerUnreachable: true });
+  it("renders the offline panel when the live polling buffer flips isManagerUnreachable", () => {
+    __setNodeStatusManagerUnreachable(true);
+    renderDashboard();
     expect(screen.getByTestId("manager-unavailable-panel")).toBeTruthy();
-    // Dashboard chrome must NOT render in this state.
+    // Dashboard chrome must NOT render in this mid-session offline state.
     expect(screen.queryByTestId("node-detail-dashboard")).toBeNull();
+  });
+
+  it("keeps the dashboard rendered when only the SSR seed path failed", () => {
+    // The seed-path failure is non-fatal: `getNode()` already
+    // succeeded, so metadata + service grid stay rendered, and the
+    // sparklines fall back to their empty state until the next poll
+    // recovers. The polling buffer's `isManagerUnreachable` flag is
+    // the only signal that swaps to the offline panel.
+    renderDashboard();
+    expect(screen.queryByTestId("manager-unavailable-panel")).toBeNull();
+    expect(screen.getByTestId("node-detail-dashboard")).toBeTruthy();
+  });
+});
+
+describe("NodeDetailDashboard — last applied + ping last seen", () => {
+  beforeEach(() => {
+    __resetNodeStatusStore();
+  });
+  afterEach(() => {
+    __resetNodeStatusStore();
+  });
+
+  it("renders the lastApplied metadata field with the supplied ISO timestamp", () => {
+    const iso = "2026-04-29T08:30:00.000Z";
+    renderDashboard({ lastAppliedAt: iso });
+    const cell = screen.getByTestId("node-detail-meta-last-applied");
+    expect(cell.getAttribute("data-iso")).toBe(iso);
+  });
+
+  it("falls back to the never-applied copy when lastAppliedAt is null", () => {
+    renderDashboard({ lastAppliedAt: null });
+    const cell = screen.getByTestId("node-detail-meta-last-applied");
+    expect(cell.textContent).toBe(
+      enMessages.nodes.detail.metadata.neverApplied,
+    );
+  });
+
+  it("renders the timestamp of the last successful ping (not RTT) when alive", () => {
+    const status: NodeStatus = {
+      id: "node-1",
+      name: "alpha",
+      nameDraft: null,
+      profile: {
+        customerId: "5",
+        hostname: "alpha.local",
+        description: "Alpha node",
+      },
+      profileDraft: null,
+      cpuUsage: 12,
+      totalMemory: "16000000000",
+      usedMemory: "8000000000",
+      totalDiskSpace: "1000000000000",
+      usedDiskSpace: "500000000000",
+      manager: true,
+      agents: [],
+      externalServices: [],
+      ping: 0.05,
+    };
+    const capturedAt = new Date("2026-04-29T08:00:00.000Z");
+    __pushNodeStatusSample(capturedAt, [status]);
+    renderDashboard({ initialNodeStatus: status });
+    const lastSeen = screen.getByTestId("node-detail-ping-last-seen");
+    // Locale formatting varies, but the badge must render the
+    // capturedAt clock time — never the RTT in milliseconds.
+    expect(lastSeen.textContent ?? "").not.toMatch(/\dms/);
+    expect(lastSeen.textContent ?? "").toMatch(/\d/);
+  });
+
+  it("renders the dead badge with the most recent successful-ping timestamp", () => {
+    const aliveSample: NodeStatus = {
+      id: "node-1",
+      name: "alpha",
+      nameDraft: null,
+      profile: null,
+      profileDraft: null,
+      cpuUsage: null,
+      totalMemory: null,
+      usedMemory: null,
+      totalDiskSpace: null,
+      usedDiskSpace: null,
+      manager: true,
+      agents: [],
+      externalServices: [],
+      ping: 0.04,
+    };
+    const deadSample: NodeStatus = { ...aliveSample, ping: null };
+    __pushNodeStatusSample(new Date("2026-04-29T08:00:00.000Z"), [aliveSample]);
+    __pushNodeStatusSample(new Date("2026-04-29T08:00:10.000Z"), [deadSample]);
+    renderDashboard({ initialNodeStatus: deadSample });
+    const badge = screen.getByTestId("node-detail-ping");
+    expect(badge.getAttribute("data-ping")).toBe("dead");
+    // Even though the latest sample has ping=null, the badge surfaces
+    // when the node was last seen via the prior alive sample.
+    expect(screen.getByTestId("node-detail-ping-last-seen")).toBeTruthy();
+  });
+});
+
+describe("NodeDetailDashboard — resource progress bars", () => {
+  beforeEach(() => {
+    __resetNodeStatusStore();
+  });
+  afterEach(() => {
+    __resetNodeStatusStore();
+  });
+
+  it("renders a progress bar with a numeric label below each sparkline", () => {
+    const status: NodeStatus = {
+      id: "node-1",
+      name: "alpha",
+      nameDraft: null,
+      profile: null,
+      profileDraft: null,
+      cpuUsage: 42.5,
+      totalMemory: "16000000000",
+      usedMemory: "8000000000",
+      totalDiskSpace: "1000000000000",
+      usedDiskSpace: "400000000000",
+      manager: true,
+      agents: [],
+      externalServices: [],
+      ping: 0.04,
+    };
+    __pushNodeStatusSample(new Date("2026-04-29T08:00:00.000Z"), [status]);
+    renderDashboard({ initialNodeStatus: status });
+    const cpuBar = screen.getByTestId("node-detail-sparkline-progress-cpu");
+    expect(cpuBar.textContent ?? "").toContain("42.5%");
+    expect(
+      screen.getByTestId("node-detail-sparkline-progress-memory"),
+    ).toBeTruthy();
+    expect(
+      screen.getByTestId("node-detail-sparkline-progress-disk"),
+    ).toBeTruthy();
   });
 });
 

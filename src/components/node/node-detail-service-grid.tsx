@@ -5,7 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { seedNodeStatusFromSnapshot } from "@/hooks/use-node-status-polling";
+import {
+  seedNodeStatusFromSnapshot,
+  useNodeStatusPolling,
+} from "@/hooks/use-node-status-polling";
 import { useServiceStatus } from "@/hooks/use-service-status";
 import { Link } from "@/i18n/navigation";
 import { diffServiceConfig } from "@/lib/node/diff";
@@ -96,8 +99,15 @@ export function NodeDetailServiceGrid({
     initialCapturedAt: initialCapturedAtDate,
   });
 
-  // Manager card derives running/not-running from NodeStatus.manager.
-  const managerRunning = (initialNodeStatus ?? null)?.manager ?? false;
+  // The Manager card must reflect live manager status, not just the SSR
+  // snapshot — every other badge on this page consumes the shared
+  // polling buffer, and a Manager-card-only divergence would lie about
+  // the running state after a visibility-resume one-shot or a normal
+  // poll tick.
+  const polling = useNodeStatusPolling({ enabled: false });
+  const liveStatus: NodeStatus | null =
+    polling.byNodeId.get(node.id)?.latest ?? initialNodeStatus ?? null;
+  const managerRunning = liveStatus?.manager ?? false;
 
   const agentByKind = useMemo(() => {
     const map = new Map<AgentKind, Agent>();

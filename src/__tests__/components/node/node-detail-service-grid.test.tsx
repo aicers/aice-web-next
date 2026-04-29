@@ -4,7 +4,10 @@ import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodeDetailServiceGrid } from "@/components/node/node-detail-service-grid";
-import { __resetNodeStatusStore } from "@/hooks/use-node-status-polling";
+import {
+  __pushNodeStatusSample,
+  __resetNodeStatusStore,
+} from "@/hooks/use-node-status-polling";
 import { __resetExternalProbeStore } from "@/hooks/use-service-status";
 import enMessages from "@/i18n/messages/en.json";
 import type {
@@ -155,6 +158,21 @@ describe("NodeDetailServiceGrid — manager + unsupervised", () => {
   it("renders the Manager card with not-running badge when manager=false", () => {
     const status = makeStatus({ manager: false });
     renderGrid({ initialNodeStatus: status });
+    const card = screen.getByTestId("node-detail-manager-card");
+    expect(card.getAttribute("data-running")).toBe("false");
+    expect(screen.getByTestId("node-detail-manager-badge").textContent).toBe(
+      enMessages.nodes.detail.services.managerNotRunning,
+    );
+  });
+
+  it("Manager card live-updates from the polling buffer when newer samples arrive", () => {
+    // SSR snapshot says manager=true; a subsequent live poll surfaces
+    // manager=false. The Manager card must reflect the live value
+    // rather than freezing on the SSR snapshot.
+    const ssrStatus = makeStatus({ manager: true });
+    const liveStatus = makeStatus({ manager: false });
+    __pushNodeStatusSample(new Date("2026-04-29T08:00:00.000Z"), [liveStatus]);
+    renderGrid({ initialNodeStatus: ssrStatus });
     const card = screen.getByTestId("node-detail-manager-card");
     expect(card.getAttribute("data-running")).toBe("false");
     expect(screen.getByTestId("node-detail-manager-badge").textContent).toBe(
