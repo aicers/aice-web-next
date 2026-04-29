@@ -104,7 +104,7 @@ export function NodeStatusTable({
   // seed effect above only runs after hydration, so without this map
   // the SSR snapshot and pre-hydration client render still paint
   // `absent` em-dashes in the configured service columns until the
-  // seed lands. Mirrors the lookup `NodeDetailServiceCards` performs
+  // seed lands. Mirrors the lookup `NodeDetailServiceGrid` performs
   // for its single-node case.
   const initialEdgeById = useMemo(() => {
     const map = new Map<string, NodeStatus>();
