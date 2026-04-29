@@ -201,6 +201,29 @@ describe("ResourceSparkline", () => {
     );
   });
 
+  it("does not dim the entire chart via root <svg> opacity when isStale", () => {
+    // Round 6 reviewer: a root `opacity-60` on the <svg> mutes every
+    // child (history paths, tail path, latest-point circle), which is
+    // wider than #312 / #376 require. Stale styling must be confined
+    // to the latest point and trailing edge.
+    const samples: NodeStatusSample[] = [
+      makeSample(new Date("2026-04-29T10:00:00.000Z"), 10),
+      makeSample(new Date("2026-04-29T10:00:10.000Z"), 20),
+      makeSample(new Date("2026-04-29T10:00:20.000Z"), 30),
+      makeSample(new Date("2026-04-29T10:00:30.000Z"), 40),
+    ];
+    const { container } = renderSparkline({
+      metric: "cpu",
+      samples,
+      isStale: true,
+      pollIntervalMs: 10_000,
+      lastSampleAt: samples[samples.length - 1].capturedAt,
+    });
+    const svg = container.querySelector("svg");
+    expect(svg).not.toBeNull();
+    expect(svg?.getAttribute("class") ?? "").not.toContain("opacity-60");
+  });
+
   it("does not split into head/tail when isStale=false", () => {
     const samples: NodeStatusSample[] = [
       makeSample(new Date("2026-04-29T10:00:00.000Z"), 10),

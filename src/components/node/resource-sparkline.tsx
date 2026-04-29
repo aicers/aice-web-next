@@ -186,10 +186,7 @@ export function ResourceSparkline({
         preserveAspectRatio="none"
         role="img"
         aria-label={t(metric)}
-        className={cn(
-          "h-12 w-full rounded-sm bg-muted/40",
-          isStale && "opacity-60",
-        )}
+        className="h-12 w-full rounded-sm bg-muted/40"
       >
         {segments.map((segment, segIdx) => {
           if (segment.length < 2) return null;
