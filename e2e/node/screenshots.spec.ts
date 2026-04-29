@@ -551,4 +551,412 @@ test.describe
         animations: "disabled",
       });
     });
+
+    /**
+     * Detail-page captures (Phase Node-5b, #377).
+     *
+     * Three figures discharge the umbrella's "Node detail page"
+     * docs delta:
+     *
+     *   (a) `node-detail-{en,ko}.png`        — full dashboard (metadata
+     *       + ping indicator + three resource sparklines).
+     *   (b) `node-detail-services-{en,ko}.png` — a single service card
+     *       with its three-tab panel (applied / draft / diff).
+     *   (c) `node-detail-apply-mid-{en,ko}.png` — the Apply preview
+     *       modal during the executing phase (a fourth state distinct
+     *       from #362's planned / retryable / terminal figures).
+     *
+     * Each capture navigates to the canonical seed (`alpha-node`,
+     * id `11`) so the asset is stable across runs. The mock manager
+     * answers `node`, `nodeStatusList`, and `applyNode` via the
+     * fixtures registered in the surrounding `beforeEach`.
+     */
+    async function navigateToDetail(
+      page: Page,
+      locale: "en" | "ko",
+    ): Promise<void> {
+      const route = locale === "en" ? "/nodes/11" : "/ko/nodes/11";
+      await page.goto(route);
+      await page.waitForFunction(() => !document.getElementById("S:0"));
+      await expect(page.getByTestId("node-detail-page")).toBeVisible({
+        timeout: 30_000,
+      });
+      // Sparklines render asynchronously after the SSR seed lands —
+      // wait so the screenshot doesn't capture an empty axis.
+      await expect(page.getByTestId("node-detail-charts")).toBeVisible();
+    }
+
+    test("EN node detail dashboard", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await signInAndWait(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "en");
+      await page.screenshot({
+        path: path.join(ASSETS_DIR, "node-detail-en.png"),
+        animations: "disabled",
+      });
+    });
+
+    test("KO node detail dashboard", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "ko");
+      await page.screenshot({
+        path: path.join(ASSETS_DIR, "node-detail-ko.png"),
+        animations: "disabled",
+      });
+    });
+
+    test("EN node detail service card", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await signInAndWait(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "en");
+      // Crop to the SENSOR service card to highlight the three-tab panel
+      // (applied / draft / diff) rather than the full dashboard.
+      const card = page.getByTestId("node-detail-service-card-sensor");
+      await expect(card).toBeVisible();
+      await card.scrollIntoViewIfNeeded();
+      await card.screenshot({
+        path: path.join(ASSETS_DIR, "node-detail-services-en.png"),
+        animations: "disabled",
+      });
+    });
+
+    test("KO node detail service card", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "ko");
+      const card = page.getByTestId("node-detail-service-card-sensor");
+      await expect(card).toBeVisible();
+      await card.scrollIntoViewIfNeeded();
+      await card.screenshot({
+        path: path.join(ASSETS_DIR, "node-detail-services-ko.png"),
+        animations: "disabled",
+      });
+    });
+
+    /**
+     * Apply preview state captures (six PNGs replacing the
+     * `node-apply-preview-{planned,retryable,terminal}-{en,ko}.svg`
+     * wireframes shipped by PR #372 as a pre-mount stand-in). The
+     * modal is reached through the detail page's Apply All button.
+     *
+     *   - Planned state: stub `applyNode` to succeed (never invoked
+     *     before the screenshot, which is taken on the planned list).
+     *   - Retryable state: stub `applyNode` with errors; click Apply;
+     *     wait for the row's `data-state` to settle on
+     *     `failed_retryable`; capture.
+     *   - Terminal state: same, but force the dispatch through
+     *     APPLY_DISPATCH_MAX_ATTEMPTS+ retries by stubbing repeated
+     *     errors and clicking Retry until the row settles on
+     *     `failed_terminal`. The dispatch cap is a small constant in
+     *     `apply-attempt-types.ts` so a couple of retries is enough.
+     */
+    async function openApplyModal(page: Page): Promise<void> {
+      await page.getByTestId("node-detail-apply-all").click();
+      await page.getByTestId("node-detail-apply-all-confirm-button").click();
+      await page
+        .locator(
+          '[data-testid="apply-preview-body"], [data-testid="apply-preview-plan-error"]',
+        )
+        .first()
+        .waitFor({ timeout: 30_000 });
+    }
+
+    async function captureApplyState(
+      page: Page,
+      filename: string,
+    ): Promise<void> {
+      const dialog = page.locator('[role="dialog"]').filter({
+        has: page.getByTestId("apply-preview-body"),
+      });
+      await expect(dialog).toBeVisible();
+      await dialog.screenshot({
+        path: path.join(ASSETS_DIR, filename),
+        animations: "disabled",
+      });
+    }
+
+    test("EN apply preview — planned dispatches", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await stubSession.registerStub({
+        operation: "applyNode",
+        response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+      });
+      await signInAndWait(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "en");
+      await openApplyModal(page);
+      await captureApplyState(page, "node-apply-preview-planned-en.png");
+    });
+
+    test("KO apply preview — planned dispatches", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await stubSession.registerStub({
+        operation: "applyNode",
+        response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+      });
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "ko");
+      await openApplyModal(page);
+      await captureApplyState(page, "node-apply-preview-planned-ko.png");
+    });
+
+    test("EN apply preview — failed_retryable", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await stubSession.registerStub({
+        operation: "applyNode",
+        response: {
+          kind: "errors",
+          errors: [{ message: "transient manager dispatch failure" }],
+        },
+      });
+      await signInAndWait(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "en");
+      await openApplyModal(page);
+      await page.getByTestId("apply-preview-apply").click();
+      const row = page
+        .locator('[data-testid^="apply-preview-dispatch-"]')
+        .first();
+      await expect(row).toHaveAttribute("data-state", "failed_retryable", {
+        timeout: 30_000,
+      });
+      await captureApplyState(page, "node-apply-preview-retryable-en.png");
+    });
+
+    test("KO apply preview — failed_retryable", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await stubSession.registerStub({
+        operation: "applyNode",
+        response: {
+          kind: "errors",
+          errors: [{ message: "transient manager dispatch failure" }],
+        },
+      });
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "ko");
+      await openApplyModal(page);
+      await page.getByTestId("apply-preview-apply").click();
+      const row = page
+        .locator('[data-testid^="apply-preview-dispatch-"]')
+        .first();
+      await expect(row).toHaveAttribute("data-state", "failed_retryable", {
+        timeout: 30_000,
+      });
+      await captureApplyState(page, "node-apply-preview-retryable-ko.png");
+    });
+
+    test("EN apply preview — failed_terminal", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await stubSession.registerStub({
+        operation: "applyNode",
+        response: {
+          kind: "errors",
+          errors: [{ message: "manager dispatch failure" }],
+        },
+      });
+      await signInAndWait(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "en");
+      await openApplyModal(page);
+      await page.getByTestId("apply-preview-apply").click();
+      const row = page
+        .locator('[data-testid^="apply-preview-dispatch-"]')
+        .first();
+      // Wait for the initial confirm to settle into failed_retryable
+      // before issuing retries. The dispatch cap defaults to 3
+      // (APPLY_DISPATCH_MAX_ATTEMPTS), so confirm + 2 retries = 3
+      // attempts, which trips the cap and flips the row to terminal.
+      await expect(row).toHaveAttribute("data-state", "failed_retryable", {
+        timeout: 30_000,
+      });
+      for (let i = 0; i < 3; i++) {
+        const state = await row.getAttribute("data-state");
+        if (state === "failed_terminal") break;
+        const retry = page.getByTestId(/^apply-preview-retry-/);
+        await retry.first().click();
+        // Wait for the row to leave in_flight and settle on a failed_*
+        // state before deciding whether another retry is needed.
+        await expect(row).toHaveAttribute(
+          "data-state",
+          /^failed_(retryable|terminal)$/,
+          { timeout: 30_000 },
+        );
+      }
+      await expect(row).toHaveAttribute("data-state", "failed_terminal", {
+        timeout: 30_000,
+      });
+      await captureApplyState(page, "node-apply-preview-terminal-en.png");
+    });
+
+    test("KO apply preview — failed_terminal", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await stubSession.registerStub({
+        operation: "applyNode",
+        response: {
+          kind: "errors",
+          errors: [{ message: "manager dispatch failure" }],
+        },
+      });
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "ko");
+      await openApplyModal(page);
+      await page.getByTestId("apply-preview-apply").click();
+      const row = page
+        .locator('[data-testid^="apply-preview-dispatch-"]')
+        .first();
+      await expect(row).toHaveAttribute("data-state", "failed_retryable", {
+        timeout: 30_000,
+      });
+      for (let i = 0; i < 3; i++) {
+        const state = await row.getAttribute("data-state");
+        if (state === "failed_terminal") break;
+        const retry = page.getByTestId(/^apply-preview-retry-/);
+        await retry.first().click();
+        await expect(row).toHaveAttribute(
+          "data-state",
+          /^failed_(retryable|terminal)$/,
+          { timeout: 30_000 },
+        );
+      }
+      await expect(row).toHaveAttribute("data-state", "failed_terminal", {
+        timeout: 30_000,
+      });
+      await captureApplyState(page, "node-apply-preview-terminal-ko.png");
+    });
+
+    /**
+     * Mid-execution capture for the manual's "Node detail page" docs
+     * delta — distinct from the planned / retryable / terminal trio
+     * above. Captures the modal while `confirmApplyAttempt` is in
+     * flight (the executing phase shows the manager row in
+     * `in_flight` and the action button in the "Applying…" disabled
+     * state). We force a slow response with `page.route` on the
+     * server-action URL so the executing phase is observable for
+     * long enough to screenshot.
+     */
+    test("EN apply preview — mid-execution", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      // Don't register an applyNode stub: the mock server's `no stub
+      // registered` error keeps the modal in the executing phase
+      // longest while the BFF retries / waits, but it would also flip
+      // the row to failed_retryable on the first response. Instead,
+      // delay the upstream by intercepting the BFF's outgoing
+      // server-action POST in the browser. This works for the
+      // mid-execution capture only because the modal projects the
+      // executing state synchronously when Apply is clicked.
+      await stubSession.registerStub({
+        operation: "applyNode",
+        response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+      });
+      await signInAndWait(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "en");
+      await openApplyModal(page);
+      await page.getByTestId("apply-preview-apply").click();
+      // The modal projects `kind: "executing"` synchronously the
+      // moment Apply is clicked — capture immediately so the
+      // screenshot lands on the executing-phase Applying… button
+      // before the BFF resolves.
+      await expect(page.getByTestId("apply-preview-applying")).toBeVisible({
+        timeout: 5_000,
+      });
+      await captureApplyState(page, "node-apply-preview-mid-en.png");
+    });
+
+    test("KO apply preview — mid-execution", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await stubSession.registerStub({
+        operation: "node",
+        response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
+      });
+      await stubSession.registerStub({
+        operation: "applyNode",
+        response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+      });
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await navigateToDetail(page, "ko");
+      await openApplyModal(page);
+      await page.getByTestId("apply-preview-apply").click();
+      await expect(page.getByTestId("apply-preview-applying")).toBeVisible({
+        timeout: 5_000,
+      });
+      await captureApplyState(page, "node-apply-preview-mid-ko.png");
+    });
   });

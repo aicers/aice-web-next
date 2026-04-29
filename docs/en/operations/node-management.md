@@ -589,17 +589,9 @@ saving drafts and confirming the apply. It opens in two phases — a
 read-only **planned dispatches** list, and a live **per-dispatch
 status** view once the operator clicks **Apply**.
 
-The figures below are wireframe stand-ins per the
-infrastructure-gated screenshot exception in `docs/AUTHORING.md`:
-the modal does not yet have a mount point on the node detail page
-(owned by Phase Node-5 / #311), and the bulk-apply mock manager /
-external endpoints used by the e2e harness are tracked separately.
-Real PNG captures of all three states will replace these wireframes
-in the same PR that lands the detail-page mount.
-
 ### Planned dispatches (before execution)
 
-![Apply preview — planned dispatches (wireframe)](../../assets/node-apply-preview-planned-en.svg)
+![Apply preview — planned dispatches](../../assets/node-apply-preview-planned-en.png)
 
 Opening the modal calls `createApplyAttempt({ nodeId })`. The BFF
 returns the planned dispatch list — the **top-level dispatches the
@@ -652,9 +644,9 @@ muted for **Queued**.
 
 ### Retry vs. Rebuild
 
-![Apply preview — failed_retryable with Retry (wireframe)](../../assets/node-apply-preview-retryable-en.svg)
+![Apply preview — failed_retryable with Retry](../../assets/node-apply-preview-retryable-en.png)
 
-![Apply preview — failed_terminal with Rebuild guidance (wireframe)](../../assets/node-apply-preview-terminal-en.svg)
+![Apply preview — failed_terminal with Rebuild guidance](../../assets/node-apply-preview-terminal-en.png)
 
 A failed dispatch presents one of two recovery paths:
 
@@ -682,6 +674,97 @@ navigation stays within the dialog. Escape closes the modal only
 when not executing; per-row Retry buttons carry an accessible name
 naming the dispatch kind so screen readers can disambiguate
 ("Retry – Data Store (updateConfig)").
+
+## Node detail page
+
+The detail page renders at `/nodes/<id>` and is reached by clicking a
+node row from the Status tab (the read-only entry point) or by
+following a deep link from another surface that names a node id. The
+page combines the node's metadata, live ping and resource indicators,
+and a per-service card grid with the same Apply preview modal
+documented above.
+
+### Dashboard
+
+![Node detail dashboard](../../assets/node-detail-en.png)
+
+The dashboard at the top of the page lays out the node's metadata
+(name, hostname, customer, description, last applied at), a **ping
+indicator** (alive / dead with a "Last seen ..." timestamp), and three
+resource sparklines (CPU, memory, disk) driven by the same client-side
+polling loop as the Status tab. The sparklines carry one SSR-seeded
+sample on first paint so the chart does not render an empty axis on
+cold loads, and the polling buffer takes over from the next client
+tick onward. A **Pending changes** badge appears whenever any
+node-level draft (name / metadata / agent / external service) is
+non-null; the dashboard's controls (`Edit`, `Restart`, `Shutdown`,
+`Apply All`, `Delete`) are individually gated on the relevant
+write / delete permissions.
+
+### Service cards and three-tab panel
+
+![Node detail service card](../../assets/node-detail-services-en.png)
+
+Below the dashboard, the page renders a card grid with one card per
+service the node hosts (Manager, Sensor, Unsupervised Engine,
+Semi-supervised Engine, Time Series Generator, Data Store, TI
+Container). The Manager card is status-only — it surfaces a live
+running / not-running badge and no configuration tabs. Every other
+card carries:
+
+- A status badge (`On` / `Off` / `Idle`) driven by the same shared
+  polling buffer as the Status tab.
+- A **Pending changes** badge (amber) whenever the service has a
+  non-null draft on the canonical node payload.
+- A three-tab panel: **Applied** (the live config the service is
+  running with), **Draft** (any pending operator-authored changes),
+  and **Diff** (a per-field diff between Applied and Draft).
+- An **Edit this service** link (gated on `nodes:write + services:write`)
+  that deep-links into the create/edit dialog with the relevant
+  service section auto-expanded.
+
+The Diff tab renders the documented copy `"No pending changes for
+this service."` when the service's draft is null. When the external
+service (Data Store / TI Container) is unreachable, the Applied tab
+renders the unavailable copy and the Diff tab renders `"Diff cannot
+be computed while the service is unreachable."` — the Draft tab
+continues to render normally because the draft is held on the manager
+side, not on the external endpoint.
+
+### Apply preview from the detail page
+
+![Apply preview — mid-execution](../../assets/node-apply-preview-mid-en.png)
+
+The dashboard's **Apply All** button opens a confirmation prompt that,
+once accepted, mounts the same Apply preview modal documented in
+*Apply preview* above. The mid-execution capture above shows the modal
+during the executing phase — the manager dispatch is in flight, the
+**Applying…** label is on the action button, and Escape / outside-
+clicks are disabled until the call resolves. From here the modal
+proceeds to the per-dispatch status view (`Succeeded`, `Failed
+(retryable)` with a Retry button, or `Failed (terminal)` with the
+Rebuild guidance) as documented above.
+
+### Manager offline fallback
+
+When the canonical-node read fails with a manager outage after the
+combined gate has already passed, the page swaps to the same
+manager-unavailable fallback panel as the Status tab. This is the
+post-gate "manager dropped before this read" path; it is not the same
+surface as the gate-time HTTP 403 a caller without `nodes:read +
+services:read` would see.
+
+### Permissions on the detail page
+
+The detail page is gated on `nodes:read + services:read`. A
+**Security Monitor** (read-only) reaches the page and sees the
+dashboard, status indicators, and service cards (read-only) — but
+does not see Edit, Delete, Restart, Shutdown, Apply All, or any
+per-service "Edit this service" affordance. Because **Apply All**
+is the only entry point to the Apply preview modal on this page, a
+Security Monitor never reaches it. The per-service on/off control
+documented for Phase Node-7 ships with #317 PR 2 and is not
+present on this page in v1.
 
 ## Status tab
 
@@ -982,18 +1065,9 @@ passes, the audit DB is the suspect.
 ### Modal screenshots
 
 Modal-state captures (planned dispatches, `failed_retryable` with
-Retry, `failed_terminal` with Rebuild) live with the [Apply
-preview](#apply-preview) section above and are not duplicated
-here. Operators triaging a stuck row should open the same modal
-the user sees — every state visible to the user is documented
-there.
-
-The Apply preview figures currently ship as the wireframe stand-ins
-that #362 produced under the infrastructure-gated screenshot
-exception in `docs/AUTHORING.md` (the modal does not yet have a
-mount point on the node detail page — owned by Phase Node-5 / #311).
-This ops section deliberately reuses those same wireframes rather
-than re-capturing them; the real PNG captures will replace the
-Apply preview wireframes in the same PR that lands the detail-page
-mount, and this section will inherit the upgrade automatically
-because it links to those figures by reference.
+Retry, `failed_terminal` with Rebuild, mid-execution) live with
+the [Apply preview](#apply-preview) and
+[Apply preview from the detail page](#apply-preview-from-the-detail-page)
+sections above and are not duplicated here. Operators triaging a
+stuck row should open the same modal the user sees — every state
+visible to the user is documented there.

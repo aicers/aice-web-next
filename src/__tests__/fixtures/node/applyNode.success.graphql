@@ -1,0 +1,3 @@
+mutation ApplyNode($id: ID!, $node: NodeInput!) {
+  applyNode(id: $id, node: $node)
+}
