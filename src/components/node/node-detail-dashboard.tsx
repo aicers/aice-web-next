@@ -489,16 +489,23 @@ function PingBadge({
   lastSuccessfulPingAt: Date | null;
 }) {
   const t = useTranslations("nodes.detail.ping");
-  const [hydrated, setHydrated] = useState(false);
+  const iso = lastSuccessfulPingAt?.toISOString() ?? null;
+  // SSR / first client paint: render the ISO timestamp so the markup
+  // is truthful (and deterministic across server and client). After
+  // hydration the effect swaps in the operator's locale-formatted
+  // clock time. The two paints agree on the same `iso` initial value,
+  // so there is no hydration mismatch.
+  const [timeLabel, setTimeLabel] = useState<string | null>(iso);
   useEffect(() => {
-    setHydrated(true);
-  }, []);
-  // Render the locale-formatted timestamp only after hydration so SSR
-  // and the first client paint agree on the markup.
-  const timeLabel =
-    hydrated && lastSuccessfulPingAt !== null
-      ? lastSuccessfulPingAt.toLocaleTimeString()
-      : null;
+    if (iso === null) {
+      setTimeLabel(null);
+      return;
+    }
+    const parsed = new Date(iso);
+    setTimeLabel(
+      Number.isNaN(parsed.getTime()) ? iso : parsed.toLocaleTimeString(),
+    );
+  }, [iso]);
   if (alive) {
     return (
       <span
@@ -551,16 +558,28 @@ function PingBadge({
 
 function LastAppliedField({ lastAppliedAt }: { lastAppliedAt: string | null }) {
   const t = useTranslations("nodes.detail.metadata");
-  const [hydrated, setHydrated] = useState(false);
+  // SSR / first client paint: when the server has a real timestamp,
+  // surface the ISO value (truthful and deterministic) instead of
+  // contradicting it with the "Never applied" fallback. After
+  // hydration the effect swaps in the operator's locale-formatted
+  // version. Server and client agree on the same initial state, so
+  // there is no hydration mismatch.
+  const [value, setValue] = useState<string>(() =>
+    lastAppliedAt === null
+      ? t("neverApplied")
+      : t("lastAppliedAt", { time: lastAppliedAt }),
+  );
   useEffect(() => {
-    setHydrated(true);
-  }, []);
-  // Defer locale formatting until after hydration so SSR and the first
-  // client paint agree on the markup.
-  const value =
-    hydrated && lastAppliedAt !== null
-      ? t("lastAppliedAt", { time: new Date(lastAppliedAt).toLocaleString() })
-      : t("neverApplied");
+    if (lastAppliedAt === null) {
+      setValue(t("neverApplied"));
+      return;
+    }
+    const parsed = new Date(lastAppliedAt);
+    const localized = Number.isNaN(parsed.getTime())
+      ? lastAppliedAt
+      : parsed.toLocaleString();
+    setValue(t("lastAppliedAt", { time: localized }));
+  }, [lastAppliedAt, t]);
   return (
     <div className="space-y-1">
       <dt className="text-muted-foreground text-xs">{t("lastApplied")}</dt>

@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodeDetailDashboard } from "@/components/node/node-detail-dashboard";
@@ -9,6 +10,11 @@ import {
   __setNodeStatusManagerUnreachable,
 } from "@/hooks/use-node-status-polling";
 import enMessages from "@/i18n/messages/en.json";
+import type {
+  ApplyAttemptRow,
+  CreateApplyAttemptResult,
+  PlannedDispatch,
+} from "@/lib/node/apply-attempt-types";
 import type { Node as ManagerNode, NodeStatus } from "@/lib/node/types";
 
 vi.mock("@/i18n/navigation", () => ({
@@ -240,6 +246,13 @@ describe("NodeDetailDashboard — last applied + ping last seen", () => {
     renderDashboard({ lastAppliedAt: iso });
     const cell = screen.getByTestId("node-detail-meta-last-applied");
     expect(cell.getAttribute("data-iso")).toBe(iso);
+    // The cell must surface a real timestamp value — never the
+    // "Never applied" fallback when the server already has the ISO.
+    const text = cell.textContent ?? "";
+    expect(text).not.toBe(enMessages.nodes.detail.metadata.neverApplied);
+    expect(text.length).toBeGreaterThan(0);
+    // Must contain at least one digit from the timestamp (the year).
+    expect(text).toMatch(/\d/);
   });
 
   it("falls back to the never-applied copy when lastAppliedAt is null", () => {
@@ -356,17 +369,75 @@ describe("NodeDetailDashboard — apply preview modal wiring", () => {
     __resetNodeStatusStore();
   });
 
-  it("threads applyActions to the modal so retry delegates to retryDispatch", async () => {
-    // Verify the dashboard hands the supplied actions through to the
-    // ApplyPreviewModal — the dispatcher-level "fresh `old` snapshot
-    // before retry" invariant is covered by #361's own integration
-    // tests (per the issue's acceptance footnote), so this test only
-    // checks that the wiring is in place: clicking Apply All Pending
-    // confirms and then opens the preview, and the actions object
-    // received by the modal is the one we passed in.
-    const createApplyAttempt = vi.fn();
-    const confirmApplyAttempt = vi.fn();
-    const retryDispatch = vi.fn();
+  it("retry on a failed external dispatch delegates to retryDispatch with the right inputs", async () => {
+    // Drive the full Apply All flow as the operator would: open the
+    // confirm dialog from the dashboard, confirm to mount the preview
+    // modal, walk through createApplyAttempt + confirmApplyAttempt, and
+    // finally click the per-row Retry button to verify retryDispatch
+    // is invoked with the attemptId/dispatchId pair the modal exposed.
+    //
+    // The dispatcher-level "fresh `old` snapshot before retry"
+    // invariant is covered by #361's own integration tests (per the
+    // issue's acceptance footnote), so this test stops at the call
+    // boundary — it just asserts the wiring delivers the user's click
+    // to retryDispatch with the right payload.
+    const attemptId = "00000000-0000-0000-0000-000000000001";
+    const dispatchId = "d-data-store";
+    const planned: PlannedDispatch[] = [
+      {
+        dispatchId: "d-manager",
+        kind: "MANAGER",
+        state: "queued",
+        attemptCount: 0,
+        lastError: null,
+      },
+      {
+        dispatchId,
+        kind: "DATA_STORE",
+        state: "queued",
+        attemptCount: 0,
+        lastError: null,
+        new: 'ingest_srv_addr = "10.0.0.1:38370"\n',
+      },
+    ];
+    const planResult: CreateApplyAttemptResult = {
+      attemptId,
+      plannedDispatches: planned,
+      draftFingerprint: "deadbeef",
+      expiresAt: "2099-12-31T23:59:59.999Z",
+    };
+    const failedRow: ApplyAttemptRow = {
+      attemptId,
+      nodeId: "node-1",
+      draftFingerprint: Buffer.from("deadbeef", "hex"),
+      plannedDispatches: [
+        { ...planned[0], state: "succeeded" },
+        {
+          ...planned[1],
+          state: "failed_retryable",
+          lastError: "transient",
+        },
+      ],
+      createdBy: "user",
+      createdAt: new Date(),
+      expiresAt: new Date("2099-12-31T23:59:59.999Z"),
+      executingLock: null,
+      claimStartedAt: null,
+      status: "failed_retryable",
+    };
+    const succeededRow: ApplyAttemptRow = {
+      ...failedRow,
+      plannedDispatches: planned.map((d) => ({
+        ...d,
+        state: "succeeded" as const,
+      })),
+      status: "succeeded",
+    };
+
+    const createApplyAttempt = vi.fn().mockResolvedValue(planResult);
+    const confirmApplyAttempt = vi.fn().mockResolvedValue(failedRow);
+    const retryDispatch = vi.fn().mockResolvedValue(succeededRow);
+
     renderDashboard({
       applyActions: {
         createApplyAttempt,
@@ -374,10 +445,35 @@ describe("NodeDetailDashboard — apply preview modal wiring", () => {
         retryDispatch,
       },
     });
-    expect(screen.getByTestId("node-detail-apply-all")).toBeTruthy();
-    // Sanity: actions object is what we passed.
-    expect(typeof createApplyAttempt).toBe("function");
-    expect(typeof confirmApplyAttempt).toBe("function");
-    expect(typeof retryDispatch).toBe("function");
+
+    // 1. Click Apply All Pending → opens the confirm dialog.
+    fireEvent.click(screen.getByTestId("node-detail-apply-all"));
+
+    // 2. Confirm → closes dialog, opens the ApplyPreviewModal which
+    //    fires createApplyAttempt on mount.
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId("node-detail-apply-all-confirm-button"),
+      );
+    });
+    expect(createApplyAttempt).toHaveBeenCalledWith({ nodeId: "node-1" });
+
+    // 3. Apply → fires confirmApplyAttempt, settles to failed_retryable
+    //    so the per-row Retry button renders.
+    const applyButton = await screen.findByTestId("apply-preview-apply");
+    await act(async () => {
+      fireEvent.click(applyButton);
+    });
+    expect(confirmApplyAttempt).toHaveBeenCalledWith({ attemptId });
+
+    // 4. Retry the failed external dispatch → must reach retryDispatch
+    //    with the exposed attemptId + dispatchId.
+    const retryButton = await screen.findByTestId(
+      `apply-preview-retry-${dispatchId}`,
+    );
+    await act(async () => {
+      fireEvent.click(retryButton);
+    });
+    expect(retryDispatch).toHaveBeenCalledWith({ attemptId, dispatchId });
   });
 });
