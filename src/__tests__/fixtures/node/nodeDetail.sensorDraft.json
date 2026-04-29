@@ -1,0 +1,24 @@
+{
+  "node": {
+    "id": "31",
+    "name": "draft-node",
+    "nameDraft": null,
+    "profile": {
+      "customerId": "1",
+      "description": "Sensor with a partial pending change",
+      "hostname": "draft.lan"
+    },
+    "profileDraft": null,
+    "agents": [
+      {
+        "node": 31,
+        "key": "draft-sensor",
+        "kind": "SENSOR",
+        "status": "ENABLED",
+        "config": "pcap_max_size = 1000\nprotocols = [\"http\", \"ssh\"]\nhttp_ports = [80]\n",
+        "draft": "pcap_max_size = 2000\nprotocols = [\"http\", \"ssh\"]\nhttp_ports = [80]\n"
+      }
+    ],
+    "externalServices": []
+  }
+}

@@ -758,11 +758,13 @@ services:read` would see.
 
 The detail page is gated on `nodes:read + services:read`. A
 **Security Monitor** (read-only) reaches the page and sees the
-dashboard, status indicators, service cards (read-only), and the
-Apply preview list — but does not see Edit, Delete, Restart,
-Shutdown, Apply All, or any per-service "Edit this service"
-affordance. The per-service on/off control documented for Phase
-Node-7 ships with #317 PR 2 and is not present on this page in v1.
+dashboard, status indicators, and service cards (read-only) — but
+does not see Edit, Delete, Restart, Shutdown, Apply All, or any
+per-service "Edit this service" affordance. Because **Apply All**
+is the only entry point to the Apply preview modal on this page, a
+Security Monitor never reaches it. The per-service on/off control
+documented for Phase Node-7 ships with #317 PR 2 and is not
+present on this page in v1.
 
 ## Status tab
 
@@ -1063,18 +1065,9 @@ passes, the audit DB is the suspect.
 ### Modal screenshots
 
 Modal-state captures (planned dispatches, `failed_retryable` with
-Retry, `failed_terminal` with Rebuild) live with the [Apply
-preview](#apply-preview) section above and are not duplicated
-here. Operators triaging a stuck row should open the same modal
-the user sees — every state visible to the user is documented
-there.
-
-The Apply preview figures currently ship as the wireframe stand-ins
-that #362 produced under the infrastructure-gated screenshot
-exception in `docs/AUTHORING.md` (the modal does not yet have a
-mount point on the node detail page — owned by Phase Node-5 / #311).
-This ops section deliberately reuses those same wireframes rather
-than re-capturing them; the real PNG captures will replace the
-Apply preview wireframes in the same PR that lands the detail-page
-mount, and this section will inherit the upgrade automatically
-because it links to those figures by reference.
+Retry, `failed_terminal` with Rebuild, mid-execution) live with
+the [Apply preview](#apply-preview) and
+[Apply preview from the detail page](#apply-preview-from-the-detail-page)
+sections above and are not duplicated here. Operators triaging a
+stuck row should open the same modal the user sees — every state
+visible to the user is documented there.

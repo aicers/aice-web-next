@@ -210,6 +210,64 @@ test.describe("Node detail page", () => {
     ).toContainText("No pending changes for this service.");
   });
 
+  test("Diff tab on a service with a draft shows only the changed fields", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Drive the page off `nodeDetail.sensorDraft.json` (id: "31"): the
+    // sensor agent's `draft` differs from `config` only on
+    // `pcap_max_size` (1000 → 2000); `protocols` and `http_ports` are
+    // identical. The Diff tab must therefore render the diff table with
+    // exactly one row keyed by `pcap_max_size` and not surface a row for
+    // either of the unchanged keys — verifying both halves of the
+    // "shows only changed fields" contract end-to-end (the unit-level
+    // `diffServiceConfig` test already covers shape; this catches a
+    // regression in the page → component → row wiring).
+    await stubSession.registerStub({
+      operation: "node",
+      matchVariables: { id: "31" },
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeDetail.sensorDraft.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToDetail(page, "31");
+    await expect(page.getByTestId("node-detail-dashboard")).toBeVisible({
+      timeout: 30_000,
+    });
+
+    const sensorCard = page.getByTestId("node-detail-service-card-sensor");
+    await sensorCard.getByTestId("node-detail-service-sensor-tab-diff").click();
+
+    // Diff table is rendered, not the empty-diff fallback.
+    await expect(
+      sensorCard.getByTestId("node-detail-service-sensor-diff"),
+    ).toBeVisible();
+    await expect(
+      sensorCard.getByTestId("node-detail-service-sensor-diff-empty"),
+    ).toHaveCount(0);
+
+    // The single changed key surfaces a row.
+    const changedRow = sensorCard.getByTestId(
+      "node-detail-service-sensor-diff-row-pcap_max_size",
+    );
+    await expect(changedRow).toBeVisible();
+    await expect(changedRow).toContainText("1000");
+    await expect(changedRow).toContainText("2000");
+
+    // Unchanged keys must NOT appear as rows — that's the "only changed
+    // fields" half of the contract.
+    await expect(
+      sensorCard.getByTestId("node-detail-service-sensor-diff-row-protocols"),
+    ).toHaveCount(0);
+    await expect(
+      sensorCard.getByTestId("node-detail-service-sensor-diff-row-http_ports"),
+    ).toHaveCount(0);
+  });
+
   test("External service (DATA_STORE) unreachable: Applied + Diff render unavailable copy, Draft renders normally", async ({
     page,
     workerUsername,
