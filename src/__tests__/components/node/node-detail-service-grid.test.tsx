@@ -294,6 +294,82 @@ describe("NodeDetailServiceGrid — agent service tabs", () => {
     ).toBeTruthy();
   });
 
+  it("emits the registry kebab-case kind in the Edit-this-service URL so the dialog can auto-focus", async () => {
+    // Round 5 reviewer: the link previously appended `#service-<key>`
+    // but nothing on the settings page or dialog consumed the
+    // fragment. The new contract pushes `?service=<registry-kind>` so
+    // the dialog can expand + scroll the matching accordion. Assert
+    // the camelCase ServiceKind (`semiSupervised`, `dataStore`,
+    // `tiContainer`, `timeSeries`) is mapped to the registry's
+    // kebab-case value before going on the wire.
+    const TIME_SERIES_AGENT: Agent = {
+      node: 1,
+      key: "ts-1",
+      kind: "TIME_SERIES_GENERATOR",
+      status: "ENABLED",
+      config: 'srv_addr = "0.0.0.0:8443"\n',
+      draft: 'srv_addr = "0.0.0.0:8444"\n',
+    };
+    const makeExternal = (kind: ExternalService["kind"]): ExternalService => ({
+      node: 1,
+      key: `${kind.toLowerCase()}-1`,
+      kind,
+      status: "ENABLED",
+      draft: 'ingest_srv_addr = "0.0.0.0:38380"\n',
+    });
+    const cases: Array<{
+      agent?: Agent;
+      external?: ExternalService;
+      key: string;
+      param: string;
+    }> = [
+      {
+        agent: SEMI_SUPERVISED_AGENT,
+        key: "semiSupervised",
+        param: "semi-supervised",
+      },
+      {
+        agent: TIME_SERIES_AGENT,
+        key: "timeSeries",
+        param: "time-series",
+      },
+      {
+        external: makeExternal("DATA_STORE"),
+        key: "dataStore",
+        param: "data-store",
+      },
+      {
+        external: makeExternal("TI_CONTAINER"),
+        key: "tiContainer",
+        param: "ti-container",
+      },
+    ];
+    for (const { agent, external, key, param } of cases) {
+      const node = makeNode({
+        agents: agent ? [agent] : [],
+        externalServices: external ? [external] : [],
+      });
+      const { unmount } = renderGrid({ node, canEditServices: true });
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByTestId(`node-detail-service-${key}-tab-draft`),
+      );
+      const link = screen.getByTestId(
+        `node-detail-service-${key}-edit-link`,
+      ) as HTMLAnchorElement;
+      // next-intl's <Link /> may decorate the locale prefix; the
+      // important invariant is that the registry kind reaches the
+      // settings page as a plain `service` query param.
+      expect(link.getAttribute("href")).toContain(`service=${param}`);
+      expect(link.getAttribute("href")).toContain(`dialog=edit&id=${node.id}`);
+      // The old fragment-based form is gone — the dialog never
+      // consumed it, so emitting it would still leave the user on
+      // the generic top of the dialog.
+      expect(link.getAttribute("href")).not.toContain("#service-");
+      unmount();
+    }
+  });
+
   it("hides the Edit-this-service link when canEdit=false", async () => {
     const node = makeNode({ agents: [SENSOR_AGENT] });
     renderGrid({ node, canEditServices: false });

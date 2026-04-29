@@ -58,6 +58,21 @@ const EXTERNAL_KIND_ORDER: ExternalServiceKind[] = [
   "TI_CONTAINER",
 ];
 
+// Map detail-page `ServiceKind` (camelCase) onto the dialog registry's
+// kebab-case `kind`. The Edit-dialog accordion keys off the registry
+// kind (`sensor`, `data-store`, `ti-container`, `semi-supervised`,
+// `time-series`, `unsupervised`), and the `?service=` URL param is
+// what the dialog auto-expand path consumes — so the link emits the
+// registry-kind value directly.
+const EDIT_SERVICE_PARAM: Record<ServiceKind, string> = {
+  sensor: "sensor",
+  unsupervised: "unsupervised",
+  semiSupervised: "semi-supervised",
+  timeSeries: "time-series",
+  dataStore: "data-store",
+  tiContainer: "ti-container",
+};
+
 /**
  * Detail-page service card grid. Renders:
  *   - Manager card (status-only, special)
@@ -501,7 +516,13 @@ function DraftTab({
       )}
       {canEdit && (
         <Link
-          href={`/nodes/settings?dialog=edit&id=${nodeId}#service-${serviceKey}`}
+          // The dialog accordion uses the registry's kebab-case kind
+          // (sensor, data-store, ti-container, semi-supervised,
+          // time-series, unsupervised), while ServiceKind here is the
+          // detail-page camelCase. Map at the link site so the URL is
+          // stable across both spaces and the dialog can read the
+          // `service` param directly.
+          href={`/nodes/settings?dialog=edit&id=${nodeId}&service=${EDIT_SERVICE_PARAM[serviceKey]}`}
           className="text-primary text-xs underline-offset-2 hover:underline"
           data-testid={`node-detail-service-${serviceKey}-edit-link`}
         >

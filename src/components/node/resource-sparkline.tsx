@@ -191,17 +191,74 @@ export function ResourceSparkline({
           isStale && "opacity-60",
         )}
       >
-        {segments.map((segment) => {
+        {segments.map((segment, segIdx) => {
           if (segment.length < 2) return null;
+          // Stable per-segment key from the segment's first capturedAt
+          // — buildSegments preserves this across re-renders.
+          const key = `${metric}-${segment[0].capturedAt.getTime()}`;
+          const isLastSegment = segIdx === segments.length - 1;
+          // Stale styling is restricted to the latest point (handled
+          // by the `<circle>` below) and the trailing edge only — i.e.
+          // the line stroke between the last two samples of the most
+          // recent segment. Earlier segments and the leading portion
+          // of the trailing segment stay in the normal `text-primary`
+          // colour even while `isStale === true`. Without this split,
+          // the whole rendered history would mute when stale, which
+          // misrepresents what the operator is looking at.
+          if (isStale && isLastSegment && segment.length >= 2) {
+            const head = segment.slice(0, segment.length - 1);
+            const tail = segment.slice(segment.length - 2);
+            const headD =
+              head.length >= 2
+                ? head
+                    .map(
+                      (p, j) =>
+                        `${j === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`,
+                    )
+                    .join(" ")
+                : null;
+            const tailD = tail
+              .map(
+                (p, j) =>
+                  `${j === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`,
+              )
+              .join(" ");
+            return (
+              <g
+                key={key}
+                data-testid={`node-detail-sparkline-segment-${metric}-${key}`}
+              >
+                {headD !== null && (
+                  <path
+                    d={headD}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-primary"
+                    data-testid={`node-detail-sparkline-segment-${metric}-${key}-head`}
+                  />
+                )}
+                <path
+                  d={tailD}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-muted-foreground"
+                  data-testid={`node-detail-sparkline-segment-${metric}-${key}-tail`}
+                />
+              </g>
+            );
+          }
           const d = segment
             .map(
               (p, j) =>
                 `${j === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`,
             )
             .join(" ");
-          // Stable per-segment key from the segment's first capturedAt
-          // — buildSegments preserves this across re-renders.
-          const key = `${metric}-${segment[0].capturedAt.getTime()}`;
           return (
             <path
               key={key}
@@ -211,7 +268,7 @@ export function ResourceSparkline({
               strokeWidth={1.5}
               strokeLinecap="round"
               strokeLinejoin="round"
-              className={cn("text-primary", isStale && "text-muted-foreground")}
+              className="text-primary"
               data-testid={`node-detail-sparkline-segment-${metric}-${key}`}
             />
           );

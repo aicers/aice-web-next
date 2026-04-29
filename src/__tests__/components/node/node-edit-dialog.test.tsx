@@ -282,6 +282,56 @@ describe("NodeEditDialog rendering", () => {
     expect(html).not.toContain("node-dialog-time-series-mode");
   });
 
+  it("starts the matching accordion expanded when initialFocusService is set", () => {
+    // Round 5 reviewer: the detail-page "Edit this service" link
+    // pushes `?service=<registry-kind>` so the dialog can land the
+    // user directly on that section. The accordion must auto-expand
+    // on mount when its `kind` matches `initialFocusService`. SSR
+    // markup is enough to lock the initial-state contract — the
+    // runtime scrollIntoView/focus path happens in a post-mount
+    // requestAnimationFrame and is not asserted here (effects do not
+    // fire under renderToStaticMarkup).
+    const html = renderToStaticMarkup(
+      <NodeEditDialog
+        open
+        onOpenChange={noop}
+        mode="edit"
+        customers={customers}
+        existingNames={["alpha"]}
+        existingHostnames={["alpha.local"]}
+        node={{
+          id: "42",
+          name: "alpha",
+          nameDraft: null,
+          profile: {
+            customerId: "1",
+            description: "primary",
+            hostname: "alpha.local",
+          },
+          profileDraft: null,
+          agents: [],
+          externalServices: [],
+        }}
+        initialFocusService="data-store"
+        onSuccess={noop}
+      />,
+    );
+
+    // Sibling sections stay collapsed: their bodies have no rendered
+    // chevron-down marker, only the chevron-right.
+    // Targeted section's chevron-down exists at least once, indicating
+    // an expanded accordion. We check the ARIA pair
+    // `aria-expanded="true"` for the targeted kind.
+    const dataStoreHeader = html.match(
+      /node-dialog-service-data-store[\s\S]*?aria-expanded="(true|false)"/,
+    );
+    expect(dataStoreHeader?.[1]).toBe("true");
+    const sensorHeader = html.match(
+      /node-dialog-service-sensor[\s\S]*?aria-expanded="(true|false)"/,
+    );
+    expect(sensorHeader?.[1]).toBe("false");
+  });
+
   it("renders Cancel and Save in the dialog footer", () => {
     const html = renderToStaticMarkup(
       <NodeEditDialog

@@ -92,6 +92,15 @@ export interface NodeEditDialogProps {
    * even a metadata-only edit on a node that has applied externals.
    */
   appliedExternalDrafts?: Readonly<Record<string, string>>;
+  /**
+   * Registry kind (e.g. `data-store`) of a service section the dialog
+   * should expand and scroll into view on mount. Forwarded by the
+   * settings page when the detail-page "Edit this service" link
+   * pushes `?service=<kind>` so the user lands on the matching
+   * accordion instead of the generic dialog top. Unknown values are
+   * a no-op.
+   */
+  initialFocusService?: string | null;
   onSuccess: () => void;
 }
 
@@ -158,6 +167,7 @@ export function NodeEditDialog({
   sensorOptions = EMPTY_SENSOR_OPTIONS,
   node,
   appliedExternalDrafts = EMPTY_APPLIED_EXTERNAL_DRAFTS,
+  initialFocusService = null,
   onSuccess,
 }: NodeEditDialogProps) {
   const t = useTranslations("nodes.dialog");
@@ -699,6 +709,7 @@ export function NodeEditDialog({
                         ? serviceError.message
                         : null
                     }
+                    autoFocusOnMount={initialFocusService === entry.kind}
                   />
                 ))}
               </div>
@@ -1039,6 +1050,13 @@ interface ServiceAccordionProps {
    * when no service-level error targets this section.
    */
   serviceError?: string | null;
+  /**
+   * When true, the accordion auto-expands and scrolls into view on
+   * mount. Wired by the dialog from `initialFocusService` so the
+   * detail-page "Edit this service" link lands the user directly on
+   * the requested section.
+   */
+  autoFocusOnMount?: boolean;
 }
 
 function ServiceAccordion({
@@ -1047,6 +1065,7 @@ function ServiceAccordion({
   mode,
   sensorOptions,
   serviceError,
+  autoFocusOnMount = false,
 }: ServiceAccordionProps) {
   const t = useTranslations("nodes.dialog");
   const { setValue, watch } = useFormContext<DialogFormShape>();
@@ -1055,7 +1074,8 @@ function ServiceAccordion({
   const configMode =
     (watch(`membership.${kind}.configMode`) as ConfigMode | undefined) ??
     (mode === "configure-manually" ? "configure-manually" : "configure-here");
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoFocusOnMount);
+  const sectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (enabled) setExpanded(true);
@@ -1067,12 +1087,30 @@ function ServiceAccordion({
     if (serviceError) setExpanded(true);
   }, [serviceError]);
 
+  // Auto-expand + scroll into view + focus on mount when the dialog
+  // was opened from a "Edit this service" link that targeted this
+  // kind. The dialog re-keys on `initialFocusService` so this only
+  // fires for fresh mounts driven by a focus request, not on every
+  // accordion toggle.
+  useEffect(() => {
+    if (!autoFocusOnMount) return;
+    setExpanded(true);
+    const id = requestAnimationFrame(() => {
+      const el = sectionRef.current;
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.focus();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [autoFocusOnMount]);
+
   const showConfigSwitch = mode === "both";
   const isManualMode =
     mode === "configure-manually" || configMode === "configure-manually";
 
   return (
     <div
+      ref={sectionRef}
       data-testid={`node-dialog-service-${kind}`}
       data-service-kind={kind}
       data-service-enabled={enabled ? "true" : "false"}

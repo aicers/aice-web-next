@@ -161,6 +161,63 @@ describe("ResourceSparkline", () => {
     expect(paths.length).toBe(2);
   });
 
+  it("scopes stale styling to the trailing edge, leaving prior history un-muted", () => {
+    // Round 5 reviewer: every rendered <path> previously inherited
+    // `text-muted-foreground` while `isStale === true`, which muted
+    // the entire sparkline history. The spec calls for stale styling
+    // on the latest point and the trailing edge only — i.e. the line
+    // segment between the last two samples — so prior strokes must
+    // stay in the normal `text-primary` colour.
+    const samples: NodeStatusSample[] = [
+      makeSample(new Date("2026-04-29T10:00:00.000Z"), 10),
+      makeSample(new Date("2026-04-29T10:00:10.000Z"), 20),
+      makeSample(new Date("2026-04-29T10:00:20.000Z"), 30),
+      makeSample(new Date("2026-04-29T10:00:30.000Z"), 40),
+    ];
+    const { container } = renderSparkline({
+      metric: "cpu",
+      samples,
+      isStale: true,
+      pollIntervalMs: 10_000,
+      lastSampleAt: samples[samples.length - 1].capturedAt,
+    });
+    // The trailing edge — the final line segment — is rendered as a
+    // dedicated `<path>` with the muted stale colour, while the
+    // earlier history keeps `text-primary`.
+    const tail = container.querySelector(
+      "[data-testid$='-tail']",
+    ) as SVGPathElement | null;
+    const head = container.querySelector(
+      "[data-testid$='-head']",
+    ) as SVGPathElement | null;
+    expect(tail).not.toBeNull();
+    expect(head).not.toBeNull();
+    expect(tail?.getAttribute("class") ?? "").toContain(
+      "text-muted-foreground",
+    );
+    expect(head?.getAttribute("class") ?? "").toContain("text-primary");
+    expect(head?.getAttribute("class") ?? "").not.toContain(
+      "text-muted-foreground",
+    );
+  });
+
+  it("does not split into head/tail when isStale=false", () => {
+    const samples: NodeStatusSample[] = [
+      makeSample(new Date("2026-04-29T10:00:00.000Z"), 10),
+      makeSample(new Date("2026-04-29T10:00:10.000Z"), 20),
+      makeSample(new Date("2026-04-29T10:00:20.000Z"), 30),
+    ];
+    const { container } = renderSparkline({
+      metric: "cpu",
+      samples,
+      isStale: false,
+      pollIntervalMs: 10_000,
+      lastSampleAt: samples[samples.length - 1].capturedAt,
+    });
+    expect(container.querySelector("[data-testid$='-tail']")).toBeNull();
+    expect(container.querySelector("[data-testid$='-head']")).toBeNull();
+  });
+
   it("derives the label from sample timestamps, not a fixed sample count", () => {
     // Three samples spanning ~30 minutes — label should reflect that
     // span, not "10 minutes" implied by a fixed buffer size.
