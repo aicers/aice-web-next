@@ -145,6 +145,18 @@ export default async function NodesSettingsPage({
   if (editId && (!canWriteNodes || !canWriteServices)) {
     forbidden();
   }
+  // Detail page's "Edit this service" link forwards `service=<kind>`
+  // (kebab-case registry kind). Forward it through to the dialog so
+  // it can auto-expand and scroll the matching accordion. Unknown
+  // values are dropped silently (the dialog falls back to its default
+  // collapsed behaviour) rather than surfaced as an error — a stale
+  // bookmark or mistyped param should still let the user reach the
+  // dialog.
+  const serviceParam = params.service;
+  const initialFocusService =
+    editId && typeof serviceParam === "string" && serviceParam.length > 0
+      ? serviceParam
+      : null;
   let editNode: ManagerNode | null = null;
   if (editId) {
     try {
@@ -210,6 +222,7 @@ export default async function NodesSettingsPage({
       canDelete={canDelete}
       showTenantFilter={accessAll}
       initialEditNode={editNode}
+      initialFocusService={initialFocusService}
       sensorOptions={sensorOptions}
       appliedExternalDrafts={appliedExternalDrafts}
     />

@@ -1,29 +1,79 @@
-import { redirect } from "next/navigation";
-import { getTranslations } from "next-intl/server";
+import { notFound, redirect } from "next/navigation";
 
-import { NodeDetailServiceCards } from "@/components/node/node-detail-service-cards";
+import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
+import { NodeDetailDashboard } from "@/components/node/node-detail-dashboard";
+import { NodeDetailServiceGrid } from "@/components/node/node-detail-service-grid";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
-import { ManagerUnavailableError } from "@/lib/node/errors";
+import { query } from "@/lib/db/client";
+import {
+  gigantoConfigToToml,
+  tivanConfigToToml,
+} from "@/lib/node/applied-config-toml";
+import { confirmApplyAttempt, retryDispatch } from "@/lib/node/apply-actions";
+import { createApplyAttempt } from "@/lib/node/apply-attempts";
+import { getLastAppliedAt } from "@/lib/node/apply-history";
+import {
+  ExternalServiceUnavailableError,
+  ManagerUnavailableError,
+  NodeNotFoundError,
+  NodePermissionError,
+} from "@/lib/node/errors";
+import {
+  getGigantoConfig,
+  getNode,
+  getTivanConfig,
+} from "@/lib/node/server-actions";
 import { getNodeStatusList } from "@/lib/node/status";
-import type { NodeStatus } from "@/lib/node/types";
+import type {
+  ExternalServiceKind,
+  Node as ManagerNode,
+  NodeStatus,
+} from "@/lib/node/types";
 
-// Phase Node-6 (this PR) makes the Status row navigational: clicking
-// a row pushes `/nodes/[id]`. The full per-node detail dashboard and
-// the "Apply All Pending" affordance are owned by Phase Node-5, so
-// this placeholder is intentionally minimal — it exists to give the
-// row navigation a real destination (instead of the framework 404)
-// and a stable testid hook (`node-detail-placeholder`) that Phase
-// Node-5 can replace in-place when it lands the real dashboard.
-//
-// The combined `nodes:read + services:read` gate is enforced in the
-// parent `(gate)/layout.tsx`, so missing permissions still surface a
-// real HTTP 403 with the localised forbidden panel. The placeholder
-// deliberately does NOT fetch the node from the manager: tenant-scope
-// enforcement on the detail surface is part of the Phase Node-5 data
-// contract, and pulling in a NodeDetail GraphQL fixture for a
-// throwaway placeholder would cement a fixture shape that Phase
-// Node-5 has not yet ratified.
+interface CustomerOption {
+  id: string;
+  name: string;
+}
+
+async function loadCustomerOptions(
+  accountId: string,
+  accessAll: boolean,
+): Promise<CustomerOption[]> {
+  const sql = accessAll
+    ? "SELECT id, name FROM customers ORDER BY name"
+    : `SELECT c.id, c.name FROM customers c
+       JOIN account_customer ac ON ac.customer_id = c.id
+       WHERE ac.account_id = $1
+       ORDER BY c.name`;
+  try {
+    const { rows } = accessAll
+      ? await query<{ id: number; name: string }>(sql)
+      : await query<{ id: number; name: string }>(sql, [accountId]);
+    return rows.map((row) => ({ id: String(row.id), name: row.name }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Phase Node-5a (#376) detail page core.
+ *
+ * Replaces the Phase Node-6 placeholder in-place. The combined
+ * `nodes:read + services:read` gate runs in the parent
+ * `(gate)/layout.tsx` so missing either permission still surfaces a
+ * real HTTP 403; the manager-unavailable fallback panel rendered here
+ * is for the post-gate "manager dropped before this read" path.
+ *
+ * Server-side responsibilities:
+ *  - Fetch the canonical node payload (`getNode`) for tenant-scope
+ *    enforcement and applied/draft service config.
+ *  - Fetch external (Giganto/Tivan) applied configs for any external
+ *    service the node hosts; transient unavailability falls through to
+ *    the per-card "unreachable" copy on Applied/Diff tabs.
+ *  - SSR-seed the polling buffer via `getNodeStatusList` so the
+ *    sparkline carries at least one point on the first paint.
+ */
 export default async function NodeDetailPage({
   params,
 }: {
@@ -35,65 +85,161 @@ export default async function NodeDetailPage({
   }
 
   const { id } = await params;
-  const t = await getTranslations("nodes.detail");
-  // Layout already enforces the combined `nodes:read + services:read`
-  // gate, so this read is effectively always `true`. Threading it
-  // explicitly so the per-card `useServiceStatus` defence-in-depth
-  // check carries the same permission tuple as the page-level gate.
-  const canReadServices = await hasPermission(session.roles, "services:read");
+
+  const [
+    canReadServices,
+    canWriteNodes,
+    canWriteServices,
+    canDeleteNodes,
+    accessAll,
+  ] = await Promise.all([
+    hasPermission(session.roles, "services:read"),
+    hasPermission(session.roles, "nodes:write"),
+    hasPermission(session.roles, "services:write"),
+    hasPermission(session.roles, "nodes:delete"),
+    hasPermission(session.roles, "customers:access-all"),
+  ]);
+
+  // Canonical node payload. The combined gate at the layout level
+  // ensures `getNode` is always callable here for the read scopes; the
+  // canonical-not-found / out-of-scope branches map to 404 (NotFound),
+  // and a manager outage maps to the offline panel.
+  let node: ManagerNode | null = null;
+  let managerOffline = false;
+  try {
+    node = await getNode(session, id);
+  } catch (err) {
+    if (err instanceof NodeNotFoundError) {
+      notFound();
+    }
+    if (err instanceof NodePermissionError) {
+      notFound();
+    }
+    if (err instanceof ManagerUnavailableError) {
+      managerOffline = true;
+    } else {
+      throw err;
+    }
+  }
+
+  if (managerOffline || !node) {
+    return <ManagerUnavailablePanel />;
+  }
+
+  const customers = await loadCustomerOptions(session.accountId, accessAll);
+
+  // Applied external configs for any external service the node hosts.
+  // Transient unavailability of Giganto / Tivan falls through to the
+  // unreachable copy on Applied / Diff tabs; the Draft tab keeps
+  // rendering normally regardless.
+  const appliedExternalConfigs: Record<ExternalServiceKind, string | null> = {
+    DATA_STORE: null,
+    TI_CONTAINER: null,
+  };
+  const unreachableExternals = new Set<ExternalServiceKind>();
+  const externalFetches: Promise<void>[] = [];
+  for (const ext of node.externalServices) {
+    if (ext.kind === "DATA_STORE") {
+      externalFetches.push(
+        getGigantoConfig(session)
+          .then((config) => {
+            appliedExternalConfigs.DATA_STORE = gigantoConfigToToml(config);
+          })
+          .catch((err) => {
+            if (err instanceof ExternalServiceUnavailableError) {
+              unreachableExternals.add("DATA_STORE");
+              return;
+            }
+            throw err;
+          }),
+      );
+    } else if (ext.kind === "TI_CONTAINER") {
+      externalFetches.push(
+        getTivanConfig(session)
+          .then((config) => {
+            appliedExternalConfigs.TI_CONTAINER = tivanConfigToToml(config);
+          })
+          .catch((err) => {
+            if (err instanceof ExternalServiceUnavailableError) {
+              unreachableExternals.add("TI_CONTAINER");
+              return;
+            }
+            throw err;
+          }),
+      );
+    }
+  }
+  if (externalFetches.length > 0) await Promise.all(externalFetches);
 
   // SSR-seed the polling buffer for cold loads of `/nodes/[id]`.
-  // The polling driver intentionally defers its first client tick
-  // until the first `pollIntervalMs` boundary, and the detail page
-  // can be entered directly (bookmark, deep link) without first
-  // visiting the Status tab. Without this seed every service card
-  // would render the `absent` placeholder for up to a full polling
-  // interval after the first paint, even though `nodeStatusList`
-  // already carries the agents / external services for this node.
-  // A `ManagerUnavailableError` on the seed path is non-fatal — the
-  // cards fall back to the absent placeholder and the next polling
-  // tick recovers — so we swallow it here rather than collapsing
-  // the whole detail page to the manager-offline panel that lives
-  // on the Status tab.
-  // `initialCapturedAt` stays undefined until we successfully observe
-  // a real `nodeStatusList` payload. Fabricating `new Date().toISOString()`
-  // on the `ManagerUnavailableError` path (or any other early-return
-  // branch) leaks down to the per-card "Last checked Xs ago" footer
-  // and makes the cold-load detail page claim a successful service
-  // read happened when it did not.
+  // The polling driver intentionally defers its first client tick until
+  // the first `pollIntervalMs` boundary, and the detail page can be
+  // entered directly (bookmark, deep link) without first visiting the
+  // Status tab. A `ManagerUnavailableError` on the seed path is
+  // non-fatal — `getNode()` has already succeeded, so the dashboard
+  // still renders the metadata + service grid; only the live-status
+  // widgets fall back to their empty state and recover on the next
+  // poll tick (or when the polling driver flips
+  // `isManagerUnreachable` mid-session).
   let initialEdges: NodeStatus[] = [];
-  let initialCapturedAt: string | undefined;
+  let initialCapturedAt: string | null = null;
   if (canReadServices) {
     try {
       const result = await getNodeStatusList(session);
       initialCapturedAt = result.capturedAt;
       initialEdges = result.edges;
     } catch (err) {
-      if (!(err instanceof ManagerUnavailableError)) {
-        throw err;
-      }
+      if (!(err instanceof ManagerUnavailableError)) throw err;
     }
   }
+  const initialNodeStatus = initialEdges.find((edge) => edge.id === id) ?? null;
+
+  // Last successful apply finalisation timestamp, derived from the
+  // local `apply_attempts` audit metadata. Independent of manager
+  // reachability so the metadata card is populated even during a
+  // manager outage.
+  let lastAppliedAt: string | null = null;
+  try {
+    const value = await getLastAppliedAt(id);
+    lastAppliedAt = value !== null ? value.toISOString() : null;
+  } catch {
+    lastAppliedAt = null;
+  }
+
+  const canEdit = canWriteNodes && canWriteServices;
+  const canApply = canWriteNodes && canWriteServices;
 
   return (
-    <div className="space-y-4">
-      <section
-        className="space-y-4 rounded-lg border bg-card p-6"
-        data-testid="node-detail-placeholder"
-        data-node-id={id}
-      >
-        <header className="space-y-1">
-          <h1 className="text-xl font-semibold">{t("title")}</h1>
-          <p className="text-muted-foreground text-sm font-mono">{id}</p>
-        </header>
-        <p className="text-muted-foreground text-sm">{t("placeholder")}</p>
-      </section>
-      <NodeDetailServiceCards
-        nodeId={id}
-        canReadServices={canReadServices}
-        initialEdges={initialEdges}
+    <div className="space-y-6" data-testid="node-detail-page" data-node-id={id}>
+      <NodeDetailDashboard
+        node={node}
+        customers={customers}
+        canEdit={canEdit}
+        canDelete={canDeleteNodes}
+        canControl={canWriteNodes}
+        canApply={canApply}
+        initialNodeStatus={initialNodeStatus}
         initialCapturedAt={initialCapturedAt}
+        initialEdges={initialEdges}
+        lastAppliedAt={lastAppliedAt}
+        applyActions={{
+          createApplyAttempt,
+          confirmApplyAttempt,
+          retryDispatch,
+        }}
       />
+      {canReadServices && (
+        <NodeDetailServiceGrid
+          node={node}
+          canReadServices={canReadServices}
+          canEditServices={canEdit}
+          initialNodeStatus={initialNodeStatus}
+          initialCapturedAt={initialCapturedAt}
+          initialEdges={initialEdges}
+          appliedExternalConfigs={appliedExternalConfigs}
+          unreachableExternals={unreachableExternals}
+        />
+      )}
     </div>
   );
 }

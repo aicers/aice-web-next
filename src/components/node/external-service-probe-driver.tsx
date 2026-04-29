@@ -16,7 +16,7 @@ import { useExternalServiceProbes } from "@/hooks/use-service-status";
 // intra-segment navigation (Status row → detail page) preserves the
 // driver mount and the shared snapshot survives. Without this scoped
 // layout the page-level `useExternalServiceProbes(...)` call inside
-// `NodeStatusTable` / `NodeDetailServiceCards` ran during page
+// `NodeStatusTable` / `NodeDetailServiceGrid` ran during page
 // cleanup; React tears the old page down before the new one mounts,
 // so `probeDriverCount` bounced through 0 and the last-unmount reset
 // wiped the snapshot back to `unknown` / `null`. Because
@@ -26,7 +26,7 @@ import { useExternalServiceProbes } from "@/hooks/use-service-status";
 //
 // The parent `(gate)` layout already enforces `services:read`, so the
 // driver can run unconditionally inside this sub-layout. Page-level
-// callers (`NodeStatusTable`, `NodeDetailServiceCards`) pass
+// callers (`NodeStatusTable`, `NodeDetailServiceGrid`) pass
 // `enabled: false` to `useExternalServiceProbes` / `useServiceStatus`
 // so they consume the shared store rather than spinning up parallel
 // loops.

@@ -302,7 +302,90 @@
     },
     "detail": {
       "title": "Node detail",
-      "placeholder": "The full node detail dashboard, including the Apply All Pending action, will be delivered in Phase Node-5."
+      "placeholder": "The full node detail dashboard, including the Apply All Pending action, will be delivered in Phase Node-5.",
+      "metadata": {
+        "name": "Name",
+        "hostname": "Hostname",
+        "customer": "Customer",
+        "description": "Description",
+        "lastApplied": "Last applied",
+        "neverApplied": "Never applied",
+        "lastAppliedAt": "{time}",
+        "noDescription": "—",
+        "noHostname": "—",
+        "noCustomer": "—",
+        "pendingChanges": "Pending changes",
+        "noPendingChanges": "No pending changes"
+      },
+      "ping": {
+        "alive": "Alive",
+        "dead": "Dead",
+        "lastSeen": "Last seen {time}",
+        "neverSeen": "Awaiting first check"
+      },
+      "charts": {
+        "cpu": "CPU",
+        "memory": "Memory",
+        "disk": "Disk",
+        "samplesLabel": "{samples, plural, one {Last # sample} other {Last # samples}} · ~{minutes} min",
+        "stale": "data stale",
+        "lastSampleAt": "Last sample {time}",
+        "noSamples": "No samples yet",
+        "cpuValue": "{percent}%",
+        "memoryValue": "{used} / {total}",
+        "diskValue": "{used} / {total}"
+      },
+      "controls": {
+        "edit": "Edit",
+        "restart": "Restart",
+        "shutdown": "Shutdown",
+        "applyAll": "Apply All Pending",
+        "delete": "Delete",
+        "restartConfirmTitle": "Restart node",
+        "restartConfirmDescription": "{hostname} will be restarted now. Active connections will be interrupted.",
+        "shutdownConfirmTitle": "Shut down node",
+        "shutdownConfirmDescription": "{hostname} will be shut down now. The node will not come back up automatically.",
+        "applyAllConfirmTitle": "Apply pending changes",
+        "applyAllConfirmDescription": "Pending drafts on this node will be applied to the manager and any external services.",
+        "deleteConfirmTitle": "Delete node",
+        "deleteConfirmDescription": "{hostname} will be removed permanently. This action cannot be undone.",
+        "controlError": "The action could not be completed.",
+        "deleteError": "The node could not be deleted.",
+        "cancel": "Cancel",
+        "confirm": "Confirm"
+      },
+      "services": {
+        "heading": "Services",
+        "manager": "Manager",
+        "managerRunning": "Running",
+        "managerNotRunning": "Not running",
+        "unsupervisedNote": "This service has no UI-editable config.",
+        "pendingBadge": "Pending",
+        "tabs": {
+          "applied": "Applied",
+          "draft": "Draft",
+          "diff": "Diff"
+        },
+        "appliedEmpty": "No applied configuration for this service.",
+        "draftEmpty": "No pending draft for this service.",
+        "editService": "Edit this service",
+        "diffEmpty": "No pending changes for this service.",
+        "diffColumns": {
+          "field": "Field",
+          "applied": "Applied",
+          "draft": "Draft"
+        },
+        "diffUnset": "(unset)",
+        "externalUnreachable": {
+          "applied": "This service is currently unreachable; applied configuration cannot be read.",
+          "diff": "Diff cannot be computed while the service is unreachable."
+        }
+      },
+      "managerOffline": {
+        "title": "Cannot reach manager",
+        "description": "The node detail page cannot load while the manager is unreachable.",
+        "retry": "Retry"
+      }
     },
     "applyPreview": {
       "title": "Apply preview",

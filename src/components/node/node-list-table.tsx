@@ -90,6 +90,14 @@ interface NodeListTableProps {
    */
   initialEditNode?: ManagerNode | null;
   /**
+   * Registry kind (e.g. `data-store`, `semi-supervised`) the edit
+   * dialog should expand and focus on mount. Wired from the settings
+   * page when the URL carries `?service=<kind>` so the detail-page
+   * "Edit this service" link lands directly on the matching
+   * accordion. `null` keeps the dialog's default collapsed layout.
+   */
+  initialFocusService?: string | null;
+  /**
    * Sensor-bearing nodes the dialog forwards to the Hog
    * (Semi-supervised Engine) form so it can render its
    * `active_sensors` checklist. Empty when no node carries a sensor
@@ -117,6 +125,7 @@ export function NodeListTable({
   canDelete,
   showTenantFilter,
   initialEditNode = null,
+  initialFocusService = null,
   sensorOptions,
   appliedExternalDrafts,
 }: NodeListTableProps) {
@@ -637,12 +646,17 @@ export function NodeListTable({
 
         {canEdit && editNode && (
           <NodeEditDialog
-            // Re-keying on the node id forces a fresh dialog instance
-            // when the user navigates between two different edit
-            // targets — RHF's `defaultValues` only seeds on first
-            // mount, so without this a quick switch would leak the
-            // previous node's metadata into the form.
-            key={editNode.id}
+            // Re-keying on the node id AND the focus-service param
+            // forces a fresh dialog instance both when the user
+            // navigates between two different edit targets and when
+            // they land on the same node from a different service
+            // link (so the new accordion auto-expands on mount).
+            // RHF's `defaultValues` only seeds on first mount, and
+            // the focus effect only runs on mount — without the
+            // service in the key, navigating from one service link
+            // to another on the same node would leave the previous
+            // accordion expanded and not focus the new one.
+            key={`${editNode.id}:${initialFocusService ?? ""}`}
             open={true}
             onOpenChange={(open) => {
               if (!open) {
@@ -657,6 +671,7 @@ export function NodeListTable({
             existingHostnames={existingHostnames}
             sensorOptions={sensorOptions}
             appliedExternalDrafts={appliedExternalDrafts}
+            initialFocusService={initialFocusService}
             onSuccess={() => {
               setEditNode(null);
               router.replace("/nodes/settings");

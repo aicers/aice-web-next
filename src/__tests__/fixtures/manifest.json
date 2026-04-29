@@ -68,5 +68,11 @@
     "query": "node/nodeDetail.alpha.graphql",
     "fixture": "node/nodeDetail.alpha.json",
     "variables": { "id": "11" }
+  },
+  {
+    "operation": "node",
+    "query": "node/nodeDetail.alpha.graphql",
+    "fixture": "node/nodeDetail.agentEnabled.json",
+    "variables": { "id": "21" }
   }
 ]
