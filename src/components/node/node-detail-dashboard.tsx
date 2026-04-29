@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   type NodeStatusBuffer,
+  type NodeStatusSample,
   seedNodeStatusFromSnapshot,
   useNodeStatusPolling,
 } from "@/hooks/use-node-status-polling";
@@ -106,8 +107,43 @@ export function NodeDetailDashboard({
 
   // Live snapshot priority: real polled buffer > SSR initial snapshot.
   const live: NodeStatus | null = buffer?.latest ?? initialNodeStatus ?? null;
-  const samples = buffer?.samples ?? [];
-  const lastSampleAt = buffer?.lastSampleAt ?? null;
+
+  // The polling buffer is seeded from the SSR snapshot in the effect
+  // below, but that effect does not run until after hydration. To
+  // satisfy the "first paint already carries one point" contract,
+  // synthesize a single sample from the SSR payload during render
+  // when the buffer is empty. SSR and the first client paint produce
+  // identical output (same capturedAt, same metric values), so there
+  // is no hydration mismatch; the seed effect then takes over and
+  // the polling buffer becomes the source of truth from the next
+  // render onward.
+  const ssrFallback: {
+    samples: NodeStatusSample[];
+    lastSampleAt: Date | null;
+  } = useMemo(() => {
+    if (!initialNodeStatus || !initialCapturedAt) {
+      return { samples: [], lastSampleAt: null };
+    }
+    const captured = new Date(initialCapturedAt);
+    if (Number.isNaN(captured.getTime())) {
+      return { samples: [], lastSampleAt: null };
+    }
+    const sample: NodeStatusSample = {
+      capturedAt: captured,
+      cpuUsage: initialNodeStatus.cpuUsage,
+      totalMemory: initialNodeStatus.totalMemory,
+      usedMemory: initialNodeStatus.usedMemory,
+      totalDiskSpace: initialNodeStatus.totalDiskSpace,
+      usedDiskSpace: initialNodeStatus.usedDiskSpace,
+      manager: initialNodeStatus.manager,
+      ping: initialNodeStatus.ping,
+      segmentBoundary: false,
+    };
+    return { samples: [sample], lastSampleAt: captured };
+  }, [initialNodeStatus, initialCapturedAt]);
+
+  const samples = buffer?.samples ?? ssrFallback.samples;
+  const lastSampleAt = buffer?.lastSampleAt ?? ssrFallback.lastSampleAt;
 
   const customerName = useMemo(() => {
     const id = node.profile?.customerId ?? node.profileDraft?.customerId;

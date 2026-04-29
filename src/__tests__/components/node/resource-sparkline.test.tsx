@@ -124,6 +124,43 @@ describe("ResourceSparkline", () => {
     );
   });
 
+  it("preserves the segment boundary when the boundary sample has no metric value", () => {
+    // The first post-gap sample is the one carrying segmentBoundary=true,
+    // but it has no CPU reading (cpuUsage=null). It is therefore filtered
+    // from the plottable points — yet the polyline must still break at
+    // the gap. The next usable sample must carry the boundary forward
+    // so the resulting render produces TWO segments rather than a single
+    // polyline that silently interpolates across the gap.
+    const samples: NodeStatusSample[] = [
+      makeSample(new Date("2026-04-29T10:00:00.000Z"), 10),
+      makeSample(new Date("2026-04-29T10:00:10.000Z"), 20),
+      {
+        capturedAt: new Date("2026-04-29T10:01:00.000Z"),
+        cpuUsage: null,
+        totalMemory: "16000000000",
+        usedMemory: "8000000000",
+        totalDiskSpace: "1000000000000",
+        usedDiskSpace: "400000000000",
+        manager: true,
+        ping: 0.05,
+        segmentBoundary: true,
+      },
+      makeSample(new Date("2026-04-29T10:01:10.000Z"), 40),
+      makeSample(new Date("2026-04-29T10:01:20.000Z"), 50),
+    ];
+    const { container } = renderSparkline({
+      metric: "cpu",
+      samples,
+      isStale: false,
+      pollIntervalMs: 10_000,
+      lastSampleAt: samples[samples.length - 1].capturedAt,
+    });
+    const paths = container.querySelectorAll(
+      "[data-testid^='node-detail-sparkline-segment-cpu-']",
+    );
+    expect(paths.length).toBe(2);
+  });
+
   it("derives the label from sample timestamps, not a fixed sample count", () => {
     // Three samples spanning ~30 minutes — label should reflect that
     // span, not "10 minutes" implied by a fixed buffer size.

@@ -83,17 +83,30 @@ export function ResourceSparkline({
       index: number;
       ratio: number;
       sample: NodeStatusSample;
+      boundary: boolean;
     }> = [];
+    // A boundary sample whose metric is null is filtered from the
+    // plottable set, but its `segmentBoundary` flag must still split
+    // the polyline — otherwise the next usable sample would fuse
+    // across the gap and silently interpolate, exactly what the
+    // segment-boundary rule forbids. Carry the boundary forward to
+    // whichever usable sample renders next.
+    let pendingBoundary = false;
     samples.forEach((sample, index) => {
       const ratio = ratioFor(metric, sample);
-      if (ratio === null) return;
-      usable.push({ index, ratio, sample });
+      if (ratio === null) {
+        if (sample.segmentBoundary) pendingBoundary = true;
+        return;
+      }
+      const boundary = sample.segmentBoundary || pendingBoundary;
+      pendingBoundary = false;
+      usable.push({ index, ratio, sample, boundary });
     });
     if (usable.length === 0) return [];
     const total = samples.length;
     const innerWidth = VIEWBOX_WIDTH - PADDING * 2;
     const innerHeight = VIEWBOX_HEIGHT - PADDING * 2;
-    return usable.map(({ index, ratio, sample }) => {
+    return usable.map(({ index, ratio, sample, boundary }) => {
       const x =
         total <= 1
           ? VIEWBOX_WIDTH / 2
@@ -102,7 +115,7 @@ export function ResourceSparkline({
       return {
         x,
         y,
-        segmentBoundary: sample.segmentBoundary,
+        segmentBoundary: boundary,
         capturedAt: sample.capturedAt,
       };
     });

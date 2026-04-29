@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { act } from "react";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodeDetailDashboard } from "@/components/node/node-detail-dashboard";
@@ -358,6 +359,62 @@ describe("NodeDetailDashboard — resource progress bars", () => {
     expect(
       screen.getByTestId("node-detail-sparkline-progress-disk"),
     ).toBeTruthy();
+  });
+});
+
+describe("NodeDetailDashboard — SSR sparkline seed", () => {
+  beforeEach(() => {
+    __resetNodeStatusStore();
+  });
+  afterEach(() => {
+    __resetNodeStatusStore();
+  });
+
+  it("renders progress bars on the SSR pass before the seed effect runs", () => {
+    // The polling buffer is seeded from the SSR snapshot in a
+    // useEffect that does not run on the server. To satisfy the
+    // "first paint already carries one point on the sparkline"
+    // contract the dashboard must synthesize one sample from the
+    // SSR payload during render — proven here by checking the SSR
+    // markup directly (renderToString runs the synchronous render
+    // only; effects never fire).
+    const status: NodeStatus = {
+      id: "node-1",
+      name: "alpha",
+      nameDraft: null,
+      profile: null,
+      profileDraft: null,
+      cpuUsage: 33.3,
+      totalMemory: "16000000000",
+      usedMemory: "8000000000",
+      totalDiskSpace: "1000000000000",
+      usedDiskSpace: "400000000000",
+      manager: true,
+      agents: [],
+      externalServices: [],
+      ping: 0.04,
+    };
+    const html = renderToString(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <NodeDetailDashboard
+          node={makeNode()}
+          customers={[{ id: "5", name: "ACME" }]}
+          canEdit={true}
+          canDelete={true}
+          canControl={true}
+          canApply={true}
+          initialNodeStatus={status}
+          initialCapturedAt="2026-04-29T08:00:00.000Z"
+          initialEdges={[status]}
+          lastAppliedAt={null}
+          applyActions={NOOP_APPLY_ACTIONS}
+        />
+      </NextIntlClientProvider>,
+    );
+    expect(html).toContain("node-detail-sparkline-progress-cpu");
+    expect(html).toContain("33.3%");
+    expect(html).toContain("node-detail-sparkline-progress-memory");
+    expect(html).toContain("node-detail-sparkline-progress-disk");
   });
 });
 
