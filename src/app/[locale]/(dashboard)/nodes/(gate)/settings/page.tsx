@@ -1,8 +1,10 @@
 import { forbidden, redirect } from "next/navigation";
 
+import { CustomerScopeCallout } from "@/components/layout/customer-scope-callout";
 import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
 import { NodeListTable } from "@/components/node/node-list-table";
 import { buildNodeRows, type NodeRow } from "@/components/node/node-list-types";
+import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 import { query } from "@/lib/db/client";
@@ -80,6 +82,7 @@ export default async function NodesSettingsPage({
     ]);
 
   const customers = await loadCustomerOptions(session.accountId, accessAll);
+  const scope = await getEffectiveCustomerScope(session);
 
   let rows: NodeRow[] | null = null;
   let sensorOptions: SensorNodeOption[] = [];
@@ -120,7 +123,12 @@ export default async function NodesSettingsPage({
   }
 
   if (managerOffline) {
-    return <ManagerUnavailablePanel />;
+    return (
+      <>
+        <CustomerScopeCallout scope={scope} className="mb-4" />
+        <ManagerUnavailablePanel />
+      </>
+    );
   }
 
   // Edit-from-list: the kebab menu pushes `?dialog=edit&id=…`. Resolve
@@ -214,17 +222,20 @@ export default async function NodesSettingsPage({
   }
 
   return (
-    <NodeListTable
-      initialRows={rows ?? []}
-      customers={customers}
-      canCreate={canWriteNodes && canWriteServices}
-      canEdit={canWriteNodes && canWriteServices}
-      canDelete={canDelete}
-      showTenantFilter={accessAll}
-      initialEditNode={editNode}
-      initialFocusService={initialFocusService}
-      sensorOptions={sensorOptions}
-      appliedExternalDrafts={appliedExternalDrafts}
-    />
+    <>
+      <CustomerScopeCallout scope={scope} className="mb-4" />
+      <NodeListTable
+        initialRows={rows ?? []}
+        customers={customers}
+        canCreate={canWriteNodes && canWriteServices}
+        canEdit={canWriteNodes && canWriteServices}
+        canDelete={canDelete}
+        showTenantFilter={accessAll}
+        initialEditNode={editNode}
+        initialFocusService={initialFocusService}
+        sensorOptions={sensorOptions}
+        appliedExternalDrafts={appliedExternalDrafts}
+      />
+    </>
   );
 }

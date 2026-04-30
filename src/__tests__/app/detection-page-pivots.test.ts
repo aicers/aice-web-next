@@ -32,6 +32,18 @@ vi.mock("@/lib/auth/session", () => ({
   requirePermission: mockRequirePermission,
 }));
 
+// The Detection page now resolves the session's customer scope (issue
+// #383) so it can render the multi-customer callout. The actual DB
+// lookup is exercised separately in the customer-scope unit tests;
+// here we just need a stub that returns a deterministic scope so the
+// page renders without touching the database.
+vi.mock("@/lib/auth/customer-scope", () => ({
+  getEffectiveCustomerScope: vi.fn(async () => ({
+    kind: "assigned" as const,
+    customers: [{ id: 1, name: "ACME" }],
+  })),
+}));
+
 vi.mock("next-intl/server", () => ({
   getTranslations: mockGetTranslations,
   getLocale: mockGetLocale,
@@ -39,6 +51,13 @@ vi.mock("next-intl/server", () => ({
 
 vi.mock("@/components/detection/detection-shell", () => ({
   DetectionShell: mockDetectionShell,
+}));
+
+// The customer-scope callout is a client component that pulls
+// `useTranslations` from next-intl; mock it out for this RSC test
+// so `renderToStaticMarkup` doesn't trip over the missing context.
+vi.mock("@/components/layout/customer-scope-callout", () => ({
+  CustomerScopeCallout: () => null,
 }));
 
 // `DetectionPage` imports the whole `@/lib/detection` facade; stub

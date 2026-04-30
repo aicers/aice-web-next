@@ -1,5 +1,7 @@
 import { getTranslations } from "next-intl/server";
 
+import { CustomerScopeCallout } from "@/components/layout/customer-scope-callout";
+import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 
 export default async function DashboardPage() {
@@ -9,9 +11,11 @@ export default async function DashboardPage() {
   await requirePermission(session, "dashboard:read");
 
   const t = await getTranslations("dashboard");
+  const scope = await getEffectiveCustomerScope(session);
 
   return (
     <div className="space-y-6">
+      <CustomerScopeCallout scope={scope} />
       <h1 className="text-foreground text-2xl font-bold">{t("title")}</h1>
       <p className="text-muted-foreground">{t("placeholder")}</p>
     </div>

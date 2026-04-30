@@ -653,6 +653,23 @@
     "updated": "Customer updated successfully",
     "deleted": "Customer deleted successfully"
   },
+  "multitenancy": {
+    "scope": {
+      "single": "Customer: {name}",
+      "few": "Customers: {names}",
+      "many": "Customers: {first}, +{count, plural, =1 {1 more} other {# more}}",
+      "all": "All customers",
+      "empty": "No customer access",
+      "adminBadge": "Admin",
+      "popoverTitle": "Customer scope",
+      "sourceAssigned": "Assigned via account",
+      "sourceAdmin": "Admin scope (customers:access-all)",
+      "sourceEmpty": "No customers are assigned to this account.",
+      "manageLink": "Manage customers",
+      "callout": "Showing data across {count} customers. Click the customer indicator above for details.",
+      "openLabel": "Show customer scope details"
+    }
+  },
   "accounts": {
     "title": "Accounts",
     "username": "Username",

@@ -4,6 +4,8 @@ import { DetectionTabsShell } from "@/components/detection/detection-tabs-shell"
 import type { FilterDrawerOptions } from "@/components/detection/filter-drawer";
 import type { FilterMultiSelectOption } from "@/components/detection/filter-multi-select";
 import { EVENT_KIND_FRIENDLY_NAMES } from "@/components/events/event-display-helpers";
+import { CustomerScopeCallout } from "@/components/layout/customer-scope-callout";
+import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
   computePeriodRange,
@@ -61,6 +63,7 @@ export default async function DetectionPage({
 
   const t = await getTranslations("detection");
   const locale = await getLocale();
+  const scope = await getEffectiveCustomerScope(session);
   const rawParams = await searchParams;
   let initialPagination: PaginationState =
     parsePaginationSearchParams(rawParams);
@@ -608,47 +611,50 @@ export default async function DetectionPage({
   };
 
   return (
-    <DetectionTabsShell
-      title={t("title")}
-      options={options}
-      initialTab={{
-        id: tabId,
-        filter: initialFilter,
-        period: pivotPeriod,
-        pivotOnly: initialPivotOnly,
-        endpoints: initialEndpoints,
-        pagination: initialPagination,
-        result: {
-          totalCount: initialTotal,
-          error: initialError,
-          events: initialEvents,
-          eventKeys: initialEventKeys,
-          pageInfo: initialPageInfo,
-        },
-        quickPeekToken: initialQuickPeekToken,
-      }}
-      labels={{
-        shell: shellLabels,
-        tabs: {
-          tablist: t("tabs.tablist"),
-          newTab: t("tabs.newTab"),
-          newTabAtCap: t("tabs.newTabAtCap"),
-          closeTab: t("tabs.closeTab"),
-          renameTab: t("tabs.renameTab"),
-          resetName: t("tabs.resetName"),
-        },
-        tabFallbackName: t("tabs.fallbackName"),
-        pivot: {
-          // Pass ICU templates as plain strings so the server→client
-          // boundary stays serialization-safe; the client wrapper does
-          // a single `.replace("{value}", …)` / `.replace("{max}", …)`
-          // before showing the toast.
-          alreadyFilteredTemplate: t.raw("pivot.alreadyFiltered") as string,
-          tabCapReachedTemplate: t.raw("pivot.tabCapReached") as string,
-          dismissToast: t("pivot.dismissToast"),
-        },
-      }}
-    />
+    <>
+      <CustomerScopeCallout scope={scope} className="mb-4" />
+      <DetectionTabsShell
+        title={t("title")}
+        options={options}
+        initialTab={{
+          id: tabId,
+          filter: initialFilter,
+          period: pivotPeriod,
+          pivotOnly: initialPivotOnly,
+          endpoints: initialEndpoints,
+          pagination: initialPagination,
+          result: {
+            totalCount: initialTotal,
+            error: initialError,
+            events: initialEvents,
+            eventKeys: initialEventKeys,
+            pageInfo: initialPageInfo,
+          },
+          quickPeekToken: initialQuickPeekToken,
+        }}
+        labels={{
+          shell: shellLabels,
+          tabs: {
+            tablist: t("tabs.tablist"),
+            newTab: t("tabs.newTab"),
+            newTabAtCap: t("tabs.newTabAtCap"),
+            closeTab: t("tabs.closeTab"),
+            renameTab: t("tabs.renameTab"),
+            resetName: t("tabs.resetName"),
+          },
+          tabFallbackName: t("tabs.fallbackName"),
+          pivot: {
+            // Pass ICU templates as plain strings so the server→client
+            // boundary stays serialization-safe; the client wrapper does
+            // a single `.replace("{value}", …)` / `.replace("{max}", …)`
+            // before showing the toast.
+            alreadyFilteredTemplate: t.raw("pivot.alreadyFiltered") as string,
+            tabCapReachedTemplate: t.raw("pivot.tabCapReached") as string,
+            dismissToast: t("pivot.dismissToast"),
+          },
+        }}
+      />
+    </>
   );
 }
 
