@@ -90,6 +90,10 @@ import {
 
 const TEST_PREFIX = "Integ-Scope-";
 const ROLE_NAME = "integ-scope-tenant";
+// Security Monitor-equivalent role used as the **target role** by the
+// `POST /api/accounts` row. Listed under the same `integ-scope-`
+// prefix so the suite cleanup picks it up via `deleteRolesByPrefix`.
+const MONITOR_ROLE_NAME = "integ-scope-monitor";
 
 const ACCOUNT_A_USERNAME = "integ-scope-account-a";
 const ACCOUNT_B_USERNAME = "integ-scope-account-b";
@@ -106,8 +110,15 @@ interface Resources {
   customerOrphanId: number;
   accountAId: string;
   accountBId: string;
-  /** Role id for the tenant test role; used by `POST /api/accounts`. */
-  tenantRoleId: number;
+  /**
+   * Role id for a Security Monitor-equivalent role (only allow-listed
+   * read permissions). Used as the **target role** by the
+   * `POST /api/accounts` row so the request reaches the customer-scope
+   * branch instead of failing at the tenant-manageability gate. The
+   * tenant caller's own role is unrelated; what matters is that the
+   * target role qualifies under `tenantManageable`.
+   */
+  monitorRoleId: number;
   auditLogARowId: string;
   auditLogBRowId: string;
   auditLogNullRowId: string;
@@ -367,35 +378,78 @@ const ENDPOINTS: Endpoint[] = [
     }),
     expects: "200-on-in-scope-404-on-out-of-scope",
   },
-  // POST /api/accounts — tenant role can call (it has accounts:write)
-  // but is rejected by the role-creation policy when the target role
-  // isn't Security Monitor-equivalent. The matrix doesn't seed a
-  // monitor-equiv role, so the tenant call will 403; admin uses the
-  // tenant role itself (which is fine for system-admin callers) to
-  // create a throwaway account that the cleanup deletes.
+  // POST /api/accounts — the regression we want to guard is the
+  // customer-scope branch ("Cannot assign customers outside your
+  // scope" at route step 5), so the request body has to reach that
+  // branch. That requires the **target role** to be tenant-manageable
+  // (Security Monitor-equivalent), otherwise tenant callers fail at
+  // the role-policy gate (step 3) and the scope check is never
+  // exercised. The matrix seeds a dedicated `monitorRoleId` for that
+  // purpose; the tenant caller's own role still lacks
+  // `customers:access-all`, so out-of-scope `customerIds` produce
+  // 403 and in-scope `customerIds` produce 201. Admin (System
+  // Administrator, has `customers:access-all`) can create with any
+  // customer set, so both variants succeed.
   {
     name: "POST /api/accounts",
     method: "POST",
-    expects: "admin-only",
-    request: (r) => ({
-      path: "/api/accounts",
-      body: {
-        username: `${TEST_PREFIX}created-${Date.now()}`.toLowerCase(),
-        displayName: `${TEST_PREFIX}created`,
+    expects: "mutation-scope",
+    request: (r) => {
+      const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const buildBody = (
+        suffix: string,
+        customerIds: number[],
+      ): Record<string, unknown> => ({
+        username: `${TEST_PREFIX}created-${suffix}-${stamp}`.toLowerCase(),
+        displayName: `${TEST_PREFIX}created-${suffix}`,
         password: COMMON_PASSWORD,
-        roleId: r.tenantRoleId,
-        customerIds: [r.customerAId],
-      },
-    }),
-    adminSuccessStatus: 201,
-    nonAdminStatuses: [403],
+        roleId: r.monitorRoleId,
+        customerIds,
+      });
+      return {
+        accountA: {
+          inScope: {
+            path: "/api/accounts",
+            body: buildBody("a-in", [r.customerAId]),
+            expectStatus: 201,
+          },
+          outOfScope: {
+            path: "/api/accounts",
+            body: buildBody("a-out", [r.customerBId]),
+            expectStatus: 403,
+          },
+        },
+        accountB: {
+          inScope: {
+            path: "/api/accounts",
+            body: buildBody("b-in", [r.customerBId]),
+            expectStatus: 201,
+          },
+          outOfScope: {
+            path: "/api/accounts",
+            body: buildBody("b-out", [r.customerAId]),
+            expectStatus: 403,
+          },
+        },
+        admin: {
+          inScope: {
+            path: "/api/accounts",
+            body: buildBody("admin-a", [r.customerAId]),
+            expectStatus: 201,
+          },
+          outOfScope: {
+            path: "/api/accounts",
+            body: buildBody("admin-b", [r.customerBId]),
+            expectStatus: 201,
+          },
+        },
+      };
+    },
     cleanupAfterSuccess: async () => {
-      // Drop every account whose username matches the matrix prefix.
-      // The admin variant generates a new timestamp-suffixed username
-      // each invocation, so a prefix sweep is the simplest way to
-      // keep the dev DB clean across re-runs.
-      // We use a SQL-level helper inline to avoid plumbing yet
-      // another helper for a single use.
+      // Sweep every account whose username matches the matrix prefix.
+      // Variants generate fresh timestamp+random usernames each run,
+      // so a prefix sweep is the simplest way to keep the dev DB
+      // clean across re-runs.
       await dropAccountsByUsernamePrefix(`${TEST_PREFIX}created`);
     },
   },
@@ -818,10 +872,21 @@ describe("Cross-customer scope matrix", () => {
     // mfa-reset from a non-admin caller. No `customers:access-all`,
     // `customers:write`, `customers:delete`, or `accounts:delete` —
     // those gate the admin-only assertions.
-    const tenantRoleId = await createTestRole(
+    await createTestRole(
       ROLE_NAME,
       ["customers:read", "audit-logs:read", "accounts:read", "accounts:write"],
       "Integration scope-matrix tenant role",
+    );
+
+    // Security Monitor-equivalent role used as the **target role** for
+    // `POST /api/accounts`. Permissions must all be drawn from the
+    // monitor allow-list in `account-role-policy.ts` so
+    // `tenantManageable` is true; otherwise the route's step-3 gate
+    // shorts the tenant's request before the customer-scope check.
+    const monitorRoleId = await createTestRole(
+      MONITOR_ROLE_NAME,
+      ["audit-logs:read"],
+      "Integration scope-matrix monitor-equivalent role",
     );
 
     const customerAId = await createCustomerRow(`${TEST_PREFIX}CustomerA`);
@@ -864,7 +929,7 @@ describe("Cross-customer scope matrix", () => {
       customerOrphanId,
       accountAId,
       accountBId,
-      tenantRoleId,
+      monitorRoleId,
       auditLogARowId,
       auditLogBRowId,
       auditLogNullRowId,
@@ -902,6 +967,7 @@ describe("Cross-customer scope matrix", () => {
     }
     await dropAccountsByUsernamePrefix(`${TEST_PREFIX}created`.toLowerCase());
     await deleteTestRole(ROLE_NAME);
+    await deleteTestRole(MONITOR_ROLE_NAME);
     await deleteCustomersByPrefix(TEST_PREFIX);
   });
 

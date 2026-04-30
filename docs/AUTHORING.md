@@ -390,13 +390,30 @@ verify that the dispatch context flows into the specific call
 site, only that the symbol is in scope. Deeper correctness still
 relies on code review.
 
-The script strips comments and string literals before applying the
-call and presence regexes, so a commented-out
-`import { buildDispatchContext } from "..."` does NOT satisfy the
-presence requirement, and a commented-out call does NOT count as a
-real call. Call detection runs against the whole comment-stripped
-source so a call split across lines (e.g.
-`return graphqlRequest\n  (QUERY, ...)`) is still recognized.
+The script strips line/block comments AND the contents of string
+literals (single-quoted, double-quoted, and template-string) before
+applying the call and presence regexes, so:
+
+- A commented-out `import { buildDispatchContext } from "..."` does
+  NOT satisfy the presence requirement.
+- A commented-out call does NOT count as a real call.
+- A string literal that happens to contain
+  `import { buildDispatchContext } ...` (e.g. an error message,
+  log line, or fixture) does NOT satisfy the presence requirement
+  either, and a string literal containing `graphqlRequest(...)`
+  does NOT trigger a violation.
+
+Call detection runs against the whole stripped source so a call
+split across lines (e.g. `return graphqlRequest\n  (QUERY, ...)`) is
+still recognized. Newlines are preserved by the stripper so reported
+line numbers stay aligned with the original source. Template-literal
+interpolation expressions (`${...}`) are not parsed back out — a real
+call buried inside `${...}` is missed and an
+`import { buildDispatchContext }` substring inside `${...}` does not
+satisfy the presence check either. Both edges are pathological in
+real source, and the file-level allowlist still catches the only
+meaningful regression: a brand-new server action outside
+`src/lib/{node,detection}` that calls `graphqlRequest`.
 
 To allow a deliberate exception, append an override comment to any
 line of the call expression (start through the opening paren):

@@ -262,6 +262,68 @@ export function GET() {
     expect(violations).toEqual([]);
   });
 
+  it("does NOT count an `import { buildDispatchContext } ...` substring inside a string literal as in-scope", () => {
+    // Regression test for the round-3 review: the previous stripper
+    // preserved string contents, so a fixture-style string literal
+    // that happened to contain the import substring satisfied the
+    // presence check. Stripping string contents fixes this.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+
+const fixture = "import { buildDispatchContext } from './dispatch-context';";
+
+export async function listNodes() {
+  return graphqlRequest(QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(
+      /neither imports nor locally declares/,
+    );
+  });
+
+  it("does NOT report a `graphqlRequest(...)` substring inside a string literal as a call site", () => {
+    // Regression test for the round-3 review: the previous stripper
+    // preserved string contents, so a string literal in a non-
+    // allowlisted file that contained `graphqlRequest(QUERY)` was
+    // reported as an out-of-allowlist call. Stripping string
+    // contents avoids the false positive.
+    const violations = run([
+      {
+        relPath: "src/app/api/feature/route.ts",
+        source: `const fixture = "graphqlRequest(QUERY)";
+
+export function GET() {
+  return new Response(fixture);
+}
+`,
+      },
+    ]);
+
+    expect(violations).toEqual([]);
+  });
+
+  it("does NOT report a `graphqlRequest(...)` substring inside a template literal as a call site", () => {
+    const violations = run([
+      {
+        relPath: "src/app/api/feature/route.ts",
+        source: `const fixture = \`example: graphqlRequest(QUERY)\`;
+
+export function GET() {
+  return new Response(fixture);
+}
+`,
+      },
+    ]);
+
+    expect(violations).toEqual([]);
+  });
+
   it("treats the GraphQL client modules as pass-through (no buildDispatchContext required)", () => {
     const violations = run([
       {

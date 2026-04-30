@@ -34,16 +34,33 @@
 // override is intentionally noisy in code review so anyone reaching
 // for it has to justify it.
 //
-// Comments and split-line calls. The presence and call-site checks
-// run against a comment-stripped copy of the source so that a
-// commented-out `import { buildDispatchContext } ...` does NOT
-// satisfy the presence requirement, and a commented-out call site
-// does NOT count as a real call. Call-site detection runs against the
-// whole stripped source (not line-by-line) so a call split across
-// lines (e.g. `return graphqlRequest\n  (QUERY, ...)`) is still
-// recognized. Override-comment lookups still scan the *original*
-// lines so the `// scope-allowlist:` annotation can sit on any line
-// of the call expression (start through the opening paren).
+// Comments, string literals, and split-line calls. The presence and
+// call-site checks run against a stripped copy of the source so
+// non-executable text — line/block comments AND the *contents* of
+// single-quoted, double-quoted, and template-string literals — does
+// not influence the result. That means a commented-out
+// `import { buildDispatchContext } ...` does NOT satisfy the presence
+// requirement, a commented-out call site does NOT count as a real
+// call, and a string literal that happens to contain
+// `graphqlRequest(...)` or `import { buildDispatchContext } ...`
+// (e.g. an error message, log line, or fixture) does NOT trigger or
+// satisfy the guard either. The stripper preserves newlines and
+// pads non-newline characters inside strings/comments with spaces
+// so line/column offsets stay aligned for line-number reporting.
+// Call-site detection runs against the whole stripped source (not
+// line-by-line) so a call split across lines
+// (e.g. `return graphqlRequest\n  (QUERY, ...)`) is still recognized.
+// Override-comment lookups still scan the *original* lines so the
+// `// scope-allowlist:` annotation can sit on any line of the call
+// expression (start through the opening paren).
+//
+// Caveat: template-literal interpolation expressions (`${...}`) are
+// not parsed back out, so a real call buried inside `${...}` is
+// missed and an `import { buildDispatchContext }` substring inside
+// `${...}` doesn't satisfy the presence check either. Both edges are
+// pathological in real source, and the file-level allowlist still
+// catches the only meaningful regression — a brand-new server action
+// outside `src/lib/{node,detection}` that calls `graphqlRequest`.
 //
 // Run via `pnpm check:scope`. Tests live at
 // `src/__tests__/scripts/check-dispatch-context.test.ts`.
@@ -98,14 +115,16 @@ const OVERRIDE_RE = /\/\/\s*scope-allowlist:\s*(.+?)\s*$/;
 // `import { ..., buildDispatchContext, ... } from "..."`. Allows
 // arbitrary whitespace and `as` aliases between the braces. We do not
 // resolve the import path — any path that brings the symbol in scope
-// counts. Run against comment-stripped source so a commented-out
-// import does not satisfy the check.
+// counts. Run against the stripped source so neither a commented-out
+// import nor a string literal containing the import substring
+// satisfies the check; the path quotes survive the strip but the path
+// contents become spaces.
 const IMPORT_BUILD_DISPATCH_CONTEXT_RE =
-  /import\s*(?:type\s+)?\{[^}]*\bbuildDispatchContext\b[^}]*\}\s*from\s*["'][^"']+["']/;
+  /import\s*(?:type\s+)?\{[^}]*\bbuildDispatchContext\b[^}]*\}\s*from\s*["'][^"']*["']/;
 
 // `(async )?function buildDispatchContext(...)` or
-// `(export )?const buildDispatchContext = ...`. Run against
-// comment-stripped source.
+// `(export )?const buildDispatchContext = ...`. Run against the
+// stripped source.
 const LOCAL_DECL_RE =
   /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?(?:function\s+buildDispatchContext\b|const\s+buildDispatchContext\b)/;
 
@@ -149,14 +168,19 @@ function isInAllowedDir(relPath) {
   return ALLOWED_DIRS.some((d) => relPath === d || relPath.startsWith(`${d}/`));
 }
 
-// Strip line and block comments while preserving newlines so line
-// numbers stay aligned with the original source. Naively skips
-// characters inside single-quoted, double-quoted, and template-string
-// literals so a comment-marker inside a string is not treated as a
-// comment. Template-literal interpolation expressions are not parsed
-// recursively; this is a guard, not a TS parser, and the worst case
-// is a missed match — which the file-level allowlist still catches.
-function stripComments(source) {
+// Strip line/block comments AND the contents of string literals while
+// preserving newlines so line numbers stay aligned with the original
+// source. Inside a string or comment, non-newline characters become
+// spaces and newlines are kept verbatim; the string delimiters
+// themselves are emitted so that an `import { ... } from "..."`
+// statement still parses as an import (the path content is replaced
+// with spaces, but `[^"']*` still matches). Template-literal
+// interpolation expressions are NOT parsed back out — `${...}`
+// content is treated as part of the string and its substrings will
+// not match the call/import regexes. This is a guard, not a TS
+// parser; the worst case is a missed match, which the file-level
+// allowlist still catches.
+function stripCommentsAndStrings(source) {
   let out = "";
   let i = 0;
   let stringDelim = null; // null | '"' | "'" | "`"
@@ -169,33 +193,44 @@ function stripComments(source) {
       if (ch === "\n") {
         inLineComment = false;
         out += ch;
+      } else {
+        out += " ";
       }
       i++;
     } else if (inBlockComment) {
       if (ch === "*" && next === "/") {
         inBlockComment = false;
+        out += "  ";
         i += 2;
       } else {
-        if (ch === "\n") out += ch;
+        out += ch === "\n" ? "\n" : " ";
         i++;
       }
     } else if (stringDelim !== null) {
       if (ch === "\\") {
-        out += ch;
-        if (next) out += next;
+        // Escape sequence: blank both the backslash and the next
+        // character, preserving an actual newline in `\<newline>` so
+        // line counts stay aligned.
+        out += " ";
+        if (next) out += next === "\n" ? "\n" : " ";
         i += 2;
         continue;
       }
       if (ch === stringDelim) {
         stringDelim = null;
+        out += ch;
+        i++;
+        continue;
       }
-      out += ch;
+      out += ch === "\n" ? "\n" : " ";
       i++;
     } else if (ch === "/" && next === "/") {
       inLineComment = true;
+      out += "  ";
       i += 2;
     } else if (ch === "/" && next === "*") {
       inBlockComment = true;
+      out += "  ";
       i += 2;
     } else if (ch === '"' || ch === "'" || ch === "`") {
       stringDelim = ch;
@@ -210,7 +245,7 @@ function stripComments(source) {
 }
 
 function findCallSites(source) {
-  const stripped = stripComments(source);
+  const stripped = stripCommentsAndStrings(source);
   const originalLines = source.split("\n");
   const sites = [];
   CALL_RE.lastIndex = 0;
@@ -239,7 +274,7 @@ function hasOverride(lines) {
 }
 
 function hasBuildDispatchContext(source) {
-  const stripped = stripComments(source);
+  const stripped = stripCommentsAndStrings(source);
   if (IMPORT_BUILD_DISPATCH_CONTEXT_RE.test(stripped)) return true;
   if (LOCAL_DECL_RE.test(stripped)) return true;
   return false;
