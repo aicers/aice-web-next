@@ -71,6 +71,7 @@ function makeRow(
     executingLock: null,
     claimStartedAt: null,
     status,
+    customerId: 5,
   };
 }
 

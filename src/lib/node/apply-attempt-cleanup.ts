@@ -107,6 +107,7 @@ interface RawAttemptRow {
   executing_lock: string | null;
   claim_started_at: Date | null;
   status: ApplyAttemptStatus;
+  customer_id: number | null;
 }
 
 function rowFromDb(raw: RawAttemptRow): ApplyAttemptRow {
@@ -121,6 +122,7 @@ function rowFromDb(raw: RawAttemptRow): ApplyAttemptRow {
     executingLock: raw.executing_lock,
     claimStartedAt: raw.claim_started_at,
     status: raw.status,
+    customerId: raw.customer_id,
   };
 }
 
@@ -445,7 +447,8 @@ export async function readApplyAttempt(
       expires_at,
       executing_lock,
       claim_started_at,
-      status
+      status,
+      customer_id
     FROM apply_attempts
     WHERE attempt_id = $1
   `;
@@ -606,6 +609,7 @@ interface PendingAuditRecoveryRow {
   audit_actor: string;
   planned_dispatches: PlannedDispatch[];
   slot_claimed: boolean;
+  customer_id: number | null;
 }
 
 /**
@@ -702,7 +706,8 @@ export async function recoverPendingNodeApplyAudits(): Promise<number> {
       node_id,
       audit_actor,
       planned_dispatches,
-      (succeeded_audit_emitted_at IS NOT NULL) AS slot_claimed
+      (succeeded_audit_emitted_at IS NOT NULL) AS slot_claimed,
+      customer_id
     FROM apply_attempts
     WHERE status = 'succeeded'
       AND succeeded_audit_completed_at IS NULL
@@ -741,6 +746,11 @@ export async function recoverPendingNodeApplyAudits(): Promise<number> {
         target: "node",
         targetId: row.node_id,
         details: { appliedServices },
+        // Pulled from `apply_attempts.customer_id`, snapshotted at
+        // attempt creation. NULL is permitted and intentional for nodes
+        // that carry no `customerId` (only globally-scoped callers
+        // reach those — there is no owning customer to scope against).
+        ...(row.customer_id !== null && { customerId: row.customer_id }),
         correlationId: row.attempt_id,
       });
     } catch (err) {
