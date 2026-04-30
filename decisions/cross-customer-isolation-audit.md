@@ -55,8 +55,10 @@ section 7, not repeated in every section.
 
 | Route | Class | Notes |
 |---|---|---|
-| `/api/customers` (GET, POST) | scoped | GET: `access-all` returns all rows; otherwise `JOIN account_customer` against caller. POST gated by `customers:write` |
-| `/api/customers/[id]` (GET, PATCH, DELETE) | scoped | Same `access-all`-or-JOIN pattern before any read/mutation |
+| `/api/customers` (GET) | scoped | `access-all` returns all rows; otherwise `JOIN account_customer` against caller |
+| `/api/customers` (POST) | scoped | Gated by `customers:write` only — *not* admin-gated. A non-`access-all` caller with `customers:write` can create customer rows; the new row has no `account_customer` link until POST `/api/accounts/[id]/customers` runs. The audit emit at line 146 is a finding — see §3 |
+| `/api/customers/[id]` (GET, PATCH) | scoped | `access-all`-or-`account_customer`-JOIN check at `[id]/route.ts:62, 138` before read/mutation. Audit emit on PATCH at line 177 is a finding — see §3 |
+| `/api/customers/[id]` (DELETE) | **LEAK** | Gated by `customers:delete` only. The handler checks existence and refuses if any `account_customer` link remains, but it does **not** check that the caller has scope on the customer (no `account_customer WHERE account_id = session.accountId AND customer_id = $1`). A non-`access-all` caller with `customers:delete` can therefore drop any unlinked customer's database row + DB. Audit emit at line 248 also omits `customerId` — see §3 |
 
 #### Customer-scoped data plane (`/api/nodes/**`, `/api/services/external/**`, `/api/detection/export`)
 
@@ -100,6 +102,7 @@ section 7, not repeated in every section.
 | `src/lib/detection/server-actions.ts` | `searchEvents`, `searchEventsAtAnchor`, `countEventsBy*` (category/level/country/kind/ip/originatorIp/responderIp), `eventFrequencySeries`, `fetchEventByLocator` | All `scoped` via local `buildDispatchContext(session, filter)` |
 | `src/lib/detection/server-actions.ts` | `lookupIpLocation` | `customer-agnostic` — IP geolocation, no customer data |
 | `src/app/[locale]/(dashboard)/detection/actions.ts` | `runEventQuery` | `scoped` — wraps `searchEventsAtAnchor` |
+| `src/app/[locale]/(dashboard)/detection/saved-filter-actions.ts` | `listSavedFilters`, `saveFilter`, `renameFilter`, `deleteFilter` | `scoped` — DB ownership scoped by `owner_account_id = session.accountId`. The persisted `filter_json` payload may embed a `customers` selection from a previous scope; running a saved filter goes back through the Detection BFF whose customer-intersection check is owned by **#384** (referenced in §7, not duplicated). The saved-filter actions themselves do not leak across accounts |
 
 ---
 
@@ -122,6 +125,28 @@ excluded.
 ### Scoped — internal `apply_attempts` state machine (auth DB)
 
 - `src/lib/node/apply-attempt-lifecycle.ts` (~line 515 onward) and `src/lib/node/apply-attempt-cleanup.ts` (~line 224 onward) — all reads/writes are keyed on `attempt_id` / `node_id` (UUID, opaque). The only public entry points are server actions that pre-resolve the node via `buildDispatchContext` + `assertNodeInScope`, plus the internal cleanup endpoint behind a static token. Treated as `scoped`. The cleanup-driven audit emit is a separate finding — see §3
+
+### Scoped (account-owner) — `saved_filter` (auth DB, account-owned)
+
+`saved_filter` is account-owned, not customer-owned: every row carries
+`owner_account_id` and is only readable / writable by that account. Listed
+explicitly per the §2 special-attention list in #385 — these are persisted
+filters whose `filter_json` payload may encode customer-scoped Detection
+state (e.g. a `customers` chip selection captured under the account's
+prior scope).
+
+- `src/lib/detection/saved-filters.ts:190` — `SELECT ... FROM saved_filter WHERE owner_account_id = $1 AND mode = 'structured' ORDER BY ...` (list)
+- `src/lib/detection/saved-filters.ts:222` — `INSERT INTO saved_filter (owner_account_id, name, mode, filter_json) VALUES (...)` (create)
+- `src/lib/detection/saved-filters.ts:254` — `UPDATE saved_filter SET name = ... WHERE id = $1 AND owner_account_id = $2` (rename)
+- `src/lib/detection/saved-filters.ts:284` — `DELETE FROM saved_filter WHERE id = $1 AND owner_account_id = $2` (delete)
+
+All four are scoped at the row level by `owner_account_id`, so a saved
+filter cannot be read or mutated across account boundaries. The
+cross-customer concern is one step removed: a row written under a wider
+customer scope can later be replayed by the same account after its scope
+has been reduced. Enforcement of customer scope when *applying* the
+filter is the Detection BFF intersection check owned by **#384** (already
+referenced in §7 "out of scope") — not duplicated as a new finding here.
 
 ### Customer-agnostic (auth DB / audit DB / system tables)
 
@@ -174,11 +199,16 @@ section verifies whether each emission populates it.
 | `src/lib/node/apply-attempt-cleanup.ts:738` | `node.apply` | `customerId` not passed; emitted by the recovery sweep that re-emits a missing `node.apply` audit |
 | `src/app/api/accounts/[id]/customers/route.ts:244` | `customer.assign` | top-level `customerId` omitted; assigned ids only present in `details.customerIds` (and may be a multi-id batch) |
 | `src/app/api/accounts/[id]/customers/[customerId]/route.ts:87` | `customer.unassign` | top-level `customerId` omitted; id present in `details.customerId` |
+| `src/app/api/customers/route.ts:146` | `customer.create` | Targets a specific customer (`targetId` populated, `details.name` / `databaseName` populated) but top-level `customerId` omitted. POST is gated only by `customers:write`, **not** `customers:access-all` — a non-`access-all` tenant admin can perform the action. Once #386 scopes the audit-log viewer on `audit_logs.customer_id`, the row will be invisible to the only operator who plausibly owns it after assignment |
+| `src/app/api/customers/[id]/route.ts:177` | `customer.update` | Tenant-scope-checked endpoint (gated by `customers:write` + `account_customer` JOIN) targeting a specific customer; top-level `customerId` omitted. Same downstream visibility consequence as `customer.create` |
+| `src/app/api/customers/[id]/route.ts:248` | `customer.delete` | Targets a specific customer; top-level `customerId` omitted. The handler is gated only by `customers:delete` with no caller-scope check (see §1 LEAK) — even if the visibility consequence is paired with a separate authorization gap, the audit-row contract is the same |
 
 The two `node.apply` sites are the same underlying bug observed in two
 emitters (the wrapper and the recovery sweep). The two
 `customer.{assign,unassign}` sites are the same underlying bug at the
-customer-assignment endpoints. Counted as two distinct findings in §7.
+customer-assignment endpoints. The three `customer.{create,update,delete}`
+sites are the same underlying bug at the customer-CRUD endpoints. Counted
+as three distinct findings in §7.
 
 Impact: once #386 lands and the audit-log viewer applies a `customer_id IN
 (...)` predicate, rows with `customer_id IS NULL` will be invisible to the
@@ -188,18 +218,21 @@ plausibly be looking for it.
 
 ### Customer-agnostic actions — `customerId` correctly omitted
 
-The remaining ~62 call sites in `src/app/api/auth/**`,
+The remaining ~59 call sites in `src/app/api/auth/**`,
 `src/app/api/accounts/**` (account CRUD, lock/unlock, suspend/restore),
 `src/app/api/auth/sign-in/route.ts` (sign-in success/failure, account
 suspend/lock, MFA enforcement blocked), `src/app/api/dashboard/sessions/[sid]/revoke/route.ts`,
 `src/app/api/system-settings/[key]/route.ts`, `src/app/api/roles/**`,
-`src/app/api/auth/mfa/**`, `src/lib/auth/{sign-in,guard,emergency-mfa-reset}.ts`,
-and the `customer.{create,update,delete}` actions on
-`src/app/api/customers/{route.ts,[id]/route.ts}` (admin-gated by
-`customers:access-all`) all omit `customerId`. These are session / account
-/ role / MFA / system-settings actions and customer-agnostic at the
-audit-row level — the global admin who performed the action is the
-intended audience.
+`src/app/api/auth/mfa/**`, and `src/lib/auth/{sign-in,guard,emergency-mfa-reset}.ts`
+all omit `customerId`. These are session / account / role / MFA /
+system-settings actions and customer-agnostic at the audit-row level —
+the global admin who performed the action is the intended audience.
+
+(`customer.{create,update,delete}` were previously listed in this
+bucket as "admin-gated by `customers:access-all`". That was wrong — the
+endpoints are gated by `customers:write` / `customers:delete`, which are
+not necessarily admin-only — and they target a specific customer, so they
+belong in the LEAK bucket above.)
 
 ### Unknown
 
@@ -349,16 +382,41 @@ a factor.
    `src/app/api/accounts/[id]/customers/[customerId]/route.ts:87`. Same
    downstream impact as #3.
 
+5. **`customer.{create,update,delete}` audit emissions omit top-level
+   `customerId`.**
+   `src/app/api/customers/route.ts:146` (`customer.create`),
+   `src/app/api/customers/[id]/route.ts:177` (`customer.update`),
+   `src/app/api/customers/[id]/route.ts:248` (`customer.delete`). These
+   endpoints are gated by `customers:write` / `customers:delete`, *not*
+   `customers:access-all` — so a non-`access-all` tenant admin can
+   perform the action. Once #386 scopes the audit-log viewer on
+   `audit_logs.customer_id`, these rows become invisible to the only
+   operator who plausibly has scope on the targeted customer. Same
+   downstream visibility consequence as #3 / #4 — counted separately
+   because the call sites and the fix shape are different (the
+   emitter already has `targetId = String(customerId)`).
+
+6. **`DELETE /api/customers/[id]` does not check caller customer
+   scope.**
+   `src/app/api/customers/[id]/route.ts:206-261`. Unlike GET / PATCH
+   on the same resource, DELETE only checks `customers:delete` plus a
+   "no remaining `account_customer` link" precondition; it never
+   verifies that `session.accountId` has scope on `customerId`. A
+   non-`access-all` caller with `customers:delete` can therefore drop
+   any unlinked customer (including its database). Mutation-side
+   isolation gap; pairs with finding #5 because the missing audit
+   `customerId` makes the resulting row invisible to a scoped viewer.
+
 ### P2 — `unknown`, case-by-case decision
 
-5. **Detection analytics in-memory cache** (`src/components/detection/detection-analytics.tsx:204`).
+7. **Detection analytics in-memory cache** (`src/components/detection/detection-analytics.tsx:204`).
    Cache key does not include customer scope. Risk only realises if a
    client-side scope change can occur without a page reload — confirm
    during hardening whether any sign-in / role-change / impersonation
    flow keeps the page mounted.
 
-6. **Detection tabs `sessionStorage`** (`src/lib/detection/tabs-storage.ts`).
-   Stores filter UI state only (no result rows). Same condition as #5;
+8. **Detection tabs `sessionStorage`** (`src/lib/detection/tabs-storage.ts`).
+   Stores filter UI state only (no result rows). Same condition as #7;
    confirm that a scope change either reloads the shell or clears the
    `detection:tabs:v1` key.
 
@@ -379,8 +437,10 @@ a factor.
 | 2 (P1) | `Customers not found: <ids>` enumeration | Reorder: run the tenant-scope check on input IDs first; fold "not found" and "out of scope" into a single 403/404 with no ID enumeration. (Optionally subset the response only to IDs the caller has scope on.) |
 | 3 (P1) | `node.apply` audit missing `customerId` | Resolve the node's `customer_id` from `apply_attempts` (or the canonical node) inside the audit wrapper and pass it as `customerId`. The recovery sweep already SELECTs `node_id`; extend the SELECT to include `customer_id` from `apply_attempts` (or join the cached node row). |
 | 4 (P1) | `customer.{assign,unassign}` audit missing `customerId` | Set `customerId` on the audit event. For the bulk `customer.assign` case (`uniqueIds.length > 1`) emit one audit row per assigned `customerId` so each is correctly scoped, rather than one row with a list in `details`. |
-| 5 (P2) | Detection analytics cache key | If hardening confirms the scope-change-without-reload pathway exists, prefix the cache key with the session's `accountId` or invalidate the cache on a "scope changed" signal from the auth provider. |
-| 6 (P2) | Detection tabs `sessionStorage` | Same disposition: namespace the `sessionStorage` key by `accountId` or wipe on sign-in. |
+| 5 (P1) | `customer.{create,update,delete}` audit missing `customerId` | Pass `customerId: customer.id` (or the parsed `customerId` for PATCH / DELETE) on the audit event in `src/app/api/customers/route.ts:146` and `src/app/api/customers/[id]/route.ts:177, 248`. The numeric id is already in scope at the emit site. |
+| 6 (P1) | `DELETE /api/customers/[id]` missing caller-scope check | Add the same `access-all`-or-`account_customer`-JOIN check used by GET / PATCH on the same route before the linked-accounts check, so a non-`access-all` caller cannot delete a customer outside their scope. |
+| 7 (P2) | Detection analytics cache key | If hardening confirms the scope-change-without-reload pathway exists, prefix the cache key with the session's `accountId` or invalidate the cache on a "scope changed" signal from the auth provider. |
+| 8 (P2) | Detection tabs `sessionStorage` | Same disposition: namespace the `sessionStorage` key by `accountId` or wipe on sign-in. |
 
 #388 should additionally:
 
@@ -388,5 +448,5 @@ a factor.
   whose `action` matches the customer-scoped subset (`node.*`,
   `service.*`, `customer.*`) sets `customerId` (or explicitly opts out
   with `customerId: null` and a `// scope-allowlist:` comment).
-- Cover findings 2–4 with the cross-customer integration test matrix
+- Cover findings 2–6 with the cross-customer integration test matrix
   under `src/__integration__/multi-tenancy/`.
