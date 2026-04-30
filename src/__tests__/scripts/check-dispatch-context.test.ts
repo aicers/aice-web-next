@@ -324,6 +324,82 @@ export function GET() {
     expect(violations).toEqual([]);
   });
 
+  it("does NOT count `import type { buildDispatchContext } ...` as in-scope", () => {
+    // Regression test for the round-4 review: type-only imports are
+    // erased by the TS compiler so the symbol is not actually in
+    // runtime scope. The previous regex accepted them.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+import type { buildDispatchContext } from "./dispatch-context";
+
+export async function listNodes() {
+  return graphqlRequest(QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(
+      /neither imports nor locally declares/,
+    );
+  });
+
+  it("does NOT count `import { type buildDispatchContext } ...` as in-scope", () => {
+    // Per-specifier `type` modifier — also erased at runtime, so the
+    // symbol is not in scope for the call site to use.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+import { type buildDispatchContext } from "./dispatch-context";
+
+export async function listNodes() {
+  return graphqlRequest(QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(
+      /neither imports nor locally declares/,
+    );
+  });
+
+  it("does NOT count a nested `function buildDispatchContext` as in-scope", () => {
+    // Regression test for the round-4 review: a nested declaration
+    // inside another function does not bring the symbol into file
+    // scope, so it must NOT satisfy the presence check. The previous
+    // regex permitted leading whitespace and matched indented
+    // declarations.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+
+function wrapper() {
+  async function buildDispatchContext() {
+    return { role: "admin", customerIds: [] };
+  }
+  return buildDispatchContext;
+}
+
+export async function listNodes() {
+  return graphqlRequest(QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(
+      /neither imports nor locally declares/,
+    );
+  });
+
   it("treats the GraphQL client modules as pass-through (no buildDispatchContext required)", () => {
     const violations = run([
       {

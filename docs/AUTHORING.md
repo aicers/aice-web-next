@@ -382,7 +382,19 @@ alongside `pnpm check`. It enforces, file-by-file:
 - For each allowlisted file that calls one of the helpers,
   `buildDispatchContext` must either be imported from another
   module or declared locally as a top-level function / const.
-  Files that have neither fail CI.
+  Files that have neither fail CI. The contract is "symbol is in
+  scope at runtime", so two shapes intentionally do NOT satisfy the
+  presence check:
+    - **Type-only imports.** Both `import type { buildDispatchContext } ...`
+      (whole-import type modifier) and `import { type buildDispatchContext } ...`
+      (per-specifier type modifier) are rejected. TypeScript erases
+      these so the symbol is not in runtime scope when the call site
+      executes.
+    - **Nested declarations.** `function buildDispatchContext` /
+      `const buildDispatchContext` inside another function or block
+      does not bring the symbol into file scope. Only top-level
+      (column-0) declarations count — the same shape Detection's
+      `src/lib/detection/server-actions.ts` already uses.
 
 Both `pnpm check` (Biome) and `pnpm check:scope` must pass before
 a PR can land. The guard is intentionally simple — it does not

@@ -27,7 +27,15 @@
 //      uses the local-declaration form today
 //      (`src/lib/detection/server-actions.ts`); the Node track
 //      imports it from `src/lib/node/dispatch-context.ts`. Both
-//      patterns are accepted.
+//      patterns are accepted, but the contract is "symbol is in
+//      scope at runtime", so two shapes intentionally do NOT
+//      satisfy the check:
+//        * Type-only imports — both `import type { buildDispatchContext } ...`
+//          and `import { type buildDispatchContext } ...`. TypeScript
+//          erases these so the symbol is not in runtime scope.
+//        * Nested declarations — `function buildDispatchContext` /
+//          `const buildDispatchContext` inside another function or
+//          block. Only top-level (column-0) declarations count.
 //
 // Per-line override: append `// scope-allowlist: <reason>` to the
 // offending call-site line. The reason must be non-empty. The
@@ -112,21 +120,29 @@ const CALL_RE = /\bgraphqlRequest(?:To)?\s*[<(]/g;
 // non-empty (after trimming).
 const OVERRIDE_RE = /\/\/\s*scope-allowlist:\s*(.+?)\s*$/;
 
-// `import { ..., buildDispatchContext, ... } from "..."`. Allows
-// arbitrary whitespace and `as` aliases between the braces. We do not
-// resolve the import path — any path that brings the symbol in scope
-// counts. Run against the stripped source so neither a commented-out
-// import nor a string literal containing the import substring
-// satisfies the check; the path quotes survive the strip but the path
-// contents become spaces.
-const IMPORT_BUILD_DISPATCH_CONTEXT_RE =
-  /import\s*(?:type\s+)?\{[^}]*\bbuildDispatchContext\b[^}]*\}\s*from\s*["'][^"']*["']/;
+// `import { ..., buildDispatchContext, ... } from "..."`. Iterates
+// every `import { ... } from "..."` statement in the stripped source
+// and inspects each specifier individually so type-only imports do
+// NOT count: `import type { buildDispatchContext } ...` (whole-import
+// type modifier) and `import { type buildDispatchContext } ...`
+// (per-specifier type modifier) are both rejected because TypeScript
+// erases them at runtime — the symbol is not actually in scope when
+// the call site executes. `as` aliases are accepted (the symbol is in
+// scope under either name). We do not resolve the import path — any
+// path that brings the symbol in scope counts. Run against the
+// stripped source so a commented-out import or a string literal that
+// happens to contain the import substring is not honoured.
+const IMPORT_RE = /\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["'][^"']*["']/g;
 
-// `(async )?function buildDispatchContext(...)` or
-// `(export )?const buildDispatchContext = ...`. Run against the
-// stripped source.
+// Top-level declaration only — must start at column 0 (no leading
+// whitespace). Nested `function buildDispatchContext` /
+// `const buildDispatchContext` declarations inside another function
+// or block do NOT bring the symbol into file scope, so they must NOT
+// satisfy the presence check. Run against the stripped source so a
+// commented-out declaration is not honoured. Anchored on `^` or `\n`
+// followed directly by the keyword (no `\s*`) to enforce column 0.
 const LOCAL_DECL_RE =
-  /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?(?:function\s+buildDispatchContext\b|const\s+buildDispatchContext\b)/;
+  /(?:^|\n)(?:export\s+)?(?:async\s+)?(?:function\s+buildDispatchContext\b|const\s+buildDispatchContext\b)/;
 
 function listSourceFiles(dir) {
   const out = [];
@@ -273,9 +289,34 @@ function hasOverride(lines) {
   return false;
 }
 
+function hasBuildDispatchContextImport(stripped) {
+  IMPORT_RE.lastIndex = 0;
+  for (;;) {
+    const match = IMPORT_RE.exec(stripped);
+    if (match === null) return false;
+    // Reject `import type { ... }` (whole-import type modifier).
+    // The leading `\b` in IMPORT_RE means `match[0]` starts at
+    // `import`, so we can test for `type` directly after it.
+    if (/^import\s+type\b/.test(match[0])) continue;
+    for (const rawSpec of match[1].split(",")) {
+      const spec = rawSpec.trim();
+      if (spec.length === 0) continue;
+      // Reject `{ type buildDispatchContext }` (per-specifier type
+      // modifier).
+      if (/^type\s+/.test(spec)) continue;
+      // Match either a direct specifier (`buildDispatchContext` /
+      // `buildDispatchContext as foo`) or a renamed import that
+      // brings the symbol into local scope (`foo as
+      // buildDispatchContext`). \b boundaries keep us off
+      // `myBuildDispatchContext` etc.
+      if (/\bbuildDispatchContext\b/.test(spec)) return true;
+    }
+  }
+}
+
 function hasBuildDispatchContext(source) {
   const stripped = stripCommentsAndStrings(source);
-  if (IMPORT_BUILD_DISPATCH_CONTEXT_RE.test(stripped)) return true;
+  if (hasBuildDispatchContextImport(stripped)) return true;
   if (LOCAL_DECL_RE.test(stripped)) return true;
   return false;
 }
