@@ -7,6 +7,7 @@ import {
   signIn,
 } from "../helpers/auth";
 import {
+  assignAllExistingCustomersToAccount,
   assignCustomerToAccount,
   createCustomerRow,
   createTestAccount,
@@ -95,12 +96,14 @@ describe("Audit logs viewer scoping", () => {
     await assignCustomerToAccount(accountAId, customerAId);
     await assignCustomerToAccount(accountBId, customerBId);
 
-    // The "all-assigned" account is linked to every test customer but
-    // does not hold customers:access-all — proves the predicate is
-    // applied even when the assignment list happens to cover every
-    // customer.
-    await assignCustomerToAccount(allAssignedId, customerAId);
-    await assignCustomerToAccount(allAssignedId, customerBId);
+    // The "all-assigned" account is linked to every customer row in
+    // the database (not just the two created here) but does not hold
+    // customers:access-all. This defends against a regression where
+    // admin status is inferred from
+    // `assignedIds.length === SELECT COUNT(*) FROM customers`: such an
+    // implementation would treat this account as admin and surface
+    // `customer_id IS NULL` rows.
+    await assignAllExistingCustomersToAccount(allAssignedId);
 
     // Seed three audit rows: one per customer plus one customer-agnostic.
     seeded = {

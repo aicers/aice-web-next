@@ -352,6 +352,29 @@ export async function removeAccountCustomerAssignments(
   );
 }
 
+/**
+ * Assigns the account to every customer row currently in `customers`.
+ * Returns the list of customer IDs assigned. Used to defend against
+ * regressions where admin status is inferred from
+ * `assignedIds.length === SELECT COUNT(*) FROM customers`.
+ */
+export async function assignAllExistingCustomersToAccount(
+  accountId: string,
+): Promise<number[]> {
+  return withAuthDb(async (c) => {
+    const { rows } = await c.query<{ id: number }>(
+      "SELECT id FROM customers ORDER BY id",
+    );
+    for (const { id } of rows) {
+      await c.query(
+        "INSERT INTO account_customer (account_id, customer_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [accountId, id],
+      );
+    }
+    return rows.map((r) => r.id);
+  });
+}
+
 export async function createCustomerRow(name: string): Promise<number> {
   return withAuthDb(async (c) => {
     const dbName = `customer_test_${name
