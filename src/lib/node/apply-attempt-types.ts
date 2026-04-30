@@ -91,6 +91,15 @@ export interface ApplyAttemptRow {
   executingLock: string | null;
   claimStartedAt: Date | null;
   status: ApplyAttemptStatus;
+  /**
+   * Owning customer id snapshotted at attempt-creation time. NULL only
+   * for nodes that carry no `customerId` on either profile — reachable
+   * exclusively by globally-scoped callers (see `enforceNodeScope`).
+   * Read by both audit emitters so `node.apply` rows populate
+   * `audit_logs.customer_id` and remain visible to a tenant-scoped
+   * audit-log viewer.
+   */
+  customerId: number | null;
 }
 
 /**

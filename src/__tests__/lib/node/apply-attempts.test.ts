@@ -149,9 +149,13 @@ describe("createApplyAttempt — happy path", () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const [sql, params] = mockQuery.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO apply_attempts/);
+    expect(sql).toMatch(/customer_id/);
     expect(params?.[0]).toBe(result.attemptId);
     expect(params?.[1]).toBe("node-1");
     expect(params?.[4]).toBe("00000000-0000-0000-0000-000000000001");
+    // #387: customer_id is snapshotted from the canonical node so the
+    // node.apply audit emission can populate audit_logs.customer_id.
+    expect(params?.[5]).toBe(5);
 
     // Manager mutation MUST NOT be invoked during create.
     expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);

@@ -200,6 +200,11 @@ describe("POST /api/customers", () => {
       expect.objectContaining({
         action: "customer.create",
         target: "customer",
+        // #387: top-level customerId must be populated so the audit-log
+        // viewer surfaces the row to a tenant operator under
+        // `customer_id IN (...)` scope after the matching
+        // `account_customer` link is added.
+        customerId: sampleCustomer.id,
       }),
     );
   });

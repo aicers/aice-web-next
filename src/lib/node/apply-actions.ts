@@ -344,6 +344,10 @@ async function maybeEmitNodeApplyAudit(
       targetId: result.nodeId,
       details: { appliedServices },
       sid: session.sessionId,
+      // Pulled from `apply_attempts.customer_id`, snapshotted at attempt
+      // creation. NULL is permitted and intentional for nodes that
+      // carry no `customerId` (only globally-scoped callers reach those).
+      ...(result.customerId !== null && { customerId: result.customerId }),
       // Stable per-attempt key. Used by the partial unique index on
       // `audit_logs` (Layer A above) to make a second insert for the
       // same attempt physically impossible.

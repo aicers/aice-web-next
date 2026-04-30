@@ -91,6 +91,10 @@ export const DELETE = withAuth(
       targetId: accountId,
       ip: extractClientIp(request),
       sid: session.sessionId,
+      // Top-level `customerId` populated so the audit-log viewer (#386)
+      // surfaces this unassign to the tenant operator who owns the
+      // customer.
+      customerId,
       details: { customerId },
     });
 

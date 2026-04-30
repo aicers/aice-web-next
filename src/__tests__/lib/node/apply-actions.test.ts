@@ -124,6 +124,7 @@ function makeRow(
     claimStartedAt: null,
     status:
       status as import("@/lib/node/apply-attempt-types").ApplyAttemptStatus,
+    customerId: 5,
     ...overrides,
   };
 }
@@ -161,6 +162,7 @@ beforeEach(() => {
     executingLock: null,
     claimStartedAt: null,
     status: "pending",
+    customerId: 5,
   });
   mockGetCurrentSession.mockResolvedValue(makeSession());
   // Default: every wrapper-level canonical-node read resolves to an
@@ -390,6 +392,32 @@ describe("node.apply audit emission — exactly once per attempt that reaches su
     // `audit_logs(correlation_id) WHERE action = 'node.apply'` makes a
     // second insert for the same attempt physically impossible.
     expect(event.correlationId).toBe("att-1");
+    // #387: customerId snapshotted on the apply-attempt row is now
+    // forwarded to the audit emission so the audit-log viewer (#386)
+    // surfaces the row to the tenant operator under
+    // `audit_logs.customer_id IN (...)` scope.
+    expect(event.customerId).toBe(5);
+  });
+
+  it("omits customerId from the audit when the apply-attempt row's customer_id is NULL (#387)", async () => {
+    // A node with no `customerId` on either profile is reachable only
+    // by a globally-scoped caller (see `enforceNodeScope`). For those
+    // attempts the persisted `apply_attempts.customer_id` is NULL and
+    // the audit row's `customer_id` should stay NULL — there is no
+    // owning customer to scope against.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockInternalConfirm.mockResolvedValue(
+      makeRow("succeeded", { customerId: null }),
+    );
+    const { confirmApplyAttempt } = await import("@/lib/node/apply-actions");
+    await confirmApplyAttempt({ attemptId: "att-1" });
+    expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+    const event = mockAuditRecord.mock.calls[0][0];
+    expect(event.action).toBe("node.apply");
+    expect(
+      "customerId" in event ? event.customerId : undefined,
+    ).toBeUndefined();
   });
 
   it("does NOT emit on idempotent re-confirm of an already-succeeded row (slot already claimed)", async () => {

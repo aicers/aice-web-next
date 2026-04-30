@@ -133,6 +133,8 @@ describe("DELETE /api/accounts/[id]/customers/[customerId]", () => {
         action: "customer.unassign",
         target: "account",
         targetId: TARGET_UUID,
+        // #387: top-level customerId must be populated.
+        customerId: 1,
         details: { customerId: 1 },
       }),
     );
@@ -260,6 +262,8 @@ describe("DELETE /api/accounts/[id]/customers/[customerId]", () => {
         action: "customer.unassign",
         target: "account",
         targetId: TARGET_UUID,
+        // #387: top-level customerId must be populated.
+        customerId: 1,
         details: { customerId: 1 },
       }),
     );

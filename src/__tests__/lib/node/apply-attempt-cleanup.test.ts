@@ -229,6 +229,86 @@ describe("recoverPendingNodeApplyAudits", () => {
     expect(event.correlationId).toBe("att-stuck");
   });
 
+  it("forwards the persisted apply_attempts.customer_id onto the recovered audit (#387)", async () => {
+    // Recovery sweep half of #387 P1 finding §3 — the candidate SELECT
+    // must include `customer_id`, and a non-null value MUST be
+    // forwarded to `auditLog.record({ customerId })` so the
+    // audit-log viewer scopes the recovered row to the tenant operator
+    // who actually owns the customer that ran the apply.
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          attempt_id: "att-stuck",
+          node_id: "node-1",
+          audit_actor: "actor-1",
+          slot_claimed: true,
+          customer_id: 5,
+          planned_dispatches: [
+            {
+              dispatchId: "d-mgr",
+              kind: "MANAGER",
+              state: "succeeded",
+              attemptCount: 1,
+              lastError: null,
+            },
+          ],
+        },
+      ],
+      rowCount: 1,
+    });
+    mockQuery.mockResolvedValueOnce({ rows: [{}], rowCount: 1 });
+
+    const { recoverPendingNodeApplyAudits } = await import(
+      "@/lib/node/apply-attempt-cleanup"
+    );
+    await recoverPendingNodeApplyAudits();
+    const selectSql = mockQuery.mock.calls[0][0] as string;
+    expect(selectSql).toMatch(/customer_id/);
+    expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+    const event = mockAuditRecord.mock.calls[0][0];
+    expect(event.customerId).toBe(5);
+  });
+
+  it("omits customerId on the recovered audit when apply_attempts.customer_id is NULL (#387)", async () => {
+    // A globally-scoped caller's attempt against a node with no
+    // `customerId` persists `customer_id = NULL`. The recovered audit
+    // event must omit `customerId` rather than send `null`/`undefined`
+    // — `audit_logs.customer_id` then stays NULL by design (no owning
+    // customer to scope against).
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          attempt_id: "att-stuck",
+          node_id: "node-1",
+          audit_actor: "actor-1",
+          slot_claimed: true,
+          customer_id: null,
+          planned_dispatches: [
+            {
+              dispatchId: "d-mgr",
+              kind: "MANAGER",
+              state: "succeeded",
+              attemptCount: 1,
+              lastError: null,
+            },
+          ],
+        },
+      ],
+      rowCount: 1,
+    });
+    mockQuery.mockResolvedValueOnce({ rows: [{}], rowCount: 1 });
+
+    const { recoverPendingNodeApplyAudits } = await import(
+      "@/lib/node/apply-attempt-cleanup"
+    );
+    await recoverPendingNodeApplyAudits();
+    expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+    const event = mockAuditRecord.mock.calls[0][0];
+    expect(
+      "customerId" in event ? event.customerId : undefined,
+    ).toBeUndefined();
+  });
+
   it("leaves the slot CLAIMED when the audit DB still rejects the insert so the next sweep can re-pick the row (round 4)", async () => {
     // Round-4 acceptance: on a non-23505 audit-DB failure during
     // recovery, the sweep MUST NOT release the slot. The candidate

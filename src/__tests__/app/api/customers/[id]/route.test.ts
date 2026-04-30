@@ -187,6 +187,10 @@ describe("PATCH /api/customers/[id]", () => {
         action: "customer.update",
         target: "customer",
         targetId: "1",
+        // #387: top-level customerId must be populated so the audit-log
+        // viewer surfaces the row to a tenant operator under
+        // `customer_id IN (...)` scope.
+        customerId: 1,
       }),
     );
   });
@@ -342,5 +346,52 @@ describe("DELETE /api/customers/[id]", () => {
     const response = await DELETE(request, makeContext());
 
     expect(response.status).toBe(403);
+  });
+
+  it("returns 404 when Tenant Admin deletes a customer outside their scope (#387)", async () => {
+    // Tenant admin: has customers:delete but not customers:access-all.
+    // The new scope check rejects with 404 before the linked-accounts
+    // check or any database-drop side effect runs.
+    mockHasPermission.mockImplementation(
+      async (_roles: string[], perm: string) => {
+        if (perm === "customers:access-all") return false;
+        return true;
+      },
+    );
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [sampleCustomer], rowCount: 1 }) // SELECT customer
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // SELECT account_customer (no link)
+
+    const { DELETE } = await import("@/app/api/customers/[id]/route");
+    const request = new NextRequest("http://localhost:3000/api/customers/1", {
+      method: "DELETE",
+    });
+    const response = await DELETE(request, makeContext());
+
+    expect(response.status).toBe(404);
+    expect(mockDropCustomerDb).not.toHaveBeenCalled();
+    expect(mockAuditRecord).not.toHaveBeenCalled();
+  });
+
+  it("populates customerId on the audit record (#387)", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [sampleCustomer], rowCount: 1 }) // SELECT customer
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // SELECT account_customer
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // DELETE
+
+    const { DELETE } = await import("@/app/api/customers/[id]/route");
+    const request = new NextRequest("http://localhost:3000/api/customers/1", {
+      method: "DELETE",
+    });
+    await DELETE(request, makeContext());
+
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "customer.delete",
+        targetId: "1",
+        customerId: 1,
+      }),
+    );
   });
 });

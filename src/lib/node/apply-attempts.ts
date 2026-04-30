@@ -133,6 +133,17 @@ export async function createApplyAttempt(
   const fingerprint = computeDraftFingerprint(snapshot);
   const ttlMs = getAttemptTtlMs();
 
+  // Resolve the node's owning customer id once, here, so the
+  // synchronous wrapper emission and the recovery sweep both populate
+  // `audit_logs.customer_id` for the eventual `node.apply` audit
+  // without re-reading the manager DB. NULL is permitted: a node that
+  // carries no `customerId` on either profile is reachable only by a
+  // globally-scoped caller (see `enforceNodeScope`); for that case the
+  // audit row's `customer_id` stays NULL by design.
+  const rawCustomerId =
+    node.profile?.customerId ?? node.profileDraft?.customerId;
+  const customerId = rawCustomerId === undefined ? null : Number(rawCustomerId);
+
   const attemptId = randomUUID();
   // `audit_actor` is a non-cascading snapshot of the creator's id
   // (round 8). The audit-recovery sweep reads it for the `node.apply`
@@ -150,6 +161,7 @@ export async function createApplyAttempt(
       planned_dispatches,
       created_by,
       audit_actor,
+      customer_id,
       expires_at,
       status
     )
@@ -160,7 +172,8 @@ export async function createApplyAttempt(
       $4::jsonb,
       $5,
       $5,
-      NOW() + ($6 || ' milliseconds')::interval,
+      $6,
+      NOW() + ($7 || ' milliseconds')::interval,
       'pending'
     )
     RETURNING created_at, expires_at
@@ -171,6 +184,7 @@ export async function createApplyAttempt(
       fingerprint.bytes,
       JSON.stringify(plannedDispatches),
       session.accountId,
+      customerId,
       String(ttlMs),
     ],
   );

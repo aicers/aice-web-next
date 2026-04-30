@@ -313,7 +313,29 @@ export const POST = withAuth(
     // Deduplicate
     const uniqueCustomerIds = customerIds ? [...new Set(customerIds)] : [];
 
-    // Verify customers exist
+    // Tenant Admin scope: can only assign their own customers. Run the
+    // scope check BEFORE the existence check so an out-of-scope input
+    // id is rejected at the same surface as a non-existent one —
+    // otherwise the existence-check error path leaks "exists, out of
+    // scope" vs "does not exist" to a tenant admin probing arbitrary
+    // ids (#387 P1 finding §4 / §7-2).
+    if (!callerAccessAll && uniqueCustomerIds.length > 0) {
+      const callerCustomerIds = await getAccountCustomerIds(session.accountId);
+      const callerSet = new Set(callerCustomerIds);
+      const outOfScope = uniqueCustomerIds.filter((id) => !callerSet.has(id));
+      if (outOfScope.length > 0) {
+        return NextResponse.json(
+          { error: "Cannot assign customers outside your scope" },
+          { status: 403 },
+        );
+      }
+    }
+
+    // Verify customers exist. Reachable only after the scope check
+    // above has cleared every id, so listing the missing ones is safe:
+    // an `access-all` caller has access to the full customer list, and
+    // a tenant-scoped caller can only have reached here for ids inside
+    // their own scope.
     if (uniqueCustomerIds.length > 0) {
       const { rows: existingCustomers } = await query<{ id: number }>(
         "SELECT id FROM customers WHERE id = ANY($1)",
@@ -325,19 +347,6 @@ export const POST = withAuth(
         return NextResponse.json(
           { error: `Customers not found: ${missing.join(", ")}` },
           { status: 400 },
-        );
-      }
-    }
-
-    // Tenant Admin scope: can only assign their own customers
-    if (!callerAccessAll && uniqueCustomerIds.length > 0) {
-      const callerCustomerIds = await getAccountCustomerIds(session.accountId);
-      const callerSet = new Set(callerCustomerIds);
-      const outOfScope = uniqueCustomerIds.filter((id) => !callerSet.has(id));
-      if (outOfScope.length > 0) {
-        return NextResponse.json(
-          { error: "Cannot assign customers outside your scope" },
-          { status: 403 },
         );
       }
     }

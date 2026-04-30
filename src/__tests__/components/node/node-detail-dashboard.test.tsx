@@ -516,6 +516,7 @@ describe("NodeDetailDashboard — apply preview modal wiring", () => {
       executingLock: null,
       claimStartedAt: null,
       status: "failed_retryable",
+      customerId: 5,
     };
     const succeededRow: ApplyAttemptRow = {
       ...failedRow,
