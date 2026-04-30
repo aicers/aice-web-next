@@ -102,15 +102,19 @@ section 7, not repeated in every section.
 | `src/lib/detection/server-actions.ts` | `searchEvents`, `searchEventsAtAnchor`, `countEventsBy*` (category/level/country/kind/ip/originatorIp/responderIp), `eventFrequencySeries`, `fetchEventByLocator` | All `scoped` via local `buildDispatchContext(session, filter)` |
 | `src/lib/detection/server-actions.ts` | `lookupIpLocation` | `customer-agnostic` — IP geolocation, no customer data |
 | `src/app/[locale]/(dashboard)/detection/actions.ts` | `runEventQuery` | `scoped` — wraps `searchEventsAtAnchor` |
+| `src/app/[locale]/(dashboard)/detection/analytics-actions.ts` | `runAnalyticsQuery` | `scoped` — wraps `countEventsBy*` (category/level/country/kind/srcIp/dstIp via `dispatch`) and `eventFrequencySeries`; both flow through the Detection-track `buildDispatchContext` |
+| `src/app/[locale]/(dashboard)/detection/sensor-actions.ts` | `fetchSensors` | `scoped` — wraps `listSensors`, which signs the Context JWT with `session.customerIds`; the returned sensor list is already restricted to the caller's accessible customers |
 | `src/app/[locale]/(dashboard)/detection/saved-filter-actions.ts` | `listSavedFilters`, `saveFilter`, `renameFilter`, `deleteFilter` | `scoped` — DB ownership scoped by `owner_account_id = session.accountId`. The persisted `filter_json` payload may embed a `customers` selection from a previous scope; running a saved filter goes back through the Detection BFF whose customer-intersection check is owned by **#384** (referenced in §7, not duplicated). The saved-filter actions themselves do not leak across accounts |
 
 ---
 
 ## 2. DB query inventory
 
-Scope: every `query(...)`, `pool.query(...)`, `client.query(...)` under
-`src/lib/**` and `src/app/api/**/route.ts`. Migrations and test harnesses
-excluded.
+Scope: every `query(...)`, `query<T>(...)`, `pool.query(...)`,
+`client.query(...)`, and `client.query<T>(...)` call site under
+`src/lib/**` and `src/app/api/**/route.ts`. Generic-typed forms
+(`query<Row>(...)`) are included alongside untyped forms — they are
+the same DB call. Migrations and test harnesses excluded.
 
 ### Scoped — operates on customer-scoped tables under explicit scope
 
@@ -118,9 +122,14 @@ excluded.
 - `src/lib/auth/customer-scope.ts:29` — `SELECT id FROM customers ORDER BY id` (used only after `customers:access-all` check)
 - `src/app/api/customers/route.ts:62, 67` — list customers; either unconditional (`access-all`) or `JOIN account_customer ac ON ac.customer_id = c.id WHERE ac.account_id = $1`
 - `src/app/api/customers/[id]/route.ts:46, 122, 219` — single-customer read/patch/delete; tenant scope verified via `account_customer` lookup before each
-- `src/app/api/accounts/[id]/customers/route.ts:77, 195–228` — list/insert assignments inside transaction; tenant scope check before insert
+- `src/app/api/accounts/[id]/customers/route.ts:72` — `JOIN account_customer ac` + `JOIN customers c`; tenant scope check (lines 53–69) runs before the SELECT
+- `src/app/api/accounts/[id]/customers/route.ts:159` — `SELECT id FROM customers WHERE id = ANY($1)`; existence check used to validate request input. The error path at line 167 is the §4 enumeration LEAK; the SELECT itself is `unknown`/scope-deferred — runs *before* the tenant-scope check at line 173
+- `src/app/api/accounts/[id]/customers/route.ts:197, 204, 223` — transactional account-customer assignment queries; tenant scope check at line 173 runs before the transaction
 - `src/app/api/accounts/[id]/customers/[customerId]/route.ts:51, 81` — verify-then-delete; explicit scope check between
-- `src/app/api/accounts/route.ts:89, 123, 319` — `account_customer` subqueries used to filter visible accounts; `customers WHERE id = ANY($1)` used to validate inputs
+- `src/app/api/accounts/route.ts:134` — `account_customer` subquery used to filter visible accounts in the GET listing
+- `src/app/api/accounts/route.ts:145` — `accounts` listing with the visibility filter from `:134` applied
+- `src/app/api/accounts/route.ts:318` — `SELECT id FROM customers WHERE id = ANY($1)` validating the `customerIds` payload of POST /api/accounts. Same enumeration shape as `:159` above; error path at `:326` is the §4 enumeration LEAK
+- `src/app/api/accounts/route.ts:436` — `accounts` post-insert refetch (within the create-account transaction; scope already enforced by the path above)
 
 ### Scoped — internal `apply_attempts` state machine (auth DB)
 
@@ -154,6 +163,11 @@ referenced in §7 "out of scope") — not duplicated as a new finding here.
 - `src/lib/auth/{mfa-credentials,recovery-codes,role-management,bootstrap}.ts` — accounts / sessions / role-permission CRUD; no customer dimension
 - `src/lib/auth/{password,session,lockout,jwt,mfa}-policy.ts` — single-row `system_settings` reads
 - `src/app/api/auth/**` route handlers — sessions, password history, MFA credentials
+- `src/app/api/accounts/[id]/route.ts:63, 129, 300, 311, 368, 418` — account-row CRUD against `accounts`/`roles` only; the `accounts` table has no `customer_id` column. Tenant-scope is enforced one frame up by `validateManagedAccountTarget` / `getAccountCustomerIds` (see `:81–92, :148–158, :393–399`) so the scope sits on the *account* axis (whose customers does the target manage), not on the row itself
+- `src/app/api/accounts/[id]/route.ts:228, 246, 403` — System Administrator headcount checks against the `accounts`/`roles` join; aggregate count, no customer dimension
+- `src/app/api/accounts/[id]/customers/route.ts:44, 141` — `SELECT id FROM accounts WHERE id = $1` existence checks; the `accounts` row carries no customer dimension. Customer-axis enforcement is the surrounding scope check (lines 53–69 / 173–187) plus the `account_customer` JOINs above
+- `src/app/api/accounts/route.ts:252` — System Administrator headcount on the create-account path
+- `src/app/api/accounts/route.ts:369, 378, 395, 402` — transactional `accounts` insert / `account_customer` insert / `password_history` insert during account creation; tenant-scope on the linked `customerIds` is enforced earlier in the same handler before the transaction opens
 - `src/app/api/accounts/[id]/{password-reset,unlock,mfa-reset}/route.ts` — account-only updates
 - `src/app/api/auth/sign-out-all/route.ts:20, 24` — token / session revocation per-account
 - `src/lib/db/migrate.ts` — DDL only
@@ -326,6 +340,7 @@ None.
 | Surface | Key | Invalidation | Class |
 |---|---|---|---|
 | `src/components/detection/detection-analytics.tsx:204` `cacheRef<Map<string, ReadyResult>>` | `${filterIdentity}|${dimension}|${topN}` | Per-component-mount only; cleared on unmount; no cross-customer key | `unknown` — see §7 P2 |
+| `src/components/detection/detection-shell.tsx:1111` `sensorCache` (state) populated via `fetchSensors()` | per-mount state in the Detection shell — caches the sensor list (id / name / customerId) for the tab session | None on scope change; only refetched on `shouldTriggerSensorFetch(sensorCache)` (idle / prior error). Survives drawer close/reopen but not a tab unmount | `unknown` — see §7 P2 |
 | `src/lib/detection/tabs-storage.ts` `sessionStorage["detection:tabs:v1"]` | per-tab filter / endpoints / pagination snapshot | None on scope change; sessionStorage cleared at tab close | `unknown` — see §7 P2 |
 | `src/components/providers/timezone-provider.tsx:24` | timezone preference (per-account, not per-customer) | None on scope change; remount on navigation | scoped (account-only data) |
 | `src/hooks/use-sidebar.ts` `localStorage["sidebar-collapsed"]` | UI state only | n/a | scoped (no customer data) |
@@ -333,11 +348,16 @@ None.
 The Detection caches do not store cross-customer payloads in a single
 session because (a) a session's effective `customerIds` does not change
 mid-session (the JWT is re-derived only on a new sign-in / impersonation,
-which already invalidates the page), and (b) the analytics cache is wiped
-on unmount and never persists across reloads. The risk is theoretical and
-narrow: an SSO-style scope change without a full reload could surface
-stale analytics until the component re-fetches. Flagged as `unknown` for
-hardening to decide.
+which already invalidates the page), and (b) the analytics cache is
+wiped on unmount and never persists across reloads. The sensor-drawer
+cache (`sensorCache`) holds customer-scoped sensor names / IDs but
+shares the same mid-session-immutability assumption — its risk is
+narrower than the analytics cache because the data set is sensor-list
+metadata rather than result rows, but the cache key shape is the same
+("none — keyed by mount only"). The risk is theoretical and narrow: an
+SSO-style scope change without a full reload could surface stale
+analytics or stale sensor labels until the component re-fetches.
+Flagged as `unknown` for hardening to decide.
 
 The React app is App-Router-based; no React Query / SWR / `unstable_cache` /
 `fetch({ next: { revalidate } })` usage was found that holds customer
@@ -345,7 +365,7 @@ data. The route segments under `/api/**` are all dynamic
 (per-request session resolution), so Next.js route-handler caching is not
 a factor.
 
-### No findings beyond the two `unknown` Detection surfaces.
+### No findings beyond the three `unknown` Detection surfaces.
 
 ---
 
@@ -420,6 +440,15 @@ a factor.
    confirm that a scope change either reloads the shell or clears the
    `detection:tabs:v1` key.
 
+9. **Detection sensor drawer cache** (`src/components/detection/detection-shell.tsx:1111`).
+   Shell-state cache of the sensor list (id / name / customerId)
+   populated by `fetchSensors`. Holds customer-scoped sensor labels
+   for the tab session with no scope key and no explicit invalidation
+   beyond unmount. Same scope-change-without-reload condition as #7
+   / #8; the data set is metadata rather than result rows, so the
+   blast radius is "stale labels" rather than "cross-customer
+   payloads".
+
 ### Out of scope of this report (already owned elsewhere)
 
 - **#384** — Detection BFF intersection check on `filter.customers`. The
@@ -441,6 +470,7 @@ a factor.
 | 6 (P1) | `DELETE /api/customers/[id]` missing caller-scope check | Add the same `access-all`-or-`account_customer`-JOIN check used by GET / PATCH on the same route before the linked-accounts check, so a non-`access-all` caller cannot delete a customer outside their scope. |
 | 7 (P2) | Detection analytics cache key | If hardening confirms the scope-change-without-reload pathway exists, prefix the cache key with the session's `accountId` or invalidate the cache on a "scope changed" signal from the auth provider. |
 | 8 (P2) | Detection tabs `sessionStorage` | Same disposition: namespace the `sessionStorage` key by `accountId` or wipe on sign-in. |
+| 9 (P2) | Detection sensor drawer cache (`sensorCache`) | Same disposition: reset `sensorCache` on a "scope changed" signal from the auth provider, or refetch eagerly when the session's `accountId` / `customerIds` differs from the value the cache was filled under. |
 
 #388 should additionally:
 
@@ -450,3 +480,5 @@ a factor.
   with `customerId: null` and a `// scope-allowlist:` comment).
 - Cover findings 2–6 with the cross-customer integration test matrix
   under `src/__integration__/multi-tenancy/`.
+- Cover findings 7–9 once the scope-change-without-reload pathway is
+  confirmed or ruled out under #387.
