@@ -77,7 +77,7 @@ export function MobileHeader({
           <CustomerScopeIndicator
             scope={scope}
             canManage={canManageCustomers}
-            compact
+            variant="mobile"
             className="text-[var(--sidebar-fg)]"
           />
         </div>

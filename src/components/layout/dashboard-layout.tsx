@@ -56,6 +56,7 @@ export default function DashboardLayout({
               <CustomerScopeIndicator
                 scope={scope}
                 canManage={canManageCustomers}
+                className="hidden desktop:inline-flex"
               />
             </div>
 

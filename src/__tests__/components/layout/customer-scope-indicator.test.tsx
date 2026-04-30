@@ -108,6 +108,45 @@ describe("formatScopeLabel", () => {
   it("returns the empty label for an empty assignment", () => {
     expect(formatScopeLabel({ kind: "empty", customers: [] }, t)).toBe("empty");
   });
+
+  it("renders the mobile single-customer label as just the name", () => {
+    expect(
+      formatScopeLabel(
+        { kind: "assigned", customers: [{ id: 1, name: "ACME" }] },
+        t,
+        "mobile",
+      ),
+    ).toBe("mobileSingle(name=ACME)");
+  });
+
+  it("renders the mobile multi-customer label as a count pill", () => {
+    expect(
+      formatScopeLabel(
+        {
+          kind: "assigned",
+          customers: [
+            { id: 1, name: "ACME" },
+            { id: 2, name: "Beta" },
+            { id: 3, name: "Gamma" },
+          ],
+        },
+        t,
+        "mobile",
+      ),
+    ).toBe("mobileCount(count=3)");
+  });
+
+  it("renders the mobile admin label as a count-style pill", () => {
+    expect(
+      formatScopeLabel({ kind: "admin", customers: [] }, t, "mobile"),
+    ).toBe("mobileAll");
+  });
+
+  it("renders the mobile empty label as the warning short form", () => {
+    expect(
+      formatScopeLabel({ kind: "empty", customers: [] }, t, "mobile"),
+    ).toBe("mobileEmpty");
+  });
 });
 
 describe("CustomerScopeIndicator", () => {
@@ -174,6 +213,65 @@ describe("CustomerScopeIndicator", () => {
     expect(html).toContain('data-scope-kind="empty"');
     // Empty scope must use the destructive (warning) styling so the
     // operator notices that the session has no tenant access.
+    expect(html).toContain("destructive");
+  });
+
+  it("renders the mobile single-customer pill as a name-only chip", () => {
+    const html = renderToStaticMarkup(
+      <CustomerScopeIndicator
+        variant="mobile"
+        scope={{ kind: "assigned", customers: [{ id: 1, name: "ACME" }] }}
+      />,
+    );
+    expect(html).toContain('data-variant="mobile"');
+    // Mobile single-customer must drop the "Customer:" prefix and
+    // render the bare name so it fits the narrow header.
+    expect(html).toContain("mobileSingle(name=ACME)");
+    expect(html).not.toContain("single(name=ACME)");
+  });
+
+  it("renders the mobile multi-customer pill as a count chip", () => {
+    const html = renderToStaticMarkup(
+      <CustomerScopeIndicator
+        variant="mobile"
+        scope={{
+          kind: "assigned",
+          customers: [
+            { id: 1, name: "ACME" },
+            { id: 2, name: "Beta" },
+            { id: 3, name: "Gamma" },
+          ],
+        }}
+      />,
+    );
+    // Mobile must NOT use the desktop comma-joined format that would
+    // overflow a narrow viewport.
+    expect(html).not.toContain("few(names=ACME, Beta, Gamma)");
+    expect(html).toContain("mobileCount(count=3)");
+  });
+
+  it("renders the mobile admin pill as a count-style chip without the inline badge", () => {
+    const html = renderToStaticMarkup(
+      <CustomerScopeIndicator
+        variant="mobile"
+        scope={{ kind: "admin", customers: [] }}
+      />,
+    );
+    expect(html).toContain("mobileAll");
+    expect(html).not.toContain("All customers");
+    // The admin badge moves into the sheet header on mobile so the
+    // pill itself stays compact.
+    expect(html).not.toContain("adminBadge");
+  });
+
+  it("renders the mobile empty pill with the short warning label", () => {
+    const html = renderToStaticMarkup(
+      <CustomerScopeIndicator
+        variant="mobile"
+        scope={{ kind: "empty", customers: [] }}
+      />,
+    );
+    expect(html).toContain("mobileEmpty");
     expect(html).toContain("destructive");
   });
 });

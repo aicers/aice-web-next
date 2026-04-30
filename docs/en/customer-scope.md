@@ -6,11 +6,7 @@ operators always know which slice of the system they are looking
 at. The indicator is read-only — it does not narrow or switch the
 session; that is tracked separately as a future enhancement.
 
-![Customer scope indicator (wireframe)](../assets/customer-scope-indicator-en.svg)
-
-> The image above is a wireframe stand-in. A real PNG capture will
-> replace it once a development environment with multi-customer
-> fixtures is available (issue #383 follow-up).
+![Customer scope indicator on a multi-customer dashboard](../assets/customer-scope-indicator-en.png)
 
 ## Where the indicator appears
 
@@ -19,11 +15,19 @@ The indicator is rendered for every authenticated page:
 - **Desktop** — right-aligned in the breadcrumb bar at the top of
   the page, sharing the row with the breadcrumb trail.
 - **Mobile** — in the mobile header, right of the menu trigger
-  and the logo. The pill collapses to a compact size on narrow
-  viewports.
+  and the logo. The pill collapses to a customer-name chip in the
+  single-customer case (`ACME`), a count chip in the multi or
+  admin cases (`3 customers`, `All`), or a short warning chip when
+  the session has no customer access. Tapping the chip opens a
+  bottom sheet rather than the desktop popover, so the full
+  customer list and management link fit a narrow viewport without
+  overflowing the header.
 
-Click (or tap) the pill to open a popover that lists the full set
-of customers in scope and labels the source of the access.
+![Mobile customer scope sheet](../assets/customer-scope-indicator-mobile-en.png)
+
+Click (or tap) the pill to open the popover (desktop) or sheet
+(mobile) that lists the full set of customers in scope and labels
+the source of the access.
 
 ## Indicator labels
 
@@ -45,6 +49,8 @@ The empty state means the session has no `account_customer`
 assignment and is not an admin. The page renders cleanly but
 shows a warning-styled pill so the operator notices that no
 customer data is available.
+
+![Admin scope with the All customers badge](../assets/customer-scope-indicator-admin-en.png)
 
 ## Popover
 
