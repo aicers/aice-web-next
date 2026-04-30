@@ -105,6 +105,12 @@ section 7, not repeated in every section.
 | `src/app/[locale]/(dashboard)/detection/analytics-actions.ts` | `runAnalyticsQuery` | `scoped` — wraps `countEventsBy*` (category/level/country/kind/srcIp/dstIp via `dispatch`) and `eventFrequencySeries`; both flow through the Detection-track `buildDispatchContext` |
 | `src/app/[locale]/(dashboard)/detection/sensor-actions.ts` | `fetchSensors` | `scoped` — wraps `listSensors`, which signs the Context JWT with `session.customerIds`; the returned sensor list is already restricted to the caller's accessible customers |
 | `src/app/[locale]/(dashboard)/detection/saved-filter-actions.ts` | `listSavedFilters`, `saveFilter`, `renameFilter`, `deleteFilter` | `scoped` — DB ownership scoped by `owner_account_id = session.accountId`. The persisted `filter_json` payload may embed a `customers` selection from a previous scope; running a saved filter goes back through the Detection BFF whose customer-intersection check is owned by **#384** (referenced in §7, not duplicated). The saved-filter actions themselves do not leak across accounts |
+| `src/lib/node/apply-attempts.ts` | `createApplyAttempt` (`:101`) | `scoped` — `getCurrentSession()` resolved server-side; `requireBothPermissions` (`nodes:write` + `services:write`); `buildDispatchContext(session)`; `readCanonicalNode(ctx, ...)` followed by `enforceNodeScope(ctx, node)`. The downstream `INSERT INTO apply_attempts` at `:144` is the §2 call site |
+| `src/lib/node/apply-actions.ts` | `confirmApplyAttempt` (`:195`), `retryDispatch` (`:254`) | `scoped` — `resolveSession()` server-side; `requireWritePermissions(session)`; `buildDispatchContext(session)`; `rebuildAndAssertNodeScope(session, ctx, attemptId, ...)` re-reads the canonical node and re-asserts scope before any dispatch reaches the wire (deliberately re-checked because the dispatcher's `external()` path has no per-node scope guard of its own) |
+| `src/lib/events/related-pivots.ts` | `fetchRelatedPivotSummaries` (`:98`) | `scoped` (transitive) — calls into `searchEvents(session, ...)` from `src/lib/detection/server-actions.ts`, which materialises customer scope via the local Detection-track `buildDispatchContext(session, filter)`. No additional state of its own |
+| `src/lib/events/endpoint-enrichment.ts` | `fetchEndpointEnrichments` (`:22`) | `customer-agnostic` — wraps `lookupIpLocation(session, addr)` (Detection-track IP geolocation; same classification as the underlying `lookupIpLocation` action above). Returns `{}` when no session is present |
+
+(The Investigation page's lazy server actions — `fetchRelatedPivotSummaries` and `fetchEndpointEnrichments` — are listed explicitly here so #387/#388 do not have to infer them from their downstream helpers; same rationale for the three exported `apply-*` actions.)
 
 ---
 
@@ -113,10 +119,12 @@ section 7, not repeated in every section.
 Scope: every **semantic SQL call site** — every `query(...)`,
 `query<T>(...)`, `pool.query(...)`, `client.query(...)`,
 `client.query<T>(...)`, and the audit-DB wrapper `queryAudit(...)` /
-`queryAudit<T>(...)` — under `src/lib/**` and
-`src/app/api/**/route.ts`. Generic-typed forms (`query<Row>(...)`) are
-included alongside untyped forms; they are the same DB call.
-Migrations and test harnesses excluded.
+`queryAudit<T>(...)` — under `src/lib/**`, `src/app/api/**/route.ts`,
+**and** the App-Router page modules
+(`src/app/[locale]/(dashboard)/**/page.tsx`) where a few RSC pages
+issue direct customer-list reads to feed picker UI. Generic-typed
+forms (`query<Row>(...)`) are included alongside untyped forms; they
+are the same DB call. Migrations and test harnesses excluded.
 
 The thin DB-helper plumbing (the bodies of `query` / `withTransaction`
 in `src/lib/db/client.ts` and `queryAudit` in `src/lib/audit/client.ts`)
@@ -154,6 +162,15 @@ not invisible:
 - `src/app/api/accounts/route.ts:436` — `accounts` post-insert refetch (within the create-account transaction; scope already enforced by the path above)
 - `src/lib/node/apply-attempts.ts:144` — `INSERT INTO apply_attempts (...)` inside `createApplyAttempt`; the public entry point pre-resolves the node via `assertNodeInScope` before reaching this insert
 - `src/lib/node/apply-history.ts:21` — `SELECT MAX(...) FROM apply_attempts WHERE node_id = $1 AND status = 'succeeded'` (last-applied-at on the detail page); reachable only from the scoped `getNode` / detail-page path that has already run `assertNodeInScope`
+
+Page-level RSC reads that feed picker UI (each page branches on `customers:access-all` and otherwise scopes via `account_customer` JOIN keyed on `session.accountId`):
+
+- `src/app/[locale]/(dashboard)/nodes/(gate)/settings/page.tsx:42` — `SELECT id, name FROM customers ORDER BY name` (`access-all` branch of `loadCustomerOptions`)
+- `src/app/[locale]/(dashboard)/nodes/(gate)/settings/page.tsx:43-46` — `SELECT c.id, c.name FROM customers c JOIN account_customer ac ON ac.customer_id = c.id WHERE ac.account_id = $1 ORDER BY c.name` (tenant-scoped branch); `accessAll` precomputed at `:79`, `accountId` from server-resolved session at `:82`
+- `src/app/[locale]/(dashboard)/nodes/(gate)/(probe)/[id]/page.tsx:44` — `SELECT id, name FROM customers ORDER BY name` (same `access-all` branch as the settings page)
+- `src/app/[locale]/(dashboard)/nodes/(gate)/(probe)/[id]/page.tsx:45-48` — `SELECT c.id, c.name FROM customers c JOIN account_customer ac ON ac.customer_id = c.id WHERE ac.account_id = $1 ORDER BY c.name` (tenant-scoped branch); `accessAll` precomputed at `:100`, `accountId` from server-resolved session at `:129`
+
+Both pages mount under the `nodes/(gate)` segment whose layout enforces the `nodes:read + services:read` permission gate (parent layout's combined-permission check). The `access-all` flag is a server-side `hasPermission(...)` lookup, not caller-supplied. The result feeds the customer-filter picker in `NodeListTable` and the customer-name lookup on the detail page; rows the caller does not have scope on are not visible to the UI. Classified `scoped` rather than `LEAK` — the `access-all`-or-`account_customer`-JOIN shape mirrors the `/api/customers` GET handler at `src/app/api/customers/route.ts:61, 66`.
 
 ### Scoped — internal `apply_attempts` state machine (auth DB)
 
@@ -419,6 +436,17 @@ Dashboard / admin (admin-only at the route layer; tables touched carry no `custo
 - `src/lib/dashboard/queries.ts:37` — `sessions` ⨝ `accounts` SELECT (active sessions list)
 - `src/lib/dashboard/queries.ts:56` — `accounts` ⨝ `roles` SELECT (locked / suspended accounts list)
 - `src/app/api/dashboard/sessions/[sid]/revoke/route.ts:30` — `sessions` SELECT (existence + ownership for the revoke target)
+
+Dashboard suspicious-activity (audit DB; `dashboard:read` route gate; aggregates over global session/account audit rows that carry no `customer_id`):
+
+- `src/lib/dashboard/suspicious-activity.ts:40` — `audit_logs` aggregate (`auth.sign_in.failure` GROUP BY `ip_address`)
+- `src/lib/dashboard/suspicious-activity.ts:68` — `audit_logs` aggregate (`account.lock` count)
+- `src/lib/dashboard/suspicious-activity.ts:95` — `audit_logs` aggregate (`session.ip_mismatch` / `session.ua_mismatch` count)
+- `src/lib/dashboard/suspicious-activity.ts:125` — `audit_logs` aggregate (after-hours `auth.sign_in.success` count)
+- `src/lib/dashboard/suspicious-activity.ts:154` — `audit_logs` aggregate (`account.update` privilege-escalation count)
+- `src/lib/dashboard/suspicious-activity.ts:183` — `audit_logs` aggregate (`session.revoke` GROUP BY `actor_id`)
+
+All six rules aggregate over auth-axis actions (sign-in / lock / session / account.update / session.revoke) whose `customer_id` is intentionally null — they target accounts and sessions, not customers — and roll up into the admin-only `/api/dashboard/alerts` route. No `customer_id` predicate is needed; no `customer_id` data crosses the response.
 
 E2E test-only:
 
