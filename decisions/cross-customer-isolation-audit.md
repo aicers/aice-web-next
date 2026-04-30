@@ -120,8 +120,19 @@ the same DB call. Migrations and test harnesses excluded.
 
 - `src/lib/auth/customer-scope.ts:14` — `SELECT customer_id FROM account_customer WHERE account_id = $1` (resolves caller scope)
 - `src/lib/auth/customer-scope.ts:29` — `SELECT id FROM customers ORDER BY id` (used only after `customers:access-all` check)
-- `src/app/api/customers/route.ts:62, 67` — list customers; either unconditional (`access-all`) or `JOIN account_customer ac ON ac.customer_id = c.id WHERE ac.account_id = $1`
-- `src/app/api/customers/[id]/route.ts:46, 122, 219` — single-customer read/patch/delete; tenant scope verified via `account_customer` lookup before each
+- `src/app/api/customers/route.ts:61` — `SELECT * FROM customers ORDER BY ...` (the `access-all` branch's listing)
+- `src/app/api/customers/route.ts:66` — `SELECT * FROM customers c JOIN account_customer ac ON ac.customer_id = c.id WHERE ac.account_id = $1` (the tenant-scoped listing)
+- `src/app/api/customers/route.ts:119` — `SELECT * FROM customers WHERE id = $1` (post-create read-back inside POST)
+- `src/app/api/customers/route.ts:132` — `DELETE FROM customers WHERE id = $1` (rollback path inside POST when database provisioning fails)
+- `src/app/api/customers/route.ts:137` — `SELECT * FROM customers WHERE status = 'active' ORDER BY ...` (post-create active-customers list)
+- `src/app/api/customers/[id]/route.ts:45` — `SELECT * FROM customers WHERE id = $1` (GET target)
+- `src/app/api/customers/[id]/route.ts:62` — `SELECT customer_id FROM account_customer WHERE account_id = $1 AND customer_id = $2` (GET tenant-scope check, runs only on the non-`access-all` branch)
+- `src/app/api/customers/[id]/route.ts:121` — `SELECT * FROM customers WHERE id = $1` (PATCH precondition)
+- `src/app/api/customers/[id]/route.ts:138` — `SELECT customer_id FROM account_customer WHERE account_id = $1 AND customer_id = $2` (PATCH tenant-scope check, non-`access-all` branch)
+- `src/app/api/customers/[id]/route.ts:171` — `UPDATE customers SET ... WHERE id = $1` (PATCH commit, after the scope check above)
+- `src/app/api/customers/[id]/route.ts:218` — `SELECT * FROM customers WHERE id = $1` (DELETE precondition; the missing caller-scope check is the §1 LEAK — see §7 #6, not duplicated)
+- `src/app/api/customers/[id]/route.ts:232` — `SELECT customer_id FROM account_customer WHERE customer_id = $1 LIMIT 1` (precondition: refuse delete while any link remains; **does not** verify the caller's own scope — that is the §1 LEAK)
+- `src/app/api/customers/[id]/route.ts:245` — `DELETE FROM customers WHERE id = $1` (DELETE commit; same scope gap as `:218`)
 - `src/app/api/accounts/[id]/customers/route.ts:72` — `JOIN account_customer ac` + `JOIN customers c`; tenant scope check (lines 53–69) runs before the SELECT
 - `src/app/api/accounts/[id]/customers/route.ts:159` — `SELECT id FROM customers WHERE id = ANY($1)`; existence check used to validate request input. The error path at line 167 is the §4 enumeration LEAK; the SELECT itself is `unknown`/scope-deferred — runs *before* the tenant-scope check at line 173
 - `src/app/api/accounts/[id]/customers/route.ts:197, 204, 223` — transactional account-customer assignment queries; tenant scope check at line 173 runs before the transaction
@@ -130,6 +141,8 @@ the same DB call. Migrations and test harnesses excluded.
 - `src/app/api/accounts/route.ts:145` — `accounts` listing with the visibility filter from `:134` applied
 - `src/app/api/accounts/route.ts:318` — `SELECT id FROM customers WHERE id = ANY($1)` validating the `customerIds` payload of POST /api/accounts. Same enumeration shape as `:159` above; error path at `:326` is the §4 enumeration LEAK
 - `src/app/api/accounts/route.ts:436` — `accounts` post-insert refetch (within the create-account transaction; scope already enforced by the path above)
+- `src/lib/node/apply-attempts.ts:144` — `INSERT INTO apply_attempts (...)` inside `createApplyAttempt`; the public entry point pre-resolves the node via `assertNodeInScope` before reaching this insert
+- `src/lib/node/apply-history.ts:21` — `SELECT MAX(...) FROM apply_attempts WHERE node_id = $1 AND status = 'succeeded'` (last-applied-at on the detail page); reachable only from the scoped `getNode` / detail-page path that has already run `assertNodeInScope`
 
 ### Scoped — internal `apply_attempts` state machine (auth DB)
 
@@ -199,40 +212,206 @@ Listed per-call-site for all auth-DB CRUD. `accounts`, `roles`,
 tenant-scoped (account-management routes), tenant-overlap enforcement
 sits one frame up at the API layer; the SQL itself is customer-agnostic.
 
-Audit-DB / system-settings:
+Audit-DB writers:
 
 - `src/lib/audit/logger.ts:133` — `INSERT INTO audit_logs ...`. Append-only insert; `customer_id` is data, not predicate
-- `src/lib/auth/{password,session,lockout,jwt,mfa}-policy.ts` — single-row `system_settings` SELECTs
 
-Auth-DB lib:
+System-settings reads (each policy module owns one cached SELECT against the global `system_settings` row keyed by `key`):
 
-- `src/lib/auth/sign-in.ts:48` — `accounts` UPDATE (reset failed-count + lockout, set `last_sign_in_at`); `:57` — `sessions` INSERT (per account)
-- `src/lib/auth/session.ts:18` — `sessions` UPDATE (revoke single session)
-- `src/lib/auth/guard.ts:271` — `sessions` UPDATE (set `needs_reauth`); `:310` — `sessions` UPDATE (`last_active_at`)
-- `src/lib/auth/mfa-credentials.ts:15` — `totp_credentials` DELETE (account); `:18` — `webauthn_credentials` DELETE (account); `:21` — `recovery_codes` DELETE (account); `:24` — `sessions` UPDATE (revoke for account)
-- `src/lib/auth/recovery-codes.ts:52, :56` — `recovery_codes` DELETE + INSERT (transactional regenerate); `:84` — `recovery_codes` UPDATE (mark used)
-- `src/lib/auth/totp.ts:85` — `totp_credentials` SELECT; `:97` — INSERT...ON CONFLICT; `:110` — UPDATE; `:119` — DELETE
-- `src/lib/auth/webauthn.ts:92, :107, :122` — `webauthn_credentials` SELECTs (by account / credential); `:141` — INSERT; `:163, :175` — UPDATEs; `:187, :198` — DELETEs; `:234, :238, :254` — `webauthn_registration_challenges` cleanup / upsert / consume; `:269, :273, :289` — `webauthn_authentication_challenges` cleanup / upsert / consume
-- `src/lib/auth/role-management.ts:179, :251` — `roles` SELECTs (name conflict); `:189` — INSERT; `:201, :273` — `role_permissions` INSERTs; `:261` — `roles` UPDATE; `:269` — `role_permissions` DELETE; `:328` — `roles` DELETE
-- `src/lib/auth/bootstrap.ts:125` — `audit_logs` INSERT (bootstrap); `:157` — `accounts` SELECT (count); `:175` — `roles` SELECT (lookup); `:192` — `accounts` INSERT...WHERE NOT EXISTS; `:208` — `password_history` INSERT
-- `src/lib/db/migrate.ts` — DDL only
+- `src/lib/auth/password-policy.ts:45` — `system_settings` SELECT (`password_policy`)
+- `src/lib/auth/session-policy.ts:56` — `system_settings` SELECT (`session_policy`)
+- `src/lib/auth/lockout-policy.ts:39` — `system_settings` SELECT (`lockout_policy`)
+- `src/lib/auth/jwt-policy.ts:36` — `system_settings` SELECT (`jwt_policy`)
+- `src/lib/auth/mfa-policy.ts:40` — `system_settings` SELECT (`mfa_policy`)
+- `src/lib/auth/account-role-policy.ts:104` — `system_settings` SELECT (`account_role_policy`)
+- `src/lib/auth/system-settings.ts:194` — `system_settings` SELECT (single-key read by admin endpoint)
+- `src/lib/auth/system-settings.ts:204` — `system_settings` UPSERT (admin write of the single global row for that key)
+- `src/lib/auth/system-settings.ts:232` — `system_settings` SELECT (alternate read path used by snapshot consumers)
+- `src/lib/rate-limit/limiter.ts:75` — `system_settings` SELECT (`rate_limit.sign_in`)
+- `src/lib/rate-limit/limiter.ts:110` — `system_settings` SELECT (`rate_limit.api`)
+
+Auth-DB lib (per call site):
+
+`src/lib/auth/sign-in.ts`:
+
+- `:48` — `accounts` UPDATE (reset failed-count + lockout, set `last_sign_in_at`)
+- `:57` — `sessions` INSERT (per-account session row)
+
+`src/lib/auth/session.ts`:
+
+- `:18` — `sessions` UPDATE (revoke single session by sid)
+
+`src/lib/auth/guard.ts`:
+
+- `:271` — `sessions` UPDATE (set `needs_reauth`)
+- `:310` — `sessions` UPDATE (touch `last_active_at`)
+
+`src/lib/auth/jwt.ts`:
+
+- `:125` — `sessions` SELECT (resolve session row from sid for JWT issuance)
+
+`src/lib/auth/permissions.ts`:
+
+- `:23` — `role_permissions` SELECT (resolve permissions for a role)
+
+`src/lib/auth/password-validator.ts`:
+
+- `:60` — `password_history` SELECT (reuse-prevention lookup)
+
+`src/lib/auth/mfa-enforcement.ts`:
+
+- `:31` — credential-presence SELECT (UNION over `totp_credentials` / `webauthn_credentials` for the caller's account)
+
+`src/lib/auth/mfa-challenge.ts`:
+
+- `:61` — `mfa_challenges` SELECT (single-use guard on the JWT identifier)
+- `:87` — `accounts` SELECT (resolve subject account from challenge JWT)
+- `:150` — `mfa_challenges` SELECT (rate-limit count of recent challenges)
+
+`src/lib/auth/mfa-credentials.ts` (transactional account credential wipe):
+
+- `:15` — `totp_credentials` DELETE (account)
+- `:18` — `webauthn_credentials` DELETE (account)
+- `:21` — `recovery_codes` DELETE (account)
+- `:24` — `sessions` UPDATE (revoke for account)
+
+`src/lib/auth/recovery-codes.ts`:
+
+- `:52` — `recovery_codes` DELETE (transactional regenerate, prior codes)
+- `:56` — `recovery_codes` INSERT (transactional regenerate, fresh codes)
+- `:76` — `recovery_codes` SELECT (challenge consume — load candidates)
+- `:84` — `recovery_codes` UPDATE (mark a code used)
+- `:101` — `recovery_codes` SELECT (remaining/total count for the UI)
+
+`src/lib/auth/totp.ts`:
+
+- `:85` — `totp_credentials` SELECT (active credential by account)
+- `:97` — `totp_credentials` INSERT…ON CONFLICT (enroll / replace)
+- `:110` — `totp_credentials` UPDATE (mark verified)
+- `:119` — `totp_credentials` DELETE (remove credential)
+
+`src/lib/auth/webauthn.ts`:
+
+- `:92` — `webauthn_credentials` SELECT (list by account)
+- `:107` — `webauthn_credentials` SELECT (load by credential id)
+- `:122` — `webauthn_credentials` SELECT (load by account)
+- `:141` — `webauthn_credentials` INSERT (registration commit)
+- `:163` — `webauthn_credentials` UPDATE (label / metadata edit)
+- `:175` — `webauthn_credentials` UPDATE (counter / last-used bump)
+- `:187` — `webauthn_credentials` DELETE (single credential by id)
+- `:198` — `webauthn_credentials` DELETE (all for account)
+- `:234` — `webauthn_registration_challenges` cleanup
+- `:238` — `webauthn_registration_challenges` upsert
+- `:254` — `webauthn_registration_challenges` consume
+- `:269` — `webauthn_authentication_challenges` cleanup
+- `:273` — `webauthn_authentication_challenges` upsert
+- `:289` — `webauthn_authentication_challenges` consume
+
+`src/lib/auth/role-management.ts`:
+
+- `:82` — `roles` ⨝ `role_permissions` SELECT (list with permissions)
+- `:109` — `roles` SELECT (single by id, with permissions)
+- `:139` — `roles` SELECT (lookup by name)
+- `:179` — `roles` SELECT (name-conflict check on create)
+- `:189` — `roles` INSERT (within the create transaction)
+- `:201` — `role_permissions` INSERT (within the create transaction)
+- `:251` — `roles` SELECT (name-conflict check on update)
+- `:261` — `roles` UPDATE (within the update transaction)
+- `:269` — `role_permissions` DELETE (within the update transaction)
+- `:273` — `role_permissions` INSERT (within the update transaction, fresh perms)
+- `:328` — `roles` DELETE
+
+`src/lib/auth/emergency-mfa-reset.ts`:
+
+- `:38` — `accounts` SELECT (resolve account by username for the break-glass path)
+
+`src/lib/auth/bootstrap.ts`:
+
+- `:125` — `audit_logs` INSERT (bootstrap audit row)
+- `:157` — `accounts` SELECT (count, gate the bootstrap path)
+- `:175` — `roles` SELECT (lookup default admin role)
+- `:192` — `accounts` INSERT…WHERE NOT EXISTS (bootstrap admin)
+- `:208` — `password_history` INSERT (bootstrap admin's initial password)
+
+`src/lib/db/migrate.ts` — DDL / migration runner only (excluded from this inventory by scope).
 
 Auth route handlers (per call site):
 
-- `src/app/api/auth/reauth/route.ts:62` — `sessions` UPDATE (clear reauth flag)
-- `src/app/api/auth/sign-in/route.ts:88` — `accounts` UPDATE (auto-unlock expired temp lock); `:130` — `accounts` UPDATE (stage-1 temp lock); `:151` — `accounts` UPDATE (stage-2 suspend); `:174` — `accounts` UPDATE (increment `failed_sign_in_count`); `:311` — `mfa_challenges` INSERT
-- `src/app/api/auth/sign-out-all/route.ts:20` — `accounts` UPDATE (`token_version` bump); `:24` — `sessions` UPDATE (revoke all for account)
-- `src/app/api/auth/password/route.ts:105` — `accounts` UPDATE (password hash + token bump + status); `:120` — `password_history` INSERT; `:127` — `sessions` UPDATE (revoke siblings)
+- `src/app/api/auth/me/route.ts:15` — `accounts` SELECT (caller's own row by `session.accountId`; self-read, no customer dimension)
+- `src/app/api/auth/reauth/route.ts:32` — `accounts` SELECT (caller's password hash for the reauth verify)
+- `src/app/api/auth/reauth/route.ts:62` — `sessions` UPDATE (clear `needs_reauth`)
+- `src/app/api/auth/sign-in/route.ts:88` — `accounts` UPDATE (auto-unlock expired temp lock)
+- `src/app/api/auth/sign-in/route.ts:130` — `accounts` UPDATE (stage-1 temp lock)
+- `src/app/api/auth/sign-in/route.ts:151` — `accounts` UPDATE (stage-2 suspend)
+- `src/app/api/auth/sign-in/route.ts:174` — `accounts` UPDATE (`failed_sign_in_count`)
+- `src/app/api/auth/sign-in/route.ts:238` — `accounts` SELECT (resolve account from username for the credential check)
+- `src/app/api/auth/sign-in/route.ts:311` — `mfa_challenges` INSERT (issue MFA challenge token)
+- `src/app/api/auth/sign-in/route.ts:351` — `password_history` SELECT (post-sign-in must-change-password gate count)
+- `src/app/api/auth/sign-out-all/route.ts:20` — `accounts` UPDATE (`token_version` bump within transaction)
+- `src/app/api/auth/sign-out-all/route.ts:24` — `sessions` UPDATE (revoke all for account, within transaction)
+- `src/app/api/auth/password/route.ts:63` — `accounts` SELECT (caller's current password hash)
+- `src/app/api/auth/password/route.ts:105` — `accounts` UPDATE (password hash + token bump + status, within transaction)
+- `src/app/api/auth/password/route.ts:120` — `password_history` INSERT (within transaction)
+- `src/app/api/auth/password/route.ts:127` — `sessions` UPDATE (revoke siblings, within transaction)
 - `src/app/api/auth/mfa/enrollment-complete/route.ts:21` — `sessions` UPDATE (clear `must_enroll_mfa`)
+- `src/app/api/auth/mfa/totp/setup/route.ts:52` — `accounts` SELECT (caller's username for the TOTP issuer label)
+- `src/app/api/auth/mfa/totp/challenge/route.ts:89` — `mfa_challenges` SELECT (single-use guard on the challenge JTI)
+- `src/app/api/auth/mfa/recovery/generate/route.ts:52` — `accounts` SELECT (caller's password hash for confirm)
+- `src/app/api/auth/mfa/recovery/challenge/route.ts:62` — `mfa_challenges` SELECT (single-use guard on the challenge JTI)
+- `src/app/api/auth/mfa/webauthn/register/options/route.ts:42` — `accounts` SELECT (caller's username for the WebAuthn user handle)
+- `src/app/api/auth/mfa/webauthn/credentials/[id]/route.ts:100` — `accounts` SELECT (caller's password hash for confirm)
+- `src/app/api/auth/mfa/webauthn/challenge/route.ts:146` — `mfa_challenges` SELECT (single-use guard on the challenge JTI)
+- `src/app/api/auth/mfa/webauthn/challenge/options/route.ts:63` — `webauthn_authentication_challenges` SELECT (challenge presence)
+
+Self-service / preferences:
+
+- `src/app/api/accounts/me/preferences/route.ts:32` — `accounts` SELECT (caller's locale + timezone, keyed on `session.accountId`)
+- `src/app/api/accounts/me/preferences/route.ts:116` — `accounts` SELECT (no-update echo of current values)
+- `src/app/api/accounts/me/preferences/route.ts:126` — `accounts` UPDATE (caller's preferences, keyed on `session.accountId`)
 
 Account-management routes (per call site; targets are account rows on the auth DB; tenant-overlap on the *account* axis is enforced by `validateManagedAccountTarget` / `getAccountCustomerIds` one frame up):
 
-- `src/app/api/accounts/[id]/route.ts:63, :129, :300, :311, :368, :418` — `accounts`/`roles` CRUD (GET/PATCH/DELETE handler bodies); the `accounts` row carries no `customer_id` column
-- `src/app/api/accounts/[id]/route.ts:228, :246, :403` — System Administrator headcount aggregates over `accounts` ⨝ `roles`; no customer dimension
-- `src/app/api/accounts/[id]/customers/route.ts:44, :141` — `SELECT id FROM accounts WHERE id = $1` existence checks
-- `src/app/api/accounts/route.ts:252` — System Administrator headcount on the create-account path
-- `src/app/api/accounts/route.ts:369` — `accounts` INSERT (within the create-account transaction); `:378` — `account_customer` INSERT (links to caller-supplied `customerIds` already validated above); `:395` — `password_history` INSERT; `:402` — same `account_customer` step within the transaction body; `:436` — `accounts` post-insert refetch
-- `src/app/api/accounts/[id]/password-reset/route.ts`, `/unlock/route.ts`, `/mfa-reset/route.ts` — `accounts` UPDATEs only (no customer dimension)
+- `src/app/api/accounts/[id]/route.ts:63` — `accounts` SELECT (target row for GET handler)
+- `src/app/api/accounts/[id]/route.ts:129` — `accounts` SELECT (target row for PATCH precondition)
+- `src/app/api/accounts/[id]/route.ts:228` — `accounts` ⨝ `roles` count (System Administrator headcount on PATCH)
+- `src/app/api/accounts/[id]/route.ts:246` — `accounts` ⨝ `roles` count (System Administrator headcount on PATCH, secondary check)
+- `src/app/api/accounts/[id]/route.ts:300` — `accounts` UPDATE (PATCH commit)
+- `src/app/api/accounts/[id]/route.ts:311` — `accounts` SELECT (post-update refetch)
+- `src/app/api/accounts/[id]/route.ts:368` — `accounts` SELECT (target row for DELETE precondition)
+- `src/app/api/accounts/[id]/route.ts:403` — `accounts` ⨝ `roles` count (System Administrator headcount on DELETE)
+- `src/app/api/accounts/[id]/route.ts:418` — `accounts` DELETE
+- `src/app/api/accounts/[id]/customers/route.ts:44` — `accounts` existence SELECT (GET)
+- `src/app/api/accounts/[id]/customers/route.ts:141` — `accounts` existence SELECT (POST)
+- `src/app/api/accounts/[id]/unlock/route.ts:31` — `accounts` SELECT (target row)
+- `src/app/api/accounts/[id]/unlock/route.ts:64` — `accounts` UPDATE (unlock active account)
+- `src/app/api/accounts/[id]/unlock/route.ts:86` — `accounts` UPDATE (restore suspended account)
+- `src/app/api/accounts/[id]/password-reset/route.ts:51` — `accounts` SELECT (target row)
+- `src/app/api/accounts/[id]/password-reset/route.ts:91` — `accounts` UPDATE (password hash + status, within transaction)
+- `src/app/api/accounts/[id]/password-reset/route.ts:100` — `password_history` INSERT (within transaction)
+- `src/app/api/accounts/[id]/password-reset/route.ts:106` — `sessions` UPDATE (revoke target's sessions, within transaction)
+- `src/app/api/accounts/[id]/mfa-reset/route.ts:55` — `accounts` SELECT (target row)
+- `src/app/api/accounts/[id]/mfa-reset/route.ts:122` — `accounts` SELECT (caller's password hash for confirm)
+- `src/app/api/accounts/route.ts:252` — `accounts` ⨝ `roles` count (System Administrator headcount on create)
+- `src/app/api/accounts/route.ts:369` — `accounts` INSERT…WHERE NOT EXISTS (within create transaction)
+- `src/app/api/accounts/route.ts:378` — `account_customer` INSERT (within create transaction; links to caller-supplied `customerIds` already validated above)
+- `src/app/api/accounts/route.ts:395` — `password_history` INSERT (within create transaction)
+- `src/app/api/accounts/route.ts:402` — `account_customer` INSERT (secondary insert path within the same create transaction)
+- `src/app/api/accounts/route.ts:436` — `accounts` post-insert refetch
+
+Roles routes:
+
+- `src/app/api/roles/[id]/mfa-required/route.ts:33` — `roles` SELECT (existence check)
+- `src/app/api/roles/[id]/mfa-required/route.ts:41` — `roles` UPDATE (`mfa_required` toggle)
+
+Dashboard / admin (admin-only at the route layer; tables touched carry no `customer_id`):
+
+- `src/lib/dashboard/queries.ts:37` — `sessions` ⨝ `accounts` SELECT (active sessions list)
+- `src/lib/dashboard/queries.ts:56` — `accounts` ⨝ `roles` SELECT (locked / suspended accounts list)
+- `src/app/api/dashboard/sessions/[sid]/revoke/route.ts:30` — `sessions` SELECT (existence + ownership for the revoke target)
+
+E2E test-only:
+
+- `src/app/api/e2e/reset-mfa-policy/route.ts:18` — `system_settings` write (test fixture; behind `NODE_ENV !== "production"`)
 
 ### Admin-only
 
@@ -501,21 +680,23 @@ None.
 | `src/components/detection/detection-analytics.tsx:204` `cacheRef<Map<string, ReadyResult>>` | `${filterIdentity}|${dimension}|${topN}` | Per-component-mount only; cleared on unmount; no cross-customer key | `unknown` — see §7 P2 |
 | `src/components/detection/detection-shell.tsx:1111` `sensorCache` (state) populated via `fetchSensors()` | per-mount state in the Detection shell — caches the sensor list (id / name / customerId) for the tab session | None on scope change; only refetched on `shouldTriggerSensorFetch(sensorCache)` (idle / prior error). Survives drawer close/reopen but not a tab unmount | `unknown` — see §7 P2 |
 | `src/lib/detection/tabs-storage.ts` `sessionStorage["detection:tabs:v1"]` | per-tab filter / endpoints / pagination snapshot | None on scope change; sessionStorage cleared at tab close | `unknown` — see §7 P2 |
+| `src/hooks/use-node-status-polling.ts:81-109` module-level `byNodeId: Map<string, NodeStatusBuffer>` (single instance shared by every `useNodeStatusPolling` consumer) populated from scoped `/api/nodes/status` (`src/app/api/nodes/status/route.ts:10-18, 31-34` → `getNodeStatusList`) | per-node id; payload includes node id and status snapshot (cpu / mem / disk / manager / ping). Driven by `NodeStatusPollingDriver` mounted in `nodes/(gate)/layout.tsx` (`src/components/node/node-status-polling-driver.tsx:7-17`) so the buffer survives every intra-segment navigation (Status ↔ Settings ↔ Detail) | `resetStoreForUnmount` (`use-node-status-polling.ts:484-496`) wipes the map only on the *last* `/nodes` segment unmount; `stopInterval` (`:469-472`) pauses polling on tab-hidden but does not clear the buffer; no explicit invalidation on a session / scope change while the user remains in `/nodes` | `unknown` — see §7 P2 |
 | `src/components/providers/timezone-provider.tsx:24` | timezone preference (per-account, not per-customer) | None on scope change; remount on navigation | scoped (account-only data) |
 | `src/hooks/use-sidebar.ts` `localStorage["sidebar-collapsed"]` | UI state only | n/a | scoped (no customer data) |
 
-The Detection caches do not store cross-customer payloads in a single
-session because (a) a session's effective `customerIds` does not change
-mid-session (the JWT is re-derived only on a new sign-in / impersonation,
-which already invalidates the page), and (b) the analytics cache is
-wiped on unmount and never persists across reloads. The sensor-drawer
-cache (`sensorCache`) holds customer-scoped sensor names / IDs but
-shares the same mid-session-immutability assumption — its risk is
-narrower than the analytics cache because the data set is sensor-list
-metadata rather than result rows, but the cache key shape is the same
-("none — keyed by mount only"). The risk is theoretical and narrow: an
-SSO-style scope change without a full reload could surface stale
-analytics or stale sensor labels until the component re-fetches.
+The Detection caches and the Nodes status buffer do not store
+cross-customer payloads in a single session because (a) a session's
+effective `customerIds` does not change mid-session (the JWT is
+re-derived only on a new sign-in / impersonation, which already
+invalidates the page), and (b) the Detection analytics cache is wiped
+on unmount and never persists across reloads. The Detection
+sensor-drawer cache (`sensorCache`) and the Nodes module-level status
+buffer (`byNodeId`) hold customer-scoped sensor / node identifiers but
+share the same mid-session-immutability assumption. The Nodes buffer is
+deliberately segment-scoped (lives as long as the `/nodes` segment is
+mounted) so the rolling sparkline survives intra-segment navigation; an
+SSO-style scope change that keeps the user inside `/nodes` would
+surface stale node ids and metrics until the next `/nodes` unmount.
 Flagged as `unknown` for hardening to decide.
 
 The React app is App-Router-based; no React Query / SWR / `unstable_cache` /
@@ -524,7 +705,7 @@ data. The route segments under `/api/**` are all dynamic
 (per-request session resolution), so Next.js route-handler caching is not
 a factor.
 
-### No findings beyond the three `unknown` Detection surfaces.
+### No findings beyond the four `unknown` surfaces enumerated above (three Detection + one Nodes status buffer).
 
 ---
 
@@ -608,6 +789,21 @@ a factor.
    blast radius is "stale labels" rather than "cross-customer
    payloads".
 
+10. **Nodes status polling store** (`src/hooks/use-node-status-polling.ts:81-109`).
+    Module-level `byNodeId: Map<string, NodeStatusBuffer>` populated
+    from scoped `/api/nodes/status`. Deliberately segment-scoped via
+    `NodeStatusPollingDriver` (`src/components/node/node-status-polling-driver.tsx:7-17`)
+    so the rolling sparkline buffer survives intra-segment navigation
+    (Status ↔ Settings ↔ Detail) and is only torn down on the last
+    `/nodes` unmount via `resetStoreForUnmount`
+    (`use-node-status-polling.ts:484-496`). Same
+    scope-change-without-reload condition as #7 / #8 / #9; if a
+    customer-scope change can occur while the user remains inside
+    `/nodes`, stale node ids and status snapshots from the prior
+    scope would shadow the next snapshot until the segment unmounts
+    or the next poll lands. Blast radius: node ids + system metrics
+    (cpu / memory / disk / manager flag / ping), not event payloads.
+
 ### Out of scope of this report (already owned elsewhere)
 
 - **#384** — Detection BFF intersection check on `filter.customers`. The
@@ -630,6 +826,7 @@ a factor.
 | 7 (P2) | Detection analytics cache key | If hardening confirms the scope-change-without-reload pathway exists, prefix the cache key with the session's `accountId` or invalidate the cache on a "scope changed" signal from the auth provider. |
 | 8 (P2) | Detection tabs `sessionStorage` | Same disposition: namespace the `sessionStorage` key by `accountId` or wipe on sign-in. |
 | 9 (P2) | Detection sensor drawer cache (`sensorCache`) | Same disposition: reset `sensorCache` on a "scope changed" signal from the auth provider, or refetch eagerly when the session's `accountId` / `customerIds` differs from the value the cache was filled under. |
+| 10 (P2) | Nodes status polling store (`byNodeId` in `use-node-status-polling.ts`) | Same disposition: extend `resetStoreForUnmount` (or expose a sibling reset) and call it on a "scope changed" signal from the auth provider so the segment-scoped buffer is wiped without waiting for the `/nodes` unmount. Alternatively, key the buffer by `${session.accountId}|${nodeId}` and discard entries on key mismatch. |
 
 #388 should additionally:
 
@@ -639,5 +836,5 @@ a factor.
   with `customerId: null` and a `// scope-allowlist:` comment).
 - Cover findings 2–6 with the cross-customer integration test matrix
   under `src/__integration__/multi-tenancy/`.
-- Cover findings 7–9 once the scope-change-without-reload pathway is
+- Cover findings 7–10 once the scope-change-without-reload pathway is
   confirmed or ruled out under #387.
