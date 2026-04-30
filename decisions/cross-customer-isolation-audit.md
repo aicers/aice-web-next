@@ -110,11 +110,27 @@ section 7, not repeated in every section.
 
 ## 2. DB query inventory
 
-Scope: every `query(...)`, `query<T>(...)`, `pool.query(...)`,
-`client.query(...)`, and `client.query<T>(...)` call site under
-`src/lib/**` and `src/app/api/**/route.ts`. Generic-typed forms
-(`query<Row>(...)`) are included alongside untyped forms — they are
-the same DB call. Migrations and test harnesses excluded.
+Scope: every **semantic SQL call site** — every `query(...)`,
+`query<T>(...)`, `pool.query(...)`, `client.query(...)`,
+`client.query<T>(...)`, and the audit-DB wrapper `queryAudit(...)` /
+`queryAudit<T>(...)` — under `src/lib/**` and
+`src/app/api/**/route.ts`. Generic-typed forms (`query<Row>(...)`) are
+included alongside untyped forms; they are the same DB call.
+Migrations and test harnesses excluded.
+
+The thin DB-helper plumbing (the bodies of `query` / `withTransaction`
+in `src/lib/db/client.ts` and `queryAudit` in `src/lib/audit/client.ts`)
+is **explicitly excluded** from the per-call-site inventory below
+because it is pass-through plumbing that forwards
+`text` / `params` / `BEGIN` / `COMMIT` / `ROLLBACK` straight to the
+underlying `pg` driver and never embeds a customer predicate.
+Semantic ownership lives at each helper's caller, which is what this
+inventory enumerates. Listed once for completeness so the helpers are
+not invisible:
+
+- `src/lib/db/client.ts:28` — `getPool().query<T>(text, params)` inside `query()`; pass-through wrapper, no SQL of its own
+- `src/lib/db/client.ts:37, :39, :42` — `client.query("BEGIN" / "COMMIT" / "ROLLBACK")` inside `withTransaction()`; transaction-control statements, customer-agnostic
+- `src/lib/audit/client.ts:34` — `getPool().query<T>(text, params)` inside `queryAudit()`; pass-through wrapper against the audit DB
 
 ### Scoped — operates on customer-scoped tables under explicit scope
 
@@ -130,16 +146,11 @@ the same DB call. Migrations and test harnesses excluded.
 - `src/app/api/customers/[id]/route.ts:121` — `SELECT * FROM customers WHERE id = $1` (PATCH precondition)
 - `src/app/api/customers/[id]/route.ts:138` — `SELECT customer_id FROM account_customer WHERE account_id = $1 AND customer_id = $2` (PATCH tenant-scope check, non-`access-all` branch)
 - `src/app/api/customers/[id]/route.ts:171` — `UPDATE customers SET ... WHERE id = $1` (PATCH commit, after the scope check above)
-- `src/app/api/customers/[id]/route.ts:218` — `SELECT * FROM customers WHERE id = $1` (DELETE precondition; the missing caller-scope check is the §1 LEAK — see §7 #6, not duplicated)
-- `src/app/api/customers/[id]/route.ts:232` — `SELECT customer_id FROM account_customer WHERE customer_id = $1 LIMIT 1` (precondition: refuse delete while any link remains; **does not** verify the caller's own scope — that is the §1 LEAK)
-- `src/app/api/customers/[id]/route.ts:245` — `DELETE FROM customers WHERE id = $1` (DELETE commit; same scope gap as `:218`)
 - `src/app/api/accounts/[id]/customers/route.ts:72` — `JOIN account_customer ac` + `JOIN customers c`; tenant scope check (lines 53–69) runs before the SELECT
-- `src/app/api/accounts/[id]/customers/route.ts:159` — `SELECT id FROM customers WHERE id = ANY($1)`; existence check used to validate request input. The error path at line 167 is the §4 enumeration LEAK; the SELECT itself is `unknown`/scope-deferred — runs *before* the tenant-scope check at line 173
 - `src/app/api/accounts/[id]/customers/route.ts:197, 204, 223` — transactional account-customer assignment queries; tenant scope check at line 173 runs before the transaction
 - `src/app/api/accounts/[id]/customers/[customerId]/route.ts:51, 81` — verify-then-delete; explicit scope check between
 - `src/app/api/accounts/route.ts:134` — `account_customer` subquery used to filter visible accounts in the GET listing
 - `src/app/api/accounts/route.ts:145` — `accounts` listing with the visibility filter from `:134` applied
-- `src/app/api/accounts/route.ts:318` — `SELECT id FROM customers WHERE id = ANY($1)` validating the `customerIds` payload of POST /api/accounts. Same enumeration shape as `:159` above; error path at `:326` is the §4 enumeration LEAK
 - `src/app/api/accounts/route.ts:436` — `accounts` post-insert refetch (within the create-account transaction; scope already enforced by the path above)
 - `src/lib/node/apply-attempts.ts:144` — `INSERT INTO apply_attempts (...)` inside `createApplyAttempt`; the public entry point pre-resolves the node via `assertNodeInScope` before reaching this insert
 - `src/lib/node/apply-history.ts:21` — `SELECT MAX(...) FROM apply_attempts WHERE node_id = $1 AND status = 'succeeded'` (last-applied-at on the detail page); reachable only from the scoped `getNode` / detail-page path that has already run `assertNodeInScope`
@@ -415,16 +426,33 @@ E2E test-only:
 
 ### Admin-only
 
-- `src/app/api/audit-logs/route.ts:182` — `SELECT FROM audit_logs ...` (count); `:192` — `SELECT FROM audit_logs ...` (page). Both gated by `audit-logs:read`. The gate is *not enough* (the permission can be granted to non-`access-all` roles), which is the §1 LEAK; the query itself is admin-style "no predicate" and is the locus that #386 fixes
+(No call sites in this bucket. The previously listed
+`/api/audit-logs/route.ts` SELECTs are now classified `LEAK` below
+because the permission gate alone does not enforce customer scope —
+that is the §1 / #386 finding.)
 
 ### LEAK
 
-None at the DB layer beyond the §1 audit-logs viewer (single underlying
-issue; not double-counted).
+Per-call-site SQL locus of the §1 / §7 LEAK findings. Counted once in
+§7; reproduced here so §2 lists every site at the proper class rather
+than parking them under another bucket.
+
+- `src/app/api/audit-logs/route.ts:181` — `SELECT COUNT(*) FROM audit_logs ${where}` (count). No `customer_id` predicate against the caller's effective scope; gated by `audit-logs:read` only. SQL locus of the §1 audit-logs viewer LEAK; fix owned by **#386** (§7 #1)
+- `src/app/api/audit-logs/route.ts:189` — `SELECT … FROM audit_logs ${where} ORDER BY timestamp DESC LIMIT $… OFFSET $…` (page). Same shape and same finding as `:181`
+- `src/app/api/customers/[id]/route.ts:218` — `SELECT * FROM customers WHERE id = $1` (DELETE precondition). Reachable without a caller-scope check on `customer_id`; SQL locus of the §1 DELETE LEAK (§7 #6)
+- `src/app/api/customers/[id]/route.ts:232` — `SELECT customer_id FROM account_customer WHERE customer_id = $1 LIMIT 1` (refuses delete while any link remains; **does not** verify the caller's own scope). Same finding as `:218`
+- `src/app/api/customers/[id]/route.ts:245` — `DELETE FROM customers WHERE id = $1` (DELETE commit). Same finding as `:218`
 
 ### Unknown
 
-None. All call sites classified.
+Per-call-site SQL locus of the §4 enumeration finding (§7 #2). The
+SELECT itself is scope-deferred — it runs before the tenant-scope
+check, so `unknown` is the right class for the SELECT proper; the
+LEAK is the error message that echoes missing IDs back to the caller
+(see §4).
+
+- `src/app/api/accounts/[id]/customers/route.ts:159` — `SELECT id FROM customers WHERE id = ANY($1)`; existence check used to validate request input. Runs before the tenant-scope check at line 173. The error path at line 167 is the §4 enumeration LEAK (§7 #2)
+- `src/app/api/accounts/route.ts:318` — `SELECT id FROM customers WHERE id = ANY($1)` validating the `customerIds` payload of POST /api/accounts. Same shape as `:159`; the error path at `:326` is the §4 enumeration LEAK (same §7 #2)
 
 ---
 
