@@ -115,14 +115,18 @@ test.describe
         drawer.getByRole("heading", { name: "Filters" }),
       ).toBeVisible();
 
-      const customerTrigger = drawer
-        .getByRole("group", { name: "Customer" })
-        .getByRole("button")
-        .first();
+      // Wait for the customer fetch to settle into the `ready` state
+      // before interacting; while the request is in flight the trigger
+      // renders the disabled "Loading customers…" variant, and the
+      // ready-state replacement detaches that node mid-test otherwise.
+      const customerTrigger = drawer.getByRole("button", {
+        name: "Select customers",
+      });
+      await expect(customerTrigger).toBeVisible({ timeout: 10_000 });
       await customerTrigger.scrollIntoViewIfNeeded();
       await customerTrigger.click();
       await expect(
-        drawer.getByRole("button", { name: /Acme Inc\./ }),
+        drawer.getByRole("checkbox", { name: /Acme Inc\./ }),
       ).toBeVisible();
       await page.screenshot({
         path: path.join(ASSETS_DIR, "detection-drawer-customer-en.png"),
@@ -149,14 +153,14 @@ test.describe
       const drawer = page.getByRole("dialog");
       await expect(drawer.getByRole("heading", { name: "필터" })).toBeVisible();
 
-      const customerTrigger = drawer
-        .getByRole("group", { name: "고객사" })
-        .getByRole("button")
-        .first();
+      const customerTrigger = drawer.getByRole("button", {
+        name: "고객사 선택",
+      });
+      await expect(customerTrigger).toBeVisible({ timeout: 10_000 });
       await customerTrigger.scrollIntoViewIfNeeded();
       await customerTrigger.click();
       await expect(
-        drawer.getByRole("button", { name: /Acme Inc\./ }),
+        drawer.getByRole("checkbox", { name: /Acme Inc\./ }),
       ).toBeVisible();
       await page.screenshot({
         path: path.join(ASSETS_DIR, "detection-drawer-customer-ko.png"),
