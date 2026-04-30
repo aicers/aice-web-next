@@ -67,8 +67,9 @@ The popover anchored under the indicator shows:
 ## Page-level callout
 
 When the session has more than one customer in scope and is not
-an admin, top-level pages (Dashboard, Detection, Node settings)
-render a small callout above the page content:
+an admin, top-level pages (Dashboard, Detection, Node status,
+Node detail, Node settings) render a small callout above the
+page content:
 
 > Showing data across N customers. Click the customer indicator
 > above for details.

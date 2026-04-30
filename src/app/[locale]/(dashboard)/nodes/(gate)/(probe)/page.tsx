@@ -1,11 +1,13 @@
 import { redirect } from "next/navigation";
 
+import { CustomerScopeCallout } from "@/components/layout/customer-scope-callout";
 import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
 import {
   type NodeStatusRowSnapshot,
   nodeStatusToRow,
 } from "@/components/node/node-status-row";
 import { NodeStatusTable } from "@/components/node/node-status-table";
+import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 import { ManagerUnavailableError } from "@/lib/node/errors";
@@ -30,6 +32,7 @@ export default async function NodesStatusPage() {
   // is driven by the same permission tuple as the rest of the page,
   // not by an implicit assumption about the layout gate.
   const canReadServices = await hasPermission(session.roles, "services:read");
+  const scope = await getEffectiveCustomerScope(session);
 
   let initialRows: NodeStatusRowSnapshot[] = [];
   let initialEdges: NodeStatus[] = [];
@@ -54,16 +57,24 @@ export default async function NodesStatusPage() {
   }
 
   if (managerOffline) {
-    return <ManagerUnavailablePanel />;
+    return (
+      <>
+        <CustomerScopeCallout scope={scope} className="mb-4" />
+        <ManagerUnavailablePanel />
+      </>
+    );
   }
 
   return (
-    <NodeStatusTable
-      initialRows={initialRows}
-      initialEdges={initialEdges}
-      initialCapturedAt={initialCapturedAt}
-      canControl={canWriteNodes}
-      canReadServices={canReadServices}
-    />
+    <>
+      <CustomerScopeCallout scope={scope} className="mb-4" />
+      <NodeStatusTable
+        initialRows={initialRows}
+        initialEdges={initialEdges}
+        initialCapturedAt={initialCapturedAt}
+        canControl={canWriteNodes}
+        canReadServices={canReadServices}
+      />
+    </>
   );
 }
