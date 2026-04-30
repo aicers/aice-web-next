@@ -390,8 +390,16 @@ verify that the dispatch context flows into the specific call
 site, only that the symbol is in scope. Deeper correctness still
 relies on code review.
 
-To allow a deliberate exception, append a same-line comment to
-the offending call:
+The script strips comments and string literals before applying the
+call and presence regexes, so a commented-out
+`import { buildDispatchContext } from "..."` does NOT satisfy the
+presence requirement, and a commented-out call does NOT count as a
+real call. Call detection runs against the whole comment-stripped
+source so a call split across lines (e.g.
+`return graphqlRequest\n  (QUERY, ...)`) is still recognized.
+
+To allow a deliberate exception, append an override comment to any
+line of the call expression (start through the opening paren):
 
 ```ts
 return graphqlRequest(QUERY, undefined, ctx); // scope-allowlist: <reason>
@@ -422,14 +430,18 @@ assertions for its `expects` mode:
   customer A returns 200; account-A's GET on customer B returns
   404 (NOT 403 — surfacing 403 would disclose existence); admin gets
   200 on both.
-- `mutation-scope` (POST / PATCH / DELETE) — for each persona the row
-  declares an in-scope and out-of-scope variant of the request body
-  / path; the harness fires both and asserts the declared
-  `expectStatus` (typically 2xx in-scope, 403 out-of-scope for non-
-  admins; 2xx for both for admin). An optional
-  `cleanupAfterSuccess` hook resets fixture state between mutation
-  rows so the matrix can run repeatedly against a long-lived dev
-  database.
+- `mutation-scope` (POST / PATCH / DELETE) — each persona slot
+  declares an optional `inScope` and `outOfScope` variant. The
+  harness fires only the variants that are defined and asserts the
+  response status equals the variant's `expectStatus` (typically 2xx
+  in-scope, 403 out-of-scope for non-admins; 2xx for both for
+  admin). Routes whose tenant in-scope path would mutate fixture
+  state we don't want to restore on every run (e.g.
+  password-reset, mfa-reset) declare only the tenant `outOfScope`
+  variant and leave `inScope` undefined — the regression bar is
+  "out-of-scope is rejected", not "every successful path is
+  exercised". An optional `cleanupAfterSuccess` hook resets fixture
+  state after each 2xx so mutations don't leak between runs.
 - `admin-only` — account-A and account-B are rejected (default
   `nonAdminStatuses: [401, 403]`); admin succeeds with the row's
   declared `adminSuccessStatus`.

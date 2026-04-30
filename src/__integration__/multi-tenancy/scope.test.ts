@@ -26,13 +26,16 @@
  *       - admin in-scope and out-of-scope GETs: 200.
  *
  *   - `mutation-scope` (POST / PATCH / DELETE):
- *       - account-A with in-scope params: 2xx.
- *       - account-A with out-of-scope params: 4xx (typically 403 for a
- *         mutation that names an out-of-scope resource — distinct from
- *         the read-side 404 since the caller is asserting they own the
- *         input ids).
- *       - account-B mirrors account-A on customer B.
- *       - admin: 2xx for both in-scope and out-of-scope variants.
+ *       - Each per-persona slot has an optional `inScope` and
+ *         `outOfScope` variant. The harness only fires variants that
+ *         are defined and asserts each response status equals the
+ *         variant's `expectStatus`. Routes whose tenant in-scope path
+ *         would mutate fixture state we don't want to restore (e.g.
+ *         password-reset, mfa-reset) only declare the tenant
+ *         out-of-scope variant — the regression bar is "out-of-scope
+ *         is rejected", not "every successful path is exercised".
+ *         Optional `cleanupAfterSuccess` runs after each 2xx so
+ *         mutation rows don't leak fixture state into later runs.
  *
  *   - `admin-only`:
  *       - account-A and account-B: 4xx (typically 403 — neither holds
@@ -80,6 +83,7 @@ import {
   removeAccountCustomerAssignments,
   resetAccountDefaults,
   revokeAllSessions,
+  setAccountStatus,
 } from "../helpers/setup-db";
 
 // ── Fixtures ─────────────────────────────────────────────────────
@@ -94,8 +98,16 @@ const COMMON_PASSWORD = "ScopeMatrix1234!";
 interface Resources {
   customerAId: number;
   customerBId: number;
+  /**
+   * Customer with no account assignments. Used by the
+   * `DELETE /api/customers/[id]` row, since the route refuses to drop
+   * a customer that still has linked accounts.
+   */
+  customerOrphanId: number;
   accountAId: string;
   accountBId: string;
+  /** Role id for the tenant test role; used by `POST /api/accounts`. */
+  tenantRoleId: number;
   auditLogARowId: string;
   auditLogBRowId: string;
   auditLogNullRowId: string;
@@ -150,23 +162,35 @@ interface MutationVariant {
   expectStatus: number;
 }
 
+interface PersonaMutationVariants {
+  /**
+   * The persona's "in-scope" call (e.g. tenant acting on their own
+   * resource). Optional: omit when the in-scope path requires fixture
+   * state we don't want to restore (e.g. tenant password-reset on a
+   * managed Security Monitor account that doesn't exist in this
+   * matrix). The out-of-scope variant alone is sufficient regression
+   * coverage for those routes.
+   */
+  inScope?: MutationVariant;
+  /** The persona's "out-of-scope" call. */
+  outOfScope?: MutationVariant;
+}
+
 interface MutationEndpoint {
   name: string;
   method: "POST" | "PATCH" | "DELETE";
   expects: "mutation-scope";
   /**
-   * Build the request variants for each persona. The harness fires:
-   *   - account-A: `accountA.inScope` then `accountA.outOfScope`
-   *   - account-B: `accountB.inScope` then `accountB.outOfScope`
-   *   - admin:     `admin.inScope` then `admin.outOfScope`
-   * and asserts each response status equals the variant's
-   * `expectStatus`. Optional cleanup runs after each successful 2xx so
-   * mutation rows don't leak fixture state into later test runs.
+   * Build the request variants for each persona. The harness fires
+   * each defined variant in order (`inScope`, then `outOfScope`) and
+   * asserts the response status equals the variant's `expectStatus`.
+   * Optional cleanup runs after each successful 2xx so mutations
+   * don't leak fixture state into later runs.
    */
   request: (resources: Resources) => {
-    accountA: { inScope: MutationVariant; outOfScope: MutationVariant };
-    accountB: { inScope: MutationVariant; outOfScope: MutationVariant };
-    admin: { inScope: MutationVariant; outOfScope: MutationVariant };
+    accountA: PersonaMutationVariants;
+    accountB: PersonaMutationVariants;
+    admin: PersonaMutationVariants;
   };
   /**
    * Optional post-success cleanup. Fired after every 2xx mutation so
@@ -268,6 +292,38 @@ const ENDPOINTS: Endpoint[] = [
     }),
     expects: "200-on-in-scope-404-on-out-of-scope",
   },
+  {
+    name: "PATCH /api/customers/[id]",
+    method: "PATCH",
+    expects: "admin-only",
+    request: (r) => ({
+      path: `/api/customers/${r.customerOrphanId}`,
+      body: { description: `${TEST_PREFIX}admin-only-patched` },
+    }),
+    adminSuccessStatus: 200,
+    cleanupAfterSuccess: async (r, adminSession) => {
+      // Restore the description to its original empty state so
+      // re-runs don't drift the fixture.
+      await authPatch(adminSession, `/api/customers/${r.customerOrphanId}`, {
+        description: null,
+      });
+    },
+  },
+  {
+    name: "DELETE /api/customers/[id]",
+    method: "DELETE",
+    expects: "admin-only",
+    request: (r) => ({ path: `/api/customers/${r.customerOrphanId}` }),
+    adminSuccessStatus: 200,
+    cleanupAfterSuccess: async (r) => {
+      // The admin success deletes the orphan customer. Recreate it so
+      // the fixture state is consistent for re-runs against a
+      // long-lived dev DB. The id changes, but the matrix doesn't
+      // re-read `r.customerOrphanId` after this row runs.
+      await deleteCustomersByPrefix(`${TEST_PREFIX}Orphan`);
+      r.customerOrphanId = await createCustomerRow(`${TEST_PREFIX}Orphan`);
+    },
+  },
   // ── accounts (post-#387 surface, local-DB scoped) ──────────────
   {
     name: "GET /api/accounts",
@@ -310,6 +366,103 @@ const ENDPOINTS: Endpoint[] = [
       inScopeB: `/api/accounts/${r.accountBId}/customers`,
     }),
     expects: "200-on-in-scope-404-on-out-of-scope",
+  },
+  // POST /api/accounts — tenant role can call (it has accounts:write)
+  // but is rejected by the role-creation policy when the target role
+  // isn't Security Monitor-equivalent. The matrix doesn't seed a
+  // monitor-equiv role, so the tenant call will 403; admin uses the
+  // tenant role itself (which is fine for system-admin callers) to
+  // create a throwaway account that the cleanup deletes.
+  {
+    name: "POST /api/accounts",
+    method: "POST",
+    expects: "admin-only",
+    request: (r) => ({
+      path: "/api/accounts",
+      body: {
+        username: `${TEST_PREFIX}created-${Date.now()}`.toLowerCase(),
+        displayName: `${TEST_PREFIX}created`,
+        password: COMMON_PASSWORD,
+        roleId: r.tenantRoleId,
+        customerIds: [r.customerAId],
+      },
+    }),
+    adminSuccessStatus: 201,
+    nonAdminStatuses: [403],
+    cleanupAfterSuccess: async () => {
+      // Drop every account whose username matches the matrix prefix.
+      // The admin variant generates a new timestamp-suffixed username
+      // each invocation, so a prefix sweep is the simplest way to
+      // keep the dev DB clean across re-runs.
+      // We use a SQL-level helper inline to avoid plumbing yet
+      // another helper for a single use.
+      await dropAccountsByUsernamePrefix(`${TEST_PREFIX}created`);
+    },
+  },
+  // PATCH /api/accounts/[id] — accounts:write held by tenants, scope
+  // enforced by validateManagedAccountTarget. Self-patch on basic
+  // fields is the in-scope path; cross-tenant target is the out-of-
+  // scope path (404 since accounts share no customers in the
+  // fixture).
+  {
+    name: "PATCH /api/accounts/[id]",
+    method: "PATCH",
+    expects: "mutation-scope",
+    request: (r) => ({
+      accountA: {
+        inScope: {
+          path: `/api/accounts/${r.accountAId}`,
+          body: { displayName: ACCOUNT_A_USERNAME },
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/accounts/${r.accountBId}`,
+          body: { displayName: "should-not-apply" },
+          expectStatus: 404,
+        },
+      },
+      accountB: {
+        inScope: {
+          path: `/api/accounts/${r.accountBId}`,
+          body: { displayName: ACCOUNT_B_USERNAME },
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/accounts/${r.accountAId}`,
+          body: { displayName: "should-not-apply" },
+          expectStatus: 404,
+        },
+      },
+      // Admin can patch any account; both variants succeed and are
+      // idempotent (display_name reset to the original username), so
+      // no per-variant cleanup is needed.
+      admin: {
+        inScope: {
+          path: `/api/accounts/${r.accountAId}`,
+          body: { displayName: ACCOUNT_A_USERNAME },
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/accounts/${r.accountBId}`,
+          body: { displayName: ACCOUNT_B_USERNAME },
+          expectStatus: 200,
+        },
+      },
+    }),
+  },
+  // DELETE /api/accounts/[id] — admin-only because tenant role lacks
+  // `accounts:delete`. The admin success disables account-A; the
+  // cleanup re-enables it so subsequent rows / re-runs aren't broken.
+  {
+    name: "DELETE /api/accounts/[id]",
+    method: "DELETE",
+    expects: "admin-only",
+    request: (r) => ({ path: `/api/accounts/${r.accountAId}` }),
+    adminSuccessStatus: 200,
+    nonAdminStatuses: [403],
+    cleanupAfterSuccess: async () => {
+      await setAccountStatus(ACCOUNT_A_USERNAME, "active", null);
+    },
   },
   // ── accounts mutation surface ──────────────────────────────────
   //
@@ -379,6 +532,147 @@ const ENDPOINTS: Endpoint[] = [
       );
     },
   },
+  // DELETE /api/accounts/[id]/customers/[customerId] — tenants have
+  // accounts:write. In-scope: tenant unassigns their own customer
+  // from their own account (200), then the cleanup re-adds. Out-of-
+  // scope: tenant tries to unassign the OTHER tenant's customer from
+  // the OTHER tenant's account; the assignment exists, so the route
+  // reaches the scope check and rejects with 403.
+  {
+    name: "DELETE /api/accounts/[id]/customers/[customerId]",
+    method: "DELETE",
+    expects: "mutation-scope",
+    request: (r) => ({
+      accountA: {
+        inScope: {
+          path: `/api/accounts/${r.accountAId}/customers/${r.customerAId}`,
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/accounts/${r.accountBId}/customers/${r.customerBId}`,
+          expectStatus: 403,
+        },
+      },
+      accountB: {
+        inScope: {
+          path: `/api/accounts/${r.accountBId}/customers/${r.customerBId}`,
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/accounts/${r.accountAId}/customers/${r.customerAId}`,
+          expectStatus: 403,
+        },
+      },
+      // Admin variants intentionally omitted: re-firing admin-driven
+      // mutations on the same (account, customer) pair after the
+      // tenant in-scope variants would race the cleanup ordering.
+      // The route's "admin can do anything" path is exercised by the
+      // sibling POST row above; what this row guards is the tenant
+      // scope check, which the two non-admin personas already cover.
+      admin: {},
+    }),
+    cleanupAfterSuccess: async (
+      resources,
+      _adminSession,
+      _persona,
+      _variant,
+    ) => {
+      // Re-establish the canonical (accountA→customerA, accountB→
+      // customerB) assignments after every successful unassign.
+      await assignCustomerToAccount(
+        resources.accountAId,
+        resources.customerAId,
+      );
+      await assignCustomerToAccount(
+        resources.accountBId,
+        resources.customerBId,
+      );
+    },
+  },
+  // POST /api/accounts/[id]/password-reset — tenants have
+  // accounts:write but the route forbids self-reset (400) and
+  // validateManagedAccountTarget rejects out-of-scope targets (404).
+  // Only the out-of-scope variant is meaningful for regression
+  // detection: a future change that drops the scope check would let
+  // a tenant reset another tenant's password, which is exactly the
+  // gap we're guarding against. Admin variants omitted because the
+  // success path mutates password state we don't want to restore on
+  // every run.
+  {
+    name: "POST /api/accounts/[id]/password-reset",
+    method: "POST",
+    expects: "mutation-scope",
+    request: (r) => ({
+      accountA: {
+        outOfScope: {
+          path: `/api/accounts/${r.accountBId}/password-reset`,
+          body: { newPassword: COMMON_PASSWORD },
+          expectStatus: 404,
+        },
+      },
+      accountB: {
+        outOfScope: {
+          path: `/api/accounts/${r.accountAId}/password-reset`,
+          body: { newPassword: COMMON_PASSWORD },
+          expectStatus: 404,
+        },
+      },
+      admin: {},
+    }),
+  },
+  // POST /api/accounts/[id]/unlock — same shape as password-reset:
+  // out-of-scope is the regression-meaningful assertion. Admin
+  // success requires the target to be locked or suspended, which the
+  // matrix fixture doesn't seed; the dedicated unlock test in
+  // src/__integration__/api/unlock.test.ts already covers the happy
+  // path.
+  {
+    name: "POST /api/accounts/[id]/unlock",
+    method: "POST",
+    expects: "mutation-scope",
+    request: (r) => ({
+      accountA: {
+        outOfScope: {
+          path: `/api/accounts/${r.accountBId}/unlock`,
+          expectStatus: 404,
+        },
+      },
+      accountB: {
+        outOfScope: {
+          path: `/api/accounts/${r.accountAId}/unlock`,
+          expectStatus: 404,
+        },
+      },
+      admin: {},
+    }),
+  },
+  // POST /api/accounts/[id]/mfa-reset — out-of-scope rejected by
+  // validateManagedAccountTarget (404) before the step-up auth and
+  // MFA-existence checks run. The dedicated MFA tests cover the
+  // happy path; what this row protects is "tenant cannot reach
+  // another tenant's MFA reset at all".
+  {
+    name: "POST /api/accounts/[id]/mfa-reset",
+    method: "POST",
+    expects: "mutation-scope",
+    request: (r) => ({
+      accountA: {
+        outOfScope: {
+          path: `/api/accounts/${r.accountBId}/mfa-reset`,
+          body: { password: COMMON_PASSWORD },
+          expectStatus: 404,
+        },
+      },
+      accountB: {
+        outOfScope: {
+          path: `/api/accounts/${r.accountAId}/mfa-reset`,
+          body: { password: COMMON_PASSWORD },
+          expectStatus: 404,
+        },
+      },
+      admin: {},
+    }),
+  },
   // ── admin-only example: POST /api/customers ────────────────────
   //
   // Creating a customer requires `customers:write`, which the
@@ -445,6 +739,61 @@ async function fireAdminOnly(
   }
 }
 
+/**
+ * Drop every account row whose username starts with `prefix`,
+ * cascading through the related child tables that `deleteTestAccount`
+ * handles. Used by the `POST /api/accounts` cleanup, which generates
+ * a unique timestamped username on every admin invocation.
+ */
+async function dropAccountsByUsernamePrefix(prefix: string): Promise<void> {
+  const pg = await import("pg");
+  const { readFileSync } = await import("node:fs");
+  const { resolve } = await import("node:path");
+  let connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    try {
+      const env = readFileSync(resolve(".env.local"), "utf8");
+      const m = env.match(/^DATABASE_URL=(.+)$/m);
+      if (m) connectionString = m[1].trim();
+    } catch {
+      /* fall through */
+    }
+  }
+  if (!connectionString) {
+    connectionString = "postgres://postgres:postgres@localhost:5432/auth_db";
+  }
+  const client = new pg.Client({ connectionString });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ username: string }>(
+      "SELECT username FROM accounts WHERE username LIKE $1",
+      [`${prefix}%`],
+    );
+    for (const row of rows) {
+      await client.query(
+        `DELETE FROM sessions
+         WHERE account_id = (SELECT id FROM accounts WHERE username = $1)`,
+        [row.username],
+      );
+      await client.query(
+        `DELETE FROM account_customer
+         WHERE account_id = (SELECT id FROM accounts WHERE username = $1)`,
+        [row.username],
+      );
+      await client.query(
+        `DELETE FROM password_history
+         WHERE account_id = (SELECT id FROM accounts WHERE username = $1)`,
+        [row.username],
+      );
+      await client.query("DELETE FROM accounts WHERE username = $1", [
+        row.username,
+      ]);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 // ── Suite ────────────────────────────────────────────────────────
 
 describe("Cross-customer scope matrix", () => {
@@ -457,16 +806,19 @@ describe("Cross-customer scope matrix", () => {
     // Clean up any prior state.
     await deleteTestAccount(ACCOUNT_A_USERNAME);
     await deleteTestAccount(ACCOUNT_B_USERNAME);
+    await dropAccountsByUsernamePrefix(`${TEST_PREFIX}created`.toLowerCase());
     await deleteTestRole(ROLE_NAME);
     await deleteRolesByPrefix("integ-scope-");
     await deleteCustomersByPrefix(TEST_PREFIX);
 
     // Tenant-style role: scoped read on accounts/customers/audit-logs
-    // plus accounts:write so the mutation-scope row can exercise
-    // POST /api/accounts/[id]/customers from a non-admin caller.
-    // No `customers:access-all`, no `customers:write` — those gate the
-    // admin-only assertions.
-    await createTestRole(
+    // plus accounts:write so the mutation-scope rows can exercise
+    // PATCH /api/accounts/[id], POST /api/accounts/[id]/customers,
+    // and the admin-bypass rows on password-reset / unlock /
+    // mfa-reset from a non-admin caller. No `customers:access-all`,
+    // `customers:write`, `customers:delete`, or `accounts:delete` —
+    // those gate the admin-only assertions.
+    const tenantRoleId = await createTestRole(
       ROLE_NAME,
       ["customers:read", "audit-logs:read", "accounts:read", "accounts:write"],
       "Integration scope-matrix tenant role",
@@ -474,6 +826,7 @@ describe("Cross-customer scope matrix", () => {
 
     const customerAId = await createCustomerRow(`${TEST_PREFIX}CustomerA`);
     const customerBId = await createCustomerRow(`${TEST_PREFIX}CustomerB`);
+    const customerOrphanId = await createCustomerRow(`${TEST_PREFIX}Orphan`);
 
     await createTestAccount(ACCOUNT_A_USERNAME, COMMON_PASSWORD, ROLE_NAME);
     await createTestAccount(ACCOUNT_B_USERNAME, COMMON_PASSWORD, ROLE_NAME);
@@ -508,8 +861,10 @@ describe("Cross-customer scope matrix", () => {
     resources = {
       customerAId,
       customerBId,
+      customerOrphanId,
       accountAId,
       accountBId,
+      tenantRoleId,
       auditLogARowId,
       auditLogBRowId,
       auditLogNullRowId,
@@ -528,13 +883,15 @@ describe("Cross-customer scope matrix", () => {
     await deleteAuditLogById(resources.auditLogBRowId);
     await deleteAuditLogById(resources.auditLogNullRowId);
 
-    // The mutation row emits `customer.assign` audit entries via the
-    // route under test (`POST /api/accounts/[id]/customers`). Those
-    // live in `audit_db` so they are not cascaded by the auth_db
-    // account/role/customer cleanup below — drop them by actor before
-    // detaching the test accounts so re-runs see a clean slate. Only
-    // the test-account actors are dropped; admin's row count is not
-    // touched since admin's audit history belongs to the dev DB.
+    // The mutation rows emit audit entries via the routes under test
+    // (`POST /api/accounts/[id]/customers`, `PATCH /api/accounts/[id]`,
+    // `DELETE /api/accounts/[id]`, etc.). Those live in `audit_db` so
+    // they are not cascaded by the auth_db account/role/customer
+    // cleanup below — drop them by actor before detaching the test
+    // accounts so re-runs see a clean slate. Only the test-account
+    // actors (and admin, since admin's matrix-driven rows also emit)
+    // are touched: admin's audit history outside the matrix isn't
+    // affected because we filter by actor_id, not by action.
     await deleteAuditLogsByActor(resources.accountAId);
     await deleteAuditLogsByActor(resources.accountBId);
 
@@ -543,6 +900,7 @@ describe("Cross-customer scope matrix", () => {
       if (id) await removeAccountCustomerAssignments(id);
       await deleteTestAccount(username);
     }
+    await dropAccountsByUsernamePrefix(`${TEST_PREFIX}created`.toLowerCase());
     await deleteTestRole(ROLE_NAME);
     await deleteCustomersByPrefix(TEST_PREFIX);
   });
@@ -658,7 +1016,7 @@ describe("Cross-customer scope matrix", () => {
         ];
 
         for (const c of personaCases) {
-          it(`${c.persona}: in-scope succeeds, out-of-scope is rejected`, async () => {
+          it(`${c.persona}: defined variants pass scope assertions`, async () => {
             const variants = mutation.request(resources);
             const personaVariants =
               c.persona === "account-A"
@@ -666,50 +1024,36 @@ describe("Cross-customer scope matrix", () => {
                 : c.persona === "account-B"
                   ? variants.accountB
                   : variants.admin;
-            const session = await signIn(c.username);
 
-            const inScopeRes = await fireMutation(
-              session,
-              mutation.method,
-              personaVariants.inScope,
-            );
-            expect(inScopeRes.status).toBe(
-              personaVariants.inScope.expectStatus,
-            );
-            if (
-              inScopeRes.status >= 200 &&
-              inScopeRes.status < 300 &&
-              mutation.cleanupAfterSuccess
-            ) {
-              const adminSession = await signIn(ADMIN_USERNAME);
-              await mutation.cleanupAfterSuccess(
-                resources,
-                adminSession,
-                c.persona,
-                "in-scope",
-              );
+            // Skip the test cleanly when neither variant is defined
+            // (e.g. admin: {} for routes whose admin path needs
+            // stateful setup we don't seed in this matrix).
+            if (!personaVariants.inScope && !personaVariants.outOfScope) {
+              return;
             }
 
-            const outOfScopeRes = await fireMutation(
-              session,
-              mutation.method,
-              personaVariants.outOfScope,
-            );
-            expect(outOfScopeRes.status).toBe(
-              personaVariants.outOfScope.expectStatus,
-            );
-            if (
-              outOfScopeRes.status >= 200 &&
-              outOfScopeRes.status < 300 &&
-              mutation.cleanupAfterSuccess
-            ) {
-              const adminSession = await signIn(ADMIN_USERNAME);
-              await mutation.cleanupAfterSuccess(
-                resources,
-                adminSession,
-                c.persona,
-                "out-of-scope",
-              );
+            const session = await signIn(c.username);
+
+            for (const [tag, variant] of [
+              ["in-scope", personaVariants.inScope],
+              ["out-of-scope", personaVariants.outOfScope],
+            ] as const) {
+              if (!variant) continue;
+              const res = await fireMutation(session, mutation.method, variant);
+              expect(res.status).toBe(variant.expectStatus);
+              if (
+                res.status >= 200 &&
+                res.status < 300 &&
+                mutation.cleanupAfterSuccess
+              ) {
+                const adminSession = await signIn(ADMIN_USERNAME);
+                await mutation.cleanupAfterSuccess(
+                  resources,
+                  adminSession,
+                  c.persona,
+                  tag,
+                );
+              }
             }
           });
         }

@@ -157,6 +157,111 @@ export async function GET() {
     expect(violations[0].lineNumber).toBe(4);
   });
 
+  it("flags an out-of-allowlist call site that is split across lines", () => {
+    // Regression test for the round-2 review: the previous
+    // line-by-line scanner missed `graphqlRequest\n  (...)` because
+    // the helper name and the `(` were not on the same line. The
+    // whole-source scan should still find the call.
+    const violations = run([
+      {
+        relPath: "src/app/api/feature/route.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+
+export async function GET() {
+  return graphqlRequest
+    (QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].relPath).toBe("src/app/api/feature/route.ts");
+    expect(violations[0].message).toMatch(/outside the dispatch-context/);
+  });
+
+  it("accepts a split-line override comment on any line of the call expression", () => {
+    const violations = run([
+      {
+        relPath: "src/app/api/feature/route.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+
+export async function GET() {
+  return graphqlRequest
+    (QUERY, undefined, { role: "admin" }); // scope-allowlist: introspection-only health probe
+}
+`,
+      },
+    ]);
+
+    expect(violations).toEqual([]);
+  });
+
+  it("does NOT count a commented-out import of buildDispatchContext as in-scope", () => {
+    // Regression test for the round-2 review: the previous presence
+    // check ran the import regex against raw source, so a
+    // `// import { buildDispatchContext } ...` line satisfied it even
+    // though the symbol is not actually in scope.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+// import { buildDispatchContext } from "./dispatch-context";
+
+export async function listNodes() {
+  return graphqlRequest(QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(
+      /neither imports nor locally declares/,
+    );
+  });
+
+  it("does NOT count a block-commented import as in-scope", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+/*
+import { buildDispatchContext } from "./dispatch-context";
+*/
+
+export async function listNodes() {
+  return graphqlRequest(QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(
+      /neither imports nor locally declares/,
+    );
+  });
+
+  it("does NOT count a commented-out call site as a call", () => {
+    // A commented-out invocation in an allowlisted file shouldn't
+    // trigger the presence check (and likewise shouldn't cause a
+    // violation when the file is OUT of the allowlist).
+    const violations = run([
+      {
+        relPath: "src/app/api/feature/route.ts",
+        source: `// const x = graphqlRequest(QUERY, undefined, ctx);
+
+export function GET() {
+  return new Response("ok");
+}
+`,
+      },
+    ]);
+
+    expect(violations).toEqual([]);
+  });
+
   it("treats the GraphQL client modules as pass-through (no buildDispatchContext required)", () => {
     const violations = run([
       {

@@ -34,6 +34,17 @@
 // override is intentionally noisy in code review so anyone reaching
 // for it has to justify it.
 //
+// Comments and split-line calls. The presence and call-site checks
+// run against a comment-stripped copy of the source so that a
+// commented-out `import { buildDispatchContext } ...` does NOT
+// satisfy the presence requirement, and a commented-out call site
+// does NOT count as a real call. Call-site detection runs against the
+// whole stripped source (not line-by-line) so a call split across
+// lines (e.g. `return graphqlRequest\n  (QUERY, ...)`) is still
+// recognized. Override-comment lookups still scan the *original*
+// lines so the `// scope-allowlist:` annotation can sit on any line
+// of the call expression (start through the opening paren).
+//
 // Run via `pnpm check:scope`. Tests live at
 // `src/__tests__/scripts/check-dispatch-context.test.ts`.
 
@@ -75,8 +86,10 @@ const SOURCE_EXTS = new Set([".ts", ".tsx", ".mts", ".cts"]);
 
 // Matches a real call site (`name(` or `name<…>(`) of the helpers.
 // `\b` ensures we don't match `myGraphqlRequest(`. The `To?` covers
-// both `graphqlRequest` and `graphqlRequestTo`.
-const CALL_RE = /\bgraphqlRequest(?:To)?\s*[<(]/;
+// both `graphqlRequest` and `graphqlRequestTo`. `\s` matches newlines
+// so the regex can detect calls split across lines when run against
+// the whole-source string.
+const CALL_RE = /\bgraphqlRequest(?:To)?\s*[<(]/g;
 
 // Inline override: `// scope-allowlist: <reason>`. Reason must be
 // non-empty (after trimming).
@@ -85,12 +98,14 @@ const OVERRIDE_RE = /\/\/\s*scope-allowlist:\s*(.+?)\s*$/;
 // `import { ..., buildDispatchContext, ... } from "..."`. Allows
 // arbitrary whitespace and `as` aliases between the braces. We do not
 // resolve the import path — any path that brings the symbol in scope
-// counts.
+// counts. Run against comment-stripped source so a commented-out
+// import does not satisfy the check.
 const IMPORT_BUILD_DISPATCH_CONTEXT_RE =
   /import\s*(?:type\s+)?\{[^}]*\bbuildDispatchContext\b[^}]*\}\s*from\s*["'][^"']+["']/;
 
 // `(async )?function buildDispatchContext(...)` or
-// `(export )?const buildDispatchContext = ...`.
+// `(export )?const buildDispatchContext = ...`. Run against
+// comment-stripped source.
 const LOCAL_DECL_RE =
   /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?(?:function\s+buildDispatchContext\b|const\s+buildDispatchContext\b)/;
 
@@ -134,28 +149,99 @@ function isInAllowedDir(relPath) {
   return ALLOWED_DIRS.some((d) => relPath === d || relPath.startsWith(`${d}/`));
 }
 
-function findCallSites(source) {
-  const lines = source.split("\n");
-  const sites = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (CALL_RE.test(line)) {
-      sites.push({ lineNumber: i + 1, line });
+// Strip line and block comments while preserving newlines so line
+// numbers stay aligned with the original source. Naively skips
+// characters inside single-quoted, double-quoted, and template-string
+// literals so a comment-marker inside a string is not treated as a
+// comment. Template-literal interpolation expressions are not parsed
+// recursively; this is a guard, not a TS parser, and the worst case
+// is a missed match — which the file-level allowlist still catches.
+function stripComments(source) {
+  let out = "";
+  let i = 0;
+  let stringDelim = null; // null | '"' | "'" | "`"
+  let inLineComment = false;
+  let inBlockComment = false;
+  while (i < source.length) {
+    const ch = source[i];
+    const next = i + 1 < source.length ? source[i + 1] : "";
+    if (inLineComment) {
+      if (ch === "\n") {
+        inLineComment = false;
+        out += ch;
+      }
+      i++;
+    } else if (inBlockComment) {
+      if (ch === "*" && next === "/") {
+        inBlockComment = false;
+        i += 2;
+      } else {
+        if (ch === "\n") out += ch;
+        i++;
+      }
+    } else if (stringDelim !== null) {
+      if (ch === "\\") {
+        out += ch;
+        if (next) out += next;
+        i += 2;
+        continue;
+      }
+      if (ch === stringDelim) {
+        stringDelim = null;
+      }
+      out += ch;
+      i++;
+    } else if (ch === "/" && next === "/") {
+      inLineComment = true;
+      i += 2;
+    } else if (ch === "/" && next === "*") {
+      inBlockComment = true;
+      i += 2;
+    } else if (ch === '"' || ch === "'" || ch === "`") {
+      stringDelim = ch;
+      out += ch;
+      i++;
+    } else {
+      out += ch;
+      i++;
     }
+  }
+  return out;
+}
+
+function findCallSites(source) {
+  const stripped = stripComments(source);
+  const originalLines = source.split("\n");
+  const sites = [];
+  CALL_RE.lastIndex = 0;
+  for (;;) {
+    const match = CALL_RE.exec(stripped);
+    if (match === null) break;
+    const startLine = stripped.slice(0, match.index).split("\n").length;
+    const endLine = stripped
+      .slice(0, match.index + match[0].length)
+      .split("\n").length;
+    sites.push({
+      startLine,
+      endLine,
+      lines: originalLines.slice(startLine - 1, endLine),
+    });
   }
   return sites;
 }
 
-function hasOverride(line) {
-  const match = line.match(OVERRIDE_RE);
-  if (!match) return false;
-  const reason = match[1].trim();
-  return reason.length > 0;
+function hasOverride(lines) {
+  for (const line of lines) {
+    const m = line.match(OVERRIDE_RE);
+    if (m && m[1].trim().length > 0) return true;
+  }
+  return false;
 }
 
 function hasBuildDispatchContext(source) {
-  if (IMPORT_BUILD_DISPATCH_CONTEXT_RE.test(source)) return true;
-  if (LOCAL_DECL_RE.test(source)) return true;
+  const stripped = stripComments(source);
+  if (IMPORT_BUILD_DISPATCH_CONTEXT_RE.test(stripped)) return true;
+  if (LOCAL_DECL_RE.test(stripped)) return true;
   return false;
 }
 
@@ -177,14 +263,14 @@ export function checkFiles(files) {
     const allowed = isClientModule || isInAllowedDir(relPath);
 
     for (const site of sites) {
-      if (hasOverride(site.line)) continue;
+      if (hasOverride(site.lines)) continue;
 
       if (!allowed) {
         violations.push({
           relPath,
-          lineNumber: site.lineNumber,
+          lineNumber: site.startLine,
           message:
-            `Call to graphqlRequest/graphqlRequestTo from ${relPath}:${site.lineNumber} ` +
+            `Call to graphqlRequest/graphqlRequestTo from ${relPath}:${site.startLine} ` +
             "is outside the dispatch-context allowlist. Customer-scoped " +
             "GraphQL requests must originate from src/lib/node, " +
             "src/lib/detection, or the GraphQL client modules. If the call " +
@@ -202,9 +288,9 @@ export function checkFiles(files) {
       if (!hasBuildDispatchContext(source)) {
         violations.push({
           relPath,
-          lineNumber: site.lineNumber,
+          lineNumber: site.startLine,
           message:
-            `${relPath}:${site.lineNumber} calls graphqlRequest/graphqlRequestTo ` +
+            `${relPath}:${site.startLine} calls graphqlRequest/graphqlRequestTo ` +
             "but neither imports nor locally declares `buildDispatchContext`. " +
             "Customer scope must be materialized through " +
             "`buildDispatchContext(session)` before dispatch. Use " +
