@@ -29,6 +29,7 @@ import {
 } from "./helpers/auth";
 import {
   deleteSavedFiltersForAccount,
+  ensureCustomerExists,
   resetAccountDefaults,
 } from "./helpers/setup-db";
 
@@ -86,6 +87,79 @@ test.describe
       ).toBeVisible();
       await page.screenshot({
         path: path.join(ASSETS_DIR, "detection-drawer-ko.png"),
+        animations: "disabled",
+      });
+    });
+
+    // Customer multi-select drawer (#384). The control opens to reveal
+    // a search box, "Select all" toggle, and a checkbox list of the
+    // customers `getEffectiveCustomerScope(session)` returns. The
+    // worker account holds the System Administrator role and so resolves
+    // to every registered customer; we seed two so the panel renders a
+    // populated list rather than the disabled empty-scope affordance.
+    test("EN customer drawer", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await ensureCustomerExists("Acme Inc.", "acme_inc_db");
+      await ensureCustomerExists("Globex", "globex_db");
+      await signInAndWait(page, workerUsername, workerPassword);
+      await page.goto("/detection");
+
+      const filtersButton = page.getByRole("button", { name: "Filters" });
+      await expect(filtersButton).toBeVisible({ timeout: 10_000 });
+      await filtersButton.click();
+      const drawer = page.getByRole("dialog");
+      await expect(
+        drawer.getByRole("heading", { name: "Filters" }),
+      ).toBeVisible();
+
+      const customerTrigger = drawer
+        .getByRole("group", { name: "Customer" })
+        .getByRole("button")
+        .first();
+      await customerTrigger.scrollIntoViewIfNeeded();
+      await customerTrigger.click();
+      await expect(
+        drawer.getByRole("button", { name: /Acme Inc\./ }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: path.join(ASSETS_DIR, "detection-drawer-customer-en.png"),
+        animations: "disabled",
+      });
+    });
+
+    test("KO customer drawer", async ({
+      page,
+      workerUsername,
+      workerPassword,
+    }) => {
+      await ensureCustomerExists("Acme Inc.", "acme_inc_db");
+      await ensureCustomerExists("Globex", "globex_db");
+      await signInAndWaitKo(page, workerUsername, workerPassword);
+      await page.goto("/ko/detection");
+
+      const filtersButton = page.getByRole("button", {
+        name: "필터",
+        exact: true,
+      });
+      await expect(filtersButton).toBeVisible({ timeout: 10_000 });
+      await filtersButton.click();
+      const drawer = page.getByRole("dialog");
+      await expect(drawer.getByRole("heading", { name: "필터" })).toBeVisible();
+
+      const customerTrigger = drawer
+        .getByRole("group", { name: "고객사" })
+        .getByRole("button")
+        .first();
+      await customerTrigger.scrollIntoViewIfNeeded();
+      await customerTrigger.click();
+      await expect(
+        drawer.getByRole("button", { name: /Acme Inc\./ }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: path.join(ASSETS_DIR, "detection-drawer-customer-ko.png"),
         animations: "disabled",
       });
     });

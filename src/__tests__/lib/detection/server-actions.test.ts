@@ -232,6 +232,203 @@ describe("detection server actions", () => {
     });
   });
 
+  // ── BFF intersection check (#384) ──────────────────────────────
+  //
+  // Every Detection server action must reject before any REview
+  // dispatch when `filter.input.customers` references IDs outside
+  // the caller's effective scope. The check sits at the dispatch
+  // choke point (`buildDispatchContext`), so a single test on
+  // `searchEvents` covers every entry path (URL param, saved
+  // filter load, recommended filter activation, pivot click).
+
+  describe("BFF intersection check", () => {
+    beforeEach(() => {
+      mockHasPermission.mockResolvedValue(true);
+    });
+
+    it("dispatches when the filter narrows to a subset of allowed scope", async () => {
+      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+      mockGraphqlRequest.mockResolvedValue({
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: false,
+            hasNextPage: false,
+            startCursor: null,
+            endCursor: null,
+          },
+          edges: [],
+          nodes: [],
+          totalCount: "0",
+        },
+      });
+
+      const { searchEvents } = await import("@/lib/detection");
+      await searchEvents(makeSession(), {
+        mode: "structured",
+        input: { customers: ["1"] },
+      });
+
+      expect(mockGraphqlRequest).toHaveBeenCalledOnce();
+      const [, variables] = mockGraphqlRequest.mock.calls[0];
+      expect(variables.filter.customers).toEqual(["1"]);
+    });
+
+    it("rejects a fully-out-of-scope `customers` list with DetectionForbiddenError, no REview dispatch", async () => {
+      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+
+      const { searchEvents, DetectionForbiddenError } = await import(
+        "@/lib/detection"
+      );
+
+      await expect(
+        searchEvents(makeSession(), {
+          mode: "structured",
+          input: { customers: ["3"] },
+        }),
+      ).rejects.toBeInstanceOf(DetectionForbiddenError);
+
+      expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    });
+
+    it("rejects a mixed legal/illegal `customers` list — never silently narrows", async () => {
+      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+
+      const { searchEvents, DetectionForbiddenError } = await import(
+        "@/lib/detection"
+      );
+
+      await expect(
+        searchEvents(makeSession(), {
+          mode: "structured",
+          input: { customers: ["1", "3"] },
+        }),
+      ).rejects.toBeInstanceOf(DetectionForbiddenError);
+
+      expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    });
+
+    it("dispatches an admin selecting any subset of registered customers", async () => {
+      // Admin scope is materialised upstream — every registered
+      // customer ID — and `searchEvents` does not branch on role.
+      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3, 4, 5]);
+      mockGraphqlRequest.mockResolvedValue({
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: false,
+            hasNextPage: false,
+            startCursor: null,
+            endCursor: null,
+          },
+          edges: [],
+          nodes: [],
+          totalCount: "0",
+        },
+      });
+
+      const { searchEvents } = await import("@/lib/detection");
+      await searchEvents(makeSession({ roles: ["System Administrator"] }), {
+        mode: "structured",
+        input: { customers: ["2", "4"] },
+      });
+
+      expect(mockGraphqlRequest).toHaveBeenCalledOnce();
+      const [, variables] = mockGraphqlRequest.mock.calls[0];
+      expect(variables.filter.customers).toEqual(["2", "4"]);
+    });
+
+    it("rejects an admin selecting an unknown customer ID (not present in `customers`)", async () => {
+      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3]);
+
+      const { searchEvents, DetectionForbiddenError } = await import(
+        "@/lib/detection"
+      );
+
+      await expect(
+        searchEvents(makeSession({ roles: ["System Administrator"] }), {
+          mode: "structured",
+          input: { customers: ["999999"] },
+        }),
+      ).rejects.toBeInstanceOf(DetectionForbiddenError);
+
+      expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    });
+
+    it("rejects an empty-scope account before any REview dispatch", async () => {
+      mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+
+      // Note: the empty-scope rejection surfaces as
+      // `DetectionUnauthorizedError`, not `DetectionForbiddenError`
+      // — the caller has no Detection access at all, distinct from
+      // "has access but referenced a forbidden customer". The
+      // important contract is that **no** REview dispatch occurs.
+      const { searchEvents, DetectionUnauthorizedError } = await import(
+        "@/lib/detection"
+      );
+
+      await expect(
+        searchEvents(makeSession(), {
+          mode: "structured",
+          input: { customers: ["1"] },
+        }),
+      ).rejects.toBeInstanceOf(DetectionUnauthorizedError);
+
+      expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    });
+
+    it("rejects malformed wire entries (non-integer / negative)", async () => {
+      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+
+      const { searchEvents, DetectionForbiddenError } = await import(
+        "@/lib/detection"
+      );
+
+      await expect(
+        searchEvents(makeSession(), {
+          mode: "structured",
+          input: { customers: ["abc"] },
+        }),
+      ).rejects.toBeInstanceOf(DetectionForbiddenError);
+
+      expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    });
+
+    it("propagates rejection through every counter entry point", async () => {
+      mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+
+      const mod = await import("@/lib/detection");
+      const { DetectionForbiddenError } = mod;
+      const counters: Array<keyof typeof mod> = [
+        "countEventsByCategory",
+        "countEventsByLevel",
+        "countEventsByCountry",
+        "countEventsByKind",
+        "countEventsByIpAddress",
+        "countEventsByOriginatorIpAddress",
+        "countEventsByResponderIpAddress",
+        "eventFrequencySeries",
+      ];
+      for (const fnName of counters) {
+        const fn = mod[fnName] as (
+          s: import("@/lib/auth/jwt").AuthSession,
+          f: import("@/lib/detection").Filter,
+          arg: number,
+        ) => Promise<unknown>;
+        await expect(
+          fn(
+            makeSession(),
+            {
+              mode: "structured",
+              input: { customers: ["999"] },
+            },
+            10,
+          ),
+        ).rejects.toBeInstanceOf(DetectionForbiddenError);
+      }
+
+      expect(mockGraphqlRequest).not.toHaveBeenCalled();
+    });
+  });
+
   // ── Per-counter wiring ─────────────────────────────────────────
 
   describe.each([

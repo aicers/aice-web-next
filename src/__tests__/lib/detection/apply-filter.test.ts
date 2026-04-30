@@ -21,6 +21,7 @@ function draft(
     confidenceMin: 0,
     confidenceMax: 1,
     sensorIds: [],
+    customerIds: [],
     levels: [],
     countries: [],
     learningMethods: [],
@@ -131,6 +132,39 @@ describe("buildAppliedFilter", () => {
     expect(next.input.endpoints).toEqual([
       { direction: "FROM", predefined: "net-1" },
     ]);
+  });
+
+  // ── Customers (#384) ───────────────────────────────────────────
+  it("converts the draft's numeric customerIds to wire-format strings", () => {
+    const current: Filter = { mode: "structured", input: {} };
+    const next = buildAppliedFilter(current, draft({ customerIds: [42, 7] }));
+    if (next.mode !== "structured") throw new Error("unreachable");
+    // `IDScalar[]` on the wire — never raw numbers.
+    expect(next.input.customers).toEqual(["42", "7"]);
+    expect(next.input.customers?.every((v) => typeof v === "string")).toBe(
+      true,
+    );
+  });
+
+  it("omits the customers field when the draft is empty (no narrowing)", () => {
+    const current: Filter = { mode: "structured", input: {} };
+    const next = buildAppliedFilter(current, draft({ customerIds: [] }));
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(Object.hasOwn(next.input, "customers")).toBe(false);
+  });
+
+  it("clears a previous customers selection when the draft empties it", () => {
+    const current: Filter = {
+      mode: "structured",
+      input: {
+        start: "2026-04-22T10:00:00.000Z",
+        end: "2026-04-22T11:00:00.000Z",
+        customers: ["1", "2"],
+      },
+    };
+    const next = buildAppliedFilter(current, draft({ customerIds: [] }));
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(Object.hasOwn(next.input, "customers")).toBe(false);
   });
 
   it("re-emits predefined endpoints alongside rebuilt custom rules", () => {

@@ -22,6 +22,10 @@ import {
   runEventQuery,
 } from "@/app/[locale]/(dashboard)/detection/actions";
 import {
+  type FetchCustomersForFilterResult,
+  fetchCustomersForFilter,
+} from "@/app/[locale]/(dashboard)/detection/customer-actions";
+import {
   type FetchSensorsResult,
   fetchSensors,
 } from "@/app/[locale]/(dashboard)/detection/sensor-actions";
@@ -95,6 +99,7 @@ import {
   endpointEntriesFromEndpointInputs,
 } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
+import { parsePositiveCustomerId } from "@/lib/detection/filter-customer-scope";
 import {
   CONFIDENCE_DEFAULT_MAX,
   CONFIDENCE_DEFAULT_MIN,
@@ -150,6 +155,10 @@ import type {
 } from "@/lib/detection/url-filters";
 import { encodeEventLocator } from "@/lib/events/event-locator";
 import { cn } from "@/lib/utils";
+import type {
+  CustomerMultiSelectState,
+  CustomerOption,
+} from "./customer-multi-select";
 import {
   type DrawerFocusField,
   FilterDrawer,
@@ -667,6 +676,48 @@ export function shouldTriggerSensorFetch(cache: SensorCache): boolean {
 }
 
 /**
+ * Session-cached customer inventory (#384). Mirrors {@link SensorCache}
+ * one-for-one — the drawer fetches `getEffectiveCustomerScope(session)`
+ * (via `fetchCustomersForFilter`) on first open and reuses the result
+ * for subsequent opens in the same tab session. The cache is keyed on
+ * the page mount: away-and-back / hard refresh discards it.
+ */
+export type CustomerCache =
+  | { status: "idle" }
+  | { status: "loading" }
+  | {
+      status: "loaded";
+      kind: "admin" | "assigned" | "empty";
+      options: readonly CustomerOption[];
+    }
+  | { status: "error" };
+
+/**
+ * Translate {@link CustomerCache} into the visual state the
+ * Customer control should render. `loaded` (regardless of `kind`)
+ * maps to `ready` — the empty-scope case is folded into the ready
+ * state with `options.length === 0` so the control can render its
+ * disabled "No customer access" affordance distinctly from the
+ * loading and error states.
+ */
+export function customerStateForCache(
+  cache: CustomerCache,
+): CustomerMultiSelectState {
+  if (cache.status === "loaded") return "ready";
+  if (cache.status === "error") return "error";
+  return "loading";
+}
+
+/**
+ * True when an open-drawer path should kick off a customer fetch.
+ * Same contract as {@link shouldTriggerSensorFetch} so both drawer
+ * fields share their lazy-load policy.
+ */
+export function shouldTriggerCustomerFetch(cache: CustomerCache): boolean {
+  return cache.status !== "loading" && cache.status !== "loaded";
+}
+
+/**
  * Whether opening the drawer on a given chip-body focus should also
  * expand the Network/IP advanced panel. Only the endpoints aggregate
  * wants it; every other focus (period, source, direction, …) must
@@ -1111,6 +1162,9 @@ export function DetectionShell({
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
   });
+  const [customerCache, setCustomerCache] = useState<CustomerCache>({
+    status: "idle",
+  });
   // Target field for the drawer to focus after opening. `focusToken`
   // increments on each openDrawerFocused call so repeated clicks on
   // the same aggregate chip re-trigger the drawer's focus effect.
@@ -1275,6 +1329,31 @@ export function DetectionShell({
     );
   }, []);
 
+  // Symmetric to `triggerSensorFetch`. Bundled with the sensor
+  // fetch on the first drawer open so both fields land at the same
+  // visible cadence (#384 fetch & cache policy: page-session cache,
+  // no auto-TTL, manual refresh affordance).
+  const triggerCustomerFetch = useCallback(() => {
+    setCustomerCache({ status: "loading" });
+    void fetchCustomersForFilter().then(
+      (result: FetchCustomersForFilterResult) => {
+        if (result.ok) {
+          setCustomerCache({
+            status: "loaded",
+            kind: result.kind,
+            options: result.customers.map((c) => ({
+              id: c.id,
+              name: c.name,
+            })),
+          });
+        } else {
+          setCustomerCache({ status: "error" });
+        }
+      },
+      () => setCustomerCache({ status: "error" }),
+    );
+  }, []);
+
   const openDrawer = useCallback(() => {
     setDraft(
       (current) =>
@@ -1292,12 +1371,19 @@ export function DetectionShell({
     // hiccup doesn't freeze Sensor into the "Coming soon" fallback
     // for the rest of the tab session.
     if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
+    // Customer inventory follows the same lazy-on-first-open
+    // contract (#384). The two fetches fire together on the same
+    // drawer-open trigger so both fields settle at the same visible
+    // cadence.
+    if (shouldTriggerCustomerFetch(customerCache)) triggerCustomerFetch();
   }, [
     committedFilter,
     committedPeriod,
     committedEndpoints,
     sensorCache,
     triggerSensorFetch,
+    customerCache,
+    triggerCustomerFetch,
   ]);
 
   // Mirror the Quick peek selection into the URL so a refresh
@@ -2315,6 +2401,8 @@ export function DetectionShell({
       // sensors…" placeholder forever when the operator opens the
       // drawer via a chip without ever having clicked Filters.
       if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
+      // Customer fetch follows the same chip-body wiring (#384).
+      if (shouldTriggerCustomerFetch(customerCache)) triggerCustomerFetch();
     },
     [
       committedFilter,
@@ -2322,6 +2410,8 @@ export function DetectionShell({
       committedEndpoints,
       sensorCache,
       triggerSensorFetch,
+      customerCache,
+      triggerCustomerFetch,
     ],
   );
 
@@ -2397,6 +2487,24 @@ export function DetectionShell({
   // committed filter.
   const sensorState = sensorStateForCache(sensorCache);
 
+  // Customer cache → drawer state + chip-summary options. Mirrors
+  // the sensor wiring above; the empty-scope edge case
+  // (`kind: 'empty'`) is folded into a `loaded` cache with
+  // `options.length === 0` so the drawer renders the dedicated
+  // "No customer access" affordance.
+  const customerOptions: readonly CustomerOption[] =
+    customerCache.status === "loaded" ? customerCache.options : [];
+  const customerState = customerStateForCache(customerCache);
+  // Cached id → name map for the chip summariser. Keyed by the
+  // wire-format string id (`String(customer.id)`) so the chip
+  // label-up step is one Map hit per chip.
+  const customerSummaryOptions = useMemo<
+    readonly { value: string; label: string }[]
+  >(
+    () => customerOptions.map((c) => ({ value: String(c.id), label: c.name })),
+    [customerOptions],
+  );
+
   // Shared chip summariser: one `Filter → FilterChip[]` call the bar
   // reuses everywhere. The pivot-only chips above are concatenated
   // on render because they live outside `EventListFilterInput`.
@@ -2404,6 +2512,7 @@ export function DetectionShell({
     () => ({
       sensor: labels.drawer.sensor.label,
       sensorAggregate: labels.summarize.sensorAggregate,
+      customers: labels.drawer.customer.label,
       period: t("chips.period"),
       periodOptions: labels.drawer.periodOptions,
       formatRange: ({ start, end }) => t("activeRange", { start, end }),
@@ -2432,6 +2541,7 @@ export function DetectionShell({
       summarizeFilter(committedFilter, summarizeLabels, {
         period: committedPeriod,
         sensorOptions,
+        customerOptions: customerSummaryOptions,
         categoricalOptions: {
           levels: options.levels,
           countries: options.countries,
@@ -2440,7 +2550,14 @@ export function DetectionShell({
           kinds: options.kinds,
         },
       }),
-    [committedFilter, committedPeriod, options, sensorOptions, summarizeLabels],
+    [
+      committedFilter,
+      committedPeriod,
+      options,
+      sensorOptions,
+      customerSummaryOptions,
+      summarizeLabels,
+    ],
   );
   // Endpoints still flow through their richer drawer-side entries; the
   // unified summariser covers the committed `EventListFilterInput`, but
@@ -2470,6 +2587,7 @@ export function DetectionShell({
       const chips = summarizeFilter(next, summarizeLabels, {
         period: applied.period,
         sensorOptions,
+        customerOptions: customerSummaryOptions,
         categoricalOptions: {
           levels: options.levels,
           countries: options.countries,
@@ -2492,6 +2610,7 @@ export function DetectionShell({
       options,
       sensorCache,
       sensorOptions,
+      customerSummaryOptions,
       summarizeLabels,
     ],
   );
@@ -3022,6 +3141,9 @@ export function DetectionShell({
           sensorOptions={sensorOptions}
           sensorState={sensorState}
           onSensorRetry={triggerSensorFetch}
+          customerOptions={customerOptions}
+          customerState={customerState}
+          onCustomerRefresh={triggerCustomerFetch}
           focusField={focusField}
           focusToken={focusToken}
           onSaveRequest={savedFilters ? handleSaveRequest : undefined}
@@ -3297,6 +3419,14 @@ function filterToDraft(
     confidenceMin,
     confidenceMax,
     sensorIds: [...sensorIds],
+    // Customers travel as `string[]` on the wire; the drawer draft
+    // uses `number[]` for natural comparison/membership. Drop any
+    // string that does not parse cleanly into a positive integer —
+    // a malformed entry can only reach the draft via a saved-filter
+    // load or a crafted `?f=` blob, and the BFF intersection check
+    // would reject it on the next dispatch anyway. Keeping the draft
+    // numeric-only here keeps the chip / UI paths free of `NaN`.
+    customerIds: customerIdsFromInput(input.customers),
     levels: (input.levels ?? []) as readonly number[],
     countries: (input.countries ?? []) as readonly string[],
     learningMethods: (input.learningMethods ?? []) as readonly LearningMethod[],
@@ -3312,6 +3442,21 @@ function filterToDraft(
     userNames: fromArray(input.userNames),
     userDepartments: fromArray(input.userDepartments),
   };
+}
+
+function customerIdsFromInput(
+  values: readonly string[] | null | undefined,
+): number[] {
+  if (!values || values.length === 0) return [];
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const raw of values) {
+    const parsed = parsePositiveCustomerId(raw);
+    if (parsed === null || seen.has(parsed)) continue;
+    seen.add(parsed);
+    out.push(parsed);
+  }
+  return out;
 }
 
 function RemovableChip({

@@ -13,6 +13,7 @@ import { graphqlRequest } from "@/lib/graphql/client";
 
 import { DetectionUnauthorizedError } from "./errors";
 import { type Filter, toEventListFilterInput } from "./filter";
+import { validateFilterScope } from "./filter-customer-scope";
 import {
   type PageAnchor,
   type PageSize,
@@ -103,6 +104,13 @@ async function buildDispatchContext(
       "Caller has no assigned customers; Detection requires a customer scope.",
     );
   }
+
+  // BFF intersection check (#384). Reject before any REview round-
+  // trip when `filter.input.customers` references IDs outside the
+  // caller's effective scope. Throws `DetectionForbiddenError`; the
+  // route layer maps it to the same forbidden response code as the
+  // unauthorized branch above so neither path leaks a partial result.
+  validateFilterScope(filter, customerIds);
 
   return {
     role: session.roles[0],

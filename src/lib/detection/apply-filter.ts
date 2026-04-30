@@ -63,6 +63,7 @@ export function buildAppliedFilter(
     directions: _prevDirections,
     endpoints: _prevEndpoints,
     sensors: _prevSensors,
+    customers: _prevCustomers,
     // Strip the branch-introduced free-form fields from the previous
     // input so stale values don't survive when the drawer clears them;
     // the drawer-provided `applied` draft is the source of truth below.
@@ -129,6 +130,18 @@ export function buildAppliedFilter(
   // ("no `sensors` reaches the filter unless ready") holds.
   if (sensorEndpointLive && applied.sensorIds.length > 0) {
     input.sensors = [...applied.sensorIds];
+  }
+
+  // Customers (#384). The draft carries numeric IDs for natural
+  // in-drawer comparisons; the wire shape is REview's `IDScalar[]`
+  // (i.e. `string[]`), so convert at the boundary. An empty draft
+  // means "no customer narrowing" — omit the field so REview applies
+  // the JWT-carried scope without further restriction. The BFF
+  // intersection check (`validateFilterScope`) rejects out-of-scope
+  // IDs before any REview round-trip; this code path therefore never
+  // needs to "trim" a saved/crafted selection.
+  if (applied.customerIds.length > 0) {
+    input.customers = applied.customerIds.map(String);
   }
 
   // Free-form drawer fields: source/destination are single strings,

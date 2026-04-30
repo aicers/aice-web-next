@@ -864,12 +864,47 @@ bar (for example, `Confidence 0.70 – 1.00`).
 
 ### Customer
 
-**Customer** is a disabled placeholder marked **Coming soon**.
-Customer scoping still happens automatically — results are already
-limited to the customers your account has access to — but picking
-a subset of them from the UI arrives with the Customer directory
-in a later phase. The field is never submitted with the filter and
-never appears in the chip bar.
+**Customer** is a multi-select that narrows results to a subset
+of the customers your account can access. The list is sourced from
+the same scope helper that drives the customer indicator in the
+page header, so the drawer and the indicator always agree about
+which customers are visible.
+
+Open the control to reveal a search box, a **Select all / Clear
+selection** toggle, and a scrollable list of customer names; picked
+customers also appear as removable chips just below the control.
+A small **↻** refresh icon in the panel header re-fetches the
+customer list — useful when an admin has just changed
+account-customer assignments in another browser tab. There is no
+automatic refresh; the cached list is reused for every drawer open
+in the current page session.
+
+Applying the filter submits the selected customer IDs. They show
+up in the active chip bar at the top of the page following the
+shared aggregation rule — one chip per customer for one to three
+selections, a single `Customer: N` aggregate token for four or
+more.
+
+![Detection filter drawer — Customer multi-select](../assets/detection-drawer-customer-en.png)
+
+If your account has **no customers in scope**, the control is
+disabled with a **No customer access** affordance and the filter
+never submits a `customers` value. While the customer list is
+being fetched on the first drawer open, the control shows a
+**Loading customers…** affordance; if the fetch fails transiently,
+a **Failed to load customers** message is displayed alongside an
+inline **Retry** button so the operator can recover without
+closing and reopening the drawer.
+
+> Security note: aice-web-next independently rejects any filter
+> whose `customers` list references a customer outside your
+> effective scope. Loading a saved filter, activating a recommended
+> filter, or following a pivot URL whose `customers` list exceeds
+> your current scope produces a clear failure rather than silently
+> stripping the offending IDs and returning a partial result. The
+> backend (REview) applies its own intersection on top, but the
+> aice-web-next side is no longer relying on REview as the only
+> enforcement point.
 
 ### Sensor
 

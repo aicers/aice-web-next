@@ -291,6 +291,7 @@ export function DetectionTabsShell({
     () => ({
       sensor: labels.shell.drawer.sensor.label,
       sensorAggregate: labels.shell.summarize.sensorAggregate,
+      customers: labels.shell.drawer.customer.label,
       period: "",
       periodOptions: labels.shell.drawer.periodOptions,
       formatRange: ({ start, end }) => `${start} – ${end}`,
@@ -319,6 +320,7 @@ export function DetectionTabsShell({
       const chips: FilterChip[] = summarizeFilter(tab.filter, summarizeLabels, {
         period: tab.period,
         sensorOptions: [],
+        customerOptions: [],
         categoricalOptions: {
           levels: options.levels,
           countries: options.countries,

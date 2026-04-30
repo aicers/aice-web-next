@@ -17,6 +17,11 @@ export {
   isAnalyticsTopN,
 } from "./analytics";
 export {
+  type DetectionCustomerListResult,
+  type DetectionCustomerOption,
+  listCustomersForFilter,
+} from "./customers";
+export {
   buildEndpointChips,
   createEndpointEntryId,
   ENDPOINT_CHIP_AGGREGATE_THRESHOLD,
@@ -32,10 +37,15 @@ export {
   preservePredefinedEndpointInputs,
 } from "./endpoint-filter";
 export {
+  DetectionForbiddenError,
   DetectionNotImplementedError,
   DetectionUnauthorizedError,
 } from "./errors";
 export { type Filter, toEventListFilterInput } from "./filter";
+export {
+  parsePositiveCustomerId,
+  validateFilterScope,
+} from "./filter-customer-scope";
 export {
   analyticsFilterIdentity,
   type FilterIdentity,
