@@ -429,8 +429,11 @@ test.describe("Node settings list page", () => {
     await expect(page.getByText("gamma-node")).toHaveCount(0);
     // Tenant Admin retains write affordances within their scope.
     await expect(page.getByTestId("nodes-add-button")).toBeVisible();
-    // System-Admin-only tenant filter must not appear.
-    await expect(page.getByLabel("Customer")).toHaveCount(0);
+    // System-Admin-only tenant filter must not appear. Use an exact
+    // match on the dropdown's `aria-label="Customer"` so the assertion
+    // does not also catch the customer scope indicator (whose aria-label
+    // happens to contain the substring "customer").
+    await expect(page.getByLabel("Customer", { exact: true })).toHaveCount(0);
   });
 
   test("row-menu Edit/Delete do not also navigate to /nodes/[id]", async ({

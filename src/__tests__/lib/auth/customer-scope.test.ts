@@ -114,3 +114,133 @@ describe("resolveEffectiveCustomerIds", () => {
     expect(result).toEqual([3, 7]);
   });
 });
+
+describe("getEffectiveCustomerScope", () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockHasPermission.mockReset();
+  });
+
+  it("returns admin scope with every customer name when access-all is granted", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    // First call: getAllCustomerIds (id list)
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: 1 }, { id: 2 }, { id: 3 }],
+    });
+    // Second call: name JOIN
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { id: 1, name: "ACME" },
+        { id: 2, name: "Beta" },
+        { id: 3, name: "Gamma" },
+      ],
+    });
+
+    const { getEffectiveCustomerScope } = await import(
+      "@/lib/auth/customer-scope"
+    );
+    const result = await getEffectiveCustomerScope({
+      accountId: "account-1",
+      roles: ["System Administrator"],
+    });
+
+    expect(result.kind).toBe("admin");
+    expect(result.customers).toEqual([
+      { id: 1, name: "ACME" },
+      { id: 2, name: "Beta" },
+      { id: 3, name: "Gamma" },
+    ]);
+  });
+
+  it("returns assigned scope with names when account has account_customer rows", async () => {
+    mockHasPermission.mockResolvedValue(false);
+    // First call: getAccountCustomerIds
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ customer_id: 3 }, { customer_id: 7 }],
+    });
+    // Second call: name JOIN
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { id: 3, name: "ACME" },
+        { id: 7, name: "Beta" },
+      ],
+    });
+
+    const { getEffectiveCustomerScope } = await import(
+      "@/lib/auth/customer-scope"
+    );
+    const result = await getEffectiveCustomerScope({
+      accountId: "account-1",
+      roles: ["Tenant Administrator"],
+    });
+
+    expect(result.kind).toBe("assigned");
+    expect(result.customers).toEqual([
+      { id: 3, name: "ACME" },
+      { id: 7, name: "Beta" },
+    ]);
+  });
+
+  it("flags assigned-to-everything (without admin) as kind: 'assigned'", async () => {
+    // A non-admin who happens to be assigned to every customer is
+    // *still* kind: 'assigned' — the indicator's admin badge surfaces
+    // the source of the scope, not its size.
+    mockHasPermission.mockResolvedValue(false);
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ customer_id: 1 }, { customer_id: 2 }, { customer_id: 3 }],
+    });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { id: 1, name: "ACME" },
+        { id: 2, name: "Beta" },
+        { id: 3, name: "Gamma" },
+      ],
+    });
+
+    const { getEffectiveCustomerScope } = await import(
+      "@/lib/auth/customer-scope"
+    );
+    const result = await getEffectiveCustomerScope({
+      accountId: "account-1",
+      roles: ["Tenant Administrator"],
+    });
+
+    expect(result.kind).toBe("assigned");
+    expect(result.customers).toHaveLength(3);
+  });
+
+  it("returns admin scope even when no customers are registered", async () => {
+    // Admin source is preserved regardless of whether any customers
+    // exist yet — the indicator still differentiates admin from
+    // empty assignment.
+    mockHasPermission.mockResolvedValue(true);
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { getEffectiveCustomerScope } = await import(
+      "@/lib/auth/customer-scope"
+    );
+    const result = await getEffectiveCustomerScope({
+      accountId: "account-1",
+      roles: ["System Administrator"],
+    });
+
+    expect(result.kind).toBe("admin");
+    expect(result.customers).toEqual([]);
+  });
+
+  it("returns empty scope when no rows and not admin", async () => {
+    mockHasPermission.mockResolvedValue(false);
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { getEffectiveCustomerScope } = await import(
+      "@/lib/auth/customer-scope"
+    );
+    const result = await getEffectiveCustomerScope({
+      accountId: "account-1",
+      roles: ["Operator"],
+    });
+
+    expect(result.kind).toBe("empty");
+    expect(result.customers).toEqual([]);
+  });
+});

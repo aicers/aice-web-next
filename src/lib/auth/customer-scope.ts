@@ -2,6 +2,7 @@ import "server-only";
 
 import { query } from "@/lib/db/client";
 
+import type { AuthSession } from "./jwt";
 import { hasPermission } from "./permissions";
 
 /**
@@ -52,4 +53,70 @@ export async function resolveEffectiveCustomerIds(
   const accessAll = await hasPermission(roles, "customers:access-all");
   if (accessAll) return getAllCustomerIds();
   return getAccountCustomerIds(accountId);
+}
+
+// ── Effective scope (with names, for the UI indicator) ────────
+
+/**
+ * Customer summary surfaced by the indicator. Plain JSON-serializable
+ * shape so the dashboard server layout can pass it as a prop into a
+ * client component without any custom serialization.
+ */
+export interface CustomerScopeEntry {
+  id: number;
+  name: string;
+}
+
+/**
+ * Effective customer scope for a session, formatted for display.
+ *
+ * - `kind: 'admin'` — the session holds `customers:access-all`. The
+ *   scope is the entire registered customer set, but the indicator
+ *   shows it as an admin-source badge rather than enumerating every
+ *   customer name.
+ * - `kind: 'assigned'` — the session is scoped via `account_customer`.
+ *   `customers` holds those rows, possibly enumerating the entire
+ *   customer set when the account happens to be assigned to all of
+ *   them — that is *still* `'assigned'`, not `'admin'`.
+ * - `kind: 'empty'` — no `account_customer` rows and no admin
+ *   permission. Surfaced as a warning state.
+ */
+export interface EffectiveCustomerScope {
+  kind: "admin" | "assigned" | "empty";
+  customers: CustomerScopeEntry[];
+}
+
+/**
+ * Resolve the customer scope of a session into a display-ready shape
+ * for the UI indicator (issue #383). Wraps `hasPermission` and
+ * `resolveEffectiveCustomerIds`, then JOINs against `customers` to
+ * attach names.
+ *
+ * Admin and assignment are independent: a non-admin assigned to every
+ * customer is `kind: 'assigned'`, not `'admin'`. The badge in the
+ * indicator surfaces the *source* of the scope, which the operator
+ * cannot otherwise tell from a name list alone.
+ */
+export async function getEffectiveCustomerScope(
+  session: Pick<AuthSession, "accountId" | "roles">,
+): Promise<EffectiveCustomerScope> {
+  const isAdmin = await hasPermission(session.roles, "customers:access-all");
+  const ids = await resolveEffectiveCustomerIds(
+    session.accountId,
+    session.roles,
+  );
+
+  if (ids.length === 0) {
+    return { kind: isAdmin ? "admin" : "empty", customers: [] };
+  }
+
+  const { rows } = await query<{ id: number; name: string }>(
+    "SELECT id, name FROM customers WHERE id = ANY($1::int[]) ORDER BY name",
+    [ids],
+  );
+
+  return {
+    kind: isAdmin ? "admin" : "assigned",
+    customers: rows.map((r) => ({ id: r.id, name: r.name })),
+  };
 }

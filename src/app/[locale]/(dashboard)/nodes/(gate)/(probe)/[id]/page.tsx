@@ -1,8 +1,10 @@
 import { notFound, redirect } from "next/navigation";
 
+import { CustomerScopeCallout } from "@/components/layout/customer-scope-callout";
 import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
 import { NodeDetailDashboard } from "@/components/node/node-detail-dashboard";
 import { NodeDetailServiceGrid } from "@/components/node/node-detail-service-grid";
+import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 import { query } from "@/lib/db/client";
@@ -92,12 +94,14 @@ export default async function NodeDetailPage({
     canWriteServices,
     canDeleteNodes,
     accessAll,
+    scope,
   ] = await Promise.all([
     hasPermission(session.roles, "services:read"),
     hasPermission(session.roles, "nodes:write"),
     hasPermission(session.roles, "services:write"),
     hasPermission(session.roles, "nodes:delete"),
     hasPermission(session.roles, "customers:access-all"),
+    getEffectiveCustomerScope(session),
   ]);
 
   // Canonical node payload. The combined gate at the layout level
@@ -123,7 +127,12 @@ export default async function NodeDetailPage({
   }
 
   if (managerOffline || !node) {
-    return <ManagerUnavailablePanel />;
+    return (
+      <>
+        <CustomerScopeCallout scope={scope} className="mb-4" />
+        <ManagerUnavailablePanel />
+      </>
+    );
   }
 
   const customers = await loadCustomerOptions(session.accountId, accessAll);
@@ -211,6 +220,7 @@ export default async function NodeDetailPage({
 
   return (
     <div className="space-y-6" data-testid="node-detail-page" data-node-id={id}>
+      <CustomerScopeCallout scope={scope} />
       <NodeDetailDashboard
         node={node}
         customers={customers}

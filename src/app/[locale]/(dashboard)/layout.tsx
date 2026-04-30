@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 
 import DashboardLayoutClient from "@/components/layout/dashboard-layout";
 import { routing } from "@/i18n/routing";
+import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
+import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 import { query } from "@/lib/db/client";
 
@@ -40,8 +42,29 @@ export default async function DashboardLayout({
     // DB unavailable — fall back to no username
   }
 
+  // Resolve the session's effective customer scope so the indicator
+  // and popover render server-side; the helper itself is server-only,
+  // and the result is a plain JSON object that drops cleanly through
+  // the client-component boundary. We deliberately do NOT swallow
+  // failures here: an unavailable DB / permission lookup is a real
+  // error and `empty` carries the specific meaning "no customer
+  // access," not "we could not figure out scope." Letting the error
+  // propagate keeps the indicator state honest (the next/error
+  // boundary surfaces the actual fault) and matches the pages below
+  // that call `getEffectiveCustomerScope()` again without their own
+  // catch.
+  const scope = await getEffectiveCustomerScope(session);
+  const canManageCustomers = await hasPermission(
+    session.roles,
+    "customers:read",
+  );
+
   return (
-    <DashboardLayoutClient username={username}>
+    <DashboardLayoutClient
+      username={username}
+      scope={scope}
+      canManageCustomers={canManageCustomers}
+    >
       {children}
     </DashboardLayoutClient>
   );

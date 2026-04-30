@@ -4,9 +4,24 @@ import type { AuthSession } from "@/lib/auth/jwt";
 
 const mockGetCurrentSession = vi.hoisted(() => vi.fn());
 const mockRedirect = vi.hoisted(() => vi.fn());
+const mockGetEffectiveCustomerScope = vi.hoisted(() => vi.fn());
+const mockHasPermission = vi.hoisted(() => vi.fn());
+const mockQuery = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/session", () => ({
   getCurrentSession: mockGetCurrentSession,
+}));
+
+vi.mock("@/lib/auth/customer-scope", () => ({
+  getEffectiveCustomerScope: mockGetEffectiveCustomerScope,
+}));
+
+vi.mock("@/lib/auth/permissions", () => ({
+  hasPermission: mockHasPermission,
+}));
+
+vi.mock("@/lib/db/client", () => ({
+  query: mockQuery,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -42,6 +57,15 @@ beforeEach(() => {
   mockRedirect.mockImplementation((path: string) => {
     throw new Error(`redirect:${path}`);
   });
+  mockGetEffectiveCustomerScope.mockReset();
+  mockGetEffectiveCustomerScope.mockResolvedValue({
+    kind: "admin",
+    customers: [],
+  });
+  mockHasPermission.mockReset();
+  mockHasPermission.mockResolvedValue(false);
+  mockQuery.mockReset();
+  mockQuery.mockResolvedValue({ rows: [{ username: "admin" }] });
   vi.resetModules();
 });
 
@@ -104,5 +128,26 @@ describe("DashboardLayout", () => {
 
     expect(result.props.children).toBe("child");
     expect(mockRedirect).not.toHaveBeenCalled();
+  });
+
+  // The layout used to wrap `getEffectiveCustomerScope` in a `try/catch`
+  // that collapsed any failure to `{ kind: "empty" }`, which made the
+  // indicator silently impersonate the legitimate "no customer access"
+  // state on a DB outage. The contract now is to let the error
+  // propagate so Next's error boundary surfaces the actual fault.
+  it("propagates getEffectiveCustomerScope failures instead of masking them as empty scope", async () => {
+    mockGetCurrentSession.mockResolvedValue(validSession);
+    const failure = new Error("DB unavailable");
+    mockGetEffectiveCustomerScope.mockRejectedValue(failure);
+
+    const DashboardLayout = (await import("@/app/[locale]/(dashboard)/layout"))
+      .default;
+
+    await expect(
+      DashboardLayout({
+        children: "child",
+        params: Promise.resolve({ locale: "en" }),
+      }),
+    ).rejects.toThrow("DB unavailable");
   });
 });

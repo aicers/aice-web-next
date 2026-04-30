@@ -30,6 +30,7 @@ plugins:
             - Operations:
                 - Node management: operations/node-management.md
             - Settings: settings.md
+            - Customer Scope: customer-scope.md
         - locale: ko
           name: 한국어
           build: true
@@ -41,6 +42,7 @@ plugins:
             - Operations:
                 - Node management: operations/node-management.md
             - Settings: settings.md
+            - Customer Scope: customer-scope.md
           nav_translations:
             Overview: 개요
             Getting Started: 시작하기
@@ -49,6 +51,7 @@ plugins:
             Operations: 운영
             Node management: 노드 관리
             Settings: 설정
+            Customer Scope: 고객사 범위
 
 extra_css:
   - styles/lists.css

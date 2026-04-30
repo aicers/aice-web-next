@@ -23,7 +23,9 @@ import {
 } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { usePathname } from "@/i18n/navigation";
+import type { EffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { ThemeToggle } from "../theme-toggle";
+import { CustomerScopeIndicator } from "./customer-scope-indicator";
 import { Logo } from "./logo";
 import { NavUser } from "./nav-user";
 import { SidebarItem } from "./sidebar-item";
@@ -44,19 +46,23 @@ interface MobileHeaderProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   username?: string;
+  scope: EffectiveCustomerScope;
+  canManageCustomers: boolean;
 }
 
 export function MobileHeader({
   open,
   onOpenChange,
   username,
+  scope,
+  canManageCustomers,
 }: MobileHeaderProps) {
   const t = useTranslations("nav");
   const pathname = usePathname();
 
   return (
     <>
-      <header className="flex h-14 items-center border-b bg-[var(--sidebar-bg)] px-4 desktop:hidden">
+      <header className="flex h-14 items-center gap-3 border-b bg-[var(--sidebar-bg)] px-4 desktop:hidden">
         <Button
           variant="ghost"
           size="icon"
@@ -67,6 +73,14 @@ export function MobileHeader({
           <span className="sr-only">Open menu</span>
         </Button>
         <Logo className="ml-3" />
+        <div className="ml-auto">
+          <CustomerScopeIndicator
+            scope={scope}
+            canManage={canManageCustomers}
+            variant="mobile"
+            className="text-[var(--sidebar-fg)]"
+          />
+        </div>
       </header>
 
       <Sheet open={open} onOpenChange={onOpenChange}>
