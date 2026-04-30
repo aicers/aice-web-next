@@ -4,7 +4,9 @@ import { NextResponse } from "next/server";
 
 import { queryAudit } from "@/lib/audit/client";
 import { AUDIT_ACTIONS, AUDIT_TARGET_TYPES } from "@/lib/audit/schema";
+import { resolveEffectiveCustomerIds } from "@/lib/auth/customer-scope";
 import { withAuth } from "@/lib/auth/guard";
+import { hasPermission } from "@/lib/auth/permissions";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -63,15 +65,55 @@ const UUID_RE =
 /**
  * GET /api/audit-logs
  *
- * Search and filter audit log entries.  System Administrator only.
+ * Search and filter audit log entries. Requires `audit-logs:read`.
+ * Results are scoped to the caller's effective customer set unless
+ * the caller holds `customers:access-all`.
  *
  * Query parameters:
  *   page, pageSize, from, to, actor, action, targetType, targetId,
  *   correlationId
  */
 export const GET = withAuth(
-  async (request, _context, _session) => {
+  async (request, _context, session) => {
     const url = request.nextUrl;
+
+    // ── Customer scope (project principle 3) ─────────────────────
+    //
+    // Branch on two independent signals:
+    //   1. `isAdmin` — authoritative admin signal from the
+    //      `customers:access-all` permission. Only this branch may
+    //      omit the customer_id predicate (so admins see rows with
+    //      `customer_id IS NULL`).
+    //   2. `allowedCustomerIds` — the predicate values for non-admin
+    //      callers, materialized from `account_customer`. A non-admin
+    //      who happens to be assigned to every customer must still
+    //      receive the explicit `customer_id IN (...)` filter, or
+    //      audit-agnostic (`customer_id IS NULL`) rows would leak via
+    //      the admin-only "no predicate" path.
+    const isAdmin = await hasPermission(session.roles, "customers:access-all");
+    const allowedCustomerIds = isAdmin
+      ? []
+      : await resolveEffectiveCustomerIds(session.accountId, session.roles);
+    if (!isAdmin && allowedCustomerIds.length === 0) {
+      const emptyPage = Math.max(
+        DEFAULT_PAGE,
+        Number.parseInt(url.searchParams.get("page") ?? "", 10) || DEFAULT_PAGE,
+      );
+      const emptyPageSize = Math.min(
+        MAX_PAGE_SIZE,
+        Math.max(
+          1,
+          Number.parseInt(url.searchParams.get("pageSize") ?? "", 10) ||
+            DEFAULT_PAGE_SIZE,
+        ),
+      );
+      return NextResponse.json({
+        data: [],
+        total: 0,
+        page: emptyPage,
+        pageSize: emptyPageSize,
+      });
+    }
 
     // ── Parse pagination ──────────────────────────────────────────
 
@@ -170,6 +212,19 @@ export const GET = withAuth(
       }
       conditions.push(`correlation_id = $${idx++}`);
       params.push(correlationId);
+    }
+
+    // ── Customer scope predicate ──────────────────────────────────
+    //
+    // Restricted callers (`!isAdmin`) get an explicit
+    // `customer_id IN ($N, ...)` predicate. Rows with
+    // `customer_id IS NULL` (audit-agnostic events such as
+    // `account.login`) are intentionally excluded — surfacing them
+    // to a restricted viewer is out of scope for this issue.
+    if (!isAdmin) {
+      const placeholders = allowedCustomerIds.map(() => `$${idx++}`).join(", ");
+      conditions.push(`customer_id IN (${placeholders})`);
+      params.push(...allowedCustomerIds);
     }
 
     // ── Execute queries ───────────────────────────────────────────
