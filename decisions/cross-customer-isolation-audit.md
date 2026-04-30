@@ -120,11 +120,12 @@ Scope: every **semantic SQL call site** — every `query(...)`,
 `query<T>(...)`, `pool.query(...)`, `client.query(...)`,
 `client.query<T>(...)`, and the audit-DB wrapper `queryAudit(...)` /
 `queryAudit<T>(...)` — under `src/lib/**`, `src/app/api/**/route.ts`,
-**and** the App-Router page modules
-(`src/app/[locale]/(dashboard)/**/page.tsx`) where a few RSC pages
-issue direct customer-list reads to feed picker UI. Generic-typed
-forms (`query<Row>(...)`) are included alongside untyped forms; they
-are the same DB call. Migrations and test harnesses excluded.
+**and** the App-Router page / layout modules
+(`src/app/[locale]/(dashboard)/**/{page,layout}.tsx`) where a few RSC
+modules issue direct DB reads (customer-list reads to feed picker UI,
+plus a `username` self-read in the dashboard shell layout). Generic-
+typed forms (`query<Row>(...)`) are included alongside untyped forms;
+they are the same DB call. Migrations and test harnesses excluded.
 
 The thin DB-helper plumbing (the bodies of `query` / `withTransaction`
 in `src/lib/db/client.ts` and `queryAudit` in `src/lib/audit/client.ts`)
@@ -396,6 +397,7 @@ Self-service / preferences:
 - `src/app/api/accounts/me/preferences/route.ts:32` — `accounts` SELECT (caller's locale + timezone, keyed on `session.accountId`)
 - `src/app/api/accounts/me/preferences/route.ts:116` — `accounts` SELECT (no-update echo of current values)
 - `src/app/api/accounts/me/preferences/route.ts:126` — `accounts` UPDATE (caller's preferences, keyed on `session.accountId`)
+- `src/app/[locale]/(dashboard)/layout.tsx:34` — `SELECT username FROM accounts WHERE id = $1` (sidebar shell self-read of the caller's username, keyed on `session.accountId`; `accounts` carries no `customer_id`, response is not customer-scoped)
 
 Account-management routes (per call site; targets are account rows on the auth DB; tenant-overlap on the *account* axis is enforced by `validateManagedAccountTarget` / `getAccountCustomerIds` one frame up):
 
