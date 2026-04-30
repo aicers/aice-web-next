@@ -873,11 +873,14 @@ which customers are visible.
 Open the control to reveal a search box, a **Select all / Clear
 selection** toggle, and a scrollable list of customer names; picked
 customers also appear as removable chips just below the control.
-A small **↻** refresh icon in the panel header re-fetches the
-customer list — useful when an admin has just changed
-account-customer assignments in another browser tab. There is no
-automatic refresh; the cached list is reused for every drawer open
-in the current page session.
+The customer list is delivered with the Detection page itself, so
+the drawer is populated the very first time it opens — no waiting
+for a separate fetch. A small **↻** refresh icon in the panel
+header explicitly re-fetches the customer list; this is useful
+when an admin has just changed account-customer assignments in
+another browser tab. There is no automatic refresh; the cached
+list is reused for every drawer open and is shared across every
+filter tab in the current page session.
 
 Applying the filter submits the selected customer IDs. They show
 up in the active chip bar at the top of the page following the
@@ -889,12 +892,14 @@ more.
 
 If your account has **no customers in scope**, the control is
 disabled with a **No customer access** affordance and the filter
-never submits a `customers` value. While the customer list is
-being fetched on the first drawer open, the control shows a
-**Loading customers…** affordance; if the fetch fails transiently,
-a **Failed to load customers** message is displayed alongside an
-inline **Retry** button so the operator can recover without
-closing and reopening the drawer.
+never submits a `customers` value. The drawer never has to wait
+for a customer fetch on the first open (the list rides in the
+SSR payload), but a manual **↻** refresh briefly shows a
+**Loading customers…** affordance while the explicit re-fetch
+is in flight; if that fetch fails transiently, a **Failed to
+load customers** message is displayed alongside an inline
+**Retry** button so the operator can recover without closing and
+reopening the drawer.
 
 > Security note: aice-web-next independently rejects any filter
 > whose `customers` list references a customer outside your

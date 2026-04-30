@@ -2,6 +2,7 @@
 
 import { getCurrentSession } from "@/lib/auth/session";
 import {
+  DetectionForbiddenError,
   DetectionUnauthorizedError,
   type Event,
   type Filter,
@@ -38,7 +39,21 @@ export interface RunEventQueryOk {
 
 export interface RunEventQueryErr {
   ok: false;
-  code: "unauthenticated" | "forbidden" | "server-error";
+  /**
+   * `forbidden` covers the unauthorized-for-Detection case
+   * (`DetectionUnauthorizedError`: caller lacks `detection:read` or has
+   * empty scope). `forbidden-customer-scope` is the typed translation
+   * of `DetectionForbiddenError` — the inbound `Filter` references a
+   * customer ID the caller cannot access (#384's BFF intersection
+   * check). Kept distinct so the route layer / UI can render an
+   * actionable message ("drop the offending IDs and retry") instead of
+   * the generic Detection-access denial.
+   */
+  code:
+    | "unauthenticated"
+    | "forbidden"
+    | "forbidden-customer-scope"
+    | "server-error";
 }
 
 export type RunEventQueryResult = RunEventQueryOk | RunEventQueryErr;
@@ -111,6 +126,9 @@ export async function runEventQuery(
       pageInfo: connection.pageInfo,
     };
   } catch (err) {
+    if (err instanceof DetectionForbiddenError) {
+      return { ok: false, code: "forbidden-customer-scope" };
+    }
     if (err instanceof DetectionUnauthorizedError) {
       return { ok: false, code: "forbidden" };
     }

@@ -630,6 +630,15 @@ export default async function DetectionPage({
       <DetectionTabsShell
         title={t("title")}
         options={options}
+        initialCustomerScope={{
+          // Reviewer Round 1 (#1 + #3): thread the SSR-resolved scope
+          // through to the wrapper. The wrapper seeds the shared
+          // customer cache from this so chips render with customer
+          // names on the very first paint, and the cache survives
+          // the keyed remount the shell undergoes on tab switch.
+          kind: scope.kind,
+          customers: scope.customers.map((c) => ({ id: c.id, name: c.name })),
+        }}
         initialTab={{
           id: tabId,
           filter: initialFilter,

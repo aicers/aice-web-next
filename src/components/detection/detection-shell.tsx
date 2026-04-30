@@ -22,10 +22,6 @@ import {
   runEventQuery,
 } from "@/app/[locale]/(dashboard)/detection/actions";
 import {
-  type FetchCustomersForFilterResult,
-  fetchCustomersForFilter,
-} from "@/app/[locale]/(dashboard)/detection/customer-actions";
-import {
   type FetchSensorsResult,
   fetchSensors,
 } from "@/app/[locale]/(dashboard)/detection/sensor-actions";
@@ -625,6 +621,33 @@ export interface DetectionShellProps {
    * query so the tab lands populated.
    */
   onLoadRecommendedFilterInNewTab?: (preset: RecommendedPreset) => void;
+  /**
+   * Customer inventory cache, lifted to the multi-tab wrapper so it
+   * survives the keyed remount this shell undergoes on every tab
+   * switch (Reviewer Round 1 #1: with the cache here in shell-local
+   * state, opening the drawer in one tab and then switching tabs
+   * dropped the cache and forced another fetch — breaking the
+   * page-session-shared contract from #384). Pass-through props that
+   * keep the rendering code identical to a self-owned cache.
+   */
+  customerCache: CustomerCache;
+  /**
+   * Manual `↻` refresh callback the wrapper supplies. The drawer's
+   * Customer header `↻` icon and the error-state Retry button both
+   * call this; the wrapper performs the actual `fetchCustomersForFilter()`
+   * round-trip and replaces the cache.
+   */
+  onCustomerRefresh: () => void;
+  /**
+   * Lookup options used for chip-name rendering when {@link customerCache}
+   * isn't yet `loaded` (e.g. during a manual refresh). The wrapper
+   * seeds these from the SSR `getEffectiveCustomerScope(session)` call
+   * so chips render with customer **names**, not raw IDs, on the
+   * first paint of a bookmarked / saved-filter / pivot URL — the
+   * disagreement Reviewer Round 1 #3 flagged when chip rendering
+   * relied solely on the lazy-loaded cache.
+   */
+  initialCustomerOptions?: readonly CustomerOption[];
 }
 
 /**
@@ -957,6 +980,9 @@ export function DetectionShell({
   onLoadSavedFilterInNewTab,
   recommendedPresets,
   onLoadRecommendedFilterInNewTab,
+  customerCache,
+  onCustomerRefresh,
+  initialCustomerOptions,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
@@ -1162,9 +1188,6 @@ export function DetectionShell({
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
   });
-  const [customerCache, setCustomerCache] = useState<CustomerCache>({
-    status: "idle",
-  });
   // Target field for the drawer to focus after opening. `focusToken`
   // increments on each openDrawerFocused call so repeated clicks on
   // the same aggregate chip re-trigger the drawer's focus effect.
@@ -1329,30 +1352,13 @@ export function DetectionShell({
     );
   }, []);
 
-  // Symmetric to `triggerSensorFetch`. Bundled with the sensor
-  // fetch on the first drawer open so both fields land at the same
-  // visible cadence (#384 fetch & cache policy: page-session cache,
-  // no auto-TTL, manual refresh affordance).
-  const triggerCustomerFetch = useCallback(() => {
-    setCustomerCache({ status: "loading" });
-    void fetchCustomersForFilter().then(
-      (result: FetchCustomersForFilterResult) => {
-        if (result.ok) {
-          setCustomerCache({
-            status: "loaded",
-            kind: result.kind,
-            options: result.customers.map((c) => ({
-              id: c.id,
-              name: c.name,
-            })),
-          });
-        } else {
-          setCustomerCache({ status: "error" });
-        }
-      },
-      () => setCustomerCache({ status: "error" }),
-    );
-  }, []);
+  // Customer fetch is owned by the multi-tab wrapper (Reviewer
+  // Round 1 #1: lifted out of shell-local state so the cache survives
+  // the keyed remount on tab switch). The wrapper supplies
+  // `onCustomerRefresh` for the manual `↻` and the chip-body /
+  // Filters-button drawer-open paths just call it on an idle/error
+  // cache through `triggerCustomerFetch` below.
+  const triggerCustomerFetch = onCustomerRefresh;
 
   const openDrawer = useCallback(() => {
     setDraft(
@@ -2495,15 +2501,26 @@ export function DetectionShell({
   const customerOptions: readonly CustomerOption[] =
     customerCache.status === "loaded" ? customerCache.options : [];
   const customerState = customerStateForCache(customerCache);
-  // Cached id → name map for the chip summariser. Keyed by the
-  // wire-format string id (`String(customer.id)`) so the chip
-  // label-up step is one Map hit per chip.
+  // Lookup options for chip-name rendering. Reviewer Round 1 #3:
+  // a bookmarked `?f=` URL (or saved filter / pivot) that already
+  // carries `customers: [<id>, ...]` paints chips in the active
+  // chip bar before the customer cache transitions out of `idle`.
+  // Falling back to `initialCustomerOptions` (seeded server-side
+  // from `getEffectiveCustomerScope(session)`) means those chips
+  // render the customer **name** on the first paint, not the raw
+  // numeric id `summarizeFilter` defaults to when the option list
+  // is empty. Once the wrapper's manual-refresh resolves, the live
+  // `loaded` cache wins so a fresh post-refresh assignment shows
+  // up immediately.
   const customerSummaryOptions = useMemo<
     readonly { value: string; label: string }[]
-  >(
-    () => customerOptions.map((c) => ({ value: String(c.id), label: c.name })),
-    [customerOptions],
-  );
+  >(() => {
+    const source =
+      customerCache.status === "loaded"
+        ? customerCache.options
+        : (initialCustomerOptions ?? []);
+    return source.map((c) => ({ value: String(c.id), label: c.name }));
+  }, [customerCache, initialCustomerOptions]);
 
   // Shared chip summariser: one `Filter → FilterChip[]` call the bar
   // reuses everywhere. The pivot-only chips above are concatenated
