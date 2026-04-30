@@ -52,3 +52,6 @@ databases are provisioned and migrated automatically.
   installation, and first sign-in
 - **[Settings](settings.md)** — accounts, roles, customers,
   policies, and account status
+- **[Customer Scope Indicator](customer-scope.md)** — header
+  indicator and per-page callout that surface the session's
+  customer access
