@@ -51,8 +51,10 @@ export interface RunAnalyticsQueryErr {
    * {@link DetectionForbiddenError} — the inbound `Filter` references
    * a customer ID outside the caller's effective scope (#384's BFF
    * intersection check, applied uniformly to the analytics dispatch
-   * path). Distinct from `forbidden` (caller has no Detection access
-   * at all) so the UI can render an actionable message.
+   * path) **or** the caller's effective customer scope is empty
+   * (Reviewer Round 2: empty-scope sessions flow through the same
+   * customer-scope gate). Distinct from `forbidden` (caller lacks
+   * `detection:read`) so the UI can render an actionable message.
    */
   code:
     | "unauthenticated"

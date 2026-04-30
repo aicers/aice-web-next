@@ -11,7 +11,7 @@ import {
 } from "@/lib/events/event-locator";
 import { graphqlRequest } from "@/lib/graphql/client";
 
-import { DetectionUnauthorizedError } from "./errors";
+import { DetectionForbiddenError, DetectionUnauthorizedError } from "./errors";
 import { type Filter, toEventListFilterInput } from "./filter";
 import { validateFilterScope } from "./filter-customer-scope";
 import {
@@ -75,9 +75,17 @@ interface DispatchContext {
  * it from role text, so the BFF carries the explicit list rather than
  * relying on the consumer's interpretation of an omitted claim.
  *
- * An empty resolved scope is rejected as a misconfiguration — no
- * Detection query can succeed against it, so a silent empty result
- * would be indistinguishable from a legitimately-empty page.
+ * An empty resolved scope is rejected through the customer-scope
+ * gate (`DetectionForbiddenError` → `forbidden-customer-scope`), not
+ * the generic unauthorized bucket: the caller does hold
+ * `detection:read`, so "no Detection access at all" is a misleading
+ * classification — the actionable problem is that the caller has no
+ * customers in scope, the same family of failure as a crafted filter
+ * that references customers outside scope. #384's acceptance treats
+ * empty-scope sessions as part of the same authoritative customer-
+ * scope gate. A silent empty result would also be indistinguishable
+ * from a legitimately-empty page, so the rejection happens before any
+ * REview round-trip.
  *
  * The caller's customer scope travels in the Context JWT (see
  * `graphqlRequest`), not in `filter.customers`. The filter's
@@ -100,7 +108,16 @@ async function buildDispatchContext(
     session.roles,
   );
   if (customerIds.length === 0) {
-    throw new DetectionUnauthorizedError(
+    // Empty-scope sessions flow through the customer-scope gate
+    // (Reviewer Round 2): the caller holds `detection:read` but has
+    // no customers in scope, so this is a customer-scope rejection
+    // (`forbidden-customer-scope`), not a generic Detection-access
+    // denial. Treating it as `DetectionUnauthorizedError` would
+    // collapse it into the same bucket as "lacks `detection:read`",
+    // which is misleading and conflicts with #384's acceptance that
+    // empty-scope sessions are part of the same authoritative
+    // customer-scope gate as out-of-scope filter IDs.
+    throw new DetectionForbiddenError(
       "Caller has no assigned customers; Detection requires a customer scope.",
     );
   }

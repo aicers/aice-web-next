@@ -41,13 +41,17 @@ export interface RunEventQueryErr {
   ok: false;
   /**
    * `forbidden` covers the unauthorized-for-Detection case
-   * (`DetectionUnauthorizedError`: caller lacks `detection:read` or has
-   * empty scope). `forbidden-customer-scope` is the typed translation
-   * of `DetectionForbiddenError` — the inbound `Filter` references a
+   * (`DetectionUnauthorizedError`: caller lacks `detection:read`).
+   * `forbidden-customer-scope` is the typed translation of
+   * `DetectionForbiddenError` — the inbound `Filter` references a
    * customer ID the caller cannot access (#384's BFF intersection
-   * check). Kept distinct so the route layer / UI can render an
-   * actionable message ("drop the offending IDs and retry") instead of
-   * the generic Detection-access denial.
+   * check) **or** the caller's effective customer scope is empty
+   * (Reviewer Round 2: empty-scope rejections flow through the
+   * customer-scope gate too, since the actionable failure is "no
+   * customers in scope", not "no Detection access at all"). Kept
+   * distinct so the route layer / UI can render an actionable message
+   * ("drop the offending IDs and retry", or "no customer access")
+   * instead of the generic Detection-access denial.
    */
   code:
     | "unauthenticated"

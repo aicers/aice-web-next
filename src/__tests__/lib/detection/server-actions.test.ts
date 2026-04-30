@@ -72,7 +72,13 @@ describe("detection server actions", () => {
       mockHasPermission.mockResolvedValue(true);
       mockResolveEffectiveCustomerIds.mockResolvedValue([]);
 
-      const { searchEvents, DetectionUnauthorizedError } = await import(
+      // Reviewer Round 2: empty-scope sessions flow through the
+      // customer-scope gate (`DetectionForbiddenError` →
+      // `forbidden-customer-scope`), not the generic unauthorized
+      // bucket. The caller does hold `detection:read`; the actionable
+      // failure is "no customers in scope", same family as a crafted
+      // filter referencing customers outside scope.
+      const { searchEvents, DetectionForbiddenError } = await import(
         "@/lib/detection"
       );
 
@@ -81,7 +87,7 @@ describe("detection server actions", () => {
           mode: "structured",
           input: { start: null, end: null },
         }),
-      ).rejects.toBeInstanceOf(DetectionUnauthorizedError);
+      ).rejects.toBeInstanceOf(DetectionForbiddenError);
 
       expect(mockGraphqlRequest).not.toHaveBeenCalled();
     });
@@ -356,12 +362,12 @@ describe("detection server actions", () => {
     it("rejects an empty-scope account before any REview dispatch", async () => {
       mockResolveEffectiveCustomerIds.mockResolvedValue([]);
 
-      // Note: the empty-scope rejection surfaces as
-      // `DetectionUnauthorizedError`, not `DetectionForbiddenError`
-      // — the caller has no Detection access at all, distinct from
-      // "has access but referenced a forbidden customer". The
-      // important contract is that **no** REview dispatch occurs.
-      const { searchEvents, DetectionUnauthorizedError } = await import(
+      // Reviewer Round 2: empty-scope sessions surface as
+      // `DetectionForbiddenError` (mapped to `forbidden-customer-
+      // scope` at the route layer), the same authoritative customer-
+      // scope gate as out-of-scope filter IDs. The important contract
+      // remains that **no** REview dispatch occurs.
+      const { searchEvents, DetectionForbiddenError } = await import(
         "@/lib/detection"
       );
 
@@ -370,7 +376,7 @@ describe("detection server actions", () => {
           mode: "structured",
           input: { customers: ["1"] },
         }),
-      ).rejects.toBeInstanceOf(DetectionUnauthorizedError);
+      ).rejects.toBeInstanceOf(DetectionForbiddenError);
 
       expect(mockGraphqlRequest).not.toHaveBeenCalled();
     });
