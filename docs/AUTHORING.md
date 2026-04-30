@@ -345,11 +345,31 @@ sees those rows, restricted callers do not.
 ### Error-message contract
 
 When an error message references a customer identifier the caller
-may not have scope on, redact via
-`redactForScope(customerId, ctx)` before surfacing it. Out-of-scope
-resources should return `404` (not `403`) — anything else discloses
-existence. Internal logs may name the id; the response body must
-not.
+may not have scope on, redact it before surfacing. Use
+`formatScopedError({ template, references }, allowedCustomerIds)`
+from `src/lib/auth/scope-redaction.ts` (or its positional alias
+`redactForScope(template, references, allowedCustomerIds)`). Each
+interpolated identifier is declared as a structured `Reference`
+carrying its kind (`customer` / `sensor` / `address`) and the
+customer it belongs to; the helper substitutes the literal value
+when the caller has scope and replaces it with a generic stand-in
+(`[redacted customer]`, etc.) otherwise:
+
+```ts
+return formatScopedError(
+  {
+    template: 'Customer "{customer}" not found',
+    references: [
+      { kind: "customer", id, placeholder: "customer", literal: name },
+    ],
+  },
+  allowedCustomerIds,
+);
+```
+
+Out-of-scope resources should return `404` (not `403`) — anything
+else discloses existence. Internal logs may name the id; the
+response body must not.
 
 ### Static dispatch-context guard (`pnpm check:scope`)
 
@@ -390,26 +410,53 @@ endpoint against three personas: `account-A`, `account-B`, and
 `admin`. Every row in the `ENDPOINTS` array runs the standard
 assertions for its `expects` mode:
 
-- `list-scoped` — account-A's list contains only customer-A rows;
-  account-B's contains only customer-B rows; admin sees both plus
-  any null-customer fixture rows.
+- `list-scoped` — account-A's list contains the customer-A fixture
+  row and excludes the customer-B row; account-B mirrors that on
+  customer B; admin sees both plus any null-customer fixture rows.
+  When the row payload exposes a single `customer_id` field the
+  harness also asserts every row matches the caller's customer; rows
+  that don't expose one (e.g. accounts list — membership is N:N via
+  `account_customer`) skip the per-row check via
+  `rowCustomerId: () => undefined`.
 - `200-on-in-scope-404-on-out-of-scope` — account-A's GET on
   customer A returns 200; account-A's GET on customer B returns
-  404 (NOT 403); admin gets 200 on both.
-- `admin-only` — non-admin returns 404; admin returns 200.
+  404 (NOT 403 — surfacing 403 would disclose existence); admin gets
+  200 on both.
+- `mutation-scope` (POST / PATCH / DELETE) — for each persona the row
+  declares an in-scope and out-of-scope variant of the request body
+  / path; the harness fires both and asserts the declared
+  `expectStatus` (typically 2xx in-scope, 403 out-of-scope for non-
+  admins; 2xx for both for admin). An optional
+  `cleanupAfterSuccess` hook resets fixture state between mutation
+  rows so the matrix can run repeatedly against a long-lived dev
+  database.
+- `admin-only` — account-A and account-B are rejected (default
+  `nonAdminStatuses: [401, 403]`); admin succeeds with the row's
+  declared `adminSuccessStatus`.
 
 **Adding a new customer-scoped endpoint is a one-line change** to
 `ENDPOINTS`. Pick the appropriate `expects` mode, fill in the
-`name`, `method`, and `path` (or `pathFor` for detail endpoints),
-and the harness iterates and asserts automatically. If the new
-endpoint needs a fixture row that is not in `Resources`, extend
-`Resources` and the `beforeAll` seeder; otherwise the row alone
-is enough.
+`name`, `method`, and the mode-specific fields (`path` for
+`list-scoped`, `pathFor` for detail GETs, `request` for mutations
+and admin-only routes), and the harness iterates and asserts
+automatically. If the new endpoint needs a fixture row that is not
+in `Resources`, extend `Resources` and the `beforeAll` seeder;
+otherwise the row alone is enough.
+
+Routes that go through `buildDispatchContext` (the node /
+detection API surface backed by REview / Tivan over GraphQL) are
+**not** in this matrix — the cross-customer contract there is
+"the dispatch JWT carries the right `customer_ids`", which is a
+structural assertion against the dispatch context rather than a
+row-level DB scope check. Those routes are guarded by
+`pnpm check:scope` (the static dispatch-context guard above) and
+exercised against the `mock-graphql` helper in their feature-
+specific integration files.
 
 The matrix is the regression-test target for both #386 (audit-log
 viewer scoping) and #387 (the hardening sweep). New PRs that
-touch customer-scoped routes should add their endpoint to
-`ENDPOINTS` rather than copying an existing per-endpoint test
+touch a customer-scoped local-DB route should add their endpoint
+to `ENDPOINTS` rather than copying an existing per-endpoint test
 file.
 
 ## Markdown formatting
