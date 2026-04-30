@@ -43,13 +43,13 @@ section 7, not repeated in every section.
 
 | Route | Class | Notes |
 |---|---|---|
-| `/api/accounts` (GET, POST) | admin-only | Requires `accounts:read`/`accounts:write`; non-`access-all` callers filter via `account_customer` subquery before listing. POST has a customer-enumeration leak — see §4 |
-| `/api/accounts/[id]` (GET, PATCH, DELETE) | admin-only | Permission gate plus tenant scope check via `getAccountCustomerIds` |
+| `/api/accounts` (GET, POST) | scoped | Permission-gated (`accounts:read` / `accounts:write`). `access-all` callers see all rows; non-`access-all` callers are scoped via an `account_customer` subquery so they only see/manage accounts whose customer set overlaps theirs. POST has a customer-enumeration leak on the `customerIds` payload — see §4. (Classified `scoped`, not `admin-only`: the route is reachable by tenant admins and applies tenant-overlap scoping, so "scope check unnecessary" is not accurate.) |
+| `/api/accounts/[id]` (GET, PATCH, DELETE) | scoped | Permission gate plus tenant-overlap check via `getAccountCustomerIds` for non-`access-all` callers (`route.ts:70-82, 136-143, 393-399`). Reachable by tenant admins, so the `admin-only` label would understate the scope work performed; the row-level scope sits on the *account* axis ("which customers does the target manage") rather than `customer_id`, but the route still applies customer-overlap enforcement and so is classified `scoped` for taxonomy consistency. |
 | `/api/accounts/[id]/customers` (GET, POST) | scoped | `account_customer` JOIN; tenant admin can only assign within own scope. POST has a customer-enumeration leak — see §4 |
 | `/api/accounts/[id]/customers/[customerId]` (DELETE) | scoped | Same shape; explicit scope check before unassign |
-| `/api/accounts/[id]/unlock`, `/password-reset`, `/mfa-reset` | admin-only | Account ops; no per-customer data returned |
+| `/api/accounts/[id]/unlock`, `/password-reset`, `/mfa-reset` | scoped | Permission-gated account-management ops; non-`access-all` callers gated by tenant-overlap check on the target account (`getAccountCustomerIds` / `validateManagedAccountTarget`). No per-customer data returned, but the *target* is tenant-scoped, so classified `scoped` for taxonomy consistency with the sibling accounts routes |
 | `/api/accounts/me/preferences` | customer-agnostic | Self locale/timezone preferences |
-| `/api/roles`, `/api/roles/[id]`, `/api/roles/[id]/mfa-required` | admin-only | Roles are system-wide, not per-customer |
+| `/api/roles`, `/api/roles/[id]`, `/api/roles/[id]/mfa-required` | admin-only | Roles are system-wide; gated by `roles:write` / `roles:read`, which the project treats as a global-admin permission |
 
 #### Customers (`/api/customers/**`)
 
@@ -133,7 +133,40 @@ the same DB call. Migrations and test harnesses excluded.
 
 ### Scoped — internal `apply_attempts` state machine (auth DB)
 
-- `src/lib/node/apply-attempt-lifecycle.ts` (~line 515 onward) and `src/lib/node/apply-attempt-cleanup.ts` (~line 224 onward) — all reads/writes are keyed on `attempt_id` / `node_id` (UUID, opaque). The only public entry points are server actions that pre-resolve the node via `buildDispatchContext` + `assertNodeInScope`, plus the internal cleanup endpoint behind a static token. Treated as `scoped`. The cleanup-driven audit emit is a separate finding — see §3
+All call sites operate on `apply_attempts` and are keyed on `attempt_id`
+(UUID, opaque). Public entry points pre-resolve the node via
+`buildDispatchContext` + `assertNodeInScope`; the internal cleanup
+endpoint runs as `system` actor behind a static token. Listed
+per-call-site so #387/#388 do not have to re-derive the inventory:
+
+`src/lib/node/apply-attempt-lifecycle.ts`:
+
+- `:515` — `UPDATE apply_attempts SET executing_lock = $1 WHERE attempt_id = ...` (confirm-mode lock claim)
+- `:537` — `UPDATE apply_attempts SET executing_lock = $1 WHERE attempt_id = ...` (retry-mode lock claim, JSON-path guard)
+- `:809` — `UPDATE apply_attempts ... WHERE attempt_id = $... AND executing_lock = $3` (stale-lock clear under guard)
+- `:863` — `UPDATE apply_attempts ... WHERE attempt_id = $... AND executing_lock = $4` (success + final state cascade)
+- `:887` — `UPDATE apply_attempts ... WHERE attempt_id = $... AND executing_lock = $3` (dispatch advance)
+- `:938` — `UPDATE apply_attempts ... WHERE attempt_id = $... AND executing_lock = $4` (terminal-state cascade)
+- `:959` — `UPDATE apply_attempts ... WHERE attempt_id = $... AND executing_lock = $3` (soft-failure transition)
+- `:989` — `UPDATE apply_attempts ... WHERE attempt_id = $... AND executing_lock = $4` (row finalisation)
+
+`src/lib/node/apply-attempt-cleanup.ts`:
+
+- `:224` — `UPDATE apply_attempts ... WHERE attempt_id = $1` (terminalise expired attempt; conditional on caller's tx mode)
+- `:270` — `UPDATE apply_attempts SET executing_lock = NULL WHERE executing_lock IS NOT NULL AND NOW() - claim_started_at > ...` (stale-lock recovery sweep — no per-row id; bounded by a server-managed TTL predicate, customer-agnostic at the row level)
+- `:292` — `UPDATE apply_attempts ... WHERE status = 'pending' AND NOW() > expires_at` (TTL pending → expired; same shape as `:270`, no per-row id)
+- `:306` — `UPDATE apply_attempts ... WHERE status = 'failed_retryable' AND NOW() > expires_at` (TTL failed_retryable → failed_terminal; same shape)
+- `:362` — `DELETE FROM apply_attempts WHERE status IN (... terminal ...) AND NOW() > expires_at` (retention purge; same shape)
+- `:453` — `SELECT ... FROM apply_attempts WHERE attempt_id = $1` (`readApplyAttempt` helper)
+- `:515` — `UPDATE apply_attempts SET succeeded_audit_emitted_at = NOW() WHERE attempt_id = $1 AND succeeded_audit_emitted_at IS NULL` (claim audit-emission slot)
+- `:547` — `UPDATE apply_attempts SET succeeded_audit_completed_at = NOW() WHERE attempt_id = $1 AND succeeded_audit_emitted_at IS NOT NULL` (mark audit complete)
+- `:598` — `UPDATE apply_attempts SET succeeded_audit_emitted_at = NULL WHERE attempt_id = $1 AND succeeded_audit_emitted_at IS NOT NULL` (release audit slot on synchronous failure)
+- `:698` — `SELECT ... FROM apply_attempts WHERE status = 'succeeded' AND succeeded_audit_completed_at IS NULL` (recovery-sweep candidate scan; no per-row id, bounded by status predicate)
+
+All 18 sites operate on `apply_attempts` only and are scoped one frame
+up by `assertNodeInScope` at the public entry point. The
+`apply-attempt-cleanup.ts:738` audit emit driven by these rows is the
+separate finding in §3.
 
 ### Scoped (account-owner) — `saved_filter` (auth DB, account-owned)
 
@@ -159,22 +192,51 @@ referenced in §7 "out of scope") — not duplicated as a new finding here.
 
 ### Customer-agnostic (auth DB / audit DB / system tables)
 
-- `src/lib/audit/logger.ts:133` — `INSERT INTO audit_logs ...`. Append-only insert; `customer_id` is data, not predicate. Customer-agnostic at the query layer (read-side scope is the audit viewer's job, see §1)
-- `src/lib/auth/{mfa-credentials,recovery-codes,role-management,bootstrap}.ts` — accounts / sessions / role-permission CRUD; no customer dimension
-- `src/lib/auth/{password,session,lockout,jwt,mfa}-policy.ts` — single-row `system_settings` reads
-- `src/app/api/auth/**` route handlers — sessions, password history, MFA credentials
-- `src/app/api/accounts/[id]/route.ts:63, 129, 300, 311, 368, 418` — account-row CRUD against `accounts`/`roles` only; the `accounts` table has no `customer_id` column. Tenant-scope is enforced one frame up by `validateManagedAccountTarget` / `getAccountCustomerIds` (see `:81–92, :148–158, :393–399`) so the scope sits on the *account* axis (whose customers does the target manage), not on the row itself
-- `src/app/api/accounts/[id]/route.ts:228, 246, 403` — System Administrator headcount checks against the `accounts`/`roles` join; aggregate count, no customer dimension
-- `src/app/api/accounts/[id]/customers/route.ts:44, 141` — `SELECT id FROM accounts WHERE id = $1` existence checks; the `accounts` row carries no customer dimension. Customer-axis enforcement is the surrounding scope check (lines 53–69 / 173–187) plus the `account_customer` JOINs above
-- `src/app/api/accounts/route.ts:252` — System Administrator headcount on the create-account path
-- `src/app/api/accounts/route.ts:369, 378, 395, 402` — transactional `accounts` insert / `account_customer` insert / `password_history` insert during account creation; tenant-scope on the linked `customerIds` is enforced earlier in the same handler before the transaction opens
-- `src/app/api/accounts/[id]/{password-reset,unlock,mfa-reset}/route.ts` — account-only updates
-- `src/app/api/auth/sign-out-all/route.ts:20, 24` — token / session revocation per-account
+Listed per-call-site for all auth-DB CRUD. `accounts`, `roles`,
+`role_permissions`, `sessions`, `*_credentials`, `*_challenges`,
+`recovery_codes`, `password_history`, `mfa_challenges`,
+`system_settings` carry no `customer_id` column. Where the *target* is
+tenant-scoped (account-management routes), tenant-overlap enforcement
+sits one frame up at the API layer; the SQL itself is customer-agnostic.
+
+Audit-DB / system-settings:
+
+- `src/lib/audit/logger.ts:133` — `INSERT INTO audit_logs ...`. Append-only insert; `customer_id` is data, not predicate
+- `src/lib/auth/{password,session,lockout,jwt,mfa}-policy.ts` — single-row `system_settings` SELECTs
+
+Auth-DB lib:
+
+- `src/lib/auth/sign-in.ts:48` — `accounts` UPDATE (reset failed-count + lockout, set `last_sign_in_at`); `:57` — `sessions` INSERT (per account)
+- `src/lib/auth/session.ts:18` — `sessions` UPDATE (revoke single session)
+- `src/lib/auth/guard.ts:271` — `sessions` UPDATE (set `needs_reauth`); `:310` — `sessions` UPDATE (`last_active_at`)
+- `src/lib/auth/mfa-credentials.ts:15` — `totp_credentials` DELETE (account); `:18` — `webauthn_credentials` DELETE (account); `:21` — `recovery_codes` DELETE (account); `:24` — `sessions` UPDATE (revoke for account)
+- `src/lib/auth/recovery-codes.ts:52, :56` — `recovery_codes` DELETE + INSERT (transactional regenerate); `:84` — `recovery_codes` UPDATE (mark used)
+- `src/lib/auth/totp.ts:85` — `totp_credentials` SELECT; `:97` — INSERT...ON CONFLICT; `:110` — UPDATE; `:119` — DELETE
+- `src/lib/auth/webauthn.ts:92, :107, :122` — `webauthn_credentials` SELECTs (by account / credential); `:141` — INSERT; `:163, :175` — UPDATEs; `:187, :198` — DELETEs; `:234, :238, :254` — `webauthn_registration_challenges` cleanup / upsert / consume; `:269, :273, :289` — `webauthn_authentication_challenges` cleanup / upsert / consume
+- `src/lib/auth/role-management.ts:179, :251` — `roles` SELECTs (name conflict); `:189` — INSERT; `:201, :273` — `role_permissions` INSERTs; `:261` — `roles` UPDATE; `:269` — `role_permissions` DELETE; `:328` — `roles` DELETE
+- `src/lib/auth/bootstrap.ts:125` — `audit_logs` INSERT (bootstrap); `:157` — `accounts` SELECT (count); `:175` — `roles` SELECT (lookup); `:192` — `accounts` INSERT...WHERE NOT EXISTS; `:208` — `password_history` INSERT
 - `src/lib/db/migrate.ts` — DDL only
+
+Auth route handlers (per call site):
+
+- `src/app/api/auth/reauth/route.ts:62` — `sessions` UPDATE (clear reauth flag)
+- `src/app/api/auth/sign-in/route.ts:88` — `accounts` UPDATE (auto-unlock expired temp lock); `:130` — `accounts` UPDATE (stage-1 temp lock); `:151` — `accounts` UPDATE (stage-2 suspend); `:174` — `accounts` UPDATE (increment `failed_sign_in_count`); `:311` — `mfa_challenges` INSERT
+- `src/app/api/auth/sign-out-all/route.ts:20` — `accounts` UPDATE (`token_version` bump); `:24` — `sessions` UPDATE (revoke all for account)
+- `src/app/api/auth/password/route.ts:105` — `accounts` UPDATE (password hash + token bump + status); `:120` — `password_history` INSERT; `:127` — `sessions` UPDATE (revoke siblings)
+- `src/app/api/auth/mfa/enrollment-complete/route.ts:21` — `sessions` UPDATE (clear `must_enroll_mfa`)
+
+Account-management routes (per call site; targets are account rows on the auth DB; tenant-overlap on the *account* axis is enforced by `validateManagedAccountTarget` / `getAccountCustomerIds` one frame up):
+
+- `src/app/api/accounts/[id]/route.ts:63, :129, :300, :311, :368, :418` — `accounts`/`roles` CRUD (GET/PATCH/DELETE handler bodies); the `accounts` row carries no `customer_id` column
+- `src/app/api/accounts/[id]/route.ts:228, :246, :403` — System Administrator headcount aggregates over `accounts` ⨝ `roles`; no customer dimension
+- `src/app/api/accounts/[id]/customers/route.ts:44, :141` — `SELECT id FROM accounts WHERE id = $1` existence checks
+- `src/app/api/accounts/route.ts:252` — System Administrator headcount on the create-account path
+- `src/app/api/accounts/route.ts:369` — `accounts` INSERT (within the create-account transaction); `:378` — `account_customer` INSERT (links to caller-supplied `customerIds` already validated above); `:395` — `password_history` INSERT; `:402` — same `account_customer` step within the transaction body; `:436` — `accounts` post-insert refetch
+- `src/app/api/accounts/[id]/password-reset/route.ts`, `/unlock/route.ts`, `/mfa-reset/route.ts` — `accounts` UPDATEs only (no customer dimension)
 
 ### Admin-only
 
-- `src/app/api/audit-logs/route.ts:182, 192` — gated by `audit-logs:read`. The fact that the gate is *not enough* (the permission can be granted to non-`access-all` roles) is the §1 LEAK; the query itself is admin-style "no predicate" and is the locus that #386 fixes
+- `src/app/api/audit-logs/route.ts:182` — `SELECT FROM audit_logs ...` (count); `:192` — `SELECT FROM audit_logs ...` (page). Both gated by `audit-logs:read`. The gate is *not enough* (the permission can be granted to non-`access-all` roles), which is the §1 LEAK; the query itself is admin-style "no predicate" and is the locus that #386 fixes
 
 ### LEAK
 
@@ -232,21 +294,92 @@ plausibly be looking for it.
 
 ### Customer-agnostic actions — `customerId` correctly omitted
 
-The remaining ~59 call sites in `src/app/api/auth/**`,
-`src/app/api/accounts/**` (account CRUD, lock/unlock, suspend/restore),
-`src/app/api/auth/sign-in/route.ts` (sign-in success/failure, account
-suspend/lock, MFA enforcement blocked), `src/app/api/dashboard/sessions/[sid]/revoke/route.ts`,
-`src/app/api/system-settings/[key]/route.ts`, `src/app/api/roles/**`,
-`src/app/api/auth/mfa/**`, and `src/lib/auth/{sign-in,guard,emergency-mfa-reset}.ts`
-all omit `customerId`. These are session / account / role / MFA /
-system-settings actions and customer-agnostic at the audit-row level —
-the global admin who performed the action is the intended audience.
+Every remaining production `auditLog.record(...)` call site is enumerated
+below with action name and `customerId` status. All omit `customerId`,
+intentionally — these are session / account / role / MFA / system-settings
+actions whose intended audience is the global admin or the account-holder
+themselves, not a customer-scoped operator. (Customer-axis tenant-scoped
+account-management routes — e.g. `account.unlock`, `account.update`,
+`mfa.admin.reset` — *target* an account, not a customer; the `audit_logs`
+row's `customer_id` predicate is irrelevant for them. They are
+cross-checked against the §1 / §2 reclassification of those routes as
+`scoped`.)
 
-(`customer.{create,update,delete}` were previously listed in this
-bucket as "admin-gated by `customers:access-all`". That was wrong — the
-endpoints are gated by `customers:write` / `customers:delete`, which are
-not necessarily admin-only — and they target a specific customer, so they
-belong in the LEAK bucket above.)
+Auth — sign-in / sign-out / reauth:
+
+| File:line | Action | `customerId` |
+|---|---|---|
+| `src/lib/auth/sign-in.ts:107` | `auth.sign_in.success` | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:59` | `auth.sign_in.failure` (reason `account_locked`) | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:74` | `auth.sign_in.failure` (`account_locked`, lock-not-yet-expired) | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:100` | `auth.sign_in.failure` (`account_inactive`) | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:137` | `account.suspend` (stage-2 lockout) | omitted (correct — targets account, not customer) |
+| `src/app/api/auth/sign-in/route.ts:159` | `account.lock` (stage-1 lockout) | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:180` | `auth.sign_in.failure` (`invalid_credentials`) | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:222` | `auth.sign_in.failure` (`rate_limited`) | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:252` | `auth.sign_in.failure` (`invalid_credentials`, no actor) | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:272` | `auth.sign_in.failure` (`ip_restricted`) | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:336` | `mfa.enforcement.blocked` | omitted (correct) |
+| `src/app/api/auth/sign-in/route.ts:357` | `auth.sign_in.failure` (post-MFA-gate failure) | omitted (correct) |
+| `src/app/api/auth/sign-out/route.ts:28` | `auth.sign_out` | omitted (correct) |
+| `src/app/api/auth/sign-out-all/route.ts:39` | `session.revoke` (all-sessions) | omitted (correct) |
+| `src/app/api/auth/reauth/route.ts:47` | `session.reauth_failure` | omitted (correct) |
+| `src/app/api/auth/reauth/route.ts:72` | `session.reauth_success` | omitted (correct) |
+| `src/app/api/auth/password/route.ts:141` | `password.change` | omitted (correct) |
+
+Auth — guard / session-state:
+
+| File:line | Action | `customerId` |
+|---|---|---|
+| `src/lib/auth/guard.ts:202` | `session.absolute_timeout` | omitted (correct) |
+| `src/lib/auth/guard.ts:221` | `session.idle_timeout` | omitted (correct) |
+| `src/lib/auth/guard.ts:252` | `session.*` IP/UA-risk action (computed; e.g. `session.ip_change`, `session.ua_change`) | omitted (correct) |
+| `src/app/api/dashboard/sessions/[sid]/revoke/route.ts:45` | `session.revoke` (single session) | omitted (correct) |
+
+MFA:
+
+| File:line | Action | `customerId` |
+|---|---|---|
+| `src/lib/auth/emergency-mfa-reset.ts:58` | `mfa.emergency.reset` | omitted (correct) |
+| `src/app/api/accounts/[id]/mfa-reset/route.ts:142` | `mfa.admin.reset` | omitted (correct — targets account, tenant-scoped on account axis at the route layer) |
+| `src/app/api/auth/mfa/enrollment-complete/route.ts:26` | `mfa.enrollment.complete` | omitted (correct) |
+| `src/app/api/auth/mfa/totp/route.ts:53` | `mfa.totp.remove` | omitted (correct) |
+| `src/app/api/auth/mfa/totp/verify-setup/route.ts:80` | `mfa.totp.enroll` | omitted (correct) |
+| `src/app/api/auth/mfa/totp/verify-setup/route.ts:94` | `mfa.recovery.generate` (auto-issued during enrolment) | omitted (correct) |
+| `src/app/api/auth/mfa/totp/challenge/route.ts:75` | `mfa.totp.verify.failure` | omitted (correct) |
+| `src/app/api/auth/mfa/totp/challenge/route.ts:101` | `mfa.totp.verify.success` | omitted (correct) |
+| `src/app/api/auth/mfa/webauthn/credentials/[id]/route.ts:127` | `mfa.webauthn.remove` | omitted (correct) |
+| `src/app/api/auth/mfa/webauthn/register/verify/route.ts:119` | `mfa.webauthn.register` | omitted (correct) |
+| `src/app/api/auth/mfa/webauthn/register/verify/route.ts:134` | `mfa.recovery.generate` (auto-issued during enrolment) | omitted (correct) |
+| `src/app/api/auth/mfa/webauthn/challenge/route.ts:80` | `mfa.webauthn.verify.failure` | omitted (correct) |
+| `src/app/api/auth/mfa/webauthn/challenge/route.ts:112` | `mfa.webauthn.verify.failure` | omitted (correct) |
+| `src/app/api/auth/mfa/webauthn/challenge/route.ts:126` | `mfa.webauthn.verify.failure` | omitted (correct) |
+| `src/app/api/auth/mfa/webauthn/challenge/route.ts:158` | `mfa.webauthn.verify.success` | omitted (correct) |
+| `src/app/api/auth/mfa/recovery/challenge/route.ts:47` | `mfa.recovery.use` (failure path) | omitted (correct) |
+| `src/app/api/auth/mfa/recovery/challenge/route.ts:74` | `mfa.recovery.use` (success path) | omitted (correct) |
+| `src/app/api/auth/mfa/recovery/generate/route.ts:72` | `mfa.recovery.generate` | omitted (correct) |
+
+Account / role / system-settings management:
+
+| File:line | Action | `customerId` |
+|---|---|---|
+| `src/app/api/accounts/route.ts:420` | `account.create` | omitted (correct — targets account, tenant-overlap on account axis) |
+| `src/app/api/accounts/[id]/route.ts:323` | `account.update` | omitted (correct) |
+| `src/app/api/accounts/[id]/route.ts:426` | `account.delete` | omitted (correct) |
+| `src/app/api/accounts/[id]/unlock/route.ts:72` | `account.unlock` | omitted (correct) |
+| `src/app/api/accounts/[id]/unlock/route.ts:94` | `account.restore` | omitted (correct) |
+| `src/app/api/accounts/[id]/password-reset/route.ts:114` | `password.reset` | omitted (correct) |
+| `src/app/api/roles/route.ts:78` | `role.create` | omitted (correct — roles are system-wide) |
+| `src/app/api/roles/[id]/route.ts:68` | `role.update` | omitted (correct) |
+| `src/app/api/roles/[id]/route.ts:112` | `role.delete` | omitted (correct) |
+| `src/app/api/roles/[id]/mfa-required/route.ts:46` | `role.update` (`mfaRequired` toggle path) | omitted (correct) |
+| `src/app/api/system-settings/[key]/route.ts:35` | `system_settings.update` | omitted (correct — single-row global config) |
+
+(`customer.{create,update,delete}` were previously listed in the
+customer-agnostic bucket as "admin-gated by `customers:access-all`". That
+was wrong — the endpoints are gated by `customers:write` /
+`customers:delete`, which are not necessarily admin-only — and they
+target a specific customer, so they belong in the LEAK bucket above.)
 
 ### Unknown
 
@@ -301,11 +434,36 @@ JWT per request via `signContextJwt(role, customerIds)`; the cached
 `GraphQLClient` instance carries no per-customer state (only the mTLS
 dispatcher), so client reuse does not cross scopes.
 
-### Verified — every production call site flows through a dispatch context
+### Direct `graphqlRequest` / `graphqlRequestTo` call sites
+
+The two thin wrappers in `src/lib/graphql/external-client.ts` are the
+only files that call `graphqlRequestTo` directly outside of
+`src/lib/graphql/client.ts` itself. Both take a `RequestContext`
+(`{ role, customerIds }`) parameter and pass it straight through to
+`graphqlRequestTo`, which signs a fresh Context JWT per request:
+
+| File:line | Function | Endpoint | Context source |
+|---|---|---|---|
+| `src/lib/graphql/external-client.ts:47` | `gigantoClient` | `getGigantoEndpoint()` | `RequestContext` parameter (caller-supplied) |
+| `src/lib/graphql/external-client.ts:69` | `tivanClient` | `getTivanEndpoint()` | `RequestContext` parameter (caller-supplied) |
+
+Neither wrapper derives or augments the context internally — the
+caller (a Node-track server action that has already run
+`buildDispatchContext`) is responsible for passing
+`{ role, customerIds }` materialised from the session. The wrappers
+exist only so the URL is resolved at call time rather than module-load
+time. The mTLS dispatcher held in `clientsByEndpoint` (see §6) carries
+no per-customer state.
+
+### Verified — every production caller flows through a dispatch context
+
+The callers of `graphqlRequest` (manager) and the two
+`gigantoClient` / `tivanClient` wrappers above all materialise customer
+scope before the call:
 
 | File | Function(s) | Dispatch context |
 |---|---|---|
-| `src/lib/node/server-actions.ts` | `listNodes`, `getNode`, `fetchSlimNodeMetadata`, `listNodeStatuses`, `insertNode`, `updateNodeDraft`, `removeNodes`, `nodeReboot`, `nodeShutdown`, `getGigantoStatus`, `getGigantoConfig`, `updateGigantoConfig`, `getTivanStatus`, `getTivanConfig`, `updateTivanConfig` | `buildDispatchContext(session)` from `src/lib/node/dispatch-context.ts` |
+| `src/lib/node/server-actions.ts` | `listNodes`, `getNode`, `fetchSlimNodeMetadata`, `listNodeStatuses`, `insertNode`, `updateNodeDraft`, `removeNodes`, `nodeReboot`, `nodeShutdown`, `getGigantoStatus`, `getGigantoConfig`, `updateGigantoConfig`, `getTivanStatus`, `getTivanConfig`, `updateTivanConfig` | `buildDispatchContext(session)` from `src/lib/node/dispatch-context.ts`; the resulting `{ role, customerIds }` is forwarded into `gigantoClient` / `tivanClient` for every external call |
 | `src/lib/node/apply.ts` | `_internal_applyNodeViaManager`, `fetchCanonicalNode`, `readGigantoConfigAsString`, `readTivanConfigAsString`, `dispatchGigantoUpdateConfig`, `dispatchTivanUpdateConfig` | Inherited — receives a `DispatchContext` from the caller, never re-derives |
 | `src/lib/node/apply-attempts.ts:244` | `readCanonicalNode` | `buildDispatchContext(session)` |
 | `src/lib/node/draft.ts:91` | `fetchNodeForReplay` | Inherited from caller |
@@ -313,7 +471,8 @@ dispatcher), so client reuse does not cross scopes.
 
 No production caller invokes `graphqlRequest` / `graphqlRequestTo`
 directly from a `route.ts`; every request reaches the wire via a server
-action that has materialised customer scope first.
+action (or one of the two `external-client.ts` wrappers above) that has
+materialised customer scope first.
 
 ### Findings
 
