@@ -865,4 +865,42 @@ describe("POST /api/accounts", () => {
     const response = await POST(request, makeContext());
     expect(response.status).toBe(403);
   });
+
+  it("does not leak existence of out-of-scope customer ids via 'Customers not found' (#387)", async () => {
+    // Regression for the enumeration leak (#387 §4 / §7-2): a tenant
+    // admin without `customers:access-all` must not be able to use the
+    // existence-check error path to distinguish "exists, out of scope"
+    // (would 403 later) from "does not exist" (400 here). Both must
+    // surface as the same 403 with no id list in the body.
+    currentSession = tenantSession;
+    const { POST } = await import("@/app/api/accounts/route");
+    // Use a role with no single-customer cap so the scope check is the
+    // first gate hit by an out-of-scope id (Security Monitor would 400
+    // earlier on the maxCustomerAssignments=1 cap).
+    mockQuery.mockResolvedValueOnce({
+      rows: [makeRoleRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS)],
+      rowCount: 1,
+    });
+    // Caller has scope on customer 1 only.
+    mockGetAccountCustomerIds.mockResolvedValue([1]);
+
+    const request = new NextRequest("http://localhost:3000/api/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        username: "test",
+        displayName: "Test",
+        password: "Pass1234!",
+        roleId: 2,
+        // 999 is a probe id — caller has no scope on it, regardless of
+        // whether it exists in the customers table. The handler MUST
+        // reject before the existence check runs.
+        customerIds: [999],
+      }),
+    });
+    const response = await POST(request, makeContext());
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).not.toContain("not found");
+    expect(body.error).not.toContain("999");
+  });
 });

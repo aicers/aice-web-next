@@ -290,11 +290,24 @@ describe("POST /api/accounts/[id]/customers", () => {
     expect(response.status).toBe(201);
     expect(body.success).toBe(true);
     expect(body.assigned).toEqual([1, 2]);
+    // #387: one audit row per assigned customer, each carrying a
+    // top-level `customerId`, so the audit-log viewer surfaces the row
+    // to the owning tenant operator under `customer_id IN (...)` scope.
+    expect(mockAuditRecord).toHaveBeenCalledTimes(2);
     expect(mockAuditRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "customer.assign",
         target: "account",
         targetId: TARGET_UUID,
+        customerId: 1,
+      }),
+    );
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "customer.assign",
+        target: "account",
+        targetId: TARGET_UUID,
+        customerId: 2,
       }),
     );
   });
@@ -691,5 +704,44 @@ describe("POST /api/accounts/[id]/customers", () => {
     const response = await POST(request, makeContext());
 
     expect(response.status).toBe(400);
+  });
+
+  it("does not leak existence of out-of-scope customer ids via 'Customers not found' (#387)", async () => {
+    // Regression for the enumeration leak (#387 §4 / §7-2): a tenant
+    // admin without `customers:access-all` must not be able to use the
+    // existence-check error path to distinguish "exists, out of scope"
+    // (would 403 later) from "does not exist" (400 here). Both must
+    // surface as the same 403 with no id list in the body.
+    currentSession = tenantAdminSession;
+    mockHasPermission.mockImplementation(
+      async (_roles: string[], perm: string) => {
+        if (perm === "customers:access-all") return false;
+        return true;
+      },
+    );
+
+    // Account exists with a tenant-manageable role.
+    mockQuery.mockResolvedValueOnce({
+      rows: [makeAccountRoleRow(3, "Security Monitor", [])],
+    });
+    // Caller has scope on customer 1 only.
+    mockGetAccountCustomerIds.mockResolvedValue([1]);
+
+    const { POST } = await import("@/app/api/accounts/[id]/customers/route");
+    const request = new NextRequest(
+      `http://localhost:3000/api/accounts/${TARGET_UUID}/customers`,
+      {
+        method: "POST",
+        // 7 is a probe id (out of scope or non-existent — caller cannot
+        // tell from the response); 999 is a probe for a non-existent id.
+        body: JSON.stringify({ customerIds: [7, 999] }),
+      },
+    );
+    const response = await POST(request, makeContext());
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).not.toContain("not found");
+    expect(body.error).not.toContain("999");
+    expect(body.error).not.toContain("7");
   });
 });

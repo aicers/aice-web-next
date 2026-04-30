@@ -181,6 +181,9 @@ export const PATCH = withAuth(
       targetId: String(customerId),
       ip: extractClientIp(request),
       sid: session.sessionId,
+      // Top-level `customerId` populated so the audit-log viewer (#386)
+      // surfaces the row to the tenant operator who owns this customer.
+      customerId,
       details: {
         ...(name !== undefined && { name: name.trim() }),
         ...(description !== undefined && {
@@ -228,6 +231,26 @@ export const DELETE = withAuth(
 
     const customer = rows[0];
 
+    // Tenant scope check — mirrors GET / PATCH on the same resource. A
+    // non-`access-all` caller with `customers:delete` must not be able
+    // to drop a customer outside their scope.
+    const accessAll = await hasPermission(
+      session.roles,
+      "customers:access-all",
+    );
+    if (!accessAll) {
+      const { rows: scopeRows } = await query<{ customer_id: number }>(
+        "SELECT customer_id FROM account_customer WHERE account_id = $1 AND customer_id = $2",
+        [session.accountId, customerId],
+      );
+      if (scopeRows.length === 0) {
+        return NextResponse.json(
+          { error: "Customer not found" },
+          { status: 404 },
+        );
+      }
+    }
+
     // Check for linked accounts
     const { rows: linkRows } = await query<{ customer_id: number }>(
       "SELECT customer_id FROM account_customer WHERE customer_id = $1 LIMIT 1",
@@ -252,6 +275,11 @@ export const DELETE = withAuth(
       targetId: String(customerId),
       ip: extractClientIp(request),
       sid: session.sessionId,
+      // Top-level `customerId` populated so the audit-log viewer (#386)
+      // surfaces this delete to the tenant operator who owned the
+      // customer (now removed). Without it the row is invisible under a
+      // `customer_id IN (...)` predicate.
+      customerId,
       details: { name: customer.name, databaseName: customer.database_name },
     });
 

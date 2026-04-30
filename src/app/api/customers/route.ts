@@ -150,6 +150,10 @@ export const POST = withAuth(
       targetId: String(customer.id),
       ip: extractClientIp(request),
       sid: session.sessionId,
+      // Top-level `customerId` populated so the audit-log viewer (#386)
+      // surfaces this create to a tenant operator after the matching
+      // `account_customer` link is added.
+      customerId: customer.id,
       details: { name, databaseName },
     });
 

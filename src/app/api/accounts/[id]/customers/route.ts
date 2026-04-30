@@ -155,21 +155,12 @@ export const POST = withAuth(
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
-    // Verify all customer IDs exist
-    const { rows: existingCustomers } = await query<{ id: number }>(
-      `SELECT id FROM customers WHERE id = ANY($1)`,
-      [uniqueIds],
-    );
-    if (existingCustomers.length !== uniqueIds.length) {
-      const found = new Set(existingCustomers.map((r) => r.id));
-      const missing = uniqueIds.filter((id) => !found.has(id));
-      return NextResponse.json(
-        { error: `Customers not found: ${missing.join(", ")}` },
-        { status: 400 },
-      );
-    }
-
-    // Tenant scope: Tenant Admin can only assign their own customers
+    // Tenant scope: Tenant Admin can only assign their own customers.
+    // Run the scope check BEFORE the existence check so an out-of-scope
+    // input id is rejected at the same surface as a non-existent one —
+    // otherwise the existence-check error path leaks "exists, out of
+    // scope" vs "does not exist" to a tenant admin probing arbitrary
+    // ids (#387 P1 finding §4 / §7-2).
     const accessAll = await hasPermission(
       session.roles,
       "customers:access-all",
@@ -184,6 +175,25 @@ export const POST = withAuth(
           { status: 403 },
         );
       }
+    }
+
+    // Verify all customer IDs exist. Reachable only after the scope
+    // check above has cleared every id, so listing the missing ones is
+    // safe: an `access-all` caller already has access to the full
+    // customer list, and a tenant-scoped caller can only have reached
+    // here for ids inside their own scope (out-of-scope ids would have
+    // hit the 403 above with no enumeration distinction).
+    const { rows: existingCustomers } = await query<{ id: number }>(
+      `SELECT id FROM customers WHERE id = ANY($1)`,
+      [uniqueIds],
+    );
+    if (existingCustomers.length !== uniqueIds.length) {
+      const found = new Set(existingCustomers.map((r) => r.id));
+      const missing = uniqueIds.filter((id) => !found.has(id));
+      return NextResponse.json(
+        { error: `Customers not found: ${missing.join(", ")}` },
+        { status: 400 },
+      );
     }
 
     const targetRole = deriveAccountRolePolicy({
@@ -240,16 +250,24 @@ export const POST = withAuth(
       );
     }
 
-    // Audit
-    await auditLog.record({
-      actor: session.accountId,
-      action: "customer.assign",
-      target: "account",
-      targetId: accountId,
-      ip: extractClientIp(request),
-      sid: session.sessionId,
-      details: { customerIds: assigned },
-    });
+    // Audit. One row per assigned customer so each row carries a
+    // top-level `customerId` and is visible to the tenant operator who
+    // owns it under the audit-log viewer's `customer_id IN (...)` scope
+    // (#386). A single row with `customerIds: [...]` in `details` would
+    // be invisible to a restricted operator after #386 lands.
+    const ip = extractClientIp(request);
+    for (const assignedCustomerId of assigned) {
+      await auditLog.record({
+        actor: session.accountId,
+        action: "customer.assign",
+        target: "account",
+        targetId: accountId,
+        ip,
+        sid: session.sessionId,
+        customerId: assignedCustomerId,
+        details: { customerId: assignedCustomerId },
+      });
+    }
 
     return NextResponse.json({ success: true, assigned }, { status: 201 });
   },
