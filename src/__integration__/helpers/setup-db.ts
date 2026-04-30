@@ -352,6 +352,45 @@ export async function removeAccountCustomerAssignments(
   );
 }
 
+/**
+ * Assigns the account to every customer row currently in `customers`.
+ * Returns the list of customer IDs assigned. Used to defend against
+ * regressions where admin status is inferred from
+ * `assignedIds.length === SELECT COUNT(*) FROM customers`.
+ */
+export async function assignAllExistingCustomersToAccount(
+  accountId: string,
+): Promise<number[]> {
+  return withAuthDb(async (c) => {
+    const { rows } = await c.query<{ id: number }>(
+      "SELECT id FROM customers ORDER BY id",
+    );
+    for (const { id } of rows) {
+      await c.query(
+        "INSERT INTO account_customer (account_id, customer_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [accountId, id],
+      );
+    }
+    return rows.map((r) => r.id);
+  });
+}
+
+export async function createCustomerRow(name: string): Promise<number> {
+  return withAuthDb(async (c) => {
+    const dbName = `customer_test_${name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .slice(0, 30)}_${Math.random().toString(16).slice(2, 8)}`;
+    const { rows } = await c.query<{ id: number }>(
+      `INSERT INTO customers (name, database_name, status)
+       VALUES ($1, $2, 'active')
+       RETURNING id`,
+      [name, dbName],
+    );
+    return rows[0].id;
+  });
+}
+
 export async function getCustomerIdByName(
   name: string,
 ): Promise<number | null> {
@@ -437,12 +476,13 @@ export async function insertAuditLog(opts: {
   targetId?: string;
   ipAddress?: string;
   details?: Record<string, unknown>;
+  customerId?: number | null;
 }): Promise<string> {
   return withAuditDb(async (c) => {
     const { rows } = await c.query<{ id: string }>(
       `INSERT INTO audit_logs
-         (actor_id, action, target_type, target_id, ip_address, details)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (actor_id, action, target_type, target_id, ip_address, details, customer_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         opts.actorId,
@@ -451,6 +491,7 @@ export async function insertAuditLog(opts: {
         opts.targetId ?? null,
         opts.ipAddress ?? "127.0.0.1",
         opts.details ? JSON.stringify(opts.details) : null,
+        opts.customerId ?? null,
       ],
     );
     return rows[0].id;
@@ -460,6 +501,12 @@ export async function insertAuditLog(opts: {
 export async function deleteAuditLogById(id: string): Promise<void> {
   await withAuditDb((c) =>
     c.query("DELETE FROM audit_logs WHERE id = $1", [id]),
+  );
+}
+
+export async function deleteAuditLogsByActor(actorId: string): Promise<void> {
+  await withAuditDb((c) =>
+    c.query("DELETE FROM audit_logs WHERE actor_id = $1", [actorId]),
   );
 }
 
