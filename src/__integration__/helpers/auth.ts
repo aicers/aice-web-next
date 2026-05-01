@@ -281,6 +281,8 @@ export async function authDelete(
 export async function resetRateLimits(): Promise<void> {
   const res = await fetch(`${SERVER_ORIGIN}/api/e2e/reset-rate-limits`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
   });
   if (!res.ok) throw new Error(`reset-rate-limits failed: ${res.status}`);
 }

@@ -5,7 +5,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
-
 import { readManifest, runFixturePreflight } from "../test-harness/fixtures";
 import {
   type RunningMockServer,
@@ -169,6 +168,12 @@ export async function setup(): Promise<() => Promise<void>> {
     MTLS_CERT_PATH: certs.paths.clientCertPath,
     MTLS_KEY_PATH: certs.paths.clientKeyPath,
   };
+
+  // The spawned dev server receives the integration env via `spawn()`,
+  // but some integration tests also execute DB-backed code in-process.
+  // Mirror the same values into the Vitest worker so helpers that call
+  // `lib/db/client.ts` or `lib/audit/client.ts` see the test DSNs too.
+  Object.assign(process.env, env);
 
   // Never reuse an existing server. A process already bound to SERVER_URL
   // has its own env and will not have received the harness-controlled

@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN } from "./helpers/app-url";
 
 import { resetRateLimits } from "./helpers/auth";
 import {
@@ -131,7 +132,7 @@ test.describe("Session Policy E2E", () => {
       data: { password: workerPassword },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -170,7 +171,7 @@ test.describe("Session Policy E2E", () => {
       data: { password: "WrongPassword999!" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 

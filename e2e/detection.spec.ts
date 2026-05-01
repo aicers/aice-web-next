@@ -487,7 +487,7 @@ test("Korean locale: detection shell renders localized placeholders", async ({
   await signInAndWaitKo(page, workerUsername, workerPassword);
   await page.goto("/ko/detection");
 
-  await expect(page.getByRole("button", { name: "필터" })).toBeVisible({
-    timeout: 10_000,
-  });
+  await expect(
+    page.getByRole("button", { name: "필터", exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
 });

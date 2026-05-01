@@ -1,0 +1,363 @@
+query EventDetailManual($filter: EventListFilterInput!) {
+  eventList(filter: $filter, first: 5) {
+    totalCount
+    nodes {
+      __typename
+      time
+      sensor
+      confidence
+      category
+      level
+      triageScores {
+        policyId
+        score
+      }
+      ... on BlocklistConn {
+        origAddr
+        origCountry
+        origPort
+        respAddr
+        respCountry
+        respPort
+        proto
+        origCustomer {
+          id
+          name
+        }
+        respCustomer {
+          id
+          name
+        }
+        origNetwork {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        connState
+        service
+        startTime
+        duration
+        origBytes
+        respBytes
+        origPkts
+        respPkts
+      }
+      ... on DnsCovertChannel {
+        origAddr
+        origCountry
+        origPort
+        respAddr
+        respCountry
+        respPort
+        proto
+        origCustomer {
+          id
+          name
+        }
+        respCustomer {
+          id
+          name
+        }
+        origNetwork {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        startTime
+        duration
+        query
+        answer
+        transId
+        rtt
+        qclass
+        qtype
+        rcode
+        aaFlag
+        tcFlag
+        rdFlag
+        raFlag
+        ttl
+      }
+      ... on FtpBruteForce {
+        origAddr
+        origCountry
+        respAddr
+        respCountry
+        respPort
+        proto
+        origCustomer {
+          id
+          name
+        }
+        respCustomer {
+          id
+          name
+        }
+        origNetwork {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        userList
+        startTime
+        endTime
+        isInternal
+      }
+      ... on HttpThreat {
+        origAddr
+        origCountry
+        origPort
+        respAddr
+        respCountry
+        respPort
+        proto
+        origCustomer {
+          id
+          name
+        }
+        respCustomer {
+          id
+          name
+        }
+        origNetwork {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        startTime
+        duration
+        method
+        host
+        uri
+        referer
+        version
+        userAgent
+        requestLen
+        responseLen
+        statusCode
+        statusMsg
+        username
+        password
+        cookie
+        contentEncoding
+        contentType
+        cacheControl
+        filenames
+        mimeTypes
+        body
+        content
+        state
+        attackKind
+      }
+      ... on NetworkThreat {
+        origAddr
+        origCountry
+        origPort
+        respAddr
+        respCountry
+        respPort
+        proto
+        origCustomer {
+          id
+          name
+        }
+        respCustomer {
+          id
+          name
+        }
+        origNetwork {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        startTime
+        duration
+        service
+        content
+        attackKind
+      }
+      ... on PortScan {
+        origAddr
+        origCountry
+        respAddr
+        respCountry
+        respPorts
+        proto
+        origCustomer {
+          id
+          name
+        }
+        respCustomer {
+          id
+          name
+        }
+        origNetwork {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        startTime
+        endTime
+      }
+      ... on MultiHostPortScan {
+        origAddr
+        origCountry
+        respAddrs
+        respCountries
+        respPort
+        proto
+        origCustomer {
+          id
+          name
+        }
+        respCustomers {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        startTime
+        endTime
+      }
+      ... on FtpPlainText {
+        origAddr
+        origCountry
+        origPort
+        respAddr
+        respCountry
+        respPort
+        proto
+        origCustomer {
+          id
+          name
+        }
+        respCustomer {
+          id
+          name
+        }
+        origNetwork {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        startTime
+        duration
+        user
+        password
+        commands {
+          command
+          replyCode
+          replyMsg
+        }
+      }
+      ... on BlocklistDns {
+        origAddr
+        origCountry
+        origPort
+        respAddr
+        respCountry
+        respPort
+        proto
+        origCustomer {
+          id
+          name
+        }
+        respCustomer {
+          id
+          name
+        }
+        origNetwork {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        startTime
+        duration
+        query
+        answer
+        transId
+        rtt
+        qclass
+        qtype
+        rcode
+        aaFlag
+        tcFlag
+        rdFlag
+        raFlag
+        ttl
+      }
+      ... on RdpBruteForce {
+        origAddr
+        origCountry
+        respAddrs
+        respCountries
+        proto
+        origNetwork {
+          id
+          name
+        }
+        origCustomer {
+          id
+          name
+        }
+        respCustomers {
+          id
+          name
+        }
+        startTime
+        endTime
+      }
+      ... on ExternalDdos {
+        origAddrs
+        origCountries
+        respAddr
+        respCountry
+        proto
+        origCustomers {
+          id
+          name
+        }
+        origNetwork {
+          id
+          name
+        }
+        respCustomer {
+          id
+          name
+        }
+        respNetwork {
+          id
+          name
+        }
+        startTime
+        endTime
+      }
+    }
+  }
+}

@@ -1,5 +1,7 @@
 import type { Page } from "@playwright/test";
 
+import { APP_ORIGIN } from "./app-url";
+
 // ── Common helpers ──────────────────────────────────────────────
 
 /** Build CSRF + JSON headers from a CSRF token value. */
@@ -7,7 +9,7 @@ export function csrfHeaders(csrfValue: string) {
   return {
     "Content-Type": "application/json",
     "x-csrf-token": csrfValue,
-    Origin: "http://localhost:3000",
+    Origin: APP_ORIGIN,
   };
 }
 
