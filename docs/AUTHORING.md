@@ -496,13 +496,24 @@ assertions for its `expects` mode:
   harness fires only the variants that are defined and asserts the
   response status equals the variant's `expectStatus` (typically 2xx
   in-scope, 403 / 404 out-of-scope for non-admins; 2xx for both for
-  admin). Routes whose tenant in-scope path would mutate fixture
-  state we don't want to restore on every run (e.g.
-  password-reset, mfa-reset) declare only the tenant `outOfScope`
-  variant and leave `inScope` undefined — the regression bar is
-  "out-of-scope is rejected", not "every successful path is
-  exercised". An optional `cleanupAfterSuccess` hook resets fixture
+  admin). An optional `cleanupAfterSuccess` hook resets fixture
   state after each 2xx so mutations don't leak between runs.
+  - **Contract narrowing for auth-state-mutating routes.** The
+    matrix's mandate is the cross-customer scope contract, not
+    end-to-end coverage of every success path. Routes that mutate
+    authentication state (password hash, locked flag, MFA
+    enrolment, token version, live sessions) the matrix's other
+    rows depend on declare ONLY the tenant `outOfScope` variant.
+    Today this applies to `POST /api/accounts/[id]/password-reset`,
+    `/unlock`, and `/mfa-reset`: a single 404 from
+    `validateManagedAccountTarget` is the regression-meaningful
+    assertion (a future PR that drops the scope check turns the row
+    red), and the route-specific integration suites
+    (`src/__integration__/api/unlock.test.ts`, the password / MFA
+    suites) already cover the happy path end-to-end. New routes
+    that share this profile should follow the same pattern; new
+    routes that don't (no auth-state mutation) should declare every
+    persona slot.
   - **Persona overrides.** A row whose route requires a permission
     the base tenant role doesn't carry (`customers:write`,
     `customers:delete`, `accounts:delete`) sets

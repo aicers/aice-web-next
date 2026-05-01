@@ -35,13 +35,28 @@
  *       - Each per-persona slot has an optional `inScope` and
  *         `outOfScope` variant. The harness only fires variants that
  *         are defined and asserts each response status equals the
- *         variant's `expectStatus`. Routes whose tenant in-scope path
- *         would mutate fixture state we don't want to restore (e.g.
- *         password-reset, mfa-reset) only declare the tenant
- *         out-of-scope variant — the regression bar is "out-of-scope
- *         is rejected", not "every successful path is exercised".
- *         Optional `cleanupAfterSuccess` runs after each 2xx so
- *         mutation rows don't leak fixture state into later runs.
+ *         variant's `expectStatus`. Optional `cleanupAfterSuccess`
+ *         runs after each 2xx so mutation rows don't leak fixture
+ *         state into later runs.
+ *       - **Contract narrowing for auth-state-mutating routes.** The
+ *         issue describes a uniform three-persona / two-variant
+ *         matrix, but `POST /api/accounts/[id]/password-reset`,
+ *         `/unlock`, and `/mfa-reset` declare ONLY the tenant
+ *         `outOfScope` variant (no tenant in-scope, no admin success).
+ *         The cross-customer regression those routes can introduce
+ *         is "tenant reaches another tenant's account at all" — a
+ *         single 404 from `validateManagedAccountTarget` on an
+ *         out-of-scope target is the regression-meaningful assertion
+ *         and a future PR that drops the scope check will turn that
+ *         row red. The success paths are excluded on purpose: they
+ *         mutate authentication state (password hash, locked flag,
+ *         MFA enrolment, token version, live sessions) that the
+ *         matrix's other rows depend on, and the route-specific
+ *         integration suites (`src/__integration__/api/unlock.test.ts`,
+ *         the password / MFA suites) already cover the happy path
+ *         end-to-end. The intent is that this matrix freezes the
+ *         scope contract, not that it duplicates every per-route
+ *         success-path test.
  *       - Optional `personaUsernames` overrides the sign-in user for
  *         a persona slot (the persona label in the test name stays
  *         `account-A` / `account-B` so the matrix shape is uniform).
@@ -817,7 +832,10 @@ const ENDPOINTS: Endpoint[] = [
   // from their own account (200), then the cleanup re-adds. Out-of-
   // scope: tenant tries to unassign the OTHER tenant's customer from
   // the OTHER tenant's account; the assignment exists, so the route
-  // reaches the scope check and rejects with 403.
+  // reaches the scope check and rejects with 403. Admin
+  // (`customers:access-all`) reaches the route's success path on
+  // either side; both admin variants assert 200 and the cleanup
+  // re-establishes the canonical assignments after each success.
   {
     name: "DELETE /api/accounts/[id]/customers/[customerId]",
     method: "DELETE",
@@ -843,13 +861,16 @@ const ENDPOINTS: Endpoint[] = [
           expectStatus: 403,
         },
       },
-      // Admin variants intentionally omitted: re-firing admin-driven
-      // mutations on the same (account, customer) pair after the
-      // tenant in-scope variants would race the cleanup ordering.
-      // The route's "admin can do anything" path is exercised by the
-      // sibling POST row above; what this row guards is the tenant
-      // scope check, which the two non-admin personas already cover.
-      admin: {},
+      admin: {
+        inScope: {
+          path: `/api/accounts/${r.accountAId}/customers/${r.customerAId}`,
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/accounts/${r.accountBId}/customers/${r.customerBId}`,
+          expectStatus: 200,
+        },
+      },
     }),
     cleanupAfterSuccess: async (
       resources,
@@ -1216,10 +1237,18 @@ describe("Cross-customer scope matrix", () => {
     // `DELETE /api/accounts/[id]`, etc.). Those live in `audit_db` so
     // they are not cascaded by the auth_db account/role/customer
     // cleanup below — drop them by actor before detaching the test
-    // accounts so re-runs see a clean slate. Only the test-account
-    // actors (and admin, since admin's matrix-driven rows also emit)
-    // are touched: admin's audit history outside the matrix isn't
-    // affected because we filter by actor_id, not by action.
+    // accounts so re-runs see a clean slate.
+    //
+    // Only the test-account actor ids are swept here. Admin-driven
+    // matrix rows also emit, but `deleteAuditLogsByActor(adminId)`
+    // would delete every admin audit entry on the dev database —
+    // including unrelated history outside this matrix — which is
+    // worse than leaving the matrix's admin entries in place. Those
+    // entries are pre-tagged with the matrix's prefixed test
+    // resources (created accounts under `${TEST_PREFIX}created-...`,
+    // descriptions like `${TEST_PREFIX}admin-a`) so they're easy to
+    // identify and drop manually if a developer ever wants the dev
+    // DB pristine.
     await deleteAuditLogsByActor(resources.accountAId);
     await deleteAuditLogsByActor(resources.accountBId);
     await deleteAuditLogsByActor(resources.managerAId);
