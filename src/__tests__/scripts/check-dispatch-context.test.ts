@@ -400,6 +400,80 @@ export async function listNodes() {
     );
   });
 
+  it("accepts an allowlisted file that uses a namespace import + `<alias>.buildDispatchContext` access", () => {
+    // Regression test for the round-8 review: a namespace import
+    // genuinely puts the symbol in runtime scope (via the namespace
+    // object). The previous regex only matched named imports, so a
+    // valid future refactor would have failed `pnpm check:scope`.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+import * as dispatchContext from "./dispatch-context";
+
+export async function listNodes(session) {
+  const ctx = await dispatchContext.buildDispatchContext(session);
+  return graphqlRequest(NODE_LIST_QUERY, undefined, ctx);
+}
+`,
+      },
+    ]);
+
+    expect(violations).toEqual([]);
+  });
+
+  it("does NOT count a namespace import without a `<alias>.buildDispatchContext` access as in-scope", () => {
+    // The namespace alone only binds the namespace object — without
+    // an observed member access there is no evidence the file is
+    // materializing the symbol from it. The named-import contract
+    // works because the named specifier itself binds the symbol; a
+    // bare `import * as ns ...` does not.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+import * as dispatchContext from "./dispatch-context";
+
+export async function listNodes() {
+  // dispatchContext is imported but never reaches buildDispatchContext.
+  return graphqlRequest(QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(
+      /neither imports nor locally declares/,
+    );
+  });
+
+  it("does NOT count `import type * as ns ...` paired with member access as in-scope", () => {
+    // Whole-import type modifier on a namespace import — TypeScript
+    // erases it, so the namespace object is not actually in runtime
+    // scope. The matching `.buildDispatchContext` reference on its
+    // own does not satisfy the contract.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+import type * as dispatchContext from "./dispatch-context";
+
+export async function listNodes() {
+  const ref: typeof dispatchContext.buildDispatchContext | undefined = undefined;
+  void ref;
+  return graphqlRequest(QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(
+      /neither imports nor locally declares/,
+    );
+  });
+
   it("treats the GraphQL client modules as pass-through (no buildDispatchContext required)", () => {
     const violations = run([
       {

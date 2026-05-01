@@ -383,18 +383,39 @@ alongside `pnpm check`. It enforces, file-by-file:
   `buildDispatchContext` must either be imported from another
   module or declared locally as a top-level function / const.
   Files that have neither fail CI. The contract is "symbol is in
-  scope at runtime", so two shapes intentionally do NOT satisfy the
-  presence check:
-    - **Type-only imports.** Both `import type { buildDispatchContext } ...`
-      (whole-import type modifier) and `import { type buildDispatchContext } ...`
-      (per-specifier type modifier) are rejected. TypeScript erases
+  scope at runtime", so the guard accepts any of the three shapes
+  that put it there:
+    - **Named import** —
+      `import { buildDispatchContext } from "./dispatch-context"`,
+      with or without an `as` alias. This is the form the Node
+      track uses today.
+    - **Namespace import + member access** —
+      `import * as dispatchContext from "./dispatch-context"`
+      paired with at least one
+      `dispatchContext.buildDispatchContext(...)` reference in the
+      same file. The bare namespace binding alone is not enough: the
+      symbol is reachable through the namespace object, so the guard
+      requires an observed member access to confirm the file is
+      actually using it.
+    - **Local declaration** — `async function buildDispatchContext` /
+      `const buildDispatchContext = ...` declared at the top level
+      (column 0) of the file. This is the shape Detection's
+      `src/lib/detection/server-actions.ts` uses today.
+
+  Three shapes intentionally do NOT satisfy the presence check:
+    - **Type-only imports.** `import type { buildDispatchContext } ...`,
+      `import { type buildDispatchContext } ...`, and
+      `import type * as ns ...` are all rejected. TypeScript erases
       these so the symbol is not in runtime scope when the call site
       executes.
+    - **Namespace imports without member access.** A bare
+      `import * as ns from "..."` with no `ns.buildDispatchContext`
+      reference fails — there is no evidence the file is materializing
+      the symbol from the namespace.
     - **Nested declarations.** `function buildDispatchContext` /
       `const buildDispatchContext` inside another function or block
       does not bring the symbol into file scope. Only top-level
-      (column-0) declarations count — the same shape Detection's
-      `src/lib/detection/server-actions.ts` already uses.
+      (column-0) declarations count.
 
 Both `pnpm check` (Biome) and `pnpm check:scope` must pass before
 a PR can land. The guard is intentionally simple — it does not

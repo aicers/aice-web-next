@@ -26,13 +26,23 @@
 //      locally as a top-level function / const. Detection's track
 //      uses the local-declaration form today
 //      (`src/lib/detection/server-actions.ts`); the Node track
-//      imports it from `src/lib/node/dispatch-context.ts`. Both
-//      patterns are accepted, but the contract is "symbol is in
-//      scope at runtime", so two shapes intentionally do NOT
-//      satisfy the check:
-//        * Type-only imports — both `import type { buildDispatchContext } ...`
-//          and `import { type buildDispatchContext } ...`. TypeScript
-//          erases these so the symbol is not in runtime scope.
+//      imports it from `src/lib/node/dispatch-context.ts` via a
+//      named import. Both named imports
+//      (`import { buildDispatchContext } from "..."`) and namespace
+//      imports paired with member access
+//      (`import * as ns from "..."` followed by
+//      `ns.buildDispatchContext(...)`) are accepted, as is the
+//      local-declaration form — the contract is "symbol is in scope
+//      at runtime", so any of those bring it into scope. Three
+//      shapes intentionally do NOT satisfy the check:
+//        * Type-only imports — `import type { buildDispatchContext } ...`,
+//          `import { type buildDispatchContext } ...`, and
+//          `import type * as ns ...`. TypeScript erases these so the
+//          symbol is not in runtime scope.
+//        * Namespace imports without a `<alias>.buildDispatchContext`
+//          access. The bare namespace binding does not put the symbol
+//          in scope under its own name; without the member access we
+//          have no evidence the file is using it.
 //        * Nested declarations — `function buildDispatchContext` /
 //          `const buildDispatchContext` inside another function or
 //          block. Only top-level (column-0) declarations count.
@@ -133,6 +143,16 @@ const OVERRIDE_RE = /\/\/\s*scope-allowlist:\s*(.+?)\s*$/;
 // stripped source so a commented-out import or a string literal that
 // happens to contain the import substring is not honoured.
 const IMPORT_RE = /\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["'][^"']*["']/g;
+
+// `import * as <alias> from "..."`. Captures the alias so we can
+// verify the file actually accesses `<alias>.buildDispatchContext`
+// somewhere — the namespace import alone only binds the namespace
+// object, not the symbol, so requiring an observed access matches
+// the contract "symbol is in scope at runtime". A type-only namespace
+// import (`import type * as ...`) is rejected the same way as the
+// named-import variant — TypeScript erases it.
+const NAMESPACE_IMPORT_RE =
+  /\bimport\s+(type\s+)?\*\s+as\s+(\w+)\s+from\s*["'][^"']*["']/g;
 
 // Top-level declaration only — must start at column 0 (no leading
 // whitespace). Nested `function buildDispatchContext` /
@@ -314,9 +334,23 @@ function hasBuildDispatchContextImport(stripped) {
   }
 }
 
+function hasBuildDispatchContextNamespaceImport(stripped) {
+  NAMESPACE_IMPORT_RE.lastIndex = 0;
+  for (;;) {
+    const match = NAMESPACE_IMPORT_RE.exec(stripped);
+    if (match === null) return false;
+    // Reject `import type * as <alias>` — erased at runtime.
+    if (match[1]) continue;
+    const alias = match[2];
+    const usageRe = new RegExp(`\\b${alias}\\.buildDispatchContext\\b`);
+    if (usageRe.test(stripped)) return true;
+  }
+}
+
 function hasBuildDispatchContext(source) {
   const stripped = stripCommentsAndStrings(source);
   if (hasBuildDispatchContextImport(stripped)) return true;
+  if (hasBuildDispatchContextNamespaceImport(stripped)) return true;
   if (LOCAL_DECL_RE.test(stripped)) return true;
   return false;
 }
