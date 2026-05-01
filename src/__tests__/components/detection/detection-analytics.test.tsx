@@ -45,6 +45,9 @@ function labels(): DetectionAnalyticsLabels {
     errorRetry: "Retry",
     forbiddenTitle: "Not permitted",
     forbiddenDescription: "Forbidden",
+    forbiddenScopeTitle: "Customer outside your access",
+    forbiddenScopeDescription:
+      "The active filter references a customer outside your access.",
     emptyTitle: "No matching events",
     emptyDescription: "Empty",
     levelLabels: { LOW: "Low", MEDIUM: "Medium", HIGH: "High" },

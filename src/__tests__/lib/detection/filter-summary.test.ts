@@ -43,7 +43,9 @@ const LABELS: SummarizeFilterLabels = {
   learningMethods: "AI Model Type",
   categories: "Threat Category",
   kinds: "Threat Name",
+  customers: "Customer",
   categoricalAggregate: ({ label, count }) => `${label}: ${count}`,
+  customerAggregate: (count) => `Customer: ${count} selected`,
 };
 
 const CONTEXT: SummarizeFilterContext = {
@@ -54,6 +56,13 @@ const CONTEXT: SummarizeFilterContext = {
     { id: "sensor-c", name: "Charlie" },
     { id: "sensor-d", name: "Delta" },
     { id: "sensor-e", name: "Echo" },
+  ],
+  customerOptions: [
+    { value: "1", label: "Acme Inc." },
+    { value: "2", label: "Globex Corp." },
+    { value: "3", label: "Initech" },
+    { value: "4", label: "Umbrella" },
+    { value: "5", label: "Wonka" },
   ],
   categoricalOptions: {
     levels: [
@@ -229,6 +238,60 @@ describe("summarizeFilter (structured)", () => {
 
   it("exposes the per-dimension cap at 3", () => {
     expect(CHIP_DIMENSION_CAP).toBe(3);
+  });
+
+  // ── Customer chips (#384) ────────────────────────────────────
+  describe("customer chips", () => {
+    it("renders one chip per selected customer up to the cap", () => {
+      const chips = summarizeFilter(
+        structured({ customers: ["1", "2", "3"] }),
+        LABELS,
+        CONTEXT,
+      );
+      expect(chips).toHaveLength(3);
+      // Names resolved from `customerOptions`; chip prefix is "Customer".
+      expect(chips.map((c) => c.value)).toEqual([
+        "Acme Inc.",
+        "Globex Corp.",
+        "Initech",
+      ]);
+      expect(chips.every((c) => c.label === "Customer")).toBe(true);
+      expect(chips[0].focus).toBe("customers");
+      expect(chips[0].remove).toEqual({
+        kind: "categoricalValue",
+        field: "customers",
+        value: "1",
+      });
+    });
+
+    it("collapses four or more customers into an aggregate chip", () => {
+      const chips = summarizeFilter(
+        structured({ customers: ["1", "2", "3", "4"] }),
+        LABELS,
+        CONTEXT,
+      );
+      expect(chips).toHaveLength(1);
+      expect(chips[0].aggregate).toBe(true);
+      // #384: customer aggregate uses the dedicated `customerAggregate`
+      // formatter so the chip reads "Customer: 4 selected" rather than
+      // the generic categorical "Customer: 4".
+      expect(chips[0].value).toBe("Customer: 4 selected");
+      expect(chips[0].focus).toBe("customers");
+      expect(chips[0].remove).toEqual({
+        kind: "categoricalAggregate",
+        field: "customers",
+      });
+    });
+
+    it("falls back to the raw id when the option list does not include the customer", () => {
+      const chips = summarizeFilter(
+        structured({ customers: ["999"] }),
+        LABELS,
+        CONTEXT,
+      );
+      expect(chips).toHaveLength(1);
+      expect(chips[0].value).toBe("999");
+    });
   });
 });
 

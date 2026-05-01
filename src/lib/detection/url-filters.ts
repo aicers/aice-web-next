@@ -52,6 +52,16 @@ export interface PivotFilterParams {
   userIds?: string[];
   userNames?: string[];
   userDepartments?: string[];
+  /**
+   * Wire-format customer IDs (`string[]` — `EventListFilterInput.customers`)
+   * preserved on pivot URLs so the Investigation back-link and the
+   * Investigation-page outbound pivots ("same source" / "same destination"
+   * / "same kind" / "same session") carry the operator's active customer
+   * narrowing. Entries that do not parse as positive integers are dropped
+   * by the decoder; the BFF intersection check (#384) is the authoritative
+   * gate, so anything that survives decoding is still validated server-side.
+   */
+  customers?: string[];
 }
 
 export type PivotKey = keyof PivotFilterParams;
@@ -165,7 +175,32 @@ export function parsePivotSearchParams(
     userIds: readStringList(source, "userIds"),
     userNames: readStringList(source, "userNames"),
     userDepartments: readStringList(source, "userDepartments"),
+    customers: readPositiveIntList(source, "customers"),
   };
+}
+
+/**
+ * Decode a comma-separated list of positive integer customer IDs.
+ * Non-integer / non-positive entries are dropped silently — the
+ * Detection BFF intersection check rejects any out-of-scope or
+ * malformed ID on dispatch, so a tampered URL that survived this
+ * filter still cannot leak data. Returns `undefined` when nothing
+ * usable remains so callers treat "missing" and "explicitly empty"
+ * identically.
+ */
+function readPositiveIntList(
+  source: Record<string, string | string[] | undefined>,
+  key: string,
+): string[] | undefined {
+  const list = readStringList(source, key);
+  if (!list) return undefined;
+  const out: string[] = [];
+  for (const piece of list) {
+    const n = Number.parseInt(piece, 10);
+    if (!Number.isFinite(n) || n <= 0 || String(n) !== piece) continue;
+    out.push(piece);
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /**
@@ -204,6 +239,7 @@ export function buildDetectionSearchParams(
   writeList(search, "userIds", params.userIds);
   writeList(search, "userNames", params.userNames);
   writeList(search, "userDepartments", params.userDepartments);
+  writeList(search, "customers", params.customers);
   return search;
 }
 
@@ -233,6 +269,7 @@ export interface PivotChipLabels {
   userIds: string;
   userNames: string;
   userDepartments: string;
+  customers: string;
   /** Rendered for an aggregated multi-value chip (e.g. "Keywords: 12"). */
   countAggregate: (label: string, count: number) => string;
 }
@@ -347,6 +384,13 @@ export function buildPivotChips(
     labels.userDepartments,
     labels,
   );
+  appendArrayChips(
+    chips,
+    "customers",
+    params.customers,
+    labels.customers,
+    labels,
+  );
   return chips;
 }
 
@@ -404,6 +448,7 @@ export function pivotParamsFromFilterInput(
     userDepartments: input.userDepartments?.length
       ? input.userDepartments
       : undefined,
+    customers: input.customers?.length ? [...input.customers] : undefined,
   };
 }
 
@@ -441,5 +486,6 @@ export function mergePivotParams(
     userIds: filterSide.userIds,
     userNames: filterSide.userNames,
     userDepartments: filterSide.userDepartments,
+    customers: filterSide.customers,
   };
 }

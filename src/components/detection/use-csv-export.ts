@@ -61,6 +61,15 @@ interface UseCsvExportOptions {
   /** Localized error-state message shown when an export fails. */
   errorMessage: string;
   /**
+   * Localized error-state message surfaced when the export route
+   * returns a 403 with `code: "forbidden-customer-scope"` (Reviewer
+   * Round 6 #1) — the inbound filter references a customer outside
+   * the caller's effective scope. Distinct from {@link errorMessage}
+   * so the operator sees the actionable customer-scope hint instead
+   * of the generic "export failed" copy.
+   */
+  forbiddenScopeMessage?: string;
+  /**
    * Localized error-state message surfaced when the server rejects
    * the request because the estimated row count exceeds the hard
    * per-export ceiling. Receives the advertised count and limit
@@ -178,6 +187,7 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
   const {
     buildPayload,
     errorMessage,
+    forbiddenScopeMessage,
     formatLimitExceededMessage,
     getKnownTotalCount,
     onSuccess,
@@ -403,6 +413,31 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
         return;
       }
 
+      if (response.status === 403) {
+        // Reviewer Round 6 #1: the export route returns
+        // `code: "forbidden-customer-scope"` when #384's BFF
+        // intersection check rejects the inbound filter (or the
+        // caller's scope is empty, per Reviewer Round 2). Surface the
+        // typed message so the operator gets the actionable customer-
+        // scope hint instead of the generic transient-error copy. A
+        // plain 403 (caller lacks `detection:read`) keeps the generic
+        // copy — that one isn't actionable from the export banner.
+        const json = (await response.json().catch(() => null)) as Record<
+          string,
+          unknown
+        > | null;
+        void resolveSaveOutcome();
+        if (
+          json?.code === "forbidden-customer-scope" &&
+          forbiddenScopeMessage
+        ) {
+          setStatus({ kind: "error", message: forbiddenScopeMessage });
+          return;
+        }
+        setStatus({ kind: "error", message: errorMessage });
+        return;
+      }
+
       if (!response.ok) {
         void resolveSaveOutcome();
         setStatus({ kind: "error", message: errorMessage });
@@ -459,7 +494,13 @@ export function useCsvExport(options: UseCsvExportOptions): UseCsvExportReturn {
         setStatus({ kind: "error", message: errorMessage });
       }
     },
-    [abortInFlight, errorMessage, formatLimitExceededMessage, onSuccess],
+    [
+      abortInFlight,
+      errorMessage,
+      forbiddenScopeMessage,
+      formatLimitExceededMessage,
+      onSuccess,
+    ],
   );
 
   const start = useCallback(() => {

@@ -24,6 +24,12 @@ export default async function EventInvestigationPage({
   const { token } = await params;
   const resolvedSearch = await searchParams;
   const backHref = sanitizeReturnTo(resolvedSearch.returnTo);
+  // Forward the active Detection customer narrowing (#384) onto the
+  // outbound pivot URLs the Overview / Related tabs render. The
+  // value lives in a separate URL param rather than being decoded
+  // out of `returnTo` so this route does not have to know the
+  // encoded `?f=` filter shape.
+  const investigationCustomers = parseCustomersParam(resolvedSearch.customers);
   const t = await getTranslations("events");
 
   const locator = decodeEventLocator(token);
@@ -69,8 +75,35 @@ export default async function EventInvestigationPage({
       multipleMatches={resolution.status === "multiple"}
       backHref={backHref}
       labels={buildInvestigationLabels(t)}
+      customers={investigationCustomers}
     />
   );
+}
+
+/**
+ * Parse the `customers` query param into a `string[]` of positive
+ * integer IDs. Matches the wire format `EventListFilterInput.customers`
+ * so the parsed value plugs straight into the pivot URL builder. Any
+ * entry that does not parse as a positive integer is dropped — the
+ * Detection BFF intersection check (#384) is the authoritative gate,
+ * so a tampered URL that survives this filter is still rejected on
+ * dispatch.
+ */
+function parseCustomersParam(
+  raw: string | string[] | undefined,
+): readonly string[] | undefined {
+  if (typeof raw !== "string" || raw.length === 0) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const piece of raw.split(",")) {
+    const trimmed = piece.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) continue;
+    const n = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(n) || n <= 0 || String(n) !== trimmed) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 type EventsTranslator = Awaited<ReturnType<typeof getTranslations>>;

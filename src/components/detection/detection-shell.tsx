@@ -95,6 +95,7 @@ import {
   endpointEntriesFromEndpointInputs,
 } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
+import { parsePositiveCustomerId } from "@/lib/detection/filter-customer-scope";
 import {
   CONFIDENCE_DEFAULT_MAX,
   CONFIDENCE_DEFAULT_MIN,
@@ -150,6 +151,10 @@ import type {
 } from "@/lib/detection/url-filters";
 import { encodeEventLocator } from "@/lib/events/event-locator";
 import { cn } from "@/lib/utils";
+import type {
+  CustomerMultiSelectState,
+  CustomerOption,
+} from "./customer-multi-select";
 import {
   type DrawerFocusField,
   FilterDrawer,
@@ -237,6 +242,17 @@ export interface AnalyticsLabelStrings {
   errorRetry: string;
   forbiddenTitle: string;
   forbiddenDescription: string;
+  /**
+   * Headline + body for the analytics strip's
+   * `forbidden-customer-scope` branch (Reviewer Round 6 #1) — the
+   * inbound filter references a customer the caller cannot access, or
+   * the caller's scope is empty. Distinct from
+   * {@link forbiddenTitle}/{@link forbiddenDescription} (caller lacks
+   * `detection:read`) so the panel can show the actionable customer-
+   * scope copy instead of the generic Detection-access denial.
+   */
+  forbiddenScopeTitle: string;
+  forbiddenScopeDescription: string;
   emptyTitle: string;
   emptyDescription: string;
   levelLabels: DetectionAnalyticsLabels["levelLabels"];
@@ -288,6 +304,15 @@ export interface DetectionShellLabels {
   };
   exportErrorMessage: string;
   /**
+   * Surfaced when the export's 403 body carries
+   * `code: "forbidden-customer-scope"` — the inbound filter references a
+   * customer outside the caller's effective scope (Reviewer Round 6 #1).
+   * Distinct from {@link exportErrorMessage} so the operator gets an
+   * actionable hint ("remove the unavailable customers") rather than the
+   * generic transient-error copy.
+   */
+  exportForbiddenScopeMessage: string;
+  /**
    * Template used when the server rejects the export because the
    * estimated row count exceeds the hard per-export ceiling. Carries
    * `{count}` and `{limit}` placeholders so the error message can
@@ -328,6 +353,16 @@ export interface DetectionShellLabels {
   resultsRegion: string;
   resultsLoading: string;
   resultsError: string;
+  /**
+   * Surfaced when {@link runEventQuery} returns
+   * `code: "forbidden-customer-scope"` — the inbound filter references a
+   * customer outside the caller's effective scope, or the caller's
+   * scope is empty (Reviewer Round 6 #1). Distinct from
+   * {@link resultsError} so the operator gets an actionable hint
+   * ("remove the unavailable customers") rather than the generic
+   * transient-error copy.
+   */
+  resultsForbiddenScope: string;
   analyticsToggle: string;
   analyticsShow: string;
   analyticsHide: string;
@@ -353,6 +388,12 @@ export interface DetectionShellLabels {
   summarize: {
     sensor: string;
     sensorAggregate: string;
+    /**
+     * `{count}` substituted; #384 customer aggregate template, e.g.
+     * `"{count} selected"`. The shell concatenates with the customer
+     * label to produce the chip value `Customer: 4 selected`.
+     */
+    customerAggregate: string;
   };
   quickPeek: QuickPeekLabelStrings;
 }
@@ -616,6 +657,33 @@ export interface DetectionShellProps {
    * query so the tab lands populated.
    */
   onLoadRecommendedFilterInNewTab?: (preset: RecommendedPreset) => void;
+  /**
+   * Customer inventory cache, lifted to the multi-tab wrapper so it
+   * survives the keyed remount this shell undergoes on every tab
+   * switch (Reviewer Round 1 #1: with the cache here in shell-local
+   * state, opening the drawer in one tab and then switching tabs
+   * dropped the cache and forced another fetch — breaking the
+   * page-session-shared contract from #384). Pass-through props that
+   * keep the rendering code identical to a self-owned cache.
+   */
+  customerCache: CustomerCache;
+  /**
+   * Manual `↻` refresh callback the wrapper supplies. The drawer's
+   * Customer header `↻` icon and the error-state Retry button both
+   * call this; the wrapper performs the actual `fetchCustomersForFilter()`
+   * round-trip and replaces the cache.
+   */
+  onCustomerRefresh: () => void;
+  /**
+   * Lookup options used for chip-name rendering when {@link customerCache}
+   * isn't yet `loaded` (e.g. during a manual refresh). The wrapper
+   * seeds these from the SSR `getEffectiveCustomerScope(session)` call
+   * so chips render with customer **names**, not raw IDs, on the
+   * first paint of a bookmarked / saved-filter / pivot URL — the
+   * disagreement Reviewer Round 1 #3 flagged when chip rendering
+   * relied solely on the lazy-loaded cache.
+   */
+  initialCustomerOptions?: readonly CustomerOption[];
 }
 
 /**
@@ -664,6 +732,64 @@ export function sensorStateForCache(
  */
 export function shouldTriggerSensorFetch(cache: SensorCache): boolean {
   return cache.status !== "loading" && cache.status !== "loaded";
+}
+
+/**
+ * Session-cached customer inventory (#384). Mirrors {@link SensorCache}
+ * one-for-one — the drawer fetches `getEffectiveCustomerScope(session)`
+ * (via `fetchCustomersForFilter`) on first open and reuses the result
+ * for subsequent opens in the same tab session. The cache is keyed on
+ * the page mount: away-and-back / hard refresh discards it.
+ */
+export type CustomerCache =
+  | { status: "idle" }
+  | { status: "loading" }
+  | {
+      status: "loaded";
+      kind: "admin" | "assigned" | "empty";
+      options: readonly CustomerOption[];
+    }
+  | { status: "error" };
+
+/**
+ * Translate {@link CustomerCache} into the visual state the
+ * Customer control should render. `loaded` (regardless of `kind`)
+ * maps to `ready` — the empty-scope case is folded into the ready
+ * state with `options.length === 0` so the control can render its
+ * disabled "No customer access" affordance distinctly from the
+ * loading and error states.
+ */
+export function customerStateForCache(
+  cache: CustomerCache,
+): CustomerMultiSelectState {
+  if (cache.status === "loaded") return "ready";
+  if (cache.status === "error") return "error";
+  return "loading";
+}
+
+/**
+ * True when an open-drawer path should kick off a customer fetch.
+ * Same contract as {@link shouldTriggerSensorFetch} so both drawer
+ * fields share their lazy-load policy.
+ */
+export function shouldTriggerCustomerFetch(cache: CustomerCache): boolean {
+  return cache.status !== "loading" && cache.status !== "loaded";
+}
+
+/**
+ * Whether the drawer's apply / save boundary may emit
+ * `input.customers` for the current cache state. True only when the
+ * cache is `loaded` AND the loaded option list is non-empty —
+ * mirrors the sensor `endpointLive` gate so the issue/manual
+ * contract holds: the filter submits no `customers` value while the
+ * first drawer-open fetch is in flight (`loading`), after a manual
+ * refresh transitioned the control into `error`, or on an empty-
+ * scope (`loaded` + zero options, the "No customer access"
+ * affordance) session — even when a bookmark / saved filter / pivot
+ * URL hydrated the draft with prior IDs. Reviewer Round 8.
+ */
+export function customerSelectionLiveForCache(cache: CustomerCache): boolean {
+  return cache.status === "loaded" && cache.options.length > 0;
 }
 
 /**
@@ -906,6 +1032,9 @@ export function DetectionShell({
   onLoadSavedFilterInNewTab,
   recommendedPresets,
   onLoadRecommendedFilterInNewTab,
+  customerCache,
+  onCustomerRefresh,
+  initialCustomerOptions,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
@@ -1058,6 +1187,8 @@ export function DetectionShell({
       errorRetry: a.errorRetry,
       forbiddenTitle: a.forbiddenTitle,
       forbiddenDescription: a.forbiddenDescription,
+      forbiddenScopeTitle: a.forbiddenScopeTitle,
+      forbiddenScopeDescription: a.forbiddenScopeDescription,
       emptyTitle: a.emptyTitle,
       emptyDescription: a.emptyDescription,
       levelLabels: a.levelLabels,
@@ -1107,6 +1238,18 @@ export function DetectionShell({
     () => analyticsFilterIdentity(committedFilter),
     [committedFilter],
   );
+  // Active customer narrowing on the committed filter, threaded onto
+  // the Quick peek pivots and the Investigation handoff URL (#384) so
+  // a click-through preserves the customer scope rather than landing
+  // on the unfiltered set. `Filter.input.customers` is `string[]` (the
+  // wire format `EventListFilterInput` exposes); pivots and the events
+  // route both speak the same encoding so no conversion is needed.
+  const committedCustomers = useMemo<readonly string[] | undefined>(() => {
+    if (committedFilter.mode !== "structured") return undefined;
+    const list = committedFilter.input.customers;
+    if (!list || list.length === 0) return undefined;
+    return list;
+  }, [committedFilter]);
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(initialDraft);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
@@ -1275,6 +1418,14 @@ export function DetectionShell({
     );
   }, []);
 
+  // Customer fetch is owned by the multi-tab wrapper (Reviewer
+  // Round 1 #1: lifted out of shell-local state so the cache survives
+  // the keyed remount on tab switch). The wrapper supplies
+  // `onCustomerRefresh` for the manual `↻` and the chip-body /
+  // Filters-button drawer-open paths just call it on an idle/error
+  // cache through `triggerCustomerFetch` below.
+  const triggerCustomerFetch = onCustomerRefresh;
+
   const openDrawer = useCallback(() => {
     setDraft(
       (current) =>
@@ -1292,12 +1443,19 @@ export function DetectionShell({
     // hiccup doesn't freeze Sensor into the "Coming soon" fallback
     // for the rest of the tab session.
     if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
+    // Customer inventory follows the same lazy-on-first-open
+    // contract (#384). The two fetches fire together on the same
+    // drawer-open trigger so both fields settle at the same visible
+    // cadence.
+    if (shouldTriggerCustomerFetch(customerCache)) triggerCustomerFetch();
   }, [
     committedFilter,
     committedPeriod,
     committedEndpoints,
     sensorCache,
     triggerSensorFetch,
+    customerCache,
+    triggerCustomerFetch,
   ]);
 
   // Mirror the Quick peek selection into the URL so a refresh
@@ -1520,7 +1678,18 @@ export function DetectionShell({
               setEvents([]);
               setEventKeys([]);
               setPageInfo(null);
-              setResultError(labels.resultsError);
+              // Reviewer Round 6 #1: surface the typed
+              // `forbidden-customer-scope` rejection with actionable
+              // copy ("remove the unavailable customers") instead of
+              // collapsing it back into the generic transient-error
+              // banner. Other failure codes (`forbidden`,
+              // `unauthenticated`, `server-error`) keep the generic
+              // copy — those are not actionable from the result region.
+              setResultError(
+                result.code === "forbidden-customer-scope"
+                  ? labels.resultsForbiddenScope
+                  : labels.resultsError,
+              );
             }
             resolve(result);
           } catch {
@@ -1543,7 +1712,12 @@ export function DetectionShell({
         });
       });
     },
-    [labels.resultsError, writeQuickPeekToUrl, reconcileQuickPeekAgainstSlice],
+    [
+      labels.resultsError,
+      labels.resultsForbiddenScope,
+      writeQuickPeekToUrl,
+      reconcileQuickPeekAgainstSlice,
+    ],
   );
 
   // Wrapper used by the Apply and chip × paths — both commit a new
@@ -1629,10 +1803,19 @@ export function DetectionShell({
       // other state strips it to preserve the fallback contract.
       const endpointLive =
         sensorCache.status === "loaded" && sensorCache.endpointAvailable;
+      // Reviewer Round 8: same fallback contract for customers — the
+      // draft can be hydrated from a bookmark / saved filter / pivot
+      // URL, so without this gate Apply (and Save) would re-emit
+      // `customers: [...]` in exactly the states the issue forbids:
+      // first drawer-open fetch in flight (`loading`), manual refresh
+      // landed on `error`, or `No customer access` (`loaded` with
+      // empty options).
+      const customerLive = customerSelectionLiveForCache(customerCache);
       const next = buildAppliedFilter(
         committedFilter,
         applied,
         endpointLive,
+        customerLive,
         options,
       );
       setCommittedFilter(next);
@@ -1686,6 +1869,7 @@ export function DetectionShell({
     },
     [
       committedFilter,
+      customerCache,
       pagination.pageSize,
       pivotOnly,
       options,
@@ -2227,6 +2411,11 @@ export function DetectionShell({
   const getKnownTotalCount = useCsvExportTotalCountGetter(totalCount);
   const csvExport = useCsvExport({
     errorMessage: labels.exportErrorMessage,
+    // Reviewer Round 6 #1: surface the export route's
+    // `code: "forbidden-customer-scope"` 403 with actionable copy
+    // ("remove the unavailable customers") instead of the generic
+    // export-error banner.
+    forbiddenScopeMessage: labels.exportForbiddenScopeMessage,
     formatLimitExceededMessage: useCallback(
       ({ totalCount, limit }: { totalCount: string; limit: number }) =>
         labels.exportLimitExceededTemplate
@@ -2315,6 +2504,8 @@ export function DetectionShell({
       // sensors…" placeholder forever when the operator opens the
       // drawer via a chip without ever having clicked Filters.
       if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
+      // Customer fetch follows the same chip-body wiring (#384).
+      if (shouldTriggerCustomerFetch(customerCache)) triggerCustomerFetch();
     },
     [
       committedFilter,
@@ -2322,6 +2513,8 @@ export function DetectionShell({
       committedEndpoints,
       sensorCache,
       triggerSensorFetch,
+      customerCache,
+      triggerCustomerFetch,
     ],
   );
 
@@ -2397,6 +2590,35 @@ export function DetectionShell({
   // committed filter.
   const sensorState = sensorStateForCache(sensorCache);
 
+  // Customer cache → drawer state + chip-summary options. Mirrors
+  // the sensor wiring above; the empty-scope edge case
+  // (`kind: 'empty'`) is folded into a `loaded` cache with
+  // `options.length === 0` so the drawer renders the dedicated
+  // "No customer access" affordance.
+  const customerOptions: readonly CustomerOption[] =
+    customerCache.status === "loaded" ? customerCache.options : [];
+  const customerState = customerStateForCache(customerCache);
+  // Lookup options for chip-name rendering. Reviewer Round 1 #3:
+  // a bookmarked `?f=` URL (or saved filter / pivot) that already
+  // carries `customers: [<id>, ...]` paints chips in the active
+  // chip bar before the customer cache transitions out of `idle`.
+  // Falling back to `initialCustomerOptions` (seeded server-side
+  // from `getEffectiveCustomerScope(session)`) means those chips
+  // render the customer **name** on the first paint, not the raw
+  // numeric id `summarizeFilter` defaults to when the option list
+  // is empty. Once the wrapper's manual-refresh resolves, the live
+  // `loaded` cache wins so a fresh post-refresh assignment shows
+  // up immediately.
+  const customerSummaryOptions = useMemo<
+    readonly { value: string; label: string }[]
+  >(() => {
+    const source =
+      customerCache.status === "loaded"
+        ? customerCache.options
+        : (initialCustomerOptions ?? []);
+    return source.map((c) => ({ value: String(c.id), label: c.name }));
+  }, [customerCache, initialCustomerOptions]);
+
   // Shared chip summariser: one `Filter → FilterChip[]` call the bar
   // reuses everywhere. The pivot-only chips above are concatenated
   // on render because they live outside `EventListFilterInput`.
@@ -2404,6 +2626,11 @@ export function DetectionShell({
     () => ({
       sensor: labels.drawer.sensor.label,
       sensorAggregate: labels.summarize.sensorAggregate,
+      customers: labels.drawer.customer.label,
+      // #384: customer aggregate chip reads `Customer: 4 selected`,
+      // matching the issue's prescribed wording.
+      customerAggregate: (count: number) =>
+        `${labels.drawer.customer.label}: ${labels.summarize.customerAggregate.replace("{count}", String(count))}`,
       period: t("chips.period"),
       periodOptions: labels.drawer.periodOptions,
       formatRange: ({ start, end }) => t("activeRange", { start, end }),
@@ -2432,6 +2659,7 @@ export function DetectionShell({
       summarizeFilter(committedFilter, summarizeLabels, {
         period: committedPeriod,
         sensorOptions,
+        customerOptions: customerSummaryOptions,
         categoricalOptions: {
           levels: options.levels,
           countries: options.countries,
@@ -2440,7 +2668,14 @@ export function DetectionShell({
           kinds: options.kinds,
         },
       }),
-    [committedFilter, committedPeriod, options, sensorOptions, summarizeLabels],
+    [
+      committedFilter,
+      committedPeriod,
+      options,
+      sensorOptions,
+      customerSummaryOptions,
+      summarizeLabels,
+    ],
   );
   // Endpoints still flow through their richer drawer-side entries; the
   // unified summariser covers the committed `EventListFilterInput`, but
@@ -2461,15 +2696,25 @@ export function DetectionShell({
     (applied: DetectionFilterDraft) => {
       const endpointLive =
         sensorCache.status === "loaded" && sensorCache.endpointAvailable;
+      // Reviewer Round 8: see {@link handleApply}. The Save path also
+      // routes the draft through `buildAppliedFilter`, so a saved
+      // filter created while the customer cache is `loading`,
+      // `error`, or `No customer access` (`loaded` + empty options)
+      // would otherwise persist a stale `customers` array — even
+      // though the drawer disabled the control. Apply the same gate
+      // so the saved payload omits `customers` in those states.
+      const customerLive = customerSelectionLiveForCache(customerCache);
       const next = buildAppliedFilter(
         committedFilter,
         applied,
         endpointLive,
+        customerLive,
         options,
       );
       const chips = summarizeFilter(next, summarizeLabels, {
         period: applied.period,
         sensorOptions,
+        customerOptions: customerSummaryOptions,
         categoricalOptions: {
           levels: options.levels,
           countries: options.countries,
@@ -2488,10 +2733,12 @@ export function DetectionShell({
     },
     [
       committedFilter,
+      customerCache,
       labels.drawer.periodOptions,
       options,
       sensorCache,
       sensorOptions,
+      customerSummaryOptions,
       summarizeLabels,
     ],
   );
@@ -2575,9 +2822,19 @@ export function DetectionShell({
       // tab's own URL state rather than from a stale `returnTo`.
       const cleanSearch = applyQuickPeekToken(search, null);
       const returnTo = `${pathname}${cleanSearch}`;
-      return `/events/${encodeURIComponent(token)}?returnTo=${encodeURIComponent(returnTo)}`;
+      // Forward the active customer narrowing (#384) as a separate
+      // query param so the Investigation page can thread it onto its
+      // outbound pivot URLs (Overview "same source" / Related). Kept
+      // out of `returnTo` to avoid forcing the events route to decode
+      // the encoded `?f=` filter blob.
+      const params = new URLSearchParams();
+      params.set("returnTo", returnTo);
+      if (committedCustomers && committedCustomers.length > 0) {
+        params.set("customers", committedCustomers.join(","));
+      }
+      return `/events/${encodeURIComponent(token)}?${params.toString()}`;
     },
-    [pathname],
+    [pathname, committedCustomers],
   );
 
   const openQuickPeekFor = useCallback(
@@ -2966,6 +3223,7 @@ export function DetectionShell({
                 locale={locale}
                 investigateHref={buildInvestigateHref(quickPeekEvent)}
                 onClose={closeQuickPeek}
+                customers={committedCustomers}
               />
             </aside>
           ) : null}
@@ -3022,6 +3280,9 @@ export function DetectionShell({
           sensorOptions={sensorOptions}
           sensorState={sensorState}
           onSensorRetry={triggerSensorFetch}
+          customerOptions={customerOptions}
+          customerState={customerState}
+          onCustomerRefresh={triggerCustomerFetch}
           focusField={focusField}
           focusToken={focusToken}
           onSaveRequest={savedFilters ? handleSaveRequest : undefined}
@@ -3047,6 +3308,7 @@ export function DetectionShell({
         labels={quickPeekLabels}
         buildInvestigateHref={buildInvestigateHref}
         onClose={closeQuickPeek}
+        customers={committedCustomers}
       />
 
       <CsvExportConfirmDialog
@@ -3189,12 +3451,14 @@ function QuickPeekInspectorOverlay({
   labels,
   buildInvestigateHref,
   onClose,
+  customers,
 }: {
   event: DetectionEvent | null;
   locale: string;
   labels: QuickPeekInspectorLabels;
   buildInvestigateHref: (event: DetectionEvent) => string | null;
   onClose: () => void;
+  customers?: readonly string[];
 }) {
   const open = event !== null;
   const kindLabel = event
@@ -3240,6 +3504,7 @@ function QuickPeekInspectorOverlay({
             investigateHref={buildInvestigateHref(event)}
             onClose={onClose}
             showClose={false}
+            customers={customers}
           />
         ) : null}
       </SheetContent>
@@ -3297,6 +3562,14 @@ function filterToDraft(
     confidenceMin,
     confidenceMax,
     sensorIds: [...sensorIds],
+    // Customers travel as `string[]` on the wire; the drawer draft
+    // uses `number[]` for natural comparison/membership. Drop any
+    // string that does not parse cleanly into a positive integer —
+    // a malformed entry can only reach the draft via a saved-filter
+    // load or a crafted `?f=` blob, and the BFF intersection check
+    // would reject it on the next dispatch anyway. Keeping the draft
+    // numeric-only here keeps the chip / UI paths free of `NaN`.
+    customerIds: customerIdsFromInput(input.customers),
     levels: (input.levels ?? []) as readonly number[],
     countries: (input.countries ?? []) as readonly string[],
     learningMethods: (input.learningMethods ?? []) as readonly LearningMethod[],
@@ -3312,6 +3585,21 @@ function filterToDraft(
     userNames: fromArray(input.userNames),
     userDepartments: fromArray(input.userDepartments),
   };
+}
+
+function customerIdsFromInput(
+  values: readonly string[] | null | undefined,
+): number[] {
+  if (!values || values.length === 0) return [];
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const raw of values) {
+    const parsed = parsePositiveCustomerId(raw);
+    if (parsed === null || seen.has(parsed)) continue;
+    seen.add(parsed);
+    out.push(parsed);
+  }
+  return out;
 }
 
 function RemovableChip({

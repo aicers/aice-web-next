@@ -73,6 +73,7 @@ export default async function DetectionPage({
   const summarizeLabels = {
     sensor: t("filters.chips.sensor"),
     sensorAggregate: t.raw("filters.chips.sensorAggregate") as string,
+    customerAggregate: t.raw("filters.chips.customerAggregate") as string,
   };
 
   // Phase Detection-10 persistence contract: prefer the encoded `?f=`
@@ -125,6 +126,15 @@ export default async function DetectionPage({
     for (const field of TAG_FIELDS) {
       const values = pivotParams[field];
       if (values && values.length > 0) initialInput[field] = values;
+    }
+    // Reviewer Round 5: pivot URLs and Investigation back-links carry
+    // the operator's active customer narrowing as `customers=1,2`.
+    // Thread it into the committed filter so the very first SSR
+    // dispatch honours the narrowing — and so a crafted out-of-scope
+    // ID flows into the BFF intersection check rather than being
+    // silently dropped before it reaches the gate.
+    if (pivotParams.customers && pivotParams.customers.length > 0) {
+      initialInput.customers = pivotParams.customers;
     }
     initialFilter = { mode: "structured", input: initialInput };
     // Port / proto are not yet part of `EventListFilterInput`; they
@@ -267,6 +277,7 @@ export default async function DetectionPage({
       narrowFilterLabel: t("results.exportConfirm.narrowFilter"),
     },
     exportErrorMessage: t("results.downloadErrorDescription"),
+    exportForbiddenScopeMessage: t("results.downloadForbiddenScopeDescription"),
     exportLimitExceededTemplate: t.raw(
       "results.downloadLimitExceededDescription",
     ) as string,
@@ -356,6 +367,7 @@ export default async function DetectionPage({
     resultsRegion: t("filters.resultsRegion"),
     resultsLoading: t("filters.resultsLoading"),
     resultsError: t("filters.resultsError"),
+    resultsForbiddenScope: t("filters.resultsForbiddenScope"),
     analyticsToggle: t("analytics.toggle"),
     analyticsShow: t("analytics.show"),
     analyticsHide: t("analytics.hide"),
@@ -388,6 +400,8 @@ export default async function DetectionPage({
       errorRetry: t("analytics.errorRetry"),
       forbiddenTitle: t("analytics.forbiddenTitle"),
       forbiddenDescription: t("analytics.forbiddenDescription"),
+      forbiddenScopeTitle: t("analytics.forbiddenScopeTitle"),
+      forbiddenScopeDescription: t("analytics.forbiddenScopeDescription"),
       emptyTitle: t("analytics.emptyTitle"),
       emptyDescription: t("analytics.emptyDescription"),
       levelLabels: {
@@ -440,6 +454,7 @@ export default async function DetectionPage({
       userIds: t("filters.chips.userIds"),
       userNames: t("filters.chips.userNames"),
       userDepartments: t("filters.chips.userDepartments"),
+      customers: t("filters.chips.customers"),
     },
     drawer: {
       title: t("filters.drawerTitle"),
@@ -497,9 +512,23 @@ export default async function DetectionPage({
         removeEntry: t("filters.endpoint.removeEntry"),
         done: t("filters.endpoint.done"),
       },
-      customerLabel: t("filters.customerLabel"),
-      customerComingSoon: t("filters.customerComingSoon"),
-      customerComingSoonHint: t("filters.customerComingSoonHint"),
+      customer: {
+        label: t("filters.customer.label"),
+        placeholder: t("filters.customer.placeholder"),
+        searchPlaceholder: t("filters.customer.searchPlaceholder"),
+        selectAll: t("filters.customer.selectAll"),
+        clearAll: t("filters.customer.clearAll"),
+        emptyScope: t("filters.customer.emptyScope"),
+        noMatches: t("filters.customer.noMatches"),
+        selectedSummary: t.raw("filters.customer.selectedSummary") as string,
+        removeSelection: t.raw("filters.customer.removeSelection") as string,
+        loadingLabel: t("filters.customer.loadingLabel"),
+        loadingHint: t("filters.customer.loadingHint"),
+        errorLabel: t("filters.customer.errorLabel"),
+        errorHint: t("filters.customer.errorHint"),
+        retry: t("filters.customer.retry"),
+        refresh: t("filters.customer.refresh"),
+      },
       sensor: {
         label: t("filters.sensor.label"),
         placeholder: t("filters.sensor.placeholder"),
@@ -616,6 +645,17 @@ export default async function DetectionPage({
       <DetectionTabsShell
         title={t("title")}
         options={options}
+        initialCustomerScope={{
+          // Reviewer Round 1 #3 + Round 3 #1: thread the SSR-resolved
+          // scope through to the wrapper as a chip-name display
+          // fallback only — the shared customer cache itself starts
+          // `idle` and is populated on the first drawer open. The
+          // fallback lets a bookmarked / saved-filter / pivot URL
+          // paint customer **names** on the very first render rather
+          // than raw IDs while the first-open fetch is still pending.
+          kind: scope.kind,
+          customers: scope.customers.map((c) => ({ id: c.id, name: c.name })),
+        }}
         initialTab={{
           id: tabId,
           filter: initialFilter,

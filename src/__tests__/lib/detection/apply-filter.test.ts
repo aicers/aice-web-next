@@ -21,6 +21,7 @@ function draft(
     confidenceMin: 0,
     confidenceMax: 1,
     sensorIds: [],
+    customerIds: [],
     levels: [],
     countries: [],
     learningMethods: [],
@@ -131,6 +132,109 @@ describe("buildAppliedFilter", () => {
     expect(next.input.endpoints).toEqual([
       { direction: "FROM", predefined: "net-1" },
     ]);
+  });
+
+  // ── Customers (#384) ───────────────────────────────────────────
+  it("converts the draft's numeric customerIds to wire-format strings", () => {
+    const current: Filter = { mode: "structured", input: {} };
+    const next = buildAppliedFilter(
+      current,
+      draft({ customerIds: [42, 7] }),
+      false,
+      true,
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    // `IDScalar[]` on the wire — never raw numbers.
+    expect(next.input.customers).toEqual(["42", "7"]);
+    expect(next.input.customers?.every((v) => typeof v === "string")).toBe(
+      true,
+    );
+  });
+
+  it("omits the customers field when the draft is empty (no narrowing)", () => {
+    const current: Filter = { mode: "structured", input: {} };
+    const next = buildAppliedFilter(
+      current,
+      draft({ customerIds: [] }),
+      false,
+      true,
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(Object.hasOwn(next.input, "customers")).toBe(false);
+  });
+
+  it("clears a previous customers selection when the draft empties it", () => {
+    const current: Filter = {
+      mode: "structured",
+      input: {
+        start: "2026-04-22T10:00:00.000Z",
+        end: "2026-04-22T11:00:00.000Z",
+        customers: ["1", "2"],
+      },
+    };
+    const next = buildAppliedFilter(
+      current,
+      draft({ customerIds: [] }),
+      false,
+      true,
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(Object.hasOwn(next.input, "customers")).toBe(false);
+  });
+
+  // Reviewer Round 8: Apply / Save during loading / error / empty-
+  // scope must not submit `customers`. The drawer disables the
+  // control in those states, but the draft can still hold IDs from
+  // a bookmark / saved filter / pivot URL hydration. The gate at
+  // `buildAppliedFilter` is the single point that enforces the
+  // "filter submits no customers value until the customer list is
+  // successfully loaded" contract.
+  it("strips customerIds when the customer cache is not live (loading)", () => {
+    const current: Filter = { mode: "structured", input: {} };
+    const next = buildAppliedFilter(
+      current,
+      draft({ customerIds: [42, 7] }),
+      false,
+      false,
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(Object.hasOwn(next.input, "customers")).toBe(false);
+  });
+
+  it("strips a prior `customers` value when the customer cache is not live", () => {
+    // A bookmark / saved filter hydrated `customers` onto the
+    // committed input; the drawer's customer control is then in
+    // `loading` / `error` / `No customer access`. Apply must not
+    // re-emit those IDs even though they survived in the draft —
+    // the destructure plus the disabled gate must drop them.
+    const current: Filter = {
+      mode: "structured",
+      input: {
+        start: "2026-04-22T10:00:00.000Z",
+        end: "2026-04-22T11:00:00.000Z",
+        customers: ["1", "2"],
+      },
+    };
+    const next = buildAppliedFilter(
+      current,
+      draft({ customerIds: [1, 2] }),
+      false,
+      false,
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(Object.hasOwn(next.input, "customers")).toBe(false);
+  });
+
+  it("emits customerIds when the customer cache is live and the draft has IDs", () => {
+    const current: Filter = { mode: "structured", input: {} };
+    const next = buildAppliedFilter(
+      current,
+      draft({ customerIds: [3] }),
+      false,
+      true,
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(next.input.customers).toEqual(["3"]);
   });
 
   it("re-emits predefined endpoints alongside rebuilt custom rules", () => {

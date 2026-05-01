@@ -29,11 +29,22 @@ interface Props {
   event: Event;
   locator: EventLocator;
   labels: OverviewLabels;
+  /**
+   * Customer IDs the operator was narrowed to on the originating
+   * Detection page (#384). Forwarded onto the outbound pivot URLs
+   * so a "same source" / "same destination" / "same kind" click-
+   * through preserves the customer narrowing rather than landing
+   * on the unfiltered set. Undefined when no customer filter was
+   * active or the parameter was not supplied.
+   */
+  customers?: readonly string[];
 }
 
-export function OverviewTab({ event, locator, labels }: Props) {
+export function OverviewTab({ event, locator, labels, customers }: Props) {
   const friendly =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
+  const customerList =
+    customers && customers.length > 0 ? [...customers] : undefined;
   const pivots = [
     {
       id: "same-source",
@@ -41,6 +52,7 @@ export function OverviewTab({ event, locator, labels }: Props) {
       href: buildDetectionPivotUrl({
         source: locator.origAddr,
         window: "1d",
+        customers: customerList,
       }),
     },
     {
@@ -49,6 +61,7 @@ export function OverviewTab({ event, locator, labels }: Props) {
       href: buildDetectionPivotUrl({
         destination: locator.respAddr,
         window: "1d",
+        customers: customerList,
       }),
     },
     {
@@ -57,6 +70,7 @@ export function OverviewTab({ event, locator, labels }: Props) {
       href: buildDetectionPivotUrl({
         kind: locator.kind,
         window: "7d",
+        customers: customerList,
       }),
     },
   ];

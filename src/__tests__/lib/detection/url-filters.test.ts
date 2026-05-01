@@ -25,6 +25,7 @@ const chipLabels = {
   userIds: "User IDs",
   userNames: "User Names",
   userDepartments: "User Departments",
+  customers: "Customer",
   countAggregate: (label: string, count: number) => `${label}: ${count}`,
 };
 
@@ -40,7 +41,31 @@ describe("parsePivotSearchParams", () => {
       respPort: undefined,
       proto: undefined,
       window: undefined,
+      keywords: undefined,
+      hostnames: undefined,
+      userIds: undefined,
+      userNames: undefined,
+      userDepartments: undefined,
+      customers: undefined,
     });
+  });
+
+  it("decodes `customers` as a comma-separated list of positive integers", () => {
+    // Customer IDs round-trip on pivot URLs (#384) so the
+    // Investigation back-link and pivot click-throughs preserve the
+    // operator's active customer narrowing. The decoder drops
+    // anything that doesn't parse as a positive integer; the BFF
+    // intersection check is the authoritative gate, so a tampered
+    // URL that survived this filter is still rejected server-side.
+    expect(parsePivotSearchParams({ customers: "1,2,3" }).customers).toEqual([
+      "1",
+      "2",
+      "3",
+    ]);
+    expect(
+      parsePivotSearchParams({ customers: "1,abc,2,-3,0,4.5" }).customers,
+    ).toEqual(["1", "2"]);
+    expect(parsePivotSearchParams({ customers: "" }).customers).toBeUndefined();
   });
 
   it("coerces numeric fields and rejects non-numeric values", () => {
@@ -228,6 +253,7 @@ describe("buildPivotChips", () => {
       userIds: undefined,
       userNames: undefined,
       userDepartments: undefined,
+      customers: undefined,
     });
   });
 
@@ -251,7 +277,21 @@ describe("buildPivotChips", () => {
       userIds: undefined,
       userNames: undefined,
       userDepartments: undefined,
+      customers: undefined,
     });
+  });
+
+  it("preserves `customers` from the committed filter so pivot URLs carry the active narrowing", () => {
+    // #384: pivot URLs (overview-tab "same source", related-tab,
+    // quick-peek "same kind") must keep the operator's customer
+    // narrowing rather than landing on the unfiltered set.
+    expect(
+      pivotParamsFromFilterInput({
+        start: "2026-04-22T00:00:00.000Z",
+        end: "2026-04-22T01:00:00.000Z",
+        customers: ["7", "9"],
+      }).customers,
+    ).toEqual(["7", "9"]);
   });
 
   it("drops `kind` when the committed filter carries multiple kinds — no single-valued pivot URL representation", () => {
@@ -305,6 +345,7 @@ describe("buildPivotChips", () => {
       userIds: undefined,
       userNames: undefined,
       userDepartments: undefined,
+      customers: undefined,
     });
   });
 
@@ -331,7 +372,26 @@ describe("buildPivotChips", () => {
       userIds: undefined,
       userNames: undefined,
       userDepartments: undefined,
+      customers: undefined,
     });
+  });
+
+  it("threads `customers` through merge so the filter-side narrowing reaches the pivot URL", () => {
+    expect(
+      mergePivotParams({}, { source: undefined, customers: ["1", "5"] })
+        .customers,
+    ).toEqual(["1", "5"]);
+  });
+
+  it("encodes `customers` into the pivot URL and round-trips through the parser", () => {
+    const url = buildDetectionPivotUrl({
+      source: "10.0.0.5",
+      customers: ["7", "9"],
+    });
+    const query = Object.fromEntries(
+      new URLSearchParams(url.split("?")[1] ?? ""),
+    );
+    expect(parsePivotSearchParams(query).customers).toEqual(["7", "9"]);
   });
 
   it("lets filter-side replace `kind` with a different value — swapping kinds in the drawer overwrites the stale pivot token", () => {

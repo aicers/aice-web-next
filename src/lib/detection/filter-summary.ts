@@ -106,7 +106,8 @@ export type FilterChipFocus =
   | "countries"
   | "learningMethods"
   | "categories"
-  | "kinds";
+  | "kinds"
+  | "customers";
 
 export interface SensorOption {
   id: string;
@@ -150,8 +151,18 @@ export interface SummarizeFilterLabels {
   learningMethods: string;
   categories: string;
   kinds: string;
+  /** Prefix for customer chips (#384). */
+  customers: string;
   /** Aggregate chip template for categorical multi-selects. */
   categoricalAggregate: (args: { label: string; count: number }) => string;
+  /**
+   * Aggregate chip text for the customer field (#384). Returns the
+   * full chip value (label included) — e.g. `Customer: 4 selected` —
+   * so the customer aggregate can speak the issue's prescribed
+   * "{label}: {N} selected" wording instead of falling back to the
+   * generic categorical "{label}: {N}" template.
+   */
+  customerAggregate: (count: number) => string;
 }
 
 export interface SummarizeFilterContext {
@@ -163,6 +174,19 @@ export interface SummarizeFilterContext {
   period: PeriodKey | null;
   /** Session-cached sensor options for id → name resolution. */
   sensorOptions: readonly SensorOption[];
+  /**
+   * Session-cached customer options (#384) for id → name resolution.
+   * The drawer fetches `getEffectiveCustomerScope(session).customers`
+   * once per page session and threads it here so chips render the
+   * customer name rather than the raw `IDScalar` (`"42"`).
+   *
+   * The committed `Filter` carries `customers` as `string[]` (REview's
+   * wire format); this list is keyed by the same string so the
+   * lookup is one Map hit per chip. The shell builds the entries by
+   * mapping the helper's `{id: number, name: string}` to
+   * `{value: String(id), label: name}`.
+   */
+  customerOptions: readonly MultiSelectOption<string>[];
   /** Drawer option lists for categorical labels. */
   categoricalOptions: {
     levels: readonly MultiSelectOption<number>[];
@@ -266,6 +290,26 @@ export function summarizeFilter(
   // ── Sensors ────────────────────────────────────────────────────
   chips.push(
     ...sensorChips(input.sensors ?? null, context.sensorOptions, labels),
+  );
+
+  // ── Customers (#384) ───────────────────────────────────────────
+  // Customers use a dedicated `customerAggregate` formatter instead
+  // of the generic `categoricalAggregate` so the aggregate chip
+  // reads `Customer: 4 selected` per the issue's acceptance wording
+  // rather than the categorical default `Customer: 4`.
+  chips.push(
+    ...categoricalChips<string>({
+      fieldKey: "customers",
+      label: labels.customers,
+      values: (input.customers ?? []) as readonly string[],
+      options: context.customerOptions,
+      aggregate: labels.customerAggregate,
+      makeRemove: (value) => ({
+        kind: "categoricalValue",
+        field: "customers",
+        value,
+      }),
+    }),
   );
 
   // ── Categorical multi-selects ──────────────────────────────────
@@ -505,7 +549,13 @@ function categoricalChips<TValue extends string | number>({
   aggregate,
   makeRemove,
 }: {
-  fieldKey: "levels" | "countries" | "learningMethods" | "categories" | "kinds";
+  fieldKey:
+    | "levels"
+    | "countries"
+    | "learningMethods"
+    | "categories"
+    | "kinds"
+    | "customers";
   label: string;
   values: readonly TValue[];
   options: readonly MultiSelectOption<TValue>[];

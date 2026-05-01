@@ -40,6 +40,11 @@ export default defineConfig({
             "src/__tests__/components/node/node-detail-dashboard.test.tsx",
             "src/__tests__/components/node/node-detail-service-grid.test.tsx",
             "src/__tests__/components/node/resource-sparkline.test.tsx",
+            // Reviewer Round 6 #3 (#384): real-render tests for the
+            // Customer drawer field's loading / error / empty / ready
+            // branches and the wrapper-owned customer cache lifecycle.
+            "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
+            "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -63,6 +68,8 @@ export default defineConfig({
             "src/__tests__/components/node/node-detail-dashboard.test.tsx",
             "src/__tests__/components/node/node-detail-service-grid.test.tsx",
             "src/__tests__/components/node/resource-sparkline.test.tsx",
+            "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
+            "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
           ],
         },
       },

@@ -78,6 +78,7 @@ const BASE_DRAFT: DetectionFilterDraft = {
   confidenceMin: 0,
   confidenceMax: 1,
   sensorIds: [],
+  customerIds: [],
   levels: [],
   countries: [],
   learningMethods: [],
@@ -215,6 +216,63 @@ describe("sensorStateForCache", () => {
         options: [{ id: "s1", name: "Alpha" }],
       }),
     ).toBe("ready");
+  });
+});
+
+describe("customerSelectionLiveForCache", () => {
+  // Reviewer Round 8: this helper is the source of the
+  // `customerSelectionLive` boolean that `handleApply` /
+  // `handleSaveRequest` pass into `buildAppliedFilter`. The
+  // contract — "filter submits no `customers` value until the
+  // customer list is successfully loaded, and the empty-scope path
+  // never submits one" — relies on every non-(`loaded` + non-empty)
+  // state mapping to `false`. These cases pin that mapping.
+  let customerSelectionLiveForCache: ShellModule["customerSelectionLiveForCache"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    customerSelectionLiveForCache = mod.customerSelectionLiveForCache;
+  });
+
+  it("treats an idle cache as not live so the first open cannot submit", () => {
+    expect(customerSelectionLiveForCache({ status: "idle" })).toBe(false);
+  });
+
+  it("treats an in-flight fetch as not live (loading branch)", () => {
+    expect(customerSelectionLiveForCache({ status: "loading" })).toBe(false);
+  });
+
+  it("treats a refresh-to-error transition as not live", () => {
+    // Regression: the user opened the drawer with a non-empty
+    // customer list, selected some customers, then hit `↻` which
+    // failed. The cache becomes `error` while the draft still
+    // carries the prior IDs. Apply / Save must not re-emit them.
+    expect(customerSelectionLiveForCache({ status: "error" })).toBe(false);
+  });
+
+  it("treats refresh-to-empty (`No customer access`) as not live", () => {
+    // Regression: a manual refresh transitioning the cache to
+    // `loaded` + zero options is the empty-scope affordance. The
+    // issue requires that this path never submits a `customers`
+    // value, even when the draft holds prior IDs from a bookmark
+    // or saved filter.
+    expect(
+      customerSelectionLiveForCache({
+        status: "loaded",
+        kind: "empty",
+        options: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("treats a loaded cache with at least one option as live", () => {
+    expect(
+      customerSelectionLiveForCache({
+        status: "loaded",
+        kind: "assigned",
+        options: [{ id: 1, name: "Customer A" }],
+      }),
+    ).toBe(true);
   });
 });
 

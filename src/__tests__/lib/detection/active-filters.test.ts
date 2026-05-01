@@ -340,6 +340,48 @@ describe("removeActiveChip", () => {
     const result = removeActiveChip(filter, [], { kind: "confidence" });
     expect(result.filter).toBe(filter);
   });
+
+  // ── Customer chip removal (#384) ──────────────────────────────
+  it("removes a single customer value, leaving the rest", () => {
+    const filter: Filter = {
+      mode: "structured",
+      input: { ...baseFilter.input, customers: ["1", "2", "3"] },
+    };
+    const result = removeActiveChip(filter, [], {
+      kind: "categoricalValue",
+      field: "customers",
+      value: "2",
+    });
+    if (result.filter.mode !== "structured") throw new Error("unreachable");
+    expect(result.filter.input.customers).toEqual(["1", "3"]);
+  });
+
+  it("drops the customers field when the last value is removed", () => {
+    const filter: Filter = {
+      mode: "structured",
+      input: { ...baseFilter.input, customers: ["7"] },
+    };
+    const result = removeActiveChip(filter, [], {
+      kind: "categoricalValue",
+      field: "customers",
+      value: "7",
+    });
+    if (result.filter.mode !== "structured") throw new Error("unreachable");
+    expect(result.filter.input.customers).toBeUndefined();
+  });
+
+  it("aggregate removal drops the entire customers field", () => {
+    const filter: Filter = {
+      mode: "structured",
+      input: { ...baseFilter.input, customers: ["1", "2", "3", "4"] },
+    };
+    const result = removeActiveChip(filter, [], {
+      kind: "categoricalAggregate",
+      field: "customers",
+    });
+    if (result.filter.mode !== "structured") throw new Error("unreachable");
+    expect(result.filter.input.customers).toBeUndefined();
+  });
 });
 
 describe("hasAnyActiveChip", () => {
@@ -358,5 +400,13 @@ describe("hasAnyActiveChip", () => {
   it("returns true for a non-empty query string in query mode", () => {
     expect(hasAnyActiveChip({ mode: "query", text: "x" })).toBe(true);
     expect(hasAnyActiveChip({ mode: "query", text: "  " })).toBe(false);
+  });
+
+  it("returns true when only customers are set (#384)", () => {
+    const filter: Filter = {
+      mode: "structured",
+      input: { ...baseFilter.input, customers: ["42"] },
+    };
+    expect(hasAnyActiveChip(filter)).toBe(true);
   });
 });

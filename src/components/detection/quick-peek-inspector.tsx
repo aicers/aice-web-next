@@ -79,6 +79,14 @@ export interface QuickPeekInspectorProps {
   onClose: () => void;
   /** Density affordance: omit the inline close button on overlays (the Sheet supplies its own). */
   showClose?: boolean;
+  /**
+   * Customer IDs from the active Detection filter (#384). Threaded
+   * onto the per-IP / per-kind pivot URLs so a click-through
+   * preserves the operator's customer narrowing rather than landing
+   * on the unfiltered set. Undefined when no customer filter is
+   * active.
+   */
+  customers?: readonly string[];
 }
 
 /**
@@ -110,6 +118,7 @@ export function QuickPeekInspector({
   investigateHref,
   onClose,
   showClose = true,
+  customers,
 }: QuickPeekInspectorProps) {
   const kindLabel =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
@@ -256,7 +265,12 @@ export function QuickPeekInspector({
                 {labels.openInvestigation}
               </Link>
             ) : null}
-            <Pivots event={event} labels={labels} addressing={addressing} />
+            <Pivots
+              event={event}
+              labels={labels}
+              addressing={addressing}
+              customers={customers}
+            />
           </div>
         </Section>
       </div>
@@ -602,10 +616,12 @@ function Pivots({
   event,
   labels,
   addressing,
+  customers,
 }: {
   event: DetectionEvent;
   labels: QuickPeekInspectorLabels;
   addressing: ReturnType<typeof readEventAddressing>;
+  customers?: readonly string[];
 }) {
   const source =
     addressing.origAddr ??
@@ -613,24 +629,38 @@ function Pivots({
   const destination =
     addressing.respAddr ??
     (addressing.respAddrs.length > 0 ? addressing.respAddrs[0] : null);
+  const customerList =
+    customers && customers.length > 0 ? [...customers] : undefined;
   const items: { key: string; href: string; label: string }[] = [];
   if (source) {
     items.push({
       key: "same-source",
-      href: buildDetectionPivotUrl({ source, window: "1d" }),
+      href: buildDetectionPivotUrl({
+        source,
+        window: "1d",
+        customers: customerList,
+      }),
       label: labels.pivotSource,
     });
   }
   if (destination) {
     items.push({
       key: "same-destination",
-      href: buildDetectionPivotUrl({ destination, window: "1d" }),
+      href: buildDetectionPivotUrl({
+        destination,
+        window: "1d",
+        customers: customerList,
+      }),
       label: labels.pivotDestination,
     });
   }
   items.push({
     key: "same-kind",
-    href: buildDetectionPivotUrl({ kind: event.__typename, window: "7d" }),
+    href: buildDetectionPivotUrl({
+      kind: event.__typename,
+      window: "7d",
+      customers: customerList,
+    }),
     label: labels.pivotKind,
   });
   return (

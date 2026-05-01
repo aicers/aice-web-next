@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Filter as FilterIcon } from "lucide-react";
+import { Filter as FilterIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +44,12 @@ import {
   type TextField,
 } from "@/lib/detection/url-filters";
 import { cn } from "@/lib/utils";
+import {
+  CustomerMultiSelect,
+  type CustomerMultiSelectLabels,
+  type CustomerMultiSelectState,
+  type CustomerOption,
+} from "./customer-multi-select";
 import {
   EndpointFilterPanel,
   type EndpointFilterPanelLabels,
@@ -102,9 +108,7 @@ export interface FilterDrawerLabels {
   endpointEmpty: string;
   endpointCount: string;
   endpointPanel: EndpointFilterPanelLabels;
-  customerLabel: string;
-  customerComingSoon: string;
-  customerComingSoonHint: string;
+  customer: CustomerMultiSelectLabels;
   sensor: SensorMultiSelectLabels;
   /**
    * Section legend for the free-form text/tag inputs (source,
@@ -163,6 +167,7 @@ export type DrawerFocusField =
   | "direction"
   | "confidence"
   | "sensor"
+  | "customers"
   | "endpoints"
   | "levels"
   | "countries"
@@ -201,6 +206,24 @@ interface FilterDrawerProps {
    * `error` state. The parent should re-issue the fetch.
    */
   onSensorRetry?: () => void;
+  /**
+   * Customer options sourced from `getEffectiveCustomerScope(session)`
+   * via the page-session cache (#384). Only consumed when
+   * `customerState` is `"ready"`; otherwise the control renders the
+   * loading / error affordance and `customerIds` is not populated.
+   * An empty array under `"ready"` is the `kind: 'empty'` case and
+   * the control disables itself with the "No customer access"
+   * affordance.
+   */
+  customerOptions: readonly CustomerOption[];
+  customerState: CustomerMultiSelectState;
+  /**
+   * Invoked from the inline `↻` refresh button in the panel header
+   * **and** from the Retry button in the `error` state. The parent
+   * re-issues the same `fetchCustomersForFilter()` it ran on first
+   * open and replaces the cached options with the result.
+   */
+  onCustomerRefresh?: () => void;
   /**
    * Field to scroll into view and focus once the drawer finishes
    * opening. The shell sets this when an aggregate chip is activated
@@ -249,6 +272,9 @@ export function FilterDrawer({
   sensorOptions,
   sensorState,
   onSensorRetry,
+  customerOptions,
+  customerState,
+  onCustomerRefresh,
   focusField = null,
   focusToken = 0,
   onSaveRequest,
@@ -666,32 +692,35 @@ export function FilterDrawer({
             </fieldset>
 
             {/*
-             * Customer placeholder. The Customer directory is not yet
-             * modelled (#271 umbrella); render a disabled control
-             * with the same shape as its eventual neighbours and
-             * never submit its value. Forward-compatibility note:
-             * `triagePolicies` will share the picker component built
-             * by the Triage menu effort — when that lands, swap this
-             * placeholder for the same component so the look is
-             * consistent across surfaces. Update the call site in
-             * `detection-shell.tsx` to populate the active-filter
-             * chip bar once the directory ships.
+             * Customer multi-select (#384). Options come from
+             * `getEffectiveCustomerScope(session)` via the page-
+             * session cache in `DetectionShell` — the same helper
+             * that drives the page-header customer scope indicator
+             * (#383), so the drawer and indicator can never disagree.
+             *
+             * Like Sensor, the control switches on `customerState`:
+             *   - `ready`   — interactive multi-select (or disabled
+             *                 "No customer access" copy when the
+             *                 caller has no customers in scope).
+             *   - `loading` — disabled with "Loading customers…" copy.
+             *   - `error`   — disabled with a Retry button.
+             * The drawer never populates `customerIds` outside the
+             * `ready` state, and the apply boundary
+             * (`buildAppliedFilter`) only emits `customers: [...]`
+             * when the array is non-empty.
              */}
-            <fieldset className="flex flex-col gap-2">
-              <legend className="text-foreground text-sm font-medium">
-                {labels.customerLabel}
-              </legend>
-              <button
-                type="button"
-                disabled
-                aria-disabled="true"
-                title={labels.customerComingSoonHint}
-                className="border-input bg-background text-muted-foreground flex h-9 items-center justify-between rounded-md border px-3 text-sm opacity-60"
-              >
-                <span>{labels.customerComingSoon}</span>
-                <ChevronDown className="size-4" aria-hidden="true" />
-              </button>
-            </fieldset>
+            <div id="filter-section-customers">
+              <CustomerMultiSelect
+                options={customerOptions}
+                value={draft.customerIds}
+                onChange={(next) =>
+                  onDraftChange({ ...draft, customerIds: next })
+                }
+                labels={labels.customer}
+                state={customerState}
+                onRefresh={onCustomerRefresh}
+              />
+            </div>
 
             {/*
              * Sensor multi-select. Options come from REview via
@@ -884,6 +913,7 @@ function resolveFocusElementId(
     case "direction":
     case "confidence":
     case "sensor":
+    case "customers":
     case "endpoints":
       return `filter-section-${focusField}`;
   }

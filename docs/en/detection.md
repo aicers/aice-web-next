@@ -864,12 +864,64 @@ bar (for example, `Confidence 0.70 – 1.00`).
 
 ### Customer
 
-**Customer** is a disabled placeholder marked **Coming soon**.
-Customer scoping still happens automatically — results are already
-limited to the customers your account has access to — but picking
-a subset of them from the UI arrives with the Customer directory
-in a later phase. The field is never submitted with the filter and
-never appears in the chip bar.
+**Customer** is a multi-select that narrows results to a subset
+of the customers your account can access. The list is sourced from
+the same scope helper that drives the customer indicator in the
+page header, so the drawer and the indicator always agree about
+which customers are visible.
+
+Open the control to reveal a search box, a **Select all / Clear
+selection** toggle, and a scrollable list of customer names; picked
+customers also appear as removable chips just below the control.
+A small **↻** refresh icon in the panel header explicitly
+re-fetches the customer list; this is useful when an admin has
+just changed account-customer assignments in another browser tab.
+There is no automatic refresh; the cached list is reused for every
+drawer open and is shared across every filter tab in the current
+page session.
+
+Applying the filter submits the selected customer IDs. They show
+up in the active chip bar at the top of the page following the
+shared aggregation rule — one chip per customer for one to three
+selections, a single `Customer: N selected` aggregate token for
+four or more.
+
+![Detection filter drawer — Customer multi-select](../assets/detection-drawer-customer-en.png)
+
+If your account has **no customers in scope**, the control is
+disabled with a **No customer access** affordance and the filter
+never submits a `customers` value. A manual **↻** refresh button
+sits next to the disabled control on this path so an operator
+whose admin just assigned them a customer in another tab can
+recover without reloading the page.
+
+The customer list is lazy-loaded: opening the Detection page
+does not fetch it, the first time you open the filter drawer in a
+page session does, and subsequent drawer opens reuse the cached
+result. While the first-open fetch is in flight the control shows
+a **Loading customers…** affordance with an inline spinner so the
+in-flight fetch is visible at a glance; if it fails transiently, a
+**Failed to load customers** message is displayed alongside an
+inline **Retry** button so you can recover without closing and
+reopening the drawer. Customer chips that arrive on the very
+first paint via a bookmarked `?f=` URL, a saved filter, or a
+pivot link still render with the customer **name** rather than a
+raw ID — the page-rendered customer scope payload is reused for
+chip-name lookups during that brief loading window.
+
+> Security note: aice-web-next independently rejects any filter
+> whose `customers` list references a customer outside your
+> effective scope. Loading a saved filter, activating a recommended
+> filter, or following a pivot URL whose `customers` list exceeds
+> your current scope produces a clear failure rather than silently
+> stripping the offending IDs and returning a partial result. When
+> a Detection query (or a CSV export) is rejected for this reason
+> the result region (or export banner) shows an actionable
+> **This filter references a customer outside your access. Remove
+> the unavailable customers and retry.** message rather than the
+> generic transient-error copy. The backend (REview) applies its
+> own intersection on top, but the aice-web-next side is no longer
+> relying on REview as the only enforcement point.
 
 ### Sensor
 

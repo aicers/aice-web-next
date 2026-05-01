@@ -11,6 +11,7 @@ import {
   countEventsByLevel,
   countEventsByOriginatorIpAddress,
   countEventsByResponderIpAddress,
+  DetectionForbiddenError,
   DetectionUnauthorizedError,
   eventFrequencySeries,
   type Filter,
@@ -45,7 +46,22 @@ export interface RunAnalyticsQueryOk {
 
 export interface RunAnalyticsQueryErr {
   ok: false;
-  code: "unauthenticated" | "forbidden" | "server-error" | "invalid-input";
+  /**
+   * `forbidden-customer-scope` is the typed translation of
+   * {@link DetectionForbiddenError} — the inbound `Filter` references
+   * a customer ID outside the caller's effective scope (#384's BFF
+   * intersection check, applied uniformly to the analytics dispatch
+   * path) **or** the caller's effective customer scope is empty
+   * (Reviewer Round 2: empty-scope sessions flow through the same
+   * customer-scope gate). Distinct from `forbidden` (caller lacks
+   * `detection:read`) so the UI can render an actionable message.
+   */
+  code:
+    | "unauthenticated"
+    | "forbidden"
+    | "forbidden-customer-scope"
+    | "server-error"
+    | "invalid-input";
 }
 
 export type RunAnalyticsQueryResult =
@@ -107,6 +123,9 @@ export async function runAnalyticsQuery(
       rangeEnd: input?.end ?? null,
     };
   } catch (err) {
+    if (err instanceof DetectionForbiddenError) {
+      return { ok: false, code: "forbidden-customer-scope" };
+    }
     if (err instanceof DetectionUnauthorizedError) {
       return { ok: false, code: "forbidden" };
     }

@@ -53,11 +53,23 @@ export interface DetectionFilterDraft {
   confidenceMax: number;
   /**
    * Selected sensor Node IDs. Submitted as `sensors: [<id>, ...]`
-   * in the `EventListFilterInput`. Customer is intentionally absent
-   * from the draft — it is a placeholder while the Customer
-   * directory is unmodelled and must never reach the filter.
+   * in the `EventListFilterInput`.
    */
   sensorIds: string[];
+  /**
+   * Selected customer IDs (#384). The draft uses `number[]` —
+   * `customers.id` is a numeric DB column and the helper
+   * `getEffectiveCustomerScope` returns numeric IDs, so the in-drawer
+   * comparison / membership operations are most natural this way.
+   *
+   * The committed `Filter` and the wire `EventListFilterInput`
+   * carry `customers` as `string[]` (REview's `IDScalar`); the
+   * conversion happens at the apply boundary in
+   * {@link buildAppliedFilter} (`map(String)`) and at the load
+   * boundary in `filterToDraft` (parse). Save / URL paths read and
+   * write strings, never numbers.
+   */
+  customerIds: number[];
   levels: readonly number[];
   countries: readonly string[];
   learningMethods: readonly LearningMethod[];

@@ -17,10 +17,18 @@ export type Filter =
 /**
  * Normalize a `Filter` into an `EventListFilterInput` the BFF can
  * forward to REview. The `customers` field is a query-surface
- * dimension and is passed through unchanged — authorization and
- * customer scoping travel in the Context JWT attached by
- * `graphqlRequest`, not in the filter. REview intersects the
- * JWT-carried scope with any `filter.customers` the caller supplies.
+ * dimension — authorization and customer scoping travel in the
+ * Context JWT attached by `graphqlRequest`, not in the filter.
+ *
+ * Defense-in-depth (#384): the BFF independently rejects any
+ * `filter.input.customers` entry outside the caller's effective
+ * scope before this normalization runs (see
+ * `validateFilterScope` in `./filter-customer-scope.ts`, called
+ * from `buildDispatchContext` in `./server-actions.ts`). A passing
+ * filter therefore reaches REview with a `customers` list that is
+ * already a subset of the JWT-carried scope; REview applies its own
+ * intersection on top, but the BFF is no longer relying on REview
+ * as the only enforcement point.
  *
  * v1: throws on `mode: "query"`. The umbrella issue calls this the
  * "NotImplemented" branch — callers catch

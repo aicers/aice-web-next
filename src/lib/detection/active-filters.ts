@@ -69,13 +69,22 @@ export type ChipRemoveTarget =
       value: LearningMethod;
     }
   | {
+      // Customers (#384). Wire format is `string[]` (`IDScalar`) so
+      // the chip's value is `string`; the drawer draft separately
+      // uses `number[]` and converts at the apply boundary.
+      kind: "categoricalValue";
+      field: "customers";
+      value: string;
+    }
+  | {
       kind: "categoricalAggregate";
       field:
         | "levels"
         | "countries"
         | "learningMethods"
         | "categories"
-        | "kinds";
+        | "kinds"
+        | "customers";
     }
   | { kind: "directionValue"; value: FlowKind }
   | { kind: "confidence" }
@@ -154,6 +163,11 @@ export function removeActiveChip(
         const next = list.filter((v) => v !== target.value);
         if (next.length === 0) delete input.learningMethods;
         else input.learningMethods = next;
+      } else if (target.field === "customers") {
+        const list = input.customers ?? [];
+        const next = list.filter((v) => v !== target.value);
+        if (next.length === 0) delete input.customers;
+        else input.customers = next;
       }
       break;
     }
@@ -242,6 +256,7 @@ export function hasAnyActiveChip(filter: Filter): boolean {
   if (input.levels && input.levels.length > 0) return true;
   if (input.countries && input.countries.length > 0) return true;
   if (input.kinds && input.kinds.length > 0) return true;
+  if (input.customers && input.customers.length > 0) return true;
   if (input.learningMethods && input.learningMethods.length > 0) return true;
   if (input.directions && input.directions.length > 0) return true;
   if (input.endpoints && input.endpoints.length > 0) return true;

@@ -447,3 +447,78 @@ describe("useCsvExport — Reviewer Round 10 local gating", () => {
     expect(statusEntry.value.kind).toBe("idle");
   });
 });
+
+// Reviewer Round 6 #1: the export route returns
+// `code: "forbidden-customer-scope"` on a 403 when the inbound filter
+// references a customer outside the caller's effective scope (or the
+// caller's scope is empty, per Reviewer Round 2). The hook must read
+// that body and surface the typed `forbiddenScopeMessage` instead of
+// the generic transient-error copy.
+describe("useCsvExport — forbidden-customer-scope 403 (Reviewer Round 6 #1)", () => {
+  it("surfaces forbiddenScopeMessage when the 403 body carries the typed code", async () => {
+    const { fetchMock } = setup();
+    startSavePickerMock.mockResolvedValue({ kind: "unsupported" });
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "Forbidden",
+          code: "forbidden-customer-scope",
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const useCsvExport = await loadHook();
+    const hook = useCsvExport({
+      buildPayload: makePayload,
+      errorMessage: "export failed",
+      forbiddenScopeMessage:
+        "This export references a customer outside your access.",
+      getKnownTotalCount: () => null,
+    });
+
+    hook.start();
+
+    // Yield several times so the fetch resolves, the JSON body is
+    // parsed, and the status setter is invoked. The hook awaits
+    // `response.json()` and the picker promise, so we drain a few
+    // microtasks before asserting.
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+
+    const [statusEntry] = stateEntries as [StateEntry<CsvExportStatus>];
+    expect(statusEntry.value.kind).toBe("error");
+    if (statusEntry.value.kind === "error") {
+      expect(statusEntry.value.message).toBe(
+        "This export references a customer outside your access.",
+      );
+    }
+  });
+
+  it("falls back to the generic errorMessage when the 403 body is missing or has no code", async () => {
+    const { fetchMock } = setup();
+    startSavePickerMock.mockResolvedValue({ kind: "unsupported" });
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const useCsvExport = await loadHook();
+    const hook = useCsvExport({
+      buildPayload: makePayload,
+      errorMessage: "export failed",
+      forbiddenScopeMessage: "scope-specific copy",
+      getKnownTotalCount: () => null,
+    });
+
+    hook.start();
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+
+    const [statusEntry] = stateEntries as [StateEntry<CsvExportStatus>];
+    expect(statusEntry.value.kind).toBe("error");
+    if (statusEntry.value.kind === "error") {
+      // Plain 403 (caller lacks `detection:read`) keeps the generic
+      // copy — that one isn't actionable from the export banner.
+      expect(statusEntry.value.message).toBe("export failed");
+    }
+  });
+});

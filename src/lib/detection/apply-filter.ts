@@ -49,6 +49,7 @@ export function buildAppliedFilter(
   currentFilter: Filter,
   applied: DetectionFilterDraft,
   sensorEndpointLive: boolean = false,
+  customerSelectionLive: boolean = false,
   categoricalOptions?: CategoricalFilterOptions,
 ): Filter {
   if (!applied.startIso || !applied.endIso) {
@@ -63,6 +64,7 @@ export function buildAppliedFilter(
     directions: _prevDirections,
     endpoints: _prevEndpoints,
     sensors: _prevSensors,
+    customers: _prevCustomers,
     // Strip the branch-introduced free-form fields from the previous
     // input so stale values don't survive when the drawer clears them;
     // the drawer-provided `applied` draft is the source of truth below.
@@ -129,6 +131,30 @@ export function buildAppliedFilter(
   // ("no `sensors` reaches the filter unless ready") holds.
   if (sensorEndpointLive && applied.sensorIds.length > 0) {
     input.sensors = [...applied.sensorIds];
+  }
+
+  // Customers (#384). The draft carries numeric IDs for natural
+  // in-drawer comparisons; the wire shape is REview's `IDScalar[]`
+  // (i.e. `string[]`), so convert at the boundary. An empty draft
+  // means "no customer narrowing" — omit the field so REview applies
+  // the JWT-carried scope without further restriction. The BFF
+  // intersection check (`validateFilterScope`) rejects out-of-scope
+  // IDs before any REview round-trip; this code path therefore never
+  // needs to "trim" a saved/crafted selection.
+  //
+  // Reviewer Round 8: customers are also gated on
+  // `customerSelectionLive` — true only when the customer cache is
+  // `loaded` AND has a non-empty options list. Mirrors the sensor
+  // gate so the issue/manual contract holds: the filter submits no
+  // `customers` value while the first drawer-open fetch is in flight,
+  // after a manual refresh transitions the control into `error`, or
+  // on an empty-scope (`No customer access`) session — even when a
+  // bookmark / saved filter / pivot URL hydrated the draft with
+  // prior IDs. Whatever previous `customers` was on the committed
+  // filter is also stripped at the destructure above, so re-applying
+  // a stale selection cannot bleed through.
+  if (customerSelectionLive && applied.customerIds.length > 0) {
+    input.customers = applied.customerIds.map(String);
   }
 
   // Free-form drawer fields: source/destination are single strings,

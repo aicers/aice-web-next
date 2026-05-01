@@ -117,6 +117,15 @@ export interface DetectionAnalyticsLabels {
   errorRetry: string;
   forbiddenTitle: string;
   forbiddenDescription: string;
+  /**
+   * Headline + body for the `forbidden-customer-scope` branch
+   * (Reviewer Round 6 #1) — distinct from the generic
+   * `forbiddenTitle`/`forbiddenDescription` so the operator gets an
+   * actionable customer-scope hint rather than the generic Detection-
+   * access denial.
+   */
+  forbiddenScopeTitle: string;
+  forbiddenScopeDescription: string;
   emptyTitle: string;
   emptyDescription: string;
   /**
@@ -170,7 +179,20 @@ type FetchStatus =
   | { kind: "idle" }
   | { kind: "loading" }
   | { kind: "ready"; result: ReadyResult }
-  | { kind: "error"; code: "forbidden" | "server-error" | "invalid-input" };
+  | {
+      kind: "error";
+      // `forbidden-customer-scope` is the typed translation of
+      // `DetectionForbiddenError` from the analytics dispatch (#384's
+      // BFF intersection check, plus the empty-scope branch from
+      // Reviewer Round 2). Distinct from `forbidden` so the panel can
+      // render the actionable customer-scope copy instead of the
+      // generic Detection-access denial.
+      code:
+        | "forbidden"
+        | "forbidden-customer-scope"
+        | "server-error"
+        | "invalid-input";
+    };
 
 function cacheKey(
   filterIdentity: string,
@@ -229,6 +251,10 @@ export function DetectionAnalytics({
           }
           if (result.code === "forbidden") {
             setStatus({ kind: "error", code: "forbidden" });
+            return;
+          }
+          if (result.code === "forbidden-customer-scope") {
+            setStatus({ kind: "error", code: "forbidden-customer-scope" });
             return;
           }
           if (result.code === "invalid-input") {
@@ -367,6 +393,21 @@ function AnalyticsBody({
           icon={<TriangleAlert className="size-6" aria-hidden="true" />}
           title={labels.forbiddenTitle}
           description={labels.forbiddenDescription}
+          tone="error"
+        />
+      );
+    }
+    if (status.code === "forbidden-customer-scope") {
+      // Reviewer Round 6 #1: surface the typed customer-scope rejection
+      // with actionable copy ("remove the unavailable customers")
+      // instead of collapsing it back into the generic transient-error
+      // panel. The dispatch-side rejection is the authoritative gate;
+      // this panel just keeps the failure mode legible.
+      return (
+        <StatePanel
+          icon={<TriangleAlert className="size-6" aria-hidden="true" />}
+          title={labels.forbiddenScopeTitle}
+          description={labels.forbiddenScopeDescription}
           tone="error"
         />
       );

@@ -11,7 +11,10 @@ import {
   type FormatCsvRowOptions,
   LARGE_EXPORT_ROW_THRESHOLD,
 } from "@/lib/detection/csv-export";
-import { DetectionUnauthorizedError } from "@/lib/detection/errors";
+import {
+  DetectionForbiddenError,
+  DetectionUnauthorizedError,
+} from "@/lib/detection/errors";
 import {
   CSV_EXPORT_MAX_ROWS,
   createCsvExportStream,
@@ -244,6 +247,16 @@ export const POST = withAuth(
         },
       });
     } catch (err) {
+      if (err instanceof DetectionForbiddenError) {
+        // #384 BFF intersection check: the inbound `filter.input.customers`
+        // contains an ID outside the caller's effective scope. Distinct
+        // `code` so the client can surface an actionable message instead
+        // of the generic Detection-access denial.
+        return NextResponse.json(
+          { error: "Forbidden", code: "forbidden-customer-scope" },
+          { status: 403 },
+        );
+      }
       if (err instanceof DetectionUnauthorizedError) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }

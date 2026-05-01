@@ -14,6 +14,7 @@ const mockCountByResponderIp = vi.hoisted(() => vi.fn());
 const mockEventFrequencySeries = vi.hoisted(() => vi.fn());
 
 class MockDetectionUnauthorizedError extends Error {}
+class MockDetectionForbiddenError extends Error {}
 
 vi.mock("@/lib/auth/session", () => ({
   getCurrentSession: mockGetCurrentSession,
@@ -29,6 +30,7 @@ vi.mock("@/lib/detection", async () => {
   return {
     ...actual,
     DetectionUnauthorizedError: MockDetectionUnauthorizedError,
+    DetectionForbiddenError: MockDetectionForbiddenError,
     countEventsByCategory: mockCountByCategory,
     countEventsByLevel: mockCountByLevel,
     countEventsByCountry: mockCountByCountry,
@@ -273,6 +275,29 @@ describe("runAnalyticsQuery", () => {
 
     const result = await runAnalyticsQuery(STRUCTURED_FILTER, "srcIp", 10);
     expect(result).toEqual({ ok: false, code: "forbidden" });
+  });
+
+  // Reviewer Round 1 #2: the BFF customer-scope intersection check
+  // (#384) raises `DetectionForbiddenError` from the underlying server
+  // action when an inbound `filter.input.customers` ID falls outside
+  // the caller's effective scope. The route wrapper must surface this
+  // as a typed `forbidden-customer-scope` discriminator distinct from
+  // the generic `forbidden` (no Detection access at all) so the UI
+  // can render an actionable message instead of silently treating the
+  // failure as a transient server error.
+  it("maps DetectionForbiddenError to `forbidden-customer-scope`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    mockCountByOriginatorIp.mockRejectedValue(
+      new MockDetectionForbiddenError("scope"),
+    );
+    mockEventFrequencySeries.mockResolvedValue([]);
+
+    const { runAnalyticsQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/analytics-actions"
+    );
+
+    const result = await runAnalyticsQuery(STRUCTURED_FILTER, "srcIp", 10);
+    expect(result).toEqual({ ok: false, code: "forbidden-customer-scope" });
   });
 
   it("maps any other error to `server-error`", async () => {

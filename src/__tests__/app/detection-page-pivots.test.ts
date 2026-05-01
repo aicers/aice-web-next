@@ -221,4 +221,40 @@ describe("DetectionPage pivot URL handling", () => {
     expect(end - start).toBe(60 * 60 * 1000);
     expect(filter.input.kinds).toBeUndefined();
   });
+
+  // Reviewer Round 5: a pivot URL like
+  // `/detection?source=...&customers=1,2` was decoding `customers` in
+  // `parsePivotSearchParams()` but the page-level fallback was only
+  // copying source/destination/kind/TAG_FIELDS into `initialInput`, so
+  // the very first SSR dispatch lost the customer narrowing entirely
+  // — and a crafted out-of-scope `customers=` was silently ignored
+  // before it could reach the BFF intersection check. Lock in that
+  // legacy `customers=` survives into `initialFilter.input.customers`
+  // and lands on the first `searchEventsAtAnchor()` call.
+  it("threads legacy `customers=` from the URL into the initial filter dispatch", async () => {
+    await renderPage({ source: "10.0.0.5", customers: "1,2" });
+
+    expect(mockSearchEventsAtAnchor).toHaveBeenCalledTimes(1);
+    const [, filter] = mockSearchEventsAtAnchor.mock.calls[0];
+    expect(filter.mode).toBe("structured");
+    expect(filter.input.source).toBe("10.0.0.5");
+    expect(filter.input.customers).toEqual(["1", "2"]);
+  });
+
+  it("drops malformed `customers=` entries before they reach the dispatch", async () => {
+    // The URL decoder filters non-positive-integer entries; the page
+    // must surface only the parsed survivors so the BFF intersection
+    // check sees the same shape the wire layer expects.
+    await renderPage({ source: "10.0.0.5", customers: "1,abc,-3,2" });
+
+    const [, filter] = mockSearchEventsAtAnchor.mock.calls[0];
+    expect(filter.input.customers).toEqual(["1", "2"]);
+  });
+
+  it("omits `customers` from the initial filter when the URL has none", async () => {
+    await renderPage({ source: "10.0.0.5" });
+
+    const [, filter] = mockSearchEventsAtAnchor.mock.calls[0];
+    expect(filter.input.customers).toBeUndefined();
+  });
 });

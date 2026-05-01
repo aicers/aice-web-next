@@ -144,7 +144,7 @@ test("filter drawer opens from the Filters button and exposes chips + inputs", a
   ).toHaveAttribute("aria-pressed", "false");
 });
 
-test("drawer renders Customer placeholder and Sensor fallback while REview endpoint is absent", async ({
+test("drawer renders Customer field and Sensor fallback while REview endpoint is absent", async ({
   page,
   workerUsername,
   workerPassword,
@@ -156,16 +156,17 @@ test("drawer renders Customer placeholder and Sensor fallback while REview endpo
   await expect(filtersButton).toBeVisible({ timeout: 10_000 });
   await filtersButton.click();
 
-  // Customer is always rendered as a disabled "Coming soon" control;
-  // the nearest <button> inside the Customer fieldset must be disabled.
-  // The Sensor control collapses to the same disabled state while the
-  // vendored REview schema does not expose the sensor-list query —
-  // a "Coming soon" button under the Sensor legend appears then.
+  // Customer is now a functional multi-select sourced from
+  // `getEffectiveCustomerScope`. The fieldset is always rendered;
+  // its enabled/disabled state depends on whether the session has
+  // any customers in scope. The Sensor control collapses to a
+  // disabled state while the vendored REview schema does not
+  // expose the sensor-list query — a "Coming soon" button under
+  // the Sensor legend appears then.
   const customerSection = page
     .locator("fieldset")
     .filter({ has: page.locator("legend", { hasText: "Customer" }) });
   await expect(customerSection).toBeVisible();
-  await expect(customerSection.getByRole("button")).toBeDisabled();
 
   const sensorSection = page
     .locator("fieldset")

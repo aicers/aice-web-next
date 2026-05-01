@@ -41,8 +41,13 @@
 
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
 import {
+  type FetchCustomersForFilterResult,
+  fetchCustomersForFilter,
+} from "@/app/[locale]/(dashboard)/detection/customer-actions";
+import type { CustomerOption } from "@/components/detection/customer-multi-select";
+import {
+  type CustomerCache,
   DetectionShell,
   type DetectionShellInitialResult,
   type DetectionShellLabels,
@@ -143,6 +148,23 @@ export interface DetectionTabsShellProps {
   title: string;
   labels: DetectionTabsShellLabels;
   options: FilterDrawerOptions;
+  /**
+   * Customer scope resolved server-side from
+   * `getEffectiveCustomerScope(session)`. Same helper that drives
+   * the page-header customer indicator (#383), so the drawer's
+   * Customer multi-select and the indicator can never disagree.
+   *
+   * Reviewer Round 1 #1 + #3: lifting the customer cache up to the
+   * wrapper required a SSR seed so a freshly mounted page (including
+   * any tab switch) can render customer chips with **names** on the
+   * first paint, not raw IDs. The `kind` field mirrors the helper
+   * discriminator so the drawer's empty-scope affordance fires
+   * correctly when the SSR seed is `kind: 'empty'`.
+   */
+  initialCustomerScope: {
+    kind: "admin" | "assigned" | "empty";
+    customers: readonly { id: number; name: string }[];
+  };
   /** Bootstrap tab built from the URL-parsed active filter + SSR'd result. */
   initialTab: {
     id: TabId;
@@ -182,8 +204,68 @@ export function DetectionTabsShell({
   labels,
   options,
   initialTab,
+  initialCustomerScope,
 }: DetectionTabsShellProps) {
   const pathname = usePathname();
+
+  // Customer cache lifted out of `DetectionShell`. The shell is
+  // remounted on every tab switch (`key={activeTabId}`), so its own
+  // state cannot satisfy the #384 page-session-shared cache contract
+  // — opening the drawer in tab A and switching to tab B would drop
+  // the cache and force another fetch. Owning the cache here keeps
+  // it stable across tab create / switch / close as long as the
+  // page itself is mounted, and lets every shell instance read the
+  // same options (so chips in tab B benefit from a fetch in tab A
+  // too).
+  //
+  // Reviewer Round 3 #1: the cache starts `idle`, not pre-seeded
+  // `loaded`, so #384's explicit fetch contract holds — page entry
+  // does not fetch, the first drawer open does, subsequent opens
+  // reuse the cached result, and a scope change after page render
+  // is picked up on that first-open fetch (not silently masked by a
+  // stale SSR seed). The SSR scope still flows through as
+  // `initialCustomerOptions`, but only as a *display fallback* for
+  // the chip-name lookup so a bookmarked / saved-filter / pivot URL
+  // still paints customer **names** on the first render rather than
+  // raw IDs (Reviewer Round 1 #3). Once the first-open fetch
+  // resolves, the live `loaded` cache supersedes the seed.
+  const [customerCache, setCustomerCache] = useState<CustomerCache>(() => ({
+    status: "idle",
+  }));
+
+  const initialCustomerOptions = useMemo<readonly CustomerOption[]>(
+    () =>
+      initialCustomerScope.customers.map((c) => ({
+        id: c.id,
+        name: c.name,
+      })),
+    [initialCustomerScope],
+  );
+
+  // Manual refresh callback exposed to the shell. Wraps
+  // `fetchCustomersForFilter()` and writes the result back into the
+  // wrapper-owned cache; pessimistic on error (cache reverts to
+  // `error` state, the drawer surfaces a Retry).
+  const triggerCustomerFetch = useCallback(() => {
+    setCustomerCache({ status: "loading" });
+    void fetchCustomersForFilter().then(
+      (result: FetchCustomersForFilterResult) => {
+        if (result.ok) {
+          setCustomerCache({
+            status: "loaded",
+            kind: result.kind,
+            options: result.customers.map((c) => ({
+              id: c.id,
+              name: c.name,
+            })),
+          });
+        } else {
+          setCustomerCache({ status: "error" });
+        }
+      },
+      () => setCustomerCache({ status: "error" }),
+    );
+  }, []);
 
   // Seed the tab list with the SSR bootstrap tab. The in-effect merge
   // below folds in any additional tabs that were alive in the prior
@@ -291,6 +373,7 @@ export function DetectionTabsShell({
     () => ({
       sensor: labels.shell.drawer.sensor.label,
       sensorAggregate: labels.shell.summarize.sensorAggregate,
+      customers: labels.shell.drawer.customer.label,
       period: "",
       periodOptions: labels.shell.drawer.periodOptions,
       formatRange: ({ start, end }) => `${start} – ${end}`,
@@ -310,15 +393,32 @@ export function DetectionTabsShell({
       categories: labels.shell.drawer.fields.categories,
       kinds: labels.shell.drawer.fields.kinds,
       categoricalAggregate: ({ label, count }) => `${label}: ${count}`,
+      // #384: customer aggregate speaks the issue's "{label}: {N} selected"
+      // wording. The auto-name path consumes the chip `value`, so this
+      // affects the auto-derived tab name when many customers are
+      // selected too.
+      customerAggregate: (count) =>
+        `${labels.shell.drawer.customer.label}: ${labels.shell.summarize.customerAggregate.replace("{count}", String(count))}`,
     }),
     [labels.shell],
   );
+
+  const customerSummaryOptions = useMemo<
+    readonly { value: string; label: string }[]
+  >(() => {
+    const source =
+      customerCache.status === "loaded"
+        ? customerCache.options
+        : initialCustomerOptions;
+    return source.map((c) => ({ value: String(c.id), label: c.name }));
+  }, [customerCache, initialCustomerOptions]);
 
   const deriveAutoName = useCallback(
     (tab: TabSnapshot): string => {
       const chips: FilterChip[] = summarizeFilter(tab.filter, summarizeLabels, {
         period: tab.period,
         sensorOptions: [],
+        customerOptions: customerSummaryOptions,
         categoricalOptions: {
           levels: options.levels,
           countries: options.countries,
@@ -332,7 +432,7 @@ export function DetectionTabsShell({
         labels.tabFallbackName,
       );
     },
-    [summarizeLabels, options, labels.tabFallbackName],
+    [summarizeLabels, options, labels.tabFallbackName, customerSummaryOptions],
   );
 
   // Rehydrate additional tabs from sessionStorage on mount. URL is
@@ -690,6 +790,9 @@ export function DetectionTabsShell({
         onLoadSavedFilterInNewTab={handleLoadSavedFilterInNewTab}
         recommendedPresets={RECOMMENDED_PRESETS}
         onLoadRecommendedFilterInNewTab={handleLoadRecommendedFilterInNewTab}
+        customerCache={customerCache}
+        onCustomerRefresh={triggerCustomerFetch}
+        initialCustomerOptions={initialCustomerOptions}
       />
       <PivotToast
         message={pivotToast}
