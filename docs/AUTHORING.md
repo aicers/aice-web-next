@@ -333,14 +333,46 @@ customer-scoped operation:
 
 ### Audit log contract
 
-Every `auditLog.record(...)` call that describes an event tied to
-a specific customer must populate the top-level `customerId` field
-with the relevant customer id (not just place it inside `details`).
-Without it the row is invisible to the audit-log viewer's
+Every `auditLog.record(...)` call whose `target` is a record with a
+**canonical, single customer id** (a customer, a node, a sensor, an
+`account_customer` link row — anything where the customer that owns
+the row is unambiguous) must populate the top-level `customerId`
+field with that id (not just place it inside `details`). Without it
+the row is invisible to the audit-log viewer's
 `customer_id IN (...)` predicate, so the tenant operator who owns
-the resource never sees it. Customer-agnostic events
-(`account.login`, system events) carry `customerId: null`; admin
-sees those rows, restricted callers do not.
+the resource never sees it.
+
+Two categories explicitly fall outside that rule and intentionally
+record `customerId: null`:
+
+- **Customer-agnostic events** — `account.login`, system events
+  (system-settings, role mutations), MFA-credential management on
+  the actor's own account. These have no customer dimension at all.
+  Admin sees those rows; restricted callers do not.
+- **Account-targeted mutations on N:N accounts** — `password.reset`,
+  `account.unlock`, `account.restore`, `account.mfa.reset`,
+  `account.update`, `account.delete`. The `target` is an account,
+  and accounts relate to customers many-to-many through
+  `account_customer` (see `getAccountCustomerIds` in
+  `src/lib/auth/account-management.ts`). There is no single
+  customer id to attribute the event to, and silently picking one
+  member of the set would mislead viewers in the other tenants.
+  These rows are therefore visible to admin only today; widening
+  visibility for in-scope tenant operators on these events would
+  require either a row-fan-out (one audit row per linked customer)
+  or a multi-valued audit schema, both of which are out of scope
+  for #388 and #387 and are tracked separately.
+
+When a future audit row's target *is* unambiguously bound to one
+customer (e.g. a route that operates on `account_customer (account,
+customer)` together, or on a node/sensor whose `customer_id` is a
+column on the row), follow the rule above and populate
+`customerId`. The canonical examples are
+`src/app/api/customers/[id]/route.ts` (target = a customer),
+`src/app/api/accounts/[id]/customers/route.ts` (target = the
+`account_customer` link being created — the customer dimension is
+in the URL), and `src/app/api/nodes/[id]/route.ts` (target = a node
+whose `customer_id` is a column).
 
 ### Error-message contract
 
