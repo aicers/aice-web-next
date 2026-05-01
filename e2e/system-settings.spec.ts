@@ -10,14 +10,14 @@ import {
   createTestAccount,
   createTestRole,
   deleteMfaChallenges,
+  deleteRecoveryCodes,
   deleteTestAccount,
   deleteTestRole,
   deleteTotpCredential,
-  deleteRecoveryCodes,
-  resetAccountDefaults,
-  setAccountMfaOverride,
   deleteWebAuthnChallenges,
   deleteWebAuthnCredentials,
+  resetAccountDefaults,
+  setAccountMfaOverride,
 } from "./helpers/setup-db";
 
 const READER_USER = "e2e-settings-reader";
