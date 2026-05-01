@@ -873,14 +873,12 @@ which customers are visible.
 Open the control to reveal a search box, a **Select all / Clear
 selection** toggle, and a scrollable list of customer names; picked
 customers also appear as removable chips just below the control.
-The customer list is delivered with the Detection page itself, so
-the drawer is populated the very first time it opens — no waiting
-for a separate fetch. A small **↻** refresh icon in the panel
-header explicitly re-fetches the customer list; this is useful
-when an admin has just changed account-customer assignments in
-another browser tab. There is no automatic refresh; the cached
-list is reused for every drawer open and is shared across every
-filter tab in the current page session.
+A small **↻** refresh icon in the panel header explicitly
+re-fetches the customer list; this is useful when an admin has
+just changed account-customer assignments in another browser tab.
+There is no automatic refresh; the cached list is reused for every
+drawer open and is shared across every filter tab in the current
+page session.
 
 Applying the filter submits the selected customer IDs. They show
 up in the active chip bar at the top of the page following the

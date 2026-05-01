@@ -646,11 +646,13 @@ export default async function DetectionPage({
         title={t("title")}
         options={options}
         initialCustomerScope={{
-          // Reviewer Round 1 (#1 + #3): thread the SSR-resolved scope
-          // through to the wrapper. The wrapper seeds the shared
-          // customer cache from this so chips render with customer
-          // names on the very first paint, and the cache survives
-          // the keyed remount the shell undergoes on tab switch.
+          // Reviewer Round 1 #3 + Round 3 #1: thread the SSR-resolved
+          // scope through to the wrapper as a chip-name display
+          // fallback only — the shared customer cache itself starts
+          // `idle` and is populated on the first drawer open. The
+          // fallback lets a bookmarked / saved-filter / pivot URL
+          // paint customer **names** on the very first render rather
+          // than raw IDs while the first-open fetch is still pending.
           kind: scope.kind,
           customers: scope.customers.map((c) => ({ id: c.id, name: c.name })),
         }}
