@@ -242,6 +242,17 @@ export interface AnalyticsLabelStrings {
   errorRetry: string;
   forbiddenTitle: string;
   forbiddenDescription: string;
+  /**
+   * Headline + body for the analytics strip's
+   * `forbidden-customer-scope` branch (Reviewer Round 6 #1) — the
+   * inbound filter references a customer the caller cannot access, or
+   * the caller's scope is empty. Distinct from
+   * {@link forbiddenTitle}/{@link forbiddenDescription} (caller lacks
+   * `detection:read`) so the panel can show the actionable customer-
+   * scope copy instead of the generic Detection-access denial.
+   */
+  forbiddenScopeTitle: string;
+  forbiddenScopeDescription: string;
   emptyTitle: string;
   emptyDescription: string;
   levelLabels: DetectionAnalyticsLabels["levelLabels"];
@@ -293,6 +304,15 @@ export interface DetectionShellLabels {
   };
   exportErrorMessage: string;
   /**
+   * Surfaced when the export's 403 body carries
+   * `code: "forbidden-customer-scope"` — the inbound filter references a
+   * customer outside the caller's effective scope (Reviewer Round 6 #1).
+   * Distinct from {@link exportErrorMessage} so the operator gets an
+   * actionable hint ("remove the unavailable customers") rather than the
+   * generic transient-error copy.
+   */
+  exportForbiddenScopeMessage: string;
+  /**
    * Template used when the server rejects the export because the
    * estimated row count exceeds the hard per-export ceiling. Carries
    * `{count}` and `{limit}` placeholders so the error message can
@@ -333,6 +353,16 @@ export interface DetectionShellLabels {
   resultsRegion: string;
   resultsLoading: string;
   resultsError: string;
+  /**
+   * Surfaced when {@link runEventQuery} returns
+   * `code: "forbidden-customer-scope"` — the inbound filter references a
+   * customer outside the caller's effective scope, or the caller's
+   * scope is empty (Reviewer Round 6 #1). Distinct from
+   * {@link resultsError} so the operator gets an actionable hint
+   * ("remove the unavailable customers") rather than the generic
+   * transient-error copy.
+   */
+  resultsForbiddenScope: string;
   analyticsToggle: string;
   analyticsShow: string;
   analyticsHide: string;
@@ -1141,6 +1171,8 @@ export function DetectionShell({
       errorRetry: a.errorRetry,
       forbiddenTitle: a.forbiddenTitle,
       forbiddenDescription: a.forbiddenDescription,
+      forbiddenScopeTitle: a.forbiddenScopeTitle,
+      forbiddenScopeDescription: a.forbiddenScopeDescription,
       emptyTitle: a.emptyTitle,
       emptyDescription: a.emptyDescription,
       levelLabels: a.levelLabels,
@@ -1630,7 +1662,18 @@ export function DetectionShell({
               setEvents([]);
               setEventKeys([]);
               setPageInfo(null);
-              setResultError(labels.resultsError);
+              // Reviewer Round 6 #1: surface the typed
+              // `forbidden-customer-scope` rejection with actionable
+              // copy ("remove the unavailable customers") instead of
+              // collapsing it back into the generic transient-error
+              // banner. Other failure codes (`forbidden`,
+              // `unauthenticated`, `server-error`) keep the generic
+              // copy — those are not actionable from the result region.
+              setResultError(
+                result.code === "forbidden-customer-scope"
+                  ? labels.resultsForbiddenScope
+                  : labels.resultsError,
+              );
             }
             resolve(result);
           } catch {
@@ -1653,7 +1696,12 @@ export function DetectionShell({
         });
       });
     },
-    [labels.resultsError, writeQuickPeekToUrl, reconcileQuickPeekAgainstSlice],
+    [
+      labels.resultsError,
+      labels.resultsForbiddenScope,
+      writeQuickPeekToUrl,
+      reconcileQuickPeekAgainstSlice,
+    ],
   );
 
   // Wrapper used by the Apply and chip × paths — both commit a new
@@ -2337,6 +2385,11 @@ export function DetectionShell({
   const getKnownTotalCount = useCsvExportTotalCountGetter(totalCount);
   const csvExport = useCsvExport({
     errorMessage: labels.exportErrorMessage,
+    // Reviewer Round 6 #1: surface the export route's
+    // `code: "forbidden-customer-scope"` 403 with actionable copy
+    // ("remove the unavailable customers") instead of the generic
+    // export-error banner.
+    forbiddenScopeMessage: labels.exportForbiddenScopeMessage,
     formatLimitExceededMessage: useCallback(
       ({ totalCount, limit }: { totalCount: string; limit: number }) =>
         labels.exportLimitExceededTemplate

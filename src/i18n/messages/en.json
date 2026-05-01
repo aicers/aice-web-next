@@ -1202,6 +1202,7 @@
       "resultsLoading": "Running query...",
       "resultsCount": "{count} detection events match the current filter.",
       "resultsError": "Could not load detection results.",
+      "resultsForbiddenScope": "This filter references a customer outside your access. Remove the unavailable customers and retry.",
       "chips": {
         "period": "Period",
         "source": "Source",
@@ -1317,6 +1318,7 @@
       "downloadRunning": "Exporting…",
       "downloadErrorTitle": "Could not export detection events",
       "downloadErrorDescription": "The detection service failed to produce the CSV. Try again, or narrow the filter.",
+      "downloadForbiddenScopeDescription": "This export references a customer outside your access. Remove the unavailable customers and retry.",
       "downloadLimitExceededDescription": "The current filter matches {count} detection events, which exceeds the {limit}-row export limit. Narrow the filter before retrying.",
       "downloadErrorDismiss": "Dismiss",
       "exportConfirm": {
@@ -1425,6 +1427,8 @@
       "errorRetry": "Retry",
       "forbiddenTitle": "Not permitted",
       "forbiddenDescription": "Your account doesn't have permission to view detection analytics.",
+      "forbiddenScopeTitle": "Customer outside your access",
+      "forbiddenScopeDescription": "The active filter references a customer outside your access. Remove the unavailable customers and retry.",
       "emptyTitle": "No matching events",
       "emptyDescription": "The active filter doesn't match any events in the selected time range.",
       "pivotActivateTemplate": "Filter results by {label}: {value}"

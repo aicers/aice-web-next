@@ -901,7 +901,8 @@ The customer list is lazy-loaded: opening the Detection page
 does not fetch it, the first time you open the filter drawer in a
 page session does, and subsequent drawer opens reuse the cached
 result. While the first-open fetch is in flight the control shows
-a **Loading customers…** affordance; if it fails transiently, a
+a **Loading customers…** affordance with an inline spinner so the
+in-flight fetch is visible at a glance; if it fails transiently, a
 **Failed to load customers** message is displayed alongside an
 inline **Retry** button so you can recover without closing and
 reopening the drawer. Customer chips that arrive on the very
@@ -915,10 +916,14 @@ chip-name lookups during that brief loading window.
 > effective scope. Loading a saved filter, activating a recommended
 > filter, or following a pivot URL whose `customers` list exceeds
 > your current scope produces a clear failure rather than silently
-> stripping the offending IDs and returning a partial result. The
-> backend (REview) applies its own intersection on top, but the
-> aice-web-next side is no longer relying on REview as the only
-> enforcement point.
+> stripping the offending IDs and returning a partial result. When
+> a Detection query (or a CSV export) is rejected for this reason
+> the result region (or export banner) shows an actionable
+> **This filter references a customer outside your access. Remove
+> the unavailable customers and retry.** message rather than the
+> generic transient-error copy. The backend (REview) applies its
+> own intersection on top, but the aice-web-next side is no longer
+> relying on REview as the only enforcement point.
 
 ### Sensor
 

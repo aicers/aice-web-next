@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, RefreshCw, X } from "lucide-react";
+import { ChevronDown, Loader2, RefreshCw, X } from "lucide-react";
 import { useId, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -191,6 +191,23 @@ export function CustomerMultiSelect({
       state === "loading"
         ? { displayLabel: labels.loadingLabel, displayHint: labels.loadingHint }
         : { displayLabel: labels.errorLabel, displayHint: labels.errorHint };
+    // Reviewer Round 6 #2: render an inline spinner alongside the
+    // "Loading customers…" copy on the loading branch. The first
+    // drawer-open spends its entire `fetchCustomersForFilter()` round
+    // trip in this state, so the spinner is the visible cue that
+    // something is in flight rather than a blank disabled control.
+    // The error branch keeps the chevron — it has its own Retry button
+    // for the actionable affordance.
+    const trailingIcon =
+      state === "loading" ? (
+        <Loader2
+          className="size-4 animate-spin"
+          aria-hidden="true"
+          data-testid="customer-multi-select-loading-spinner"
+        />
+      ) : (
+        <ChevronDown className="size-4" aria-hidden="true" />
+      );
     return (
       <fieldset className="flex flex-col gap-2">
         <legend className="text-foreground text-sm font-medium">
@@ -209,7 +226,7 @@ export function CustomerMultiSelect({
             )}
           >
             <span>{displayLabel}</span>
-            <ChevronDown className="size-4" aria-hidden="true" />
+            {trailingIcon}
           </button>
           {state === "error" && onRefresh ? (
             <Button

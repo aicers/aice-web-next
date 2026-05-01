@@ -277,6 +277,7 @@ export default async function DetectionPage({
       narrowFilterLabel: t("results.exportConfirm.narrowFilter"),
     },
     exportErrorMessage: t("results.downloadErrorDescription"),
+    exportForbiddenScopeMessage: t("results.downloadForbiddenScopeDescription"),
     exportLimitExceededTemplate: t.raw(
       "results.downloadLimitExceededDescription",
     ) as string,
@@ -366,6 +367,7 @@ export default async function DetectionPage({
     resultsRegion: t("filters.resultsRegion"),
     resultsLoading: t("filters.resultsLoading"),
     resultsError: t("filters.resultsError"),
+    resultsForbiddenScope: t("filters.resultsForbiddenScope"),
     analyticsToggle: t("analytics.toggle"),
     analyticsShow: t("analytics.show"),
     analyticsHide: t("analytics.hide"),
@@ -398,6 +400,8 @@ export default async function DetectionPage({
       errorRetry: t("analytics.errorRetry"),
       forbiddenTitle: t("analytics.forbiddenTitle"),
       forbiddenDescription: t("analytics.forbiddenDescription"),
+      forbiddenScopeTitle: t("analytics.forbiddenScopeTitle"),
+      forbiddenScopeDescription: t("analytics.forbiddenScopeDescription"),
       emptyTitle: t("analytics.emptyTitle"),
       emptyDescription: t("analytics.emptyDescription"),
       levelLabels: {
