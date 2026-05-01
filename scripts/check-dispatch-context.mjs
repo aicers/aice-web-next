@@ -353,12 +353,16 @@ function hasBuildDispatchContextImport(stripped) {
       // Reject `{ type buildDispatchContext }` (per-specifier type
       // modifier).
       if (/^type\s+/.test(spec)) continue;
-      // Match either a direct specifier (`buildDispatchContext` /
-      // `buildDispatchContext as foo`) or a renamed import that
-      // brings the symbol into local scope (`foo as
-      // buildDispatchContext`). \b boundaries keep us off
-      // `myBuildDispatchContext` etc.
-      if (/\bbuildDispatchContext\b/.test(spec)) return true;
+      // The imported symbol is the left side of `as`, or the whole
+      // specifier when there is no rename. Only `buildDispatchContext`
+      // or `buildDispatchContext as <alias>` brings the real helper
+      // into scope. A right-side rename (`otherName as
+      // buildDispatchContext`) imports a different symbol and merely
+      // *names* the local binding `buildDispatchContext`, so the call
+      // site dispatches to the wrong function — must NOT satisfy the
+      // presence check.
+      const importedName = spec.split(/\s+as\s+/, 1)[0].trim();
+      if (importedName === "buildDispatchContext") return true;
     }
   }
 }

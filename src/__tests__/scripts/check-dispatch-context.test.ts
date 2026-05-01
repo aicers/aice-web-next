@@ -401,6 +401,54 @@ export async function listNodes() {
     );
   });
 
+  it("does NOT count `import { other as buildDispatchContext } ...` as in-scope", () => {
+    // Regression test for the round-12 review: a right-side rename
+    // imports a different symbol and merely names the local binding
+    // `buildDispatchContext`, so any call dispatches to the wrong
+    // function. The previous regex matched the token anywhere in the
+    // specifier and accepted this case. The matcher must inspect the
+    // imported name (left of `as`) only.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+import { notBuildDispatchContext as buildDispatchContext } from "./dispatch-context";
+
+export async function listNodes() {
+  return graphqlRequest(QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(
+      /neither imports nor locally declares/,
+    );
+  });
+
+  it("accepts `import { buildDispatchContext as alias } ...` (left-side bound to the real helper)", () => {
+    // Companion positive case for the round-12 fix: a left-side
+    // alias (`buildDispatchContext as alias`) DOES import the real
+    // helper — the local binding is just renamed. This must still
+    // satisfy the presence check so the matcher does not over-narrow.
+    const violations = run([
+      {
+        relPath: "src/lib/node/server-actions.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+import { buildDispatchContext as buildCtx } from "./dispatch-context";
+
+export async function listNodes(session) {
+  const ctx = await buildCtx(session);
+  return graphqlRequest(QUERY, undefined, ctx);
+}
+`,
+      },
+    ]);
+
+    expect(violations).toEqual([]);
+  });
+
   it("does NOT count `import { type buildDispatchContext } ...` as in-scope", () => {
     // Per-specifier `type` modifier — also erased at runtime, so the
     // symbol is not in scope for the call site to use.

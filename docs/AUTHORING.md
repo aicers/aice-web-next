@@ -419,8 +419,14 @@ alongside `pnpm check`. It enforces, file-by-file:
   that put it there:
     - **Named import** —
       `import { buildDispatchContext } from "./dispatch-context"`,
-      with or without an `as` alias. This is the form the Node
-      track uses today.
+      optionally with a left-side `as` alias
+      (`import { buildDispatchContext as buildCtx } ...`). The
+      *imported* symbol must be `buildDispatchContext`; a right-side
+      rename like `import { otherName as buildDispatchContext } ...`
+      is rejected because it imports a different symbol and merely
+      *names* the local binding `buildDispatchContext`, so the call
+      site would dispatch to the wrong function. This is the form
+      the Node track uses today.
     - **Namespace import + member access** —
       `import * as dispatchContext from "./dispatch-context"`
       paired with at least one
