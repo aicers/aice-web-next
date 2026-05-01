@@ -358,6 +358,12 @@ export interface DetectionShellLabels {
   summarize: {
     sensor: string;
     sensorAggregate: string;
+    /**
+     * `{count}` substituted; #384 customer aggregate template, e.g.
+     * `"{count} selected"`. The shell concatenates with the customer
+     * label to produce the chip value `Customer: 4 selected`.
+     */
+    customerAggregate: string;
   };
   quickPeek: QuickPeekLabelStrings;
 }
@@ -1184,6 +1190,18 @@ export function DetectionShell({
     () => analyticsFilterIdentity(committedFilter),
     [committedFilter],
   );
+  // Active customer narrowing on the committed filter, threaded onto
+  // the Quick peek pivots and the Investigation handoff URL (#384) so
+  // a click-through preserves the customer scope rather than landing
+  // on the unfiltered set. `Filter.input.customers` is `string[]` (the
+  // wire format `EventListFilterInput` exposes); pivots and the events
+  // route both speak the same encoding so no conversion is needed.
+  const committedCustomers = useMemo<readonly string[] | undefined>(() => {
+    if (committedFilter.mode !== "structured") return undefined;
+    const list = committedFilter.input.customers;
+    if (!list || list.length === 0) return undefined;
+    return list;
+  }, [committedFilter]);
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(initialDraft);
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
@@ -2530,6 +2548,10 @@ export function DetectionShell({
       sensor: labels.drawer.sensor.label,
       sensorAggregate: labels.summarize.sensorAggregate,
       customers: labels.drawer.customer.label,
+      // #384: customer aggregate chip reads `Customer: 4 selected`,
+      // matching the issue's prescribed wording.
+      customerAggregate: (count: number) =>
+        `${labels.drawer.customer.label}: ${labels.summarize.customerAggregate.replace("{count}", String(count))}`,
       period: t("chips.period"),
       periodOptions: labels.drawer.periodOptions,
       formatRange: ({ start, end }) => t("activeRange", { start, end }),
@@ -2711,9 +2733,19 @@ export function DetectionShell({
       // tab's own URL state rather than from a stale `returnTo`.
       const cleanSearch = applyQuickPeekToken(search, null);
       const returnTo = `${pathname}${cleanSearch}`;
-      return `/events/${encodeURIComponent(token)}?returnTo=${encodeURIComponent(returnTo)}`;
+      // Forward the active customer narrowing (#384) as a separate
+      // query param so the Investigation page can thread it onto its
+      // outbound pivot URLs (Overview "same source" / Related). Kept
+      // out of `returnTo` to avoid forcing the events route to decode
+      // the encoded `?f=` filter blob.
+      const params = new URLSearchParams();
+      params.set("returnTo", returnTo);
+      if (committedCustomers && committedCustomers.length > 0) {
+        params.set("customers", committedCustomers.join(","));
+      }
+      return `/events/${encodeURIComponent(token)}?${params.toString()}`;
     },
-    [pathname],
+    [pathname, committedCustomers],
   );
 
   const openQuickPeekFor = useCallback(
@@ -3102,6 +3134,7 @@ export function DetectionShell({
                 locale={locale}
                 investigateHref={buildInvestigateHref(quickPeekEvent)}
                 onClose={closeQuickPeek}
+                customers={committedCustomers}
               />
             </aside>
           ) : null}
@@ -3186,6 +3219,7 @@ export function DetectionShell({
         labels={quickPeekLabels}
         buildInvestigateHref={buildInvestigateHref}
         onClose={closeQuickPeek}
+        customers={committedCustomers}
       />
 
       <CsvExportConfirmDialog
@@ -3328,12 +3362,14 @@ function QuickPeekInspectorOverlay({
   labels,
   buildInvestigateHref,
   onClose,
+  customers,
 }: {
   event: DetectionEvent | null;
   locale: string;
   labels: QuickPeekInspectorLabels;
   buildInvestigateHref: (event: DetectionEvent) => string | null;
   onClose: () => void;
+  customers?: readonly string[];
 }) {
   const open = event !== null;
   const kindLabel = event
@@ -3379,6 +3415,7 @@ function QuickPeekInspectorOverlay({
             investigateHref={buildInvestigateHref(event)}
             onClose={onClose}
             showClose={false}
+            customers={customers}
           />
         ) : null}
       </SheetContent>

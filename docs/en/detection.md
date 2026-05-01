@@ -885,8 +885,8 @@ filter tab in the current page session.
 Applying the filter submits the selected customer IDs. They show
 up in the active chip bar at the top of the page following the
 shared aggregation rule — one chip per customer for one to three
-selections, a single `Customer: N` aggregate token for four or
-more.
+selections, a single `Customer: N selected` aggregate token for
+four or more.
 
 ![Detection filter drawer — Customer multi-select](../assets/detection-drawer-customer-en.png)
 

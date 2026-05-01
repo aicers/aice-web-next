@@ -1216,6 +1216,7 @@
         "sensor": "센서",
         "sensorAggregate": "{count}개 선택됨",
         "customers": "고객사",
+        "customerAggregate": "{count}개 선택됨",
         "keywords": "키워드",
         "hostnames": "호스트명",
         "userIds": "사용자 ID",

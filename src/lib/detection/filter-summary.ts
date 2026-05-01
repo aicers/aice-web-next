@@ -155,6 +155,14 @@ export interface SummarizeFilterLabels {
   customers: string;
   /** Aggregate chip template for categorical multi-selects. */
   categoricalAggregate: (args: { label: string; count: number }) => string;
+  /**
+   * Aggregate chip text for the customer field (#384). Returns the
+   * full chip value (label included) — e.g. `Customer: 4 selected` —
+   * so the customer aggregate can speak the issue's prescribed
+   * "{label}: {N} selected" wording instead of falling back to the
+   * generic categorical "{label}: {N}" template.
+   */
+  customerAggregate: (count: number) => string;
 }
 
 export interface SummarizeFilterContext {
@@ -285,14 +293,17 @@ export function summarizeFilter(
   );
 
   // ── Customers (#384) ───────────────────────────────────────────
+  // Customers use a dedicated `customerAggregate` formatter instead
+  // of the generic `categoricalAggregate` so the aggregate chip
+  // reads `Customer: 4 selected` per the issue's acceptance wording
+  // rather than the categorical default `Customer: 4`.
   chips.push(
     ...categoricalChips<string>({
       fieldKey: "customers",
       label: labels.customers,
       values: (input.customers ?? []) as readonly string[],
       options: context.customerOptions,
-      aggregate: (count) =>
-        labels.categoricalAggregate({ label: labels.customers, count }),
+      aggregate: labels.customerAggregate,
       makeRemove: (value) => ({
         kind: "categoricalValue",
         field: "customers",

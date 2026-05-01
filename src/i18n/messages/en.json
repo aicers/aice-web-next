@@ -1216,6 +1216,7 @@
         "sensor": "Sensor",
         "sensorAggregate": "{count} selected",
         "customers": "Customer",
+        "customerAggregate": "{count} selected",
         "keywords": "Keywords",
         "hostnames": "Hostnames",
         "userIds": "User IDs",

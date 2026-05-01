@@ -73,6 +73,7 @@ export default async function DetectionPage({
   const summarizeLabels = {
     sensor: t("filters.chips.sensor"),
     sensorAggregate: t.raw("filters.chips.sensorAggregate") as string,
+    customerAggregate: t.raw("filters.chips.customerAggregate") as string,
   };
 
   // Phase Detection-10 persistence contract: prefer the encoded `?f=`
@@ -440,6 +441,7 @@ export default async function DetectionPage({
       userIds: t("filters.chips.userIds"),
       userNames: t("filters.chips.userNames"),
       userDepartments: t("filters.chips.userDepartments"),
+      customers: t("filters.chips.customers"),
     },
     drawer: {
       title: t("filters.drawerTitle"),

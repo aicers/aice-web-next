@@ -230,6 +230,13 @@ interface Props {
   multipleMatches: boolean;
   backHref: string;
   labels: EventInvestigationLabels;
+  /**
+   * Customer IDs the operator was narrowed to on the originating
+   * Detection page (#384). Threaded through to the Overview and
+   * Related tabs so their outbound pivot URLs preserve the customer
+   * narrowing rather than landing on the unfiltered set.
+   */
+  customers?: readonly string[];
 }
 
 export function EventInvestigation({
@@ -238,6 +245,7 @@ export function EventInvestigation({
   multipleMatches,
   backHref,
   labels,
+  customers,
 }: Props) {
   const friendlyKind =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
@@ -344,6 +352,7 @@ export function EventInvestigation({
             event={event}
             locator={locator}
             labels={labels.overview}
+            customers={customers}
           />
         </TabsContent>
         <TabsContent
@@ -387,7 +396,11 @@ export function EventInvestigation({
           className="pt-4"
           forceMount={forceMount("related")}
         >
-          <RelatedTab locator={locator} labels={labels.related} />
+          <RelatedTab
+            locator={locator}
+            labels={labels.related}
+            customers={customers}
+          />
         </TabsContent>
       </Tabs>
     </div>

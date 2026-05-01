@@ -45,6 +45,7 @@ const LABELS: SummarizeFilterLabels = {
   kinds: "Threat Name",
   customers: "Customer",
   categoricalAggregate: ({ label, count }) => `${label}: ${count}`,
+  customerAggregate: (count) => `Customer: ${count} selected`,
 };
 
 const CONTEXT: SummarizeFilterContext = {
@@ -271,7 +272,10 @@ describe("summarizeFilter (structured)", () => {
       );
       expect(chips).toHaveLength(1);
       expect(chips[0].aggregate).toBe(true);
-      expect(chips[0].value).toBe("Customer: 4");
+      // #384: customer aggregate uses the dedicated `customerAggregate`
+      // formatter so the chip reads "Customer: 4 selected" rather than
+      // the generic categorical "Customer: 4".
+      expect(chips[0].value).toBe("Customer: 4 selected");
       expect(chips[0].focus).toBe("customers");
       expect(chips[0].remove).toEqual({
         kind: "categoricalAggregate",

@@ -30,6 +30,12 @@ export interface RelatedLabels {
 interface Props {
   locator: EventLocator;
   labels: RelatedLabels;
+  /**
+   * Customer IDs the operator was narrowed to on the originating
+   * Detection page (#384). Forwarded onto each Related pivot URL
+   * so the click-through preserves the customer narrowing.
+   */
+  customers?: readonly string[];
 }
 
 interface PivotEntry {
@@ -39,7 +45,9 @@ interface PivotEntry {
   href: string;
 }
 
-export function RelatedTab({ locator, labels }: Props) {
+export function RelatedTab({ locator, labels, customers }: Props) {
+  const customerList =
+    customers && customers.length > 0 ? [...customers] : undefined;
   const pivots: PivotEntry[] = [
     {
       id: "same-source",
@@ -48,6 +56,7 @@ export function RelatedTab({ locator, labels }: Props) {
       href: buildDetectionPivotUrl({
         source: locator.origAddr,
         window: "1d",
+        customers: customerList,
       }),
     },
     {
@@ -57,6 +66,7 @@ export function RelatedTab({ locator, labels }: Props) {
       href: buildDetectionPivotUrl({
         destination: locator.respAddr,
         window: "1d",
+        customers: customerList,
       }),
     },
     {
@@ -66,6 +76,7 @@ export function RelatedTab({ locator, labels }: Props) {
       href: buildDetectionPivotUrl({
         kind: locator.kind,
         window: "7d",
+        customers: customerList,
       }),
     },
     {
@@ -83,6 +94,7 @@ export function RelatedTab({ locator, labels }: Props) {
         source: locator.origAddr,
         destination: locator.respAddr,
         window: "1d",
+        customers: customerList,
       }),
     },
   ];

@@ -393,6 +393,12 @@ export function DetectionTabsShell({
       categories: labels.shell.drawer.fields.categories,
       kinds: labels.shell.drawer.fields.kinds,
       categoricalAggregate: ({ label, count }) => `${label}: ${count}`,
+      // #384: customer aggregate speaks the issue's "{label}: {N} selected"
+      // wording. The auto-name path consumes the chip `value`, so this
+      // affects the auto-derived tab name when many customers are
+      // selected too.
+      customerAggregate: (count) =>
+        `${labels.shell.drawer.customer.label}: ${labels.shell.summarize.customerAggregate.replace("{count}", String(count))}`,
     }),
     [labels.shell],
   );
