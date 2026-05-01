@@ -777,6 +777,22 @@ export function shouldTriggerCustomerFetch(cache: CustomerCache): boolean {
 }
 
 /**
+ * Whether the drawer's apply / save boundary may emit
+ * `input.customers` for the current cache state. True only when the
+ * cache is `loaded` AND the loaded option list is non-empty —
+ * mirrors the sensor `endpointLive` gate so the issue/manual
+ * contract holds: the filter submits no `customers` value while the
+ * first drawer-open fetch is in flight (`loading`), after a manual
+ * refresh transitioned the control into `error`, or on an empty-
+ * scope (`loaded` + zero options, the "No customer access"
+ * affordance) session — even when a bookmark / saved filter / pivot
+ * URL hydrated the draft with prior IDs. Reviewer Round 8.
+ */
+export function customerSelectionLiveForCache(cache: CustomerCache): boolean {
+  return cache.status === "loaded" && cache.options.length > 0;
+}
+
+/**
  * Whether opening the drawer on a given chip-body focus should also
  * expand the Network/IP advanced panel. Only the endpoints aggregate
  * wants it; every other focus (period, source, direction, …) must
@@ -1787,10 +1803,19 @@ export function DetectionShell({
       // other state strips it to preserve the fallback contract.
       const endpointLive =
         sensorCache.status === "loaded" && sensorCache.endpointAvailable;
+      // Reviewer Round 8: same fallback contract for customers — the
+      // draft can be hydrated from a bookmark / saved filter / pivot
+      // URL, so without this gate Apply (and Save) would re-emit
+      // `customers: [...]` in exactly the states the issue forbids:
+      // first drawer-open fetch in flight (`loading`), manual refresh
+      // landed on `error`, or `No customer access` (`loaded` with
+      // empty options).
+      const customerLive = customerSelectionLiveForCache(customerCache);
       const next = buildAppliedFilter(
         committedFilter,
         applied,
         endpointLive,
+        customerLive,
         options,
       );
       setCommittedFilter(next);
@@ -1844,6 +1869,7 @@ export function DetectionShell({
     },
     [
       committedFilter,
+      customerCache,
       pagination.pageSize,
       pivotOnly,
       options,
@@ -2670,10 +2696,19 @@ export function DetectionShell({
     (applied: DetectionFilterDraft) => {
       const endpointLive =
         sensorCache.status === "loaded" && sensorCache.endpointAvailable;
+      // Reviewer Round 8: see {@link handleApply}. The Save path also
+      // routes the draft through `buildAppliedFilter`, so a saved
+      // filter created while the customer cache is `loading`,
+      // `error`, or `No customer access` (`loaded` + empty options)
+      // would otherwise persist a stale `customers` array — even
+      // though the drawer disabled the control. Apply the same gate
+      // so the saved payload omits `customers` in those states.
+      const customerLive = customerSelectionLiveForCache(customerCache);
       const next = buildAppliedFilter(
         committedFilter,
         applied,
         endpointLive,
+        customerLive,
         options,
       );
       const chips = summarizeFilter(next, summarizeLabels, {
@@ -2698,6 +2733,7 @@ export function DetectionShell({
     },
     [
       committedFilter,
+      customerCache,
       labels.drawer.periodOptions,
       options,
       sensorCache,

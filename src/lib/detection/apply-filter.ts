@@ -49,6 +49,7 @@ export function buildAppliedFilter(
   currentFilter: Filter,
   applied: DetectionFilterDraft,
   sensorEndpointLive: boolean = false,
+  customerSelectionLive: boolean = false,
   categoricalOptions?: CategoricalFilterOptions,
 ): Filter {
   if (!applied.startIso || !applied.endIso) {
@@ -140,7 +141,19 @@ export function buildAppliedFilter(
   // intersection check (`validateFilterScope`) rejects out-of-scope
   // IDs before any REview round-trip; this code path therefore never
   // needs to "trim" a saved/crafted selection.
-  if (applied.customerIds.length > 0) {
+  //
+  // Reviewer Round 8: customers are also gated on
+  // `customerSelectionLive` — true only when the customer cache is
+  // `loaded` AND has a non-empty options list. Mirrors the sensor
+  // gate so the issue/manual contract holds: the filter submits no
+  // `customers` value while the first drawer-open fetch is in flight,
+  // after a manual refresh transitions the control into `error`, or
+  // on an empty-scope (`No customer access`) session — even when a
+  // bookmark / saved filter / pivot URL hydrated the draft with
+  // prior IDs. Whatever previous `customers` was on the committed
+  // filter is also stripped at the destructure above, so re-applying
+  // a stale selection cannot bleed through.
+  if (customerSelectionLive && applied.customerIds.length > 0) {
     input.customers = applied.customerIds.map(String);
   }
 
