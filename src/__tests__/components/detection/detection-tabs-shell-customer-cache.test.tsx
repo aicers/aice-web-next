@@ -46,10 +46,9 @@ vi.mock("@/i18n/navigation", () => ({
   useRouter: () => ({ push: () => {}, replace: () => {} }),
 }));
 
-const {
-  customerStateForCache,
-  shouldTriggerCustomerFetch,
-} = await import("@/components/detection/detection-shell");
+const { customerStateForCache, shouldTriggerCustomerFetch } = await import(
+  "@/components/detection/detection-shell"
+);
 
 type CustomerCache = Parameters<typeof shouldTriggerCustomerFetch>[0];
 
