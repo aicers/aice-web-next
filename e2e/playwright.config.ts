@@ -337,7 +337,7 @@ export default defineConfig({
         },
       ],
   webServer: {
-    command: `node cleanup-orphaned-customers.mjs && pnpm dev --port ${appPort}`,
+    command: `pnpm dev --port ${appPort}`,
     url: appBaseUrl,
     // Never reuse an existing server. Playwright's webServer reuse would
     // skip `env` injection and adopt whatever process already holds the

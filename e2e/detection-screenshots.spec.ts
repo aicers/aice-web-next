@@ -48,6 +48,29 @@ function forceDarkTheme(page: import("@playwright/test").Page): Promise<void> {
   return page.emulateMedia({ colorScheme: "dark" });
 }
 
+async function captureRailFigure(
+  page: import("@playwright/test").Page,
+  rail: import("@playwright/test").Locator,
+  fileName: string,
+): Promise<void> {
+  const box = await rail.boundingBox();
+  if (!box) {
+    throw new Error(`Unable to capture rail screenshot for ${fileName}`);
+  }
+
+  const padding = 16;
+  await page.screenshot({
+    path: path.join(ASSETS_DIR, fileName),
+    animations: "disabled",
+    clip: {
+      x: Math.max(0, box.x - padding),
+      y: Math.max(0, box.y - padding),
+      width: box.width + padding * 2,
+      height: box.height + padding * 2,
+    },
+  });
+}
+
 test.describe
   .serial("Detection manual screenshots", () => {
     test("EN filter drawer", async ({
@@ -287,10 +310,11 @@ test.describe
           exact: true,
         }),
       ).toBeVisible();
-      await rail.screenshot({
-        path: path.join(ASSETS_DIR, "detection-saved-filters-rail-en.png"),
-        animations: "disabled",
-      });
+      await captureRailFigure(
+        page,
+        rail,
+        "detection-saved-filters-rail-en.png",
+      );
     });
 
     test("KO saved filters rail", async ({
@@ -318,10 +342,11 @@ test.describe
           exact: true,
         }),
       ).toBeVisible();
-      await rail.screenshot({
-        path: path.join(ASSETS_DIR, "detection-saved-filters-rail-ko.png"),
-        animations: "disabled",
-      });
+      await captureRailFigure(
+        page,
+        rail,
+        "detection-saved-filters-rail-ko.png",
+      );
     });
 
     // The Recommended Filter rail is fully client-side: presets are
@@ -348,13 +373,11 @@ test.describe
       await expect(
         rail.getByRole("button", { name: "1 year", exact: true }),
       ).toBeVisible();
-      await rail.screenshot({
-        path: path.join(
-          ASSETS_DIR,
-          "detection-recommended-filters-rail-en.png",
-        ),
-        animations: "disabled",
-      });
+      await captureRailFigure(
+        page,
+        rail,
+        "detection-recommended-filters-rail-en.png",
+      );
     });
 
     test("KO recommended filters rail", async ({
@@ -377,13 +400,11 @@ test.describe
       await expect(
         rail.getByRole("button", { name: "최근 1년", exact: true }),
       ).toBeVisible();
-      await rail.screenshot({
-        path: path.join(
-          ASSETS_DIR,
-          "detection-recommended-filters-rail-ko.png",
-        ),
-        animations: "disabled",
-      });
+      await captureRailFigure(
+        page,
+        rail,
+        "detection-recommended-filters-rail-ko.png",
+      );
     });
   });
 

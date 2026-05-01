@@ -5,8 +5,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
-import pg from "pg";
-
 import { readManifest, runFixturePreflight } from "../test-harness/fixtures";
 import {
   type RunningMockServer,
@@ -67,58 +65,6 @@ async function ensureJwtSigningKey(): Promise<void> {
     ),
     "utf8",
   );
-}
-
-async function cleanupOrphanedCustomerRows(env: Record<string, string>) {
-  const authClient = new pg.Client({ connectionString: env.DATABASE_URL });
-  const adminClient = new pg.Client({
-    connectionString: env.DATABASE_ADMIN_URL,
-  });
-
-  await authClient.connect();
-  await adminClient.connect();
-
-  try {
-    const customerTable = await authClient.query<{ oid: string | null }>(
-      "SELECT to_regclass('public.customers') AS oid",
-    );
-    if (!customerTable.rows[0]?.oid) {
-      console.log(
-        "[integration] Skipping orphaned customer cleanup because auth_db is not initialized yet",
-      );
-      return;
-    }
-
-    const { rows } = await authClient.query<{
-      id: number;
-      database_name: string;
-      status: string;
-    }>(
-      `SELECT id, database_name, status
-         FROM customers
-        WHERE status IN ('active', 'provisioning')`,
-    );
-
-    for (const row of rows) {
-      const exists = await adminClient.query<{ exists: boolean }>(
-        "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists",
-        [row.database_name],
-      );
-      if (exists.rows[0]?.exists) continue;
-
-      await authClient.query(
-        "DELETE FROM account_customer WHERE customer_id = $1",
-        [row.id],
-      );
-      await authClient.query("DELETE FROM customers WHERE id = $1", [row.id]);
-      console.log(
-        `[integration] Removed orphaned customer row ${row.id} (${row.database_name}) with missing backing DB`,
-      );
-    }
-  } finally {
-    await authClient.end();
-    await adminClient.end();
-  }
 }
 
 async function waitForServer(url: string, timeoutMs: number): Promise<void> {
@@ -253,8 +199,6 @@ export async function setup(): Promise<() => Promise<void>> {
     }
     // Port is free — start our own dev server below.
   }
-
-  await cleanupOrphanedCustomerRows(env);
 
   // Save tsconfig.json before starting the dev server — Next.js rewrites
   // it on startup, which dirties the worktree.

@@ -1062,7 +1062,7 @@ in view.
 
 ![Network/IP advanced filter](../assets/detection-endpoint-filter-en.png)
 
-The panel has two sections:
+The drawer has two sections:
 
 - **Saved Network/IPs** renders in v1 but is not functional. It
   shows `No saved network/IPs` and a help line explaining that
