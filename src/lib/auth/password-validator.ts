@@ -11,6 +11,15 @@ import { loadPasswordPolicy } from "./password-policy";
 export interface PasswordValidationResult {
   valid: boolean;
   errors: string[];
+  errorParams?: Partial<
+    Record<
+      string,
+      {
+        min?: number;
+        max?: number;
+      }
+    >
+  >;
 }
 
 // ── Validator ────────────────────────────────────────────────────
@@ -32,13 +41,16 @@ export async function validatePassword(
 ): Promise<PasswordValidationResult> {
   const policy = await loadPasswordPolicy();
   const errors: string[] = [];
+  const errorParams: PasswordValidationResult["errorParams"] = {};
 
   // Length checks
   if (password.length < policy.minLength) {
     errors.push("TOO_SHORT");
+    errorParams.TOO_SHORT = { min: policy.minLength };
   }
   if (password.length > policy.maxLength) {
     errors.push("TOO_LONG");
+    errorParams.TOO_LONG = { max: policy.maxLength };
   }
 
   // Complexity checks (when enabled)
@@ -73,5 +85,9 @@ export async function validatePassword(
     }
   }
 
-  return { valid: errors.length === 0, errors };
+  return {
+    valid: errors.length === 0,
+    errors,
+    errorParams: Object.keys(errorParams).length > 0 ? errorParams : undefined,
+  };
 }

@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN } from "./helpers/app-url";
 
 import {
   resetRateLimits,
@@ -26,7 +27,7 @@ const SUSPENDED_PASS = "Suspended1234!";
 function csrfHeader(csrfValue: string) {
   return {
     "x-csrf-token": csrfValue,
-    Origin: "http://localhost:3000",
+    Origin: APP_ORIGIN,
     "Content-Type": "application/json",
   };
 }

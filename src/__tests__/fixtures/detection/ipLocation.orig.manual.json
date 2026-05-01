@@ -1,0 +1,11 @@
+{
+  "ipLocation": {
+    "latitude": 37.5665,
+    "longitude": 126.978,
+    "country": "KR",
+    "region": "Seoul",
+    "city": "Seoul",
+    "isp": "Default ISP",
+    "domain": "corp.example.test"
+  }
+}

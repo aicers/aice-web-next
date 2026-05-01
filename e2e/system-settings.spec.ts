@@ -9,10 +9,15 @@ import {
 import {
   createTestAccount,
   createTestRole,
+  deleteMfaChallenges,
   deleteTestAccount,
   deleteTestRole,
+  deleteTotpCredential,
+  deleteRecoveryCodes,
   resetAccountDefaults,
   setAccountMfaOverride,
+  deleteWebAuthnChallenges,
+  deleteWebAuthnCredentials,
 } from "./helpers/setup-db";
 
 const READER_USER = "e2e-settings-reader";
@@ -28,6 +33,11 @@ test.beforeAll(async () => {
 test.beforeEach(async () => {
   await resetRateLimits();
   await resetAccountDefaults(ADMIN_USERNAME);
+  await deleteTotpCredential(ADMIN_USERNAME);
+  await deleteWebAuthnCredentials(ADMIN_USERNAME);
+  await deleteWebAuthnChallenges(ADMIN_USERNAME);
+  await deleteMfaChallenges(ADMIN_USERNAME);
+  await deleteRecoveryCodes(ADMIN_USERNAME);
   await setAccountMfaOverride(ADMIN_USERNAME, "exempt");
 });
 

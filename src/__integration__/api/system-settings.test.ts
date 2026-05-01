@@ -140,7 +140,42 @@ describe("System settings API", () => {
   it("settings update appears in audit logs", async () => {
     const session = await signIn(ADMIN_USERNAME);
 
-    // Record newest audit log ID before change
+    // Normalise the current lockout policy to a known-valid baseline
+    // first. Local integration databases can be left in an invalid
+    // state by aborted manual runs, and this test is verifying audit
+    // logging rather than validation edge cases.
+    const getRes = await authGet(session, "/api/system-settings");
+    const allSettings = await getRes.json();
+    const lockoutSetting = allSettings.data.find(
+      (s: { key: string }) => s.key === "lockout_policy",
+    );
+    const baselineValue = {
+      stage1_threshold:
+        Number.isInteger(lockoutSetting.value.stage1_threshold) &&
+        lockoutSetting.value.stage1_threshold >= 1 &&
+        lockoutSetting.value.stage1_threshold <= 100
+          ? lockoutSetting.value.stage1_threshold
+          : 5,
+      stage1_duration_minutes:
+        Number.isInteger(lockoutSetting.value.stage1_duration_minutes) &&
+        lockoutSetting.value.stage1_duration_minutes >= 1 &&
+        lockoutSetting.value.stage1_duration_minutes <= 1440
+          ? lockoutSetting.value.stage1_duration_minutes
+          : 30,
+    };
+    const updatedValue = {
+      ...baselineValue,
+      stage1_threshold: baselineValue.stage1_threshold === 5 ? 6 : 5,
+    };
+
+    const baselineRes = await authPatch(
+      session,
+      "/api/system-settings/lockout_policy",
+      { value: baselineValue },
+    );
+    expect(baselineRes.status).toBe(200);
+
+    // Record newest audit log ID before the update under test.
     const beforeRes = await authGet(
       session,
       "/api/audit-logs?action=system_settings.update&targetId=lockout_policy&pageSize=1",
@@ -148,18 +183,6 @@ describe("System settings API", () => {
     const beforeBody = await beforeRes.json();
     const newestIdBefore =
       beforeBody.data.length > 0 ? beforeBody.data[0].id : null;
-
-    // Read current lockout policy and toggle a value
-    const getRes = await authGet(session, "/api/system-settings");
-    const allSettings = await getRes.json();
-    const lockoutSetting = allSettings.data.find(
-      (s: { key: string }) => s.key === "lockout_policy",
-    );
-    const originalValue = { ...lockoutSetting.value };
-    const updatedValue = {
-      ...originalValue,
-      stage1_threshold: originalValue.stage1_threshold === 5 ? 6 : 5,
-    };
 
     try {
       const patchRes = await authPatch(
@@ -183,7 +206,7 @@ describe("System settings API", () => {
       expect(newest.target_id).toBe("lockout_policy");
     } finally {
       await authPatch(session, "/api/system-settings/lockout_policy", {
-        value: originalValue,
+        value: baselineValue,
       });
     }
   });

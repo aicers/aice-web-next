@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN } from "./helpers/app-url";
 
 import { resetRateLimits } from "./helpers/auth";
 import { clearMustChangePassword, revokeAllSessions } from "./helpers/setup-db";
@@ -78,7 +79,7 @@ test.describe("Authentication E2E", () => {
     const response = await page.request.post("/api/auth/sign-out", {
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
     expect(response.ok()).toBeTruthy();

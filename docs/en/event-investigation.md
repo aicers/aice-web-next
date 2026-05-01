@@ -18,17 +18,7 @@ permission that gates the Detection page. Accounts without it are
 redirected away from the Investigation URL even if they obtain a
 valid event link.
 
-![Event Investigation page — wireframe](../assets/event-investigation-en.svg)
-
-The figure above is an SVG wireframe stand-in. Authoring a
-representative PNG capture requires a running REview environment
-with at least one event matching the tight locator filter, which
-the development worktree this branch was written in does not have
-access to. The wireframe diagram is shipped as the permitted
-alternative artifact under `docs/AUTHORING.md` §"Screenshot
-exception for infrastructure-gated features"; replace it with a
-PNG capture (`event-investigation-en.png`) when staging becomes
-available.
+![Event Investigation page](../assets/event-investigation-en.png)
 
 ## URL shape
 
@@ -184,13 +174,7 @@ When no endpoint has geographic enrichment the map is hidden
 entirely; the Source / Destination tables remain fully
 functional on their own.
 
-![Endpoints tab with world map — wireframe](../assets/event-investigation-endpoints-map-en.svg)
-
-The figure above is an SVG wireframe stand-in, following the
-same infrastructure-gated screenshot exception as the rest of
-this page. Replace it with a PNG capture
-(`event-investigation-endpoints-map-en.png`) when staging
-becomes available.
+![Endpoints tab with world map](../assets/event-investigation-endpoints-map-en.png)
 
 The map is rendered as a static SVG using an equirectangular
 projection of the `world-atlas` `land-110m` topology. It has

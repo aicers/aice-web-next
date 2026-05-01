@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN, APP_URL } from "./helpers/app-url";
 
 import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import { resetAccountDefaults } from "./helpers/setup-db";
@@ -22,7 +23,7 @@ test.describe("CSRF protection", () => {
 
     const response = await page.request.post("/api/auth/sign-out", {
       headers: {
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
         // Deliberately omit x-csrf-token
       },
     });
@@ -40,7 +41,7 @@ test.describe("CSRF protection", () => {
     const response = await page.request.post("/api/auth/sign-out", {
       headers: {
         "x-csrf-token": "invalid-token-value",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -62,7 +63,7 @@ test.describe("CSRF protection", () => {
 
     // Create a standalone API context without automatic Origin.
     const apiContext = await playwright.request.newContext({
-      baseURL: "http://localhost:3000",
+      baseURL: APP_URL,
       extraHTTPHeaders: {
         "x-csrf-token": csrfCookie?.value ?? "",
         Cookie: `at=${atCookie?.value ?? ""}; csrf=${csrfCookie?.value ?? ""}`,

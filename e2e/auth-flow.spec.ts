@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN } from "./helpers/app-url";
 
 import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import { resetAccountDefaults } from "./helpers/setup-db";
@@ -121,7 +122,7 @@ test.describe("Auth flow screens (#131)", () => {
     const res = await page.request.post("/api/auth/sign-out", {
       headers: {
         "x-csrf-token": csrf,
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
     expect(res.status()).toBe(200);

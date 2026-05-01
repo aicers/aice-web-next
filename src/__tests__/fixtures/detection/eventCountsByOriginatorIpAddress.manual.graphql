@@ -1,0 +1,9 @@
+query EventCountsByOriginatorIpAddressManual(
+  $filter: EventListFilterInput!
+  $first: Int!
+) {
+  eventCountsByOriginatorIpAddress(filter: $filter, first: $first) {
+    values
+    counts
+  }
+}

@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN, APP_URL } from "./helpers/app-url";
 
 import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import {
@@ -57,7 +58,7 @@ test.describe("Preferences", () => {
       data: { locale: "ko" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -86,7 +87,7 @@ test.describe("Preferences", () => {
       data: { timezone: "Asia/Seoul" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -109,7 +110,7 @@ test.describe("Preferences", () => {
       data: { locale: "ko", timezone: "Asia/Seoul" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -133,7 +134,7 @@ test.describe("Preferences", () => {
       data: { locale: "xx" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -154,7 +155,7 @@ test.describe("Preferences", () => {
       data: { timezone: "Not/A/Zone" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -176,7 +177,7 @@ test.describe("Preferences", () => {
       data: { locale: "ko" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -185,7 +186,7 @@ test.describe("Preferences", () => {
       data: { locale: null },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -213,7 +214,7 @@ test.describe("Preferences", () => {
       data: { locale: "ko", timezone: "America/New_York" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -226,9 +227,7 @@ test.describe("Preferences", () => {
   });
 
   test("unauthenticated request returns 401", async ({ request }) => {
-    const res = await request.get(
-      "http://localhost:3000/api/accounts/me/preferences",
-    );
+    const res = await request.get(`${APP_URL}/api/accounts/me/preferences`);
     // withAuth redirects or returns 401/403
     expect([401, 403, 302]).toContain(res.status());
   });
@@ -344,7 +343,7 @@ test.describe("Preferences", () => {
       data: { locale: "ko" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -372,7 +371,7 @@ test.describe("Preferences", () => {
       data: { timezone: "America/New_York" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -396,7 +395,7 @@ test.describe("Preferences", () => {
     const csrfCookie = cookies.find((c) => c.name === "csrf");
     const csrfHeader = {
       "x-csrf-token": csrfCookie?.value ?? "",
-      Origin: "http://localhost:3000",
+      Origin: APP_ORIGIN,
     };
 
     // Set timezone to America/New_York and load audit logs

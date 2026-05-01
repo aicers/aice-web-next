@@ -1,17 +1,13 @@
 import type { Page } from "@playwright/test";
 
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN } from "./helpers/app-url";
 import { resetRateLimits } from "./helpers/auth";
 import {
   getSessionStatus,
   resetAccountDefaults,
   setMaxSessions,
 } from "./helpers/setup-db";
-
-const APP_URL = process.env.BASE_URL ?? "http://localhost:3000";
-// Next.js local CSRF origin checks still expect the canonical localhost
-// origin even when Playwright targets the app over 127.0.0.1.
-const APP_ORIGIN = APP_URL.replace("127.0.0.1", "localhost");
 
 function makeSignInViaApi(username: string, password: string) {
   return async (page: Page): Promise<void> => {

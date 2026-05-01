@@ -1,9 +1,8 @@
 import { expect, test } from "./fixtures";
 
+import { APP_URL } from "./helpers/app-url";
 import { resetRateLimits } from "./helpers/auth";
 import { resetAccountDefaults, revokeAllSessions } from "./helpers/setup-db";
-
-const APP_URL = process.env.BASE_URL ?? "http://localhost:3000";
 
 /**
  * Helper: sign in via the UI and wait until redirected away from sign-in.

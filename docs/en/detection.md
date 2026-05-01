@@ -1057,7 +1057,8 @@ start, surfacing an inline validation message.
 
 The **Network / IP** section carries a summary line and a funnel
 affordance. Activating the funnel opens the advanced Network/IP
-filter panel alongside the drawer so the drawer stays in view.
+drawer alongside the main filter drawer so the main drawer stays
+in view.
 
 ![Network/IP advanced filter](../assets/detection-endpoint-filter-en.png)
 

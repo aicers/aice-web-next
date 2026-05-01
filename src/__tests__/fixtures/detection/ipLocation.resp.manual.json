@@ -1,0 +1,11 @@
+{
+  "ipLocation": {
+    "latitude": 37.7749,
+    "longitude": -122.4194,
+    "country": "US",
+    "region": "California",
+    "city": "San Francisco",
+    "isp": "Edge Transit",
+    "domain": "mail.example.test"
+  }
+}

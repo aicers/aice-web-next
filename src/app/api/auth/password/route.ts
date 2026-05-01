@@ -84,7 +84,11 @@ export const POST = withAuth(
     const validation = await validatePassword(newPassword, session.accountId);
     if (!validation.valid) {
       return NextResponse.json(
-        { error: "Password policy violation", codes: validation.errors },
+        {
+          error: "Password policy violation",
+          codes: validation.errors,
+          errorParams: validation.errorParams,
+        },
         { status: 400 },
       );
     }

@@ -291,7 +291,7 @@ function buildInvestigationLabels(t: EventsTranslator) {
       title: t("payload.title"),
       description: t("payload.description"),
       size: t("payload.size"),
-      bytes: t("payload.bytes"),
+      bytes: t("payload.bytes", { count: "{count}" }),
       download: t("payload.download"),
       downloadName: t("payload.downloadName"),
     },
