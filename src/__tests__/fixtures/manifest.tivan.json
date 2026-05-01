@@ -1,0 +1,16 @@
+[
+  {
+    "operation": "config",
+    "query": "external/tivan/fetchConfig.graphql",
+    "fixture": "external/tivan/config.base.json"
+  },
+  {
+    "operation": "updateConfig",
+    "query": "external/tivan/updateConfig.graphql",
+    "fixture": "external/tivan/updateConfig.success.json",
+    "variables": {
+      "old": "{\"excelData\":null,\"graphqlSrvAddr\":\"127.0.0.1:38371\",\"originMitre\":null,\"translateMitre\":\"/srv/tivan/translate.json\"}",
+      "new": "{\"graphqlSrvAddr\":\"127.0.0.1:48371\",\"translateMitre\":\"/srv/tivan/translate-next.json\",\"excelData\":\"/srv/tivan/excel.xlsx\",\"originMitre\":\"/srv/tivan/origin.json\"}"
+    }
+  }
+]

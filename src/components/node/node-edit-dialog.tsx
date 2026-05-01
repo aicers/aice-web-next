@@ -157,6 +157,18 @@ function buildDefaultValues(
   return { values };
 }
 
+function buildBaselineSeedSignature(args: {
+  nodeId: string | null;
+  externalDrafts: Readonly<Record<string, string>>;
+  sensorOptions: readonly SensorNodeOption[];
+}): string {
+  return JSON.stringify({
+    nodeId: args.nodeId,
+    externalDrafts: args.externalDrafts,
+    sensorOptionIds: args.sensorOptions.map((option) => option.id),
+  });
+}
+
 export function NodeEditDialog({
   open,
   onOpenChange,
@@ -349,6 +361,44 @@ export function NodeEditDialog({
     }
     wasOpen.current = open;
   }, [open, initial, form]);
+
+  // The edit dialog's external applied baseline can legitimately land
+  // after the first client render (for example after a fresh RSC payload
+  // resolves, or when the parent rekeys the edit target with newly-fetched
+  // Giganto/Tivan config). Re-seed untouched fields from the latest
+  // baseline while preserving dirty user edits; otherwise metadata-only
+  // saves can be blocked by stale blank defaults on enabled externals.
+  const baselineSeedSignature = useMemo(
+    () =>
+      buildBaselineSeedSignature({
+        nodeId: baselineNode?.id ?? null,
+        externalDrafts: liveAppliedExternalDrafts,
+        sensorOptions: liveSensorOptions,
+      }),
+    [baselineNode?.id, liveAppliedExternalDrafts, liveSensorOptions],
+  );
+  const lastRebasedBaselineSeed = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open || mode !== "edit" || !baselineNode) return;
+    if (lastRebasedBaselineSeed.current === baselineSeedSignature) return;
+    lastRebasedBaselineSeed.current = baselineSeedSignature;
+    const next = buildDefaultValues(
+      baselineNode,
+      customers,
+      liveSensorOptions,
+      liveAppliedExternalDrafts,
+    ).values;
+    form.reset(next as never, { keepDirtyValues: true });
+  }, [
+    open,
+    mode,
+    baselineNode,
+    baselineSeedSignature,
+    customers,
+    liveSensorOptions,
+    liveAppliedExternalDrafts,
+    form,
+  ]);
 
   const refreshBaseline = useCallback(async (): Promise<{
     node: ManagerNode;
@@ -769,6 +819,12 @@ export function NodeEditDialog({
                           fresh.sensorOptions,
                           fresh.appliedExternalDrafts,
                         ).values;
+                        lastRebasedBaselineSeed.current =
+                          buildBaselineSeedSignature({
+                            nodeId: fresh.node.id,
+                            externalDrafts: fresh.appliedExternalDrafts,
+                            sensorOptions: fresh.sensorOptions,
+                          });
                         form.reset(next as never);
                         setStaleConflict(null);
                         setSubmitError(null);
@@ -856,6 +912,12 @@ export function NodeEditDialog({
                           fresh.sensorOptions,
                           fresh.appliedExternalDrafts,
                         ).values;
+                        lastRebasedBaselineSeed.current =
+                          buildBaselineSeedSignature({
+                            nodeId: fresh.node.id,
+                            externalDrafts: fresh.appliedExternalDrafts,
+                            sensorOptions: fresh.sensorOptions,
+                          });
                         form.reset(freshDefaults as never, {
                           keepDirtyValues: true,
                         });

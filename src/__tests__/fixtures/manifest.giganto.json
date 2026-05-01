@@ -1,0 +1,16 @@
+[
+  {
+    "operation": "config",
+    "query": "external/giganto/fetchConfig.graphql",
+    "fixture": "external/giganto/config.base.json"
+  },
+  {
+    "operation": "updateConfig",
+    "query": "external/giganto/updateConfig.graphql",
+    "fixture": "external/giganto/updateConfig.success.json",
+    "variables": {
+      "old": "{\"ackTransmission\":4,\"dataDir\":\"/srv/giganto/data\",\"exportDir\":\"/srv/giganto/export\",\"graphqlSrvAddr\":\"127.0.0.1:8444\",\"ingestSrvAddr\":\"127.0.0.1:38370\",\"maxMbOfLevelBase\":\"512\",\"maxOpenFiles\":4096,\"maxSubcompactions\":\"2\",\"numOfThread\":8,\"publishSrvAddr\":\"127.0.0.1:38371\",\"retention\":\"168h\"}",
+      "new": "{\"ackTransmission\":8,\"dataDir\":\"/srv/giganto/data-next\",\"exportDir\":\"/srv/giganto/export-next\",\"graphqlSrvAddr\":\"127.0.0.1:9444\",\"ingestSrvAddr\":\"127.0.0.1:48370\",\"maxMbOfLevelBase\":\"1024\",\"maxOpenFiles\":8192,\"maxSubcompactions\":\"4\",\"numOfThread\":16,\"publishSrvAddr\":\"127.0.0.1:48371\",\"retention\":\"336h\"}"
+    }
+  }
+]

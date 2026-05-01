@@ -243,6 +243,13 @@ describe("serviceTouchedByUser", () => {
     };
     expect(serviceTouchedByUser("sensor", dirty)).toBe(true);
   });
+
+  it("returns false when RHF leaves an empty object under the form bag", () => {
+    const dirty: DirtyMap = {
+      sensor: {} as unknown,
+    };
+    expect(serviceTouchedByUser("sensor", dirty)).toBe(false);
+  });
 });
 
 describe("buildDraftSubmission", () => {

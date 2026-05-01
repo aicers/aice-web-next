@@ -9,7 +9,7 @@ import {
 } from "@/components/node/apply-preview-modal";
 import enMessages from "@/i18n/messages/en.json";
 import type {
-  ApplyAttemptRow,
+  ApplyAttemptClientRow,
   CreateApplyAttemptResult,
   PlannedDispatch,
 } from "@/lib/node/apply-attempt-types";
@@ -58,16 +58,16 @@ function makePlanResult(attemptId: string): CreateApplyAttemptResult {
 function makeRow(
   attemptId: string,
   dispatches: PlannedDispatch[],
-  status: ApplyAttemptRow["status"],
-): ApplyAttemptRow {
+  status: ApplyAttemptClientRow["status"],
+): ApplyAttemptClientRow {
   return {
     attemptId,
     nodeId: "node-1",
-    draftFingerprint: Buffer.from("deadbeef", "hex"),
+    draftFingerprint: "deadbeef",
     plannedDispatches: dispatches,
     createdBy: "user",
-    createdAt: new Date(),
-    expiresAt: new Date("2099-12-31T23:59:59.999Z"),
+    createdAt: new Date().toISOString(),
+    expiresAt: "2099-12-31T23:59:59.999Z",
     executingLock: null,
     claimStartedAt: null,
     status,
@@ -564,16 +564,16 @@ describe("ApplyPreviewModal", () => {
       .fn<(args: { nodeId: string }) => Promise<CreateApplyAttemptResult>>()
       .mockResolvedValueOnce(makePlanResult(initialAttemptId))
       .mockResolvedValueOnce(makePlanResult(reopenedAttemptId));
-    let resolveStaleConfirm: ((row: ApplyAttemptRow) => void) | undefined;
+    let resolveStaleConfirm: ((row: ApplyAttemptClientRow) => void) | undefined;
     const staleSucceeded = makeDispatches().map((d) => ({
       ...d,
       state: "succeeded" as const,
     }));
     const confirm = vi
-      .fn<(args: { attemptId: string }) => Promise<ApplyAttemptRow>>()
+      .fn<(args: { attemptId: string }) => Promise<ApplyAttemptClientRow>>()
       .mockImplementationOnce(
         () =>
-          new Promise<ApplyAttemptRow>((resolve) => {
+          new Promise<ApplyAttemptClientRow>((resolve) => {
             resolveStaleConfirm = resolve;
           }),
       )
@@ -671,14 +671,14 @@ describe("ApplyPreviewModal", () => {
       .mockResolvedValue(
         makeRow(initialAttemptId, failedDispatches, "failed_retryable"),
       );
-    let resolveStaleRetry: ((row: ApplyAttemptRow) => void) | undefined;
+    let resolveStaleRetry: ((row: ApplyAttemptClientRow) => void) | undefined;
     const staleSucceeded = makeDispatches().map((d) => ({
       ...d,
       state: "succeeded" as const,
     }));
     const retry = vi.fn().mockImplementation(
       () =>
-        new Promise<ApplyAttemptRow>((resolve) => {
+        new Promise<ApplyAttemptClientRow>((resolve) => {
           resolveStaleRetry = resolve;
         }),
     );
@@ -877,14 +877,14 @@ describe("ApplyPreviewModal", () => {
     it("promotes only the first queued dispatch to in_flight while confirmApplyAttempt is pending", async () => {
       const attemptId = makeAttemptId("c");
       const create = vi.fn().mockResolvedValue(makePlanResult(attemptId));
-      let resolveConfirm: ((row: ApplyAttemptRow) => void) | undefined;
+      let resolveConfirm: ((row: ApplyAttemptClientRow) => void) | undefined;
       const succeededDispatches = makeDispatches().map((d) => ({
         ...d,
         state: "succeeded" as const,
       }));
       const confirm = vi.fn().mockImplementation(
         () =>
-          new Promise<ApplyAttemptRow>((resolve) => {
+          new Promise<ApplyAttemptClientRow>((resolve) => {
             resolveConfirm = resolve;
           }),
       );
@@ -949,10 +949,10 @@ describe("ApplyPreviewModal", () => {
         .mockResolvedValue(
           makeRow(attemptId, failedDispatches, "failed_retryable"),
         );
-      let resolveRetry: ((row: ApplyAttemptRow) => void) | undefined;
+      let resolveRetry: ((row: ApplyAttemptClientRow) => void) | undefined;
       const retry = vi.fn().mockImplementation(
         () =>
-          new Promise<ApplyAttemptRow>((resolve) => {
+          new Promise<ApplyAttemptClientRow>((resolve) => {
             resolveRetry = resolve;
           }),
       );
@@ -1009,14 +1009,14 @@ describe("ApplyPreviewModal", () => {
     it("Escape during execution does not close the modal; Escape after settling does", async () => {
       const attemptId = makeAttemptId("b");
       const create = vi.fn().mockResolvedValue(makePlanResult(attemptId));
-      let resolveConfirm: ((row: ApplyAttemptRow) => void) | undefined;
+      let resolveConfirm: ((row: ApplyAttemptClientRow) => void) | undefined;
       const succeededDispatches = makeDispatches().map((d) => ({
         ...d,
         state: "succeeded" as const,
       }));
       const confirm = vi.fn().mockImplementation(
         () =>
-          new Promise<ApplyAttemptRow>((resolve) => {
+          new Promise<ApplyAttemptClientRow>((resolve) => {
             resolveConfirm = resolve;
           }),
       );

@@ -83,11 +83,17 @@ both pre-test validation and live mock-server requests.
 ## Adding a fixture
 
 1. Drop a `.graphql` file describing the operation under
-   `src/__tests__/fixtures/<area>/`. It must parse against
-   `schemas/review.graphql`.
+   `src/__tests__/fixtures/<area>/`. It must parse against the vendored
+   schema for that area:
+   `schemas/review.graphql` for `detection/` and `node/`,
+   `schemas/giganto.graphql` for `external/giganto/`, and
+   `schemas/tivan.graphql` for `external/tivan/`.
 2. Drop a `.json` file beside it with the canned response, shaped like
    `{ "<rootField>": <data> }`.
-3. Append an entry to `src/__tests__/fixtures/manifest.json`:
+3. Append an entry to the schema-specific manifest:
+   `manifest.json` for REview fixtures,
+   `manifest.giganto.json` for Giganto fixtures, or
+   `manifest.tivan.json` for Tivan fixtures:
 
    ```json
    {
@@ -99,13 +105,14 @@ both pre-test validation and live mock-server requests.
    ```
 
 4. Both vitest's integration `globalSetup` and Playwright's `globalSetup`
-   call `runFixturePreflight()` before any test runs. The preflight does
-   five things:
+   call `runAllFixturePreflights()` before any test runs. The preflight does
+   five things per schema manifest:
    - **Coverage.** Every `.json` fixture and `.graphql` document under
-     `src/__tests__/fixtures/` must be declared in `manifest.json`. A
-     fixture JSON sitting in the tree but missing from the manifest
-     fails the preflight with an explicit error, so an author cannot
-     register an un-validated fixture over `/__admin/stubs` by accident.
+     the schema-owned fixture subtree must be declared in that schema's
+     manifest. A fixture JSON sitting in the tree but missing from the
+     relevant manifest fails the preflight with an explicit error, so an
+     author cannot register an un-validated fixture over `/__admin/stubs`
+     by accident.
    - **Consistency.** For each manifest entry, `entry.operation` must
      match a top-level field selected by `entry.query` (fragment spreads
      on the operation's root selection set are followed, so a document
@@ -187,7 +194,7 @@ strictly more specific and wins deterministically. Catch-alls (no
 `matchVariables`) are only consulted when no specific matcher fires.
 So a manifest where a catch-all entry follows a narrower entry still
 routes narrow requests to the narrow fixture — the order in which the
-entries appear in `manifest.json` is immaterial. The same specificity
+entries appear in a schema manifest is immaterial. The same specificity
 rule applies to admin-registered and in-process stubs. Ambiguous
 overlaps (same key count, neither strictly more specific) would tie at
 the top of the specific tier and fall through to registration order —
@@ -216,10 +223,10 @@ manifest without failing the coverage check.
 
 ## Stubbing a new GraphQL operation in the mock server
 
-Every entry in `manifest.json` is registered with the mock server at
-startup. When you need finer control (per-variables matching, error
-responses, multiple scenarios for one operation), use one of two paths
-depending on where your test runs.
+Every entry in the selected schema manifest is registered with the mock
+server at startup. When you need finer control (per-variables matching,
+error responses, multiple scenarios for one operation), use one of two
+paths depending on where your test runs.
 
 ### In-process (unit tests, or a mock you spin up yourself)
 
@@ -372,18 +379,20 @@ The admin endpoint accepts:
   manually.
 - `response`: either
   `{ kind: "fixture", fixture: "<path-relative-to-fixtures>" }` (the path
-  **must** be declared in `manifest.json` **for the same `operation` as
-  the request**) or `{ kind: "errors", errors: [{ message }] }`.
+  **must** be declared in the target server's schema manifest **for the
+  same `operation` as the request**) or
+  `{ kind: "errors", errors: [{ message }] }`.
 
 The admin allow-list is keyed by the `(fixture, operation)` pair from
-`manifest.json`, not just by raw path. A POST that references a declared
-path but pairs it with a different `operation` than the manifest records
-is rejected with HTTP 400, because preflight only executed that fixture
-against its manifest-declared operation's query document — registering it
-under a different operation would serve a payload the pre-test hook never
-validated. If a fixture legitimately needs to be served for more than one
-operation, add a manifest entry for each pair (the preflight will then
-run the JSON through each query document) before registering it.
+that server's schema manifest, not just by raw path. A POST that
+references a declared path but pairs it with a different `operation`
+than the manifest records is rejected with HTTP 400, because preflight
+only executed that fixture against its manifest-declared operation's
+query document. Registering it under a different operation would serve a
+payload the pre-test hook never validated. If a fixture legitimately
+needs to be served for more than one operation, add a manifest entry for
+each pair (the preflight will then run the JSON through each query
+document) before registering it.
 
 The admin wire format deliberately does **not** accept inline fixture
 JSON. Every fixture payload served to a running test has to come from a
@@ -408,12 +417,14 @@ worker has finished.
    for serialization rules).
 2. Use the helpers from `e2e/fixtures.ts` and `e2e/helpers/auth.ts` for
    per-worker accounts and sign-in.
-3. If your feature triggers a REview GraphQL call, register the
-   appropriate stub via `mockServerSession()` (see above). The server URL
-   is at `mockServerUrl()` from `e2e/mock-server-state.ts`. For purely
+3. If your feature triggers a REview, Giganto, or Tivan GraphQL call,
+   register the appropriate stub via `mockServerSession("<kind>")`
+   (see above). The server URL is at
+   `mockServerUrl("<kind>")` from `e2e/mock-server-state.ts`. For purely
    client-side features, no stub is necessary.
 4. Keep new fixtures in `src/__tests__/fixtures/<area>/` and add them to
-   `manifest.json` so the pre-test validator catches schema drift.
+   the matching schema manifest so the pre-test validator catches schema
+   drift.
 
 The harness ships exactly one Playwright spec — `harness.spec.ts` — that
 proves Playwright can launch a browser context, that the Next.js dev

@@ -249,6 +249,33 @@ describe("mock GraphQL server (unit)", () => {
     expect(result.errors?.[0]?.message).toMatch(/no stub registered/);
   });
 
+  it("preloads the schema-specific Giganto manifest when fixtureSchema='giganto'", async () => {
+    const isolated = await startMockServer({
+      port: 0,
+      fixtureSchema: "giganto",
+    });
+    try {
+      const result = await gql<{
+        config: { ingestSrvAddr: string; graphqlSrvAddr: string };
+      }>(
+        isolated.url,
+        `query FetchGigantoConfig {
+           config {
+             ingestSrvAddr
+             graphqlSrvAddr
+           }
+         }`,
+      );
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.config).toEqual({
+        ingestSrvAddr: "127.0.0.1:38370",
+        graphqlSrvAddr: "127.0.0.1:8444",
+      });
+    } finally {
+      await isolated.close();
+    }
+  });
+
   it("routes to the stub via a fragment spread on the root selection", async () => {
     // Schema-valid documents can hide their root field behind a fragment
     // spread (`query Q { ...RootFields } fragment RootFields on Query { ...
@@ -422,6 +449,33 @@ describe("mock GraphQL server (unit)", () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as { error?: string };
         expect(body.error).toMatch(/not declared in .*manifest\.json/);
+      } finally {
+        await isolated.close();
+      }
+    });
+
+    it("rejects a cross-schema fixture on a schema-specific server", async () => {
+      const isolated = await startMockServer({
+        port: 0,
+        loadManifest: false,
+        fixtureSchema: "giganto",
+      });
+      const adminUrl = `${isolated.url.replace("/graphql", "")}/__admin/stubs`;
+      try {
+        const res = await fetch(adminUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operation: "config",
+            response: {
+              kind: "fixture",
+              fixture: "external/tivan/config.base.json",
+            },
+          }),
+        });
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { error?: string };
+        expect(body.error).toMatch(/not declared in .*manifest\.giganto\.json/);
       } finally {
         await isolated.close();
       }

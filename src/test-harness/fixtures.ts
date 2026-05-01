@@ -14,9 +14,19 @@ import {
   validate,
 } from "graphql";
 
-import { loadReviewSchema } from "./schema";
+import { type FixtureSchemaName, loadReviewSchema, loadSchema } from "./schema";
 
 const FIXTURES_ROOT = resolve(__dirname, "../__tests__/fixtures");
+const MANIFEST_FILES: Record<FixtureSchemaName, string> = {
+  review: "manifest.json",
+  giganto: "manifest.giganto.json",
+  tivan: "manifest.tivan.json",
+};
+const COVERAGE_PREFIXES: Record<FixtureSchemaName, readonly string[]> = {
+  review: ["detection/", "node/"],
+  giganto: ["external/giganto/"],
+  tivan: ["external/tivan/"],
+};
 
 export interface FixtureManifestEntry {
   /** Operation name (matches the field on Query/Mutation root). */
@@ -42,6 +52,24 @@ export interface FixtureManifestEntry {
    * the admin endpoint at request time.
    */
   variables?: Record<string, unknown>;
+}
+
+export interface FixtureManifestOptions {
+  schemaName?: FixtureSchemaName;
+}
+
+function manifestPath(schemaName: FixtureSchemaName): string {
+  return resolve(FIXTURES_ROOT, MANIFEST_FILES[schemaName]);
+}
+
+function shouldCheckManifestPath(
+  relPath: string,
+  schemaName: FixtureSchemaName,
+): boolean {
+  if (relPath === MANIFEST_FILES[schemaName]) return false;
+  return COVERAGE_PREFIXES[schemaName].some((prefix) =>
+    relPath.startsWith(prefix),
+  );
 }
 
 export function fixturesRoot(): string {
@@ -138,12 +166,16 @@ export function validateManifest(
 }
 
 export function readManifest(): FixtureManifestEntry[] {
-  const manifestPath = resolve(FIXTURES_ROOT, "manifest.json");
-  const raw = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
+  return readManifestForSchema("review");
+}
+
+export function readManifestForSchema(
+  schemaName: FixtureSchemaName,
+): FixtureManifestEntry[] {
+  const fullPath = manifestPath(schemaName);
+  const raw = JSON.parse(readFileSync(fullPath, "utf8")) as unknown;
   if (!Array.isArray(raw)) {
-    throw new Error(
-      `Fixture manifest at ${manifestPath} must be a JSON array.`,
-    );
+    throw new Error(`Fixture manifest at ${fullPath} must be a JSON array.`);
   }
   return raw as FixtureManifestEntry[];
 }
@@ -211,7 +243,10 @@ function toPosixRel(full: string): string {
  */
 export function checkManifestCoverage(
   manifest: readonly FixtureManifestEntry[],
+  options: FixtureManifestOptions = {},
 ): string[] {
+  const schemaName = options.schemaName ?? "review";
+  const manifestFile = MANIFEST_FILES[schemaName];
   const failures: string[] = [];
   const declaredFixtures = new Set<string>();
   const declaredQueries = new Set<string>();
@@ -222,13 +257,13 @@ export function checkManifestCoverage(
 
   for (const full of listFixtureFilesByExt(".json")) {
     const rel = toPosixRel(full);
-    if (rel === "manifest.json") continue;
+    if (!shouldCheckManifestPath(rel, schemaName)) continue;
     if (isNegativeFixture(rel)) continue;
     if (!declaredFixtures.has(rel)) {
       failures.push(
-        `Fixture ${rel} is not declared in manifest.json. Every JSON ` +
+        `Fixture ${rel} is not declared in ${manifestFile}. Every JSON ` +
           "fixture must have a manifest entry so the pre-test hook validates " +
-          "it against schemas/review.graphql. Deliberately-invalid fixtures " +
+          `it against schemas/${schemaName}.graphql. Deliberately-invalid fixtures ` +
           "must use the `.malformed.json` suffix.",
       );
     }
@@ -236,12 +271,12 @@ export function checkManifestCoverage(
 
   for (const full of listFixtureFilesByExt(".graphql")) {
     const rel = toPosixRel(full);
+    if (!shouldCheckManifestPath(rel, schemaName)) continue;
     if (isNegativeFixture(rel)) continue;
     if (!declaredQueries.has(rel)) {
       failures.push(
         `Query document ${rel} is not referenced by any manifest entry. ` +
-          "Every .graphql document must be paired with a fixture in " +
-          "manifest.json.",
+          `Every .graphql document must be paired with a fixture in ${manifestFile}.`,
       );
     }
   }
@@ -623,12 +658,35 @@ export function checkManifestDuplicates(
 export function runFixturePreflight(
   manifest: readonly FixtureManifestEntry[],
   schema: GraphQLSchema = loadReviewSchema(),
+  options: FixtureManifestOptions = {},
 ): string[] {
   return [
-    ...checkManifestCoverage(manifest),
+    ...checkManifestCoverage(manifest, options),
     ...checkManifestConsistency(manifest),
     ...checkManifestCatchAllSafety(manifest),
     ...checkManifestDuplicates(manifest),
     ...validateManifest(manifest, schema),
   ];
+}
+
+export function readAllFixtureManifests(): Record<
+  FixtureSchemaName,
+  FixtureManifestEntry[]
+> {
+  return {
+    review: readManifestForSchema("review"),
+    giganto: readManifestForSchema("giganto"),
+    tivan: readManifestForSchema("tivan"),
+  };
+}
+
+export function runAllFixturePreflights(): string[] {
+  const manifests = readAllFixtureManifests();
+  return (
+    Object.entries(manifests) as Array<
+      [FixtureSchemaName, FixtureManifestEntry[]]
+    >
+  ).flatMap(([schemaName, manifest]) =>
+    runFixturePreflight(manifest, loadSchema(schemaName), { schemaName }),
+  );
 }

@@ -49,6 +49,25 @@ describe("gigantoConfigToToml", () => {
     expect(parsed.max_subcompactions).toBe(2);
     expect(parsed.ack_transmission).toBe(1024);
   });
+
+  it("normalizes hour-based Giganto retention into the dialog's supported day unit", () => {
+    const config: GigantoConfig = {
+      ingestSrvAddr: "10.0.0.1:38370",
+      publishSrvAddr: "10.0.0.1:38371",
+      graphqlSrvAddr: "10.0.0.1:8443",
+      retention: "168h",
+      exportDir: "/opt/clumit/var/data_store/export",
+      dataDir: "/opt/clumit/var/data_store",
+      maxOpenFiles: 8000,
+      maxMbOfLevelBase: "512",
+      numOfThread: 8,
+      maxSubcompactions: "2",
+      ackTransmission: 1024,
+    };
+    const toml = gigantoConfigToToml(config);
+    const parsed = fromToml(toml);
+    expect(parsed.retention).toBe("7d");
+  });
 });
 
 describe("tivanConfigToToml", () => {

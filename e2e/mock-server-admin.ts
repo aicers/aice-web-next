@@ -4,7 +4,7 @@ import { Agent, fetch as undiciFetch } from "undici";
 
 import type { AdminStubRequest } from "../src/test-harness/mock-server";
 
-import { mockServerUrl } from "./mock-server-state";
+import { type MockServerKind, mockServerUrl } from "./mock-server-state";
 
 /**
  * HTTP client for the mock-server's `/__admin/stubs` endpoint. Specs run in
@@ -52,8 +52,8 @@ import { mockServerUrl } from "./mock-server-state";
 
 let cachedAgent: Agent | null = null;
 
-function adminBase(): string {
-  return `${mockServerUrl().replace(/\/graphql$/, "")}/__admin/stubs`;
+function adminBase(kind: MockServerKind): string {
+  return `${mockServerUrl(kind).replace(/\/graphql$/, "")}/__admin/stubs`;
 }
 
 function adminAgent(): Agent | undefined {
@@ -75,8 +75,11 @@ function adminAgent(): Agent | undefined {
   return cachedAgent;
 }
 
-export async function registerStub(req: AdminStubRequest): Promise<void> {
-  const res = await undiciFetch(adminBase(), {
+export async function registerStub(
+  req: AdminStubRequest,
+  kind: MockServerKind = "review",
+): Promise<void> {
+  const res = await undiciFetch(adminBase(kind), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -100,9 +103,16 @@ export async function registerStub(req: AdminStubRequest): Promise<void> {
  *   without touching other specs' state.
  */
 export async function clearStubs(opts?: { scope?: string }): Promise<void> {
+  await clearStubsFor("review", opts);
+}
+
+export async function clearStubsFor(
+  kind: MockServerKind,
+  opts?: { scope?: string },
+): Promise<void> {
   const url = opts?.scope
-    ? `${adminBase()}?scope=${encodeURIComponent(opts.scope)}`
-    : adminBase();
+    ? `${adminBase(kind)}?scope=${encodeURIComponent(opts.scope)}`
+    : adminBase(kind);
   const res = await undiciFetch(url, {
     method: "DELETE",
     dispatcher: adminAgent(),
@@ -116,6 +126,7 @@ export async function clearStubs(opts?: { scope?: string }): Promise<void> {
 }
 
 export interface MockServerSession {
+  kind: MockServerKind;
   /** Unique scope token tagging every stub this session registers. */
   scope: string;
   /** Register a stub scoped to this session. `scope` is filled in for you. */
@@ -125,12 +136,14 @@ export interface MockServerSession {
 }
 
 export function mockServerSession(
+  kind: MockServerKind = "review",
   scope: string = randomUUID(),
 ): MockServerSession {
   return {
+    kind,
     scope,
-    registerStub: (req) => registerStub({ ...req, scope }),
-    clear: () => clearStubs({ scope }),
+    registerStub: (req) => registerStub({ ...req, scope }, kind),
+    clear: () => clearStubsFor(kind, { scope }),
   };
 }
 

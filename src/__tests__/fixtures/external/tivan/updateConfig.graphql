@@ -1,0 +1,8 @@
+mutation UpdateTivanConfig($old: String!, $new: String!) {
+  updateConfig(old: $old, new: $new) {
+    graphqlSrvAddr
+    translateMitre
+    excelData
+    originMitre
+  }
+}

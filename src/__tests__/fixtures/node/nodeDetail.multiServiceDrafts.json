@@ -1,0 +1,39 @@
+{
+  "node": {
+    "id": "41",
+    "name": "beta-node",
+    "nameDraft": null,
+    "profile": {
+      "customerId": "1",
+      "description": "Secondary analysis cluster",
+      "hostname": "beta.lan"
+    },
+    "profileDraft": null,
+    "agents": [
+      {
+        "node": 41,
+        "key": "beta-sensor",
+        "kind": "SENSOR",
+        "status": "ENABLED",
+        "config": "dpdk_args = \"\"\ndpdk_inputs = [\"0000:00:1f.6\"]\ndpdk_outputs = [\"0000:00:1f.6\"]\nsrc_mac = \"00:00:00:00:00:00\"\ndst_mac = \"00:00:00:00:00:00\"\ndump_dir = \"/opt/clumit/var/sensor\"\nlog_path = \"/opt/clumit/log/sensor.log\"\ngiganto_ingest_srv_addr = \"10.0.0.2:38370\"\ngiganto_name = \"beta-store\"\npcap_max_size = 1000\nprotocols = [\"http\", \"ssh\"]\nhttp_ports = [80]\nhttps_ports = [443]\nssh_ports = [22]\nftp_ports = [21]\ndump_items = [\"pcap\"]\ndump_http_content_types = [\"pdf\"]\n",
+        "draft": null
+      }
+    ],
+    "externalServices": [
+      {
+        "node": 41,
+        "key": "beta-data-store",
+        "kind": "DATA_STORE",
+        "status": "ENABLED",
+        "draft": "{\"ackTransmission\":8,\"dataDir\":\"/srv/giganto/data-next\",\"exportDir\":\"/srv/giganto/export-next\",\"graphqlSrvAddr\":\"127.0.0.1:9444\",\"ingestSrvAddr\":\"127.0.0.1:48370\",\"maxMbOfLevelBase\":\"1024\",\"maxOpenFiles\":8192,\"maxSubcompactions\":\"4\",\"numOfThread\":16,\"publishSrvAddr\":\"127.0.0.1:48371\",\"retention\":\"336h\"}"
+      },
+      {
+        "node": 41,
+        "key": "beta-ti-container",
+        "kind": "TI_CONTAINER",
+        "status": "ENABLED",
+        "draft": "{\"graphqlSrvAddr\":\"127.0.0.1:48371\",\"translateMitre\":\"/srv/tivan/translate-next.json\",\"excelData\":\"/srv/tivan/excel.xlsx\",\"originMitre\":\"/srv/tivan/origin.json\"}"
+      }
+    ]
+  }
+}

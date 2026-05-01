@@ -190,7 +190,11 @@ export function serviceTouchedByUser(
   const prefix = PREFIX_BY_REGISTRY_KIND[registryKind];
   if (!prefix) return false;
   const formDirty = dirtyFields[prefix];
-  return !!formDirty;
+  if (!formDirty) return false;
+  if (typeof formDirty === "object") {
+    return Object.keys(formDirty).length > 0;
+  }
+  return true;
 }
 
 /**

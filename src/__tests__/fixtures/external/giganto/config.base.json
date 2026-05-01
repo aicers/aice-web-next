@@ -1,0 +1,15 @@
+{
+  "config": {
+    "ingestSrvAddr": "127.0.0.1:38370",
+    "publishSrvAddr": "127.0.0.1:38371",
+    "graphqlSrvAddr": "127.0.0.1:8444",
+    "retention": "168h",
+    "exportDir": "/srv/giganto/export",
+    "dataDir": "/srv/giganto/data",
+    "maxOpenFiles": 4096,
+    "maxMbOfLevelBase": "512",
+    "numOfThread": 8,
+    "maxSubcompactions": "2",
+    "ackTransmission": 4
+  }
+}

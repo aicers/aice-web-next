@@ -1,0 +1,8 @@
+query FetchTivanConfig {
+  config {
+    graphqlSrvAddr
+    translateMitre
+    excelData
+    originMitre
+  }
+}

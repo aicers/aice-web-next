@@ -1,0 +1,8 @@
+{
+  "config": {
+    "graphqlSrvAddr": "127.0.0.1:38371",
+    "translateMitre": "/srv/tivan/translate.json",
+    "excelData": null,
+    "originMitre": null
+  }
+}

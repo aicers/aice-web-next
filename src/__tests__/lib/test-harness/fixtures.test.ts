@@ -13,10 +13,14 @@ import {
   extractRootFieldNames,
   loadFixtureJson,
   loadQueryDocument,
+  readAllFixtureManifests,
   readManifest,
+  readManifestForSchema,
+  runAllFixturePreflights,
   runFixturePreflight,
   validateManifest,
 } from "@/test-harness/fixtures";
+import { loadGigantoSchema, loadTivanSchema } from "@/test-harness/schema";
 
 describe("fixture loader + schema-backed validator", () => {
   it("the manifest validates cleanly against schemas/review.graphql", () => {
@@ -24,6 +28,16 @@ describe("fixture loader + schema-backed validator", () => {
     expect(manifest.length).toBeGreaterThan(0);
     const failures = validateManifest(manifest);
     expect(failures).toEqual([]);
+  });
+
+  it("the giganto and tivan manifests validate cleanly against their vendored schemas", () => {
+    const gigantoManifest = readManifestForSchema("giganto");
+    const tivanManifest = readManifestForSchema("tivan");
+
+    expect(gigantoManifest.length).toBeGreaterThan(0);
+    expect(tivanManifest.length).toBeGreaterThan(0);
+    expect(validateManifest(gigantoManifest, loadGigantoSchema())).toEqual([]);
+    expect(validateManifest(tivanManifest, loadTivanSchema())).toEqual([]);
   });
 
   it("rejects a deliberately malformed fixture", () => {
@@ -62,6 +76,19 @@ describe("fixture loader + schema-backed validator", () => {
     expect(checkManifestCoverage(manifest)).toEqual([]);
   });
 
+  it("checkManifestCoverage passes for the shipped giganto and tivan manifests", () => {
+    expect(
+      checkManifestCoverage(readManifestForSchema("giganto"), {
+        schemaName: "giganto",
+      }),
+    ).toEqual([]);
+    expect(
+      checkManifestCoverage(readManifestForSchema("tivan"), {
+        schemaName: "tivan",
+      }),
+    ).toEqual([]);
+  });
+
   it("checkManifestCoverage flags a fixture that is missing from the manifest", () => {
     // Simulate the bug the reviewer described: a fixture JSON lands in the
     // tree but its manifest entry is forgotten, so the admin endpoint could
@@ -86,9 +113,39 @@ describe("fixture loader + schema-backed validator", () => {
     ).toBe(true);
   });
 
+  it("runAllFixturePreflights validates every schema manifest", () => {
+    const manifests = readAllFixtureManifests();
+    expect(manifests.review.length).toBeGreaterThan(0);
+    expect(manifests.giganto.length).toBeGreaterThan(0);
+    expect(manifests.tivan.length).toBeGreaterThan(0);
+    expect(runAllFixturePreflights()).toEqual([]);
+  });
+
   it("checkManifestConsistency passes for the shipped manifest", () => {
     const manifest = readManifest();
     expect(checkManifestConsistency(manifest)).toEqual([]);
+  });
+
+  it("preflight rejects a fixture paired with the wrong schema manifest", () => {
+    const failures = runFixturePreflight(
+      [
+        {
+          operation: "config",
+          query: "external/giganto/fetchConfig.graphql",
+          fixture: "external/giganto/config.base.json",
+        },
+      ],
+      loadTivanSchema(),
+      { schemaName: "tivan" },
+    );
+    expect(failures.length).toBeGreaterThan(0);
+    expect(
+      failures.some(
+        (failure) =>
+          /Cannot query field "ingestSrvAddr"/.test(failure) ||
+          /Field "config" must not have a selection/.test(failure),
+      ),
+    ).toBe(true);
   });
 
   it("checkManifestConsistency flags an operation that does not match the query root", () => {

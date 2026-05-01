@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
@@ -9,25 +11,39 @@ import { mockServerUrl } from "./mock-server-state";
 // Build webServer.env: only set values that are explicitly provided
 // via environment variables (e.g., from CI). Omitted keys let Next.js
 // fall back to .env.local for local development.
+function readEnvLocalValue(key: string): string | undefined {
+  try {
+    const envFile = readFileSync(resolve(__dirname, "../.env.local"), "utf8");
+    const match = envFile.match(new RegExp(`^${key}=(.+)$`, "m"));
+    return match?.[1]?.trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveEnvValue(key: string): string | undefined {
+  return process.env[key] ?? readEnvLocalValue(key);
+}
+
 function buildEnv(): Record<string, string> {
   const env: Record<string, string> = {};
 
-  const keys = [
-    "DATABASE_URL",
-    "DATABASE_ADMIN_URL",
-    "AUDIT_DATABASE_URL",
-    "DATA_DIR",
-    "CSRF_SECRET",
-    "INIT_ADMIN_USERNAME",
-    "INIT_ADMIN_PASSWORD",
-    "DEFAULT_LOCALE",
-  ] as const;
-
-  for (const key of keys) {
-    if (process.env[key]) {
-      env[key] = process.env[key];
-    }
-  }
+  env.DATABASE_URL =
+    resolveEnvValue("DATABASE_URL") ??
+    "postgres://postgres:postgres@localhost:5432/auth_db";
+  env.DATABASE_ADMIN_URL =
+    resolveEnvValue("DATABASE_ADMIN_URL") ??
+    "postgres://postgres:postgres@localhost:5432/postgres";
+  env.AUDIT_DATABASE_URL =
+    resolveEnvValue("AUDIT_DATABASE_URL") ??
+    "postgres://audit_writer:changeme@localhost:5432/audit_db";
+  env.CSRF_SECRET =
+    resolveEnvValue("CSRF_SECRET") ??
+    "integration-test-csrf-secret-at-least-32-chars!!";
+  env.INIT_ADMIN_USERNAME = resolveEnvValue("INIT_ADMIN_USERNAME") ?? "admin";
+  env.INIT_ADMIN_PASSWORD =
+    resolveEnvValue("INIT_ADMIN_PASSWORD") ?? "Admin1234!";
+  env.DEFAULT_LOCALE = resolveEnvValue("DEFAULT_LOCALE") ?? "en";
 
   // Point the dev server at the mock REview GraphQL endpoint that
   // global-setup.ts brings up. The mock is served over HTTPS + mTLS using
@@ -35,7 +51,9 @@ function buildEnv(): Record<string, string> {
   // mTLS code path in src/lib/mtls.ts (no bypass involved — the bypass's
   // NODE_ENV gate is unreachable from `next dev`, since `next dev` forces
   // NODE_ENV=development).
-  env.REVIEW_GRAPHQL_ENDPOINT = mockServerUrl();
+  env.REVIEW_GRAPHQL_ENDPOINT = mockServerUrl("review");
+  env.GIGANTO_GRAPHQL_ENDPOINT = mockServerUrl("giganto");
+  env.TIVAN_GRAPHQL_ENDPOINT = mockServerUrl("tivan");
 
   // The mock server is an HTTPS + mTLS endpoint. Generate (or reuse)
   // short-lived test certs now — before webServer starts — so the dev
@@ -49,6 +67,10 @@ function buildEnv(): Record<string, string> {
   // env.DATA_DIR so the dev server inherits the same value.
   const dataDir = resolveDataDir();
   env.DATA_DIR = dataDir;
+  execFileSync(process.execPath, [resolve(__dirname, "generate-key.mjs")], {
+    env: { ...process.env, DATA_DIR: dataDir },
+    stdio: "inherit",
+  });
   const certs = ensureTestCerts(resolve(dataDir, "certs"));
   env.MTLS_CA_PATH = certs.paths.caPath;
   env.MTLS_CERT_PATH = certs.paths.clientCertPath;

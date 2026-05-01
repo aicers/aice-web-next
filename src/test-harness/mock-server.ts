@@ -21,9 +21,15 @@ import {
   extractRootFieldNames,
   type FixtureManifestEntry,
   loadFixtureJson,
-  readManifest,
+  readManifestForSchema,
 } from "./fixtures";
-import { loadReviewSchema } from "./schema";
+import { type FixtureSchemaName, loadReviewSchema, loadSchema } from "./schema";
+
+const MANIFEST_FILE_NAMES: Record<FixtureSchemaName, string> = {
+  review: "manifest.json",
+  giganto: "manifest.giganto.json",
+  tivan: "manifest.tivan.json",
+};
 
 interface PostBody {
   query?: unknown;
@@ -195,10 +201,12 @@ export class StubRegistry {
  *
  * The admin endpoint deliberately does **not** accept inline fixture JSON.
  * Every fixture payload served to a running test must come from a file
- * under `src/__tests__/fixtures/` that is declared in `manifest.json`, so
- * the pre-test preflight covers it against the vendored schema. Inline
- * data would bypass that validation entirely. Specs that need ad-hoc error
- * responses can still use `{ kind: "errors", ... }`.
+ * under `src/__tests__/fixtures/` that is declared in the schema-specific
+ * manifest (`manifest.json`, `manifest.giganto.json`, or
+ * `manifest.tivan.json`), so the pre-test preflight covers it against the
+ * vendored schema. Inline data would bypass that validation entirely.
+ * Specs that need ad-hoc error responses can still use
+ * `{ kind: "errors", ... }`.
  */
 export interface AdminStubRequest {
   operation: string;
@@ -233,7 +241,9 @@ export interface MockServerOptions {
   registry?: StubRegistry;
   /** Override the schema (used by tests). Defaults to the vendored REview schema. */
   schema?: GraphQLSchema;
-  /** Pre-load fixtures from `src/__tests__/fixtures/manifest.json`. Default: true. */
+  /** Which fixture manifest + default schema this server should use. */
+  fixtureSchema?: FixtureSchemaName;
+  /** Pre-load fixtures from the schema-specific manifest. Default: true. */
   loadManifest?: boolean;
   /**
    * Enable HTTPS + mTLS. When set, the server presents the given cert and
@@ -282,10 +292,13 @@ function formatErrors(errors: readonly GraphQLError[]): { message: string }[] {
   return errors.map((e) => ({ message: e.message }));
 }
 
-function preloadManifestStubs(registry: StubRegistry): void {
+function preloadManifestStubs(
+  registry: StubRegistry,
+  fixtureSchema: FixtureSchemaName,
+): void {
   let manifest: FixtureManifestEntry[];
   try {
-    manifest = readManifest();
+    manifest = readManifestForSchema(fixtureSchema);
   } catch {
     return;
   }
@@ -328,26 +341,29 @@ function buildMatcher(req: AdminStubRequest): StubMatcher {
 function resolveAdminStub(
   req: AdminStubRequest,
   declaredFixtures: Map<string, Set<string>>,
+  fixtureSchema: FixtureSchemaName,
 ): StubResolver {
   if (req.response.kind === "errors") return req.response;
   if (req.response.kind === "connectionFailure") return req.response;
   const path = req.response.fixture;
   const declaredOps = declaredFixtures.get(path);
   if (!declaredOps) {
+    const manifestFile = MANIFEST_FILE_NAMES[fixtureSchema];
     throw new Error(
-      `fixture '${path}' is not declared in src/__tests__/fixtures/manifest.json. ` +
+      `fixture '${path}' is not declared in src/__tests__/fixtures/${manifestFile}. ` +
         "Admin-registered fixture stubs must reference manifest-declared " +
         "fixture files so the pre-test preflight validates them against " +
-        "schemas/review.graphql.",
+        `schemas/${fixtureSchema}.graphql.`,
     );
   }
   if (!declaredOps.has(req.operation)) {
+    const manifestFile = MANIFEST_FILE_NAMES[fixtureSchema];
     const declaredList = [...declaredOps]
       .map((o) => `'${o}'`)
       .sort()
       .join(", ");
     throw new Error(
-      `fixture '${path}' is declared in manifest.json for operation(s) ` +
+      `fixture '${path}' is declared in ${manifestFile} for operation(s) ` +
         `${declaredList}, but the admin request registers it under ` +
         `'${req.operation}'. The admin endpoint keys fixture payloads by ` +
         "manifest metadata, not raw path, so a mismatch would serve a " +
@@ -366,10 +382,12 @@ function resolveAdminStub(
  * POSTed `operation` must be one of the operations the fixture was
  * preflight-validated against.
  */
-function readDeclaredFixtures(): Map<string, Set<string>> {
+function readDeclaredFixturesForSchema(
+  fixtureSchema: FixtureSchemaName,
+): Map<string, Set<string>> {
   try {
     const map = new Map<string, Set<string>>();
-    for (const entry of readManifest()) {
+    for (const entry of readManifestForSchema(fixtureSchema)) {
       const ops = map.get(entry.fixture) ?? new Set<string>();
       ops.add(entry.operation);
       map.set(entry.fixture, ops);
@@ -392,6 +410,7 @@ async function handleAdminStubs(
   method: string,
   registry: StubRegistry,
   declaredFixtures: Map<string, Set<string>>,
+  fixtureSchema: FixtureSchemaName,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -435,7 +454,7 @@ async function handleAdminStubs(
   }
   try {
     const matcher = buildMatcher(parsed);
-    const resolver = resolveAdminStub(parsed, declaredFixtures);
+    const resolver = resolveAdminStub(parsed, declaredFixtures, fixtureSchema);
     registry.register(matcher, resolver, parsed.scope);
   } catch (err) {
     jsonResponse(res, 400, { error: (err as Error).message });
@@ -451,15 +470,22 @@ async function handleAdminStubs(
 export async function startMockServer(
   opts: MockServerOptions = {},
 ): Promise<RunningMockServer> {
+  const fixtureSchema = opts.fixtureSchema ?? "review";
   const registry = opts.registry ?? new StubRegistry();
-  if (opts.loadManifest !== false) preloadManifestStubs(registry);
-  const schema = opts.schema ?? loadReviewSchema();
+  if (opts.loadManifest !== false) {
+    preloadManifestStubs(registry, fixtureSchema);
+  }
+  const schema =
+    opts.schema ??
+    (fixtureSchema === "review"
+      ? loadReviewSchema()
+      : loadSchema(fixtureSchema));
   const adminEnabled = opts.admin !== false;
   // Always built from the manifest, even when `loadManifest: false` — this
   // is the allow-list the admin endpoint checks against, not the preload
   // source. Isolating the registry from the manifest preload should not
   // also disable preflight-backed fixture enforcement.
-  const declaredFixtures = readDeclaredFixtures();
+  const declaredFixtures = readDeclaredFixturesForSchema(fixtureSchema);
 
   const handler = async (
     req: IncomingMessage,
@@ -478,6 +504,7 @@ export async function startMockServer(
         req.method ?? "GET",
         registry,
         declaredFixtures,
+        fixtureSchema,
         req,
         res,
       );

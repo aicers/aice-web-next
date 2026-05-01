@@ -1,12 +1,21 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
 
-import { readManifest, runFixturePreflight } from "../test-harness/fixtures";
+import {
+  readAllFixtureManifests,
+  runAllFixturePreflights,
+} from "../test-harness/fixtures";
 import {
   type RunningMockServer,
   startMockServer,
@@ -57,8 +66,9 @@ async function ensureJwtSigningKey(): Promise<void> {
   publicJwk.kid = kid;
 
   mkdirSync(keysDir, { recursive: true });
+  const tmpPath = `${keyPath}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(
-    keyPath,
+    tmpPath,
     JSON.stringify(
       { kid, algorithm: "ES256", privateKey: privateJwk, publicKey: publicJwk },
       null,
@@ -66,6 +76,7 @@ async function ensureJwtSigningKey(): Promise<void> {
     ),
     "utf8",
   );
+  renameSync(tmpPath, keyPath);
 }
 
 async function waitForServer(url: string, timeoutMs: number): Promise<void> {
@@ -97,8 +108,8 @@ let serverProcess: ChildProcess | undefined;
 let mockServer: RunningMockServer | undefined;
 
 function preflightFixtures(): void {
-  const manifest = readManifest();
-  const failures = runFixturePreflight(manifest);
+  const manifests = readAllFixtureManifests();
+  const failures = runAllFixturePreflights();
   if (failures.length > 0) {
     throw new Error(
       "Fixture preflight failed (schema validation or manifest coverage):\n\n" +
@@ -106,9 +117,9 @@ function preflightFixtures(): void {
     );
   }
   console.log(
-    `[integration] Validated ${manifest.length} fixture(s) against ` +
-      "schemas/review.graphql and confirmed manifest coverage of the " +
-      "fixtures tree",
+    `[integration] Validated ${manifests.review.length + manifests.giganto.length + manifests.tivan.length} fixture(s) ` +
+      "across schemas/review.graphql, schemas/giganto.graphql, and " +
+      "schemas/tivan.graphql and confirmed manifest coverage of the fixtures tree",
   );
 }
 
@@ -169,6 +180,10 @@ export async function setup(): Promise<() => Promise<void>> {
     MTLS_CERT_PATH: certs.paths.clientCertPath,
     MTLS_KEY_PATH: certs.paths.clientKeyPath,
   };
+
+  for (const [key, value] of Object.entries(env)) {
+    process.env[key] = value;
+  }
 
   // Never reuse an existing server. A process already bound to SERVER_URL
   // has its own env and will not have received the harness-controlled

@@ -3,6 +3,16 @@ import "server-only";
 import { type TomlEntries, toToml } from "./toml";
 import type { GigantoConfig, TivanConfig } from "./types";
 
+function normalizeGigantoRetention(retention: string): string {
+  const hours = /^(\d+)h$/.exec(retention);
+  if (!hours) return retention;
+  const totalHours = Number(hours[1]);
+  if (Number.isFinite(totalHours) && totalHours % 24 === 0) {
+    return `${totalHours / 24}d`;
+  }
+  return retention;
+}
+
 /**
  * Convert a structured `GigantoConfig` (Giganto's `config` GraphQL
  * query) into the flat TOML wire shape the Data Store form's
@@ -26,7 +36,7 @@ export function gigantoConfigToToml(config: GigantoConfig): string {
     ["ingest_srv_addr", config.ingestSrvAddr],
     ["publish_srv_addr", config.publishSrvAddr],
     ["graphql_srv_addr", config.graphqlSrvAddr],
-    ["retention", config.retention],
+    ["retention", normalizeGigantoRetention(config.retention)],
     ["data_dir", config.dataDir],
     ["export_dir", config.exportDir],
     ["max_open_files", config.maxOpenFiles],
