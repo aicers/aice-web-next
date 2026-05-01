@@ -107,6 +107,16 @@ async function cleanupOrphanedCustomerRows(): Promise<void> {
   await adminClient.connect();
 
   try {
+    const customerTable = await authClient.query<{ oid: string | null }>(
+      "SELECT to_regclass('public.customers') AS oid",
+    );
+    if (!customerTable.rows[0]?.oid) {
+      console.log(
+        "[e2e] Skipping orphaned customer cleanup because auth_db is not initialized yet",
+      );
+      return;
+    }
+
     const { rows } = await authClient.query<{
       id: number;
       database_name: string;

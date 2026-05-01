@@ -14,6 +14,16 @@ await authClient.connect();
 await adminClient.connect();
 
 try {
+  const customerTable = await authClient.query(
+    "SELECT to_regclass('public.customers') AS oid",
+  );
+  if (!customerTable.rows[0]?.oid) {
+    console.log(
+      "[e2e] Skipping orphaned customer cleanup because auth_db is not initialized yet",
+    );
+    process.exit(0);
+  }
+
   const { rows } = await authClient.query(
     `SELECT id, database_name
        FROM customers
