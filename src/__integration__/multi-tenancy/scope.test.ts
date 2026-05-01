@@ -36,11 +36,29 @@
  *         is rejected", not "every successful path is exercised".
  *         Optional `cleanupAfterSuccess` runs after each 2xx so
  *         mutation rows don't leak fixture state into later runs.
+ *       - Optional `personaUsernames` overrides the sign-in user for
+ *         a persona slot (the persona label in the test name stays
+ *         `account-A` / `account-B` so the matrix shape is uniform).
+ *         Used by rows whose route requires a permission the base
+ *         tenant role doesn't carry (`customers:write`,
+ *         `customers:delete`, `accounts:delete`) so the request
+ *         actually reaches the tenant-scope branch instead of being
+ *         short-circuited at the permission gate. The override
+ *         personas (`manager-A` / `manager-B`) are seeded with a
+ *         tenant-administrator-style role: tenant scope plus the
+ *         elevated permissions, but no `customers:access-all`.
  *
  *   - `admin-only`:
  *       - account-A and account-B: 4xx (typically 403 — neither holds
  *         the operation's permission).
  *       - admin: success status declared on the row.
+ *       - Reserved for routes with no tenant-scope branch at all
+ *         (e.g. POST /api/customers — there is no customer to be
+ *         in/out of scope of). Routes that DO have a scope branch
+ *         but require an elevated permission to reach it use
+ *         `mutation-scope` with `personaUsernames` so the regression
+ *         guard actually exercises the scope check, not just the
+ *         permission gate.
  *
  * The audit-log and customer rows are the regression tests for #386
  * and #387; the accounts rows cover the post-#387 customer-scoped
@@ -91,25 +109,73 @@ import {
 const TEST_PREFIX = "Integ-Scope-";
 const ROLE_NAME = "integ-scope-tenant";
 // Security Monitor-equivalent role used as the **target role** by the
-// `POST /api/accounts` row. Listed under the same `integ-scope-`
-// prefix so the suite cleanup picks it up via `deleteRolesByPrefix`.
+// `POST /api/accounts` row, and also as the role assigned to the
+// `monitor-target-A` / `-B` accounts that the `DELETE /api/accounts/[id]`
+// row deletes (the route requires the target role to be tenant-
+// manageable, i.e. monitor-equivalent). Listed under the same
+// `integ-scope-` prefix so the suite cleanup picks it up via
+// `deleteRolesByPrefix`.
 const MONITOR_ROLE_NAME = "integ-scope-monitor";
+// Tenant-administrator-style role used by the `manager-A` / `-B`
+// personas. Carries the elevated permissions
+// (`customers:write` / `customers:delete` / `accounts:delete`) that
+// the rows for `PATCH /api/customers/[id]`,
+// `DELETE /api/customers/[id]`, and `DELETE /api/accounts/[id]` need
+// the caller to hold so the request reaches the route's tenant-scope
+// check. Crucially, no `customers:access-all` — that's what makes the
+// scope check fire.
+const MANAGER_ROLE_NAME = "integ-scope-manager";
 
 const ACCOUNT_A_USERNAME = "integ-scope-account-a";
 const ACCOUNT_B_USERNAME = "integ-scope-account-b";
+// Manager personas — same `accounts:write`, `accounts:read`,
+// `customers:read`, `audit-logs:read` as the tenant role, plus
+// `customers:write`, `customers:delete`, `accounts:delete`. Customer
+// scope: A on customer-A, B on customer-B (mirrors the tenant fixture).
+const MANAGER_A_USERNAME = "integ-scope-manager-a";
+const MANAGER_B_USERNAME = "integ-scope-manager-b";
+// Monitor-target accounts used as the **target** of the
+// `DELETE /api/accounts/[id]` row. The route's
+// `validateManagedAccountTarget` rejects targets whose role is not
+// tenant-manageable (i.e. anything outside the Security Monitor
+// allow-list), so the tenant accounts above can't be the deletion
+// target. These two accounts hold the monitor role and are linked to
+// customer-A / customer-B respectively so the manager personas can
+// reach the scope branch.
+const MONITOR_TARGET_A_USERNAME = "integ-scope-monitor-target-a";
+const MONITOR_TARGET_B_USERNAME = "integ-scope-monitor-target-b";
 const COMMON_PASSWORD = "ScopeMatrix1234!";
 
 interface Resources {
   customerAId: number;
   customerBId: number;
   /**
-   * Customer with no account assignments. Used by the
-   * `DELETE /api/customers/[id]` row, since the route refuses to drop
-   * a customer that still has linked accounts.
+   * Customer with no account assignments. Used by the admin in-scope
+   * variant of the `DELETE /api/customers/[id]` row, since the route
+   * refuses to drop a customer that still has linked accounts.
    */
   customerOrphanId: number;
   accountAId: string;
   accountBId: string;
+  /**
+   * Manager personas — non-`access-all` callers carrying
+   * `customers:write` / `customers:delete` / `accounts:delete`. Used
+   * by the rows that need a non-admin caller to reach the route's
+   * tenant-scope branch (`PATCH /api/customers/[id]`,
+   * `DELETE /api/customers/[id]` out-of-scope variant,
+   * `DELETE /api/accounts/[id]`). Manager-A is scoped to customer-A,
+   * manager-B to customer-B.
+   */
+  managerAId: string;
+  managerBId: string;
+  /**
+   * Monitor-equivalent target accounts deleted by the
+   * `DELETE /api/accounts/[id]` row. Linked to customer-A / customer-B
+   * respectively so the manager personas can reach the scope branch
+   * (in-scope → 200, out-of-scope → 404 from `validateManagedAccountTarget`).
+   */
+  monitorTargetAId: string;
+  monitorTargetBId: string;
   /**
    * Role id for a Security Monitor-equivalent role (only allow-listed
    * read permissions). Used as the **target role** by the
@@ -202,6 +268,21 @@ interface MutationEndpoint {
     accountA: PersonaMutationVariants;
     accountB: PersonaMutationVariants;
     admin: PersonaMutationVariants;
+  };
+  /**
+   * Optional per-persona sign-in override. Defaults to the suite's
+   * `account-A` / `account-B` / `admin` usernames; rows whose route
+   * requires a permission the tenant role doesn't carry (e.g.
+   * `customers:write`, `customers:delete`, `accounts:delete`) override
+   * the `accountA` / `accountB` slots to the manager personas so the
+   * request reaches the route's tenant-scope branch. The persona
+   * label in the test name stays `account-A` / `account-B` so the
+   * matrix shape stays uniform.
+   */
+  personaUsernames?: {
+    accountA?: string;
+    accountB?: string;
+    admin?: string;
   };
   /**
    * Optional post-success cleanup. Fired after every 2xx mutation so
@@ -303,34 +384,114 @@ const ENDPOINTS: Endpoint[] = [
     }),
     expects: "200-on-in-scope-404-on-out-of-scope",
   },
+  // PATCH /api/customers/[id] — needs `customers:write`. The route's
+  // tenant scope check fires for any non-`access-all` caller; a
+  // regression that drops the check would let a tenant edit a
+  // customer they have no scope on. The base tenant role doesn't
+  // carry `customers:write`, so the row uses the manager personas
+  // (which do) — that's how the request actually reaches the scope
+  // branch instead of being rejected at the permission gate.
   {
     name: "PATCH /api/customers/[id]",
     method: "PATCH",
-    expects: "admin-only",
+    expects: "mutation-scope",
+    personaUsernames: {
+      accountA: MANAGER_A_USERNAME,
+      accountB: MANAGER_B_USERNAME,
+    },
     request: (r) => ({
-      path: `/api/customers/${r.customerOrphanId}`,
-      body: { description: `${TEST_PREFIX}admin-only-patched` },
+      accountA: {
+        inScope: {
+          path: `/api/customers/${r.customerAId}`,
+          body: { description: `${TEST_PREFIX}manager-a-in` },
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/customers/${r.customerBId}`,
+          body: { description: `${TEST_PREFIX}manager-a-out` },
+          expectStatus: 404,
+        },
+      },
+      accountB: {
+        inScope: {
+          path: `/api/customers/${r.customerBId}`,
+          body: { description: `${TEST_PREFIX}manager-b-in` },
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/customers/${r.customerAId}`,
+          body: { description: `${TEST_PREFIX}manager-b-out` },
+          expectStatus: 404,
+        },
+      },
+      admin: {
+        inScope: {
+          path: `/api/customers/${r.customerAId}`,
+          body: { description: `${TEST_PREFIX}admin-a` },
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/customers/${r.customerBId}`,
+          body: { description: `${TEST_PREFIX}admin-b` },
+          expectStatus: 200,
+        },
+      },
     }),
-    adminSuccessStatus: 200,
     cleanupAfterSuccess: async (r, adminSession) => {
-      // Restore the description to its original empty state so
-      // re-runs don't drift the fixture.
-      await authPatch(adminSession, `/api/customers/${r.customerOrphanId}`, {
+      // Restore both customers' descriptions to their original empty
+      // state so re-runs against a long-lived dev DB stay stable.
+      await authPatch(adminSession, `/api/customers/${r.customerAId}`, {
+        description: null,
+      });
+      await authPatch(adminSession, `/api/customers/${r.customerBId}`, {
         description: null,
       });
     },
   },
+  // DELETE /api/customers/[id] — needs `customers:delete`. Same
+  // reasoning as PATCH above for using the manager personas. The
+  // tenant in-scope path is intentionally NOT exercised because the
+  // route is structurally unreachable for tenants: the scope check
+  // requires the caller to be linked to the customer
+  // (`account_customer` row exists) and the next gate
+  // (`Cannot delete customer with active account assignments`)
+  // refuses any customer with at least one link — so a non-
+  // `access-all` caller cannot pass both gates on the same customer.
+  // The regression-meaningful path for tenants is the out-of-scope
+  // 404; for admin we exercise the orphan-customer in-scope success
+  // (cleanup recreates the orphan).
   {
     name: "DELETE /api/customers/[id]",
     method: "DELETE",
-    expects: "admin-only",
-    request: (r) => ({ path: `/api/customers/${r.customerOrphanId}` }),
-    adminSuccessStatus: 200,
+    expects: "mutation-scope",
+    personaUsernames: {
+      accountA: MANAGER_A_USERNAME,
+      accountB: MANAGER_B_USERNAME,
+    },
+    request: (r) => ({
+      accountA: {
+        outOfScope: {
+          path: `/api/customers/${r.customerBId}`,
+          expectStatus: 404,
+        },
+      },
+      accountB: {
+        outOfScope: {
+          path: `/api/customers/${r.customerAId}`,
+          expectStatus: 404,
+        },
+      },
+      admin: {
+        inScope: {
+          path: `/api/customers/${r.customerOrphanId}`,
+          expectStatus: 200,
+        },
+      },
+    }),
     cleanupAfterSuccess: async (r) => {
       // The admin success deletes the orphan customer. Recreate it so
       // the fixture state is consistent for re-runs against a
-      // long-lived dev DB. The id changes, but the matrix doesn't
-      // re-read `r.customerOrphanId` after this row runs.
+      // long-lived dev DB.
       await deleteCustomersByPrefix(`${TEST_PREFIX}Orphan`);
       r.customerOrphanId = await createCustomerRow(`${TEST_PREFIX}Orphan`);
     },
@@ -504,18 +665,63 @@ const ENDPOINTS: Endpoint[] = [
       },
     }),
   },
-  // DELETE /api/accounts/[id] — admin-only because tenant role lacks
-  // `accounts:delete`. The admin success disables account-A; the
-  // cleanup re-enables it so subsequent rows / re-runs aren't broken.
+  // DELETE /api/accounts/[id] — needs `accounts:delete`, AND the
+  // target's role must be tenant-manageable (Security Monitor-
+  // equivalent) for the non-admin path to clear
+  // `validateManagedAccountTarget`'s role-policy gate. Manager
+  // personas hold `accounts:delete`; the deletion targets are the
+  // dedicated monitor-target accounts (not the tenant accounts above,
+  // which have non-monitor permissions and would 403 at the role-
+  // policy gate before the scope check). With those in place the
+  // route reaches the scope branch: in-scope (overlap with target's
+  // customer) → 200, out-of-scope (no overlap) → 404. Admin holds
+  // `customers:access-all`, so both variants succeed; cleanup
+  // re-enables both monitor targets.
   {
     name: "DELETE /api/accounts/[id]",
     method: "DELETE",
-    expects: "admin-only",
-    request: (r) => ({ path: `/api/accounts/${r.accountAId}` }),
-    adminSuccessStatus: 200,
-    nonAdminStatuses: [403],
+    expects: "mutation-scope",
+    personaUsernames: {
+      accountA: MANAGER_A_USERNAME,
+      accountB: MANAGER_B_USERNAME,
+    },
+    request: (r) => ({
+      accountA: {
+        inScope: {
+          path: `/api/accounts/${r.monitorTargetAId}`,
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/accounts/${r.monitorTargetBId}`,
+          expectStatus: 404,
+        },
+      },
+      accountB: {
+        inScope: {
+          path: `/api/accounts/${r.monitorTargetBId}`,
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/accounts/${r.monitorTargetAId}`,
+          expectStatus: 404,
+        },
+      },
+      admin: {
+        inScope: {
+          path: `/api/accounts/${r.monitorTargetAId}`,
+          expectStatus: 200,
+        },
+        outOfScope: {
+          path: `/api/accounts/${r.monitorTargetBId}`,
+          expectStatus: 200,
+        },
+      },
+    }),
     cleanupAfterSuccess: async () => {
-      await setAccountStatus(ACCOUNT_A_USERNAME, "active", null);
+      // Re-enable both monitor targets so the subsequent variants /
+      // re-runs see them in their original active state.
+      await setAccountStatus(MONITOR_TARGET_A_USERNAME, "active", null);
+      await setAccountStatus(MONITOR_TARGET_B_USERNAME, "active", null);
     },
   },
   // ── accounts mutation surface ──────────────────────────────────
@@ -860,6 +1066,10 @@ describe("Cross-customer scope matrix", () => {
     // Clean up any prior state.
     await deleteTestAccount(ACCOUNT_A_USERNAME);
     await deleteTestAccount(ACCOUNT_B_USERNAME);
+    await deleteTestAccount(MANAGER_A_USERNAME);
+    await deleteTestAccount(MANAGER_B_USERNAME);
+    await deleteTestAccount(MONITOR_TARGET_A_USERNAME);
+    await deleteTestAccount(MONITOR_TARGET_B_USERNAME);
     await dropAccountsByUsernamePrefix(`${TEST_PREFIX}created`.toLowerCase());
     await deleteTestRole(ROLE_NAME);
     await deleteRolesByPrefix("integ-scope-");
@@ -871,18 +1081,41 @@ describe("Cross-customer scope matrix", () => {
     // and the admin-bypass rows on password-reset / unlock /
     // mfa-reset from a non-admin caller. No `customers:access-all`,
     // `customers:write`, `customers:delete`, or `accounts:delete` —
-    // those gate the admin-only assertions.
+    // those are carried by the manager role below so the
+    // PATCH /api/customers/[id], DELETE /api/customers/[id], and
+    // DELETE /api/accounts/[id] rows reach the route's tenant scope
+    // branch instead of being short-circuited at the permission gate.
     await createTestRole(
       ROLE_NAME,
       ["customers:read", "audit-logs:read", "accounts:read", "accounts:write"],
       "Integration scope-matrix tenant role",
     );
 
-    // Security Monitor-equivalent role used as the **target role** for
-    // `POST /api/accounts`. Permissions must all be drawn from the
-    // monitor allow-list in `account-role-policy.ts` so
-    // `tenantManageable` is true; otherwise the route's step-3 gate
-    // shorts the tenant's request before the customer-scope check.
+    // Manager (tenant administrator-style) role: tenant role +
+    // `customers:write`, `customers:delete`, `accounts:delete`. No
+    // `customers:access-all` — that's what makes the route-level scope
+    // checks fire.
+    await createTestRole(
+      MANAGER_ROLE_NAME,
+      [
+        "customers:read",
+        "customers:write",
+        "customers:delete",
+        "audit-logs:read",
+        "accounts:read",
+        "accounts:write",
+        "accounts:delete",
+      ],
+      "Integration scope-matrix manager (tenant-admin) role",
+    );
+
+    // Security Monitor-equivalent role used as (a) the **target role**
+    // for `POST /api/accounts` and (b) the role assigned to the
+    // monitor-target accounts deleted by `DELETE /api/accounts/[id]`.
+    // Permissions must all be drawn from the monitor allow-list in
+    // `account-role-policy.ts` so `tenantManageable` is true;
+    // otherwise the route's step-3 gate shorts the tenant's request
+    // before the customer-scope check.
     const monitorRoleId = await createTestRole(
       MONITOR_ROLE_NAME,
       ["audit-logs:read"],
@@ -895,11 +1128,39 @@ describe("Cross-customer scope matrix", () => {
 
     await createTestAccount(ACCOUNT_A_USERNAME, COMMON_PASSWORD, ROLE_NAME);
     await createTestAccount(ACCOUNT_B_USERNAME, COMMON_PASSWORD, ROLE_NAME);
+    await createTestAccount(
+      MANAGER_A_USERNAME,
+      COMMON_PASSWORD,
+      MANAGER_ROLE_NAME,
+    );
+    await createTestAccount(
+      MANAGER_B_USERNAME,
+      COMMON_PASSWORD,
+      MANAGER_ROLE_NAME,
+    );
+    await createTestAccount(
+      MONITOR_TARGET_A_USERNAME,
+      COMMON_PASSWORD,
+      MONITOR_ROLE_NAME,
+    );
+    await createTestAccount(
+      MONITOR_TARGET_B_USERNAME,
+      COMMON_PASSWORD,
+      MONITOR_ROLE_NAME,
+    );
 
     const accountAId = await getAccountId(ACCOUNT_A_USERNAME);
     const accountBId = await getAccountId(ACCOUNT_B_USERNAME);
+    const managerAId = await getAccountId(MANAGER_A_USERNAME);
+    const managerBId = await getAccountId(MANAGER_B_USERNAME);
+    const monitorTargetAId = await getAccountId(MONITOR_TARGET_A_USERNAME);
+    const monitorTargetBId = await getAccountId(MONITOR_TARGET_B_USERNAME);
     await assignCustomerToAccount(accountAId, customerAId);
     await assignCustomerToAccount(accountBId, customerBId);
+    await assignCustomerToAccount(managerAId, customerAId);
+    await assignCustomerToAccount(managerBId, customerBId);
+    await assignCustomerToAccount(monitorTargetAId, customerAId);
+    await assignCustomerToAccount(monitorTargetBId, customerBId);
 
     const auditLogARowId = await insertAuditLog({
       actorId: accountAId,
@@ -929,6 +1190,10 @@ describe("Cross-customer scope matrix", () => {
       customerOrphanId,
       accountAId,
       accountBId,
+      managerAId,
+      managerBId,
+      monitorTargetAId,
+      monitorTargetBId,
       monitorRoleId,
       auditLogARowId,
       auditLogBRowId,
@@ -941,6 +1206,8 @@ describe("Cross-customer scope matrix", () => {
     await revokeAllSessions(ADMIN_USERNAME);
     await revokeAllSessions(ACCOUNT_A_USERNAME);
     await revokeAllSessions(ACCOUNT_B_USERNAME);
+    await revokeAllSessions(MANAGER_A_USERNAME);
+    await revokeAllSessions(MANAGER_B_USERNAME);
   });
 
   afterAll(async () => {
@@ -959,14 +1226,24 @@ describe("Cross-customer scope matrix", () => {
     // affected because we filter by actor_id, not by action.
     await deleteAuditLogsByActor(resources.accountAId);
     await deleteAuditLogsByActor(resources.accountBId);
+    await deleteAuditLogsByActor(resources.managerAId);
+    await deleteAuditLogsByActor(resources.managerBId);
 
-    for (const username of [ACCOUNT_A_USERNAME, ACCOUNT_B_USERNAME]) {
+    for (const username of [
+      ACCOUNT_A_USERNAME,
+      ACCOUNT_B_USERNAME,
+      MANAGER_A_USERNAME,
+      MANAGER_B_USERNAME,
+      MONITOR_TARGET_A_USERNAME,
+      MONITOR_TARGET_B_USERNAME,
+    ]) {
       const id = await getAccountId(username).catch(() => null);
       if (id) await removeAccountCustomerAssignments(id);
       await deleteTestAccount(username);
     }
     await dropAccountsByUsernamePrefix(`${TEST_PREFIX}created`.toLowerCase());
     await deleteTestRole(ROLE_NAME);
+    await deleteTestRole(MANAGER_ROLE_NAME);
     await deleteTestRole(MONITOR_ROLE_NAME);
     await deleteCustomersByPrefix(TEST_PREFIX);
   });
@@ -1071,14 +1348,24 @@ describe("Cross-customer scope matrix", () => {
         });
       } else if (endpoint.expects === "mutation-scope") {
         const mutation = endpoint;
+        const overrides = mutation.personaUsernames ?? {};
 
         const personaCases: Array<{
           persona: Persona;
           username: string;
         }> = [
-          { persona: "account-A", username: ACCOUNT_A_USERNAME },
-          { persona: "account-B", username: ACCOUNT_B_USERNAME },
-          { persona: "admin", username: ADMIN_USERNAME },
+          {
+            persona: "account-A",
+            username: overrides.accountA ?? ACCOUNT_A_USERNAME,
+          },
+          {
+            persona: "account-B",
+            username: overrides.accountB ?? ACCOUNT_B_USERNAME,
+          },
+          {
+            persona: "admin",
+            username: overrides.admin ?? ADMIN_USERNAME,
+          },
         ];
 
         for (const c of personaCases) {

@@ -463,7 +463,7 @@ assertions for its `expects` mode:
   declares an optional `inScope` and `outOfScope` variant. The
   harness fires only the variants that are defined and asserts the
   response status equals the variant's `expectStatus` (typically 2xx
-  in-scope, 403 out-of-scope for non-admins; 2xx for both for
+  in-scope, 403 / 404 out-of-scope for non-admins; 2xx for both for
   admin). Routes whose tenant in-scope path would mutate fixture
   state we don't want to restore on every run (e.g.
   password-reset, mfa-reset) declare only the tenant `outOfScope`
@@ -471,9 +471,48 @@ assertions for its `expects` mode:
   "out-of-scope is rejected", not "every successful path is
   exercised". An optional `cleanupAfterSuccess` hook resets fixture
   state after each 2xx so mutations don't leak between runs.
+  - **Persona overrides.** A row whose route requires a permission
+    the base tenant role doesn't carry (`customers:write`,
+    `customers:delete`, `accounts:delete`) sets
+    `personaUsernames: { accountA: MANAGER_A_USERNAME, accountB:
+    MANAGER_B_USERNAME }`. The harness signs in those personas as
+    the **manager** accounts (a non-`access-all` "tenant-
+    administrator" role that holds the elevated permissions) so the
+    request reaches the route's tenant-scope branch instead of being
+    short-circuited at the permission gate. The persona label in
+    the test name stays `account-A` / `account-B` so the matrix
+    shape stays uniform; only the sign-in user changes. This is the
+    pattern used by `PATCH /api/customers/[id]`,
+    `DELETE /api/customers/[id]`, and `DELETE /api/accounts/[id]`.
+  - **Targets that need a tenant-manageable role.** The
+    `DELETE /api/accounts/[id]` row deletes the dedicated
+    `monitor-target-A` / `-B` accounts (Security Monitor-equivalent
+    role) rather than the tenant accounts, because
+    `validateManagedAccountTarget` rejects targets whose role is
+    not tenant-manageable with 403 before the scope check ever
+    runs. Use the same pattern for any future route that calls
+    `validateManagedAccountTarget` and needs the scope branch
+    exercised.
+  - **Structurally unreachable in-scope paths.** A few routes
+    intentionally leave the tenant `inScope` variant undefined
+    because the success path is blocked by a separate gate
+    downstream of the scope check. `DELETE /api/customers/[id]` is
+    the canonical case: the scope check requires the caller's
+    `account_customer` link to exist, but the next gate
+    (`Cannot delete customer with active account assignments`)
+    refuses any customer with at least one link, so a
+    non-`access-all` caller cannot pass both gates on the same
+    customer. The `outOfScope` 404 is the regression-meaningful
+    assertion for tenants; the admin in-scope variant covers the
+    success path against an orphan customer.
 - `admin-only` — account-A and account-B are rejected (default
   `nonAdminStatuses: [401, 403]`); admin succeeds with the row's
-  declared `adminSuccessStatus`.
+  declared `adminSuccessStatus`. Reserve this mode for routes that
+  have **no** tenant-scope branch at all (e.g. `POST /api/customers`
+  — there is no customer to be in/out of scope of). For routes that
+  do have a scope branch but only allow elevated callers to reach
+  it, use `mutation-scope` with `personaUsernames` so the regression
+  guard actually exercises the scope check.
 
 **Adding a new customer-scoped endpoint is a one-line change** to
 `ENDPOINTS`. Pick the appropriate `expects` mode, fill in the
