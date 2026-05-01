@@ -53,6 +53,9 @@ plugins:
             Settings: 설정
             Customer Scope: 고객사 범위
 
+markdown_extensions:
+  - attr_list
+
 extra_css:
   - styles/lists.css
   - styles/pdf.css

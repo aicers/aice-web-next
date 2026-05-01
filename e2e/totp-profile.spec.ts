@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import * as OTPAuth from "otpauth";
 
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN } from "./helpers/app-url";
 import { resetRateLimits, signIn, signInAndWait } from "./helpers/auth";
 import {
   deleteMfaChallenges,
@@ -240,7 +241,7 @@ test.describe("TOTP profile management (#205)", () => {
     await page.request.post("/api/auth/sign-out", {
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -338,7 +339,7 @@ test.describe("TOTP profile management (#205)", () => {
       headers: {
         "Content-Type": "application/json",
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
       data: { value: { allowed_methods: ["webauthn"] } },
     });
@@ -359,7 +360,7 @@ test.describe("TOTP profile management (#205)", () => {
         headers: {
           "Content-Type": "application/json",
           "x-csrf-token": csrfCookie?.value ?? "",
-          Origin: "http://localhost:3000",
+          Origin: APP_ORIGIN,
         },
         data: { value: { allowed_methods: ["webauthn", "totp"] } },
       });
@@ -383,7 +384,7 @@ test.describe("TOTP profile management (#205)", () => {
       headers: {
         "Content-Type": "application/json",
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
       data: { value: { allowed_methods: ["webauthn"] } },
     });
@@ -427,7 +428,7 @@ test.describe("TOTP profile management (#205)", () => {
         headers: {
           "Content-Type": "application/json",
           "x-csrf-token": csrfCookie?.value ?? "",
-          Origin: "http://localhost:3000",
+          Origin: APP_ORIGIN,
         },
         data: { value: { allowed_methods: ["webauthn", "totp"] } },
       });
@@ -468,7 +469,7 @@ test.describe("TOTP profile management (#205)", () => {
       headers: {
         "Content-Type": "application/json",
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
       data: { value: { allowed_methods: ["webauthn"] } },
     });
@@ -489,7 +490,7 @@ test.describe("TOTP profile management (#205)", () => {
         headers: {
           "Content-Type": "application/json",
           "x-csrf-token": csrfCookie?.value ?? "",
-          Origin: "http://localhost:3000",
+          Origin: APP_ORIGIN,
         },
         data: { value: { allowed_methods: ["webauthn", "totp"] } },
       });

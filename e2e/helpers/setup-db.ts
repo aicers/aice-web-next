@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import argon2 from "argon2";
 import pg from "pg";
 
+import { APP_URL } from "./app-url";
+
 /**
  * Load DATABASE_URL: prefer process.env, then parse .env.local.
  */
@@ -664,9 +666,8 @@ export async function setMfaPolicyAllowedMethods(
  * global teardown).
  */
 export async function resetMfaPolicy(): Promise<void> {
-  const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
   try {
-    const res = await fetch(`${baseUrl}/api/e2e/reset-mfa-policy`, {
+    const res = await fetch(`${APP_URL}/api/e2e/reset-mfa-policy`, {
       method: "POST",
     });
     if (res.ok) return;

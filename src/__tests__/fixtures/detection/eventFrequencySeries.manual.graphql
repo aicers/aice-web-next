@@ -1,0 +1,6 @@
+query EventFrequencySeriesManual(
+  $filter: EventListFilterInput!
+  $period: Int!
+) {
+  eventFrequencySeries(filter: $filter, period: $period)
+}

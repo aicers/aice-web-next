@@ -43,7 +43,7 @@ that:
 
 - The wireframe is placed in `docs/assets/` alongside the
   would-be PNG, using the matching filename with an `.svg`
-  suffix (e.g., `event-investigation-en.svg`).
+  suffix (e.g., `feature-state-en.svg`).
 - EN and KO pages each carry their own localized wireframe so
   language parity is preserved.
 - The page body explicitly tags the figure as a wireframe
@@ -226,8 +226,16 @@ underlying data is shared between the two figures.
 
 Detection captures use a **1440×900 desktop viewport** in **dark
 mode**. Set `localStorage.theme = "gray-dark"` before the first
-render so the chrome is dark from frame zero. Every PNG must use
-the same dimensions so figures line up across pages.
+render so the chrome is dark from frame zero. Full-page and
+full-surface captures keep that shared viewport; tightly focused
+component figures (for example the left-rail close-ups) may crop
+to the relevant region after the page is rendered in that
+viewport.
+
+For Detection docs, dark mode is mandatory rather than a stylistic
+preference. Reviewers should treat a light-mode Detection capture
+the same way they would treat a missing screenshot: the docs are
+not ready to merge until the figure is re-captured in dark mode.
 
 ### Filename convention
 
@@ -252,8 +260,12 @@ Before opening a Detection PR with new screenshots:
 
 - [ ] EN and KO PNGs exist for every figure the page references,
       with matching filenames and equivalent captured state.
-- [ ] Each PNG was captured at 1440×900, dark theme, against the
-      local-REview procedure above.
+- [ ] Each PNG was captured at 1440×900 in dark theme. REview-backed
+      list / analytics / investigation figures must come either from
+      the local-REview procedure above or from the maintained
+      Playwright fixture flow that reproduces those populated states;
+      deterministic client-side figures may be captured from the
+      local mocked flow.
 - [ ] No personally identifiable information, no developer
       machine artefacts (open IDE windows in the background,
       personal browser bookmarks, etc.) appear in any frame.
@@ -262,18 +274,35 @@ Before opening a Detection PR with new screenshots:
 
 ### Automation reference
 
-A reusable Playwright harness lives at
-`docs/scripts/capture-detection-screenshots.mjs`. It is
-Detection-specific today but is the canonical example to copy
-when adding a sibling capture script for another feature that
-needs this procedure. Sibling scripts belong under the same
-`docs/scripts/` directory so that adding or updating one keeps
-the change docs-only as far as CI's paths filter is concerned.
-It logs in, sets dark theme, walks each of the captures listed
-above, and writes the resulting PNGs into `docs/assets/`. Use it
-as a starting point when adding new Detection sections; the
-script's locale-aware selectors are the canonical source of
-truth for which strings drive the capture flow.
+The maintained Detection capture flow lives in the Playwright
+specs:
+
+- `e2e/detection-screenshots.spec.ts` for deterministic,
+  client-rendered surfaces (drawer, customer picker, save dialog,
+  and both rails).
+- `e2e/detection-manual-dynamic-screenshots.spec.ts` for the
+  REview-backed list, analytics, Quick peek, CSV export, pivot,
+  and Event Investigation captures. It replays fixed fixture data
+  so the populated states are reproducible on any machine after the
+  fixture set has been refreshed from the local REview dataset.
+
+Run them with:
+
+```sh
+DETECTION_MANUAL_CAPTURE_ONLY=1 \
+pnpm exec playwright test --config=e2e/playwright.config.ts \
+  e2e/detection-screenshots.spec.ts \
+  e2e/detection-manual-dynamic-screenshots.spec.ts
+```
+
+That environment flag swaps Playwright into a dedicated capture-only
+project graph so the command above does not fan out into the rest of
+the E2E matrix.
+
+The older one-off scripts under `docs/scripts/` remain as
+historical references, but they are no longer the canonical
+capture path and do not cover the full Detection inventory on
+their own.
 
 ### Language parity
 

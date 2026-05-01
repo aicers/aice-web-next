@@ -118,7 +118,22 @@ test.describe("Role management — UI", () => {
 
     await dialog.locator("#perm-customers\\:read").click();
 
+    const updateRequest = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PATCH" &&
+        /\/api\/roles\/\d+$/.test(response.url()),
+    );
     await dialog.getByRole("button", { name: "Edit" }).click();
+    const updateResponse = await updateRequest;
+
+    if (!updateResponse.ok()) {
+      const errorBody = await updateResponse.json().catch(() => null);
+      throw new Error(
+        `Edit API failed (${updateResponse.status()}): ${JSON.stringify(errorBody)}`,
+      );
+    }
+
+    await expect(dialog).not.toBeVisible({ timeout: 5_000 });
 
     await expect(roleRow(page, `${TEST_PREFIX}ui-edited`)).toBeVisible({
       timeout: 15_000,

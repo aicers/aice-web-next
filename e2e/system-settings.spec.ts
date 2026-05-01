@@ -9,8 +9,13 @@ import {
 import {
   createTestAccount,
   createTestRole,
+  deleteMfaChallenges,
+  deleteRecoveryCodes,
   deleteTestAccount,
   deleteTestRole,
+  deleteTotpCredential,
+  deleteWebAuthnChallenges,
+  deleteWebAuthnCredentials,
   resetAccountDefaults,
   setAccountMfaOverride,
 } from "./helpers/setup-db";
@@ -28,6 +33,11 @@ test.beforeAll(async () => {
 test.beforeEach(async () => {
   await resetRateLimits();
   await resetAccountDefaults(ADMIN_USERNAME);
+  await deleteTotpCredential(ADMIN_USERNAME);
+  await deleteWebAuthnCredentials(ADMIN_USERNAME);
+  await deleteWebAuthnChallenges(ADMIN_USERNAME);
+  await deleteMfaChallenges(ADMIN_USERNAME);
+  await deleteRecoveryCodes(ADMIN_USERNAME);
   await setAccountMfaOverride(ADMIN_USERNAME, "exempt");
 });
 

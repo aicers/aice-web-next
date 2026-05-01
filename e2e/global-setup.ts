@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
-
 import {
   readAllFixtureManifests,
   runAllFixturePreflights,

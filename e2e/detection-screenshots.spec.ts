@@ -1,18 +1,12 @@
 /**
- * Capture the Detection filter-drawer screenshots for the manual.
+ * Capture the deterministic Detection manual screenshots.
  *
- * This spec captures the drawer plus the Phase Detection-15 saved-
- * filter dialog and saved-filters rail. All three surfaces are
- * client-rendered (the rail draws from the personal saved-filter
- * table, not REview), so they produce deterministic assets on any
- * machine that can run the e2e suite. The page-level illustration in
- * the manual is an SVG wireframe (`docs/assets/detection-{en,ko}.svg`)
- * because the hero count is sourced from a live query and the
- * authoring worktree has no staging backend with seeded detection
- * data — a PNG taken there would capture the `Could not load
- * detection results.` error state and would get silently re-published
- * on every refresh. Per `docs/AUTHORING.md` the localized wireframe
- * is the correct fallback until staging is available.
+ * This spec covers the client-rendered surfaces: the filter drawer,
+ * customer multi-select, save-filter dialog, and both left-rail
+ * sections. The list / analytics / quick-peek / Event Investigation
+ * captures now live in `e2e/detection-manual-dynamic-screenshots.spec.ts`,
+ * which stubs REview-backed responses so the page-level PNGs can be
+ * reproduced without a live staging backend.
  *
  * Run manually with:
  *
@@ -45,6 +39,40 @@ test.beforeEach(async () => {
   await resetRateLimits();
 });
 
+async function forceDarkTheme(
+  page: import("@playwright/test").Page,
+): Promise<void> {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem("theme", "gray-dark");
+    } catch {}
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+}
+
+async function captureRailFigure(
+  page: import("@playwright/test").Page,
+  rail: import("@playwright/test").Locator,
+  fileName: string,
+): Promise<void> {
+  const box = await rail.boundingBox();
+  if (!box) {
+    throw new Error(`Unable to capture rail screenshot for ${fileName}`);
+  }
+
+  const padding = 16;
+  await page.screenshot({
+    path: path.join(ASSETS_DIR, fileName),
+    animations: "disabled",
+    clip: {
+      x: Math.max(0, box.x - padding),
+      y: Math.max(0, box.y - padding),
+      width: box.width + padding * 2,
+      height: box.height + padding * 2,
+    },
+  });
+}
+
 test.describe
   .serial("Detection manual screenshots", () => {
     test("EN filter drawer", async ({
@@ -52,10 +80,14 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await signInAndWait(page, workerUsername, workerPassword);
       await page.goto("/detection");
 
-      const filtersButton = page.getByRole("button", { name: "Filters" });
+      const filtersButton = page.getByRole("button", {
+        name: "Filters",
+        exact: true,
+      });
       await expect(filtersButton).toBeVisible({ timeout: 10_000 });
       await filtersButton.click();
       await expect(
@@ -75,10 +107,14 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await signInAndWaitKo(page, workerUsername, workerPassword);
       await page.goto("/ko/detection");
 
-      const filtersButton = page.getByRole("button", { name: "필터" });
+      const filtersButton = page.getByRole("button", {
+        name: "필터",
+        exact: true,
+      });
       await expect(filtersButton).toBeVisible({ timeout: 10_000 });
       await filtersButton.click();
       await expect(page.getByRole("heading", { name: "필터" })).toBeVisible();
@@ -102,12 +138,16 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await ensureCustomerExists("Acme Inc.", "acme_inc_db");
       await ensureCustomerExists("Globex", "globex_db");
       await signInAndWait(page, workerUsername, workerPassword);
       await page.goto("/detection");
 
-      const filtersButton = page.getByRole("button", { name: "Filters" });
+      const filtersButton = page.getByRole("button", {
+        name: "Filters",
+        exact: true,
+      });
       await expect(filtersButton).toBeVisible({ timeout: 10_000 });
       await filtersButton.click();
       const drawer = page.getByRole("dialog");
@@ -139,6 +179,7 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await ensureCustomerExists("Acme Inc.", "acme_inc_db");
       await ensureCustomerExists("Globex", "globex_db");
       await signInAndWaitKo(page, workerUsername, workerPassword);
@@ -173,11 +214,15 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await resetAccountDefaults(workerUsername);
       await signInAndWait(page, workerUsername, workerPassword);
       await page.goto("/detection");
 
-      const filtersButton = page.getByRole("button", { name: "Filters" });
+      const filtersButton = page.getByRole("button", {
+        name: "Filters",
+        exact: true,
+      });
       await expect(filtersButton).toBeVisible({ timeout: 10_000 });
       await filtersButton.click();
       const drawer = page.getByRole("dialog");
@@ -205,11 +250,15 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await resetAccountDefaults(workerUsername);
       await signInAndWaitKo(page, workerUsername, workerPassword);
       await page.goto("/ko/detection");
 
-      const filtersButton = page.getByRole("button", { name: "필터" });
+      const filtersButton = page.getByRole("button", {
+        name: "필터",
+        exact: true,
+      });
       await expect(filtersButton).toBeVisible({ timeout: 10_000 });
       await filtersButton.click();
       const drawer = page.getByRole("dialog");
@@ -233,6 +282,7 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await deleteSavedFiltersForAccount(workerUsername);
       await resetAccountDefaults(workerUsername);
       await signInAndWait(page, workerUsername, workerPassword);
@@ -262,10 +312,11 @@ test.describe
           exact: true,
         }),
       ).toBeVisible();
-      await rail.screenshot({
-        path: path.join(ASSETS_DIR, "detection-saved-filters-rail-en.png"),
-        animations: "disabled",
-      });
+      await captureRailFigure(
+        page,
+        rail,
+        "detection-saved-filters-rail-en.png",
+      );
     });
 
     test("KO saved filters rail", async ({
@@ -273,6 +324,7 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await deleteSavedFiltersForAccount(workerUsername);
       await resetAccountDefaults(workerUsername);
       await signInAndWaitKo(page, workerUsername, workerPassword);
@@ -292,10 +344,11 @@ test.describe
           exact: true,
         }),
       ).toBeVisible();
-      await rail.screenshot({
-        path: path.join(ASSETS_DIR, "detection-saved-filters-rail-ko.png"),
-        animations: "disabled",
-      });
+      await captureRailFigure(
+        page,
+        rail,
+        "detection-saved-filters-rail-ko.png",
+      );
     });
 
     // The Recommended Filter rail is fully client-side: presets are
@@ -307,6 +360,7 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await signInAndWait(page, workerUsername, workerPassword);
       await page.goto("/detection");
 
@@ -321,13 +375,11 @@ test.describe
       await expect(
         rail.getByRole("button", { name: "1 year", exact: true }),
       ).toBeVisible();
-      await rail.screenshot({
-        path: path.join(
-          ASSETS_DIR,
-          "detection-recommended-filters-rail-en.png",
-        ),
-        animations: "disabled",
-      });
+      await captureRailFigure(
+        page,
+        rail,
+        "detection-recommended-filters-rail-en.png",
+      );
     });
 
     test("KO recommended filters rail", async ({
@@ -335,6 +387,7 @@ test.describe
       workerUsername,
       workerPassword,
     }) => {
+      await forceDarkTheme(page);
       await signInAndWaitKo(page, workerUsername, workerPassword);
       await page.goto("/ko/detection");
 
@@ -349,13 +402,11 @@ test.describe
       await expect(
         rail.getByRole("button", { name: "최근 1년", exact: true }),
       ).toBeVisible();
-      await rail.screenshot({
-        path: path.join(
-          ASSETS_DIR,
-          "detection-recommended-filters-rail-ko.png",
-        ),
-        animations: "disabled",
-      });
+      await captureRailFigure(
+        page,
+        rail,
+        "detection-recommended-filters-rail-ko.png",
+      );
     });
   });
 

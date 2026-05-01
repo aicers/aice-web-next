@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN } from "./helpers/app-url";
 import { resetRateLimits, signIn } from "./helpers/auth";
 import {
   clearMustChangePassword,
@@ -65,7 +66,7 @@ test.describe("Must-change-password flow", () => {
     const response = await page.request.post("/api/auth/sign-out", {
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
     expect(response.ok()).toBeTruthy();

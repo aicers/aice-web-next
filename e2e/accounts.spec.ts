@@ -1,6 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 
 import { expect, test } from "./fixtures";
+import { APP_ORIGIN } from "./helpers/app-url";
 import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import {
   clearMustChangePassword,
@@ -39,6 +40,11 @@ function accountRow(page: Page, username: string): Locator {
   return page.locator("tbody tr").filter({
     has: page.locator("td.font-medium", { hasText: username }),
   });
+}
+
+async function filterAccounts(page: Page, username: string): Promise<void> {
+  const searchInput = page.getByPlaceholder("Search accounts");
+  await searchInput.fill(username);
 }
 
 test.describe("Account management", () => {
@@ -118,7 +124,7 @@ test.describe("Account management", () => {
       },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -148,7 +154,7 @@ test.describe("Account management", () => {
       },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -201,7 +207,7 @@ test.describe("Account management", () => {
       data: { displayName: "E2E Alpha Updated" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -233,7 +239,7 @@ test.describe("Account management", () => {
     const response = await page.request.delete(`/api/accounts/${account.id}`, {
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -260,7 +266,7 @@ test.describe("Account management", () => {
       data: { username: "incomplete" },
       headers: {
         "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: "http://localhost:3000",
+        Origin: APP_ORIGIN,
       },
     });
 
@@ -345,6 +351,7 @@ test.describe("Account management", () => {
 
     await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/accounts");
+    await filterAccounts(page, UI_EDIT_USERNAME);
 
     // Wait for table to load
     const row = accountRow(page, UI_EDIT_USERNAME);
@@ -375,6 +382,7 @@ test.describe("Account management", () => {
 
     await signInAndWait(page, workerUsername, workerPassword);
     await page.goto("/settings/accounts");
+    await filterAccounts(page, UI_DELETE_USERNAME);
 
     // Wait for table to load
     const row = accountRow(page, UI_DELETE_USERNAME);

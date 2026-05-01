@@ -1,0 +1,11 @@
+query IpLocationManual($address: IpAddress!) {
+  ipLocation(address: $address) {
+    latitude
+    longitude
+    country
+    region
+    city
+    isp
+    domain
+  }
+}

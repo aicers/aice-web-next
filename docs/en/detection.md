@@ -1057,11 +1057,12 @@ start, surfacing an inline validation message.
 
 The **Network / IP** section carries a summary line and a funnel
 affordance. Activating the funnel opens the advanced Network/IP
-filter panel alongside the drawer so the drawer stays in view.
+drawer alongside the main filter drawer so the main drawer stays
+in view.
 
 ![Network/IP advanced filter](../assets/detection-endpoint-filter-en.png)
 
-The panel has two sections:
+The drawer has two sections:
 
 - **Saved Network/IPs** renders in v1 but is not functional. It
   shows `No saved network/IPs` and a help line explaining that
