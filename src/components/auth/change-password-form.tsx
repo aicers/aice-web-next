@@ -51,6 +51,7 @@ export function ChangePasswordForm() {
   });
 
   const isSubmitting = form.formState.isSubmitting;
+
   async function onSubmit(values: ChangePasswordValues) {
     setServerError(null);
 
