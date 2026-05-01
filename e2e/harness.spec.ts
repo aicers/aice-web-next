@@ -23,10 +23,11 @@ import { mockServerUrl } from "./mock-server-state";
  * by the corresponding feature issues.
  */
 function tlsRequestContext() {
+  const reviewOrigin = mockServerUrl("review").replace(/\/graphql$/, "");
   return playwrightRequest.newContext({
     clientCertificates: [
       {
-        origin: mockServerUrl().replace(/\/graphql$/, ""),
+        origin: reviewOrigin,
         certPath: process.env.MTLS_CERT_PATH,
         keyPath: process.env.MTLS_KEY_PATH,
       },
@@ -64,7 +65,7 @@ test.describe("test harness wiring", () => {
   test("mock REview GraphQL server responds to introspection", async () => {
     const ctx = await tlsRequestContext();
     try {
-      const res = await ctx.post(mockServerUrl(), {
+      const res = await ctx.post(mockServerUrl("review"), {
         data: { query: "{ __schema { queryType { name } } }" },
       });
       expect(res.status()).toBe(200);
@@ -83,7 +84,7 @@ test.describe("test harness wiring", () => {
       // so the request must send the same shape `{ filter: {}, first: 10 }`
       // that `manifest.json` declares for `eventList`. Different variables
       // would (correctly) miss the manifest stub.
-      const res = await ctx.post(mockServerUrl(), {
+      const res = await ctx.post(mockServerUrl("review"), {
         data: {
           query: `query Q($filter: EventListFilterInput!, $first: Int) {
             eventList(filter: $filter, first: $first) {
@@ -120,7 +121,7 @@ test.describe("test harness wiring", () => {
 
     const ctx = await tlsRequestContext();
     try {
-      const res = await ctx.post(mockServerUrl(), {
+      const res = await ctx.post(mockServerUrl("review"), {
         data: { query: "{ indicatorList { name } }" },
       });
       expect(res.status()).toBe(200);

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -89,7 +90,9 @@ function buildEnv(): Record<string, string> {
   // mTLS code path in src/lib/mtls.ts (no bypass involved — the bypass's
   // NODE_ENV gate is unreachable from `next dev`, since `next dev` forces
   // NODE_ENV=development).
-  env.REVIEW_GRAPHQL_ENDPOINT = mockServerUrl();
+  env.REVIEW_GRAPHQL_ENDPOINT = mockServerUrl("review");
+  env.GIGANTO_GRAPHQL_ENDPOINT = mockServerUrl("giganto");
+  env.TIVAN_GRAPHQL_ENDPOINT = mockServerUrl("tivan");
 
   // The mock server is an HTTPS + mTLS endpoint. Generate (or reuse)
   // short-lived test certs now — before webServer starts — so the dev
@@ -103,6 +106,10 @@ function buildEnv(): Record<string, string> {
   // env.DATA_DIR so the dev server inherits the same value.
   const dataDir = env.DATA_DIR;
   env.DATA_DIR = dataDir;
+  execFileSync(process.execPath, [resolve(__dirname, "generate-key.mjs")], {
+    env: { ...process.env, DATA_DIR: dataDir },
+    stdio: "inherit",
+  });
   const certs = ensureTestCerts(resolve(dataDir, "certs"));
   env.MTLS_CA_PATH = certs.paths.caPath;
   env.MTLS_CERT_PATH = certs.paths.clientCertPath;

@@ -13,7 +13,7 @@ import { mockServerSession } from "./mock-server-admin";
 
 const VIEWPORT = { width: 1440, height: 900 } as const;
 const ASSETS_DIR = path.resolve(__dirname, "..", "docs", "assets");
-const session = mockServerSession("issue-288-detection-manual");
+const session = mockServerSession();
 
 const INVESTIGATION_EVENT = {
   __typename: "HttpThreat",

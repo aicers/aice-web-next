@@ -17,10 +17,35 @@ import { expect, test } from "../fixtures";
 import { resetRateLimits, signInAndWait } from "../helpers/auth";
 import {
   assignCustomerToAccount,
+  deleteCustomersByPrefix,
   ensureCustomerExists,
   getAccountId,
 } from "../helpers/setup-db";
 import { closeAdminAgent, mockServerSession } from "../mock-server-admin";
+
+const BASE_DATA_STORE_TOML = [
+  'ingest_srv_addr = "10.0.0.1:38370"',
+  'publish_srv_addr = "10.0.0.1:38371"',
+  'graphql_srv_addr = "10.0.0.1:8443"',
+  'retention = "100d"',
+  'data_dir = "/opt/clumit/var/data_store"',
+  'export_dir = "/opt/clumit/var/data_store/export"',
+  "max_open_files = 8000",
+  "max_mb_of_level_base = 512",
+  "num_of_thread = 8",
+  "max_subcompactions = 2",
+  "ack_transmission = 1024",
+].join("\n");
+
+function alphaDataStoreExternal() {
+  return {
+    node: 11,
+    key: "alpha-data-store",
+    kind: "DATA_STORE",
+    status: "ENABLED",
+    draft: null,
+  };
+}
 
 async function navigateToList(page: Page): Promise<void> {
   await page.goto("/nodes/settings");
@@ -28,11 +53,17 @@ async function navigateToList(page: Page): Promise<void> {
 }
 
 test.describe("Node create/edit dialog", () => {
-  const stubSession = mockServerSession();
+  const stubSession = mockServerSession("review");
+  const gigantoSession = mockServerSession("giganto");
+  const tivanSession = mockServerSession("tivan");
+  let primaryCustomerId: number;
+  let secondaryCustomerId: number;
 
   test.beforeAll(async ({ workerUsername }) => {
     await resetRateLimits();
+    await deleteCustomersByPrefix("e2e-create-edit-customer");
     const customerId = await ensureCustomerExists("e2e-create-edit-customer");
+    primaryCustomerId = customerId;
     // Round 13 #1 needs a *second* customer in scope so the user can
     // change Customer to a different value than the seed and trip the
     // dirty marker the Keep-editing rebase reads. Without two
@@ -41,6 +72,7 @@ test.describe("Node create/edit dialog", () => {
     const customerId2 = await ensureCustomerExists(
       "e2e-create-edit-customer-2",
     );
+    secondaryCustomerId = customerId2;
     try {
       const accountId = await getAccountId(workerUsername);
       await assignCustomerToAccount(accountId, customerId);
@@ -56,7 +88,10 @@ test.describe("Node create/edit dialog", () => {
 
   test.afterAll(async () => {
     await stubSession.clear();
+    await gigantoSession.clear();
+    await tivanSession.clear();
     await closeAdminAgent();
+    await deleteCustomersByPrefix("e2e-create-edit-customer");
   });
 
   test.beforeEach(async () => {
@@ -74,6 +109,26 @@ test.describe("Node create/edit dialog", () => {
       response: {
         kind: "fixture",
         fixture: "node/nodeStatusList.empty.json",
+      },
+    });
+    // The edit dialog's initial GET and stale-conflict refresh path now
+    // hydrate applied external baselines from the per-service endpoints
+    // when a node hosts DATA_STORE / TI_CONTAINER with `draft: null`.
+    // Keep those reads deterministic so edit-mode tests continue to hit
+    // their intended branch instead of failing form validation on blank
+    // external defaults.
+    await gigantoSession.registerStub({
+      operation: "config",
+      response: {
+        kind: "fixture",
+        fixture: "external/giganto/config.base.json",
+      },
+    });
+    await tivanSession.registerStub({
+      operation: "config",
+      response: {
+        kind: "fixture",
+        fixture: "external/tivan/config.base.json",
       },
     });
   });
@@ -250,7 +305,10 @@ test.describe("Node create/edit dialog", () => {
               },
               profileDraft: null,
               agents: [],
-              externalServices: [],
+              externalServices: [alphaDataStoreExternal()],
+            },
+            appliedExternalDrafts: {
+              "data-store": BASE_DATA_STORE_TOML,
             },
           }),
         });
@@ -392,7 +450,10 @@ test.describe("Node create/edit dialog", () => {
                   draft: null,
                 },
               ],
-              externalServices: [],
+              externalServices: [alphaDataStoreExternal()],
+            },
+            appliedExternalDrafts: {
+              "data-store": BASE_DATA_STORE_TOML,
             },
           }),
         });
@@ -722,7 +783,10 @@ test.describe("Node create/edit dialog", () => {
               },
               profileDraft: null,
               agents: [],
-              externalServices: [],
+              externalServices: [alphaDataStoreExternal()],
+            },
+            appliedExternalDrafts: {
+              "data-store": BASE_DATA_STORE_TOML,
             },
           }),
         });
@@ -764,11 +828,21 @@ test.describe("Node create/edit dialog", () => {
     // both to make the dirty diff unambiguous and to avoid relying
     // on alphabetic ordering of the seeded customer names.
     await dialog.getByLabel("Customer", { exact: true }).click();
-    const optionTexts = await page.getByRole("option").allTextContents();
-    expect(optionTexts.length).toBeGreaterThanOrEqual(2);
-    await page.getByRole("option").nth(1).click();
-    const userCustomerLabel = optionTexts[1] ?? "";
+    const optionTexts = (await page.getByRole("option").allTextContents()).map(
+      (text) => text.trim(),
+    );
+    expect(optionTexts).toEqual(
+      expect.arrayContaining([
+        "e2e-create-edit-customer",
+        "e2e-create-edit-customer-2",
+      ]),
+    );
+    const userCustomerLabel =
+      optionTexts.find((text) => text === "e2e-create-edit-customer-2") ??
+      optionTexts.find((text) => text === "e2e-create-edit-customer") ??
+      "";
     expect(userCustomerLabel).toBeTruthy();
+    await page.getByRole("option", { name: userCustomerLabel }).click();
 
     // Trigger the stale-conflict path.
     await page.getByTestId("node-dialog-save").click();
@@ -805,8 +879,11 @@ test.describe("Node create/edit dialog", () => {
     // them), but anything other than "1" proves the user's selection
     // round-tripped instead of being silently overwritten by the
     // refreshed baseline.
-    expect(submittedCustomerId).toBeTruthy();
-    expect(submittedCustomerId).not.toBe("1");
+    const expectedCustomerId =
+      userCustomerLabel === "e2e-create-edit-customer-2"
+        ? secondaryCustomerId
+        : primaryCustomerId;
+    expect(submittedCustomerId).toBe(String(expectedCustomerId));
   });
 
   // Reviewer Round 13 #2: `GET /api/nodes/[id]` fetches Giganto and

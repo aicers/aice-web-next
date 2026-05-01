@@ -118,6 +118,27 @@ export interface CreateApplyAttemptResult {
 }
 
 /**
+ * JSON-serializable apply-attempt row shape for server-action responses.
+ *
+ * The persisted row uses `Buffer` + `Date`, but Next server actions hand
+ * this object to client components. Convert binary/time fields to strings
+ * before crossing that boundary.
+ */
+export interface ApplyAttemptClientRow {
+  attemptId: string;
+  nodeId: string;
+  draftFingerprint: string;
+  plannedDispatches: PlannedDispatch[];
+  createdBy: string | null;
+  createdAt: string;
+  expiresAt: string;
+  executingLock: string | null;
+  claimStartedAt: string | null;
+  status: ApplyAttemptStatus;
+  customerId: number | null;
+}
+
+/**
  * The dispatcher interface that the post-claim executor invokes for
  * each planned dispatch.
  *

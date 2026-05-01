@@ -127,6 +127,12 @@
     "variables": { "id": "31" }
   },
   {
+    "operation": "node",
+    "query": "node/nodeDetail.alpha.graphql",
+    "fixture": "node/nodeDetail.multiServiceDrafts.json",
+    "variables": { "id": "41" }
+  },
+  {
     "operation": "applyNode",
     "query": "node/applyNode.success.graphql",
     "fixture": "node/applyNode.success.json",

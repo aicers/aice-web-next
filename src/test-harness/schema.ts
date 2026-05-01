@@ -3,13 +3,33 @@ import { resolve } from "node:path";
 
 import { buildSchema, type GraphQLSchema } from "graphql";
 
-const SCHEMA_PATH = resolve(__dirname, "../../schemas/review.graphql");
+export type FixtureSchemaName = "review" | "giganto" | "tivan";
 
-let cached: GraphQLSchema | null = null;
+const SCHEMA_PATHS: Record<FixtureSchemaName, string> = {
+  review: resolve(__dirname, "../../schemas/review.graphql"),
+  giganto: resolve(__dirname, "../../schemas/giganto.graphql"),
+  tivan: resolve(__dirname, "../../schemas/tivan.graphql"),
+};
+
+const cached = new Map<FixtureSchemaName, GraphQLSchema>();
+
+export function loadSchema(schemaName: FixtureSchemaName): GraphQLSchema {
+  const existing = cached.get(schemaName);
+  if (existing) return existing;
+  const sdl = readFileSync(SCHEMA_PATHS[schemaName], "utf8");
+  const schema = buildSchema(sdl);
+  cached.set(schemaName, schema);
+  return schema;
+}
 
 export function loadReviewSchema(): GraphQLSchema {
-  if (cached) return cached;
-  const sdl = readFileSync(SCHEMA_PATH, "utf8");
-  cached = buildSchema(sdl);
-  return cached;
+  return loadSchema("review");
+}
+
+export function loadGigantoSchema(): GraphQLSchema {
+  return loadSchema("giganto");
+}
+
+export function loadTivanSchema(): GraphQLSchema {
+  return loadSchema("tivan");
 }

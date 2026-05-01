@@ -366,6 +366,15 @@ describe("real dispatcher binding (counts outbound GraphQL via recorder)", () =>
     });
     expect(result.status).toBe("succeeded");
     expect(mockTivanClient).toHaveBeenCalledTimes(2);
+    expect(mockTivanClient.mock.calls[1]?.[1]).toEqual({
+      old: JSON.stringify({
+        excelData: null,
+        graphqlSrvAddr: "g",
+        originMitre: null,
+        translateMitre: "t",
+      }),
+      new: "{retried}",
+    });
   });
 });
 

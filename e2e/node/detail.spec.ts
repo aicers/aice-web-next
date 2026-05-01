@@ -15,13 +15,10 @@
  * before the page renders, so worker accounts are linked to a customer
  * with id `"1"` via the test customer-assignment helpers.
  *
- * GIGANTO_GRAPHQL_ENDPOINT / TIVAN_GRAPHQL_ENDPOINT are unset in the
- * Playwright environment (see `playwright.config.ts:buildEnv`), so the
- * SSR `getGigantoConfig` / `getTivanConfig` calls already throw
- * `ExternalServiceUnavailableError` which the page catches and
- * forwards through `unreachableExternals`. That gives us the
- * external-unreachable-copy assertion for free without needing
- * additional Giganto / Tivan mock infrastructure.
+ * GIGANTO_GRAPHQL_ENDPOINT / TIVAN_GRAPHQL_ENDPOINT are wired to the
+ * schema-specific mock servers in `playwright.config.ts:buildEnv`, so
+ * external-service success / failure paths must now be driven explicitly
+ * via those harness endpoints rather than by leaving the env unset.
  */
 import type { Page } from "@playwright/test";
 
@@ -75,6 +72,7 @@ async function navigateToDetail(page: Page, id: string): Promise<void> {
 
 test.describe("Node detail page", () => {
   const stubSession = mockServerSession();
+  const gigantoSession = mockServerSession("giganto");
 
   let TEST_PREFIX: string;
   let SECMON_USERNAME: string;
@@ -111,6 +109,7 @@ test.describe("Node detail page", () => {
 
   test.afterAll(async () => {
     await stubSession.clear();
+    await gigantoSession.clear();
     await closeAdminAgent();
     await deleteTestAccount(SECMON_USERNAME);
     await deleteRolesByPrefix(`${TEST_PREFIX}role-`);
@@ -273,11 +272,15 @@ test.describe("Node detail page", () => {
     workerUsername,
     workerPassword,
   }) => {
-    // GIGANTO_GRAPHQL_ENDPOINT is unset in the e2e env (see
-    // playwright.config.ts:buildEnv), so getGigantoConfig already
-    // throws ExternalServiceUnavailableError and DATA_STORE lands in
-    // `unreachableExternals` on the SSR path. We assert the resulting
-    // per-tab copy directly.
+    await gigantoSession.registerStub({
+      operation: "config",
+      response: { kind: "connectionFailure" },
+    });
+
+    // Drive the SSR `getGigantoConfig` path into
+    // `ExternalServiceUnavailableError` via the Giganto mock. The page
+    // should surface unreachable copy on Applied + Diff while leaving
+    // the Draft tab editable.
     await signInAndWait(page, workerUsername, workerPassword);
     await navigateToDetail(page, "11");
     await expect(page.getByTestId("node-detail-dashboard")).toBeVisible({

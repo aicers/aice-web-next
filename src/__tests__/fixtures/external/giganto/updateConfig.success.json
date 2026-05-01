@@ -1,0 +1,15 @@
+{
+  "updateConfig": {
+    "ingestSrvAddr": "127.0.0.1:48370",
+    "publishSrvAddr": "127.0.0.1:48371",
+    "graphqlSrvAddr": "127.0.0.1:9444",
+    "retention": "336h",
+    "exportDir": "/srv/giganto/export-next",
+    "dataDir": "/srv/giganto/data-next",
+    "maxOpenFiles": 8192,
+    "maxMbOfLevelBase": "1024",
+    "numOfThread": 16,
+    "maxSubcompactions": "4",
+    "ackTransmission": 8
+  }
+}

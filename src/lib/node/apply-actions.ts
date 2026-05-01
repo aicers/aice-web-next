@@ -91,6 +91,7 @@ import {
   _internal_retryDispatch,
 } from "./apply-attempt-lifecycle";
 import type {
+  ApplyAttemptClientRow,
   ApplyAttemptRow,
   ApplyAttemptStatus,
 } from "./apply-attempt-types";
@@ -195,7 +196,7 @@ async function rebuildAndAssertNodeScope(
 export async function confirmApplyAttempt(
   args: { attemptId: string; expectedDraftFingerprint?: string },
   signal?: AbortSignal,
-): Promise<ApplyAttemptRow> {
+): Promise<ApplyAttemptClientRow> {
   const session = await resolveSession();
   await requireWritePermissions(session);
   const ctx = await buildDispatchContext(session);
@@ -233,7 +234,7 @@ export async function confirmApplyAttempt(
   });
 
   await maybeEmitNodeApplyAudit(session, result);
-  return result;
+  return toClientApplyAttemptRow(result);
 }
 
 /**
@@ -254,7 +255,7 @@ export async function confirmApplyAttempt(
 export async function retryDispatch(
   args: { attemptId: string; dispatchId: string },
   signal?: AbortSignal,
-): Promise<ApplyAttemptRow> {
+): Promise<ApplyAttemptClientRow> {
   const session = await resolveSession();
   await requireWritePermissions(session);
   const ctx = await buildDispatchContext(session);
@@ -289,7 +290,23 @@ export async function retryDispatch(
   });
 
   await maybeEmitNodeApplyAudit(session, result);
-  return result;
+  return toClientApplyAttemptRow(result);
+}
+
+function toClientApplyAttemptRow(row: ApplyAttemptRow): ApplyAttemptClientRow {
+  return {
+    attemptId: row.attemptId,
+    nodeId: row.nodeId,
+    draftFingerprint: row.draftFingerprint.toString("hex"),
+    plannedDispatches: row.plannedDispatches,
+    createdBy: row.createdBy,
+    createdAt: row.createdAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    executingLock: row.executingLock,
+    claimStartedAt: row.claimStartedAt?.toISOString() ?? null,
+    status: row.status,
+    customerId: row.customerId,
+  };
 }
 
 async function maybeEmitNodeApplyAudit(

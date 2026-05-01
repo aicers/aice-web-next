@@ -1,7 +1,13 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import type { CryptoKey, JWK } from "jose";
 import { exportJWK, generateKeyPair, importJWK } from "jose";
@@ -195,7 +201,10 @@ export async function generateJwtSigningKey(
 
   const dir = keysDir();
   mkdirSync(dir, { recursive: true });
-  writeFileSync(currentKeyPath(), JSON.stringify(keyFile, null, 2), "utf8");
+  const keyPath = currentKeyPath();
+  const tmpPath = `${keyPath}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(keyFile, null, 2), "utf8");
+  renameSync(tmpPath, keyPath);
 }
 
 /** Delete the previous key file and clear it from memory. */

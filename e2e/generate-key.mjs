@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
@@ -24,12 +24,14 @@ priv.kid = kid;
 pub.kid = kid;
 
 mkdirSync(keysDir, { recursive: true });
+const tmpPath = `${keyPath}.${process.pid}.${randomUUID()}.tmp`;
 writeFileSync(
-  keyPath,
+  tmpPath,
   JSON.stringify(
     { kid, algorithm: "ES256", privateKey: priv, publicKey: pub },
     null,
     2,
   ),
 );
+renameSync(tmpPath, keyPath);
 console.log(`JWT signing key generated at ${keyPath}`);

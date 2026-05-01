@@ -1,0 +1,15 @@
+mutation UpdateGigantoConfig($old: String!, $new: String!) {
+  updateConfig(old: $old, new: $new) {
+    ingestSrvAddr
+    publishSrvAddr
+    graphqlSrvAddr
+    retention
+    exportDir
+    dataDir
+    maxOpenFiles
+    maxMbOfLevelBase
+    numOfThread
+    maxSubcompactions
+    ackTransmission
+  }
+}

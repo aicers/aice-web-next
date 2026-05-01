@@ -1,0 +1,8 @@
+{
+  "updateConfig": {
+    "graphqlSrvAddr": "127.0.0.1:48371",
+    "translateMitre": "/srv/tivan/translate-next.json",
+    "excelData": "/srv/tivan/excel.xlsx",
+    "originMitre": "/srv/tivan/origin.json"
+  }
+}

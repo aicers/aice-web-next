@@ -76,6 +76,50 @@ function getDatabaseUrl(): string {
 }
 
 const pool = new pg.Pool({ connectionString: getDatabaseUrl(), max: 2 });
+const NODE_ID = "11";
+const MULTI_SERVICE_NODE_ID = "41";
+const GIGANTO_UPDATE_VARIABLES = {
+  old: JSON.stringify({
+    ackTransmission: 4,
+    dataDir: "/srv/giganto/data",
+    exportDir: "/srv/giganto/export",
+    graphqlSrvAddr: "127.0.0.1:8444",
+    ingestSrvAddr: "127.0.0.1:38370",
+    maxMbOfLevelBase: "512",
+    maxOpenFiles: 4096,
+    maxSubcompactions: "2",
+    numOfThread: 8,
+    publishSrvAddr: "127.0.0.1:38371",
+    retention: "168h",
+  }),
+  new: JSON.stringify({
+    ackTransmission: 8,
+    dataDir: "/srv/giganto/data-next",
+    exportDir: "/srv/giganto/export-next",
+    graphqlSrvAddr: "127.0.0.1:9444",
+    ingestSrvAddr: "127.0.0.1:48370",
+    maxMbOfLevelBase: "1024",
+    maxOpenFiles: 8192,
+    maxSubcompactions: "4",
+    numOfThread: 16,
+    publishSrvAddr: "127.0.0.1:48371",
+    retention: "336h",
+  }),
+} as const;
+const TIVAN_UPDATE_VARIABLES = {
+  old: JSON.stringify({
+    excelData: null,
+    graphqlSrvAddr: "127.0.0.1:38371",
+    originMitre: null,
+    translateMitre: "/srv/tivan/translate.json",
+  }),
+  new: JSON.stringify({
+    graphqlSrvAddr: "127.0.0.1:48371",
+    translateMitre: "/srv/tivan/translate-next.json",
+    excelData: "/srv/tivan/excel.xlsx",
+    originMitre: "/srv/tivan/origin.json",
+  }),
+} as const;
 
 async function clearApplyAttempts(nodeId: string): Promise<void> {
   await pool.query("DELETE FROM apply_attempts WHERE node_id = $1", [nodeId]);
@@ -103,8 +147,9 @@ async function openApplyPreviewModal(page: Page): Promise<void> {
 }
 
 test.describe("Node detail apply preview save→preview→confirm→retry", () => {
-  const stubSession = mockServerSession();
-  const NODE_ID = "11";
+  const stubSession = mockServerSession("review");
+  const gigantoSession = mockServerSession("giganto");
+  const tivanSession = mockServerSession("tivan");
 
   test.beforeAll(async ({ workerUsername }) => {
     await resetRateLimits();
@@ -121,12 +166,16 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
       // already linked or absent
     }
     await clearApplyAttempts(NODE_ID);
+    await clearApplyAttempts(MULTI_SERVICE_NODE_ID);
   });
 
   test.afterAll(async () => {
     await stubSession.clear();
+    await gigantoSession.clear();
+    await tivanSession.clear();
     await closeAdminAgent();
     await clearApplyAttempts(NODE_ID);
+    await clearApplyAttempts(MULTI_SERVICE_NODE_ID);
     await deleteCustomersByPrefix("e2e-apply-preview-customer");
     await pool.end();
   });
@@ -134,6 +183,7 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
   test.beforeEach(async () => {
     await resetRateLimits();
     await clearApplyAttempts(NODE_ID);
+    await clearApplyAttempts(MULTI_SERVICE_NODE_ID);
     await stubSession.registerStub({
       operation: "nodeStatusList",
       response: {
@@ -165,7 +215,9 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
     // Planned dispatches: one MANAGER row (alpha-node has no external
     // drafts in the seed fixture).
     await expect(page.getByTestId("apply-preview-body")).toBeVisible();
-    const dispatches = page.locator('[data-testid^="apply-preview-dispatch-"]');
+    const dispatches = page.locator(
+      'li[data-testid^="apply-preview-dispatch-"]',
+    );
     await expect(dispatches).toHaveCount(1);
 
     // Click Apply → confirm runs the manager dispatch via mock applyNode.
@@ -208,7 +260,9 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
     await openApplyPreviewModal(page);
 
     await expect(page.getByTestId("apply-preview-body")).toBeVisible();
-    const dispatches = page.locator('[data-testid^="apply-preview-dispatch-"]');
+    const dispatches = page.locator(
+      'li[data-testid^="apply-preview-dispatch-"]',
+    );
     await expect(dispatches).toHaveCount(1);
 
     // Confirm: drives the row into failed_retryable via the errors stub.
@@ -236,6 +290,110 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
     });
     // Retry button is no longer rendered once the row has settled
     // successfully.
+    await expect(
+      page.locator('[data-testid^="apply-preview-retry-"]'),
+    ).toHaveCount(0);
+  });
+
+  test("multi-service retry path: manager succeeds → giganto fails retryable → retry resumes tivan", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await stubSession.registerStub({
+      operation: "node",
+      matchVariables: { id: MULTI_SERVICE_NODE_ID },
+      response: {
+        kind: "fixture",
+        fixture: "node/nodeDetail.multiServiceDrafts.json",
+      },
+    });
+    await stubSession.registerStub({
+      operation: "applyNode",
+      response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+    });
+
+    await gigantoSession.registerStub({
+      operation: "config",
+      response: {
+        kind: "fixture",
+        fixture: "external/giganto/config.base.json",
+      },
+    });
+    await gigantoSession.registerStub({
+      operation: "updateConfig",
+      matchVariables: GIGANTO_UPDATE_VARIABLES,
+      response: {
+        kind: "errors",
+        errors: [{ message: "transient giganto update failure" }],
+      },
+    });
+
+    await tivanSession.registerStub({
+      operation: "config",
+      response: {
+        kind: "fixture",
+        fixture: "external/tivan/config.base.json",
+      },
+    });
+    await tivanSession.registerStub({
+      operation: "updateConfig",
+      matchVariables: TIVAN_UPDATE_VARIABLES,
+      response: {
+        kind: "fixture",
+        fixture: "external/tivan/updateConfig.success.json",
+      },
+    });
+
+    await signInAndWait(page, workerUsername, workerPassword);
+    await navigateToDetail(page, MULTI_SERVICE_NODE_ID);
+    await openApplyPreviewModal(page);
+
+    await expect(page.getByTestId("apply-preview-body")).toBeVisible();
+    const dispatches = page.locator(
+      'li[data-testid^="apply-preview-dispatch-"]',
+    );
+    await expect(dispatches).toHaveCount(3);
+
+    const managerRow = dispatches.nth(0);
+    const gigantoRow = dispatches.nth(1);
+    const tivanRow = dispatches.nth(2);
+
+    await page.getByTestId("apply-preview-apply").click();
+
+    await expect(managerRow).toHaveAttribute("data-state", "succeeded", {
+      timeout: 30_000,
+    });
+    await expect(gigantoRow).toHaveAttribute("data-state", "failed_retryable", {
+      timeout: 30_000,
+    });
+    await expect(tivanRow).toHaveAttribute("data-state", "queued", {
+      timeout: 30_000,
+    });
+
+    const retryButton = gigantoRow.locator(
+      '[data-testid^="apply-preview-retry-"]',
+    );
+    await expect(retryButton).toHaveCount(1);
+
+    await gigantoSession.registerStub({
+      operation: "updateConfig",
+      matchVariables: GIGANTO_UPDATE_VARIABLES,
+      response: {
+        kind: "fixture",
+        fixture: "external/giganto/updateConfig.success.json",
+      },
+    });
+
+    await retryButton.focus();
+    await page.keyboard.press("Enter");
+
+    await expect(gigantoRow).toHaveAttribute("data-state", "succeeded", {
+      timeout: 30_000,
+    });
+    await expect(tivanRow).toHaveAttribute("data-state", "succeeded", {
+      timeout: 30_000,
+    });
     await expect(
       page.locator('[data-testid^="apply-preview-retry-"]'),
     ).toHaveCount(0);

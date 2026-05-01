@@ -49,7 +49,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type {
-  ApplyAttemptRow,
+  ApplyAttemptClientRow,
   CreateApplyAttemptResult,
   DispatchState,
   PlannedDispatch,
@@ -67,11 +67,11 @@ export interface ApplyPreviewActions {
   }) => Promise<CreateApplyAttemptResult>;
   confirmApplyAttempt: (args: {
     attemptId: string;
-  }) => Promise<ApplyAttemptRow>;
+  }) => Promise<ApplyAttemptClientRow>;
   retryDispatch: (args: {
     attemptId: string;
     dispatchId: string;
-  }) => Promise<ApplyAttemptRow>;
+  }) => Promise<ApplyAttemptClientRow>;
 }
 
 export interface ApplyPreviewModalProps {
@@ -128,7 +128,7 @@ type Phase =
       attemptId: string;
       dispatches: DispatchView[];
       expiresAt: string;
-      status: ApplyAttemptRow["status"];
+      status: ApplyAttemptClientRow["status"];
     }
   | { kind: "error"; message: string };
 

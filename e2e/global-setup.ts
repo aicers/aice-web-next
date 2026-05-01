@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
 import {
-  readManifest,
-  runFixturePreflight,
+  readAllFixtureManifests,
+  runAllFixturePreflights,
 } from "../src/test-harness/fixtures";
 import { startMockServer } from "../src/test-harness/mock-server";
 import { ensureTestCerts } from "../src/test-harness/test-certs";
@@ -15,7 +15,11 @@ import {
   createTestRole,
   resetAccountDefaults,
 } from "./helpers/setup-db";
-import { mockServerPort, setMockServer } from "./mock-server-state";
+import {
+  type MockServerKind,
+  mockServerPort,
+  setMockServer,
+} from "./mock-server-state";
 
 /**
  * Generate an ES256 JWT signing key if one doesn't already exist.
@@ -43,8 +47,9 @@ async function ensureJwtSigningKey(): Promise<void> {
   publicJwk.kid = kid;
 
   mkdirSync(keysDir, { recursive: true });
+  const tmpPath = `${keyPath}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(
-    keyPath,
+    tmpPath,
     JSON.stringify(
       {
         kid,
@@ -57,6 +62,7 @@ async function ensureJwtSigningKey(): Promise<void> {
     ),
     "utf8",
   );
+  renameSync(tmpPath, keyPath);
 }
 
 const WORKER_PASSWORD = "WorkerPass1234!";
@@ -98,9 +104,9 @@ async function ensureWorkerAccounts(): Promise<void> {
   }
 }
 
-async function startMockReviewGraphql(): Promise<void> {
-  const manifest = readManifest();
-  const failures = runFixturePreflight(manifest);
+async function startMockGraphqlServers(): Promise<void> {
+  const manifests = readAllFixtureManifests();
+  const failures = runAllFixturePreflights();
   if (failures.length > 0) {
     throw new Error(
       "Fixture preflight failed (schema validation or manifest coverage):\n\n" +
@@ -108,8 +114,9 @@ async function startMockReviewGraphql(): Promise<void> {
     );
   }
   console.log(
-    `[e2e] Validated ${manifest.length} fixture(s) against schemas/review.graphql ` +
-      "and confirmed manifest coverage of the fixtures tree",
+    `[e2e] Validated ${manifests.review.length + manifests.giganto.length + manifests.tivan.length} fixture(s) ` +
+      "across schemas/review.graphql, schemas/giganto.graphql, and " +
+      "schemas/tivan.graphql and confirmed manifest coverage of the fixtures tree",
   );
 
   // Generate (or reuse) short-lived test certs so the mock server can serve
@@ -123,19 +130,22 @@ async function startMockReviewGraphql(): Promise<void> {
   const certs = ensureTestCerts(certDir);
   console.log(`[e2e] Test mTLS material ready at ${certs.dir}`);
 
-  const port = mockServerPort();
-  const server = await startMockServer({
-    port,
-    tls: { cert: certs.serverCert, key: certs.serverKey, ca: certs.caCert },
-  });
-  setMockServer(server);
-  console.log(`[e2e] Mock REview GraphQL listening at ${server.url}`);
+  const serverKinds: readonly MockServerKind[] = ["review", "giganto", "tivan"];
+  for (const kind of serverKinds) {
+    const server = await startMockServer({
+      fixtureSchema: kind,
+      port: mockServerPort(kind),
+      tls: { cert: certs.serverCert, key: certs.serverKey, ca: certs.caCert },
+    });
+    setMockServer(kind, server);
+    console.log(`[e2e] Mock ${kind} GraphQL listening at ${server.url}`);
+  }
 }
 
 export default async function globalSetup(): Promise<void> {
   console.log("[e2e] Running global setup…");
   try {
-    await startMockReviewGraphql();
+    await startMockGraphqlServers();
     await ensureJwtSigningKey();
     await ensureWorkerAccounts();
     console.log("[e2e] Global setup complete.");
