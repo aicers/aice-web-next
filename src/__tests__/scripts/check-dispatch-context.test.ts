@@ -197,6 +197,60 @@ export async function GET() {
     expect(violations).toEqual([]);
   });
 
+  it("accepts an override on the opening-paren line of a multiline generic call", () => {
+    // Regression test for the round-9 review: when the helper is
+    // invoked with TS generic arguments split across lines
+    // (`graphqlRequest<Thing>\n  (...)`), the call-site scan must
+    // extend `endLine` through the real opening `(` — not stop at
+    // the line containing `<` — so a `// scope-allowlist:` annotation
+    // on the opening-paren line still suppresses the violation.
+    const violations = run([
+      {
+        relPath: "src/app/api/feature/route.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+
+interface Thing {
+  id: string;
+}
+
+export async function GET() {
+  return graphqlRequest<Thing>
+    (QUERY, undefined, { role: "admin" }); // scope-allowlist: intentional exception
+}
+`,
+      },
+    ]);
+
+    expect(violations).toEqual([]);
+  });
+
+  it("flags a multiline generic call without an override", () => {
+    // Companion to the override case above: with no override, the
+    // out-of-allowlist multiline generic call must still be reported,
+    // and the reported line number must be the helper-name line so
+    // the message points at where the call begins.
+    const violations = run([
+      {
+        relPath: "src/app/api/feature/route.ts",
+        source: `import { graphqlRequest } from "@/lib/graphql/client";
+
+interface Thing {
+  id: string;
+}
+
+export async function GET() {
+  return graphqlRequest<Thing>
+    (QUERY, undefined, { role: "admin" });
+}
+`,
+      },
+    ]);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].lineNumber).toBe(8);
+    expect(violations[0].message).toMatch(/outside the dispatch-context/);
+  });
+
   it("does NOT count a commented-out import of buildDispatchContext as in-scope", () => {
     // Regression test for the round-2 review: the previous presence
     // check ran the import regex against raw source, so a

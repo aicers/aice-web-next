@@ -68,9 +68,15 @@
 // Call-site detection runs against the whole stripped source (not
 // line-by-line) so a call split across lines
 // (e.g. `return graphqlRequest\n  (QUERY, ...)`) is still recognized.
-// Override-comment lookups still scan the *original* lines so the
-// `// scope-allowlist:` annotation can sit on any line of the call
-// expression (start through the opening paren).
+// The scanner also walks past a balanced `<...>` generic-arguments
+// block before locating the opening `(`, so the generic form
+// (`graphqlRequest<Thing>(...)`, including its multiline variant
+// `graphqlRequest<Thing>\n  (...)`) is recognized as the same call
+// site and the override-line range covers the helper-name line
+// through the opening-paren line. Override-comment lookups still
+// scan the *original* lines so the `// scope-allowlist:` annotation
+// can sit on any line of the call expression (helper name through
+// the opening paren).
 //
 // Caveat: template-literal interpolation expressions (`${...}`) are
 // not parsed back out, so a real call buried inside `${...}` is
@@ -119,12 +125,14 @@ const EXCLUDED_DIRS = [
 // Source extensions to scan.
 const SOURCE_EXTS = new Set([".ts", ".tsx", ".mts", ".cts"]);
 
-// Matches a real call site (`name(` or `name<…>(`) of the helpers.
-// `\b` ensures we don't match `myGraphqlRequest(`. The `To?` covers
-// both `graphqlRequest` and `graphqlRequestTo`. `\s` matches newlines
-// so the regex can detect calls split across lines when run against
-// the whole-source string.
-const CALL_RE = /\bgraphqlRequest(?:To)?\s*[<(]/g;
+// Matches the helper name itself. `\b` keeps us off `myGraphqlRequest`
+// and similar; the `To?` covers both `graphqlRequest` and
+// `graphqlRequestTo`. We deliberately do NOT bake the opening `(` (or
+// `<` for generic calls) into this regex — `findCallSites()` walks
+// forward from the name and skips a balanced `<…>` generic-arguments
+// block before locating the real `(`, so `endLine` always points at
+// the opening-paren line even for `graphqlRequest<Thing>\n  (...)`.
+const NAME_RE = /\bgraphqlRequest(?:To)?\b/g;
 
 // Inline override: `// scope-allowlist: <reason>`. Reason must be
 // non-empty (after trimming).
@@ -284,14 +292,35 @@ function findCallSites(source) {
   const stripped = stripCommentsAndStrings(source);
   const originalLines = source.split("\n");
   const sites = [];
-  CALL_RE.lastIndex = 0;
+  NAME_RE.lastIndex = 0;
   for (;;) {
-    const match = CALL_RE.exec(stripped);
+    const match = NAME_RE.exec(stripped);
     if (match === null) break;
+    let i = match.index + match[0].length;
+    // Skip whitespace between the helper name and the next token.
+    while (i < stripped.length && /\s/.test(stripped[i])) i++;
+    // If the next token is `<`, walk a balanced generic-arguments
+    // block so the opening-paren scan resumes after `>`. We need
+    // depth-counted scanning because TS generics nest
+    // (e.g. `graphqlRequest<A<B, C>>(...)`). Strings/comments are
+    // already blanked so any `<`/`>` we encounter is real syntax.
+    if (stripped[i] === "<") {
+      let depth = 1;
+      i++;
+      while (i < stripped.length && depth > 0) {
+        if (stripped[i] === "<") depth++;
+        else if (stripped[i] === ">") depth--;
+        i++;
+      }
+      if (depth !== 0) continue; // Unbalanced — not a call site we can pin.
+      while (i < stripped.length && /\s/.test(stripped[i])) i++;
+    }
+    // A real call has `(` here. Anything else (e.g. an `import { ...,
+    // graphqlRequest, ... }` specifier, a re-export, an object-property
+    // shorthand) is not a call and is skipped.
+    if (stripped[i] !== "(") continue;
     const startLine = stripped.slice(0, match.index).split("\n").length;
-    const endLine = stripped
-      .slice(0, match.index + match[0].length)
-      .split("\n").length;
+    const endLine = stripped.slice(0, i + 1).split("\n").length;
     sites.push({
       startLine,
       endLine,

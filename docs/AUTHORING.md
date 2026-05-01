@@ -438,10 +438,15 @@ applying the call and presence regexes, so:
 
 Call detection runs against the whole stripped source so a call
 split across lines (e.g. `return graphqlRequest\n  (QUERY, ...)`) is
-still recognized. Newlines are preserved by the stripper so reported
-line numbers stay aligned with the original source. Template-literal
-interpolation expressions (`${...}`) are not parsed back out — a real
-call buried inside `${...}` is missed and an
+still recognized. The scanner also walks past a balanced `<...>`
+generic-arguments block before locating the opening `(`, so the
+generic form (`graphqlRequest<Thing>(...)` and its multiline variant
+`graphqlRequest<Thing>\n  (...)`) is recognized as the same call
+site and the override-line range covers the helper-name line through
+the opening-paren line. Newlines are preserved by the stripper so
+reported line numbers stay aligned with the original source.
+Template-literal interpolation expressions (`${...}`) are not parsed
+back out — a real call buried inside `${...}` is missed and an
 `import { buildDispatchContext }` substring inside `${...}` does not
 satisfy the presence check either. Both edges are pathological in
 real source, and the file-level allowlist still catches the only
@@ -449,7 +454,8 @@ meaningful regression: a brand-new server action outside
 `src/lib/{node,detection}` that calls `graphqlRequest`.
 
 To allow a deliberate exception, append an override comment to any
-line of the call expression (start through the opening paren):
+line of the call expression (helper-name line through the opening
+paren — including the line containing `<` for generic calls):
 
 ```ts
 return graphqlRequest(QUERY, undefined, ctx); // scope-allowlist: <reason>
