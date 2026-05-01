@@ -232,22 +232,43 @@ export function CustomerMultiSelect({
   // `ready` + empty options ≡ `kind: 'empty'` — render the disabled
   // affordance and never submit a `customers` value. The intersection
   // check on the dispatch side rejects the same condition server-side.
+  //
+  // Reviewer Round 3 #2: the disabled trigger has no panel for the
+  // operator to open, so the in-panel `↻` refresh is unreachable
+  // here. Surface a sibling refresh button instead so an operator
+  // whose admin just assigned them a customer in another tab can
+  // recover in-page without a full reload. The button calls the
+  // same `onRefresh` the panel header uses on the non-empty path.
   if (options.length === 0) {
     return (
       <fieldset className="flex flex-col gap-2">
         <legend className="text-foreground text-sm font-medium">
           {labels.label}
         </legend>
-        <button
-          type="button"
-          disabled
-          aria-disabled="true"
-          title={labels.emptyScope}
-          className="border-input bg-background text-muted-foreground flex h-9 items-center justify-between rounded-md border px-3 text-sm opacity-60"
-        >
-          <span>{labels.emptyScope}</span>
-          <ChevronDown className="size-4" aria-hidden="true" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled
+            aria-disabled="true"
+            title={labels.emptyScope}
+            className="border-input bg-background text-muted-foreground flex h-9 flex-1 items-center justify-between rounded-md border px-3 text-sm opacity-60"
+          >
+            <span>{labels.emptyScope}</span>
+            <ChevronDown className="size-4" aria-hidden="true" />
+          </button>
+          {onRefresh ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onRefresh}
+              aria-label={labels.refresh}
+              title={labels.refresh}
+            >
+              <RefreshCw className="size-4" aria-hidden="true" />
+            </Button>
+          ) : null}
+        </div>
       </fieldset>
     );
   }

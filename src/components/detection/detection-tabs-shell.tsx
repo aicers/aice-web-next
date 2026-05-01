@@ -218,27 +218,19 @@ export function DetectionTabsShell({
   // same options (so chips in tab B benefit from a fetch in tab A
   // too).
   //
-  // Seed from the SSR `initialCustomerScope` so the cache starts
-  // `loaded` rather than `idle`. That means:
-  //   - The drawer-open `shouldTriggerCustomerFetch` check is a
-  //     no-op; clicking Filters does not re-fetch what the SSR
-  //     payload already carries.
-  //   - Chips for a bookmarked / saved-filter / pivot URL paint
-  //     with customer **names** on the very first render, not raw
-  //     IDs (Reviewer Round 1 #3).
-  //   - The manual `↻` refresh in the drawer header still kicks the
-  //     cache to `loading` and then replaces it on success, so
-  //     out-of-band assignment changes are picked up explicitly.
-  //   - Empty-scope sessions (`kind: 'empty'`) are seeded as
-  //     `loaded` with `options: []`; the drawer renders the
-  //     dedicated "No customer access" affordance.
+  // Reviewer Round 3 #1: the cache starts `idle`, not pre-seeded
+  // `loaded`, so #384's explicit fetch contract holds — page entry
+  // does not fetch, the first drawer open does, subsequent opens
+  // reuse the cached result, and a scope change after page render
+  // is picked up on that first-open fetch (not silently masked by a
+  // stale SSR seed). The SSR scope still flows through as
+  // `initialCustomerOptions`, but only as a *display fallback* for
+  // the chip-name lookup so a bookmarked / saved-filter / pivot URL
+  // still paints customer **names** on the first render rather than
+  // raw IDs (Reviewer Round 1 #3). Once the first-open fetch
+  // resolves, the live `loaded` cache supersedes the seed.
   const [customerCache, setCustomerCache] = useState<CustomerCache>(() => ({
-    status: "loaded",
-    kind: initialCustomerScope.kind,
-    options: initialCustomerScope.customers.map((c) => ({
-      id: c.id,
-      name: c.name,
-    })),
+    status: "idle",
   }));
 
   const initialCustomerOptions = useMemo<readonly CustomerOption[]>(

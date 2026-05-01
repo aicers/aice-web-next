@@ -892,14 +892,23 @@ more.
 
 If your account has **no customers in scope**, the control is
 disabled with a **No customer access** affordance and the filter
-never submits a `customers` value. The drawer never has to wait
-for a customer fetch on the first open (the list rides in the
-SSR payload), but a manual **↻** refresh briefly shows a
-**Loading customers…** affordance while the explicit re-fetch
-is in flight; if that fetch fails transiently, a **Failed to
-load customers** message is displayed alongside an inline
-**Retry** button so the operator can recover without closing and
-reopening the drawer.
+never submits a `customers` value. A manual **↻** refresh button
+sits next to the disabled control on this path so an operator
+whose admin just assigned them a customer in another tab can
+recover without reloading the page.
+
+The customer list is lazy-loaded: opening the Detection page
+does not fetch it, the first time you open the filter drawer in a
+page session does, and subsequent drawer opens reuse the cached
+result. While the first-open fetch is in flight the control shows
+a **Loading customers…** affordance; if it fails transiently, a
+**Failed to load customers** message is displayed alongside an
+inline **Retry** button so you can recover without closing and
+reopening the drawer. Customer chips that arrive on the very
+first paint via a bookmarked `?f=` URL, a saved filter, or a
+pivot link still render with the customer **name** rather than a
+raw ID — the page-rendered customer scope payload is reused for
+chip-name lookups during that brief loading window.
 
 > Security note: aice-web-next independently rejects any filter
 > whose `customers` list references a customer outside your
