@@ -39,13 +39,15 @@ test.beforeEach(async () => {
   await resetRateLimits();
 });
 
-function forceDarkTheme(page: import("@playwright/test").Page): Promise<void> {
-  page.addInitScript(() => {
+async function forceDarkTheme(
+  page: import("@playwright/test").Page,
+): Promise<void> {
+  await page.addInitScript(() => {
     try {
       localStorage.setItem("theme", "gray-dark");
     } catch {}
   });
-  return page.emulateMedia({ colorScheme: "dark" });
+  await page.emulateMedia({ colorScheme: "dark" });
 }
 
 async function captureRailFigure(
