@@ -504,20 +504,32 @@ const ENDPOINTS: Endpoint[] = [
     expects: "list-scoped",
     // Account rows don't expose a single customer_id (membership is
     // N:N via `account_customer`); skip the per-row check and rely on
-    // include/exclude alone.
+    // include/exclude alone. The route scopes by shared-customer
+    // overlap (`src/app/api/accounts/route.ts:42-93`), so the
+    // include/exclude lists must enumerate every seeded fixture
+    // account on each side: a tenant caller must see every account
+    // linked to its customer (self + manager + monitor-target) and
+    // must NOT see any account linked to the opposite customer.
     rowCustomerId: () => undefined,
     rowId: (row) => String(row.id),
     expectedRows: {
       "account-A": {
-        include: ["accountAId"],
-        exclude: ["accountBId"],
+        include: ["accountAId", "managerAId", "monitorTargetAId"],
+        exclude: ["accountBId", "managerBId", "monitorTargetBId"],
       },
       "account-B": {
-        include: ["accountBId"],
-        exclude: ["accountAId"],
+        include: ["accountBId", "managerBId", "monitorTargetBId"],
+        exclude: ["accountAId", "managerAId", "monitorTargetAId"],
       },
       admin: {
-        include: ["accountAId", "accountBId"],
+        include: [
+          "accountAId",
+          "accountBId",
+          "managerAId",
+          "managerBId",
+          "monitorTargetAId",
+          "monitorTargetBId",
+        ],
       },
     },
   },
