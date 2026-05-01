@@ -24,6 +24,12 @@
  *       - account-A out-of-scope GET: 404 (not 403 — surfacing 403
  *         would disclose existence to the caller).
  *       - admin in-scope and out-of-scope GETs: 200.
+ *       - Optional `inScopeBodyAssertion` runs against the parsed
+ *         JSON body of in-scope GETs and is the regression hook for
+ *         routes that return a list under a parent path
+ *         (e.g. `/api/accounts/[id]/customers`) — without it a
+ *         200 only proves the path is reachable, not that the
+ *         response body is scoped.
  *
  *   - `mutation-scope` (POST / PATCH / DELETE):
  *       - Each per-persona slot has an optional `inScope` and
@@ -48,17 +54,15 @@
  *         tenant-administrator-style role: tenant scope plus the
  *         elevated permissions, but no `customers:access-all`.
  *
- *   - `admin-only`:
- *       - account-A and account-B: 4xx (typically 403 — neither holds
- *         the operation's permission).
- *       - admin: success status declared on the row.
- *       - Reserved for routes with no tenant-scope branch at all
- *         (e.g. POST /api/customers — there is no customer to be
- *         in/out of scope of). Routes that DO have a scope branch
- *         but require an elevated permission to reach it use
- *         `mutation-scope` with `personaUsernames` so the regression
- *         guard actually exercises the scope check, not just the
- *         permission gate.
+ * Routes whose only tenant gate is a permission check with no
+ * per-customer scope branch (e.g. `POST /api/customers`, which only
+ * needs `customers:write`) are intentionally **not** in this matrix.
+ * The matrix asserts the cross-customer scope contract; for those
+ * routes there is no customer to be in/out of scope of, so the
+ * regression-meaningful coverage is a permission-gate test in the
+ * route's own integration suite, not a row here. Adding such a route
+ * here would teach future authors that it is "admin-only" when in
+ * fact any holder of the required permission can succeed.
  *
  * The audit-log and customer rows are the regression tests for #386
  * and #387; the accounts rows cover the post-#387 customer-scoped
@@ -231,6 +235,23 @@ interface DetailEndpoint {
   /** Resource the path resolves against ("A" / "B"). */
   pathFor: (resources: Resources) => { inScopeA: string; inScopeB: string };
   expects: "200-on-in-scope-404-on-out-of-scope";
+  /**
+   * Optional assertion against the in-scope GET response body. Used by
+   * routes that return a list under a parent path (e.g.
+   * `GET /api/accounts/[id]/customers`) — a bare 200/404 status check
+   * only proves the route is reachable, not that the returned data
+   * itself is scoped. When defined, the harness fires this for the
+   * tenant in-scope variants of both account-A and account-B (and for
+   * the admin in-scope variants where the admin still hits a
+   * single-tenant target) so a future change that lets a parent route
+   * return a row belonging to the other customer is caught.
+   */
+  inScopeBodyAssertion?: (
+    body: unknown,
+    persona: Persona,
+    target: "A" | "B",
+    resources: Resources,
+  ) => void;
 }
 
 interface MutationVariant {
@@ -298,36 +319,7 @@ interface MutationEndpoint {
   ) => Promise<void>;
 }
 
-interface AdminOnlyEndpoint {
-  name: string;
-  method: "GET" | "POST" | "PATCH" | "DELETE";
-  expects: "admin-only";
-  /** Single request shape — admin-only routes have no per-persona scope. */
-  request: (resources: Resources) => {
-    path: string;
-    body?: unknown;
-  };
-  /** Status the admin call must produce (e.g. 200, 201). */
-  adminSuccessStatus: number;
-  /**
-   * Status non-admin callers must produce. Defaults to `[401, 403]`
-   * since admin-only routes typically refuse non-holders of the
-   * operation's permission with 403, but a few surface 401 if the
-   * route checks auth before perm.
-   */
-  nonAdminStatuses?: readonly number[];
-  /** Optional post-success cleanup mirroring `MutationEndpoint`. */
-  cleanupAfterSuccess?: (
-    resources: Resources,
-    adminSession: AuthSession,
-  ) => Promise<void>;
-}
-
-type Endpoint =
-  | ListEndpoint
-  | DetailEndpoint
-  | MutationEndpoint
-  | AdminOnlyEndpoint;
+type Endpoint = ListEndpoint | DetailEndpoint | MutationEndpoint;
 
 const ENDPOINTS: Endpoint[] = [
   // ── audit-logs (regression target for #386) ────────────────────
@@ -542,6 +534,13 @@ const ENDPOINTS: Endpoint[] = [
     }),
     expects: "200-on-in-scope-404-on-out-of-scope",
   },
+  // GET /api/accounts/[id]/customers — once the overlap gate clears,
+  // the route returns *every* assignment on the target account
+  // (`src/app/api/accounts/[id]/customers/route.ts:71-83`). A future
+  // change (or fixture extension) that linked an A-visible account to
+  // a B customer would leak that B customer to caller-A, with the
+  // status-only `200` check still green. Pin the in-scope body to the
+  // persona's own customer so that regression is caught.
   {
     name: "GET /api/accounts/[id]/customers",
     method: "GET",
@@ -550,6 +549,15 @@ const ENDPOINTS: Endpoint[] = [
       inScopeB: `/api/accounts/${r.accountBId}/customers`,
     }),
     expects: "200-on-in-scope-404-on-out-of-scope",
+    inScopeBodyAssertion: (body, _persona, target, r) => {
+      const data = (body as { data: Array<{ customer_id: number }> }).data;
+      expect(Array.isArray(data)).toBe(true);
+      const expectedCustomerId = target === "A" ? r.customerAId : r.customerBId;
+      const opposingCustomerId = target === "A" ? r.customerBId : r.customerAId;
+      const customerIds = data.map((row) => row.customer_id);
+      expect(customerIds).toContain(expectedCustomerId);
+      expect(customerIds).not.toContain(opposingCustomerId);
+    },
   },
   // POST /api/accounts — the regression we want to guard is the
   // customer-scope branch ("Cannot assign customers outside your
@@ -945,22 +953,15 @@ const ENDPOINTS: Endpoint[] = [
       admin: {},
     }),
   },
-  // ── admin-only example: POST /api/customers ────────────────────
-  //
-  // Creating a customer requires `customers:write`, which the
-  // tenant-style test role does not hold; this exercises the
-  // admin-only branch end-to-end. The created row is cleaned up via
-  // `deleteCustomersByPrefix` since the name carries `TEST_PREFIX`.
-  {
-    name: "POST /api/customers",
-    method: "POST",
-    expects: "admin-only",
-    request: () => ({
-      path: "/api/customers",
-      body: { name: `${TEST_PREFIX}AdminOnly-${Date.now()}` },
-    }),
-    adminSuccessStatus: 201,
-  },
+  // `POST /api/customers` is intentionally NOT in the matrix. It only
+  // requires `customers:write` and has no per-customer scope branch
+  // (no customer parameter to be in/out of scope of), so any holder
+  // of that permission — admin or a tenant-administrator-style
+  // manager — can hit the success path. Modeling it here would teach
+  // future authors that the route is "admin-only" when in fact the
+  // matrix's manager personas would also succeed; permission-gate
+  // coverage for the route lives in its own integration suite, not
+  // in this cross-customer scope guard.
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -991,23 +992,6 @@ async function fireMutation(
       return authPatch(session, variant.path, variant.body);
     case "DELETE":
       return authDelete(session, variant.path, variant.body);
-  }
-}
-
-async function fireAdminOnly(
-  session: AuthSession,
-  method: AdminOnlyEndpoint["method"],
-  request: { path: string; body?: unknown },
-): Promise<Response> {
-  switch (method) {
-    case "GET":
-      return authGet(session, request.path);
-    case "POST":
-      return authPost(session, request.path, request.body);
-    case "PATCH":
-      return authPatch(session, request.path, request.body);
-    case "DELETE":
-      return authDelete(session, request.path, request.body);
   }
 }
 
@@ -1324,12 +1308,24 @@ describe("Cross-customer scope matrix", () => {
       } else if (endpoint.expects === "200-on-in-scope-404-on-out-of-scope") {
         const detail = endpoint;
 
+        async function assertInScope(
+          response: Response,
+          persona: Persona,
+          target: "A" | "B",
+        ): Promise<void> {
+          expect(response.status).toBe(200);
+          if (detail.inScopeBodyAssertion) {
+            const body = await response.json();
+            detail.inScopeBodyAssertion(body, persona, target, resources);
+          }
+        }
+
         it("account-A: 200 on in-scope, 404 on out-of-scope", async () => {
           const session = await signIn(ACCOUNT_A_USERNAME);
           const paths = detail.pathFor(resources);
 
           const inScope = await authGet(session, paths.inScopeA);
-          expect(inScope.status).toBe(200);
+          await assertInScope(inScope, "account-A", "A");
 
           const outOfScope = await authGet(session, paths.inScopeB);
           // 404, not 403 — surfacing 403 would disclose existence of
@@ -1342,7 +1338,7 @@ describe("Cross-customer scope matrix", () => {
           const paths = detail.pathFor(resources);
 
           const inScope = await authGet(session, paths.inScopeB);
-          expect(inScope.status).toBe(200);
+          await assertInScope(inScope, "account-B", "B");
 
           const outOfScope = await authGet(session, paths.inScopeA);
           expect(outOfScope.status).toBe(404);
@@ -1353,10 +1349,10 @@ describe("Cross-customer scope matrix", () => {
           const paths = detail.pathFor(resources);
 
           const a = await authGet(session, paths.inScopeA);
-          expect(a.status).toBe(200);
+          await assertInScope(a, "admin", "A");
 
           const b = await authGet(session, paths.inScopeB);
-          expect(b.status).toBe(200);
+          await assertInScope(b, "admin", "B");
         });
       } else if (endpoint.expects === "mutation-scope") {
         const mutation = endpoint;
@@ -1422,32 +1418,6 @@ describe("Cross-customer scope matrix", () => {
             }
           });
         }
-      } else {
-        const adminOnly = endpoint;
-        const nonAdminStatuses = adminOnly.nonAdminStatuses ?? [401, 403];
-
-        for (const username of [ACCOUNT_A_USERNAME, ACCOUNT_B_USERNAME]) {
-          it(`${username}: rejected (no admin permission)`, async () => {
-            const session = await signIn(username);
-            const req = adminOnly.request(resources);
-            const res = await fireAdminOnly(session, adminOnly.method, req);
-            expect(nonAdminStatuses).toContain(res.status);
-          });
-        }
-
-        it("admin: succeeds", async () => {
-          const session = await signIn(ADMIN_USERNAME);
-          const req = adminOnly.request(resources);
-          const res = await fireAdminOnly(session, adminOnly.method, req);
-          expect(res.status).toBe(adminOnly.adminSuccessStatus);
-          if (
-            adminOnly.cleanupAfterSuccess &&
-            res.status >= 200 &&
-            res.status < 300
-          ) {
-            await adminOnly.cleanupAfterSuccess(resources, session);
-          }
-        });
       }
     });
   }

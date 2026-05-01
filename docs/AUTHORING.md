@@ -458,7 +458,12 @@ assertions for its `expects` mode:
 - `200-on-in-scope-404-on-out-of-scope` — account-A's GET on
   customer A returns 200; account-A's GET on customer B returns
   404 (NOT 403 — surfacing 403 would disclose existence); admin gets
-  200 on both.
+  200 on both. An optional `inScopeBodyAssertion` callback runs
+  against the parsed JSON body of every in-scope GET — use it for
+  routes that return a list under a parent path (e.g.
+  `GET /api/accounts/[id]/customers`) so the regression guard
+  actually pins the returned data to the persona's customer rather
+  than only asserting that the path is reachable.
 - `mutation-scope` (POST / PATCH / DELETE) — each persona slot
   declares an optional `inScope` and `outOfScope` variant. The
   harness fires only the variants that are defined and asserts the
@@ -505,23 +510,25 @@ assertions for its `expects` mode:
     customer. The `outOfScope` 404 is the regression-meaningful
     assertion for tenants; the admin in-scope variant covers the
     success path against an orphan customer.
-- `admin-only` — account-A and account-B are rejected (default
-  `nonAdminStatuses: [401, 403]`); admin succeeds with the row's
-  declared `adminSuccessStatus`. Reserve this mode for routes that
-  have **no** tenant-scope branch at all (e.g. `POST /api/customers`
-  — there is no customer to be in/out of scope of). For routes that
-  do have a scope branch but only allow elevated callers to reach
-  it, use `mutation-scope` with `personaUsernames` so the regression
-  guard actually exercises the scope check.
+Routes whose only tenant gate is a permission check with **no**
+per-customer scope branch (e.g. `POST /api/customers`, which only
+needs `customers:write`) are intentionally NOT in this matrix.
+Any holder of the required permission — admin or a tenant-
+administrator-style manager — can hit the success path, so there
+is no cross-customer contract to assert. Permission-gate coverage
+for those routes lives in the route's own integration suite, not
+in this scope guard. Modeling them here would teach future authors
+that the route is "admin-only" when in fact the matrix's manager
+personas would also succeed.
 
 **Adding a new customer-scoped endpoint is a one-line change** to
 `ENDPOINTS`. Pick the appropriate `expects` mode, fill in the
 `name`, `method`, and the mode-specific fields (`path` for
-`list-scoped`, `pathFor` for detail GETs, `request` for mutations
-and admin-only routes), and the harness iterates and asserts
-automatically. If the new endpoint needs a fixture row that is not
-in `Resources`, extend `Resources` and the `beforeAll` seeder;
-otherwise the row alone is enough.
+`list-scoped`, `pathFor` for detail GETs, `request` for mutations),
+and the harness iterates and asserts automatically. If the new
+endpoint needs a fixture row that is not in `Resources`, extend
+`Resources` and the `beforeAll` seeder; otherwise the row alone
+is enough.
 
 Routes that go through `buildDispatchContext` (the node /
 detection API surface backed by REview / Tivan over GraphQL) are
