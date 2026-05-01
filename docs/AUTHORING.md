@@ -283,6 +283,345 @@ truth for which strings drive the capture flow.
   languages.
 - Keep the same filename across language directories.
 
+## Customer scope (multi-tenancy contract)
+
+Code that touches customer data must enforce tenant isolation —
+data, audit rows, and even the shape of error messages must not
+leak across customer boundaries. The contract below pins the rules
+for new code and the regression guards installed under issue #388
+(static dispatch-context guard, integration test matrix).
+
+### Project principle
+
+A caller's effective customer scope is whatever
+`resolveEffectiveCustomerIds(accountId, roles)` returns. No code
+path that handles customer-touching data may bypass it except
+through one of the three permitted patterns below. "Empty scope"
+is a hard fail for non-`access-all` callers — never silently widen
+to "all customers".
+
+### Permitted patterns
+
+There are exactly three permitted ways for new code to issue a
+customer-scoped operation:
+
+1. **Dispatch via `buildDispatchContext(session)`** — for any code
+   path that crosses the BFF boundary into REview / Giganto / Tivan
+   over GraphQL. Both the Node track
+   (`src/lib/node/dispatch-context.ts`) and the Detection track
+   (locally declared in `src/lib/detection/server-actions.ts`) use
+   this helper to materialize the caller's scope into a concrete
+   `customer_ids: number[]` list before signing the Context JWT.
+   review-web reads scope from the JWT verbatim; do not pass scope
+   in the GraphQL filter or rely on review-web to re-derive it.
+
+2. **Local DB query with an `account_customer` JOIN** — for
+   queries that read directly from `auth_db` / `audit_db`. Either
+   add `JOIN account_customer ac ON ac.customer_id = <table>.customer_id
+   AND ac.account_id = $session_account` for the account-link
+   pattern, or push an explicit `customer_id IN (...)` predicate
+   sourced from `resolveEffectiveCustomerIds`. The audit-log viewer
+   route (`src/app/api/audit-logs/route.ts`) is the canonical
+   example after #386.
+
+3. **Explicit `customers:access-all` permission check** — when a
+   route legitimately needs to bypass tenant scope (e.g. a
+   System Administrator-only listing of every customer). Always
+   branch on `await hasPermission(session.roles, "customers:access-all")`
+   and never on the audit-only `role[0]` string. Customer scope
+   checks must NOT be inferred from the role name.
+
+### Audit log contract
+
+Every `auditLog.record(...)` call whose `target` is a record with a
+**canonical, single customer id** (a customer, a node, a sensor, an
+`account_customer` link row — anything where the customer that owns
+the row is unambiguous) must populate the top-level `customerId`
+field with that id (not just place it inside `details`). Without it
+the row is invisible to the audit-log viewer's
+`customer_id IN (...)` predicate, so the tenant operator who owns
+the resource never sees it.
+
+Two categories explicitly fall outside that rule and intentionally
+record `customerId: null`:
+
+- **Customer-agnostic events** — `account.login`, system events
+  (system-settings, role mutations), MFA-credential management on
+  the actor's own account. These have no customer dimension at all.
+  Admin sees those rows; restricted callers do not.
+- **Account-targeted mutations on N:N accounts** — `password.reset`,
+  `account.unlock`, `account.restore`, `account.mfa.reset`,
+  `account.update`, `account.delete`. The `target` is an account,
+  and accounts relate to customers many-to-many through
+  `account_customer` (see `getAccountCustomerIds` in
+  `src/lib/auth/account-management.ts`). There is no single
+  customer id to attribute the event to, and silently picking one
+  member of the set would mislead viewers in the other tenants.
+  These rows are therefore visible to admin only today; widening
+  visibility for in-scope tenant operators on these events would
+  require either a row-fan-out (one audit row per linked customer)
+  or a multi-valued audit schema, both of which are out of scope
+  for #388 and #387 and are tracked separately.
+
+When a future audit row's target *is* unambiguously bound to one
+customer (e.g. a route that operates on `account_customer (account,
+customer)` together, or on a node/sensor whose `customer_id` is a
+column on the row), follow the rule above and populate
+`customerId`. The canonical examples are
+`src/app/api/customers/[id]/route.ts` (target = a customer),
+`src/app/api/accounts/[id]/customers/route.ts` (target = the
+`account_customer` link being created — the customer dimension is
+in the URL), and `src/app/api/nodes/[id]/route.ts` (target = a node
+whose `customer_id` is a column).
+
+### Error-message contract
+
+When an error message references a customer identifier the caller
+may not have scope on, redact it before surfacing. Use
+`formatScopedError({ template, references }, allowedCustomerIds)`
+from `src/lib/auth/scope-redaction.ts` (or its positional alias
+`redactForScope(template, references, allowedCustomerIds)`). Each
+interpolated identifier is declared as a structured `Reference`
+carrying its kind (`customer` / `sensor` / `address`) and the
+customer it belongs to; the helper substitutes the literal value
+when the caller has scope and replaces it with a generic stand-in
+(`[redacted customer]`, etc.) otherwise:
+
+```ts
+return formatScopedError(
+  {
+    template: 'Customer "{customer}" not found',
+    references: [
+      { kind: "customer", id, placeholder: "customer", literal: name },
+    ],
+  },
+  allowedCustomerIds,
+);
+```
+
+Out-of-scope resources should return `404` (not `403`) — anything
+else discloses existence. Internal logs may name the id; the
+response body must not.
+
+### Static dispatch-context guard (`pnpm check:scope`)
+
+A Node script at `scripts/check-dispatch-context.mjs` runs in CI
+alongside `pnpm check`. It enforces, file-by-file:
+
+- Only files under `src/lib/node/`, `src/lib/detection/`, and the
+  GraphQL client modules themselves may call `graphqlRequest` /
+  `graphqlRequestTo`. Any other call site fails CI.
+- For each allowlisted file that calls one of the helpers,
+  `buildDispatchContext` must either be imported from another
+  module or declared locally as a top-level function / const.
+  Files that have neither fail CI. The contract is "symbol is in
+  scope at runtime", so the guard accepts any of the three shapes
+  that put it there:
+    - **Named import** —
+      `import { buildDispatchContext } from "./dispatch-context"`,
+      optionally with a left-side `as` alias
+      (`import { buildDispatchContext as buildCtx } ...`). The
+      *imported* symbol must be `buildDispatchContext`; a right-side
+      rename like `import { otherName as buildDispatchContext } ...`
+      is rejected because it imports a different symbol and merely
+      *names* the local binding `buildDispatchContext`, so the call
+      site would dispatch to the wrong function. This is the form
+      the Node track uses today.
+    - **Namespace import + member access** —
+      `import * as dispatchContext from "./dispatch-context"`
+      paired with at least one
+      `dispatchContext.buildDispatchContext(...)` reference in the
+      same file. The bare namespace binding alone is not enough: the
+      symbol is reachable through the namespace object, so the guard
+      requires an observed member access to confirm the file is
+      actually using it.
+    - **Local declaration** — `async function buildDispatchContext` /
+      `const buildDispatchContext = ...` declared at the top level
+      (column 0) of the file. This is the shape Detection's
+      `src/lib/detection/server-actions.ts` uses today.
+
+  Three shapes intentionally do NOT satisfy the presence check:
+    - **Type-only imports.** `import type { buildDispatchContext } ...`,
+      `import { type buildDispatchContext } ...`, and
+      `import type * as ns ...` are all rejected. TypeScript erases
+      these so the symbol is not in runtime scope when the call site
+      executes.
+    - **Namespace imports without member access.** A bare
+      `import * as ns from "..."` with no `ns.buildDispatchContext`
+      reference fails — there is no evidence the file is materializing
+      the symbol from the namespace.
+    - **Nested declarations.** `function buildDispatchContext` /
+      `const buildDispatchContext` inside another function or block
+      does not bring the symbol into file scope. Only top-level
+      (column-0) declarations count.
+
+Both `pnpm check` (Biome) and `pnpm check:scope` must pass before
+a PR can land. The guard is intentionally simple — it does not
+verify that the dispatch context flows into the specific call
+site, only that the symbol is in scope. Deeper correctness still
+relies on code review.
+
+The script strips line/block comments AND the contents of string
+literals (single-quoted, double-quoted, and template-string) before
+applying the call and presence regexes, so:
+
+- A commented-out `import { buildDispatchContext } from "..."` does
+  NOT satisfy the presence requirement.
+- A commented-out call does NOT count as a real call.
+- A string literal that happens to contain
+  `import { buildDispatchContext } ...` (e.g. an error message,
+  log line, or fixture) does NOT satisfy the presence requirement
+  either, and a string literal containing `graphqlRequest(...)`
+  does NOT trigger a violation.
+
+Call detection runs against the whole stripped source so a call
+split across lines (e.g. `return graphqlRequest\n  (QUERY, ...)`) is
+still recognized. The scanner also walks past a balanced `<...>`
+generic-arguments block before locating the opening `(`, so the
+generic form (`graphqlRequest<Thing>(...)` and its multiline variant
+`graphqlRequest<Thing>\n  (...)`) is recognized as the same call
+site and the override-line range covers the helper-name line through
+the opening-paren line. Newlines are preserved by the stripper so
+reported line numbers stay aligned with the original source.
+Template-literal interpolation expressions (`${...}`) are not parsed
+back out — a real call buried inside `${...}` is missed and an
+`import { buildDispatchContext }` substring inside `${...}` does not
+satisfy the presence check either. Both edges are pathological in
+real source, and the file-level allowlist still catches the only
+meaningful regression: a brand-new server action outside
+`src/lib/{node,detection}` that calls `graphqlRequest`.
+
+To allow a deliberate exception, append an override comment to any
+line of the call expression (helper-name line through the opening
+paren — including the line containing `<` for generic calls):
+
+```ts
+return graphqlRequest(QUERY, undefined, ctx); // scope-allowlist: <reason>
+```
+
+The reason must be non-empty and survives review precisely
+because it is loud. Use the override only when the call genuinely
+does not need a customer scope (e.g. a non-customer-scoped manager
+introspection query); never to silence a real violation.
+
+### Cross-customer integration test matrix
+
+`src/__integration__/multi-tenancy/scope.test.ts` is a
+data-driven regression suite that exercises every customer-scoped
+endpoint against three personas: `account-A`, `account-B`, and
+`admin`. Every row in the `ENDPOINTS` array runs the standard
+assertions for its `expects` mode:
+
+- `list-scoped` — account-A's list contains the customer-A fixture
+  row and excludes the customer-B row; account-B mirrors that on
+  customer B; admin sees both plus any null-customer fixture rows.
+  When the row payload exposes a single `customer_id` field the
+  harness also asserts every row matches the caller's customer; rows
+  that don't expose one (e.g. accounts list — membership is N:N via
+  `account_customer`) skip the per-row check via
+  `rowCustomerId: () => undefined`.
+- `200-on-in-scope-404-on-out-of-scope` — account-A's GET on
+  customer A returns 200; account-A's GET on customer B returns
+  404 (NOT 403 — surfacing 403 would disclose existence); admin gets
+  200 on both. An optional `inScopeBodyAssertion` callback runs
+  against the parsed JSON body of every in-scope GET — use it for
+  routes that return a list under a parent path (e.g.
+  `GET /api/accounts/[id]/customers`) so the regression guard
+  actually pins the returned data to the persona's customer rather
+  than only asserting that the path is reachable.
+- `mutation-scope` (POST / PATCH / DELETE) — each persona slot
+  declares an optional `inScope` and `outOfScope` variant. The
+  harness fires only the variants that are defined and asserts the
+  response status equals the variant's `expectStatus` (typically 2xx
+  in-scope, 403 / 404 out-of-scope for non-admins; 2xx for both for
+  admin). An optional `cleanupAfterSuccess` hook resets fixture
+  state after each 2xx so mutations don't leak between runs.
+  - **Contract narrowing for auth-state-mutating routes.** The
+    matrix's mandate is the cross-customer scope contract, not
+    end-to-end coverage of every success path. Routes that mutate
+    authentication state (password hash, locked flag, MFA
+    enrolment, token version, live sessions) the matrix's other
+    rows depend on declare ONLY the tenant `outOfScope` variant.
+    Today this applies to `POST /api/accounts/[id]/password-reset`,
+    `/unlock`, and `/mfa-reset`: a single 404 from
+    `validateManagedAccountTarget` is the regression-meaningful
+    assertion (a future PR that drops the scope check turns the row
+    red), and the route-specific integration suites
+    (`src/__integration__/api/unlock.test.ts`, the password / MFA
+    suites) already cover the happy path end-to-end. New routes
+    that share this profile should follow the same pattern; new
+    routes that don't (no auth-state mutation) should declare every
+    persona slot.
+  - **Persona overrides.** A row whose route requires a permission
+    the base tenant role doesn't carry (`customers:write`,
+    `customers:delete`, `accounts:delete`) sets
+    `personaUsernames: { accountA: MANAGER_A_USERNAME, accountB:
+    MANAGER_B_USERNAME }`. The harness signs in those personas as
+    the **manager** accounts (a non-`access-all` "tenant-
+    administrator" role that holds the elevated permissions) so the
+    request reaches the route's tenant-scope branch instead of being
+    short-circuited at the permission gate. The persona label in
+    the test name stays `account-A` / `account-B` so the matrix
+    shape stays uniform; only the sign-in user changes. This is the
+    pattern used by `PATCH /api/customers/[id]`,
+    `DELETE /api/customers/[id]`, and `DELETE /api/accounts/[id]`.
+  - **Targets that need a tenant-manageable role.** The
+    `DELETE /api/accounts/[id]` row deletes the dedicated
+    `monitor-target-A` / `-B` accounts (Security Monitor-equivalent
+    role) rather than the tenant accounts, because
+    `validateManagedAccountTarget` rejects targets whose role is
+    not tenant-manageable with 403 before the scope check ever
+    runs. Use the same pattern for any future route that calls
+    `validateManagedAccountTarget` and needs the scope branch
+    exercised.
+  - **Structurally unreachable in-scope paths.** A few routes
+    intentionally leave the tenant `inScope` variant undefined
+    because the success path is blocked by a separate gate
+    downstream of the scope check. `DELETE /api/customers/[id]` is
+    the canonical case: the scope check requires the caller's
+    `account_customer` link to exist, but the next gate
+    (`Cannot delete customer with active account assignments`)
+    refuses any customer with at least one link, so a
+    non-`access-all` caller cannot pass both gates on the same
+    customer. The `outOfScope` 404 is the regression-meaningful
+    assertion for tenants; the admin in-scope variant covers the
+    success path against an orphan customer.
+Routes whose only tenant gate is a permission check with **no**
+per-customer scope branch (e.g. `POST /api/customers`, which only
+needs `customers:write`) are intentionally NOT in this matrix.
+Any holder of the required permission — admin or a tenant-
+administrator-style manager — can hit the success path, so there
+is no cross-customer contract to assert. Permission-gate coverage
+for those routes lives in the route's own integration suite, not
+in this scope guard. Modeling them here would teach future authors
+that the route is "admin-only" when in fact the matrix's manager
+personas would also succeed.
+
+**Adding a new customer-scoped endpoint is a one-line change** to
+`ENDPOINTS`. Pick the appropriate `expects` mode, fill in the
+`name`, `method`, and the mode-specific fields (`path` for
+`list-scoped`, `pathFor` for detail GETs, `request` for mutations),
+and the harness iterates and asserts automatically. If the new
+endpoint needs a fixture row that is not in `Resources`, extend
+`Resources` and the `beforeAll` seeder; otherwise the row alone
+is enough.
+
+Routes that go through `buildDispatchContext` (the node /
+detection API surface backed by REview / Tivan over GraphQL) are
+**not** in this matrix — the cross-customer contract there is
+"the dispatch JWT carries the right `customer_ids`", which is a
+structural assertion against the dispatch context rather than a
+row-level DB scope check. Those routes are guarded by
+`pnpm check:scope` (the static dispatch-context guard above) and
+exercised against the `mock-graphql` helper in their feature-
+specific integration files.
+
+The matrix is the regression-test target for both #386 (audit-log
+viewer scoping) and #387 (the hardening sweep). New PRs that
+touch a customer-scoped local-DB route should add their endpoint
+to `ENDPOINTS` rather than copying an existing per-endpoint test
+file.
+
 ## Markdown formatting
 
 - Use **ATX headings** (`#`, `##`, `###`). Do not skip heading
