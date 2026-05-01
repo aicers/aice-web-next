@@ -127,6 +127,15 @@ export default async function DetectionPage({
       const values = pivotParams[field];
       if (values && values.length > 0) initialInput[field] = values;
     }
+    // Reviewer Round 5: pivot URLs and Investigation back-links carry
+    // the operator's active customer narrowing as `customers=1,2`.
+    // Thread it into the committed filter so the very first SSR
+    // dispatch honours the narrowing — and so a crafted out-of-scope
+    // ID flows into the BFF intersection check rather than being
+    // silently dropped before it reaches the gate.
+    if (pivotParams.customers && pivotParams.customers.length > 0) {
+      initialInput.customers = pivotParams.customers;
+    }
     initialFilter = { mode: "structured", input: initialInput };
     // Port / proto are not yet part of `EventListFilterInput`; they
     // ride in the URL so Phase Network/IP can pick them up without
