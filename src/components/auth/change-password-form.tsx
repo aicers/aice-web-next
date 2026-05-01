@@ -32,26 +32,6 @@ const changePasswordSchema = z
 
 type ChangePasswordValues = z.infer<typeof changePasswordSchema>;
 
-type PasswordErrorCode =
-  | "TOO_SHORT"
-  | "TOO_LONG"
-  | "MISSING_UPPERCASE"
-  | "MISSING_LOWERCASE"
-  | "MISSING_DIGIT"
-  | "MISSING_SPECIAL"
-  | "BLOCKLISTED"
-  | "RECENTLY_USED";
-
-type PasswordErrorParams = Partial<
-  Record<
-    PasswordErrorCode,
-    {
-      min?: number;
-      max?: number;
-    }
-  >
->;
-
 export function ChangePasswordForm() {
   const t = useTranslations("changePassword");
   const tValidation = useTranslations("validation");
@@ -71,35 +51,6 @@ export function ChangePasswordForm() {
   });
 
   const isSubmitting = form.formState.isSubmitting;
-
-  function translatePasswordError(
-    code: string,
-    errorParams?: PasswordErrorParams,
-  ): string {
-    switch (code as PasswordErrorCode) {
-      case "TOO_SHORT":
-        return t("errors.TOO_SHORT", {
-          min: errorParams?.TOO_SHORT?.min ?? 8,
-        });
-      case "TOO_LONG":
-        return t("errors.TOO_LONG");
-      case "MISSING_UPPERCASE":
-        return t("errors.MISSING_UPPERCASE");
-      case "MISSING_LOWERCASE":
-        return t("errors.MISSING_LOWERCASE");
-      case "MISSING_DIGIT":
-        return t("errors.MISSING_DIGIT");
-      case "MISSING_SPECIAL":
-        return t("errors.MISSING_SPECIAL");
-      case "BLOCKLISTED":
-        return t("errors.BLOCKLISTED");
-      case "RECENTLY_USED":
-        return t("errors.RECENTLY_USED");
-      default:
-        return code;
-    }
-  }
-
   async function onSubmit(values: ChangePasswordValues) {
     setServerError(null);
 
@@ -135,13 +86,16 @@ export function ChangePasswordForm() {
 
       if (res.status === 400) {
         try {
-          const body = (await res.json()) as {
-            codes?: string[];
-            errorParams?: PasswordErrorParams;
-          };
+          const body = (await res.json()) as { codes?: string[] };
           if (body.codes && body.codes.length > 0) {
             const errorMessages = body.codes
-              .map((code) => translatePasswordError(code, body.errorParams))
+              .map((code) => {
+                try {
+                  return t(`errors.${code}` as Parameters<typeof t>[0]);
+                } catch {
+                  return code;
+                }
+              })
               .join(". ");
             setServerError(errorMessages);
             return;
