@@ -304,8 +304,12 @@ The CSP nonce flow requires dynamic rendering — `app/[locale]/layout.tsx`,
 per-request nonce.  Any new page added under `app/` must do the same
 (or have no `<script>` tags at all): a statically rendered HTML
 response carries no per-request nonce and would be blocked once CSP
-promotes from Report-Only to enforcing.  Verify with `pnpm build` —
-the route map should mark every HTML route as `ƒ` (dynamic).
+promotes from Report-Only to enforcing.  `pnpm build` chains
+`scripts/assert-no-static-html-routes.mjs`, which fails the build if
+any HTML route is statically prerendered (the route map should mark
+every HTML route as `ƒ` (dynamic)).  The Playwright suite at
+`e2e/csp-nonce.spec.ts` is the matching regression net for the
+nonce-on-every-`<script>` invariant under `pnpm dev`.
 
 The `__Host-csrf` cookie and `Secure` flag on the access token cookie
 are automatically enabled when `NODE_ENV=production` (set by the

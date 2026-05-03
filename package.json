@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "next build && node scripts/assert-no-static-html-routes.mjs",
     "start": "next start",
     "lint": "biome check",
     "format": "biome format --write",
