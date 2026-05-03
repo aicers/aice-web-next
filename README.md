@@ -18,7 +18,7 @@ backend).
 
 ```bash
 pnpm install
-cp .env.example .env.local   # then fill in values (see below)
+cp .env.example .env.local   # local dev (pnpm dev). See env-file note below.
 ```
 
 Start PostgreSQL (via Docker Compose or a local instance), then:
@@ -31,7 +31,20 @@ Open <http://localhost:3000> to see the result.
 
 ## Environment variables
 
-Copy `.env.example` to `.env.local` and fill in the values:
+Pick the right env file for the path you are running:
+
+- **Local dev (`pnpm dev`):** Next.js loads `.env.local` (and `.env`)
+  from the project root, per the standard
+  [Next.js env-loading rules](https://nextjs.org/docs/app/guides/environment-variables).
+  Most contributors put their secrets in `.env.local`.
+- **Production Docker Compose (`docker compose --profile prod up`):**
+  the `next-app` service has `env_file: .env` in `docker-compose.yml`,
+  so the prod profile **only** reads `.env`. `.env.local` is ignored
+  by Compose. Operators deploying with the prod profile must populate
+  `.env`.
+
+Copy `.env.example` to whichever file matches your path and fill in
+the values:
 
 | Variable | Description |
 |----------|-------------|
@@ -44,8 +57,12 @@ Copy `.env.example` to `.env.local` and fill in the values:
 | `MTLS_CERT_PATH` | Path to the mTLS client certificate |
 | `MTLS_KEY_PATH` | Path to the mTLS private key |
 | `MTLS_CA_PATH` | Path to the mTLS CA certificate |
-| `DATA_DIR` | Directory for runtime data (default: `./data`) |
+| `DATA_DIR` | Directory for runtime data (default: `./data`). When the prod compose profile runs, this directory is backed by the `next-app-data` named volume so JWT keys survive container restarts. |
 | `JWT_EXPIRATION_MINUTES` | Access token lifetime in minutes |
+| `JWT_SIGNING_KEY_FILE` | Path to an externally managed ES256 signing key (e.g. K8s Secret mount, Vault csi driver). Takes precedence over `<DATA_DIR>/keys/jwt-signing.json`. **Recommended for production.** When set, the previous key still loads from `<DATA_DIR>/keys/jwt-signing.prev.json` unless `JWT_SIGNING_KEY_FILE_PREVIOUS` is also set. |
+| `JWT_SIGNING_KEY_FILE_PREVIOUS` | Optional override for the previous (rotated-out) key path. |
+| `JWT_SIGNING_KEY_AUTOGEN` | Set to `1` / `true` / `on` to generate `<DATA_DIR>/keys/jwt-signing.json` on first boot when missing. Idempotent — re-boots load the existing key. **Single-instance only**: every replica would generate its own key, breaking inter-replica session validation. Multi-replica deployments must inject a shared key via `JWT_SIGNING_KEY_FILE` instead. Boot fails fast when `DATA_DIR` is not writable. |
+| `EXPECTED_ORIGIN` | Override the expected request Origin for the CSRF/Origin guard (e.g. `https://app.example.com`). Required when the app is fronted by a TLS-terminating reverse proxy — browsers send `Origin: https://...` while the upstream sees `http://...`, and the mutation guard would otherwise reject every POST/PUT/PATCH/DELETE. Canonicalized at parse time (trailing slash stripped, scheme + host lowercased). When unset, behavior is unchanged from today (`request.nextUrl.origin` only). |
 | `CSRF_SECRET` | Secret for CSRF token HMAC |
 | `INIT_ADMIN_USERNAME` | Initial System Administrator username |
 | `INIT_ADMIN_PASSWORD` | Initial System Administrator password |
@@ -274,9 +291,36 @@ The production nginx config (`infra/nginx/nginx.prod.conf`) enables:
 - Security headers: `X-Frame-Options`, `X-Content-Type-Options`,
   `Referrer-Policy`
 
+`Content-Security-Policy-Report-Only` is emitted by the Next.js app
+(per-request nonce — nginx leaves the header untouched). Enforcement
+is staged: the Report-Only mode lands first to surface any inline
+script/style breakages in real traffic before the header is promoted
+to enforcing CSP.
+
 The `__Host-csrf` cookie and `Secure` flag on the access token cookie
 are automatically enabled when `NODE_ENV=production` (set by the
 Dockerfile).
+
+#### First-boot deployment checklist
+
+1. Populate `.env` (the prod compose profile reads `.env`, not
+   `.env.local`). At minimum set `CSRF_SECRET`, the database URLs,
+   the GraphQL endpoints, and:
+   - `EXPECTED_ORIGIN=https://your.public.host` so the CSRF/Origin
+     guard accepts mutation requests through the HTTPS proxy.
+   - One of `JWT_SIGNING_KEY_FILE=<path>` (recommended — a Secret
+     mount) or `JWT_SIGNING_KEY_AUTOGEN=1` (single-instance dev
+     convenience).
+2. Make sure the persistent data volume is in place. The
+   `docker-compose.yml` shipped here mounts a named `next-app-data`
+   volume on `/app/data`; if you customise this, mount your own
+   volume at `${DATA_DIR}` so the JWT key (and any other persisted
+   state) survives container restarts.
+3. `docker compose --profile prod up -d`.
+
+If autogen is requested but `DATA_DIR` is not writable by the
+container user (uid 1001), the app fails fast at startup with a
+clear error message instead of crash-looping mid-boot.
 
 ### Development with Docker Compose
 
