@@ -8,3 +8,8 @@ docker-compose.yml
 .claude
 .agent*
 .github
+# Local key material / runtime state must never enter the Docker
+# build context — even if NFT regresses and pulls /data into the
+# standalone bundle, this keeps the host's keys out of the image.
+data/
+data-e2e/
