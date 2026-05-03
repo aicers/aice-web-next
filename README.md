@@ -498,18 +498,22 @@ Three deployment shapes:
         - "review.<instance-id>.<hostname>.<domain>:host-gateway"
   ```
 
-- **Kubernetes.** Either rewrite the name in CoreDNS so it
-  resolves to the upstream's `Service` ClusterIP:
+- **Kubernetes.** Use a CoreDNS `rewrite` rule that maps the
+  bootroot-issued external FQDN onto the upstream's in-cluster
+  `Service` DNS name:
 
   ```yaml
   # CoreDNS Corefile snippet
   rewrite name review.<instance-id>.<hostname>.<domain> review-web.aice.svc.cluster.local
   ```
 
-  …or stand up a `Service` whose name (plus
-  `.<namespace>.svc.cluster.local`) is exactly the SAN. The
-  CoreDNS-rewrite path is usually less disruptive when the SAN
-  was minted before the cluster existed.
+  An alternative — naming a `Service` so its in-cluster DNS
+  name equals the SAN — is **not** workable for the bootroot
+  SAN shape: Kubernetes Service names are a single DNS label
+  (no dots), while the bootroot SAN
+  `<instance-id>.<service-name>.<hostname>.<domain>` is
+  multi-label. CoreDNS rewrite is the supported path for
+  bootroot-issued external FQDNs.
 
 - **Bare-metal.** Add an `/etc/hosts` entry:
 
