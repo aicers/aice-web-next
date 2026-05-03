@@ -77,8 +77,21 @@ type ScriptObservation = {
   snippet: string;
 };
 
+/**
+ * The Playwright harness boots `pnpm dev --turbopack`, which injects a
+ * Turbopack HMR client chunk (e.g.
+ * `/_next/static/chunks/[turbopack]_browser_dev_hmr-client_hmr-client_ts_*.js`)
+ * into every HTML response. That script is a dev-runtime artifact and
+ * never ships to production — `pnpm build` does not emit it, and the
+ * static-vs-dynamic guard (`scripts/assert-no-static-html-routes.mjs`)
+ * is what protects the prod build's nonce coverage. Excluding it here
+ * keeps the dev-mode assertion honest without losing prod coverage.
+ */
+const DEV_ONLY_SCRIPT_SRC =
+  /\/_next\/static\/chunks\/(?:%5B|\[)turbopack(?:%5D|\])_browser_dev_/;
+
 async function readScriptNonces(page: Page): Promise<ScriptObservation[]> {
-  return page.$$eval("script", (scripts) =>
+  const all = await page.$$eval("script", (scripts) =>
     scripts.map((s) => ({
       // IDL attribute — survives nonce hiding (the content attribute
       // is cleared post-parse). `getAttribute("nonce")` would return
@@ -89,6 +102,7 @@ async function readScriptNonces(page: Page): Promise<ScriptObservation[]> {
       snippet: s.outerHTML.slice(0, 120),
     })),
   );
+  return all.filter((s) => !DEV_ONLY_SCRIPT_SRC.test(s.src));
 }
 
 function assertEveryScriptCarriesNonce(
