@@ -389,10 +389,23 @@ audit table.
 
    At minimum also set `CSRF_SECRET`, the GraphQL endpoints, and:
    - `EXPECTED_ORIGIN=https://your.public.host` so the CSRF/Origin
-     guard accepts mutation requests through the HTTPS proxy.
+     guard accepts mutation requests through the HTTPS proxy. For
+     the prod profile, also set `WEBAUTHN_RP_ORIGIN` to the same
+     public HTTPS origin and `WEBAUTHN_RP_ID` to its host
+     (e.g. `WEBAUTHN_RP_ID=your.public.host`,
+     `WEBAUTHN_RP_ORIGIN=https://your.public.host`). The two env
+     vars guard different code paths — the CSRF/Origin guard and
+     the WebAuthn ceremony — but share the same value in this
+     deployment. Leaving `WEBAUTHN_RP_ORIGIN` at its dev fallback
+     silently breaks MFA enrollment on the prod profile.
    - One of `JWT_SIGNING_KEY_FILE=<path>` (recommended — a Secret
      mount) or `JWT_SIGNING_KEY_AUTOGEN=1` (single-instance dev
      convenience).
+   - The prod nginx config sets `X-Request-ID` on every upstream
+     request and includes `$request_id` in its access log. When an
+     upstream load balancer already mints a request id, override
+     the directive to forward `$http_x_request_id` instead so the
+     id is end-to-end (see `infra/nginx/nginx.prod.conf`).
 2. Make sure the persistent data volume is in place. The
    `docker-compose.yml` shipped here mounts a named `next-app-data`
    volume on `/app/data`; if you customise this, mount your own

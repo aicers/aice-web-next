@@ -28,6 +28,10 @@ import {
 import { assessIpUaRisk } from "./session-validator";
 import { extractBrowserFingerprint } from "./ua-parser";
 
+// Cap on the X-Request-ID value before it lands in the log line.
+// The header is operator-supplied and must be treated as untrusted.
+const REQUEST_ID_LOG_MAX_LEN = 200;
+
 // ── Types ───────────────────────────────────────────────────────
 
 type RouteHandler = (
@@ -166,14 +170,23 @@ export function withAuth(
         expectedOrigin,
       );
       if (!originResult.ok) {
+        // Operator-supplied X-Request-ID (set by nginx in the prod
+        // profile). Header is untrusted and length-capped before
+        // logging — never used for control flow.
+        const rawRequestId = request.headers.get("x-request-id");
+        const requestId =
+          rawRequestId === null
+            ? "unknown"
+            : rawRequestId.slice(0, REQUEST_ID_LOG_MAX_LEN);
         // Server-side log so operators can see expected/actual without
         // leaking it into the response body in production.
         console.warn(
-          "[csrf] Origin mismatch on %s %s: expected=%s actual=%s",
+          "[csrf] Origin mismatch on %s %s: expected=%s actual=%s request_id=%s",
           request.method,
           request.nextUrl.pathname,
           originResult.expected,
           originResult.actual ?? "<none>",
+          requestId,
         );
         const body: Record<string, unknown> = { error: "Origin mismatch" };
         if (process.env.NODE_ENV !== "production") {
