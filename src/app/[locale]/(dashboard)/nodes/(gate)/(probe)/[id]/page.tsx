@@ -32,6 +32,12 @@ import type {
   Node as ManagerNode,
   NodeStatus,
 } from "@/lib/node/types";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+} from "@/lib/review/errors";
+
+import NodesForbidden from "../../../forbidden";
 
 interface CustomerOption {
   id: string;
@@ -108,8 +114,14 @@ export default async function NodeDetailPage({
   // ensures `getNode` is always callable here for the read scopes; the
   // canonical-not-found / out-of-scope branches map to 404 (NotFound),
   // and a manager outage maps to the offline panel.
+  //
+  // #405 I: review's typed denials surface as the explicit forbidden
+  // panel rather than the manager-offline copy or a 500 page. A
+  // silent empty state would conflate "denied" with "no data" — see
+  // the issue's security guardrails.
   let node: ManagerNode | null = null;
   let managerOffline = false;
+  let reviewForbidden = false;
   try {
     node = await getNode(session, id);
   } catch (err) {
@@ -121,9 +133,23 @@ export default async function NodeDetailPage({
     }
     if (err instanceof ManagerUnavailableError) {
       managerOffline = true;
+    } else if (
+      err instanceof ReviewForbiddenError ||
+      err instanceof ReviewInvalidArgumentError
+    ) {
+      reviewForbidden = true;
     } else {
       throw err;
     }
+  }
+
+  if (reviewForbidden) {
+    return (
+      <>
+        <CustomerScopeCallout scope={scope} className="mb-4" />
+        <NodesForbidden />
+      </>
+    );
   }
 
   if (managerOffline || !node) {
@@ -198,7 +224,19 @@ export default async function NodeDetailPage({
       initialCapturedAt = result.capturedAt;
       initialEdges = result.edges;
     } catch (err) {
-      if (!(err instanceof ManagerUnavailableError)) throw err;
+      // The seed is non-fatal — the dashboard still renders without
+      // it and the polling driver recovers on the first tick. Treat
+      // review-side denials and argument validation the same as the
+      // manager-offline path here: the canonical node fetch above
+      // already succeeded, so an out-of-band failure to seed should
+      // degrade gracefully rather than 500-ing the page.
+      if (
+        !(err instanceof ManagerUnavailableError) &&
+        !(err instanceof ReviewForbiddenError) &&
+        !(err instanceof ReviewInvalidArgumentError)
+      ) {
+        throw err;
+      }
     }
   }
   const initialNodeStatus = initialEdges.find((edge) => edge.id === id) ?? null;

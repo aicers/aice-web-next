@@ -5,6 +5,7 @@ import {
   DEFAULT_CSV_HEADERS,
   type FormatCsvRowOptions,
 } from "@/lib/detection/csv-export";
+import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 
 const mockSearchEvents = vi.hoisted(() => vi.fn());
 
@@ -66,6 +67,45 @@ const EVENT = {
 describe("createCsvExportStream", () => {
   beforeEach(() => {
     mockSearchEvents.mockReset();
+  });
+
+  // #405 P1: review 0.47.0 rejects `first` / `last` outside [0,100]
+  // with a GraphQL-level error. The CSV export shares the same
+  // connection shape as the interactive list, so its page size must
+  // also be capped at REVIEW_MAX_PAGE_SIZE — otherwise the preflight
+  // (`first: 1`) succeeds, the route emits a 200 with headers, and
+  // the stream fails the download as soon as it pulls the first
+  // page. This test pins the cap at the dispatch boundary.
+  it("dispatches each page with first <= REVIEW_MAX_PAGE_SIZE", async () => {
+    mockSearchEvents.mockResolvedValue({
+      pageInfo: { hasNextPage: false, endCursor: null },
+      edges: [],
+      nodes: [],
+      totalCount: "0",
+    });
+
+    const { createCsvExportStream, CSV_EXPORT_PAGE_SIZE } = await import(
+      "@/lib/detection/export-stream"
+    );
+    expect(CSV_EXPORT_PAGE_SIZE).toBeLessThanOrEqual(REVIEW_MAX_PAGE_SIZE);
+
+    const stream = createCsvExportStream({
+      session: buildSession(),
+      filter: FILTER,
+      headers: HEADERS,
+      formatRowOptions: ROW_OPTIONS,
+    });
+    const reader = stream.getReader();
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+
+    expect(mockSearchEvents).toHaveBeenCalled();
+    for (const call of mockSearchEvents.mock.calls) {
+      const args = call[2] as { first?: number };
+      expect(args.first).toBeLessThanOrEqual(REVIEW_MAX_PAGE_SIZE);
+    }
   });
 
   it("does not fetch additional pages while the consumer has not drained the first page", async () => {

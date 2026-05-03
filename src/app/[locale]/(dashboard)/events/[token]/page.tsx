@@ -3,9 +3,14 @@ import { EventInvestigation } from "@/components/events/event-investigation";
 import { EventNotFound } from "@/components/events/event-not-found";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import { fetchEventByLocator } from "@/lib/detection";
+import {
+  DetectionForbiddenError,
+  DetectionUnauthorizedError,
+} from "@/lib/detection/errors";
 import type { Event } from "@/lib/detection/types";
 import { decodeEventLocator } from "@/lib/events/event-locator";
 import { sanitizeReturnTo } from "@/lib/events/return-to";
+import { ReviewForbiddenError } from "@/lib/review/errors";
 
 interface PageProps {
   params: Promise<{ locale: string; token: string }>;
@@ -46,7 +51,24 @@ export default async function EventInvestigationPage({
   let resolution: Awaited<ReturnType<typeof fetchEventByLocator>>;
   try {
     resolution = await fetchEventByLocator(session, locator);
-  } catch {
+  } catch (err) {
+    // #405 I: surface review-side / BFF-side denials as an explicit
+    // access-denied panel, never as a generic fetch error. The
+    // security guardrail forbids conflating "denied" with "could not
+    // load" — operators must be able to tell the two apart.
+    if (
+      err instanceof ReviewForbiddenError ||
+      err instanceof DetectionForbiddenError ||
+      err instanceof DetectionUnauthorizedError
+    ) {
+      return (
+        <EventNotFound
+          reason="forbidden"
+          backHref={backHref}
+          labels={buildLabels(t)}
+        />
+      );
+    }
     return (
       <EventNotFound
         reason="fetch-error"
@@ -116,6 +138,8 @@ function buildLabels(t: EventsTranslator) {
     notFoundBody: t("notFound.notFoundBody"),
     fetchErrorTitle: t("notFound.fetchErrorTitle"),
     fetchErrorBody: t("notFound.fetchErrorBody"),
+    forbiddenTitle: t("notFound.forbiddenTitle"),
+    forbiddenBody: t("notFound.forbiddenBody"),
     back: t("notFound.back"),
   };
 }

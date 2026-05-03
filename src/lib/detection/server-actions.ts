@@ -11,6 +11,10 @@ import {
 } from "@/lib/events/event-locator";
 import { graphqlRequest } from "@/lib/graphql/client";
 import { withReviewErrorMapping } from "@/lib/review/error-mapping";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+} from "@/lib/review/errors";
 
 import { DetectionForbiddenError, DetectionUnauthorizedError } from "./errors";
 import { type Filter, toEventListFilterInput } from "./filter";
@@ -144,13 +148,25 @@ async function buildDispatchContext(
   // route layer maps it to the same forbidden response code as the
   // unauthorized branch above so neither path leaks a partial result.
   //
-  // Admins with `customers:access-all` are checked against the
-  // materialized list (every registered customer ID) — same as the
-  // pre-#405 behavior for the non-empty case. When the `customers`
-  // table is empty, the materialized list is empty too, so an admin
-  // selecting any customer ID is rejected here. That's the correct
-  // outcome: there is nothing to filter to.
-  validateFilterScope(filter, customerIds);
+  // The check intentionally only runs for non-global-scope callers
+  // (#405 P2). The local `customers` table is the BFF's
+  // *materialized* view of review's customer set, used to enforce
+  // per-account scope. An admin with `customers:access-all` is
+  // logically `customer_ids = None` (review's "all customers" wire
+  // semantics, see {@link jwtCustomerIdsForDetection}) — running
+  // them through an intersection against the local list would
+  // incorrectly reject filters that reference legitimate review
+  // customer IDs missing from the local table (the most common
+  // reproduction is a fresh install where the bootstrap admin
+  // pivots into a review customer before BFF sync runs). The admin
+  // path delegates filter validation to review itself: if the
+  // operator types a non-existent customer ID, review returns an
+  // empty connection rather than 500. Non-admin callers keep the
+  // BFF gate as the authoritative scope check — their JWT carries
+  // a finite materialized list and the intersection is meaningful.
+  if (!hasGlobalScope) {
+    validateFilterScope(filter, customerIds);
+  }
 
   return {
     role: session.roles[0],
@@ -484,7 +500,17 @@ export async function fetchEventByLocator(
 /**
  * Look up geolocation for a single IP address. Returns `null` when
  * REview has no entry (the `IpLocation` return is nullable), or when
- * the query fails — IP enrichment is a best-effort decoration.
+ * the query fails for a transient / unknown reason — IP enrichment
+ * is a best-effort decoration.
+ *
+ * Typed review denials ({@link ReviewForbiddenError} /
+ * {@link ReviewInvalidArgumentError}) are intentionally re-thrown
+ * rather than collapsed to `null`: per #405's security guardrail,
+ * Forbidden must not be silently swallowed as "no data". Callers
+ * that already render an explicit access-denied state (Investigation
+ * page, endpoint enrichment) propagate the rejection upward; the
+ * legacy "best-effort decoration" contract still applies for
+ * transient transport failures and unknown errors.
  */
 export async function lookupIpLocation(
   session: AuthSession,
@@ -505,7 +531,13 @@ export async function lookupIpLocation(
       ),
     );
     return data.ipLocation;
-  } catch {
+  } catch (err) {
+    if (
+      err instanceof ReviewForbiddenError ||
+      err instanceof ReviewInvalidArgumentError
+    ) {
+      throw err;
+    }
     return null;
   }
 }

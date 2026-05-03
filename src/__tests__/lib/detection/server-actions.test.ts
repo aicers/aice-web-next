@@ -332,7 +332,15 @@ describe("detection server actions", () => {
 
   describe("BFF intersection check", () => {
     beforeEach(() => {
-      mockHasPermission.mockResolvedValue(true);
+      // Non-admin caller: holds `detection:read` but not
+      // `customers:access-all`. The intersection check is only the
+      // authoritative gate for non-global-scope callers; admins
+      // delegate filter validation to review (#405 P2 — see the
+      // separate admin tests below).
+      mockHasPermission.mockImplementation(
+        async (_roles: string[], permission: string) =>
+          permission !== "customers:access-all",
+      );
     });
 
     it("dispatches when the filter narrows to a subset of allowed scope", async () => {
@@ -399,6 +407,9 @@ describe("detection server actions", () => {
     it("dispatches an admin selecting any subset of registered customers", async () => {
       // Admin scope is materialised upstream — every registered
       // customer ID — and `searchEvents` does not branch on role.
+      // Override the suite-level non-admin permission shape so the
+      // global-scope path activates for this case.
+      mockHasPermission.mockResolvedValue(true);
       mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3, 4, 5]);
       mockGraphqlRequest.mockResolvedValue({
         eventList: {
@@ -425,21 +436,46 @@ describe("detection server actions", () => {
       expect(variables.filter.customers).toEqual(["2", "4"]);
     });
 
-    it("rejects an admin selecting an unknown customer ID (not present in `customers`)", async () => {
-      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3]);
+    it("dispatches a global-scope admin even when filter.customers is missing from the local list (#405 P2)", async () => {
+      // The BFF's local `customers` table is a materialised view of
+      // review's customer set used for non-admin scope enforcement.
+      // An admin holds `customers:access-all`, which review reads as
+      // `customer_ids = None` (all customers). On a fresh install the
+      // local table can be sparser than review's — the bootstrap
+      // admin must still be able to filter by a review customer ID
+      // that hasn't been mirrored locally yet, otherwise the
+      // pre-#405 P2 reproduction (admin opens `/en/detection?customers=1`
+      // on an empty local table) re-emerges as an unrecoverable 403.
+      mockHasPermission.mockResolvedValue(true);
+      mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+      mockGraphqlRequest.mockResolvedValue({
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: false,
+            hasNextPage: false,
+            startCursor: null,
+            endCursor: null,
+          },
+          edges: [],
+          nodes: [],
+          totalCount: "0",
+        },
+      });
 
-      const { searchEvents, DetectionForbiddenError } = await import(
-        "@/lib/detection"
-      );
+      const { searchEvents } = await import("@/lib/detection");
+      await searchEvents(makeSession({ roles: ["System Administrator"] }), {
+        mode: "structured",
+        input: { customers: ["1"] },
+      });
 
-      await expect(
-        searchEvents(makeSession({ roles: ["System Administrator"] }), {
-          mode: "structured",
-          input: { customers: ["999999"] },
-        }),
-      ).rejects.toBeInstanceOf(DetectionForbiddenError);
-
-      expect(mockGraphqlRequest).not.toHaveBeenCalled();
+      expect(mockGraphqlRequest).toHaveBeenCalledOnce();
+      const [, variables, context] = mockGraphqlRequest.mock.calls[0];
+      // The filter passes through verbatim — admin scope delegation
+      // means review is the authoritative customer-ID gate.
+      expect(variables.filter.customers).toEqual(["1"]);
+      // SysAdmin's JWT continues to omit `customer_ids` per the
+      // `validate_context_jwt` contract.
+      expect(context.customerIds).toBeUndefined();
     });
 
     it("rejects an empty-scope account before any REview dispatch", async () => {
@@ -703,6 +739,58 @@ describe("detection server actions", () => {
       );
 
       expect(mockGraphqlRequest).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  // ── lookupIpLocation: typed review-error guardrail ─────────────
+  //
+  // #405 P1: `lookupIpLocation` is best-effort enrichment and used to
+  // collapse every failure into `null`. That conflated "review denied
+  // this query" with "no enrichment available", which the security
+  // guardrails forbid. Typed review denials (Forbidden / argument
+  // validation) must propagate so the caller can render an explicit
+  // access-denied state; transient transport / unknown errors keep
+  // the legacy null-fallback so a missing geo entry does not crash
+  // the Investigation page.
+
+  describe("lookupIpLocation — typed review errors", () => {
+    beforeEach(() => {
+      mockHasPermission.mockResolvedValue(true);
+      mockResolveEffectiveCustomerIds.mockResolvedValue([7]);
+    });
+
+    it("re-throws ReviewForbiddenError instead of silently returning null", async () => {
+      const { ReviewForbiddenError } = await import("@/lib/review/errors");
+      mockGraphqlRequest.mockRejectedValue(
+        new ReviewForbiddenError("Forbidden"),
+      );
+
+      const { lookupIpLocation } = await import("@/lib/detection");
+      await expect(
+        lookupIpLocation(makeSession(), "10.0.0.1"),
+      ).rejects.toBeInstanceOf(ReviewForbiddenError);
+    });
+
+    it("re-throws ReviewInvalidArgumentError instead of silently returning null", async () => {
+      const { ReviewInvalidArgumentError } = await import(
+        "@/lib/review/errors"
+      );
+      mockGraphqlRequest.mockRejectedValue(
+        new ReviewInvalidArgumentError("Invalid argument"),
+      );
+
+      const { lookupIpLocation } = await import("@/lib/detection");
+      await expect(
+        lookupIpLocation(makeSession(), "10.0.0.1"),
+      ).rejects.toBeInstanceOf(ReviewInvalidArgumentError);
+    });
+
+    it("returns null for transient / unknown failures (best-effort decoration)", async () => {
+      mockGraphqlRequest.mockRejectedValue(new Error("boom"));
+
+      const { lookupIpLocation } = await import("@/lib/detection");
+      const result = await lookupIpLocation(makeSession(), "10.0.0.1");
+      expect(result).toBeNull();
     });
   });
 

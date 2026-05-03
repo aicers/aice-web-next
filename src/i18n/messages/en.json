@@ -1499,6 +1499,8 @@
       "notFoundBody": "We could not find an event matching this link. It may have aged out of retention, or its addressing information may have changed.",
       "fetchErrorTitle": "Could not load event",
       "fetchErrorBody": "We were unable to contact the detection service. Please try again in a moment.",
+      "forbiddenTitle": "Access denied",
+      "forbiddenBody": "You do not have permission to view this event. If you believe this is a mistake, contact your administrator.",
       "back": "Back to Detection"
     },
     "header": {

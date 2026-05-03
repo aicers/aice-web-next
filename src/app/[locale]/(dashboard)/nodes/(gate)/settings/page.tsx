@@ -30,6 +30,12 @@ import {
   listAllNodes,
 } from "@/lib/node/server-actions";
 import type { Node as ManagerNode } from "@/lib/node/types";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+} from "@/lib/review/errors";
+
+import NodesForbidden from "../../forbidden";
 
 interface CustomerOption {
   id: string;
@@ -87,6 +93,7 @@ export default async function NodesSettingsPage({
   let rows: NodeRow[] | null = null;
   let sensorOptions: SensorNodeOption[] = [];
   let managerOffline = false;
+  let reviewForbidden = false;
   try {
     // The list page must render every node the caller can see (Phase
     // Node-3 acceptance). Paginate both `nodeList` and `nodeStatusList`
@@ -115,11 +122,31 @@ export default async function NodesSettingsPage({
     // `graphql-request` `ClientError`s and must propagate so Next.js
     // can render its standard error boundary — silently masking those
     // as "manager offline" would hide real bugs from operators.
+    //
+    // #405 I: review's typed denials surface as their own panel
+    // (`NodesForbidden`) rather than the manager-offline copy or a
+    // 500 page. `ReviewInvalidArgumentError` is defense-in-depth
+    // (the BFF caps `first` at `REVIEW_MAX_PAGE_SIZE`); if either
+    // side drifts we still avoid a crash.
     if (err instanceof ManagerUnavailableError) {
       managerOffline = true;
+    } else if (
+      err instanceof ReviewForbiddenError ||
+      err instanceof ReviewInvalidArgumentError
+    ) {
+      reviewForbidden = true;
     } else {
       throw err;
     }
+  }
+
+  if (reviewForbidden) {
+    return (
+      <>
+        <CustomerScopeCallout scope={scope} className="mb-4" />
+        <NodesForbidden />
+      </>
+    );
   }
 
   if (managerOffline) {
@@ -172,10 +199,15 @@ export default async function NodesSettingsPage({
     } catch (err) {
       // A stale URL (node deleted) or out-of-scope id should not crash
       // the page — drop the edit intent silently and render the list.
+      // Review-side denials likewise drop the edit intent; the list
+      // itself already rendered above and the operator sees the rest
+      // of the page.
       if (
         !(err instanceof NodeNotFoundError) &&
         !(err instanceof NodePermissionError) &&
-        !(err instanceof ManagerUnavailableError)
+        !(err instanceof ManagerUnavailableError) &&
+        !(err instanceof ReviewForbiddenError) &&
+        !(err instanceof ReviewInvalidArgumentError)
       ) {
         throw err;
       }

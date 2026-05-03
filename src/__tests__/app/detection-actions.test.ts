@@ -1,0 +1,131 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { AuthSession } from "@/lib/auth/jwt";
+import type { Filter } from "@/lib/detection";
+
+const mockGetCurrentSession = vi.hoisted(() => vi.fn());
+const mockSearchEventsAtAnchor = vi.hoisted(() => vi.fn());
+
+class MockDetectionUnauthorizedError extends Error {}
+class MockDetectionForbiddenError extends Error {}
+
+vi.mock("@/lib/auth/session", () => ({
+  getCurrentSession: mockGetCurrentSession,
+}));
+
+vi.mock("@/lib/detection", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/detection")>("@/lib/detection");
+  return {
+    ...actual,
+    DetectionUnauthorizedError: MockDetectionUnauthorizedError,
+    DetectionForbiddenError: MockDetectionForbiddenError,
+    searchEventsAtAnchor: mockSearchEventsAtAnchor,
+  };
+});
+
+const SESSION = {
+  accountId: "account-1",
+  sessionId: "session-1",
+  roles: ["Security Monitor"],
+  tokenVersion: 0,
+  mustChangePassword: false,
+  mustEnrollMfa: false,
+  iat: 0,
+  exp: 0,
+  sessionIp: "127.0.0.1",
+  sessionUserAgent: "test",
+  sessionBrowserFingerprint: "test",
+  needsReauth: false,
+  sessionCreatedAt: new Date(0),
+  sessionLastActiveAt: new Date(0),
+} as AuthSession;
+
+const STRUCTURED_FILTER: Filter = {
+  mode: "structured",
+  input: { start: null, end: null },
+};
+
+describe("runEventQuery — review-side error mapping (#405 I)", () => {
+  beforeEach(() => {
+    mockGetCurrentSession.mockReset();
+    mockSearchEventsAtAnchor.mockReset();
+  });
+
+  it("maps DetectionForbiddenError to `forbidden-customer-scope`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    mockSearchEventsAtAnchor.mockRejectedValue(
+      new MockDetectionForbiddenError("scope"),
+    );
+
+    const { runEventQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/actions"
+    );
+
+    const result = await runEventQuery(STRUCTURED_FILTER);
+    expect(result).toEqual({ ok: false, code: "forbidden-customer-scope" });
+  });
+
+  it("maps DetectionUnauthorizedError to `forbidden`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    mockSearchEventsAtAnchor.mockRejectedValue(
+      new MockDetectionUnauthorizedError("nope"),
+    );
+
+    const { runEventQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/actions"
+    );
+
+    const result = await runEventQuery(STRUCTURED_FILTER);
+    expect(result).toEqual({ ok: false, code: "forbidden" });
+  });
+
+  // The action MUST surface review-side denials with their typed
+  // discriminator. Collapsing them into the generic `server-error`
+  // bucket would silently swallow Forbidden as "the BFF crashed",
+  // which the security guardrails forbid. Unknown errors continue
+  // to fall through to `server-error` (next test).
+  it("maps ReviewForbiddenError to `forbidden`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    const { ReviewForbiddenError } = await import("@/lib/review/errors");
+    mockSearchEventsAtAnchor.mockRejectedValue(
+      new ReviewForbiddenError("Forbidden"),
+    );
+
+    const { runEventQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/actions"
+    );
+
+    const result = await runEventQuery(STRUCTURED_FILTER);
+    expect(result).toEqual({ ok: false, code: "forbidden" });
+  });
+
+  it("maps ReviewInvalidArgumentError to `invalid-input`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    const { ReviewInvalidArgumentError } = await import("@/lib/review/errors");
+    mockSearchEventsAtAnchor.mockRejectedValue(
+      new ReviewInvalidArgumentError(
+        "The value of first and last must be within 0-100",
+      ),
+    );
+
+    const { runEventQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/actions"
+    );
+
+    const result = await runEventQuery(STRUCTURED_FILTER);
+    expect(result).toEqual({ ok: false, code: "invalid-input" });
+  });
+
+  it("maps any other error to `server-error`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    mockSearchEventsAtAnchor.mockRejectedValue(new Error("boom"));
+
+    const { runEventQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/actions"
+    );
+
+    const result = await runEventQuery(STRUCTURED_FILTER);
+    expect(result).toEqual({ ok: false, code: "server-error" });
+  });
+});

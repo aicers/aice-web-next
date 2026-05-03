@@ -9,11 +9,13 @@ export interface EventNotFoundLabels {
   notFoundBody: string;
   fetchErrorTitle: string;
   fetchErrorBody: string;
+  forbiddenTitle: string;
+  forbiddenBody: string;
   back: string;
 }
 
 interface Props {
-  reason: "invalid-token" | "not-found" | "fetch-error";
+  reason: "invalid-token" | "not-found" | "fetch-error" | "forbidden";
   backHref: string;
   labels: EventNotFoundLabels;
 }
@@ -24,13 +26,17 @@ export function EventNotFound({ reason, backHref, labels }: Props) {
       ? labels.invalidTokenTitle
       : reason === "fetch-error"
         ? labels.fetchErrorTitle
-        : labels.notFoundTitle;
+        : reason === "forbidden"
+          ? labels.forbiddenTitle
+          : labels.notFoundTitle;
   const body =
     reason === "invalid-token"
       ? labels.invalidTokenBody
       : reason === "fetch-error"
         ? labels.fetchErrorBody
-        : labels.notFoundBody;
+        : reason === "forbidden"
+          ? labels.forbiddenBody
+          : labels.notFoundBody;
 
   return (
     <div className="mx-auto flex max-w-xl flex-col items-start gap-3 py-12">
