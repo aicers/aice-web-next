@@ -57,3 +57,28 @@ export class ReviewInvalidArgumentError extends Error {
     this.name = "ReviewInvalidArgumentError";
   }
 }
+
+/**
+ * Thrown when review responds (status 200) with an `errors[]`
+ * payload whose `extensions.code` / `message` does not match any
+ * known classification. Distinct from a transport / connection
+ * failure: this signals review *did* answer, but with a code the
+ * BFF was not taught to recognise — e.g. a new review-side error
+ * code added in a later release.
+ *
+ * #405's security guardrail forbids the catch sites from
+ * broadening to "all GraphQL errors → graceful state": an
+ * unrecognised review error must continue to throw so operators
+ * see a real failure (and the BFF gets a follow-up classification
+ * commit) rather than the route silently degrading to "no data".
+ * Reviewer Round 2 P1: every catch site that returns a graceful
+ * `server-error` / generic-banner state must let this class
+ * propagate, while still translating ordinary expected failures
+ * (transport drops, BFF bugs) into the existing graceful states.
+ */
+export class ReviewUnknownGraphQLError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "ReviewUnknownGraphQLError";
+  }
+}

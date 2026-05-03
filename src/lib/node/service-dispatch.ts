@@ -2,7 +2,7 @@ import "server-only";
 
 import { gigantoClient, tivanClient } from "@/lib/graphql/external-client";
 
-import { type DispatchContext, jwtCustomerIdsFor } from "./dispatch-context";
+import type { DispatchContext } from "./dispatch-context";
 import { withExternalErrorMapping } from "./error-mapping";
 import { GIGANTO_CONFIG_QUERY, TIVAN_CONFIG_QUERY } from "./queries";
 import type {
@@ -115,9 +115,15 @@ export async function getApplied(
   if (isExternalKind(kind)) {
     const service = node.externalServices.find((s) => s.kind === kind);
     if (!service) return null;
+    // Reviewer Round 2 P2: external clients (Giganto / Tivan) keep
+    // sending the materialized list. The omit-for-admin rule in
+    // `jwtCustomerIdsFor` is review-only because external services'
+    // Context-JWT validators were not audited under #405; broadening
+    // the rule to them would silently change a JWT claim they may
+    // rely on.
     const requestContext = {
       role: ctx.role,
-      customerIds: jwtCustomerIdsFor(ctx),
+      customerIds: ctx.customerIds,
     };
     if (kind === "DATA_STORE") {
       const data = await withExternalErrorMapping(

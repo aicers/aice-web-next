@@ -14,6 +14,7 @@ import { withReviewErrorMapping } from "@/lib/review/error-mapping";
 import {
   ReviewForbiddenError,
   ReviewInvalidArgumentError,
+  ReviewUnknownGraphQLError,
 } from "@/lib/review/errors";
 
 import { DetectionForbiddenError, DetectionUnauthorizedError } from "./errors";
@@ -510,7 +511,12 @@ export async function fetchEventByLocator(
  * that already render an explicit access-denied state (Investigation
  * page, endpoint enrichment) propagate the rejection upward; the
  * legacy "best-effort decoration" contract still applies for
- * transient transport failures and unknown errors.
+ * transient transport failures and ordinary unknown errors.
+ *
+ * Reviewer Round 2 P1: an unrecognised review GraphQL error
+ * ({@link ReviewUnknownGraphQLError}) likewise re-throws rather
+ * than collapsing to `null` — masking a new review-side error code
+ * as "no enrichment data" would defeat the same guardrail.
  */
 export async function lookupIpLocation(
   session: AuthSession,
@@ -534,7 +540,8 @@ export async function lookupIpLocation(
   } catch (err) {
     if (
       err instanceof ReviewForbiddenError ||
-      err instanceof ReviewInvalidArgumentError
+      err instanceof ReviewInvalidArgumentError ||
+      err instanceof ReviewUnknownGraphQLError
     ) {
       throw err;
     }

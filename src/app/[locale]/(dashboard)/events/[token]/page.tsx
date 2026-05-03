@@ -10,7 +10,10 @@ import {
 import type { Event } from "@/lib/detection/types";
 import { decodeEventLocator } from "@/lib/events/event-locator";
 import { sanitizeReturnTo } from "@/lib/events/return-to";
-import { ReviewForbiddenError } from "@/lib/review/errors";
+import {
+  ReviewForbiddenError,
+  ReviewUnknownGraphQLError,
+} from "@/lib/review/errors";
 
 interface PageProps {
   params: Promise<{ locale: string; token: string }>;
@@ -56,6 +59,13 @@ export default async function EventInvestigationPage({
     // access-denied panel, never as a generic fetch error. The
     // security guardrail forbids conflating "denied" with "could not
     // load" — operators must be able to tell the two apart.
+    //
+    // Reviewer Round 2 P1: an unrecognised review GraphQL error
+    // (`ReviewUnknownGraphQLError`) re-throws past the generic
+    // `fetch-error` panel — masking a new review-side error code as
+    // "could not load" would defeat the same guardrail. Plain
+    // `Error`s (transport drops, BFF bugs) still render the
+    // `fetch-error` panel.
     if (
       err instanceof ReviewForbiddenError ||
       err instanceof DetectionForbiddenError ||
@@ -68,6 +78,9 @@ export default async function EventInvestigationPage({
           labels={buildLabels(t)}
         />
       );
+    }
+    if (err instanceof ReviewUnknownGraphQLError) {
+      throw err;
     }
     return (
       <EventNotFound

@@ -96,7 +96,7 @@ export async function buildDispatchContext(
 
 /**
  * Derive the `customer_ids` claim that should travel on the Context
- * JWT for a dispatch.
+ * JWT for a **review-bound** dispatch.
  *
  * Review's `validate_context_jwt` accepts `customer_ids = None`
  * (omitted) only for `Role::SystemAdministrator`. For every other
@@ -110,6 +110,15 @@ export async function buildDispatchContext(
  * `enforceNodeScope`) and only narrowing at the JWT boundary keeps
  * the in-process invariants intact while still aligning with
  * review's contract.
+ *
+ * Reviewer Round 2 P2: do NOT call this for Giganto / Tivan
+ * dispatches — `gigantoClient` / `tivanClient` target external
+ * services whose Context-JWT validators have their own contracts
+ * (not audited under #405). Pass `ctx.customerIds` to those
+ * clients verbatim so System Administrator external calls keep
+ * shipping the materialized list, matching the pre-#405 behaviour.
+ * Broadening the omit-for-admin rule to external services would
+ * silently change a JWT claim those services may rely on.
  */
 export function jwtCustomerIdsFor(
   ctx: Pick<DispatchContext, "role" | "customerIds">,

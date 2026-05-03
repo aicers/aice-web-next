@@ -350,4 +350,25 @@ describe("runAnalyticsQuery", () => {
     const result = await runAnalyticsQuery(STRUCTURED_FILTER, "srcIp", 10);
     expect(result).toEqual({ ok: false, code: "invalid-input" });
   });
+
+  // Reviewer Round 2 P1: same guardrail as `runEventQuery` —
+  // unrecognised review GraphQL errors must NOT collapse into the
+  // graceful `server-error` bucket. The action lets
+  // `ReviewUnknownGraphQLError` propagate so the route's error
+  // boundary surfaces the failure.
+  it("re-throws ReviewUnknownGraphQLError instead of masking as `server-error`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    const { ReviewUnknownGraphQLError } = await import("@/lib/review/errors");
+    const denied = new ReviewUnknownGraphQLError("future-review-code");
+    mockCountByOriginatorIp.mockRejectedValue(denied);
+    mockEventFrequencySeries.mockResolvedValue([]);
+
+    const { runAnalyticsQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/analytics-actions"
+    );
+
+    await expect(
+      runAnalyticsQuery(STRUCTURED_FILTER, "srcIp", 10),
+    ).rejects.toBe(denied);
+  });
 });

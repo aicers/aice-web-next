@@ -732,7 +732,7 @@ export async function getGigantoStatus(
     gigantoClient<GigantoStatusResult>(
       GIGANTO_STATUS_QUERY,
       undefined,
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );
@@ -750,7 +750,7 @@ export async function getGigantoConfig(
     gigantoClient<GigantoConfigResult>(
       GIGANTO_CONFIG_QUERY,
       undefined,
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );
@@ -775,7 +775,7 @@ export async function updateGigantoConfig(
     gigantoClient<GigantoUpdateConfigResult, UpdateConfigVariables>(
       GIGANTO_UPDATE_CONFIG_MUTATION,
       { old: oldConfig, new: newConfig },
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );
@@ -793,7 +793,7 @@ export async function getTivanStatus(
     tivanClient<TivanStatusResult>(
       TIVAN_STATUS_QUERY,
       undefined,
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );
@@ -811,7 +811,7 @@ export async function getTivanConfig(
     tivanClient<TivanConfigResult>(
       TIVAN_CONFIG_QUERY,
       undefined,
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );
@@ -831,7 +831,7 @@ export async function updateTivanConfig(
     tivanClient<TivanUpdateConfigResult, UpdateConfigVariables>(
       TIVAN_UPDATE_CONFIG_MUTATION,
       { old: oldConfig, new: newConfig },
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );

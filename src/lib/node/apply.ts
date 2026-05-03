@@ -401,7 +401,7 @@ async function readGigantoConfigAsString(
     gigantoClient<GigantoConfigResult>(
       GIGANTO_CONFIG_QUERY,
       undefined,
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );
@@ -417,7 +417,7 @@ async function readTivanConfigAsString(
     tivanClient<TivanConfigResult>(
       TIVAN_CONFIG_QUERY,
       undefined,
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );
@@ -435,7 +435,7 @@ async function dispatchGigantoUpdateConfig(
     gigantoClient<GigantoUpdateConfigResult, UpdateConfigVariables>(
       GIGANTO_UPDATE_CONFIG_MUTATION,
       { old: oldConfig, new: newConfig },
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );
@@ -452,7 +452,7 @@ async function dispatchTivanUpdateConfig(
     tivanClient<TivanUpdateConfigResult, UpdateConfigVariables>(
       TIVAN_UPDATE_CONFIG_MUTATION,
       { old: oldConfig, new: newConfig },
-      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+      { role: ctx.role, customerIds: ctx.customerIds },
       signal,
     ),
   );

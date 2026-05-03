@@ -22,6 +22,7 @@ import {
 import {
   ReviewForbiddenError,
   ReviewInvalidArgumentError,
+  ReviewUnknownGraphQLError,
 } from "@/lib/review/errors";
 
 /**
@@ -139,15 +140,22 @@ export async function runAnalyticsQuery(
     // `forbidden-customer-scope` panels — `ReviewForbiddenError`
     // routes through the former, while `ReviewInvalidArgumentError`
     // joins the existing `invalid-input` branch so the operator sees
-    // a refresh-prompt rather than a crash banner. Unknown errors
-    // continue to fall through to `server-error`, per the security
-    // guardrail forbidding the catch from broadening to "all GraphQL
-    // errors → graceful state".
+    // a refresh-prompt rather than a crash banner.
+    // `ReviewUnknownGraphQLError` (review answered with an
+    // unrecognised code) deliberately re-throws past the
+    // `server-error` fallback per the security guardrail (Reviewer
+    // Round 2 P1) — masking a new review-side error code as a
+    // generic graceful state would defeat the guardrail. Plain
+    // `Error`s (transport, BFF bugs) still fall through to
+    // `server-error`.
     if (err instanceof ReviewForbiddenError) {
       return { ok: false, code: "forbidden" };
     }
     if (err instanceof ReviewInvalidArgumentError) {
       return { ok: false, code: "invalid-input" };
+    }
+    if (err instanceof ReviewUnknownGraphQLError) {
+      throw err;
     }
     return { ok: false, code: "server-error" };
   }

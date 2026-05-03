@@ -4,6 +4,7 @@ import { withReviewErrorMapping } from "@/lib/review/error-mapping";
 import {
   ReviewForbiddenError,
   ReviewInvalidArgumentError,
+  ReviewUnknownGraphQLError,
 } from "@/lib/review/errors";
 
 /**
@@ -65,11 +66,15 @@ describe("withReviewErrorMapping", () => {
     ).rejects.toBeInstanceOf(ReviewInvalidArgumentError);
   });
 
-  it("re-throws unknown `errors[].message` strings unchanged (does not silently swallow)", async () => {
+  it("wraps unknown `errors[].message` strings in ReviewUnknownGraphQLError (does not silently swallow)", async () => {
     // Per #405's security guard: the catch must NOT broaden to "all
-    // GraphQL errors → graceful state". Unknown messages pass through
-    // so the caller / error boundary surfaces them rather than the
-    // BFF masking new review-side error codes as Forbidden.
+    // GraphQL errors → graceful state". Reviewer Round 2 P1 found
+    // that returning the raw error here let downstream catch sites
+    // collapse it into the generic `server-error` / banner state —
+    // exactly the masking the guard forbids. Wrapping in a typed
+    // class lets every catch site rethrow it explicitly while still
+    // collapsing ordinary plain `Error`s (transport drops, BFF
+    // bugs) into the graceful state.
     const original = gqlError([{ message: "some-novel-review-failure" }]);
     let caught: unknown;
     try {
@@ -77,7 +82,21 @@ describe("withReviewErrorMapping", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBe(original);
+    expect(caught).toBeInstanceOf(ReviewUnknownGraphQLError);
+    expect((caught as Error).message).toBe("some-novel-review-failure");
+    expect((caught as Error & { cause?: unknown }).cause).toBe(original);
+  });
+
+  it("wraps an empty unknown message in ReviewUnknownGraphQLError with a sentinel message", async () => {
+    const original = gqlError([{ extensions: { code: "CUSTOM_FUTURE_CODE" } }]);
+    let caught: unknown;
+    try {
+      await withReviewErrorMapping(Promise.reject(original));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ReviewUnknownGraphQLError);
+    expect((caught as Error).message).toBe("Unclassified review GraphQL error");
   });
 
   it("re-throws raw connection errors (no `response.errors[]` to inspect)", async () => {

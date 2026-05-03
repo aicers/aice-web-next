@@ -792,6 +792,21 @@ describe("detection server actions", () => {
       const result = await lookupIpLocation(makeSession(), "10.0.0.1");
       expect(result).toBeNull();
     });
+
+    // Reviewer Round 2 P1: an unrecognised review GraphQL error is
+    // not a transient transport failure — collapsing it to `null`
+    // would mask a new review-side error code as "no enrichment
+    // data", which the same #405 security guardrail forbids.
+    it("re-throws ReviewUnknownGraphQLError instead of returning null", async () => {
+      const { ReviewUnknownGraphQLError } = await import("@/lib/review/errors");
+      const denied = new ReviewUnknownGraphQLError("future-review-code");
+      mockGraphqlRequest.mockRejectedValue(denied);
+
+      const { lookupIpLocation } = await import("@/lib/detection");
+      await expect(lookupIpLocation(makeSession(), "10.0.0.1")).rejects.toBe(
+        denied,
+      );
+    });
   });
 
   // ── Time series ────────────────────────────────────────────────

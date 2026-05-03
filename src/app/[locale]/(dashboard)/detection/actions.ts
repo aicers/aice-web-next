@@ -14,6 +14,7 @@ import {
 import {
   ReviewForbiddenError,
   ReviewInvalidArgumentError,
+  ReviewUnknownGraphQLError,
 } from "@/lib/review/errors";
 
 export interface RunEventQueryOk {
@@ -147,14 +148,21 @@ export async function runEventQuery(
     // for an unknown reason". `ReviewInvalidArgumentError` likewise
     // surfaces as a structured `invalid-input` so the shell can
     // prompt a refresh / corrective action rather than a generic
-    // banner. Unknown errors continue to fall through to
-    // `server-error`, per the security guardrail forbidding the
-    // catch from broadening to "all GraphQL errors → graceful state".
+    // banner. `ReviewUnknownGraphQLError` (review answered with an
+    // unrecognised code) deliberately re-throws past the
+    // `server-error` fallback per the security guardrail (Reviewer
+    // Round 2 P1) — a future review-side error code we don't
+    // classify must not be silently masked as a generic graceful
+    // state. Plain `Error`s (transport drops, BFF bugs) still fall
+    // through to `server-error`.
     if (err instanceof ReviewForbiddenError) {
       return { ok: false, code: "forbidden" };
     }
     if (err instanceof ReviewInvalidArgumentError) {
       return { ok: false, code: "invalid-input" };
+    }
+    if (err instanceof ReviewUnknownGraphQLError) {
+      throw err;
     }
     return { ok: false, code: "server-error" };
   }

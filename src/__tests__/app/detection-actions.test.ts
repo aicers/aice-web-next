@@ -128,4 +128,23 @@ describe("runEventQuery — review-side error mapping (#405 I)", () => {
     const result = await runEventQuery(STRUCTURED_FILTER);
     expect(result).toEqual({ ok: false, code: "server-error" });
   });
+
+  // Reviewer Round 2 P1: an unrecognised review GraphQL error is
+  // *not* an "ordinary" failure and must NOT collapse into the
+  // graceful `server-error` bucket — masking new review-side error
+  // codes as a generic state defeats the security guardrail. The
+  // action lets `ReviewUnknownGraphQLError` propagate so the route's
+  // error boundary surfaces it.
+  it("re-throws ReviewUnknownGraphQLError instead of masking as `server-error`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    const { ReviewUnknownGraphQLError } = await import("@/lib/review/errors");
+    const denied = new ReviewUnknownGraphQLError("future-review-code");
+    mockSearchEventsAtAnchor.mockRejectedValue(denied);
+
+    const { runEventQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/actions"
+    );
+
+    await expect(runEventQuery(STRUCTURED_FILTER)).rejects.toBe(denied);
+  });
 });

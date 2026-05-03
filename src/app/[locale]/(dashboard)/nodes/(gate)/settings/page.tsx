@@ -199,19 +199,38 @@ export default async function NodesSettingsPage({
     } catch (err) {
       // A stale URL (node deleted) or out-of-scope id should not crash
       // the page — drop the edit intent silently and render the list.
-      // Review-side denials likewise drop the edit intent; the list
-      // itself already rendered above and the operator sees the rest
-      // of the page.
+      // A manager outage drops it the same way; the list above either
+      // already rendered cached data or surfaced the offline panel.
+      //
+      // Reviewer Round 2 P2: typed review denials are NOT transient.
+      // `listAllNodes` above succeeded with the same role / scope, so
+      // a Forbidden on this single-node fetch is either a per-resource
+      // denial or contract drift — silently dropping the dialog
+      // conflates "denied" with "stale link" and undermines the same
+      // #405 I security guardrail. Surface the explicit forbidden
+      // panel (mirroring the list-fetch path above) instead of
+      // pretending the edit intent was never made.
       if (
+        err instanceof ReviewForbiddenError ||
+        err instanceof ReviewInvalidArgumentError
+      ) {
+        reviewForbidden = true;
+      } else if (
         !(err instanceof NodeNotFoundError) &&
         !(err instanceof NodePermissionError) &&
-        !(err instanceof ManagerUnavailableError) &&
-        !(err instanceof ReviewForbiddenError) &&
-        !(err instanceof ReviewInvalidArgumentError)
+        !(err instanceof ManagerUnavailableError)
       ) {
         throw err;
       }
     }
+  }
+  if (reviewForbidden) {
+    return (
+      <>
+        <CustomerScopeCallout scope={scope} className="mb-4" />
+        <NodesForbidden />
+      </>
+    );
   }
 
   // Externals (Data Store / TI Container) carry only `draft` on the
