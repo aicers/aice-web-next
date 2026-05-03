@@ -12,6 +12,7 @@ import {
   deleteTestRole,
   resetAccountDefaults,
 } from "./helpers/setup-db";
+import { mockServerSession } from "./mock-server-admin";
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -21,6 +22,10 @@ const NOPERM_PASS = "Noperm1234!";
 
 let NOPERM_USER: string;
 let NOPERM_ROLE: string;
+
+// Per-spec mock-server session so the stub registered below is cleared
+// in `afterAll` without touching other specs' state.
+const session = mockServerSession();
 
 // ── Setup / Teardown ─────────────────────────────────────────────
 
@@ -36,6 +41,32 @@ test.beforeAll(async ({ workerUsername, workerPrefix }) => {
   // Role with no detection permissions
   await createTestRole(NOPERM_ROLE, ["accounts:read"]);
   await createTestAccount(NOPERM_USER, NOPERM_PASS, NOPERM_ROLE);
+
+  // #405 Reviewer Round 2 P1: the Detection page bootstrap now
+  // re-throws unrecognised review GraphQL errors (the new
+  // `ReviewUnknownGraphQLError`) to the route's error boundary
+  // instead of masking them as the generic results banner. The
+  // mock server answers an `eventList` request with no registered
+  // stub by emitting `errors: [{ message: "no stub registered..." }]`,
+  // which now classifies as `ReviewUnknownGraphQLError` and crashes
+  // the SSR render before the shell mounts. Register an empty
+  // `eventList` stub keyed on the default page size so every test
+  // in this file lands on the rendered shell — these tests only
+  // assert on shell affordances (filters drawer, chips, drawer
+  // inputs), not the results list, so empty rows are fine.
+  //
+  // The stub is keyed on `first: 50` (Detection's default page
+  // size) so it does not steal traffic from sibling specs that
+  // pin to different page sizes (`detection-pivot-identity` uses
+  // `first: 100`).
+  await session.registerStub({
+    operation: "eventList",
+    matchVariables: { first: 50 },
+    response: {
+      kind: "fixture",
+      fixture: "detection/eventList.empty.json",
+    },
+  });
 });
 
 test.beforeEach(async ({ workerUsername }) => {
@@ -50,6 +81,7 @@ test.afterAll(async () => {
   } catch {
     // best-effort cleanup
   }
+  await session.clear();
 });
 
 // ── Permission gate ──────────────────────────────────────────────
