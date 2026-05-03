@@ -48,9 +48,10 @@ the values:
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string for `auth_db` |
-| `DATABASE_ADMIN_URL` | Admin connection to create databases at runtime |
-| `AUDIT_DATABASE_URL` | PostgreSQL connection string for `audit_db` |
+| `DATABASE_URL` | PostgreSQL connection string for `auth_db`. Host-side DSN — defaults to `localhost:5434` to match the published compose port (see `AICE_POSTGRES_HOST_PORT`). |
+| `DATABASE_ADMIN_URL` | Admin connection to create databases at runtime. Host-side DSN; same port-mapping note as `DATABASE_URL`. |
+| `AUDIT_DATABASE_URL` | PostgreSQL connection string for `audit_db`. Host-side DSN; same port-mapping note as `DATABASE_URL`. |
+| `AICE_POSTGRES_HOST_PORT` | Host port the compose `postgres` service publishes on. Default `5434` so aice-web-next does not collide with any other Postgres on the host. The compose `next-app` service still reaches Postgres at `postgres:5432` over the compose network — only the host-published port shifts. Operators with an existing 5432-bound deployment can override with `AICE_POSTGRES_HOST_PORT=5432` and update the host-side DSNs above accordingly. |
 | `REVIEW_GRAPHQL_ENDPOINT` | `review-web` (manager) GraphQL endpoint URL |
 | `GIGANTO_GRAPHQL_ENDPOINT` | Giganto GraphQL endpoint URL (direct mTLS, not proxied through review-web) |
 | `TIVAN_GRAPHQL_ENDPOINT` | Tivan GraphQL endpoint URL (direct mTLS, not proxied through review-web) |
@@ -308,6 +309,62 @@ paths before promotion.
 The `__Host-csrf` cookie and `Secure` flag on the access token cookie
 are automatically enabled when `NODE_ENV=production` (set by the
 Dockerfile).
+
+#### Postgres host port and the dev/prod address split
+
+The compose `postgres` service publishes its container port `5432` on the
+host as `${AICE_POSTGRES_HOST_PORT:-5434}` so aice-web-next does not
+collide with any other Postgres instance running on the same host (e.g.
+bootroot's own Postgres for step-ca state). Two distinct addresses
+result:
+
+- **Host tooling (`psql`, DBeaver, ad-hoc `pg_dump`, CI jobs, the
+  Vitest integration suite running outside the container):** connect to
+  `localhost:${AICE_POSTGRES_HOST_PORT:-5434}`.
+- **The compose `next-app` service:** connects internally over the
+  compose network at `postgres:5432`. The container-internal port is
+  unchanged.
+
+**Breaking change for external clients on upgrade.** Any host-side
+tooling that previously connected to `localhost:5432` (psql sessions,
+DBeaver/TablePlus profiles, ad-hoc `pg_dump` scripts, CI jobs that bind
+nothing but assume the published port) breaks after this version is
+deployed until reconfigured to `5434`. Operators who need to keep the
+previous behavior can override with
+`AICE_POSTGRES_HOST_PORT=5432`. The shipped `.env.example` already uses
+the new default.
+
+#### Postgres init script and re-applying grants
+
+The `infra/postgres/init-audit-db.sql` script is mounted into
+`docker-entrypoint-initdb.d`, which Postgres only runs **on first volume
+init**. Edits to the script after the volume already exists are ignored
+by compose. To force the script to re-run at compose-init time, the
+volume must be removed:
+
+```bash
+docker compose down -v
+docker volume rm <project>_pgdata
+```
+
+The init script itself is now safe to run by hand against an existing
+cluster:
+
+```bash
+psql -h localhost -p 5434 -U postgres -f infra/postgres/init-audit-db.sql
+```
+
+Both `CREATE DATABASE audit_db` and `CREATE ROLE audit_writer` are
+guarded so re-runs are no-ops, not errors.
+
+The runtime grant helper in `src/lib/db/migrate.ts`
+(`ensureAuditRolePermissions{Preflight,Postflight}`) re-applies
+`audit_writer` privileges on every boot, so operator-induced privilege
+drift heals automatically without re-running the init script. The
+preflight pass runs *before* `migrateAuditDb()` because the audit
+migrations themselves need `CREATE` on `public`; the postflight pass
+re-applies table and sequence grants once the migration has created the
+audit table.
 
 #### First-boot deployment checklist
 

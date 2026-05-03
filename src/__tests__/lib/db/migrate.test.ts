@@ -532,9 +532,9 @@ describe("migrate", () => {
   // ── runStartupMigrations ──────────────────────────────────────────
 
   describe("runStartupMigrations", () => {
-    it("runs auth → audit → customer migrations in order", async () => {
+    it("runs auth → audit → customer migrations in order with grant helpers around audit", async () => {
       process.env.AUDIT_DATABASE_URL =
-        "postgres://postgres:postgres@localhost:5432/audit_db";
+        "postgres://audit_writer:changeme@localhost:5432/audit_db";
 
       writeMigration("auth", "0001_init.sql", "SELECT 1");
       writeMigration("audit", "0001_init.sql", "SELECT 1");
@@ -553,9 +553,18 @@ describe("migrate", () => {
           } as never;
         }
 
-        if (url.includes("auth_db")) callOrder.push("auth");
-        else if (url.includes("audit_db")) callOrder.push("audit");
-        else callOrder.push("customer");
+        // The grant helper connects to the admin user (postgres) against
+        // /audit_db. Distinguish it from the audit migration runner,
+        // which uses AUDIT_DATABASE_URL (audit_writer) on /audit_db.
+        if (url.includes("audit_db") && url.includes("postgres:postgres")) {
+          callOrder.push("audit-admin");
+        } else if (url.includes("auth_db")) {
+          callOrder.push("auth");
+        } else if (url.includes("audit_db")) {
+          callOrder.push("audit");
+        } else {
+          callOrder.push("customer");
+        }
         return {
           query: mockPoolQuery,
           connect: mockPoolConnect,
@@ -577,7 +586,13 @@ describe("migrate", () => {
 
       await migrate.runStartupMigrations();
 
-      expect(callOrder).toEqual(["auth", "audit", "customer"]);
+      expect(callOrder).toEqual([
+        "auth",
+        "audit-admin",
+        "audit",
+        "audit-admin",
+        "customer",
+      ]);
     });
 
     it("uses the admin connection when cleaning stale provisioning databases", async () => {
@@ -618,6 +633,176 @@ describe("migrate", () => {
       expect(mockAdminPoolQuery).toHaveBeenCalledWith(
         'DROP DATABASE IF EXISTS "customer_stale"',
       );
+    });
+  });
+
+  // ── ensureAuditRolePermissionsPreflight ────────────────────────────
+
+  describe("ensureAuditRolePermissionsPreflight", () => {
+    it("connects to /audit_db using the admin DSN, not the audit DSN", async () => {
+      const { connectTo } = await import("@/lib/db/client");
+      const observed: string[] = [];
+
+      vi.mocked(connectTo).mockImplementation((url: string) => {
+        observed.push(url);
+        return {
+          query: vi
+            .fn()
+            // SELECT EXISTS — role exists
+            .mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 })
+            // GRANT
+            .mockResolvedValue({ rows: [], rowCount: 0 }),
+          connect: mockPoolConnect,
+          end: mockPoolEnd,
+        } as never;
+      });
+
+      await migrate.ensureAuditRolePermissionsPreflight();
+
+      expect(observed).toHaveLength(1);
+      const built = new URL(observed[0]);
+      expect(built.pathname).toBe("/audit_db");
+      expect(built.username).toBe("postgres");
+    });
+
+    it("issues GRANT CREATE, USAGE ON SCHEMA public when role exists", async () => {
+      const grantQuery = vi.fn();
+      const { connectTo } = await import("@/lib/db/client");
+
+      vi.mocked(connectTo).mockReturnValue({
+        query: grantQuery
+          .mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 })
+          .mockResolvedValue({ rows: [], rowCount: 0 }),
+        connect: mockPoolConnect,
+        end: mockPoolEnd,
+      } as never);
+
+      await migrate.ensureAuditRolePermissionsPreflight();
+
+      const calls = grantQuery.mock.calls.map((c) => c[0]);
+      expect(calls).toContain(
+        "GRANT CREATE, USAGE ON SCHEMA public TO audit_writer",
+      );
+    });
+
+    it("short-circuits when audit_writer role does not exist", async () => {
+      const queryFn = vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ exists: false }], rowCount: 1 });
+      const { connectTo } = await import("@/lib/db/client");
+
+      vi.mocked(connectTo).mockReturnValue({
+        query: queryFn,
+        connect: mockPoolConnect,
+        end: mockPoolEnd,
+      } as never);
+
+      await migrate.ensureAuditRolePermissionsPreflight();
+
+      // Only the existence-check query ran; no GRANT.
+      expect(queryFn).toHaveBeenCalledTimes(1);
+      const calls = queryFn.mock.calls.map((c) => c[0]);
+      expect(calls.some((q) => String(q).startsWith("GRANT"))).toBe(false);
+    });
+
+    it("does not log the admin DSN", async () => {
+      const consoleSpies = [
+        vi.spyOn(console, "log").mockImplementation(() => {}),
+        vi.spyOn(console, "info").mockImplementation(() => {}),
+        vi.spyOn(console, "warn").mockImplementation(() => {}),
+        vi.spyOn(console, "error").mockImplementation(() => {}),
+        vi.spyOn(console, "debug").mockImplementation(() => {}),
+      ];
+      const { connectTo } = await import("@/lib/db/client");
+
+      vi.mocked(connectTo).mockReturnValue({
+        query: vi
+          .fn()
+          .mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 })
+          .mockResolvedValue({ rows: [], rowCount: 0 }),
+        connect: mockPoolConnect,
+        end: mockPoolEnd,
+      } as never);
+
+      await migrate.ensureAuditRolePermissionsPreflight();
+
+      const adminDsn = process.env.DATABASE_ADMIN_URL ?? "";
+      for (const spy of consoleSpies) {
+        for (const call of spy.mock.calls) {
+          for (const arg of call) {
+            expect(String(arg)).not.toContain(adminDsn);
+            expect(String(arg)).not.toContain("postgres:postgres@");
+          }
+        }
+      }
+    });
+  });
+
+  // ── ensureAuditRolePermissionsPostflight ───────────────────────────
+
+  describe("ensureAuditRolePermissionsPostflight", () => {
+    it("issues table and sequence grants when role and table both exist", async () => {
+      const queryFn = vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 }) // role
+        .mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 }) // table
+        .mockResolvedValue({ rows: [], rowCount: 0 });
+      const { connectTo } = await import("@/lib/db/client");
+
+      vi.mocked(connectTo).mockReturnValue({
+        query: queryFn,
+        connect: mockPoolConnect,
+        end: mockPoolEnd,
+      } as never);
+
+      await migrate.ensureAuditRolePermissionsPostflight();
+
+      const calls = queryFn.mock.calls.map((c) => c[0]);
+      expect(calls).toContain(
+        "GRANT INSERT, SELECT ON audit_logs TO audit_writer",
+      );
+      expect(calls).toContain(
+        "GRANT USAGE, SELECT ON SEQUENCE audit_logs_id_seq TO audit_writer",
+      );
+    });
+
+    it("short-circuits when audit_writer role does not exist", async () => {
+      const queryFn = vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ exists: false }], rowCount: 1 });
+      const { connectTo } = await import("@/lib/db/client");
+
+      vi.mocked(connectTo).mockReturnValue({
+        query: queryFn,
+        connect: mockPoolConnect,
+        end: mockPoolEnd,
+      } as never);
+
+      await migrate.ensureAuditRolePermissionsPostflight();
+
+      expect(queryFn).toHaveBeenCalledTimes(1);
+      const calls = queryFn.mock.calls.map((c) => c[0]);
+      expect(calls.some((q) => String(q).startsWith("GRANT"))).toBe(false);
+    });
+
+    it("short-circuits when audit_logs table does not yet exist", async () => {
+      const queryFn = vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 }) // role
+        .mockResolvedValueOnce({ rows: [{ exists: false }], rowCount: 1 }); // table
+      const { connectTo } = await import("@/lib/db/client");
+
+      vi.mocked(connectTo).mockReturnValue({
+        query: queryFn,
+        connect: mockPoolConnect,
+        end: mockPoolEnd,
+      } as never);
+
+      await migrate.ensureAuditRolePermissionsPostflight();
+
+      expect(queryFn).toHaveBeenCalledTimes(2);
+      const calls = queryFn.mock.calls.map((c) => c[0]);
+      expect(calls.some((q) => String(q).startsWith("GRANT"))).toBe(false);
     });
   });
 });
