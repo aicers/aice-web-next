@@ -101,6 +101,47 @@ export function validateCsrfToken(
 // ── Origin / Referer verification ────────────────────────────────
 
 /**
+ * Canonicalize an origin string for comparison.
+ *
+ * Strips any trailing slash and lowercases scheme + host.  Browsers
+ * send `Origin` without a trailing slash and with a lowercase
+ * scheme/host; canonicalizing here means that
+ * `EXPECTED_ORIGIN=https://Example.com/` does not silently mismatch
+ * `Origin: https://example.com`.
+ *
+ * Returns `null` if the input is not a parseable absolute origin.
+ */
+export function canonicalizeOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    // URL parsing already lowercases the scheme and host; constructing
+    // the origin via the URL API drops any path/query/fragment and
+    // also drops a trailing slash because `URL.origin` never includes
+    // one.
+    if (!url.origin || url.origin === "null") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the configured `EXPECTED_ORIGIN`, canonicalized.
+ *
+ * Returns `null` when the env var is unset or not a parseable origin.
+ * A malformed value is treated as unset rather than crashing the
+ * mutation guard — the caller falls back to `request.nextUrl.origin`,
+ * preserving today's behavior.
+ */
+export function getConfiguredExpectedOrigin(): string | null {
+  const raw = process.env.EXPECTED_ORIGIN;
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  return canonicalizeOrigin(trimmed);
+}
+
+/**
  * Verify that the request originates from the expected app origin.
  *
  * Checks the `Origin` header first; falls back to extracting the
@@ -108,26 +149,54 @@ export function validateCsrfToken(
  * present or if neither matches.
  *
  * This is a defense-in-depth measure alongside the HMAC token.
+ *
+ * Returns the actual origin (Origin header value, or the parsed
+ * Referer origin) when the headers are usable but mismatch — useful
+ * for non-production debug responses and for server-side warning
+ * logs.  Returns `null` when neither header is present / parseable.
+ */
+export interface OriginCheckResult {
+  ok: boolean;
+  /** Origin actually presented by the request, when extractable. */
+  actual: string | null;
+  /** Expected origin used in the comparison (canonicalized). */
+  expected: string;
+}
+
+export function checkOrigin(
+  originHeader: string | null,
+  refererHeader: string | null,
+  expectedOrigin: string,
+): OriginCheckResult {
+  const expected = canonicalizeOrigin(expectedOrigin) ?? expectedOrigin;
+
+  if (originHeader) {
+    const actual = canonicalizeOrigin(originHeader) ?? originHeader;
+    return { ok: actual === expected, actual, expected };
+  }
+
+  if (refererHeader) {
+    const actual = canonicalizeOrigin(refererHeader);
+    if (actual === null) {
+      return { ok: false, actual: null, expected };
+    }
+    return { ok: actual === expected, actual, expected };
+  }
+
+  // Neither Origin nor Referer present — reject
+  return { ok: false, actual: null, expected };
+}
+
+/**
+ * Boolean shorthand for {@link checkOrigin}, retained for the
+ * existing callers and tests.
  */
 export function validateOrigin(
   originHeader: string | null,
   refererHeader: string | null,
   expectedOrigin: string,
 ): boolean {
-  if (originHeader) {
-    return originHeader === expectedOrigin;
-  }
-
-  if (refererHeader) {
-    try {
-      return new URL(refererHeader).origin === expectedOrigin;
-    } catch {
-      return false;
-    }
-  }
-
-  // Neither Origin nor Referer present — reject
-  return false;
+  return checkOrigin(originHeader, refererHeader, expectedOrigin).ok;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────

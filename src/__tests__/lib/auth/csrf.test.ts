@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   CSRF_COOKIE_OPTIONS,
   CSRF_HEADER_NAME,
+  canonicalizeOrigin,
+  checkOrigin,
   generateCsrfToken,
+  getConfiguredExpectedOrigin,
   isMutationMethod,
   validateCsrfToken,
   validateOrigin,
@@ -200,6 +203,119 @@ describe("CSRF", () => {
       expect(validateOrigin(EXPECTED, "https://evil.com/path", EXPECTED)).toBe(
         true,
       );
+    });
+  });
+
+  // ── canonicalizeOrigin() ────────────────────────────────────
+
+  describe("canonicalizeOrigin()", () => {
+    it("strips trailing slash", () => {
+      expect(canonicalizeOrigin("https://example.com/")).toBe(
+        "https://example.com",
+      );
+    });
+
+    it("lowercases scheme and host", () => {
+      expect(canonicalizeOrigin("HTTPS://Example.COM")).toBe(
+        "https://example.com",
+      );
+    });
+
+    it("preserves explicit port", () => {
+      expect(canonicalizeOrigin("https://example.com:8443")).toBe(
+        "https://example.com:8443",
+      );
+    });
+
+    it("returns null for opaque origins", () => {
+      expect(canonicalizeOrigin("file:///tmp/foo")).toBeNull();
+    });
+
+    it("returns null for malformed values", () => {
+      expect(canonicalizeOrigin("not-a-url")).toBeNull();
+      expect(canonicalizeOrigin("")).toBeNull();
+    });
+  });
+
+  // ── getConfiguredExpectedOrigin() ────────────────────────────
+
+  describe("getConfiguredExpectedOrigin()", () => {
+    afterEach(() => {
+      delete process.env.EXPECTED_ORIGIN;
+    });
+
+    it("returns null when env var is unset", () => {
+      delete process.env.EXPECTED_ORIGIN;
+      expect(getConfiguredExpectedOrigin()).toBeNull();
+    });
+
+    it("returns null when env var is empty / whitespace", () => {
+      process.env.EXPECTED_ORIGIN = "";
+      expect(getConfiguredExpectedOrigin()).toBeNull();
+      process.env.EXPECTED_ORIGIN = "   ";
+      expect(getConfiguredExpectedOrigin()).toBeNull();
+    });
+
+    it("canonicalizes a valid origin", () => {
+      process.env.EXPECTED_ORIGIN = "HTTPS://Example.com/";
+      expect(getConfiguredExpectedOrigin()).toBe("https://example.com");
+    });
+
+    it("returns null for a malformed value", () => {
+      process.env.EXPECTED_ORIGIN = "not-an-origin";
+      expect(getConfiguredExpectedOrigin()).toBeNull();
+    });
+  });
+
+  // ── checkOrigin() ───────────────────────────────────────────
+
+  describe("checkOrigin()", () => {
+    const EXPECTED = "https://app.example.com";
+
+    it("returns ok=true and the actual origin when matching", () => {
+      const result = checkOrigin(EXPECTED, null, EXPECTED);
+      expect(result.ok).toBe(true);
+      expect(result.actual).toBe(EXPECTED);
+      expect(result.expected).toBe(EXPECTED);
+    });
+
+    it("returns ok=false and the actual origin when mismatching", () => {
+      const result = checkOrigin("https://evil.example", null, EXPECTED);
+      expect(result.ok).toBe(false);
+      expect(result.actual).toBe("https://evil.example");
+      expect(result.expected).toBe(EXPECTED);
+    });
+
+    it("canonicalizes both sides before comparing (trailing slash, case)", () => {
+      const result = checkOrigin(
+        "https://APP.example.com",
+        null,
+        "https://app.example.com/",
+      );
+      expect(result.ok).toBe(true);
+      expect(result.expected).toBe("https://app.example.com");
+    });
+
+    it("uses Referer origin when Origin header is absent", () => {
+      const result = checkOrigin(
+        null,
+        "https://app.example.com/some/path",
+        EXPECTED,
+      );
+      expect(result.ok).toBe(true);
+      expect(result.actual).toBe(EXPECTED);
+    });
+
+    it("returns actual=null when neither header is present", () => {
+      const result = checkOrigin(null, null, EXPECTED);
+      expect(result.ok).toBe(false);
+      expect(result.actual).toBeNull();
+    });
+
+    it("returns actual=null when Referer is malformed", () => {
+      const result = checkOrigin(null, "not-a-url", EXPECTED);
+      expect(result.ok).toBe(false);
+      expect(result.actual).toBeNull();
     });
   });
 
