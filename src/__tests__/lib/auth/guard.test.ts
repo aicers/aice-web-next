@@ -1210,6 +1210,109 @@ describe("withAuth", () => {
       }
     });
 
+    it("includes request_id from x-request-id header in the warn log", async () => {
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockGetConfiguredExpectedOrigin.mockReturnValue("https://example.com");
+      mockCheckOrigin.mockReturnValue({
+        ok: false,
+        actual: "https://attacker.example",
+        expected: "https://example.com",
+      });
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const handler = vi.fn();
+        const wrapped = guard.withAuth(handler);
+        const request = makeAuthRequest("http://localhost:3000/api/test", {
+          method: "POST",
+          headers: {
+            origin: "https://attacker.example",
+            "x-csrf-token": "tok",
+            "x-request-id": "test-uuid",
+          },
+        });
+
+        await wrapped(request, makeContext());
+
+        expect(warn).toHaveBeenCalledTimes(1);
+        const args = warn.mock.calls[0];
+        expect(args?.[0]).toContain("request_id=%s");
+        expect(args?.[args.length - 1]).toBe("test-uuid");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("logs request_id=unknown when x-request-id header is absent", async () => {
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockGetConfiguredExpectedOrigin.mockReturnValue("https://example.com");
+      mockCheckOrigin.mockReturnValue({
+        ok: false,
+        actual: "https://attacker.example",
+        expected: "https://example.com",
+      });
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const handler = vi.fn();
+        const wrapped = guard.withAuth(handler);
+        const request = makeAuthRequest("http://localhost:3000/api/test", {
+          method: "POST",
+          headers: {
+            origin: "https://attacker.example",
+            "x-csrf-token": "tok",
+          },
+        });
+
+        const response = await wrapped(request, makeContext());
+
+        expect(response.status).toBe(403);
+        expect(warn).toHaveBeenCalledTimes(1);
+        const args = warn.mock.calls[0];
+        expect(args?.[args.length - 1]).toBe("unknown");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("truncates an oversize x-request-id header before logging", async () => {
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockGetConfiguredExpectedOrigin.mockReturnValue("https://example.com");
+      mockCheckOrigin.mockReturnValue({
+        ok: false,
+        actual: "https://attacker.example",
+        expected: "https://example.com",
+      });
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const handler = vi.fn();
+        const wrapped = guard.withAuth(handler);
+        const oversize = "a".repeat(10_000);
+        const request = makeAuthRequest("http://localhost:3000/api/test", {
+          method: "POST",
+          headers: {
+            origin: "https://attacker.example",
+            "x-csrf-token": "tok",
+            "x-request-id": oversize,
+          },
+        });
+
+        await wrapped(request, makeContext());
+
+        expect(warn).toHaveBeenCalledTimes(1);
+        const args = warn.mock.calls[0];
+        const logged = args?.[args.length - 1] as string;
+        expect(logged.length).toBe(200);
+        expect(logged).toBe("a".repeat(200));
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it("hides expected/actual from response body when NODE_ENV === production", async () => {
       vi.stubEnv("NODE_ENV", "production");
 
