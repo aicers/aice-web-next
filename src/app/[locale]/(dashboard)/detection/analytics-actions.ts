@@ -19,6 +19,11 @@ import {
   isAnalyticsTopN,
   toEventListFilterInput,
 } from "@/lib/detection";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+  ReviewUnknownGraphQLError,
+} from "@/lib/review/errors";
 
 /**
  * Top N counter row. `value` is always a string for client display —
@@ -128,6 +133,29 @@ export async function runAnalyticsQuery(
     }
     if (err instanceof DetectionUnauthorizedError) {
       return { ok: false, code: "forbidden" };
+    }
+    // #405 I: review's GraphQL-layer denials must surface as their
+    // typed code, not collapse into the generic `server-error`
+    // bucket. The shell already differentiates `forbidden` vs.
+    // `forbidden-customer-scope` panels — `ReviewForbiddenError`
+    // routes through the former, while `ReviewInvalidArgumentError`
+    // joins the existing `invalid-input` branch so the operator sees
+    // a refresh-prompt rather than a crash banner.
+    // `ReviewUnknownGraphQLError` (review answered with an
+    // unrecognised code) deliberately re-throws past the
+    // `server-error` fallback per the security guardrail (Reviewer
+    // Round 2 P1) — masking a new review-side error code as a
+    // generic graceful state would defeat the guardrail. Plain
+    // `Error`s (transport, BFF bugs) still fall through to
+    // `server-error`.
+    if (err instanceof ReviewForbiddenError) {
+      return { ok: false, code: "forbidden" };
+    }
+    if (err instanceof ReviewInvalidArgumentError) {
+      return { ok: false, code: "invalid-input" };
+    }
+    if (err instanceof ReviewUnknownGraphQLError) {
+      throw err;
     }
     return { ok: false, code: "server-error" };
   }

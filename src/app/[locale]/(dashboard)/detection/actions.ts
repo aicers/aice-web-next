@@ -11,6 +11,11 @@ import {
   type PageSize,
   searchEventsAtAnchor,
 } from "@/lib/detection";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+  ReviewUnknownGraphQLError,
+} from "@/lib/review/errors";
 
 export interface RunEventQueryOk {
   ok: true;
@@ -57,6 +62,7 @@ export interface RunEventQueryErr {
     | "unauthenticated"
     | "forbidden"
     | "forbidden-customer-scope"
+    | "invalid-input"
     | "server-error";
 }
 
@@ -135,6 +141,28 @@ export async function runEventQuery(
     }
     if (err instanceof DetectionUnauthorizedError) {
       return { ok: false, code: "forbidden" };
+    }
+    // #405 I: review's GraphQL-layer denials must surface as their
+    // typed code, not as a generic `server-error` — operators must be
+    // able to tell "review denied this dispatch" from "the BFF crashed
+    // for an unknown reason". `ReviewInvalidArgumentError` likewise
+    // surfaces as a structured `invalid-input` so the shell can
+    // prompt a refresh / corrective action rather than a generic
+    // banner. `ReviewUnknownGraphQLError` (review answered with an
+    // unrecognised code) deliberately re-throws past the
+    // `server-error` fallback per the security guardrail (Reviewer
+    // Round 2 P1) — a future review-side error code we don't
+    // classify must not be silently masked as a generic graceful
+    // state. Plain `Error`s (transport drops, BFF bugs) still fall
+    // through to `server-error`.
+    if (err instanceof ReviewForbiddenError) {
+      return { ok: false, code: "forbidden" };
+    }
+    if (err instanceof ReviewInvalidArgumentError) {
+      return { ok: false, code: "invalid-input" };
+    }
+    if (err instanceof ReviewUnknownGraphQLError) {
+      throw err;
     }
     return { ok: false, code: "server-error" };
   }

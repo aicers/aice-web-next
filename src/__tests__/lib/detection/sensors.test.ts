@@ -65,8 +65,14 @@ describe("detection sensors — listSensors()", () => {
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 
-  it("rejects a caller with an empty customer scope", async () => {
-    mockHasPermission.mockResolvedValue(true);
+  it("rejects a non-admin caller with an empty customer scope", async () => {
+    // Non-admin (no `customers:access-all`): the empty-scope gate
+    // applies as before. The bypass for access-all callers — see
+    // the dedicated test below — is a separate path.
+    mockHasPermission.mockImplementation(
+      async (_roles: string[], permission: string) =>
+        permission === "detection:read",
+    );
     mockResolveEffectiveCustomerIds.mockResolvedValue([]);
 
     const { listSensors, DetectionUnauthorizedError } = await import(
@@ -77,6 +83,24 @@ describe("detection sensors — listSensors()", () => {
       DetectionUnauthorizedError,
     );
 
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not block an access-all caller (e.g. SysAdmin) with an empty local customers table (#405 L1)", async () => {
+    // Symmetric to the bypass in `buildDispatchContext`: a fresh
+    // install with no `customers` rows must not lock SysAdmin out
+    // of the sensor enumeration. While the sensor-list endpoint is
+    // still absent the helper returns the `endpoint-absent` variant
+    // rather than throwing, but the empty-scope gate must NOT trip
+    // for an access-all caller along the way.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+
+    const { listSensors } = await import("@/lib/detection");
+    const result = await listSensors(
+      makeSession({ roles: ["System Administrator"] }),
+    );
+    expect(result).toEqual({ endpointAvailable: false });
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
 

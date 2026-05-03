@@ -6,7 +6,11 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { graphqlRequest } from "@/lib/graphql/client";
 
 import { mapConflictError, NodeStaleConflictError } from "./conflict-patterns";
-import { buildDispatchContext, type DispatchContext } from "./dispatch-context";
+import {
+  buildDispatchContext,
+  type DispatchContext,
+  jwtCustomerIdsFor,
+} from "./dispatch-context";
 import {
   withManagerErrorMapping,
   withNodeNotFoundMapping,
@@ -91,7 +95,7 @@ async function fetchNodeForReplay(
       graphqlRequest<NodeDetailResult, { id: string }>(
         NODE_DETAIL_QUERY,
         { id },
-        { role: ctx.role, customerIds: ctx.customerIds },
+        { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
         signal,
       ),
       id,

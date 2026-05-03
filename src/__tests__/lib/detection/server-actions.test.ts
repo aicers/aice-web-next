@@ -68,8 +68,14 @@ describe("detection server actions", () => {
       expect(mockGraphqlRequest).not.toHaveBeenCalled();
     });
 
-    it("rejects a caller with an empty customer scope", async () => {
-      mockHasPermission.mockResolvedValue(true);
+    it("rejects a non-admin caller with an empty customer scope", async () => {
+      // The caller holds `detection:read` but not
+      // `customers:access-all`, so an empty assigned scope is the
+      // legitimate "no Detection access at all" case.
+      mockHasPermission.mockImplementation(
+        async (_roles: string[], permission: string) =>
+          permission === "detection:read",
+      );
       mockResolveEffectiveCustomerIds.mockResolvedValue([]);
 
       // Reviewer Round 2: empty-scope sessions flow through the
@@ -92,12 +98,16 @@ describe("detection server actions", () => {
       expect(mockGraphqlRequest).not.toHaveBeenCalled();
     });
 
-    it("carries the materialized access-all scope on the JWT context", async () => {
+    it("omits `customer_ids` from the JWT for System Administrator (review's None-only-for-SysAdmin contract)", async () => {
       mockHasPermission.mockResolvedValue(true);
-      // Access-all callers are resolved upstream to the explicit list
-      // of every registered customer ID. The BFF forwards that list
-      // on the Context JWT verbatim — REview does not re-derive scope
-      // from role text, so the list must be present.
+      // The materialized list still flows through the BFF for in-
+      // process defense-in-depth checks (filter scope intersection),
+      // but the Context JWT must omit `customer_ids` for the
+      // SysAdmin role: review's `validate_context_jwt` accepts
+      // `customer_ids = None` only for `Role::SystemAdministrator`,
+      // so passing the materialized list is unnecessary and a fresh
+      // install with an empty `customers` table would otherwise
+      // ship `customer_ids: []` and 403 from review (#405 L1+L2).
       mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3]);
       mockGraphqlRequest.mockResolvedValue({
         eventList: {
@@ -127,7 +137,80 @@ describe("detection server actions", () => {
       expect(variables.filter.customers).toBeUndefined();
       expect(context).toEqual({
         role: "System Administrator",
+        customerIds: undefined,
+      });
+    });
+
+    it("carries the materialized access-all scope on the JWT for non-SysAdmin custom roles", async () => {
+      // A custom role granting `customers:access-all` is not the
+      // `Role::SystemAdministrator` that review's `validate_context_jwt`
+      // recognises for the omit-customer_ids path, so the materialized
+      // list must still ride the JWT verbatim.
+      mockHasPermission.mockResolvedValue(true);
+      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3]);
+      mockGraphqlRequest.mockResolvedValue({
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: false,
+            hasNextPage: false,
+            startCursor: null,
+            endCursor: null,
+          },
+          edges: [],
+          nodes: [],
+          totalCount: "0",
+        },
+      });
+
+      const { searchEvents } = await import("@/lib/detection");
+
+      await searchEvents(makeSession({ roles: ["Custom Auditor"] }), {
+        mode: "structured",
+        input: { start: null, end: null },
+      });
+
+      const [, , context] = mockGraphqlRequest.mock.calls[0];
+      expect(context).toEqual({
+        role: "Custom Auditor",
         customerIds: [1, 2, 3],
+      });
+    });
+
+    it("does not block a System Administrator with an empty local `customers` table (#405 L1)", async () => {
+      // Reproduction from the 2026-05-03 integration test: bootstrap
+      // SysAdmin opens `/en/detection`, `auth_db.customers` is empty,
+      // `resolveEffectiveCustomerIds` returns `[]`. The pre-#405
+      // empty-scope gate threw before any review round-trip — but
+      // review accepts `customer_ids = None` for SysAdmin, so the
+      // BFF must let the dispatch through with the customer_ids
+      // claim omitted.
+      mockHasPermission.mockResolvedValue(true);
+      mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+      mockGraphqlRequest.mockResolvedValue({
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: false,
+            hasNextPage: false,
+            startCursor: null,
+            endCursor: null,
+          },
+          edges: [],
+          nodes: [],
+          totalCount: "0",
+        },
+      });
+
+      const { searchEvents } = await import("@/lib/detection");
+      await searchEvents(makeSession({ roles: ["System Administrator"] }), {
+        mode: "structured",
+        input: { start: null, end: null },
+      });
+
+      expect(mockGraphqlRequest).toHaveBeenCalledOnce();
+      const [, , context] = mockGraphqlRequest.mock.calls[0];
+      expect(context).toEqual({
+        role: "System Administrator",
+        customerIds: undefined,
       });
     });
 
@@ -249,7 +332,15 @@ describe("detection server actions", () => {
 
   describe("BFF intersection check", () => {
     beforeEach(() => {
-      mockHasPermission.mockResolvedValue(true);
+      // Non-admin caller: holds `detection:read` but not
+      // `customers:access-all`. The intersection check is only the
+      // authoritative gate for non-global-scope callers; admins
+      // delegate filter validation to review (#405 P2 — see the
+      // separate admin tests below).
+      mockHasPermission.mockImplementation(
+        async (_roles: string[], permission: string) =>
+          permission !== "customers:access-all",
+      );
     });
 
     it("dispatches when the filter narrows to a subset of allowed scope", async () => {
@@ -316,6 +407,9 @@ describe("detection server actions", () => {
     it("dispatches an admin selecting any subset of registered customers", async () => {
       // Admin scope is materialised upstream — every registered
       // customer ID — and `searchEvents` does not branch on role.
+      // Override the suite-level non-admin permission shape so the
+      // global-scope path activates for this case.
+      mockHasPermission.mockResolvedValue(true);
       mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3, 4, 5]);
       mockGraphqlRequest.mockResolvedValue({
         eventList: {
@@ -342,21 +436,46 @@ describe("detection server actions", () => {
       expect(variables.filter.customers).toEqual(["2", "4"]);
     });
 
-    it("rejects an admin selecting an unknown customer ID (not present in `customers`)", async () => {
-      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3]);
+    it("dispatches a global-scope admin even when filter.customers is missing from the local list (#405 P2)", async () => {
+      // The BFF's local `customers` table is a materialised view of
+      // review's customer set used for non-admin scope enforcement.
+      // An admin holds `customers:access-all`, which review reads as
+      // `customer_ids = None` (all customers). On a fresh install the
+      // local table can be sparser than review's — the bootstrap
+      // admin must still be able to filter by a review customer ID
+      // that hasn't been mirrored locally yet, otherwise the
+      // pre-#405 P2 reproduction (admin opens `/en/detection?customers=1`
+      // on an empty local table) re-emerges as an unrecoverable 403.
+      mockHasPermission.mockResolvedValue(true);
+      mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+      mockGraphqlRequest.mockResolvedValue({
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: false,
+            hasNextPage: false,
+            startCursor: null,
+            endCursor: null,
+          },
+          edges: [],
+          nodes: [],
+          totalCount: "0",
+        },
+      });
 
-      const { searchEvents, DetectionForbiddenError } = await import(
-        "@/lib/detection"
-      );
+      const { searchEvents } = await import("@/lib/detection");
+      await searchEvents(makeSession({ roles: ["System Administrator"] }), {
+        mode: "structured",
+        input: { customers: ["1"] },
+      });
 
-      await expect(
-        searchEvents(makeSession({ roles: ["System Administrator"] }), {
-          mode: "structured",
-          input: { customers: ["999999"] },
-        }),
-      ).rejects.toBeInstanceOf(DetectionForbiddenError);
-
-      expect(mockGraphqlRequest).not.toHaveBeenCalled();
+      expect(mockGraphqlRequest).toHaveBeenCalledOnce();
+      const [, variables, context] = mockGraphqlRequest.mock.calls[0];
+      // The filter passes through verbatim — admin scope delegation
+      // means review is the authoritative customer-ID gate.
+      expect(variables.filter.customers).toEqual(["1"]);
+      // SysAdmin's JWT continues to omit `customer_ids` per the
+      // `validate_context_jwt` contract.
+      expect(context.customerIds).toBeUndefined();
     });
 
     it("rejects an empty-scope account before any REview dispatch", async () => {
@@ -620,6 +739,73 @@ describe("detection server actions", () => {
       );
 
       expect(mockGraphqlRequest).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  // ── lookupIpLocation: typed review-error guardrail ─────────────
+  //
+  // #405 P1: `lookupIpLocation` is best-effort enrichment and used to
+  // collapse every failure into `null`. That conflated "review denied
+  // this query" with "no enrichment available", which the security
+  // guardrails forbid. Typed review denials (Forbidden / argument
+  // validation) must propagate so the caller can render an explicit
+  // access-denied state; transient transport / unknown errors keep
+  // the legacy null-fallback so a missing geo entry does not crash
+  // the Investigation page.
+
+  describe("lookupIpLocation — typed review errors", () => {
+    beforeEach(() => {
+      mockHasPermission.mockResolvedValue(true);
+      mockResolveEffectiveCustomerIds.mockResolvedValue([7]);
+    });
+
+    it("re-throws ReviewForbiddenError instead of silently returning null", async () => {
+      const { ReviewForbiddenError } = await import("@/lib/review/errors");
+      mockGraphqlRequest.mockRejectedValue(
+        new ReviewForbiddenError("Forbidden"),
+      );
+
+      const { lookupIpLocation } = await import("@/lib/detection");
+      await expect(
+        lookupIpLocation(makeSession(), "10.0.0.1"),
+      ).rejects.toBeInstanceOf(ReviewForbiddenError);
+    });
+
+    it("re-throws ReviewInvalidArgumentError instead of silently returning null", async () => {
+      const { ReviewInvalidArgumentError } = await import(
+        "@/lib/review/errors"
+      );
+      mockGraphqlRequest.mockRejectedValue(
+        new ReviewInvalidArgumentError("Invalid argument"),
+      );
+
+      const { lookupIpLocation } = await import("@/lib/detection");
+      await expect(
+        lookupIpLocation(makeSession(), "10.0.0.1"),
+      ).rejects.toBeInstanceOf(ReviewInvalidArgumentError);
+    });
+
+    it("returns null for transient / unknown failures (best-effort decoration)", async () => {
+      mockGraphqlRequest.mockRejectedValue(new Error("boom"));
+
+      const { lookupIpLocation } = await import("@/lib/detection");
+      const result = await lookupIpLocation(makeSession(), "10.0.0.1");
+      expect(result).toBeNull();
+    });
+
+    // Reviewer Round 2 P1: an unrecognised review GraphQL error is
+    // not a transient transport failure — collapsing it to `null`
+    // would mask a new review-side error code as "no enrichment
+    // data", which the same #405 security guardrail forbids.
+    it("re-throws ReviewUnknownGraphQLError instead of returning null", async () => {
+      const { ReviewUnknownGraphQLError } = await import("@/lib/review/errors");
+      const denied = new ReviewUnknownGraphQLError("future-review-code");
+      mockGraphqlRequest.mockRejectedValue(denied);
+
+      const { lookupIpLocation } = await import("@/lib/detection");
+      await expect(lookupIpLocation(makeSession(), "10.0.0.1")).rejects.toBe(
+        denied,
+      );
     });
   });
 

@@ -115,7 +115,16 @@ export async function getApplied(
   if (isExternalKind(kind)) {
     const service = node.externalServices.find((s) => s.kind === kind);
     if (!service) return null;
-    const requestContext = { role: ctx.role, customerIds: ctx.customerIds };
+    // Reviewer Round 2 P2: external clients (Giganto / Tivan) keep
+    // sending the materialized list. The omit-for-admin rule in
+    // `jwtCustomerIdsFor` is review-only because external services'
+    // Context-JWT validators were not audited under #405; broadening
+    // the rule to them would silently change a JWT claim they may
+    // rely on.
+    const requestContext = {
+      role: ctx.role,
+      customerIds: ctx.customerIds,
+    };
     if (kind === "DATA_STORE") {
       const data = await withExternalErrorMapping(
         "DATA_STORE",

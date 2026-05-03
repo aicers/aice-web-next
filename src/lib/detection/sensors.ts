@@ -7,6 +7,7 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { DetectionUnauthorizedError } from "./errors";
 
 const DETECTION_READ = "detection:read";
+const CUSTOMERS_ACCESS_ALL = "customers:access-all";
 
 /**
  * A sensor (Node) known to REview, scoped to customers the caller can
@@ -142,11 +143,21 @@ export async function listSensors(
     );
   }
 
+  const hasGlobalScope = await hasPermission(
+    session.roles,
+    CUSTOMERS_ACCESS_ALL,
+  );
   const customerIds = await resolveEffectiveCustomerIds(
     session.accountId,
     session.roles,
   );
-  if (customerIds.length === 0) {
+  if (!hasGlobalScope && customerIds.length === 0) {
+    // An access-all caller (in particular the bootstrap System
+    // Administrator on a fresh install with no `customers` rows yet)
+    // must be able to reach the sensor list — see the symmetric
+    // bypass in `buildDispatchContext` (server-actions.ts) for the
+    // same rationale. Non-admin sessions with an empty scope still
+    // throw so the BFF never leaks an unscoped sensor enumeration.
     throw new DetectionUnauthorizedError(
       "Caller has no assigned customers; Detection requires a customer scope.",
     );

@@ -32,6 +32,12 @@ import type {
   Node as ManagerNode,
   NodeStatus,
 } from "@/lib/node/types";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+} from "@/lib/review/errors";
+
+import NodesForbidden from "../../../forbidden";
 
 interface CustomerOption {
   id: string;
@@ -108,8 +114,14 @@ export default async function NodeDetailPage({
   // ensures `getNode` is always callable here for the read scopes; the
   // canonical-not-found / out-of-scope branches map to 404 (NotFound),
   // and a manager outage maps to the offline panel.
+  //
+  // #405 I: review's typed denials surface as the explicit forbidden
+  // panel rather than the manager-offline copy or a 500 page. A
+  // silent empty state would conflate "denied" with "no data" — see
+  // the issue's security guardrails.
   let node: ManagerNode | null = null;
   let managerOffline = false;
+  let reviewForbidden = false;
   try {
     node = await getNode(session, id);
   } catch (err) {
@@ -121,9 +133,23 @@ export default async function NodeDetailPage({
     }
     if (err instanceof ManagerUnavailableError) {
       managerOffline = true;
+    } else if (
+      err instanceof ReviewForbiddenError ||
+      err instanceof ReviewInvalidArgumentError
+    ) {
+      reviewForbidden = true;
     } else {
       throw err;
     }
+  }
+
+  if (reviewForbidden) {
+    return (
+      <>
+        <CustomerScopeCallout scope={scope} className="mb-4" />
+        <NodesForbidden />
+      </>
+    );
   }
 
   if (managerOffline || !node) {
@@ -198,8 +224,38 @@ export default async function NodeDetailPage({
       initialCapturedAt = result.capturedAt;
       initialEdges = result.edges;
     } catch (err) {
-      if (!(err instanceof ManagerUnavailableError)) throw err;
+      // The seed is non-fatal for *transient* failures only — a
+      // manager outage degrades gracefully because the polling driver
+      // recovers on the first tick and the dashboard still renders
+      // the metadata + service grid.
+      //
+      // Reviewer Round 2 P2: typed review denials are NOT transient.
+      // The canonical `getNode` above shares the same role / scope /
+      // JWT contract; if review denies the status seed it is either
+      // a per-resource denial or contract drift, and silently
+      // continuing with `initialEdges = []` would conflate "denied"
+      // with "no live status" — the same security guardrail
+      // forbidden in #405 I. Surface the explicit forbidden panel
+      // (mirroring the canonical-fetch path above) so operators see
+      // a real denied state instead of a page that silently lost its
+      // live-status widget.
+      if (
+        err instanceof ReviewForbiddenError ||
+        err instanceof ReviewInvalidArgumentError
+      ) {
+        reviewForbidden = true;
+      } else if (!(err instanceof ManagerUnavailableError)) {
+        throw err;
+      }
     }
+  }
+  if (reviewForbidden) {
+    return (
+      <>
+        <CustomerScopeCallout scope={scope} className="mb-4" />
+        <NodesForbidden />
+      </>
+    );
   }
   const initialNodeStatus = initialEdges.find((edge) => edge.id === id) ?? null;
 

@@ -35,6 +35,7 @@ import {
 } from "@/lib/detection";
 import { COUNTRY_CODES } from "@/lib/detection/countries";
 import { FLOW_KINDS } from "@/lib/detection/direction";
+import { DetectionForbiddenError } from "@/lib/detection/errors";
 import {
   INITIAL_THREAT_KINDS,
   LEARNING_METHOD_VALUES,
@@ -48,6 +49,10 @@ import { RECOMMENDED_PRESETS } from "@/lib/detection/recommended-filters";
 import { createTabId, type TabId } from "@/lib/detection/tabs";
 import type { LearningMethod, PageInfo } from "@/lib/detection/types";
 import { decodeEventLocator } from "@/lib/events/event-locator";
+import {
+  ReviewForbiddenError,
+  ReviewUnknownGraphQLError,
+} from "@/lib/review/errors";
 
 interface DetectionPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -187,8 +192,31 @@ export default async function DetectionPage({
     // row's React key so duplicate content can't collide.
     initialEventKeys = connection.edges.map((edge) => edge.cursor);
     initialPageInfo = connection.pageInfo;
-  } catch {
-    initialError = t("filters.resultsError");
+  } catch (err) {
+    // #405 I: review's typed denials surface as the explicit
+    // forbidden-scope panel rather than the generic banner — the
+    // security guardrails forbid conflating "denied" with "no
+    // data".
+    //
+    // Reviewer Round 2 P1: an unrecognised review GraphQL error
+    // (`ReviewUnknownGraphQLError`) is *not* an "ordinary expected
+    // failure" — review answered with a code we don't classify, and
+    // masking that as the generic results banner would hide a real
+    // bug from operators. Re-throw so the route's error boundary
+    // surfaces it. Plain `Error`s (transport drops, BFF bugs)
+    // continue to render the generic banner so the rest of the
+    // shell stays usable.
+    if (err instanceof ReviewUnknownGraphQLError) {
+      throw err;
+    }
+    if (
+      err instanceof ReviewForbiddenError ||
+      err instanceof DetectionForbiddenError
+    ) {
+      initialError = t("filters.resultsForbiddenScope");
+    } else {
+      initialError = t("filters.resultsError");
+    }
   }
 
   const periodOptions = Object.fromEntries(

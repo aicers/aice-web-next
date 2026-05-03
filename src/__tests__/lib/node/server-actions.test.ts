@@ -566,6 +566,62 @@ describe("external service server actions — happy path", () => {
     expect(mockGigantoClient).not.toHaveBeenCalled();
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
   });
+
+  // Reviewer Round 2 P2: external clients (Giganto / Tivan) must
+  // keep shipping the materialized `customerIds` list — even for
+  // System Administrator, where review's contract would omit it.
+  // The omit-for-admin rule in `jwtCustomerIdsFor` is review-only;
+  // broadening it to external services would silently change a JWT
+  // claim those services may rely on. Pin the contract here so a
+  // future regression that wires `jwtCustomerIdsFor` back into
+  // these getters fails fast.
+  it("getGigantoStatus ships materialized customerIds (not omitted) for System Administrator", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([7, 11]);
+    mockGigantoClient.mockResolvedValue({
+      status: {
+        name: "g",
+        cpuUsage: 1,
+        totalMemory: 1,
+        usedMemory: 1,
+        diskUsedBytes: 1,
+        diskAvailableBytes: 1,
+      },
+    });
+
+    const { getGigantoStatus } = await import("@/lib/node/server-actions");
+    await getGigantoStatus(makeSession({ roles: ["System Administrator"] }));
+    const call = mockGigantoClient.mock.calls[0];
+    expect(call?.[2]).toEqual({
+      role: "System Administrator",
+      customerIds: [7, 11],
+    });
+    expect(call?.[2]?.customerIds).not.toBeUndefined();
+  });
+
+  it("getTivanStatus ships materialized customerIds (not omitted) for System Administrator", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([7, 11]);
+    mockTivanClient.mockResolvedValue({
+      status: {
+        name: "t",
+        cpuUsage: 1,
+        totalMemory: 1,
+        usedMemory: 1,
+        diskUsedBytes: 1,
+        diskAvailableBytes: 1,
+      },
+    });
+
+    const { getTivanStatus } = await import("@/lib/node/server-actions");
+    await getTivanStatus(makeSession({ roles: ["System Administrator"] }));
+    const call = mockTivanClient.mock.calls[0];
+    expect(call?.[2]).toEqual({
+      role: "System Administrator",
+      customerIds: [7, 11],
+    });
+    expect(call?.[2]?.customerIds).not.toBeUndefined();
+  });
 });
 
 // ── Permission boundary ────────────────────────────────────────────

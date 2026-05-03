@@ -312,4 +312,63 @@ describe("runAnalyticsQuery", () => {
     const result = await runAnalyticsQuery(STRUCTURED_FILTER, "srcIp", 10);
     expect(result).toEqual({ ok: false, code: "server-error" });
   });
+
+  // #405 I: review's typed denials must surface as their specific
+  // discriminator rather than collapse into the generic `server-error`
+  // bucket — silently swallowing Forbidden as a transient failure is
+  // forbidden by the security guardrails.
+  it("maps ReviewForbiddenError to `forbidden`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    const { ReviewForbiddenError } = await import("@/lib/review/errors");
+    mockCountByOriginatorIp.mockRejectedValue(
+      new ReviewForbiddenError("Forbidden"),
+    );
+    mockEventFrequencySeries.mockResolvedValue([]);
+
+    const { runAnalyticsQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/analytics-actions"
+    );
+
+    const result = await runAnalyticsQuery(STRUCTURED_FILTER, "srcIp", 10);
+    expect(result).toEqual({ ok: false, code: "forbidden" });
+  });
+
+  it("maps ReviewInvalidArgumentError to `invalid-input`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    const { ReviewInvalidArgumentError } = await import("@/lib/review/errors");
+    mockCountByOriginatorIp.mockRejectedValue(
+      new ReviewInvalidArgumentError(
+        "The value of first and last must be within 0-100",
+      ),
+    );
+    mockEventFrequencySeries.mockResolvedValue([]);
+
+    const { runAnalyticsQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/analytics-actions"
+    );
+
+    const result = await runAnalyticsQuery(STRUCTURED_FILTER, "srcIp", 10);
+    expect(result).toEqual({ ok: false, code: "invalid-input" });
+  });
+
+  // Reviewer Round 2 P1: same guardrail as `runEventQuery` —
+  // unrecognised review GraphQL errors must NOT collapse into the
+  // graceful `server-error` bucket. The action lets
+  // `ReviewUnknownGraphQLError` propagate so the route's error
+  // boundary surfaces the failure.
+  it("re-throws ReviewUnknownGraphQLError instead of masking as `server-error`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    const { ReviewUnknownGraphQLError } = await import("@/lib/review/errors");
+    const denied = new ReviewUnknownGraphQLError("future-review-code");
+    mockCountByOriginatorIp.mockRejectedValue(denied);
+    mockEventFrequencySeries.mockResolvedValue([]);
+
+    const { runAnalyticsQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/analytics-actions"
+    );
+
+    await expect(
+      runAnalyticsQuery(STRUCTURED_FILTER, "srcIp", 10),
+    ).rejects.toBe(denied);
+  });
 });

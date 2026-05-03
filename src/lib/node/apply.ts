@@ -55,6 +55,7 @@ import {
   assertNodeInScope,
   buildDispatchContext,
   type DispatchContext,
+  jwtCustomerIdsFor,
 } from "./dispatch-context";
 import {
   withExternalErrorMapping,
@@ -141,7 +142,7 @@ export async function _internal_applyNodeViaManager(
     graphqlRequest<ApplyNodeResult, ApplyNodeVariables>(
       APPLY_NODE_MUTATION,
       { id, node },
-      { role: ctx.role, customerIds: ctx.customerIds },
+      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
       signal,
     ),
   );
@@ -158,7 +159,7 @@ async function fetchCanonicalNode(
       graphqlRequest<NodeDetailResult, { id: string }>(
         NODE_DETAIL_QUERY,
         { id },
-        { role: ctx.role, customerIds: ctx.customerIds },
+        { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
         signal,
       ),
       id,

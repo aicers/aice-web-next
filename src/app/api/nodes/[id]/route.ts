@@ -30,6 +30,10 @@ import {
   removeNodes,
 } from "@/lib/node/server-actions";
 import type { NodeDraftInput, NodeInput } from "@/lib/node/types";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+} from "@/lib/review/errors";
 
 /**
  * GET /api/nodes/[id]
@@ -126,8 +130,17 @@ export const GET = withAuth(
       if (err instanceof NodeNotFoundError) {
         return NextResponse.json({ error: "Node not found" }, { status: 404 });
       }
-      if (err instanceof NodePermissionError) {
+      if (
+        err instanceof NodePermissionError ||
+        err instanceof ReviewForbiddenError
+      ) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (err instanceof ReviewInvalidArgumentError) {
+        return NextResponse.json(
+          { error: "Invalid argument" },
+          { status: 400 },
+        );
       }
       if (err instanceof ManagerUnavailableError) {
         return NextResponse.json(
@@ -175,8 +188,17 @@ export const DELETE = withAuth(
       if (err instanceof NodeNotFoundError) {
         return NextResponse.json({ error: "Node not found" }, { status: 404 });
       }
-      if (err instanceof NodePermissionError) {
+      if (
+        err instanceof NodePermissionError ||
+        err instanceof ReviewForbiddenError
+      ) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (err instanceof ReviewInvalidArgumentError) {
+        return NextResponse.json(
+          { error: "Invalid argument" },
+          { status: 400 },
+        );
       }
       if (err instanceof ManagerUnavailableError) {
         return NextResponse.json(
@@ -194,8 +216,17 @@ export const DELETE = withAuth(
       if (err instanceof NodeNotFoundError) {
         return NextResponse.json({ error: "Node not found" }, { status: 404 });
       }
-      if (err instanceof NodePermissionError) {
+      if (
+        err instanceof NodePermissionError ||
+        err instanceof ReviewForbiddenError
+      ) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (err instanceof ReviewInvalidArgumentError) {
+        return NextResponse.json(
+          { error: "Invalid argument" },
+          { status: 400 },
+        );
       }
       if (err instanceof ManagerUnavailableError) {
         return NextResponse.json(
@@ -311,8 +342,17 @@ export const PATCH = withAuth(
       if (err instanceof NodeNotFoundError) {
         return NextResponse.json({ error: "Node not found" }, { status: 404 });
       }
-      if (err instanceof NodePermissionError) {
+      if (
+        err instanceof NodePermissionError ||
+        err instanceof ReviewForbiddenError
+      ) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (err instanceof ReviewInvalidArgumentError) {
+        return NextResponse.json(
+          { error: "Invalid argument" },
+          { status: 400 },
+        );
       }
       if (err instanceof ManagerUnavailableError) {
         return NextResponse.json(

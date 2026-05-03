@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { AuthSession } from "@/lib/auth/jwt";
+import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 
 import {
   CSV_EXPORT_MAX_ROWS,
@@ -16,11 +17,16 @@ export { CSV_EXPORT_MAX_ROWS } from "./csv-export";
 
 /**
  * Page size used when iterating through the full result set for a
- * CSV export. Larger than the interactive page size to cut down on
- * round-trips to REview — the shell's default interactive page is
- * tuned for latency, not bulk fetches.
+ * CSV export. Capped at {@link REVIEW_MAX_PAGE_SIZE} because review
+ * 0.47.0 rejects any `first` / `last` outside `[0, 100]` with a
+ * GraphQL-level error — the export stream shares the `eventList`
+ * connection shape as the interactive list, so it cannot exceed the
+ * limit even though bulk-fetch cost favours a larger page. Without
+ * the cap the preflight (`first: 1`) would succeed and the route
+ * would return a 200 with headers, only for the stream to fail the
+ * download as soon as it pulled the first page (#405 P1).
  */
-export const CSV_EXPORT_PAGE_SIZE = 500;
+export const CSV_EXPORT_PAGE_SIZE = REVIEW_MAX_PAGE_SIZE;
 
 /**
  * Thrown by the stream when iteration crosses

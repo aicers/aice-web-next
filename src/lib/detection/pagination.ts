@@ -18,13 +18,19 @@
  * Apply is mandatory.
  */
 
+import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
+
 import type { SearchEventsArgs } from "./server-actions";
 
 /**
  * Selectable page sizes for the Detection result list. Order is
- * preserved by the selector UI (`25 / 50 / 100 / 200`, default 50).
+ * preserved by the selector UI (`25 / 50 / 100`, default 50). The
+ * upper option matches {@link REVIEW_MAX_PAGE_SIZE} — review 0.47.0
+ * rejects `first` / `last` above 100 with a GraphQL-level error, so
+ * an off-menu `200` cannot be exposed even if the UI selector were
+ * widened.
  */
-export const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
+export const PAGE_SIZE_OPTIONS = [25, 50, REVIEW_MAX_PAGE_SIZE] as const;
 export type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 
 export const DEFAULT_PAGE_SIZE: PageSize = 50;
@@ -34,15 +40,21 @@ export function isPageSize(value: number): value is PageSize {
 }
 
 /**
- * Coerce a caller-supplied number into a supported page size,
- * falling back to {@link DEFAULT_PAGE_SIZE} when the value is not
- * one of the allowed steps. Used at URL-ingest time so a tampered
- * `?pageSize=999` can't produce an off-menu page size that the
- * selector couldn't round-trip.
+ * Coerce a caller-supplied number into a supported page size. Stale
+ * URLs (e.g. a bookmark from before #405 dropped `200` from the
+ * options list) coerce DOWN to {@link REVIEW_MAX_PAGE_SIZE} rather
+ * than collapsing to the default — the operator's intent was a
+ * larger page, and capping preserves the closest legal step. Other
+ * unsupported values (negative, non-finite, or below the smallest
+ * option) fall back to {@link DEFAULT_PAGE_SIZE}.
  */
 export function coercePageSize(value: number | undefined): PageSize {
   if (value === undefined) return DEFAULT_PAGE_SIZE;
-  return isPageSize(value) ? value : DEFAULT_PAGE_SIZE;
+  if (isPageSize(value)) return value;
+  if (Number.isFinite(value) && value > REVIEW_MAX_PAGE_SIZE) {
+    return REVIEW_MAX_PAGE_SIZE;
+  }
+  return DEFAULT_PAGE_SIZE;
 }
 
 /**
@@ -212,8 +224,8 @@ export function totalPagesFrom(
   const size = BigInt(pageSize);
   const pages = total / size + (total % size === ZERO ? ZERO : ONE);
   // Clamp to Number.MAX_SAFE_INTEGER so the UI math (page arithmetic,
-  // progress counters) stays in the safe integer range. At 200-per
-  // page this supports 1.8e18 events, well beyond anything REview
+  // progress counters) stays in the safe integer range. At 100-per
+  // page this supports 9.0e17 events, well beyond anything REview
   // can hold.
   if (pages > BigInt(Number.MAX_SAFE_INTEGER)) return Number.MAX_SAFE_INTEGER;
   return Number(pages);

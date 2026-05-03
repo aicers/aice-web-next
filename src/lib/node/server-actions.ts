@@ -4,11 +4,13 @@ import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
 import { graphqlRequest } from "@/lib/graphql/client";
 import { gigantoClient, tivanClient } from "@/lib/graphql/external-client";
+import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 
 import {
   assertNodeInScope,
   buildDispatchContext,
   type DispatchContext,
+  jwtCustomerIdsFor,
   SYSTEM_ADMINISTRATOR,
 } from "./dispatch-context";
 import {
@@ -143,7 +145,7 @@ async function fetchCanonicalNode(
       graphqlRequest<NodeDetailResult, { id: string }>(
         NODE_DETAIL_QUERY,
         { id },
-        { role: ctx.role, customerIds: ctx.customerIds },
+        { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
         signal,
       ),
       id,
@@ -206,7 +208,7 @@ export async function listNodes(
         last: args.last ?? null,
         before: args.before ?? null,
       },
-      { role: ctx.role, customerIds: ctx.customerIds },
+      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
       signal,
     ),
   );
@@ -309,7 +311,7 @@ async function fetchSlimNodeMetadata(
       graphqlRequest<NodeAuditMetadataResult, { id: string }>(
         NODE_AUDIT_METADATA_QUERY,
         { id },
-        { role: ctx.role, customerIds: ctx.customerIds },
+        { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
         signal,
       ),
       id,
@@ -379,7 +381,7 @@ export async function listNodeStatuses(
         last: args.last ?? null,
         before: args.before ?? null,
       },
-      { role: ctx.role, customerIds: ctx.customerIds },
+      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
       signal,
     ),
   );
@@ -387,11 +389,17 @@ export async function listNodeStatuses(
 }
 
 // Cap the cursor walk so a misbehaving manager (no-op cursor, missing
-// `hasNextPage: false`) cannot hang the page indefinitely. 50 pages at
-// `pageSize: 200` covers up to 10k nodes — well above any realistic
-// deployment; the cap exists strictly as a runaway guard.
-const PAGINATION_PAGE_LIMIT = 50;
-const DEFAULT_PAGE_SIZE = 200;
+// `hasNextPage: false`) cannot hang the page indefinitely. 100 pages
+// at `pageSize: REVIEW_MAX_PAGE_SIZE` covers up to 10k nodes — well
+// above any realistic deployment; the cap exists strictly as a
+// runaway guard.
+const PAGINATION_PAGE_LIMIT = 100;
+// Match review's hard upper bound on Relay `first`/`last` arguments —
+// `REVIEW_MAX_PAGE_SIZE`. Review 0.47.0 rejects anything outside
+// `[0, 100]` ("The value of first and last must be within 0-100"),
+// which would otherwise surface as a 500 from `nodeList` /
+// `nodeStatusList`.
+const DEFAULT_PAGE_SIZE = REVIEW_MAX_PAGE_SIZE;
 
 /**
  * Walk every page of a connection-shaped manager query, accumulating
@@ -522,7 +530,7 @@ export async function insertNode(
     graphqlRequest<InsertNodeResult, InsertNodeVariables>(
       INSERT_NODE_MUTATION,
       args,
-      { role: ctx.role, customerIds: ctx.customerIds },
+      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
       signal,
     ),
   );
@@ -584,7 +592,7 @@ export async function updateNodeDraft(
     graphqlRequest<{ updateNodeDraft: string }, UpdateNodeDraftVariables>(
       UPDATE_NODE_DRAFT_MUTATION,
       { id, old: oldNode, new: newDraft },
-      { role: ctx.role, customerIds: ctx.customerIds },
+      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
       signal,
     ),
   );
@@ -629,7 +637,7 @@ export async function removeNodes(
     graphqlRequest<RemoveNodesResult, RemoveNodesVariables>(
       REMOVE_NODES_MUTATION,
       { ids },
-      { role: ctx.role, customerIds: ctx.customerIds },
+      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
       signal,
     ),
   );
@@ -669,7 +677,7 @@ export async function nodeReboot(
     graphqlRequest<NodeRebootResult, NodeRebootVariables>(
       NODE_REBOOT_MUTATION,
       { hostname },
-      { role: ctx.role, customerIds: ctx.customerIds },
+      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
       signal,
     ),
   );
@@ -687,7 +695,7 @@ export async function nodeShutdown(
     graphqlRequest<NodeShutdownResult, NodeRebootVariables>(
       NODE_SHUTDOWN_MUTATION,
       { hostname },
-      { role: ctx.role, customerIds: ctx.customerIds },
+      { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
       signal,
     ),
   );

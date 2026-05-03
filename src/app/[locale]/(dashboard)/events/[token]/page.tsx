@@ -3,9 +3,17 @@ import { EventInvestigation } from "@/components/events/event-investigation";
 import { EventNotFound } from "@/components/events/event-not-found";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import { fetchEventByLocator } from "@/lib/detection";
+import {
+  DetectionForbiddenError,
+  DetectionUnauthorizedError,
+} from "@/lib/detection/errors";
 import type { Event } from "@/lib/detection/types";
 import { decodeEventLocator } from "@/lib/events/event-locator";
 import { sanitizeReturnTo } from "@/lib/events/return-to";
+import {
+  ReviewForbiddenError,
+  ReviewUnknownGraphQLError,
+} from "@/lib/review/errors";
 
 interface PageProps {
   params: Promise<{ locale: string; token: string }>;
@@ -46,7 +54,34 @@ export default async function EventInvestigationPage({
   let resolution: Awaited<ReturnType<typeof fetchEventByLocator>>;
   try {
     resolution = await fetchEventByLocator(session, locator);
-  } catch {
+  } catch (err) {
+    // #405 I: surface review-side / BFF-side denials as an explicit
+    // access-denied panel, never as a generic fetch error. The
+    // security guardrail forbids conflating "denied" with "could not
+    // load" — operators must be able to tell the two apart.
+    //
+    // Reviewer Round 2 P1: an unrecognised review GraphQL error
+    // (`ReviewUnknownGraphQLError`) re-throws past the generic
+    // `fetch-error` panel — masking a new review-side error code as
+    // "could not load" would defeat the same guardrail. Plain
+    // `Error`s (transport drops, BFF bugs) still render the
+    // `fetch-error` panel.
+    if (
+      err instanceof ReviewForbiddenError ||
+      err instanceof DetectionForbiddenError ||
+      err instanceof DetectionUnauthorizedError
+    ) {
+      return (
+        <EventNotFound
+          reason="forbidden"
+          backHref={backHref}
+          labels={buildLabels(t)}
+        />
+      );
+    }
+    if (err instanceof ReviewUnknownGraphQLError) {
+      throw err;
+    }
     return (
       <EventNotFound
         reason="fetch-error"
@@ -116,6 +151,8 @@ function buildLabels(t: EventsTranslator) {
     notFoundBody: t("notFound.notFoundBody"),
     fetchErrorTitle: t("notFound.fetchErrorTitle"),
     fetchErrorBody: t("notFound.fetchErrorBody"),
+    forbiddenTitle: t("notFound.forbiddenTitle"),
+    forbiddenBody: t("notFound.forbiddenBody"),
     back: t("notFound.back"),
   };
 }

@@ -10,6 +10,12 @@ import {
   THREAT_LEVEL_TO_NUMBER,
 } from "@/lib/events/event-locator";
 import { graphqlRequest } from "@/lib/graphql/client";
+import { withReviewErrorMapping } from "@/lib/review/error-mapping";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+  ReviewUnknownGraphQLError,
+} from "@/lib/review/errors";
 
 import { DetectionForbiddenError, DetectionUnauthorizedError } from "./errors";
 import { type Filter, toEventListFilterInput } from "./filter";
@@ -54,10 +60,19 @@ import type {
 // ── Permission / customer scope ──────────────────────────────────
 
 const DETECTION_READ = "detection:read";
+const CUSTOMERS_ACCESS_ALL = "customers:access-all";
+const SYSTEM_ADMINISTRATOR = "System Administrator";
 
 interface DispatchContext {
   role: string;
   customerIds: number[];
+  /**
+   * Whether the caller holds `customers:access-all`, regardless of how
+   * many rows happen to be in the local `customers` table. Mirrors
+   * Node's `DispatchContext.hasGlobalScope` so a fresh-install admin
+   * (no `customers` rows yet) is not blocked by the empty-scope gate.
+   */
+  hasGlobalScope: boolean;
   filter: EventListFilterInput;
 }
 
@@ -68,24 +83,35 @@ interface DispatchContext {
  * with no accessible customers are rejected without any network
  * traffic to REview.
  *
- * Scope is always materialized into a concrete `customer_ids` list
- * before it reaches the Context JWT — including for callers with
- * `customers:access-all`, who get every registered customer. REview
- * applies customer scoping from that claim set and does not re-derive
- * it from role text, so the BFF carries the explicit list rather than
- * relying on the consumer's interpretation of an omitted claim.
+ * `customerIds` carries the materialized scope used for in-process
+ * defense-in-depth checks (`validateFilterScope` against
+ * `filter.input.customers`). The Context JWT shape is *separately*
+ * decided in {@link jwtCustomerIdsForDetection}: review's
+ * `validate_context_jwt` accepts `customer_ids = None` only for
+ * `Role::SystemAdministrator`, so the JWT omits the field for the
+ * bootstrap admin and ships the materialized list for every other
+ * caller.
  *
- * An empty resolved scope is rejected through the customer-scope
- * gate (`DetectionForbiddenError` → `forbidden-customer-scope`), not
- * the generic unauthorized bucket: the caller does hold
- * `detection:read`, so "no Detection access at all" is a misleading
- * classification — the actionable problem is that the caller has no
- * customers in scope, the same family of failure as a crafted filter
- * that references customers outside scope. #384's acceptance treats
- * empty-scope sessions as part of the same authoritative customer-
- * scope gate. A silent empty result would also be indistinguishable
- * from a legitimately-empty page, so the rejection happens before any
- * REview round-trip.
+ * Empty-scope handling differentiates two cases:
+ *
+ *   - `hasGlobalScope === true` (caller holds `customers:access-all`):
+ *     **do not block** even when the local `customers` table is
+ *     empty. A fresh install with no `customers` rows still has the
+ *     bootstrap System Administrator, who legitimately needs to
+ *     reach Detection so review's own customer can be enumerated.
+ *     Review accepts `customer_ids = None` for the SysAdmin role, so
+ *     the dispatch succeeds end-to-end.
+ *   - `hasGlobalScope === false` and `customerIds.length === 0`:
+ *     reject through the customer-scope gate
+ *     (`DetectionForbiddenError` → `forbidden-customer-scope`). The
+ *     caller does hold `detection:read`, so "no Detection access at
+ *     all" is a misleading classification — the actionable problem
+ *     is that the caller has no customers in scope, same family as a
+ *     crafted filter that references customers outside scope. #384's
+ *     acceptance treats empty-scope sessions as part of the same
+ *     authoritative customer-scope gate. A silent empty result would
+ *     also be indistinguishable from a legitimately-empty page, so
+ *     the rejection happens before any REview round-trip.
  *
  * The caller's customer scope travels in the Context JWT (see
  * `graphqlRequest`), not in `filter.customers`. The filter's
@@ -103,20 +129,15 @@ async function buildDispatchContext(
     );
   }
 
+  const hasGlobalScope = await hasPermission(
+    session.roles,
+    CUSTOMERS_ACCESS_ALL,
+  );
   const customerIds = await resolveEffectiveCustomerIds(
     session.accountId,
     session.roles,
   );
-  if (customerIds.length === 0) {
-    // Empty-scope sessions flow through the customer-scope gate
-    // (Reviewer Round 2): the caller holds `detection:read` but has
-    // no customers in scope, so this is a customer-scope rejection
-    // (`forbidden-customer-scope`), not a generic Detection-access
-    // denial. Treating it as `DetectionUnauthorizedError` would
-    // collapse it into the same bucket as "lacks `detection:read`",
-    // which is misleading and conflicts with #384's acceptance that
-    // empty-scope sessions are part of the same authoritative
-    // customer-scope gate as out-of-scope filter IDs.
+  if (!hasGlobalScope && customerIds.length === 0) {
     throw new DetectionForbiddenError(
       "Caller has no assigned customers; Detection requires a customer scope.",
     );
@@ -127,13 +148,48 @@ async function buildDispatchContext(
   // caller's effective scope. Throws `DetectionForbiddenError`; the
   // route layer maps it to the same forbidden response code as the
   // unauthorized branch above so neither path leaks a partial result.
-  validateFilterScope(filter, customerIds);
+  //
+  // The check intentionally only runs for non-global-scope callers
+  // (#405 P2). The local `customers` table is the BFF's
+  // *materialized* view of review's customer set, used to enforce
+  // per-account scope. An admin with `customers:access-all` is
+  // logically `customer_ids = None` (review's "all customers" wire
+  // semantics, see {@link jwtCustomerIdsForDetection}) — running
+  // them through an intersection against the local list would
+  // incorrectly reject filters that reference legitimate review
+  // customer IDs missing from the local table (the most common
+  // reproduction is a fresh install where the bootstrap admin
+  // pivots into a review customer before BFF sync runs). The admin
+  // path delegates filter validation to review itself: if the
+  // operator types a non-existent customer ID, review returns an
+  // empty connection rather than 500. Non-admin callers keep the
+  // BFF gate as the authoritative scope check — their JWT carries
+  // a finite materialized list and the intersection is meaningful.
+  if (!hasGlobalScope) {
+    validateFilterScope(filter, customerIds);
+  }
 
   return {
     role: session.roles[0],
     customerIds,
+    hasGlobalScope,
     filter: toEventListFilterInput(filter),
   };
+}
+
+/**
+ * Derive the `customer_ids` claim that should ride on the Context
+ * JWT for a Detection dispatch. Mirrors Node's `jwtCustomerIdsFor`:
+ * review's `validate_context_jwt` accepts `customer_ids = None` only
+ * for `Role::SystemAdministrator`, so the JWT omits the field for
+ * the bootstrap admin and ships the materialized list for every
+ * other caller — including custom roles that grant
+ * `customers:access-all`.
+ */
+function jwtCustomerIdsForDetection(
+  ctx: Pick<DispatchContext, "role" | "customerIds">,
+): number[] | undefined {
+  return ctx.role === SYSTEM_ADMINISTRATOR ? undefined : ctx.customerIds;
 }
 
 // ── Variable shapes (match the `.graphql` operations one-for-one) ──
@@ -174,17 +230,19 @@ export async function searchEvents(
   signal?: AbortSignal,
 ): Promise<EventConnection> {
   const ctx = await buildDispatchContext(session, filter);
-  const data = await graphqlRequest<EventListResult, EventListVariables>(
-    EVENT_LIST_QUERY,
-    {
-      filter: ctx.filter,
-      first: args.first ?? null,
-      after: args.after ?? null,
-      last: args.last ?? null,
-      before: args.before ?? null,
-    },
-    { role: ctx.role, customerIds: ctx.customerIds },
-    signal,
+  const data = await withReviewErrorMapping(
+    graphqlRequest<EventListResult, EventListVariables>(
+      EVENT_LIST_QUERY,
+      {
+        filter: ctx.filter,
+        first: args.first ?? null,
+        after: args.after ?? null,
+        last: args.last ?? null,
+        before: args.before ?? null,
+      },
+      { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+      signal,
+    ),
   );
   return data.eventList;
 }
@@ -244,11 +302,13 @@ async function dispatchCounter<TPayload>(
   signal?: AbortSignal,
 ): Promise<TPayload> {
   const ctx = await buildDispatchContext(session, filter);
-  const data = await graphqlRequest<Record<string, TPayload>, CounterVariables>(
-    document,
-    { filter: ctx.filter, first },
-    { role: ctx.role, customerIds: ctx.customerIds },
-    signal,
+  const data = await withReviewErrorMapping(
+    graphqlRequest<Record<string, TPayload>, CounterVariables>(
+      document,
+      { filter: ctx.filter, first },
+      { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+      signal,
+    ),
   );
   return extract(data);
 }
@@ -421,11 +481,13 @@ export async function fetchEventByLocator(
     mode: "structured",
     input: locatorToEventListFilter(locator),
   });
-  const data = await graphqlRequest<EventDetailResult, EventDetailVariables>(
-    EVENT_DETAIL_QUERY,
-    { filter: ctx.filter },
-    { role: ctx.role, customerIds: ctx.customerIds },
-    signal,
+  const data = await withReviewErrorMapping(
+    graphqlRequest<EventDetailResult, EventDetailVariables>(
+      EVENT_DETAIL_QUERY,
+      { filter: ctx.filter },
+      { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+      signal,
+    ),
   );
   const nodes = data.eventList.nodes;
   const totalCount = data.eventList.totalCount;
@@ -439,7 +501,22 @@ export async function fetchEventByLocator(
 /**
  * Look up geolocation for a single IP address. Returns `null` when
  * REview has no entry (the `IpLocation` return is nullable), or when
- * the query fails — IP enrichment is a best-effort decoration.
+ * the query fails for a transient / unknown reason — IP enrichment
+ * is a best-effort decoration.
+ *
+ * Typed review denials ({@link ReviewForbiddenError} /
+ * {@link ReviewInvalidArgumentError}) are intentionally re-thrown
+ * rather than collapsed to `null`: per #405's security guardrail,
+ * Forbidden must not be silently swallowed as "no data". Callers
+ * that already render an explicit access-denied state (Investigation
+ * page, endpoint enrichment) propagate the rejection upward; the
+ * legacy "best-effort decoration" contract still applies for
+ * transient transport failures and ordinary unknown errors.
+ *
+ * Reviewer Round 2 P1: an unrecognised review GraphQL error
+ * ({@link ReviewUnknownGraphQLError}) likewise re-throws rather
+ * than collapsing to `null` — masking a new review-side error code
+ * as "no enrichment data" would defeat the same guardrail.
  */
 export async function lookupIpLocation(
   session: AuthSession,
@@ -451,14 +528,23 @@ export async function lookupIpLocation(
     input: {},
   });
   try {
-    const data = await graphqlRequest<IpLocationResult, IpLocationVariables>(
-      IP_LOCATION_QUERY,
-      { address },
-      { role: ctx.role, customerIds: ctx.customerIds },
-      signal,
+    const data = await withReviewErrorMapping(
+      graphqlRequest<IpLocationResult, IpLocationVariables>(
+        IP_LOCATION_QUERY,
+        { address },
+        { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+        signal,
+      ),
     );
     return data.ipLocation;
-  } catch {
+  } catch (err) {
+    if (
+      err instanceof ReviewForbiddenError ||
+      err instanceof ReviewInvalidArgumentError ||
+      err instanceof ReviewUnknownGraphQLError
+    ) {
+      throw err;
+    }
     return null;
   }
 }
@@ -470,14 +556,13 @@ export async function eventFrequencySeries(
   signal?: AbortSignal,
 ): Promise<number[]> {
   const ctx = await buildDispatchContext(session, filter);
-  const data = await graphqlRequest<
-    EventFrequencySeriesResult,
-    FrequencySeriesVariables
-  >(
-    EVENT_FREQUENCY_SERIES_QUERY,
-    { filter: ctx.filter, period },
-    { role: ctx.role, customerIds: ctx.customerIds },
-    signal,
+  const data = await withReviewErrorMapping(
+    graphqlRequest<EventFrequencySeriesResult, FrequencySeriesVariables>(
+      EVENT_FREQUENCY_SERIES_QUERY,
+      { filter: ctx.filter, period },
+      { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+      signal,
+    ),
   );
   return data.eventFrequencySeries;
 }

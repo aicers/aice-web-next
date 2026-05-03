@@ -147,3 +147,38 @@ describe("assertNodeInScope", () => {
     ).not.toThrow();
   });
 });
+
+describe("jwtCustomerIdsFor", () => {
+  // Reviewer Round 2 P2: this helper is review-only by contract.
+  // The tests below pin the omit-for-`SystemAdministrator` rule (so
+  // it keeps matching review's `validate_context_jwt`) and the
+  // never-omit rule for every other role (so a custom access-all
+  // role still ships the materialized list to review). External
+  // services (Giganto / Tivan) intentionally do not call this
+  // helper — the call sites in `service-dispatch.ts`,
+  // `server-actions.ts` (Giganto/Tivan getters), and `apply.ts`
+  // pass `ctx.customerIds` directly.
+
+  it("omits customer_ids for the literal 'System Administrator' role", async () => {
+    const { jwtCustomerIdsFor } = await import("@/lib/node/dispatch-context");
+    expect(
+      jwtCustomerIdsFor({ role: "System Administrator", customerIds: [] }),
+    ).toBeUndefined();
+    expect(
+      jwtCustomerIdsFor({
+        role: "System Administrator",
+        customerIds: [1, 2],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns the materialized list for every other role (including custom access-all)", async () => {
+    const { jwtCustomerIdsFor } = await import("@/lib/node/dispatch-context");
+    expect(
+      jwtCustomerIdsFor({ role: "Tenant Administrator", customerIds: [5, 9] }),
+    ).toEqual([5, 9]);
+    expect(
+      jwtCustomerIdsFor({ role: "Custom Access-All", customerIds: [] }),
+    ).toEqual([]);
+  });
+});
