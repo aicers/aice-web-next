@@ -14,6 +14,9 @@ export async function register() {
     const { emergencyMfaReset } = await import(
       "@/lib/auth/emergency-mfa-reset"
     );
+    const { installMtlsSighupHandler } = await import(
+      "@/lib/instrumentation/mtls-sighup"
+    );
 
     await runStartupMigrations();
     await bootstrapAdminAccount();
@@ -33,6 +36,7 @@ export async function register() {
     await loadSigningKeys();
     await initStatelessKeys(getPublicKeyData());
     await emergencyMfaReset();
+    await installMtlsSighupHandler();
   }
 }
 

@@ -29,6 +29,7 @@ plugins:
             - Event Investigation: event-investigation.md
             - Operations:
                 - Node management: operations/node-management.md
+                - mTLS certificate rotation: operations/mtls-rotation.md
             - Settings: settings.md
             - Customer Scope: customer-scope.md
         - locale: ko
@@ -41,6 +42,7 @@ plugins:
             - Event Investigation: event-investigation.md
             - Operations:
                 - Node management: operations/node-management.md
+                - mTLS certificate rotation: operations/mtls-rotation.md
             - Settings: settings.md
             - Customer Scope: customer-scope.md
           nav_translations:
@@ -50,6 +52,7 @@ plugins:
             Event Investigation: 이벤트 조사
             Operations: 운영
             Node management: 노드 관리
+            mTLS certificate rotation: mTLS 인증서 교체
             Settings: 설정
             Customer Scope: 고객사 범위
 

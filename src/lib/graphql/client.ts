@@ -2,30 +2,20 @@ import "server-only";
 
 import type { DocumentNode } from "graphql";
 import { GraphQLClient } from "graphql-request";
+import type { Agent } from "undici";
 import { fetch as undiciFetch } from "undici";
 
-import { getAgent, signContextJwt } from "@/lib/mtls";
+import { createMtlsRequestAuth } from "@/lib/mtls";
 
-const clientsByEndpoint = new Map<string, GraphQLClient>();
-
-function buildClient(endpoint: string): GraphQLClient {
+function buildClient(endpoint: string, agent: Agent): GraphQLClient {
   return new GraphQLClient(endpoint, {
     fetch: async (input, init) => {
-      const agent = await getAgent();
-      return undiciFetch(
+      return (await undiciFetch(
         input as string | URL,
         { ...init, dispatcher: agent } as Parameters<typeof undiciFetch>[1],
-      ) as unknown as Response;
+      )) as unknown as Response;
     },
   });
-}
-
-function getClient(endpoint: string): GraphQLClient {
-  const cached = clientsByEndpoint.get(endpoint);
-  if (cached) return cached;
-  const client = buildClient(endpoint);
-  clientsByEndpoint.set(endpoint, client);
-  return client;
 }
 
 function getReviewEndpoint(): string {
@@ -44,14 +34,15 @@ interface RequestContext {
 /**
  * Dispatch a GraphQL request to an arbitrary endpoint through the
  * mTLS-authenticated undici dispatcher with a freshly-signed Context
- * JWT. The endpoint-specific clients are cached per endpoint so we
- * don't rebuild a `GraphQLClient` on every call, but they share the
- * same mTLS state from `@/lib/mtls`.
+ * JWT.
  *
- * This is the building block for both `graphqlRequest` (default
- * REview manager call site) and the per-service callers in
- * `src/lib/graphql/external-client.ts` (Giganto / Tivan). The
- * endpoint is passed at the boundary so that:
+ * The agent and JWT are read from the same `mtls` snapshot via
+ * `createMtlsRequestAuth`, and the snapshot's lease is held for the
+ * lifetime of the dispatch (release in `finally`). This closes both
+ * the JWT/cert pairing race and the "agent gets closed mid-request"
+ * race during a SIGHUP-triggered cert rotation.
+ *
+ * The endpoint is passed at the boundary so that:
  *
  *  - Detection's existing call sites continue to work unchanged via
  *    the wrapper below, and
@@ -87,17 +78,23 @@ export async function graphqlRequestTo<
     );
   }
 
-  const token = await signContextJwt(context.role, context.customerIds);
-  const gqlClient = getClient(endpoint);
-
-  return gqlClient.request<TData>({
-    document,
-    variables,
-    requestHeaders: {
-      Authorization: `Bearer ${token}`,
-    },
-    signal,
-  });
+  const { agent, token, release } = await createMtlsRequestAuth(
+    context.role,
+    context.customerIds,
+  );
+  try {
+    const gqlClient = buildClient(endpoint, agent);
+    return await gqlClient.request<TData>({
+      document,
+      variables,
+      requestHeaders: {
+        Authorization: `Bearer ${token}`,
+      },
+      signal,
+    });
+  } finally {
+    release();
+  }
 }
 
 /**
@@ -131,6 +128,9 @@ export async function graphqlRequest<
   );
 }
 
-export function resetClient(): void {
-  clientsByEndpoint.clear();
-}
+/**
+ * No-op kept for callers that previously cleared a per-endpoint
+ * `GraphQLClient` cache. The new per-request snapshot model has no
+ * client cache to clear.
+ */
+export function resetClient(): void {}

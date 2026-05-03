@@ -15,9 +15,23 @@ const fetchSpy = vi.fn().mockImplementation(() =>
   ),
 );
 
+const releaseSpy = vi.fn();
+const signContextJwtSpy = vi.fn().mockResolvedValue("mock-jwt-token");
+const createMtlsRequestAuthSpy = vi
+  .fn()
+  .mockImplementation(async (role: string, customerIds?: number[]) => {
+    const token = await signContextJwtSpy(role, customerIds);
+    return {
+      agent: { mock: "dispatcher" },
+      token,
+      release: releaseSpy,
+    };
+  });
+
 vi.mock("@/lib/mtls", () => ({
-  signContextJwt: vi.fn().mockResolvedValue("mock-jwt-token"),
+  signContextJwt: signContextJwtSpy,
   getAgent: vi.fn().mockResolvedValue({ mock: "dispatcher" }),
+  createMtlsRequestAuth: createMtlsRequestAuthSpy,
 }));
 
 vi.mock("undici", () => ({
@@ -36,9 +50,18 @@ describe("graphql client", () => {
     mtls = await import("@/lib/mtls");
 
     fetchSpy.mockClear();
-    vi.mocked(mtls.signContextJwt)
+    releaseSpy.mockClear();
+    signContextJwtSpy.mockReset().mockResolvedValue("mock-jwt-token");
+    createMtlsRequestAuthSpy
       .mockReset()
-      .mockResolvedValue("mock-jwt-token");
+      .mockImplementation(async (role: string, customerIds?: number[]) => {
+        const token = await signContextJwtSpy(role, customerIds);
+        return {
+          agent: { mock: "dispatcher" },
+          token,
+          release: releaseSpy,
+        };
+      });
     vi.mocked(mtls.getAgent)
       .mockReset()
       .mockResolvedValue({ mock: "dispatcher" } as never);
@@ -51,8 +74,8 @@ describe("graphql client", () => {
   // ── Authorization header ─────────────────────────────────────────
 
   describe("Authorization header", () => {
-    it("attaches Bearer token from signContextJwt", async () => {
-      vi.mocked(mtls.signContextJwt).mockResolvedValue("test-token-123");
+    it("attaches Bearer token from createMtlsRequestAuth", async () => {
+      signContextJwtSpy.mockResolvedValue("test-token-123");
 
       await client.graphqlRequest(Q_HELLO, undefined, {
         role: "admin",
@@ -65,7 +88,7 @@ describe("graphql client", () => {
     });
 
     it("uses fresh JWT per request", async () => {
-      vi.mocked(mtls.signContextJwt)
+      signContextJwtSpy
         .mockResolvedValueOnce("token-1")
         .mockResolvedValueOnce("token-2");
 
@@ -82,13 +105,13 @@ describe("graphql client", () => {
   // ── Context passing ──────────────────────────────────────────────
 
   describe("context passing", () => {
-    it("passes role and customerIds to signContextJwt", async () => {
+    it("passes role and customerIds to createMtlsRequestAuth", async () => {
       await client.graphqlRequest(Q_HELLO, undefined, {
         role: "Security Administrator",
         customerIds: [42, 99],
       });
 
-      expect(mtls.signContextJwt).toHaveBeenCalledWith(
+      expect(createMtlsRequestAuthSpy).toHaveBeenCalledWith(
         "Security Administrator",
         [42, 99],
       );
@@ -99,7 +122,7 @@ describe("graphql client", () => {
         role: "System Administrator",
       });
 
-      expect(mtls.signContextJwt).toHaveBeenCalledWith(
+      expect(createMtlsRequestAuthSpy).toHaveBeenCalledWith(
         "System Administrator",
         undefined,
       );
@@ -114,13 +137,13 @@ describe("graphql client", () => {
         customerIds: [1],
       });
 
-      expect(mtls.signContextJwt).toHaveBeenCalledTimes(2);
-      expect(mtls.signContextJwt).toHaveBeenNthCalledWith(
+      expect(createMtlsRequestAuthSpy).toHaveBeenCalledTimes(2);
+      expect(createMtlsRequestAuthSpy).toHaveBeenNthCalledWith(
         1,
         "System Administrator",
         undefined,
       );
-      expect(mtls.signContextJwt).toHaveBeenNthCalledWith(
+      expect(createMtlsRequestAuthSpy).toHaveBeenNthCalledWith(
         2,
         "Security Administrator",
         [1],
@@ -133,7 +156,11 @@ describe("graphql client", () => {
   describe("dispatcher injection", () => {
     it("injects mTLS dispatcher into fetch call", async () => {
       const mockAgent = { mock: "agent-dispatcher" };
-      vi.mocked(mtls.getAgent).mockResolvedValue(mockAgent as never);
+      createMtlsRequestAuthSpy.mockResolvedValueOnce({
+        agent: mockAgent,
+        token: "mock-jwt-token",
+        release: releaseSpy,
+      });
 
       await client.graphqlRequest(Q_HELLO, undefined, {
         role: "admin",
@@ -143,11 +170,24 @@ describe("graphql client", () => {
       expect(init.dispatcher).toBe(mockAgent);
     });
 
-    it("calls getAgent on every request", async () => {
+    it("calls createMtlsRequestAuth on every request", async () => {
       await client.graphqlRequest(Q_A, undefined, { role: "admin" });
       await client.graphqlRequest(Q_B, undefined, { role: "admin" });
 
-      expect(mtls.getAgent).toHaveBeenCalledTimes(2);
+      expect(createMtlsRequestAuthSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("releases the mtls lease in finally on success", async () => {
+      await client.graphqlRequest(Q_HELLO, undefined, { role: "admin" });
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases the mtls lease in finally on failure", async () => {
+      fetchSpy.mockRejectedValueOnce(new TypeError("fetch failed"));
+      await expect(
+        client.graphqlRequest(Q_HELLO, undefined, { role: "admin" }),
+      ).rejects.toThrow();
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -229,24 +269,14 @@ describe("graphql client", () => {
   // ── Error propagation ────────────────────────────────────────────
 
   describe("error propagation", () => {
-    it("propagates signContextJwt errors", async () => {
-      vi.mocked(mtls.signContextJwt).mockRejectedValue(
+    it("propagates createMtlsRequestAuth errors", async () => {
+      createMtlsRequestAuthSpy.mockRejectedValueOnce(
         new Error("Missing environment variable: MTLS_CERT_PATH"),
       );
 
       await expect(
         client.graphqlRequest(Q_HELLO, undefined, { role: "admin" }),
       ).rejects.toThrow("Missing environment variable: MTLS_CERT_PATH");
-    });
-
-    it("propagates getAgent errors", async () => {
-      vi.mocked(mtls.getAgent).mockRejectedValue(
-        new Error("Missing environment variable: MTLS_KEY_PATH"),
-      );
-
-      await expect(
-        client.graphqlRequest(Q_HELLO, undefined, { role: "admin" }),
-      ).rejects.toThrow("Missing environment variable: MTLS_KEY_PATH");
     });
 
     it("propagates fetch/network errors", async () => {
