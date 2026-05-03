@@ -418,6 +418,125 @@ If autogen is requested but `DATA_DIR` is not writable by the
 container user (uid 1001), the app fails fast at startup with a
 clear error message instead of crash-looping mid-boot.
 
+#### mTLS upstream certificate mount
+
+`review-web`, Giganto, and Tivan are all reached over mutual TLS.
+The `next-app` container reads the client cert/key/CA from
+`MTLS_CERT_PATH`, `MTLS_KEY_PATH`, and `MTLS_CA_PATH` (see
+`src/lib/mtls.ts`); operators provide them by bind-mounting the
+files into the container. The same shape is what the integration
+test harness uses (`src/__integration__/global-setup.ts`).
+
+Place the bind mount in a local `docker-compose.override.yml` —
+**this file is not shipped** because operators typically already
+keep their own override file, and committing a sample would
+either collide with theirs or get accidentally tracked. Use the
+shape below as a starting point:
+
+```yaml
+# docker-compose.override.yml (local; do NOT commit)
+services:
+  next-app:
+    volumes:
+      - /etc/aice/certs:/certs:ro
+    environment:
+      MTLS_CERT_PATH: /certs/client-cert.pem
+      MTLS_KEY_PATH: /certs/client-key.pem
+      MTLS_CA_PATH: /certs/ca.pem
+```
+
+The runtime user inside the container is `nextjs` (uid `1001`)
+with primary group `nodejs` (gid `1001`) — see `Dockerfile`.
+Files mounted into `/certs` must be readable by uid `1001`. For
+the private key, recommend `0640` with group ownership matching
+gid `1001`, or a POSIX ACL granting uid `1001` read access:
+
+```bash
+# Group-ownership variant
+sudo chown root:1001 /etc/aice/certs/client-key.pem
+sudo chmod 0640      /etc/aice/certs/client-key.pem
+
+# ACL variant (preserves the host user's ownership)
+sudo setfacl -m u:1001:r /etc/aice/certs/client-key.pem
+```
+
+Do **not** chmod the private key to `0644` (world-readable) just
+to satisfy the container user — that exposes the key to every
+other local account on the host. The cert and CA can be `0644`,
+but the key must not be.
+
+The mTLS hot-reload path re-reads all three files on `SIGHUP`
+(`docs/en/operations/mtls-rotation.md`); the bind mount lets the
+operator rotate the on-host file in place without rebuilding the
+image.
+
+#### Upstream FQDN resolution
+
+The FQDN aice-web-next dials for each upstream **must match a
+SAN on that upstream's server certificate**. REview's bootroot
+service-add issues server certs whose SAN follows the
+`<instance-id>.<service-name>.<hostname>.<domain>` shape; if the
+hostname the app resolves disagrees with the SAN, the mTLS
+handshake fails before any GraphQL request is sent. The same
+FQDN must therefore be set as the host portion of
+`REVIEW_GRAPHQL_ENDPOINT`, `GIGANTO_GRAPHQL_ENDPOINT`, and
+`TIVAN_GRAPHQL_ENDPOINT`, and must resolve to the right address
+in whichever environment the app runs.
+
+Three deployment shapes:
+
+- **Docker Desktop / Compose.** When the upstream lives on the
+  Docker host (the common single-host bootroot case), add the
+  SAN-matching FQDN to `extra_hosts` so the container resolves it
+  to the host gateway:
+
+  ```yaml
+  # docker-compose.override.yml
+  services:
+    next-app:
+      extra_hosts:
+        - "review.<instance-id>.<hostname>.<domain>:host-gateway"
+  ```
+
+- **Kubernetes.** Either rewrite the name in CoreDNS so it
+  resolves to the upstream's `Service` ClusterIP:
+
+  ```yaml
+  # CoreDNS Corefile snippet
+  rewrite name review.<instance-id>.<hostname>.<domain> review-web.aice.svc.cluster.local
+  ```
+
+  …or stand up a `Service` whose name (plus
+  `.<namespace>.svc.cluster.local`) is exactly the SAN. The
+  CoreDNS-rewrite path is usually less disruptive when the SAN
+  was minted before the cluster existed.
+
+- **Bare-metal.** Add an `/etc/hosts` entry:
+
+  ```text
+  10.0.0.20  review.<instance-id>.<hostname>.<domain>
+  ```
+
+If the SAN and the resolved hostname disagree, you will see a
+TLS handshake error in the Next.js logs (`certificate name does
+not match`) and no GraphQL traffic will leave the app. Verify
+both ends with `openssl s_client -connect ...` against the
+upstream and `getent hosts ...` from inside the `next-app`
+container.
+
+#### Trusted-proxy CIDR
+
+Single-origin deployments (one TLS-terminating nginx in front of
+one `next-app`) do not need a trusted-proxy allow-list — the
+CSRF/Origin guard is keyed off `EXPECTED_ORIGIN`, not the
+client's transport address, so an attacker who cannot also forge
+the browser's `Origin` header cannot bypass it. There is
+deliberately no `TRUSTED_PROXIES` env var to set; if you go
+looking for one, you won't find it. A separate trusted-proxy
+allow-list (for forwarded-header trust at the BFF, distinct from
+nginx's own `set_real_ip_from`) remains explicitly out of scope
+for v1.
+
 ### Development with Docker Compose
 
 ```bash

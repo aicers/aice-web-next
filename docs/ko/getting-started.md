@@ -100,6 +100,8 @@ pnpm build
 pnpm start
 ```
 
+Docker Compose 기반 프로덕션 배포는 README의 [Production deployment](../../README.md#production) 섹션을 참고하세요 — 첫 부팅 체크리스트의 정식 출처입니다.
+
 브라우저에서 `http://localhost:3000`(또는 설정된 주소)을
 엽니다. 로그인 페이지가 표시됩니다:
 
