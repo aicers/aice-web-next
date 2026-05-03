@@ -2,9 +2,11 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { runStartupMigrations } = await import("@/lib/db/migrate");
     const { bootstrapAdminAccount } = await import("@/lib/auth/bootstrap");
-    const { loadSigningKeys, getPublicKeyData } = await import(
-      "@/lib/auth/jwt-keys"
-    );
+    const {
+      loadSigningKeys,
+      getPublicKeyData,
+      autoGenerateJwtSigningKeyIfMissing,
+    } = await import("@/lib/auth/jwt-keys");
     const { initStatelessKeys } = await import(
       "@/lib/auth/jwt-verify-stateless"
     );
@@ -15,8 +17,27 @@ export async function register() {
 
     await runStartupMigrations();
     await bootstrapAdminAccount();
+
+    // First-boot convenience: when the operator opts in with
+    // JWT_SIGNING_KEY_AUTOGEN=1 and is not pointing at an externally
+    // managed key via JWT_SIGNING_KEY_FILE, generate an ES256 key on
+    // disk before loadSigningKeys() runs. Idempotent — re-boots load
+    // the existing key.
+    if (
+      isTruthyEnv(process.env.JWT_SIGNING_KEY_AUTOGEN) &&
+      !process.env.JWT_SIGNING_KEY_FILE
+    ) {
+      await autoGenerateJwtSigningKeyIfMissing();
+    }
+
     await loadSigningKeys();
     await initStatelessKeys(getPublicKeyData());
     await emergencyMfaReset();
   }
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false;
+  const v = value.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "on" || v === "yes";
 }

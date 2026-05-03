@@ -3,10 +3,11 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const tmpDir = path.join(__dirname, ".tmp-jwt-keys");
 const dataDir = path.join(tmpDir, "data");
@@ -26,6 +27,8 @@ describe("jwt-keys", () => {
 
   afterEach(() => {
     delete process.env.DATA_DIR;
+    delete process.env.JWT_SIGNING_KEY_FILE;
+    delete process.env.JWT_SIGNING_KEY_FILE_PREVIOUS;
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -244,6 +247,138 @@ describe("jwt-keys", () => {
       // Remove and verify it's cleared
       jwtKeys.removePreviousKey();
       expect(jwtKeys.getVerificationKey(firstKid)).toBeNull();
+    });
+  });
+
+  // ── perms on generated key file ───────────────────────────────
+
+  describe("generateJwtSigningKey perms", () => {
+    it("writes the key file with mode 0600", async () => {
+      await jwtKeys.generateJwtSigningKey();
+      const keyPath = path.join(dataDir, "keys", "jwt-signing.json");
+      const mode = statSync(keyPath).mode & 0o777;
+      expect(mode).toBe(0o600);
+    });
+
+    it("locks the parent keys directory to mode 0700", async () => {
+      await jwtKeys.generateJwtSigningKey();
+      const keysPath = path.join(dataDir, "keys");
+      const mode = statSync(keysPath).mode & 0o777;
+      expect(mode).toBe(0o700);
+    });
+  });
+
+  // ── JWT_SIGNING_KEY_FILE override ─────────────────────────────
+
+  describe("JWT_SIGNING_KEY_FILE override", () => {
+    it("loadSigningKeys reads the key from the override path", async () => {
+      const customPath = path.join(tmpDir, "custom", "current.json");
+      process.env.JWT_SIGNING_KEY_FILE = customPath;
+
+      // Generate writes to the override path because currentKeyPath
+      // honors the env var.
+      await jwtKeys.generateJwtSigningKey();
+      expect(existsSync(customPath)).toBe(true);
+
+      jwtKeys.resetKeyState();
+      await jwtKeys.loadSigningKeys();
+      expect(jwtKeys.getSigningKey().kid).toBeDefined();
+    });
+
+    it("previous key still loads from <DATA_DIR>/keys when only current is overridden", async () => {
+      // Write a previous key in the standard location.
+      const standardPrevPath = path.join(
+        dataDir,
+        "keys",
+        "jwt-signing.prev.json",
+      );
+      mkdirSync(path.dirname(standardPrevPath), { recursive: true });
+
+      // Generate a key (default location), copy to prev path.
+      await jwtKeys.generateJwtSigningKey();
+      const defaultCurrent = path.join(dataDir, "keys", "jwt-signing.json");
+      writeFileSync(
+        standardPrevPath,
+        readFileSync(defaultCurrent, "utf8"),
+        "utf8",
+      );
+      const prevKid = JSON.parse(readFileSync(standardPrevPath, "utf8")).kid;
+
+      // Now override the current key to a custom path and generate again.
+      const customCurrent = path.join(tmpDir, "custom", "current.json");
+      process.env.JWT_SIGNING_KEY_FILE = customCurrent;
+      await jwtKeys.generateJwtSigningKey();
+
+      jwtKeys.resetKeyState();
+      await jwtKeys.loadSigningKeys();
+
+      // Previous key (from <DATA_DIR>/keys) should still resolve.
+      expect(jwtKeys.getVerificationKey(prevKid)).not.toBeNull();
+    });
+
+    it("JWT_SIGNING_KEY_FILE_PREVIOUS overrides the previous key path too", async () => {
+      const customPrev = path.join(tmpDir, "custom", "prev.json");
+      const customCurrent = path.join(tmpDir, "custom", "current.json");
+      process.env.JWT_SIGNING_KEY_FILE = customCurrent;
+
+      // Generate a current key, copy to the custom prev path.
+      await jwtKeys.generateJwtSigningKey();
+      writeFileSync(customPrev, readFileSync(customCurrent, "utf8"), "utf8");
+      const prevKid = JSON.parse(readFileSync(customPrev, "utf8")).kid;
+
+      // Generate a new current and tell the loader where prev lives.
+      // generateJwtSigningKey overwrites — call again to mint a new kid.
+      await jwtKeys.generateJwtSigningKey();
+      process.env.JWT_SIGNING_KEY_FILE_PREVIOUS = customPrev;
+
+      jwtKeys.resetKeyState();
+      await jwtKeys.loadSigningKeys();
+      expect(jwtKeys.getVerificationKey(prevKid)).not.toBeNull();
+    });
+  });
+
+  // ── autoGenerateJwtSigningKeyIfMissing ────────────────────────
+
+  describe("autoGenerateJwtSigningKeyIfMissing", () => {
+    it("generates a key when none exists", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await jwtKeys.autoGenerateJwtSigningKeyIfMissing();
+
+      const keyPath = path.join(dataDir, "keys", "jwt-signing.json");
+      expect(existsSync(keyPath)).toBe(true);
+      expect(warn).toHaveBeenCalled();
+      const message = warn.mock.calls[0]?.[0] as string;
+      expect(message).toContain("single-instance");
+      warn.mockRestore();
+    });
+
+    it("is a no-op when the key file already exists", async () => {
+      await jwtKeys.generateJwtSigningKey();
+      const keyPath = path.join(dataDir, "keys", "jwt-signing.json");
+      const before = readFileSync(keyPath, "utf8");
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await jwtKeys.autoGenerateJwtSigningKeyIfMissing();
+      warn.mockRestore();
+
+      const after = readFileSync(keyPath, "utf8");
+      expect(after).toBe(before);
+    });
+
+    it("throws a clear error when DATA_DIR points at a non-directory (e.g. accidental file mount)", async () => {
+      // assertDataDirWritable mkdirSync's the path with recursive:true,
+      // which is a no-op when a directory already exists at that path
+      // — but errors with ENOTDIR / EEXIST when a *file* sits there.
+      // Either way we expect the "not writable" / "not a directory"
+      // error rather than a cryptic crash later in key generation.
+      const accidentalFile = path.join(tmpDir, "accidental-file");
+      writeFileSync(accidentalFile, "definitely a file", "utf8");
+      process.env.DATA_DIR = accidentalFile;
+
+      await expect(
+        jwtKeys.autoGenerateJwtSigningKeyIfMissing(),
+      ).rejects.toThrow(/not writable|not a directory/);
     });
   });
 

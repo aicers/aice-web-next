@@ -6,7 +6,8 @@ import type { AuthSession } from "@/lib/auth/jwt";
 const mockVerifyJwtFull = vi.hoisted(() => vi.fn());
 const mockPoolQuery = vi.hoisted(() => vi.fn());
 const mockValidateCsrfToken = vi.hoisted(() => vi.fn());
-const mockValidateOrigin = vi.hoisted(() => vi.fn());
+const mockCheckOrigin = vi.hoisted(() => vi.fn());
+const mockGetConfiguredExpectedOrigin = vi.hoisted(() => vi.fn());
 const mockCheckApiRateLimit = vi.hoisted(() => vi.fn());
 const mockShouldRotate = vi.hoisted(() => vi.fn());
 const mockRotateTokens = vi.hoisted(() => vi.fn());
@@ -46,7 +47,8 @@ vi.mock("@/lib/auth/csrf", () => ({
     new Set(["POST", "PUT", "PATCH", "DELETE"]).has(method.toUpperCase()),
   ),
   validateCsrfToken: mockValidateCsrfToken,
-  validateOrigin: mockValidateOrigin,
+  checkOrigin: mockCheckOrigin,
+  getConfiguredExpectedOrigin: mockGetConfiguredExpectedOrigin,
 }));
 
 vi.mock("@/lib/auth/session-policy", () => ({
@@ -149,7 +151,8 @@ describe("withAuth", () => {
     mockVerifyJwtFull.mockReset();
     mockPoolQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
     mockValidateCsrfToken.mockReset();
-    mockValidateOrigin.mockReset();
+    mockCheckOrigin.mockReset();
+    mockGetConfiguredExpectedOrigin.mockReset().mockReturnValue(null);
     mockCheckApiRateLimit.mockReset().mockResolvedValue({ limited: false });
     mockShouldRotate.mockReset().mockReturnValue(false);
     mockRotateTokens.mockReset().mockResolvedValue(undefined);
@@ -284,12 +287,16 @@ describe("withAuth", () => {
       expect(response.status).toBe(200);
       expect(handler).toHaveBeenCalled();
       expect(mockValidateCsrfToken).not.toHaveBeenCalled();
-      expect(mockValidateOrigin).not.toHaveBeenCalled();
+      expect(mockCheckOrigin).not.toHaveBeenCalled();
     });
 
     it("POST with valid CSRF token and valid Origin passes", async () => {
       mockVerifyJwtFull.mockResolvedValue(validSession);
-      mockValidateOrigin.mockReturnValue(true);
+      mockCheckOrigin.mockReturnValue({
+        ok: true,
+        actual: "http://localhost:3000",
+        expected: "http://localhost:3000",
+      });
       mockValidateCsrfToken.mockReturnValue(true);
 
       const handler = vi
@@ -312,7 +319,11 @@ describe("withAuth", () => {
 
     it("POST without CSRF token returns 403", async () => {
       mockVerifyJwtFull.mockResolvedValue(validSession);
-      mockValidateOrigin.mockReturnValue(true);
+      mockCheckOrigin.mockReturnValue({
+        ok: true,
+        actual: "http://localhost:3000",
+        expected: "http://localhost:3000",
+      });
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
@@ -332,7 +343,11 @@ describe("withAuth", () => {
 
     it("POST with invalid CSRF token returns 403", async () => {
       mockVerifyJwtFull.mockResolvedValue(validSession);
-      mockValidateOrigin.mockReturnValue(true);
+      mockCheckOrigin.mockReturnValue({
+        ok: true,
+        actual: "http://localhost:3000",
+        expected: "http://localhost:3000",
+      });
       mockValidateCsrfToken.mockReturnValue(false);
 
       const handler = vi.fn();
@@ -356,7 +371,11 @@ describe("withAuth", () => {
 
     it("POST with mismatched Origin returns 403", async () => {
       mockVerifyJwtFull.mockResolvedValue(validSession);
-      mockValidateOrigin.mockReturnValue(false);
+      mockCheckOrigin.mockReturnValue({
+        ok: false,
+        actual: "https://evil.com",
+        expected: "http://localhost:3000",
+      });
 
       const handler = vi.fn();
       const wrapped = guard.withAuth(handler);
@@ -402,7 +421,11 @@ describe("withAuth", () => {
 
     it("passes correct arguments to validateCsrfToken", async () => {
       mockVerifyJwtFull.mockResolvedValue(validSession);
-      mockValidateOrigin.mockReturnValue(true);
+      mockCheckOrigin.mockReturnValue({
+        ok: true,
+        actual: "http://localhost:3000",
+        expected: "http://localhost:3000",
+      });
       mockValidateCsrfToken.mockReturnValue(true);
 
       const handler = vi
@@ -434,7 +457,11 @@ describe("withAuth", () => {
       "DELETE",
     ])("%s request also requires CSRF validation", async (method) => {
       mockVerifyJwtFull.mockResolvedValue(validSession);
-      mockValidateOrigin.mockReturnValue(true);
+      mockCheckOrigin.mockReturnValue({
+        ok: true,
+        actual: "http://localhost:3000",
+        expected: "http://localhost:3000",
+      });
       mockValidateCsrfToken.mockReturnValue(false);
 
       const handler = vi.fn();
@@ -1075,6 +1102,151 @@ describe("withAuth", () => {
         ["System Administrator"],
         "audit-logs:read",
       );
+    });
+  });
+
+  // ── EXPECTED_ORIGIN override + debug response ──────────────────
+
+  describe("EXPECTED_ORIGIN override", () => {
+    it("uses request.nextUrl.origin when EXPECTED_ORIGIN is unset", async () => {
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockGetConfiguredExpectedOrigin.mockReturnValue(null);
+      mockCheckOrigin.mockReturnValue({
+        ok: true,
+        actual: "http://localhost:3000",
+        expected: "http://localhost:3000",
+      });
+      mockValidateCsrfToken.mockReturnValue(true);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler);
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost:3000",
+          "x-csrf-token": "ok",
+        },
+      });
+
+      await wrapped(request, makeContext());
+
+      expect(mockCheckOrigin).toHaveBeenCalledWith(
+        "http://localhost:3000",
+        null,
+        "http://localhost:3000",
+      );
+    });
+
+    it("passes EXPECTED_ORIGIN to checkOrigin when set", async () => {
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockGetConfiguredExpectedOrigin.mockReturnValue("https://example.com");
+      mockCheckOrigin.mockReturnValue({
+        ok: true,
+        actual: "https://example.com",
+        expected: "https://example.com",
+      });
+      mockValidateCsrfToken.mockReturnValue(true);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler);
+      // Note: nextUrl.origin would be http://localhost:3000 here, but
+      // EXPECTED_ORIGIN should win.
+      const request = makeAuthRequest("http://localhost:3000/api/test", {
+        method: "POST",
+        headers: {
+          origin: "https://example.com",
+          "x-csrf-token": "ok",
+        },
+      });
+
+      await wrapped(request, makeContext());
+
+      expect(mockCheckOrigin).toHaveBeenCalledWith(
+        "https://example.com",
+        null,
+        "https://example.com",
+      );
+    });
+
+    it("includes expected/actual in response body when NODE_ENV !== production", async () => {
+      vi.stubEnv("NODE_ENV", "development");
+
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockGetConfiguredExpectedOrigin.mockReturnValue("https://example.com");
+      mockCheckOrigin.mockReturnValue({
+        ok: false,
+        actual: "https://attacker.example",
+        expected: "https://example.com",
+      });
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const handler = vi.fn();
+        const wrapped = guard.withAuth(handler);
+        const request = makeAuthRequest("http://localhost:3000/api/test", {
+          method: "POST",
+          headers: {
+            origin: "https://attacker.example",
+            "x-csrf-token": "tok",
+          },
+        });
+
+        const response = await wrapped(request, makeContext());
+        const body = await response.json();
+
+        expect(response.status).toBe(403);
+        expect(body.error).toBe("Origin mismatch");
+        expect(body.expected).toBe("https://example.com");
+        expect(body.actual).toBe("https://attacker.example");
+        expect(warn).toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("hides expected/actual from response body when NODE_ENV === production", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockGetConfiguredExpectedOrigin.mockReturnValue("https://example.com");
+      mockCheckOrigin.mockReturnValue({
+        ok: false,
+        actual: "https://attacker.example",
+        expected: "https://example.com",
+      });
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const handler = vi.fn();
+        const wrapped = guard.withAuth(handler);
+        const request = makeAuthRequest("http://localhost:3000/api/test", {
+          method: "POST",
+          headers: {
+            origin: "https://attacker.example",
+            "x-csrf-token": "tok",
+          },
+        });
+
+        const response = await wrapped(request, makeContext());
+        const body = await response.json();
+
+        expect(response.status).toBe(403);
+        expect(body.error).toBe("Origin mismatch");
+        expect(body.expected).toBeUndefined();
+        expect(body.actual).toBeUndefined();
+        // Server-side warn still logs the values for operator debug.
+        expect(warn).toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+        vi.unstubAllEnvs();
+      }
     });
   });
 });

@@ -9,9 +9,10 @@ import { checkApiRateLimit } from "@/lib/rate-limit/limiter";
 import { ACCESS_TOKEN_COOKIE } from "./cookies";
 import {
   CSRF_HEADER_NAME,
+  checkOrigin,
+  getConfiguredExpectedOrigin,
   isMutationMethod,
   validateCsrfToken,
-  validateOrigin,
 } from "./csrf";
 import { extractClientIp } from "./ip";
 import type { AuthSession } from "./jwt";
@@ -148,15 +149,38 @@ export function withAuth(
         );
       }
 
-      // Step 4a: Origin / Referer verification
-      if (
-        !validateOrigin(
-          request.headers.get("origin"),
-          request.headers.get("referer"),
-          request.nextUrl.origin,
-        )
-      ) {
-        return NextResponse.json({ error: "Origin mismatch" }, { status: 403 });
+      // Step 4a: Origin / Referer verification.
+      //
+      // EXPECTED_ORIGIN (canonicalized) wins when set, so deployments
+      // behind a TLS-terminating reverse proxy (where the upstream
+      // sees `http://...` while the browser's Origin header is
+      // `https://...`) can pin the comparison to the public origin.
+      // When unset, behavior is unchanged from today
+      // (`request.nextUrl.origin` only). No proxy header trust is
+      // introduced here — TRUSTED_PROXIES is deferred.
+      const expectedOrigin =
+        getConfiguredExpectedOrigin() ?? request.nextUrl.origin;
+      const originResult = checkOrigin(
+        request.headers.get("origin"),
+        request.headers.get("referer"),
+        expectedOrigin,
+      );
+      if (!originResult.ok) {
+        // Server-side log so operators can see expected/actual without
+        // leaking it into the response body in production.
+        console.warn(
+          "[csrf] Origin mismatch on %s %s: expected=%s actual=%s",
+          request.method,
+          request.nextUrl.pathname,
+          originResult.expected,
+          originResult.actual ?? "<none>",
+        );
+        const body: Record<string, unknown> = { error: "Origin mismatch" };
+        if (process.env.NODE_ENV !== "production") {
+          body.expected = originResult.expected;
+          body.actual = originResult.actual;
+        }
+        return NextResponse.json(body, { status: 403 });
       }
 
       // Step 4b: CSRF token verification

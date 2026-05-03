@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Roboto } from "next/font/google";
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
 import { setRequestLocale } from "next-intl/server";
 import { ThemeProvider } from "next-themes";
@@ -21,10 +22,6 @@ export const metadata: Metadata = {
   description: "Clumit Security",
 };
 
-export function generateStaticParams() {
-  return routing.locales.map((locale) => ({ locale }));
-}
-
 export default async function LocaleLayout({
   children,
   params,
@@ -32,6 +29,13 @@ export default async function LocaleLayout({
   children: React.ReactNode;
   params: Promise<{ locale: string }>;
 }>) {
+  // Opt out of static rendering so the per-request CSP nonce minted in
+  // `src/proxy.ts` actually reaches every framework script tag.  Next's
+  // CSP/nonce flow only injects nonces during dynamic SSR — pages
+  // generated at build time have no per-request nonce to attach.  See
+  // Next.js docs: https://nextjs.org/docs/app/guides/content-security-policy#static-vs-dynamic-rendering-with-csp
+  await connection();
+
   const { locale } = await params;
 
   if (!hasLocale(routing.locales, locale)) {

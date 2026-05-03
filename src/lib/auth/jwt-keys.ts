@@ -2,9 +2,14 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import {
+  accessSync,
+  chmodSync,
+  existsSync,
+  constants as fsConstants,
   mkdirSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -52,11 +57,32 @@ function keysDir(): string {
   return path.join(getDataDir(), "keys");
 }
 
+/**
+ * Resolve the current key file path.
+ *
+ * `JWT_SIGNING_KEY_FILE` takes precedence (intended for externally
+ * managed key material — Kubernetes Secret mounts, Vault csi driver,
+ * etc.).  Otherwise the standard `<DATA_DIR>/keys/jwt-signing.json`
+ * location is used.
+ */
 function currentKeyPath(): string {
+  const override = process.env.JWT_SIGNING_KEY_FILE;
+  if (override && override.length > 0) return path.resolve(override);
   return path.join(keysDir(), "jwt-signing.json");
 }
 
+/**
+ * Resolve the previous key file path.
+ *
+ * `JWT_SIGNING_KEY_FILE_PREVIOUS` takes precedence.  When only
+ * `JWT_SIGNING_KEY_FILE` is set, the previous key continues to load
+ * from the standard `<DATA_DIR>/keys/jwt-signing.prev.json` location
+ * — this preserves the existing rotation flow and avoids
+ * rollout-time session invalidation.
+ */
 function previousKeyPath(): string {
+  const override = process.env.JWT_SIGNING_KEY_FILE_PREVIOUS;
+  if (override && override.length > 0) return path.resolve(override);
   return path.join(keysDir(), "jwt-signing.prev.json");
 }
 
@@ -177,10 +203,21 @@ export function getPublicKeyData(): Array<{
 /**
  * Generate a new JWT signing key pair and write it to disk.
  * Defaults to ES256 (ECDSA P-256).
+ *
+ * Writes the key file with `0600` perms and the parent directory
+ * with `0700` perms so the private JWK is not world-readable.
+ *
+ * Overwrites any existing key at the resolved path — this is the
+ * primitive used by the rotation flow.  First-boot autogen and the
+ * `gen-jwt-key` ops script must use {@link autoGenerateJwtSigningKeyIfMissing}
+ * (or check existence themselves) to avoid invalidating already-issued
+ * session tokens.
  */
 export async function generateJwtSigningKey(
   algorithm = "ES256",
 ): Promise<void> {
+  const keyPath = currentKeyPath();
+
   const { privateKey, publicKey } = await generateKeyPair(algorithm, {
     extractable: true,
   });
@@ -199,12 +236,98 @@ export async function generateJwtSigningKey(
     publicKey: publicJwk,
   };
 
-  const dir = keysDir();
-  mkdirSync(dir, { recursive: true });
-  const keyPath = currentKeyPath();
+  // currentKeyPath was resolved at function entry above; reuse it
+  // here so JWT_SIGNING_KEY_FILE callers write to the configured
+  // location.
+  const dir = path.dirname(keyPath);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // mkdirSync only applies the mode to newly created directories;
+  // tighten it explicitly so a pre-existing parent is also locked down.
+  try {
+    chmodSync(dir, 0o700);
+  } catch {
+    // Best effort — some platforms (Windows, certain mounted volumes)
+    // do not honor POSIX perms.  The file write below still proceeds.
+  }
+
   const tmpPath = `${keyPath}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(tmpPath, JSON.stringify(keyFile, null, 2), "utf8");
+  // writeFileSync's `mode` only applies on file creation; force perms
+  // afterwards so the umask cannot loosen them.
+  writeFileSync(tmpPath, JSON.stringify(keyFile, null, 2), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  try {
+    chmodSync(tmpPath, 0o600);
+  } catch {
+    // see chmod note above
+  }
   renameSync(tmpPath, keyPath);
+}
+
+/**
+ * Throw if `<DATA_DIR>` is not writable.  Called by the autogen
+ * boot path so the operator gets a clear error instead of a cryptic
+ * EACCES partway through key generation.
+ */
+export function assertDataDirWritable(): void {
+  const dir = getDataDir();
+
+  // If something already exists at the path, validate it before any
+  // mkdir so a stray file (or a wedged mount) produces a clear
+  // diagnostic rather than an EEXIST/ENOTDIR deeper in.
+  if (existsSync(dir) && !statSync(dir).isDirectory()) {
+    throw new Error(
+      `JWT_SIGNING_KEY_AUTOGEN=1 was requested but DATA_DIR (${dir}) is not a directory.`,
+    );
+  }
+
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (cause) {
+    throw new Error(
+      `JWT_SIGNING_KEY_AUTOGEN=1 was requested but DATA_DIR (${dir}) is not writable. ` +
+        "Mount a writable volume at this path or inject the key via JWT_SIGNING_KEY_FILE.",
+      { cause },
+    );
+  }
+
+  try {
+    accessSync(dir, fsConstants.W_OK);
+  } catch (cause) {
+    throw new Error(
+      `JWT_SIGNING_KEY_AUTOGEN=1 was requested but DATA_DIR (${dir}) is not writable. ` +
+        "Mount a writable volume at this path or inject the key via JWT_SIGNING_KEY_FILE.",
+      { cause },
+    );
+  }
+}
+
+/**
+ * Idempotent first-boot key generation.
+ *
+ * Caller is responsible for honoring `JWT_SIGNING_KEY_AUTOGEN=1` and
+ * for ensuring no `JWT_SIGNING_KEY_FILE` is set (autogen is for
+ * single-instance dev/convenience; multi-replica deployments must
+ * inject a shared key via `JWT_SIGNING_KEY_FILE`).
+ *
+ * Logs a warning once per process so the single-instance constraint
+ * is visible in startup logs.
+ */
+export async function autoGenerateJwtSigningKeyIfMissing(): Promise<void> {
+  const keyPath = currentKeyPath();
+  if (existsSync(keyPath)) return;
+
+  assertDataDirWritable();
+
+  console.warn(
+    "[jwt-keys] JWT_SIGNING_KEY_AUTOGEN=1: generating a new ES256 signing key at " +
+      `${keyPath}. This is a single-instance convenience — multi-replica ` +
+      "deployments must inject a shared key via JWT_SIGNING_KEY_FILE so every " +
+      "replica validates tokens against the same key.",
+  );
+
+  await generateJwtSigningKey();
 }
 
 /** Delete the previous key file and clear it from memory. */
