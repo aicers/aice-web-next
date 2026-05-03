@@ -1,6 +1,8 @@
+import { headers } from "next/headers";
 import { connection } from "next/server";
 
 import { routing } from "@/i18n/routing";
+import { REQUEST_URL_HEADER } from "@/proxy";
 
 import "./globals.css";
 
@@ -9,6 +11,36 @@ type NotFoundMessages = {
   description: string;
   backToDashboard: string;
 };
+
+type Locale = (typeof routing.locales)[number];
+
+function isLocale(value: string): value is Locale {
+  return (routing.locales as readonly string[]).includes(value);
+}
+
+/**
+ * Derive the locale to render the root not-found document under.
+ *
+ * The root boundary catches unmatched URLs that escape the `[locale]`
+ * segment, but the request URL still carries the user's locale intent
+ * for shapes like `/ko/missing` or `/en/missing`.  Reading the original
+ * URL from the `x-request-url` header that `proxy.ts` forwards lets
+ * `<html lang>` and the body copy track the locale the user actually
+ * asked for.  Invalid prefixes (e.g. `/xx/missing`) and the
+ * no-locale-prefix shape (`/missing`, the default-locale form under
+ * `localePrefix: "as-needed"`) fall back to `routing.defaultLocale`.
+ */
+function resolveLocale(requestUrl: string | null): Locale {
+  if (!requestUrl) return routing.defaultLocale;
+  let pathname: string;
+  try {
+    pathname = new URL(requestUrl).pathname;
+  } catch {
+    return routing.defaultLocale;
+  }
+  const firstSegment = pathname.split("/")[1] ?? "";
+  return isLocale(firstSegment) ? firstSegment : routing.defaultLocale;
+}
 
 export default async function RootNotFound() {
   // Opt out of static rendering so the per-request CSP nonce minted in
@@ -23,11 +55,13 @@ export default async function RootNotFound() {
 
   // The root layout (`src/app/layout.tsx`) is a pass-through and the
   // locale provider/theme/font shell lives in `[locale]/layout.tsx`, so
-  // this boundary must render its own minimal HTML document.  The request
-  // that lands here has no resolved locale, so we render the configured
-  // default-locale messages and tag the document with the same locale —
-  // this keeps `lang` and copy in agreement under any `DEFAULT_LOCALE`.
-  const locale = routing.defaultLocale;
+  // this boundary must render its own minimal HTML document.  Derive the
+  // locale from the original request URL forwarded by the proxy so a
+  // `/ko/missing` request renders Korean copy under `<html lang="ko">`
+  // even on an English-default deployment, and vice versa.  Falls back
+  // to `routing.defaultLocale` when the prefix is missing or invalid.
+  const requestUrl = (await headers()).get(REQUEST_URL_HEADER);
+  const locale = resolveLocale(requestUrl);
   const messages = (await import(`@/i18n/messages/${locale}.json`)).default;
   const t = messages.notFound as NotFoundMessages;
 
@@ -56,7 +90,11 @@ export default async function RootNotFound() {
           {t.description}
         </p>
         <a
-          href="/dashboard"
+          href={
+            locale === routing.defaultLocale
+              ? "/dashboard"
+              : `/${locale}/dashboard`
+          }
           style={{
             fontSize: "0.875rem",
             fontWeight: 500,
