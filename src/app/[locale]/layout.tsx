@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Roboto } from "next/font/google";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
@@ -8,6 +9,7 @@ import { ThemeProvider } from "next-themes";
 
 import { SessionExtensionDialog } from "@/components/session/session-extension-dialog";
 import { routing } from "@/i18n/routing";
+import { NONCE_HEADER } from "@/lib/security/csp";
 import { themeConfig } from "@/lib/theme";
 
 import "../globals.css";
@@ -44,10 +46,17 @@ export default async function LocaleLayout({
 
   setRequestLocale(locale);
 
+  // `next-themes` injects an inline pre-paint script to set the theme
+  // before hydration. That script is app-emitted (not framework-
+  // emitted), so Next.js's renderer does not stamp the per-request
+  // nonce on it — the package exposes its own `nonce` prop, and CSP
+  // refuses the script without it under the script-src nonce policy.
+  const nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
+
   return (
     <html lang={locale} suppressHydrationWarning>
       <body className={roboto.className}>
-        <ThemeProvider {...themeConfig}>
+        <ThemeProvider {...themeConfig} nonce={nonce}>
           <NextIntlClientProvider>
             {children}
             <SessionExtensionDialog />

@@ -73,22 +73,33 @@ type ScriptObservation = {
   nonce: string | undefined;
   /** Resolved `src`, empty for inline scripts. */
   src: string;
+  /** Whether the element carries `data-nextjs-dev-overlay` — the dev
+   * error-overlay portal Next injects in dev mode only. */
+  isDevOverlay: boolean;
   /** Short identifier for failure diagnostics. */
   snippet: string;
 };
 
 /**
- * The Playwright harness boots `pnpm dev --turbopack`, which injects a
- * Turbopack HMR client chunk (e.g.
- * `/_next/static/chunks/[turbopack]_browser_dev_hmr-client_hmr-client_ts_*.js`)
- * into every HTML response. That script is a dev-runtime artifact and
- * never ships to production — `pnpm build` does not emit it, and the
- * static-vs-dynamic guard (`scripts/assert-no-static-html-routes.mjs`)
- * is what protects the prod build's nonce coverage. Excluding it here
- * keeps the dev-mode assertion honest without losing prod coverage.
+ * The Playwright harness boots `pnpm dev --turbopack`, which injects
+ * several dev-runtime artifacts into every HTML response that never
+ * ship to production:
+ *
+ *   • Turbopack HMR client chunk
+ *     (`/_next/static/chunks/[turbopack]_browser_dev_hmr-client_*.js`)
+ *   • Turbopack dev module chunks named after the source path with a
+ *     `_._.js` suffix (e.g.
+ *     `/_next/static/chunks/src_app_%5Blocale%5D_not-found_tsx_0.-.k9_._.js`).
+ *     Production Turbopack output uses content-hashed names without
+ *     that suffix.
+ *
+ * `pnpm build` emits none of these, so excluding them from the dev-mode
+ * assertion does not lose prod coverage. The static-vs-dynamic guard
+ * (`scripts/assert-no-static-html-routes.mjs`) is what protects prod
+ * nonce coverage; this dev exclusion keeps the smoke test honest.
  */
 const DEV_ONLY_SCRIPT_SRC =
-  /\/_next\/static\/chunks\/(?:%5B|\[)turbopack(?:%5D|\])_browser_dev_/;
+  /\/_next\/static\/chunks\/(?:(?:%5B|\[)turbopack(?:%5D|\])_browser_dev_|.+_\._\.js$)/;
 
 async function readScriptNonces(page: Page): Promise<ScriptObservation[]> {
   const all = await page.$$eval("script", (scripts) =>
@@ -99,10 +110,13 @@ async function readScriptNonces(page: Page): Promise<ScriptObservation[]> {
       // applied, so it must NOT be used as the assertion source.
       nonce: s.nonce,
       src: s.src,
+      // Next's dev error overlay portal — `<script data-nextjs-dev-overlay="true">`.
+      // Dev-only, never emitted by `pnpm build`.
+      isDevOverlay: s.dataset.nextjsDevOverlay === "true",
       snippet: s.outerHTML.slice(0, 120),
     })),
   );
-  return all.filter((s) => !DEV_ONLY_SCRIPT_SRC.test(s.src));
+  return all.filter((s) => !s.isDevOverlay && !DEV_ONLY_SCRIPT_SRC.test(s.src));
 }
 
 function assertEveryScriptCarriesNonce(
