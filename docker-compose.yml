@@ -38,6 +38,13 @@ services:
       - "3000"
     env_file:
       - .env
+    # Persist <DATA_DIR> across container restarts so first-boot JWT
+    # autogen (JWT_SIGNING_KEY_AUTOGEN=1) does not regenerate the key
+    # — and therefore invalidate every issued session — on every boot.
+    # Production deployments should override this with a Secret mount
+    # at JWT_SIGNING_KEY_FILE.
+    volumes:
+      - next-app-data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,3 +63,4 @@ services:
 
 volumes:
   pgdata:
+  next-app-data:
