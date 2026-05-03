@@ -35,6 +35,7 @@ import {
 } from "@/lib/detection";
 import { COUNTRY_CODES } from "@/lib/detection/countries";
 import { FLOW_KINDS } from "@/lib/detection/direction";
+import { DetectionForbiddenError } from "@/lib/detection/errors";
 import {
   INITIAL_THREAT_KINDS,
   LEARNING_METHOD_VALUES,
@@ -48,6 +49,7 @@ import { RECOMMENDED_PRESETS } from "@/lib/detection/recommended-filters";
 import { createTabId, type TabId } from "@/lib/detection/tabs";
 import type { LearningMethod, PageInfo } from "@/lib/detection/types";
 import { decodeEventLocator } from "@/lib/events/event-locator";
+import { ReviewForbiddenError } from "@/lib/review/errors";
 
 interface DetectionPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -187,8 +189,21 @@ export default async function DetectionPage({
     // row's React key so duplicate content can't collide.
     initialEventKeys = connection.edges.map((edge) => edge.cursor);
     initialPageInfo = connection.pageInfo;
-  } catch {
-    initialError = t("filters.resultsError");
+  } catch (err) {
+    if (
+      err instanceof ReviewForbiddenError ||
+      err instanceof DetectionForbiddenError
+    ) {
+      // #405 I: review denied the bootstrap dispatch (or the BFF
+      // intersection check rejected an out-of-scope filter). Show the
+      // explicit forbidden-scope panel so the operator sees a real
+      // access-denied state — never a silent empty list, which the
+      // security guardrails forbid as conflating "denied" with
+      // "no data".
+      initialError = t("filters.resultsForbiddenScope");
+    } else {
+      initialError = t("filters.resultsError");
+    }
   }
 
   const periodOptions = Object.fromEntries(

@@ -21,6 +21,10 @@ import {
   fetchExportRowCount,
 } from "@/lib/detection/export-stream";
 import type { Filter } from "@/lib/detection/filter";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+} from "@/lib/review/errors";
 
 interface ExportRequestBody {
   filter?: Filter;
@@ -259,6 +263,18 @@ export const POST = withAuth(
       }
       if (err instanceof DetectionUnauthorizedError) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (err instanceof ReviewForbiddenError) {
+        // Review denied the export request at the GraphQL layer
+        // (#405 I). Surface as 403 so the client renders the access-
+        // denied message rather than a generic export failure.
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (err instanceof ReviewInvalidArgumentError) {
+        return NextResponse.json(
+          { error: "Invalid argument" },
+          { status: 400 },
+        );
       }
       return NextResponse.json(
         { error: "Failed to export detection events" },

@@ -642,10 +642,11 @@ controls, and a **Go to page** input for rare deep seeks.
 
 ![Detection pagination controls](../assets/detection-pagination-en.png)
 
-- **Rows per page** toggles between `25`, `50`, `100`, and `200`.
-  The default is `50`. Changing the size keeps the operator near
-  the start of the current window: on page 3 at `50/page`
-  (rows 101–150), switching to `100/page` lands on page 2
+- **Rows per page** toggles between `25`, `50`, and `100`. The
+  default is `50`; `100` matches REview 0.47.0's hard upper bound on
+  Relay `first` / `last` arguments. Changing the size keeps the
+  operator near the start of the current window: on page 3 at
+  `50/page` (rows 101–150), switching to `100/page` lands on page 2
   (rows 101–200) instead of snapping back to page 1. Because
   REview cursors are page-size scoped, this is accomplished by
   walking forward from head at the new size — the same cursor

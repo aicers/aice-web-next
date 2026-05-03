@@ -1,5 +1,7 @@
 import "server-only";
 
+import { withReviewErrorMapping } from "@/lib/review/error-mapping";
+
 import {
   type ExternalServiceKindHint,
   ExternalServiceUnavailableError,
@@ -46,7 +48,14 @@ export async function withManagerErrorMapping<T>(
   promise: Promise<T>,
 ): Promise<T> {
   try {
-    return await promise;
+    // Layer review's GraphQL-`errors[]` classifier underneath the
+    // transport-level mapper so a review-side Forbidden / argument-
+    // validation arrives as `ReviewForbiddenError` /
+    // `ReviewInvalidArgumentError` rather than a raw `Error` (#405 I).
+    // Connection failures still surface as `ManagerUnavailableError`
+    // because `classifyReviewErrors` only inspects `response.errors[]`
+    // and returns null for transport-level rejects.
+    return await withReviewErrorMapping(promise);
   } catch (err) {
     if (isConnectionError(err)) {
       throw new ManagerUnavailableError(

@@ -68,8 +68,14 @@ describe("detection server actions", () => {
       expect(mockGraphqlRequest).not.toHaveBeenCalled();
     });
 
-    it("rejects a caller with an empty customer scope", async () => {
-      mockHasPermission.mockResolvedValue(true);
+    it("rejects a non-admin caller with an empty customer scope", async () => {
+      // The caller holds `detection:read` but not
+      // `customers:access-all`, so an empty assigned scope is the
+      // legitimate "no Detection access at all" case.
+      mockHasPermission.mockImplementation(
+        async (_roles: string[], permission: string) =>
+          permission === "detection:read",
+      );
       mockResolveEffectiveCustomerIds.mockResolvedValue([]);
 
       // Reviewer Round 2: empty-scope sessions flow through the
@@ -92,12 +98,16 @@ describe("detection server actions", () => {
       expect(mockGraphqlRequest).not.toHaveBeenCalled();
     });
 
-    it("carries the materialized access-all scope on the JWT context", async () => {
+    it("omits `customer_ids` from the JWT for System Administrator (review's None-only-for-SysAdmin contract)", async () => {
       mockHasPermission.mockResolvedValue(true);
-      // Access-all callers are resolved upstream to the explicit list
-      // of every registered customer ID. The BFF forwards that list
-      // on the Context JWT verbatim — REview does not re-derive scope
-      // from role text, so the list must be present.
+      // The materialized list still flows through the BFF for in-
+      // process defense-in-depth checks (filter scope intersection),
+      // but the Context JWT must omit `customer_ids` for the
+      // SysAdmin role: review's `validate_context_jwt` accepts
+      // `customer_ids = None` only for `Role::SystemAdministrator`,
+      // so passing the materialized list is unnecessary and a fresh
+      // install with an empty `customers` table would otherwise
+      // ship `customer_ids: []` and 403 from review (#405 L1+L2).
       mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3]);
       mockGraphqlRequest.mockResolvedValue({
         eventList: {
@@ -127,7 +137,80 @@ describe("detection server actions", () => {
       expect(variables.filter.customers).toBeUndefined();
       expect(context).toEqual({
         role: "System Administrator",
+        customerIds: undefined,
+      });
+    });
+
+    it("carries the materialized access-all scope on the JWT for non-SysAdmin custom roles", async () => {
+      // A custom role granting `customers:access-all` is not the
+      // `Role::SystemAdministrator` that review's `validate_context_jwt`
+      // recognises for the omit-customer_ids path, so the materialized
+      // list must still ride the JWT verbatim.
+      mockHasPermission.mockResolvedValue(true);
+      mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2, 3]);
+      mockGraphqlRequest.mockResolvedValue({
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: false,
+            hasNextPage: false,
+            startCursor: null,
+            endCursor: null,
+          },
+          edges: [],
+          nodes: [],
+          totalCount: "0",
+        },
+      });
+
+      const { searchEvents } = await import("@/lib/detection");
+
+      await searchEvents(makeSession({ roles: ["Custom Auditor"] }), {
+        mode: "structured",
+        input: { start: null, end: null },
+      });
+
+      const [, , context] = mockGraphqlRequest.mock.calls[0];
+      expect(context).toEqual({
+        role: "Custom Auditor",
         customerIds: [1, 2, 3],
+      });
+    });
+
+    it("does not block a System Administrator with an empty local `customers` table (#405 L1)", async () => {
+      // Reproduction from the 2026-05-03 integration test: bootstrap
+      // SysAdmin opens `/en/detection`, `auth_db.customers` is empty,
+      // `resolveEffectiveCustomerIds` returns `[]`. The pre-#405
+      // empty-scope gate threw before any review round-trip — but
+      // review accepts `customer_ids = None` for SysAdmin, so the
+      // BFF must let the dispatch through with the customer_ids
+      // claim omitted.
+      mockHasPermission.mockResolvedValue(true);
+      mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+      mockGraphqlRequest.mockResolvedValue({
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: false,
+            hasNextPage: false,
+            startCursor: null,
+            endCursor: null,
+          },
+          edges: [],
+          nodes: [],
+          totalCount: "0",
+        },
+      });
+
+      const { searchEvents } = await import("@/lib/detection");
+      await searchEvents(makeSession({ roles: ["System Administrator"] }), {
+        mode: "structured",
+        input: { start: null, end: null },
+      });
+
+      expect(mockGraphqlRequest).toHaveBeenCalledOnce();
+      const [, , context] = mockGraphqlRequest.mock.calls[0];
+      expect(context).toEqual({
+        role: "System Administrator",
+        customerIds: undefined,
       });
     });
 

@@ -46,6 +46,7 @@ import {
   assertNodeInScope,
   buildDispatchContext,
   type DispatchContext,
+  jwtCustomerIdsFor,
 } from "./dispatch-context";
 import {
   withManagerErrorMapping,
@@ -258,7 +259,7 @@ async function readCanonicalNode(
         graphqlRequest<NodeDetailResult, { id: string }>(
           NODE_DETAIL_QUERY,
           { id },
-          { role: ctx.role, customerIds: ctx.customerIds },
+          { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
           signal,
         ),
         id,

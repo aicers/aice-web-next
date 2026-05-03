@@ -95,6 +95,29 @@ export async function buildDispatchContext(
 }
 
 /**
+ * Derive the `customer_ids` claim that should travel on the Context
+ * JWT for a dispatch.
+ *
+ * Review's `validate_context_jwt` accepts `customer_ids = None`
+ * (omitted) only for `Role::SystemAdministrator`. For every other
+ * caller — including custom roles that grant `customers:access-all`
+ * — the materialized list is sent verbatim, even when it is empty;
+ * review will reject the empty list and the BFF surfaces that as a
+ * typed Forbidden via `withReviewErrorMapping` rather than a 500.
+ *
+ * Keeping the materialized list on `DispatchContext.customerIds` for
+ * in-process scope checks (`assertNodeInScope`,
+ * `enforceNodeScope`) and only narrowing at the JWT boundary keeps
+ * the in-process invariants intact while still aligning with
+ * review's contract.
+ */
+export function jwtCustomerIdsFor(
+  ctx: Pick<DispatchContext, "role" | "customerIds">,
+): number[] | undefined {
+  return ctx.role === SYSTEM_ADMINISTRATOR ? undefined : ctx.customerIds;
+}
+
+/**
  * Assert that a node belonging to the given `customerId` is in scope
  * for the dispatch context. Callers with `customers:access-all` can
  * touch any node (their `hasGlobalScope` flag is true); every other

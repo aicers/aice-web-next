@@ -15,6 +15,10 @@ import {
   NodePermissionError,
 } from "@/lib/node/server-actions";
 import type { AgentDraftInput, ExternalServiceInput } from "@/lib/node/types";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+} from "@/lib/review/errors";
 
 interface CreateNodeBody {
   name: string;
@@ -94,8 +98,20 @@ export const POST = withAuth(
         }
         return NextResponse.json(payload, { status: 409 });
       }
-      if (err instanceof NodePermissionError) {
+      if (
+        err instanceof NodePermissionError ||
+        err instanceof ReviewForbiddenError
+      ) {
+        // BFF or review-side permission denial both surface as 403
+        // so the dialog focuses the operator on the access affordance
+        // rather than the generic 500 fallback. (#405 I)
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (err instanceof ReviewInvalidArgumentError) {
+        return NextResponse.json(
+          { error: "Invalid argument" },
+          { status: 400 },
+        );
       }
       if (err instanceof ManagerUnavailableError) {
         return NextResponse.json(

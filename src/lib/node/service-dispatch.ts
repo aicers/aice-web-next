@@ -2,7 +2,7 @@ import "server-only";
 
 import { gigantoClient, tivanClient } from "@/lib/graphql/external-client";
 
-import type { DispatchContext } from "./dispatch-context";
+import { type DispatchContext, jwtCustomerIdsFor } from "./dispatch-context";
 import { withExternalErrorMapping } from "./error-mapping";
 import { GIGANTO_CONFIG_QUERY, TIVAN_CONFIG_QUERY } from "./queries";
 import type {
@@ -115,7 +115,10 @@ export async function getApplied(
   if (isExternalKind(kind)) {
     const service = node.externalServices.find((s) => s.kind === kind);
     if (!service) return null;
-    const requestContext = { role: ctx.role, customerIds: ctx.customerIds };
+    const requestContext = {
+      role: ctx.role,
+      customerIds: jwtCustomerIdsFor(ctx),
+    };
     if (kind === "DATA_STORE") {
       const data = await withExternalErrorMapping(
         "DATA_STORE",

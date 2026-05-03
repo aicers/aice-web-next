@@ -13,6 +13,11 @@ import { getCurrentSession } from "@/lib/auth/session";
 import { ManagerUnavailableError } from "@/lib/node/errors";
 import { getNodeStatusList } from "@/lib/node/status";
 import type { NodeStatus } from "@/lib/node/types";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+} from "@/lib/review/errors";
+import NodesForbidden from "../../forbidden";
 
 // The combined `nodes:read + services:read` gate runs in the parent
 // `(gate)/layout.tsx` so `forbidden()` lands above any Suspense and
@@ -38,6 +43,7 @@ export default async function NodesStatusPage() {
   let initialEdges: NodeStatus[] = [];
   let initialCapturedAt = new Date().toISOString();
   let managerOffline = false;
+  let reviewForbidden = false;
   try {
     const result = await getNodeStatusList(session);
     initialCapturedAt = result.capturedAt;
@@ -46,14 +52,32 @@ export default async function NodesStatusPage() {
   } catch (err) {
     // The fallback panel is reserved for transport failures
     // (`ManagerUnavailableError` from `withManagerErrorMapping`).
-    // GraphQL `errors[]` should propagate so the standard error
-    // boundary surfaces an unexpected failure instead of pretending
-    // the manager is offline.
+    // Review-side denials (`ReviewForbiddenError`, #405 I) and
+    // argument-validation errors are surfaced with explicit panels
+    // — silently swallowing Forbidden as "no data" is forbidden by
+    // the security guardrails. Other GraphQL errors propagate so
+    // the standard error boundary surfaces them unmasked.
     if (err instanceof ManagerUnavailableError) {
       managerOffline = true;
+    } else if (err instanceof ReviewForbiddenError) {
+      reviewForbidden = true;
+    } else if (err instanceof ReviewInvalidArgumentError) {
+      // Defense-in-depth: the BFF caps page sizes (#405 J) so this
+      // path is unreachable in steady state, but if either side
+      // drifts, render the same forbidden panel rather than 500-ing.
+      reviewForbidden = true;
     } else {
       throw err;
     }
+  }
+
+  if (reviewForbidden) {
+    return (
+      <>
+        <CustomerScopeCallout scope={scope} className="mb-4" />
+        <NodesForbidden />
+      </>
+    );
   }
 
   if (managerOffline) {

@@ -5,6 +5,10 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth/guard";
 import { ManagerUnavailableError } from "@/lib/node/errors";
 import { getNodeStatusList } from "@/lib/node/status";
+import {
+  ReviewForbiddenError,
+  ReviewInvalidArgumentError,
+} from "@/lib/review/errors";
 
 /**
  * GET /api/nodes/status
@@ -38,6 +42,25 @@ export const GET = withAuth(
       const result = await getNodeStatusList(session);
       return NextResponse.json(result, { headers: NO_STORE_HEADERS });
     } catch (err) {
+      if (err instanceof ReviewForbiddenError) {
+        // Review denied the request at the GraphQL layer (status 200,
+        // `errors[].message === "Forbidden"`). Surface as 403 so the
+        // poll consumer renders the access-denied affordance instead
+        // of treating it as transport-unavailable. (#405 I)
+        return NextResponse.json(
+          { error: "Forbidden" },
+          { status: 403, headers: NO_STORE_HEADERS },
+        );
+      }
+      if (err instanceof ReviewInvalidArgumentError) {
+        // Review rejected an argument (e.g. `first` out of range).
+        // Defense-in-depth: the BFF now caps page sizes (#405 J), but
+        // a future drift on either side should not 500 the page.
+        return NextResponse.json(
+          { error: "Invalid argument" },
+          { status: 400, headers: NO_STORE_HEADERS },
+        );
+      }
       if (err instanceof ManagerUnavailableError) {
         return NextResponse.json(
           { error: "Manager unavailable" },

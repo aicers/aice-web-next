@@ -453,7 +453,7 @@ describe("applyTransitionReset — Reviewer Round 3", () => {
     applyTransitionReset = mod.applyTransitionReset;
   });
 
-  function runReset(args: { pageSize: 25 | 50 | 100 | 200 }) {
+  function runReset(args: { pageSize: 25 | 50 | 100 }) {
     const setters = {
       setPagination: vi.fn(),
       setEvents: vi.fn(),
@@ -477,16 +477,16 @@ describe("applyTransitionReset — Reviewer Round 3", () => {
     });
   });
 
-  it("preserves a non-default page size so a tab on 200/page stays at 200 after Apply", () => {
+  it("preserves a non-default page size so a tab on 100/page stays at 100 after Apply", () => {
     // Regression: a naive reset to INITIAL_PAGINATION_STATE would
     // silently teleport the tab back to the default pageSize on
     // every Apply — Apply is supposed to reset the cursor, not the
     // operator's chosen page size.
-    const setters = runReset({ pageSize: 200 });
+    const setters = runReset({ pageSize: 100 });
     const call = setters.setPagination.mock.calls[0]?.[0] as {
       pageSize: number;
     };
-    expect(call.pageSize).toBe(200);
+    expect(call.pageSize).toBe(100);
   });
 
   it("clears events / eventKeys / totalCount / pageInfo so snapshots cannot retain old rows under a new filter", () => {

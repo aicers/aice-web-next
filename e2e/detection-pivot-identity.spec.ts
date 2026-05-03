@@ -21,14 +21,15 @@ import { closeAdminAgent, mockServerSession } from "./mock-server-admin";
  * validates them against `schemas/review.graphql`.
  *
  * Stub matching is keyed on the request's `first` value: this spec
- * navigates with `?pageSize=200`, so its `eventList` requests carry
- * `first: 200`, which no other detection spec uses (the rest fall
+ * navigates with `?pageSize=100`, so its `eventList` requests carry
+ * `first: 100`, which no other detection spec uses (the rest fall
  * back to the default 50). A catch-all matcher would otherwise leak
  * the identity rows into `detection-screenshots.spec.ts` and any
  * other Apply-driven detection spec running in a parallel worker —
  * the mock server is shared across workers, so once a catch-all is
  * live every page's `eventList` query is satisfied by it. Pinning to
- * `first: 200` keeps the stub local to this spec.
+ * `first: 100` keeps the stub local to this spec. (#405 J: review's
+ * hard cap is 100, so 200 is no longer a valid menu option.)
  */
 
 const session = mockServerSession();
@@ -44,7 +45,7 @@ test.beforeAll(async () => {
   await ensureCustomerExists("E2E Detection Pivot", "e2e_detection_pivot_db");
   await session.registerStub({
     operation: "eventList",
-    matchVariables: { first: 200 },
+    matchVariables: { first: 100 },
     response: {
       kind: "fixture",
       fixture: "detection/eventList.identity.json",
@@ -68,10 +69,10 @@ test("clicking the User and Host cells opens narrowed pivot tabs", async ({
   workerPassword,
 }) => {
   await signInAndWait(page, workerUsername, workerPassword);
-  // `?pageSize=200` keys this spec's `eventList` requests off the
+  // `?pageSize=100` keys this spec's `eventList` requests off the
   // page-size matcher the stub registration above pins to. See the
   // module-level docstring for the cross-spec leak this avoids.
-  await page.goto("/detection?pageSize=200");
+  await page.goto("/detection?pageSize=100");
 
   // Apply the default filter to dispatch the eventList query — without
   // Apply the shell renders the empty-prequery state and never asks

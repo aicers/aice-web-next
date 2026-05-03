@@ -19,8 +19,11 @@ import {
 } from "@/lib/detection/pagination";
 
 describe("page-size guardrails", () => {
-  it("exposes the Gmail-spec steps in order with 50 as the default", () => {
-    expect(PAGE_SIZE_OPTIONS).toEqual([25, 50, 100, 200]);
+  it("exposes the Gmail-spec steps in order capped at review's hard limit, with 50 as the default", () => {
+    // `200` was removed from the menu in #405: review 0.47.0 rejects
+    // `first` / `last` above 100, so the previous `200` step
+    // produced a guaranteed 500 from the result page once selected.
+    expect(PAGE_SIZE_OPTIONS).toEqual([25, 50, 100]);
     expect(DEFAULT_PAGE_SIZE).toBe(50);
   });
 
@@ -29,11 +32,22 @@ describe("page-size guardrails", () => {
     expect(isPageSize(30)).toBe(false);
     expect(isPageSize(0)).toBe(false);
     expect(isPageSize(Number.NaN)).toBe(false);
+    expect(isPageSize(200)).toBe(false);
   });
 
-  it("coercePageSize snaps unknown values to the default", () => {
+  it("coercePageSize snaps off-menu values that exceed review's cap to that cap", () => {
+    // Stale bookmarks from before #405 may still carry `?pageSize=200`.
+    // Coercing those down to 100 (review's hard upper bound) preserves
+    // the operator's intent (a larger page) instead of collapsing back
+    // to the default.
+    expect(coercePageSize(200)).toBe(100);
+    expect(coercePageSize(999)).toBe(100);
+  });
+
+  it("coercePageSize falls back to the default for unknown sub-cap values", () => {
     expect(coercePageSize(undefined)).toBe(DEFAULT_PAGE_SIZE);
-    expect(coercePageSize(999)).toBe(DEFAULT_PAGE_SIZE);
+    expect(coercePageSize(30)).toBe(DEFAULT_PAGE_SIZE);
+    expect(coercePageSize(0)).toBe(DEFAULT_PAGE_SIZE);
     expect(coercePageSize(25)).toBe(25);
   });
 });
@@ -81,8 +95,8 @@ describe("searchArgsForAnchor", () => {
   });
 
   it("maps `before` to backward with cursor", () => {
-    expect(searchArgsForAnchor({ kind: "before", cursor: "xyz" }, 200)).toEqual(
-      { last: 200, before: "xyz" },
+    expect(searchArgsForAnchor({ kind: "before", cursor: "xyz" }, 100)).toEqual(
+      { last: 100, before: "xyz" },
     );
   });
 });
@@ -139,10 +153,10 @@ describe("totalPagesFrom — BigInt-safe", () => {
     // total to `Number`. For a total whose derived page count
     // exceeds safe-int range, the helper clamps the exposed number
     // so downstream arithmetic stays finite instead of silently
-    // rounding. (2^70 / 200 ≈ 5.9e18, comfortably past
+    // rounding. (2^70 / 100 ≈ 1.18e19, comfortably past
     // Number.MAX_SAFE_INTEGER ≈ 9.0e15.)
     const huge = "1180591620717411303424"; // 2^70
-    const pages = totalPagesFrom(huge, 200);
+    const pages = totalPagesFrom(huge, 100);
     expect(pages).toBe(Number.MAX_SAFE_INTEGER);
   });
 });
@@ -342,10 +356,11 @@ describe("URL round-trip", () => {
     });
   });
 
-  it("coerces an off-menu pageSize back to the default", () => {
-    expect(parsePaginationSearchParams({ pageSize: "999" }).pageSize).toBe(
-      DEFAULT_PAGE_SIZE,
-    );
+  it("coerces an off-menu pageSize above review's cap down to the cap", () => {
+    // `?pageSize=999` (a stale or tampered URL) lands at the review
+    // hard limit instead of silently collapsing to the default —
+    // preserves the operator's "I want a large page" intent. (#405 J)
+    expect(parsePaginationSearchParams({ pageSize: "999" }).pageSize).toBe(100);
   });
 
   it("round-trips non-default entries through URLSearchParams", () => {
