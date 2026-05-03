@@ -154,7 +154,15 @@ async function assertNonceCoverage(
 }
 
 test.describe("CSP nonce coverage", () => {
-  test.beforeAll(async () => {
+  // Reset before every test, not just beforeAll: this spec calls
+  // `signInAndWait` in 6 of 7 tests (dashboard ×2 + missing ×4) and
+  // a single `pnpm e2e` worker reuses the same `e2e-worker-N`
+  // username across them. Six sign-ins without resets trip the
+  // proxy's per-account rate limiter, and the last not-found test
+  // fails with "Too many attempts" on local single-worker runs
+  // (CI's 4-worker fan-out hides this by spreading sign-ins across
+  // accounts). Match the convention used by `e2e/dashboard.spec.ts`.
+  test.beforeEach(async () => {
     await resetRateLimits();
   });
 
