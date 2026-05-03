@@ -42,6 +42,13 @@ const signContextJwtSpy = vi.fn().mockResolvedValue("mock-jwt-token");
 vi.mock("@/lib/mtls", () => ({
   signContextJwt: signContextJwtSpy,
   getAgent: vi.fn().mockResolvedValue({ mock: "dispatcher" }),
+  createMtlsRequestAuth: vi
+    .fn()
+    .mockImplementation(async (role: string, customerIds?: number[]) => ({
+      agent: { mock: "dispatcher" },
+      token: await signContextJwtSpy(role, customerIds),
+      release: () => {},
+    })),
 }));
 
 vi.mock("undici", () => ({ fetch: fetchSpy }));

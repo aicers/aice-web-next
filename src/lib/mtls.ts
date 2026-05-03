@@ -14,7 +14,29 @@ interface MtlsState {
   algorithm: JwtAlgorithm;
 }
 
-let state: MtlsState | null = null;
+interface LeasedState extends MtlsState {
+  refCount: number;
+  retired: boolean;
+}
+
+let state: LeasedState | null = null;
+
+// Single mutex queue for every write to `state`. ALL paths that assign `state`
+// — first-use init AND reload() — run inside this queue. The "single writer"
+// property guarantees no two `buildState()` runs install `state` concurrently,
+// so a late init can never overwrite a fresher reload result and vice versa.
+let stateLifecycle: Promise<unknown> = Promise.resolve();
+
+function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const next = stateLifecycle.then(fn, fn);
+  // Swallow this slot's rejection on the chain so a single failure does not
+  // poison subsequent enqueues; callers still see the rejection on `next`.
+  stateLifecycle = next.catch(() => {});
+  return next;
+}
+
+let reloadPending: Promise<Agent> | null = null;
+let reloadDirty = false;
 
 /**
  * Test-only bypass: when running under the test harness, return a plain-HTTP
@@ -106,13 +128,67 @@ async function buildState(): Promise<MtlsState> {
   return { agent, privateKey, algorithm };
 }
 
-async function initialize(): Promise<MtlsState> {
-  state = await buildState();
-  return state;
+function acquire(s: LeasedState): void {
+  s.refCount++;
+}
+
+function releaseState(s: LeasedState): void {
+  s.refCount--;
+  if (s.retired && s.refCount === 0) {
+    // Last in-flight request finished; drain the retired agent. Catch the
+    // promise so a close() failure cannot become an unhandled rejection
+    // (which under --unhandled-rejections=strict would crash the process).
+    s.agent.close().catch((err) => {
+      // eslint-disable-next-line no-console -- cleanup-path log line
+      console.error("[mtls] failed to close retired agent", err);
+    });
+  }
+}
+
+async function ensureState(): Promise<LeasedState> {
+  if (state) return state;
+  return runExclusive(async () => {
+    if (state) return state;
+    const built = await buildState();
+    state = { ...built, refCount: 1, retired: false };
+    return state;
+  });
+}
+
+/**
+ * Read `state` and increment its refcount as one operation, with no
+ * microtask boundary in between when state is already installed.
+ *
+ * The earlier shape `await ensureState(); acquire(current);` had an
+ * unleased window: if a concurrent `reload()` had already finished
+ * `buildState()` and its continuation was queued behind the awaiter's,
+ * the reload could install the new state, retire the old one, and call
+ * `releaseState` — driving the old refcount to zero and starting
+ * `agent.close()` — before `acquire()` ran. The caller then dispatched
+ * with a closing agent. Acquiring synchronously on the fast path (and
+ * before returning from the queued first-init job on the slow path)
+ * closes that window: the structural refcount is bumped to ≥ 2 before
+ * any other microtask can retire the state.
+ */
+function acquireState(): LeasedState | Promise<LeasedState> {
+  if (state) {
+    acquire(state);
+    return state;
+  }
+  return runExclusive(async () => {
+    if (state) {
+      acquire(state);
+      return state;
+    }
+    const built = await buildState();
+    state = { ...built, refCount: 1, retired: false };
+    acquire(state);
+    return state;
+  });
 }
 
 export async function getAgent(): Promise<Agent> {
-  const current = state ?? (await initialize());
+  const current = await ensureState();
   return current.agent;
 }
 
@@ -120,7 +196,7 @@ export async function signContextJwt(
   role: string,
   customerIds?: number[],
 ): Promise<string> {
-  const current = state ?? (await initialize());
+  const current = await ensureState();
 
   const builder = new SignJWT({
     role,
@@ -132,11 +208,81 @@ export async function signContextJwt(
     .sign(current.privateKey);
 }
 
-export async function reload(): Promise<Agent> {
-  const previous = state;
-  state = await buildState();
-  if (previous) {
-    await previous.agent.close();
+export interface MtlsRequestAuth {
+  agent: Agent;
+  token: string;
+  release(): void;
+}
+
+/**
+ * Snapshot helper that reads `state` once, increments its refcount, and
+ * returns the agent + a freshly-signed JWT derived from that single snapshot.
+ *
+ * The caller MUST invoke `release()` (typically in a `finally`) so the
+ * refcount is decremented when the dispatch completes. `release()` is
+ * idempotent: a duplicate call is a no-op rather than pushing the refcount
+ * negative — a negative refcount would break the close-deferral timing for
+ * the next retired state.
+ *
+ * Pairing the agent and the JWT against the same `state` reference closes
+ * (a) the JWT/cert pairing race during rotation and (b) the
+ * "snapshot's agent gets closed mid-request" race.
+ */
+export async function createMtlsRequestAuth(
+  role: string,
+  customerIds?: number[],
+): Promise<MtlsRequestAuth> {
+  const current = await acquireState();
+  try {
+    const builder = new SignJWT({
+      role,
+      ...(customerIds !== undefined && { customer_ids: customerIds }),
+    }).setExpirationTime("5m");
+    const token = await builder
+      .setProtectedHeader({ alg: current.algorithm })
+      .sign(current.privateKey);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      releaseState(current);
+    };
+    return { agent: current.agent, token, release };
+  } catch (err) {
+    releaseState(current);
+    throw err;
   }
-  return state.agent;
+}
+
+export function reload(): Promise<Agent> {
+  if (reloadPending) {
+    // Coalesce overlapping reloads. The dirty flag ensures that a SIGHUP
+    // arriving mid-reload re-runs buildState() once after the current run,
+    // so a fast double rotation always converges on the latest disk state.
+    reloadDirty = true;
+    return reloadPending;
+  }
+  reloadPending = runExclusive(async () => {
+    try {
+      let next: LeasedState;
+      do {
+        reloadDirty = false;
+        const previous = state;
+        const built = await buildState();
+        next = { ...built, refCount: 1, retired: false };
+        state = next;
+        if (previous) {
+          // Mark retired and drop the structural reference. In-flight
+          // requests still hold leases; the last release() will close()
+          // the old agent.
+          previous.retired = true;
+          releaseState(previous);
+        }
+      } while (reloadDirty);
+      return next.agent;
+    } finally {
+      reloadPending = null;
+    }
+  });
+  return reloadPending;
 }
