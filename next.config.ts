@@ -12,6 +12,30 @@ const nextConfig: NextConfig = {
     "/api/nodes/**/*": ["./src/lib/node/queries/**/*"],
     "/[locale]/(dashboard)/nodes/**/*": ["./src/lib/node/queries/**/*"],
   },
+  // Backstop against future NFT regressions broadening route
+  // traces to the project root. Only excludes operator-side files
+  // that are never read at runtime — note that excludes do not
+  // apply to `instrumentation.js.nft.json`, so the structural fix
+  // in `data-dir.ts` / `jwt-keys.ts` is what actually keeps the
+  // standalone bundle clean. See #407.
+  outputFileTracingExcludes: {
+    "/*": [
+      "**/*.md",
+      "**/Dockerfile",
+      "**/docker-compose*.yml",
+      "**/biome.json",
+      "**/components.json",
+      "LICENSE",
+      "pnpm-lock.yaml",
+      "decisions/**",
+      "data/**",
+      "data-e2e/**",
+      "e2e/**",
+      "docs/**",
+      "site/**",
+      "playwright-report/**",
+    ],
+  },
   experimental: {
     // Enables the navigation `forbidden()` helper used by the Node
     // Status / Settings tabs to surface a real HTTP 403 (with the

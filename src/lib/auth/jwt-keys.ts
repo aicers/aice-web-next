@@ -54,7 +54,22 @@ const g = globalThis as unknown as {
 // ── File paths ──────────────────────────────────────────────────
 
 function keysDir(): string {
-  return path.join(getDataDir(), "keys");
+  // Build via array-join so the result is opaque to the Next.js File
+  // Tracer: a literal `path.join(getDataDir(), "keys", "jwt-signing.json")`
+  // chain gets statically resolved to `<root>/data/keys/jwt-signing.json`
+  // and pulls runtime key material into `.next/standalone/`. See #407.
+  return [getDataDir(), "keys"].join(path.sep);
+}
+
+function defaultKeyBasename(previous: boolean): string {
+  // Build the basename via array-join so the literal
+  // "jwt-signing[.prev].json" never appears adjacent to `keysDir()` /
+  // `path.join` in source. NFT cannot statically resolve
+  // `Array.prototype.join`, which keeps it from following
+  // readKeyFile() to the on-disk key file at build time. See #407.
+  const stem = ["jwt", "signing"].join("-");
+  const suffix = previous ? [stem, "prev"].join(".") : stem;
+  return [suffix, "json"].join(".");
 }
 
 /**
@@ -68,7 +83,7 @@ function keysDir(): string {
 function currentKeyPath(): string {
   const override = process.env.JWT_SIGNING_KEY_FILE;
   if (override && override.length > 0) return path.resolve(override);
-  return path.join(keysDir(), "jwt-signing.json");
+  return [keysDir(), defaultKeyBasename(false)].join(path.sep);
 }
 
 /**
@@ -83,7 +98,7 @@ function currentKeyPath(): string {
 function previousKeyPath(): string {
   const override = process.env.JWT_SIGNING_KEY_FILE_PREVIOUS;
   if (override && override.length > 0) return path.resolve(override);
-  return path.join(keysDir(), "jwt-signing.prev.json");
+  return [keysDir(), defaultKeyBasename(true)].join(path.sep);
 }
 
 // ── Key file I/O ────────────────────────────────────────────────
