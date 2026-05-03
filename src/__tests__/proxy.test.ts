@@ -199,6 +199,35 @@ describe("proxy", () => {
       expect(csp).toContain(`'nonce-${forwardedNonce}'`);
     });
 
+    it("forwards the enforcing-style Content-Security-Policy request header so Next's renderer can extract the nonce", async () => {
+      mockIntlMiddleware.mockImplementation((request: NextRequest) => {
+        // Next.js's renderer parses the *request*-side CSP header for
+        // the `'nonce-{value}'` pattern and uses that value as the
+        // nonce attribute on framework scripts.  Capture what the
+        // proxy forwarded.
+        const cspRequest = request.headers.get("Content-Security-Policy");
+        const xNonce = request.headers.get("x-nonce");
+        const response = new Response(null, { status: 200 });
+        if (cspRequest) response.headers.set("x-test-csp-request", cspRequest);
+        if (xNonce) response.headers.set("x-test-nonce", xNonce);
+        return response;
+      });
+
+      const response = await proxy(makeRequest("/sign-in"));
+
+      const cspRequest = response.headers.get("x-test-csp-request");
+      const nonce = response.headers.get("x-test-nonce");
+      expect(cspRequest).toBeTruthy();
+      expect(nonce).toBeTruthy();
+      // The forwarded request header carries the same nonce as the
+      // browser-facing Report-Only response header.
+      expect(cspRequest).toContain(`'nonce-${nonce}'`);
+      const cspResponse = response.headers.get(
+        "Content-Security-Policy-Report-Only",
+      );
+      expect(cspResponse).toBe(cspRequest);
+    });
+
     it("mints a fresh nonce per request", async () => {
       // Return a fresh Response each call so applyCspHeader writes
       // into distinct header objects.

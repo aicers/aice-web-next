@@ -17,6 +17,18 @@
 export const NONCE_HEADER = "x-nonce";
 
 /**
+ * Request header that Next.js's renderer parses to extract the nonce
+ * via the `'nonce-{value}'` pattern; the framework then attaches that
+ * nonce to all framework scripts, page bundles, and inline scripts it
+ * emits. Even when the response advertises CSP in Report-Only mode,
+ * this request header MUST contain the enforcing-style policy value
+ * (i.e. unprefixed `Content-Security-Policy`) for the renderer to
+ * pick the nonce up. See Next.js docs:
+ * https://nextjs.org/docs/app/guides/content-security-policy#how-nonces-work-in-nextjs
+ */
+export const CSP_REQUEST_HEADER = "Content-Security-Policy";
+
+/**
  * Generate a CSP nonce.
  *
  * Uses the Edge runtime's global `crypto.getRandomValues` so the same

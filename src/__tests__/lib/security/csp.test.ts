@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCspHeaderValue,
   CSP_HEADER_NAME,
+  CSP_REQUEST_HEADER,
   generateCspNonce,
   NONCE_HEADER,
 } from "@/lib/security/csp";
@@ -59,6 +60,13 @@ describe("csp", () => {
 
     it("NONCE_HEADER is the conventional x-nonce", () => {
       expect(NONCE_HEADER).toBe("x-nonce");
+    });
+
+    it("CSP_REQUEST_HEADER is the unprefixed Content-Security-Policy", () => {
+      // Next's renderer parses this *request* header for the nonce; it
+      // must be the enforcing-style name even when the response ships
+      // CSP in Report-Only mode.
+      expect(CSP_REQUEST_HEADER).toBe("Content-Security-Policy");
     });
   });
 });

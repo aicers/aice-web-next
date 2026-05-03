@@ -8,6 +8,7 @@ import { AUTH_COOKIE_NAME, isPublicPath } from "./lib/auth/proxy-auth";
 import {
   buildCspHeaderValue,
   CSP_HEADER_NAME,
+  CSP_REQUEST_HEADER,
   generateCspNonce,
   NONCE_HEADER,
 } from "./lib/security/csp";
@@ -31,12 +32,23 @@ export default async function proxy(request: NextRequest) {
 
   // Mint a per-request CSP nonce. The proxy's matcher already
   // excludes `/api/*` and other non-HTML paths, so every request
-  // that lands here gets a nonce + CSP header.  Forward the nonce to
-  // RSC layouts via a request header so the framework's nonce-aware
-  // script injection picks it up.
+  // that lands here gets a nonce + CSP header.
+  //
+  // Two request headers must be set so Next.js's renderer attaches
+  // `nonce` attributes to framework scripts, page bundles, and inline
+  // scripts it emits:
+  //   • `x-nonce` — read by app code that wants the raw nonce
+  //   • `Content-Security-Policy` — parsed by Next's renderer for the
+  //     `'nonce-{value}'` pattern; the value here is the enforcing
+  //     policy even though the response ships it as Report-Only.
+  // Mutating in place is sufficient because next-intl's middleware
+  // forwards the request headers via
+  // `NextResponse.next/rewrite({ request: { headers: new Headers(req.headers) } })`,
+  // so our mutations propagate to the RSC render path.
   const nonce = generateCspNonce();
   const cspHeaderValue = buildCspHeaderValue(nonce);
   request.headers.set(NONCE_HEADER, nonce);
+  request.headers.set(CSP_REQUEST_HEADER, cspHeaderValue);
 
   // Forward the request URL on every request — public and protected
   // alike — so the gate layouts can read it via `headers()` regardless

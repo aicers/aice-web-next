@@ -297,6 +297,14 @@ is staged: the Report-Only mode lands first to surface any inline
 script/style breakages in real traffic before the header is promoted
 to enforcing CSP.
 
+The CSP nonce flow requires dynamic rendering — `app/[locale]/layout.tsx`
+calls `await connection()` so framework script tags receive a fresh
+per-request nonce. Pages added under `app/` that are intentionally
+statically rendered (e.g. the built-in `_not-found` page) will not
+carry a nonce; under enforcing CSP they would be blocked, so the
+Report-Only validation cycle exists in part to identify any such
+paths before promotion.
+
 The `__Host-csrf` cookie and `Secure` flag on the access token cookie
 are automatically enabled when `NODE_ENV=production` (set by the
 Dockerfile).
