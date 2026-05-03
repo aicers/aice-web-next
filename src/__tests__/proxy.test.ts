@@ -228,6 +228,42 @@ describe("proxy", () => {
       expect(cspResponse).toBe(cspRequest);
     });
 
+    it("forwards the nonce-bearing CSP request header to the renderer for an unmatched (not-found) path with a valid session", async () => {
+      // The proxy is fail-closed, so an unauthenticated `/missing` would
+      // hit the `/sign-in` redirect branch instead of the not-found
+      // branch.  Driving with a valid JWT exercises the same renderer
+      // path that produces the dynamic not-found HTML, which is the only
+      // way to assert that the per-request nonce reaches the boundary
+      // that issue #411 makes dynamic.
+      mockVerifyJwtStateless.mockResolvedValue({
+        sub: "account-1",
+        sid: "session-1",
+        roles: ["admin"],
+        token_version: 0,
+        kid: "key-1",
+      });
+      mockIntlMiddleware.mockImplementation((request: NextRequest) => {
+        const cspRequest = request.headers.get("Content-Security-Policy");
+        const xNonce = request.headers.get("x-nonce");
+        const response = new Response(null, { status: 404 });
+        if (cspRequest) response.headers.set("x-test-csp-request", cspRequest);
+        if (xNonce) response.headers.set("x-test-nonce", xNonce);
+        return response;
+      });
+
+      const response = await proxy(makeRequest("/missing", "valid-token"));
+
+      const cspRequest = response.headers.get("x-test-csp-request");
+      const nonce = response.headers.get("x-test-nonce");
+      expect(cspRequest).toBeTruthy();
+      expect(nonce).toBeTruthy();
+      expect(cspRequest).toContain(`'nonce-${nonce}'`);
+      const cspResponse = response.headers.get(
+        "Content-Security-Policy-Report-Only",
+      );
+      expect(cspResponse).toBe(cspRequest);
+    });
+
     it("mints a fresh nonce per request", async () => {
       // Return a fresh Response each call so applyCspHeader writes
       // into distinct header objects.
