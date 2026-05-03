@@ -26,11 +26,39 @@ import {
   ensureCustomerExists,
   resetAccountDefaults,
 } from "./helpers/setup-db";
+import { closeAdminAgent, mockServerSession } from "./mock-server-admin";
 
 const VIEWPORT = { width: 1440, height: 900 } as const;
 const ASSETS_DIR = path.resolve(__dirname, "..", "docs", "assets");
 
 test.use({ viewport: VIEWPORT });
+
+// Per-spec scope so the empty-bootstrap stub registered below is
+// removed in `afterAll` without touching other specs' state.
+const session = mockServerSession();
+
+test.beforeAll(async () => {
+  // The Detection page bootstrap dispatches `eventList` with the
+  // default page size (50). Since #405 Round 2 the bootstrap re-
+  // throws unrecognised review GraphQL `errors[]` payloads as
+  // `ReviewUnknownGraphQLError` (including the mock server's
+  // "no stub registered" message), so the page tree crashes
+  // before the drawer can render. Pin an empty fixture to
+  // `first: 50` so the captures below render the shell at rest.
+  await session.registerStub({
+    operation: "eventList",
+    matchVariables: { first: 50 },
+    response: {
+      kind: "fixture",
+      fixture: "detection/eventList.empty.json",
+    },
+  });
+});
+
+test.afterAll(async () => {
+  await session.clear();
+  await closeAdminAgent();
+});
 
 // The serial Detection screenshot suite runs six sign-ins back-to-
 // back; without resetting between tests the auth rate limiter blocks
