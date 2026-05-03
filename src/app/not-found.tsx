@@ -4,6 +4,12 @@ import { routing } from "@/i18n/routing";
 
 import "./globals.css";
 
+type NotFoundMessages = {
+  title: string;
+  description: string;
+  backToDashboard: string;
+};
+
 export default async function RootNotFound() {
   // Opt out of static rendering so the per-request CSP nonce minted in
   // `src/proxy.ts` reaches every framework script tag.  This boundary
@@ -17,11 +23,16 @@ export default async function RootNotFound() {
 
   // The root layout (`src/app/layout.tsx`) is a pass-through and the
   // locale provider/theme/font shell lives in `[locale]/layout.tsx`, so
-  // this boundary must render its own minimal HTML document.  We render
-  // a static English message rather than reaching for next-intl: the
-  // request that lands here has no resolved locale.
+  // this boundary must render its own minimal HTML document.  The request
+  // that lands here has no resolved locale, so we render the configured
+  // default-locale messages and tag the document with the same locale —
+  // this keeps `lang` and copy in agreement under any `DEFAULT_LOCALE`.
+  const locale = routing.defaultLocale;
+  const messages = (await import(`@/i18n/messages/${locale}.json`)).default;
+  const t = messages.notFound as NotFoundMessages;
+
   return (
-    <html lang={routing.defaultLocale}>
+    <html lang={locale}>
       <body
         style={{
           fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
@@ -39,13 +50,13 @@ export default async function RootNotFound() {
         }}
       >
         <h1 style={{ fontSize: "1.5rem", fontWeight: 600, margin: 0 }}>
-          404 — Page not found
+          {t.title}
         </h1>
         <p style={{ maxWidth: "32rem", fontSize: "0.875rem", margin: 0 }}>
-          The page you are looking for does not exist or has been moved.
+          {t.description}
         </p>
         <a
-          href="/"
+          href="/dashboard"
           style={{
             fontSize: "0.875rem",
             fontWeight: 500,
@@ -53,7 +64,7 @@ export default async function RootNotFound() {
             textDecoration: "underline",
           }}
         >
-          Back to home
+          {t.backToDashboard}
         </a>
       </body>
     </html>
