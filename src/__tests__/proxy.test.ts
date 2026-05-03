@@ -138,4 +138,85 @@ describe("proxy", () => {
       expect(config.matcher).toBe("/((?!api|trpc|_next|_vercel|.*\\..*).*)");
     });
   });
+
+  describe("CSP header (Report-Only)", () => {
+    it("attaches Content-Security-Policy-Report-Only on the public path response", async () => {
+      const response = await proxy(makeRequest("/sign-in"));
+
+      const csp = response.headers.get("Content-Security-Policy-Report-Only");
+      expect(csp).toBeTruthy();
+      expect(csp).toContain("default-src 'self'");
+      expect(csp).toMatch(
+        /script-src 'self' 'nonce-[A-Za-z0-9+/=]+' 'strict-dynamic'/,
+      );
+      expect(csp).toContain("frame-ancestors 'none'");
+    });
+
+    it("attaches CSP-Report-Only on the sign-in redirect from a protected path", async () => {
+      const response = await proxy(makeRequest("/audit-logs"));
+
+      expect(response.status).toBe(307);
+      expect(
+        response.headers.get("Content-Security-Policy-Report-Only"),
+      ).toBeTruthy();
+    });
+
+    it("attaches CSP-Report-Only on the redirect when JWT verification fails", async () => {
+      mockVerifyJwtStateless.mockRejectedValue(new Error("JWT expired"));
+
+      const response = await proxy(makeRequest("/audit-logs", "bad-token"));
+
+      expect(response.status).toBe(307);
+      expect(
+        response.headers.get("Content-Security-Policy-Report-Only"),
+      ).toBeTruthy();
+    });
+
+    it("does NOT emit the enforcing Content-Security-Policy header (Report-Only only)", async () => {
+      const response = await proxy(makeRequest("/sign-in"));
+
+      // Promotion to enforcing CSP is a separate follow-up after one
+      // release of Report-Only validation.
+      expect(response.headers.get("Content-Security-Policy")).toBeNull();
+    });
+
+    it("forwards the nonce to RSC via the x-nonce request header", async () => {
+      mockIntlMiddleware.mockImplementation((request: NextRequest) => {
+        // Capture the request that the intl middleware sees so we can
+        // assert that x-nonce was forwarded.
+        const nonce = request.headers.get("x-nonce");
+        const response = new Response(null, { status: 200 });
+        if (nonce) response.headers.set("x-test-nonce", nonce);
+        return response;
+      });
+
+      const response = await proxy(makeRequest("/sign-in"));
+
+      const forwardedNonce = response.headers.get("x-test-nonce");
+      expect(forwardedNonce).toBeTruthy();
+      // The same nonce should appear in the CSP header.
+      const csp = response.headers.get("Content-Security-Policy-Report-Only");
+      expect(csp).toContain(`'nonce-${forwardedNonce}'`);
+    });
+
+    it("mints a fresh nonce per request", async () => {
+      // Return a fresh Response each call so applyCspHeader writes
+      // into distinct header objects.
+      mockIntlMiddleware.mockImplementation(
+        () => new Response(null, { status: 200 }),
+      );
+
+      const r1 = await proxy(makeRequest("/sign-in"));
+      const r2 = await proxy(makeRequest("/sign-in"));
+
+      const csp1 = r1.headers.get("Content-Security-Policy-Report-Only") ?? "";
+      const csp2 = r2.headers.get("Content-Security-Policy-Report-Only") ?? "";
+      const nonce1 = csp1.match(/'nonce-([^']+)'/)?.[1];
+      const nonce2 = csp2.match(/'nonce-([^']+)'/)?.[1];
+
+      expect(nonce1).toBeTruthy();
+      expect(nonce2).toBeTruthy();
+      expect(nonce1).not.toBe(nonce2);
+    });
+  });
 });
