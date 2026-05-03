@@ -48,9 +48,9 @@ the values:
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string for `auth_db`. Host-side DSN — defaults to `localhost:5434` to match the published compose port (see `AICE_POSTGRES_HOST_PORT`). |
-| `DATABASE_ADMIN_URL` | Admin connection to create databases at runtime. Host-side DSN; same port-mapping note as `DATABASE_URL`. |
-| `AUDIT_DATABASE_URL` | PostgreSQL connection string for `audit_db`. Host-side DSN; same port-mapping note as `DATABASE_URL`. |
+| `DATABASE_URL` | PostgreSQL connection string for `auth_db`. **The shipped `.env.example` value is host-side** (`localhost:5434`, for `pnpm dev` and host tooling). The prod compose profile passes `.env` directly into the `next-app` container, where `localhost` is the container itself — set this to `postgres://postgres:postgres@postgres:5432/auth_db` for prod. See the [first-boot deployment checklist](#first-boot-deployment-checklist) and `AICE_POSTGRES_HOST_PORT`. |
+| `DATABASE_ADMIN_URL` | Admin connection to create databases at runtime. Same dev-vs-prod address split as `DATABASE_URL`; for prod use `postgres://postgres:postgres@postgres:5432/postgres`. |
+| `AUDIT_DATABASE_URL` | PostgreSQL connection string for `audit_db`. Same dev-vs-prod address split as `DATABASE_URL`; for prod use `postgres://audit_writer:changeme@postgres:5432/audit_db`. |
 | `AICE_POSTGRES_HOST_PORT` | Host port the compose `postgres` service publishes on. Default `5434` so aice-web-next does not collide with any other Postgres on the host. The compose `next-app` service still reaches Postgres at `postgres:5432` over the compose network — only the host-published port shifts. Operators with an existing 5432-bound deployment can override with `AICE_POSTGRES_HOST_PORT=5432` and update the host-side DSNs above accordingly. |
 | `REVIEW_GRAPHQL_ENDPOINT` | `review-web` (manager) GraphQL endpoint URL |
 | `GIGANTO_GRAPHQL_ENDPOINT` | Giganto GraphQL endpoint URL (direct mTLS, not proxied through review-web) |
@@ -369,8 +369,25 @@ audit table.
 #### First-boot deployment checklist
 
 1. Populate `.env` (the prod compose profile reads `.env`, not
-   `.env.local`). At minimum set `CSRF_SECRET`, the database URLs,
-   the GraphQL endpoints, and:
+   `.env.local`). The prod compose passes `.env` *directly into the
+   `next-app` container*, so the database URLs must use the
+   compose-network address `postgres:5432`, not the host-side
+   `localhost:${AICE_POSTGRES_HOST_PORT:-5434}` that the shipped
+   `.env.example` ships with for `pnpm dev`. Concretely, override the
+   three DSNs to:
+
+   ```env
+   DATABASE_URL=postgres://postgres:postgres@postgres:5432/auth_db
+   DATABASE_ADMIN_URL=postgres://postgres:postgres@postgres:5432/postgres
+   AUDIT_DATABASE_URL=postgres://audit_writer:changeme@postgres:5432/audit_db
+   ```
+
+   Host tooling (`psql`, the Vitest integration suite, DBeaver, etc.)
+   continues to use the `.env.example` defaults at
+   `localhost:${AICE_POSTGRES_HOST_PORT:-5434}` — a separate file
+   (e.g. `.env.local`) is the natural place to keep them.
+
+   At minimum also set `CSRF_SECRET`, the GraphQL endpoints, and:
    - `EXPECTED_ORIGIN=https://your.public.host` so the CSRF/Origin
      guard accepts mutation requests through the HTTPS proxy.
    - One of `JWT_SIGNING_KEY_FILE=<path>` (recommended — a Secret
