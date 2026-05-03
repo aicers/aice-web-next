@@ -215,6 +215,63 @@ async function runAdminQuery(sql: string): Promise<void> {
   }
 }
 
+function buildAuditAdminUrl(): string {
+  const url = new URL(requireDatabaseAdminUrl());
+  url.pathname = "/audit_db";
+  return url.toString();
+}
+
+async function auditWriterRoleExists(pool: pg.Pool): Promise<boolean> {
+  const result = await pool.query<{ exists: boolean }>(
+    "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'audit_writer') AS exists",
+  );
+  return result.rows[0]?.exists === true;
+}
+
+/**
+ * Re-apply schema-level grants the audit migrations themselves depend on.
+ * Run before `migrateAuditDb()` so a freshly-restored database (or one
+ * where `audit_writer` has been inadvertently revoked) heals before the
+ * migration runner connects as `audit_writer` and tries to CREATE TABLE.
+ *
+ * Short-circuits cleanly when the role does not exist (fresh cluster
+ * before init-audit-db.sql has run, or non-Docker environments).
+ */
+export async function ensureAuditRolePermissionsPreflight(): Promise<void> {
+  const pool = connectTo(buildAuditAdminUrl());
+  try {
+    if (!(await auditWriterRoleExists(pool))) return;
+    await pool.query("GRANT CREATE, USAGE ON SCHEMA public TO audit_writer");
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
+ * Re-apply table- and sequence-level grants. Run after `migrateAuditDb()`
+ * because on a fresh cluster `audit_logs` does not exist until 0001
+ * runs. Guarded with `to_regclass(...)` so the helper is also safe
+ * to call before the table exists.
+ */
+export async function ensureAuditRolePermissionsPostflight(): Promise<void> {
+  const pool = connectTo(buildAuditAdminUrl());
+  try {
+    if (!(await auditWriterRoleExists(pool))) return;
+
+    const tableExists = await pool.query<{ exists: boolean }>(
+      "SELECT to_regclass('public.audit_logs') IS NOT NULL AS exists",
+    );
+    if (tableExists.rows[0]?.exists !== true) return;
+
+    await pool.query("GRANT INSERT, SELECT ON audit_logs TO audit_writer");
+    await pool.query(
+      "GRANT USAGE, SELECT ON SEQUENCE audit_logs_id_seq TO audit_writer",
+    );
+  } finally {
+    await pool.end();
+  }
+}
+
 export async function migrateAuthDb(): Promise<number> {
   const migrations = scanMigrations(getMigrationsDir("auth"));
   if (migrations.length === 0) return 0;
@@ -279,7 +336,14 @@ export async function dropCustomerDb(dbName: string): Promise<void> {
 
 export async function runStartupMigrations(): Promise<void> {
   await migrateAuthDb();
+  // Heal schema-level grants before the audit migration runner connects
+  // as `audit_writer`. A drifted GRANT CREATE on `public` would surface
+  // as `permission denied for schema public` from migrateAuditDb().
+  await ensureAuditRolePermissionsPreflight();
   await migrateAuditDb();
+  // Re-apply table/sequence grants on every boot. Idempotent; safe
+  // against operator-induced privilege drift.
+  await ensureAuditRolePermissionsPostflight();
 
   // Clean up stale provisioning rows (crashed mid-provision)
   const stale = await query<{ database_name: string }>(
