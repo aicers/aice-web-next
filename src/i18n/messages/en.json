@@ -10,6 +10,11 @@
     "loading": "Loading...",
     "error": "An error occurred"
   },
+  "notFound": {
+    "title": "404 — Page not found",
+    "description": "The page you are looking for does not exist or has been moved.",
+    "backToDashboard": "Back to dashboard"
+  },
   "auth": {
     "username": "Account ID",
     "password": "Password",

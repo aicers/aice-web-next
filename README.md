@@ -297,13 +297,14 @@ is staged: the Report-Only mode lands first to surface any inline
 script/style breakages in real traffic before the header is promoted
 to enforcing CSP.
 
-The CSP nonce flow requires dynamic rendering — `app/[locale]/layout.tsx`
-calls `await connection()` so framework script tags receive a fresh
-per-request nonce. Pages added under `app/` that are intentionally
-statically rendered (e.g. the built-in `_not-found` page) will not
-carry a nonce; under enforcing CSP they would be blocked, so the
-Report-Only validation cycle exists in part to identify any such
-paths before promotion.
+The CSP nonce flow requires dynamic rendering — `app/[locale]/layout.tsx`,
+`app/[locale]/not-found.tsx`, and `app/not-found.tsx` all call
+`await connection()` so framework script tags receive a fresh
+per-request nonce.  Any new page added under `app/` must do the same
+(or have no `<script>` tags at all): a statically rendered HTML
+response carries no per-request nonce and would be blocked once CSP
+promotes from Report-Only to enforcing.  Verify with `pnpm build` —
+the route map should mark every HTML route as `ƒ` (dynamic).
 
 The `__Host-csrf` cookie and `Secure` flag on the access token cookie
 are automatically enabled when `NODE_ENV=production` (set by the
