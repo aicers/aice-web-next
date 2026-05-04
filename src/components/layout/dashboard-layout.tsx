@@ -15,6 +15,8 @@ interface DashboardLayoutProps {
   username?: string;
   scope: EffectiveCustomerScope;
   canManageCustomers: boolean;
+  initialSidebarCollapsed?: boolean;
+  hasSidebarCollapsedCookie?: boolean;
 }
 
 export default function DashboardLayout({
@@ -22,8 +24,13 @@ export default function DashboardLayout({
   username,
   scope,
   canManageCustomers,
+  initialSidebarCollapsed = false,
+  hasSidebarCollapsedCookie = false,
 }: Readonly<DashboardLayoutProps>) {
-  const { collapsed, toggle } = useSidebar();
+  const { collapsed, toggle } = useSidebar({
+    initialCollapsed: initialSidebarCollapsed,
+    hasCookie: hasSidebarCollapsedCookie,
+  });
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (

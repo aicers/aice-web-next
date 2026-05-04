@@ -112,3 +112,22 @@ prompted:
 ![Password change page](../assets/change-password-en.png)
 
 After changing the password you are redirected to the dashboard.
+
+## Sidebar Layout
+
+The dashboard's left navigation can be toggled between an expanded
+view (with labels) and a collapsed icon-only view using the arrow
+button at the bottom of the sidebar. The choice is remembered:
+
+- **First sign-in** — sidebar is expanded so labels are visible
+  while you learn the navigation.
+- **After toggling** — the chosen state is persisted in a
+  `sidebar-collapsed` cookie and is restored on the next reload or
+  sign-in. The first painted HTML already reflects the saved
+  preference, so reloads do not flash from expanded to collapsed.
+
+The preference is per browser (cookie + `localStorage`) and is not
+synced across devices through your account.
+
+> Screenshots for the expanded and collapsed states will be added
+> in a follow-up pass once surrounding navigation changes settle.
