@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import DashboardLayoutClient from "@/components/layout/dashboard-layout";
@@ -59,11 +60,21 @@ export default async function DashboardLayout({
     "customers:read",
   );
 
+  // Read the persisted sidebar preference so the first server-rendered
+  // HTML matches the user's choice — avoids the expanded-then-collapsed
+  // flash on reload. Cookie is authoritative; a missing cookie means
+  // "no preference yet," not "expanded."
+  const sidebarCookie = (await cookies()).get("sidebar-collapsed");
+  const hasSidebarCollapsedCookie = sidebarCookie !== undefined;
+  const initialSidebarCollapsed = sidebarCookie?.value === "true";
+
   return (
     <DashboardLayoutClient
       username={username}
       scope={scope}
       canManageCustomers={canManageCustomers}
+      initialSidebarCollapsed={initialSidebarCollapsed}
+      hasSidebarCollapsedCookie={hasSidebarCollapsedCookie}
     >
       {children}
     </DashboardLayoutClient>

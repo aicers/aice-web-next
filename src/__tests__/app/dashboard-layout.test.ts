@@ -7,6 +7,11 @@ const mockRedirect = vi.hoisted(() => vi.fn());
 const mockGetEffectiveCustomerScope = vi.hoisted(() => vi.fn());
 const mockHasPermission = vi.hoisted(() => vi.fn());
 const mockQuery = vi.hoisted(() => vi.fn());
+const mockCookies = vi.hoisted(() => vi.fn());
+
+vi.mock("next/headers", () => ({
+  cookies: mockCookies,
+}));
 
 vi.mock("@/lib/auth/session", () => ({
   getCurrentSession: mockGetCurrentSession,
@@ -66,8 +71,19 @@ beforeEach(() => {
   mockHasPermission.mockResolvedValue(false);
   mockQuery.mockReset();
   mockQuery.mockResolvedValue({ rows: [{ username: "admin" }] });
+  mockCookies.mockReset();
+  mockCookies.mockResolvedValue({ get: () => undefined });
   vi.resetModules();
 });
+
+function cookieStoreFor(value: string | undefined) {
+  return {
+    get: (name: string) =>
+      name === "sidebar-collapsed" && value !== undefined
+        ? { name, value }
+        : undefined,
+  };
+}
 
 describe("DashboardLayout", () => {
   it("redirects to default-locale sign-in when session is missing", async () => {
@@ -128,6 +144,54 @@ describe("DashboardLayout", () => {
 
     expect(result.props.children).toBe("child");
     expect(mockRedirect).not.toHaveBeenCalled();
+  });
+
+  it("forwards initialSidebarCollapsed=true and hasSidebarCollapsedCookie=true when cookie is 'true'", async () => {
+    mockGetCurrentSession.mockResolvedValue(validSession);
+    mockCookies.mockResolvedValue(cookieStoreFor("true"));
+
+    const DashboardLayout = (await import("@/app/[locale]/(dashboard)/layout"))
+      .default;
+
+    const result = await DashboardLayout({
+      children: "child",
+      params: Promise.resolve({ locale: "en" }),
+    });
+
+    expect(result.props.initialSidebarCollapsed).toBe(true);
+    expect(result.props.hasSidebarCollapsedCookie).toBe(true);
+  });
+
+  it("forwards initialSidebarCollapsed=false and hasSidebarCollapsedCookie=true when cookie is 'false'", async () => {
+    mockGetCurrentSession.mockResolvedValue(validSession);
+    mockCookies.mockResolvedValue(cookieStoreFor("false"));
+
+    const DashboardLayout = (await import("@/app/[locale]/(dashboard)/layout"))
+      .default;
+
+    const result = await DashboardLayout({
+      children: "child",
+      params: Promise.resolve({ locale: "en" }),
+    });
+
+    expect(result.props.initialSidebarCollapsed).toBe(false);
+    expect(result.props.hasSidebarCollapsedCookie).toBe(true);
+  });
+
+  it("forwards hasSidebarCollapsedCookie=false when cookie is missing", async () => {
+    mockGetCurrentSession.mockResolvedValue(validSession);
+    mockCookies.mockResolvedValue(cookieStoreFor(undefined));
+
+    const DashboardLayout = (await import("@/app/[locale]/(dashboard)/layout"))
+      .default;
+
+    const result = await DashboardLayout({
+      children: "child",
+      params: Promise.resolve({ locale: "en" }),
+    });
+
+    expect(result.props.initialSidebarCollapsed).toBe(false);
+    expect(result.props.hasSidebarCollapsedCookie).toBe(false);
   });
 
   // The layout used to wrap `getEffectiveCustomerScope` in a `try/catch`
