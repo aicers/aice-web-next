@@ -162,9 +162,21 @@ export function PresetsDropdown({
     return { ok: false, code: result.code };
   }
 
+  // When the saved-filter fetch failed, retry on the next open of the
+  // dropdown. The hook's cache is held by the shell (not by this
+  // component), so without this retry hook the operator would be
+  // stuck on the inline error placeholder until something else in the
+  // page causes a refetch — which contradicts what the manual tells
+  // them ("reopen the dropdown to retry").
+  function handleOpenChange(open: boolean) {
+    if (open && savedFilters?.loadError) {
+      void savedFilters.refresh();
+    }
+  }
+
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={handleOpenChange}>
         <DropdownMenuTrigger asChild>
           <Button type="button" variant="outline" size="sm">
             {labels.trigger}

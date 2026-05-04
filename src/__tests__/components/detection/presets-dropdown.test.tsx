@@ -29,8 +29,33 @@ import type { RecommendedPreset } from "@/lib/detection/recommended-filters";
 import type { SavedFilter } from "@/lib/detection/saved-filters";
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: React.ReactNode }) => (
-    <div data-slot="dropdown-menu">{children}</div>
+  DropdownMenu: ({
+    children,
+    onOpenChange,
+  }: {
+    children: React.ReactNode;
+    onOpenChange?: (open: boolean) => void;
+  }) => (
+    // Expose `onOpenChange` so tests can simulate the open/close cycle
+    // that the live Radix root drives — used to assert the saved-error
+    // retry hook fires on reopen.
+    <div data-slot="dropdown-menu" data-testid="dropdown-root">
+      <button
+        type="button"
+        data-testid="simulate-open-true"
+        onClick={() => onOpenChange?.(true)}
+      >
+        open
+      </button>
+      <button
+        type="button"
+        data-testid="simulate-open-false"
+        onClick={() => onOpenChange?.(false)}
+      >
+        close
+      </button>
+      {children}
+    </div>
   ),
   DropdownMenuTrigger: ({
     children,
@@ -361,6 +386,53 @@ describe("PresetsDropdown", () => {
     );
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Could not load saved filters.");
+  });
+
+  it("calls savedFilters.refresh() on reopen when the saved section is in load-error", () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PresetsDropdown
+        recommendedPresets={RECOMMENDED}
+        savedFilters={buildSavedState({
+          loadError: true,
+          filters: [],
+          refresh,
+        })}
+        labels={buildLabels()}
+        onActivateRecommended={vi.fn()}
+        onLoadSavedInNewTab={vi.fn()}
+        onLoadSavedInCurrentTab={vi.fn()}
+        onSaveCurrentFilter={vi.fn()}
+      />,
+    );
+
+    // Simulate a close-then-reopen cycle. Only the open transition
+    // should trigger the retry; the close transition must not.
+    fireEvent.click(screen.getByTestId("simulate-open-false"));
+    expect(refresh).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("simulate-open-true"));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call savedFilters.refresh() on open when the saved section is not in load-error", () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PresetsDropdown
+        recommendedPresets={RECOMMENDED}
+        savedFilters={buildSavedState({ refresh })}
+        labels={buildLabels()}
+        onActivateRecommended={vi.fn()}
+        onLoadSavedInNewTab={vi.fn()}
+        onLoadSavedInCurrentTab={vi.fn()}
+        onSaveCurrentFilter={vi.fn()}
+      />,
+    );
+
+    // The hook's mount-time fetch already populated the cache, so
+    // open transitions in the steady state must not re-hit the
+    // server.
+    fireEvent.click(screen.getByTestId("simulate-open-true"));
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("renders the saved-empty placeholder when the saved list is empty", () => {
