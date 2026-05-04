@@ -346,6 +346,7 @@ export default async function DetectionPage({
       savedLoadError: t("presets.savedError"),
       savedEmpty: t("presets.savedEmpty"),
       savedRowMenuLabelTemplate: t.raw("presets.savedRowMenuLabel") as string,
+      openInNewTabTemplate: t.raw("presets.openInNewTab") as string,
       loadInNewTab: t("presets.loadInNewTab"),
       loadInCurrentTab: t("presets.loadInCurrentTab"),
       rename: t("presets.rename"),

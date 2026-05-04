@@ -52,13 +52,17 @@ umbrella:
 - **1 year** — Time period set to the last 1 year, no other
   narrowing.
 
-Picking an entry opens the preset in a **new tab** (matching the
-saved-filter default-click contract) and auto-runs the query so
-the new tab lands populated. The current tab is left untouched,
-the same way the pivot path and saved-filter activation behave.
-Hitting the 8-tab cap surfaces the same "close a tab to load —
-already at the 8-tab limit" toast the rest of the workspace uses;
-nothing is silently dropped.
+Picking an entry routes through the same preset-matching logic
+saved filters use (see [Loading a saved filter](#loading-a-saved-filter)
+below): the workspace **focuses an existing tab** that was created
+from the same recommended preset and still uses the preset's time
+window, otherwise it creates a fresh tab pre-seeded with the
+preset's filter and auto-runs the query. The current tab is left
+untouched. To force a new tab even when a match exists, click the
+small **Open in new tab** icon on the row, or hold Cmd/Ctrl while
+clicking the row. Hitting the 8-tab cap surfaces the same "close
+a tab to load — already at the 8-tab limit" toast the rest of the
+workspace uses; nothing is silently dropped.
 
 The preset's start / end is resolved at activation time relative
 to "now," so the filter committed today reflects the same window
@@ -103,18 +107,42 @@ remains available across reloads.
 Each entry in the **Saved** section of the Presets dropdown acts
 on the active workspace when you interact with it:
 
-- **Click the row** — the default action — opens a new tab
-  pre-seeded with the saved filter and auto-runs the query,
-  leaving the tab you were on untouched. This matches the tab-bar
-  contract that tabs are for context switches.
-- **Load in new tab** (in the row's submenu) is the same default
-  action made explicit so it can be re-fired without dismissing
+- **Click the row** — the default action — looks for an existing
+  tab that was created from the same saved filter and still uses
+  the filter's original time window. If one is found, the
+  workspace **focuses that tab** without re-running the query;
+  scroll position, pagination, and Quick peek state are
+  preserved, and the operator decides when to refresh. If no
+  matching tab exists, a new tab is created pre-seeded with the
+  filter and the query auto-runs. Tabs you have **narrowed** (a
+  stricter source / destination / kind / level) or whose **time
+  window you have edited** no longer match — your work is
+  preserved and a fresh tab is created instead.
+- **Open in new tab** — the small icon next to each row, or
+  Cmd/Ctrl-click on the row body — always creates a new tab
+  regardless of matching. Use this for side-by-side comparison.
+- **Load in new tab** (in the row's submenu) is the explicit
+  force-new-tab action so it can be re-fired without dismissing
   the row.
 - **Load in current tab** (in the row's submenu) replaces the
   active tab's filter with the saved filter and re-runs the
   query. The active tab's pagination resets to the first page;
   the rest of the workspace (analytics expansion, Quick peek
   selection) follows the standard Apply contract.
+
+When a match-focus reveals a tab whose last fetch is more than a
+couple of minutes old, the result header surfaces a one-shot
+**Last updated …** notice with a **Refresh** button — refresh is
+the operator's choice, not an automatic re-query. Clicking
+Refresh runs the same fetch the manual Refresh button does. The
+notice does not appear when the tab's data is fresh.
+
+If a Refresh (or any other re-query) lands without the event your
+Quick peek inspector was pointing at, the inspector closes and
+the result header shows a **This event is no longer in the list**
+notice with a **Dismiss** button — the slice-reconcile path
+surfaces this so a vanished inspector is never silent. Closing
+the inspector yourself does not trigger the notice.
 
 The filter loads with all of its committed fields applied —
 including the time range, levels, sensors, source / destination,

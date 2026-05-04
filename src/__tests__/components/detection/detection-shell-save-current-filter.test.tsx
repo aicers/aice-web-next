@@ -324,6 +324,7 @@ function buildLabels(): PresetsDropdownLabels {
     savedLoadError: "Could not load saved filters.",
     savedEmpty: "Save a filter to keep it here.",
     savedRowMenuLabel: (name) => `Saved filter actions for ${name}`,
+    openInNewTab: (name) => `Open ${name} in a new tab`,
     loadInNewTab: "Load in new tab",
     loadInCurrentTab: "Load in current tab",
     rename: "Rename",
@@ -437,7 +438,7 @@ describe("Presets dropdown 'Save current filter…' shell wiring", () => {
             savedFilters={savedFilters}
             labels={buildLabels()}
             onActivateRecommended={vi.fn()}
-            onLoadSavedInNewTab={vi.fn()}
+            onActivateSaved={vi.fn()}
             onLoadSavedInCurrentTab={vi.fn()}
             onSaveCurrentFilter={onSaveCurrentFilter}
           />

@@ -130,6 +130,51 @@ export function filtersAreEquivalent(
 }
 
 /**
+ * Issue #429: time-excluding identity used by Detection's preset
+ * matching path. Every non-time field (kinds, levels, customers,
+ * endpoints, ...) is canonicalized through the same rules
+ * {@link normalizeFilterIdentity} uses; the literal `start` / `end`
+ * pair AND the relative {@link PeriodKey} are deliberately dropped so
+ * a tab that was created at 11:00 with `Last 1 hour` still equals the
+ * `Last 1 hour` preset at 11:30 even though its absolute window has
+ * advanced (or not, depending on whether the operator hit Refresh).
+ *
+ * For `mode: "query"` filters the trimmed text is the comparison key —
+ * v1 has no other way to canonicalise free-form query text, and the
+ * search-language phase has not yet defined what "the time portion of
+ * a query" means.
+ */
+export function normalizeFilterIdentityIgnoringTime(
+  filter: Filter,
+): FilterIdentity {
+  if (filter.mode === "query") {
+    return JSON.stringify({ mode: "query", text: filter.text.trim() });
+  }
+  const normalized = normalizeStructuredInput(filter.input, null);
+  // Drop the time keys the structured normalizer otherwise emits when
+  // `period` is null (the literal start / end fall-through).
+  delete normalized.start;
+  delete normalized.end;
+  return JSON.stringify({ mode: "structured", input: normalized });
+}
+
+/**
+ * Convenience wrapper around {@link normalizeFilterIdentityIgnoringTime}
+ * for the common preset-matching question. Two filters that share the
+ * same non-time fields compare equal regardless of their committed
+ * window.
+ */
+export function filtersAreEquivalentIgnoringTime(
+  a: Filter,
+  b: Filter,
+): boolean {
+  return (
+    normalizeFilterIdentityIgnoringTime(a) ===
+    normalizeFilterIdentityIgnoringTime(b)
+  );
+}
+
+/**
  * Identity used by the Phase Detection-14 analytics strip's fetch
  * effect and in-memory cache.
  *

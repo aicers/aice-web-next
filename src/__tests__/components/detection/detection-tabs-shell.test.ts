@@ -27,8 +27,10 @@ import {
   bootstrapTabToSnapshot,
   buildDefaultTabSnapshot,
   buildUrlSearchForTab,
+  findMatchingTab,
   mergeSnapshot,
   mergeStoredTabsOnRehydrate,
+  resolveActivatePresetEffect,
   resolveLoadSavedFilterEffect,
   resolvePivotEffect,
   routeSnapshotToTab,
@@ -40,6 +42,7 @@ import { INITIAL_PAGINATION_STATE } from "@/lib/detection/pagination";
 import type { PivotAction } from "@/lib/detection/pivot";
 import {
   createTabSnapshot,
+  type OriginPreset,
   type TabId,
   type TabSnapshot,
 } from "@/lib/detection/tabs";
@@ -152,6 +155,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -194,6 +198,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       analyticsTopN: 20,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -230,6 +235,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -371,6 +377,7 @@ describe("routeSnapshotToTab — Reviewer Round 2 (item 1)", () => {
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -523,6 +530,7 @@ describe("buildUrlSearchForTab — Reviewer Round 9 (pending token round-trip)",
       ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
     };
     const search = buildUrlSearchForTab(tab);
     expect(search.has("event")).toBe(false);
@@ -594,6 +602,7 @@ describe("mergeSnapshot — Reviewer Round 9 (pending token round-trip)", () => 
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: "pending-token-xyz",
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -629,6 +638,7 @@ describe("mergeSnapshot — Reviewer Round 9 (pending token round-trip)", () => 
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -998,5 +1008,162 @@ describe("resolveLoadSavedFilterEffect — Reviewer Round 2 (cap toast vs. creat
     });
     if (effect.kind !== "create") throw new Error("expected create branch");
     expect(effect.tab.endpoints).toEqual(endpoints);
+  });
+});
+
+describe("findMatchingTab — issue #429 §2 + §6", () => {
+  const SAVED_PRESET: OriginPreset = { kind: "saved", id: "sf-1" };
+  const RECOMMENDED_PRESET: OriginPreset = {
+    kind: "recommended",
+    id: "rec-1",
+  };
+  const PRESET_FILTER: Filter = {
+    mode: "structured",
+    input: {
+      start: "2026-04-25T00:00:00.000Z",
+      end: "2026-04-25T01:00:00.000Z",
+      kinds: ["HttpThreat"],
+    },
+  };
+
+  function presetTab(overrides: Partial<TabSnapshot> = {}): TabSnapshot {
+    return {
+      ...createTabSnapshot({
+        filter: PRESET_FILTER,
+        period: "1h",
+        originPreset: SAVED_PRESET,
+        timeMode: "preset",
+      }),
+      ...overrides,
+    };
+  }
+
+  it("returns null when no tab carries an origin preset", () => {
+    const manual = createTabSnapshot({ filter: PRESET_FILTER, period: "1h" });
+    expect(findMatchingTab([manual], SAVED_PRESET, PRESET_FILTER)).toBeNull();
+  });
+
+  it("focuses the matching tab on a second activation of the same preset", () => {
+    const tab = presetTab();
+    expect(findMatchingTab([tab], SAVED_PRESET, PRESET_FILTER)?.id).toBe(
+      tab.id,
+    );
+  });
+
+  it("does not match across kinds — saved-id `sf-1` and recommended-id `sf-1` stay distinct", () => {
+    // The kind discriminator is required because saved and recommended
+    // ids occupy separate namespaces. A coincidental id collision must
+    // not collapse the two onto each other.
+    const tab = presetTab({
+      originPreset: { kind: "saved", id: "sf-1" },
+    });
+    expect(
+      findMatchingTab(
+        [tab],
+        { kind: "recommended", id: "sf-1" },
+        PRESET_FILTER,
+      ),
+    ).toBeNull();
+  });
+
+  it("does not match when the tab's non-time fields have been narrowed", () => {
+    const narrowed = presetTab({
+      filter: {
+        mode: "structured",
+        input: { ...PRESET_FILTER.input, levels: [3] },
+      },
+    });
+    expect(findMatchingTab([narrowed], SAVED_PRESET, PRESET_FILTER)).toBeNull();
+  });
+
+  it("does not match when the tab's `timeMode` has flipped to `custom`", () => {
+    const customTime = presetTab({ timeMode: "custom" });
+    expect(
+      findMatchingTab([customTime], SAVED_PRESET, PRESET_FILTER),
+    ).toBeNull();
+  });
+
+  it("ignores the start/end ISO pair so a tab created hours ago still matches", () => {
+    // Mirrors the spec: a tab created at 11:00 with `Last 1 hour` is
+    // still a `Last 1 hour` tab at 11:30 even though its absolute
+    // start/end have not moved (the matcher does not advance them).
+    const olderTab = presetTab({
+      filter: {
+        mode: "structured",
+        input: {
+          start: "2099-01-01T00:00:00.000Z",
+          end: "2099-01-01T01:00:00.000Z",
+          kinds: ["HttpThreat"],
+        },
+      },
+    });
+    expect(findMatchingTab([olderTab], SAVED_PRESET, PRESET_FILTER)?.id).toBe(
+      olderTab.id,
+    );
+  });
+
+  it("focuses the most recently activated tab when multiple match", () => {
+    const older = presetTab({ lastActivatedAt: 1_000 });
+    const newer = presetTab({ lastActivatedAt: 5_000 });
+    const match = findMatchingTab([older, newer], SAVED_PRESET, PRESET_FILTER);
+    expect(match?.id).toBe(newer.id);
+  });
+
+  it("handles recommended presets the same way as saved", () => {
+    const tab = presetTab({ originPreset: RECOMMENDED_PRESET });
+    expect(findMatchingTab([tab], RECOMMENDED_PRESET, PRESET_FILTER)?.id).toBe(
+      tab.id,
+    );
+  });
+});
+
+describe("resolveActivatePresetEffect — issue #429", () => {
+  const FILTER: Filter = {
+    mode: "structured",
+    input: { kinds: ["HttpThreat"] },
+  };
+  const SAVED_PRESET: OriginPreset = { kind: "saved", id: "sf-1" };
+
+  it("seeds the new tab with the supplied origin preset and `timeMode: 'preset'`", () => {
+    const effect = resolveActivatePresetEffect(FILTER, [], {
+      tabCapReachedTemplate: "Tab cap reached ({max} max)",
+      maxTabs: 8,
+      period: "1h",
+      endpoints: [],
+      originPreset: SAVED_PRESET,
+    });
+    if (effect.kind !== "create") throw new Error("expected create branch");
+    expect(effect.tab.originPreset).toEqual(SAVED_PRESET);
+    expect(effect.tab.timeMode).toBe("preset");
+    expect(effect.tab.result.hasQueried).toBe(true);
+    expect(effect.tab.result.loading).toBe(true);
+  });
+
+  it("falls back to a manual tab (no preset, `timeMode: 'custom'`) when no preset is supplied", () => {
+    const effect = resolveActivatePresetEffect(FILTER, [], {
+      tabCapReachedTemplate: "Tab cap reached ({max} max)",
+      maxTabs: 8,
+      period: "1h",
+      endpoints: [],
+    });
+    if (effect.kind !== "create") throw new Error("expected create branch");
+    expect(effect.tab.originPreset).toBeNull();
+    expect(effect.tab.timeMode).toBe("custom");
+  });
+
+  it("emits the cap toast when the tab list is at the cap", () => {
+    const tab = createTabSnapshot({ filter: FILTER, period: null });
+    const tabs = Array.from({ length: 8 }, () => tab);
+    const effect = resolveActivatePresetEffect(FILTER, tabs, {
+      tabCapReachedTemplate: "Tab cap reached ({max} max)",
+      maxTabs: 8,
+      period: null,
+      endpoints: [],
+      originPreset: SAVED_PRESET,
+    });
+    expect(effect).toEqual({
+      kind: "toast",
+      message: "Tab cap reached (8 max)",
+    });
   });
 });

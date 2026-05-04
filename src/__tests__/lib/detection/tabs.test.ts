@@ -109,6 +109,27 @@ describe("createTabSnapshot", () => {
     const tab = createTabSnapshot({ filter: FILTER_1H, period: "1h" });
     expect(tab.pendingQuickPeekToken).toBeNull();
   });
+
+  it("defaults the issue #429 metadata to manual / custom with a fresh activation timestamp", () => {
+    const before = Date.now();
+    const tab = createTabSnapshot({ filter: FILTER_1H, period: "1h" });
+    expect(tab.originPreset).toBeNull();
+    expect(tab.timeMode).toBe("custom");
+    expect(tab.lastActivatedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it("propagates issue #429 originPreset / timeMode overrides into the snapshot", () => {
+    const tab = createTabSnapshot({
+      filter: FILTER_1H,
+      period: "1h",
+      originPreset: { kind: "saved", id: "sf-1" },
+      timeMode: "preset",
+      lastActivatedAt: 12345,
+    });
+    expect(tab.originPreset).toEqual({ kind: "saved", id: "sf-1" });
+    expect(tab.timeMode).toBe("preset");
+    expect(tab.lastActivatedAt).toBe(12345);
+  });
 });
 
 describe("preserveActiveTabParam", () => {

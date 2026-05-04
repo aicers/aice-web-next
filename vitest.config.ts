@@ -57,6 +57,11 @@ export default defineConfig({
             // through `savedFilters.save` without re-running through
             // `buildAppliedFilter`).
             "src/__tests__/components/detection/detection-shell-save-current-filter.test.tsx",
+            // Issue #429 §3 + §6: stale-data inline notice gated on
+            // a match-focus event. Needs a real DOM because the
+            // notice's gating effect runs on mount and the Refresh
+            // button click clears local React state.
+            "src/__tests__/components/detection/result-list-stale-focus.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -84,6 +89,7 @@ export default defineConfig({
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
             "src/__tests__/components/detection/presets-dropdown.test.tsx",
             "src/__tests__/components/detection/detection-shell-save-current-filter.test.tsx",
+            "src/__tests__/components/detection/result-list-stale-focus.test.tsx",
           ],
         },
       },

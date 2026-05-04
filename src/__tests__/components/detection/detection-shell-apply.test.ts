@@ -848,3 +848,93 @@ describe("ENDPOINT_CHIP_FOCUS", () => {
     );
   });
 });
+
+describe("shouldTransitionToCustomTime — issue #429 §2", () => {
+  // The structured filter's start/end are recomputed by selectPeriod
+  // on every period click, so we use distinct ISO values per case to
+  // make the "ISO drift on re-selection" scenarios visible.
+  const ISO_OLD_START = "2026-05-05T08:00:00.000Z";
+  const ISO_OLD_END = "2026-05-05T09:00:00.000Z";
+  const ISO_NEW_START = "2026-05-05T08:00:00.500Z";
+  const ISO_NEW_END = "2026-05-05T09:00:00.500Z";
+
+  function relativeFilter(): Filter {
+    return {
+      mode: "structured",
+      input: { start: ISO_OLD_START, end: ISO_OLD_END, kinds: ["HttpThreat"] },
+    };
+  }
+
+  it("re-selecting the same Period does NOT transition, even when ISO bounds drift", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.shouldTransitionToCustomTime(relativeFilter(), "1h", {
+        period: "1h",
+        startIso: ISO_NEW_START,
+        endIso: ISO_NEW_END,
+      }),
+    ).toBe(false);
+  });
+
+  it("changing the Period (1h → 1d) DOES transition", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.shouldTransitionToCustomTime(relativeFilter(), "1h", {
+        period: "1d",
+        startIso: ISO_NEW_START,
+        endIso: ISO_NEW_END,
+      }),
+    ).toBe(true);
+  });
+
+  it("dropping the relative period for a manual range DOES transition", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.shouldTransitionToCustomTime(relativeFilter(), "1h", {
+        period: null,
+        startIso: ISO_NEW_START,
+        endIso: ISO_NEW_END,
+      }),
+    ).toBe(true);
+  });
+
+  it("editing start/end while in absolute mode (period stays null) DOES transition", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const absolute: Filter = {
+      mode: "structured",
+      input: { start: ISO_OLD_START, end: ISO_OLD_END },
+    };
+    expect(
+      mod.shouldTransitionToCustomTime(absolute, null, {
+        period: null,
+        startIso: ISO_NEW_START,
+        endIso: ISO_OLD_END,
+      }),
+    ).toBe(true);
+  });
+
+  it("re-applying identical absolute start/end (no edit) does NOT transition", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const absolute: Filter = {
+      mode: "structured",
+      input: { start: ISO_OLD_START, end: ISO_OLD_END },
+    };
+    expect(
+      mod.shouldTransitionToCustomTime(absolute, null, {
+        period: null,
+        startIso: ISO_OLD_START,
+        endIso: ISO_OLD_END,
+      }),
+    ).toBe(false);
+  });
+});

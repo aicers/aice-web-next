@@ -72,16 +72,28 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuItem: ({
     children,
     onSelect,
+    onClick,
     ...rest
   }: {
     children: React.ReactNode;
     onSelect?: () => void;
+    onClick?: (event: React.MouseEvent) => void;
     [key: string]: unknown;
   }) => (
     <button
       type="button"
       role="menuitem"
-      onClick={() => onSelect?.()}
+      onClick={(event) => {
+        // Radix-style composition: the user's onClick runs first (with
+        // the option to call event.preventDefault() to suppress the
+        // default activation). onSelect only fires when the click was
+        // not consumed — used by issue #429's Cmd-Ctrl-click handler
+        // to bypass the default create-or-focus path.
+        onClick?.(event);
+        if (!event.defaultPrevented) {
+          onSelect?.();
+        }
+      }}
       {...(rest as Record<string, unknown>)}
     >
       {children}
@@ -271,6 +283,7 @@ function buildLabels(
     savedLoadError: "Could not load saved filters.",
     savedEmpty: "Save a filter to keep it here.",
     savedRowMenuLabel: (name) => `Saved filter actions for ${name}`,
+    openInNewTab: (name) => `Open ${name} in a new tab`,
     loadInNewTab: "Load in new tab",
     loadInCurrentTab: "Load in current tab",
     rename: "Rename",
@@ -330,7 +343,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState()}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -364,7 +377,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState()}
         labels={buildLabels()}
         onActivateRecommended={onActivate}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -379,7 +392,7 @@ describe("PresetsDropdown", () => {
     expect(onActivate).toHaveBeenCalledWith(RECOMMENDED[0]);
   });
 
-  it("default click on a saved row fires onLoadSavedInNewTab with that filter", () => {
+  it("default click on a saved row fires onActivateSaved with that filter", () => {
     const onNew = vi.fn();
     render(
       <PresetsDropdown
@@ -387,7 +400,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState()}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={onNew}
+        onActivateSaved={onNew}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -407,7 +420,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState({ loading: true, filters: [] })}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -428,7 +441,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState({ loadError: true, filters: [] })}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -449,7 +462,7 @@ describe("PresetsDropdown", () => {
         })}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -471,7 +484,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState({ refresh })}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -491,7 +504,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState({ filters: [] })}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -508,7 +521,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState()}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -524,7 +537,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState()}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={onCurrent}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -554,7 +567,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState()}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -589,7 +602,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState({ rename })}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -633,7 +646,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState({ rename })}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -674,7 +687,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState({ remove })}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={vi.fn()}
       />,
@@ -703,7 +716,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState()}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
         onSaveCurrentFilter={onSave}
       />,
@@ -721,7 +734,7 @@ describe("PresetsDropdown", () => {
         savedFilters={buildSavedState()}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
       />,
     );
@@ -747,11 +760,102 @@ describe("PresetsDropdown", () => {
         recommendedPresets={RECOMMENDED}
         labels={buildLabels()}
         onActivateRecommended={vi.fn()}
-        onLoadSavedInNewTab={vi.fn()}
+        onActivateSaved={vi.fn()}
         onLoadSavedInCurrentTab={vi.fn()}
       />,
     );
     expect(screen.queryByText("Saved")).toBeNull();
     expect(screen.queryByText("Save current filter…")).toBeNull();
+  });
+
+  // Issue #429 §5: an explicit "Open in new tab" icon affordance plus
+  // Cmd/Ctrl-click on the row body must always create a new tab,
+  // bypassing the wrapper's create-or-focus decider. The default click
+  // path stays unchanged.
+  it("renders an `Open in new tab` icon affordance on each preset row", () => {
+    render(
+      <PresetsDropdown
+        recommendedPresets={RECOMMENDED}
+        savedFilters={buildSavedState()}
+        labels={buildLabels()}
+        onActivateRecommended={vi.fn()}
+        onActivateSaved={vi.fn()}
+        onLoadSavedInCurrentTab={vi.fn()}
+        onSaveCurrentFilter={vi.fn()}
+      />,
+    );
+    const newTabButtons = document.querySelectorAll(
+      "[data-slot='presets-dropdown-open-new-tab']",
+    );
+    // 2 recommended rows + 2 saved rows = 4 affordances.
+    expect(newTabButtons.length).toBe(4);
+  });
+
+  it("the recommended row's Open-in-new-tab icon fires onActivateRecommended with forceNewTab: true", () => {
+    const onActivate = vi.fn();
+    render(
+      <PresetsDropdown
+        recommendedPresets={RECOMMENDED}
+        savedFilters={buildSavedState()}
+        labels={buildLabels()}
+        onActivateRecommended={onActivate}
+        onActivateSaved={vi.fn()}
+        onLoadSavedInCurrentTab={vi.fn()}
+        onSaveCurrentFilter={vi.fn()}
+      />,
+    );
+    const newTabButtons = Array.from(
+      document.querySelectorAll("[data-slot='presets-dropdown-open-new-tab']"),
+    );
+    fireEvent.click(newTabButtons[0] as HTMLElement);
+    expect(onActivate).toHaveBeenCalledWith(RECOMMENDED[0], {
+      forceNewTab: true,
+    });
+  });
+
+  it("Cmd-click on a recommended row also forces a new tab and bypasses the default activation", () => {
+    const onActivate = vi.fn();
+    render(
+      <PresetsDropdown
+        recommendedPresets={RECOMMENDED}
+        savedFilters={buildSavedState()}
+        labels={buildLabels()}
+        onActivateRecommended={onActivate}
+        onActivateSaved={vi.fn()}
+        onLoadSavedInCurrentTab={vi.fn()}
+        onSaveCurrentFilter={vi.fn()}
+      />,
+    );
+    const buttonA = screen
+      .getAllByRole("menuitem")
+      .find(
+        (el) => el.getAttribute("data-preset-id") === "rec-a",
+      ) as HTMLElement;
+    fireEvent.click(buttonA, { metaKey: true });
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate).toHaveBeenCalledWith(RECOMMENDED[0], {
+      forceNewTab: true,
+    });
+  });
+
+  it("Ctrl-click on a saved row forces a new tab", () => {
+    const onActivate = vi.fn();
+    render(
+      <PresetsDropdown
+        recommendedPresets={RECOMMENDED}
+        savedFilters={buildSavedState()}
+        labels={buildLabels()}
+        onActivateRecommended={vi.fn()}
+        onActivateSaved={onActivate}
+        onLoadSavedInCurrentTab={vi.fn()}
+        onSaveCurrentFilter={vi.fn()}
+      />,
+    );
+    const row = screen.getByText("Last 1h · Production");
+    fireEvent.click(row.closest("button") as HTMLButtonElement, {
+      ctrlKey: true,
+    });
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate).toHaveBeenCalledWith(SAVED[0], { forceNewTab: true });
   });
 });

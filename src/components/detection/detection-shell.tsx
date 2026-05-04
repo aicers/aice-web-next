@@ -129,6 +129,8 @@ import { buildSaveCurrentFilterDialogState } from "@/lib/detection/save-current-
 import {
   autoTabName as autoTabNameFromChips,
   preserveActiveTabParam,
+  type TabId,
+  type TimeMode,
 } from "@/lib/detection/tabs";
 import type {
   Event as DetectionEvent,
@@ -279,6 +281,12 @@ export interface PresetsDropdownLabelStrings {
   savedEmpty: string;
   /** ICU template carrying `{name}` for the per-row menu trigger. */
   savedRowMenuLabelTemplate: string;
+  /**
+   * Issue #429: ICU template carrying `{name}` for the explicit
+   * "Open in new tab" icon affordance rendered on every preset row.
+   * Read by screen readers as the icon button's `aria-label`.
+   */
+  openInNewTabTemplate: string;
   loadInNewTab: string;
   loadInCurrentTab: string;
   rename: string;
@@ -527,6 +535,14 @@ export interface DetectionShellStateSnapshot {
     loading: boolean;
     walking: { current: number; target: number } | null;
   };
+  /**
+   * Issue #429: whether the operator has redefined the time window on
+   * this tab. Starts at `initialTimeMode` and flips to `"custom"` on
+   * the first committed change to Period / start / end. The wrapper
+   * mirrors this back into the tab snapshot so the matcher knows
+   * whether the tab is still a candidate for preset focus.
+   */
+  timeMode: TimeMode;
 }
 
 export interface DetectionShellProps {
@@ -598,6 +614,22 @@ export interface DetectionShellProps {
    */
   initialPendingQuickPeekToken?: string | null;
   /**
+   * Issue #429: starting {@link TimeMode}. Preset-originated tabs pass
+   * `"preset"`; manual tabs default to `"custom"`. The shell flips it
+   * to `"custom"` on the first committed change to Period / start /
+   * end and reports the new value via the next `onStateChange`.
+   */
+  initialTimeMode?: TimeMode;
+  /**
+   * Issue #429 §3: most recent match-focus event the wrapper observed
+   * on this tab. Set when a preset activation matched an existing tab
+   * and focused it; consumed by the result-list header to gate the
+   * stale-data notice. The shell uses this only as a one-shot signal
+   * — once consumed, repeated focus events with the same `at` value
+   * do not re-emit the notice.
+   */
+  matchFocusEvent?: { tabId: TabId; at: number } | null;
+  /**
    * Fired on every tab-relevant state transition so the multi-tab
    * wrapper can mirror the active tab's live state into its
    * `TabSnapshot[]` (for session persistence and for the save-on-
@@ -626,30 +658,35 @@ export interface DetectionShellProps {
    */
   savedFilters?: UseSavedFiltersResult;
   /**
-   * Activation hook for "Load in new tab" / per-row default click on
-   * a saved filter. The wrapper creates a new tab pre-seeded with the
-   * supplied filter and auto-runs the query so the new tab lands
-   * populated rather than on the pre-query empty state — matching the
-   * pivot tab-create contract.
+   * Activation hook for a saved-filter row. The wrapper decides whether
+   * to focus an existing matching tab or create a new one (issue #429
+   * §2). Pass `options.forceNewTab: true` from the explicit "Open in
+   * new tab" affordance / Cmd-Ctrl-click path to bypass the matching
+   * step. The preset shape carries the saved filter's `id` alongside
+   * its `Filter` so the matching logic can populate the new tab's
+   * `originPreset.id` — the legacy `Filter`-only signature made
+   * saved-preset matching impossible.
    */
-  onLoadSavedFilterInNewTab?: (filter: Filter) => void;
+  onActivateSavedPreset?: (
+    preset: { id: string; filter: Filter },
+    options?: { forceNewTab?: boolean },
+  ) => void;
   /**
-   * System-provided recommended presets to render in the slim left
-   * rail (Phase Detection-16). Read-only in v1: each row activates a
-   * one-click broad view in a new tab. The shell stays render-only
-   * over the list; the wrapper builds the concrete {@link Filter}
-   * from the preset and threads it through the same "load in new tab"
-   * path Saved Filters use. `undefined` keeps the rail in the
-   * placeholder shape used by the standalone shell tests.
+   * System-provided recommended presets to surface in the presets
+   * dropdown. Read-only in v1: each row activates a one-click broad
+   * view via {@link onActivateRecommendedPreset}. `undefined` keeps the
+   * dropdown out of the toolbar (used by the standalone shell tests).
    */
   recommendedPresets?: readonly RecommendedPreset[];
   /**
-   * Activation hook for the Recommended Filter rail. Same contract
-   * as {@link onLoadSavedFilterInNewTab}: the wrapper creates a new
-   * tab pre-seeded with the preset's filter and auto-runs the
-   * query so the tab lands populated.
+   * Activation hook for a recommended preset. Same contract as
+   * {@link onActivateSavedPreset}: defaults route through the wrapper's
+   * create-or-focus decider, `options.forceNewTab: true` always creates.
    */
-  onLoadRecommendedFilterInNewTab?: (preset: RecommendedPreset) => void;
+  onActivateRecommendedPreset?: (
+    preset: RecommendedPreset,
+    options?: { forceNewTab?: boolean },
+  ) => void;
   /**
    * Customer inventory cache, lifted to the multi-tab wrapper so it
    * survives the keyed remount this shell undergoes on every tab
@@ -1003,6 +1040,52 @@ export function derivePeriodForFilter(filter: Filter): PeriodKey | null {
   return matchesPeriodKey({ start, end });
 }
 
+/**
+ * Issue #429: decide whether a just-committed `applied` draft constitutes
+ * an explicit time edit on a preset-originated tab — i.e. whether the
+ * tab's `timeMode` should flip from `"preset"` to `"custom"`.
+ *
+ * Rules per spec §2:
+ * - A change to the relative {@link PeriodKey} counts (e.g. `Last 1
+ *   hour` → `Last 1 day`, or dropping a relative period for an absolute
+ *   range, or vice versa).
+ * - When both before and after carry the **same** non-null Period,
+ *   start/end ISO drift is a side effect of `selectPeriod` recomputing
+ *   the window from `now` — not an operator edit. Re-clicking the same
+ *   period chip MUST NOT transition.
+ * - When the committed filter is in absolute mode (period === null) and
+ *   stays absolute, an actual change to start or end ISO counts as an
+ *   edit.
+ *
+ * Refresh never reaches this helper — `handleRefresh` re-dispatches
+ * the existing committed filter without calling `setCommittedFilter`,
+ * so a window slide from Refresh does not trip the transition.
+ */
+export function shouldTransitionToCustomTime(
+  committedFilter: Filter,
+  committedPeriod: PeriodKey | null,
+  applied: {
+    period: PeriodKey | null;
+    startIso: string | null;
+    endIso: string | null;
+  },
+): boolean {
+  if (applied.period !== committedPeriod) return true;
+  // Same period key on both sides. For relative windows, ignore ISO
+  // drift — selectPeriod recomputes from `now`, so re-clicking the
+  // same chip would otherwise wrongly transition.
+  if (applied.period !== null) return false;
+  const oldStart =
+    committedFilter.mode === "structured"
+      ? (committedFilter.input.start ?? null)
+      : null;
+  const oldEnd =
+    committedFilter.mode === "structured"
+      ? (committedFilter.input.end ?? null)
+      : null;
+  return applied.startIso !== oldStart || applied.endIso !== oldEnd;
+}
+
 export function DetectionShell({
   title,
   labels,
@@ -1019,12 +1102,14 @@ export function DetectionShell({
   initialAnalyticsTopN = DEFAULT_ANALYTICS_TOP_N,
   initialQuickPeekEvent = null,
   initialPendingQuickPeekToken = null,
+  initialTimeMode = "custom",
+  matchFocusEvent = null,
   onStateChange,
   onPivot,
   savedFilters,
-  onLoadSavedFilterInNewTab,
+  onActivateSavedPreset,
   recommendedPresets,
-  onLoadRecommendedFilterInNewTab,
+  onActivateRecommendedPreset,
   customerCache,
   onCustomerRefresh,
   initialCustomerOptions,
@@ -1057,6 +1142,11 @@ export function DetectionShell({
       updatedSecondsAgo: (s: number) => tResults("updatedSecondsAgo", { s }),
       updatedMinutesAgo: (m: number) => tResults("updatedMinutesAgo", { m }),
       updatedHoursAgo: (h: number) => tResults("updatedHoursAgo", { h }),
+      staleNoticePrefix: (relative: string) =>
+        tResults("staleNoticePrefix", { relative }),
+      staleNoticeRefresh: tResults("staleNoticeRefresh"),
+      peekLostNotice: tResults("peekLostNotice"),
+      peekLostDismiss: tResults("peekLostDismiss"),
       loadingTitle: tResults("loadingTitle"),
       loadingDescription: tResults("loadingDescription"),
       errorTitle: tResults("errorTitle"),
@@ -1209,6 +1299,14 @@ export function DetectionShell({
   );
   const [committedEndpoints, setCommittedEndpoints] =
     useState<EndpointEntry[]>(initialEndpoints);
+  // Issue #429: per-tab time mode. The shell drives the
+  // preset → custom transition by inspecting the just-committed
+  // Period / start / end against the prior committed values inside
+  // `handleApply`; Refresh and programmatic preset re-applications
+  // never call `setTimeMode("custom")`. Re-selecting the same Period
+  // / start / end is a no-op because the comparison short-circuits
+  // before the setter fires.
+  const [timeMode, setTimeMode] = useState<TimeMode>(initialTimeMode);
   // `pivotOnly` carries URL-only fields that aren't yet represented
   // in the drawer — today that's `origPort` / `respPort` / `proto`,
   // which arrive from the Investigation handoff and ride through the
@@ -1362,6 +1460,15 @@ export function DetectionShell({
   const [pendingQuickPeekToken, setPendingQuickPeekToken] = useState<
     string | null
   >(initialPendingQuickPeekToken);
+  // Issue #429 §6: timestamp at which the active tab's open Quick peek
+  // was closed because its event disappeared from a freshly-resolved
+  // slice (Refresh / Apply / chip removal landed without the row that
+  // backed the inspector). Each new value renders the inline "no
+  // longer in the list" notice in the result-list header so the
+  // operator understands why the inspector vanished. `null` means the
+  // peek either was never open, was dismissed by the operator
+  // directly, or has already been acknowledged.
+  const [peekLostAt, setPeekLostAt] = useState<number | null>(null);
   // Ref mirror of `quickPeekEvent` so the async `runQueryFor` success
   // path can read the latest state without becoming a dependency.
   // Reviewer Round 7: used to gate the post-Refresh URL reconcile so
@@ -1513,7 +1620,13 @@ export function DetectionShell({
         // against the fresh slice, so close it rather than risk
         // showing an inspector describing a row the new filter does
         // not return.
-        if (current) setQuickPeekEvent(null);
+        if (current) {
+          setQuickPeekEvent(null);
+          // Issue #429 §6: surface a small notice instead of silently
+          // closing the inspector — the operator should know why the
+          // peek vanished after a Refresh / Apply.
+          setPeekLostAt(Date.now());
+        }
         // Reviewer Round 9: a successful slice with no probe token is
         // also the canonical "this tab has no pending peek" state, so
         // clear any stale pending placeholder.
@@ -1543,7 +1656,13 @@ export function DetectionShell({
       // Token present but the fresh slice does not contain it: strip
       // the URL token and close any stale in-memory peek.
       if (action === "strip") writeQuickPeekToUrl(null);
-      if (current) setQuickPeekEvent(null);
+      if (current) {
+        setQuickPeekEvent(null);
+        // Issue #429 §6: notice the operator that their peek vanished
+        // because the event left the slice — silent strip would leave
+        // the operator confused about where the inspector went.
+        setPeekLostAt(Date.now());
+      }
       // Reviewer Round 9: even when `action !== "strip"` (no URL
       // token but an in-memory peek that lost its row), pending can
       // now be cleared because either branch above decided the
@@ -1811,6 +1930,17 @@ export function DetectionShell({
         customerLive,
         options,
       );
+      // Issue #429: transition `timeMode` to "custom" on the first
+      // operator-driven time edit. See {@link shouldTransitionToCustomTime}
+      // for the full rule set (re-clicking the same Period chip is NOT
+      // an edit even though selectPeriod recomputes ISO bounds; manual
+      // start/end edits in absolute mode are).
+      if (
+        timeMode === "preset" &&
+        shouldTransitionToCustomTime(committedFilter, committedPeriod, applied)
+      ) {
+        setTimeMode("custom");
+      }
       setCommittedFilter(next);
       setCommittedPeriod(applied.period);
       setCommittedEndpoints(applied.endpoints);
@@ -1862,6 +1992,7 @@ export function DetectionShell({
     },
     [
       committedFilter,
+      committedPeriod,
       customerCache,
       pagination.pageSize,
       pivotOnly,
@@ -1869,6 +2000,7 @@ export function DetectionShell({
       pathname,
       runQueryFor,
       sensorCache,
+      timeMode,
     ],
   );
 
@@ -1958,6 +2090,8 @@ export function DetectionShell({
       savedEmpty: ddStrings.savedEmpty,
       savedRowMenuLabel: (name: string) =>
         ddStrings.savedRowMenuLabelTemplate.replace("{name}", name),
+      openInNewTab: (name: string) =>
+        ddStrings.openInNewTabTemplate.replace("{name}", name),
       loadInNewTab: ddStrings.loadInNewTab,
       loadInCurrentTab: ddStrings.loadInCurrentTab,
       rename: ddStrings.rename,
@@ -1983,6 +2117,12 @@ export function DetectionShell({
       // so the period stays in sync with the filter's start/end.
       if (target.kind === "period") {
         setCommittedPeriod(null);
+        // Issue #429: removing the period chip is an explicit time
+        // edit — the operator stripped the relative window — so a
+        // preset-originated tab transitions to `"custom"`.
+        if (timeMode === "preset") {
+          setTimeMode("custom");
+        }
       }
       // Drop the cached drawer draft — it was built from the
       // pre-removal filter and would clobber the change if the
@@ -2017,6 +2157,7 @@ export function DetectionShell({
       pivotOnly,
       pathname,
       runQueryFor,
+      timeMode,
     ],
   );
 
@@ -3018,6 +3159,7 @@ export function DetectionShell({
       analyticsTopN,
       quickPeekEvent,
       pendingQuickPeekToken,
+      timeMode,
       result: {
         events,
         eventKeys,
@@ -3044,6 +3186,7 @@ export function DetectionShell({
     analyticsTopN,
     quickPeekEvent,
     pendingQuickPeekToken,
+    timeMode,
     events,
     eventKeys,
     totalCount,
@@ -3082,14 +3225,19 @@ export function DetectionShell({
             <SlidersHorizontal className="size-4" />
             {labels.filtersOpen}
           </Button>
-          {recommendedPresets && onLoadRecommendedFilterInNewTab ? (
+          {recommendedPresets && onActivateRecommendedPreset ? (
             <PresetsDropdown
               recommendedPresets={recommendedPresets}
               savedFilters={savedFilters}
               labels={presetsDropdownLabels}
-              onActivateRecommended={onLoadRecommendedFilterInNewTab}
-              onLoadSavedInNewTab={(filter) =>
-                onLoadSavedFilterInNewTab?.(filter.filter)
+              onActivateRecommended={(preset, opts) =>
+                onActivateRecommendedPreset(preset, opts)
+              }
+              onActivateSaved={(filter, opts) =>
+                onActivateSavedPreset?.(
+                  { id: filter.id, filter: filter.filter },
+                  opts,
+                )
               }
               onLoadSavedInCurrentTab={(filter) =>
                 loadFilterIntoCurrentTab(filter.filter)
@@ -3192,6 +3340,9 @@ export function DetectionShell({
                   : null
               }
               onDismissDownloadError={csvExport.dismissError}
+              matchFocusEvent={matchFocusEvent}
+              peekLostAt={peekLostAt}
+              onDismissPeekLost={() => setPeekLostAt(null)}
             />
             {hasQueried && !resultError ? (
               <PaginationControls
