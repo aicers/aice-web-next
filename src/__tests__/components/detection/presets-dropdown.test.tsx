@@ -17,7 +17,7 @@
  * opens it.
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -171,20 +171,69 @@ vi.mock("@/components/ui/alert-dialog", () => ({
 // `SaveFilterDialog` is a non-trivial Radix Dialog with internal
 // state; the dropdown's contract is "open the rename flow when the
 // operator picks Rename" — a simpler stub captures the wiring without
-// pulling the full Radix Dialog surface into the suite.
+// pulling the full Radix Dialog surface into the suite. The stub
+// also exposes a name input plus submit/cancel buttons so tests can
+// drive `onSubmit` end-to-end (rename id+name plumbing, error code
+// surfacing) without relying on the real Radix Dialog surface.
+type SavedFilterErrorCode =
+  | "duplicate"
+  | "empty"
+  | "too-long"
+  | "server-error"
+  | "unauthenticated";
+type SaveFilterDialogResult =
+  | { ok: true }
+  | { ok: false; code: SavedFilterErrorCode };
+
 vi.mock("@/components/detection/save-filter-dialog", () => ({
   SaveFilterDialog: ({
     open,
     defaultName,
+    onSubmit,
+    onOpenChange,
   }: {
     open: boolean;
     defaultName: string;
-  }) =>
-    open ? (
+    onSubmit: (name: string) => Promise<SaveFilterDialogResult>;
+    onOpenChange: (open: boolean) => void;
+  }) => {
+    if (!open) return null;
+    return (
       <div data-slot="rename-dialog" data-default-name={defaultName}>
-        rename dialog
+        <input
+          aria-label="rename-name-input"
+          data-testid="rename-name-input"
+          defaultValue={defaultName}
+        />
+        <button
+          type="button"
+          data-testid="rename-submit"
+          onClick={async () => {
+            const input = document.querySelector(
+              "[data-testid='rename-name-input']",
+            ) as HTMLInputElement | null;
+            const typed = input ? input.value : defaultName;
+            const result = await onSubmit(typed);
+            const slot = document.querySelector(
+              "[data-slot='rename-dialog']",
+            ) as HTMLElement | null;
+            if (!slot) return;
+            slot.dataset.lastSubmitOk = result.ok ? "true" : "false";
+            slot.dataset.lastSubmitCode = result.ok ? "" : result.code;
+          }}
+        >
+          submit
+        </button>
+        <button
+          type="button"
+          data-testid="rename-cancel"
+          onClick={() => onOpenChange(false)}
+        >
+          cancel
+        </button>
       </div>
-    ) : null,
+    );
+  },
 }));
 
 const RECOMMENDED: readonly RecommendedPreset[] = [
@@ -522,6 +571,99 @@ describe("PresetsDropdown", () => {
     const dialog = document.querySelector("[data-slot='rename-dialog']");
     expect(dialog).not.toBeNull();
     expect(dialog?.getAttribute("data-default-name")).toBe("Last 1d · Inbound");
+  });
+
+  it("submitting the rename dialog forwards the row id and edited name to savedFilters.rename and closes the dialog on ok", async () => {
+    // Pin the full rename plumbing — without driving onSubmit, the
+    // dropdown could regress to passing the wrong id, the unedited
+    // default name, or stop calling rename at all and the suite would
+    // still pass. Use sf-2 so the "wrong id" failure mode is also
+    // distinguishable (sf-1 is index 0 and would be picked by an
+    // accidental `.filters[0].id`).
+    const rename = vi
+      .fn()
+      .mockResolvedValue({ ok: true, filter: SAVED[1] as SavedFilter });
+    render(
+      <PresetsDropdown
+        recommendedPresets={RECOMMENDED}
+        savedFilters={buildSavedState({ rename })}
+        labels={buildLabels()}
+        onActivateRecommended={vi.fn()}
+        onLoadSavedInNewTab={vi.fn()}
+        onLoadSavedInCurrentTab={vi.fn()}
+        onSaveCurrentFilter={vi.fn()}
+      />,
+    );
+
+    const row = document.querySelector(
+      "[data-saved-filter-id='sf-2']",
+    ) as HTMLElement;
+    const renameItem = Array.from(
+      row.querySelectorAll("[role='menuitem']"),
+    ).find((el) => el.textContent === "Rename") as HTMLButtonElement;
+    fireEvent.click(renameItem);
+
+    const input = screen.getByTestId("rename-name-input") as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { value: "Last 1d · Inbound (renamed)" },
+    });
+    fireEvent.click(screen.getByTestId("rename-submit"));
+
+    await waitFor(() => {
+      expect(rename).toHaveBeenCalledTimes(1);
+    });
+    expect(rename).toHaveBeenCalledWith("sf-2", "Last 1d · Inbound (renamed)");
+    // Dialog must close on ok so the operator does not have to dismiss
+    // it manually after a successful rename.
+    await waitFor(() => {
+      expect(document.querySelector("[data-slot='rename-dialog']")).toBeNull();
+    });
+  });
+
+  it("rename dialog stays open and surfaces the duplicate code when savedFilters.rename rejects", async () => {
+    // A duplicate-name response from the server is the path the
+    // SaveFilterDialog uses to surface an inline error to the
+    // operator. The dropdown must propagate the code unchanged
+    // (no swallowing, no re-mapping) and must not close the dialog
+    // so the operator can edit the name and retry.
+    const rename = vi.fn().mockResolvedValue({ ok: false, code: "duplicate" });
+    render(
+      <PresetsDropdown
+        recommendedPresets={RECOMMENDED}
+        savedFilters={buildSavedState({ rename })}
+        labels={buildLabels()}
+        onActivateRecommended={vi.fn()}
+        onLoadSavedInNewTab={vi.fn()}
+        onLoadSavedInCurrentTab={vi.fn()}
+        onSaveCurrentFilter={vi.fn()}
+      />,
+    );
+
+    const row = document.querySelector(
+      "[data-saved-filter-id='sf-1']",
+    ) as HTMLElement;
+    const renameItem = Array.from(
+      row.querySelectorAll("[role='menuitem']"),
+    ).find((el) => el.textContent === "Rename") as HTMLButtonElement;
+    fireEvent.click(renameItem);
+
+    const input = screen.getByTestId("rename-name-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Last 1d · Inbound" } });
+    fireEvent.click(screen.getByTestId("rename-submit"));
+
+    await waitFor(() => {
+      expect(rename).toHaveBeenCalledTimes(1);
+    });
+    expect(rename).toHaveBeenCalledWith("sf-1", "Last 1d · Inbound");
+    const dialog = await waitFor(() => {
+      const node = document.querySelector(
+        "[data-slot='rename-dialog']",
+      ) as HTMLElement | null;
+      expect(node).not.toBeNull();
+      expect(node?.dataset.lastSubmitOk).toBe("false");
+      return node;
+    });
+    expect(dialog?.dataset.lastSubmitCode).toBe("duplicate");
   });
 
   it("Delete action opens the confirm dialog and Confirm calls state.remove with the filter id", async () => {
