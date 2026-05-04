@@ -45,6 +45,12 @@ export default defineConfig({
             // branches and the wrapper-owned customer cache lifecycle.
             "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
+            // Issue #428: the new on-demand presets dropdown replaces
+            // the always-visible left rail. Coverage exercises the
+            // open/close cycle, recommended preset activation, saved-
+            // filter activation + per-row actions, the loading/empty/
+            // error tri-state, and the "Save current filter…" entry.
+            "src/__tests__/components/detection/presets-dropdown.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -70,6 +76,7 @@ export default defineConfig({
             "src/__tests__/components/node/resource-sparkline.test.tsx",
             "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
+            "src/__tests__/components/detection/presets-dropdown.test.tsx",
           ],
         },
       },

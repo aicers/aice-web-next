@@ -1031,19 +1031,20 @@
   },
   "detection": {
     "title": "Detection",
-    "savedRail": {
-      "recommended": "Recommended Filter",
-      "saved": "Saved Filters",
-      "placeholder": "No filters yet.",
+    "presets": {
+      "trigger": "Presets",
+      "recommendedHeading": "Recommended",
       "recommendedEmpty": "No recommended filters configured.",
+      "savedHeading": "Saved",
       "savedEmpty": "Save a filter to keep it here.",
       "savedLoading": "Loading saved filters…",
       "savedError": "Could not load saved filters.",
-      "menuLabel": "Saved filter actions for {name}",
+      "savedRowMenuLabel": "Saved filter actions for {name}",
       "loadInNewTab": "Load in new tab",
       "loadInCurrentTab": "Load in current tab",
       "rename": "Rename",
       "delete": "Delete",
+      "saveCurrentFilter": "Save current filter…",
       "deleteConfirm": {
         "title": "Delete saved filter?",
         "description": "{name} will be removed from your saved filters. This cannot be undone.",
@@ -1075,7 +1076,7 @@
     },
     "saveFilterDialog": {
       "title": "Save this filter",
-      "description": "Saved filters appear in the rail on the left and can be loaded later.",
+      "description": "Saved filters appear in the Presets menu and can be loaded later.",
       "nameLabel": "Name",
       "namePlaceholder": "Saved filter name",
       "cancel": "Cancel",

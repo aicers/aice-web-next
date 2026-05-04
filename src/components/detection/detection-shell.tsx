@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  Bookmark,
-  ChevronRight,
-  SlidersHorizontal,
-  Star,
-  X,
-} from "lucide-react";
+import { ChevronRight, SlidersHorizontal, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import {
@@ -39,13 +33,13 @@ import {
   type PaginationControlsLabels,
 } from "@/components/detection/pagination-controls";
 import {
+  PresetsDropdown,
+  type PresetsDropdownLabels,
+} from "@/components/detection/presets-dropdown";
+import {
   QuickPeekInspector,
   type QuickPeekInspectorLabels,
 } from "@/components/detection/quick-peek-inspector";
-import {
-  RecommendedFiltersRail,
-  type RecommendedFiltersRailLabels,
-} from "@/components/detection/recommended-filters-rail";
 import {
   ResultList,
   type ResultListLabels,
@@ -55,10 +49,6 @@ import {
   SaveFilterDialog,
   type SaveFilterDialogLabels,
 } from "@/components/detection/save-filter-dialog";
-import {
-  SavedFiltersRail,
-  type SavedFiltersRailLabels,
-} from "@/components/detection/saved-filters-rail";
 import {
   type CsvExportPayload,
   useCsvExport,
@@ -263,19 +253,31 @@ export interface AnalyticsLabelStrings {
 }
 
 /**
- * Serializable subset of {@link SavedFiltersRailLabels} — the server
- * page passes plain strings. The function-valued `menuLabel`
- * formatter (it carries a dynamic `{name}` arg) is bound on the
- * client side using the active locale's translator before being
- * threaded into the rail.
+ * Serializable subset of {@link PresetsDropdownLabels} — the server
+ * page passes plain strings. The function-valued formatters
+ * (`recommendedPresetName`, `savedRowMenuLabel`) carry dynamic args
+ * (a preset object, a saved-filter name) and are bound on the client
+ * side using the active locale's translator before being threaded
+ * into the dropdown.
  */
-export interface SavedFiltersRailLabelStrings {
-  title: string;
-  emptyHint: string;
-  loadingHint: string;
-  loadErrorHint: string;
+export interface PresetsDropdownLabelStrings {
+  trigger: string;
+  recommendedHeading: string;
+  recommendedEmpty: string;
+  /**
+   * Localized display name for each {@link RecommendedPreset}, keyed
+   * by `preset.id`. Built on the server page from
+   * `detection.recommendedFilters.<nameKey>` so the dropdown can
+   * render names without hauling `useTranslations` into a presentation
+   * component.
+   */
+  recommendedPresetNames: Record<string, string>;
+  savedHeading: string;
+  savedLoading: string;
+  savedLoadError: string;
+  savedEmpty: string;
   /** ICU template carrying `{name}` for the per-row menu trigger. */
-  menuLabelTemplate: string;
+  savedRowMenuLabelTemplate: string;
   loadInNewTab: string;
   loadInCurrentTab: string;
   rename: string;
@@ -289,6 +291,7 @@ export interface SavedFiltersRailLabelStrings {
     error: string;
   };
   renameDialog: SaveFilterDialogLabels;
+  saveCurrentFilter: string;
 }
 
 export interface DetectionShellLabels {
@@ -320,32 +323,21 @@ export interface DetectionShellLabels {
    */
   exportLimitExceededTemplate: string;
   exportColumnHeaders: Record<string, string>;
-  recommendedFilter: string;
-  savedFilters: string;
-  railPlaceholder: string;
   /**
-   * Localized display name for each {@link RecommendedPreset}, keyed
-   * by `preset.id`. Built on the server page from
-   * `detection.recommendedFilters.<nameKey>` so the rail can render
-   * names without hauling `useTranslations` into a presentation
-   * component.
+   * Serializable subset of {@link PresetsDropdownLabels} — the server
+   * page passes plain strings + ICU templates; the shell binds the
+   * function-valued formatters (`recommendedPresetName`,
+   * `savedRowMenuLabel`) using the active locale's translator before
+   * the dropdown is rendered. Includes templates / strings for the
+   * embedded rename and delete confirmation dialogs and the trailing
+   * "Save current filter…" action.
    */
-  recommendedPresetNames: Record<string, string>;
-  /** Sub-line shown below the Recommended Filter heading when the preset list is empty. */
-  recommendedEmptyHint: string;
-  /**
-   * Serializable subset of {@link SavedFiltersRailLabels} — the
-   * server page passes plain strings (the menu a11y label is an ICU
-   * template carrying `{name}`); the shell binds the function-valued
-   * `menuLabel` formatter using the active locale's translator before
-   * the rail is rendered. Includes templates / strings for the
-   * embedded rename and delete confirmation dialogs.
-   */
-  savedFiltersRail: SavedFiltersRailLabelStrings;
+  presetsDropdown: PresetsDropdownLabelStrings;
   /**
    * Labels for the "Save this filter" dialog opened from the filter
-   * drawer footer. Plain strings — the dialog handles its own
-   * inline error rendering.
+   * drawer footer or the presets dropdown's "Save current filter…"
+   * action. Plain strings — the dialog handles its own inline error
+   * rendering.
    */
   saveFilterDialog: SaveFilterDialogLabels;
   filtersOpen: string;
@@ -1947,40 +1939,33 @@ export function DetectionShell({
     [saveDialogFilter, savedFilters],
   );
 
-  // Bind the rail's function-valued labels (the per-row menu a11y
-  // formatter takes a dynamic `name` arg) using the active locale's
-  // translator on this side of the server→client boundary.
-  const railLabels = useMemo<SavedFiltersRailLabels>(() => {
-    const railStrings = labels.savedFiltersRail;
+  // Bind the dropdown's function-valued labels (the per-row menu
+  // a11y formatter takes a dynamic `name` arg, and the recommended
+  // preset name resolver is keyed by preset id) using the active
+  // locale's translator on this side of the server→client boundary.
+  const presetsDropdownLabels = useMemo<PresetsDropdownLabels>(() => {
+    const ddStrings = labels.presetsDropdown;
     return {
-      title: railStrings.title,
-      emptyHint: railStrings.emptyHint,
-      loadingHint: railStrings.loadingHint,
-      loadErrorHint: railStrings.loadErrorHint,
-      menuLabel: (name: string) =>
-        railStrings.menuLabelTemplate.replace("{name}", name),
-      loadInNewTab: railStrings.loadInNewTab,
-      loadInCurrentTab: railStrings.loadInCurrentTab,
-      rename: railStrings.rename,
-      delete: railStrings.delete,
-      deleteConfirm: railStrings.deleteConfirm,
-      renameDialog: railStrings.renameDialog,
+      trigger: ddStrings.trigger,
+      recommendedHeading: ddStrings.recommendedHeading,
+      recommendedEmpty: ddStrings.recommendedEmpty,
+      recommendedPresetName: (preset) =>
+        ddStrings.recommendedPresetNames[preset.id] ?? preset.id,
+      savedHeading: ddStrings.savedHeading,
+      savedLoading: ddStrings.savedLoading,
+      savedLoadError: ddStrings.savedLoadError,
+      savedEmpty: ddStrings.savedEmpty,
+      savedRowMenuLabel: (name: string) =>
+        ddStrings.savedRowMenuLabelTemplate.replace("{name}", name),
+      loadInNewTab: ddStrings.loadInNewTab,
+      loadInCurrentTab: ddStrings.loadInCurrentTab,
+      rename: ddStrings.rename,
+      delete: ddStrings.delete,
+      deleteConfirm: ddStrings.deleteConfirm,
+      renameDialog: ddStrings.renameDialog,
+      saveCurrentFilter: ddStrings.saveCurrentFilter,
     };
-  }, [labels.savedFiltersRail]);
-
-  const recommendedRailLabels = useMemo<RecommendedFiltersRailLabels>(
-    () => ({
-      title: labels.recommendedFilter,
-      emptyHint: labels.recommendedEmptyHint,
-      presetName: (preset) =>
-        labels.recommendedPresetNames[preset.id] ?? preset.id,
-    }),
-    [
-      labels.recommendedFilter,
-      labels.recommendedEmptyHint,
-      labels.recommendedPresetNames,
-    ],
-  );
+  }, [labels.presetsDropdown]);
 
   const handleRemoveChip = useCallback(
     (target: ChipRemoveTarget) => {
@@ -2743,6 +2728,46 @@ export function DetectionShell({
     ],
   );
 
+  // "Save current filter…" entry point opened from the presets
+  // dropdown (issue #428). Saves the committed filter — what the URL
+  // `f` parameter encodes — directly, without routing through
+  // `buildAppliedFilter`. The committed filter is already canonical
+  // for the active tab, so the customer/sensor "live" gates that
+  // apply on the drawer save path do not apply here: the value is
+  // already what's running the active query, not a draft that might
+  // hold stale fields the drawer disabled.
+  const handleSaveCurrentFilter = useCallback(() => {
+    if (!savedFilters) return;
+    const chips = summarizeFilter(committedFilter, summarizeLabels, {
+      period: committedPeriod,
+      sensorOptions,
+      customerOptions: customerSummaryOptions,
+      categoricalOptions: {
+        levels: options.levels,
+        countries: options.countries,
+        learningMethods: options.learningMethods,
+        categories: options.categories,
+        kinds: options.kinds,
+      },
+    });
+    const defaultName = autoTabNameFromChips(
+      chips.map((c) => c.value),
+      labels.drawer.periodOptions[DEFAULT_PERIOD_KEY],
+    );
+    setSaveDialogFilter(committedFilter);
+    setSaveDialogDefaultName(defaultName);
+    setSaveDialogOpen(true);
+  }, [
+    committedFilter,
+    committedPeriod,
+    customerSummaryOptions,
+    labels.drawer.periodOptions,
+    options,
+    savedFilters,
+    sensorOptions,
+    summarizeLabels,
+  ]);
+
   const resultRange = useMemo<{ start: string; end: string } | null>(() => {
     if (committedFilter.mode !== "structured") return null;
     const { start, end } = committedFilter.input;
@@ -3035,47 +3060,17 @@ export function DetectionShell({
 
   return (
     <div className="flex gap-4">
-      <aside
-        aria-label={labels.savedFilters}
-        className="flex w-14 shrink-0 flex-col gap-6 border-r border-[var(--sidebar-border)] pr-2 desktop:w-60 desktop:pr-4"
-      >
-        {recommendedPresets && onLoadRecommendedFilterInNewTab ? (
-          <RecommendedFiltersRail
-            presets={recommendedPresets}
-            labels={recommendedRailLabels}
-            onActivate={onLoadRecommendedFilterInNewTab}
-          />
-        ) : (
-          <RailSection
-            icon={<Star className="size-4" />}
-            title={labels.recommendedFilter}
-            placeholder={labels.railPlaceholder}
-          />
-        )}
-        {savedFilters ? (
-          <SavedFiltersRail
-            state={savedFilters}
-            labels={railLabels}
-            onLoadInCurrentTab={(filter) =>
-              loadFilterIntoCurrentTab(filter.filter)
-            }
-            onLoadInNewTab={(filter) =>
-              onLoadSavedFilterInNewTab?.(filter.filter)
-            }
-          />
-        ) : (
-          <RailSection
-            icon={<Bookmark className="size-4" />}
-            title={labels.savedFilters}
-            placeholder={labels.railPlaceholder}
-          />
-        )}
-      </aside>
-
       <section className="flex min-w-0 flex-1 flex-col gap-4">
         <h1 className="sr-only">{title}</h1>
 
-        {/* Top bar: Filters affordance + active filter chip bar. */}
+        {/*
+         * Top bar: Filters affordance, presets dropdown, and active
+         * filter chip bar. The presets dropdown (issue #428) replaces
+         * the always-visible left-rail surface that previously held
+         * the Recommended + Saved filter sections; the trigger sits
+         * next to the Filters button so both filter affordances live
+         * in the same toolbar.
+         */}
         <div className="flex items-center gap-3">
           <Button
             type="button"
@@ -3089,6 +3084,23 @@ export function DetectionShell({
             <SlidersHorizontal className="size-4" />
             {labels.filtersOpen}
           </Button>
+          {recommendedPresets && onLoadRecommendedFilterInNewTab ? (
+            <PresetsDropdown
+              recommendedPresets={recommendedPresets}
+              savedFilters={savedFilters}
+              labels={presetsDropdownLabels}
+              onActivateRecommended={onLoadRecommendedFilterInNewTab}
+              onLoadSavedInNewTab={(filter) =>
+                onLoadSavedFilterInNewTab?.(filter.filter)
+              }
+              onLoadSavedInCurrentTab={(filter) =>
+                loadFilterIntoCurrentTab(filter.filter)
+              }
+              onSaveCurrentFilter={
+                savedFilters ? handleSaveCurrentFilter : undefined
+              }
+            />
+          ) : null}
           <div
             role="toolbar"
             aria-label={labels.filtersOpen}
@@ -3666,29 +3678,5 @@ function RemovableChip({
         </button>
       ) : null}
     </span>
-  );
-}
-
-function RailSection({
-  icon,
-  title,
-  placeholder,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  placeholder: string;
-}) {
-  return (
-    <section aria-label={title} className="flex flex-col gap-2">
-      <div className="text-muted-foreground flex items-center justify-center desktop:justify-start desktop:gap-2">
-        <span aria-hidden="true">{icon}</span>
-        <span className="sr-only text-xs font-medium uppercase tracking-wider desktop:not-sr-only desktop:inline">
-          {title}
-        </span>
-      </div>
-      <p className="text-muted-foreground sr-only text-xs desktop:not-sr-only desktop:block">
-        {placeholder}
-      </p>
-    </section>
   );
 }

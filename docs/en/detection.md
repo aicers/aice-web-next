@@ -17,23 +17,33 @@ The page is organized into four regions. The Results area is the
 dominant region of the workspace; the supporting regions are kept
 compact so they do not distract from the findings.
 
-### Saved / Recommended rail
+### Presets dropdown
 
-A slim rail on the left lists two sections:
+The **Presets** button sits in the top toolbar next to **Filters**
+and opens an on-demand dropdown that bundles three groups, visually
+separated:
 
-- **Recommended Filter** — curated starting points.
-- **Saved Filters** — personal filters you have saved yourself.
+- **Recommended** — curated starting points.
+- **Saved** — personal filters you have saved yourself.
+- **Save current filter…** — a trailing action that captures the
+  filter currently running in the active tab.
 
-On narrow viewports the rail collapses to icons only. On desktop
-widths it expands to show the section headings.
+The dropdown replaces the previous always-visible left rail
+(issue #428). The list is hidden until you click the trigger, so
+the toolbar reclaims the horizontal space the rail used to consume
+on the data-densest screen in the product. Closing the dropdown is
+a click outside or pressing **Escape**; nothing else changes about
+how filters are stored or applied.
+
+![Detection Presets dropdown](../assets/detection-presets-dropdown-en.png)
 
 #### Recommended filters
 
-The **Recommended Filter** section ships a curated set of broad
-starting points so a new operator can land on a populated view with
-one click instead of building a filter from scratch. The initial
-v1 list mirrors the broad-lookback presets the team agreed on in
-the umbrella:
+The **Recommended** section ships a curated set of broad starting
+points so a new operator can land on a populated view with one
+click instead of building a filter from scratch. The initial v1
+list mirrors the broad-lookback presets the team agreed on in the
+umbrella:
 
 - **3 years** — Time period set to the last 3 years, no other
   narrowing.
@@ -42,13 +52,13 @@ the umbrella:
 - **1 year** — Time period set to the last 1 year, no other
   narrowing.
 
-Activating a row opens the preset in a **new tab** (matching the
-default activation contract Saved Filters use) and auto-runs the
-query so the new tab lands populated. The current tab is left
-untouched, the same way the pivot path and saved-filter activation
-behave. Hitting the 8-tab cap surfaces the same "close a tab to
-load — already at the 8-tab limit" toast the rest of the workspace
-uses; nothing is silently dropped.
+Picking an entry opens the preset in a **new tab** (matching the
+saved-filter default-click contract) and auto-runs the query so
+the new tab lands populated. The current tab is left untouched,
+the same way the pivot path and saved-filter activation behave.
+Hitting the 8-tab cap surfaces the same "close a tab to load —
+already at the 8-tab limit" toast the rest of the workspace uses;
+nothing is silently dropped.
 
 The preset's start / end is resolved at activation time relative
 to "now," so the filter committed today reflects the same window
@@ -56,60 +66,80 @@ the **Period** chip would compute today — not whatever window was
 current when the page first rendered.
 
 Recommended filters are **system-provided and read-only** in v1:
-the rail exposes no rename / delete / save affordances. Per-tenant
-recommendation lists and an admin UI to manage the set are tracked
-as future work.
-
-![Recommended Filter rail](../assets/detection-recommended-filters-rail-en.png)
+the dropdown exposes no rename / delete affordances on this group.
+Per-tenant recommendation lists and an admin UI to manage the set
+are tracked as future work. Because the list is a static client-
+side preset source, the only non-ready state for this group is
+the unavailable / empty fallback (no recommended filters
+configured) — it has no real loading or error state to render.
 
 #### Saving a filter
 
-Open the filter drawer, configure the filter you want to keep, and
-click **Save this filter** in the drawer footer. A naming dialog
-opens pre-populated with an auto-generated name from the filter
-summary (e.g. `Last 1h · High`); accept the suggestion or type a
-new one and click **Save**.
+Two entry points lead to the save dialog:
 
-Names are personal and must be unique within your account — the
-dialog reports an inline error if you reuse a name. Saving the
-filter does not run the query; the saved entry shows up in the
-**Saved Filters** rail immediately and remains available across
-reloads.
+- **Save current filter…** at the bottom of the Presets dropdown
+  saves whatever the active tab is currently running — the filter
+  encoded in the URL `?f=` blob. Use this when you have triaged a
+  result set into a useful shape and want to keep it without
+  reopening the drawer.
+- **Save this filter** in the filter drawer footer saves the
+  drawer's draft (after applying the same Apply-side gates for
+  Customer / Sensor) so a draft you have not yet committed can be
+  persisted as a saved filter alongside Apply.
+
+Either entry opens the same naming dialog pre-populated with an
+auto-generated name from the filter summary (e.g. `Last 1h ·
+High`); accept the suggestion or type a new one and click
+**Save**. Names are personal and must be unique within your
+account — the dialog reports an inline error if you reuse a name.
+Saving the filter does not run the query; the saved entry shows
+up in the Presets dropdown's **Saved** section immediately and
+remains available across reloads.
 
 ![Save filter dialog](../assets/detection-save-filter-dialog-en.png)
 
 #### Loading a saved filter
 
-Each row in the **Saved Filters** rail acts on the active workspace
-when you interact with it:
+Each entry in the **Saved** section of the Presets dropdown acts
+on the active workspace when you interact with it:
 
-- **Click the row** (or pick **Load in new tab** from the row's `⋮`
-  menu) — the default action — opens a new tab pre-seeded with the
-  saved filter and auto-runs the query, leaving the tab you were on
-  untouched. This matches the tab-bar contract that tabs are for
-  context switches.
-- **Load in current tab** (from the row's `⋮` menu) replaces the
-  active tab's filter with the saved filter and re-runs the query.
-  The active tab's pagination resets to the first page; the rest
-  of the workspace (analytics expansion, Quick peek selection)
-  follows the standard Apply contract.
+- **Click the row** — the default action — opens a new tab
+  pre-seeded with the saved filter and auto-runs the query,
+  leaving the tab you were on untouched. This matches the tab-bar
+  contract that tabs are for context switches.
+- **Load in new tab** (in the row's submenu) is the same default
+  action made explicit so it can be re-fired without dismissing
+  the row.
+- **Load in current tab** (in the row's submenu) replaces the
+  active tab's filter with the saved filter and re-runs the
+  query. The active tab's pagination resets to the first page;
+  the rest of the workspace (analytics expansion, Quick peek
+  selection) follows the standard Apply contract.
 
 The filter loads with all of its committed fields applied —
 including the time range, levels, sensors, source / destination,
-direction, confidence bounds, country / category / kind / learning-
-method selections, and Network / IP endpoints carried in the
-filter payload.
+direction, confidence bounds, country / category / kind /
+learning-method selections, and Network / IP endpoints carried in
+the filter payload.
 
 If the workspace already has the maximum 8 tabs open when you
-click a row or pick **Load in new tab**, the rail surfaces the
-same "close a tab to load — already at the 8-tab limit" toast
-the pivot path uses instead of silently no-opping. **Load in
-current tab** is unaffected by the cap because it does not
+click a row or pick **Load in new tab**, the dropdown surfaces
+the same "close a tab to load — already at the 8-tab limit"
+toast the pivot path uses instead of silently no-opping. **Load
+in current tab** is unaffected by the cap because it does not
 create a new tab.
+
+While the saved-filter list is being fetched, the **Saved**
+section shows a muted **Loading saved filters…** placeholder
+rather than collapsing entirely. A failed fetch surfaces an
+inline error message in the same place; reopen the dropdown to
+retry. An empty list shows **Save a filter to keep it here.** so
+the section is always visible and the operator can find the
+Save-current entry directly below.
 
 #### Renaming and deleting
 
-The `⋮` menu on each saved-filter row also exposes:
+The submenu on each saved-filter row also exposes:
 
 - **Rename** — opens a dialog pre-populated with the current name.
   Submit a new unique name; duplicate names surface the same inline
@@ -118,8 +148,6 @@ The `⋮` menu on each saved-filter row also exposes:
   saved filter; the action cannot be undone in v1 (no version
   history). Open tabs that were loaded from this filter are not
   affected — the tab keeps its own copy of the filter state.
-
-![Saved Filters rail](../assets/detection-saved-filters-rail-en.png)
 
 #### Scope and limits
 
@@ -162,8 +190,8 @@ view is never empty.
   ("Build a filter to begin") and the operator clicks Apply to
   populate it.
 - Activating a **saved filter** or a **recommended filter** from
-  the slim left rail (default click — see "Saved Filters" and
-  "Recommended filters" above) or following a **pivot link**
+  the Presets dropdown (default click — see [Presets
+  dropdown](#presets-dropdown) above) or following a **pivot link**
   (Phase Detection-12) also creates a new tab pre-seeded with the
   target filter rather than replacing the current tab.
 
@@ -256,10 +284,12 @@ separately.
 
 ### Top bar
 
-The top of the main region holds the **Filters** button and the
-active filter chip bar. Clicking **Filters** opens the filter
-drawer on the right; the chip bar to its right summarises the
-filter currently applied to the active tab.
+The top of the main region holds the **Filters** button, the
+**Presets** dropdown, and the active filter chip bar. Clicking
+**Filters** opens the filter drawer on the right; clicking
+**Presets** opens the on-demand preset menu (see "Presets
+dropdown" above); the chip bar summarises the filter currently
+applied to the active tab.
 
 The chip bar is built from a single shared helper
 (`summarizeFilter(filter: Filter)`) so every surface that renders
@@ -1116,8 +1146,12 @@ for every other chip type.
 The **Save this filter** button sits alongside Apply in the
 filter drawer footer. Clicking it opens the naming dialog seeded
 with the auto-generated filter summary; submitting persists the
-filter to your personal **Saved Filters** rail. See "Saved
-Filters" above for the full save / load / rename / delete flow.
+filter to your personal saved list, which surfaces under the
+**Saved** section of the Presets dropdown. See
+[Presets dropdown](#presets-dropdown) above for the full save /
+load / rename / delete flow, including the alternate
+**Save current filter…** entry that captures whatever the active
+tab is currently running rather than the drawer draft.
 
 Save shares the same time-range gate as Apply: if start/end is
 missing or end is not strictly later than start, the inline range
