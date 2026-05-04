@@ -455,16 +455,37 @@ interface IpLocationVariables extends Record<string, unknown> {
 }
 
 /**
+ * Add one second to an RFC 3339 timestamp, returning a UTC ISO
+ * string with millisecond precision. Used by
+ * {@link locatorToEventListFilter} to widen the end bound; the
+ * 1-second gap is intentionally generous so callers don't need to
+ * preserve nanosecond fractions across the round-trip.
+ */
+function addOneSecond(timestamp: string): string {
+  return new Date(Date.parse(timestamp) + 1000).toISOString();
+}
+
+/**
  * Build the tight `EventListFilterInput` for a decoded locator.
  * Exposed for tests and for the page component, which logs the
  * filter it will dispatch for debuggability.
+ *
+ * `end` is widened by **+1 second** because REview's `eventList`
+ * treats `end` as exclusive: the half-open interval
+ * `[locator.time, locator.time)` is empty and the matching event is
+ * always filtered out (#424). Disambiguation when more than one
+ * event lands inside the 1-second window is handled by the existing
+ * `status: "multiple"` branch in {@link fetchEventByLocator}. This
+ * is a workaround for REview lacking a single-event lookup API
+ * (aicers/review-web#841); when that API ships the widening must be
+ * removed and replaced with the direct lookup.
  */
 export function locatorToEventListFilter(
   locator: EventLocator,
 ): EventListFilterInput {
   return {
     start: locator.time,
-    end: locator.time,
+    end: addOneSecond(locator.time),
     source: locator.origAddr,
     destination: locator.respAddr,
     kinds: [locator.kind],

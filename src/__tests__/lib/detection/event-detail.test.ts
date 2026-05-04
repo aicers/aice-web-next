@@ -109,12 +109,19 @@ describe("fetchEventByLocator", () => {
     const filter = locatorToEventListFilter(LOCATOR);
     expect(filter).toEqual({
       start: LOCATOR.time,
-      end: LOCATOR.time,
+      end: "2026-04-22T10:00:01.000Z",
       source: LOCATOR.origAddr,
       destination: LOCATOR.respAddr,
       kinds: ["HttpThreat"],
       levels: [3],
     });
+    // #424: REview's `eventList` treats `end` as exclusive, so the
+    // half-open interval `[time, time)` is empty. The widening must
+    // produce a strictly larger end and the gap is exactly 1 s.
+    const startMs = Date.parse(filter.start as string);
+    const endMs = Date.parse(filter.end as string);
+    expect(endMs).toBeGreaterThan(startMs);
+    expect(endMs - startMs).toBe(1000);
 
     const result = await fetchEventByLocator(makeSession(), LOCATOR);
 
@@ -192,6 +199,71 @@ describe("fetchEventByLocator", () => {
     const ddos = extractFragmentBody(printed, "ExternalDdos");
     expect(ddos).toContain("origAddrs");
     expect(ddos).toMatch(/\brespAddr\b/);
+  });
+
+  // #424: end-to-end shape — encode a token from a list-returned
+  // event, decode it, and assert `fetchEventByLocator` lands on
+  // `status: "one"`. Guards against regressions where the BFF
+  // re-collapses the half-open interval and the panel reverts to
+  // the "Event no longer available" state.
+  it("resolves a token built from a list-returned event to status:one", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+
+    const eventTime = "2026-03-12T05:17:40.076967Z";
+    const listEvent = {
+      __typename: "HttpThreat" as const,
+      time: eventTime,
+      sensor: "sensor-1",
+      level: "HIGH" as const,
+      origAddr: "10.0.0.5",
+      respAddr: "203.0.113.45",
+      origPort: 54321,
+      respPort: 80,
+      proto: 6,
+    };
+
+    const { encodeEventLocator, decodeEventLocator } = await import(
+      "@/lib/events/event-locator"
+    );
+    const token = encodeEventLocator(listEvent);
+    expect(token).not.toBeNull();
+    const decoded = decodeEventLocator(token as string);
+    expect(decoded).not.toBeNull();
+
+    mockGraphqlRequest.mockImplementation(async (_doc, variables) => {
+      const { start, end } = (
+        variables as { filter: { start: string; end: string } }
+      ).filter;
+      const eventMs = Date.parse(eventTime);
+      const startMs = Date.parse(start);
+      const endMs = Date.parse(end);
+      // Mimic REview's exclusive-end semantics: the event matches
+      // only when start <= eventTime < end.
+      const matches = startMs <= eventMs && eventMs < endMs;
+      return {
+        eventList: matches
+          ? {
+              totalCount: "1",
+              nodes: [
+                {
+                  ...listEvent,
+                  confidence: 0.9,
+                  category: null,
+                  triageScores: null,
+                },
+              ],
+            }
+          : { totalCount: "0", nodes: [] },
+      };
+    });
+
+    const { fetchEventByLocator } = await import("@/lib/detection");
+    const result = await fetchEventByLocator(
+      makeSession(),
+      decoded as NonNullable<ReturnType<typeof decodeEventLocator>>,
+    );
+    expect(result.status).toBe("one");
   });
 
   it("rejects callers without detection:read before dispatching", async () => {
