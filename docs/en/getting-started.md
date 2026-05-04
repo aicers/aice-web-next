@@ -99,7 +99,7 @@ pnpm build
 pnpm start
 ```
 
-For Docker Compose production deployments, see the [Production deployment](../../README.md#production) section of the README — that is the authoritative first-boot checklist.
+For Docker Compose production deployments, see the [Production deployment](https://github.com/aicers/aice-web-next/blob/main/README.md#production) section of the README — that is the authoritative first-boot checklist.
 
 Open `http://localhost:3000` (or the configured address) in your
 browser. You should see the sign-in page:
