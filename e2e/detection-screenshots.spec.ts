@@ -78,29 +78,6 @@ async function forceDarkTheme(
   await page.emulateMedia({ colorScheme: "dark" });
 }
 
-async function captureRailFigure(
-  page: import("@playwright/test").Page,
-  rail: import("@playwright/test").Locator,
-  fileName: string,
-): Promise<void> {
-  const box = await rail.boundingBox();
-  if (!box) {
-    throw new Error(`Unable to capture rail screenshot for ${fileName}`);
-  }
-
-  const padding = 16;
-  await page.screenshot({
-    path: path.join(ASSETS_DIR, fileName),
-    animations: "disabled",
-    clip: {
-      x: Math.max(0, box.x - padding),
-      y: Math.max(0, box.y - padding),
-      width: box.width + padding * 2,
-      height: box.height + padding * 2,
-    },
-  });
-}
-
 test.describe
   .serial("Detection manual screenshots", () => {
     test("EN filter drawer", async ({
@@ -305,7 +282,12 @@ test.describe
       });
     });
 
-    test("EN saved filters rail", async ({
+    // Issue #428: the Saved + Recommended sections moved from the
+    // always-visible left rail into an on-demand Presets dropdown.
+    // The captures below open that dropdown so the manual can show
+    // the populated three-section layout (Recommended / Saved /
+    // Save-current) operators see when they trigger it.
+    test("EN presets dropdown", async ({
       page,
       workerUsername,
       workerPassword,
@@ -316,38 +298,41 @@ test.describe
       await signInAndWait(page, workerUsername, workerPassword);
       await page.goto("/detection");
 
-      // Save two filters with different names so the rail renders the
-      // populated list (the empty / loading states are illustrated by
-      // the surrounding text in the manual).
+      // Save two filters so the Saved section renders a populated
+      // list rather than the muted-empty placeholder.
       await saveOneFilter(page, "Last 1h · Production");
       await saveOneFilter(page, "Last 1d · KR endpoints");
 
-      const rail = page.getByRole("region", { name: "Saved Filters" });
-      await expect(rail).toBeVisible();
-      // Wait for both rows to render so the screenshot doesn't catch
-      // the rail mid-fetch. Use `exact` because each row also exposes
-      // a per-row `Saved filter actions for {name}` menu trigger that
-      // would otherwise match by substring.
+      const presetsTrigger = page.getByRole("button", {
+        name: "Presets",
+        exact: true,
+      });
+      await expect(presetsTrigger).toBeVisible({ timeout: 10_000 });
+      await presetsTrigger.click();
+
+      // Wait for the populated rows so the screenshot doesn't catch
+      // the dropdown mid-fetch. The recommended group is static
+      // client-side, the saved group resolves once the rename/save
+      // round-trips above have committed.
       await expect(
-        rail.getByRole("button", {
+        page.getByRole("menuitem", { name: "3 years", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("menuitem", {
           name: "Last 1h · Production",
           exact: true,
         }),
       ).toBeVisible();
       await expect(
-        rail.getByRole("button", {
-          name: "Last 1d · KR endpoints",
-          exact: true,
-        }),
+        page.getByRole("menuitem", { name: /Save current filter/ }),
       ).toBeVisible();
-      await captureRailFigure(
-        page,
-        rail,
-        "detection-saved-filters-rail-en.png",
-      );
+      await page.screenshot({
+        path: path.join(ASSETS_DIR, "detection-presets-dropdown-en.png"),
+        animations: "disabled",
+      });
     });
 
-    test("KO saved filters rail", async ({
+    test("KO presets dropdown", async ({
       page,
       workerUsername,
       workerPassword,
@@ -361,80 +346,26 @@ test.describe
       await saveOneFilterKo(page, "Last 1h · 운영");
       await saveOneFilterKo(page, "Last 1d · 한국 엔드포인트");
 
-      const rail = page.getByRole("region", { name: "저장된 필터" });
-      await expect(rail).toBeVisible();
-      await expect(
-        rail.getByRole("button", { name: "Last 1h · 운영", exact: true }),
-      ).toBeVisible();
-      await expect(
-        rail.getByRole("button", {
-          name: "Last 1d · 한국 엔드포인트",
-          exact: true,
-        }),
-      ).toBeVisible();
-      await captureRailFigure(
-        page,
-        rail,
-        "detection-saved-filters-rail-ko.png",
-      );
-    });
+      const presetsTrigger = page.getByRole("button", {
+        name: "프리셋",
+        exact: true,
+      });
+      await expect(presetsTrigger).toBeVisible({ timeout: 10_000 });
+      await presetsTrigger.click();
 
-    // The Recommended Filter rail is fully client-side: presets are
-    // declared in `src/lib/detection/recommended-filters.ts` and never
-    // hit the database, so this capture is deterministic on any
-    // signed-in account regardless of REview state.
-    test("EN recommended filters rail", async ({
-      page,
-      workerUsername,
-      workerPassword,
-    }) => {
-      await forceDarkTheme(page);
-      await signInAndWait(page, workerUsername, workerPassword);
-      await page.goto("/detection");
-
-      const rail = page.getByRole("region", { name: "Recommended Filter" });
-      await expect(rail).toBeVisible();
       await expect(
-        rail.getByRole("button", { name: "3 years", exact: true }),
+        page.getByRole("menuitem", { name: "최근 3년", exact: true }),
       ).toBeVisible();
       await expect(
-        rail.getByRole("button", { name: "1 year, Inbound", exact: true }),
+        page.getByRole("menuitem", { name: "Last 1h · 운영", exact: true }),
       ).toBeVisible();
       await expect(
-        rail.getByRole("button", { name: "1 year", exact: true }),
+        page.getByRole("menuitem", { name: /현재 필터 저장/ }),
       ).toBeVisible();
-      await captureRailFigure(
-        page,
-        rail,
-        "detection-recommended-filters-rail-en.png",
-      );
-    });
-
-    test("KO recommended filters rail", async ({
-      page,
-      workerUsername,
-      workerPassword,
-    }) => {
-      await forceDarkTheme(page);
-      await signInAndWaitKo(page, workerUsername, workerPassword);
-      await page.goto("/ko/detection");
-
-      const rail = page.getByRole("region", { name: "추천 필터" });
-      await expect(rail).toBeVisible();
-      await expect(
-        rail.getByRole("button", { name: "최근 3년", exact: true }),
-      ).toBeVisible();
-      await expect(
-        rail.getByRole("button", { name: "최근 1년, 인바운드", exact: true }),
-      ).toBeVisible();
-      await expect(
-        rail.getByRole("button", { name: "최근 1년", exact: true }),
-      ).toBeVisible();
-      await captureRailFigure(
-        page,
-        rail,
-        "detection-recommended-filters-rail-ko.png",
-      );
+      await page.screenshot({
+        path: path.join(ASSETS_DIR, "detection-presets-dropdown-ko.png"),
+        animations: "disabled",
+      });
     });
   });
 

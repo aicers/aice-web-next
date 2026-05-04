@@ -323,54 +323,57 @@ export default async function DetectionPage({
       userName: t("results.csvHeaders.userName"),
       hostname: t("results.csvHeaders.hostname"),
     },
-    recommendedFilter: t("savedRail.recommended"),
-    savedFilters: t("savedRail.saved"),
-    railPlaceholder: t("savedRail.placeholder"),
-    // Resolve every preset's localized name on the server so the
-    // client shell stays render-only over the read-only preset list.
-    // Name keys live under `detection.recommendedFilters.<nameKey>`
-    // and are paired with the preset's stable id so the rail can
-    // look them up without re-importing the i18n bundle.
-    recommendedPresetNames: Object.fromEntries(
-      RECOMMENDED_PRESETS.map((preset) => [
-        preset.id,
-        t(`recommendedFilters.${preset.nameKey}`),
-      ]),
-    ) as Record<string, string>,
-    recommendedEmptyHint: t("savedRail.recommendedEmpty"),
-    savedFiltersRail: {
-      title: t("savedRail.saved"),
-      emptyHint: t("savedRail.savedEmpty"),
-      loadingHint: t("savedRail.savedLoading"),
-      loadErrorHint: t("savedRail.savedError"),
-      menuLabelTemplate: t.raw("savedRail.menuLabel") as string,
-      loadInNewTab: t("savedRail.loadInNewTab"),
-      loadInCurrentTab: t("savedRail.loadInCurrentTab"),
-      rename: t("savedRail.rename"),
-      delete: t("savedRail.delete"),
+    // Issue #428: the saved + recommended filter sections are now
+    // surfaced as an on-demand dropdown next to the Filters button
+    // rather than an always-visible left rail. The label set
+    // collapses what used to be three separate label blocks
+    // (`savedRail.*`, `savedFiltersRail`, `recommendedFilters.*`)
+    // into a single `presetsDropdown` payload the dropdown consumes.
+    // Preset names still live under `detection.recommendedFilters.*`
+    // so the static client-side list keeps a single source of truth.
+    presetsDropdown: {
+      trigger: t("presets.trigger"),
+      recommendedHeading: t("presets.recommendedHeading"),
+      recommendedEmpty: t("presets.recommendedEmpty"),
+      recommendedPresetNames: Object.fromEntries(
+        RECOMMENDED_PRESETS.map((preset) => [
+          preset.id,
+          t(`recommendedFilters.${preset.nameKey}`),
+        ]),
+      ) as Record<string, string>,
+      savedHeading: t("presets.savedHeading"),
+      savedLoading: t("presets.savedLoading"),
+      savedLoadError: t("presets.savedError"),
+      savedEmpty: t("presets.savedEmpty"),
+      savedRowMenuLabelTemplate: t.raw("presets.savedRowMenuLabel") as string,
+      loadInNewTab: t("presets.loadInNewTab"),
+      loadInCurrentTab: t("presets.loadInCurrentTab"),
+      rename: t("presets.rename"),
+      delete: t("presets.delete"),
+      saveCurrentFilter: t("presets.saveCurrentFilter"),
       deleteConfirm: {
-        title: t("savedRail.deleteConfirm.title"),
+        title: t("presets.deleteConfirm.title"),
         descriptionTemplate: t.raw(
-          "savedRail.deleteConfirm.description",
+          "presets.deleteConfirm.description",
         ) as string,
-        cancel: t("savedRail.deleteConfirm.cancel"),
-        confirm: t("savedRail.deleteConfirm.confirm"),
-        error: t("savedRail.deleteConfirm.error"),
+        cancel: t("presets.deleteConfirm.cancel"),
+        confirm: t("presets.deleteConfirm.confirm"),
+        error: t("presets.deleteConfirm.error"),
       },
       renameDialog: {
-        title: t("savedRail.renameDialog.title"),
-        description: t("savedRail.renameDialog.description"),
-        nameLabel: t("savedRail.renameDialog.nameLabel"),
-        namePlaceholder: t("savedRail.renameDialog.namePlaceholder"),
-        cancel: t("savedRail.renameDialog.cancel"),
-        submit: t("savedRail.renameDialog.submit"),
-        submitting: t("savedRail.renameDialog.submitting"),
+        title: t("presets.renameDialog.title"),
+        description: t("presets.renameDialog.description"),
+        nameLabel: t("presets.renameDialog.nameLabel"),
+        namePlaceholder: t("presets.renameDialog.namePlaceholder"),
+        cancel: t("presets.renameDialog.cancel"),
+        submit: t("presets.renameDialog.submit"),
+        submitting: t("presets.renameDialog.submitting"),
         errors: {
-          empty: t("savedRail.renameDialog.errors.empty"),
-          duplicate: t("savedRail.renameDialog.errors.duplicate"),
-          tooLong: t("savedRail.renameDialog.errors.tooLong"),
-          server: t("savedRail.renameDialog.errors.server"),
-          unauthenticated: t("savedRail.renameDialog.errors.unauthenticated"),
+          empty: t("presets.renameDialog.errors.empty"),
+          duplicate: t("presets.renameDialog.errors.duplicate"),
+          tooLong: t("presets.renameDialog.errors.tooLong"),
+          server: t("presets.renameDialog.errors.server"),
+          unauthenticated: t("presets.renameDialog.errors.unauthenticated"),
         },
       },
     },

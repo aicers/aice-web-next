@@ -106,30 +106,26 @@ test("detection page renders shell for admin worker", async ({
   await signInAndWait(page, workerUsername, workerPassword);
   await page.goto("/detection");
 
-  // Filters affordance and region placeholders confirm the shell mounted.
+  // Filters affordance and the on-demand Presets trigger confirm the
+  // shell mounted. Issue #428 replaced the always-visible left rail
+  // with a Presets dropdown that sits next to Filters in the toolbar.
   const filtersButton = page.getByRole("button", { name: "Filters" });
   await expect(filtersButton).toBeVisible({ timeout: 10_000 });
   await expect(filtersButton).toBeEnabled();
   await expect(filtersButton).toHaveAttribute("aria-expanded", "false");
 
-  // Rail sections expose accessible names so the collapsed icon-only
-  // layout still announces what each icon represents.
-  await expect(
-    page.getByRole("region", { name: "Recommended Filter" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("region", { name: "Saved Filters" }),
-  ).toBeVisible();
+  const presetsTrigger = page.getByRole("button", { name: "Presets" });
+  await expect(presetsTrigger).toBeVisible();
+  await expect(presetsTrigger).toBeEnabled();
 
-  // At narrow viewports the rail collapses visually but the accessible
-  // names (section + placeholder copy) remain in the a11y tree via sr-only.
-  await page.setViewportSize({ width: 900, height: 800 });
+  // Opening the dropdown reveals the Recommended section, the Saved
+  // section, and the trailing Save-current action — the three
+  // visually-separated groups the issue's "preset menu" requires.
+  await presetsTrigger.click();
+  await expect(page.getByRole("menuitem", { name: "3 years" })).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Recommended Filter" }),
-  ).toBeAttached();
-  await expect(
-    page.getByRole("region", { name: "Saved Filters" }),
-  ).toBeAttached();
+    page.getByRole("menuitem", { name: /Save current filter/ }),
+  ).toBeVisible();
 });
 
 // ── Filter drawer ───────────────────────────────────────────────

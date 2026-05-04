@@ -1031,19 +1031,20 @@
   },
   "detection": {
     "title": "탐지",
-    "savedRail": {
-      "recommended": "추천 필터",
-      "saved": "저장된 필터",
-      "placeholder": "아직 필터가 없습니다.",
+    "presets": {
+      "trigger": "프리셋",
+      "recommendedHeading": "추천",
       "recommendedEmpty": "구성된 추천 필터가 없습니다.",
+      "savedHeading": "저장됨",
       "savedEmpty": "필터를 저장하면 여기에 표시됩니다.",
       "savedLoading": "저장된 필터를 불러오는 중…",
       "savedError": "저장된 필터를 불러오지 못했습니다.",
-      "menuLabel": "{name} 저장된 필터 작업",
+      "savedRowMenuLabel": "{name} 저장된 필터 작업",
       "loadInNewTab": "새 탭에서 불러오기",
       "loadInCurrentTab": "현재 탭에서 불러오기",
       "rename": "이름 바꾸기",
       "delete": "삭제",
+      "saveCurrentFilter": "현재 필터 저장…",
       "deleteConfirm": {
         "title": "저장된 필터를 삭제할까요?",
         "description": "{name} 항목이 저장된 필터에서 제거됩니다. 이 작업은 되돌릴 수 없습니다.",
@@ -1075,7 +1076,7 @@
     },
     "saveFilterDialog": {
       "title": "이 필터 저장",
-      "description": "저장된 필터는 왼쪽 레일에 표시되며 나중에 불러올 수 있습니다.",
+      "description": "저장된 필터는 프리셋 메뉴에 표시되며 나중에 불러올 수 있습니다.",
       "nameLabel": "이름",
       "namePlaceholder": "저장된 필터 이름",
       "cancel": "취소",

@@ -70,6 +70,21 @@ tab feature whose successor PR has not yet landed; once it does,
 those wireframes must be replaced as part of the same PR rather
 than punted to a follow-up.
 
+##### Issue #428: Presets dropdown screenshot debt
+
+The implementation PR for issue #428 (the Saved / Recommended rail
+moves into an on-demand Presets dropdown) introduces two new
+screenshots — `detection-presets-dropdown-{en,ko}.png` — and stops
+referencing the now-deleted rail captures
+(`detection-saved-filters-rail-{en,ko}.png`,
+`detection-recommended-filters-rail-{en,ko}.png`). The existing
+detection-screenshots.spec.ts captures the new dropdown PNGs from
+the live local-REview procedure; contributors who land follow-up
+work touching the Detection toolbar must re-capture those PNGs in
+the same PR rather than punt to a follow-up. This is a re-statement
+of the standing rule above, not a fresh exception — the issue
+intentionally rejected silently shipping without screenshots.
+
 ## Live REview screenshot procedure
 
 **When to use this procedure.** Follow it only when a capture
