@@ -125,6 +125,7 @@ import {
   readQuickPeekToken,
 } from "@/lib/detection/quick-peek-url";
 import type { RecommendedPreset } from "@/lib/detection/recommended-filters";
+import { buildSaveCurrentFilterDialogState } from "@/lib/detection/save-current-filter";
 import {
   autoTabName as autoTabNameFromChips,
   preserveActiveTabParam,
@@ -2729,19 +2730,19 @@ export function DetectionShell({
   );
 
   // "Save current filter…" entry point opened from the presets
-  // dropdown (issue #428). Saves the committed filter — what the URL
-  // `f` parameter encodes — directly, without routing through
-  // `buildAppliedFilter`. The committed filter is already canonical
-  // for the active tab, so the customer/sensor "live" gates that
-  // apply on the drawer save path do not apply here: the value is
-  // already what's running the active query, not a draft that might
-  // hold stale fields the drawer disabled.
+  // dropdown (issue #428). The gating decision lives in
+  // {@link buildSaveCurrentFilterDialogState}: the committed filter
+  // (what URL `?f=` encodes) is persisted as-is rather than re-run
+  // through `buildAppliedFilter` like the drawer save path. See the
+  // helper module for the full rationale.
   const handleSaveCurrentFilter = useCallback(() => {
     if (!savedFilters) return;
-    const chips = summarizeFilter(committedFilter, summarizeLabels, {
-      period: committedPeriod,
+    const { filter, defaultName } = buildSaveCurrentFilterDialogState({
+      committedFilter,
+      committedPeriod,
+      summarizeLabels,
       sensorOptions,
-      customerOptions: customerSummaryOptions,
+      customerSummaryOptions,
       categoricalOptions: {
         levels: options.levels,
         countries: options.countries,
@@ -2749,12 +2750,9 @@ export function DetectionShell({
         categories: options.categories,
         kinds: options.kinds,
       },
+      defaultPeriodLabel: labels.drawer.periodOptions[DEFAULT_PERIOD_KEY],
     });
-    const defaultName = autoTabNameFromChips(
-      chips.map((c) => c.value),
-      labels.drawer.periodOptions[DEFAULT_PERIOD_KEY],
-    );
-    setSaveDialogFilter(committedFilter);
+    setSaveDialogFilter(filter);
     setSaveDialogDefaultName(defaultName);
     setSaveDialogOpen(true);
   }, [

@@ -51,6 +51,12 @@ export default defineConfig({
             // filter activation + per-row actions, the loading/empty/
             // error tri-state, and the "Save current filter…" entry.
             "src/__tests__/components/detection/presets-dropdown.test.tsx",
+            // Round 1 review follow-up: shell-level coverage for the
+            // presets-dropdown "Save current filter…" gating contract
+            // and end-to-end save wiring (committed filter persisted
+            // through `savedFilters.save` without re-running through
+            // `buildAppliedFilter`).
+            "src/__tests__/components/detection/detection-shell-save-current-filter.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -77,6 +83,7 @@ export default defineConfig({
             "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
             "src/__tests__/components/detection/presets-dropdown.test.tsx",
+            "src/__tests__/components/detection/detection-shell-save-current-filter.test.tsx",
           ],
         },
       },
