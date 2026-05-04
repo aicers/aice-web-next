@@ -49,7 +49,11 @@ test.beforeAll(async () => {
     matchVariables: {
       filter: {
         start: INVESTIGATION_EVENT.time,
-        end: INVESTIGATION_EVENT.time,
+        // #424: `end` is widened by +1 s in `locatorToEventListFilter`
+        // because REview's `eventList` treats `end` as exclusive. The
+        // stub matcher must mirror the widened bound; the value is
+        // produced by `new Date(Date.parse(time) + 1000).toISOString()`.
+        end: "2026-04-22T12:00:01.000Z",
         source: INVESTIGATION_EVENT.origAddr,
         destination: INVESTIGATION_EVENT.respAddr,
         kinds: [INVESTIGATION_EVENT.__typename],
