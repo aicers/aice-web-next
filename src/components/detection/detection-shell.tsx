@@ -1143,6 +1143,41 @@ export function slidePresetRefreshFilter(
   };
 }
 
+/**
+ * Build the URL search string the pagination persistence path will
+ * write to `?…`. Pure so tests can prove the closure-vs-override
+ * decision without mounting the shell.
+ *
+ * Reviewer Round 4 (issue #429): when `handleRefresh` slides a
+ * `timeMode: "preset"` window, the success-path URL write happens in
+ * the same React turn as `setCommittedFilter(slid)` — so the calling
+ * `persistPaginationToUrl` callback's `committedFilter` closure still
+ * holds the pre-slide value. The success branch must pass the slid
+ * filter as `filterOverride`, otherwise the URL ends up rewritten to
+ * the frozen activation bounds while the in-memory query already
+ * advanced (a reload would then restore 10:00–11:00 instead of the
+ * just-refreshed 10:30–11:30).
+ */
+export function buildPaginationPersistSearch(args: {
+  filter: Filter;
+  period: PeriodKey | null;
+  endpoints: EndpointEntry[];
+  pivotExtras: PivotExtras;
+  pagination: PaginationState;
+}): URLSearchParams {
+  const search = buildEncodedFilterSearch({
+    filter: args.filter,
+    period: args.period,
+    endpoints: args.endpoints,
+    pivotExtras: args.pivotExtras,
+  });
+  for (const [k, v] of paginationToSearchEntries(args.pagination)) {
+    search.set(k, v);
+  }
+  preserveActiveTabParam(search);
+  return search;
+}
+
 export function DetectionShell({
   title,
   labels,
@@ -2299,19 +2334,26 @@ export function DetectionShell({
    * existing filter / pivot params. Called after every successful
    * paginator navigation so a refresh or share-this-URL lands on
    * the same page.
+   *
+   * Reviewer Round 4: callers that have just transitioned the
+   * committed filter in the same React turn (e.g. `handleRefresh`
+   * sliding a `timeMode: "preset"` window) MUST pass the freshly
+   * dispatched filter via `filterOverride`. The `committedFilter`
+   * in this callback's closure is the pre-transition value because
+   * the `setCommittedFilter` triggered earlier in the same turn has
+   * not flushed yet, so the default closure would otherwise rewrite
+   * `?f=` back to the stale activation bounds while the in-memory
+   * query state already advanced.
    */
   const persistPaginationToUrl = useCallback(
-    (next: PaginationState) => {
-      const search = buildEncodedFilterSearch({
-        filter: committedFilter,
+    (next: PaginationState, filterOverride?: Filter) => {
+      const search = buildPaginationPersistSearch({
+        filter: filterOverride ?? committedFilter,
         period: committedPeriod,
         endpoints: committedEndpoints,
         pivotExtras: extrasFromPivotOnly(pivotOnly),
+        pagination: next,
       });
-      for (const [k, v] of paginationToSearchEntries(next)) {
-        search.set(k, v);
-      }
-      preserveActiveTabParam(search);
       const qs = search.toString();
       const url = qs ? `${pathname}?${qs}` : pathname;
       window.history.replaceState(window.history.state, "", url);
@@ -2421,15 +2463,27 @@ export function DetectionShell({
         // between the previous query and this one. Persist the page
         // number derived from the fresh total so the URL counts from
         // the same rows the paginator is about to render.
-        persistPaginationToUrl({
-          ...pagination,
-          page: committedPageForAnchor(
-            pagination.anchor,
-            pagination.pageSize,
-            result.totalCount,
-            pagination.page,
-          ),
-        });
+        //
+        // Reviewer Round 4: pass `dispatched` explicitly so the
+        // success-path URL write uses the slid bounds. The
+        // `persistPaginationToUrl` callback closes over the pre-slide
+        // `committedFilter` (the `setCommittedFilter(slid)` call above
+        // has not flushed yet), and without the override the success
+        // write would clobber the pre-dispatch URL write with the
+        // frozen activation bounds — a reload would then restore
+        // 10:00–11:00 instead of the freshly slid 10:30–11:30.
+        persistPaginationToUrl(
+          {
+            ...pagination,
+            page: committedPageForAnchor(
+              pagination.anchor,
+              pagination.pageSize,
+              result.totalCount,
+              pagination.page,
+            ),
+          },
+          dispatched,
+        );
       }
     });
   }, [

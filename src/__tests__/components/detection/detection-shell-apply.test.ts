@@ -1104,3 +1104,90 @@ describe("slidePresetRefreshFilter — issue #429 §3 (Reviewer Round 3)", () =>
     ).toBeNull();
   });
 });
+
+describe("buildPaginationPersistSearch — issue #429 Reviewer Round 4", () => {
+  // Reviewer Round 4: a successful preset Refresh must leave the URL
+  // carrying the slid bounds, not the frozen activation bounds. The
+  // success-path `persistPaginationToUrl` callback closes over the
+  // pre-slide `committedFilter` (the `setCommittedFilter(slid)` from
+  // the same React turn has not flushed), so without an explicit
+  // `filterOverride` the encoded `?f=` would silently revert to the
+  // 10:00–11:00 activation window even though the in-memory query
+  // already advanced to 10:30–11:30. This test exercises the pure
+  // helper that backs both call paths and proves the override wins.
+  const NOW_ACTIVATION = new Date("2026-05-05T11:00:00.000Z");
+  const NOW_REFRESH = new Date("2026-05-05T11:30:00.000Z");
+  const ACTIVATION_FILTER: Filter = {
+    mode: "structured",
+    input: {
+      start: "2026-05-05T10:00:00.000Z",
+      end: NOW_ACTIVATION.toISOString(),
+      directions: ["INBOUND"],
+    },
+  };
+  const PAGINATION = {
+    anchor: { kind: "head" } as const,
+    pageSize: 50 as const,
+    page: 1,
+  };
+
+  it("encodes the override filter when the closure-captured filter is stale", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const slid = mod.slidePresetRefreshFilter(
+      ACTIVATION_FILTER,
+      "1h",
+      "preset",
+      NOW_REFRESH,
+    );
+    if (!slid || slid.mode !== "structured") {
+      throw new Error("expected slid filter for the test setup");
+    }
+    // Build the URL from the stale (pre-slide) committed filter. This
+    // is what the closure would do if the success path forgot the
+    // override — the regression the reviewer flagged.
+    const stale = mod.buildPaginationPersistSearch({
+      filter: ACTIVATION_FILTER,
+      period: "1h",
+      endpoints: [],
+      pivotExtras: {},
+      pagination: PAGINATION,
+    });
+    // Build the URL with the slid filter as the override. This is
+    // what the fixed success path produces.
+    const fresh = mod.buildPaginationPersistSearch({
+      filter: slid,
+      period: "1h",
+      endpoints: [],
+      pivotExtras: {},
+      pagination: PAGINATION,
+    });
+    // The encoded `?f=` blob must differ — and the override branch
+    // must reflect the slid bounds, not the activation bounds.
+    const staleF = stale.get("f");
+    const freshF = fresh.get("f");
+    expect(staleF).not.toBeNull();
+    expect(freshF).not.toBeNull();
+    expect(freshF).not.toBe(staleF);
+    // Decode the override branch and check it carries the slid window.
+    const filterUrl = await import("@/lib/detection/filter-url");
+    const decoded = filterUrl.parseFilterFromUrlParam(freshF);
+    if (!decoded || decoded.filter.mode !== "structured") {
+      throw new Error("expected the encoded blob to round-trip");
+    }
+    expect(decoded.filter.input.start).toBe(slid.input.start);
+    expect(decoded.filter.input.end).toBe(slid.input.end);
+    // Sanity: narrowing survived the override path too.
+    expect(decoded.filter.input.directions).toEqual(["INBOUND"]);
+
+    // The stale (closure-only) branch encodes the activation bounds —
+    // demonstrating the regression the override exists to prevent.
+    const staleDecoded = filterUrl.parseFilterFromUrlParam(staleF);
+    if (!staleDecoded || staleDecoded.filter.mode !== "structured") {
+      throw new Error("expected the stale blob to round-trip");
+    }
+    expect(staleDecoded.filter.input.start).toBe(ACTIVATION_FILTER.input.start);
+    expect(staleDecoded.filter.input.end).toBe(ACTIVATION_FILTER.input.end);
+  });
+});
