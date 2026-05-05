@@ -553,6 +553,53 @@ describe("withAuth", () => {
 
       expect(mockCheckApiRateLimit).toHaveBeenCalledWith("account-1");
     });
+
+    it("skips checkApiRateLimit entirely when skipApiRateLimit is set", async () => {
+      // Routes with their own dedicated bucket (e.g. the Aimer
+      // bridge) should not double-count against the generic API
+      // budget — see Reviewer Round 1 P1 on PR #445.
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler, { skipApiRateLimit: true });
+      const response = await wrapped(makeAuthRequest(), makeContext());
+
+      expect(response.status).toBe(200);
+      expect(mockCheckApiRateLimit).not.toHaveBeenCalled();
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it("skipApiRateLimit does NOT bypass authentication", async () => {
+      // Defense-in-depth: a route that opts out of the generic
+      // bucket must still authenticate.
+      const handler = vi.fn();
+      const wrapped = guard.withAuth(handler, { skipApiRateLimit: true });
+      const response = await wrapped(makeRequest(), makeContext());
+
+      expect(response.status).toBe(401);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("an exhausted generic API bucket does NOT block a skipApiRateLimit route", async () => {
+      // The generic bucket reports exhausted; the wrapped route is
+      // still served because it carries its own dedicated bucket.
+      mockVerifyJwtFull.mockResolvedValue(validSession);
+      mockCheckApiRateLimit.mockResolvedValue({
+        limited: true,
+        retryAfterSeconds: 42,
+      });
+
+      const handler = vi
+        .fn()
+        .mockResolvedValue(NextResponse.json({ ok: true }));
+      const wrapped = guard.withAuth(handler, { skipApiRateLimit: true });
+      const response = await wrapped(makeAuthRequest(), makeContext());
+
+      expect(response.status).toBe(200);
+      expect(mockCheckApiRateLimit).not.toHaveBeenCalled();
+    });
   });
 
   // ── Session policy enforcement ─────────────────────────────────

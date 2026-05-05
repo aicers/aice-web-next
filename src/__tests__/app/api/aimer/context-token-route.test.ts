@@ -386,6 +386,97 @@ describe("POST /api/aimer/context-token", () => {
     expect((await res.json()).error).toBe("invalid_locator");
   });
 
+  it("invalid locator does NOT leak through the customer access gate (bad locator + no access → 404, not 400)", async () => {
+    // Reviewer Round 1 P2: validating the locator before the
+    // customer access check would surface `400 invalid_locator`
+    // for callers who lack access to the requested customerId,
+    // distinguishing "your locator was malformed" from the
+    // mandated 404 mask.  The handler now defers locator
+    // validation until after access + external_key gates pass.
+    mockResolveScope.mockResolvedValue([99]); // caller can't reach 42
+    const { POST } = await import("@/app/api/aimer/context-token/route");
+    const res = await POST(
+      makeRequest({
+        customerId: 42,
+        locator: makeLocator({ kind: "NotARealKind" }),
+      }),
+      makeContext(),
+    );
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("event_not_found_for_customer");
+  });
+
+  it("invalid locator does NOT leak through external_key gate either (bad locator + NULL external_key → 400 customer_external_key_missing, not invalid_locator)", async () => {
+    // Same ordering rule — the locator is only inspected after
+    // the customer's access + external_key gates pass.
+    mockQuery.mockResolvedValue({
+      rows: [{ id: 42, external_key: null }],
+      rowCount: 1,
+    });
+    const { POST } = await import("@/app/api/aimer/context-token/route");
+    const res = await POST(
+      makeRequest({
+        customerId: 42,
+        locator: makeLocator({ kind: "NotARealKind" }),
+      }),
+      makeContext(),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("customer_external_key_missing");
+  });
+
+  // ── Operational GraphQL failures (Reviewer Round 1 P2) ────
+
+  it("propagates operational graphql failures instead of masking them as 404 event_not_found_for_customer", async () => {
+    // Transport drops, missing endpoint, mTLS handshake, etc.
+    // must NOT be silently downgraded to a customer/event miss —
+    // that would defeat the security guardrails of #405 and hide
+    // real BFF↔Review failures from operators.
+    mockGraphqlRequest.mockRejectedValue(
+      Object.assign(new Error("ECONNREFUSED"), { code: "ECONNREFUSED" }),
+    );
+    const { POST } = await import("@/app/api/aimer/context-token/route");
+    await expect(
+      POST(
+        makeRequest({ customerId: 42, locator: makeLocator() }),
+        makeContext(),
+      ),
+    ).rejects.toBeDefined();
+    // Crucially: no `event_not_found_for_customer` denial row.
+    const denialCalls = mockAuditRecord.mock.calls.filter(
+      (c) =>
+        (c[0] as { action?: string } | undefined)?.action ===
+        "aimer_context_token.denied",
+    );
+    expect(denialCalls).toEqual([]);
+  });
+
+  it("a Review-side Forbidden (status 200 errors[]) is masked as the same 404 (no existence leak)", async () => {
+    // ReviewForbiddenError is the one classified failure that
+    // legitimately means "no, you don't have this" — mask it
+    // behind the same 404 used for the access gate.
+    mockGraphqlRequest.mockRejectedValue({
+      response: {
+        errors: [{ message: "Forbidden", extensions: { code: "FORBIDDEN" } }],
+      },
+    });
+    const { POST } = await import("@/app/api/aimer/context-token/route");
+    const res = await POST(
+      makeRequest({ customerId: 42, locator: makeLocator() }),
+      makeContext(),
+    );
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("event_not_found_for_customer");
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "aimer_context_token.denied",
+        details: expect.objectContaining({
+          reason: "event_not_found_for_customer",
+        }),
+      }),
+    );
+  });
+
   it("returns 400 invalid_customer_id when customerId is missing or not a positive integer", async () => {
     const { POST } = await import("@/app/api/aimer/context-token/route");
     const res = await POST(

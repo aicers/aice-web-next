@@ -31,7 +31,9 @@ import {
   type EventLocator,
 } from "@/lib/events/event-locator";
 import { graphqlRequest } from "@/lib/graphql/client";
+import { withManagerErrorMapping } from "@/lib/node/error-mapping";
 import { checkAimerContextTokenRateLimit } from "@/lib/rate-limit/limiter";
+import { ReviewForbiddenError } from "@/lib/review/errors";
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -147,7 +149,14 @@ export const POST = withAuth(
       );
     }
 
-    // ── Parse + validate body ──────────────────────────────────
+    // ── Parse + validate body (customerId only) ────────────────
+    //
+    // Locator validation is deliberately deferred until after the
+    // customer access gate.  Validating the locator first would
+    // surface `400 invalid_locator` for callers who lack access to
+    // the requested customerId, which leaks "your locator was
+    // malformed" vs "the masked 404" — the issue's information-
+    // disclosure ordering forbids that.
     let body: { locator?: unknown; customerId?: unknown };
     try {
       body = (await request.json()) as typeof body;
@@ -165,10 +174,6 @@ export const POST = withAuth(
       );
     }
     const customerId = body.customerId;
-    const locator = validateLocator(body.locator);
-    if (!locator) {
-      return NextResponse.json({ error: "invalid_locator" }, { status: 400 });
-    }
 
     // ── Setup gating (Sub-7.2.AB) ──────────────────────────────
     //
@@ -246,6 +251,16 @@ export const POST = withAuth(
       );
     }
 
+    // ── Locator validation (after access + external_key gates) ─
+    //
+    // Deferred to here so callers without access to `customerId`
+    // see the masked 404 regardless of locator shape — see the
+    // ordering note at the top of the handler.
+    const locator = validateLocator(body.locator);
+    if (!locator) {
+      return NextResponse.json({ error: "invalid_locator" }, { status: 400 });
+    }
+
     // ── Locator resolution under single-customer scope ─────────
     //
     // The central security property of this route: dispatch with
@@ -253,25 +268,39 @@ export const POST = withAuth(
     // effective scope, so a multi-customer user cannot mint a
     // token bound to customer A for an event that lives under
     // customer B.  Bypasses `buildDispatchContext` on purpose.
+    //
+    // Error policy:
+    //   - `ReviewForbiddenError` (review-side denial) — mask as the
+    //     same 404 used for the access gate so existence is not
+    //     leaked through a divergent status code.
+    //   - Everything else (transport drops, missing endpoint, mTLS
+    //     handshake, `ReviewInvalidArgumentError`,
+    //     `ReviewUnknownGraphQLError`, …) propagates as a real
+    //     5xx — these are operational / contract failures, not a
+    //     customer/event miss, and auditing them as the latter
+    //     would defeat the security guardrails of #405.
     const filter = locatorToEventListFilter(locator);
     let detail: EventDetailResult;
     try {
       // biome-ignore format: keep the override on the helper-name line so
       // scripts/check-dispatch-context.mjs sees `// scope-allowlist:` within
       // the call expression range (helper-name → opening paren).
-      detail = (await graphqlRequest( // scope-allowlist: #439 single-customer
+      detail = (await withManagerErrorMapping(graphqlRequest( // scope-allowlist: #439 single-customer
         EVENT_DETAIL_QUERY,
         { filter } as EventDetailVariables,
         { role: session.roles[0] ?? "", customerIds: [customerId] },
-      )) as EventDetailResult;
-    } catch {
-      await recordDenial({
-        session,
-        ip,
-        reason: "event_not_found_for_customer",
-        requestedCustomerId: customerId,
-      });
-      return denyEventNotFound();
+      ))) as EventDetailResult;
+    } catch (err) {
+      if (err instanceof ReviewForbiddenError) {
+        await recordDenial({
+          session,
+          ip,
+          reason: "event_not_found_for_customer",
+          requestedCustomerId: customerId,
+        });
+        return denyEventNotFound();
+      }
+      throw err;
     }
     if (detail.eventList.nodes.length === 0) {
       await recordDenial({
@@ -349,5 +378,11 @@ export const POST = withAuth(
       targetUrl: `${setup.bridgeUrl}${BRIDGE_PATH}`,
     });
   },
-  { requiredPermissions: ["detection:read"] },
+  {
+    requiredPermissions: ["detection:read"],
+    // Skip the generic per-user API bucket — this route enforces
+    // its own bridge-specific bucket (30 / 60s) so bridge usage and
+    // generic API traffic do not starve each other.
+    skipApiRateLimit: true,
+  },
 );
