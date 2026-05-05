@@ -1,6 +1,9 @@
 import { getTranslations } from "next-intl/server";
 import { EventInvestigation } from "@/components/events/event-investigation";
 import { EventNotFound } from "@/components/events/event-not-found";
+import { extractAimerCustomerCandidates } from "@/lib/aimer/candidate-customers";
+import { getCustomerBridgeEligibility } from "@/lib/aimer/customer-eligibility";
+import { getAimerIntegrationSetupStatus } from "@/lib/aimer/setup-status";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import { fetchEventByLocator } from "@/lib/detection";
 import {
@@ -103,6 +106,18 @@ export default async function EventInvestigationPage({
 
   const event: Event = resolution.event;
 
+  // Sub-7.2.E: derive Send to Aimer eligibility data server-side so
+  // the client component receives only booleans (and non-sensitive
+  // enum tags), never the underlying `external_key` / `aice_id` /
+  // `aimer_web_bridge_url` / signing-key material.  Done in parallel
+  // since the two helpers touch disjoint stores (auth_db.customers
+  // vs. system settings + the active signing key).
+  const candidates = extractAimerCustomerCandidates(event);
+  const [customerBridgeEligible, aimerSetup] = await Promise.all([
+    getCustomerBridgeEligibility(candidates.map((c) => c.id)),
+    getAimerIntegrationSetupStatus(),
+  ]);
+
   return (
     <EventInvestigation
       event={event}
@@ -111,6 +126,9 @@ export default async function EventInvestigationPage({
       backHref={backHref}
       labels={buildInvestigationLabels(t)}
       customers={investigationCustomers}
+      candidates={candidates}
+      customerBridgeEligible={customerBridgeEligible}
+      aimerSetup={aimerSetup}
     />
   );
 }
@@ -181,10 +199,6 @@ function buildInvestigationLabels(t: EventsTranslator) {
       confidence: t("overview.confidence"),
       triageScores: t("overview.triageScores"),
       noTriage: t("overview.noTriage"),
-      aimerTitle: t("overview.aimerTitle"),
-      aimerBody: t("overview.aimerBody"),
-      aimerCta: t("overview.aimerCta"),
-      aimerToast: t("overview.aimerToast"),
       pivotsTitle: t("overview.pivotsTitle"),
       pivotSameSource: t("overview.pivotSameSource"),
       pivotSameDestination: t("overview.pivotSameDestination"),

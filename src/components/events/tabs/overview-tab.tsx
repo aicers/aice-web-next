@@ -1,10 +1,12 @@
 import { Badge } from "@/components/ui/badge";
 import { Link } from "@/i18n/navigation";
+import type { AimerCustomerCandidate } from "@/lib/aimer/candidate-customers";
+import type { AimerIntegrationSetupStatus } from "@/lib/aimer/setup-status";
 import type { Event } from "@/lib/detection/types";
 import { buildDetectionPivotUrl } from "@/lib/detection/url-filters";
 import type { EventLocator } from "@/lib/events/event-locator";
+import { AimerBanner } from "../aimer-banner";
 import { EVENT_KIND_FRIENDLY_NAMES } from "../event-display-helpers";
-import { AimerBanner } from "../event-investigation";
 
 export interface OverviewLabels {
   summary: string;
@@ -15,10 +17,6 @@ export interface OverviewLabels {
   confidence: string;
   triageScores: string;
   noTriage: string;
-  aimerTitle: string;
-  aimerBody: string;
-  aimerCta: string;
-  aimerToast: string;
   pivotsTitle: string;
   pivotSameSource: string;
   pivotSameDestination: string;
@@ -38,9 +36,21 @@ interface Props {
    * active or the parameter was not supplied.
    */
   customers?: readonly string[];
+  /** Aimer Send-to-Aimer (#440) — forwarded unchanged to {@link AimerBanner}. */
+  candidates: AimerCustomerCandidate[];
+  customerBridgeEligible: Record<number, boolean>;
+  aimerSetup: AimerIntegrationSetupStatus;
 }
 
-export function OverviewTab({ event, locator, labels, customers }: Props) {
+export function OverviewTab({
+  event,
+  locator,
+  labels,
+  customers,
+  candidates,
+  customerBridgeEligible,
+  aimerSetup,
+}: Props) {
   const friendly =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
   const customerList =
@@ -116,10 +126,10 @@ export function OverviewTab({ event, locator, labels, customers }: Props) {
       </section>
 
       <AimerBanner
-        label={labels.aimerTitle}
-        body={labels.aimerBody}
-        cta={labels.aimerCta}
-        toast={labels.aimerToast}
+        locator={locator}
+        candidates={candidates}
+        customerBridgeEligible={customerBridgeEligible}
+        aimerSetup={aimerSetup}
       />
 
       <section

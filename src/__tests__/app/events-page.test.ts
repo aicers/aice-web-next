@@ -7,6 +7,8 @@ const mockRequirePermission = vi.hoisted(() => vi.fn());
 const mockRedirect = vi.hoisted(() => vi.fn());
 const mockFetchEventByLocator = vi.hoisted(() => vi.fn());
 const mockGetTranslations = vi.hoisted(() => vi.fn());
+const mockGetCustomerBridgeEligibility = vi.hoisted(() => vi.fn());
+const mockGetAimerIntegrationSetupStatus = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/session", () => ({
   getCurrentSession: mockGetCurrentSession,
@@ -23,6 +25,14 @@ vi.mock("@/lib/detection", () => ({
 
 vi.mock("next-intl/server", () => ({
   getTranslations: mockGetTranslations,
+}));
+
+vi.mock("@/lib/aimer/customer-eligibility", () => ({
+  getCustomerBridgeEligibility: mockGetCustomerBridgeEligibility,
+}));
+
+vi.mock("@/lib/aimer/setup-status", () => ({
+  getAimerIntegrationSetupStatus: mockGetAimerIntegrationSetupStatus,
 }));
 
 vi.mock("@/components/events/event-investigation", () => ({
@@ -77,6 +87,10 @@ beforeEach(() => {
   mockFetchEventByLocator.mockReset();
   mockGetTranslations.mockReset();
   mockGetTranslations.mockResolvedValue((key: string) => key);
+  mockGetCustomerBridgeEligibility.mockReset();
+  mockGetCustomerBridgeEligibility.mockResolvedValue({});
+  mockGetAimerIntegrationSetupStatus.mockReset();
+  mockGetAimerIntegrationSetupStatus.mockResolvedValue({ configured: true });
   vi.resetModules();
 });
 

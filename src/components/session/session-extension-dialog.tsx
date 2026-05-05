@@ -16,20 +16,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useSessionMonitor } from "@/hooks/use-session-monitor";
 import { useRouter } from "@/i18n/navigation";
+import { readCsrfToken } from "@/lib/csrf-client";
+
+// Re-exported so existing test imports (`@/components/session/...`)
+// keep working.  New callers should import from `@/lib/csrf-client`.
+export { readCsrfToken };
 
 // ── Helpers ────────────────────────────────────────────────────
-
-/** Read the CSRF token from the cookie (non-httpOnly). */
-export function readCsrfToken(): string | null {
-  // Production uses "__Host-csrf", development uses "csrf"
-  for (const name of ["__Host-csrf", "csrf"]) {
-    const match = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith(`${name}=`));
-    if (match) return match.split("=")[1];
-  }
-  return null;
-}
 
 /** Delete session monitor cookies client-side to prevent stale warnings. */
 function clearSessionMonitorCookies(): void {

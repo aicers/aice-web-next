@@ -124,12 +124,58 @@ switching away and back does not re-issue the lookup.
 Summary card with severity, time, kind, category, confidence
 and triage scores (each score with its policy ID).
 
-The tab also includes a **Send to Aimer** banner. In this
-release the button is a placeholder: clicking it shows a
-**Coming soon** notice rather than performing a transfer. The
-full Aimer bridge — signed envelope packaging, context token
-exchange, and POST to the `aimer-web` bridge endpoint — is
-tracked as a separate future effort.
+The tab also includes a **Send to Aimer** banner.  Clicking
+**Send to Aimer** opens a confirmation modal, then performs a
+top-level POST to aimer-web's bridge endpoint:
+
+1. The investigator picks the customer this event should be
+   sent under.  When the event is connected to a single
+   customer the modal shows that customer's name and the
+   investigator only has to confirm.  When the event is
+   connected to two or more customers (today this happens for
+   subtypes such as Multi-Host Port Scan, RDP Brute Force, and
+   External DDoS, whose responder/originator side carries an
+   array of customers) the modal renders a radio list and the
+   investigator must pick one.
+2. The browser fetches a short-lived signed context token from
+   `/api/aimer/context-token`, scoped to the chosen customer.
+3. The browser builds a hidden HTML `<form>` with three text
+   parts (`context_token`, `events_envelope`, `events_data`)
+   and submits it as a top-level multipart POST to the
+   bridge endpoint.  The investigator lands on aimer-web,
+   where they will be asked to sign in and approve the
+   transfer.
+
+The button is disabled when:
+
+- The event is not connected to any customer (no Aimer customer
+  to scope the transfer under).
+- Every connected customer is missing the `external_key`
+  needed to identify it on aimer-web.  An operator with the
+  Customers permission can populate that key on the **Customers**
+  page.
+- The Aimer integration is not configured by a System
+  Administrator (the AICE ID, bridge URL, or active signing
+  key is missing).
+
+The tooltip on the disabled button names the specific reason so
+the investigator knows whether to ask their administrator or
+their customer-management peer to unblock the flow.
+
+When two customers are listed in the modal and only one of them
+has an `external_key`, the customer without a key is shown
+disabled (with an "(no external_key set)" hint) — the
+investigator can still send under the configured one.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+The browser primitive used here is intentional.  An HTML form
+submit is the only standard browser API that produces a
+top-level multipart POST so the user actually navigates to
+aimer-web — `fetch` with a `FormData` body would not navigate.
+Because HTML form parts can only be text, the events payload is
+sent as a text part rather than a `Blob`.  Payloads that need a
+binary upload remain out of scope for this release.
 
 Below the Aimer banner, **Pivot shortcuts** lists links that
 open the Detection page pre-filtered to related activity:
