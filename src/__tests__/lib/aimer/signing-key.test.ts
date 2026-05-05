@@ -201,10 +201,11 @@ describe("aimer signing-key facade", () => {
         /retention window has not elapsed/,
       );
 
-      // Force override clears the previous slot anyway.
-      mod.deactivateAimerSigningPreviousKey({ force: true });
+      // The previous slot is still on disk — no public API force
+      // escape hatch exists to clear it before the timer.
       const status = await mod.getAimerSigningKeyStatus();
-      expect(status.state).toBe("active_only");
+      expect(status.state).toBe("active_and_previous");
+      expect(status.previous).not.toBeNull();
     });
 
     it("rotate is rejected while a previous slot is still retained", async () => {

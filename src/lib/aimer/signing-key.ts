@@ -487,11 +487,14 @@ export async function switchAimerSigningKey(params: {
  * `trust_registry`'s cached public key (not via the private key
  * here), so the delay protects against a brief race window.
  *
- * Pass `{ force: true }` to bypass the timer (admin override).
+ * There is no operator-facing override.  The retention window
+ * itself is configurable via `AIMER_SIGNING_KEY_PREV_RETENTION_MS`
+ * (test-only escape hatch) so e2e suites can collapse the wait;
+ * production code paths must wait for the timer.
  */
-export function deactivateAimerSigningPreviousKey(
-  params: { force?: boolean } = {},
-): { previousKid: string } {
+export function deactivateAimerSigningPreviousKey(): {
+  previousKid: string;
+} {
   const file = readKeyFile();
   if (!file) {
     throw new Error("No Aimer signing key file present.");
@@ -500,15 +503,13 @@ export function deactivateAimerSigningPreviousKey(
     throw new Error("No previous kid to deactivate.");
   }
 
-  if (!params.force) {
-    const recommendedAt = file.previous.recommendedDeactivateAt;
-    if (recommendedAt) {
-      const due = Date.parse(recommendedAt);
-      if (Number.isFinite(due) && Date.now() < due) {
-        throw new Error(
-          `Previous kid retention window has not elapsed (recommended deactivate at ${recommendedAt}). Pass force to override.`,
-        );
-      }
+  const recommendedAt = file.previous.recommendedDeactivateAt;
+  if (recommendedAt) {
+    const due = Date.parse(recommendedAt);
+    if (Number.isFinite(due) && Date.now() < due) {
+      throw new Error(
+        `Previous kid retention window has not elapsed (recommended deactivate at ${recommendedAt}).`,
+      );
     }
   }
 

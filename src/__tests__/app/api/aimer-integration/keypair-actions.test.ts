@@ -169,12 +169,34 @@ describe("POST /api/aimer-integration/keypair/actions", () => {
       makeContext(),
     );
     expect(res.status).toBe(200);
-    expect(mockDeactivate).toHaveBeenCalledWith({ force: false });
+    expect(mockDeactivate).toHaveBeenCalledWith();
     expect(mockAuditRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "aimer_signing_key.deactivated",
         targetId: "k1",
       }),
     );
+  });
+
+  it("ignores body.force=true and never bypasses the retention window", async () => {
+    // The lib's gate fires when retention has not elapsed. The route
+    // must propagate that as 400 even when the operator passes
+    // `force: true` — the body field is not consulted.
+    mockDeactivate.mockImplementation(() => {
+      throw new Error(
+        "Previous kid retention window has not elapsed (recommended deactivate at 2026-01-01T00:00:00.000Z).",
+      );
+    });
+
+    const { POST } = await import(
+      "@/app/api/aimer-integration/keypair/actions/route"
+    );
+    const res = await POST(
+      makeRequest({ action: "deactivate", force: true }),
+      makeContext(),
+    );
+    expect(res.status).toBe(400);
+    expect(mockDeactivate).toHaveBeenCalledWith();
+    expect(mockAuditRecord).not.toHaveBeenCalled();
   });
 });

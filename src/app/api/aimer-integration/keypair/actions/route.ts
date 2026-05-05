@@ -80,9 +80,12 @@ export const POST = withAuth(async (request, _context, session) => {
         break;
       }
       case "deactivate": {
-        const force = body.force === true;
-        const result = deactivateAimerSigningPreviousKey({ force });
-        details = { previousKid: result.previousKid, force };
+        // No `force` bypass on the public API. The retention window
+        // (context-token TTL + clock-skew margin) protects in-flight
+        // verification on aimer-web's side; the only legitimate
+        // override is the test-only env var consumed inside the lib.
+        const result = deactivateAimerSigningPreviousKey();
+        details = { previousKid: result.previousKid };
         auditTargetId = result.previousKid;
         break;
       }
