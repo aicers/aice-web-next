@@ -24,6 +24,7 @@ vi.mock("@/components/detection/tab-bar", () => ({
 
 import type { DetectionShellStateSnapshot } from "@/components/detection/detection-shell";
 import {
+  applyTabScrollTransition,
   bootstrapTabToSnapshot,
   buildDefaultTabSnapshot,
   buildUrlSearchForTab,
@@ -1270,5 +1271,79 @@ describe("shouldClearMatchFocusEvent — Reviewer Round 2 (item 3)", () => {
         activeTabId: TAB_B,
       }),
     ).toBe(true);
+  });
+});
+
+describe("applyTabScrollTransition — Reviewer Round 5 (issue #429 §3 scroll preservation)", () => {
+  // Regression: the wrapper's keyed `<DetectionShell>` swap restored
+  // the matched tab's filter / events / pagination / Quick peek but
+  // not its result-list scroll position. The parent dashboard
+  // scroller is shared across tabs, so its `scrollTop` bled across
+  // activations. This helper parks the outgoing tab's scrollTop and
+  // returns the incoming tab's saved value (or 0 for a fresh tab).
+  const TAB_A = "tab-a" as TabId;
+  const TAB_B = "tab-b" as TabId;
+  const TAB_C = "tab-c" as TabId;
+
+  it("captures the outgoing tab's scrollTop into the positions map", () => {
+    const result = applyTabScrollTransition({
+      positions: new Map(),
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 1234,
+      incomingTabId: TAB_B,
+    });
+    expect(result.positions.get(TAB_A)).toBe(1234);
+  });
+
+  it("restores the incoming tab's saved scrollTop on a switch back — the match-focus-after-switch-away path the reviewer flagged", () => {
+    // Operator: scroll Tab A to 500, switch to Tab B (scrolls to 0),
+    // re-click the preset that focuses Tab A. The restored scrollTop
+    // for the incoming Tab A must be 500, not Tab B's 0.
+    const afterFirstSwitch = applyTabScrollTransition({
+      positions: new Map(),
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 500,
+      incomingTabId: TAB_B,
+    });
+    expect(afterFirstSwitch.restoredScrollTop).toBe(0);
+    const afterMatchFocus = applyTabScrollTransition({
+      positions: afterFirstSwitch.positions,
+      outgoingTabId: TAB_B,
+      outgoingScrollTop: 80,
+      incomingTabId: TAB_A,
+    });
+    expect(afterMatchFocus.restoredScrollTop).toBe(500);
+  });
+
+  it("returns 0 for an incoming tab that has never been scrolled — fresh tabs start at the top, not at the outgoing tab's offset", () => {
+    const result = applyTabScrollTransition({
+      positions: new Map([[TAB_A, 999]]),
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 999,
+      incomingTabId: TAB_C,
+    });
+    expect(result.restoredScrollTop).toBe(0);
+  });
+
+  it("overwrites a stale outgoing entry rather than holding onto the prior value", () => {
+    const result = applyTabScrollTransition({
+      positions: new Map([[TAB_A, 100]]),
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 250,
+      incomingTabId: TAB_B,
+    });
+    expect(result.positions.get(TAB_A)).toBe(250);
+  });
+
+  it("does not mutate the input positions map (returns a fresh Map)", () => {
+    const input = new Map([[TAB_A, 100]]);
+    const result = applyTabScrollTransition({
+      positions: input,
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 200,
+      incomingTabId: TAB_B,
+    });
+    expect(input.get(TAB_A)).toBe(100);
+    expect(result.positions).not.toBe(input);
   });
 });

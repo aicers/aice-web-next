@@ -40,7 +40,14 @@
  */
 
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   type FetchCustomersForFilterResult,
   fetchCustomersForFilter,
@@ -305,6 +312,64 @@ export function DetectionTabsShell({
   const tabsRef = useRef<TabSnapshot[]>(tabs);
   useEffect(() => {
     tabsRef.current = tabs;
+  }, [tabs]);
+
+  // Reviewer Round 5: per-tab scroll preservation across tab switches.
+  // Issue #429 §3 says focusing an existing tab on match preserves
+  // "the list, scroll position, Quick peek inspector, and pagination
+  // state". The result-list rows survived the switch (the snapshot
+  // already carries `result.events`), but the parent dashboard
+  // scroller — `<div className="flex-1 overflow-y-auto p-6">` in
+  // `dashboard-layout.tsx` — sits above this wrapper, so its
+  // scrollTop bled across tabs: scroll Tab A to row 50, switch to
+  // Tab B, click the preset that focuses Tab A, and the list is
+  // back but the scroll snapped to whatever Tab B left behind.
+  //
+  // We park the outgoing tab's scrollTop in a per-tab Map on cleanup
+  // and restore the incoming tab's value on the next layout effect
+  // pass. Layout-effect timing matters: the keyed `<DetectionShell>`
+  // remount commits the new tab's already-cached rows synchronously
+  // (no fetch needed for match-focus), so the scroll container's
+  // content height is correct by the time we write `scrollTop`. A
+  // passive useEffect would let the browser paint the new content at
+  // the wrong scroll first, producing a visible jump.
+  //
+  // Storage is intentionally a ref (not React state): the value is
+  // read inside the layout effect and never participates in render.
+  // It's also intentionally not persisted by `tabs-storage.ts` — the
+  // entire matching system (`originPreset`, `timeMode`,
+  // `lastActivatedAt`) explicitly resets on reload, and scroll
+  // position belongs in the same in-memory bucket.
+  const scrollPositionsRef = useRef<Map<TabId, number>>(new Map());
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return;
+    const container = findScrollableAncestor(wrapperRef.current);
+    if (!container) return;
+    const saved = scrollPositionsRef.current.get(activeTabId);
+    // Treat a missing entry as "fresh tab — start at top". Without
+    // this, switching to a brand-new tab would leave the parent's
+    // scrollTop wherever the prior tab parked it, which the operator
+    // reads as "the new tab is mysteriously scrolled past its
+    // header".
+    container.scrollTop = saved ?? 0;
+    return () => {
+      const c = findScrollableAncestor(wrapperRef.current);
+      if (!c) return;
+      scrollPositionsRef.current.set(activeTabId, c.scrollTop);
+    };
+  }, [activeTabId]);
+
+  // Drop a closed tab's stored scroll so the Map cannot leak entries
+  // for ids that no longer exist. The cleanup above writes the
+  // outgoing tab's position, and on a closed tab that write is dead
+  // weight — but we still want to evict the slot proactively rather
+  // than hope the Map ages out on a future GC.
+  useEffect(() => {
+    const live = new Set(tabs.map((t) => t.id));
+    for (const id of scrollPositionsRef.current.keys()) {
+      if (!live.has(id)) scrollPositionsRef.current.delete(id);
+    }
   }, [tabs]);
 
   // Reviewer Round 1 (item 2): mirror the shell's live state into the
@@ -827,7 +892,7 @@ export function DetectionTabsShell({
   const canAdd = canAddTabFn(tabs);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div ref={wrapperRef} className="flex flex-col gap-3">
       <TabBar
         tabs={tabBarTabs}
         activeTabId={activeTabId}
@@ -1112,6 +1177,64 @@ export function shouldClearMatchFocusEvent(args: {
 }): boolean {
   if (args.matchFocusEvent === null) return false;
   return args.matchFocusEvent.tabId !== args.activeTabId;
+}
+
+/**
+ * Reviewer Round 5: per-tab scroll-position bookkeeping for the
+ * tab-switch transition. Issue #429 §3 lists scroll position as one
+ * of the four UX guarantees match-focus preserves (alongside the list
+ * itself, Quick peek, and pagination). The result-list rows already
+ * survive the switch via `tabSnapshot.result.events`, but the parent
+ * dashboard scroller (the `overflow-y-auto` container in
+ * `dashboard-layout.tsx`) is shared across tabs, so its `scrollTop`
+ * bled across activations: scrolling Tab A to row 50, switching to
+ * Tab B, then re-clicking the preset that focuses Tab A would
+ * restore A's content but leave the scroll where B parked it.
+ *
+ * Park the outgoing tab's scrollTop in a per-tab Map and return the
+ * incoming tab's restored value (0 if no entry exists — a fresh /
+ * never-scrolled tab starts at the top, which beats inheriting the
+ * outgoing tab's position).
+ *
+ * Pure helper so the bookkeeping can be unit-tested without rendering
+ * the full shell or a scrollable ancestor element.
+ */
+export function applyTabScrollTransition(args: {
+  positions: ReadonlyMap<TabId, number>;
+  outgoingTabId: TabId;
+  outgoingScrollTop: number;
+  incomingTabId: TabId;
+}): {
+  positions: Map<TabId, number>;
+  restoredScrollTop: number;
+} {
+  const next = new Map(args.positions);
+  next.set(args.outgoingTabId, args.outgoingScrollTop);
+  return {
+    positions: next,
+    restoredScrollTop: next.get(args.incomingTabId) ?? 0,
+  };
+}
+
+/**
+ * Walk up the DOM from the wrapper looking for the first ancestor
+ * whose computed `overflow-y` is `auto` or `scroll`. The dashboard
+ * layout owns this scroller (`flex-1 overflow-y-auto p-6` in
+ * `dashboard-layout.tsx`); the wrapper itself doesn't scroll.
+ * Defensive: returns null when called server-side or before mount,
+ * so the layout effect can no-op gracefully.
+ */
+function findScrollableAncestor(start: HTMLElement | null): HTMLElement | null {
+  if (typeof window === "undefined") return null;
+  let cur: HTMLElement | null = start?.parentElement ?? null;
+  while (cur) {
+    const style = window.getComputedStyle(cur);
+    if (style.overflowY === "auto" || style.overflowY === "scroll") {
+      return cur;
+    }
+    cur = cur.parentElement;
+  }
+  return null;
 }
 
 /**
