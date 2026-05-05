@@ -141,6 +141,16 @@ the operator's choice, not an automatic re-query. Clicking
 Refresh runs the same fetch the manual Refresh button does. The
 notice does not appear when the tab's data is fresh.
 
+Refresh on a tab that still uses its preset's relative window
+(for example **Last 1 hour**) **slides that window forward** to
+end at the current moment — a tab created at 11:00 and refreshed
+at 11:30 queries 10:30–11:30, not the frozen 10:00–11:00 from
+activation. The tab stays bound to the preset, so a subsequent
+click on the same preset still focuses this tab. Tabs whose time
+has been edited (absolute range, or a different Period chip) keep
+their custom bounds — Refresh re-runs the same window without
+sliding.
+
 If a Refresh (or any other re-query) lands without the event your
 Quick peek inspector was pointing at, the inspector closes and
 the result header shows a **This event is no longer in the list**

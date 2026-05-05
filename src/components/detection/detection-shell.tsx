@@ -115,6 +115,7 @@ import {
   totalPagesFrom,
 } from "@/lib/detection/pagination";
 import {
+  computePeriodRange,
   DEFAULT_PERIOD_KEY,
   matchesPeriodKey,
   type PeriodKey,
@@ -1072,9 +1073,10 @@ export function derivePeriodForFilter(filter: Filter): PeriodKey | null {
  *   stays absolute, an actual change to start or end ISO counts as an
  *   edit.
  *
- * Refresh never reaches this helper — `handleRefresh` re-dispatches
- * the existing committed filter without calling `setCommittedFilter`,
- * so a window slide from Refresh does not trip the transition.
+ * Refresh never reaches this helper — Refresh on a preset tab slides
+ * the relative window in place via {@link slidePresetRefreshFilter},
+ * which preserves `timeMode: "preset"` rather than going through the
+ * Apply path that would call this transition check.
  */
 export function shouldTransitionToCustomTime(
   committedFilter: Filter,
@@ -1099,6 +1101,46 @@ export function shouldTransitionToCustomTime(
       ? (committedFilter.input.end ?? null)
       : null;
   return applied.startIso !== oldStart || applied.endIso !== oldEnd;
+}
+
+/**
+ * Issue #429: Refresh on a preset-originated tab must slide the
+ * relative time window forward — the issue's `timeMode: "preset"`
+ * contract says "Refresh slides the window in place" and explicitly
+ * forbids transitioning to `"custom"`.
+ *
+ * Returns `null` when the current state does not warrant a slide
+ * (custom-time tabs, query-mode filters, missing period). The caller
+ * then re-dispatches the existing `committedFilter` unchanged. When
+ * eligible, returns a freshly built filter with `start`/`end`
+ * recomputed from `now` against the same period, leaving every
+ * non-time field untouched so narrowing the operator added later
+ * survives the slide.
+ */
+export function slidePresetRefreshFilter(
+  committedFilter: Filter,
+  committedPeriod: PeriodKey | null,
+  timeMode: TimeMode,
+  now: Date = new Date(),
+): Filter | null {
+  if (timeMode !== "preset") return null;
+  if (committedPeriod === null) return null;
+  if (committedFilter.mode !== "structured") return null;
+  const range = computePeriodRange(committedPeriod, now);
+  if (
+    committedFilter.input.start === range.start &&
+    committedFilter.input.end === range.end
+  ) {
+    return null;
+  }
+  return {
+    mode: "structured",
+    input: {
+      ...committedFilter.input,
+      start: range.start,
+      end: range.end,
+    },
+  };
 }
 
 export function DetectionShell({
@@ -2338,7 +2380,37 @@ export function DetectionShell({
     if (!hasQueried) return;
     latestWalkIdRef.current += 1;
     setWalking(null);
-    void dispatchQuery(committedFilter, {
+    // Issue #429: a tab still in `timeMode: "preset"` advances its
+    // relative window on Refresh — a "Last 1 hour" tab created at 11:00
+    // and refreshed at 11:30 must query 10:30–11:30, not the frozen
+    // 10:00–11:00 captured at activation. The slide preserves
+    // `timeMode: "preset"` so subsequent preset clicks still match this
+    // tab.
+    const slid = slidePresetRefreshFilter(
+      committedFilter,
+      committedPeriod,
+      timeMode,
+    );
+    const dispatched = slid ?? committedFilter;
+    if (slid) {
+      setCommittedFilter(slid);
+      // Mirror the slid window into the URL so a refresh restores the
+      // freshly advanced bounds (the `f` param carries start/end).
+      const search = buildEncodedFilterSearch({
+        filter: slid,
+        period: committedPeriod,
+        endpoints: committedEndpoints,
+        pivotExtras: extrasFromPivotOnly(pivotOnly),
+      });
+      for (const [k, v] of paginationToSearchEntries(pagination)) {
+        search.set(k, v);
+      }
+      preserveActiveTabParam(search);
+      const qs = search.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(window.history.state, "", url);
+    }
+    void dispatchQuery(dispatched, {
       anchor: pagination.anchor,
       pageSize: pagination.pageSize,
       page: pagination.page,
@@ -2361,11 +2433,16 @@ export function DetectionShell({
       }
     });
   }, [
+    committedEndpoints,
     committedFilter,
+    committedPeriod,
     dispatchQuery,
     hasQueried,
     pagination,
+    pathname,
     persistPaginationToUrl,
+    pivotOnly,
+    timeMode,
   ]);
 
   /**

@@ -1012,3 +1012,95 @@ describe("shouldTransitionToCustomTime — issue #429 §2", () => {
     ).toBe(false);
   });
 });
+
+describe("slidePresetRefreshFilter — issue #429 §3 (Reviewer Round 3)", () => {
+  // Matches `computePeriodRange("1h", now)` shape — end === now.toISOString(),
+  // start === end - 1h.
+  const NOW_ACTIVATION = new Date("2026-05-05T11:00:00.000Z");
+  const NOW_REFRESH = new Date("2026-05-05T11:30:00.000Z");
+  const ACTIVATION_START = "2026-05-05T10:00:00.000Z";
+  const ACTIVATION_END = NOW_ACTIVATION.toISOString();
+  const REFRESH_START = "2026-05-05T10:30:00.000Z";
+  const REFRESH_END = NOW_REFRESH.toISOString();
+
+  function presetTabFilter(): Filter {
+    return {
+      mode: "structured",
+      input: {
+        start: ACTIVATION_START,
+        end: ACTIVATION_END,
+        directions: ["INBOUND"],
+      },
+    };
+  }
+
+  it("slides start/end forward against the same period when timeMode is 'preset'", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const slid = mod.slidePresetRefreshFilter(
+      presetTabFilter(),
+      "1h",
+      "preset",
+      NOW_REFRESH,
+    );
+    expect(slid).not.toBeNull();
+    if (slid?.mode !== "structured") throw new Error("expected structured");
+    expect(slid.input.start).toBe(REFRESH_START);
+    expect(slid.input.end).toBe(REFRESH_END);
+    // Non-time narrowing must survive the slide.
+    expect(slid.input.directions).toEqual(["INBOUND"]);
+  });
+
+  it("returns null for custom-time tabs (Refresh re-runs frozen bounds)", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.slidePresetRefreshFilter(
+        presetTabFilter(),
+        "1h",
+        "custom",
+        NOW_REFRESH,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when committedPeriod is null (absolute-mode tab)", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.slidePresetRefreshFilter(
+        presetTabFilter(),
+        null,
+        "preset",
+        NOW_REFRESH,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when refreshing within the same instant (no drift)", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.slidePresetRefreshFilter(
+        presetTabFilter(),
+        "1h",
+        "preset",
+        NOW_ACTIVATION,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for query-mode filters", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const queryFilter: Filter = { mode: "query", text: "src=10.0.0.1" };
+    expect(
+      mod.slidePresetRefreshFilter(queryFilter, "1h", "preset", NOW_REFRESH),
+    ).toBeNull();
+  });
+});
