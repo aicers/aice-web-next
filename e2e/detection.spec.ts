@@ -122,7 +122,13 @@ test("detection page renders shell for admin worker", async ({
   // section, and the trailing Save-current action — the three
   // visually-separated groups the issue's "preset menu" requires.
   await presetsTrigger.click();
-  await expect(page.getByRole("menuitem", { name: "3 years" })).toBeVisible();
+  // `exact: true` keeps the assertion scoped to the recommended preset
+  // row itself; #429's "Open in new tab" icon renders a sibling
+  // menuitem whose aria-label embeds the preset name ("Open 3 years
+  // in a new tab"), which would otherwise match by substring.
+  await expect(
+    page.getByRole("menuitem", { name: "3 years", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("menuitem", { name: /Save current filter/ }),
   ).toBeVisible();
