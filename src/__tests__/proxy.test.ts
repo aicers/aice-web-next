@@ -88,6 +88,21 @@ describe("proxy", () => {
       // "en" is the default locale — redirect has no locale prefix
       expect(getRedirectPathname(response)).toBe("/sign-in");
     });
+
+    // Regression: with the default `nginx-prod` host mapping of
+    // `9443:443`, the browser sends `Host: localhost:9443`. Nginx
+    // must forward that authority verbatim (`proxy_set_header Host
+    // $http_host`) so Next builds `request.url` against it; otherwise
+    // the sign-in redirect lands on the unpublished `:443`.
+    it("preserves the inbound host:port authority on the sign-in redirect", async () => {
+      const request = new NextRequest("https://localhost:9443/audit-logs");
+      const response = await proxy(request);
+
+      expect(response.status).toBe(307);
+      const location = new URL(response.headers.get("location") ?? "");
+      expect(location.origin).toBe("https://localhost:9443");
+      expect(location.pathname).toBe("/sign-in");
+    });
   });
 
   describe("protected routes — invalid JWT", () => {

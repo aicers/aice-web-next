@@ -410,14 +410,21 @@ audit table.
    (e.g. `.env.local`) is the natural place to keep them.
 
    At minimum also set `CSRF_SECRET`, the GraphQL endpoints, and:
-   - `EXPECTED_ORIGIN=https://your.public.host` so the CSRF/Origin
-     guard accepts mutation requests through the HTTPS proxy. For
-     the prod profile, also set `WEBAUTHN_RP_ORIGIN` to the same
-     public HTTPS origin and `WEBAUTHN_RP_ID` to its host
+   - `EXPECTED_ORIGIN=https://your.public.host:9443` so the
+     CSRF/Origin guard accepts mutation requests through the HTTPS
+     proxy. The `:9443` suffix matches the default `nginx-prod`
+     host-port mapping (`9443:443`) — the browser sends the port in
+     the `Origin` header, and any mismatch with `EXPECTED_ORIGIN`
+     causes every state-changing request to be rejected. Drop the
+     port suffix only when an external reverse proxy terminates TLS
+     on standard `:443` (in which case the operator typically also
+     publishes nginx-prod on host `:443` via override). The prod
+     profile also needs `WEBAUTHN_RP_ORIGIN` set to that same full
+     origin and `WEBAUTHN_RP_ID` set to its host
      (e.g. `WEBAUTHN_RP_ID=your.public.host`,
-     `WEBAUTHN_RP_ORIGIN=https://your.public.host`). The two env
-     vars guard different code paths — the CSRF/Origin guard and
-     the WebAuthn ceremony — but share the same value in this
+     `WEBAUTHN_RP_ORIGIN=https://your.public.host:9443`). The two
+     env vars guard different code paths — the CSRF/Origin guard
+     and the WebAuthn ceremony — but share the same value in this
      deployment. Leaving `WEBAUTHN_RP_ORIGIN` at its dev fallback
      silently breaks MFA enrollment on the prod profile.
    - One of `JWT_SIGNING_KEY_FILE=<path>` (recommended — a Secret
