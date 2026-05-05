@@ -88,10 +88,13 @@ type ScriptObservation = {
  *   • Turbopack HMR client chunk
  *     (`/_next/static/chunks/[turbopack]_browser_dev_hmr-client_*.js`)
  *   • Turbopack dev module chunks named after the source path with a
- *     `_._.js` suffix (e.g.
- *     `/_next/static/chunks/src_app_%5Blocale%5D_not-found_tsx_0.-.k9_._.js`).
+ *     `._.js` suffix (e.g.
+ *     `/_next/static/chunks/src_app_%5Blocale%5D_not-found_tsx_0.-.k9_._.js`
+ *     or `..._tsx_0ebvdg5._.js`). Turbopack sometimes inserts an
+ *     underscore separator between the hash and the `._.js` marker and
+ *     sometimes does not, so the regex matches the marker alone.
  *     Production Turbopack output uses content-hashed names without
- *     that suffix.
+ *     that marker.
  *
  * `pnpm build` emits none of these, so excluding them from the dev-mode
  * assertion does not lose prod coverage. The static-vs-dynamic guard
@@ -99,7 +102,7 @@ type ScriptObservation = {
  * nonce coverage; this dev exclusion keeps the smoke test honest.
  */
 const DEV_ONLY_SCRIPT_SRC =
-  /\/_next\/static\/chunks\/(?:(?:%5B|\[)turbopack(?:%5D|\])_browser_dev_|.+_\._\.js$)/;
+  /\/_next\/static\/chunks\/(?:(?:%5B|\[)turbopack(?:%5D|\])_browser_dev_|.+\._\.js$)/;
 
 async function readScriptNonces(page: Page): Promise<ScriptObservation[]> {
   const all = await page.$$eval("script", (scripts) =>
