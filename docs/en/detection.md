@@ -222,10 +222,16 @@ view is never empty.
   ("Build a filter to begin") and the operator clicks Apply to
   populate it.
 - Activating a **saved filter** or a **recommended filter** from
-  the Presets dropdown (default click — see [Presets
-  dropdown](#presets-dropdown) above) or following a **pivot link**
-  (Phase Detection-12) also creates a new tab pre-seeded with the
-  target filter rather than replacing the current tab.
+  the Presets dropdown follows the **create-or-focus** rule
+  described in [Presets dropdown](#presets-dropdown) above: it
+  creates a new tab only when no untouched matching tab exists,
+  otherwise it focuses the existing one (and never auto-refetches
+  on a focus). Use the row's **Open in new tab** icon, or
+  Cmd/Ctrl-click the row, when you want a fresh tab anyway —
+  those paths always create.
+- Following a **pivot link** (Phase Detection-12) always creates
+  a new tab pre-seeded with the target filter; pivots do not
+  participate in preset matching.
 
 The tab cap is **8 simultaneous tabs**. At the cap the `+`
 affordance disables and surfaces a tooltip explaining that you

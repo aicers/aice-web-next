@@ -87,8 +87,17 @@ export interface ResultListLabels {
    * the threshold. Coexists with the `Updated …` timestamp; the notice
    * is gated on a match-focus event and the staleness threshold so a
    * fresh tab does not spam it.
+   *
+   * Distinct from `updated*Ago` — those compose the always-on
+   * `Updated …` chip and prepending another `Last updated` to them
+   * would produce duplicated wording (`Last updated Updated 14 min
+   * ago`). The stale-notice variants are full sentences so the two
+   * surfaces never share a fragment.
    */
-  staleNoticePrefix: (relative: string) => string;
+  staleNoticeJustNow: string;
+  staleNoticeSecondsAgo: (s: number) => string;
+  staleNoticeMinutesAgo: (m: number) => string;
+  staleNoticeHoursAgo: (h: number) => string;
   staleNoticeRefresh: string;
   /**
    * Issue #429 §6: inline notice surfaced when the operator's open
@@ -569,14 +578,14 @@ function StaleFocusNotice({
   if (focusAt !== shownEventAt) return null;
   if (lastUpdatedMs === null) return null;
   const elapsedMs = Date.now() - lastUpdatedMs;
-  const relative = formatRelativeUpdate(elapsedMs, labels);
+  const message = formatStaleNotice(elapsedMs, labels);
   return (
     <div
       role="status"
       data-slot="result-stale-notice"
       className="text-muted-foreground flex items-center justify-end gap-2 text-xs"
     >
-      <span>{labels.staleNoticePrefix(relative)}</span>
+      <span>{message}</span>
       <Button
         type="button"
         variant="ghost"
@@ -604,6 +613,19 @@ function formatRelativeUpdate(
   if (minutes < 60) return labels.updatedMinutesAgo(minutes);
   const hours = Math.floor(minutes / 60);
   return labels.updatedHoursAgo(hours);
+}
+
+function formatStaleNotice(
+  elapsedMs: number,
+  labels: ResultListLabels,
+): string {
+  if (elapsedMs < 5_000) return labels.staleNoticeJustNow;
+  const seconds = Math.floor(elapsedMs / 1000);
+  if (seconds < 60) return labels.staleNoticeSecondsAgo(seconds);
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return labels.staleNoticeMinutesAgo(minutes);
+  const hours = Math.floor(minutes / 60);
+  return labels.staleNoticeHoursAgo(hours);
 }
 
 function ResultListBody({

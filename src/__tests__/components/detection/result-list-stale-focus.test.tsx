@@ -38,7 +38,10 @@ function labels(): ResultListLabels {
     updatedSecondsAgo: (s) => `Updated ${s} sec ago`,
     updatedMinutesAgo: (m) => `Updated ${m} min ago`,
     updatedHoursAgo: (h) => `Updated ${h} hr ago`,
-    staleNoticePrefix: (relative) => `Last updated ${relative}`,
+    staleNoticeJustNow: "Last updated just now",
+    staleNoticeSecondsAgo: (s) => `Last updated ${s} sec ago`,
+    staleNoticeMinutesAgo: (m) => `Last updated ${m} min ago`,
+    staleNoticeHoursAgo: (h) => `Last updated ${h} hr ago`,
     staleNoticeRefresh: "Refresh now",
     peekLostNotice: "This event is no longer in the list.",
     peekLostDismiss: "Dismiss",
@@ -155,6 +158,13 @@ describe("ResultList stale-focus notice — issue #429 §3 + §6", () => {
     );
     const notice = container.querySelector("[data-slot='result-stale-notice']");
     expect(notice).not.toBeNull();
+    // Round 2 regression: the notice must NOT compose "Last updated" with
+    // a fragment that itself contains "Updated"; that produced copy like
+    // `Last updated Updated 14 min ago`. Stale-notice variants are full
+    // sentences specifically to avoid that double-up.
+    const noticeText = notice?.textContent ?? "";
+    expect(noticeText).toMatch(/Last updated \d+ min ago/);
+    expect(noticeText).not.toMatch(/Last updated Updated/);
     fireEvent.click(getByText("Refresh now"));
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });

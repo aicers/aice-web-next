@@ -1158,8 +1158,13 @@ export function DetectionShell({
       updatedSecondsAgo: (s: number) => tResults("updatedSecondsAgo", { s }),
       updatedMinutesAgo: (m: number) => tResults("updatedMinutesAgo", { m }),
       updatedHoursAgo: (h: number) => tResults("updatedHoursAgo", { h }),
-      staleNoticePrefix: (relative: string) =>
-        tResults("staleNoticePrefix", { relative }),
+      staleNoticeJustNow: tResults("staleNoticeJustNow"),
+      staleNoticeSecondsAgo: (s: number) =>
+        tResults("staleNoticeSecondsAgo", { s }),
+      staleNoticeMinutesAgo: (m: number) =>
+        tResults("staleNoticeMinutesAgo", { m }),
+      staleNoticeHoursAgo: (h: number) =>
+        tResults("staleNoticeHoursAgo", { h }),
       staleNoticeRefresh: tResults("staleNoticeRefresh"),
       peekLostNotice: tResults("peekLostNotice"),
       peekLostDismiss: tResults("peekLostDismiss"),
