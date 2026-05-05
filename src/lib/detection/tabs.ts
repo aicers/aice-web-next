@@ -63,6 +63,33 @@ export const MAX_TABS = 8;
 export const ACTIVE_TAB_URL_PARAM = "tab";
 
 /**
+ * Identity of the preset a tab was activated from (issue #429). Saved-
+ * filter ids and recommended-preset ids occupy separate namespaces and
+ * could otherwise collide on the matching path, so the discriminator is
+ * required.
+ *
+ * `null` on a {@link TabSnapshot} marks a tab the operator built
+ * manually (`+` affordance, drawer Apply, pivot create) — manual tabs
+ * never participate in preset matching.
+ */
+export type OriginPreset =
+  | { readonly kind: "saved"; readonly id: string }
+  | { readonly kind: "recommended"; readonly id: string };
+
+/**
+ * Whether a preset-originated tab is still using the preset's relative
+ * time semantics (`"preset"`) or the operator has explicitly redefined
+ * the window (`"custom"`). Manual tabs always carry `"custom"`.
+ *
+ * Transitions are one-way: the first time the operator commits a new
+ * value to Period / start / end the tab flips to `"custom"` and stays
+ * there for the rest of its life. Re-selecting the same value does NOT
+ * transition; the Refresh button never transitions; programmatic preset
+ * re-applications never transition.
+ */
+export type TimeMode = "preset" | "custom";
+
+/**
  * Copy the current URL's `?tab=<id>` value into `search` when present.
  * Called by the shell's URL writes (Apply, chip removal, pagination)
  * so the multi-tab wrapper's active-tab anchor survives committed
@@ -209,6 +236,41 @@ export interface TabSnapshot {
    */
   readonly pendingQuickPeekToken: string | null;
   readonly result: ResultCache;
+  /**
+   * Issue #429: the preset this tab was activated from, or `null` for
+   * manually-built tabs (`+` affordance, drawer Apply on a default tab,
+   * pivot create). Set at tab creation and never updated for the
+   * lifetime of the tab — the matching logic relies on the value being
+   * stable so a tab that was originally a preset activation can be
+   * recognised even after the operator has narrowed it.
+   *
+   * NOT persisted by `tabs-storage.ts`: a reload resets matching state,
+   * which is acceptable for v1 (the matching tab list lives only as
+   * long as the tab list itself does).
+   */
+  readonly originPreset: OriginPreset | null;
+  /**
+   * Issue #429: whether this tab is still in the preset's relative time
+   * semantics (Refresh slides the window) or the operator has redefined
+   * it (`"custom"`). Manual tabs are always `"custom"`. Preset tabs
+   * start at `"preset"` and flip to `"custom"` on the first committed
+   * change to Period / start / end.
+   *
+   * NOT persisted by `tabs-storage.ts`.
+   */
+  readonly timeMode: TimeMode;
+  /**
+   * Issue #429: wall-clock ms timestamp of the most recent activation
+   * (creation or focus). Used to break ties when multiple tabs match
+   * the same preset under §6's "Multiple matching tabs" rule — focus
+   * the most recently active. Updated on tab creation, on tab switch
+   * (focus), and on a preset-activation match-focus.
+   *
+   * NOT persisted by `tabs-storage.ts` — a reload starts every
+   * remaining tab from the same baseline, matching the "matching state
+   * resets on reload" contract.
+   */
+  readonly lastActivatedAt: number;
 }
 
 /**
@@ -316,6 +378,20 @@ export function createTabSnapshot(args: {
   endpoints?: EndpointEntry[];
   pivotOnly?: PivotFilterParams;
   pagination?: PaginationState;
+  /**
+   * Issue #429: the preset this tab was activated from, when applicable.
+   * Manual tabs (default `null`) never participate in preset matching.
+   */
+  originPreset?: OriginPreset | null;
+  /**
+   * Issue #429: starting {@link TimeMode}. Preset activations pass
+   * `"preset"`; manual activations leave the default `"custom"`. The
+   * shell flips it to `"custom"` on the first committed time-field
+   * change.
+   */
+  timeMode?: TimeMode;
+  /** Issue #429: override the activation timestamp (defaults to `Date.now()`). */
+  lastActivatedAt?: number;
 }): TabSnapshot {
   return {
     id: createTabId(),
@@ -333,5 +409,8 @@ export function createTabSnapshot(args: {
     quickPeekEvent: null,
     pendingQuickPeekToken: null,
     result: EMPTY_RESULT_CACHE,
+    originPreset: args.originPreset ?? null,
+    timeMode: args.timeMode ?? "custom",
+    lastActivatedAt: args.lastActivatedAt ?? Date.now(),
   };
 }

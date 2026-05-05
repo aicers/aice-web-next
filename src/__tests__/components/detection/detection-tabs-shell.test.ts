@@ -24,14 +24,19 @@ vi.mock("@/components/detection/tab-bar", () => ({
 
 import type { DetectionShellStateSnapshot } from "@/components/detection/detection-shell";
 import {
+  applyTabScrollTransition,
   bootstrapTabToSnapshot,
   buildDefaultTabSnapshot,
   buildUrlSearchForTab,
+  clearTabPresetMetadata,
+  findMatchingTab,
   mergeSnapshot,
   mergeStoredTabsOnRehydrate,
+  resolveActivatePresetEffect,
   resolveLoadSavedFilterEffect,
   resolvePivotEffect,
   routeSnapshotToTab,
+  shouldClearMatchFocusEvent,
 } from "@/components/detection/detection-tabs-shell";
 import type { EndpointEntry } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
@@ -40,6 +45,7 @@ import { INITIAL_PAGINATION_STATE } from "@/lib/detection/pagination";
 import type { PivotAction } from "@/lib/detection/pivot";
 import {
   createTabSnapshot,
+  type OriginPreset,
   type TabId,
   type TabSnapshot,
 } from "@/lib/detection/tabs";
@@ -152,6 +158,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -194,6 +201,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       analyticsTopN: 20,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -230,6 +238,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -371,6 +380,7 @@ describe("routeSnapshotToTab — Reviewer Round 2 (item 1)", () => {
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -523,6 +533,7 @@ describe("buildUrlSearchForTab — Reviewer Round 9 (pending token round-trip)",
       ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
     };
     const search = buildUrlSearchForTab(tab);
     expect(search.has("event")).toBe(false);
@@ -594,6 +605,7 @@ describe("mergeSnapshot — Reviewer Round 9 (pending token round-trip)", () => 
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: "pending-token-xyz",
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -629,6 +641,7 @@ describe("mergeSnapshot — Reviewer Round 9 (pending token round-trip)", () => 
       analyticsTopN: 10,
       quickPeekEvent: null,
       pendingQuickPeekToken: null,
+      timeMode: "custom",
       result: {
         events: [],
         eventKeys: [],
@@ -998,5 +1011,339 @@ describe("resolveLoadSavedFilterEffect — Reviewer Round 2 (cap toast vs. creat
     });
     if (effect.kind !== "create") throw new Error("expected create branch");
     expect(effect.tab.endpoints).toEqual(endpoints);
+  });
+});
+
+describe("findMatchingTab — issue #429 §2 + §6", () => {
+  const SAVED_PRESET: OriginPreset = { kind: "saved", id: "sf-1" };
+  const RECOMMENDED_PRESET: OriginPreset = {
+    kind: "recommended",
+    id: "rec-1",
+  };
+  const PRESET_FILTER: Filter = {
+    mode: "structured",
+    input: {
+      start: "2026-04-25T00:00:00.000Z",
+      end: "2026-04-25T01:00:00.000Z",
+      kinds: ["HttpThreat"],
+    },
+  };
+
+  function presetTab(overrides: Partial<TabSnapshot> = {}): TabSnapshot {
+    return {
+      ...createTabSnapshot({
+        filter: PRESET_FILTER,
+        period: "1h",
+        originPreset: SAVED_PRESET,
+        timeMode: "preset",
+      }),
+      ...overrides,
+    };
+  }
+
+  it("returns null when no tab carries an origin preset", () => {
+    const manual = createTabSnapshot({ filter: PRESET_FILTER, period: "1h" });
+    expect(findMatchingTab([manual], SAVED_PRESET, PRESET_FILTER)).toBeNull();
+  });
+
+  it("focuses the matching tab on a second activation of the same preset", () => {
+    const tab = presetTab();
+    expect(findMatchingTab([tab], SAVED_PRESET, PRESET_FILTER)?.id).toBe(
+      tab.id,
+    );
+  });
+
+  it("does not match across kinds — saved-id `sf-1` and recommended-id `sf-1` stay distinct", () => {
+    // The kind discriminator is required because saved and recommended
+    // ids occupy separate namespaces. A coincidental id collision must
+    // not collapse the two onto each other.
+    const tab = presetTab({
+      originPreset: { kind: "saved", id: "sf-1" },
+    });
+    expect(
+      findMatchingTab(
+        [tab],
+        { kind: "recommended", id: "sf-1" },
+        PRESET_FILTER,
+      ),
+    ).toBeNull();
+  });
+
+  it("does not match when the tab's non-time fields have been narrowed", () => {
+    const narrowed = presetTab({
+      filter: {
+        mode: "structured",
+        input: { ...PRESET_FILTER.input, levels: [3] },
+      },
+    });
+    expect(findMatchingTab([narrowed], SAVED_PRESET, PRESET_FILTER)).toBeNull();
+  });
+
+  it("does not match when the tab's `timeMode` has flipped to `custom`", () => {
+    const customTime = presetTab({ timeMode: "custom" });
+    expect(
+      findMatchingTab([customTime], SAVED_PRESET, PRESET_FILTER),
+    ).toBeNull();
+  });
+
+  it("ignores the start/end ISO pair so a tab created hours ago still matches", () => {
+    // Mirrors the spec: a tab created at 11:00 with `Last 1 hour` is
+    // still a `Last 1 hour` tab at 11:30 even though its absolute
+    // start/end have not moved (the matcher does not advance them).
+    const olderTab = presetTab({
+      filter: {
+        mode: "structured",
+        input: {
+          start: "2099-01-01T00:00:00.000Z",
+          end: "2099-01-01T01:00:00.000Z",
+          kinds: ["HttpThreat"],
+        },
+      },
+    });
+    expect(findMatchingTab([olderTab], SAVED_PRESET, PRESET_FILTER)?.id).toBe(
+      olderTab.id,
+    );
+  });
+
+  it("focuses the most recently activated tab when multiple match", () => {
+    const older = presetTab({ lastActivatedAt: 1_000 });
+    const newer = presetTab({ lastActivatedAt: 5_000 });
+    const match = findMatchingTab([older, newer], SAVED_PRESET, PRESET_FILTER);
+    expect(match?.id).toBe(newer.id);
+  });
+
+  it("handles recommended presets the same way as saved", () => {
+    const tab = presetTab({ originPreset: RECOMMENDED_PRESET });
+    expect(findMatchingTab([tab], RECOMMENDED_PRESET, PRESET_FILTER)?.id).toBe(
+      tab.id,
+    );
+  });
+});
+
+describe("resolveActivatePresetEffect — issue #429", () => {
+  const FILTER: Filter = {
+    mode: "structured",
+    input: { kinds: ["HttpThreat"] },
+  };
+  const SAVED_PRESET: OriginPreset = { kind: "saved", id: "sf-1" };
+
+  it("seeds the new tab with the supplied origin preset and `timeMode: 'preset'`", () => {
+    const effect = resolveActivatePresetEffect(FILTER, [], {
+      tabCapReachedTemplate: "Tab cap reached ({max} max)",
+      maxTabs: 8,
+      period: "1h",
+      endpoints: [],
+      originPreset: SAVED_PRESET,
+    });
+    if (effect.kind !== "create") throw new Error("expected create branch");
+    expect(effect.tab.originPreset).toEqual(SAVED_PRESET);
+    expect(effect.tab.timeMode).toBe("preset");
+    expect(effect.tab.result.hasQueried).toBe(true);
+    expect(effect.tab.result.loading).toBe(true);
+  });
+
+  it("falls back to a manual tab (no preset, `timeMode: 'custom'`) when no preset is supplied", () => {
+    const effect = resolveActivatePresetEffect(FILTER, [], {
+      tabCapReachedTemplate: "Tab cap reached ({max} max)",
+      maxTabs: 8,
+      period: "1h",
+      endpoints: [],
+    });
+    if (effect.kind !== "create") throw new Error("expected create branch");
+    expect(effect.tab.originPreset).toBeNull();
+    expect(effect.tab.timeMode).toBe("custom");
+  });
+
+  it("emits the cap toast when the tab list is at the cap", () => {
+    const tab = createTabSnapshot({ filter: FILTER, period: null });
+    const tabs = Array.from({ length: 8 }, () => tab);
+    const effect = resolveActivatePresetEffect(FILTER, tabs, {
+      tabCapReachedTemplate: "Tab cap reached ({max} max)",
+      maxTabs: 8,
+      period: null,
+      endpoints: [],
+      originPreset: SAVED_PRESET,
+    });
+    expect(effect).toEqual({
+      kind: "toast",
+      message: "Tab cap reached (8 max)",
+    });
+  });
+});
+
+describe("clearTabPresetMetadata — Reviewer Round 2 (item 2)", () => {
+  // Regression: the dropdown's "Load in current tab" affordance
+  // replaces the active tab's filter without disturbing
+  // `originPreset` or `timeMode`. The next activation of the
+  // preset that originally seeded the tab would silently focus the
+  // now-misaligned slot — e.g. load a "Last 1 day" saved filter
+  // into a "Last 1 hour" recommended-preset tab, then re-click the
+  // "Last 1 hour" preset, and `findMatchingTab` would return the
+  // mutated tab. This helper drops both fields so the matcher
+  // disqualifies the slot.
+  const PRESET: OriginPreset = { kind: "saved", id: "sf-1" };
+  const FILTER: Filter = {
+    mode: "structured",
+    input: { kinds: ["HttpThreat"] },
+  };
+
+  it("nulls the originPreset binding so future activations cannot focus this tab", () => {
+    const tab = createTabSnapshot({
+      filter: FILTER,
+      period: "1h",
+      originPreset: PRESET,
+      timeMode: "preset",
+    });
+    const cleared = clearTabPresetMetadata(tab);
+    expect(cleared.originPreset).toBeNull();
+  });
+
+  it("flips timeMode to `custom` so a tab whose filter just changed cannot be re-matched on time alone", () => {
+    const tab = createTabSnapshot({
+      filter: FILTER,
+      period: "1h",
+      originPreset: PRESET,
+      timeMode: "preset",
+    });
+    expect(clearTabPresetMetadata(tab).timeMode).toBe("custom");
+  });
+
+  it("disqualifies the cleared tab from `findMatchingTab` against its original preset", () => {
+    const original = createTabSnapshot({
+      filter: FILTER,
+      period: "1h",
+      originPreset: PRESET,
+      timeMode: "preset",
+    });
+    expect(findMatchingTab([original], PRESET, FILTER)?.id).toBe(original.id);
+    const cleared = clearTabPresetMetadata(original);
+    expect(findMatchingTab([cleared], PRESET, FILTER)).toBeNull();
+  });
+
+  it("preserves all non-preset fields (filter / period / endpoints / pagination / id / name)", () => {
+    const tab = createTabSnapshot({
+      filter: FILTER,
+      period: "1h",
+      originPreset: PRESET,
+      timeMode: "preset",
+    });
+    const cleared = clearTabPresetMetadata(tab);
+    expect(cleared.id).toBe(tab.id);
+    expect(cleared.filter).toEqual(tab.filter);
+    expect(cleared.period).toBe(tab.period);
+    expect(cleared.endpoints).toEqual(tab.endpoints);
+    expect(cleared.pagination).toEqual(tab.pagination);
+    expect(cleared.name).toBe(tab.name);
+    expect(cleared.lastActivatedAt).toBe(tab.lastActivatedAt);
+  });
+});
+
+describe("shouldClearMatchFocusEvent — Reviewer Round 2 (item 3)", () => {
+  // Regression: the wrapper used to keep `matchFocusEvent` set even
+  // after focus left the matched tab. Switching away from and back
+  // to the matched tab remounts the keyed `<DetectionShell>`, the
+  // result-list's local `shownEventAt` resets to null, and the
+  // stale-data notice fires a second time for the same activation —
+  // breaking the §6 "once per focus event" rule. The wrapper now
+  // clears the event the moment focus leaves its target tab.
+  const TAB_A = "tab-a" as TabId;
+  const TAB_B = "tab-b" as TabId;
+
+  it("returns false when there is no event in flight", () => {
+    expect(
+      shouldClearMatchFocusEvent({ matchFocusEvent: null, activeTabId: TAB_A }),
+    ).toBe(false);
+  });
+
+  it("returns false while focus is still on the event's target tab", () => {
+    expect(
+      shouldClearMatchFocusEvent({
+        matchFocusEvent: { tabId: TAB_A },
+        activeTabId: TAB_A,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true once focus moves to a different tab — the keyed-remount replay path", () => {
+    expect(
+      shouldClearMatchFocusEvent({
+        matchFocusEvent: { tabId: TAB_A },
+        activeTabId: TAB_B,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("applyTabScrollTransition — Reviewer Round 5 (issue #429 §3 scroll preservation)", () => {
+  // Regression: the wrapper's keyed `<DetectionShell>` swap restored
+  // the matched tab's filter / events / pagination / Quick peek but
+  // not its result-list scroll position. The parent dashboard
+  // scroller is shared across tabs, so its `scrollTop` bled across
+  // activations. This helper parks the outgoing tab's scrollTop and
+  // returns the incoming tab's saved value (or 0 for a fresh tab).
+  const TAB_A = "tab-a" as TabId;
+  const TAB_B = "tab-b" as TabId;
+  const TAB_C = "tab-c" as TabId;
+
+  it("captures the outgoing tab's scrollTop into the positions map", () => {
+    const result = applyTabScrollTransition({
+      positions: new Map(),
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 1234,
+      incomingTabId: TAB_B,
+    });
+    expect(result.positions.get(TAB_A)).toBe(1234);
+  });
+
+  it("restores the incoming tab's saved scrollTop on a switch back — the match-focus-after-switch-away path the reviewer flagged", () => {
+    // Operator: scroll Tab A to 500, switch to Tab B (scrolls to 0),
+    // re-click the preset that focuses Tab A. The restored scrollTop
+    // for the incoming Tab A must be 500, not Tab B's 0.
+    const afterFirstSwitch = applyTabScrollTransition({
+      positions: new Map(),
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 500,
+      incomingTabId: TAB_B,
+    });
+    expect(afterFirstSwitch.restoredScrollTop).toBe(0);
+    const afterMatchFocus = applyTabScrollTransition({
+      positions: afterFirstSwitch.positions,
+      outgoingTabId: TAB_B,
+      outgoingScrollTop: 80,
+      incomingTabId: TAB_A,
+    });
+    expect(afterMatchFocus.restoredScrollTop).toBe(500);
+  });
+
+  it("returns 0 for an incoming tab that has never been scrolled — fresh tabs start at the top, not at the outgoing tab's offset", () => {
+    const result = applyTabScrollTransition({
+      positions: new Map([[TAB_A, 999]]),
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 999,
+      incomingTabId: TAB_C,
+    });
+    expect(result.restoredScrollTop).toBe(0);
+  });
+
+  it("overwrites a stale outgoing entry rather than holding onto the prior value", () => {
+    const result = applyTabScrollTransition({
+      positions: new Map([[TAB_A, 100]]),
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 250,
+      incomingTabId: TAB_B,
+    });
+    expect(result.positions.get(TAB_A)).toBe(250);
+  });
+
+  it("does not mutate the input positions map (returns a fresh Map)", () => {
+    const input = new Map([[TAB_A, 100]]);
+    const result = applyTabScrollTransition({
+      positions: input,
+      outgoingTabId: TAB_A,
+      outgoingScrollTop: 200,
+      incomingTabId: TAB_B,
+    });
+    expect(input.get(TAB_A)).toBe(100);
+    expect(result.positions).not.toBe(input);
   });
 });

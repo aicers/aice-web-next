@@ -40,7 +40,14 @@
  */
 
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   type FetchCustomersForFilterResult,
   fetchCustomersForFilter,
@@ -71,6 +78,7 @@ import {
   endpointEntriesFromEndpointInputs,
 } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
+import { filtersAreEquivalentIgnoringTime } from "@/lib/detection/filter-identity";
 import {
   type FilterChip,
   type SummarizeFilterLabels,
@@ -110,6 +118,7 @@ import {
   closeTab as closeTabFn,
   createTabSnapshot,
   MAX_TABS,
+  type OriginPreset,
   type TabId,
   type TabSnapshot,
 } from "@/lib/detection/tabs";
@@ -303,6 +312,64 @@ export function DetectionTabsShell({
   const tabsRef = useRef<TabSnapshot[]>(tabs);
   useEffect(() => {
     tabsRef.current = tabs;
+  }, [tabs]);
+
+  // Reviewer Round 5: per-tab scroll preservation across tab switches.
+  // Issue #429 §3 says focusing an existing tab on match preserves
+  // "the list, scroll position, Quick peek inspector, and pagination
+  // state". The result-list rows survived the switch (the snapshot
+  // already carries `result.events`), but the parent dashboard
+  // scroller — `<div className="flex-1 overflow-y-auto p-6">` in
+  // `dashboard-layout.tsx` — sits above this wrapper, so its
+  // scrollTop bled across tabs: scroll Tab A to row 50, switch to
+  // Tab B, click the preset that focuses Tab A, and the list is
+  // back but the scroll snapped to whatever Tab B left behind.
+  //
+  // We park the outgoing tab's scrollTop in a per-tab Map on cleanup
+  // and restore the incoming tab's value on the next layout effect
+  // pass. Layout-effect timing matters: the keyed `<DetectionShell>`
+  // remount commits the new tab's already-cached rows synchronously
+  // (no fetch needed for match-focus), so the scroll container's
+  // content height is correct by the time we write `scrollTop`. A
+  // passive useEffect would let the browser paint the new content at
+  // the wrong scroll first, producing a visible jump.
+  //
+  // Storage is intentionally a ref (not React state): the value is
+  // read inside the layout effect and never participates in render.
+  // It's also intentionally not persisted by `tabs-storage.ts` — the
+  // entire matching system (`originPreset`, `timeMode`,
+  // `lastActivatedAt`) explicitly resets on reload, and scroll
+  // position belongs in the same in-memory bucket.
+  const scrollPositionsRef = useRef<Map<TabId, number>>(new Map());
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return;
+    const container = findScrollableAncestor(wrapperRef.current);
+    if (!container) return;
+    const saved = scrollPositionsRef.current.get(activeTabId);
+    // Treat a missing entry as "fresh tab — start at top". Without
+    // this, switching to a brand-new tab would leave the parent's
+    // scrollTop wherever the prior tab parked it, which the operator
+    // reads as "the new tab is mysteriously scrolled past its
+    // header".
+    container.scrollTop = saved ?? 0;
+    return () => {
+      const c = findScrollableAncestor(wrapperRef.current);
+      if (!c) return;
+      scrollPositionsRef.current.set(activeTabId, c.scrollTop);
+    };
+  }, [activeTabId]);
+
+  // Drop a closed tab's stored scroll so the Map cannot leak entries
+  // for ids that no longer exist. The cleanup above writes the
+  // outgoing tab's position, and on a closed tab that write is dead
+  // weight — but we still want to evict the slot proactively rather
+  // than hope the Map ages out on a future GC.
+  useEffect(() => {
+    const live = new Set(tabs.map((t) => t.id));
+    for (const id of scrollPositionsRef.current.keys()) {
+      if (!live.has(id)) scrollPositionsRef.current.delete(id);
+    }
   }, [tabs]);
 
   // Reviewer Round 1 (item 2): mirror the shell's live state into the
@@ -508,9 +575,16 @@ export function DetectionTabsShell({
   const handleActivate = useCallback(
     (nextId: TabId) => {
       if (nextId === activeTabIdRef.current) return;
+      const now = Date.now();
       setTabs((prev) => {
         if (!prev.some((t) => t.id === nextId)) return prev;
-        return withActiveSnapshot(prev);
+        // Issue #429: bump `lastActivatedAt` on focus so a later preset
+        // activation matching multiple tabs picks the most recently
+        // active one (§6).
+        const withLive = withActiveSnapshot(prev);
+        return withLive.map((t) =>
+          t.id === nextId ? { ...t, lastActivatedAt: now } : t,
+        );
       });
       setActiveTabId(nextId);
     },
@@ -530,33 +604,90 @@ export function DetectionTabsShell({
   const [pivotToast, setPivotToast] = useState<string | null>(null);
   const dismissPivotToast = useCallback(() => setPivotToast(null), []);
 
-  // Shared "load filter in new tab" core. Both the saved-filter and
-  // recommended-preset paths funnel through this helper so the cap
-  // toast, endpoint rehydration, and resume-on-mount seeding stay
-  // identical. The two callers differ only in how they source the
-  // tab's period metadata: saved filters re-derive it from the
-  // filter's start / end (the persisted shape carries no period
-  // field), while recommended presets pass `preset.period` straight
-  // through — re-deriving it from freshly-built timestamps risks a
-  // millisecond drift between the build clock and the
-  // `matchesPeriodKey` clock that would silently null the period
-  // chip.
-  const loadFilterInNewTab = useCallback(
-    (filter: Filter, period: PeriodKey | null) => {
-      // Rehydrate `EndpointEntry[]` from `filter.input.endpoints` so
-      // the new tab's chip bar / drawer match the saved Network/IP
-      // rules. Stranding `endpoints: []` here makes the very next
-      // drawer Apply rebuild the input from an empty draft and
-      // silently drop the saved endpoints.
+  // Issue #429 §3: most recent match-focus event. Set when a preset
+  // activation matches an existing tab and focuses it; threaded down
+  // to the active shell so the result-list header can decide whether
+  // to render the staleness notice. Cleared by the wrapper as soon
+  // as focus leaves the matched tab (see the effect below) so a
+  // tab-away-and-back remount cannot replay the same event.
+  const [matchFocusEvent, setMatchFocusEvent] = useState<{
+    tabId: TabId;
+    at: number;
+  } | null>(null);
+
+  // Reviewer Round 2 (item 3): the keyed `<DetectionShell>` remounts
+  // every time `activeTabId` changes, which resets `StaleFocusNotice`'s
+  // local `shownEventAt` back to `null`. Without clearing the wrapper-
+  // owned event on tab switch, the same focus event would keep
+  // re-arriving as a prop on remount and the result-list header would
+  // re-emit the notice — violating the §6 "once per focus event"
+  // contract for the same activation. Clearing the event the moment
+  // focus leaves its target tab confines the notice to a single
+  // delivery. A subsequent preset activation creates a fresh event
+  // (new `at`) so the once-per-event semantics still apply when the
+  // operator legitimately re-activates the preset later.
+  useEffect(() => {
+    if (shouldClearMatchFocusEvent({ matchFocusEvent, activeTabId })) {
+      setMatchFocusEvent(null);
+    }
+  }, [activeTabId, matchFocusEvent]);
+
+  // Issue #429: shared "activate preset" core. Both saved-filter and
+  // recommended-preset paths funnel through this helper, which routes
+  // through the create-or-focus decider unless `forceNewTab` is set.
+  // The two callers differ only in how they source the tab's period
+  // metadata: saved filters re-derive it from the filter's start / end
+  // (the persisted shape carries no period field), while recommended
+  // presets pass `preset.period` straight through — re-deriving it
+  // from freshly-built timestamps risks a millisecond drift between
+  // the build clock and the `matchesPeriodKey` clock that would
+  // silently null the period chip.
+  const activatePreset = useCallback(
+    (
+      args: {
+        originPreset: OriginPreset;
+        filter: Filter;
+        period: PeriodKey | null;
+      },
+      options?: { forceNewTab?: boolean },
+    ) => {
+      const { originPreset, filter, period } = args;
+      const forceNewTab = options?.forceNewTab === true;
+      const currentTabs = tabsRef.current;
+
+      // Issue #429 §2: matching path. When not forced, look for an
+      // existing tab whose origin preset, non-time fields, and
+      // `timeMode === "preset"` all match the activation. Multiple
+      // matches → focus the most recently activated (§6).
+      if (!forceNewTab) {
+        const match = findMatchingTab(currentTabs, originPreset, filter);
+        if (match) {
+          const now = Date.now();
+          setTabs((prev) => {
+            const withLive = withActiveSnapshot(prev);
+            return withLive.map((t) =>
+              t.id === match.id ? { ...t, lastActivatedAt: now } : t,
+            );
+          });
+          setActiveTabId(match.id);
+          setMatchFocusEvent({ tabId: match.id, at: now });
+          return;
+        }
+      }
+
+      // No match (or force-new-tab): create a fresh tab seeded with the
+      // preset's filter, the preset's identity, and `timeMode: "preset"`
+      // so a future activation with the same preset can find it.
       const endpoints =
         filter.mode === "structured"
           ? endpointEntriesFromEndpointInputs(filter.input.endpoints)
           : [];
-      const effect = resolveLoadSavedFilterEffect(filter, tabsRef.current, {
+      const effect = resolveActivatePresetEffect(filter, currentTabs, {
         tabCapReachedTemplate: labels.pivot.tabCapReachedTemplate,
         maxTabs: MAX_TABS,
         period,
         endpoints,
+        originPreset,
       });
       if (effect.kind === "toast") {
         setPivotToast(effect.message);
@@ -573,35 +704,47 @@ export function DetectionTabsShell({
     [labels.pivot.tabCapReachedTemplate, withActiveSnapshot],
   );
 
-  const handleLoadSavedFilterInNewTab = useCallback(
-    (filter: Filter) => {
-      loadFilterInNewTab(filter, derivePeriodForFilter(filter));
+  const handleActivateSavedPreset = useCallback(
+    (
+      preset: { id: string; filter: Filter },
+      options?: { forceNewTab?: boolean },
+    ) => {
+      activatePreset(
+        {
+          originPreset: { kind: "saved", id: preset.id },
+          filter: preset.filter,
+          period: derivePeriodForFilter(preset.filter),
+        },
+        options,
+      );
     },
-    [loadFilterInNewTab],
+    [activatePreset],
   );
 
-  // Recommended-filter activation routes through the same load-in-new-
-  // tab path Saved Filters use (Phase Detection-16). The preset is
-  // resolved at activation time so the tab's start / end pair is
-  // relative to "now" rather than frozen at page load — a preset
-  // bound to `3y` opened at 9am today commits the same window the
-  // period chip would compute. Read-only in v1: no current-tab
-  // activation, no rename / delete affordances.
+  // Recommended-filter activation routes through the same activate-
+  // preset path. The preset is resolved at activation time so the
+  // tab's start / end pair is relative to "now" rather than frozen
+  // at page load.
   //
   // Reviewer Round 1: thread `preset.period` directly into the tab
   // creation path instead of re-deriving from the freshly-built
   // start / end pair. `derivePeriodForFilter` would call
   // `matchesPeriodKey` with its own `new Date()`, and any
   // millisecond drift from the clock used inside
-  // `buildRecommendedFilter` would null the period — leaving the
-  // drawer / chip / tab summary unable to recognise a preset
-  // described as "Time period = last N years".
-  const handleLoadRecommendedFilterInNewTab = useCallback(
-    (preset: RecommendedPreset) => {
+  // `buildRecommendedFilter` would null the period.
+  const handleActivateRecommendedPreset = useCallback(
+    (preset: RecommendedPreset, options?: { forceNewTab?: boolean }) => {
       const filter = buildRecommendedFilter(preset);
-      loadFilterInNewTab(filter, preset.period);
+      activatePreset(
+        {
+          originPreset: { kind: "recommended", id: preset.id },
+          filter,
+          period: preset.period,
+        },
+        options,
+      );
     },
-    [loadFilterInNewTab],
+    [activatePreset],
   );
 
   const handleAddTab = useCallback(() => {
@@ -663,6 +806,25 @@ export function DetectionTabsShell({
     },
     [withActiveSnapshot],
   );
+
+  // Reviewer Round 2 (item 2): the operator loaded a different saved
+  // filter into the active tab via the dropdown's "Load in current
+  // tab" affordance. Drop the active tab's `originPreset` and flip
+  // `timeMode` to `"custom"` so a future activation of the preset
+  // that originally seeded the tab does not silently focus it. The
+  // shell already flips its own local `timeMode` synchronously; we
+  // mirror that into the wrapper-side TabSnapshot here so
+  // `findMatchingTab` sees the updated value before the next
+  // `mergeSnapshot` round-trip.
+  const handleClearPresetMetadataForCurrentTab = useCallback(() => {
+    const activeId = activeTabIdRef.current;
+    setTabs((prev) => {
+      const withLive = withActiveSnapshot(prev);
+      return withLive.map((t) =>
+        t.id === activeId ? clearTabPresetMetadata(t) : t,
+      );
+    });
+  }, [withActiveSnapshot]);
 
   const handlePivot = useCallback(
     (patch: PivotPatch) => {
@@ -730,7 +892,7 @@ export function DetectionTabsShell({
   const canAdd = canAddTabFn(tabs);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div ref={wrapperRef} className="flex flex-col gap-3">
       <TabBar
         tabs={tabBarTabs}
         activeTabId={activeTabId}
@@ -785,11 +947,20 @@ export function DetectionTabsShell({
         initialAnalyticsTopN={activeTab.analyticsTopN}
         initialQuickPeekEvent={activeTab.quickPeekEvent}
         initialPendingQuickPeekToken={activeTab.pendingQuickPeekToken}
+        initialTimeMode={activeTab.timeMode}
         onStateChange={handleShellStateChange}
         savedFilters={savedFiltersState}
-        onLoadSavedFilterInNewTab={handleLoadSavedFilterInNewTab}
+        onActivateSavedPreset={handleActivateSavedPreset}
         recommendedPresets={RECOMMENDED_PRESETS}
-        onLoadRecommendedFilterInNewTab={handleLoadRecommendedFilterInNewTab}
+        onActivateRecommendedPreset={handleActivateRecommendedPreset}
+        onClearPresetMetadataForCurrentTab={
+          handleClearPresetMetadataForCurrentTab
+        }
+        matchFocusEvent={
+          matchFocusEvent && matchFocusEvent.tabId === activeTabId
+            ? matchFocusEvent
+            : null
+        }
         customerCache={customerCache}
         onCustomerRefresh={triggerCustomerFetch}
         initialCustomerOptions={initialCustomerOptions}
@@ -888,40 +1059,57 @@ export function resolvePivotEffect(
 }
 
 /**
- * Pure decision helper for the "Load saved filter in new tab" path.
- * Mirrors the pivot path's `resolvePivotEffect` shape so the React
- * handler stays a thin dispatcher. At the cap returns a `toast`
- * effect carrying the same `tabCapReached` template the pivot path
- * uses; otherwise returns a `create` effect with the seeded tab
+ * Pure decision helper for the "activate preset → create tab" path
+ * (issue #429). Mirrors the pivot path's `resolvePivotEffect` shape so
+ * the React handler stays a thin dispatcher. At the cap returns a
+ * `toast` effect carrying the same `tabCapReached` template the pivot
+ * path uses; otherwise returns a `create` effect with the seeded tab
  * already pre-marked `hasQueried + loading` so the resume-on-mount
  * effect dispatches the query for us.
  *
+ * Issue #429: the seed tab is stamped with the preset's
+ * {@link OriginPreset} and `timeMode: "preset"` (when an
+ * `originPreset` is supplied) so a future activation with the same
+ * preset can find it via the time-excluding matcher. Manual /
+ * pivot-create paths use {@link resolvePivotEffect} instead and never
+ * stamp `originPreset`.
+ *
  * Predefined endpoint references in `filter.input.endpoints` survive
  * intact through the (empty) endpoint mirror returned here — the
- * mirror only feeds the chip bar / drawer; the dispatched query
- * still uses `filter.input.endpoints` directly, and the next drawer
- * Apply replays predefined refs via `preservePredefinedEndpointInputs`
+ * mirror only feeds the chip bar / drawer; the dispatched query still
+ * uses `filter.input.endpoints` directly, and the next drawer Apply
+ * replays predefined refs via `preservePredefinedEndpointInputs`
  * inside `buildAppliedFilter`.
  */
-export type LoadSavedFilterEffect =
+export type ActivatePresetEffect =
   | { kind: "toast"; message: string }
   | { kind: "create"; tab: TabSnapshot };
 
-export interface ResolveLoadSavedFilterEffectOptions {
+/** Backwards-compat alias for tests that still import the old name. */
+export type LoadSavedFilterEffect = ActivatePresetEffect;
+
+export interface ResolveActivatePresetEffectOptions {
   /** ICU-style template carrying a `{max}` placeholder. */
   tabCapReachedTemplate: string;
   maxTabs: number;
-  /** Period key derived from the saved filter. */
+  /** Period key derived from the saved filter or recommended preset. */
   period: PeriodKey | null;
   /** Rich endpoint mirror rehydrated from `filter.input.endpoints`. */
   endpoints: EndpointEntry[];
+  /**
+   * Issue #429: when non-null, the seed tab is stamped with the preset
+   * identity and `timeMode: "preset"` so future activations of the same
+   * preset can match it. Pass `null` for paths that should not
+   * participate in matching (none today — kept for forward-compat).
+   */
+  originPreset?: OriginPreset | null;
 }
 
-export function resolveLoadSavedFilterEffect(
+export function resolveActivatePresetEffect(
   filter: Filter,
   currentTabs: readonly TabSnapshot[],
-  opts: ResolveLoadSavedFilterEffectOptions,
-): LoadSavedFilterEffect {
+  opts: ResolveActivatePresetEffectOptions,
+): ActivatePresetEffect {
   if (currentTabs.length >= opts.maxTabs) {
     return {
       kind: "toast",
@@ -935,12 +1123,150 @@ export function resolveLoadSavedFilterEffect(
     filter,
     period: opts.period,
     endpoints: opts.endpoints,
+    originPreset: opts.originPreset ?? null,
+    timeMode: opts.originPreset ? "preset" : "custom",
   });
   const seedWithLoad: TabSnapshot = {
     ...seed,
     result: { ...seed.result, hasQueried: true, loading: true },
   };
   return { kind: "create", tab: seedWithLoad };
+}
+
+/**
+ * Backwards-compatibility wrapper retained so the existing test suite
+ * keeps importing the old function name. New callers should use
+ * {@link resolveActivatePresetEffect} directly.
+ */
+export function resolveLoadSavedFilterEffect(
+  filter: Filter,
+  currentTabs: readonly TabSnapshot[],
+  opts: Omit<ResolveActivatePresetEffectOptions, "originPreset">,
+): ActivatePresetEffect {
+  return resolveActivatePresetEffect(filter, currentTabs, opts);
+}
+
+/**
+ * Reviewer Round 2 (item 2): clear the preset-matching metadata on a
+ * tab whose committed filter the operator just replaced via the
+ * dropdown's "Load in current tab" affordance. Drops the
+ * {@link OriginPreset} binding and flips `timeMode` to `"custom"`
+ * so a future activation of the preset that originally seeded the
+ * tab cannot silently focus this now-misaligned slot.
+ *
+ * Pure helper so the tab-update shape can be unit-tested without
+ * wiring through the React handler.
+ */
+export function clearTabPresetMetadata(tab: TabSnapshot): TabSnapshot {
+  return { ...tab, originPreset: null, timeMode: "custom" };
+}
+
+/**
+ * Reviewer Round 2 (item 3): predicate for the wrapper-side effect
+ * that clears the most recent match-focus event when focus leaves
+ * the matched tab. Without this clear, the keyed `<DetectionShell>`
+ * remount on tab-away-and-back replays the stale event and the
+ * result-list header re-emits the §6 stale-data notice — a
+ * violation of the "once per focus event" contract.
+ *
+ * Returns `true` when the wrapper should null out the event.
+ */
+export function shouldClearMatchFocusEvent(args: {
+  matchFocusEvent: { tabId: TabId } | null;
+  activeTabId: TabId;
+}): boolean {
+  if (args.matchFocusEvent === null) return false;
+  return args.matchFocusEvent.tabId !== args.activeTabId;
+}
+
+/**
+ * Reviewer Round 5: per-tab scroll-position bookkeeping for the
+ * tab-switch transition. Issue #429 §3 lists scroll position as one
+ * of the four UX guarantees match-focus preserves (alongside the list
+ * itself, Quick peek, and pagination). The result-list rows already
+ * survive the switch via `tabSnapshot.result.events`, but the parent
+ * dashboard scroller (the `overflow-y-auto` container in
+ * `dashboard-layout.tsx`) is shared across tabs, so its `scrollTop`
+ * bled across activations: scrolling Tab A to row 50, switching to
+ * Tab B, then re-clicking the preset that focuses Tab A would
+ * restore A's content but leave the scroll where B parked it.
+ *
+ * Park the outgoing tab's scrollTop in a per-tab Map and return the
+ * incoming tab's restored value (0 if no entry exists — a fresh /
+ * never-scrolled tab starts at the top, which beats inheriting the
+ * outgoing tab's position).
+ *
+ * Pure helper so the bookkeeping can be unit-tested without rendering
+ * the full shell or a scrollable ancestor element.
+ */
+export function applyTabScrollTransition(args: {
+  positions: ReadonlyMap<TabId, number>;
+  outgoingTabId: TabId;
+  outgoingScrollTop: number;
+  incomingTabId: TabId;
+}): {
+  positions: Map<TabId, number>;
+  restoredScrollTop: number;
+} {
+  const next = new Map(args.positions);
+  next.set(args.outgoingTabId, args.outgoingScrollTop);
+  return {
+    positions: next,
+    restoredScrollTop: next.get(args.incomingTabId) ?? 0,
+  };
+}
+
+/**
+ * Walk up the DOM from the wrapper looking for the first ancestor
+ * whose computed `overflow-y` is `auto` or `scroll`. The dashboard
+ * layout owns this scroller (`flex-1 overflow-y-auto p-6` in
+ * `dashboard-layout.tsx`); the wrapper itself doesn't scroll.
+ * Defensive: returns null when called server-side or before mount,
+ * so the layout effect can no-op gracefully.
+ */
+function findScrollableAncestor(start: HTMLElement | null): HTMLElement | null {
+  if (typeof window === "undefined") return null;
+  let cur: HTMLElement | null = start?.parentElement ?? null;
+  while (cur) {
+    const style = window.getComputedStyle(cur);
+    if (style.overflowY === "auto" || style.overflowY === "scroll") {
+      return cur;
+    }
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Issue #429 §2 + §6: locate the existing tab a preset activation
+ * should focus, or `null` when no candidate matches. The match
+ * predicate is:
+ *
+ *   - the tab carries the same {@link OriginPreset} (kind + id), AND
+ *   - its `timeMode` is still `"preset"`, AND
+ *   - its non-time filter fields canonically equal the preset's filter.
+ *
+ * When multiple tabs match (e.g. the operator used "Open in new tab"
+ * to duplicate one and then reverted any narrowing on both copies)
+ * the most recently activated wins.
+ */
+export function findMatchingTab(
+  tabs: readonly TabSnapshot[],
+  originPreset: OriginPreset,
+  presetFilter: Filter,
+): TabSnapshot | null {
+  let best: TabSnapshot | null = null;
+  for (const tab of tabs) {
+    if (!tab.originPreset) continue;
+    if (tab.originPreset.kind !== originPreset.kind) continue;
+    if (tab.originPreset.id !== originPreset.id) continue;
+    if (tab.timeMode !== "preset") continue;
+    if (!filtersAreEquivalentIgnoringTime(tab.filter, presetFilter)) continue;
+    if (!best || tab.lastActivatedAt > best.lastActivatedAt) {
+      best = tab;
+    }
+  }
+  return best;
 }
 
 /**
@@ -983,6 +1309,11 @@ export function mergeSnapshot(
     quickPeekEvent: snapshot.quickPeekEvent,
     pendingQuickPeekToken: snapshot.pendingQuickPeekToken,
     result: snapshot.result,
+    // Issue #429: the shell drives `timeMode` transitions; mirror the
+    // current value back into the tab so the next preset activation
+    // can decide whether this tab still qualifies as a focus
+    // candidate.
+    timeMode: snapshot.timeMode,
   };
 }
 
@@ -1097,6 +1428,17 @@ export function bootstrapTabToSnapshot(
       loading: false,
       walking: null,
     },
+    // Issue #429: a bootstrap tab landed via a shared / bookmarked URL
+    // does not know which preset (if any) the URL was originally
+    // produced from — the encoded `?f=` blob carries no preset id. So
+    // a reload always starts the bootstrap tab as a manual / custom
+    // tab; the operator's first preset click after reload then creates
+    // a fresh tab rather than silently focusing this one. The
+    // `lastActivatedAt` baseline matches the rehydrated-storage tabs
+    // so a multi-tab session has a coherent ordering on day 1.
+    originPreset: null,
+    timeMode: "custom",
+    lastActivatedAt: Date.now(),
   };
 }
 

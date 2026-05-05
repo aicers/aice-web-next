@@ -115,6 +115,7 @@ import {
   totalPagesFrom,
 } from "@/lib/detection/pagination";
 import {
+  computePeriodRange,
   DEFAULT_PERIOD_KEY,
   matchesPeriodKey,
   type PeriodKey,
@@ -129,6 +130,8 @@ import { buildSaveCurrentFilterDialogState } from "@/lib/detection/save-current-
 import {
   autoTabName as autoTabNameFromChips,
   preserveActiveTabParam,
+  type TabId,
+  type TimeMode,
 } from "@/lib/detection/tabs";
 import type {
   Event as DetectionEvent,
@@ -279,6 +282,12 @@ export interface PresetsDropdownLabelStrings {
   savedEmpty: string;
   /** ICU template carrying `{name}` for the per-row menu trigger. */
   savedRowMenuLabelTemplate: string;
+  /**
+   * Issue #429: ICU template carrying `{name}` for the explicit
+   * "Open in new tab" icon affordance rendered on every preset row.
+   * Read by screen readers as the icon button's `aria-label`.
+   */
+  openInNewTabTemplate: string;
   loadInNewTab: string;
   loadInCurrentTab: string;
   rename: string;
@@ -527,6 +536,14 @@ export interface DetectionShellStateSnapshot {
     loading: boolean;
     walking: { current: number; target: number } | null;
   };
+  /**
+   * Issue #429: whether the operator has redefined the time window on
+   * this tab. Starts at `initialTimeMode` and flips to `"custom"` on
+   * the first committed change to Period / start / end. The wrapper
+   * mirrors this back into the tab snapshot so the matcher knows
+   * whether the tab is still a candidate for preset focus.
+   */
+  timeMode: TimeMode;
 }
 
 export interface DetectionShellProps {
@@ -598,6 +615,22 @@ export interface DetectionShellProps {
    */
   initialPendingQuickPeekToken?: string | null;
   /**
+   * Issue #429: starting {@link TimeMode}. Preset-originated tabs pass
+   * `"preset"`; manual tabs default to `"custom"`. The shell flips it
+   * to `"custom"` on the first committed change to Period / start /
+   * end and reports the new value via the next `onStateChange`.
+   */
+  initialTimeMode?: TimeMode;
+  /**
+   * Issue #429 §3: most recent match-focus event the wrapper observed
+   * on this tab. Set when a preset activation matched an existing tab
+   * and focused it; consumed by the result-list header to gate the
+   * stale-data notice. The shell uses this only as a one-shot signal
+   * — once consumed, repeated focus events with the same `at` value
+   * do not re-emit the notice.
+   */
+  matchFocusEvent?: { tabId: TabId; at: number } | null;
+  /**
    * Fired on every tab-relevant state transition so the multi-tab
    * wrapper can mirror the active tab's live state into its
    * `TabSnapshot[]` (for session persistence and for the save-on-
@@ -626,30 +659,50 @@ export interface DetectionShellProps {
    */
   savedFilters?: UseSavedFiltersResult;
   /**
-   * Activation hook for "Load in new tab" / per-row default click on
-   * a saved filter. The wrapper creates a new tab pre-seeded with the
-   * supplied filter and auto-runs the query so the new tab lands
-   * populated rather than on the pre-query empty state — matching the
-   * pivot tab-create contract.
+   * Activation hook for a saved-filter row. The wrapper decides whether
+   * to focus an existing matching tab or create a new one (issue #429
+   * §2). Pass `options.forceNewTab: true` from the explicit "Open in
+   * new tab" affordance / Cmd-Ctrl-click path to bypass the matching
+   * step. The preset shape carries the saved filter's `id` alongside
+   * its `Filter` so the matching logic can populate the new tab's
+   * `originPreset.id` — the legacy `Filter`-only signature made
+   * saved-preset matching impossible.
    */
-  onLoadSavedFilterInNewTab?: (filter: Filter) => void;
+  onActivateSavedPreset?: (
+    preset: { id: string; filter: Filter },
+    options?: { forceNewTab?: boolean },
+  ) => void;
   /**
-   * System-provided recommended presets to render in the slim left
-   * rail (Phase Detection-16). Read-only in v1: each row activates a
-   * one-click broad view in a new tab. The shell stays render-only
-   * over the list; the wrapper builds the concrete {@link Filter}
-   * from the preset and threads it through the same "load in new tab"
-   * path Saved Filters use. `undefined` keeps the rail in the
-   * placeholder shape used by the standalone shell tests.
+   * System-provided recommended presets to surface in the presets
+   * dropdown. Read-only in v1: each row activates a one-click broad
+   * view via {@link onActivateRecommendedPreset}. `undefined` keeps the
+   * dropdown out of the toolbar (used by the standalone shell tests).
    */
   recommendedPresets?: readonly RecommendedPreset[];
   /**
-   * Activation hook for the Recommended Filter rail. Same contract
-   * as {@link onLoadSavedFilterInNewTab}: the wrapper creates a new
-   * tab pre-seeded with the preset's filter and auto-runs the
-   * query so the tab lands populated.
+   * Activation hook for a recommended preset. Same contract as
+   * {@link onActivateSavedPreset}: defaults route through the wrapper's
+   * create-or-focus decider, `options.forceNewTab: true` always creates.
    */
-  onLoadRecommendedFilterInNewTab?: (preset: RecommendedPreset) => void;
+  onActivateRecommendedPreset?: (
+    preset: RecommendedPreset,
+    options?: { forceNewTab?: boolean },
+  ) => void;
+  /**
+   * Reviewer Round 2 (item 2): fired when the operator loads a saved
+   * filter into the active tab via the dropdown's "Load in current
+   * tab" affordance. The wrapper clears the active tab's
+   * {@link OriginPreset} and flips `timeMode` to `"custom"` so the
+   * tab no longer qualifies as a focus target for the preset that
+   * originally seeded it. Without this, replacing the filter (with
+   * possibly different time semantics) would leave a stale preset
+   * binding behind and the matcher would silently focus the wrong
+   * tab — concretely: load a "Last 1 day" saved filter into a
+   * "Last 1 hour" recommended-preset tab, then re-click the "Last
+   * 1 hour" preset, and the matcher would focus the now-misaligned
+   * tab instead of opening a fresh one.
+   */
+  onClearPresetMetadataForCurrentTab?: () => void;
   /**
    * Customer inventory cache, lifted to the multi-tab wrapper so it
    * survives the keyed remount this shell undergoes on every tab
@@ -1003,6 +1056,128 @@ export function derivePeriodForFilter(filter: Filter): PeriodKey | null {
   return matchesPeriodKey({ start, end });
 }
 
+/**
+ * Issue #429: decide whether a just-committed `applied` draft constitutes
+ * an explicit time edit on a preset-originated tab — i.e. whether the
+ * tab's `timeMode` should flip from `"preset"` to `"custom"`.
+ *
+ * Rules per spec §2:
+ * - A change to the relative {@link PeriodKey} counts (e.g. `Last 1
+ *   hour` → `Last 1 day`, or dropping a relative period for an absolute
+ *   range, or vice versa).
+ * - When both before and after carry the **same** non-null Period,
+ *   start/end ISO drift is a side effect of `selectPeriod` recomputing
+ *   the window from `now` — not an operator edit. Re-clicking the same
+ *   period chip MUST NOT transition.
+ * - When the committed filter is in absolute mode (period === null) and
+ *   stays absolute, an actual change to start or end ISO counts as an
+ *   edit.
+ *
+ * Refresh never reaches this helper — Refresh on a preset tab slides
+ * the relative window in place via {@link slidePresetRefreshFilter},
+ * which preserves `timeMode: "preset"` rather than going through the
+ * Apply path that would call this transition check.
+ */
+export function shouldTransitionToCustomTime(
+  committedFilter: Filter,
+  committedPeriod: PeriodKey | null,
+  applied: {
+    period: PeriodKey | null;
+    startIso: string | null;
+    endIso: string | null;
+  },
+): boolean {
+  if (applied.period !== committedPeriod) return true;
+  // Same period key on both sides. For relative windows, ignore ISO
+  // drift — selectPeriod recomputes from `now`, so re-clicking the
+  // same chip would otherwise wrongly transition.
+  if (applied.period !== null) return false;
+  const oldStart =
+    committedFilter.mode === "structured"
+      ? (committedFilter.input.start ?? null)
+      : null;
+  const oldEnd =
+    committedFilter.mode === "structured"
+      ? (committedFilter.input.end ?? null)
+      : null;
+  return applied.startIso !== oldStart || applied.endIso !== oldEnd;
+}
+
+/**
+ * Issue #429: Refresh on a preset-originated tab must slide the
+ * relative time window forward — the issue's `timeMode: "preset"`
+ * contract says "Refresh slides the window in place" and explicitly
+ * forbids transitioning to `"custom"`.
+ *
+ * Returns `null` when the current state does not warrant a slide
+ * (custom-time tabs, query-mode filters, missing period). The caller
+ * then re-dispatches the existing `committedFilter` unchanged. When
+ * eligible, returns a freshly built filter with `start`/`end`
+ * recomputed from `now` against the same period, leaving every
+ * non-time field untouched so narrowing the operator added later
+ * survives the slide.
+ */
+export function slidePresetRefreshFilter(
+  committedFilter: Filter,
+  committedPeriod: PeriodKey | null,
+  timeMode: TimeMode,
+  now: Date = new Date(),
+): Filter | null {
+  if (timeMode !== "preset") return null;
+  if (committedPeriod === null) return null;
+  if (committedFilter.mode !== "structured") return null;
+  const range = computePeriodRange(committedPeriod, now);
+  if (
+    committedFilter.input.start === range.start &&
+    committedFilter.input.end === range.end
+  ) {
+    return null;
+  }
+  return {
+    mode: "structured",
+    input: {
+      ...committedFilter.input,
+      start: range.start,
+      end: range.end,
+    },
+  };
+}
+
+/**
+ * Build the URL search string the pagination persistence path will
+ * write to `?…`. Pure so tests can prove the closure-vs-override
+ * decision without mounting the shell.
+ *
+ * Reviewer Round 4 (issue #429): when `handleRefresh` slides a
+ * `timeMode: "preset"` window, the success-path URL write happens in
+ * the same React turn as `setCommittedFilter(slid)` — so the calling
+ * `persistPaginationToUrl` callback's `committedFilter` closure still
+ * holds the pre-slide value. The success branch must pass the slid
+ * filter as `filterOverride`, otherwise the URL ends up rewritten to
+ * the frozen activation bounds while the in-memory query already
+ * advanced (a reload would then restore 10:00–11:00 instead of the
+ * just-refreshed 10:30–11:30).
+ */
+export function buildPaginationPersistSearch(args: {
+  filter: Filter;
+  period: PeriodKey | null;
+  endpoints: EndpointEntry[];
+  pivotExtras: PivotExtras;
+  pagination: PaginationState;
+}): URLSearchParams {
+  const search = buildEncodedFilterSearch({
+    filter: args.filter,
+    period: args.period,
+    endpoints: args.endpoints,
+    pivotExtras: args.pivotExtras,
+  });
+  for (const [k, v] of paginationToSearchEntries(args.pagination)) {
+    search.set(k, v);
+  }
+  preserveActiveTabParam(search);
+  return search;
+}
+
 export function DetectionShell({
   title,
   labels,
@@ -1019,12 +1194,15 @@ export function DetectionShell({
   initialAnalyticsTopN = DEFAULT_ANALYTICS_TOP_N,
   initialQuickPeekEvent = null,
   initialPendingQuickPeekToken = null,
+  initialTimeMode = "custom",
+  matchFocusEvent = null,
   onStateChange,
   onPivot,
   savedFilters,
-  onLoadSavedFilterInNewTab,
+  onActivateSavedPreset,
   recommendedPresets,
-  onLoadRecommendedFilterInNewTab,
+  onActivateRecommendedPreset,
+  onClearPresetMetadataForCurrentTab,
   customerCache,
   onCustomerRefresh,
   initialCustomerOptions,
@@ -1057,6 +1235,16 @@ export function DetectionShell({
       updatedSecondsAgo: (s: number) => tResults("updatedSecondsAgo", { s }),
       updatedMinutesAgo: (m: number) => tResults("updatedMinutesAgo", { m }),
       updatedHoursAgo: (h: number) => tResults("updatedHoursAgo", { h }),
+      staleNoticeJustNow: tResults("staleNoticeJustNow"),
+      staleNoticeSecondsAgo: (s: number) =>
+        tResults("staleNoticeSecondsAgo", { s }),
+      staleNoticeMinutesAgo: (m: number) =>
+        tResults("staleNoticeMinutesAgo", { m }),
+      staleNoticeHoursAgo: (h: number) =>
+        tResults("staleNoticeHoursAgo", { h }),
+      staleNoticeRefresh: tResults("staleNoticeRefresh"),
+      peekLostNotice: tResults("peekLostNotice"),
+      peekLostDismiss: tResults("peekLostDismiss"),
       loadingTitle: tResults("loadingTitle"),
       loadingDescription: tResults("loadingDescription"),
       errorTitle: tResults("errorTitle"),
@@ -1209,6 +1397,14 @@ export function DetectionShell({
   );
   const [committedEndpoints, setCommittedEndpoints] =
     useState<EndpointEntry[]>(initialEndpoints);
+  // Issue #429: per-tab time mode. The shell drives the
+  // preset → custom transition by inspecting the just-committed
+  // Period / start / end against the prior committed values inside
+  // `handleApply`; Refresh and programmatic preset re-applications
+  // never call `setTimeMode("custom")`. Re-selecting the same Period
+  // / start / end is a no-op because the comparison short-circuits
+  // before the setter fires.
+  const [timeMode, setTimeMode] = useState<TimeMode>(initialTimeMode);
   // `pivotOnly` carries URL-only fields that aren't yet represented
   // in the drawer — today that's `origPort` / `respPort` / `proto`,
   // which arrive from the Investigation handoff and ride through the
@@ -1362,6 +1558,15 @@ export function DetectionShell({
   const [pendingQuickPeekToken, setPendingQuickPeekToken] = useState<
     string | null
   >(initialPendingQuickPeekToken);
+  // Issue #429 §6: timestamp at which the active tab's open Quick peek
+  // was closed because its event disappeared from a freshly-resolved
+  // slice (Refresh / Apply / chip removal landed without the row that
+  // backed the inspector). Each new value renders the inline "no
+  // longer in the list" notice in the result-list header so the
+  // operator understands why the inspector vanished. `null` means the
+  // peek either was never open, was dismissed by the operator
+  // directly, or has already been acknowledged.
+  const [peekLostAt, setPeekLostAt] = useState<number | null>(null);
   // Ref mirror of `quickPeekEvent` so the async `runQueryFor` success
   // path can read the latest state without becoming a dependency.
   // Reviewer Round 7: used to gate the post-Refresh URL reconcile so
@@ -1371,6 +1576,16 @@ export function DetectionShell({
   useEffect(() => {
     quickPeekEventRef.current = quickPeekEvent;
   }, [quickPeekEvent]);
+  // Reviewer Round 2 (item 1): locator of a peek dismissed by the
+  // dispatch-time eager close. `applyCommitDispatchReset` clears the
+  // in-memory event and strips the URL token before the async fetch
+  // resolves, leaving the post-fetch reconcile with no probe to test
+  // against the fresh slice. We retain the locator here so the
+  // reconcile can decide "row still present (no notice)" vs. "row
+  // gone (surface the §6 notice)" instead of silently dropping the
+  // inspector. Cleared by the reconcile and on fetch error so a
+  // stale locator can't bleed into the next dispatch.
+  const pendingPeekProbeRef = useRef<string | null>(null);
   const isDesktop = useIsDesktopViewport();
   // Monotonic id for the in-flight Apply; a late response whose id
   // no longer matches is dropped so the results region can't drift
@@ -1500,12 +1715,22 @@ export function DetectionShell({
       const stored = readQuickPeekToken(
         new URLSearchParams(window.location.search),
       );
+      // Reviewer Round 2 (item 1): a peek dismissed by the dispatch-
+      // time eager close has no in-memory locator (state was nulled)
+      // and no URL token (sink stripped it). The retained probe ref
+      // is the only remaining locator we can compare against the
+      // fresh slice — read and clear it here so a "row gone" outcome
+      // can still surface the §6 notice.
+      const dismissed = pendingPeekProbeRef.current;
+      pendingPeekProbeRef.current = null;
       // Prefer the in-memory peek's own locator when present — covers
       // the race where a row click during the retained-slice loading
       // window reopened the peek after dispatch. Fall back to the URL
       // token for the mount-error restore path, where no in-memory
-      // peek exists yet.
-      const probeToken = currentToken ?? stored?.token ?? null;
+      // peek exists yet, and finally to the dispatched-dismissed
+      // probe so a Refresh that drops the inspected row still
+      // reaches the "lost" branch below.
+      const probeToken = currentToken ?? stored?.token ?? dismissed ?? null;
       if (!probeToken) {
         // No URL token and no addressable in-memory peek. A non-
         // addressable in-memory peek (rare: a schema-limited row was
@@ -1513,7 +1738,13 @@ export function DetectionShell({
         // against the fresh slice, so close it rather than risk
         // showing an inspector describing a row the new filter does
         // not return.
-        if (current) setQuickPeekEvent(null);
+        if (current) {
+          setQuickPeekEvent(null);
+          // Issue #429 §6: surface a small notice instead of silently
+          // closing the inspector — the operator should know why the
+          // peek vanished after a Refresh / Apply.
+          setPeekLostAt(Date.now());
+        }
         // Reviewer Round 9: a successful slice with no probe token is
         // also the canonical "this tab has no pending peek" state, so
         // clear any stale pending placeholder.
@@ -1543,7 +1774,24 @@ export function DetectionShell({
       // Token present but the fresh slice does not contain it: strip
       // the URL token and close any stale in-memory peek.
       if (action === "strip") writeQuickPeekToUrl(null);
-      if (current) setQuickPeekEvent(null);
+      if (current) {
+        setQuickPeekEvent(null);
+      }
+      if (
+        shouldFirePeekLostFromSlice({
+          hasInMemoryPeek: current !== null,
+          dispatchedDismissPresent: dismissed !== null,
+          matchFound: false,
+        })
+      ) {
+        // Issue #429 §6: notice the operator that their peek vanished
+        // because the event left the slice — silent strip would leave
+        // the operator confused about where the inspector went.
+        // Reviewer Round 2 (item 1): the dispatched-dismiss branch
+        // covers the Refresh-after-eager-close path the reviewer
+        // flagged.
+        setPeekLostAt(Date.now());
+      }
       // Reviewer Round 9: even when `action !== "strip"` (no URL
       // token but an in-memory peek that lost its row), pending can
       // now be cleared because either branch above decided the
@@ -1586,6 +1834,17 @@ export function DetectionShell({
       setResultError(null);
       setHasQueried(true);
       if (!args.navigating) {
+        // Reviewer Round 2 (item 1): capture the open peek's locator
+        // before `applyCommitDispatchReset` strips both the in-memory
+        // event and the URL token. The post-fetch reconcile uses this
+        // probe to decide "row still present" vs. "row gone after
+        // Refresh / Apply" — without it, the dispatched-dismiss path
+        // had no locator left and the §6 "no longer in the list"
+        // notice never fired.
+        const dismissed = quickPeekEventRef.current;
+        pendingPeekProbeRef.current = dismissed
+          ? encodeEventLocator(dismissed)
+          : null;
         // See `applyCommitDispatchReset` for the dispatch-time contract.
         // Reviewer Round 7: only clear the URL token when we are
         // actually dismissing an open peek. Otherwise — e.g. Refresh
@@ -1671,6 +1930,11 @@ export function DetectionShell({
               setEvents([]);
               setEventKeys([]);
               setPageInfo(null);
+              // Reviewer Round 2 (item 1): drop the dispatched-dismiss
+              // probe on a failed fetch. A later successful slice from
+              // a different dispatch must not be reconciled against a
+              // probe captured for the dispatch that just failed.
+              pendingPeekProbeRef.current = null;
               // Reviewer Round 6 #1: surface the typed
               // `forbidden-customer-scope` rejection with actionable
               // copy ("remove the unavailable customers") instead of
@@ -1694,6 +1958,10 @@ export function DetectionShell({
             setTotalCount(null);
             setEvents([]);
             setEventKeys([]);
+            // Reviewer Round 2 (item 1): same as the non-ok branch —
+            // a thrown fetch must not leave a stale probe behind for
+            // the next dispatch's reconcile to mis-attribute.
+            pendingPeekProbeRef.current = null;
             setPageInfo(null);
             setResultError(labels.resultsError);
             resolve(null);
@@ -1811,6 +2079,17 @@ export function DetectionShell({
         customerLive,
         options,
       );
+      // Issue #429: transition `timeMode` to "custom" on the first
+      // operator-driven time edit. See {@link shouldTransitionToCustomTime}
+      // for the full rule set (re-clicking the same Period chip is NOT
+      // an edit even though selectPeriod recomputes ISO bounds; manual
+      // start/end edits in absolute mode are).
+      if (
+        timeMode === "preset" &&
+        shouldTransitionToCustomTime(committedFilter, committedPeriod, applied)
+      ) {
+        setTimeMode("custom");
+      }
       setCommittedFilter(next);
       setCommittedPeriod(applied.period);
       setCommittedEndpoints(applied.endpoints);
@@ -1862,6 +2141,7 @@ export function DetectionShell({
     },
     [
       committedFilter,
+      committedPeriod,
       customerCache,
       pagination.pageSize,
       pivotOnly,
@@ -1869,6 +2149,7 @@ export function DetectionShell({
       pathname,
       runQueryFor,
       sensorCache,
+      timeMode,
     ],
   );
 
@@ -1897,6 +2178,18 @@ export function DetectionShell({
       setCommittedEndpoints(endpoints);
       setDraft(null);
       setDrawerOpen(false);
+      // Reviewer Round 2 (item 2): the operator just replaced this
+      // tab's filter with a different saved filter — `timeMode` and
+      // any `originPreset` binding inherited from the preset that
+      // originally seeded the tab no longer describe what the tab is
+      // showing. Flip the local `timeMode` so this tab cannot match
+      // the original preset on a future activation, and tell the
+      // wrapper to drop `originPreset` for the same reason. Without
+      // this, loading a "Last 1 day" saved filter into a "Last 1
+      // hour" recommended-preset tab and then re-clicking the "Last
+      // 1 hour" preset would silently focus the now-misaligned tab.
+      if (timeMode === "preset") setTimeMode("custom");
+      onClearPresetMetadataForCurrentTab?.();
 
       const search = buildEncodedFilterSearch({
         filter,
@@ -1914,7 +2207,14 @@ export function DetectionShell({
 
       runQueryFor(filter);
     },
-    [pagination.pageSize, pathname, pivotOnly, runQueryFor],
+    [
+      onClearPresetMetadataForCurrentTab,
+      pagination.pageSize,
+      pathname,
+      pivotOnly,
+      runQueryFor,
+      timeMode,
+    ],
   );
 
   // Save dialog state — opened from the drawer's "Save this filter"
@@ -1958,6 +2258,8 @@ export function DetectionShell({
       savedEmpty: ddStrings.savedEmpty,
       savedRowMenuLabel: (name: string) =>
         ddStrings.savedRowMenuLabelTemplate.replace("{name}", name),
+      openInNewTab: (name: string) =>
+        ddStrings.openInNewTabTemplate.replace("{name}", name),
       loadInNewTab: ddStrings.loadInNewTab,
       loadInCurrentTab: ddStrings.loadInCurrentTab,
       rename: ddStrings.rename,
@@ -1983,6 +2285,12 @@ export function DetectionShell({
       // so the period stays in sync with the filter's start/end.
       if (target.kind === "period") {
         setCommittedPeriod(null);
+        // Issue #429: removing the period chip is an explicit time
+        // edit — the operator stripped the relative window — so a
+        // preset-originated tab transitions to `"custom"`.
+        if (timeMode === "preset") {
+          setTimeMode("custom");
+        }
       }
       // Drop the cached drawer draft — it was built from the
       // pre-removal filter and would clobber the change if the
@@ -2017,6 +2325,7 @@ export function DetectionShell({
       pivotOnly,
       pathname,
       runQueryFor,
+      timeMode,
     ],
   );
 
@@ -2025,19 +2334,26 @@ export function DetectionShell({
    * existing filter / pivot params. Called after every successful
    * paginator navigation so a refresh or share-this-URL lands on
    * the same page.
+   *
+   * Reviewer Round 4: callers that have just transitioned the
+   * committed filter in the same React turn (e.g. `handleRefresh`
+   * sliding a `timeMode: "preset"` window) MUST pass the freshly
+   * dispatched filter via `filterOverride`. The `committedFilter`
+   * in this callback's closure is the pre-transition value because
+   * the `setCommittedFilter` triggered earlier in the same turn has
+   * not flushed yet, so the default closure would otherwise rewrite
+   * `?f=` back to the stale activation bounds while the in-memory
+   * query state already advanced.
    */
   const persistPaginationToUrl = useCallback(
-    (next: PaginationState) => {
-      const search = buildEncodedFilterSearch({
-        filter: committedFilter,
+    (next: PaginationState, filterOverride?: Filter) => {
+      const search = buildPaginationPersistSearch({
+        filter: filterOverride ?? committedFilter,
         period: committedPeriod,
         endpoints: committedEndpoints,
         pivotExtras: extrasFromPivotOnly(pivotOnly),
+        pagination: next,
       });
-      for (const [k, v] of paginationToSearchEntries(next)) {
-        search.set(k, v);
-      }
-      preserveActiveTabParam(search);
       const qs = search.toString();
       const url = qs ? `${pathname}?${qs}` : pathname;
       window.history.replaceState(window.history.state, "", url);
@@ -2106,7 +2422,37 @@ export function DetectionShell({
     if (!hasQueried) return;
     latestWalkIdRef.current += 1;
     setWalking(null);
-    void dispatchQuery(committedFilter, {
+    // Issue #429: a tab still in `timeMode: "preset"` advances its
+    // relative window on Refresh — a "Last 1 hour" tab created at 11:00
+    // and refreshed at 11:30 must query 10:30–11:30, not the frozen
+    // 10:00–11:00 captured at activation. The slide preserves
+    // `timeMode: "preset"` so subsequent preset clicks still match this
+    // tab.
+    const slid = slidePresetRefreshFilter(
+      committedFilter,
+      committedPeriod,
+      timeMode,
+    );
+    const dispatched = slid ?? committedFilter;
+    if (slid) {
+      setCommittedFilter(slid);
+      // Mirror the slid window into the URL so a refresh restores the
+      // freshly advanced bounds (the `f` param carries start/end).
+      const search = buildEncodedFilterSearch({
+        filter: slid,
+        period: committedPeriod,
+        endpoints: committedEndpoints,
+        pivotExtras: extrasFromPivotOnly(pivotOnly),
+      });
+      for (const [k, v] of paginationToSearchEntries(pagination)) {
+        search.set(k, v);
+      }
+      preserveActiveTabParam(search);
+      const qs = search.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(window.history.state, "", url);
+    }
+    void dispatchQuery(dispatched, {
       anchor: pagination.anchor,
       pageSize: pagination.pageSize,
       page: pagination.page,
@@ -2117,23 +2463,40 @@ export function DetectionShell({
         // between the previous query and this one. Persist the page
         // number derived from the fresh total so the URL counts from
         // the same rows the paginator is about to render.
-        persistPaginationToUrl({
-          ...pagination,
-          page: committedPageForAnchor(
-            pagination.anchor,
-            pagination.pageSize,
-            result.totalCount,
-            pagination.page,
-          ),
-        });
+        //
+        // Reviewer Round 4: pass `dispatched` explicitly so the
+        // success-path URL write uses the slid bounds. The
+        // `persistPaginationToUrl` callback closes over the pre-slide
+        // `committedFilter` (the `setCommittedFilter(slid)` call above
+        // has not flushed yet), and without the override the success
+        // write would clobber the pre-dispatch URL write with the
+        // frozen activation bounds — a reload would then restore
+        // 10:00–11:00 instead of the freshly slid 10:30–11:30.
+        persistPaginationToUrl(
+          {
+            ...pagination,
+            page: committedPageForAnchor(
+              pagination.anchor,
+              pagination.pageSize,
+              result.totalCount,
+              pagination.page,
+            ),
+          },
+          dispatched,
+        );
       }
     });
   }, [
+    committedEndpoints,
     committedFilter,
+    committedPeriod,
     dispatchQuery,
     hasQueried,
     pagination,
+    pathname,
     persistPaginationToUrl,
+    pivotOnly,
+    timeMode,
   ]);
 
   /**
@@ -3018,6 +3381,7 @@ export function DetectionShell({
       analyticsTopN,
       quickPeekEvent,
       pendingQuickPeekToken,
+      timeMode,
       result: {
         events,
         eventKeys,
@@ -3044,6 +3408,7 @@ export function DetectionShell({
     analyticsTopN,
     quickPeekEvent,
     pendingQuickPeekToken,
+    timeMode,
     events,
     eventKeys,
     totalCount,
@@ -3082,14 +3447,19 @@ export function DetectionShell({
             <SlidersHorizontal className="size-4" />
             {labels.filtersOpen}
           </Button>
-          {recommendedPresets && onLoadRecommendedFilterInNewTab ? (
+          {recommendedPresets && onActivateRecommendedPreset ? (
             <PresetsDropdown
               recommendedPresets={recommendedPresets}
               savedFilters={savedFilters}
               labels={presetsDropdownLabels}
-              onActivateRecommended={onLoadRecommendedFilterInNewTab}
-              onLoadSavedInNewTab={(filter) =>
-                onLoadSavedFilterInNewTab?.(filter.filter)
+              onActivateRecommended={(preset, opts) =>
+                onActivateRecommendedPreset(preset, opts)
+              }
+              onActivateSaved={(filter, opts) =>
+                onActivateSavedPreset?.(
+                  { id: filter.id, filter: filter.filter },
+                  opts,
+                )
               }
               onLoadSavedInCurrentTab={(filter) =>
                 loadFilterIntoCurrentTab(filter.filter)
@@ -3192,6 +3562,9 @@ export function DetectionShell({
                   : null
               }
               onDismissDownloadError={csvExport.dismissError}
+              matchFocusEvent={matchFocusEvent}
+              peekLostAt={peekLostAt}
+              onDismissPeekLost={() => setPeekLostAt(null)}
             />
             {hasQueried && !resultError ? (
               <PaginationControls
@@ -3401,6 +3774,42 @@ export function reconcileQuickPeekUrlAction(args: {
   if (!args.tokenPresent) return "noop";
   if (args.matchFound) return "restore";
   return "strip";
+}
+
+/**
+ * Reviewer Round 2 (item 1): pure decision for the §6 "no longer in
+ * the list" notice that the post-fetch reconcile fires.
+ *
+ * The notice should fire whenever a successful slice confirms that
+ * the operator's open peek's row is gone — but the reconcile has up
+ * to three locator sources to consider:
+ *
+ *  - `hasInMemoryPeek`: a peek currently open in shell state (no
+ *    eager close happened, e.g. a chip × against a different
+ *    filter). The §6 notice paths through `setPeekLostAt` AND
+ *    closes the inspector.
+ *  - `dispatchedDismissPresent`: a peek that an Apply / Refresh /
+ *    chip × already closed at dispatch time
+ *    ({@link applyCommitDispatchReset}). The locator was retained
+ *    in `pendingPeekProbeRef` so this reconcile can decide whether
+ *    the row is gone — without that, a Refresh that drops the
+ *    inspected row never fired the notice (the symptom Reviewer
+ *    Round 2 (item 1) flagged).
+ *  - `urlTokenPresent` is handled separately by
+ *    {@link reconcileQuickPeekUrlAction} for the URL-strip leg.
+ *
+ * The §6 notice fires whenever there is *some* peek being lost
+ * (in-memory or dispatched-dismissed) AND the slice does not
+ * contain it. Extracted as a pure helper so the contract can be
+ * unit-tested without standing up the full shell.
+ */
+export function shouldFirePeekLostFromSlice(args: {
+  hasInMemoryPeek: boolean;
+  dispatchedDismissPresent: boolean;
+  matchFound: boolean;
+}): boolean {
+  if (args.matchFound) return false;
+  return args.hasInMemoryPeek || args.dispatchedDismissPresent;
 }
 
 /**

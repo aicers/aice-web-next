@@ -81,6 +81,33 @@ export interface ResultListLabels {
   updatedSecondsAgo: (s: number) => string;
   updatedMinutesAgo: (m: number) => string;
   updatedHoursAgo: (h: number) => string;
+  /**
+   * Issue #429 §3: stale-data inline notice surfaced after a preset
+   * activation focused an existing tab whose last fetch is older than
+   * the threshold. Coexists with the `Updated …` timestamp; the notice
+   * is gated on a match-focus event and the staleness threshold so a
+   * fresh tab does not spam it.
+   *
+   * Distinct from `updated*Ago` — those compose the always-on
+   * `Updated …` chip and prepending another `Last updated` to them
+   * would produce duplicated wording (`Last updated Updated 14 min
+   * ago`). The stale-notice variants are full sentences so the two
+   * surfaces never share a fragment.
+   */
+  staleNoticeJustNow: string;
+  staleNoticeSecondsAgo: (s: number) => string;
+  staleNoticeMinutesAgo: (m: number) => string;
+  staleNoticeHoursAgo: (h: number) => string;
+  staleNoticeRefresh: string;
+  /**
+   * Issue #429 §6: inline notice surfaced when the operator's open
+   * Quick peek was closed because the event disappeared from the
+   * latest slice (e.g. a Refresh narrowed it out). Lets the operator
+   * understand why the inspector vanished instead of silently
+   * stripping it.
+   */
+  peekLostNotice: string;
+  peekLostDismiss: string;
   loadingTitle: string;
   loadingDescription: string;
   errorTitle: string;
@@ -213,7 +240,36 @@ interface ResultListProps {
    */
   downloadError?: string | null;
   onDismissDownloadError?: () => void;
+  /**
+   * Issue #429 §3: most recent match-focus event. When the wrapper
+   * focused the active tab on a preset activation, the result-list
+   * header shows an inline "Last updated …" notice with a Refresh
+   * button if the tab's last fetch is older than the staleness
+   * threshold. Each new event (distinguished by `at`) renders the
+   * notice once; subsequent unrelated state changes do not re-emit
+   * it. Refresh is the operator's choice — focus does not auto-
+   * refetch.
+   */
+  matchFocusEvent?: { at: number } | null;
+  /**
+   * Issue #429 §6: most recent timestamp at which the open Quick peek
+   * was closed because its event was no longer in the slice. Each
+   * distinct value renders the inline "no longer in the list" notice
+   * once until the operator dismisses it. `null` keeps the notice
+   * hidden — the standard state for tabs whose peek was never opened
+   * or was dismissed by the operator directly.
+   */
+  peekLostAt?: number | null;
+  onDismissPeekLost?: () => void;
 }
+
+/**
+ * Issue #429 §3: staleness threshold for the match-focus notice. A tab
+ * whose last fetch is older than this surfaces the inline "Last
+ * updated …" notice on a match-focus. Independent of the tab's data
+ * window — a Last 1 year tab and a Last 1 hour tab use the same rule.
+ */
+export const STALE_THRESHOLD_MS = 2 * 60 * 1000;
 
 export function ResultList({
   state,
@@ -229,6 +285,9 @@ export function ResultList({
   downloadRunning,
   downloadError,
   onDismissDownloadError,
+  matchFocusEvent,
+  peekLostAt,
+  onDismissPeekLost,
 }: ResultListProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3">
@@ -237,6 +296,7 @@ export function ResultList({
         labels={labels}
         onRefresh={onRefresh}
         onDownload={onDownload}
+        matchFocusEvent={matchFocusEvent}
         downloadRunning={downloadRunning}
       />
       {downloadError ? (
@@ -247,6 +307,12 @@ export function ResultList({
           onDismiss={onDismissDownloadError}
         />
       ) : null}
+      <PeekLostNotice
+        peekLostAt={peekLostAt ?? null}
+        message={labels.peekLostNotice}
+        dismissLabel={labels.peekLostDismiss}
+        onDismiss={onDismissPeekLost}
+      />
       <ResultListBody
         state={state}
         labels={labels}
@@ -262,18 +328,66 @@ export function ResultList({
   );
 }
 
+/**
+ * Issue #429 §6: inline notice rendered after the active tab's Quick
+ * peek was closed because its event disappeared from the latest slice.
+ * Re-renders on each fresh `peekLostAt` value (a different timestamp
+ * means a fresh "lost" event) and disappears once the operator
+ * dismisses it. The shell pairs each notice with a `setPeekLostAt`
+ * call inside the slice-reconcile path so legitimate peek dismissals
+ * (operator clicked the close button) do NOT trigger the notice.
+ */
+function PeekLostNotice({
+  peekLostAt,
+  message,
+  dismissLabel,
+  onDismiss,
+}: {
+  peekLostAt: number | null;
+  message: string;
+  dismissLabel: string;
+  onDismiss?: () => void;
+}) {
+  const [acknowledgedAt, setAcknowledgedAt] = useState<number | null>(null);
+  if (peekLostAt === null) return null;
+  if (peekLostAt === acknowledgedAt) return null;
+  return (
+    <div
+      role="status"
+      data-slot="result-peek-lost-notice"
+      className="text-muted-foreground border-muted bg-muted/30 flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs"
+    >
+      <span>{message}</span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 text-xs"
+        onClick={() => {
+          setAcknowledgedAt(peekLostAt);
+          onDismiss?.();
+        }}
+      >
+        {dismissLabel}
+      </Button>
+    </div>
+  );
+}
+
 function ResultListHeader({
   state,
   labels,
   onRefresh,
   onDownload,
   downloadRunning,
+  matchFocusEvent,
 }: {
   state: ResultListState;
   labels: ResultListLabels;
   onRefresh: () => void;
   onDownload?: () => void;
   downloadRunning?: boolean;
+  matchFocusEvent?: { at: number } | null;
 }) {
   const total = state.totalCount;
   const range = state.range;
@@ -289,59 +403,67 @@ function ResultListHeader({
     ? labels.downloadRunning
     : labels.download;
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 className="text-foreground text-sm font-semibold">
-        {showCount && range
-          ? labels.countWithRange({
-              range: `${range.start} – ${range.end}`,
-              total,
-            })
-          : showCount
-            ? labels.totalOnly({ total: total ?? "0" })
-            : null}
-      </h2>
-      <div className="flex items-center gap-2">
-        <UpdatedAffordance
-          lastUpdatedMs={state.lastUpdatedMs}
-          labels={labels}
-        />
-        {/*
-         * Refresh stays disabled in `empty-prequery` so a `+`-created
-         * tab cannot run its first query without going through Apply
-         * (#281: new tabs must not auto-run).
-         */}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onRefresh}
-          aria-label={labels.refresh}
-          disabled={
-            state.status === "loading" || state.status === "empty-prequery"
-          }
-        >
-          <RefreshCw
-            className={cn(
-              "size-4",
-              state.status === "loading" && "animate-spin",
-            )}
-            aria-hidden="true"
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-foreground text-sm font-semibold">
+          {showCount && range
+            ? labels.countWithRange({
+                range: `${range.start} – ${range.end}`,
+                total,
+              })
+            : showCount
+              ? labels.totalOnly({ total: total ?? "0" })
+              : null}
+        </h2>
+        <div className="flex items-center gap-2">
+          <UpdatedAffordance
+            lastUpdatedMs={state.lastUpdatedMs}
+            labels={labels}
           />
-          <span className="sr-only">{labels.refresh}</span>
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onDownload}
-          disabled={downloadDisabled}
-          aria-label={downloadLabel}
-          aria-busy={downloadRunning === true}
-        >
-          <Download className="size-4" aria-hidden="true" />
-          {downloadLabel}
-        </Button>
+          {/*
+           * Refresh stays disabled in `empty-prequery` so a `+`-created
+           * tab cannot run its first query without going through Apply
+           * (#281: new tabs must not auto-run).
+           */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onRefresh}
+            aria-label={labels.refresh}
+            disabled={
+              state.status === "loading" || state.status === "empty-prequery"
+            }
+          >
+            <RefreshCw
+              className={cn(
+                "size-4",
+                state.status === "loading" && "animate-spin",
+              )}
+              aria-hidden="true"
+            />
+            <span className="sr-only">{labels.refresh}</span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onDownload}
+            disabled={downloadDisabled}
+            aria-label={downloadLabel}
+            aria-busy={downloadRunning === true}
+          >
+            <Download className="size-4" aria-hidden="true" />
+            {downloadLabel}
+          </Button>
+        </div>
       </div>
+      <StaleFocusNotice
+        lastUpdatedMs={state.lastUpdatedMs}
+        labels={labels}
+        matchFocusEvent={matchFocusEvent ?? null}
+        onRefresh={onRefresh}
+      />
     </div>
   );
 }
@@ -404,6 +526,82 @@ function UpdatedAffordance({
   return <span className="text-muted-foreground text-xs">{text}</span>;
 }
 
+/**
+ * Issue #429 §3: stale-data inline notice surfaced after a preset
+ * activation match-focuses an existing tab whose last fetch is older
+ * than {@link STALE_THRESHOLD_MS}. The notice is gated on a
+ * match-focus event (re-rendered once per `matchFocusEvent.at`) so the
+ * "once per focus event" rule in §6 is enforced — repeated clicks of
+ * the same preset within a short window do not stack toasts.
+ *
+ * Coexists with the existing `UpdatedAffordance` timestamp; the two
+ * surfaces communicate different things — the timestamp is always-on
+ * informational copy, this notice is a one-shot "you came back to
+ * stale data, here's a Refresh" affordance.
+ *
+ * Refresh is the operator's choice (§3) — clicking it triggers the
+ * same list refetch the manual Refresh button performs. Focus does
+ * not auto-refetch.
+ */
+function StaleFocusNotice({
+  lastUpdatedMs,
+  labels,
+  matchFocusEvent,
+  onRefresh,
+}: {
+  lastUpdatedMs: number | null;
+  labels: ResultListLabels;
+  matchFocusEvent: { at: number } | null;
+  onRefresh: () => void;
+}) {
+  // Track the last `matchFocusEvent.at` we have already shown so a
+  // tab-state change unrelated to focus (e.g. the operator scrolled,
+  // hovered a row) cannot re-emit the notice. The notice clears as
+  // soon as the operator dismisses it or refreshes.
+  //
+  // `shownEventAt` is intentionally NOT a dep of the gating effect:
+  // after a dismissal sets it back to `null`, we do not want the effect
+  // to immediately re-fire on the same focusAt and re-render the
+  // notice. The effect only re-evaluates when a fresh focus event
+  // arrives or `lastUpdatedMs` advances — both of which are
+  // operator-driven signals that legitimately deserve a fresh decision.
+  const [shownEventAt, setShownEventAt] = useState<number | null>(null);
+  const focusAt = matchFocusEvent?.at ?? null;
+  useEffect(() => {
+    if (focusAt === null) return;
+    if (lastUpdatedMs === null) return;
+    if (Date.now() - lastUpdatedMs < STALE_THRESHOLD_MS) return;
+    setShownEventAt(focusAt);
+  }, [focusAt, lastUpdatedMs]);
+
+  if (shownEventAt === null) return null;
+  if (focusAt !== shownEventAt) return null;
+  if (lastUpdatedMs === null) return null;
+  const elapsedMs = Date.now() - lastUpdatedMs;
+  const message = formatStaleNotice(elapsedMs, labels);
+  return (
+    <div
+      role="status"
+      data-slot="result-stale-notice"
+      className="text-muted-foreground flex items-center justify-end gap-2 text-xs"
+    >
+      <span>{message}</span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 text-xs"
+        onClick={() => {
+          setShownEventAt(null);
+          onRefresh();
+        }}
+      >
+        {labels.staleNoticeRefresh}
+      </Button>
+    </div>
+  );
+}
+
 function formatRelativeUpdate(
   elapsedMs: number,
   labels: ResultListLabels,
@@ -415,6 +613,19 @@ function formatRelativeUpdate(
   if (minutes < 60) return labels.updatedMinutesAgo(minutes);
   const hours = Math.floor(minutes / 60);
   return labels.updatedHoursAgo(hours);
+}
+
+function formatStaleNotice(
+  elapsedMs: number,
+  labels: ResultListLabels,
+): string {
+  if (elapsedMs < 5_000) return labels.staleNoticeJustNow;
+  const seconds = Math.floor(elapsedMs / 1000);
+  if (seconds < 60) return labels.staleNoticeSecondsAgo(seconds);
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return labels.staleNoticeMinutesAgo(minutes);
+  const hours = Math.floor(minutes / 60);
+  return labels.staleNoticeHoursAgo(hours);
 }
 
 function ResultListBody({

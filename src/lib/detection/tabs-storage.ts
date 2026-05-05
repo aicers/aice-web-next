@@ -120,6 +120,16 @@ function hydrateStoredTab(stored: StoredTab): TabSnapshot {
     quickPeekEvent: null,
     pendingQuickPeekToken: null,
     result: EMPTY_RESULT_CACHE,
+    // Issue #429: matching state is intentionally not persisted. A
+    // reload resets every rehydrated tab to "manual + custom" so the
+    // first preset activation after reload always creates a new tab —
+    // the operator hasn't told us their previous tab was the preset
+    // tab they want to focus, and silently treating it as one would
+    // surprise them when subsequent clicks suddenly stop spawning new
+    // tabs.
+    originPreset: null,
+    timeMode: "custom",
+    lastActivatedAt: Date.now(),
   };
 }
 

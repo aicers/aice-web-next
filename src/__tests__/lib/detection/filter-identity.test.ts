@@ -5,7 +5,9 @@ import {
   analyticsFilterIdentity,
   filterIdentitiesEqual,
   filtersAreEquivalent,
+  filtersAreEquivalentIgnoringTime,
   normalizeFilterIdentity,
+  normalizeFilterIdentityIgnoringTime,
 } from "@/lib/detection/filter-identity";
 import type { EventListFilterInput } from "@/lib/detection/types";
 
@@ -359,5 +361,112 @@ describe("analyticsFilterIdentity", () => {
       }),
     );
     expect(a).toBe(b);
+  });
+});
+
+describe("normalizeFilterIdentityIgnoringTime — issue #429", () => {
+  it("treats two filters with identical non-time fields but different ISO start/end as equal", () => {
+    const a = normalizeFilterIdentityIgnoringTime(
+      structured({
+        start: ISO_A_START,
+        end: ISO_A_END,
+        kinds: ["HttpThreat"],
+      }),
+    );
+    const b = normalizeFilterIdentityIgnoringTime(
+      structured({
+        start: "2099-01-01T00:00:00.000Z",
+        end: "2099-01-01T01:00:00.000Z",
+        kinds: ["HttpThreat"],
+      }),
+    );
+    expect(a).toBe(b);
+  });
+
+  it("treats filters with different non-time fields as unequal even when start/end match", () => {
+    const a = normalizeFilterIdentityIgnoringTime(
+      structured({
+        start: ISO_A_START,
+        end: ISO_A_END,
+        kinds: ["HttpThreat"],
+      }),
+    );
+    const b = normalizeFilterIdentityIgnoringTime(
+      structured({
+        start: ISO_A_START,
+        end: ISO_A_END,
+        kinds: ["HttpThreat"],
+        levels: [3],
+      }),
+    );
+    expect(a).not.toBe(b);
+  });
+
+  it("ignores period collapsing — two filters with identical non-time fields but different period values still match", () => {
+    // The period key only enters the canonicalization through the
+    // start/end stand-in; ignoring time means the period doesn't
+    // matter either, just the non-time fields. So `Last 1 hour` and
+    // `Last 1 day` over identical kinds are equal here even though
+    // `normalizeFilterIdentity` would have reported them unequal.
+    const a = normalizeFilterIdentityIgnoringTime(
+      structured({
+        start: ISO_A_START,
+        end: ISO_A_END,
+        kinds: ["HttpThreat"],
+      }),
+    );
+    const b = normalizeFilterIdentityIgnoringTime(
+      structured({
+        start: "2026-04-20T00:00:00.000Z",
+        end: "2026-04-25T00:00:00.000Z",
+        kinds: ["HttpThreat"],
+      }),
+    );
+    expect(a).toBe(b);
+  });
+
+  it("normalizes array order and deduplicates the same way the time-aware variant does", () => {
+    const a = normalizeFilterIdentityIgnoringTime(
+      structured({ kinds: ["HttpThreat", "DnsCovertChannel", "HttpThreat"] }),
+    );
+    const b = normalizeFilterIdentityIgnoringTime(
+      structured({ kinds: ["DnsCovertChannel", "HttpThreat"] }),
+    );
+    expect(a).toBe(b);
+  });
+
+  it("compares query-mode filters by trimmed text", () => {
+    const a = normalizeFilterIdentityIgnoringTime({
+      mode: "query",
+      text: " level:high ",
+    });
+    const b = normalizeFilterIdentityIgnoringTime({
+      mode: "query",
+      text: "level:high",
+    });
+    expect(a).toBe(b);
+  });
+
+  it("filtersAreEquivalentIgnoringTime composes the helpers", () => {
+    expect(
+      filtersAreEquivalentIgnoringTime(
+        structured({
+          start: ISO_A_START,
+          end: ISO_A_END,
+          kinds: ["HttpThreat"],
+        }),
+        structured({
+          start: "2099-01-01T00:00:00.000Z",
+          end: "2099-01-01T01:00:00.000Z",
+          kinds: ["HttpThreat"],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      filtersAreEquivalentIgnoringTime(
+        structured({ kinds: ["HttpThreat"] }),
+        structured({ kinds: ["DnsCovertChannel"] }),
+      ),
+    ).toBe(false);
   });
 });

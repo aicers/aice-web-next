@@ -763,6 +763,80 @@ describe("reconcileQuickPeekUrlAction", () => {
   });
 });
 
+describe("shouldFirePeekLostFromSlice — Reviewer Round 2 (item 1)", () => {
+  // Regression: when an Apply / Refresh / chip × dismisses an open
+  // Quick peek at dispatch time, both the in-memory event AND the
+  // URL token are stripped before the async fetch resolves. The
+  // post-fetch reconcile then has no probe to compare against the
+  // fresh slice — so a Refresh that drops the inspected row used
+  // to silently close the inspector with no §6 "no longer in the
+  // list" notice. The fix retains the dismissed locator in
+  // `pendingPeekProbeRef` so this predicate can decide "row gone"
+  // even when the in-memory peek state has already been cleared.
+  let shouldFirePeekLostFromSlice: ShellModule["shouldFirePeekLostFromSlice"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldFirePeekLostFromSlice = mod.shouldFirePeekLostFromSlice;
+  });
+
+  it("does not fire when the fresh slice still contains the probed row", () => {
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: true,
+        dispatchedDismissPresent: false,
+        matchFound: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: false,
+        dispatchedDismissPresent: true,
+        matchFound: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("fires for a still-open in-memory peek whose row left the slice", () => {
+    // Pre-existing branch: the operator never explicitly dismissed
+    // the peek; the reconcile closes it AND surfaces the notice so
+    // they understand why the inspector vanished.
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: true,
+        dispatchedDismissPresent: false,
+        matchFound: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("fires for a dispatched-dismissed peek whose row left the slice", () => {
+    // The Reviewer Round 2 (item 1) regression: Refresh closed the
+    // inspector at dispatch time, the fresh slice confirms the row
+    // is gone, and the §6 notice must still fire even though
+    // `quickPeekEvent` has been null since dispatch.
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: false,
+        dispatchedDismissPresent: true,
+        matchFound: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not fire when there is no peek to lose at all", () => {
+    // No in-memory peek and no dispatched-dismissed locator means
+    // the operator has nothing in flight that needs the §6 notice.
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: false,
+        dispatchedDismissPresent: false,
+        matchFound: false,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("shouldCloseQuickPeekOnEscape", () => {
   // Regression (Reviewer Round 13): a single Escape keypress used to
   // fire both the `MorePopover`'s own document-level Escape handler
@@ -846,5 +920,274 @@ describe("ENDPOINT_CHIP_FOCUS", () => {
     expect(mod.shouldOpenEndpointPanelForFocus(mod.ENDPOINT_CHIP_FOCUS)).toBe(
       true,
     );
+  });
+});
+
+describe("shouldTransitionToCustomTime — issue #429 §2", () => {
+  // The structured filter's start/end are recomputed by selectPeriod
+  // on every period click, so we use distinct ISO values per case to
+  // make the "ISO drift on re-selection" scenarios visible.
+  const ISO_OLD_START = "2026-05-05T08:00:00.000Z";
+  const ISO_OLD_END = "2026-05-05T09:00:00.000Z";
+  const ISO_NEW_START = "2026-05-05T08:00:00.500Z";
+  const ISO_NEW_END = "2026-05-05T09:00:00.500Z";
+
+  function relativeFilter(): Filter {
+    return {
+      mode: "structured",
+      input: { start: ISO_OLD_START, end: ISO_OLD_END, kinds: ["HttpThreat"] },
+    };
+  }
+
+  it("re-selecting the same Period does NOT transition, even when ISO bounds drift", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.shouldTransitionToCustomTime(relativeFilter(), "1h", {
+        period: "1h",
+        startIso: ISO_NEW_START,
+        endIso: ISO_NEW_END,
+      }),
+    ).toBe(false);
+  });
+
+  it("changing the Period (1h → 1d) DOES transition", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.shouldTransitionToCustomTime(relativeFilter(), "1h", {
+        period: "1d",
+        startIso: ISO_NEW_START,
+        endIso: ISO_NEW_END,
+      }),
+    ).toBe(true);
+  });
+
+  it("dropping the relative period for a manual range DOES transition", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.shouldTransitionToCustomTime(relativeFilter(), "1h", {
+        period: null,
+        startIso: ISO_NEW_START,
+        endIso: ISO_NEW_END,
+      }),
+    ).toBe(true);
+  });
+
+  it("editing start/end while in absolute mode (period stays null) DOES transition", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const absolute: Filter = {
+      mode: "structured",
+      input: { start: ISO_OLD_START, end: ISO_OLD_END },
+    };
+    expect(
+      mod.shouldTransitionToCustomTime(absolute, null, {
+        period: null,
+        startIso: ISO_NEW_START,
+        endIso: ISO_OLD_END,
+      }),
+    ).toBe(true);
+  });
+
+  it("re-applying identical absolute start/end (no edit) does NOT transition", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const absolute: Filter = {
+      mode: "structured",
+      input: { start: ISO_OLD_START, end: ISO_OLD_END },
+    };
+    expect(
+      mod.shouldTransitionToCustomTime(absolute, null, {
+        period: null,
+        startIso: ISO_OLD_START,
+        endIso: ISO_OLD_END,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("slidePresetRefreshFilter — issue #429 §3 (Reviewer Round 3)", () => {
+  // Matches `computePeriodRange("1h", now)` shape — end === now.toISOString(),
+  // start === end - 1h.
+  const NOW_ACTIVATION = new Date("2026-05-05T11:00:00.000Z");
+  const NOW_REFRESH = new Date("2026-05-05T11:30:00.000Z");
+  const ACTIVATION_START = "2026-05-05T10:00:00.000Z";
+  const ACTIVATION_END = NOW_ACTIVATION.toISOString();
+  const REFRESH_START = "2026-05-05T10:30:00.000Z";
+  const REFRESH_END = NOW_REFRESH.toISOString();
+
+  function presetTabFilter(): Filter {
+    return {
+      mode: "structured",
+      input: {
+        start: ACTIVATION_START,
+        end: ACTIVATION_END,
+        directions: ["INBOUND"],
+      },
+    };
+  }
+
+  it("slides start/end forward against the same period when timeMode is 'preset'", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const slid = mod.slidePresetRefreshFilter(
+      presetTabFilter(),
+      "1h",
+      "preset",
+      NOW_REFRESH,
+    );
+    expect(slid).not.toBeNull();
+    if (slid?.mode !== "structured") throw new Error("expected structured");
+    expect(slid.input.start).toBe(REFRESH_START);
+    expect(slid.input.end).toBe(REFRESH_END);
+    // Non-time narrowing must survive the slide.
+    expect(slid.input.directions).toEqual(["INBOUND"]);
+  });
+
+  it("returns null for custom-time tabs (Refresh re-runs frozen bounds)", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.slidePresetRefreshFilter(
+        presetTabFilter(),
+        "1h",
+        "custom",
+        NOW_REFRESH,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when committedPeriod is null (absolute-mode tab)", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.slidePresetRefreshFilter(
+        presetTabFilter(),
+        null,
+        "preset",
+        NOW_REFRESH,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when refreshing within the same instant (no drift)", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    expect(
+      mod.slidePresetRefreshFilter(
+        presetTabFilter(),
+        "1h",
+        "preset",
+        NOW_ACTIVATION,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for query-mode filters", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const queryFilter: Filter = { mode: "query", text: "src=10.0.0.1" };
+    expect(
+      mod.slidePresetRefreshFilter(queryFilter, "1h", "preset", NOW_REFRESH),
+    ).toBeNull();
+  });
+});
+
+describe("buildPaginationPersistSearch — issue #429 Reviewer Round 4", () => {
+  // Reviewer Round 4: a successful preset Refresh must leave the URL
+  // carrying the slid bounds, not the frozen activation bounds. The
+  // success-path `persistPaginationToUrl` callback closes over the
+  // pre-slide `committedFilter` (the `setCommittedFilter(slid)` from
+  // the same React turn has not flushed), so without an explicit
+  // `filterOverride` the encoded `?f=` would silently revert to the
+  // 10:00–11:00 activation window even though the in-memory query
+  // already advanced to 10:30–11:30. This test exercises the pure
+  // helper that backs both call paths and proves the override wins.
+  const NOW_ACTIVATION = new Date("2026-05-05T11:00:00.000Z");
+  const NOW_REFRESH = new Date("2026-05-05T11:30:00.000Z");
+  const ACTIVATION_FILTER: Filter = {
+    mode: "structured",
+    input: {
+      start: "2026-05-05T10:00:00.000Z",
+      end: NOW_ACTIVATION.toISOString(),
+      directions: ["INBOUND"],
+    },
+  };
+  const PAGINATION = {
+    anchor: { kind: "head" } as const,
+    pageSize: 50 as const,
+    page: 1,
+  };
+
+  it("encodes the override filter when the closure-captured filter is stale", async () => {
+    const mod: ShellModule = await import(
+      "@/components/detection/detection-shell"
+    );
+    const slid = mod.slidePresetRefreshFilter(
+      ACTIVATION_FILTER,
+      "1h",
+      "preset",
+      NOW_REFRESH,
+    );
+    if (!slid || slid.mode !== "structured") {
+      throw new Error("expected slid filter for the test setup");
+    }
+    // Build the URL from the stale (pre-slide) committed filter. This
+    // is what the closure would do if the success path forgot the
+    // override — the regression the reviewer flagged.
+    const stale = mod.buildPaginationPersistSearch({
+      filter: ACTIVATION_FILTER,
+      period: "1h",
+      endpoints: [],
+      pivotExtras: {},
+      pagination: PAGINATION,
+    });
+    // Build the URL with the slid filter as the override. This is
+    // what the fixed success path produces.
+    const fresh = mod.buildPaginationPersistSearch({
+      filter: slid,
+      period: "1h",
+      endpoints: [],
+      pivotExtras: {},
+      pagination: PAGINATION,
+    });
+    // The encoded `?f=` blob must differ — and the override branch
+    // must reflect the slid bounds, not the activation bounds.
+    const staleF = stale.get("f");
+    const freshF = fresh.get("f");
+    expect(staleF).not.toBeNull();
+    expect(freshF).not.toBeNull();
+    expect(freshF).not.toBe(staleF);
+    // Decode the override branch and check it carries the slid window.
+    const filterUrl = await import("@/lib/detection/filter-url");
+    const decoded = filterUrl.parseFilterFromUrlParam(freshF);
+    if (!decoded || decoded.filter.mode !== "structured") {
+      throw new Error("expected the encoded blob to round-trip");
+    }
+    expect(decoded.filter.input.start).toBe(slid.input.start);
+    expect(decoded.filter.input.end).toBe(slid.input.end);
+    // Sanity: narrowing survived the override path too.
+    expect(decoded.filter.input.directions).toEqual(["INBOUND"]);
+
+    // The stale (closure-only) branch encodes the activation bounds —
+    // demonstrating the regression the override exists to prevent.
+    const staleDecoded = filterUrl.parseFilterFromUrlParam(staleF);
+    if (!staleDecoded || staleDecoded.filter.mode !== "structured") {
+      throw new Error("expected the stale blob to round-trip");
+    }
+    expect(staleDecoded.filter.input.start).toBe(ACTIVATION_FILTER.input.start);
+    expect(staleDecoded.filter.input.end).toBe(ACTIVATION_FILTER.input.end);
   });
 });

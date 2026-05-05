@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, ExternalLink } from "lucide-react";
+import { type MouseEvent as ReactMouseEvent, useState } from "react";
 
 import {
   SaveFilterDialog,
@@ -55,6 +55,13 @@ export interface PresetsDropdownLabels {
   savedEmpty: string;
   /** A11y label for a saved row's per-row context menu trigger. */
   savedRowMenuLabel: (name: string) => string;
+  /**
+   * Issue #429: a11y label for the explicit "Open in new tab" icon
+   * rendered on every preset row. Rendered as the icon button's
+   * `aria-label` so screen readers can read the affordance even though
+   * the icon itself is decorative.
+   */
+  openInNewTab: (name: string) => string;
   loadInNewTab: string;
   loadInCurrentTab: string;
   rename: string;
@@ -83,16 +90,26 @@ export interface PresetsDropdownProps {
   savedFilters?: UseSavedFiltersResult;
   labels: PresetsDropdownLabels;
   /**
-   * Recommended preset activation. Mirrors today's rail-click contract
-   * (load in new tab); the wrapper builds the concrete {@link Filter}
-   * from the preset and creates a tab pre-seeded with the result.
+   * Recommended preset activation. Issue #429: routes through the
+   * wrapper's create-or-focus decider by default; the dropdown passes
+   * `options.forceNewTab: true` from the explicit "Open in new tab"
+   * icon and Cmd-Ctrl-click paths so they always create a fresh tab
+   * regardless of matching.
    */
-  onActivateRecommended: (preset: RecommendedPreset) => void;
+  onActivateRecommended: (
+    preset: RecommendedPreset,
+    options?: { forceNewTab?: boolean },
+  ) => void;
   /**
-   * Saved-filter activation. The default click on a saved row fires
-   * this handler, matching the prior rail's "Load in new tab" default.
+   * Saved-filter activation. Same matching contract as
+   * {@link onActivateRecommended}: the default row click routes
+   * through create-or-focus; the icon and Cmd-Ctrl-click paths force
+   * a new tab.
    */
-  onLoadSavedInNewTab: (filter: SavedFilter) => void;
+  onActivateSaved: (
+    filter: SavedFilter,
+    options?: { forceNewTab?: boolean },
+  ) => void;
   /**
    * Secondary saved-filter activation: replace the active tab's
    * filter rather than creating a new one. Routed from the per-row
@@ -127,7 +144,7 @@ export function PresetsDropdown({
   savedFilters,
   labels,
   onActivateRecommended,
-  onLoadSavedInNewTab,
+  onActivateSaved,
   onLoadSavedInCurrentTab,
   onSaveCurrentFilter,
 }: PresetsDropdownProps) {
@@ -194,17 +211,42 @@ export function PresetsDropdown({
               {labels.recommendedEmpty}
             </p>
           ) : (
-            recommendedPresets.map((preset) => (
-              <DropdownMenuItem
-                key={preset.id}
-                data-preset-id={preset.id}
-                onSelect={() => onActivateRecommended(preset)}
-              >
-                <span className="truncate">
-                  {labels.recommendedPresetName(preset)}
-                </span>
-              </DropdownMenuItem>
-            ))
+            recommendedPresets.map((preset) => {
+              const presetName = labels.recommendedPresetName(preset);
+              return (
+                <div key={preset.id} className="flex items-center gap-1">
+                  <DropdownMenuItem
+                    className="min-w-0 flex-1"
+                    data-preset-id={preset.id}
+                    onClick={(event) => {
+                      // Issue #429: Cmd-Ctrl-click on a preset row always
+                      // creates a new tab regardless of matching, matching
+                      // standard web link conventions.
+                      if (isForceNewTabClick(event)) {
+                        event.preventDefault();
+                        onActivateRecommended(preset, { forceNewTab: true });
+                      }
+                    }}
+                    onSelect={() => onActivateRecommended(preset)}
+                  >
+                    <span className="truncate">{presetName}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="shrink-0 px-1 py-1.5"
+                    aria-label={labels.openInNewTab(presetName)}
+                    data-slot="presets-dropdown-open-new-tab"
+                    onSelect={() =>
+                      onActivateRecommended(preset, { forceNewTab: true })
+                    }
+                  >
+                    <ExternalLink className="size-3.5" aria-hidden="true" />
+                    <span className="sr-only">
+                      {labels.openInNewTab(presetName)}
+                    </span>
+                  </DropdownMenuItem>
+                </div>
+              );
+            })
           )}
 
           {savedFilters ? (
@@ -326,11 +368,29 @@ export function PresetsDropdown({
       >
         <DropdownMenuItem
           className="min-w-0 flex-1"
-          onSelect={() => onLoadSavedInNewTab(filter)}
+          onClick={(event) => {
+            // Issue #429: Cmd-Ctrl-click on a preset row always creates
+            // a new tab regardless of matching, matching standard web
+            // link conventions.
+            if (isForceNewTabClick(event)) {
+              event.preventDefault();
+              onActivateSaved(filter, { forceNewTab: true });
+            }
+          }}
+          onSelect={() => onActivateSaved(filter)}
         >
           <span className="truncate" title={filter.name}>
             {filter.name}
           </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="shrink-0 px-1 py-1.5"
+          aria-label={labels.openInNewTab(filter.name)}
+          data-slot="presets-dropdown-open-new-tab"
+          onSelect={() => onActivateSaved(filter, { forceNewTab: true })}
+        >
+          <ExternalLink className="size-3.5" aria-hidden="true" />
+          <span className="sr-only">{labels.openInNewTab(filter.name)}</span>
         </DropdownMenuItem>
         <DropdownMenuSub>
           <DropdownMenuSubTrigger
@@ -342,7 +402,9 @@ export function PresetsDropdown({
             </span>
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
-            <DropdownMenuItem onSelect={() => onLoadSavedInNewTab(filter)}>
+            <DropdownMenuItem
+              onSelect={() => onActivateSaved(filter, { forceNewTab: true })}
+            >
               {labels.loadInNewTab}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onLoadSavedInCurrentTab(filter)}>
@@ -363,4 +425,14 @@ export function PresetsDropdown({
       </div>
     ));
   }
+}
+
+/**
+ * Issue #429: detect a Cmd-Ctrl-click that should bypass the create-or-
+ * focus decider and always create a new tab. Mirrors the platform
+ * convention from anchor `target="_blank"` semantics — Mac users press
+ * `meta`, Windows / Linux users press `ctrl`.
+ */
+function isForceNewTabClick(event: ReactMouseEvent): boolean {
+  return event.metaKey || event.ctrlKey;
 }
