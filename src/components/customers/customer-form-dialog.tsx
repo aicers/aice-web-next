@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
 import {
   AlertDialog,
@@ -76,6 +76,21 @@ export function CustomerFormDialog({
   const [error, setError] = useState<string | null>(null);
   const [pendingWarning, setPendingWarning] =
     useState<ExternalKeyChangeVariant | null>(null);
+
+  // Resync form state from the current `customer` prop whenever the
+  // dialog opens. The component is mounted once by the parent table and
+  // reused across opens, so without this effect the initial `useState`
+  // values from the very first render would persist (e.g. an empty
+  // `name` after the first edit), leaving the submit button disabled.
+  useEffect(() => {
+    if (open) {
+      setName(customer?.name ?? "");
+      setDescription(customer?.description ?? "");
+      setExternalKey(customer?.external_key ?? "");
+      setError(null);
+      setPendingWarning(null);
+    }
+  }, [open, customer]);
 
   const submit = async () => {
     setSubmitting(true);
