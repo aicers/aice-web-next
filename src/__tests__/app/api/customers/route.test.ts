@@ -88,6 +88,7 @@ const sampleCustomer = {
   id: 1,
   name: "Acme Corp",
   description: "A test customer",
+  external_key: null as string | null,
   database_name: "customer_acme_corp_abc123",
   status: "active",
   created_at: "2026-01-01T00:00:00Z",
@@ -233,6 +234,100 @@ describe("POST /api/customers", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toBe("Invalid JSON");
+  });
+
+  it("creates a customer with external_key and persists it (#438)", async () => {
+    const provisioned = {
+      ...sampleCustomer,
+      external_key: "acmecorp.com",
+      status: "provisioning",
+    };
+    const active = {
+      ...sampleCustomer,
+      external_key: "acmecorp.com",
+      status: "active",
+    };
+    mockQuery
+      .mockResolvedValueOnce({ rows: [provisioned], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [active], rowCount: 1 });
+
+    const { POST } = await import("@/app/api/customers/route");
+    const request = new NextRequest("http://localhost:3000/api/customers", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Acme Corp",
+        external_key: "  acmecorp.com  ",
+      }),
+    });
+    const response = await POST(request, makeContext());
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.data.external_key).toBe("acmecorp.com");
+    // INSERT received the trimmed external_key in the right slot.
+    const insertCall = mockQuery.mock.calls[0];
+    expect(insertCall?.[0]).toContain("INSERT INTO customers");
+    expect(insertCall?.[1][2]).toBe("acmecorp.com");
+  });
+
+  it("returns 400 with field=external_key for invalid input (#438)", async () => {
+    const { POST } = await import("@/app/api/customers/route");
+    const request = new NextRequest("http://localhost:3000/api/customers", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Acme",
+        external_key: "a".repeat(257),
+      }),
+    });
+    const response = await POST(request, makeContext());
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.field).toBe("external_key");
+  });
+
+  it("returns 409 on external_key UNIQUE conflict (#438)", async () => {
+    mockQuery.mockRejectedValueOnce(
+      Object.assign(new Error("dup"), {
+        code: "23505",
+        constraint: "customers_external_key_key",
+      }),
+    );
+
+    const { POST } = await import("@/app/api/customers/route");
+    const request = new NextRequest("http://localhost:3000/api/customers", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Acme",
+        external_key: "acmecorp.com",
+      }),
+    });
+    const response = await POST(request, makeContext());
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe("external_key_conflict");
+    // Provisioning was never invoked because the INSERT itself failed.
+    expect(mockProvisionCustomerDb).not.toHaveBeenCalled();
+  });
+
+  it("treats empty external_key on create as NULL (#438)", async () => {
+    const provisioned = { ...sampleCustomer, status: "provisioning" };
+    const active = { ...sampleCustomer, status: "active" };
+    mockQuery
+      .mockResolvedValueOnce({ rows: [provisioned], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [active], rowCount: 1 });
+
+    const { POST } = await import("@/app/api/customers/route");
+    const request = new NextRequest("http://localhost:3000/api/customers", {
+      method: "POST",
+      body: JSON.stringify({ name: "Acme", external_key: "  " }),
+    });
+    const response = await POST(request, makeContext());
+
+    expect(response.status).toBe(201);
+    const insertCall = mockQuery.mock.calls[0];
+    expect(insertCall?.[1][2]).toBeNull();
   });
 
   it("cleans up on provisioning failure", async () => {

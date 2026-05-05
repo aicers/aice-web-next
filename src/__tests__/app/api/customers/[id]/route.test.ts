@@ -84,6 +84,7 @@ const sampleCustomer = {
   id: 1,
   name: "Acme Corp",
   description: "A test customer",
+  external_key: null as string | null,
   database_name: "customer_acme_corp_abc123",
   status: "active",
   created_at: "2026-01-01T00:00:00Z",
@@ -258,6 +259,153 @@ describe("PATCH /api/customers/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(body.data.name).toBe("Acme Corp");
+  });
+
+  it("emits changedFields/previous/next audit detail on a name-only edit (#438)", async () => {
+    const updated = { ...sampleCustomer, name: "Renamed Corp" };
+    mockQuery
+      .mockResolvedValueOnce({ rows: [sampleCustomer], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [updated], rowCount: 1 });
+
+    const { PATCH } = await import("@/app/api/customers/[id]/route");
+    const request = new NextRequest("http://localhost:3000/api/customers/1", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Renamed Corp" }),
+    });
+    await PATCH(request, makeContext());
+
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "customer.update",
+        details: expect.objectContaining({
+          changedFields: ["name"],
+          previous: { name: "Acme Corp" },
+          next: { name: "Renamed Corp" },
+          customerId: 1,
+          customerName: "Renamed Corp",
+        }),
+      }),
+    );
+    // A name-only edit must not include external_key keys.
+    const call = mockAuditRecord.mock.calls[0]?.[0] as
+      | {
+          details: {
+            previous: Record<string, unknown>;
+            next: Record<string, unknown>;
+          };
+        }
+      | undefined;
+    expect(call?.details.previous).not.toHaveProperty("external_key");
+    expect(call?.details.next).not.toHaveProperty("external_key");
+  });
+
+  it("sets external_key from NULL → value with audit changedFields (#438)", async () => {
+    const updated = { ...sampleCustomer, external_key: "acmecorp.com" };
+    mockQuery
+      .mockResolvedValueOnce({ rows: [sampleCustomer], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [updated], rowCount: 1 });
+
+    const { PATCH } = await import("@/app/api/customers/[id]/route");
+    const request = new NextRequest("http://localhost:3000/api/customers/1", {
+      method: "PATCH",
+      body: JSON.stringify({ external_key: "  acmecorp.com  " }),
+    });
+    const response = await PATCH(request, makeContext());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.external_key).toBe("acmecorp.com");
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "customer.update",
+        details: expect.objectContaining({
+          changedFields: ["external_key"],
+          previous: { external_key: null },
+          next: { external_key: "acmecorp.com" },
+        }),
+      }),
+    );
+  });
+
+  it("clears external_key from value → NULL on explicit null (#438)", async () => {
+    const previous = { ...sampleCustomer, external_key: "acmecorp.com" };
+    const cleared = { ...previous, external_key: null };
+    mockQuery
+      .mockResolvedValueOnce({ rows: [previous], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [cleared], rowCount: 1 });
+
+    const { PATCH } = await import("@/app/api/customers/[id]/route");
+    const request = new NextRequest("http://localhost:3000/api/customers/1", {
+      method: "PATCH",
+      body: JSON.stringify({ external_key: null }),
+    });
+    const response = await PATCH(request, makeContext());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.external_key).toBeNull();
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          changedFields: ["external_key"],
+          previous: { external_key: "acmecorp.com" },
+          next: { external_key: null },
+        }),
+      }),
+    );
+  });
+
+  it("treats empty external_key on already-NULL row as a no-op (#438)", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [sampleCustomer], rowCount: 1 });
+
+    const { PATCH } = await import("@/app/api/customers/[id]/route");
+    const request = new NextRequest("http://localhost:3000/api/customers/1", {
+      method: "PATCH",
+      body: JSON.stringify({ external_key: "   " }),
+    });
+    const response = await PATCH(request, makeContext());
+
+    expect(response.status).toBe(200);
+    // No UPDATE query was issued, so only the existence SELECT ran.
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockAuditRecord).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 with field=external_key on invalid value (#438)", async () => {
+    const { PATCH } = await import("@/app/api/customers/[id]/route");
+    const request = new NextRequest("http://localhost:3000/api/customers/1", {
+      method: "PATCH",
+      body: JSON.stringify({ external_key: "a".repeat(257) }),
+    });
+    const response = await PATCH(request, makeContext());
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.field).toBe("external_key");
+    expect(mockAuditRecord).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 on external_key UNIQUE conflict (#438)", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [sampleCustomer], rowCount: 1 })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("dup"), {
+          code: "23505",
+          constraint: "customers_external_key_key",
+        }),
+      );
+
+    const { PATCH } = await import("@/app/api/customers/[id]/route");
+    const request = new NextRequest("http://localhost:3000/api/customers/1", {
+      method: "PATCH",
+      body: JSON.stringify({ external_key: "acmecorp.com" }),
+    });
+    const response = await PATCH(request, makeContext());
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.field).toBe("external_key");
+    expect(body.code).toBe("external_key_conflict");
   });
 });
 

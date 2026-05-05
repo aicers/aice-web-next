@@ -200,9 +200,62 @@ Fields:
 
 - **Name** — customer display name (required).
 - **Description** — optional description.
+- **External Key** — optional cross-system bridge identifier paired
+  with the matching customer on aimer-web. Globally unique. Leave
+  blank if the customer is not yet onboarded for *Send to Aimer*.
+  See [External Key](#external-key) below for the agreement and
+  validation rules.
 
 When a customer is created, the system provisions a dedicated
 database automatically.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+### Editing a Customer
+
+Open the row's kebab menu and choose **Edit** to update the name,
+description, or external key. Editing the **external key** to a
+different value (or clearing it back to blank) opens a non-dismissable
+confirmation dialog before the change is saved — see
+[External Key](#external-key) below for why the warning matters.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+### External Key
+
+The external key is the operator-supplied identifier that pairs an
+AICE customer with the matching customer on aimer-web. The value is
+the same string both sides carry, so the cross-system bridge can map
+audit and event traffic back to a single business entity.
+
+- **When to set it.** Only after the value has been agreed with the
+  aimer-web System Administrator over an out-of-band secure channel
+  (in-house SSO messenger, in person, etc.). The recommended
+  identifiers are a domain (e.g. `acmecorp.com`), a business
+  registration number, or a contract code.
+- **Validation.** Trimmed before storage. Empty / whitespace-only
+  inputs clear the value back to blank. Non-empty values are limited
+  to 256 characters and may not contain control characters. The
+  external key is globally unique — submitting a value already in use
+  by another customer returns a typed conflict.
+- **Effect of a change.** Setting or changing the external key
+  rewrites the cross-system mapping; the matching customer on
+  aimer-web must be updated to keep the mapping intact, and a single
+  bridge test is recommended right after.
+- **Effect of clearing.** Clearing the external key disables
+  *Send to Aimer* for the customer until a value is set again. Any
+  existing mapping with the aimer-web side is no longer reachable
+  from this side.
+- **Customers without an external key.** Edits and queries continue
+  to work normally; only the *Send to Aimer* button is disabled per
+  customer until a value is populated.
+
+For the full operator playbook (agreement workflow, recovery from
+mismatches, audit forensics) see the canonical
+[Cross-system customer identification](https://github.com/aicers/aimer-web/blob/main/docs/operations/cross-system-customer-identification.md)
+guide on aimer-web.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
 
 ### Deleting a Customer
 

@@ -197,9 +197,60 @@ Administrator 역할은 기본적으로 MFA가 필수입니다.
 
 - **이름** — 고객 표시 이름(필수).
 - **설명** — 선택적 설명.
+- **External Key** — aimer-web의 일치하는 고객과 페어링하는
+  교차 시스템 브리지 식별자(선택). 전 시스템에서 globally unique
+  합니다. 해당 고객이 *Send to Aimer*에 아직 온보딩되지 않은 경우
+  비워둡니다. 합의 및 검증 규칙은 아래
+  [External Key](#external-key) 섹션을 참고하세요.
 
 고객이 생성되면 시스템이 전용 데이터베이스를 자동으로
 프로비저닝합니다.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+### 고객 편집
+
+행의 케밥 메뉴에서 **수정**을 선택하여 이름, 설명 또는 external
+key를 업데이트합니다. **external key**를 다른 값으로 변경하거나
+공란으로 되돌릴 때는 저장 전에 닫을 수 없는 확인 대화상자가
+표시됩니다 — 경고가 중요한 이유는 아래
+[External Key](#external-key) 섹션에 정리되어 있습니다.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+### External Key
+
+External key는 AICE 고객과 aimer-web 측의 일치하는 고객을
+페어링하는 운영자 지정 식별자입니다. 양쪽 시스템이 동일한 값을
+보유하므로 교차 시스템 브리지가 감사 / 이벤트 트래픽을 단일
+비즈니스 엔티티로 매핑할 수 있습니다.
+
+- **언제 설정하나요?** aimer-web System Administrator와 out-of-band
+  secure channel(사내 SSO 메신저, 직접 대면 등)로 값을 사전 합의한
+  후에만 설정합니다. 권장 식별자는 도메인(예: `acmecorp.com`),
+  사업자등록번호 또는 계약 코드입니다.
+- **검증 규칙.** 저장 전에 trim 됩니다. 빈 값 또는 공백만 있는
+  입력은 값을 비움으로 처리합니다. 비어 있지 않은 값은 256자
+  이하이며 제어 문자를 포함할 수 없습니다. External key는
+  globally unique 하므로 다른 고객이 이미 사용 중인 값을 제출하면
+  충돌(typed conflict)을 반환합니다.
+- **변경의 영향.** External key를 설정하거나 변경하면 교차 시스템
+  매핑이 재설정됩니다. 매핑을 유지하려면 aimer-web 측의 일치하는
+  고객 정보도 함께 업데이트해야 하며, 직후에 단일 bridge 테스트로
+  매핑을 검증하는 것을 권장합니다.
+- **해제의 영향.** External key를 해제하면 다시 설정할 때까지
+  해당 고객의 *Send to Aimer*가 비활성화됩니다. aimer-web 측과의
+  기존 매핑은 이 측에서는 더 이상 도달할 수 없습니다.
+- **External key가 없는 고객.** 일반적인 편집 및 조회는 그대로
+  동작하며, 고객별로 *Send to Aimer* 버튼만 값이 채워질 때까지
+  비활성화됩니다.
+
+전체 운영자 플레이북(합의 절차, 불일치 복구, 감사 포렌식)은
+aimer-web의 표준 가이드인
+[Cross-system customer identification](https://github.com/aicers/aimer-web/blob/main/docs/operations/cross-system-customer-identification.md)
+를 참고하세요.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
 
 ### 고객 삭제
 

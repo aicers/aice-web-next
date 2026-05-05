@@ -8,6 +8,11 @@ import { auditLog } from "@/lib/audit/logger";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import { hasPermission } from "@/lib/auth/permissions";
+import {
+  ExternalKeyValidationError,
+  isExternalKeyUniqueViolation,
+  normalizeExternalKey,
+} from "@/lib/customers/external-key";
 import { query } from "@/lib/db/client";
 import { provisionCustomerDb } from "@/lib/db/migrate";
 
@@ -17,6 +22,7 @@ interface CustomerRow {
   id: number;
   name: string;
   description: string | null;
+  external_key: string | null;
   database_name: string;
   status: string;
   created_at: string;
@@ -83,7 +89,7 @@ export const GET = withAuth(
  *
  * Create a new customer and provision its database.
  *
- * Body: `{ name: string, description?: string }`
+ * Body: `{ name: string, description?: string, external_key?: string | null }`
  *
  * Flow:
  *  1. Insert row with `status = 'provisioning'`
@@ -99,6 +105,7 @@ export const POST = withAuth(
     // Step 1: Parse body
     let name: string;
     let description: string | undefined;
+    let externalKey: string | null;
     try {
       const body = await request.json();
       name = body.name;
@@ -110,19 +117,42 @@ export const POST = withAuth(
         );
       }
       name = name.trim();
-    } catch {
+      // omitted / null / empty / whitespace → NULL on create
+      externalKey = normalizeExternalKey(body.external_key) ?? null;
+    } catch (err) {
+      if (err instanceof ExternalKeyValidationError) {
+        return NextResponse.json(
+          { error: err.message, field: "external_key" },
+          { status: 400 },
+        );
+      }
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
     // Step 2: Insert as provisioning
     const databaseName = generateDatabaseName(name);
-    const { rows } = await query<CustomerRow>(
-      `INSERT INTO customers (name, description, database_name, status)
-       VALUES ($1, $2, $3, 'provisioning')
-       RETURNING *`,
-      [name, description?.trim() || null, databaseName],
-    );
-    const customer = rows[0];
+    let customer: CustomerRow;
+    try {
+      const { rows } = await query<CustomerRow>(
+        `INSERT INTO customers (name, description, external_key, database_name, status)
+         VALUES ($1, $2, $3, $4, 'provisioning')
+         RETURNING *`,
+        [name, description?.trim() || null, externalKey, databaseName],
+      );
+      customer = rows[0];
+    } catch (err) {
+      if (isExternalKeyUniqueViolation(err)) {
+        return NextResponse.json(
+          {
+            error: "external_key is already in use by another customer",
+            field: "external_key",
+            code: "external_key_conflict",
+          },
+          { status: 409 },
+        );
+      }
+      throw err;
+    }
 
     // Step 3: Provision the database
     try {
@@ -154,7 +184,11 @@ export const POST = withAuth(
       // surfaces this create to a tenant operator after the matching
       // `account_customer` link is added.
       customerId: customer.id,
-      details: { name, databaseName },
+      details: {
+        name,
+        databaseName,
+        ...(externalKey !== null && { externalKey }),
+      },
     });
 
     return NextResponse.json({ data: activeRows[0] }, { status: 201 });
