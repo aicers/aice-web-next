@@ -51,7 +51,7 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
     expect(bad).toEqual([]);
   });
 
-  it("flags the customer.* and node.* / service.* actions as customer-scoped", () => {
+  it("flags customer.* / node.* / service.* / aimer_context_token.issued as customer-scoped", () => {
     const expectedScoped: AuditAction[] = [
       "customer.create",
       "customer.update",
@@ -66,19 +66,32 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
       "node.apply",
       "service.draft_save",
       "service.set_mode",
+      "aimer_context_token.issued",
     ];
     for (const action of expectedScoped) {
       expect(customerScopeForAction(action)).toBe("customer-scoped");
     }
   });
 
-  it("flags every non-customer / non-node / non-service action as customer-agnostic", () => {
-    const scopedPrefixes = ["customer.", "node.", "service."];
+  it("flags every other action as customer-agnostic", () => {
+    const scopedActions = new Set<AuditAction>([
+      "customer.create",
+      "customer.update",
+      "customer.delete",
+      "customer.assign",
+      "customer.unassign",
+      "node.create",
+      "node.update",
+      "node.delete",
+      "node.restart",
+      "node.shutdown",
+      "node.apply",
+      "service.draft_save",
+      "service.set_mode",
+      "aimer_context_token.issued",
+    ]);
     for (const action of listAllAuditActions()) {
-      const isCustomerScopedPrefix = scopedPrefixes.some((p) =>
-        action.startsWith(p),
-      );
-      if (!isCustomerScopedPrefix) {
+      if (!scopedActions.has(action)) {
         expect(customerScopeForAction(action)).toBe("customer-agnostic");
       }
     }

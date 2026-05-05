@@ -19,6 +19,50 @@ describe("rate limiter", () => {
     limiter.resetRateLimiter();
   });
 
+  // ── checkAimerContextTokenRateLimit (#439) ──────────────────
+
+  describe("checkAimerContextTokenRateLimit()", () => {
+    it("passes within the 30 / 60s budget", async () => {
+      for (let i = 0; i < 30; i++) {
+        const r = await limiter.checkAimerContextTokenRateLimit(
+          "alice",
+          "1.2.3.4",
+        );
+        expect(r.limited).toBe(false);
+      }
+    });
+
+    it("blocks the 31st request from the same (account, ip)", async () => {
+      for (let i = 0; i < 30; i++) {
+        await limiter.checkAimerContextTokenRateLimit("alice", "1.2.3.4");
+      }
+      const r = await limiter.checkAimerContextTokenRateLimit(
+        "alice",
+        "1.2.3.4",
+      );
+      expect(r.limited).toBe(true);
+      if (r.limited) expect(r.retryAfterSeconds).toBeGreaterThan(0);
+    });
+
+    it("counts independently from the global API rate limit", async () => {
+      // Exhaust the bridge bucket.
+      for (let i = 0; i < 31; i++) {
+        await limiter.checkAimerContextTokenRateLimit("alice", "1.2.3.4");
+      }
+      // The global API limit must remain unaffected.
+      const apiResult = await limiter.checkApiRateLimit("alice");
+      expect(apiResult.limited).toBe(false);
+    });
+
+    it("a different account on the same IP has its own counter", async () => {
+      for (let i = 0; i < 30; i++) {
+        await limiter.checkAimerContextTokenRateLimit("alice", "1.2.3.4");
+      }
+      const r = await limiter.checkAimerContextTokenRateLimit("bob", "1.2.3.4");
+      expect(r.limited).toBe(false);
+    });
+  });
+
   // ── checkSignInRateLimit ─────────────────────────────────────
 
   describe("checkSignInRateLimit()", () => {

@@ -9,13 +9,15 @@ describe("aimer audit actions are registered in the closed union", () => {
     "aimer_signing_key.switched",
     "aimer_signing_key.deactivated",
     "aimer_integration_setting.changed",
+    "aimer_context_token.issued",
+    "aimer_context_token.denied",
   ] as const;
 
   it.each(expected)("includes %s", (action) => {
     expect(AUDIT_ACTIONS).toContain(action);
   });
 
-  it("registers exactly five new actions for #437", () => {
+  it("registers exactly the expected aimer_* actions", () => {
     const aimerActions = (AUDIT_ACTIONS as readonly string[]).filter((a) =>
       a.startsWith("aimer_"),
     );

@@ -741,7 +741,27 @@ The Aimer integration page records:
   `aimer_web_bridge_url` change with the `{key, old, new}`
   triple.
 
-These actions are part of the closed audit-action union, so the
+The Send to Aimer flow records, on every browser-initiated
+context-token request (issued by the `POST /api/aimer/context-token`
+endpoint that the Send to Aimer button calls in the background):
+
+- `aimer_context_token.issued` — success. The audit row is bound
+  to the resolved customer and carries the issued `jti` and the
+  active signing-key `kid` so a forensic analyst can correlate
+  the token with the matching record on `aimer-web`.
+- `aimer_context_token.denied` — failure. Carries a `reason`
+  detail enumerating the gate that rejected the request:
+  `aimer_integration_not_configured` (one of the three
+  prerequisites in the [Setup status](#setup-status) section is
+  missing), `customer_external_key_missing` (the resolved
+  customer has no `external_key`), `event_not_found_for_customer`
+  (the locator did not resolve under the chosen customer's
+  scope — also covers the access-denied branch, which is
+  intentionally masked behind the same status to avoid leaking
+  customer existence), or `rate_limited` (the per-account+IP
+  bridge bucket — 30 requests / 60 seconds — was exhausted).
+
+All actions are part of the closed audit-action union, so the
 audit log viewer surfaces them automatically.
 
 ### Backup

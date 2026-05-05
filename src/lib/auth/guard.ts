@@ -71,6 +71,15 @@ interface WithAuthOptions {
    * before session policy enforcement.  Returns 403 on failure.
    */
   requiredPermissions?: string[];
+  /**
+   * When `true`, skip the per-user authenticated-API rate-limit
+   * bucket (`api:user:<accountId>`).  Routes with their own
+   * dedicated bucket should set this so bridge / specialized
+   * traffic does not double-count against the generic API budget
+   * and starve other API requests (or vice versa).  The wrapped
+   * route is responsible for enforcing its own bucket.
+   */
+  skipApiRateLimit?: boolean;
 }
 
 // ── Public API ──────────────────────────────────────────────────
@@ -129,18 +138,21 @@ export function withAuth(
       );
     }
 
-    // Step 3: Per-user API rate limit
-    const rateLimitResult = await checkApiRateLimit(session.accountId);
-    if (rateLimitResult.limited) {
-      return NextResponse.json(
-        { error: "Too many requests" },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(rateLimitResult.retryAfterSeconds),
+    // Step 3: Per-user API rate limit (skippable for routes with
+    // their own dedicated bucket — see `skipApiRateLimit`).
+    if (!options?.skipApiRateLimit) {
+      const rateLimitResult = await checkApiRateLimit(session.accountId);
+      if (rateLimitResult.limited) {
+        return NextResponse.json(
+          { error: "Too many requests" },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": String(rateLimitResult.retryAfterSeconds),
+            },
           },
-        },
-      );
+        );
+      }
     }
 
     // Step 4: CSRF validation for mutation methods
