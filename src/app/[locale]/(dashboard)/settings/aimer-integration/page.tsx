@@ -31,10 +31,44 @@ export default async function AimerIntegrationSettingsPage() {
   );
 }
 
-async function loadCustomerStats(): Promise<{ total: number }> {
-  const { rows } = await query<{ count: string }>(
+async function loadCustomerStats(): Promise<{
+  total: number;
+  configured: number | null;
+}> {
+  // The per-customer `external_key` column is introduced by
+  // Sub-7.2.E (#440); until it lands we cannot compute the
+  // numerator and intentionally surface `configured = null` so the
+  // UI shows the total alone instead of a misleading `0 / N`.
+  const { rows: colRows } = await query<{ has: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = current_schema()
+         AND table_name = 'customers'
+         AND column_name = 'external_key'
+     ) AS has`,
+  );
+  const hasExternalKey = colRows[0]?.has ?? false;
+
+  const totalRes = await query<{ count: string }>(
     "SELECT COUNT(*)::text AS count FROM customers WHERE status = 'active'",
   );
-  const total = Number(rows[0]?.count ?? "0");
-  return { total: Number.isFinite(total) ? total : 0 };
+  const total = Number(totalRes.rows[0]?.count ?? "0");
+
+  let configured: number | null = null;
+  if (hasExternalKey) {
+    const configuredRes = await query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM customers
+        WHERE status = 'active'
+          AND external_key IS NOT NULL
+          AND external_key <> ''`,
+    );
+    configured = Number(configuredRes.rows[0]?.count ?? "0");
+    if (!Number.isFinite(configured)) configured = 0;
+  }
+
+  return {
+    total: Number.isFinite(total) ? total : 0,
+    configured,
+  };
 }

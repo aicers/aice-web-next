@@ -179,6 +179,7 @@
     },
     "customerExternalKey": {
       "line": "Customer external_key configured: {configured} / {total} customers.",
+      "lineUnavailable": "Active customers: {total}. Per-customer external_key has not yet been introduced; the M / N counter will appear once Sub-7.2.E ships.",
       "linkLabel": "Manage customers →",
       "note": "external_key is a per-customer setting and does not affect system-wide setup status. The Send to Aimer button is independently disabled per customer until each customer's external_key is populated."
     },

@@ -74,7 +74,7 @@ async function copyToClipboard(value: string): Promise<boolean> {
 interface AimerIntegrationPanelProps {
   initialSetup: AimerIntegrationSetup;
   initialKeyStatus: AimerSigningKeyStatus;
-  customerStats: { total: number };
+  customerStats: { total: number; configured: number | null };
 }
 
 export function AimerIntegrationPanel({
@@ -136,7 +136,7 @@ export function AimerIntegrationPanel({
   async function saveSetting(
     key: "aice_id" | "aimer_web_bridge_url",
     value: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
     setBusy(key);
     setMessage(null);
     try {
@@ -155,7 +155,7 @@ export function AimerIntegrationPanel({
           type: "error",
           text: body?.error ?? t("errors.actionFailed"),
         });
-        return;
+        return null;
       }
       const body = (await res.json()) as {
         data: { key: string; value: string };
@@ -166,8 +166,10 @@ export function AimerIntegrationPanel({
           : { ...prev, bridgeUrl: body.data.value },
       );
       setMessage({ type: "success", text: t("success.settingSaved") });
+      return body.data.value;
     } catch {
       setMessage({ type: "error", text: t("errors.actionFailed") });
+      return null;
     } finally {
       setBusy(null);
     }
@@ -230,7 +232,11 @@ export function AimerIntegrationPanel({
         t={t}
       />
 
-      <CustomerExternalKeyBlock total={customerStats.total} t={t} />
+      <CustomerExternalKeyBlock
+        total={customerStats.total}
+        configured={customerStats.configured}
+        t={t}
+      />
     </div>
   );
 }
@@ -624,7 +630,7 @@ function SettingsBlock({
   onSave: (
     key: "aice_id" | "aimer_web_bridge_url",
     value: string,
-  ) => Promise<void>;
+  ) => Promise<string | null>;
   t: ReturnType<typeof useTranslations<"aimerIntegration">>;
 }) {
   const [aiceIdDraft, setAiceIdDraft] = useState(aiceId ?? "");
@@ -709,7 +715,21 @@ function SettingsBlock({
           if (!key) return;
           const value =
             key === "aice_id" ? aiceIdDraft.trim() : bridgeUrlDraft.trim();
-          await onSave(key, value);
+          // Reset the local draft to the canonical (server-normalized)
+          // value so non-canonical inputs (e.g. a bridge URL with a
+          // trailing slash) are reflected in the UI.  Done in this
+          // closure rather than a useEffect on the prop because the
+          // canonical value can equal the prior prop value (round-trip
+          // of an already-canonical input), which would not retrigger
+          // a prop-watching effect.
+          const canonical = await onSave(key, value);
+          if (canonical !== null) {
+            if (key === "aice_id") {
+              setAiceIdDraft(canonical);
+            } else {
+              setBridgeUrlDraft(canonical);
+            }
+          }
         }}
       />
     </section>
@@ -720,18 +740,30 @@ function SettingsBlock({
 
 function CustomerExternalKeyBlock({
   total,
+  configured,
   t,
 }: {
   total: number;
+  configured: number | null;
   t: ReturnType<typeof useTranslations<"aimerIntegration">>;
 }) {
+  // `configured = null` is a deliberate signal that the per-customer
+  // `external_key` column has not yet been introduced (Sub-7.2.E
+  // #440 owns it).  Showing `0 / N` in that case is misleading
+  // because the numerator can never go up until the column lands,
+  // so the UI degrades to the total-only line.
+  const message =
+    configured === null
+      ? t("customerExternalKey.lineUnavailable", { total })
+      : t("customerExternalKey.line", { configured, total });
+
   return (
     <section className="rounded-md border border-dashed p-5">
       <div className="flex items-start gap-2">
         <Info className="size-4 shrink-0 text-muted-foreground" />
         <div className="text-sm">
-          <p>
-            {t("customerExternalKey.line", { configured: 0, total })}{" "}
+          <p data-testid="aimer-customer-external-key-line">
+            {message}{" "}
             <Link href="/settings/customers" className="underline">
               {t("customerExternalKey.linkLabel")}
             </Link>
