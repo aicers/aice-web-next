@@ -128,7 +128,11 @@ on the active workspace when you interact with it:
   active tab's filter with the saved filter and re-runs the
   query. The active tab's pagination resets to the first page;
   the rest of the workspace (analytics expansion, Quick peek
-  selection) follows the standard Apply contract.
+  selection) follows the standard Apply contract. After this
+  load the tab is treated as a manual workspace — re-clicking
+  the preset that originally seeded the tab opens a fresh tab
+  rather than focusing this one, since the filter inside no
+  longer represents that preset.
 
 When a match-focus reveals a tab whose last fetch is more than a
 couple of minutes old, the result header surfaces a one-shot

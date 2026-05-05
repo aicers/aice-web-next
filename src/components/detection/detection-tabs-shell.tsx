@@ -542,13 +542,30 @@ export function DetectionTabsShell({
   // Issue #429 §3: most recent match-focus event. Set when a preset
   // activation matches an existing tab and focuses it; threaded down
   // to the active shell so the result-list header can decide whether
-  // to render the staleness notice. The shell self-clears its local
-  // copy after rendering once so the "once per focus event" rule is
-  // enforced even when the same preset is clicked many times.
+  // to render the staleness notice. Cleared by the wrapper as soon
+  // as focus leaves the matched tab (see the effect below) so a
+  // tab-away-and-back remount cannot replay the same event.
   const [matchFocusEvent, setMatchFocusEvent] = useState<{
     tabId: TabId;
     at: number;
   } | null>(null);
+
+  // Reviewer Round 2 (item 3): the keyed `<DetectionShell>` remounts
+  // every time `activeTabId` changes, which resets `StaleFocusNotice`'s
+  // local `shownEventAt` back to `null`. Without clearing the wrapper-
+  // owned event on tab switch, the same focus event would keep
+  // re-arriving as a prop on remount and the result-list header would
+  // re-emit the notice — violating the §6 "once per focus event"
+  // contract for the same activation. Clearing the event the moment
+  // focus leaves its target tab confines the notice to a single
+  // delivery. A subsequent preset activation creates a fresh event
+  // (new `at`) so the once-per-event semantics still apply when the
+  // operator legitimately re-activates the preset later.
+  useEffect(() => {
+    if (shouldClearMatchFocusEvent({ matchFocusEvent, activeTabId })) {
+      setMatchFocusEvent(null);
+    }
+  }, [activeTabId, matchFocusEvent]);
 
   // Issue #429: shared "activate preset" core. Both saved-filter and
   // recommended-preset paths funnel through this helper, which routes
@@ -725,6 +742,25 @@ export function DetectionTabsShell({
     [withActiveSnapshot],
   );
 
+  // Reviewer Round 2 (item 2): the operator loaded a different saved
+  // filter into the active tab via the dropdown's "Load in current
+  // tab" affordance. Drop the active tab's `originPreset` and flip
+  // `timeMode` to `"custom"` so a future activation of the preset
+  // that originally seeded the tab does not silently focus it. The
+  // shell already flips its own local `timeMode` synchronously; we
+  // mirror that into the wrapper-side TabSnapshot here so
+  // `findMatchingTab` sees the updated value before the next
+  // `mergeSnapshot` round-trip.
+  const handleClearPresetMetadataForCurrentTab = useCallback(() => {
+    const activeId = activeTabIdRef.current;
+    setTabs((prev) => {
+      const withLive = withActiveSnapshot(prev);
+      return withLive.map((t) =>
+        t.id === activeId ? clearTabPresetMetadata(t) : t,
+      );
+    });
+  }, [withActiveSnapshot]);
+
   const handlePivot = useCallback(
     (patch: PivotPatch) => {
       const currentTabs = withActiveSnapshot(tabsRef.current);
@@ -852,6 +888,9 @@ export function DetectionTabsShell({
         onActivateSavedPreset={handleActivateSavedPreset}
         recommendedPresets={RECOMMENDED_PRESETS}
         onActivateRecommendedPreset={handleActivateRecommendedPreset}
+        onClearPresetMetadataForCurrentTab={
+          handleClearPresetMetadataForCurrentTab
+        }
         matchFocusEvent={
           matchFocusEvent && matchFocusEvent.tabId === activeTabId
             ? matchFocusEvent
@@ -1040,6 +1079,39 @@ export function resolveLoadSavedFilterEffect(
   opts: Omit<ResolveActivatePresetEffectOptions, "originPreset">,
 ): ActivatePresetEffect {
   return resolveActivatePresetEffect(filter, currentTabs, opts);
+}
+
+/**
+ * Reviewer Round 2 (item 2): clear the preset-matching metadata on a
+ * tab whose committed filter the operator just replaced via the
+ * dropdown's "Load in current tab" affordance. Drops the
+ * {@link OriginPreset} binding and flips `timeMode` to `"custom"`
+ * so a future activation of the preset that originally seeded the
+ * tab cannot silently focus this now-misaligned slot.
+ *
+ * Pure helper so the tab-update shape can be unit-tested without
+ * wiring through the React handler.
+ */
+export function clearTabPresetMetadata(tab: TabSnapshot): TabSnapshot {
+  return { ...tab, originPreset: null, timeMode: "custom" };
+}
+
+/**
+ * Reviewer Round 2 (item 3): predicate for the wrapper-side effect
+ * that clears the most recent match-focus event when focus leaves
+ * the matched tab. Without this clear, the keyed `<DetectionShell>`
+ * remount on tab-away-and-back replays the stale event and the
+ * result-list header re-emits the §6 stale-data notice — a
+ * violation of the "once per focus event" contract.
+ *
+ * Returns `true` when the wrapper should null out the event.
+ */
+export function shouldClearMatchFocusEvent(args: {
+  matchFocusEvent: { tabId: TabId } | null;
+  activeTabId: TabId;
+}): boolean {
+  if (args.matchFocusEvent === null) return false;
+  return args.matchFocusEvent.tabId !== args.activeTabId;
 }
 
 /**

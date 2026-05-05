@@ -763,6 +763,80 @@ describe("reconcileQuickPeekUrlAction", () => {
   });
 });
 
+describe("shouldFirePeekLostFromSlice — Reviewer Round 2 (item 1)", () => {
+  // Regression: when an Apply / Refresh / chip × dismisses an open
+  // Quick peek at dispatch time, both the in-memory event AND the
+  // URL token are stripped before the async fetch resolves. The
+  // post-fetch reconcile then has no probe to compare against the
+  // fresh slice — so a Refresh that drops the inspected row used
+  // to silently close the inspector with no §6 "no longer in the
+  // list" notice. The fix retains the dismissed locator in
+  // `pendingPeekProbeRef` so this predicate can decide "row gone"
+  // even when the in-memory peek state has already been cleared.
+  let shouldFirePeekLostFromSlice: ShellModule["shouldFirePeekLostFromSlice"];
+
+  it("loads the helper", async () => {
+    const mod = await import("@/components/detection/detection-shell");
+    shouldFirePeekLostFromSlice = mod.shouldFirePeekLostFromSlice;
+  });
+
+  it("does not fire when the fresh slice still contains the probed row", () => {
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: true,
+        dispatchedDismissPresent: false,
+        matchFound: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: false,
+        dispatchedDismissPresent: true,
+        matchFound: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("fires for a still-open in-memory peek whose row left the slice", () => {
+    // Pre-existing branch: the operator never explicitly dismissed
+    // the peek; the reconcile closes it AND surfaces the notice so
+    // they understand why the inspector vanished.
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: true,
+        dispatchedDismissPresent: false,
+        matchFound: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("fires for a dispatched-dismissed peek whose row left the slice", () => {
+    // The Reviewer Round 2 (item 1) regression: Refresh closed the
+    // inspector at dispatch time, the fresh slice confirms the row
+    // is gone, and the §6 notice must still fire even though
+    // `quickPeekEvent` has been null since dispatch.
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: false,
+        dispatchedDismissPresent: true,
+        matchFound: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not fire when there is no peek to lose at all", () => {
+    // No in-memory peek and no dispatched-dismissed locator means
+    // the operator has nothing in flight that needs the §6 notice.
+    expect(
+      shouldFirePeekLostFromSlice({
+        hasInMemoryPeek: false,
+        dispatchedDismissPresent: false,
+        matchFound: false,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("shouldCloseQuickPeekOnEscape", () => {
   // Regression (Reviewer Round 13): a single Escape keypress used to
   // fire both the `MorePopover`'s own document-level Escape handler

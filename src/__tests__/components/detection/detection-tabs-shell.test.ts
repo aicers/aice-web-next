@@ -27,6 +27,7 @@ import {
   bootstrapTabToSnapshot,
   buildDefaultTabSnapshot,
   buildUrlSearchForTab,
+  clearTabPresetMetadata,
   findMatchingTab,
   mergeSnapshot,
   mergeStoredTabsOnRehydrate,
@@ -34,6 +35,7 @@ import {
   resolveLoadSavedFilterEffect,
   resolvePivotEffect,
   routeSnapshotToTab,
+  shouldClearMatchFocusEvent,
 } from "@/components/detection/detection-tabs-shell";
 import type { EndpointEntry } from "@/lib/detection/endpoint-filter";
 import type { Filter } from "@/lib/detection/filter";
@@ -1165,5 +1167,108 @@ describe("resolveActivatePresetEffect — issue #429", () => {
       kind: "toast",
       message: "Tab cap reached (8 max)",
     });
+  });
+});
+
+describe("clearTabPresetMetadata — Reviewer Round 2 (item 2)", () => {
+  // Regression: the dropdown's "Load in current tab" affordance
+  // replaces the active tab's filter without disturbing
+  // `originPreset` or `timeMode`. The next activation of the
+  // preset that originally seeded the tab would silently focus the
+  // now-misaligned slot — e.g. load a "Last 1 day" saved filter
+  // into a "Last 1 hour" recommended-preset tab, then re-click the
+  // "Last 1 hour" preset, and `findMatchingTab` would return the
+  // mutated tab. This helper drops both fields so the matcher
+  // disqualifies the slot.
+  const PRESET: OriginPreset = { kind: "saved", id: "sf-1" };
+  const FILTER: Filter = {
+    mode: "structured",
+    input: { kinds: ["HttpThreat"] },
+  };
+
+  it("nulls the originPreset binding so future activations cannot focus this tab", () => {
+    const tab = createTabSnapshot({
+      filter: FILTER,
+      period: "1h",
+      originPreset: PRESET,
+      timeMode: "preset",
+    });
+    const cleared = clearTabPresetMetadata(tab);
+    expect(cleared.originPreset).toBeNull();
+  });
+
+  it("flips timeMode to `custom` so a tab whose filter just changed cannot be re-matched on time alone", () => {
+    const tab = createTabSnapshot({
+      filter: FILTER,
+      period: "1h",
+      originPreset: PRESET,
+      timeMode: "preset",
+    });
+    expect(clearTabPresetMetadata(tab).timeMode).toBe("custom");
+  });
+
+  it("disqualifies the cleared tab from `findMatchingTab` against its original preset", () => {
+    const original = createTabSnapshot({
+      filter: FILTER,
+      period: "1h",
+      originPreset: PRESET,
+      timeMode: "preset",
+    });
+    expect(findMatchingTab([original], PRESET, FILTER)?.id).toBe(original.id);
+    const cleared = clearTabPresetMetadata(original);
+    expect(findMatchingTab([cleared], PRESET, FILTER)).toBeNull();
+  });
+
+  it("preserves all non-preset fields (filter / period / endpoints / pagination / id / name)", () => {
+    const tab = createTabSnapshot({
+      filter: FILTER,
+      period: "1h",
+      originPreset: PRESET,
+      timeMode: "preset",
+    });
+    const cleared = clearTabPresetMetadata(tab);
+    expect(cleared.id).toBe(tab.id);
+    expect(cleared.filter).toEqual(tab.filter);
+    expect(cleared.period).toBe(tab.period);
+    expect(cleared.endpoints).toEqual(tab.endpoints);
+    expect(cleared.pagination).toEqual(tab.pagination);
+    expect(cleared.name).toBe(tab.name);
+    expect(cleared.lastActivatedAt).toBe(tab.lastActivatedAt);
+  });
+});
+
+describe("shouldClearMatchFocusEvent — Reviewer Round 2 (item 3)", () => {
+  // Regression: the wrapper used to keep `matchFocusEvent` set even
+  // after focus left the matched tab. Switching away from and back
+  // to the matched tab remounts the keyed `<DetectionShell>`, the
+  // result-list's local `shownEventAt` resets to null, and the
+  // stale-data notice fires a second time for the same activation —
+  // breaking the §6 "once per focus event" rule. The wrapper now
+  // clears the event the moment focus leaves its target tab.
+  const TAB_A = "tab-a" as TabId;
+  const TAB_B = "tab-b" as TabId;
+
+  it("returns false when there is no event in flight", () => {
+    expect(
+      shouldClearMatchFocusEvent({ matchFocusEvent: null, activeTabId: TAB_A }),
+    ).toBe(false);
+  });
+
+  it("returns false while focus is still on the event's target tab", () => {
+    expect(
+      shouldClearMatchFocusEvent({
+        matchFocusEvent: { tabId: TAB_A },
+        activeTabId: TAB_A,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true once focus moves to a different tab — the keyed-remount replay path", () => {
+    expect(
+      shouldClearMatchFocusEvent({
+        matchFocusEvent: { tabId: TAB_A },
+        activeTabId: TAB_B,
+      }),
+    ).toBe(true);
   });
 });

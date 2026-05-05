@@ -688,6 +688,21 @@ export interface DetectionShellProps {
     options?: { forceNewTab?: boolean },
   ) => void;
   /**
+   * Reviewer Round 2 (item 2): fired when the operator loads a saved
+   * filter into the active tab via the dropdown's "Load in current
+   * tab" affordance. The wrapper clears the active tab's
+   * {@link OriginPreset} and flips `timeMode` to `"custom"` so the
+   * tab no longer qualifies as a focus target for the preset that
+   * originally seeded it. Without this, replacing the filter (with
+   * possibly different time semantics) would leave a stale preset
+   * binding behind and the matcher would silently focus the wrong
+   * tab — concretely: load a "Last 1 day" saved filter into a
+   * "Last 1 hour" recommended-preset tab, then re-click the "Last
+   * 1 hour" preset, and the matcher would focus the now-misaligned
+   * tab instead of opening a fresh one.
+   */
+  onClearPresetMetadataForCurrentTab?: () => void;
+  /**
    * Customer inventory cache, lifted to the multi-tab wrapper so it
    * survives the keyed remount this shell undergoes on every tab
    * switch (Reviewer Round 1 #1: with the cache here in shell-local
@@ -1110,6 +1125,7 @@ export function DetectionShell({
   onActivateSavedPreset,
   recommendedPresets,
   onActivateRecommendedPreset,
+  onClearPresetMetadataForCurrentTab,
   customerCache,
   onCustomerRefresh,
   initialCustomerOptions,
@@ -1478,6 +1494,16 @@ export function DetectionShell({
   useEffect(() => {
     quickPeekEventRef.current = quickPeekEvent;
   }, [quickPeekEvent]);
+  // Reviewer Round 2 (item 1): locator of a peek dismissed by the
+  // dispatch-time eager close. `applyCommitDispatchReset` clears the
+  // in-memory event and strips the URL token before the async fetch
+  // resolves, leaving the post-fetch reconcile with no probe to test
+  // against the fresh slice. We retain the locator here so the
+  // reconcile can decide "row still present (no notice)" vs. "row
+  // gone (surface the §6 notice)" instead of silently dropping the
+  // inspector. Cleared by the reconcile and on fetch error so a
+  // stale locator can't bleed into the next dispatch.
+  const pendingPeekProbeRef = useRef<string | null>(null);
   const isDesktop = useIsDesktopViewport();
   // Monotonic id for the in-flight Apply; a late response whose id
   // no longer matches is dropped so the results region can't drift
@@ -1607,12 +1633,22 @@ export function DetectionShell({
       const stored = readQuickPeekToken(
         new URLSearchParams(window.location.search),
       );
+      // Reviewer Round 2 (item 1): a peek dismissed by the dispatch-
+      // time eager close has no in-memory locator (state was nulled)
+      // and no URL token (sink stripped it). The retained probe ref
+      // is the only remaining locator we can compare against the
+      // fresh slice — read and clear it here so a "row gone" outcome
+      // can still surface the §6 notice.
+      const dismissed = pendingPeekProbeRef.current;
+      pendingPeekProbeRef.current = null;
       // Prefer the in-memory peek's own locator when present — covers
       // the race where a row click during the retained-slice loading
       // window reopened the peek after dispatch. Fall back to the URL
       // token for the mount-error restore path, where no in-memory
-      // peek exists yet.
-      const probeToken = currentToken ?? stored?.token ?? null;
+      // peek exists yet, and finally to the dispatched-dismissed
+      // probe so a Refresh that drops the inspected row still
+      // reaches the "lost" branch below.
+      const probeToken = currentToken ?? stored?.token ?? dismissed ?? null;
       if (!probeToken) {
         // No URL token and no addressable in-memory peek. A non-
         // addressable in-memory peek (rare: a schema-limited row was
@@ -1658,9 +1694,20 @@ export function DetectionShell({
       if (action === "strip") writeQuickPeekToUrl(null);
       if (current) {
         setQuickPeekEvent(null);
+      }
+      if (
+        shouldFirePeekLostFromSlice({
+          hasInMemoryPeek: current !== null,
+          dispatchedDismissPresent: dismissed !== null,
+          matchFound: false,
+        })
+      ) {
         // Issue #429 §6: notice the operator that their peek vanished
         // because the event left the slice — silent strip would leave
         // the operator confused about where the inspector went.
+        // Reviewer Round 2 (item 1): the dispatched-dismiss branch
+        // covers the Refresh-after-eager-close path the reviewer
+        // flagged.
         setPeekLostAt(Date.now());
       }
       // Reviewer Round 9: even when `action !== "strip"` (no URL
@@ -1705,6 +1752,17 @@ export function DetectionShell({
       setResultError(null);
       setHasQueried(true);
       if (!args.navigating) {
+        // Reviewer Round 2 (item 1): capture the open peek's locator
+        // before `applyCommitDispatchReset` strips both the in-memory
+        // event and the URL token. The post-fetch reconcile uses this
+        // probe to decide "row still present" vs. "row gone after
+        // Refresh / Apply" — without it, the dispatched-dismiss path
+        // had no locator left and the §6 "no longer in the list"
+        // notice never fired.
+        const dismissed = quickPeekEventRef.current;
+        pendingPeekProbeRef.current = dismissed
+          ? encodeEventLocator(dismissed)
+          : null;
         // See `applyCommitDispatchReset` for the dispatch-time contract.
         // Reviewer Round 7: only clear the URL token when we are
         // actually dismissing an open peek. Otherwise — e.g. Refresh
@@ -1790,6 +1848,11 @@ export function DetectionShell({
               setEvents([]);
               setEventKeys([]);
               setPageInfo(null);
+              // Reviewer Round 2 (item 1): drop the dispatched-dismiss
+              // probe on a failed fetch. A later successful slice from
+              // a different dispatch must not be reconciled against a
+              // probe captured for the dispatch that just failed.
+              pendingPeekProbeRef.current = null;
               // Reviewer Round 6 #1: surface the typed
               // `forbidden-customer-scope` rejection with actionable
               // copy ("remove the unavailable customers") instead of
@@ -1813,6 +1876,10 @@ export function DetectionShell({
             setTotalCount(null);
             setEvents([]);
             setEventKeys([]);
+            // Reviewer Round 2 (item 1): same as the non-ok branch —
+            // a thrown fetch must not leave a stale probe behind for
+            // the next dispatch's reconcile to mis-attribute.
+            pendingPeekProbeRef.current = null;
             setPageInfo(null);
             setResultError(labels.resultsError);
             resolve(null);
@@ -2029,6 +2096,18 @@ export function DetectionShell({
       setCommittedEndpoints(endpoints);
       setDraft(null);
       setDrawerOpen(false);
+      // Reviewer Round 2 (item 2): the operator just replaced this
+      // tab's filter with a different saved filter — `timeMode` and
+      // any `originPreset` binding inherited from the preset that
+      // originally seeded the tab no longer describe what the tab is
+      // showing. Flip the local `timeMode` so this tab cannot match
+      // the original preset on a future activation, and tell the
+      // wrapper to drop `originPreset` for the same reason. Without
+      // this, loading a "Last 1 day" saved filter into a "Last 1
+      // hour" recommended-preset tab and then re-clicking the "Last
+      // 1 hour" preset would silently focus the now-misaligned tab.
+      if (timeMode === "preset") setTimeMode("custom");
+      onClearPresetMetadataForCurrentTab?.();
 
       const search = buildEncodedFilterSearch({
         filter,
@@ -2046,7 +2125,14 @@ export function DetectionShell({
 
       runQueryFor(filter);
     },
-    [pagination.pageSize, pathname, pivotOnly, runQueryFor],
+    [
+      onClearPresetMetadataForCurrentTab,
+      pagination.pageSize,
+      pathname,
+      pivotOnly,
+      runQueryFor,
+      timeMode,
+    ],
   );
 
   // Save dialog state — opened from the drawer's "Save this filter"
@@ -3552,6 +3638,42 @@ export function reconcileQuickPeekUrlAction(args: {
   if (!args.tokenPresent) return "noop";
   if (args.matchFound) return "restore";
   return "strip";
+}
+
+/**
+ * Reviewer Round 2 (item 1): pure decision for the §6 "no longer in
+ * the list" notice that the post-fetch reconcile fires.
+ *
+ * The notice should fire whenever a successful slice confirms that
+ * the operator's open peek's row is gone — but the reconcile has up
+ * to three locator sources to consider:
+ *
+ *  - `hasInMemoryPeek`: a peek currently open in shell state (no
+ *    eager close happened, e.g. a chip × against a different
+ *    filter). The §6 notice paths through `setPeekLostAt` AND
+ *    closes the inspector.
+ *  - `dispatchedDismissPresent`: a peek that an Apply / Refresh /
+ *    chip × already closed at dispatch time
+ *    ({@link applyCommitDispatchReset}). The locator was retained
+ *    in `pendingPeekProbeRef` so this reconcile can decide whether
+ *    the row is gone — without that, a Refresh that drops the
+ *    inspected row never fired the notice (the symptom Reviewer
+ *    Round 2 (item 1) flagged).
+ *  - `urlTokenPresent` is handled separately by
+ *    {@link reconcileQuickPeekUrlAction} for the URL-strip leg.
+ *
+ * The §6 notice fires whenever there is *some* peek being lost
+ * (in-memory or dispatched-dismissed) AND the slice does not
+ * contain it. Extracted as a pure helper so the contract can be
+ * unit-tested without standing up the full shell.
+ */
+export function shouldFirePeekLostFromSlice(args: {
+  hasInMemoryPeek: boolean;
+  dispatchedDismissPresent: boolean;
+  matchFound: boolean;
+}): boolean {
+  if (args.matchFound) return false;
+  return args.hasInMemoryPeek || args.dispatchedDismissPresent;
 }
 
 /**
