@@ -53,7 +53,10 @@ vi.mock("@/i18n/navigation", () => ({
 import { AimerIntegrationPanel } from "@/components/settings/aimer-integration-panel";
 import enMessages from "@/i18n/messages/en.json";
 import type { AimerIntegrationSetup } from "@/lib/aimer/setup-status";
-import type { AimerSigningKeyStatus } from "@/lib/aimer/signing-key";
+import type {
+  AimerSigningKeyPublicEntry,
+  AimerSigningKeyStatus,
+} from "@/lib/aimer/signing-key";
 
 const EMPTY_KEY_STATUS: AimerSigningKeyStatus = {
   state: "empty",
@@ -64,9 +67,24 @@ const EMPTY_KEY_STATUS: AimerSigningKeyStatus = {
   observedFilePermission: null,
 };
 
+function activeEntry(
+  recommendedRotationAt: string,
+): AimerSigningKeyPublicEntry {
+  return {
+    kid: "test-kid",
+    algorithm: "ES256",
+    publicJwk: { kty: "EC", crv: "P-256", x: "x", y: "y" },
+    thumbprintBase64Url: "thumb-b64u",
+    thumbprintHexColons: "00:00:00:00:00:00:00:00",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    recommendedRotationAt,
+  };
+}
+
 function renderPanel(overrides?: {
   setup?: Partial<AimerIntegrationSetup>;
   customerStats?: { total: number; configured: number };
+  keyStatus?: AimerSigningKeyStatus;
 }) {
   const setup: AimerIntegrationSetup = {
     aiceId: "aice.example.com",
@@ -78,7 +96,7 @@ function renderPanel(overrides?: {
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <AimerIntegrationPanel
         initialSetup={setup}
-        initialKeyStatus={EMPTY_KEY_STATUS}
+        initialKeyStatus={overrides?.keyStatus ?? EMPTY_KEY_STATUS}
         customerStats={overrides?.customerStats ?? { total: 3, configured: 0 }}
       />
     </NextIntlClientProvider>,
@@ -105,6 +123,48 @@ describe("AimerIntegrationPanel – customer external_key info line", () => {
     expect(line.textContent ?? "").toMatch(
       /Customer external_key configured:\s*0\s*\/\s*5\s*customers\./,
     );
+  });
+});
+
+describe("AimerIntegrationPanel – rotation banner overdue boundary", () => {
+  // Reviewer Round 3: a key that has just passed `recommendedRotationAt`
+  // (even by one minute) must render the gray "overdue" banner.  The
+  // prior `Math.ceil((due - now) / day)` arithmetic rounded a sub-day
+  // overdue offset to `0`, so the red "within 7 days" banner showed
+  // instead.  This test pins the boundary so a regression to the
+  // bucket-only check would fail.
+  it("renders the overdue banner when recommendedRotationAt is just minutes in the past", () => {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+    renderPanel({
+      setup: { hasActiveSigningKey: true },
+      keyStatus: {
+        ...EMPTY_KEY_STATUS,
+        state: "active_only",
+        active: activeEntry(fiveMinutesAgo),
+      },
+    });
+    expect(screen.getByText(/Rotation overdue/i)).toBeTruthy();
+    expect(
+      screen.queryByText(/Rotation recommended within 7 days/i),
+    ).toBeNull();
+  });
+
+  it("still renders the red banner inside the 7-day window", () => {
+    const inThreeDays = new Date(
+      Date.now() + 3 * 24 * 60 * 60_000,
+    ).toISOString();
+    renderPanel({
+      setup: { hasActiveSigningKey: true },
+      keyStatus: {
+        ...EMPTY_KEY_STATUS,
+        state: "active_only",
+        active: activeEntry(inThreeDays),
+      },
+    });
+    expect(
+      screen.getByText(/Rotation recommended within 7 days/i),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Rotation overdue/i)).toBeNull();
   });
 });
 

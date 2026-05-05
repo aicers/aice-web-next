@@ -52,8 +52,13 @@ function rotationBannerLevel(
   active: AimerSigningKeyPublicEntry | null,
 ): "none" | "yellow" | "red" | "overdue" {
   if (!active) return "none";
+  // Compare the parsed timestamp directly with `Date.now()` first, so a
+  // key whose `recommendedRotationAt` is even one minute in the past is
+  // immediately classified as overdue.  Falling through to the
+  // day-bucket arithmetic would round up to `0` and mis-show red.
+  const due = Date.parse(active.recommendedRotationAt);
+  if (Number.isFinite(due) && due <= Date.now()) return "overdue";
   const days = daysUntil(active.recommendedRotationAt);
-  if (days < 0) return "overdue";
   if (days <= ROTATION_BANNER_RED_DAYS) return "red";
   if (days <= ROTATION_BANNER_YELLOW_DAYS) return "yellow";
   return "none";
