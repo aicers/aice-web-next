@@ -281,16 +281,33 @@ the `decisions/` directory for detailed design records.
 ## HTTPS
 
 Production deployments must be served over HTTPS. The nginx reverse
-proxy handles TLS termination and redirects all HTTP traffic to HTTPS.
+proxy handles TLS termination; the prod profile only publishes the
+HTTPS listener on the host (see "Production" below).
 
 ### Production
 
 The production nginx config (`infra/nginx/nginx.prod.conf`) enables:
 
-- HTTP → HTTPS redirect (port 80 → 443)
 - HSTS with a 1-year `max-age` and `includeSubDomains`
 - Security headers: `X-Frame-Options`, `X-Content-Type-Options`,
   `Referrer-Policy`
+
+The `nginx-prod` compose service publishes the container's TLS
+listener (`:443`) on host port `9443` by default — i.e. the app is
+reachable at `https://<host>:9443`. The non-standard port leaves
+host `:443` free for an internet-facing peer (e.g. `aimer-web` in
+the bridge handoff) on the same machine and avoids collisions on
+host OSes that already bind `:80`. Operators who want the standard
+`:443` (or to publish `:80` for an HTTP→HTTPS redirect handled by
+the container's internal `listen 80` block) can re-publish via a
+local `docker-compose.override.yml`. Note that the internal redirect
+emits `https://$host$request_uri`, so reopening host `:80` without
+also publishing host `:443` will land the redirect on a closed port.
+
+**Migration note.** This default changed from `80:80, 443:443` to
+`9443:443`. Operators relying on the previous default need to
+update bookmarks and any reverse-proxy upstream from `:443` to
+`:9443`, or pin the old mapping in their override.
 
 `Content-Security-Policy-Report-Only` is emitted by the Next.js app
 (per-request nonce — nginx leaves the header untouched). Enforcement
