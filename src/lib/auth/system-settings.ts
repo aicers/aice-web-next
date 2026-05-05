@@ -189,10 +189,18 @@ const VALIDATORS: Record<string, (value: unknown) => ValidationResult> = {
 
 // ── Public API ──────────────────────────────────────────────────
 
-/** Fetch all system settings. */
+/**
+ * Fetch all system settings exposed by the policies surface.
+ *
+ * Restricted to `KNOWN_KEYS` so rows that share the table but live
+ * behind their own role-name authorization (e.g. the Aimer
+ * integration settings, gated to System Administrator only) cannot
+ * leak through the generic `system-settings:read` permission.
+ */
 export async function getSystemSettings(): Promise<SystemSettingRow[]> {
   const result = await query<SystemSettingRow>(
-    "SELECT key, value, updated_at FROM system_settings ORDER BY key",
+    "SELECT key, value, updated_at FROM system_settings WHERE key = ANY($1::text[]) ORDER BY key",
+    [Array.from(KNOWN_KEYS)],
   );
   return result.rows;
 }

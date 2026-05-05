@@ -595,3 +595,157 @@ Displays mTLS certificate status with severity indicators:
 - **OK** — certificate is valid with plenty of time remaining.
 - **Warning** — certificate will expire soon.
 - **Critical** — certificate is expired or expiring imminently.
+
+## Aimer Integration
+
+Navigate to **Settings → Aimer Integration** to configure the
+system-wide prerequisites for the Send to Aimer flow. This
+section is reserved for the **System Administrator** role —
+Tenant Administrator and Security Monitor are denied access at
+the page route, the public-JWK / thumbprint read endpoint, and
+every mutation endpoint, regardless of any custom permission
+grants.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+### Setup status
+
+Send to Aimer requires three system-wide prerequisites:
+
+1. **`aice_id`** — the deployment hostname. Used as the JWT
+   `iss` claim and as the `aice_id` claim sent to aimer-web.
+   aimer-web's `trust_registry` joins on this value, so it must
+   match the entry registered there.
+2. **`aimer_web_bridge_url`** — the base URL of the aimer-web
+   instance whose `/api/auth/bridge` endpoint receives the
+   multipart POST. HTTPS only.
+3. **Context-token signing keypair** — a dedicated ES256 keypair
+   stored under `data/keys/aimer-context-signing.json`.
+
+When all three are set the page shows **Configured (system-wide)**.
+Any missing prerequisite turns the badge red and lists what is
+missing. Customer-level `external_key` is a per-customer setting
+and is intentionally **not** part of system-wide setup status; the
+page shows an informational line linking to the customers page.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+### Context-token signing keypair
+
+The signing keypair is **separate** from the JWT signing key and
+from mTLS keys, by design — keeping the trust domains independent
+prevents a compromise of one from invalidating the others.
+
+#### Thumbprint
+
+After **Generate**, the page shows the public JWK and the RFC 7638
+SHA-256 Thumbprint in two formats simultaneously:
+
+- **base64url** (43 characters, no padding) — canonical. Use this
+  when accuracy matters; copy and compare it with the value shown
+  on aimer-web's environment registration screen.
+- **colon-separated hex** — the same SHA-256 (32 bytes / 64 hex
+  characters) grouped in 4-byte blocks. Visual aid for verbal or
+  mental comparison.
+
+Both formats encode the same bytes; only the rendering differs.
+The Thumbprint is computed server-side from the public JWK and
+the **private key never leaves the server** — the UI receives only
+the public JWK and the thumbprint via API responses.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+#### Rotation lifecycle
+
+The rotation state machine has four states:
+
+| State | Available actions |
+| --- | --- |
+| Empty | **Generate** |
+| Active only | **Rotate** |
+| Active + pending | **Switch** (requires confirmation checkbox) |
+| Active + previous | **Deactivate** (after the retention window) |
+
+1. **Generate** — first-boot. Creates the active kid.
+2. **Rotate** — mints a *pending* kid alongside the active one.
+   The active kid keeps signing tokens until you Switch.
+3. **Switch** — promotes the pending kid to active and demotes the
+   old kid to *previous*. **Required precondition**: the new kid
+   must already be registered on aimer-web's trust registry, or
+   tokens signed by the new kid will be rejected. The page asks
+   you to tick a confirmation checkbox before the button enables.
+4. **Deactivate** — drops the previous kid from disk. Auto-eligible
+   after a short retention window (default: 5 minutes — sized to
+   the context-token TTL plus a clock-skew margin) so in-flight
+   verification on aimer-web's side has time to complete via
+   redelivery.
+
+A dashboard banner warns when rotation is approaching:
+
+- **Yellow** at 30 days before the recommended rotation date.
+- **Red** at 7 days.
+- **Gray** after the recommended rotation date has passed.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+#### File permissions
+
+The on-disk file is written with mode `0600` and the parent
+`data/keys/` directory with `0700`. If the file mode drifts (for
+example, when an operator restores a backup with looser perms),
+the page surfaces a permission alert with operator guidance to
+fix it before continuing. The boot log also records a warning.
+
+The application **fails closed** if it cannot set `0600` on a
+new key file — it refuses to leave a private key with looser
+permissions on disk.
+
+### `aice_id`
+
+Hostname (RFC 1123) identifying this AICE instance to aimer-web.
+Underscores are intentionally rejected — `aice_id` is also the
+JWT `iss` claim, so a strict hostname keeps the trust-registry
+join key portable.
+
+Example: `aice-kepco.example.com`.
+
+### `aimer_web_bridge_url`
+
+Base URL of the aimer-web instance, HTTPS-only. The path is
+normalized to a canonical form (no trailing slash). Credentials,
+query strings, and fragments are rejected.
+
+Example: `https://aimer.example.com`.
+
+### Effect-warning modal
+
+Editing `aice_id` or `aimer_web_bridge_url` triggers a
+non-dismissable modal that warns:
+
+> After this change, the operator must re-register this
+> environment on aimer-web. Existing registrations are
+> invalidated and any context tokens issued in the interim
+> will be rejected.
+
+You must explicitly confirm before the change is committed.
+
+<!-- TODO: screenshot - aimer-bridge batch -->
+
+### Audit log
+
+The Aimer integration page records:
+
+- `aimer_signing_key.generated`, `.rotated`, `.switched`,
+  `.deactivated` — keypair lifecycle events.
+- `aimer_integration_setting.changed` — `aice_id` or
+  `aimer_web_bridge_url` change with the `{key, old, new}`
+  triple.
+
+These actions are part of the closed audit-action union, so the
+audit log viewer surfaces them automatically.
+
+### Backup
+
+The signing keypair file (`data/keys/aimer-context-signing.json`)
+is included in the on-disk backup target alongside the JWT signing
+key. See `decisions/backup-restore.md` for the full backup scope.

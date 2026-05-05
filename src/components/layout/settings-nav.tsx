@@ -10,6 +10,7 @@ interface SettingsNavProps {
   showCustomers?: boolean;
   showPolicies?: boolean;
   showAccountStatus?: boolean;
+  showAimerIntegration?: boolean;
 }
 
 export function SettingsNav({
@@ -18,6 +19,7 @@ export function SettingsNav({
   showCustomers,
   showPolicies,
   showAccountStatus,
+  showAimerIntegration,
 }: SettingsNavProps) {
   const t = useTranslations("settings");
   const pathname = usePathname();
@@ -30,6 +32,11 @@ export function SettingsNav({
   if (showPolicies) items.push({ key: "policies", href: "/settings/policies" });
   if (showAccountStatus)
     items.push({ key: "accountStatus", href: "/settings/account-status" });
+  if (showAimerIntegration)
+    items.push({
+      key: "aimerIntegration",
+      href: "/settings/aimer-integration",
+    });
 
   if (items.length === 0) return null;
 

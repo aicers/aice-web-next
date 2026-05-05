@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { isSystemAdministrator } from "@/lib/aimer/role-guard";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 
@@ -21,6 +22,9 @@ export default async function SettingsPage() {
     }
     if (await hasPermission(session.roles, "dashboard:read")) {
       redirect("/settings/account-status");
+    }
+    if (isSystemAdministrator(session.roles)) {
+      redirect("/settings/aimer-integration");
     }
   }
 

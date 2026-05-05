@@ -191,6 +191,29 @@ describe("system-settings", () => {
       expect(result).toHaveLength(2);
       expect(result[0].key).toBe("jwt_policy");
     });
+
+    it("filters the query to known policy keys so non-policy rows (e.g. Aimer) cannot leak", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      await mod.getSystemSettings();
+
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).toMatch(/WHERE key = ANY/);
+      const allowed = params?.[0] as string[];
+      expect(allowed).toEqual(
+        expect.arrayContaining([
+          "password_policy",
+          "session_policy",
+          "lockout_policy",
+          "jwt_policy",
+          "mfa_policy",
+          "signin_rate_limit",
+          "api_rate_limit",
+        ]),
+      );
+      expect(allowed).not.toContain("aice_id");
+      expect(allowed).not.toContain("aimer_web_bridge_url");
+    });
   });
 
   // ── updateSystemSetting ───────────────────────────────────────

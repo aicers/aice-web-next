@@ -83,6 +83,32 @@ type NodeAction =
  */
 type ServiceAction = "service.draft_save" | "service.set_mode";
 
+/**
+ * Aimer signing-key event actions (#437).
+ *
+ * The Aimer integration uses a dedicated ES256 keypair for context-token
+ * signing, separate from the JWT signing key. The rotation lifecycle is
+ * Generate → Rotate → Switch (after operator confirms aimer-web has
+ * registered the new kid) → Deactivate.
+ *
+ * Targets are scoped to `system_settings` because the keypair is a
+ * system-wide artifact owned by the System Administrator role.
+ */
+type AimerSigningKeyAction =
+  | "aimer_signing_key.generated"
+  | "aimer_signing_key.rotated"
+  | "aimer_signing_key.switched"
+  | "aimer_signing_key.deactivated";
+
+/**
+ * Aimer integration setting change action (#437).
+ *
+ * Records updates to `aice_id` and `aimer_web_bridge_url` system
+ * settings, which together with the signing keypair gate the Send to
+ * Aimer flow.
+ */
+type AimerIntegrationSettingAction = "aimer_integration_setting.changed";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
@@ -94,7 +120,9 @@ export type AuditAction =
   | RoleAction
   | MfaAction
   | NodeAction
-  | ServiceAction;
+  | ServiceAction
+  | AimerSigningKeyAction
+  | AimerIntegrationSettingAction;
 
 /** Target entity types for audit events. */
 export type AuditTargetType =
@@ -159,6 +187,11 @@ export const AUDIT_ACTIONS = [
   "node.apply",
   "service.draft_save",
   "service.set_mode",
+  "aimer_signing_key.generated",
+  "aimer_signing_key.rotated",
+  "aimer_signing_key.switched",
+  "aimer_signing_key.deactivated",
+  "aimer_integration_setting.changed",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */

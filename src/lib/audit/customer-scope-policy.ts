@@ -83,6 +83,14 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   "node.apply": "customer-scoped",
   "service.draft_save": "customer-scoped",
   "service.set_mode": "customer-scoped",
+  // Aimer integration (#437) — system-wide artifacts (signing keypair,
+  // aice_id, aimer_web_bridge_url) with no per-customer axis. The
+  // per-customer external_key gate lives on a different action set.
+  "aimer_signing_key.generated": "customer-agnostic",
+  "aimer_signing_key.rotated": "customer-agnostic",
+  "aimer_signing_key.switched": "customer-agnostic",
+  "aimer_signing_key.deactivated": "customer-agnostic",
+  "aimer_integration_setting.changed": "customer-agnostic",
 };
 
 /**

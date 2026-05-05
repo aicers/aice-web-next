@@ -62,6 +62,12 @@ export default defineConfig({
             // notice's gating effect runs on mount and the Refresh
             // button click clears local React state.
             "src/__tests__/components/detection/result-list-stale-focus.test.tsx",
+            // Issue #437 (Reviewer Round 1): the bridge URL save
+            // path must reset the input draft to the canonical
+            // (trailing-slash-stripped) value, and the customer
+            // external_key info line must degrade to a total-only
+            // form when the per-customer column has not yet shipped.
+            "src/__tests__/components/settings/aimer-integration-panel-render.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -90,6 +96,7 @@ export default defineConfig({
             "src/__tests__/components/detection/presets-dropdown.test.tsx",
             "src/__tests__/components/detection/detection-shell-save-current-filter.test.tsx",
             "src/__tests__/components/detection/result-list-stale-focus.test.tsx",
+            "src/__tests__/components/settings/aimer-integration-panel-render.test.tsx",
           ],
         },
       },
