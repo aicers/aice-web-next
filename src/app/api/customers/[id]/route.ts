@@ -6,6 +6,11 @@ import { auditLog } from "@/lib/audit/logger";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import { hasPermission } from "@/lib/auth/permissions";
+import {
+  ExternalKeyValidationError,
+  isExternalKeyUniqueViolation,
+  normalizeExternalKey,
+} from "@/lib/customers/external-key";
 import { query } from "@/lib/db/client";
 import { dropCustomerDb } from "@/lib/db/migrate";
 
@@ -15,6 +20,7 @@ interface CustomerRow {
   id: number;
   name: string;
   description: string | null;
+  external_key: string | null;
   database_name: string;
   status: string;
   created_at: string;
@@ -79,9 +85,16 @@ export const GET = withAuth(
 /**
  * PATCH /api/customers/[id]
  *
- * Update a customer's name and/or description.
+ * Update a customer's name, description, and/or external_key.
  *
- * Body: `{ name?: string, description?: string }`
+ * Body: `{ name?: string, description?: string, external_key?: string | null }`
+ *
+ * `external_key` semantics (#438):
+ *   - omitted from body → no change
+ *   - explicit `null` / empty / whitespace-only → cleared to NULL
+ *   - non-empty string → trimmed, validated (≤256 chars, no control chars)
+ *
+ * UNIQUE conflicts on `external_key` produce a 409.
  *
  * Requires `customers:write` permission.
  */
@@ -99,11 +112,20 @@ export const PATCH = withAuth(
     // Parse body
     let name: string | undefined;
     let description: string | undefined;
+    // `undefined` means "field omitted, do not change".
+    let externalKey: string | null | undefined;
     try {
       const body = await request.json();
       name = body.name;
       description = body.description;
-    } catch {
+      externalKey = normalizeExternalKey(body.external_key);
+    } catch (err) {
+      if (err instanceof ExternalKeyValidationError) {
+        return NextResponse.json(
+          { error: err.message, field: "external_key" },
+          { status: 400 },
+        );
+      }
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
@@ -152,28 +174,73 @@ export const PATCH = withAuth(
     const params: unknown[] = [];
     let idx = 1;
 
-    if (name !== undefined) {
+    const previousRow = existing[0];
+    const trimmedName = name?.trim();
+    const trimmedDescription =
+      description === undefined ? undefined : description?.trim() || null;
+
+    const changedFields: string[] = [];
+    const previous: Record<string, unknown> = {};
+    const next: Record<string, unknown> = {};
+
+    if (trimmedName !== undefined && trimmedName !== previousRow.name) {
       updates.push(`name = $${idx++}`);
-      params.push(name.trim());
+      params.push(trimmedName);
+      changedFields.push("name");
+      previous.name = previousRow.name;
+      next.name = trimmedName;
     }
-    if (description !== undefined) {
+    if (
+      trimmedDescription !== undefined &&
+      trimmedDescription !== previousRow.description
+    ) {
       updates.push(`description = $${idx++}`);
-      params.push(description?.trim() || null);
+      params.push(trimmedDescription);
+      changedFields.push("description");
+      previous.description = previousRow.description;
+      next.description = trimmedDescription;
+    }
+    // external_key: only include in the SET / changedFields when the
+    // effective value actually changes (covers NULL→NULL no-op, e.g.
+    // an empty input on a row that's already NULL).
+    if (externalKey !== undefined && externalKey !== previousRow.external_key) {
+      updates.push(`external_key = $${idx++}`);
+      params.push(externalKey);
+      changedFields.push("external_key");
+      previous.external_key = previousRow.external_key;
+      next.external_key = externalKey;
     }
 
     if (updates.length === 0) {
-      return NextResponse.json({ data: existing[0] });
+      return NextResponse.json({ data: previousRow });
     }
 
     updates.push(`updated_at = NOW()`);
     params.push(customerId);
 
-    const { rows } = await query<CustomerRow>(
-      `UPDATE customers SET ${updates.join(", ")} WHERE id = $${idx} RETURNING *`,
-      params,
-    );
+    let updatedRow: CustomerRow;
+    try {
+      const { rows } = await query<CustomerRow>(
+        `UPDATE customers SET ${updates.join(", ")} WHERE id = $${idx} RETURNING *`,
+        params,
+      );
+      updatedRow = rows[0];
+    } catch (err) {
+      if (isExternalKeyUniqueViolation(err)) {
+        return NextResponse.json(
+          {
+            error: "external_key is already in use by another customer",
+            field: "external_key",
+            code: "external_key_conflict",
+          },
+          { status: 409 },
+        );
+      }
+      throw err;
+    }
 
-    // Audit
+    // Audit (aligns with aimer-web #196 `changedFields` detail shape;
+    // we keep the existing `customer.update` action — see #438).
     await auditLog.record({
       actor: session.accountId,
       action: "customer.update",
@@ -185,14 +252,15 @@ export const PATCH = withAuth(
       // surfaces the row to the tenant operator who owns this customer.
       customerId,
       details: {
-        ...(name !== undefined && { name: name.trim() }),
-        ...(description !== undefined && {
-          description: description?.trim() || null,
-        }),
+        changedFields,
+        previous,
+        next,
+        customerId,
+        customerName: updatedRow.name,
       },
     });
 
-    return NextResponse.json({ data: rows[0] });
+    return NextResponse.json({ data: updatedRow });
   },
   { requiredPermissions: ["customers:write"] },
 );

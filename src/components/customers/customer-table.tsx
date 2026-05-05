@@ -46,6 +46,7 @@ interface Customer {
   id: number;
   name: string;
   description: string | null;
+  external_key: string | null;
   database_name: string;
   status: string;
   created_at: string;
@@ -209,6 +210,7 @@ export function CustomerTable() {
                   </button>
                 </TableHead>
                 <TableHead>{t("description")}</TableHead>
+                <TableHead>{t("externalKey")}</TableHead>
                 <TableHead className="w-[40px]" />
               </TableRow>
             </TableHeader>
@@ -224,6 +226,9 @@ export function CustomerTable() {
                   <TableCell className="font-medium">{customer.name}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {customer.description ?? "-"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground font-mono text-xs">
+                    {customer.external_key ?? "-"}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
