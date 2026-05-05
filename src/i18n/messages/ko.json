@@ -179,7 +179,6 @@
     },
     "customerExternalKey": {
       "line": "고객 external_key 설정: {configured} / {total} 고객.",
-      "lineUnavailable": "활성 고객 수: {total}. 고객별 external_key 항목이 아직 추가되지 않아 M / N 카운터는 Sub-7.2.E 적용 이후에 표시됩니다.",
       "linkLabel": "고객 관리 →",
       "note": "external_key는 고객별 설정으로 시스템 전역 설정 상태에 영향을 주지 않습니다. 각 고객의 external_key가 채워질 때까지 Send to Aimer 버튼은 고객별로 독립적으로 비활성화됩니다."
     },

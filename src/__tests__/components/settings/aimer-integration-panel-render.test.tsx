@@ -13,11 +13,12 @@
  *    operator typed and the Save button would stay enabled, even
  *    though the saved value is "https://aimer.example.com".
  *
- * 2. The customer external_key informational line shows "M / N"
- *    only when the per-customer column has been introduced (Sub-7.2.E
- *    #440); until then the page passes `configured = null` and the
- *    UI degrades to a total-only line plus the explanatory note,
- *    rather than rendering a misleading "0 / N".
+ * 2. The customer external_key informational line renders the real
+ *    `configured / total` counter from the page query.  Reviewer
+ *    Round 1 caught the prior hard-coded `0` numerator; the
+ *    regression guard renders both an in-progress rollout (M / N)
+ *    and an empty-rollout state (0 / N) to prove the numerator is
+ *    not constant.
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -65,7 +66,7 @@ const EMPTY_KEY_STATUS: AimerSigningKeyStatus = {
 
 function renderPanel(overrides?: {
   setup?: Partial<AimerIntegrationSetup>;
-  customerStats?: { total: number; configured: number | null };
+  customerStats?: { total: number; configured: number };
 }) {
   const setup: AimerIntegrationSetup = {
     aiceId: "aice.example.com",
@@ -85,7 +86,7 @@ function renderPanel(overrides?: {
 }
 
 describe("AimerIntegrationPanel – customer external_key info line", () => {
-  it("renders 'M / N customers' when the per-customer column is available", () => {
+  it("renders the M / N counter from the page-supplied configured / total", () => {
     renderPanel({ customerStats: { total: 5, configured: 2 } });
     const line = screen.getByTestId("aimer-customer-external-key-line");
     expect(line.textContent ?? "").toMatch(
@@ -93,16 +94,17 @@ describe("AimerIntegrationPanel – customer external_key info line", () => {
     );
   });
 
-  it("falls back to a total-only line when configured is null (column not yet introduced)", () => {
-    // The customers table has no `external_key` column until Sub-7.2.E
-    // (#440) ships, so the page deliberately surfaces `configured =
-    // null` to the panel.  Showing "0 / N" in that state would imply
-    // the operator can populate per-customer keys today, which is
-    // false.
-    renderPanel({ customerStats: { total: 5, configured: null } });
+  it("renders 0 / N when no customer has external_key populated yet", () => {
+    // The numerator is real (not hard-coded to 0): the page query
+    // counts `external_key IS NOT NULL AND external_key <> ''`, so a
+    // 0 / N reading reflects an empty rollout rather than a missing
+    // schema.  This guards against a regression to the prior
+    // hard-coded zero.
+    renderPanel({ customerStats: { total: 5, configured: 0 } });
     const line = screen.getByTestId("aimer-customer-external-key-line");
-    expect(line.textContent ?? "").toMatch(/Active customers:\s*5/);
-    expect(line.textContent ?? "").not.toMatch(/0\s*\/\s*5/);
+    expect(line.textContent ?? "").toMatch(
+      /Customer external_key configured:\s*0\s*\/\s*5\s*customers\./,
+    );
   });
 });
 

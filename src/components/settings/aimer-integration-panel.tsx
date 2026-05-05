@@ -74,7 +74,7 @@ async function copyToClipboard(value: string): Promise<boolean> {
 interface AimerIntegrationPanelProps {
   initialSetup: AimerIntegrationSetup;
   initialKeyStatus: AimerSigningKeyStatus;
-  customerStats: { total: number; configured: number | null };
+  customerStats: { total: number; configured: number };
 }
 
 export function AimerIntegrationPanel({
@@ -744,26 +744,16 @@ function CustomerExternalKeyBlock({
   t,
 }: {
   total: number;
-  configured: number | null;
+  configured: number;
   t: ReturnType<typeof useTranslations<"aimerIntegration">>;
 }) {
-  // `configured = null` is a deliberate signal that the per-customer
-  // `external_key` column has not yet been introduced (Sub-7.2.E
-  // #440 owns it).  Showing `0 / N` in that case is misleading
-  // because the numerator can never go up until the column lands,
-  // so the UI degrades to the total-only line.
-  const message =
-    configured === null
-      ? t("customerExternalKey.lineUnavailable", { total })
-      : t("customerExternalKey.line", { configured, total });
-
   return (
     <section className="rounded-md border border-dashed p-5">
       <div className="flex items-start gap-2">
         <Info className="size-4 shrink-0 text-muted-foreground" />
         <div className="text-sm">
           <p data-testid="aimer-customer-external-key-line">
-            {message}{" "}
+            {t("customerExternalKey.line", { configured, total })}{" "}
             <Link href="/settings/customers" className="underline">
               {t("customerExternalKey.linkLabel")}
             </Link>
