@@ -1,15 +1,15 @@
 "use client";
 
-import { AlertTriangle, ArrowLeft, Info, Send } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "@/i18n/navigation";
+import type { AimerCustomerCandidate } from "@/lib/aimer/candidate-customers";
+import type { AimerIntegrationSetupStatus } from "@/lib/aimer/setup-status";
 import type { Event } from "@/lib/detection/types";
 import type { EventLocator } from "@/lib/events/event-locator";
-import { cn } from "@/lib/utils";
 
 import {
   EVENT_KIND_FRIENDLY_NAMES,
@@ -46,10 +46,6 @@ export interface EventInvestigationLabels {
     confidence: string;
     triageScores: string;
     noTriage: string;
-    aimerTitle: string;
-    aimerBody: string;
-    aimerCta: string;
-    aimerToast: string;
     pivotsTitle: string;
     pivotSameSource: string;
     pivotSameDestination: string;
@@ -237,6 +233,27 @@ interface Props {
    * narrowing rather than landing on the unfiltered set.
    */
   customers?: readonly string[];
+  /**
+   * Send to Aimer (Sub-7.2.E / #440) — server-derived data forwarded
+   * unchanged through this layer to the AimerBanner inside the
+   * Overview tab.  See the candidate extractor and the SSR
+   * eligibility helper for shape rationale.
+   */
+  candidates: AimerCustomerCandidate[];
+  /**
+   * Per-candidate `customers.external_key` eligibility (#438).  The
+   * actual `external_key` string is intentionally not in the prop
+   * shape — only the boolean — so the value never appears in the
+   * client-side hydrate JSON.
+   */
+  customerBridgeEligible: Record<number, boolean>;
+  /**
+   * System-wide Aimer integration setup status (Sub-7.2.AB / #437).
+   * The actual `aice_id`, `bridgeUrl`, and signing-key material never
+   * leave the server — this prop carries only `{ configured }` plus
+   * non-sensitive missing-prerequisite enum tags.
+   */
+  aimerSetup: AimerIntegrationSetupStatus;
 }
 
 export function EventInvestigation({
@@ -246,6 +263,9 @@ export function EventInvestigation({
   backHref,
   labels,
   customers,
+  candidates,
+  customerBridgeEligible,
+  aimerSetup,
 }: Props) {
   const friendlyKind =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
@@ -353,6 +373,9 @@ export function EventInvestigation({
             locator={locator}
             labels={labels.overview}
             customers={customers}
+            candidates={candidates}
+            customerBridgeEligible={customerBridgeEligible}
+            aimerSetup={aimerSetup}
           />
         </TabsContent>
         <TabsContent
@@ -403,103 +426,6 @@ export function EventInvestigation({
           />
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
-
-const AIMER_TOAST_DURATION_MS = 3200;
-
-/**
- * "Send to Aimer" placeholder. The button pops a transient floating
- * toast in the viewport's lower-right corner so the placeholder
- * interaction matches the issue spec; the umbrella ships no toast
- * primitive, so this component owns a minimal self-dismissing one.
- */
-export function AimerBanner({
-  label,
-  body,
-  cta,
-  toast,
-}: {
-  label: string;
-  body: string;
-  cta: string;
-  toast: string;
-}) {
-  const [toastId, setToastId] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (toastId === 0) {
-      return;
-    }
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current);
-    }
-    timerRef.current = setTimeout(() => {
-      setToastId(0);
-      timerRef.current = null;
-    }, AIMER_TOAST_DURATION_MS);
-  }, [toastId]);
-
-  return (
-    <div className="border-border bg-card flex flex-col gap-3 rounded-md border p-4">
-      <div className="flex items-start gap-2">
-        <Info className="mt-0.5 size-4 text-blue-500" aria-hidden="true" />
-        <div className="flex-1">
-          <h3 className="text-foreground text-sm font-semibold">{label}</h3>
-          <p className="text-muted-foreground mt-1 text-sm">{body}</p>
-        </div>
-      </div>
-      <div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => setToastId((id) => id + 1)}
-        >
-          <Send className="size-4" aria-hidden="true" />
-          {cta}
-        </Button>
-      </div>
-      <AimerToast key={toastId} visible={toastId !== 0} message={toast} />
-    </div>
-  );
-}
-
-function AimerToast({
-  visible,
-  message,
-}: {
-  visible: boolean;
-  message: string;
-}) {
-  if (!visible) {
-    return null;
-  }
-  return (
-    <div
-      className="pointer-events-none fixed right-4 bottom-4 z-50 flex justify-end"
-      data-testid="aimer-toast"
-    >
-      <div
-        role="status"
-        aria-live="polite"
-        className={cn(
-          "border-border bg-popover text-popover-foreground pointer-events-auto flex items-center gap-2 rounded-md border px-3 py-2 text-sm shadow-md",
-        )}
-      >
-        <Info className="size-4 text-blue-500" aria-hidden="true" />
-        <span>{message}</span>
-      </div>
     </div>
   );
 }

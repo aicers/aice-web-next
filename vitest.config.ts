@@ -68,6 +68,16 @@ export default defineConfig({
             // external_key info line must degrade to a total-only
             // form when the per-customer column has not yet shipped.
             "src/__tests__/components/settings/aimer-integration-panel-render.test.tsx",
+            // Issue #440: Send to Aimer modal + hidden-form submit
+            // contract (DOM-level acceptance criteria — successful
+            // submit leaves the form attached, failure paths tear it
+            // down before rendering the error).
+            "src/__tests__/components/events/aimer-banner.test.tsx",
+            // Issue #440 (acceptance: prop forwarding):
+            // EventInvestigation → OverviewTab → AimerBanner threads
+            // `locator`, `candidates`, `customerBridgeEligible`, and
+            // `aimerSetup` unchanged.
+            "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -97,6 +107,8 @@ export default defineConfig({
             "src/__tests__/components/detection/detection-shell-save-current-filter.test.tsx",
             "src/__tests__/components/detection/result-list-stale-focus.test.tsx",
             "src/__tests__/components/settings/aimer-integration-panel-render.test.tsx",
+            "src/__tests__/components/events/aimer-banner.test.tsx",
+            "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
           ],
         },
       },
