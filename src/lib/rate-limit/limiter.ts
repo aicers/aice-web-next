@@ -295,6 +295,35 @@ export async function checkMfaChallengeRateLimit(
   return { limited: false };
 }
 
+// ── Aimer context-token rate limiting (#439) ─────────────────────
+
+const AIMER_CONTEXT_TOKEN_COUNT = 30;
+const AIMER_CONTEXT_TOKEN_WINDOW_MINUTES = 1;
+
+/**
+ * Per-(account, IP) rate limit for the Send to Aimer bridge route
+ * `POST /api/aimer/context-token`.  Counts independently from the
+ * global authenticated-API limiter so a busy bridge user does not
+ * starve their other API traffic, and vice versa.  Hardcoded for the
+ * first cycle — operator-configurable values are deferred to a
+ * follow-up sub-issue.
+ */
+export async function checkAimerContextTokenRateLimit(
+  accountId: string,
+  ip: string,
+): Promise<RateLimitResult> {
+  const s = getStore();
+  const windowMs = AIMER_CONTEXT_TOKEN_WINDOW_MINUTES * 60_000;
+  const result = s.increment(
+    `aimer-context-token:${accountId}:${ip}`,
+    windowMs,
+  );
+  if (result.count > AIMER_CONTEXT_TOKEN_COUNT) {
+    return { limited: true, retryAfterSeconds: retryAfter(result.resetAt) };
+  }
+  return { limited: false };
+}
+
 // ── Cache invalidation ───────────────────────────────────────────
 
 /**

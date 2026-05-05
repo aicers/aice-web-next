@@ -109,6 +109,25 @@ type AimerSigningKeyAction =
  */
 type AimerIntegrationSettingAction = "aimer_integration_setting.changed";
 
+/**
+ * Aimer context-token issuance actions (#439).
+ *
+ * The route handler `POST /api/aimer/context-token` issues a
+ * short-lived ES256-signed context token (plus a stub events
+ * envelope) on demand for the Send to Aimer button.  The success
+ * path emits `.issued`; every guard / setup / scope failure emits
+ * `.denied` with a `reason` detail.
+ *
+ * The target type is `customer` because the success path is bound to
+ * a single resolved customer via the chosen `customerId`.  The denial
+ * path may be customer-agnostic (see `customer-scope-policy.ts`),
+ * but reusing the `customer` target keeps both rows under the same
+ * audit-target taxonomy.
+ */
+type AimerContextTokenAction =
+  | "aimer_context_token.issued"
+  | "aimer_context_token.denied";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
@@ -122,7 +141,8 @@ export type AuditAction =
   | NodeAction
   | ServiceAction
   | AimerSigningKeyAction
-  | AimerIntegrationSettingAction;
+  | AimerIntegrationSettingAction
+  | AimerContextTokenAction;
 
 /** Target entity types for audit events. */
 export type AuditTargetType =
@@ -192,6 +212,8 @@ export const AUDIT_ACTIONS = [
   "aimer_signing_key.switched",
   "aimer_signing_key.deactivated",
   "aimer_integration_setting.changed",
+  "aimer_context_token.issued",
+  "aimer_context_token.denied",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */

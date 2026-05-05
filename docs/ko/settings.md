@@ -722,6 +722,24 @@ Aimer 연동 화면은 다음 이벤트를 기록합니다:
 - `aimer_integration_setting.changed` — `aice_id` 또는
   `aimer_web_bridge_url` 변경. `{key, old, new}` 삼중값을 기록.
 
+Send to Aimer 흐름은 브라우저가 백그라운드에서 호출하는
+`POST /api/aimer/context-token` 엔드포인트 요청마다 다음
+이벤트를 기록합니다:
+
+- `aimer_context_token.issued` — 성공. 감사 행은 해결된 고객과
+  결합되며, 발행된 `jti`와 활성 서명 키의 `kid`가 함께 기록되어
+  포렌식 분석가가 `aimer-web` 측 대응 기록과 상호 연관시킬 수
+  있습니다.
+- `aimer_context_token.denied` — 실패. 거절을 일으킨 게이트를
+  나타내는 `reason` 상세값을 포함합니다:
+  `aimer_integration_not_configured` ([설정 상태](#설정-상태)
+  섹션의 세 전제조건 중 하나가 누락), `customer_external_key_missing`
+  (해결된 고객에 `external_key`가 없음), `event_not_found_for_customer`
+  (선택된 고객 범위에서 로케이터가 해석되지 않음 — 접근 거부
+  분기 역시 고객 존재 여부 노출을 막기 위해 동일 상태로
+  마스킹됨), `rate_limited` (계정+IP 단위의 브릿지 버킷,
+  30회/60초가 소진됨).
+
 위 동작들은 폐쇄형 감사 액션 유니온의 일부이므로 감사 로그 뷰어가
 자동으로 표시합니다.
 
