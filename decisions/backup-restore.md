@@ -9,10 +9,22 @@ This document defines the backup and restore strategy for data managed by aice-w
 
 ### Scope
 
-This strategy covers **databases owned by aice-web-next**: `auth_db`, `audit_db`, and `customer_db` instances. It does not cover:
+This strategy covers **databases owned by aice-web-next**: `auth_db`, `audit_db`, and `customer_db` instances, plus a small set of on-disk key files held under `<DATA_DIR>/keys/` that the application owns directly. It does not cover:
 
 - REview/Giganto data (owned by those services)
-- Certificate and key material (managed separately through secret management)
+- mTLS certificates (managed separately through secret management; rotation handled by the operator-supplied PKI)
+
+#### On-disk key files included in scope
+
+The following files live under `<DATA_DIR>/keys/` (default `data/keys/`) and **must be backed up alongside `auth_db`** so a full disaster recovery restores a working trust state:
+
+| File | Owner | Purpose |
+| --- | --- | --- |
+| `jwt-signing.json` | aice-web-next | ES256 keypair signing user-session access tokens. Loss invalidates every session token on the next boot. |
+| `jwt-signing.prev.json` | aice-web-next | Previous JWT signing key retained during rotation so already-issued tokens verify until they expire. Optional. |
+| `aimer-context-signing.json` | aice-web-next | ES256 keypair signing Aimer context tokens (#437). Independent trust domain from the JWT key — separation is enforced; do not reuse the JWT key here. The file may hold an active slot, an optional pending slot (during rotation), and an optional previous slot (briefly retained after Switch). |
+
+All three files are written with mode `0600` and the parent `keys/` directory with `0700`. Backups must preserve perms (use `tar --preserve-permissions` / `cp -p`); restoring with looser perms causes the application to refuse to write new keys (and the Aimer admin page surfaces a permission alert) until the operator runs `chmod 0600` to restore them.
 
 ---
 
@@ -162,7 +174,7 @@ Periodically restore a backup to a temporary database and run the migration runn
 | Topic | Reason |
 | --- | --- |
 | WAL archiving / PITR | Infrastructure-level decision; can be layered on if needed |
-| Certificate/key backup | Managed through secret management (OpenBao roadmap) |
+| mTLS certificate backup | Managed through secret management (OpenBao roadmap). The application-owned signing keys under `<DATA_DIR>/keys/` ARE in scope — see §1. |
 | REview/Giganto data | Owned by those services |
 | Automated backup tooling selection | Implementation detail; `pg_dump` is sufficient to start |
 

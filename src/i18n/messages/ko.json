@@ -83,12 +83,115 @@
     "profile": "프로필",
     "customers": "고객",
     "policies": "정책",
-    "accountStatus": "계정 현황"
+    "accountStatus": "계정 현황",
+    "aimerIntegration": "Aimer 연동"
   },
   "validation": {
     "required": "{field}은(는) 필수입니다",
     "passwordMinLength": "비밀번호는 최소 {min}자 이상이어야 합니다",
     "passwordMismatch": "비밀번호가 일치하지 않습니다"
+  },
+  "aimerIntegration": {
+    "title": "Aimer 연동",
+    "description": "Send to Aimer 동작에 필요한 시스템 전역 사전 조건(배포 식별자 aice_id, aimer-web 브리지 URL, 컨텍스트 토큰 전용 서명 키페어)을 설정합니다.",
+    "permissionAlert": {
+      "title": "Aimer 서명 키 파일의 권한이 잘못되었습니다",
+      "body": "디스크 파일({path})의 모드가 0600이 아닌 {observed}로 확인되었습니다. 계속 진행하기 전에 chmod 0600으로 권한을 복구하십시오. 권한이 더 느슨한 키는 쓰기가 거부되며, 읽기만 가능합니다."
+    },
+    "setupStatus": {
+      "title": "설정 상태",
+      "description": "Aimer 연동은 시스템 전역 기능입니다. 세 가지 사전 조건이 모두 설정되어야 Send to Aimer 버튼이 활성화됩니다.",
+      "configured": "설정됨 (시스템 전역)",
+      "notConfigured": "설정되지 않음",
+      "missing": {
+        "aiceId": "aice_id가 설정되어 있지 않습니다.",
+        "bridgeUrl": "aimer_web_bridge_url이 설정되어 있지 않습니다.",
+        "signingKey": "컨텍스트 토큰 서명 키페어가 생성되어 있지 않습니다."
+      }
+    },
+    "signingKey": {
+      "title": "컨텍스트 토큰 서명 키페어",
+      "description": "Aimer 컨텍스트 토큰 서명에 사용되는 ES256 키페어입니다. 신뢰 도메인 분리를 위해 JWT 서명 키 및 mTLS 키와 분리되어 있습니다. 등록을 승인하기 전에 이 화면의 Thumbprint를 aimer-web의 환경 등록 화면 값과 비교하십시오.",
+      "emptyDescription": "아직 키페어가 생성되지 않았습니다. 신뢰 설정 흐름을 시작하려면 생성하십시오.",
+      "slots": {
+        "active": "활성",
+        "pending": "대기",
+        "previous": "이전"
+      },
+      "fields": {
+        "thumbprintBase64Url": "Thumbprint (RFC 7638 SHA-256, base64url) — 표준",
+        "thumbprintBase64UrlHelper": "43자, 패딩 없음. aimer-web과 비교할 때 이 값을 사용하십시오. 표준 형식입니다.",
+        "thumbprintHexColons": "Thumbprint (콜론 구분 16진수)",
+        "thumbprintHexColonsHelper": "같은 SHA-256을 4바이트 단위 64자 16진수로 표시한 값입니다. 음성/암기 비교용 보조 표현입니다.",
+        "publicJwk": "공개 JWK (RFC 7517)",
+        "publicJwkHelper": "공개 키만 표시됩니다. 비공개 키는 절대 서버 밖으로 나가지 않습니다."
+      },
+      "rotation": {
+        "yellowTitle": "30일 이내 회전 권장",
+        "redTitle": "7일 이내 회전 권장",
+        "overdueTitle": "회전 권장 기한 초과",
+        "body": "권장 회전 일자: {date}. Rotate로 새로운 대기 kid를 생성한 뒤 aimer-web 신뢰 레지스트리 업데이트가 끝나면 Switch하십시오."
+      },
+      "actions": {
+        "generate": "생성",
+        "rotate": "회전",
+        "switch": "새 kid로 전환",
+        "deactivate": "이전 kid 비활성화"
+      },
+      "switch": {
+        "guidanceTitle": "Switch 대기 중",
+        "guidanceBody": "전환 전에 새 kid의 Thumbprint를 별도 채널로 전달해 aimer-web 신뢰 레지스트리에 등록하십시오. 등록 전에 전환하면 새 kid로 서명된 토큰이 거부됩니다.",
+        "confirmCheckbox": "새 kid가 aimer-web의 신뢰 레지스트리에 등록되었음을 확인했습니다."
+      },
+      "rotateConfirm": {
+        "title": "새 대기 kid를 생성하시겠습니까?",
+        "body": "새 ES256 키페어가 생성되어 활성 kid와 함께 저장됩니다. Switch하기 전까지는 활성 kid가 계속 토큰을 서명합니다."
+      },
+      "switchConfirm": {
+        "title": "새 kid로 전환하시겠습니까?",
+        "body": "대기 kid가 활성으로 승격되고, 이전 kid는 aimer-web의 in-flight 컨텍스트 토큰 검증을 위해 잠시 보존됩니다. 즉시 적용됩니다."
+      },
+      "deactivateConfirm": {
+        "title": "이전 kid를 비활성화하시겠습니까?",
+        "body": "이전 kid의 비공개 키가 디스크에서 제거됩니다. aimer-web은 자체 신뢰 레지스트리로 전환 이전 토큰을 독립적으로 계속 검증합니다."
+      },
+      "deactivate": {
+        "windowEnds": "{date} 이후 자동 비활성화 가능"
+      }
+    },
+    "settings": {
+      "title": "시스템 설정",
+      "description": "이 AICE 인스턴스를 aimer-web에 식별시키고 컨텍스트 토큰 전송 위치를 알려주는 설정입니다.",
+      "aiceIdLabel": "aice_id",
+      "aiceIdPlaceholder": "aice-kepco.example.com",
+      "aiceIdHelper": "배포 호스트네임(RFC 1123). JWT iss 클레임과 aimer-web으로 전달되는 aice_id 클레임에 사용됩니다. aimer-web의 trust_registry 조회 키이므로 등록된 값과 일치해야 합니다.",
+      "bridgeUrlLabel": "aimer_web_bridge_url",
+      "bridgeUrlPlaceholder": "https://aimer.example.com",
+      "bridgeUrlHelper": "/api/auth/bridge로 multipart POST를 받을 aimer-web 인스턴스의 베이스 URL. HTTPS 전용. 경로는 정규화 형식(끝 슬래시 없음)으로 저장됩니다.",
+      "saveAiceId": "aice_id 저장",
+      "saveBridgeUrl": "브리지 URL 저장",
+      "saving": "저장 중…",
+      "effectWarning": {
+        "title": "변경 후 환경 재등록 필요",
+        "body": "이 변경 이후 aimer-web에 본 환경을 재등록해야 합니다. 기존 등록은 무효화되며, 그 사이에 발급된 컨텍스트 토큰은 거부됩니다.\n\n계속하시겠습니까?",
+        "confirm": "저장하고 계속"
+      }
+    },
+    "customerExternalKey": {
+      "line": "고객 external_key 설정: {configured} / {total} 고객.",
+      "linkLabel": "고객 관리 →",
+      "note": "external_key는 고객별 설정으로 시스템 전역 설정 상태에 영향을 주지 않습니다. 각 고객의 external_key가 채워질 때까지 Send to Aimer 버튼은 고객별로 독립적으로 비활성화됩니다."
+    },
+    "errors": {
+      "actionFailed": "작업이 실패했습니다. 오류 상세를 확인한 뒤 다시 시도하십시오."
+    },
+    "success": {
+      "generate": "서명 키페어를 생성했습니다.",
+      "rotate": "대기 kid를 생성했습니다. aimer-web 신뢰 레지스트리에 등록한 뒤 Switch하십시오.",
+      "switch": "새 kid로 전환했습니다. aimer-web에 새 kid가 미리 등록되어 있어야 합니다.",
+      "deactivate": "이전 kid를 비활성화했습니다.",
+      "settingSaved": "설정을 저장했습니다. aimer-web에 본 환경을 재등록하십시오."
+    }
   },
   "auditLogs": {
     "title": "감사 로그",
@@ -167,7 +270,12 @@
       "node_shutdown": "노드 종료",
       "node_apply": "노드 적용",
       "service_draft_save": "서비스 초안 저장",
-      "service_set_mode": "서비스 모드 변경"
+      "service_set_mode": "서비스 모드 변경",
+      "aimer_signing_key_generated": "Aimer 서명 키 생성",
+      "aimer_signing_key_rotated": "Aimer 서명 키 회전",
+      "aimer_signing_key_switched": "Aimer 서명 키 전환",
+      "aimer_signing_key_deactivated": "Aimer 서명 키 비활성화",
+      "aimer_integration_setting_changed": "Aimer 연동 설정 변경"
     },
     "targetTypes": {
       "account": "계정",

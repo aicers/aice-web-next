@@ -1,4 +1,5 @@
 import { SettingsNav } from "@/components/layout/settings-nav";
+import { isSystemAdministrator } from "@/lib/aimer/role-guard";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 
@@ -24,6 +25,10 @@ export default async function SettingsLayout({
   const showAccountStatus = session
     ? await hasPermission(session.roles, "dashboard:read")
     : false;
+  // Aimer integration is gated by role name, not permission, per #437.
+  const showAimerIntegration = session
+    ? isSystemAdministrator(session.roles)
+    : false;
 
   return (
     <div className="space-y-6">
@@ -33,6 +38,7 @@ export default async function SettingsLayout({
         showCustomers={showCustomers}
         showPolicies={showPolicies}
         showAccountStatus={showAccountStatus}
+        showAimerIntegration={showAimerIntegration}
       />
       {children}
     </div>

@@ -83,12 +83,115 @@
     "profile": "Profile",
     "customers": "Customers",
     "policies": "Policies",
-    "accountStatus": "Account Status"
+    "accountStatus": "Account Status",
+    "aimerIntegration": "Aimer Integration"
   },
   "validation": {
     "required": "{field} is required",
     "passwordMinLength": "Password must be at least {min} characters",
     "passwordMismatch": "Passwords do not match"
+  },
+  "aimerIntegration": {
+    "title": "Aimer Integration",
+    "description": "Configure the system-wide prerequisites for the Send to Aimer flow: the deployment identifier (aice_id), the aimer-web bridge URL, and the dedicated context-token signing keypair.",
+    "permissionAlert": {
+      "title": "Aimer signing key file has unexpected permissions",
+      "body": "The on-disk file ({path}) was observed with mode {observed} instead of 0600. Restore the correct mode (chmod 0600) before continuing — the application refuses to write a key with looser permissions, but reading remains possible."
+    },
+    "setupStatus": {
+      "title": "Setup status",
+      "description": "Aimer integration is system-wide. All three prerequisites must be configured before the Send to Aimer button becomes operational.",
+      "configured": "Configured (system-wide)",
+      "notConfigured": "Not configured",
+      "missing": {
+        "aiceId": "aice_id is not set.",
+        "bridgeUrl": "aimer_web_bridge_url is not set.",
+        "signingKey": "Context-token signing keypair is not generated."
+      }
+    },
+    "signingKey": {
+      "title": "Context-token signing keypair",
+      "description": "ES256 keypair used to sign Aimer context tokens. Separate from the JWT and mTLS keys so trust domains stay independent. Compare the thumbprint shown here with the value displayed on aimer-web's environment registration screen before approving the registration.",
+      "emptyDescription": "No keypair has been generated yet. Generate one to start the trust-establishment flow.",
+      "slots": {
+        "active": "Active",
+        "pending": "Pending",
+        "previous": "Previous"
+      },
+      "fields": {
+        "thumbprintBase64Url": "Thumbprint (RFC 7638 SHA-256, base64url) — canonical",
+        "thumbprintBase64UrlHelper": "43 characters, no padding. Use this value when comparing against aimer-web — it is the canonical form.",
+        "thumbprintHexColons": "Thumbprint (hex with colons)",
+        "thumbprintHexColonsHelper": "Same SHA-256 rendered as 64 hex characters in 4-byte blocks. Visual aid for verbal/mental comparison.",
+        "publicJwk": "Public JWK (RFC 7517)",
+        "publicJwkHelper": "Public key only. The private key never leaves the server."
+      },
+      "rotation": {
+        "yellowTitle": "Rotation recommended within 30 days",
+        "redTitle": "Rotation recommended within 7 days",
+        "overdueTitle": "Rotation overdue",
+        "body": "Recommended rotation date: {date}. Use Rotate to mint a new pending kid, then Switch once aimer-web's trust registry has been updated."
+      },
+      "actions": {
+        "generate": "Generate",
+        "rotate": "Rotate",
+        "switch": "Switch to new kid",
+        "deactivate": "Deactivate old kid"
+      },
+      "switch": {
+        "guidanceTitle": "Pending kid awaiting Switch",
+        "guidanceBody": "Before switching, transmit the new kid's thumbprint out-of-band and register it on aimer-web's trust registry. Switching before registration causes context tokens signed by the new kid to be rejected.",
+        "confirmCheckbox": "I confirmed the new kid has been registered on aimer-web's trust registry."
+      },
+      "rotateConfirm": {
+        "title": "Mint a new pending kid?",
+        "body": "A new ES256 keypair will be generated and stored alongside the active kid. The active kid keeps signing tokens until you Switch."
+      },
+      "switchConfirm": {
+        "title": "Switch to the new kid?",
+        "body": "The pending kid will become active and the previous kid will be retained briefly for in-flight context-token verification on aimer-web. This action takes effect immediately."
+      },
+      "deactivateConfirm": {
+        "title": "Deactivate previous kid?",
+        "body": "The previous kid's private key will be removed from disk. aimer-web continues to verify pre-switch tokens against its own trust registry independently."
+      },
+      "deactivate": {
+        "windowEnds": "Auto-eligible from {date}"
+      }
+    },
+    "settings": {
+      "title": "System settings",
+      "description": "These settings identify this AICE instance to aimer-web and tell it where to deliver context tokens.",
+      "aiceIdLabel": "aice_id",
+      "aiceIdPlaceholder": "aice-kepco.example.com",
+      "aiceIdHelper": "Deployment hostname (RFC 1123). Used as the JWT iss claim and as the aice_id claim sent to aimer-web. Aimer-web's trust_registry uses this as the lookup key, so it must match the value registered there.",
+      "bridgeUrlLabel": "aimer_web_bridge_url",
+      "bridgeUrlPlaceholder": "https://aimer.example.com",
+      "bridgeUrlHelper": "Base URL of the aimer-web instance whose /api/auth/bridge endpoint receives the multipart POST. HTTPS only. The path is normalized to a canonical form (no trailing slash).",
+      "saveAiceId": "Save aice_id",
+      "saveBridgeUrl": "Save bridge URL",
+      "saving": "Saving…",
+      "effectWarning": {
+        "title": "Re-registration required after this change",
+        "body": "After this change, the operator must re-register this environment on aimer-web. Existing registrations are invalidated and any context tokens issued in the interim will be rejected.\n\nContinue?",
+        "confirm": "Save and continue"
+      }
+    },
+    "customerExternalKey": {
+      "line": "Customer external_key configured: {configured} / {total} customers.",
+      "linkLabel": "Manage customers →",
+      "note": "external_key is a per-customer setting and does not affect system-wide setup status. The Send to Aimer button is independently disabled per customer until each customer's external_key is populated."
+    },
+    "errors": {
+      "actionFailed": "Operation failed. See the error toast for details and retry."
+    },
+    "success": {
+      "generate": "Signing keypair generated.",
+      "rotate": "Pending kid generated. Register it on aimer-web's trust registry, then Switch.",
+      "switch": "Switched to the new kid. Aimer-web should already accept the new kid before Switch.",
+      "deactivate": "Previous kid deactivated.",
+      "settingSaved": "Setting saved. Re-register this environment on aimer-web."
+    }
   },
   "auditLogs": {
     "title": "Audit Logs",
@@ -167,7 +270,12 @@
       "node_shutdown": "Node shutdown",
       "node_apply": "Node apply",
       "service_draft_save": "Service draft save",
-      "service_set_mode": "Service mode change"
+      "service_set_mode": "Service mode change",
+      "aimer_signing_key_generated": "Aimer signing key generated",
+      "aimer_signing_key_rotated": "Aimer signing key rotated",
+      "aimer_signing_key_switched": "Aimer signing key switched",
+      "aimer_signing_key_deactivated": "Aimer signing key deactivated",
+      "aimer_integration_setting_changed": "Aimer integration setting changed"
     },
     "targetTypes": {
       "account": "Account",

@@ -37,6 +37,20 @@ export async function register() {
     await initStatelessKeys(getPublicKeyData());
     await emergencyMfaReset();
     await installMtlsSighupHandler();
+
+    // Surface a warning when the Aimer context-token signing key file
+    // exists but its mode drifted from 0600 (#437).  The admin page
+    // also alerts on this; the boot-time log gives operators an
+    // earlier signal in container logs.
+    const { checkFilePermissionsOk, aimerSigningKeyFilePath } = await import(
+      "@/lib/aimer/signing-key"
+    );
+    const aimerKeyPerm = checkFilePermissionsOk();
+    if (!aimerKeyPerm.ok) {
+      console.warn(
+        `[aimer-signing-key] On-disk file ${aimerSigningKeyFilePath()} has mode ${aimerKeyPerm.observed} instead of 0600. Restore correct permissions before continuing.`,
+      );
+    }
   }
 }
 
