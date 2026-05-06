@@ -281,16 +281,33 @@ the `decisions/` directory for detailed design records.
 ## HTTPS
 
 Production deployments must be served over HTTPS. The nginx reverse
-proxy handles TLS termination and redirects all HTTP traffic to HTTPS.
+proxy handles TLS termination; the prod profile only publishes the
+HTTPS listener on the host (see "Production" below).
 
 ### Production
 
 The production nginx config (`infra/nginx/nginx.prod.conf`) enables:
 
-- HTTP → HTTPS redirect (port 80 → 443)
 - HSTS with a 1-year `max-age` and `includeSubDomains`
 - Security headers: `X-Frame-Options`, `X-Content-Type-Options`,
   `Referrer-Policy`
+
+The `nginx-prod` compose service publishes the container's TLS
+listener (`:443`) on host port `9443` by default — i.e. the app is
+reachable at `https://<host>:9443`. The non-standard port leaves
+host `:443` free for an internet-facing peer (e.g. `aimer-web` in
+the bridge handoff) on the same machine and avoids collisions on
+host OSes that already bind `:80`. Operators who want the standard
+`:443` (or to publish `:80` for an HTTP→HTTPS redirect handled by
+the container's internal `listen 80` block) can re-publish via a
+local `docker-compose.override.yml`. Note that the internal redirect
+emits `https://$host$request_uri`, so reopening host `:80` without
+also publishing host `:443` will land the redirect on a closed port.
+
+**Migration note.** This default changed from `80:80, 443:443` to
+`9443:443`. Operators relying on the previous default need to
+update bookmarks and any reverse-proxy upstream from `:443` to
+`:9443`, or pin the old mapping in their override.
 
 `Content-Security-Policy-Report-Only` is emitted by the Next.js app
 (per-request nonce — nginx leaves the header untouched). Enforcement
@@ -393,14 +410,21 @@ audit table.
    (e.g. `.env.local`) is the natural place to keep them.
 
    At minimum also set `CSRF_SECRET`, the GraphQL endpoints, and:
-   - `EXPECTED_ORIGIN=https://your.public.host` so the CSRF/Origin
-     guard accepts mutation requests through the HTTPS proxy. For
-     the prod profile, also set `WEBAUTHN_RP_ORIGIN` to the same
-     public HTTPS origin and `WEBAUTHN_RP_ID` to its host
+   - `EXPECTED_ORIGIN=https://your.public.host:9443` so the
+     CSRF/Origin guard accepts mutation requests through the HTTPS
+     proxy. The `:9443` suffix matches the default `nginx-prod`
+     host-port mapping (`9443:443`) — the browser sends the port in
+     the `Origin` header, and any mismatch with `EXPECTED_ORIGIN`
+     causes every state-changing request to be rejected. Drop the
+     port suffix only when an external reverse proxy terminates TLS
+     on standard `:443` (in which case the operator typically also
+     publishes nginx-prod on host `:443` via override). The prod
+     profile also needs `WEBAUTHN_RP_ORIGIN` set to that same full
+     origin and `WEBAUTHN_RP_ID` set to its host
      (e.g. `WEBAUTHN_RP_ID=your.public.host`,
-     `WEBAUTHN_RP_ORIGIN=https://your.public.host`). The two env
-     vars guard different code paths — the CSRF/Origin guard and
-     the WebAuthn ceremony — but share the same value in this
+     `WEBAUTHN_RP_ORIGIN=https://your.public.host:9443`). The two
+     env vars guard different code paths — the CSRF/Origin guard
+     and the WebAuthn ceremony — but share the same value in this
      deployment. Leaving `WEBAUTHN_RP_ORIGIN` at its dev fallback
      silently breaks MFA enrollment on the prod profile.
    - One of `JWT_SIGNING_KEY_FILE=<path>` (recommended — a Secret
