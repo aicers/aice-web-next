@@ -290,8 +290,6 @@ export function RoleFormDialog({
                   <div className="flex flex-wrap gap-x-6 gap-y-2">
                     {perms.map((perm) => {
                       const checkboxId = `perm-${perm}`;
-                      // Extract action part: "accounts:read" → "read"
-                      const action = perm.split(":")[1];
                       return (
                         <div
                           key={perm}
@@ -303,7 +301,7 @@ export function RoleFormDialog({
                             onCheckedChange={() => form.togglePermission(perm)}
                           />
                           <label htmlFor={checkboxId}>
-                            {t(`permissionActions.${action}`)}
+                            {t(`permissionLabels.${perm}`)}
                           </label>
                         </div>
                       );

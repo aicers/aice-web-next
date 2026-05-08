@@ -56,6 +56,7 @@ const SECURITY_MONITOR_EQUIVALENT_PERMISSIONS: ReadonlySet<string> = new Set([
   "detection:read",
   "nodes:read",
   "services:read",
+  "triage:read",
 ]);
 
 function hasNonMonitorPermission(permissions: string[]): boolean {

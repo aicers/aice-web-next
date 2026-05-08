@@ -140,6 +140,34 @@ describe("RoleFormDialog rendering", () => {
     }
   });
 
+  it("renders the triage group and labels each triage permission by its full key (#454)", () => {
+    // Phase 1.A-4 introduces three triple-segment permissions
+    // (`triage:policy:write`, `triage:exclusion:write`,
+    // `triage:exclusion:global:write`) whose action segment alone
+    // (`policy` / `exclusion`) is not unique. The dialog therefore
+    // looks up `permissionLabels.<full-permission-key>` instead of the
+    // old action-only `permissionActions.<action>` lookup. A regression
+    // that reverted the lookup would collapse "Manage policies" /
+    // "Manage exclusions" / "Manage global exclusions" into a single
+    // ambiguous "Write" label and reintroduce duplicate-id collisions
+    // on the two `:exclusion:` permissions.
+    const html = renderToStaticMarkup(
+      <RoleFormDialog open onOpenChange={noop} onSuccess={noop} />,
+    );
+
+    expect(html).toContain("permissionGroups.triage");
+
+    for (const perm of [
+      "triage:read",
+      "triage:policy:write",
+      "triage:exclusion:write",
+      "triage:exclusion:global:write",
+    ]) {
+      expect(html).toContain(`id="perm-${perm}"`);
+      expect(html).toContain(`permissionLabels.${perm}`);
+    }
+  });
+
   it("seeds initial selected permissions from the edited role on the very first render", () => {
     const role = {
       id: 99,

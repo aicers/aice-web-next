@@ -1047,13 +1047,35 @@
       "detection": "탐지",
       "nodes": "노드",
       "services": "서비스",
-      "system-settings": "시스템 설정"
+      "system-settings": "시스템 설정",
+      "triage": "분류"
     },
-    "permissionActions": {
-      "read": "읽기",
-      "write": "쓰기",
-      "delete": "삭제",
-      "access-all": "전체 접근"
+    "permissionLabels": {
+      "accounts:read": "읽기",
+      "accounts:write": "쓰기",
+      "accounts:delete": "삭제",
+      "roles:read": "읽기",
+      "roles:write": "쓰기",
+      "roles:delete": "삭제",
+      "customers:read": "읽기",
+      "customers:write": "쓰기",
+      "customers:delete": "삭제",
+      "customers:access-all": "전체 접근",
+      "audit-logs:read": "읽기",
+      "dashboard:read": "읽기",
+      "dashboard:write": "쓰기",
+      "detection:read": "읽기",
+      "nodes:read": "읽기",
+      "nodes:write": "쓰기",
+      "nodes:delete": "삭제",
+      "services:read": "읽기",
+      "services:write": "쓰기",
+      "system-settings:read": "읽기",
+      "system-settings:write": "쓰기",
+      "triage:read": "읽기",
+      "triage:policy:write": "정책 관리",
+      "triage:exclusion:write": "제외 규칙 관리",
+      "triage:exclusion:global:write": "전역 제외 규칙 관리"
     }
   },
   "dashboard": {

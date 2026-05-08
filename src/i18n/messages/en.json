@@ -1047,13 +1047,35 @@
       "detection": "Detection",
       "nodes": "Nodes",
       "services": "Services",
-      "system-settings": "System Settings"
+      "system-settings": "System Settings",
+      "triage": "Triage"
     },
-    "permissionActions": {
-      "read": "Read",
-      "write": "Write",
-      "delete": "Delete",
-      "access-all": "Access All"
+    "permissionLabels": {
+      "accounts:read": "Read",
+      "accounts:write": "Write",
+      "accounts:delete": "Delete",
+      "roles:read": "Read",
+      "roles:write": "Write",
+      "roles:delete": "Delete",
+      "customers:read": "Read",
+      "customers:write": "Write",
+      "customers:delete": "Delete",
+      "customers:access-all": "Access All",
+      "audit-logs:read": "Read",
+      "dashboard:read": "Read",
+      "dashboard:write": "Write",
+      "detection:read": "Read",
+      "nodes:read": "Read",
+      "nodes:write": "Write",
+      "nodes:delete": "Delete",
+      "services:read": "Read",
+      "services:write": "Write",
+      "system-settings:read": "Read",
+      "system-settings:write": "Write",
+      "triage:read": "Read",
+      "triage:policy:write": "Manage policies",
+      "triage:exclusion:write": "Manage exclusions",
+      "triage:exclusion:global:write": "Manage global exclusions"
     }
   },
   "dashboard": {

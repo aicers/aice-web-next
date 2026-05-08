@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { exportJWK, generateKeyPair } from "jose";
+import { VALID_PERMISSIONS } from "../src/lib/auth/permission-defs";
 import {
   readAllFixtureManifests,
   runAllFixturePreflights,
@@ -71,29 +72,9 @@ const MAX_WORKERS = 8;
 
 // All permissions — same as System Administrator, but with a different
 // role name so worker accounts don't count toward the System Admin limit.
-const ALL_PERMISSIONS = [
-  "accounts:read",
-  "accounts:write",
-  "accounts:delete",
-  "roles:read",
-  "roles:write",
-  "roles:delete",
-  "customers:read",
-  "customers:write",
-  "customers:delete",
-  "customers:access-all",
-  "audit-logs:read",
-  "system-settings:read",
-  "system-settings:write",
-  "dashboard:read",
-  "dashboard:write",
-  "detection:read",
-  "nodes:read",
-  "nodes:write",
-  "nodes:delete",
-  "services:read",
-  "services:write",
-];
+// Derived from VALID_PERMISSIONS so new permissions added to the shared
+// definition are automatically granted to E2E workers.
+const ALL_PERMISSIONS = [...VALID_PERMISSIONS];
 
 async function ensureWorkerAccounts(): Promise<void> {
   await createTestRole(WORKER_ROLE, ALL_PERMISSIONS, "E2E worker role");

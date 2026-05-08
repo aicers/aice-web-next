@@ -79,6 +79,43 @@ describe("account-role-policy", () => {
     expect(policy.maxCustomerAssignments).toBe(1);
   });
 
+  it("treats triage:read as Security Monitor-equivalent", () => {
+    // Migration 0030 (#454) seeds `triage:read` onto Security Monitor.
+    // Without this in the allow-list, Security Monitor accounts would
+    // silently lose `tenantManageable: true` after the migration runs
+    // and Tenant Administrators could no longer create or manage them.
+    const policy = deriveAccountRolePolicy({
+      id: 12,
+      name: "Security Monitor",
+      permissions: [
+        "audit-logs:read",
+        "dashboard:read",
+        "detection:read",
+        "nodes:read",
+        "services:read",
+        "triage:read",
+      ],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(true);
+    expect(policy.tenantManageable).toBe(true);
+    expect(policy.maxCustomerAssignments).toBe(1);
+  });
+
+  it("does not treat triage:policy:write as Security Monitor-equivalent", () => {
+    // The three `triage:*:write` permissions are placeholders in
+    // Phase 1.A but are intentionally NOT in the allow-list — granting
+    // any of them must disqualify the role from monitor equivalence.
+    const policy = deriveAccountRolePolicy({
+      id: 13,
+      name: "Custom Triage Editor",
+      permissions: ["triage:read", "triage:policy:write"],
+    });
+
+    expect(policy.isSecurityMonitorEquivalent).toBe(false);
+    expect(policy.tenantManageable).toBe(false);
+  });
+
   it("does not treat nodes:write as Security Monitor-equivalent", () => {
     const policy = deriveAccountRolePolicy({
       id: 10,
