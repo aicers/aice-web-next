@@ -22,6 +22,12 @@ export const ALL_PERMISSIONS = {
   nodes: ["nodes:read", "nodes:write", "nodes:delete"],
   services: ["services:read", "services:write"],
   "system-settings": ["system-settings:read", "system-settings:write"],
+  triage: [
+    "triage:read",
+    "triage:policy:write",
+    "triage:exclusion:write",
+    "triage:exclusion:global:write",
+  ],
 } as const;
 
 /** Flat set of all valid permission strings. */

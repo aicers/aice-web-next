@@ -149,6 +149,7 @@ rm "$DATA_DIR/.emergency_mfa_reset_consumed_<username>"
 |------|------|
 | 대시보드 | `dashboard:read`, `dashboard:write` |
 | 탐지 | `detection:read` |
+| 분류 | `triage:read`, `triage:policy:write`, `triage:exclusion:write`, `triage:exclusion:global:write` |
 | 계정 | `accounts:read`, `accounts:write`, `accounts:delete` |
 | 역할 | `roles:read`, `roles:write`, `roles:delete` |
 | 고객 | `customers:read`, `customers:write`, `customers:delete`, `customers:access-all` |

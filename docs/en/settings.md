@@ -153,6 +153,7 @@ resource:
 |-------|-------------|
 | Dashboard | `dashboard:read`, `dashboard:write` |
 | Detection | `detection:read` |
+| Triage | `triage:read`, `triage:policy:write`, `triage:exclusion:write`, `triage:exclusion:global:write` |
 | Accounts | `accounts:read`, `accounts:write`, `accounts:delete` |
 | Roles | `roles:read`, `roles:write`, `roles:delete` |
 | Customers | `customers:read`, `customers:write`, `customers:delete`, `customers:access-all` |
