@@ -119,7 +119,7 @@ importers:
         version: 7946.0.16
       '@types/node':
         specifier: ^24
-        version: 24.12.2
+        version: 24.12.3
       '@types/pg':
         specifier: ^8.18.0
         version: 8.20.0
@@ -149,7 +149,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.5
-        version: 4.1.5(@types/node@24.12.2)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.2)(jiti@2.6.1))
+        version: 4.1.5(@types/node@24.12.3)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.3)(jiti@2.6.1))
 
 packages:
 
@@ -1760,8 +1760,8 @@ packages:
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
 
-  '@types/node@24.12.2':
-    resolution: {integrity: sha512-A1sre26ke7HDIuY/M23nd9gfB+nrmhtYyMINbjI1zHJxYteKR6qSMX56FsmjMcDb3SMcjJg5BiRRgOCC/yBD0g==}
+  '@types/node@24.12.3':
+    resolution: {integrity: sha512-8oljBDGun9cIsZRJR6fkihn0TSXJI0UDOOhncYaERq6M0JMDoPLxyscwruJcb4GKS6dvK/d8xebYBg27h/duaQ==}
 
   '@types/pg@8.20.0':
     resolution: {integrity: sha512-bEPFOaMAHTEP1EzpvHTbmwR8UsFyHSKsRisLIHVMXnpNefSbGA1bD6CVy+qKjGSqmZqNqBDV2azOBo8TgkcVow==}
@@ -4512,13 +4512,13 @@ snapshots:
 
   '@types/ms@2.1.0': {}
 
-  '@types/node@24.12.2':
+  '@types/node@24.12.3':
     dependencies:
       undici-types: 7.16.0
 
   '@types/pg@8.20.0':
     dependencies:
-      '@types/node': 24.12.2
+      '@types/node': 24.12.3
       pg-protocol: 1.13.0
       pg-types: 2.2.0
 
@@ -4552,13 +4552,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.5(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.2)(jiti@2.6.1))':
+  '@vitest/mocker@4.1.5(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.3)(jiti@2.6.1))':
     dependencies:
       '@vitest/spy': 4.1.5
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.2)(jiti@2.6.1)
+      vite: 8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.3)(jiti@2.6.1)
 
   '@vitest/pretty-format@4.1.5':
     dependencies:
@@ -5744,7 +5744,7 @@ snapshots:
       d3-time: 3.1.0
       d3-timer: 3.0.1
 
-  vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.2)(jiti@2.6.1):
+  vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.3)(jiti@2.6.1):
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.4
@@ -5752,17 +5752,17 @@ snapshots:
       rolldown: 1.0.0-rc.12(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)
       tinyglobby: 0.2.16
     optionalDependencies:
-      '@types/node': 24.12.2
+      '@types/node': 24.12.3
       fsevents: 2.3.3
       jiti: 2.6.1
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'
 
-  vitest@4.1.5(@types/node@24.12.2)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.2)(jiti@2.6.1)):
+  vitest@4.1.5(@types/node@24.12.3)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.3)(jiti@2.6.1)):
     dependencies:
       '@vitest/expect': 4.1.5
-      '@vitest/mocker': 4.1.5(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.2)(jiti@2.6.1))
+      '@vitest/mocker': 4.1.5(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.3)(jiti@2.6.1))
       '@vitest/pretty-format': 4.1.5
       '@vitest/runner': 4.1.5
       '@vitest/snapshot': 4.1.5
@@ -5779,10 +5779,10 @@ snapshots:
       tinyexec: 1.1.1
       tinyglobby: 0.2.16
       tinyrainbow: 3.1.0
-      vite: 8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.2)(jiti@2.6.1)
+      vite: 8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.10.0)(@types/node@24.12.3)(jiti@2.6.1)
       why-is-node-running: 2.3.0
     optionalDependencies:
-      '@types/node': 24.12.2
+      '@types/node': 24.12.3
       jsdom: 29.1.1(@noble/hashes@2.2.0)
     transitivePeerDependencies:
       - msw
