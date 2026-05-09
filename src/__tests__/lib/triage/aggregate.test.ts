@@ -127,4 +127,55 @@ describe("aggregateTriageEvents", () => {
       "2026-05-09T10:00:00.000Z",
     ]);
   });
+
+  it("populates asset.events from baseline-passing events only", () => {
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        category: "EXFILTRATION",
+        time: "2026-05-09T08:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.1",
+        category: "RECONNAISSANCE",
+        time: "2026-05-09T10:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.1",
+        category: "DISCOVERY",
+        time: "2026-05-09T11:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    const [asset] = result.assets;
+    expect(asset.detectedCount).toBe(3);
+    expect(asset.triagedCount).toBe(1);
+    expect(asset.events).toHaveLength(1);
+    expect(asset.events[0].category).toBe("EXFILTRATION");
+  });
+
+  it("keeps the scored event visible even with many newer non-baseline events", () => {
+    // Regression: previously asset.events held every event, so a
+    // single old triaged event could be pushed past the 50-event
+    // detail window by newer non-whitelisted noise. The detail panel
+    // would then show a positive score row whose events were all
+    // score-0, breaking explainability.
+    const triagedEvent = ev({
+      origAddr: "10.0.0.1",
+      category: "EXFILTRATION",
+      time: "2026-05-08T00:00:00.000Z",
+    });
+    const noise: TriageEvent[] = Array.from({ length: 60 }, (_, i) =>
+      ev({
+        origAddr: "10.0.0.1",
+        category: "RECONNAISSANCE",
+        time: `2026-05-09T${String(i % 24).padStart(2, "0")}:00:00.000Z`,
+      }),
+    );
+    const result = aggregateTriageEvents([triagedEvent, ...noise], false);
+    const [asset] = result.assets;
+    expect(asset.score).toBeGreaterThan(0);
+    expect(asset.events).toHaveLength(1);
+    expect(asset.events[0].category).toBe("EXFILTRATION");
+  });
 });

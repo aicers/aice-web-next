@@ -86,8 +86,13 @@ export function aggregateTriageEvents(
     if (triaged) {
       acc.triagedCount += 1;
       acc.score += score;
+      // Only baseline-passing events feed the asset detail panel so
+      // the row's score is always explainable: a mixed asset that has
+      // both whitelisted and non-whitelisted events must not surface
+      // score-0 noise that could push the actual scored events out of
+      // the 50-event detail window.
+      acc.events.push(event);
     }
-    acc.events.push(event);
     byAddress.set(address, acc);
   }
 

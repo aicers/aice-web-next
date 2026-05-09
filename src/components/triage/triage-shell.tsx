@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import {
   TRIAGE_HARD_EVENT_CAP,
@@ -60,6 +60,16 @@ export function TriageShell({
   const [pending, startTransition] = useTransition();
   const [mode, setMode] = useState<TriageMode>("baseline");
 
+  // Resync local state to the server-resolved period whenever the
+  // page rerenders with a new `initialPeriod`. The server clamps
+  // out-of-range URL params (`parseTriagePeriod`), so without this
+  // the picker can keep displaying the operator's submitted range
+  // while the funnel/asset list reflect the clamped range — the
+  // visible period would no longer match the aggregated period.
+  useEffect(() => {
+    setPeriod(initialPeriod);
+  }, [initialPeriod]);
+
   function applyPeriod(next: TriagePeriod) {
     setPeriod(next);
     const params = new URLSearchParams();
@@ -67,7 +77,9 @@ export function TriageShell({
     params.set("end", next.endIso);
     startTransition(() => {
       // Push the new range to the URL so the server component
-      // re-renders with a fresh slice. The server clamps + reloads.
+      // re-renders with a fresh slice. The server clamps + reloads,
+      // and the useEffect above syncs the picker back to the
+      // clamped range.
       router.replace(`?${params.toString()}`, { scroll: false });
     });
   }
