@@ -62,10 +62,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 import type pg from "pg";
 
-import {
-  CustomerNotFoundError,
-  getCustomerPool,
-} from "@/lib/triage/policy/customer-db";
+import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
 /**
  * Phase 1.A baseline-version marker stamped on every row this runner
@@ -328,26 +325,10 @@ async function drivePages(
 export async function runTriageBaselineCadence(
   customerId: number,
 ): Promise<CadenceRunResult> {
-  let pool: pg.Pool;
-  try {
-    pool = await getCustomerPool(customerId);
-  } catch (err) {
-    if (err instanceof CustomerNotFoundError) {
-      // Treat unknown customers as a clean "skip" so a stale schedule
-      // entry pointing at a deactivated customer does not page the
-      // operator. The route handler returns 404 instead — this branch
-      // is only reachable from in-process callers (tests, future
-      // batched drivers).
-      return {
-        customerId,
-        status: "skipped",
-        observedInserted: 0,
-        baselineInserted: 0,
-        lastEventCursor: null,
-      };
-    }
-    throw err;
-  }
+  // Lets `CustomerNotFoundError` propagate so the route handler can
+  // surface it as a 404. In-process callers (future batched drivers,
+  // tests) catch the same error type if they want a "skip" instead.
+  const pool = await getCustomerPool(customerId);
 
   const client = await pool.connect();
   try {

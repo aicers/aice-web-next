@@ -240,16 +240,15 @@ describe("runTriageBaselineCadence — advisory lock + status machine", () => {
     expect(failureWrite?.params?.[0]).toBe("lock probe blew up");
   });
 
-  it("returns status=skipped (not throws) when getCustomerPool rejects with CustomerNotFoundError", async () => {
+  it("propagates CustomerNotFoundError so the route handler can return 404", async () => {
     mockGetCustomerPool.mockRejectedValue(new MockCustomerNotFoundError(99));
 
     const { runTriageBaselineCadence } = await import(
       "@/lib/triage/baseline/cadence"
     );
-    const result = await runTriageBaselineCadence(99);
-
-    expect(result.status).toBe("skipped");
-    expect(result.customerId).toBe(99);
+    await expect(runTriageBaselineCadence(99)).rejects.toBeInstanceOf(
+      MockCustomerNotFoundError,
+    );
   });
 
   it("re-throws unexpected errors from getCustomerPool", async () => {
