@@ -99,6 +99,11 @@ export function aggregateTriageEvents(
   }
 
   const assets: TriageAsset[] = Array.from(byAddress.values())
+    // Per Phase 1.A: the asset list ranks assets that passed the
+    // baseline rule. Addresses whose events are all non-triaged
+    // (score 0) drop out so the empty state can read "No assets
+    // matched the baseline rule in this period."
+    .filter((acc) => acc.triagedCount > 0)
     .map(
       (acc): TriageAsset => ({
         address: acc.address,

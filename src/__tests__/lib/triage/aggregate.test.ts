@@ -53,14 +53,27 @@ describe("aggregateTriageEvents", () => {
       ev({ origAddr: "10.0.0.3", category: "RECONNAISSANCE" }),
     ];
     const result = aggregateTriageEvents(events, false);
+    // 10.0.0.3 only emits non-triaged events, so it must not appear
+    // in the asset list — that empty-asset case is what powers the
+    // "No assets matched the baseline rule" empty state.
     expect(result.assets.map((a) => a.address)).toEqual([
       "10.0.0.1",
       "10.0.0.2",
-      "10.0.0.3",
     ]);
     expect(result.assets[0].score).toBe(2);
     expect(result.assets[1].score).toBe(1.5);
-    expect(result.assets[2].score).toBe(0);
+  });
+
+  it("omits assets whose events all fail the baseline rule", () => {
+    const events: TriageEvent[] = [
+      ev({ origAddr: "10.0.0.1", category: "RECONNAISSANCE" }),
+      ev({ origAddr: "10.0.0.2", category: "DISCOVERY" }),
+      ev({ origAddr: "10.0.0.2", category: null }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    expect(result.funnel.detected).toBe(3);
+    expect(result.funnel.triaged).toBe(0);
+    expect(result.assets).toEqual([]);
   });
 
   it("propagates the truncated flag into the result", () => {
