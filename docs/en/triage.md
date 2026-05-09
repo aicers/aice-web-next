@@ -229,9 +229,13 @@ empty.
 
 Each section ranks its rows by per-event score, descending; ties
 break newest-first. The default view shows up to **10 rows** per
-section. A **Show more** affordance expands to **50 rows**; if the
-underlying match set is larger than 50, a `Showing 50 of N` hint is
-rendered without further expansion.
+section. A **Show more** affordance expands to **50 rows**. Once the
+section is expanded and the underlying match set is larger than the
+50 rows on screen, a `Showing 50 of N` hint appears alongside the
+**Show less** affordance. The hint is suppressed while the section
+is collapsed (the visible row count is 10, not 50, so a "Showing 50"
+hint there would contradict what is on screen) and when the expanded
+view fits the entire match set.
 
 The events that drive the focus (i.e., the events whose origAddr is
 the asset's address, or that share the breadcrumb's pivot value) are

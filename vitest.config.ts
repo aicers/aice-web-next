@@ -84,6 +84,11 @@ export default defineConfig({
             // `AlertDialog` whose Cancel preserves the trail and
             // whose Confirm clears it.
             "src/__tests__/components/triage/triage-shell.test.tsx",
+            // Issue #452 (Reviewer Round 5): pivot panel must hide the
+            // "Showing 50 of N" hint while the group is collapsed at
+            // the default 10 rows, and only surface it once the user
+            // clicks Show more.
+            "src/__tests__/components/triage/related-events-panel.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -116,6 +121,7 @@ export default defineConfig({
             "src/__tests__/components/events/aimer-banner.test.tsx",
             "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
             "src/__tests__/components/triage/triage-shell.test.tsx",
+            "src/__tests__/components/triage/related-events-panel.test.tsx",
           ],
         },
       },

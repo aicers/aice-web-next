@@ -137,15 +137,17 @@ function PivotSection({
     !expanded && section.events.length > PIVOT_GROUP_DEFAULT_ROWS;
   const showLessVisible =
     expanded && section.events.length > PIVOT_GROUP_DEFAULT_ROWS;
+  // Only render the "Showing X of N" hint when the user has expanded the
+  // group; collapsed groups show the default 10 rows and the hint would
+  // contradict what is actually on screen. Once expanded, the visible
+  // count is min(events.length, PIVOT_GROUP_EXPANDED_ROWS) — not just 50 —
+  // so the number reflects what is rendered when a group has between 11
+  // and 50 matches as well.
+  const visibleCount = visibleRows.length;
   const cappedHint =
-    section.totalCount > PIVOT_GROUP_EXPANDED_ROWS
+    expanded && section.totalCount > visibleCount
       ? labels.showingOfTemplate
-          .replace(
-            "{visible}",
-            COUNT_FORMAT.format(
-              Math.min(section.totalCount, PIVOT_GROUP_EXPANDED_ROWS),
-            ),
-          )
+          .replace("{visible}", COUNT_FORMAT.format(visibleCount))
           .replace("{total}", COUNT_FORMAT.format(section.totalCount))
       : null;
 

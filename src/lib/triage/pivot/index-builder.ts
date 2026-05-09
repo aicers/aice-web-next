@@ -228,8 +228,11 @@ function collectValues(
 /**
  * One section of the Related-events panel: a dimension and the rows
  * to render under it. `totalCount` is the full match count in the
- * loaded corpus (not capped at 50) so the "Showing 50 of N" hint is
- * accurate when N > 50.
+ * loaded corpus (not capped at 50) so the panel's "Showing N of M"
+ * hint can render the actually-visible row count once the operator
+ * clicks "Show more"; the hint is suppressed while the section is
+ * collapsed at the default-row cap so the count never disagrees
+ * with what is on screen.
  */
 export interface PivotPanelSection {
   dimension: PivotDimensionId;
