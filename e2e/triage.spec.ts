@@ -101,9 +101,9 @@ test("triage page renders shell affordances for an authorized user", async ({
   // Funnel section renders with all three labels.
   const funnel = page.getByRole("region", { name: "Funnel" });
   await expect(funnel).toBeVisible();
-  await expect(funnel.getByText("Detected")).toBeVisible();
-  await expect(funnel.getByText("Triaged")).toBeVisible();
-  await expect(funnel.getByText("Pass-through")).toBeVisible();
+  await expect(funnel.getByText("Detected", { exact: true })).toBeVisible();
+  await expect(funnel.getByText("Triaged", { exact: true })).toBeVisible();
+  await expect(funnel.getByText("Pass-through", { exact: true })).toBeVisible();
 
   // Empty asset list renders the empty-state copy from the labels.
   await expect(
