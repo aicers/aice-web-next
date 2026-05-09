@@ -26,6 +26,7 @@ import type {
   HostNetworkGroupInput,
   IpRangeInput,
   LearningMethod,
+  ThreatLevel,
   TrafficDirection,
 } from "./types";
 
@@ -34,6 +35,27 @@ const LEARNING_METHOD_VALUES = new Set<LearningMethod>([
   "UNSUPERVISED",
   "SEMI_SUPERVISED",
 ]);
+const THREAT_LEVEL_VALUE_SET = new Set<ThreatLevel>([
+  "VERY_LOW",
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "VERY_HIGH",
+]);
+/**
+ * Pre-bump persisted shape: `EventListFilterInput.levels: [Int!]` with
+ * `1=LOW, 2=MEDIUM, 3=HIGH` (the SDL only had three levels). The SDL
+ * bump (#480) widened the enum to five values and switched the field
+ * to `[ThreatLevel!]`, so saved filters and `?f=` blobs written before
+ * the bump still carry numeric codes. Map them to the enum on read so
+ * the level constraint survives the upgrade rather than silently
+ * dropping (which would broaden every existing filter).
+ */
+const LEGACY_NUMERIC_THREAT_LEVEL: Record<number, ThreatLevel> = {
+  1: "LOW",
+  2: "MEDIUM",
+  3: "HIGH",
+};
 const TRAFFIC_DIRECTION_VALUES = new Set<TrafficDirection>(["FROM", "TO"]);
 
 export function coerceFilter(value: unknown): Filter | null {
@@ -83,10 +105,20 @@ export function coerceEventListFilterInput(
     const arr = filterStringArray(v[key]);
     if (arr) out[key] = arr;
   }
-  const numberArrayFields = ["levels"] as const;
-  for (const key of numberArrayFields) {
-    const arr = filterNumberArray(v[key]);
-    if (arr) out[key] = arr;
+  if (Array.isArray(v.levels)) {
+    const arr: ThreatLevel[] = [];
+    for (const item of v.levels) {
+      if (
+        typeof item === "string" &&
+        THREAT_LEVEL_VALUE_SET.has(item as ThreatLevel)
+      ) {
+        arr.push(item as ThreatLevel);
+      } else if (typeof item === "number") {
+        const mapped = LEGACY_NUMERIC_THREAT_LEVEL[item];
+        if (mapped) arr.push(mapped);
+      }
+    }
+    if (arr.length > 0) out.levels = arr;
   }
   if (Array.isArray(v.categories)) {
     out.categories = v.categories.filter(
@@ -162,11 +194,4 @@ export function coerceIpRange(value: unknown): IpRangeInput | null {
 function filterStringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((item): item is string => typeof item === "string");
-}
-
-function filterNumberArray(value: unknown): number[] | null {
-  if (!Array.isArray(value)) return null;
-  return value.filter(
-    (item): item is number => typeof item === "number" && Number.isFinite(item),
-  );
 }

@@ -44,13 +44,6 @@ import {
   type ThreatLevel,
 } from "@/lib/detection/types";
 
-/** Numeric encoding of `ThreatLevel` used by `EventListFilterInput.levels`. */
-export const THREAT_LEVEL_TO_NUMBER: Record<ThreatLevel, number> = {
-  LOW: 1,
-  MEDIUM: 2,
-  HIGH: 3,
-};
-
 /**
  * Minimum event shape required to build a locator. The curated
  * `Event` union exposes these fields on every subtype that carries
@@ -100,7 +93,13 @@ export interface EventLocator {
   level: ThreatLevel;
 }
 
-const VALID_LEVELS: readonly ThreatLevel[] = ["LOW", "MEDIUM", "HIGH"];
+const VALID_LEVELS: readonly ThreatLevel[] = [
+  "VERY_LOW",
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "VERY_HIGH",
+];
 
 function isThreatLevel(value: unknown): value is ThreatLevel {
   return (

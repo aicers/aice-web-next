@@ -57,7 +57,7 @@ test.beforeAll(async () => {
         source: INVESTIGATION_EVENT.origAddr,
         destination: INVESTIGATION_EVENT.respAddr,
         kinds: [INVESTIGATION_EVENT.__typename],
-        levels: [3],
+        levels: [INVESTIGATION_EVENT.level],
       },
     },
     response: {

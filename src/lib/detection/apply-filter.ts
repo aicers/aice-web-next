@@ -9,7 +9,11 @@ import {
   selectionForSubmission,
 } from "./filter-chips";
 import { type DetectionFilterDraft, isConfidenceDefault } from "./filter-draft";
-import type { EventListFilterInput, LearningMethod } from "./types";
+import type {
+  EventListFilterInput,
+  LearningMethod,
+  ThreatLevel,
+} from "./types";
 
 /**
  * Categorical option bundles used to normalize drafted selections
@@ -19,7 +23,7 @@ import type { EventListFilterInput, LearningMethod } from "./types";
  * server→`"use client"` import.
  */
 export interface CategoricalFilterOptions {
-  levels: readonly MultiSelectOptionRef<number>[];
+  levels: readonly MultiSelectOptionRef<ThreatLevel>[];
   countries: readonly MultiSelectOptionRef<string>[];
   learningMethods: readonly MultiSelectOptionRef<LearningMethod>[];
   categories: readonly MultiSelectOptionRef<number>[];
@@ -173,9 +177,17 @@ export function buildAppliedFilter(
   }
 
   if (categoricalOptions) {
+    // `levels` is treated as an open list because the drawer only
+    // exposes the three-level subset (`LOW` / `MEDIUM` / `HIGH`)
+    // while the schema also defines `VERY_LOW` and `VERY_HIGH`.
+    // Without `openList`, picking all three visible values would
+    // saturate the option list and drop the field, silently
+    // broadening the query to include the two values the user
+    // never saw.
     const levels = selectionForSubmission(
       applied.levels,
       categoricalOptions.levels,
+      { openList: true },
     );
     if (levels) input.levels = levels;
     const countries = selectionForSubmission(

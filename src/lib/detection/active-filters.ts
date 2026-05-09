@@ -26,7 +26,12 @@ import {
 } from "./endpoint-filter";
 import type { Filter } from "./filter";
 import { CONFIDENCE_DEFAULT_MAX, CONFIDENCE_DEFAULT_MIN } from "./filter-draft";
-import type { EventListFilterInput, FlowKind, LearningMethod } from "./types";
+import type {
+  EventListFilterInput,
+  FlowKind,
+  LearningMethod,
+  ThreatLevel,
+} from "./types";
 
 /**
  * Identifies which active chip a × press should remove. Each shape
@@ -59,9 +64,10 @@ export type ChipRemoveTarget =
     }
   | {
       kind: "categoricalValue";
-      field: "levels" | "categories";
+      field: "categories";
       value: number;
     }
+  | { kind: "categoricalValue"; field: "levels"; value: ThreatLevel }
   | { kind: "categoricalValue"; field: "countries" | "kinds"; value: string }
   | {
       kind: "categoricalValue";

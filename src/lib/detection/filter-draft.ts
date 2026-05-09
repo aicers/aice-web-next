@@ -1,6 +1,6 @@
 import type { EndpointEntry } from "./endpoint-filter";
 import type { PeriodKey } from "./period";
-import type { FlowKind, LearningMethod } from "./types";
+import type { FlowKind, LearningMethod, ThreatLevel } from "./types";
 
 /**
  * De-dupe and trim-normalize a tag-input array. Mirrors the drawer's
@@ -70,7 +70,7 @@ export interface DetectionFilterDraft {
    * write strings, never numbers.
    */
   customerIds: number[];
-  levels: readonly number[];
+  levels: readonly ThreatLevel[];
   countries: readonly string[];
   learningMethods: readonly LearningMethod[];
   categories: readonly number[];

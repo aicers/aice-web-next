@@ -5,10 +5,7 @@ import type { DocumentNode } from "graphql";
 import { resolveEffectiveCustomerIds } from "@/lib/auth/customer-scope";
 import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
-import {
-  type EventLocator,
-  THREAT_LEVEL_TO_NUMBER,
-} from "@/lib/events/event-locator";
+import type { EventLocator } from "@/lib/events/event-locator";
 import { graphqlRequest } from "@/lib/graphql/client";
 import { withReviewErrorMapping } from "@/lib/review/error-mapping";
 import {
@@ -54,6 +51,7 @@ import type {
   EventListResult,
   IpLocationResult,
   StringEventCounter,
+  ThreatLevelEventCounter,
   U8EventCounter,
 } from "./types";
 
@@ -334,8 +332,8 @@ export async function countEventsByLevel(
   filter: Filter,
   first: number,
   signal?: AbortSignal,
-): Promise<U8EventCounter> {
-  return dispatchCounter<U8EventCounter>(
+): Promise<ThreatLevelEventCounter> {
+  return dispatchCounter<ThreatLevelEventCounter>(
     session,
     filter,
     first,
@@ -489,7 +487,7 @@ export function locatorToEventListFilter(
     source: locator.origAddr,
     destination: locator.respAddr,
     kinds: [locator.kind],
-    levels: [THREAT_LEVEL_TO_NUMBER[locator.level]],
+    levels: [locator.level],
   };
 }
 

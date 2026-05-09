@@ -405,11 +405,13 @@ test("categorical multi-select: All toggle, substring search, and chip summary",
   await expect(filtersButton).toBeVisible({ timeout: 10_000 });
   await filtersButton.click();
 
-  // 1 ── Closed-list field (Threat Level): expand, flip the master
+  // 1 ── Open-list field (Threat Level): expand, flip the master
   // "All" toggle on, and confirm the trigger summary switches from
-  // "All" (the shared "no filter" wording) to the mid-state "N
-  // selected" format. Saturating a closed list still reads as "All"
-  // because saturated = no filter for Threat Level.
+  // "All" (empty = no filter) to the active "N selected" format. The
+  // drawer's three visible options (`LOW` / `MEDIUM` / `HIGH`) are a
+  // strict subset of the schema enum (`VERY_LOW` … `VERY_HIGH`), so
+  // saturation still actively constrains the query — the trigger
+  // must read "3 selected" rather than "All".
   const levelsTrigger = page.getByRole("button", { name: /Threat Level/ });
   await expect(levelsTrigger).toBeVisible();
   await expect(levelsTrigger).toHaveAttribute("aria-expanded", "false");
@@ -427,18 +429,21 @@ test("categorical multi-select: All toggle, substring search, and chip summary",
   await expect(levelsTrigger).toContainText("1 selected");
 
   // Clicking "All" selects every remaining option → 3/3 checked →
-  // trigger reads "All" again (saturated = no filter for closed list).
+  // trigger reads "3 selected" (open list keeps the active count even
+  // when every visible option is checked, because the submitted
+  // filter still constrains to the visible subset).
   await levelsPanel.getByLabel("All", { exact: true }).check();
   await expect(levelsPanel.getByLabel("Low")).toBeChecked();
   await expect(levelsPanel.getByLabel("Medium")).toBeChecked();
   await expect(levelsPanel.getByLabel("High")).toBeChecked();
-  await expect(levelsTrigger).toContainText("All");
+  await expect(levelsTrigger).toContainText("3 selected");
 
-  // Unchecking "All" clears everything → back to "All" (empty = no
-  // filter). Leave Threat Level cleared so the chip bar assertions
-  // below are not polluted.
+  // Unchecking "All" clears everything → trigger returns to "All"
+  // (empty = no filter). Leave Threat Level cleared so the chip bar
+  // assertions below are not polluted.
   await levelsPanel.getByLabel("All", { exact: true }).uncheck();
   await expect(levelsPanel.getByLabel("Low")).not.toBeChecked();
+  await expect(levelsTrigger).toContainText("All");
 
   // 2 ── Long list with substring search (Threat Country): searching
   // by raw ISO code narrows the visible options.

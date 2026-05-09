@@ -275,7 +275,12 @@
       "aimer_signing_key_rotated": "Aimer signing key rotated",
       "aimer_signing_key_switched": "Aimer signing key switched",
       "aimer_signing_key_deactivated": "Aimer signing key deactivated",
-      "aimer_integration_setting_changed": "Aimer integration setting changed"
+      "aimer_integration_setting_changed": "Aimer integration setting changed",
+      "aimer_context_token_issued": "Aimer context token issued",
+      "aimer_context_token_denied": "Aimer context token denied",
+      "triage_policy_create": "Triage policy create",
+      "triage_policy_update": "Triage policy update",
+      "triage_policy_delete": "Triage policy delete"
     },
     "targetTypes": {
       "account": "Account",
@@ -285,7 +290,8 @@
       "role": "Role",
       "mfa": "MFA",
       "node": "Node",
-      "service": "Service"
+      "service": "Service",
+      "triage_policy": "Triage Policy"
     }
   },
   "nodes": {
@@ -1423,9 +1429,11 @@
         "collapse": "Collapse options"
       },
       "levelOptions": {
+        "VERY_LOW": "Very Low",
         "LOW": "Low",
         "MEDIUM": "Medium",
-        "HIGH": "High"
+        "HIGH": "High",
+        "VERY_HIGH": "Very High"
       },
       "learningMethodOptions": {
         "UNSUPERVISED": "Unsupervised",

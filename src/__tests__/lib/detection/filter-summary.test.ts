@@ -66,9 +66,9 @@ const CONTEXT: SummarizeFilterContext = {
   ],
   categoricalOptions: {
     levels: [
-      { value: 1, label: "Low" },
-      { value: 2, label: "Medium" },
-      { value: 3, label: "High" },
+      { value: "LOW", label: "Low" },
+      { value: "MEDIUM", label: "Medium" },
+      { value: "HIGH", label: "High" },
     ],
     countries: [
       { value: "US", label: "United States (US)" },
@@ -219,7 +219,7 @@ describe("summarizeFilter (structured)", () => {
 
   it("renders categorical multi-select chips with localised labels", () => {
     const chips = summarizeFilter(
-      structured({ levels: [1, 3], kinds: ["HttpThreat"] }),
+      structured({ levels: ["LOW", "HIGH"], kinds: ["HttpThreat"] }),
       LABELS,
       CONTEXT,
     );

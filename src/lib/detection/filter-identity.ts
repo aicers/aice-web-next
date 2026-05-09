@@ -53,6 +53,7 @@ import type {
   FlowKind,
   IpRangeInput,
   LearningMethod,
+  ThreatLevel,
   TrafficDirection,
 } from "./types";
 
@@ -210,7 +211,7 @@ interface NormalizedStructuredInput {
   triagePolicies?: string[];
   countries?: string[];
   kinds?: string[];
-  levels?: number[];
+  levels?: ThreatLevel[];
   categories?: number[];
   learningMethods?: LearningMethod[];
   directions?: FlowKind[];
@@ -274,7 +275,11 @@ function normalizeStructuredInput(
   );
   setIfNonEmpty(out, "countries", uniqueSortedStrings(input.countries));
   setIfNonEmpty(out, "kinds", uniqueSortedStrings(input.kinds));
-  setIfNonEmpty(out, "levels", uniqueSortedNumbers(input.levels));
+  setIfNonEmpty(
+    out,
+    "levels",
+    uniqueSortedStrings(input.levels) as ThreatLevel[] | undefined,
+  );
   setIfNonEmpty(
     out,
     "categories",

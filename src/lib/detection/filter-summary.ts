@@ -39,7 +39,12 @@ import {
   isoToLocalInput,
 } from "./filter-draft";
 import type { PeriodKey } from "./period";
-import type { EventListFilterInput, FlowKind, LearningMethod } from "./types";
+import type {
+  EventListFilterInput,
+  FlowKind,
+  LearningMethod,
+  ThreatLevel,
+} from "./types";
 
 /**
  * A chip the active filter bar can render and — via {@link field}
@@ -189,7 +194,7 @@ export interface SummarizeFilterContext {
   customerOptions: readonly MultiSelectOption<string>[];
   /** Drawer option lists for categorical labels. */
   categoricalOptions: {
-    levels: readonly MultiSelectOption<number>[];
+    levels: readonly MultiSelectOption<ThreatLevel>[];
     countries: readonly MultiSelectOption<string>[];
     learningMethods: readonly MultiSelectOption<LearningMethod>[];
     categories: readonly MultiSelectOption<number>[];
@@ -315,10 +320,10 @@ export function summarizeFilter(
   // ── Categorical multi-selects ──────────────────────────────────
   const opts = context.categoricalOptions;
   chips.push(
-    ...categoricalChips<number>({
+    ...categoricalChips<ThreatLevel>({
       fieldKey: "levels",
       label: labels.levels,
-      values: (input.levels ?? []) as readonly number[],
+      values: (input.levels ?? []) as readonly ThreatLevel[],
       options: opts.levels,
       aggregate: (count) =>
         labels.categoricalAggregate({ label: labels.levels, count }),

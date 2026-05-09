@@ -49,7 +49,13 @@ function labels(): ResultListLabels {
     moreCountSuffix: (count) => `+${count} more`,
     countryUnknown: "??",
     countryUnavailable: "—",
-    levelLabels: { LOW: "Low", MEDIUM: "Medium", HIGH: "High" },
+    levelLabels: {
+      VERY_LOW: "Very Low",
+      LOW: "Low",
+      MEDIUM: "Medium",
+      HIGH: "High",
+      VERY_HIGH: "Very High",
+    },
     categoryLabels: {
       RECONNAISSANCE: "Reconnaissance",
       INITIAL_ACCESS: "Initial Access",

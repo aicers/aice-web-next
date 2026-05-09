@@ -41,13 +41,16 @@ import {
   LEARNING_METHOD_VALUES,
   THREAT_CATEGORY_KEY_BY_VALUE,
   THREAT_CATEGORY_VALUES,
-  THREAT_LEVEL_KEY_BY_VALUE,
   THREAT_LEVEL_VALUES,
 } from "@/lib/detection/filter-options";
 import { QUICK_PEEK_EVENT_PARAM } from "@/lib/detection/quick-peek-url";
 import { RECOMMENDED_PRESETS } from "@/lib/detection/recommended-filters";
 import { createTabId, type TabId } from "@/lib/detection/tabs";
-import type { LearningMethod, PageInfo } from "@/lib/detection/types";
+import type {
+  LearningMethod,
+  PageInfo,
+  ThreatLevel,
+} from "@/lib/detection/types";
 import { decodeEventLocator } from "@/lib/events/event-locator";
 import {
   ReviewForbiddenError,
@@ -437,9 +440,11 @@ export default async function DetectionPage({
       emptyTitle: t("analytics.emptyTitle"),
       emptyDescription: t("analytics.emptyDescription"),
       levelLabels: {
+        VERY_LOW: t("filters.levelOptions.VERY_LOW"),
         LOW: t("filters.levelOptions.LOW"),
         MEDIUM: t("filters.levelOptions.MEDIUM"),
         HIGH: t("filters.levelOptions.HIGH"),
+        VERY_HIGH: t("filters.levelOptions.VERY_HIGH"),
       },
       categoryLabels: {
         RECONNAISSANCE: t("filters.categoryOptions.RECONNAISSANCE"),
@@ -633,9 +638,11 @@ export default async function DetectionPage({
         RESOURCE_DEVELOPMENT: t("filters.categoryOptions.RESOURCE_DEVELOPMENT"),
       },
       levelLabels: {
+        VERY_LOW: t("filters.levelOptions.VERY_LOW"),
         LOW: t("filters.levelOptions.LOW"),
         MEDIUM: t("filters.levelOptions.MEDIUM"),
         HIGH: t("filters.levelOptions.HIGH"),
+        VERY_HIGH: t("filters.levelOptions.VERY_HIGH"),
       },
       protocolFields: {
         dnsQuery: t("quickPeek.protocolFields.dnsQuery"),
@@ -753,12 +760,11 @@ function buildFilterOptions(
 ): FilterDrawerOptions {
   const countryNames = buildCountryNameResolver(locale);
 
-  const levels: FilterMultiSelectOption<number>[] = THREAT_LEVEL_VALUES.map(
-    (value) => ({
+  const levels: FilterMultiSelectOption<ThreatLevel>[] =
+    THREAT_LEVEL_VALUES.map((value) => ({
       value,
-      label: labels.level(THREAT_LEVEL_KEY_BY_VALUE[value]),
-    }),
-  );
+      label: labels.level(value),
+    }));
 
   const categories: FilterMultiSelectOption<number>[] =
     THREAT_CATEGORY_VALUES.map((value) => ({

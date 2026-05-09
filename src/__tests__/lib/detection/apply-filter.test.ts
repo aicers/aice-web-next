@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildAppliedFilter } from "@/lib/detection/apply-filter";
+import {
+  buildAppliedFilter,
+  type CategoricalFilterOptions,
+} from "@/lib/detection/apply-filter";
 import type { Filter } from "@/lib/detection/filter";
 import type { DetectionFilterDraft } from "@/lib/detection/filter-draft";
 
@@ -235,6 +238,37 @@ describe("buildAppliedFilter", () => {
     );
     if (next.mode !== "structured") throw new Error("unreachable");
     expect(next.input.customers).toEqual(["3"]);
+  });
+
+  // Reviewer Round 2 (#480): the drawer exposes only the
+  // `LOW` / `MEDIUM` / `HIGH` subset of `ThreatLevel`, but the
+  // post-bump schema also defines `VERY_LOW` and `VERY_HIGH`.
+  // `levels` must therefore be submitted with open-list semantics
+  // — saturating the visible three options must NOT drop the field
+  // and silently broaden the query to include the two values the
+  // user never saw.
+  it("submits the explicit three-value selection when all visible levels are picked", () => {
+    const categoricalOptions: CategoricalFilterOptions = {
+      levels: [
+        { value: "LOW", label: "Low" },
+        { value: "MEDIUM", label: "Medium" },
+        { value: "HIGH", label: "High" },
+      ],
+      countries: [],
+      learningMethods: [],
+      categories: [],
+      kinds: [],
+    };
+    const current: Filter = { mode: "structured", input: {} };
+    const next = buildAppliedFilter(
+      current,
+      draft({ levels: ["LOW", "MEDIUM", "HIGH"] }),
+      false,
+      false,
+      categoricalOptions,
+    );
+    if (next.mode !== "structured") throw new Error("unreachable");
+    expect(next.input.levels).toEqual(["LOW", "MEDIUM", "HIGH"]);
   });
 
   it("re-emits predefined endpoints alongside rebuilt custom rules", () => {

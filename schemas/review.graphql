@@ -2,12 +2,14 @@
 #
 # This file is manually maintained. See the "Backend schema versions"
 # section of README.md for the update procedure. Its contents must match
-# the REview release tagged in schemas/review.version.
+# the review-web revision recorded in schemas/review.version.
 #
-# Captured from REview 0.47.0 (which pins review-web 0.30.1 as its
-# GraphQL surface) with the `auth-mtls` feature enabled, which is how
-# aice-web-next talks to REview. See README.md for the exact
-# reproduction steps.
+# Captured from review-web @ 2231acb52fd101d1efe6937ee7a94987245dc8f4
+# (post-0.31.0; first revision containing aicers/review-web#842 — adds
+# eventListWithTriage and the EventStandardFilterInput / EventTriageInput
+# / EventTriagePolicyInput / EventTriageExclusionInput surface) with the
+# `auth-mtls` feature enabled, which is how aice-web-next talks to REview.
+# See README.md for the exact reproduction steps.
 
 type Agent {
 	node: Int!
@@ -62,6 +64,7 @@ enum AgentStatus {
 
 type AllowNetwork {
 	id: ID!
+	customerId: ID!
 	name: String!
 	description: String!
 	networks: HostNetworkGroup!
@@ -180,6 +183,7 @@ type BackupInfo {
 
 type BlockNetwork {
 	id: ID!
+	customerId: ID!
 	name: String!
 	description: String!
 	networks: HostNetworkGroup!
@@ -578,21 +582,13 @@ type BlocklistDceRpc implements Event {
 	"""
 	respL2Bytes: StringNumber!
 	"""
-	Round-Trip Time
+	DCE/RPC Context Entries
 	"""
-	rtt: StringNumber!
+	context: [DceRpcContext!]!
 	"""
-	Named Pipe
+	DCE/RPC Request Strings
 	"""
-	namedPipe: String!
-	"""
-	Endpoint
-	"""
-	endpoint: String!
-	"""
-	Operation
-	"""
-	operation: String!
+	request: [String!]!
 	"""
 	MITRE Tactic
 	"""
@@ -768,6 +764,10 @@ type BlocklistDhcp implements Event {
 	Client ID List
 	"""
 	clientId: String!
+	"""
+	DHCP Options
+	"""
+	options: [DhcpOption!]!
 	"""
 	MITRE Tactic
 	"""
@@ -3001,7 +3001,7 @@ type ClusterScoreSet {
 }
 
 type ClusterTrend {
-	clusterId: String!
+	clusterId: ID!
 	series: [TimeCount!]!
 	"""
 	The cluster trend in a vector of string representable by a vector of
@@ -3044,14 +3044,14 @@ type ColumnTimeSeries {
 }
 
 type Confidence {
-	threatCategory: ThreatCategory!
+	threatCategory: ThreatCategory
 	threatKind: String!
 	confidence: Float!
 	weight: Float
 }
 
 input ConfidenceInput {
-	threatCategory: ThreatCategory!
+	threatCategory: ThreatCategory
 	threatKind: String!
 	confidence: Float!
 	weight: Float
@@ -3423,6 +3423,26 @@ Implement the DateTime<Utc> scalar
 The input/output is a string in RFC3339 format.
 """
 scalar DateTime
+
+"""
+A single DCE/RPC context entry.
+"""
+type DceRpcContext {
+	id: Int!
+	abstractSyntax: StringNumber!
+	abstractMajor: Int!
+	abstractMinor: Int!
+	transferSyntax: StringNumber!
+	transferMajor: Int!
+	transferMinor: Int!
+	acceptance: Int!
+	reason: Int!
+}
+
+type DhcpOption {
+	code: Int!
+	value: [Int!]!
+}
 
 type DnsCovertChannel implements Event {
 	"""
@@ -3853,12 +3873,76 @@ input EventListFilterInput {
 	userDepartments: [String!]
 	countries: [String!]
 	categories: [Int]
-	levels: [Int!]
+	levels: [ThreatLevel!]
 	kinds: [String!]
 	learningMethods: [LearningMethod!]
 	confidenceMin: Float
 	confidenceMax: Float
 	triagePolicies: [ID!]
+}
+
+"""
+Standard event filter for `eventListWithTriage`. Identical to
+`EventListFilterInput` minus `triagePolicies`: triage policies are passed
+exclusively via the separate `triage` argument as inline data.
+"""
+input EventStandardFilterInput {
+	start: DateTime
+	end: DateTime
+	customers: [ID!]
+	endpoints: [EndpointInput!]
+	directions: [FlowKind!]
+	source: String
+	destination: String
+	keywords: [String!]
+	networkTags: [ID!]
+	sensors: [ID!]
+	os: [ID!]
+	devices: [ID!]
+	hostnames: [String!]
+	userIds: [String!]
+	userNames: [String!]
+	userDepartments: [String!]
+	countries: [String!]
+	categories: [Int]
+	levels: [ThreatLevel!]
+	kinds: [String!]
+	learningMethods: [LearningMethod!]
+	confidenceMin: Float
+	confidenceMax: Float
+}
+
+"""
+Inline exclusion input for `eventListWithTriage`.
+
+All four fields are nullable at the schema level; an object with no
+populated field is rejected by the resolver. When more than one field is
+populated the object is flattened into independent `TriageExclusion`
+values that are OR-combined with the rest.
+"""
+input EventTriageExclusionInput {
+	ipAddress: HostNetworkGroupInput
+	domain: [String!]
+	hostname: [String!]
+	uri: [String!]
+}
+
+input EventTriageInput {
+	policies: [EventTriagePolicyInput!]
+	exclusions: [EventTriageExclusionInput!]
+}
+
+"""
+Inline triage policy input for `eventListWithTriage`.
+
+`id` is constrained to non-negative `i32` (`0..=i32::MAX`) and is echoed
+back unchanged as `TriageScore.policyId`.
+"""
+input EventTriagePolicyInput {
+	id: Int!
+	packetAttr: [PacketAttrInput!]!
+	confidence: [ConfidenceInput!]!
+	response: [ResponseInput!]!
 }
 
 union ExclusionReason = IpAddressTriageExclusion | DomainTriageExclusion | HostnameTriageExclusion | UriTriageExclusion
@@ -5243,7 +5327,8 @@ type Mutation {
 	Sets or creates a new backup configuration.
 	
 	This mutation creates or overwrites the backup configuration with the
-	provided values. Only administrators can modify the backup configuration.
+	provided values. Only `SystemAdministrator` can modify the backup
+	configuration.
 	
 	# Arguments
 	
@@ -5255,7 +5340,7 @@ type Mutation {
 	# Errors
 	
 	Returns an error if:
-	* The user is not an administrator
+	* The user is not a `SystemAdministrator`
 	* Input validation fails (e.g., invalid time format, zero values)
 	* Database operation fails
 	"""
@@ -5265,8 +5350,8 @@ type Mutation {
 	
 	This mutation updates the backup configuration from the old values to
 	new values. Both old and new configurations must be provided for
-	optimistic concurrency control. Only administrators can modify the
-	backup configuration.
+	optimistic concurrency control. Only `SystemAdministrator` can modify
+	the backup configuration.
 	
 	# Arguments
 	
@@ -5276,7 +5361,7 @@ type Mutation {
 	# Errors
 	
 	Returns an error if:
-	* The user is not an administrator
+	* The user is not a `SystemAdministrator`
 	* The old configuration doesn't match the current stored configuration
 	* Input validation fails (e.g., invalid time format, zero values)
 	* Database operation fails
@@ -5300,12 +5385,12 @@ type Mutation {
 	Will return error if it failed to delete or add indicator into database
 	"""
 	updateIndicator(name: String!, new: String!): String!
-	addCsvColumnExtra(model: Int!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
+	addCsvColumnExtra(model: ID!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
 	updateCsvColumnExtra(id: ID!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
 	"""
 	Inserts a new network, returning the ID of the network.
 	"""
-	insertNetwork(name: String!, description: String!, networks: HostNetworkGroupInput!, customerIds: [ID!]!, tagIds: [ID!]!): ID!
+	insertNetwork(name: String!, description: String!, networks: HostNetworkGroupInput!, tagIds: [ID!]!): ID!
 	"""
 	Removes networks, returning the networks names that no longer exist.
 	
@@ -5338,7 +5423,7 @@ type Mutation {
 	"""
 	Removes nodes, returning the node keys that no longer exist.
 	
-	On error, some nodes may have been removed.
+	Validates all requested nodes before deleting any of them.
 	"""
 	removeNodes(ids: [ID!]!): [String!]!
 	"""
@@ -5381,8 +5466,7 @@ type Mutation {
 	"""
 	insertEventTag(name: String!): ID!
 	"""
-	Removes an event tag for the given ID, returning the name of the removed
-	tag.
+	Removes an event tag for the given ID, returning the name of the removed tag.
 	"""
 	removeEventTag(id: ID!): String
 	"""
@@ -5395,19 +5479,19 @@ type Mutation {
 	"""
 	Inserts a new network tag, returning the ID of the new tag.
 	"""
-	insertNetworkTag(name: String!): ID!
+	insertNetworkTag(customerId: ID!, name: String!): ID!
 	"""
 	Removes a network tag for the given ID, returning the name of the removed
 	tag.
 	"""
-	removeNetworkTag(id: ID!): String
+	removeNetworkTag(customerId: ID!, id: ID!): String
 	"""
 	Updates the name of a network tag for the given ID.
 	
 	It returns `true` if the name was updated, `false` if the tag was
 	different or not found.
 	"""
-	updateNetworkTag(id: ID!, old: String!, new: String!): Boolean!
+	updateNetworkTag(customerId: ID!, id: ID!, old: String!, new: String!): Boolean!
 	"""
 	Inserts a new workflow tag, returning the ID of the new tag.
 	"""
@@ -5481,7 +5565,7 @@ type Mutation {
 	updateTriageExclusionReason(id: ID!, old: TriageExclusionReasonInput!, new: TriageExclusionReasonInput!): ID!
 	removeTriageExclusionReasons(ids: [ID!]!): [ID!]!
 	"""
-	Inserts a new triage response, returning the ID of the new node.
+	Inserts a new triage response, returning the ID of the new response.
 	"""
 	insertTriageResponse(sensor: String!, time: DateTime!, tagIds: [ID!]!, remarks: String!): ID!
 	"""
@@ -5568,7 +5652,6 @@ type Network {
 	name: String!
 	description: String!
 	networks: HostNetworkGroup!
-	customerList: [Customer!]!
 	tagIds: [ID!]!
 	creationTime: DateTime!
 }
@@ -5751,7 +5834,6 @@ input NetworkUpdateInput {
 	name: String
 	description: String
 	networks: HostNetworkGroupInput
-	customerIds: [ID!]
 	tagIds: [ID!]
 }
 
@@ -6102,8 +6184,8 @@ type NonBrowser implements Event {
 
 type Outlier {
 	size: Int!
-	modelId: Int!
 	id: ID!
+	modelId: ID!
 	events: [DateTime!]!
 	model: ModelDigest!
 }
@@ -6351,9 +6433,16 @@ A set of queries defined in the schema.
 """
 type Query {
 	"""
-	A list of blocked networks.
+	A list of blocked networks, optionally filtered by customer IDs.
+	
+	When `customerIds` is provided, results are filtered by the intersection
+	of requested customer IDs and the caller's accessible customer scope
+	(deduplicated and sorted for deterministic ordering and pagination).
+	If the intersection is empty, the request is denied.
+	When omitted, admins can access all customers, while scoped users can
+	access only their own customers.
 	"""
-	blockNetworkList(customerId: ID, after: String, before: String, first: Int, last: Int): BlockNetworkConnection!
+	blockNetworkList(customerIds: [ID!], after: String, before: String, first: Int, last: Int): BlockNetworkConnection!
 	"""
 	A list of available alert categories.
 	"""
@@ -6362,8 +6451,8 @@ type Query {
 	A list of clusters in descending order of cluster size.
 	"""
 	clusters(model: ID!, categories: [ID!], detectors: [ID!], qualifiers: [ID!], statuses: [ID!], after: String, before: String, first: Int, last: Int): ClusterConnection!
-	topIpAddressesOfCluster(model: ID!, clusterId: String!, size: Int): [TopElementCountsByColumn!]!
-	topTimeSeriesOfCluster(model: ID!, clusterId: String!, cutoffRate: Float, trendiOrder: Int, start: Int, end: Int): TimeSeriesResult!
+	topIpAddressesOfCluster(model: ID!, clusterId: ID!, size: Int): [TopElementCountsByColumn!]!
+	topTimeSeriesOfCluster(model: ID!, clusterId: ID!, cutoffRate: Float, trendiOrder: Int, start: Int, end: Int): TimeSeriesResult!
 	"""
 	A list of customers.
 	"""
@@ -6380,15 +6469,11 @@ type Query {
 	"""
 	Retrieves the current backup configuration.
 	
-	Returns the stored configuration if one exists, otherwise returns
-	sensible defaults:
-	- `backup_duration`: 1 day
-	- `backup_time`: "23:59:59" (UTC)
-	- `num_of_backups_to_keep`: 5
+	Returns the stored configuration if one exists, otherwise returns `None`.
 	
-	Accessible to administrators only.
+	Accessible to `SystemAdministrator` only.
 	"""
-	backupConfig: BackupConfig!
+	backupConfig: BackupConfig
 	"""
 	A list of events with timestamp on or after `start` and before `end`.
 	"""
@@ -6414,6 +6499,19 @@ type Query {
 	* An event cannot be processed
 	"""
 	eventTriageList(filter: EventListFilterInput!, count: Int): [Event!]!
+	"""
+	A list of events that pass the standard filter, with optional inline
+	triage scoring and exclusions.
+	
+	Unlike `eventList`, this resolver returns every event passing the
+	standard filter regardless of whether any triage policy matched.
+	When `triage.policies` is supplied, matching policies attach their
+	scores via `triageScores`; events that score nothing keep
+	`triageScores: null` and remain in the connection. When
+	`triage.exclusions` is supplied, matching events are removed from
+	the connection. The cursor pagination contract matches `eventList`.
+	"""
+	eventListWithTriage(filter: EventStandardFilterInput!, triage: EventTriageInput, after: String, before: String, first: Int, last: Int): EventConnection!
 	"""
 	The number of events for each category, with timestamp on or after
 	`start` and before `end`.
@@ -6465,7 +6563,7 @@ type Query {
 	The number of events for each level, with timestamp on or after `start`
 	and before `end`.
 	"""
-	eventCountsByLevel(filter: EventListFilterInput!, first: Int!): U8EventCounter!
+	eventCountsByLevel(filter: EventListFilterInput!, first: Int!): ThreatLevelEventCounter!
 	"""
 	The number of events for each network, with timestamp on or after
 	`start` and before `end`.
@@ -6496,11 +6594,11 @@ type Query {
 	A list of models.
 	"""
 	models(after: String, before: String, first: Int, last: Int): ModelDigestConnection!
-	csvColumnExtra(model: Int!): CsvColumnExtraConfig
+	csvColumnExtra(model: ID!): CsvColumnExtraConfig
 	structuredColumnTypes(model: ID!): [StructuredColumnType!]!
 	timeRangeOfModel(model: ID!): TimeRange!
 	topTimeSeries(model: ID!, size: Int, time: NaiveDateTime, minSlope: Float, trendiOrder: Int, cutoffRate: Float, trendCategory: String, start: Int, end: Int): [TopTrendsByColumn!]!
-	topClustersByScore(model: Int!, size: Int, time: NaiveDateTime): ClusterScoreSet!
+	topClustersByScore(model: ID!, size: Int, time: NaiveDateTime): ClusterScoreSet!
 	topColumns(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopN: Float): [TopElementCountsByColumn!]!
 	topIpAddresses(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopElements: Float): [TopElementCountsByColumn!]!
 	topMultimaps(model: ID!, size: Int, minMapSize: Int, time: NaiveDateTime): [TopMultimaps!]!
@@ -6520,6 +6618,13 @@ type Query {
 	A node for the given ID.
 	"""
 	node(id: ID!): Node!
+	"""
+	A list of sensors deployed across customers the caller can access.
+	
+	A sensor is an entry in `Node.agents` whose `kind` is `SENSOR` and
+	whose `config` is set. Nodes whose `profile` is `None` are excluded.
+	"""
+	customerSensorList(customerIds: [Int!], after: String, before: String, first: Int, last: Int): SensorConnection!
 	"""
 	A list of status of nodes.
 	"""
@@ -6564,7 +6669,7 @@ type Query {
 	"""
 	A list of network tags.
 	"""
-	networkTagList: [Tag!]!
+	networkTagList(customerId: ID): [Tag!]!
 	"""
 	A list of workflow tags.
 	"""
@@ -6604,7 +6709,7 @@ type Query {
 	"""
 	triageResponseList(after: String, before: String, first: Int, last: Int): TriageResponseConnection!
 	"""
-	Looks up a triage response by the given id.
+	Looks up a triage response by the given sensor and time.
 	"""
 	triageResponse(sensor: String!, time: DateTime!): TriageResponse
 	"""
@@ -6616,9 +6721,16 @@ type Query {
 	"""
 	trafficFilterList(agents: [String!]): [TrafficFilter!]
 	"""
-	A list of allowed networks.
+	A list of allowed networks, optionally filtered by customer IDs.
+	
+	When `customerIds` is provided, results are filtered by the intersection
+	of requested customer IDs and the caller's accessible customer scope
+	(deduplicated and sorted for deterministic ordering and pagination).
+	If the intersection is empty, the request is denied.
+	When omitted, admins can access all customers, while scoped users can
+	access only their own customers.
 	"""
-	allowNetworkList(customerId: ID, after: String, before: String, first: Int, last: Int): AllowNetworkConnection!
+	allowNetworkList(customerIds: [ID!], after: String, before: String, first: Int, last: Int): AllowNetworkConnection!
 	"""
 	A list of trusted user agent list.
 	"""
@@ -6630,13 +6742,13 @@ type Query {
 }
 
 type RankedOutlier {
-	modelId: Int!
 	timestamp: Int!
 	rank: Int!
 	sensor: String!
 	distance: Float!
 	saved: Boolean!
 	id: ID!
+	modelId: ID!
 }
 
 type RankedOutlierConnection {
@@ -7027,6 +7139,58 @@ input SearchFilterInput {
 	remark: String
 }
 
+"""
+A sensor agent that has been deployed (i.e. its `config` is set) on a node
+belonging to a particular customer.
+"""
+type Sensor {
+	"""
+	The ID of the owning customer.
+	"""
+	customerId: Int!
+	"""
+	The agent key (e.g., `agent@hostname`).
+	"""
+	agentKey: String!
+	"""
+	The fully-qualified hostname of the host on which the sensor runs.
+	"""
+	hostFqdn: String!
+}
+
+type SensorConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [SensorEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Sensor!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type SensorEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Sensor!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
 type Status {
 	id: ID!
 	description: String!
@@ -7364,9 +7528,16 @@ enum ThreatCategory {
 Threat level.
 """
 enum ThreatLevel {
+	VERY_LOW
 	LOW
 	MEDIUM
 	HIGH
+	VERY_HIGH
+}
+
+type ThreatLevelEventCounter {
+	values: [ThreatLevel!]!
+	counts: [Int!]!
 }
 
 type TimeCount {

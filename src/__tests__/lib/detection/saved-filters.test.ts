@@ -51,7 +51,7 @@ describe("saved-filters lib", () => {
             id: "11111111-1111-1111-1111-111111111111",
             name: "Last 1h · High",
             mode: "structured",
-            filter_json: { start: "2026-01-01T00:00:00Z", levels: [3] },
+            filter_json: { start: "2026-01-01T00:00:00Z", levels: ["HIGH"] },
             created_at: new Date("2026-01-01T00:00:00Z"),
             updated_at: new Date("2026-01-02T00:00:00Z"),
           },
@@ -64,7 +64,7 @@ describe("saved-filters lib", () => {
           name: "Last 1h · High",
           filter: {
             mode: "structured",
-            input: { start: "2026-01-01T00:00:00Z", levels: [3] },
+            input: { start: "2026-01-01T00:00:00Z", levels: ["HIGH"] },
           },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-02T00:00:00.000Z",
@@ -121,7 +121,7 @@ describe("saved-filters lib", () => {
             filter_json: {
               keywords: "not-an-array",
               categories: "not-an-array",
-              levels: [3],
+              levels: ["HIGH"],
             },
             created_at: "2026-01-01T00:00:00Z",
             updated_at: "2026-01-01T00:00:00Z",
@@ -133,10 +133,51 @@ describe("saved-filters lib", () => {
         {
           id: "11111111-1111-1111-1111-111111111111",
           name: "legacy-malformed",
-          filter: { mode: "structured", input: { levels: [3] } },
+          filter: { mode: "structured", input: { levels: ["HIGH"] } },
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
         },
+      ]);
+    });
+
+    // Issue #480: pre-bump persisted shape stored `levels` as
+    // `[Int!]` with `1=LOW, 2=MEDIUM, 3=HIGH`. The SDL bump switched
+    // the field to `[ThreatLevel!]`, so a row written before the bump
+    // must be migrated on read or its level constraint silently
+    // disappears (which would broaden every saved filter after
+    // upgrade). Mixed numeric/enum payloads also survive — useful for
+    // a row that was partially rewritten by a newer client before
+    // re-saving.
+    it("migrates pre-bump numeric `levels` to ThreatLevel enum strings on read", async () => {
+      mockQuery.mockResolvedValue({
+        rowCount: 1,
+        rows: [
+          {
+            id: "11111111-1111-1111-1111-111111111111",
+            name: "pre-bump-medium-high",
+            mode: "structured",
+            filter_json: { levels: [2, 3] },
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "22222222-2222-2222-2222-222222222222",
+            name: "mixed-numeric-and-enum",
+            mode: "structured",
+            filter_json: { levels: [1, "HIGH", 999, "VERY_LOW"] },
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const result = await mod.listSavedFiltersForAccount("acct-1");
+      expect(
+        result.map((r) =>
+          r.filter.mode === "structured" ? r.filter.input.levels : null,
+        ),
+      ).toEqual([
+        ["MEDIUM", "HIGH"],
+        ["LOW", "HIGH", "VERY_LOW"],
       ]);
     });
   });
@@ -214,7 +255,7 @@ describe("saved-filters lib", () => {
             id: "11111111-1111-1111-1111-111111111111",
             name: "malformed",
             mode: "structured",
-            filter_json: { levels: [3] },
+            filter_json: { levels: ["HIGH"] },
             created_at: "2026-01-01T00:00:00Z",
             updated_at: "2026-01-01T00:00:00Z",
           },
@@ -231,14 +272,14 @@ describe("saved-filters lib", () => {
           input: {
             keywords: "not-an-array",
             categories: "not-an-array",
-            levels: [3],
+            levels: ["HIGH"],
           },
         } as unknown as import("@/lib/detection").Filter,
       });
       const [, params] = mockQuery.mock.calls[0];
       // The persisted JSON keeps the valid `levels` field and drops
       // every malformed one — never a `keywords: "not-an-array"`.
-      expect(params?.[3]).toBe(JSON.stringify({ levels: [3] }));
+      expect(params?.[3]).toBe(JSON.stringify({ levels: ["HIGH"] }));
     });
 
     it("throws SavedFilterInvalidError when the outer filter shape is unrecoverable", async () => {

@@ -33,10 +33,7 @@ import {
   type AnalyticsTopN,
 } from "@/lib/detection/analytics";
 import type { Filter } from "@/lib/detection/filter";
-import {
-  THREAT_CATEGORY_KEY_BY_VALUE,
-  THREAT_LEVEL_KEY_BY_VALUE,
-} from "@/lib/detection/filter-options";
+import { THREAT_CATEGORY_KEY_BY_VALUE } from "@/lib/detection/filter-options";
 import { buildPivotPatch, type PivotPatch } from "@/lib/detection/pivot";
 import type { ThreatCategory, ThreatLevel } from "@/lib/detection/types";
 import { cn } from "@/lib/utils";
@@ -518,16 +515,8 @@ function buildDimensionRows(
     if (typeof raw !== "string" || typeof count !== "number") continue;
     if (!Number.isFinite(count)) continue;
     if (dimension === "level") {
-      const num = Number(raw);
-      const key =
-        Number.isInteger(num) && num in THREAT_LEVEL_KEY_BY_VALUE
-          ? THREAT_LEVEL_KEY_BY_VALUE[num as 1 | 2 | 3]
-          : null;
-      out.push({
-        label: key ? labels.levelLabels[key as ThreatLevel] : raw,
-        rawValue: Number.isInteger(num) ? num : raw,
-        count,
-      });
+      const label = labels.levelLabels[raw as ThreatLevel] ?? raw;
+      out.push({ label, rawValue: raw, count });
       continue;
     }
     if (dimension === "category") {

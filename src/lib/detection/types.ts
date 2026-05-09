@@ -22,6 +22,7 @@ export type {
   StringNumberScalar,
   ThreatCategory,
   ThreatLevel,
+  ThreatLevelEventCounter,
   TrafficDirection,
   TriageScore,
   U8EventCounter,
@@ -32,6 +33,7 @@ import type {
   EventConnection as GeneratedEventConnection,
   EventEdge as GeneratedEventEdge,
   StringEventCounter,
+  ThreatLevelEventCounter,
   U8EventCounter,
 } from "./types.generated";
 
@@ -155,7 +157,7 @@ export interface EventCountsByCategoryResult {
 }
 
 export interface EventCountsByLevelResult {
-  eventCountsByLevel: U8EventCounter;
+  eventCountsByLevel: ThreatLevelEventCounter;
 }
 
 export interface EventCountsByCountryResult {

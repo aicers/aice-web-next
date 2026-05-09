@@ -91,7 +91,13 @@ function labels(): QuickPeekInspectorLabels {
       PRIVILEGE_ESCALATION: "Privilege Escalation",
       RESOURCE_DEVELOPMENT: "Resource Development",
     },
-    levelLabels: { LOW: "Low", MEDIUM: "Medium", HIGH: "High" },
+    levelLabels: {
+      VERY_LOW: "Very Low",
+      LOW: "Low",
+      MEDIUM: "Medium",
+      HIGH: "High",
+      VERY_HIGH: "Very High",
+    },
     triageSummary: ({ count, max }) => `${count} policies · max ${max}`,
     protocolFields: {
       dnsQuery: "Query",

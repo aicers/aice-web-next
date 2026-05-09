@@ -41,7 +41,7 @@ export type ThreatCategory =
   | "PRIVILEGE_ESCALATION"
   | "RESOURCE_DEVELOPMENT";
 
-export type ThreatLevel = "LOW" | "MEDIUM" | "HIGH";
+export type ThreatLevel = "VERY_LOW" | "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH";
 
 export type TrafficDirection = "FROM" | "TO";
 
@@ -72,7 +72,7 @@ export interface EventListFilterInput {
   userDepartments?: string[] | null;
   countries?: string[] | null;
   categories?: (number | null)[] | null;
-  levels?: number[] | null;
+  levels?: ThreatLevel[] | null;
   kinds?: string[] | null;
   learningMethods?: LearningMethod[] | null;
   confidenceMin?: number | null;
@@ -126,6 +126,11 @@ export interface PageInfo {
 
 export interface StringEventCounter {
   values: string[];
+  counts: number[];
+}
+
+export interface ThreatLevelEventCounter {
+  values: ThreatLevel[];
   counts: number[];
 }
 

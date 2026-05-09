@@ -13,7 +13,7 @@ describe("toEventListFilterInput", () => {
       input: {
         start: "2026-04-01T00:00:00Z",
         end: "2026-04-02T00:00:00Z",
-        levels: [1, 2],
+        levels: ["LOW", "MEDIUM"],
         kinds: ["PortScan"],
       },
     };
@@ -21,7 +21,7 @@ describe("toEventListFilterInput", () => {
     expect(toEventListFilterInput(filter)).toEqual({
       start: "2026-04-01T00:00:00Z",
       end: "2026-04-02T00:00:00Z",
-      levels: [1, 2],
+      levels: ["LOW", "MEDIUM"],
       kinds: ["PortScan"],
     });
   });

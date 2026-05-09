@@ -42,7 +42,20 @@ import {
   normalizeFilterIdentity,
 } from "./filter-identity";
 import type { PeriodKey } from "./period";
-import type { EventListFilterInput, FlowKind, LearningMethod } from "./types";
+import type {
+  EventListFilterInput,
+  FlowKind,
+  LearningMethod,
+  ThreatLevel,
+} from "./types";
+
+const THREAT_LEVEL_VALUE_SET: ReadonlySet<ThreatLevel> = new Set([
+  "VERY_LOW",
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "VERY_HIGH",
+]);
 
 /**
  * Column key the result-list cell hands to {@link buildPivotPatch}.
@@ -92,8 +105,13 @@ export type PivotPatch =
     }
   | {
       kind: "numberArray";
-      field: "levels" | "categories";
+      field: "categories";
       value: number;
+      displayValue: string;
+    }
+  | {
+      kind: "levelArray";
+      value: ThreatLevel;
       displayValue: string;
     }
   | {
@@ -109,7 +127,7 @@ export type PivotPatch =
 
 export interface PivotCellValue {
   /** Raw value from the event row — IP, country code, kind, etc. */
-  raw: string | number | FlowKind | LearningMethod;
+  raw: string | number | FlowKind | LearningMethod | ThreatLevel;
   /**
    * Optional friendly label for toast / aria text. Falls back to the
    * raw value coerced to string when omitted.
@@ -224,12 +242,11 @@ export function buildPivotPatch(
       };
     }
     case "level": {
-      const n = numberValue(value.raw);
-      if (n === null) return null;
+      const v = stringValue(value.raw);
+      if (!v || !THREAT_LEVEL_VALUE_SET.has(v as ThreatLevel)) return null;
       return {
-        kind: "numberArray",
-        field: "levels",
-        value: n,
+        kind: "levelArray",
+        value: v as ThreatLevel,
         displayValue: display,
       };
     }
@@ -356,17 +373,17 @@ export function applyPivotPatch(
       break;
     }
     case "numberArray": {
-      if (patch.field === "categories") {
-        const current = (input.categories ?? []).filter(
-          (v): v is number => typeof v === "number",
-        );
-        if (current.includes(patch.value)) break;
-        input.categories = [...current, patch.value];
-      } else {
-        const current = input.levels ?? [];
-        if (current.includes(patch.value)) break;
-        input.levels = [...current, patch.value];
-      }
+      const current = (input.categories ?? []).filter(
+        (v): v is number => typeof v === "number",
+      );
+      if (current.includes(patch.value)) break;
+      input.categories = [...current, patch.value];
+      break;
+    }
+    case "levelArray": {
+      const current = input.levels ?? [];
+      if (current.includes(patch.value)) break;
+      input.levels = [...current, patch.value];
       break;
     }
     case "directionArray": {

@@ -28,7 +28,7 @@
         "source": "10.0.0.5",
         "destination": "203.0.113.45",
         "kinds": ["HttpThreat"],
-        "levels": [3]
+        "levels": ["HIGH"]
       }
     }
   },
