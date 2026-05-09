@@ -104,6 +104,13 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   // customer existence by pasting a `requestedCustomerId` into the
   // audit row. `customer-agnostic` is the simpler and safer placement.
   "aimer_context_token.denied": "customer-agnostic",
+  // Triage policy CRUD (#459) — TriagePolicy rows live in the
+  // per-customer tenant DB, so every row is intrinsically scoped to
+  // the customer the route operates on. Emitter populates `customerId`
+  // from the route's required `customer_id` argument.
+  "triage.policy.create": "customer-scoped",
+  "triage.policy.update": "customer-scoped",
+  "triage.policy.delete": "customer-scoped",
 };
 
 /**

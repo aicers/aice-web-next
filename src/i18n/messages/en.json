@@ -1952,5 +1952,30 @@
       "BLOCKLISTED": "This password is too common. Please choose a different one.",
       "RECENTLY_USED": "Cannot reuse a recent password"
     }
+  },
+  "triagePolicies": {
+    "title": "Triage Policies",
+    "subtitle": "User-authored matching rules applied per customer.",
+    "customer": "Customer",
+    "selectCustomer": "Select a customer",
+    "noCustomerScope": "No customers are available in your scope.",
+    "create": "Create",
+    "edit": "Edit",
+    "delete": "Delete",
+    "cancel": "Cancel",
+    "loading": "Loading…",
+    "error": "An error occurred. Please try again.",
+    "noResults": "No triage policies for this customer yet.",
+    "name": "Name",
+    "ruleCounts": "Rules",
+    "ruleCountsValue": "{packetAttr} attr · {confidence} confidence · {response} response",
+    "createdAt": "Created",
+    "packetAttr": "Packet attribute rules",
+    "packetAttrHelp": "JSON array of packet_attr rules. IP/CIDR (value_kind=ipaddr) values and range cmp_kinds (open_range / close_range / left_open_range / right_open_range and their not_* variants) are validated server-side.",
+    "confidence": "Confidence rules",
+    "response": "Response rules",
+    "deleteConfirm": "Delete triage policy '{name}'? This cannot be undone.",
+    "invalidJson": "{field}: not valid JSON",
+    "notAnArray": "{field}: must be a JSON array"
   }
 }

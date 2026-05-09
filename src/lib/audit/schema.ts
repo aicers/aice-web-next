@@ -128,6 +128,18 @@ type AimerContextTokenAction =
   | "aimer_context_token.issued"
   | "aimer_context_token.denied";
 
+/**
+ * Triage policy CRUD actions (#459).
+ *
+ * TriagePolicy rows live in the per-customer tenant DB; every row is
+ * intrinsically customer-scoped, so the audit emitter populates
+ * `customerId` from the route's `customer_id` argument.
+ */
+type TriagePolicyAction =
+  | "triage.policy.create"
+  | "triage.policy.update"
+  | "triage.policy.delete";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
@@ -142,7 +154,8 @@ export type AuditAction =
   | ServiceAction
   | AimerSigningKeyAction
   | AimerIntegrationSettingAction
-  | AimerContextTokenAction;
+  | AimerContextTokenAction
+  | TriagePolicyAction;
 
 /** Target entity types for audit events. */
 export type AuditTargetType =
@@ -153,7 +166,8 @@ export type AuditTargetType =
   | "role"
   | "mfa"
   | "node"
-  | "service";
+  | "service"
+  | "triage_policy";
 
 /** Canonical runtime list of supported audit actions. */
 export const AUDIT_ACTIONS = [
@@ -214,6 +228,9 @@ export const AUDIT_ACTIONS = [
   "aimer_integration_setting.changed",
   "aimer_context_token.issued",
   "aimer_context_token.denied",
+  "triage.policy.create",
+  "triage.policy.update",
+  "triage.policy.delete",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */
@@ -226,4 +243,5 @@ export const AUDIT_TARGET_TYPES = [
   "mfa",
   "node",
   "service",
+  "triage_policy",
 ] as const satisfies readonly AuditTargetType[];
