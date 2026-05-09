@@ -177,9 +177,17 @@ export function buildAppliedFilter(
   }
 
   if (categoricalOptions) {
+    // `levels` is treated as an open list because the drawer only
+    // exposes the three-level subset (`LOW` / `MEDIUM` / `HIGH`)
+    // while the schema also defines `VERY_LOW` and `VERY_HIGH`.
+    // Without `openList`, picking all three visible values would
+    // saturate the option list and drop the field, silently
+    // broadening the query to include the two values the user
+    // never saw.
     const levels = selectionForSubmission(
       applied.levels,
       categoricalOptions.levels,
+      { openList: true },
     );
     if (levels) input.levels = levels;
     const countries = selectionForSubmission(
