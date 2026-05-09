@@ -250,6 +250,38 @@ describe("TriageShell — period-change confirmation", () => {
     );
   });
 
+  it("treats Escape (and other non-confirm dismissals) as Cancel: keeps trail and resets picker draft", () => {
+    renderShell();
+    pivotByJa3();
+    const startBefore = (screen.getByLabelText("Start") as HTMLInputElement)
+      .value;
+    const endBefore = (screen.getByLabelText("End") as HTMLInputElement).value;
+
+    submitNewPeriod();
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Discard pivot trail?",
+    });
+    // Simulate any non-confirm dismissal (Escape, programmatic close)
+    // by firing the Radix-controlled `onOpenChange(false)` path. We do
+    // it through `keyDown` Escape on the dialog so the assertion
+    // mirrors the keyboard behavior the reviewer flagged.
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+
+    expect(replaceMock).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("alertdialog", { name: "Discard pivot trail?" }),
+    ).toBeNull();
+    expect(
+      screen.getByText("Crumb:ja3: deadbeef").getAttribute("aria-current"),
+    ).toBe("page");
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe(
+      startBefore,
+    );
+    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe(
+      endBefore,
+    );
+  });
+
   it("clears the trail and reloads when the operator confirms the period change", () => {
     renderShell();
     pivotByJa3();

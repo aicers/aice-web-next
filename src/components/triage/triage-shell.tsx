@@ -136,6 +136,24 @@ export function TriageShell({
     setPickerResetSignal((s) => s + 1);
   }
 
+  // Route all close paths through the cancel cleanup so non-button
+  // dismissals (Escape, programmatic close) reset the picker draft and
+  // clear `pendingPeriodRef`, matching the explicit Cancel button. The
+  // Confirm button consumes `pendingPeriodRef` first, so when its
+  // intrinsic close fires here the ref is already null and we just
+  // sync the open state.
+  function onConfirmDialogOpenChange(open: boolean) {
+    if (open) {
+      setConfirmOpen(true);
+      return;
+    }
+    if (pendingPeriodRef.current !== null) {
+      onCancelPeriodChange();
+    } else {
+      setConfirmOpen(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <header className="flex flex-col gap-2">
@@ -180,7 +198,7 @@ export function TriageShell({
           />
         ) : null
       ) : null}
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <AlertDialog open={confirmOpen} onOpenChange={onConfirmDialogOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -191,7 +209,7 @@ export function TriageShell({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={onCancelPeriodChange}>
+            <AlertDialogCancel>
               {labels.periodChangeConfirm.cancel}
             </AlertDialogCancel>
             <AlertDialogAction onClick={onConfirmPeriodChange}>
