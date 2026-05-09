@@ -223,6 +223,10 @@ describe("TriageShell — period-change confirmation", () => {
       screen.getByText("Crumb:ja3: deadbeef").getAttribute("aria-current"),
     ).toBe("page");
 
+    const startBefore = (screen.getByLabelText("Start") as HTMLInputElement)
+      .value;
+    const endBefore = (screen.getByLabelText("End") as HTMLInputElement).value;
+
     submitNewPeriod();
     const dialog = screen.getByRole("alertdialog", {
       name: "Discard pivot trail?",
@@ -235,6 +239,15 @@ describe("TriageShell — period-change confirmation", () => {
     expect(
       screen.getByText("Crumb:ja3: deadbeef").getAttribute("aria-current"),
     ).toBe("page");
+    // Picker draft was rejected — Start / End must snap back to the
+    // currently loaded period rather than continuing to display the
+    // values the operator just typed.
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe(
+      startBefore,
+    );
+    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe(
+      endBefore,
+    );
   });
 
   it("clears the trail and reloads when the operator confirms the period change", () => {

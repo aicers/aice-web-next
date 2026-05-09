@@ -82,6 +82,11 @@ export function TriageShell({
   const [resetSignal, setResetSignal] = useState(0);
   const pendingPeriodRef = useRef<TriagePeriod | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Bumped when the operator cancels the period-change confirmation
+  // so the picker resets its draft inputs back to the loaded period —
+  // otherwise the rejected Start / End values would linger in the
+  // controls while the corpus and breadcrumb stay on the old period.
+  const [pickerResetSignal, setPickerResetSignal] = useState(0);
   // Tracks whether the user has pivoted away from the asset root.
   // Bubbled up via a callback from baseline-content so the shell can
   // decide whether to surface the confirmation modal.
@@ -128,6 +133,7 @@ export function TriageShell({
   function onCancelPeriodChange() {
     pendingPeriodRef.current = null;
     setConfirmOpen(false);
+    setPickerResetSignal((s) => s + 1);
   }
 
   return (
@@ -142,6 +148,7 @@ export function TriageShell({
           onApply={applyPeriod}
           pending={pending}
           labels={labels.periodPicker}
+          draftResetSignal={pickerResetSignal}
         />
         <TriageModeToggle
           mode={mode}

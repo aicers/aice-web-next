@@ -188,7 +188,8 @@ issuing any additional network requests.
 > **Note:** The figure above is a wireframe stand-in. Phase 1.A
 > ships before the live REview screenshot environment is wired up
 > for Triage; the wireframe will be replaced with a real PNG capture
-> in a follow-up.
+> as part of the EN/KR Triage manual screenshot pass tracked by
+> [issue #455](https://github.com/aicers/aice-web-next/issues/455).
 
 ### Pivot dimensions
 
