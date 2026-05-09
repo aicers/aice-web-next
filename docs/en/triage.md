@@ -175,6 +175,90 @@ renders the empty shell with one of these banners:
   administrator."** — the caller holds `triage:read` but no
   customers are assigned to their account.
 
+## Related events panel and pivot
+
+When an asset is selected, the page also renders a **Related events**
+panel below the asset list. The panel groups other events from the
+loaded corpus by pivot dimension so the operator can see what else
+the focused asset has in common with the rest of the slice — without
+issuing any additional network requests.
+
+![Pivot panel (wireframe)](../assets/triage-pivot-en.svg)
+
+> **Note:** The figure above is a wireframe stand-in. Phase 1.A
+> ships before the live REview screenshot environment is wired up
+> for Triage; the wireframe will be replaced with a real PNG capture
+> in a follow-up.
+
+### Pivot dimensions
+
+The panel surfaces events grouped by:
+
+- **Network** — external IP, internal IP, destination port, country.
+  External vs internal is decided by the same per-side classifier
+  used elsewhere in Triage (customer-defined network membership wins;
+  RFC1918 / IPv6 special-use ranges are the fallback).
+- **Application** — registrable domain (Public Suffix List), host
+  header, URI pattern, user-agent. The URI is normalized to a
+  pattern: query and fragment stripped; numeric segments templated
+  to `{id}`, canonical UUIDs to `{uuid}`, long pure-hex segments to
+  `{hex}`. So `/api/v1/users/42?token=…` and
+  `/api/v1/users/99?token=…` collapse into the same pivot value
+  `/api/v1/users/{id}`.
+- **TLS** — JA3, JA3S, SNI (server name), certificate serial,
+  certificate subject CN.
+- **DNS** — DNS query, DNS answer (multi-answer rows are split).
+- **Time / structure** — same kind within ~15 minutes (events of
+  the same `__typename` falling into a 30-minute bucket), same
+  sensor, cluster ID.
+
+Dimensions where the focused asset carries no value, or where the
+loaded corpus has no other matching events, are hidden — never shown
+empty.
+
+### Per-section behavior
+
+Each section ranks its rows by per-event score, descending; ties
+break newest-first. The default view shows up to **10 rows** per
+section. A **Show more** affordance expands to **50 rows**; if the
+underlying match set is larger than 50, a `Showing 50 of N` hint is
+rendered without further expansion.
+
+The events that drive the focus (i.e., the events whose origAddr is
+the asset's address, or that share the breadcrumb's pivot value) are
+not listed in their own related-events rows — the panel surfaces the
+*other* events that share a dimension with them.
+
+When the period banner reads
+`Partial: showing N events of period (truncated at 5,000)`, the
+panel surfaces the same hint at its top so a missing match is not
+read as confirmed absence.
+
+### Breadcrumb (multi-step pivot)
+
+Pivoting from a row appends a breadcrumb step. The breadcrumb is
+local to the current view — it is not persisted in the URL.
+
+- The first crumb is the asset (e.g., `Asset 10.0.0.1`).
+- Each subsequent crumb names the dimension and value pivoted to
+  (e.g., `JA3: 7e29c8…b4`). Clicking an earlier crumb restores the
+  view to that step. Clicking the asset crumb collapses every
+  dimension step back to the asset focus.
+
+A new asset selection from the asset list resets the breadcrumb to
+that asset; it does not append.
+
+### Period change confirmation
+
+When the breadcrumb has at least one dimension step, applying a new
+period surfaces a confirmation modal:
+
+> **Discard pivot trail?** Changing the period will reload the
+> corpus and clear your current pivot trail. Continue?
+
+Confirming reloads with the new period and clears the trail.
+Cancelling keeps the existing period.
+
 ## Limitations in Phase 1.A
 
 - Only the last 30 days are loadable.
@@ -184,5 +268,8 @@ renders the empty shell with one of these banners:
   plural address fields are not assigned to an asset row.
 - Up to 5,000 events per period are aggregated; wider periods
   show a truncation banner.
-- The page does not persist period choices, mode selection, or
-  any per-asset state.
+- The page does not persist period choices, mode selection,
+  breadcrumb state, or any per-asset state.
+- Pivot is read-only over the loaded corpus. Expansion into events
+  outside the loaded slice (Tier 2) is tracked separately and is
+  not part of Tier 1.

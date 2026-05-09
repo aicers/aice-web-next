@@ -1,0 +1,189 @@
+import { describe, expect, it } from "vitest";
+import type { ScoredTriageEvent, TriageEvent } from "@/lib/triage";
+import { aggregateTriageEvents } from "@/lib/triage";
+import { getPivotDimension } from "@/lib/triage/pivot";
+
+function ev(overrides: Partial<TriageEvent>): TriageEvent {
+  return {
+    __typename: "NetworkThreat",
+    time: "2026-05-09T12:00:00.000Z",
+    sensor: "sensor-a",
+    category: "EXFILTRATION",
+    level: "MEDIUM",
+    ...overrides,
+  };
+}
+
+function scored(overrides: Partial<TriageEvent>): ScoredTriageEvent {
+  return aggregateTriageEvents([ev(overrides)], false).events[0];
+}
+
+describe("pivot dimension extractors", () => {
+  describe("externalIp / internalIp", () => {
+    it("classifies originator/responder addresses by classifier output", () => {
+      const event = scored({
+        origAddr: "10.0.0.5", // private → internal
+        respAddr: "203.0.113.5", // public → external
+      });
+      expect(
+        getPivotDimension("internalIp")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["10.0.0.5"]);
+      expect(
+        getPivotDimension("externalIp")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["203.0.113.5"]);
+    });
+
+    it("dedupes when the same address appears on both sides", () => {
+      const event = scored({
+        origAddr: "10.0.0.1",
+        respAddr: "10.0.0.1",
+      });
+      expect(getPivotDimension("internalIp").extract(event)).toHaveLength(1);
+    });
+
+    it("ignores `unknown` classification", () => {
+      const event = scored({ origAddr: "not-an-ip" });
+      expect(getPivotDimension("internalIp").extract(event)).toEqual([]);
+      expect(getPivotDimension("externalIp").extract(event)).toEqual([]);
+    });
+  });
+
+  describe("port", () => {
+    it("extracts only respPort", () => {
+      const event = scored({ origPort: 54321, respPort: 443 });
+      expect(
+        getPivotDimension("port")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["443"]);
+    });
+
+    it("returns empty when respPort is missing", () => {
+      const event = scored({ origPort: 1234 });
+      expect(getPivotDimension("port").extract(event)).toEqual([]);
+    });
+  });
+
+  describe("country", () => {
+    it("uppercases and dedupes both sides", () => {
+      const event = scored({ origCountry: "us", respCountry: "US" });
+      expect(
+        getPivotDimension("country")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["US"]);
+    });
+  });
+
+  describe("registrableDomain", () => {
+    it("extracts from host, serverName, and DNS query", () => {
+      const event = scored({
+        host: "api.example.com",
+      });
+      expect(
+        getPivotDimension("registrableDomain")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["example.com"]);
+    });
+
+    it("respects PSL multi-level suffixes", () => {
+      const event = scored({ host: "a.example.co.uk" });
+      expect(
+        getPivotDimension("registrableDomain")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["example.co.uk"]);
+    });
+
+    it("dedupes domains across host / serverName / query", () => {
+      const event = scored({
+        host: "a.example.com",
+        serverName: "b.example.com",
+        query: "c.example.com",
+      });
+      expect(
+        getPivotDimension("registrableDomain").extract(event),
+      ).toHaveLength(1);
+    });
+  });
+
+  describe("uriPattern", () => {
+    it("templates IDs and strips queries", () => {
+      const event = scored({ uri: "/api/v1/users/42?token=foo" });
+      expect(
+        getPivotDimension("uriPattern")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["/api/v1/users/{id}"]);
+    });
+  });
+
+  describe("dnsAnswer", () => {
+    it("splits comma-separated answers into separate values", () => {
+      const event = scored({
+        __typename: "BlocklistDns",
+        answer: "1.2.3.4, 5.6.7.8",
+      });
+      expect(
+        getPivotDimension("dnsAnswer")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["1.2.3.4", "5.6.7.8"]);
+    });
+  });
+
+  describe("sameKindWithin15Min", () => {
+    it("buckets two events of the same kind within the same 30-min window together", () => {
+      const a = scored({
+        __typename: "HttpThreat",
+        time: "2026-05-09T12:01:00.000Z",
+      });
+      const b = scored({
+        __typename: "HttpThreat",
+        time: "2026-05-09T12:14:00.000Z",
+      });
+      const c = scored({
+        __typename: "HttpThreat",
+        time: "2026-05-09T12:30:00.000Z",
+      });
+      const aKey = getPivotDimension("sameKindWithin15Min").extract(a)[0].key;
+      const bKey = getPivotDimension("sameKindWithin15Min").extract(b)[0].key;
+      const cKey = getPivotDimension("sameKindWithin15Min").extract(c)[0].key;
+      expect(aKey).toBe(bKey);
+      expect(aKey).not.toBe(cKey);
+    });
+
+    it("does not merge events of different __typename in the same window", () => {
+      const a = scored({
+        __typename: "HttpThreat",
+        time: "2026-05-09T12:01:00.000Z",
+      });
+      const b = scored({
+        __typename: "BlocklistDns",
+        time: "2026-05-09T12:01:00.000Z",
+      });
+      const aKey = getPivotDimension("sameKindWithin15Min").extract(a)[0].key;
+      const bKey = getPivotDimension("sameKindWithin15Min").extract(b)[0].key;
+      expect(aKey).not.toBe(bKey);
+    });
+  });
+
+  describe("clusterId", () => {
+    it("only emits a value when clusterId is non-empty", () => {
+      expect(
+        getPivotDimension("clusterId").extract(scored({ clusterId: "abc" })),
+      ).toHaveLength(1);
+      expect(
+        getPivotDimension("clusterId").extract(scored({ clusterId: "" })),
+      ).toEqual([]);
+      expect(
+        getPivotDimension("clusterId").extract(scored({ clusterId: null })),
+      ).toEqual([]);
+    });
+  });
+});

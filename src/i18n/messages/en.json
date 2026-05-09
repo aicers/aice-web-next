@@ -1929,6 +1929,79 @@
       "kindColumn": "Kind",
       "categoryColumn": "Category",
       "scoreColumn": "Score"
+    },
+    "pivotPanel": {
+      "title": "Related events",
+      "empty": "No related events for the dimensions this asset carries.",
+      "truncatedHint": "Some matches may be missing — only the first {cap} events of the period are loaded.",
+      "noFocusHint": "Select an asset to see its related events.",
+      "showMore": "Show more",
+      "showLess": "Show less",
+      "showingOfTemplate": "Showing {visible} of {total}",
+      "pivotActionTemplate": "Pivot to {dimension}: {value}",
+      "focusValuesTemplate": "Focus values: {values}",
+      "timeColumn": "Time",
+      "kindColumn": "Kind",
+      "scoreColumn": "Score",
+      "pivotColumn": "Pivot",
+      "family": {
+        "network": "Network",
+        "application": "Application",
+        "tls": "TLS",
+        "dns": "DNS",
+        "time-structure": "Time / structure"
+      },
+      "dimensions": {
+        "externalIp": "External IP",
+        "internalIp": "Internal IP",
+        "port": "Destination port",
+        "country": "Country",
+        "registrableDomain": "Registrable domain",
+        "host": "Host header",
+        "uriPattern": "URI pattern",
+        "userAgent": "User agent",
+        "ja3": "JA3",
+        "ja3s": "JA3S",
+        "sni": "SNI (server name)",
+        "certSerial": "Certificate serial",
+        "certSubjectCn": "Certificate subject CN",
+        "dnsQuery": "DNS query",
+        "dnsAnswer": "DNS answer",
+        "sameKindWithin15Min": "Same kind within ±15 min",
+        "sameSensor": "Sensor",
+        "clusterId": "Cluster ID"
+      }
+    },
+    "pivotBreadcrumb": {
+      "ariaLabel": "Pivot trail",
+      "rootCrumbPrefix": "Asset",
+      "dimensionCrumbTemplate": "{dimension}: {value}",
+      "dimensions": {
+        "externalIp": "External IP",
+        "internalIp": "Internal IP",
+        "port": "Destination port",
+        "country": "Country",
+        "registrableDomain": "Registrable domain",
+        "host": "Host header",
+        "uriPattern": "URI pattern",
+        "userAgent": "User agent",
+        "ja3": "JA3",
+        "ja3s": "JA3S",
+        "sni": "SNI",
+        "certSerial": "Cert serial",
+        "certSubjectCn": "Cert subject CN",
+        "dnsQuery": "DNS query",
+        "dnsAnswer": "DNS answer",
+        "sameKindWithin15Min": "Same kind ±15 min",
+        "sameSensor": "Sensor",
+        "clusterId": "Cluster ID"
+      }
+    },
+    "periodChangeConfirm": {
+      "title": "Discard pivot trail?",
+      "description": "Changing the period will reload the corpus and clear your current pivot trail. Continue?",
+      "confirm": "Discard and reload",
+      "cancel": "Keep current period"
     }
   },
   "changePassword": {

@@ -11,13 +11,25 @@ import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import { ReviewForbiddenError } from "@/lib/review/errors";
 import {
   parseTriagePeriod,
+  TRIAGE_HARD_EVENT_CAP,
   TriageForbiddenError,
   TriageUnauthorizedError,
 } from "@/lib/triage";
+import { PIVOT_DIMENSIONS, type PivotDimensionId } from "@/lib/triage/pivot";
 import { loadTriagePeriod } from "@/lib/triage/server-actions";
 
 interface TriagePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+function pivotDimensionsMap(
+  resolver: (id: PivotDimensionId) => string,
+): Record<PivotDimensionId, string> {
+  const out = {} as Record<PivotDimensionId, string>;
+  for (const dim of PIVOT_DIMENSIONS) {
+    out[dim.id] = resolver(dim.id);
+  }
+  return out;
 }
 
 export default async function TriagePage({ searchParams }: TriagePageProps) {
@@ -110,6 +122,50 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         categoryColumn: t("assetDetail.categoryColumn"),
         scoreColumn: t("assetDetail.scoreColumn"),
       },
+      pivotPanel: {
+        title: t("pivotPanel.title"),
+        empty: t("pivotPanel.empty"),
+        truncatedHint: (t.raw("pivotPanel.truncatedHint") as string).replace(
+          "{cap}",
+          new Intl.NumberFormat().format(TRIAGE_HARD_EVENT_CAP),
+        ),
+        noFocusHint: t("pivotPanel.noFocusHint"),
+        showMore: t("pivotPanel.showMore"),
+        showLess: t("pivotPanel.showLess"),
+        showingOfTemplate: t.raw("pivotPanel.showingOfTemplate") as string,
+        pivotActionTemplate: t.raw("pivotPanel.pivotActionTemplate") as string,
+        focusValuesTemplate: t.raw("pivotPanel.focusValuesTemplate") as string,
+        timeColumn: t("pivotPanel.timeColumn"),
+        kindColumn: t("pivotPanel.kindColumn"),
+        scoreColumn: t("pivotPanel.scoreColumn"),
+        pivotColumn: t("pivotPanel.pivotColumn"),
+        family: {
+          network: t("pivotPanel.family.network"),
+          application: t("pivotPanel.family.application"),
+          tls: t("pivotPanel.family.tls"),
+          dns: t("pivotPanel.family.dns"),
+          "time-structure": t("pivotPanel.family.time-structure"),
+        },
+        dimensions: pivotDimensionsMap((id) =>
+          t(`pivotPanel.dimensions.${id}`),
+        ),
+      },
+      pivotBreadcrumb: {
+        ariaLabel: t("pivotBreadcrumb.ariaLabel"),
+        rootCrumbPrefix: t("pivotBreadcrumb.rootCrumbPrefix"),
+        dimensionCrumbTemplate: t.raw(
+          "pivotBreadcrumb.dimensionCrumbTemplate",
+        ) as string,
+        dimensions: pivotDimensionsMap((id) =>
+          t(`pivotBreadcrumb.dimensions.${id}`),
+        ),
+      },
+    },
+    periodChangeConfirm: {
+      title: t("periodChangeConfirm.title"),
+      description: t("periodChangeConfirm.description"),
+      confirm: t("periodChangeConfirm.confirm"),
+      cancel: t("periodChangeConfirm.cancel"),
     },
   };
 

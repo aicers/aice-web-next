@@ -1929,6 +1929,79 @@
       "kindColumn": "종류",
       "categoryColumn": "카테고리",
       "scoreColumn": "점수"
+    },
+    "pivotPanel": {
+      "title": "관련 이벤트",
+      "empty": "이 자산이 가진 차원에 일치하는 관련 이벤트가 없습니다.",
+      "truncatedHint": "기간의 처음 {cap}건만 적재되어 일부 일치 항목이 누락되었을 수 있습니다.",
+      "noFocusHint": "관련 이벤트를 보려면 자산을 선택하세요.",
+      "showMore": "더 보기",
+      "showLess": "접기",
+      "showingOfTemplate": "{total}건 중 {visible}건 표시",
+      "pivotActionTemplate": "{dimension} 피벗: {value}",
+      "focusValuesTemplate": "기준 값: {values}",
+      "timeColumn": "시각",
+      "kindColumn": "종류",
+      "scoreColumn": "점수",
+      "pivotColumn": "피벗",
+      "family": {
+        "network": "네트워크",
+        "application": "애플리케이션",
+        "tls": "TLS",
+        "dns": "DNS",
+        "time-structure": "시간 / 구조"
+      },
+      "dimensions": {
+        "externalIp": "외부 IP",
+        "internalIp": "내부 IP",
+        "port": "목적지 포트",
+        "country": "국가",
+        "registrableDomain": "등록 가능 도메인",
+        "host": "호스트 헤더",
+        "uriPattern": "URI 패턴",
+        "userAgent": "사용자 에이전트",
+        "ja3": "JA3",
+        "ja3s": "JA3S",
+        "sni": "SNI (서버 이름)",
+        "certSerial": "인증서 시리얼",
+        "certSubjectCn": "인증서 주체 CN",
+        "dnsQuery": "DNS 쿼리",
+        "dnsAnswer": "DNS 응답",
+        "sameKindWithin15Min": "동일 종류 ±15분",
+        "sameSensor": "센서",
+        "clusterId": "클러스터 ID"
+      }
+    },
+    "pivotBreadcrumb": {
+      "ariaLabel": "피벗 경로",
+      "rootCrumbPrefix": "자산",
+      "dimensionCrumbTemplate": "{dimension}: {value}",
+      "dimensions": {
+        "externalIp": "외부 IP",
+        "internalIp": "내부 IP",
+        "port": "목적지 포트",
+        "country": "국가",
+        "registrableDomain": "등록 가능 도메인",
+        "host": "호스트 헤더",
+        "uriPattern": "URI 패턴",
+        "userAgent": "사용자 에이전트",
+        "ja3": "JA3",
+        "ja3s": "JA3S",
+        "sni": "SNI",
+        "certSerial": "인증서 시리얼",
+        "certSubjectCn": "인증서 주체 CN",
+        "dnsQuery": "DNS 쿼리",
+        "dnsAnswer": "DNS 응답",
+        "sameKindWithin15Min": "동일 종류 ±15분",
+        "sameSensor": "센서",
+        "clusterId": "클러스터 ID"
+      }
+    },
+    "periodChangeConfirm": {
+      "title": "피벗 경로를 버리시겠습니까?",
+      "description": "기간을 변경하면 코퍼스를 다시 적재하고 현재 피벗 경로를 비웁니다. 계속하시겠습니까?",
+      "confirm": "버리고 다시 적재",
+      "cancel": "현재 기간 유지"
     }
   },
   "changePassword": {
