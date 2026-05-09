@@ -1,4 +1,8 @@
 export { aggregateTriageEvents } from "./aggregate";
+export {
+  classifyTriageEndpoint,
+  type TriageEndpointClassification,
+} from "./classify";
 export { TriageForbiddenError, TriageUnauthorizedError } from "./errors";
 export {
   defaultTriagePeriod,
@@ -14,11 +18,14 @@ export {
   TRIAGE_BASELINE_WHITELIST,
 } from "./scoring";
 export {
+  type ScoredTriageEvent,
   TRIAGE_HARD_EVENT_CAP,
   type TriageAsset,
   type TriageEvent,
   type TriageEventListPage,
   type TriageEventListResult,
   type TriageFunnel,
+  type TriageHostNetworkGroup,
   type TriageLoadResult,
+  type TriageNetwork,
 } from "./types";

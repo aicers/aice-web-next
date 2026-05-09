@@ -12,11 +12,37 @@ import type { ThreatCategory, ThreatLevel } from "@/lib/detection";
 export const TRIAGE_HARD_EVENT_CAP = 5_000;
 
 /**
+ * Membership shape of a customer-defined network. Mirrors REview's
+ * `HostNetworkGroup` — exact hosts, CIDR networks, and inclusive IP
+ * ranges. The triage classifier reads all three fields to decide
+ * whether an address is inside the customer perimeter.
+ */
+export interface TriageHostNetworkGroup {
+  hosts: string[];
+  networks: string[];
+  ranges: { start: string; end: string }[];
+}
+
+/**
+ * Customer network attached to an event side. Only the
+ * `networks` membership shape is selected by the triage query —
+ * other `Network` fields (id, name, …) are not needed for
+ * classification.
+ */
+export interface TriageNetwork {
+  networks: TriageHostNetworkGroup;
+}
+
+/**
  * Slim event shape returned by the Triage `eventList` query.
  *
  * The selection set lives in {@link TRIAGE_EVENT_LIST_QUERY}; this
  * mirror only carries fields the page actually consumes (scoring,
- * asset extraction, asset-detail display).
+ * asset extraction, asset-detail display, and the pivot dimensions
+ * #452 / #453 will index over). Coverage is uneven across subtypes
+ * (e.g. `RdpBruteForce` exposes no resp-side fields), so every
+ * non-required field is optional and consumers must treat absent
+ * fields as `null`.
  */
 export interface TriageEvent {
   __typename: string;
@@ -26,14 +52,47 @@ export interface TriageEvent {
   level: ThreatLevel;
   /** Originator IP — present on every curated subtype the page handles. */
   origAddr?: string | null;
+  /** Responder IP — present on most but not all subtypes. */
+  respAddr?: string | null;
+  origPort?: number | null;
+  respPort?: number | null;
+  origCountry?: string | null;
+  respCountry?: string | null;
+  /** Customer-defined originator network membership. */
+  origNetwork?: TriageNetwork | null;
+  /** Customer-defined responder network membership. */
+  respNetwork?: TriageNetwork | null;
   /** Cluster ID; only `HttpThreat` selects it in the query. */
   clusterId?: string | null;
+  // HTTP-shaped subtypes only.
+  host?: string | null;
+  uri?: string | null;
+  userAgent?: string | null;
+  // DNS-shaped subtypes only.
+  query?: string | null;
+  answer?: string | null;
+  // TLS-shaped subtypes only.
+  ja3?: string | null;
+  ja3S?: string | null;
+  serverName?: string | null;
+  serial?: string | null;
+  subjectCommonName?: string | null;
   /**
    * Stable per-render React key for the asset detail panel. Populated
    * by {@link aggregateTriageEvents} so the list rows have a unique
    * identity even when several events share `time` + `__typename`.
    */
   rowKey?: string;
+}
+
+/**
+ * Post-aggregation event shape with the locally-computed baseline
+ * score attached. `score === 0` for events that do not pass the
+ * baseline rule. Carries `score` separately from `TriageEvent` so
+ * the GraphQL-mapping type stays free of computed fields.
+ */
+export interface ScoredTriageEvent extends TriageEvent {
+  score: number;
 }
 
 /** Result of one `eventList` page in the triage query. */
@@ -65,8 +124,12 @@ export interface TriageAsset {
   triagedCount: number;
   /** Sum of per-event baseline scores. Sort key for the asset list. */
   score: number;
-  /** Up to 50 events for the asset detail panel; ordered newest first. */
-  events: TriageEvent[];
+  /**
+   * Up to 50 baseline-passing events for the asset detail panel;
+   * ordered newest first. Each event carries its per-event `score`
+   * so the detail panel can render score per row.
+   */
+  events: ScoredTriageEvent[];
 }
 
 /** Funnel summary for the Triage page. */
@@ -84,6 +147,13 @@ export interface TriageLoadResult {
   truncated: boolean;
   /** Number of events actually loaded (≤ {@link TRIAGE_HARD_EVENT_CAP}). */
   loadedEventCount: number;
+  /**
+   * Every loaded event with its baseline score attached
+   * (`score === 0` for non-baseline-passing rows). #452 builds its
+   * pivot index over this full list — not over `assets[*].events`,
+   * which is capped at 50 and filters out non-baseline events.
+   */
+  events: ScoredTriageEvent[];
 }
 
 export interface TriageError {
