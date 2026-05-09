@@ -1,5 +1,6 @@
 /**
- * Pure aggregation of Triage events into the funnel + asset list.
+ * Pure aggregation of Triage events into the funnel + asset list +
+ * scored corpus.
  *
  * Kept separate from the server-action layer so the scoring +
  * grouping logic is unit-testable without mocking the GraphQL
@@ -8,6 +9,7 @@
 
 import { baselineScore } from "./scoring";
 import type {
+  ScoredTriageEvent,
   TriageAsset,
   TriageEvent,
   TriageFunnel,
@@ -22,7 +24,7 @@ interface AssetAccumulator {
   detectedCount: number;
   triagedCount: number;
   score: number;
-  events: TriageEvent[];
+  events: ScoredTriageEvent[];
 }
 
 function emptyAccumulator(address: string): AssetAccumulator {
@@ -35,7 +37,10 @@ function emptyAccumulator(address: string): AssetAccumulator {
   };
 }
 
-function compareEventsNewestFirst(a: TriageEvent, b: TriageEvent): number {
+function compareEventsNewestFirst(
+  a: ScoredTriageEvent,
+  b: ScoredTriageEvent,
+): number {
   // ISO-8601 strings sort lexicographically in calendar order.
   if (a.time < b.time) return 1;
   if (a.time > b.time) return -1;
@@ -58,9 +63,10 @@ function compareAssets(a: TriageAsset, b: TriageAsset): number {
  *
  * Events without a usable originator IP (e.g., aggregate threat
  * subtypes that emit `origAddrs` plural) are still counted in the
- * funnel denominator but do not contribute to any asset row — Phase
- * 1.A's asset key is a single originator address and the issue is
- * explicit that the asset list is sorted by score.
+ * funnel denominator and surface in the top-level scored `events`
+ * list, but do not contribute to any asset row — Phase 1.A's asset
+ * key is a single originator address and the issue is explicit that
+ * the asset list is sorted by score.
  */
 export function aggregateTriageEvents(
   events: TriageEvent[],
@@ -72,11 +78,14 @@ export function aggregateTriageEvents(
     passThroughRate: 0,
   };
   const byAddress = new Map<string, AssetAccumulator>();
+  const scoredEvents: ScoredTriageEvent[] = [];
 
   for (const event of events) {
     const score = baselineScore(event);
     const triaged = score > 0;
     if (triaged) funnel.triaged += 1;
+    const scored: ScoredTriageEvent = { ...event, score };
+    scoredEvents.push(scored);
 
     const address = typeof event.origAddr === "string" ? event.origAddr : null;
     if (!address) continue;
@@ -91,7 +100,7 @@ export function aggregateTriageEvents(
       // both whitelisted and non-whitelisted events must not surface
       // score-0 noise that could push the actual scored events out of
       // the 50-event detail window.
-      acc.events.push(event);
+      acc.events.push(scored);
     }
     byAddress.set(address, acc);
   }
@@ -132,5 +141,6 @@ export function aggregateTriageEvents(
     assets,
     truncated,
     loadedEventCount: events.length,
+    events: scoredEvents,
   };
 }
