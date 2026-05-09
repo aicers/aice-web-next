@@ -808,6 +808,7 @@ export function FilterDrawer({
                 options={options.levels}
                 selected={draft.levels}
                 onChange={(next) => onDraftChange({ ...draft, levels: next })}
+                openList
                 labels={multiSelectLabels}
               />
               <FilterMultiSelect

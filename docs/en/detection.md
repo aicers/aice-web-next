@@ -1058,13 +1058,14 @@ per-event dimensions you can narrow by. Each dimension is a
 multi-select with the same interaction pattern:
 
 - A trigger shows the current summary. For closed-list fields
-  (Threat Level, Threat Country, AI Model Type, Threat Category)
-  the summary reads `All` when everything or nothing is selected —
-  both mean "no filter" — and `N selected` otherwise. **Threat
-  Name** is treated as an open list while its options are still a
-  seed subset (see below): a saturated Threat Name selection reads
-  as `N selected` rather than `All`, because the submitted filter
-  still actively constrains to the visible list.
+  (Threat Country, AI Model Type, Threat Category) the summary
+  reads `All` when everything or nothing is selected — both mean
+  "no filter" — and `N selected` otherwise. **Threat Level** and
+  **Threat Name** are treated as open lists because their visible
+  options are a strict subset of the real domain (see below): a
+  saturated selection reads as `N selected` rather than `All`,
+  because the submitted filter still actively constrains to the
+  visible list.
 - An **All** master toggle selects or clears every option. When
   some but not all options are checked, the toggle renders as a
   mixed state.
@@ -1073,10 +1074,10 @@ multi-select with the same interaction pattern:
 - For closed-list fields, selecting zero options and selecting
   every option are both treated as "no filter" — the field is
   omitted from the submitted query and does not appear in the chip
-  bar. Threat Name follows a different rule: selecting zero still
-  omits the field, but selecting every visible option submits the
-  explicit list and still emits chips, since the seed list is not
-  exhaustive.
+  bar. Open-list fields (Threat Level, Threat Name) follow a
+  different rule: selecting zero still omits the field, but
+  selecting every visible option submits the explicit list and
+  still emits chips, since the visible options are not exhaustive.
 
 ![Detection filter drawer — categorical filters](../assets/detection-drawer-categorical-en.png)
 
@@ -1086,7 +1087,12 @@ The five categorical fields are:
   [LOW, MEDIUM, HIGH]` on the backend). REview's `ThreatLevel` enum
   also defines `VERY_LOW` and `VERY_HIGH`; those values can appear
   on event output and result-list level chips, but the drawer keeps
-  the three-level surface today.
+  the three-level surface today. Because the visible options are a
+  strict subset of the schema enum, this field is treated as an
+  open list — saturating the three checkboxes still submits the
+  explicit `[LOW, MEDIUM, HIGH]` filter (the trigger reads
+  `3 selected`, not `All`) so the query never silently broadens to
+  include `VERY_LOW` / `VERY_HIGH`.
 - **Threat Country** — originator / responder country, selected by
   ISO-3166 alpha-2 code. The list includes the REview sentinels
   `XX` and `ZZ` so events that could not be geolocated can still
@@ -1117,9 +1123,9 @@ rule:
 
 - For closed-list fields: no chip when nothing or everything is
   selected for a field (both mean "no filter").
-- For Threat Name (open-list): no chip when nothing is selected,
-  but a saturated selection still emits chips because the field is
-  still actively filtering to the visible list.
+- For open-list fields (Threat Level, Threat Name): no chip when
+  nothing is selected, but a saturated selection still emits chips
+  because the field is still actively filtering to the visible list.
 - One chip per value for 1 – 3 selected values.
 - A single aggregate token (e.g. `Countries: 12 selected`) when
   more than 3 values are selected, to keep the bar compact.
