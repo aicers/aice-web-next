@@ -236,6 +236,34 @@ describe("parseFilterFromUrlParam — Reviewer Round 6 (item 2) deep validation"
     expect(decoded.filter.input.confidenceMax).toBe(0.9);
   });
 
+  it("migrates pre-bump numeric `levels` to ThreatLevel enum strings (1->LOW, 2->MEDIUM, 3->HIGH)", () => {
+    // Issue #480: shareable `?f=` blobs minted before the SDL bump
+    // carried `levels: [Int!]` with `1=LOW, 2=MEDIUM, 3=HIGH`. The
+    // bump switched the field to `[ThreatLevel!]`. Without migration
+    // a pre-bump link's level constraint silently disappears on
+    // upgrade and the filter broadens. Mixed numeric/enum entries
+    // also survive so a partially-rewritten payload is not lost.
+    const encoded = btoaUrl(
+      JSON.stringify({
+        v: 1,
+        filter: {
+          mode: "structured",
+          input: { levels: [1, 3, "MEDIUM", 999, "HIGH"] },
+        },
+      }),
+    );
+    const decoded = parseFilterFromUrlParam(encoded);
+    if (decoded?.filter.mode !== "structured") {
+      throw new Error("expected structured filter");
+    }
+    expect(decoded.filter.input.levels).toEqual([
+      "LOW",
+      "HIGH",
+      "MEDIUM",
+      "HIGH",
+    ]);
+  });
+
   it("drops unknown enum values from directions and learningMethods", () => {
     const encoded = btoaUrl(
       JSON.stringify({

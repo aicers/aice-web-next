@@ -139,6 +139,47 @@ describe("saved-filters lib", () => {
         },
       ]);
     });
+
+    // Issue #480: pre-bump persisted shape stored `levels` as
+    // `[Int!]` with `1=LOW, 2=MEDIUM, 3=HIGH`. The SDL bump switched
+    // the field to `[ThreatLevel!]`, so a row written before the bump
+    // must be migrated on read or its level constraint silently
+    // disappears (which would broaden every saved filter after
+    // upgrade). Mixed numeric/enum payloads also survive — useful for
+    // a row that was partially rewritten by a newer client before
+    // re-saving.
+    it("migrates pre-bump numeric `levels` to ThreatLevel enum strings on read", async () => {
+      mockQuery.mockResolvedValue({
+        rowCount: 1,
+        rows: [
+          {
+            id: "11111111-1111-1111-1111-111111111111",
+            name: "pre-bump-medium-high",
+            mode: "structured",
+            filter_json: { levels: [2, 3] },
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "22222222-2222-2222-2222-222222222222",
+            name: "mixed-numeric-and-enum",
+            mode: "structured",
+            filter_json: { levels: [1, "HIGH", 999, "VERY_LOW"] },
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const result = await mod.listSavedFiltersForAccount("acct-1");
+      expect(
+        result.map((r) =>
+          r.filter.mode === "structured" ? r.filter.input.levels : null,
+        ),
+      ).toEqual([
+        ["MEDIUM", "HIGH"],
+        ["LOW", "HIGH", "VERY_LOW"],
+      ]);
+    });
   });
 
   describe("insertSavedFilter", () => {

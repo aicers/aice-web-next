@@ -1082,9 +1082,11 @@ multi-select with the same interaction pattern:
 
 The five categorical fields are:
 
-- **Threat Level** — `Very Low` / `Low` / `Medium` / `High` /
-  `Very High` (maps to `levels: [VERY_LOW, LOW, MEDIUM, HIGH,
-  VERY_HIGH]` on the backend).
+- **Threat Level** — `Low` / `Medium` / `High` (maps to `levels:
+  [LOW, MEDIUM, HIGH]` on the backend). REview's `ThreatLevel` enum
+  also defines `VERY_LOW` and `VERY_HIGH`; those values can appear
+  on event output and result-list level chips, but the drawer keeps
+  the three-level surface today.
 - **Threat Country** — originator / responder country, selected by
   ISO-3166 alpha-2 code. The list includes the REview sentinels
   `XX` and `ZZ` so events that could not be geolocated can still
