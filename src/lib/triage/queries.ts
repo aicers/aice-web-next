@@ -133,6 +133,9 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
         ... on PortScan {
           origAddr
         }
+        ... on RdpBruteForce {
+          origAddr
+        }
         ... on RepeatedHttpSessions {
           origAddr
         }
