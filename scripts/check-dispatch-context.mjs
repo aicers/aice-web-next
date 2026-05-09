@@ -99,7 +99,7 @@ const ROOT = path.resolve(path.dirname(__filename), "..");
 // Files that are permitted to issue customer-scoped GraphQL requests.
 // Keep this list small and explicit. New entries should accompany an
 // architectural change, not an ordinary feature PR.
-const ALLOWED_DIRS = ["src/lib/node", "src/lib/detection"];
+const ALLOWED_DIRS = ["src/lib/node", "src/lib/detection", "src/lib/triage"];
 
 // The GraphQL client modules themselves define and re-dispatch the
 // helpers; they have no caller-side scope to materialize and are

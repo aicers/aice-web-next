@@ -452,9 +452,10 @@ response body must not.
 A Node script at `scripts/check-dispatch-context.mjs` runs in CI
 alongside `pnpm check`. It enforces, file-by-file:
 
-- Only files under `src/lib/node/`, `src/lib/detection/`, and the
-  GraphQL client modules themselves may call `graphqlRequest` /
-  `graphqlRequestTo`. Any other call site fails CI.
+- Only files under `src/lib/node/`, `src/lib/detection/`,
+  `src/lib/triage/`, and the GraphQL client modules themselves may
+  call `graphqlRequest` / `graphqlRequestTo`. Any other call site
+  fails CI.
 - For each allowlisted file that calls one of the helpers,
   `buildDispatchContext` must either be imported from another
   module or declared locally as a top-level function / const.
