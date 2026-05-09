@@ -1878,6 +1878,59 @@
       "note": "Pivots use only filter-based lookups — no external AI insight is fetched."
     }
   },
+  "triage": {
+    "title": "Triage",
+    "intro": "Baseline scoring over events in the selected period. Phase 1.A only — corpus retention isn't yet available, so the period is restricted to the last 30 days.",
+    "errorBanner": "Could not load events for this period. Try a different range.",
+    "forbiddenBanner": "You are not authorized to view triage results.",
+    "forbiddenScopeBanner": "You have no customers in scope. Contact an administrator.",
+    "truncatedBannerTemplate": "Partial: showing {loaded} events of period (truncated at {cap}).",
+    "clampedNotice": "Period adjusted to fit the last 30 days.",
+    "periodPicker": {
+      "legend": "Period",
+      "startLabel": "Start",
+      "endLabel": "End",
+      "apply": "Apply",
+      "invalidRange": "End must be after start.",
+      "durationCapHint": "Period cannot exceed 30 days.",
+      "lookbackHint": "Start cannot be earlier than 30 days ago."
+    },
+    "modeToggle": {
+      "legend": "Triage mode",
+      "baseline": "Baseline",
+      "policies": "With my policies",
+      "policiesUnavailable": "Available once Triage policies ship."
+    },
+    "funnel": {
+      "title": "Funnel",
+      "detected": "Detected",
+      "triaged": "Triaged",
+      "passThrough": "Pass-through",
+      "passThroughHint": "Triaged ÷ Detected"
+    },
+    "assetList": {
+      "title": "Assets by score",
+      "empty": "No assets matched the baseline rule in this period.",
+      "addressColumn": "Source",
+      "scoreColumn": "score",
+      "triagedColumn": "triaged",
+      "detectedColumn": "detected",
+      "rowDetailsTemplate": "{address} — score {score}, {triaged} triaged of {detected} detected"
+    },
+    "assetDetail": {
+      "title": "Asset detail",
+      "emptySelection": "Select an asset to inspect its events.",
+      "emptyEvents": "No triaged events to display.",
+      "scoreLabel": "Score",
+      "triagedLabel": "Triaged",
+      "detectedLabel": "Detected",
+      "eventsHeading": "Events",
+      "timeColumn": "Time",
+      "kindColumn": "Kind",
+      "categoryColumn": "Category",
+      "scoreColumn": "Score"
+    }
+  },
   "changePassword": {
     "heading": "Change Password",
     "currentPassword": "Current Password",
