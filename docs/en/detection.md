@@ -1082,8 +1082,9 @@ multi-select with the same interaction pattern:
 
 The five categorical fields are:
 
-- **Threat Level** — `Low` / `Medium` / `High` (maps to
-  `levels: [1, 2, 3]` on the backend).
+- **Threat Level** — `Very Low` / `Low` / `Medium` / `High` /
+  `Very High` (maps to `levels: [VERY_LOW, LOW, MEDIUM, HIGH,
+  VERY_HIGH]` on the backend).
 - **Threat Country** — originator / responder country, selected by
   ISO-3166 alpha-2 code. The list includes the REview sentinels
   `XX` and `ZZ` so events that could not be geolocated can still
