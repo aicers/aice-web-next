@@ -73,6 +73,7 @@ the values:
 | `APPLY_EXECUTING_STALE_MS` | Stale-lock recovery threshold for `executing` apply attempts (default: 2.5 hours) |
 | `APPLY_DISPATCH_MAX_ATTEMPTS` | Per-dispatch retry cap before `failed_terminal` (default: 3) |
 | `APPLY_INTERNAL_CLEANUP_TOKEN` | Shared secret for `POST /api/internal/apply-attempts/cleanup`; route refuses every request if unset |
+| `TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN` | Shared secret for `POST /api/internal/triage/baseline/cadence`; route refuses every request if unset. Body shape: `{ "customer_id": <positive integer> }`. The deployment scheduler invokes this hourly per customer to drive Triage baseline corpus ingestion (1B-1). |
 | `NEXT_PUBLIC_NODE_STATUS_POLL_MS` | Polling cadence (ms) for the Nodes Status tab and detail-page dashboard. Default `10000`; values outside `[5000, 300000]` clamp to that range. The detail-page sparkline buffer length is a fixed 60 samples (`NODE_STATUS_SPARKLINE_SAMPLES` in `src/lib/node/status.ts`) and is not operator-configurable in v1; samples older than the cap are dropped on a rolling basis. |
 | `NEXT_PUBLIC_GS_MODE` | Set to `1` / `true` / `on` to ship the gs-build subset of Hog `active_models`; anything else (or unset) ships the full set. Read at module load by `src/lib/node/active-models.ts`. |
 
