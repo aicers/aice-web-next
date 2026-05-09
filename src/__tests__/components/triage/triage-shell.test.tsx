@@ -8,7 +8,7 @@
  */
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replaceMock = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -17,6 +17,13 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// `TriagePeriodPicker` validates the submitted start against the real
+// `Date.now()` and rejects anything older than `TRIAGE_MAX_LOOKBACK_MS`
+// (30 days). Freezing the clock keeps the fixed period below from
+// ageing past that window, which would otherwise turn this suite into
+// a CI time bomb that fails 30 days after the fixture date.
+const FROZEN_NOW = new Date("2026-05-09T12:00:00.000Z");
+
 import {
   TriageShell,
   type TriageShellLabels,
@@ -24,7 +31,13 @@ import {
 import { aggregateTriageEvents, type TriageEvent } from "@/lib/triage";
 import { PIVOT_DIMENSIONS, type PivotDimensionId } from "@/lib/triage/pivot";
 
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(FROZEN_NOW);
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   replaceMock.mockReset();
 });
 
