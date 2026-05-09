@@ -275,7 +275,12 @@
       "aimer_signing_key_rotated": "Aimer 서명 키 회전",
       "aimer_signing_key_switched": "Aimer 서명 키 전환",
       "aimer_signing_key_deactivated": "Aimer 서명 키 비활성화",
-      "aimer_integration_setting_changed": "Aimer 연동 설정 변경"
+      "aimer_integration_setting_changed": "Aimer 연동 설정 변경",
+      "aimer_context_token_issued": "Aimer 컨텍스트 토큰 발급",
+      "aimer_context_token_denied": "Aimer 컨텍스트 토큰 거부",
+      "triage_policy_create": "Triage 정책 생성",
+      "triage_policy_update": "Triage 정책 수정",
+      "triage_policy_delete": "Triage 정책 삭제"
     },
     "targetTypes": {
       "account": "계정",
@@ -285,7 +290,8 @@
       "role": "역할",
       "mfa": "MFA",
       "node": "노드",
-      "service": "서비스"
+      "service": "서비스",
+      "triage_policy": "Triage 정책"
     }
   },
   "nodes": {
