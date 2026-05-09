@@ -27,6 +27,7 @@ plugins:
             - Getting Started: getting-started.md
             - Detection: detection.md
             - Event Investigation: event-investigation.md
+            - Triage: triage.md
             - Operations:
                 - Node management: operations/node-management.md
                 - mTLS certificate rotation: operations/mtls-rotation.md
@@ -40,6 +41,7 @@ plugins:
             - Getting Started: getting-started.md
             - Detection: detection.md
             - Event Investigation: event-investigation.md
+            - Triage: triage.md
             - Operations:
                 - Node management: operations/node-management.md
                 - mTLS certificate rotation: operations/mtls-rotation.md
@@ -50,6 +52,7 @@ plugins:
             Getting Started: 시작하기
             Detection: 탐지
             Event Investigation: 이벤트 조사
+            Triage: 트리아지
             Operations: 운영
             Node management: 노드 관리
             mTLS certificate rotation: mTLS 인증서 교체
