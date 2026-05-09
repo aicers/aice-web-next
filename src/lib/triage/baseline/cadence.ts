@@ -11,15 +11,18 @@ import "server-only";
  * ## Concurrency
  *
  * A second concurrent invocation for the same customer must not double-
- * ingest. The runner takes a per-customer transaction-scoped advisory
- * lock as the first statement of the cadence transaction:
+ * ingest. Every per-page transaction starts by taking a per-customer
+ * transaction-scoped advisory lock:
  *
  *   `pg_try_advisory_xact_lock(hashtext('triage_baseline_cadence:' || customer_id))`
  *
- * If the lock is unavailable the runner exits cleanly without touching
- * `baseline_corpus_state` — the next scheduled tick picks up where the
- * previous run stopped via `last_event_cursor`. Lock release is
- * automatic on commit/rollback because it is transaction-scoped.
+ * If the lock is unavailable on the first page, the runner exits cleanly
+ * without touching `baseline_corpus_state` — the next scheduled tick
+ * picks up where the previous run stopped via `last_event_cursor`. Lock
+ * release is automatic on commit/rollback because it is transaction-
+ * scoped. A run holds the lock only across one page transaction at a
+ * time, so multiple cadence pages do not stretch a long-lived database
+ * transaction.
  *
  * ## Pipeline (per page)
  *
@@ -36,26 +39,33 @@ import "server-only";
  *   f. UPDATE `baseline_corpus_state.last_event_cursor` and
  *      `last_ingested_at`.
  *
- * Steps (d), (e), and (f) commit as a single transaction so the
- * watermark advances atomically with the rows it covers. PK collisions
- * on re-ingest of the same `event_key` are handled with
+ * Steps (a)–(f) for a single page commit as one DB transaction. PK
+ * collisions on re-ingest of the same `event_key` are handled with
  * `ON CONFLICT DO NOTHING`.
  *
- * ## Upstream dependency
+ * ## Upstream dependency and the `pending` status
  *
- * This module ships the scheduler entrypoint, the advisory lock
- * discipline, the corpus-state machine, and the schema migration. The
- * GraphQL fetch-and-ingest path is intentionally a placeholder: it
- * depends on `eventListWithTriage` from aicers/review-web#842, which
- * exposes both the new `EventStandardFilterInput` filter type and the
- * `event_key` (i128 RocksDB primary key) selection that this corpus
- * keys on. Today's vendored `schemas/review.graphql` carries neither.
+ * This module ships the scheduler entrypoint, the per-page advisory-
+ * lock discipline, the corpus-state machine, and the schema migration.
+ * The actual GraphQL pager — steps (a)–(e) — is injected via the
+ * {@link CadencePager} interface and depends on two pieces that are not
+ * yet in this repo: review-web#842 (`eventListWithTriage` resolver +
+ * `EventStandardFilterInput` type + `event_key` field selection) needs
+ * to be vendored into `schemas/review.graphql`, and aice-web-next#460
+ * (the shared `src/lib/triage/exclusion/` helper) must land so cadence-
+ * time and retroactive-DELETE paths share one normalization +
+ * `exclusions_fp` source of truth.
  *
- * Once #842 lands, the placeholder marker in {@link ingestPage} flips
- * to a real GraphQL pager: the rest of the cadence flow (lock,
- * transaction, status updates, normalization helpers, exclusion re-
- * application, ON CONFLICT DO NOTHING inserts, watermark advance) is
- * unchanged. The route handler and its token guard are unaffected.
+ * Until those land, `runTriageBaselineCadence` defaults to
+ * {@link STUB_PAGER}, which throws {@link CadencePagerNotImplementedError}
+ * on the first page. The runner catches that error specifically, rolls
+ * back the page transaction (so the corpus-state row stays untouched),
+ * and returns `status: 'pending'`. The scheduler can wire the route up
+ * today — it will see `pending` responses and the corpus stays empty —
+ * without any risk that a no-op run advertises success or advances
+ * `last_ingested_at`. When the real pager lands, the same module just
+ * swaps `STUB_PAGER` for the production pager and the surrounding
+ * lock / transaction / status-machine plumbing is unchanged.
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -88,20 +98,28 @@ export const PHASE_1A_SELECTOR_TAG = "phase1a-simple";
  */
 export const PHASE_1A_BASELINE_SCORE = 1;
 
-export type CadenceRunStatus = "ok" | "failed" | "running" | "skipped";
+export type CadenceRunStatus =
+  | "ok"
+  | "failed"
+  | "running"
+  | "skipped"
+  | "pending";
 
 export interface CadenceRunResult {
   /** Customer the runner targeted. */
   customerId: number;
   /**
    * Outcome marker:
-   *   - `ok`: the cadence transaction committed (zero or more pages
-   *     ingested).
-   *   - `skipped`: the per-customer advisory lock was unavailable
-   *     because another run is in progress; this tick is a no-op.
-   *   - `failed`: the cadence transaction rolled back; `error` carries
-   *     the message that was persisted to
-   *     `baseline_corpus_state.last_error`.
+   *   - `ok`: at least one page committed cleanly.
+   *   - `skipped`: the per-customer advisory lock was unavailable on
+   *     the very first page; this tick is a no-op.
+   *   - `failed`: a page rolled back; `error` carries the message that
+   *     was persisted to `baseline_corpus_state.last_error`.
+   *   - `pending`: the cadence pager is not yet wired (see module
+   *     docstring). The runner started a page transaction, observed the
+   *     stub, rolled back, and returned without touching the corpus-
+   *     state row. The scheduler can keep ticking; runs flip to `ok`
+   *     automatically once the pager lands.
    *   - `running`: never returned to the caller — the on-disk marker
    *     used while a run holds the lock so a crash leaves a forensic
    *     breadcrumb.
@@ -126,16 +144,68 @@ interface CorpusStateRow {
   last_error: string | null;
 }
 
+export interface CadencePageResult {
+  /** Rows inserted into `observed_event_meta` for this page. */
+  observedInserted: number;
+  /** Rows inserted into `baseline_triaged_event` for this page. */
+  baselineInserted: number;
+  /**
+   * End cursor of the page as reported by the resolver, or `null` if
+   * the resolver returned no edges. Used to advance
+   * `baseline_corpus_state.last_event_cursor`.
+   */
+  endCursor: string | null;
+  /** Whether the resolver indicates more pages are available. */
+  hasNextPage: boolean;
+}
+
 /**
- * Build the bigint advisory-lock key. Mirrors the SQL formula in the
- * issue: `hashtext('triage_baseline_cadence:' || customer_id)`. Letting
- * the database compute the hash avoids a Node ↔ Postgres consistency
- * trap (Postgres' `hashtext` is not equivalent to any well-known JS
- * hash). Returns the raw SQL fragment passed straight into
- * `pg_try_advisory_xact_lock`.
+ * Fetch + insert one page of standard-filter survivors. The runner
+ * threads `afterCursor` from the previous page's `endCursor` (or
+ * `baseline_corpus_state.last_event_cursor` on the first page) and
+ * runs every call inside an open page transaction with the per-customer
+ * advisory lock already held.
  */
+export interface CadencePager {
+  ingestPage(
+    client: pg.PoolClient,
+    customerId: number,
+    afterCursor: string | null,
+  ): Promise<CadencePageResult>;
+}
+
+/**
+ * Sentinel raised by {@link STUB_PAGER}. The runner catches this error
+ * specifically and returns `status: 'pending'` so the scheduler does
+ * not see a fake-success response while the real pager is unavailable.
+ */
+export class CadencePagerNotImplementedError extends Error {
+  constructor() {
+    super(
+      "Triage cadence pager is not yet implemented (pending review-web#842 schema vendor and aicers/aice-web-next#460 shared exclusion helper).",
+    );
+    this.name = "CadencePagerNotImplementedError";
+  }
+}
+
+/**
+ * Default pager. Throws {@link CadencePagerNotImplementedError} on
+ * every call. Replace at the {@link runTriageBaselineCadence} call site
+ * once the real pager lands.
+ */
+export const STUB_PAGER: CadencePager = {
+  async ingestPage() {
+    throw new CadencePagerNotImplementedError();
+  },
+};
+
 const LOCK_NAMESPACE = "triage_baseline_cadence:";
 
+/**
+ * Letting the database compute the hash avoids a Node ↔ Postgres
+ * consistency trap (Postgres' `hashtext` is not equivalent to any
+ * well-known JS hash).
+ */
 function buildLockKeyExpr(): string {
   return `hashtext($1)`;
 }
@@ -232,159 +302,129 @@ async function markFailed(pool: pg.Pool, message: string): Promise<void> {
 }
 
 /**
- * Ingest a single page of standard-filter survivors and return the
- * count of rows inserted into each table plus the end cursor of the
- * page (or `null` if no further pages exist). Phase 1.A: this function
- * is a placeholder. The full implementation lands once review-web#842
- * exposes `eventListWithTriage` + `event_key`. Today it returns a
- * no-op page so the surrounding cadence transaction commits a clean
- * "ran, no work to do" record — the corpus stays empty until #842
- * lands, but the scheduler endpoint, advisory-lock discipline, status
- * machine, and migration are all exercised in production.
- */
-async function ingestPage(
-  _client: pg.PoolClient,
-  _customerId: number,
-  _afterCursor: string | null,
-): Promise<{
-  observedInserted: number;
-  baselineInserted: number;
-  endCursor: string | null;
-  hasNextPage: boolean;
-}> {
-  // TODO(review-web#842): replace this stub with a real pager.
-  //
-  //   1. Build EventStandardFilterInput (no triagePolicies field).
-  //   2. graphqlRequest(EVENT_LIST_WITH_TRIAGE_QUERY, { filter, first,
-  //      after, triage: null }, { role, customerIds: [customerId] }).
-  //   3. For each node:
-  //        - Extract event_key (NUMERIC(39,0)) from the GraphQL field.
-  //        - Normalize host / dns_query / uri per event-kind mapping.
-  //        - Drop if any active exclusion (CIDR / hostname / domain
-  //          regex / uri exact) matches.
-  //   4. INSERT survivors into observed_event_meta (ON CONFLICT DO
-  //      NOTHING).
-  //   5. INSERT baseline-passing subset (Phase 1.A category whitelist
-  //      OR HttpThreat with cluster_id IS NULL) into
-  //      baseline_triaged_event (ON CONFLICT DO NOTHING) with
-  //      baseline_version = PHASE_1A_BASELINE_VERSION,
-  //      baseline_score  = PHASE_1A_BASELINE_SCORE,
-  //      selector_tags   = ARRAY[PHASE_1A_SELECTOR_TAG],
-  //      exclusions_fp   = computeExclusionsFingerprint(active).
-  //   6. Return endCursor + hasNextPage so the outer driver can either
-  //      advance the watermark or break out of the loop on the last
-  //      page.
-  return {
-    observedInserted: 0,
-    baselineInserted: 0,
-    endCursor: null,
-    hasNextPage: false,
-  };
-}
-
-/**
- * Page-bounded driver. Walks pages until either the resolver reports
- * no more pages or `MAX_PAGES_PER_RUN` is reached, accumulating row
- * counts and the latest end cursor. Hard cap defends against a runaway
- * loop if the resolver ever reports `hasNextPage = true` on every page.
+ * Hard cap on pages per cadence run. Defends against a runaway loop if
+ * the resolver ever reports `hasNextPage = true` indefinitely. With
+ * per-page transactions, the cap also bounds how long a single cadence
+ * tick can hold the connection.
  */
 const MAX_PAGES_PER_RUN = 200;
 
-async function drivePages(
-  client: pg.PoolClient,
-  customerId: number,
-  startCursor: string | null,
-): Promise<{
-  observedInserted: number;
-  baselineInserted: number;
-  endCursor: string | null;
-}> {
-  let cursor = startCursor;
-  let observedInserted = 0;
-  let baselineInserted = 0;
-  for (let page = 0; page < MAX_PAGES_PER_RUN; page += 1) {
-    const out = await ingestPage(client, customerId, cursor);
-    observedInserted += out.observedInserted;
-    baselineInserted += out.baselineInserted;
-    if (out.endCursor !== null) cursor = out.endCursor;
-    if (!out.hasNextPage) break;
-  }
-  return {
-    observedInserted,
-    baselineInserted,
-    endCursor: cursor,
-  };
-}
-
 /**
- * Run one cadence pass for a single customer. Resolves the customer's
- * tenant pool, opens a single transaction, takes the per-customer
- * advisory lock, and either drives pages to completion + commits or
- * exits without touching state.
+ * Run one cadence pass for a single customer. Walks pages until either
+ * the resolver reports `hasNextPage = false` or `MAX_PAGES_PER_RUN` is
+ * reached, committing each page's INSERTs + watermark UPDATE in its own
+ * transaction so progress is preserved if a later page fails.
  */
 export async function runTriageBaselineCadence(
   customerId: number,
+  options: { pager?: CadencePager } = {},
 ): Promise<CadenceRunResult> {
+  const pager = options.pager ?? STUB_PAGER;
+
   // Lets `CustomerNotFoundError` propagate so the route handler can
   // surface it as a 404. In-process callers (future batched drivers,
   // tests) catch the same error type if they want a "skip" instead.
   const pool = await getCustomerPool(customerId);
 
   const client = await pool.connect();
+  let totalObserved = 0;
+  let totalBaseline = 0;
+  let lastCommittedCursor: string | null = null;
+  let nextStartCursor: string | null = null;
+  let isFirstPage = true;
+
   try {
-    await client.query("BEGIN");
-    try {
-      const lockResult = await client.query<{ acquired: boolean }>(
-        `SELECT pg_try_advisory_xact_lock(${buildLockKeyExpr()}) AS acquired`,
-        [buildLockKeyParam(customerId)],
-      );
-      const acquired = lockResult.rows[0]?.acquired === true;
-      if (!acquired) {
-        // Concurrent run holds the lock. Roll back so we leave the row
-        // alone — the active runner will write the watermark.
-        await client.query("ROLLBACK");
+    for (let page = 0; page < MAX_PAGES_PER_RUN; page += 1) {
+      let pageCommitted = false;
+      try {
+        await client.query("BEGIN");
+
+        const lockResult = await client.query<{ acquired: boolean }>(
+          `SELECT pg_try_advisory_xact_lock(${buildLockKeyExpr()}) AS acquired`,
+          [buildLockKeyParam(customerId)],
+        );
+        const acquired = lockResult.rows[0]?.acquired === true;
+        if (!acquired) {
+          await client.query("ROLLBACK");
+          if (isFirstPage) {
+            return {
+              customerId,
+              status: "skipped",
+              observedInserted: 0,
+              baselineInserted: 0,
+              lastEventCursor: null,
+            };
+          }
+          // Mid-run lock loss (rare: a competing scheduler tick grabbed
+          // the lock between two of our page commits). Stop cleanly at
+          // the watermark we already committed; the competing run will
+          // continue from there.
+          break;
+        }
+
+        if (isFirstPage) {
+          const state = await readOrInitCorpusState(client);
+          await markRunning(client);
+          nextStartCursor = state.last_event_cursor;
+        }
+
+        const ingest = await pager.ingestPage(
+          client,
+          customerId,
+          nextStartCursor,
+        );
+
+        await markOk(client, ingest.endCursor, EMPTY_EXCLUSIONS_FP);
+        await client.query("COMMIT");
+        pageCommitted = true;
+
+        totalObserved += ingest.observedInserted;
+        totalBaseline += ingest.baselineInserted;
+        if (ingest.endCursor !== null) {
+          nextStartCursor = ingest.endCursor;
+          lastCommittedCursor = ingest.endCursor;
+        }
+        isFirstPage = false;
+        if (!ingest.hasNextPage) break;
+      } catch (err) {
+        if (!pageCommitted) {
+          await client.query("ROLLBACK").catch(() => {
+            // Already rolled back or connection broken; nothing to do.
+          });
+        }
+        if (err instanceof CadencePagerNotImplementedError) {
+          // Stub pager: do not advertise success and do not write
+          // failure. The corpus is intentionally idle until the real
+          // pager lands; the scheduler can keep ticking and observe
+          // `pending` until then.
+          return {
+            customerId,
+            status: "pending",
+            observedInserted: totalObserved,
+            baselineInserted: totalBaseline,
+            lastEventCursor: lastCommittedCursor,
+          };
+        }
+        const message = err instanceof Error ? err.message : "Cadence failed";
+        await markFailed(pool, message);
         return {
           customerId,
-          status: "skipped",
-          observedInserted: 0,
-          baselineInserted: 0,
-          lastEventCursor: null,
+          status: "failed",
+          observedInserted: totalObserved,
+          baselineInserted: totalBaseline,
+          lastEventCursor: lastCommittedCursor,
+          error: message,
         };
       }
-
-      const state = await readOrInitCorpusState(client);
-      await markRunning(client);
-
-      const driven = await drivePages(
-        client,
-        customerId,
-        state.last_event_cursor,
-      );
-
-      await markOk(client, driven.endCursor, EMPTY_EXCLUSIONS_FP);
-      await client.query("COMMIT");
-      return {
-        customerId,
-        status: "ok",
-        observedInserted: driven.observedInserted,
-        baselineInserted: driven.baselineInserted,
-        lastEventCursor: driven.endCursor,
-      };
-    } catch (err) {
-      await client.query("ROLLBACK").catch(() => {
-        // Already rolled back or connection broken; nothing to do.
-      });
-      const message = err instanceof Error ? err.message : "Cadence failed";
-      await markFailed(pool, message);
-      return {
-        customerId,
-        status: "failed",
-        observedInserted: 0,
-        baselineInserted: 0,
-        lastEventCursor: null,
-        error: message,
-      };
     }
+
+    return {
+      customerId,
+      status: "ok",
+      observedInserted: totalObserved,
+      baselineInserted: totalBaseline,
+      lastEventCursor: lastCommittedCursor,
+    };
   } finally {
     client.release();
   }

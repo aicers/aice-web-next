@@ -33,17 +33,22 @@ interface MockPool {
   connect: () => Promise<MockClient>;
 }
 
-function createMockPool(
-  {
-    lockAcquired,
-    throwOnLock,
-  }: {
-    lockAcquired: boolean;
-    throwOnLock?: boolean;
-  } = {
-    lockAcquired: true,
-  },
-): MockPool {
+function createMockPool({
+  lockSequence,
+  throwOnLock,
+}: {
+  /**
+   * Per-page lock-acquired booleans. The mock pops one each time the
+   * runner runs `pg_try_advisory_xact_lock`. If the array is exhausted
+   * the last value is reused (so a single-element array means "always
+   * acquired" / "always denied").
+   */
+  lockSequence?: boolean[];
+  throwOnLock?: boolean;
+} = {}): MockPool {
+  const sequence = lockSequence ?? [true];
+  let lockCallIndex = 0;
+
   const client: MockClient = {
     queries: [],
     released: false,
@@ -58,7 +63,10 @@ function createMockPool(
       client.queries.push({ sql, params });
       if (sql.includes("pg_try_advisory_xact_lock")) {
         if (throwOnLock) throw new Error("lock probe blew up");
-        return { rows: [{ acquired: lockAcquired }], rowCount: 1 };
+        const acquired =
+          sequence[Math.min(lockCallIndex, sequence.length - 1)] ?? false;
+        lockCallIndex += 1;
+        return { rows: [{ acquired }], rowCount: 1 };
       }
       if (sql.startsWith("SELECT last_ingested_at")) {
         return {
@@ -149,15 +157,65 @@ describe("verifyTriageBaselineCadenceToken", () => {
   });
 });
 
+/**
+ * Test-only fake pager. By default reports a single empty page so the
+ * runner walks one page-transaction and reports `ok`.
+ */
+type PagerScript = Array<{
+  observedInserted?: number;
+  baselineInserted?: number;
+  endCursor?: string | null;
+  hasNextPage?: boolean;
+  throw?: Error;
+}>;
+
+interface FakePager {
+  ingestPage: (
+    client: unknown,
+    customerId: number,
+    afterCursor: string | null,
+  ) => Promise<{
+    observedInserted: number;
+    baselineInserted: number;
+    endCursor: string | null;
+    hasNextPage: boolean;
+  }>;
+  calls: unknown[][];
+  callCount: () => number;
+}
+
+function makePager(script: PagerScript = [{ hasNextPage: false }]): FakePager {
+  const calls: unknown[][] = [];
+  let i = 0;
+  const ingestPage = async (
+    _client: unknown,
+    _customerId: number,
+    afterCursor: string | null,
+  ) => {
+    calls.push([afterCursor]);
+    const step = script[Math.min(i, script.length - 1)];
+    i += 1;
+    if (step.throw) throw step.throw;
+    return {
+      observedInserted: step.observedInserted ?? 0,
+      baselineInserted: step.baselineInserted ?? 0,
+      endCursor: step.endCursor ?? null,
+      hasNextPage: step.hasNextPage ?? false,
+    };
+  };
+  return { ingestPage, calls, callCount: () => calls.length };
+}
+
 describe("runTriageBaselineCadence — advisory lock + status machine", () => {
-  it("commits with status=ok when the advisory lock is acquired", async () => {
-    const pool = createMockPool({ lockAcquired: true });
+  it("commits with status=ok when the advisory lock is acquired and the pager reports an empty page", async () => {
+    const pool = createMockPool({ lockSequence: [true] });
     mockGetCustomerPool.mockResolvedValue(pool);
 
     const { runTriageBaselineCadence } = await import(
       "@/lib/triage/baseline/cadence"
     );
-    const result = await runTriageBaselineCadence(42);
+    const pager = makePager();
+    const result = await runTriageBaselineCadence(42, { pager });
 
     expect(result.status).toBe("ok");
     expect(result.customerId).toBe(42);
@@ -178,16 +236,17 @@ describe("runTriageBaselineCadence — advisory lock + status machine", () => {
     expect(sqls.some((s) => s.includes("last_run_status = 'ok'"))).toBe(true);
     expect(sqls).toContain("COMMIT");
     expect(pool.client.released).toBe(true);
+    expect(pager.callCount()).toBe(1);
   });
 
   it("passes the namespaced lock-key string into hashtext", async () => {
-    const pool = createMockPool({ lockAcquired: true });
+    const pool = createMockPool({ lockSequence: [true] });
     mockGetCustomerPool.mockResolvedValue(pool);
 
     const { runTriageBaselineCadence } = await import(
       "@/lib/triage/baseline/cadence"
     );
-    await runTriageBaselineCadence(42);
+    await runTriageBaselineCadence(42, { pager: makePager() });
 
     const lockCall = pool.client.queries.find((q) =>
       q.sql.includes("pg_try_advisory_xact_lock"),
@@ -195,14 +254,14 @@ describe("runTriageBaselineCadence — advisory lock + status machine", () => {
     expect(lockCall?.params).toEqual(["triage_baseline_cadence:42"]);
   });
 
-  it("returns status=skipped without UPDATEing state when the lock is unavailable", async () => {
-    const pool = createMockPool({ lockAcquired: false });
+  it("returns status=skipped without UPDATEing state when the lock is unavailable on the first page", async () => {
+    const pool = createMockPool({ lockSequence: [false] });
     mockGetCustomerPool.mockResolvedValue(pool);
 
     const { runTriageBaselineCadence } = await import(
       "@/lib/triage/baseline/cadence"
     );
-    const result = await runTriageBaselineCadence(42);
+    const result = await runTriageBaselineCadence(42, { pager: makePager() });
 
     expect(result.status).toBe("skipped");
     const sqls = pool.client.queries.map((q) => q.sql);
@@ -216,13 +275,13 @@ describe("runTriageBaselineCadence — advisory lock + status machine", () => {
   });
 
   it("returns status=failed and persists the error on rollback", async () => {
-    const pool = createMockPool({ lockAcquired: true, throwOnLock: true });
+    const pool = createMockPool({ lockSequence: [true], throwOnLock: true });
     mockGetCustomerPool.mockResolvedValue(pool);
 
     const { runTriageBaselineCadence } = await import(
       "@/lib/triage/baseline/cadence"
     );
-    const result = await runTriageBaselineCadence(42);
+    const result = await runTriageBaselineCadence(42, { pager: makePager() });
 
     expect(result.status).toBe("failed");
     expect(result.error).toBe("lock probe blew up");
@@ -258,5 +317,151 @@ describe("runTriageBaselineCadence — advisory lock + status machine", () => {
       "@/lib/triage/baseline/cadence"
     );
     await expect(runTriageBaselineCadence(99)).rejects.toThrow("DNS down");
+  });
+});
+
+describe("runTriageBaselineCadence — pending pager", () => {
+  it("returns status=pending and does not touch the corpus-state row when no pager is injected", async () => {
+    const pool = createMockPool({ lockSequence: [true] });
+    mockGetCustomerPool.mockResolvedValue(pool);
+
+    const { runTriageBaselineCadence } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+    const result = await runTriageBaselineCadence(42);
+
+    expect(result.status).toBe("pending");
+    expect(result.observedInserted).toBe(0);
+    expect(result.baselineInserted).toBe(0);
+    expect(result.lastEventCursor).toBeNull();
+
+    const sqls = pool.client.queries.map((q) => q.sql);
+    // Page transaction was attempted but rolled back: no `ok` UPDATE,
+    // no COMMIT, and pool.query was never called for a failure record.
+    expect(sqls).toContain("BEGIN");
+    expect(sqls).toContain("ROLLBACK");
+    expect(sqls).not.toContain("COMMIT");
+    expect(sqls.some((s) => s.includes("last_run_status = 'ok'"))).toBe(false);
+    expect(pool.poolQueries).toEqual([]);
+    expect(pool.client.released).toBe(true);
+  });
+
+  it("exposes CadencePagerNotImplementedError as the stub-pager sentinel", async () => {
+    const { CadencePagerNotImplementedError, STUB_PAGER } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+    await expect(
+      STUB_PAGER.ingestPage({} as never, 1, null),
+    ).rejects.toBeInstanceOf(CadencePagerNotImplementedError);
+  });
+});
+
+describe("runTriageBaselineCadence — per-page transaction discipline", () => {
+  it("commits each page in its own transaction and reacquires the advisory lock per page", async () => {
+    const pool = createMockPool({ lockSequence: [true, true] });
+    mockGetCustomerPool.mockResolvedValue(pool);
+
+    const { runTriageBaselineCadence } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+    const pager = makePager([
+      {
+        observedInserted: 3,
+        baselineInserted: 1,
+        endCursor: "c1",
+        hasNextPage: true,
+      },
+      {
+        observedInserted: 2,
+        baselineInserted: 0,
+        endCursor: "c2",
+        hasNextPage: false,
+      },
+    ]);
+    const result = await runTriageBaselineCadence(7, { pager });
+
+    expect(result.status).toBe("ok");
+    expect(result.observedInserted).toBe(5);
+    expect(result.baselineInserted).toBe(1);
+    expect(result.lastEventCursor).toBe("c2");
+
+    const sqls = pool.client.queries.map((q) => q.sql);
+    const begins = sqls.filter((s) => s === "BEGIN").length;
+    const commits = sqls.filter((s) => s === "COMMIT").length;
+    const lockProbes = sqls.filter((s) =>
+      s.includes("pg_try_advisory_xact_lock"),
+    ).length;
+    expect(begins).toBe(2);
+    expect(commits).toBe(2);
+    expect(lockProbes).toBe(2);
+
+    // Page 1 is invoked with the cursor page 0 returned.
+    expect(pager.calls).toEqual([[null], ["c1"]]);
+  });
+
+  it("preserves earlier pages' commits and persists the failure when a later page throws", async () => {
+    const pool = createMockPool({ lockSequence: [true, true] });
+    mockGetCustomerPool.mockResolvedValue(pool);
+
+    const { runTriageBaselineCadence } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+    const pager = makePager([
+      {
+        observedInserted: 4,
+        baselineInserted: 2,
+        endCursor: "c1",
+        hasNextPage: true,
+      },
+      { throw: new Error("review timeout") },
+    ]);
+    const result = await runTriageBaselineCadence(7, { pager });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("review timeout");
+    expect(result.observedInserted).toBe(4);
+    expect(result.baselineInserted).toBe(2);
+    expect(result.lastEventCursor).toBe("c1");
+
+    const sqls = pool.client.queries.map((q) => q.sql);
+    expect(sqls.filter((s) => s === "COMMIT").length).toBe(1);
+    expect(sqls.filter((s) => s === "ROLLBACK").length).toBe(1);
+
+    const failureWrite = pool.poolQueries.find((q) =>
+      q.sql.includes("INSERT INTO baseline_corpus_state"),
+    );
+    expect(failureWrite?.params?.[0]).toBe("review timeout");
+  });
+
+  it("stops cleanly mid-run if the advisory lock is lost between page commits", async () => {
+    const pool = createMockPool({ lockSequence: [true, false] });
+    mockGetCustomerPool.mockResolvedValue(pool);
+
+    const { runTriageBaselineCadence } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+    const pager = makePager([
+      {
+        observedInserted: 1,
+        baselineInserted: 1,
+        endCursor: "c1",
+        hasNextPage: true,
+      },
+      {
+        observedInserted: 99,
+        baselineInserted: 99,
+        endCursor: "c2",
+        hasNextPage: false,
+      },
+    ]);
+    const result = await runTriageBaselineCadence(7, { pager });
+
+    expect(result.status).toBe("ok");
+    // Only the first page actually committed; the second never got the
+    // lock so the pager was not called for it.
+    expect(result.observedInserted).toBe(1);
+    expect(result.baselineInserted).toBe(1);
+    expect(result.lastEventCursor).toBe("c1");
+    expect(pager.callCount()).toBe(1);
   });
 });

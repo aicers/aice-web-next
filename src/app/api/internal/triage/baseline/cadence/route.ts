@@ -24,15 +24,20 @@ import { CustomerNotFoundError } from "@/lib/triage/policy/customer-db";
  *
  * Status codes:
  *   - 200 with `{ status, observedInserted, baselineInserted,
- *     lastEventCursor }` when the cadence transaction commits or the
- *     advisory lock was already held by another invocation
- *     (`status: 'skipped'`).
+ *     lastEventCursor }` when at least one page committed (`status:
+ *     'ok'`) or the advisory lock was already held by another
+ *     invocation (`status: 'skipped'`).
  *   - 400 when the request body is invalid.
  *   - 401 when the bearer token does not verify.
  *   - 404 when the supplied `customer_id` is unknown / not active.
- *   - 500 with `{ status: 'failed', error }` when the cadence
- *     transaction rolled back. The route still returns a structured
- *     body so the scheduler can log the error string.
+ *   - 500 with `{ status: 'failed', error }` when a cadence page rolled
+ *     back. The route still returns a structured body so the scheduler
+ *     can log the error string.
+ *   - 503 with `{ status: 'pending' }` when the cadence pager is not
+ *     yet wired (review-web#842 + aice-web-next#460 still outstanding).
+ *     The runner did not touch the corpus-state row; the scheduler can
+ *     keep ticking and the response flips to 200 / `ok` automatically
+ *     once the pager lands.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const auth = request.headers.get("authorization");
@@ -61,6 +66,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const result = await runTriageBaselineCadence(customerId);
     if (result.status === "failed") {
       return NextResponse.json(result, { status: 500 });
+    }
+    if (result.status === "pending") {
+      return NextResponse.json(result, { status: 503 });
     }
     return NextResponse.json(result);
   } catch (err) {
