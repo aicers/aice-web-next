@@ -6,17 +6,13 @@ import {
   LEARNING_METHOD_VALUES,
   THREAT_CATEGORY_KEY_BY_VALUE,
   THREAT_CATEGORY_VALUES,
-  THREAT_LEVEL_KEY_BY_VALUE,
   THREAT_LEVEL_VALUES,
 } from "@/lib/detection/filter-options";
 import { CURATED_EVENT_TYPENAMES } from "@/lib/detection/types";
 
 describe("filter-options", () => {
-  it("threat level values are the three canonical numeric codes", () => {
-    expect([...THREAT_LEVEL_VALUES]).toEqual([1, 2, 3]);
-    expect(THREAT_LEVEL_KEY_BY_VALUE[1]).toBe("LOW");
-    expect(THREAT_LEVEL_KEY_BY_VALUE[2]).toBe("MEDIUM");
-    expect(THREAT_LEVEL_KEY_BY_VALUE[3]).toBe("HIGH");
+  it("threat level values surface the three canonical ThreatLevel enum members", () => {
+    expect([...THREAT_LEVEL_VALUES]).toEqual(["LOW", "MEDIUM", "HIGH"]);
   });
 
   it("threat category values cover all fourteen enum members", () => {

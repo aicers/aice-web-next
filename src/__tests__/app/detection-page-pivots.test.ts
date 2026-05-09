@@ -108,7 +108,6 @@ vi.mock("@/lib/detection/filter-options", () => ({
   LEARNING_METHOD_VALUES: ["UNSUPERVISED", "SEMI_SUPERVISED"],
   THREAT_CATEGORY_KEY_BY_VALUE: {},
   THREAT_CATEGORY_VALUES: [],
-  THREAT_LEVEL_KEY_BY_VALUE: {},
   THREAT_LEVEL_VALUES: [],
 }));
 

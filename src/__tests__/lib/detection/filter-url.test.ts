@@ -17,7 +17,7 @@ const STRUCTURED_RICH: Filter = {
   input: {
     start: "2026-04-25T00:00:00.000Z",
     end: "2026-04-25T01:00:00.000Z",
-    levels: [2, 3],
+    levels: ["MEDIUM", "HIGH"],
     countries: ["KR", "US"],
     learningMethods: ["UNSUPERVISED"],
     categories: [1, 5],
@@ -213,14 +213,14 @@ describe("parseFilterFromUrlParam — Reviewer Round 6 (item 2) deep validation"
     expect(decoded.filter.input.kinds).toEqual(["HttpThreat"]);
   });
 
-  it("drops non-finite numbers from levels and the confidence bounds", () => {
+  it("drops unknown ThreatLevel values from levels and non-finite confidence bounds", () => {
     const encoded = btoaUrl(
       JSON.stringify({
         v: 1,
         filter: {
           mode: "structured",
           input: {
-            levels: [3, "two", null, Number.NaN, 1],
+            levels: ["HIGH", "two", null, "NOT_A_LEVEL", "LOW"],
             confidenceMin: "abc",
             confidenceMax: 0.9,
           },
@@ -231,7 +231,7 @@ describe("parseFilterFromUrlParam — Reviewer Round 6 (item 2) deep validation"
     if (decoded?.filter.mode !== "structured") {
       throw new Error("expected structured filter");
     }
-    expect(decoded.filter.input.levels).toEqual([3, 1]);
+    expect(decoded.filter.input.levels).toEqual(["HIGH", "LOW"]);
     expect(decoded.filter.input.confidenceMin).toBeUndefined();
     expect(decoded.filter.input.confidenceMax).toBe(0.9);
   });

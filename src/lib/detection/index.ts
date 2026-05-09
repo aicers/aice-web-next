@@ -193,6 +193,7 @@ export type {
   StringNumberScalar,
   ThreatCategory,
   ThreatLevel,
+  ThreatLevelEventCounter,
   TrafficDirection,
   TriageScore,
   U8EventCounter,

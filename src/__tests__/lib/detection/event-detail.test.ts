@@ -113,7 +113,7 @@ describe("fetchEventByLocator", () => {
       source: LOCATOR.origAddr,
       destination: LOCATOR.respAddr,
       kinds: ["HttpThreat"],
-      levels: [3],
+      levels: ["HIGH"],
     });
     // #424: REview's `eventList` treats `end` as exclusive, so the
     // half-open interval `[time, time)` is empty. The widening must

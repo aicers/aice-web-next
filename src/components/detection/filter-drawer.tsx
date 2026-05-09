@@ -36,7 +36,11 @@ import {
   PERIOD_KEYS,
   type PeriodKey,
 } from "@/lib/detection/period";
-import type { FlowKind, LearningMethod } from "@/lib/detection/types";
+import type {
+  FlowKind,
+  LearningMethod,
+  ThreatLevel,
+} from "@/lib/detection/types";
 import {
   TAG_FIELDS,
   type TagField,
@@ -145,7 +149,7 @@ export interface FilterDrawerLabels {
  * i18n context.
  */
 export interface FilterDrawerOptions {
-  levels: readonly FilterMultiSelectOption<number>[];
+  levels: readonly FilterMultiSelectOption<ThreatLevel>[];
   countries: readonly FilterMultiSelectOption<string>[];
   learningMethods: readonly FilterMultiSelectOption<LearningMethod>[];
   categories: readonly FilterMultiSelectOption<number>[];

@@ -1,26 +1,28 @@
 /**
  * Static option sources for the Detection filter drawer's categorical
  * multi-select fields. The values here are shaped for direct
- * inclusion in `EventListFilterInput` — so `ThreatLevel` and
- * `ThreatCategory` are integer arrays (matching `levels: [Int!]` and
- * `categories: [Int]`) even though REview serializes the enums as
- * strings on the output side.
+ * inclusion in `EventListFilterInput` — `ThreatLevel` is a string enum
+ * (matching `levels: [ThreatLevel!]`) and `ThreatCategory` is an
+ * integer array (matching `categories: [Int]`).
  */
 
-import type { LearningMethod, ThreatCategory } from "./types";
+import type { LearningMethod, ThreatCategory, ThreatLevel } from "./types";
 import { CURATED_EVENT_TYPENAMES } from "./types";
 
-export type ThreatLevelValue = 1 | 2 | 3;
+/**
+ * Subset of `ThreatLevel` exposed in the filter drawer. The schema
+ * also defines `VERY_LOW` and `VERY_HIGH`; the UI keeps the
+ * three-level surface today and labels the extras only when REview
+ * surfaces them on output.
+ */
+export type ThreatLevelValue = Extract<ThreatLevel, "LOW" | "MEDIUM" | "HIGH">;
 
 /** Ordered ascending so the drawer renders Low → High. */
-export const THREAT_LEVEL_VALUES: readonly ThreatLevelValue[] = [1, 2, 3];
-
-/** Stable key used to look up the UI label from i18n. */
-export const THREAT_LEVEL_KEY_BY_VALUE: Record<ThreatLevelValue, string> = {
-  1: "LOW",
-  2: "MEDIUM",
-  3: "HIGH",
-};
+export const THREAT_LEVEL_VALUES: readonly ThreatLevelValue[] = [
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+];
 
 /**
  * Integer encoding of `ThreatCategory` for `categories: [Int]` in

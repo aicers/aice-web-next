@@ -9,7 +9,11 @@ import {
   selectionForSubmission,
 } from "./filter-chips";
 import { type DetectionFilterDraft, isConfidenceDefault } from "./filter-draft";
-import type { EventListFilterInput, LearningMethod } from "./types";
+import type {
+  EventListFilterInput,
+  LearningMethod,
+  ThreatLevel,
+} from "./types";
 
 /**
  * Categorical option bundles used to normalize drafted selections
@@ -19,7 +23,7 @@ import type { EventListFilterInput, LearningMethod } from "./types";
  * server→`"use client"` import.
  */
 export interface CategoricalFilterOptions {
-  levels: readonly MultiSelectOptionRef<number>[];
+  levels: readonly MultiSelectOptionRef<ThreatLevel>[];
   countries: readonly MultiSelectOptionRef<string>[];
   learningMethods: readonly MultiSelectOptionRef<LearningMethod>[];
   categories: readonly MultiSelectOptionRef<number>[];

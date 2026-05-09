@@ -23,8 +23,6 @@ import { formatEventTime } from "@/lib/detection/event-time";
 import {
   THREAT_CATEGORY_KEY_BY_VALUE,
   THREAT_CATEGORY_VALUES,
-  THREAT_LEVEL_KEY_BY_VALUE,
-  type ThreatLevelValue,
 } from "@/lib/detection/filter-options";
 import {
   buildPivotPatch,
@@ -1358,12 +1356,8 @@ function buildLevelPivotPatch(
   level: ThreatLevel,
   labels: ResultListLabels,
 ): PivotPatch | null {
-  const levelKey = (Object.keys(THREAT_LEVEL_KEY_BY_VALUE) as string[]).find(
-    (k) => THREAT_LEVEL_KEY_BY_VALUE[Number(k) as ThreatLevelValue] === level,
-  );
-  if (!levelKey) return null;
   return buildPivotPatch("level", {
-    raw: Number(levelKey),
+    raw: level,
     display: labels.levelLabels[level] ?? level,
   });
 }

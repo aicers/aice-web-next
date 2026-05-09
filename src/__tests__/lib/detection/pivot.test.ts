@@ -94,7 +94,7 @@ describe("buildPivotPatch", () => {
     });
   });
 
-  it("maps category and level to integer arrays", () => {
+  it("maps category to a numberArray patch and level to a levelArray patch", () => {
     expect(
       buildPivotPatch("category", { raw: 6, display: "Lateral Movement" }),
     ).toEqual({
@@ -103,10 +103,9 @@ describe("buildPivotPatch", () => {
       value: 6,
       displayValue: "Lateral Movement",
     });
-    expect(buildPivotPatch("level", { raw: 3, display: "High" })).toEqual({
-      kind: "numberArray",
-      field: "levels",
-      value: 3,
+    expect(buildPivotPatch("level", { raw: "HIGH", display: "High" })).toEqual({
+      kind: "levelArray",
+      value: "HIGH",
       displayValue: "High",
     });
   });
@@ -124,9 +123,10 @@ describe("buildPivotPatch", () => {
     expect(buildPivotPatch("hostname", { raw: "   " })).toBeNull();
   });
 
-  it("rejects non-numeric category / level inputs", () => {
+  it("rejects unrecognised category / level inputs", () => {
     expect(buildPivotPatch("category", { raw: "RECONNAISSANCE" })).toBeNull();
-    expect(buildPivotPatch("level", { raw: Number.NaN })).toBeNull();
+    expect(buildPivotPatch("level", { raw: "NOT_A_LEVEL" })).toBeNull();
+    expect(buildPivotPatch("level", { raw: 3 })).toBeNull();
   });
 
   it("rejects a malformed direction value", () => {

@@ -26,6 +26,7 @@ import type {
   HostNetworkGroupInput,
   IpRangeInput,
   LearningMethod,
+  ThreatLevel,
   TrafficDirection,
 } from "./types";
 
@@ -33,6 +34,13 @@ const FLOW_KIND_VALUES = new Set<FlowKind>(["INBOUND", "OUTBOUND", "INTERNAL"]);
 const LEARNING_METHOD_VALUES = new Set<LearningMethod>([
   "UNSUPERVISED",
   "SEMI_SUPERVISED",
+]);
+const THREAT_LEVEL_VALUE_SET = new Set<ThreatLevel>([
+  "VERY_LOW",
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "VERY_HIGH",
 ]);
 const TRAFFIC_DIRECTION_VALUES = new Set<TrafficDirection>(["FROM", "TO"]);
 
@@ -83,10 +91,13 @@ export function coerceEventListFilterInput(
     const arr = filterStringArray(v[key]);
     if (arr) out[key] = arr;
   }
-  const numberArrayFields = ["levels"] as const;
-  for (const key of numberArrayFields) {
-    const arr = filterNumberArray(v[key]);
-    if (arr) out[key] = arr;
+  if (Array.isArray(v.levels)) {
+    const arr = v.levels.filter(
+      (item): item is ThreatLevel =>
+        typeof item === "string" &&
+        THREAT_LEVEL_VALUE_SET.has(item as ThreatLevel),
+    );
+    if (arr.length > 0) out.levels = arr;
   }
   if (Array.isArray(v.categories)) {
     out.categories = v.categories.filter(
@@ -162,11 +173,4 @@ export function coerceIpRange(value: unknown): IpRangeInput | null {
 function filterStringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((item): item is string => typeof item === "string");
-}
-
-function filterNumberArray(value: unknown): number[] | null {
-  if (!Array.isArray(value)) return null;
-  return value.filter(
-    (item): item is number => typeof item === "number" && Number.isFinite(item),
-  );
 }

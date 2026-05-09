@@ -51,7 +51,7 @@ describe("saved-filters lib", () => {
             id: "11111111-1111-1111-1111-111111111111",
             name: "Last 1h · High",
             mode: "structured",
-            filter_json: { start: "2026-01-01T00:00:00Z", levels: [3] },
+            filter_json: { start: "2026-01-01T00:00:00Z", levels: ["HIGH"] },
             created_at: new Date("2026-01-01T00:00:00Z"),
             updated_at: new Date("2026-01-02T00:00:00Z"),
           },
@@ -64,7 +64,7 @@ describe("saved-filters lib", () => {
           name: "Last 1h · High",
           filter: {
             mode: "structured",
-            input: { start: "2026-01-01T00:00:00Z", levels: [3] },
+            input: { start: "2026-01-01T00:00:00Z", levels: ["HIGH"] },
           },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-02T00:00:00.000Z",
@@ -121,7 +121,7 @@ describe("saved-filters lib", () => {
             filter_json: {
               keywords: "not-an-array",
               categories: "not-an-array",
-              levels: [3],
+              levels: ["HIGH"],
             },
             created_at: "2026-01-01T00:00:00Z",
             updated_at: "2026-01-01T00:00:00Z",
@@ -133,7 +133,7 @@ describe("saved-filters lib", () => {
         {
           id: "11111111-1111-1111-1111-111111111111",
           name: "legacy-malformed",
-          filter: { mode: "structured", input: { levels: [3] } },
+          filter: { mode: "structured", input: { levels: ["HIGH"] } },
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
         },
@@ -214,7 +214,7 @@ describe("saved-filters lib", () => {
             id: "11111111-1111-1111-1111-111111111111",
             name: "malformed",
             mode: "structured",
-            filter_json: { levels: [3] },
+            filter_json: { levels: ["HIGH"] },
             created_at: "2026-01-01T00:00:00Z",
             updated_at: "2026-01-01T00:00:00Z",
           },
@@ -231,14 +231,14 @@ describe("saved-filters lib", () => {
           input: {
             keywords: "not-an-array",
             categories: "not-an-array",
-            levels: [3],
+            levels: ["HIGH"],
           },
         } as unknown as import("@/lib/detection").Filter,
       });
       const [, params] = mockQuery.mock.calls[0];
       // The persisted JSON keeps the valid `levels` field and drops
       // every malformed one — never a `keywords: "not-an-array"`.
-      expect(params?.[3]).toBe(JSON.stringify({ levels: [3] }));
+      expect(params?.[3]).toBe(JSON.stringify({ levels: ["HIGH"] }));
     });
 
     it("throws SavedFilterInvalidError when the outer filter shape is unrecoverable", async () => {

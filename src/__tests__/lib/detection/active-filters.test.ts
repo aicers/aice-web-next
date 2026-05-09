@@ -73,18 +73,18 @@ describe("removeActiveChip", () => {
     expect(result.filter.input.sensors).toBeUndefined();
   });
 
-  it("removes a single categorical value (numeric)", () => {
+  it("removes a single categorical value (level)", () => {
     const filter: Filter = {
       mode: "structured",
-      input: { ...baseFilter.input, levels: [1, 2] },
+      input: { ...baseFilter.input, levels: ["LOW", "MEDIUM"] },
     };
     const result = removeActiveChip(filter, [], {
       kind: "categoricalValue",
       field: "levels",
-      value: 1,
+      value: "LOW",
     });
     if (result.filter.mode !== "structured") throw new Error("unreachable");
-    expect(result.filter.input.levels).toEqual([2]);
+    expect(result.filter.input.levels).toEqual(["MEDIUM"]);
   });
 
   it("removes a single direction value, falling back to no-filter when emptied", () => {

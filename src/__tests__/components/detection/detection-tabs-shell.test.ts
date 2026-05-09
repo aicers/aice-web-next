@@ -55,7 +55,7 @@ const RICH_FILTER: Filter = {
   input: {
     start: "2026-04-25T00:00:00.000Z",
     end: "2026-04-25T01:00:00.000Z",
-    levels: [3],
+    levels: ["HIGH"],
     countries: ["KR"],
     learningMethods: ["SEMI_SUPERVISED"],
     categories: [2],
@@ -1073,7 +1073,7 @@ describe("findMatchingTab — issue #429 §2 + §6", () => {
     const narrowed = presetTab({
       filter: {
         mode: "structured",
-        input: { ...PRESET_FILTER.input, levels: [3] },
+        input: { ...PRESET_FILTER.input, levels: ["HIGH"] },
       },
     });
     expect(findMatchingTab([narrowed], SAVED_PRESET, PRESET_FILTER)).toBeNull();

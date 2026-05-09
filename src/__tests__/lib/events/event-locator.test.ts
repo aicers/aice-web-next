@@ -7,7 +7,6 @@ import {
   type EventLocator,
   encodeEventLocator,
   isEventAddressable,
-  THREAT_LEVEL_TO_NUMBER,
 } from "@/lib/events/event-locator";
 
 const SAMPLE: EventLocator = {
@@ -189,10 +188,6 @@ describe("event-locator", () => {
     expect(token).not.toBeNull();
     if (!token) throw new Error("encoder returned null");
     expect(token).not.toMatch(/[+/=]/);
-  });
-
-  it("exports the ThreatLevel->number mapping used by filter building", () => {
-    expect(THREAT_LEVEL_TO_NUMBER).toEqual({ LOW: 1, MEDIUM: 2, HIGH: 3 });
   });
 
   it("isEventAddressable narrows events that carry origAddr/respAddr", () => {

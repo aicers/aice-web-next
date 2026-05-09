@@ -1423,9 +1423,11 @@
         "collapse": "Collapse options"
       },
       "levelOptions": {
+        "VERY_LOW": "Very Low",
         "LOW": "Low",
         "MEDIUM": "Medium",
-        "HIGH": "High"
+        "HIGH": "High",
+        "VERY_HIGH": "Very High"
       },
       "learningMethodOptions": {
         "UNSUPERVISED": "Unsupervised",

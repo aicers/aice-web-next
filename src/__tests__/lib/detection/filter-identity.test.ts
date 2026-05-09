@@ -396,7 +396,7 @@ describe("normalizeFilterIdentityIgnoringTime — issue #429", () => {
         start: ISO_A_START,
         end: ISO_A_END,
         kinds: ["HttpThreat"],
-        levels: [3],
+        levels: ["HIGH"],
       }),
     );
     expect(a).not.toBe(b);

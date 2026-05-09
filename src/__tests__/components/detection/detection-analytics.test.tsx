@@ -50,7 +50,13 @@ function labels(): DetectionAnalyticsLabels {
       "The active filter references a customer outside your access.",
     emptyTitle: "No matching events",
     emptyDescription: "Empty",
-    levelLabels: { LOW: "Low", MEDIUM: "Medium", HIGH: "High" },
+    levelLabels: {
+      VERY_LOW: "Very Low",
+      LOW: "Low",
+      MEDIUM: "Medium",
+      HIGH: "High",
+      VERY_HIGH: "Very High",
+    },
     categoryLabels: {
       RECONNAISSANCE: "Reconnaissance",
       INITIAL_ACCESS: "Initial Access",

@@ -230,8 +230,8 @@ const SUMMARIZE_LABELS: SummarizeFilterLabels = {
 
 const CATEGORICAL_OPTIONS = {
   levels: [
-    { value: 5, label: "High" },
-    { value: 3, label: "Medium" },
+    { value: "HIGH", label: "High" },
+    { value: "MEDIUM", label: "Medium" },
   ],
   countries: [],
   learningMethods: [],
@@ -250,7 +250,7 @@ describe("buildSaveCurrentFilterDialogState — gating contract", () => {
     // that allocates a new filter object would fail this test.
     const committed: Filter = {
       mode: "structured",
-      input: { customers: ["999"], levels: [5] },
+      input: { customers: ["999"], levels: ["HIGH"] },
     };
     const result = buildSaveCurrentFilterDialogState({
       committedFilter: committed,
@@ -268,7 +268,7 @@ describe("buildSaveCurrentFilterDialogState — gating contract", () => {
   it("derives defaultName from committed-filter chips when chips exist", () => {
     const committed: Filter = {
       mode: "structured",
-      input: { levels: [5] },
+      input: { levels: ["HIGH"] },
     };
     const result = buildSaveCurrentFilterDialogState({
       committedFilter: committed,
@@ -377,7 +377,7 @@ describe("Presets dropdown 'Save current filter…' shell wiring", () => {
   it("opens the save dialog with the chip-derived default name and persists the committed filter through savedFilters.save", async () => {
     const committedFilter: Filter = {
       mode: "structured",
-      input: { levels: [5] },
+      input: { levels: ["HIGH"] },
     };
     const save = vi
       .fn()

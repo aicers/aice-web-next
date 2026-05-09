@@ -137,6 +137,7 @@ import type {
   Event as DetectionEvent,
   LearningMethod,
   PageInfo,
+  ThreatLevel,
 } from "@/lib/detection/types";
 import type {
   PivotChipLabels,
@@ -1269,9 +1270,11 @@ export function DetectionShell({
       countryUnknown: tResults("countryUnknown"),
       countryUnavailable: tResults("countryUnavailable"),
       levelLabels: {
+        VERY_LOW: t("levelOptions.VERY_LOW"),
         LOW: t("levelOptions.LOW"),
         MEDIUM: t("levelOptions.MEDIUM"),
         HIGH: t("levelOptions.HIGH"),
+        VERY_HIGH: t("levelOptions.VERY_HIGH"),
       },
       categoryLabels: {
         RECONNAISSANCE: t("categoryOptions.RECONNAISSANCE"),
@@ -3989,7 +3992,7 @@ function filterToDraft(
     // would reject it on the next dispatch anyway. Keeping the draft
     // numeric-only here keeps the chip / UI paths free of `NaN`.
     customerIds: customerIdsFromInput(input.customers),
-    levels: (input.levels ?? []) as readonly number[],
+    levels: (input.levels ?? []) as readonly ThreatLevel[],
     countries: (input.countries ?? []) as readonly string[],
     learningMethods: (input.learningMethods ?? []) as readonly LearningMethod[],
     categories: (input.categories ?? []).filter(

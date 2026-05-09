@@ -69,6 +69,7 @@ const ROOT_TYPES = [
   "PageInfo",
   "TriageScore",
   "StringEventCounter",
+  "ThreatLevelEventCounter",
   "U8EventCounter",
   "Event",
 ];

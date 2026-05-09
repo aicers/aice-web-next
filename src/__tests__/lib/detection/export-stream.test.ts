@@ -14,7 +14,13 @@ vi.mock("@/lib/detection/server-actions", () => ({
 }));
 
 const ROW_OPTIONS: FormatCsvRowOptions = {
-  levelLabels: { LOW: "Low", MEDIUM: "Medium", HIGH: "High" },
+  levelLabels: {
+    VERY_LOW: "Very Low",
+    LOW: "Low",
+    MEDIUM: "Medium",
+    HIGH: "High",
+    VERY_HIGH: "Very High",
+  },
   categoryLabels: {},
   countryUnknown: "??",
   countryUnavailable: "—",
