@@ -24,6 +24,13 @@ interface TriagePeriodPickerProps {
   onApply: (period: TriagePeriod) => void;
   pending: boolean;
   labels: TriagePeriodPickerLabels;
+  /**
+   * Increments whenever the parent rejects a draft submission (e.g.
+   * the operator cancelled the period-change confirmation modal). The
+   * picker resets its draft inputs back to `period` so the visible
+   * Start / End fields stay in sync with the loaded period.
+   */
+  draftResetSignal?: number;
 }
 
 /**
@@ -54,6 +61,7 @@ export function TriagePeriodPicker({
   onApply,
   pending,
   labels,
+  draftResetSignal,
 }: TriagePeriodPickerProps) {
   const startId = useId();
   const endId = useId();
@@ -66,12 +74,14 @@ export function TriagePeriodPicker({
   const [error, setError] = useState<string | null>(null);
 
   // Resync the inputs when the parent reports a different period
-  // (e.g., after a clamp on submit).
+  // (e.g., after a clamp on submit) or when the parent rejects the
+  // current draft (cancel of the period-change confirmation modal).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: draftResetSignal is the trigger
   useEffect(() => {
     setStartLocal(isoToLocalInput(period.startIso));
     setEndLocal(isoToLocalInput(period.endIso));
     setError(null);
-  }, [period.endIso, period.startIso]);
+  }, [period.endIso, period.startIso, draftResetSignal]);
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

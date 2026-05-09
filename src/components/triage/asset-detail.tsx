@@ -6,6 +6,13 @@ import { baselineScore, type TriageAsset } from "@/lib/triage";
 
 export interface TriageAssetDetailLabels {
   title: string;
+  /**
+   * Header title used when the panel reflects a pivot focus instead
+   * of an asset address. The breadcrumb above tells the operator how
+   * they got here; this just makes the card honest about what its
+   * row currently means (a JA3 / SNI / etc. value, not an IP).
+   */
+  pivotFocusTitle: string;
   emptySelection: string;
   emptyEvents: string;
   scoreLabel: string;
@@ -20,6 +27,13 @@ export interface TriageAssetDetailLabels {
 
 interface TriageAssetDetailViewProps {
   asset: TriageAsset | null;
+  /**
+   * When `true` the header is rendered with `labels.pivotFocusTitle`
+   * and the address line is shown as a label rather than a mono-IP.
+   * Set by `baseline-content.tsx` whenever the active breadcrumb
+   * step is a non-asset dimension pivot.
+   */
+  isPivotFocus?: boolean;
   labels: TriageAssetDetailLabels;
 }
 
@@ -30,15 +44,17 @@ const COUNT_FORMAT = new Intl.NumberFormat();
 
 export function TriageAssetDetailView({
   asset,
+  isPivotFocus = false,
   labels,
 }: TriageAssetDetailViewProps) {
   const timezone = useTimezone();
+  const headerTitle = isPivotFocus ? labels.pivotFocusTitle : labels.title;
 
   if (!asset) {
     return (
       <section className="rounded-md border bg-card p-4 shadow-xs">
         <h2 className="text-sm font-semibold text-muted-foreground">
-          {labels.title}
+          {headerTitle}
         </h2>
         <p className="mt-3 text-sm text-muted-foreground">
           {labels.emptySelection}
@@ -49,14 +65,22 @@ export function TriageAssetDetailView({
 
   return (
     <section
-      aria-label={labels.title}
+      aria-label={headerTitle}
       className="flex flex-col gap-4 rounded-md border bg-card p-4 shadow-xs"
     >
       <header className="flex flex-col gap-1">
         <h2 className="text-sm font-semibold text-muted-foreground">
-          {labels.title}
+          {headerTitle}
         </h2>
-        <p className="font-mono text-lg text-foreground">{asset.address}</p>
+        <p
+          className={
+            isPivotFocus
+              ? "text-lg text-foreground"
+              : "font-mono text-lg text-foreground"
+          }
+        >
+          {asset.address}
+        </p>
       </header>
       <dl className="grid grid-cols-3 gap-3 text-sm">
         <Stat
