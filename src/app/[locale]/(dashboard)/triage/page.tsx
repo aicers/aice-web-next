@@ -111,6 +111,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
       },
       assetDetail: {
         title: t("assetDetail.title"),
+        pivotFocusTitle: t("assetDetail.pivotFocusTitle"),
         emptySelection: t("assetDetail.emptySelection"),
         emptyEvents: t("assetDetail.emptyEvents"),
         scoreLabel: t("assetDetail.scoreLabel"),

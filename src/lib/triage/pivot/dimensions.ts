@@ -16,8 +16,9 @@ import { classifyTriageEndpoint } from "../classify";
 import type { ScoredTriageEvent } from "../types";
 import {
   extractRegistrableDomain,
+  isIpLiteral,
   normalizeUriPattern,
-  timeBucketKey,
+  TRIAGE_SAME_KIND_WINDOW_MS,
 } from "./normalize";
 
 /**
@@ -229,13 +230,15 @@ const DNS_ANSWER_DIMENSION: PivotDimension = {
   extract(event) {
     const value = nonEmptyString(event.answer);
     if (!value) return [];
-    // `answer` may carry comma- or space-separated multiple addresses
-    // (REview emits a flat string per row). Split on whitespace and
-    // commas, drop empties, dedupe.
+    // `answer` may carry comma- or space-separated multiple tokens
+    // (REview emits a flat string per row). The dimension's contract
+    // is "answer IP", so non-address tokens (CNAMEs, status text like
+    // `NXDOMAIN`) are filtered out — pivoting on them would conflate
+    // the IP-pivot affordance with hostname/error pivots.
     const tokens = value
       .split(/[\s,]+/)
       .map((t) => t.trim())
-      .filter((t) => t.length > 0);
+      .filter((t) => t.length > 0 && isIpLiteral(t));
     if (tokens.length === 0) return [];
     const seen = new Set<string>();
     const out: PivotValue[] = [];
@@ -248,22 +251,69 @@ const DNS_ANSWER_DIMENSION: PivotDimension = {
   },
 };
 
+/**
+ * Encode the event's typename and exact time-as-ms into the value
+ * key. Each event carries a unique key — matching is not done by
+ * key intersection (that would only ever match the event with
+ * itself) but by `matchSameKindWithin15Min` below, which interprets
+ * the key as a center and returns events with the same typename
+ * whose time falls within `±TRIAGE_SAME_KIND_WINDOW_MS` of that
+ * center. This is what gives the pivot exact ±15-minute membership
+ * rather than the bucket-floor approximation that earlier revisions
+ * shipped with.
+ */
 const SAME_KIND_WITHIN_15_MIN_DIMENSION: PivotDimension = {
   id: "sameKindWithin15Min",
   family: "time-structure",
   extract(event) {
-    const bucket = timeBucketKey(event.time);
-    if (bucket === null) return [];
-    const key = `${event.__typename}@${bucket}`;
-    // Label uses the bucket's start time so the breadcrumb crumb is
-    // operator-meaningful — `HttpThreat near 2026-05-09 12:30Z` reads
-    // better than `HttpThreat@1746838170`.
-    const startMs = bucket * (30 * 60 * 1000);
-    const startIso = new Date(startMs).toISOString();
-    const label = `${event.__typename} near ${startIso}`;
+    const ms = Date.parse(event.time);
+    if (!Number.isFinite(ms)) return [];
+    const key = `${event.__typename}@${ms}`;
+    const label = `${event.__typename} near ${new Date(ms).toISOString()}`;
     return [{ key, label }];
   },
 };
+
+/**
+ * Parse a `sameKindWithin15Min` value key back into its components.
+ * Returns `null` when the key is malformed (the panel falls back to
+ * an empty match set in that case).
+ */
+export function parseSameKindKey(
+  key: string,
+): { typename: string; centerMs: number } | null {
+  const at = key.lastIndexOf("@");
+  if (at <= 0 || at === key.length - 1) return null;
+  const typename = key.slice(0, at);
+  const ms = Number(key.slice(at + 1));
+  if (!Number.isFinite(ms)) return null;
+  return { typename, centerMs: ms };
+}
+
+/**
+ * Resolve the focus-relative event set for a `sameKindWithin15Min`
+ * dimension lookup: events with `__typename === typename` whose time
+ * is within `±TRIAGE_SAME_KIND_WINDOW_MS` of `centerMs`. The exact
+ * ±15-minute membership is what discussion #447 §3.3 calls for; the
+ * earlier 30-minute floor produced false positives at the bucket
+ * boundary and false negatives across boundaries.
+ */
+export function eventsWithinSameKindWindow(
+  corpus: readonly ScoredTriageEvent[],
+  typename: string,
+  centerMs: number,
+): ScoredTriageEvent[] {
+  const out: ScoredTriageEvent[] = [];
+  for (const ev of corpus) {
+    if (ev.__typename !== typename) continue;
+    const t = Date.parse(ev.time);
+    if (!Number.isFinite(t)) continue;
+    if (Math.abs(t - centerMs) <= TRIAGE_SAME_KIND_WINDOW_MS) {
+      out.push(ev);
+    }
+  }
+  return out;
+}
 
 const SAME_SENSOR_DIMENSION: PivotDimension = {
   id: "sameSensor",

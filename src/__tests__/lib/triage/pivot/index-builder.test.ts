@@ -50,7 +50,7 @@ describe("buildPivotIndex", () => {
       false,
     );
     const index = buildPivotIndex(corpus.events);
-    const domainBucket = index.get("registrableDomain");
+    const domainBucket = index.byDimension.get("registrableDomain");
     expect(domainBucket?.size).toBe(1);
     const entry = domainBucket?.get("example.com");
     expect(entry?.events).toHaveLength(3);
@@ -86,7 +86,9 @@ describe("buildPivotIndex", () => {
       false,
     );
     const index = buildPivotIndex(corpus.events);
-    const entry = index.get("registrableDomain")?.get("example.com");
+    const entry = index.byDimension
+      .get("registrableDomain")
+      ?.get("example.com");
     expect(entry).toBeDefined();
     expect(entry?.events.map((e) => e.score)).toEqual([1.5, 1, 1]);
     // The two score-1 events sort newest-first.

@@ -1919,6 +1919,7 @@
     },
     "assetDetail": {
       "title": "자산 상세",
+      "pivotFocusTitle": "피벗 포커스",
       "emptySelection": "이벤트를 보려면 자산을 선택하세요.",
       "emptyEvents": "표시할 트리아지 이벤트가 없습니다.",
       "scoreLabel": "점수",

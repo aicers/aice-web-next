@@ -14,11 +14,13 @@
 
 import type { ScoredTriageEvent } from "../types";
 import {
+  eventsWithinSameKindWindow,
   getPivotDimension,
   PIVOT_DIMENSIONS,
   type PivotDimension,
   type PivotDimensionId,
   type PivotValue,
+  parseSameKindKey,
 } from "./dimensions";
 
 /** Default rows shown per dimension before "Show more" is clicked. */
@@ -35,11 +37,18 @@ export interface PivotIndexEntry {
 }
 
 /**
- * Sparse index `Map<dimensionId, Map<valueKey, PivotIndexEntry>>`.
- * Entries are present only for (dimension, value) pairs that have at
- * least one event in the corpus.
+ * Sparse index over the loaded corpus. `byDimension` carries
+ * value-keyed `Map<valueKey, PivotIndexEntry>` buckets for the
+ * standard pivot dimensions. `corpus` is retained so dynamic
+ * dimensions — currently `sameKindWithin15Min`, which resolves
+ * focus-relative ±15-minute membership rather than a fixed bucket —
+ * can compute their event sets on demand without rebuilding the
+ * index per click.
  */
-export type PivotIndex = Map<PivotDimensionId, Map<string, PivotIndexEntry>>;
+export interface PivotIndex {
+  byDimension: Map<PivotDimensionId, Map<string, PivotIndexEntry>>;
+  corpus: readonly ScoredTriageEvent[];
+}
 
 function compareEventsByScoreDesc(
   a: ScoredTriageEvent,
@@ -53,6 +62,11 @@ function compareEventsByScoreDesc(
   return 0;
 }
 
+/** Dimensions whose membership is computed on demand from the corpus. */
+const DYNAMIC_DIMENSIONS: ReadonlySet<PivotDimensionId> = new Set([
+  "sameKindWithin15Min",
+]);
+
 /**
  * Build the index over a flat scored-event list. O(events × dims) but
  * dims is a fixed ~18, so the cost is dominated by the 5,000-event
@@ -61,15 +75,17 @@ function compareEventsByScoreDesc(
 export function buildPivotIndex(
   events: readonly ScoredTriageEvent[],
 ): PivotIndex {
-  const index: PivotIndex = new Map();
+  const byDimension: PivotIndex["byDimension"] = new Map();
   for (const dim of PIVOT_DIMENSIONS) {
-    index.set(dim.id, new Map());
+    if (DYNAMIC_DIMENSIONS.has(dim.id)) continue;
+    byDimension.set(dim.id, new Map());
   }
   for (const event of events) {
     for (const dim of PIVOT_DIMENSIONS) {
+      if (DYNAMIC_DIMENSIONS.has(dim.id)) continue;
       const values = dim.extract(event);
       if (values.length === 0) continue;
-      const bucket = index.get(dim.id);
+      const bucket = byDimension.get(dim.id);
       if (!bucket) continue;
       for (const value of values) {
         let entry = bucket.get(value.key);
@@ -82,21 +98,43 @@ export function buildPivotIndex(
     }
   }
   // Sort each entry once at build time. The panel just slices.
-  for (const bucket of index.values()) {
+  for (const bucket of byDimension.values()) {
     for (const entry of bucket.values()) {
       entry.events.sort(compareEventsByScoreDesc);
     }
   }
-  return index;
+  return { byDimension, corpus: events };
 }
 
-/** Look up a single (dimension, value) entry, or `null` if absent. */
+/**
+ * Look up a single (dimension, value) entry, or `null` if absent.
+ * For dynamic dimensions the entry is materialized from the corpus:
+ * `sameKindWithin15Min` resolves to events with the same typename
+ * whose time is within ±15 minutes of the value key's center.
+ */
 export function lookupPivotEntry(
   index: PivotIndex,
   dimension: PivotDimensionId,
   valueKey: string,
 ): PivotIndexEntry | null {
-  return index.get(dimension)?.get(valueKey) ?? null;
+  if (dimension === "sameKindWithin15Min") {
+    const parsed = parseSameKindKey(valueKey);
+    if (!parsed) return null;
+    const events = eventsWithinSameKindWindow(
+      index.corpus,
+      parsed.typename,
+      parsed.centerMs,
+    );
+    if (events.length === 0) return null;
+    events.sort(compareEventsByScoreDesc);
+    const label = `${parsed.typename} near ${new Date(parsed.centerMs).toISOString()}`;
+    return {
+      dimension,
+      value: { key: valueKey, label },
+      events,
+    };
+  }
+  return index.byDimension.get(dimension)?.get(valueKey) ?? null;
 }
 
 /**
@@ -105,6 +143,10 @@ export function lookupPivotEntry(
  * group: "all events sharing a registrable domain with the focused
  * asset". Result is sorted by score desc and deduped (an event that
  * carries multiple focus values for the same dimension appears once).
+ *
+ * For `sameKindWithin15Min` the focus values encode a center time
+ * each: matching events are those of the same typename within ±15
+ * minutes of any focus center, unioned across the focus.
  */
 export function eventsMatchingFocusValues(
   index: PivotIndex,
@@ -112,7 +154,26 @@ export function eventsMatchingFocusValues(
   focusValueKeys: readonly string[],
 ): ScoredTriageEvent[] {
   if (focusValueKeys.length === 0) return [];
-  const bucket = index.get(dimension);
+  if (dimension === "sameKindWithin15Min") {
+    const seen = new Set<ScoredTriageEvent>();
+    const out: ScoredTriageEvent[] = [];
+    for (const key of focusValueKeys) {
+      const parsed = parseSameKindKey(key);
+      if (!parsed) continue;
+      for (const ev of eventsWithinSameKindWindow(
+        index.corpus,
+        parsed.typename,
+        parsed.centerMs,
+      )) {
+        if (seen.has(ev)) continue;
+        seen.add(ev);
+        out.push(ev);
+      }
+    }
+    out.sort(compareEventsByScoreDesc);
+    return out;
+  }
+  const bucket = index.byDimension.get(dimension);
   if (!bucket) return [];
   const seen = new Set<ScoredTriageEvent>();
   const out: ScoredTriageEvent[] = [];

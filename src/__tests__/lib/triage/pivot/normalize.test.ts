@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
-
 import {
   extractRegistrableDomain,
   normalizeUriPattern,
-  TRIAGE_TIME_BUCKET_MS,
-  timeBucketKey,
 } from "@/lib/triage/pivot";
+import { isIpLiteral } from "@/lib/triage/pivot/normalize";
 
 describe("extractRegistrableDomain", () => {
   it("returns the eTLD+1 for a simple hostname", () => {
@@ -88,23 +86,31 @@ describe("normalizeUriPattern", () => {
   });
 });
 
-describe("timeBucketKey", () => {
-  it("buckets by 30-minute floor", () => {
-    const a = timeBucketKey("2026-05-09T12:00:00.000Z");
-    const b = timeBucketKey("2026-05-09T12:14:59.000Z");
-    const c = timeBucketKey("2026-05-09T12:30:00.000Z");
-    expect(a).toBe(b);
-    expect(a).not.toBe(c);
+describe("isIpLiteral", () => {
+  it("accepts well-formed IPv4 addresses", () => {
+    expect(isIpLiteral("1.2.3.4")).toBe(true);
+    expect(isIpLiteral("203.0.113.5")).toBe(true);
+    expect(isIpLiteral("0.0.0.0")).toBe(true);
+    expect(isIpLiteral("255.255.255.255")).toBe(true);
   });
 
-  it("returns null for unparseable input", () => {
-    expect(timeBucketKey("not a date")).toBeNull();
-    expect(timeBucketKey(null)).toBeNull();
-    expect(timeBucketKey(undefined)).toBeNull();
-    expect(timeBucketKey("")).toBeNull();
+  it("rejects IPv4 strings with out-of-range octets", () => {
+    expect(isIpLiteral("256.0.0.1")).toBe(false);
+    expect(isIpLiteral("1.2.3")).toBe(false);
+    expect(isIpLiteral("1.2.3.4.5")).toBe(false);
   });
 
-  it("exposes a 30-min bucket size", () => {
-    expect(TRIAGE_TIME_BUCKET_MS).toBe(30 * 60 * 1000);
+  it("accepts canonical and compressed IPv6 addresses", () => {
+    expect(isIpLiteral("::1")).toBe(true);
+    expect(isIpLiteral("2001:db8::1")).toBe(true);
+    expect(isIpLiteral("2001:0db8:0000:0000:0000:0000:0000:0001")).toBe(true);
+    expect(isIpLiteral("::ffff:1.2.3.4")).toBe(true);
+  });
+
+  it("rejects non-IP DNS-answer payloads", () => {
+    expect(isIpLiteral("cdn.example.com")).toBe(false);
+    expect(isIpLiteral("NXDOMAIN")).toBe(false);
+    expect(isIpLiteral("")).toBe(false);
+    expect(isIpLiteral(":::")).toBe(false);
   });
 });

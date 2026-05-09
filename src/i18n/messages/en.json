@@ -1919,6 +1919,7 @@
     },
     "assetDetail": {
       "title": "Asset detail",
+      "pivotFocusTitle": "Pivot focus",
       "emptySelection": "Select an asset to inspect its events.",
       "emptyEvents": "No triaged events to display.",
       "scoreLabel": "Score",

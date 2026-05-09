@@ -9,12 +9,14 @@ export {
   resolveStepFocusEvents,
 } from "./breadcrumb";
 export {
+  eventsWithinSameKindWindow,
   getPivotDimension,
   PIVOT_DIMENSIONS,
   type PivotDimension,
   type PivotDimensionFamily,
   type PivotDimensionId,
   type PivotValue,
+  parseSameKindKey,
 } from "./dimensions";
 export {
   buildPivotIndex,
@@ -30,7 +32,7 @@ export {
 } from "./index-builder";
 export {
   extractRegistrableDomain,
+  isIpLiteral,
   normalizeUriPattern,
-  TRIAGE_TIME_BUCKET_MS,
-  timeBucketKey,
+  TRIAGE_SAME_KIND_WINDOW_MS,
 } from "./normalize";

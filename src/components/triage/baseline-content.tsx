@@ -11,7 +11,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { ScoredTriageEvent, TriageLoadResult } from "@/lib/triage";
+import type {
+  ScoredTriageEvent,
+  TriageAsset,
+  TriageLoadResult,
+} from "@/lib/triage";
 import {
   appendPivotStep,
   backtrackPivotTrail,
@@ -64,6 +68,9 @@ interface TriageBaselineContentProps {
   onPivotTrailChange?: (hasDimensionSteps: boolean) => void;
   labels: TriageBaselineLabels;
 }
+
+/** Detail-panel events shown for a pivot focus. */
+const PIVOT_FOCUS_DETAIL_EVENT_CAP = 50;
 
 export function TriageBaselineContent({
   result,
@@ -121,6 +128,38 @@ export function TriageBaselineContent({
     return resolveStepFocusEvents(activeStep, result.events, pivotIndex);
   }, [activeStep, result.events, pivotIndex]);
 
+  // When the active step is a dimension pivot, the issue says the
+  // new "asset" view is the set of events sharing that value — not
+  // the original asset. Synthesize a TriageAsset-shaped object from
+  // the focus events so the same detail card renders, with the
+  // dimension+value as the header and the focused events in the
+  // table. The asset list still highlights the original anchor so
+  // the operator can backtrack.
+  const pivotFocusAsset: TriageAsset | null = useMemo(() => {
+    if (!activeStep || activeStep.kind !== "dimension") return null;
+    if (focusEvents.length === 0) return null;
+    const dimensionLabel = labels.pivotPanel.dimensions[activeStep.dimension];
+    const address = `${dimensionLabel}: ${activeStep.value.label}`;
+    let triagedCount = 0;
+    let scoreSum = 0;
+    for (const ev of focusEvents) {
+      if (ev.score > 0) triagedCount += 1;
+      scoreSum += ev.score;
+    }
+    const sorted = [...focusEvents].sort((a, b) =>
+      a.time === b.time ? 0 : a.time < b.time ? 1 : -1,
+    );
+    return {
+      address,
+      detectedCount: focusEvents.length,
+      triagedCount,
+      score: scoreSum,
+      events: sorted.slice(0, PIVOT_FOCUS_DETAIL_EVENT_CAP),
+    };
+  }, [activeStep, focusEvents, labels.pivotPanel.dimensions]);
+
+  const detailAsset = pivotFocusAsset ?? effectiveAsset;
+
   const sections = useMemo(
     () => buildPivotPanel(pivotIndex, focusEvents),
     [pivotIndex, focusEvents],
@@ -152,7 +191,8 @@ export function TriageBaselineContent({
           labels={labels.assetList}
         />
         <TriageAssetDetailView
-          asset={effectiveAsset}
+          asset={detailAsset}
+          isPivotFocus={pivotFocusAsset !== null}
           labels={labels.assetDetail}
         />
       </div>

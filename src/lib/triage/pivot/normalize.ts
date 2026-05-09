@@ -5,6 +5,8 @@
  *     (delegated to `tldts`, which is browser-safe and tree-shakable).
  *   - URI-pattern templating (numeric segments → `{id}`, UUID-like
  *     segments → `{uuid}`, hex-blob segments → `{hex}`).
+ *   - IP-literal validation (used to gate DNS answer pivot values to
+ *     actual address tokens).
  *
  * The pivot index ships in the baseline subtree, so this module must
  * stay free of any import from the policy modules under
@@ -13,8 +15,12 @@
 
 import { getDomain } from "tldts";
 
-/** 30-min bucket size in milliseconds for the time/structure pivot. */
-export const TRIAGE_TIME_BUCKET_MS = 30 * 60 * 1000;
+/**
+ * Half-window for the "same kind within ±15 min" pivot, in
+ * milliseconds. Two events of the same `__typename` are considered
+ * neighbors when their times fall within this delta of a focus event.
+ */
+export const TRIAGE_SAME_KIND_WINDOW_MS = 15 * 60 * 1000;
 
 /**
  * Extract the registrable domain ("eTLD+1") from a raw `host` /
@@ -88,20 +94,66 @@ export function normalizeUriPattern(
   return segments.join("/");
 }
 
+const IPV4_OCTET = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
+
 /**
- * Bucket an ISO-8601 timestamp to a 30-minute window for the
- * "same kind within ±15 min" pivot. Returns `null` when the input is
- * not parseable.
+ * `true` when `value` is a textual IPv4 or IPv6 literal. Used to gate
+ * DNS-answer pivot values to actual address tokens — REview's
+ * `event.answer` field is a flat string that may contain CNAMEs,
+ * status text, or other non-address payload, and the dimension's
+ * contract is "answer IP", not "answer string".
  *
- * Two events fall into the same bucket iff their times round down to
- * the same 30-minute boundary. Worst-case in-window separation is
- * ~30 min when the events sit at opposite ends of the same bucket;
- * the issue allows the implementer to set the grain so long as the
- * dimension stays operator-meaningful.
+ * This is a syntactic check; it does not validate that the address
+ * is reachable or that an IPv6 literal is canonically shortened.
+ * IPv4-mapped IPv6 (`::ffff:1.2.3.4`) is recognized.
  */
-export function timeBucketKey(time: string | null | undefined): number | null {
-  if (typeof time !== "string" || time.length === 0) return null;
-  const ms = Date.parse(time);
-  if (!Number.isFinite(ms)) return null;
-  return Math.floor(ms / TRIAGE_TIME_BUCKET_MS);
+export function isIpLiteral(value: string): boolean {
+  if (value.length === 0) return false;
+  if (value.includes(":")) return isIpv6Literal(value);
+  return isIpv4Literal(value);
+}
+
+function isIpv4Literal(value: string): boolean {
+  const parts = value.split(".");
+  if (parts.length !== 4) return false;
+  return parts.every((part) => IPV4_OCTET.test(part));
+}
+
+function isIpv6Literal(value: string): boolean {
+  // Reject anything that is not [0-9a-f:.] since IPv6 may also embed
+  // an IPv4 tail (`::ffff:1.2.3.4`).
+  if (!/^[0-9a-f:.]+$/i.test(value)) return false;
+  // Three or more colons in a row is never valid (`:::` is not a
+  // legal "::" compression).
+  if (/:{3,}/.test(value)) return false;
+  // At most one "::" run.
+  const doubleColons = value.match(/::/g);
+  const hasZeroRun = doubleColons !== null && doubleColons.length === 1;
+  if (doubleColons && doubleColons.length > 1) return false;
+
+  let head = value;
+  let ipv4Tail: string | null = null;
+  // Pull out an embedded IPv4 tail if present.
+  const lastColon = value.lastIndexOf(":");
+  const tail = lastColon === -1 ? "" : value.slice(lastColon + 1);
+  if (tail.includes(".")) {
+    if (!isIpv4Literal(tail)) return false;
+    ipv4Tail = tail;
+    head = value.slice(0, lastColon);
+  }
+
+  const groups = head.split(":");
+  // The IPv4 tail counts as the last two 16-bit groups.
+  const maxGroups = ipv4Tail ? 6 : 8;
+  const filled = groups.filter((g) => g.length > 0);
+  if (filled.length > maxGroups) return false;
+  if (hasZeroRun) {
+    // A `::` run requires at least one omitted group; otherwise the
+    // address is fully written and the run is spurious.
+    if (filled.length >= maxGroups) return false;
+  } else {
+    if (groups.length !== maxGroups) return false;
+    if (groups.some((g) => g.length === 0)) return false;
+  }
+  return groups.every((g) => g === "" || /^[0-9a-f]{1,4}$/i.test(g));
 }

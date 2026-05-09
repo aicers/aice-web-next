@@ -207,10 +207,18 @@ The panel surfaces events grouped by:
   `/api/v1/users/{id}`.
 - **TLS** — JA3, JA3S, SNI (server name), certificate serial,
   certificate subject CN.
-- **DNS** — DNS query, DNS answer (multi-answer rows are split).
-- **Time / structure** — same kind within ~15 minutes (events of
-  the same `__typename` falling into a 30-minute bucket), same
-  sensor, cluster ID.
+- **DNS** — DNS query, DNS answer (multi-answer rows are split, and
+  only IPv4 / IPv6 literal tokens are kept; CNAMEs and status text
+  such as `NXDOMAIN` that REview sometimes surfaces in the same
+  field are filtered out so the dimension stays a "DNS answer IP"
+  pivot, not a generic "answer string").
+- **Time / structure** — same kind within ±15 minutes (events of
+  the same `__typename` whose timestamp falls within fifteen
+  minutes of the focused event's timestamp on either side), same
+  sensor, cluster ID. Earlier revisions used a fixed 30-minute
+  bucket and could call neighbors that were two minutes apart a
+  miss when they straddled a bucket boundary; the dimension now
+  resolves the window relative to the focus event itself.
 
 Dimensions where the focused asset carries no value, or where the
 loaded corpus has no other matching events, are hidden — never shown
@@ -244,6 +252,13 @@ local to the current view — it is not persisted in the URL.
   (e.g., `JA3: 7e29c8…b4`). Clicking an earlier crumb restores the
   view to that step. Clicking the asset crumb collapses every
   dimension step back to the asset focus.
+
+When a dimension crumb is the active step, the asset-detail card
+relabels itself as **Pivot focus** and renders the events that
+share the pivoted-to value rather than the originally-selected
+asset's stats. The asset list keeps the original asset highlighted
+so the operator can backtrack by clicking the asset crumb or
+re-selecting from the list.
 
 A new asset selection from the asset list resets the breadcrumb to
 that asset; it does not append.
