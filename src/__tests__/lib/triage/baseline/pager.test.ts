@@ -27,27 +27,36 @@ function makeClient(): FakeClient {
 }
 
 function eventKeyToCursor(value: bigint): string {
-  // Big-endian 16-byte encoding; matches `cursorToEventKey`.
-  const bytes = Buffer.alloc(16);
-  let n = value;
-  for (let i = 15; i >= 0; i -= 1) {
-    bytes[i] = Number(n & BigInt(0xff));
-    n = n >> BigInt(8);
-  }
-  return bytes.toString("base64");
+  // The vendored review-web resolver builds edges with
+  // `Edge::new(k.to_string(), ev)` where `k` is the i128 RocksDB key,
+  // so the wire cursor is just the decimal string. The cadence's
+  // `cursorToEventKey` validates that shape and forwards it
+  // unchanged.
+  return value.toString();
 }
 
 describe("cursorToEventKey", () => {
-  it("decodes a 16-byte big-endian base64 cursor to a NUMERIC string", () => {
-    expect(cursorToEventKey(eventKeyToCursor(BigInt(1)))).toBe("1");
-    expect(cursorToEventKey(eventKeyToCursor(BigInt(255)))).toBe("255");
-    expect(
-      cursorToEventKey(eventKeyToCursor(BigInt("123456789012345678901"))),
-    ).toBe("123456789012345678901");
+  it("validates and returns the decimal RocksDB-key cursor unchanged", () => {
+    expect(cursorToEventKey("1")).toBe("1");
+    expect(cursorToEventKey("255")).toBe("255");
+    expect(cursorToEventKey("123456789012345678901")).toBe(
+      "123456789012345678901",
+    );
+    // Upper bound of the unsigned i128 range is 39 digits.
+    expect(cursorToEventKey("340282366920938463463374607431768211455")).toBe(
+      "340282366920938463463374607431768211455",
+    );
   });
 
-  it("throws on a malformed cursor (length != 16 bytes)", () => {
-    expect(() => cursorToEventKey("AAAA")).toThrow(/expected 16-byte/);
+  it("throws on a non-decimal cursor (rejects legacy base64 shape too)", () => {
+    expect(() => cursorToEventKey("AAAA")).toThrow(/malformed edge cursor/);
+    expect(() => cursorToEventKey("")).toThrow(/malformed edge cursor/);
+    expect(() => cursorToEventKey("12.0")).toThrow(/malformed edge cursor/);
+    expect(() => cursorToEventKey("-1")).toThrow(/malformed edge cursor/);
+    // 40-digit value falls outside the unsigned-i128 range.
+    expect(() =>
+      cursorToEventKey("1234567890123456789012345678901234567890"),
+    ).toThrow(/malformed edge cursor/);
   });
 });
 
@@ -129,6 +138,7 @@ describe("createCadencePager — full pipeline (a)–(e)", () => {
       baselineInserted: 2,
       endCursor: cursor3,
       hasNextPage: false,
+      exclusionsFp: EMPTY_EXCLUSIONS_FINGERPRINT,
     });
 
     // (d) one observed insert per surviving event.
@@ -168,13 +178,18 @@ describe("createCadencePager — full pipeline (a)–(e)", () => {
     expect(networkTags).toEqual(["phase1a-simple"]);
 
     // fetchPage was called with the customer + null cursor on the
-    // first page.
+    // first page. The customerId is threaded alongside the variables
+    // so the production fetcher can scope the outbound JWT's
+    // `customer_ids` to the same customer.
     expect(fetchPage).toHaveBeenCalledTimes(1);
     expect((fetchPage.mock.calls[0] as unknown[])[0]).toMatchObject({
-      filter: { customers: ["42"] },
-      triage: null,
-      first: CADENCE_PAGE_SIZE,
-      after: null,
+      customerId: 42,
+      variables: {
+        filter: { customers: ["42"] },
+        triage: null,
+        first: CADENCE_PAGE_SIZE,
+        after: null,
+      },
     });
   });
 
@@ -258,7 +273,8 @@ describe("createCadencePager — full pipeline (a)–(e)", () => {
     expect(result.endCursor).toBe(endCursor);
     expect(result.hasNextPage).toBe(true);
     expect((fetchPage.mock.calls[0] as unknown[])[0]).toMatchObject({
-      after: "previous-page-cursor",
+      customerId: 99,
+      variables: { after: "previous-page-cursor" },
     });
   });
 
@@ -288,6 +304,7 @@ describe("createCadencePager — full pipeline (a)–(e)", () => {
       baselineInserted: 0,
       endCursor: null,
       hasNextPage: false,
+      exclusionsFp: EMPTY_EXCLUSIONS_FINGERPRINT,
     });
     expect(client.queries.some((q) => q.sql.startsWith("INSERT INTO"))).toBe(
       false,

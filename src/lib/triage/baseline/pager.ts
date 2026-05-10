@@ -58,11 +58,21 @@ import { EVENT_LIST_WITH_TRIAGE_QUERY } from "./queries";
 export const CADENCE_PAGE_SIZE = 500;
 
 /**
- * Role the cadence runner uses for outbound REview GraphQL. The cadence
- * is a system actor (no user session), so it carries the `admin` role
- * — same convention the Detection / Node-management scripts use.
+ * Role the cadence runner uses for outbound REview GraphQL. The
+ * cadence is a system actor (no user session). REview's Context-JWT
+ * role enum names the built-in roles exactly as
+ * `"System Administrator"` / `"Security Administrator"` /
+ * `"Security Manager"` / `"Security Monitor"` (with the literal space)
+ * — the legacy `"admin"` shorthand does not deserialize to any of
+ * those, so requests carrying it are rejected before they hit the
+ * field guard.
+ *
+ * The cadence needs `System Administrator` because the per-customer
+ * fetch carries the target customer in `filter.customers` and REview
+ * deserializes the role first to decide whether the requester is
+ * allowed to scope sensors that way at all.
  */
-const CADENCE_DISPATCH_CONTEXT = { role: "admin" };
+const CADENCE_ROLE = "System Administrator";
 
 interface CadenceEventNode extends TriageEvent {
   // Re-asserted here so tsc remembers the optional fields the cadence
@@ -88,44 +98,56 @@ interface CadenceConnectionResponse {
 }
 
 /**
- * Decode a relay-style edge cursor into the review RocksDB i128 primary
- * key. The vendored review-web resolver encodes `event_key` as a
- * base64 string of the i128's big-endian byte representation (16
- * bytes); the cadence corpus tables store that integer in
- * `NUMERIC(39, 0)` PRIMARY KEY columns.
+ * Validate a relay-style edge cursor and return the review RocksDB
+ * primary key it carries.
  *
- * If the cursor does not decode to exactly 16 bytes, the function
- * throws — the runner catches the error, marks the run `failed`, and
- * the watermark stays at the previous committed cursor. This is the
- * correct failure mode: silently coercing a malformed cursor into a
- * fallback PK value would risk mass collisions across event rows.
+ * The vendored review-web resolver builds connection edges with
+ * `Edge::new(k.to_string(), ev)` where `k` is the i128 RocksDB key —
+ * so the wire cursor is just the decimal string of that integer (no
+ * base64, no opaque wrapping). The cadence corpus tables store that
+ * integer in `NUMERIC(39, 0)` PRIMARY KEY columns; we forward the
+ * decimal string straight through.
+ *
+ * The validator rejects anything other than an unsigned decimal
+ * literal of up to 39 digits (the unsigned-i128 range bound). A bad
+ * cursor throws so the runner marks the page `failed` and leaves the
+ * watermark at the previous committed cursor — silently coercing a
+ * malformed cursor into a fallback PK would risk mass collisions
+ * across event rows.
  */
+const EVENT_KEY_PATTERN = /^[0-9]{1,39}$/;
 export function cursorToEventKey(cursor: string): string {
-  const bytes = Buffer.from(cursor, "base64");
-  if (bytes.length !== 16) {
+  if (!EVENT_KEY_PATTERN.test(cursor)) {
     throw new Error(
-      `Cadence: unexpected cursor byte length ${bytes.length} (expected 16-byte i128 big-endian).`,
+      `Cadence: malformed edge cursor ${JSON.stringify(cursor)} (expected an unsigned decimal i128 string ≤ 39 digits).`,
     );
   }
-  let n = BigInt(0);
-  const SHIFT_8 = BigInt(8);
-  for (const byte of bytes) {
-    n = (n << SHIFT_8) | BigInt(byte);
-  }
-  return n.toString();
+  return cursor;
+}
+
+export interface CadenceFetchPageArgs {
+  customerId: number;
+  variables: {
+    filter: { customers: string[] };
+    triage: null;
+    first: number;
+    after: string | null;
+  };
 }
 
 export interface CadencePagerOptions {
   /**
    * Override the GraphQL fetch step. Tests inject a stub so the pager
-   * can be unit-tested without hitting review-web.
+   * can be unit-tested without hitting review-web. The pager passes
+   * `customerId` alongside the GraphQL variables so the production
+   * fetcher can scope the outbound JWT's `customer_ids` to the same
+   * customer the cadence is processing — REview rejects a system-actor
+   * request that names a customer in `filter.customers` outside the
+   * JWT scope.
    */
-  fetchPage?: (variables: {
-    filter: { customers: string[] };
-    triage: null;
-    first: number;
-    after: string | null;
-  }) => Promise<CadenceConnectionResponse>;
+  fetchPage?: (
+    args: CadenceFetchPageArgs,
+  ) => Promise<CadenceConnectionResponse>;
   /**
    * Active-exclusion-set resolver. Defaults to the empty-set resolver
    * (#457 swap point); tests inject a fake to drive the matcher.
@@ -157,10 +179,13 @@ export function createCadencePager(
     ): Promise<CadencePageResult> {
       // (a) Fetch raw standard-filter page from review.
       const response = await fetchPage({
-        filter: { customers: [String(customerId)] },
-        triage: null,
-        first: pageSize,
-        after: afterCursor,
+        customerId,
+        variables: {
+          filter: { customers: [String(customerId)] },
+          triage: null,
+          first: pageSize,
+          after: afterCursor,
+        },
       });
       const conn = response.eventListWithTriage;
       const edges = conn.edges;
@@ -210,25 +235,34 @@ export function createCadencePager(
         baselineInserted,
         endCursor: conn.pageInfo.endCursor,
         hasNextPage: conn.pageInfo.hasNextPage,
+        // Surface the page-level fingerprint so the runner can stamp
+        // `baseline_corpus_state.exclusions_fp` with the same value the
+        // per-row INSERTs carried. Otherwise the corpus-state row would
+        // diverge from the per-row fingerprint as soon as #457 wires
+        // real (non-empty) storage.
+        exclusionsFp,
       };
     },
   };
 }
 
-async function defaultFetchPage(variables: {
-  filter: { customers: string[] };
-  triage: null;
-  first: number;
-  after: string | null;
-}): Promise<CadenceConnectionResponse> {
-  // The cadence runs as a system actor (no user session) and
-  // materialises customer scope through `filter.customers` sourced
-  // from the route handler's `customer_id` parameter. There is no
-  // session JWT to derive a `customerIds` list from, so the dispatch
-  // context is the system-admin role.
+async function defaultFetchPage(
+  args: CadenceFetchPageArgs,
+): Promise<CadenceConnectionResponse> {
+  // The cadence runs as a system actor (no user session). The
+  // outbound dispatch context names the `System Administrator` role
+  // (REview's enum spelling — `"admin"` is not accepted) and
+  // materialises the customer scope into the JWT's `customer_ids`
+  // claim from the route handler's `customer_id` parameter. The same
+  // value is also threaded into `filter.customers` so the resolver's
+  // sensor scoping picks the right customer-tenant set.
+  const context = {
+    role: CADENCE_ROLE,
+    customerIds: [args.customerId],
+  };
   // biome-ignore format: keep the call on one line so the scope-allowlist
   // override sits on the same line as the graphqlRequest call.
-  return graphqlRequest<CadenceConnectionResponse, typeof variables>(EVENT_LIST_WITH_TRIAGE_QUERY, variables, CADENCE_DISPATCH_CONTEXT); // scope-allowlist: #481 system-actor cadence; customer scope materialised via filter.customers
+  return graphqlRequest<CadenceConnectionResponse, typeof args.variables>(EVENT_LIST_WITH_TRIAGE_QUERY, args.variables, context); // scope-allowlist: #481 system-actor cadence; customer scope materialised via JWT customer_ids + filter.customers
 }
 
 async function insertObservedEventMeta(

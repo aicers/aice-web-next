@@ -56,7 +56,6 @@ import { timingSafeEqual } from "node:crypto";
 
 import type pg from "pg";
 
-import { EMPTY_EXCLUSIONS_FINGERPRINT } from "@/lib/triage/exclusion";
 import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
 /**
@@ -137,6 +136,17 @@ export interface CadencePageResult {
   endCursor: string | null;
   /** Whether the resolver indicates more pages are available. */
   hasNextPage: boolean;
+  /**
+   * Canonical fingerprint of the active exclusion set the pager
+   * applied while building this page (`computeExclusionsFingerprint`).
+   * The runner copies it onto `baseline_corpus_state.exclusions_fp`
+   * when it commits the page so the corpus-state row stays in lockstep
+   * with the per-row `exclusions_fp` written into
+   * `baseline_triaged_event`. Pre-#457 the resolver returns the
+   * empty-set fingerprint; #457 swaps in real storage without touching
+   * the runner.
+   */
+  exclusionsFp: string;
 }
 
 /**
@@ -168,15 +178,6 @@ function buildLockKeyExpr(): string {
 function buildLockKeyParam(customerId: number): string {
   return `${LOCK_NAMESPACE}${customerId}`;
 }
-
-/**
- * Empty-set exclusion fingerprint, computed once via the shared helper
- * in `src/lib/triage/exclusion`. Pre-#457 the cadence runs against an
- * empty active exclusion set; every row therefore carries this real
- * (NOT NULL) fingerprint until the storage adapter lands and starts
- * returning real rules.
- */
-const EMPTY_EXCLUSIONS_FP = EMPTY_EXCLUSIONS_FINGERPRINT;
 
 /**
  * Read the corpus-state row, INSERTing the singleton if it does not
@@ -322,7 +323,7 @@ export async function runTriageBaselineCadence(
           nextStartCursor,
         );
 
-        await markOk(client, ingest.endCursor, EMPTY_EXCLUSIONS_FP);
+        await markOk(client, ingest.endCursor, ingest.exclusionsFp);
         await client.query("COMMIT");
         pageCommitted = true;
 
@@ -387,5 +388,4 @@ export function verifyTriageBaselineCadenceToken(
 
 export const _testing = {
   buildLockKeyParam,
-  EMPTY_EXCLUSIONS_FP,
 };

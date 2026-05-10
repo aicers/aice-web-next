@@ -48,9 +48,15 @@ Content-Type: application/json
   "status": "ok",
   "observedInserted": 142,
   "baselineInserted": 9,
-  "lastEventCursor": "AAAA…"
+  "lastEventCursor": "1234567890123456789"
 }
 ```
+
+`lastEventCursor`는 이번 실행에서 마지막으로 스캔한 이벤트의
+RocksDB 기본 키를 10진수로 인코딩한 값입니다. 상위 리졸버가
+`Edge::new(k.to_string(), ev)`로 커넥션 엣지를 만들기 때문에,
+커서는 i128 키를 10진수 문자열(최대 39자리)로 직렬화한 형태
+그대로입니다.
 
 | 필드 | 의미 |
 | :-- | :-- |

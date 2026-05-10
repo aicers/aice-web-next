@@ -47,9 +47,14 @@ A successful pass returns HTTP 200 with the per-run counters:
   "status": "ok",
   "observedInserted": 142,
   "baselineInserted": 9,
-  "lastEventCursor": "AAAA…"
+  "lastEventCursor": "1234567890123456789"
 }
 ```
+
+`lastEventCursor` is the decimal RocksDB primary key of the last
+event scanned in this run (the upstream resolver builds connection
+edges with `Edge::new(k.to_string(), ev)`, so the cursor is the
+i128 key serialised as a decimal string up to 39 digits).
 
 | Field | Meaning |
 | :-- | :-- |

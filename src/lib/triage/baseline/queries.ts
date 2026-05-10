@@ -34,9 +34,12 @@ import { parse } from "graphql";
  * small and the resolver round-trip fast.
  *
  * Edge `cursor` is selected so the cadence can derive the per-event
- * `event_key` for the corpus tables' primary key (review encodes the
- * RocksDB i128 as a base64 cursor; see `cursorToEventKey` in the
- * cadence runner).
+ * `event_key` for the corpus tables' primary key. The vendored
+ * resolver builds edges with `Edge::new(k.to_string(), ev)` where
+ * `k` is the i128 RocksDB key, so the wire cursor is the decimal
+ * string of that integer; `cursorToEventKey` in the cadence runner
+ * validates the shape and forwards it straight into the
+ * `NUMERIC(39, 0)` PK column.
  *
  * The query is validated against `schemas/review.graphql` by
  * `src/__tests__/lib/graphql/schema-validation.test.ts` at CI time.
