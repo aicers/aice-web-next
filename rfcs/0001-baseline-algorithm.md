@@ -45,13 +45,16 @@ At menu read (per active window, no per-event recomputation):
    │                                                       baseline_version ORDER BY raw_score)
    │                                                       over rows in the active window; see §3.
    │
-   ├─ (5) allocate per-kind slots                       ── per-kind aggregates GROUP BY against
-   │                                                       baseline_triaged_event (volume + average
-   │                                                       selector_tags length) + favored bonus
+   ├─ (5) compute per-kind quotas                       ── slot_share(kind) · default_N (§4),
+   │                                                       per-kind aggregates from baseline_triaged_event
+   │                                                       (volume + avg selector_tags length) + favored bonus.
+   │                                                       Quota is the cap, not the actual count.
    │
-   └─ (6) merge top-k of each kind                      ── SELECT FROM baseline_triaged_event,
-                                                            ORDER BY baseline_score DESC within kind,
-                                                            assemble into final_count rows
+   └─ (6) merge per-cohort cutoff-and-quota             ── For each (kind, baseline_version) cohort:
+                                                            filter to baseline_score >= cutoff(slider),
+                                                            ORDER BY baseline_score DESC, take up to
+                                                            quota[kind]. Sum across cohorts =
+                                                            final_count, ≤ default_N (§6).
 ```
 
 Step (3) — including window-level selectors S1/S3/S4 — runs inside the cadence pipeline (#481) by `GROUP BY` against `observed_event_meta` at INSERT time; the resulting `raw_score` (the weighted sum) and `selector_tags` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. `baseline_score` is **not** persisted at INSERT — it is the read-time `CUME_DIST()` window function defined in §3. See §8 for the full timing contract and §11 for the read-path performance contract. Steps (4)–(6) read only `baseline_triaged_event` — `baseline_score` is derived from `raw_score` in a CTE/window pass, slot-allocation aggregates use `selector_tags` array length as the signal-richness proxy (§4), so no raw confidence column is needed at read time and no second-table join. `observed_event_meta` is consulted only at cadence INSERT (step 3), never at menu read.
@@ -198,7 +201,34 @@ where:
 - `normalized_top_confidence(kind, window) ∈ [0, 1]`: a measure of how *signal-rich* the kind's events are this window. Concretely, `avg(coalesce(cardinality(selector_tags), 0)) / MAX_TAGS` over `baseline_triaged_event` rows for this `kind` in the active window, where `MAX_TAGS` is the total number of distinct selector tags the cadence pipeline can emit (§9). The `coalesce` guards both NULL `selector_tags` columns and PostgreSQL's quirk that `array_length('{}', 1)` returns `NULL` rather than `0`; without it, zero-tag rows would silently drop from `avg` and groups whose rows are all empty/NULL would produce a NULL slot share. A kind whose events frequently fire multiple selectors (S1-high + S3-recurring + S4-correlated, etc.) scores higher than one whose events typically fire only a single selector. Computed entirely from `selector_tags` — no raw confidence column is read, so the within-kind-only rule for confidence (§ "Pipeline" intro) is respected: signal-richness is measured from the algorithm's own selector firings, not from upstream confidence values.
 - `favored_bonus(kind) = β` if `kind ∈ FAVORED_KINDS = {DnsCovertChannel, unlabeled-HttpThreat, LockyRansomware, RepeatedHttpSessions, SuspiciousTlsTraffic}`, else 0. Constant, never decays.
 
-The shares are then normalized to sum to 1 and multiplied by `final_count` (§6) to produce per-kind absolute slot counts. Fractional slots are resolved by the largest-remainder method. **Tie-breaker** when two kinds have exactly equal remainders: the extra slot goes to the kind whose name sorts first lexicographically. The tie-breaker is included so the algorithm is fully deterministic — `FAVORED_KINDS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
+The shares are normalized to sum to 1 and multiplied by **`default_N`** (§6) — *not* by `final_count` — to produce per-kind quotas:
+
+```
+quota[kind] = round(slot_share(kind) · default_N)
+```
+
+`default_N` is the cognitive-limit cap from §6; `quota[kind]` is the maximum number of events from this kind that the menu will ever show. Fractional slots are resolved by the largest-remainder method. **Tie-breaker** when two kinds have exactly equal remainders: the extra slot goes to the kind whose name sorts first lexicographically. The tie-breaker is included so the algorithm is fully deterministic — `FAVORED_KINDS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
+
+The actual per-kind row count in the menu is then bounded *both* by `quota[kind]` and by the slider cutoff:
+
+```
+visible[kind] = min(
+    quota[kind],
+    | { events in kind cohort with baseline_score >= cutoff(slider) } |
+)
+
+final_count = sum(visible[kind] for all kinds)
+            = bounded above by sum(quota[kind]) = default_N (cognitive cap)
+            = bounded below by MIN_NONZERO_FLOOR when post_exclusion > 0 (§6 floor)
+```
+
+**Composition order at menu read** (the order pipeline §3 step (6) implements):
+
+1. `quota[kind]` is computed first (this section, against the active window).
+2. For each `(kind, baseline_version)` cohort, the rows passing the cutoff are ordered by `baseline_score DESC` (with the §3 tie-breaker tuple).
+3. The first `quota[kind]` such rows are taken; if fewer than `quota[kind]` rows pass the cutoff in a cohort, the cohort contributes only what passes (the menu is never padded with sub-cutoff events to fill a quota).
+
+The slider's "All" stop (no cutoff) thus produces the maximum menu — `default_N` rows distributed by `slot_share`. Tighter slider stops shrink the visible count uniformly because each cohort's qualifying-event count drops; `quota[kind]` becomes the binding constraint only at the loose end of the slider, while the cutoff becomes binding at the strict end.
 
 The `unlabeled-HttpThreat` entry in `FAVORED_KINDS` is a virtual kind, and slot-allocation aggregates GROUP BY `(kind, is_unlabeled)` where `is_unlabeled = (kind = 'HttpThreat' AND 'unlabeled-cluster' = ANY(selector_tags))`. The pair `('HttpThreat', true)` is treated as the virtual kind for `FAVORED_KINDS` membership and slot share. Because the unlabeled flag is detected via `selector_tags` — written at cadence INSERT by §3's `UNLABELED_BONUS` — slot allocation does not need a separate `clusterId` column on any read-time table.
 
@@ -241,23 +271,28 @@ The log10 shape buys two properties at once:
 - `LOWER_FLOOR` ensures even very quiet days surface something to look at.
 - The slow growth of log10 naturally bounds the menu near an analyst-readable size without a hard cap constant; the customer's activity level is reflected, not equated to raw volume.
 
-`default_N` is a **recommendation**, not the formula's output. The actual `final_count` is determined by the percentile cutoff #471's slider applies to `baseline_score`:
+`default_N` is the **cognitive-limit cap**: the maximum number of rows the menu shows at the loosest slider position ("All"). §4 uses it to compute per-cohort quotas. Tighter slider positions shrink the actual `final_count` below `default_N` because the cutoff filters events out faster than the quota cap binds.
+
+The formal definition of `final_count` is given in §4 as the sum of `visible[kind]` after composing quota and cutoff. Restating it here for the §6 view:
 
 ```
-final_count = count of rows in the active window with
-              baseline_score >= cutoff(slider_stop)
-            = bounded above by post_exclusion_event_count
-
-final_count = max(MIN_NONZERO_FLOOR, final_count)
-              if post_exclusion_event_count > 0
-
 final_count = 0
               if post_exclusion_event_count = 0
+
+final_count = max(
+    MIN_NONZERO_FLOOR,
+    sum_over_kinds( min(
+        quota[kind],
+        |events in (kind, baseline_version) cohort with baseline_score >= cutoff|
+    ))
+  )
+              if post_exclusion_event_count > 0
 ```
 
-- `final_count` is bounded above by the actual number of post-exclusion events; the menu is never padded with low-score events to hit a fixed number.
+- `final_count` is bounded above by `default_N` (cognitive cap, via the sum of quotas) and by `post_exclusion_event_count`. The menu is never padded with sub-cutoff events to fill a quota.
 - `MIN_NONZERO_FLOOR` guarantees a non-empty menu whenever any event survives Stage 1 exclusion. If the slider cutoff yields zero rows in the active window, the top-`MIN_NONZERO_FLOOR` events by `baseline_score` are surfaced regardless.
-- `default_N` is the row count this RFC recommends for the dial's **neutral position** — i.e., #471 should choose whichever slider stop produces a count closest to `default_N` for a typical window as the dial's default. From there the user dials "more" (loosen the cutoff) or "less" (tighten the cutoff). The dial is relative to `default_N` only in the sense that `default_N` defines neutrality; what the dial actually moves is the percentile cutoff, not a multiplier on row count.
+- The slider's neutral position should be the slider stop that, on a typical active window, produces a count near the loose end of the meaningful range — somewhere between half `default_N` and `default_N`. The exact stop is owned by #471; this RFC commits only to `default_N` being the cap (loosest stop = "All" = at most `default_N` rows after quota).
+- Slider direction: "more" loosens the cutoff (more rows pass, but capped at `default_N` via the quota); "less" tightens the cutoff (fewer rows pass). The dial is relative to whichever stop neutral lands on; what it actually moves is the percentile cutoff over `baseline_score`, not a multiplier on row count or on `default_N`.
 
 The dial mechanism (continuous vs discrete, exact UI shape) is owned by #471. This RFC fixes one piece of the contract: **the dial controls a percentile cutoff on `baseline_score`**, not a multiplier on `final_count`. The two interpretations are not equivalent — a multiplier scales the absolute row count uniformly while leaving §4's per-cohort slot allocation in charge of distribution, whereas a percentile cutoff filters per-cohort by score and lets cohort-specific score distributions drive the final per-cohort counts. #471's slider stops are score thresholds (e.g. 0.95 for the "Top ~5%" stop), so the cutoff interpretation is what the slider implements.
 
