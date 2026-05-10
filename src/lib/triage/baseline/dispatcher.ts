@@ -212,6 +212,35 @@ async function defaultListActiveCustomers(): Promise<number[]> {
   return result.rows.map((r) => Number(r.id));
 }
 
+/**
+ * Race a promise against the dispatcher's abort signal. If the signal
+ * fires first, reject with `reason` so the dispatcher reports a
+ * self-failure (HTTP 500). The underlying promise is left to settle on
+ * its own — for the default enumerator this means a hung `pg` query
+ * eventually GCs once the connection closes.
+ */
+function raceAgainstDispatcherAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+  reason: string,
+): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error(reason));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error(reason));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
 function deriveOverall(
   entries: DispatcherPerCustomerEntry[],
 ): DispatcherOverall {
@@ -261,14 +290,13 @@ export async function runTriageBaselineDispatch(
   const listActiveCustomers =
     options.listActiveCustomers ?? defaultListActiveCustomers;
 
-  const customers = await listActiveCustomers();
-
-  // Index → result slot so we can fill entries in customer-id order
-  // regardless of completion order.
-  const slots: (DispatcherPerCustomerEntry | null)[] = customers.map(
-    () => null,
-  );
-
+  // Start the total-timeout clock at dispatcher entry so customer
+  // enumeration is bounded by the same ceiling as the fan-out. If the
+  // manager DB query hangs past `totalTimeoutMs`, throw a dispatcher
+  // self-failure (the route maps it to HTTP 500 with
+  // `overall: 'failed'`) rather than letting the cron wrapper's
+  // `--max-time` kill the HTTP exchange and discard the structured
+  // response body.
   const startedAt = now();
   const deadline = startedAt + totalTimeoutMs;
 
@@ -283,6 +311,24 @@ export async function runTriageBaselineDispatch(
   const dispatcherTimer = setTimeout(
     () => dispatcherController.abort(),
     Math.max(0, totalTimeoutMs),
+  );
+
+  let customers: number[];
+  try {
+    customers = await raceAgainstDispatcherAbort(
+      listActiveCustomers(),
+      dispatcherController.signal,
+      `Customer enumeration exceeded total dispatcher timeout (${totalTimeoutMs}ms)`,
+    );
+  } catch (err) {
+    clearTimeout(dispatcherTimer);
+    throw err;
+  }
+
+  // Index → result slot so we can fill entries in customer-id order
+  // regardless of completion order.
+  const slots: (DispatcherPerCustomerEntry | null)[] = customers.map(
+    () => null,
   );
 
   let nextIndex = 0;

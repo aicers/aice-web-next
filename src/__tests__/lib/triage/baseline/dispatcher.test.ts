@@ -111,6 +111,30 @@ describe("runTriageBaselineDispatch — overall derivation", () => {
       }),
     ).rejects.toThrow("enumeration failed");
   });
+
+  it("treats a customer enumeration that exceeds the total dispatcher timeout as self-failure (Round 3 fix)", async () => {
+    // Regression: previously `listActiveCustomers()` ran outside the
+    // total-timeout clock. A hung manager DB query would let the cron
+    // wrapper's `--max-time` kill the HTTP exchange first, dropping the
+    // structured `{ overall: 'failed', ... }` body. The total budget
+    // must start at dispatcher entry and bound enumeration too.
+    const { runTriageBaselineDispatch } = await import(
+      "@/lib/triage/baseline/dispatcher"
+    );
+
+    const startedAt = Date.now();
+    await expect(
+      runTriageBaselineDispatch({
+        pager: FAKE_PAGER,
+        // Never resolves — must be aborted by the total-timeout clock.
+        listActiveCustomers: () => new Promise<number[]>(() => {}),
+        totalTimeoutMs: 80,
+      }),
+    ).rejects.toThrow(/Customer enumeration exceeded total dispatcher timeout/);
+    const elapsed = Date.now() - startedAt;
+    // Must give up close to totalTimeoutMs, not hang indefinitely.
+    expect(elapsed).toBeLessThan(2000);
+  });
 });
 
 describe("runTriageBaselineDispatch — per-customer non-2xx normalisation", () => {
