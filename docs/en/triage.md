@@ -309,8 +309,9 @@ dimensions:
   separate "Tier 2 only" group that appears once the toggle is on).
   `learningMethods` and `keywords` are also Tier 2-only filter
   fields, but their values are not derivable from the loaded corpus,
-  so the panel does not yet surface a click affordance for them; a
-  follow-up will add a free-form filter chip.
+  so the panel does not yet surface a click affordance for them.
+  Tracked as follow-ups: a static-options group for `learningMethods`
+  (issue #498) and a free-form chip input for `keywords` (issue #499).
 - `externalIp`, `internalIp`, `country`, `sameSensor` (the same row
   the operator sees in Tier 1, but the click action issues a fresh
   fetch instead of looking up the loaded index).

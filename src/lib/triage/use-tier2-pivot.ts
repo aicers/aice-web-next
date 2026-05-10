@@ -130,6 +130,17 @@ export function useTier2Pivot(
   const peekStashRef = useRef<PeekStash | null>(null);
   const [pending, setPending] = useState<Tier2PendingProjection | null>(null);
   const [evictions, setEvictions] = useState<Tier2EvictionEvent[]>([]);
+  // Bumped whenever the period or customer scope rotates. Each
+  // in-flight fetch captures the current generation when it starts and
+  // refuses to write its result back if the generation no longer
+  // matches — without this, a fetch that began before a period change
+  // could land in `stateMapRef` after the reset effect cleared it,
+  // and `getCached` would resurrect a result that belongs to a stale
+  // (period, customer) tuple. The in-memory key intentionally stays
+  // `${dimension}|${valueKey}` so the LRU layer is the only place that
+  // carries the full scoped key; the generation guard keeps the
+  // unscoped layer from leaking cross-scope rows.
+  const generationRef = useRef(0);
 
   // Wire eviction listener exactly once. The cache lives across
   // renders; we keep the React state in sync with the cache events
@@ -160,6 +171,7 @@ export function useTier2Pivot(
   // documents the trigger contract.
   // biome-ignore lint/correctness/useExhaustiveDependencies: deps name the period/scope rotate trigger
   useEffect(() => {
+    generationRef.current += 1;
     cacheRef.current?.clear();
     stateMapRef.current.clear();
     peekStashRef.current = null;
@@ -245,7 +257,7 @@ export function useTier2Pivot(
   );
 
   const continueFromStash = useCallback(
-    async (stash: PeekStash) => {
+    async (stash: PeekStash, capturedGen: number) => {
       const key = stateKey(stash.dimension, stash.valueKey);
       try {
         // Resume from the peek's cursor so the first page (already in
@@ -262,6 +274,7 @@ export function useTier2Pivot(
           afterCursor: stash.endCursor,
           alreadyFetched: stash.events.length,
         });
+        if (capturedGen !== generationRef.current) return;
         const merged = [...stash.events, ...rest.events];
         // Defensive slice — if a downstream change ever lets the
         // server overshoot the budget (or alreadyFetched is wired
@@ -274,6 +287,7 @@ export function useTier2Pivot(
           truncated,
         });
       } catch (err) {
+        if (capturedGen !== generationRef.current) return;
         setError(key, err);
       }
     },
@@ -287,6 +301,7 @@ export function useTier2Pivot(
       const existing = getCached(dimension, valueKey);
       if (existing && existing.status === "ready") return;
       const key = stateKey(dimension, valueKey);
+      const capturedGen = generationRef.current;
       stateMapRef.current.set(key, {
         status: "loading",
         events: [],
@@ -307,9 +322,11 @@ export function useTier2Pivot(
             firstPageOnly: true,
           });
         } catch (err) {
+          if (capturedGen !== generationRef.current) return;
           setError(key, err);
           return;
         }
+        if (capturedGen !== generationRef.current) return;
         // Single-page fits the whole result: skip the modal and the
         // continuation round-trip.
         if (!peek.hasMore) {
@@ -350,15 +367,18 @@ export function useTier2Pivot(
         }
         // Under threshold — continue the walk silently from the peek's
         // cursor.
-        await continueFromStash({
-          dimension,
-          valueKey,
-          events: peek.events,
-          totalCount: peek.totalCount,
-          endCursor: peek.endCursor,
-          hasMore: peek.hasMore,
-          truncated: peek.truncated,
-        });
+        await continueFromStash(
+          {
+            dimension,
+            valueKey,
+            events: peek.events,
+            totalCount: peek.totalCount,
+            endCursor: peek.endCursor,
+            hasMore: peek.hasMore,
+            truncated: peek.truncated,
+          },
+          capturedGen,
+        );
       })();
     },
     [
@@ -379,7 +399,7 @@ export function useTier2Pivot(
     peekStashRef.current = null;
     setPending(null);
     if (!stash) return;
-    void continueFromStash(stash);
+    void continueFromStash(stash, generationRef.current);
   }, [continueFromStash]);
 
   const cancelFetch = useCallback(() => {

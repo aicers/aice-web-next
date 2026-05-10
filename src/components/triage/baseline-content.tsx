@@ -28,7 +28,10 @@ import {
 } from "@/lib/triage/pivot";
 import { baselineScore } from "@/lib/triage/scoring";
 import { tier2DedupeKey } from "@/lib/triage/tier2-cache";
-import { isTier2ServerDimension } from "@/lib/triage/tier2-filter";
+import {
+  isTier2ServerDimension,
+  type Tier2Dimension,
+} from "@/lib/triage/tier2-filter";
 import {
   parseTriagePivotHash,
   pivotHashFromTrail,
@@ -334,6 +337,17 @@ export function TriageBaselineContent({
   // location.hash) ──
   const hashRestoreAttempted = useRef(false);
   const [staleHashFallback, setStaleHashFallback] = useState(false);
+  // Server-filtered steps decoded from the hash whose data still has
+  // to be fetched after restore. The restore effect parses the hash
+  // and seeds the trail, but `useTier2Pivot.startFetch` would no-op if
+  // called before the parent's scope prop has flipped to `"tier2"`. A
+  // separate effect drains this queue once `scope === "tier2"` is
+  // committed, so a shared Tier 2 URL actually re-issues the trail's
+  // server fetches (including the pre-fetch modal path when the
+  // projection trips the threshold).
+  const pendingHashFetchesRef = useRef<
+    Array<{ dimension: Tier2Dimension; valueKey: string }>
+  >([]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: restore runs once after the corpus is in hand
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -359,6 +373,10 @@ export function TriageBaselineContent({
       { kind: "asset", address: restoredAsset },
     ];
     let stale = false;
+    const refetchQueue: Array<{
+      dimension: Tier2Dimension;
+      valueKey: string;
+    }> = [];
     // Tier 2-only server dimensions are not derivable from the Tier 1
     // corpus, so a hash carrying them cannot be label-resolved here.
     // Treat them as restorable with the raw valueKey as the display
@@ -395,6 +413,16 @@ export function TriageBaselineContent({
         dimension: step.dimension,
         value: { key: step.valueKey, label },
       });
+      // Server-filtered steps need an actual Tier 2 fetch on restore —
+      // the breadcrumb alone gives the operator a misleadingly empty
+      // panel computed against the Tier 1 corpus only. Queue them now;
+      // the second effect dispatches once Tier 2 mode is enabled.
+      if (parsed.mode === "tier2" && isTier2ServerDimension(step.dimension)) {
+        refetchQueue.push({
+          dimension: step.dimension,
+          valueKey: step.valueKey,
+        });
+      }
     }
     if (stale) {
       setStaleHashFallback(true);
@@ -402,7 +430,25 @@ export function TriageBaselineContent({
     }
     setSelectedAddress(restoredAsset);
     setTrail(restoredTrail);
+    if (refetchQueue.length > 0) {
+      pendingHashFetchesRef.current = refetchQueue;
+    }
   }, [result.assets, result.events]);
+
+  // Drain the hash-restore Tier 2 fetch queue once the scope prop has
+  // actually flipped to `"tier2"`. The hook's `startFetch` short-circuits
+  // when its `enabled` flag is `false` (which mirrors `scope`), so this
+  // wait is required even when the hash carried `mode=tier2` — the
+  // parent's state update propagates on the next render.
+  useEffect(() => {
+    if (scope !== "tier2") return;
+    if (pendingHashFetchesRef.current.length === 0) return;
+    const queue = pendingHashFetchesRef.current;
+    pendingHashFetchesRef.current = [];
+    for (const item of queue) {
+      tier2.startFetch(item.dimension, item.valueKey);
+    }
+  }, [scope, tier2]);
 
   // ── URL hash sync (write-side) ──
   // Persist the breadcrumb + scope into the URL hash whenever they
