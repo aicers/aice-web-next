@@ -1422,13 +1422,18 @@ describe("Cross-customer scope matrix", () => {
               return;
             }
 
-            const session = await signIn(c.username);
-
             for (const [tag, variant] of [
               ["in-scope", personaVariants.inScope],
               ["out-of-scope", personaVariants.outOfScope],
             ] as const) {
               if (!variant) continue;
+              // Sign in fresh per variant. A successful mutation in a
+              // prior iteration may have bumped `accounts.token_version`
+              // on the caller's own account (the customer-assignment
+              // routes do this on real changes — #393), which invalidates
+              // the session and would surface as a 401 on the next
+              // request rather than the route's own scope-check status.
+              const session = await signIn(c.username);
               const res = await fireMutation(session, mutation.method, variant);
               expect(res.status).toBe(variant.expectStatus);
               if (
