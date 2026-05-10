@@ -11,8 +11,10 @@
 
 export {
   type ActiveExclusionSetResolver,
+  compileStoredRowsToActiveSet,
   EMPTY_EXCLUSION_SET_RESOLVER,
 } from "./active-set";
+export { loadActiveExclusions } from "./active-set-storage";
 export {
   computeExclusionsFingerprint,
   EMPTY_EXCLUSIONS_FINGERPRINT,
@@ -32,6 +34,20 @@ export {
   type DomainPatternValidationResult,
   validateDomainPattern,
 } from "./regex";
+export {
+  MAX_STORED_EXCLUSION_NOTE_LENGTH,
+  MAX_STORED_EXCLUSION_VALUE_LENGTH,
+  type ParsedStoredExclusion,
+  parseStoredExclusionInput,
+  STORED_EXCLUSION_KINDS,
+  type StoredExclusionInput,
+  type StoredExclusionKind,
+  StoredExclusionValidationError,
+} from "./storage-input";
+export {
+  type DomainSuffixReduction,
+  reduceDomainPatternToSuffix,
+} from "./suffix-reducer";
 export type {
   ActiveExclusionSet,
   ExclusionRule,

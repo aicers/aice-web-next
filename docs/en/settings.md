@@ -332,6 +332,94 @@ account is locked a second time.
 
 All changes to policy settings are recorded in the audit log.
 
+## Triage exclusions
+
+Triage exclusions remove unwanted source addresses, hostnames,
+URIs, or domain patterns from the Triage corpus so they neither
+score nor surface in the asset list. Two scopes are available:
+
+- **Global exclusions** — managed at **Settings → Triage
+  exclusions → Global**. Apply to every active customer. Requires
+  the `triage:exclusion:global:write` permission.
+- **Customer exclusions** — managed at **Settings → Triage
+  exclusions** with a `customer_id` query parameter. Apply only to
+  one customer's tenant database. Read access requires
+  `triage:read`; mutate access requires `triage:exclusion:write`
+  plus that the customer is in the caller's effective scope.
+
+Both scopes share the same column shape and the same retroactive
+behavior: an ADD removes matching rows from the Triage baseline
+corpus tables under the customer's cadence advisory lock so
+cadence and the retroactive path always agree on the same final
+corpus.
+
+> **Screenshots forthcoming.** This section currently ships
+> text-only. UI captures of the list and the Add dialog will land
+> in a follow-up screenshot pass once the live capture
+> environment is available for the Settings → Triage exclusions
+> tree.
+
+### Kind and value
+
+Each exclusion has a **kind** (one of four) and a **value**
+normalized at creation time:
+
+| Kind | Value semantics |
+|---|---|
+| **IP address** | Single IP or CIDR. A single IP is upgraded to `/32` (IPv4) or `/128` (IPv6); host bits are zeroed (`192.168.1.5/24` → `192.168.1.0/24`). |
+| **Hostname** | DNS name. Lowercased; trailing dot stripped. |
+| **URI** | Exact match. Trimmed of leading and trailing whitespace; otherwise byte-preserving. |
+| **Domain (regex)** | A regex pattern. Compiled at INSERT time; uncompilable patterns are rejected. |
+
+Maximum length per value is **1024 characters** to bound regex
+compile cost and keep the index footprint predictable.
+
+### Domain regex preview
+
+The Add dialog runs a suffix-reducer over the supplied regex and
+shows one of three previews:
+
+- **Reduces to suffix `.example.com`** — patterns like
+  `^.*\.example\.com$` or `^([a-z0-9-]+\.)*example\.com$` reduce
+  to a hostname suffix. The exclusion deletes past corpus rows
+  whose `host` or `dns_query` ends with the suffix.
+- **Reduces to exact hostname `foo.example.com`** — the pattern
+  `^foo\.example\.com$` reduces to an exact hostname. Past corpus
+  rows with that hostname are removed.
+- **Full-regex-only** — anything else (alternations, anchored
+  prefixes, wildcards in the middle, etc.). The exclusion still
+  takes effect on **future cadence ticks** but does **not**
+  retroactively delete past corpus rows. The dialog calls this
+  out so the operator is not surprised.
+
+### Forward and retroactive enforcement
+
+| Path | What happens |
+|---|---|
+| **Forward (cadence)** | The cadence runner reads the active union (global + customer-scoped) on every page and excludes matching events before they are written to the corpus. |
+| **Retroactive (ADD)** | Adding a customer-scoped exclusion runs `DELETE` against `baseline_triaged_event` and `observed_event_meta` (and `policy_triaged_event` once the corpus B table exists), batched at 10,000 rows per statement. Adding a **global** exclusion enqueues per-customer fanout jobs; the worker route drains them under each customer's cadence advisory lock. |
+| **Removing** | Future cadence ticks only. Past corpus rows that were excluded stay excluded. |
+
+NTLM events have `host`, `dns_query`, and `uri` set to NULL, so
+they only match retroactive **IP address** exclusions. Hostname,
+URI, and Domain exclusions cannot retroactively delete NTLM rows
+by definition.
+
+### Audit
+
+Each ADD and REMOVE emits an audit row:
+
+- `triage_exclusion.global_add` / `.global_remove` —
+  customer-agnostic, recorded against the `auth_db` global table.
+- `triage_exclusion.customer_add` / `.customer_remove` — bound to
+  the customer dimension. The fanout-driven `customer_add` rows
+  carry `details.origin = "global_fanout"` and the originating
+  `globalExclusionId` so the spread of a global ADD is visible in
+  the audit log viewer.
+- `triage_exclusion.fanout_failed` — emitted when a per-customer
+  fanout job exhausts its retry budget (5 attempts with
+  exponential backoff: 1m → 5m → 25m → 2h → 12h).
+
 ## Profile
 
 The Profile page is accessed from **Settings → Profile**. It

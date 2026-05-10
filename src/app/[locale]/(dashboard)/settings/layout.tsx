@@ -22,6 +22,13 @@ export default async function SettingsLayout({
   const showPolicies = session
     ? await hasPermission(session.roles, "system-settings:read")
     : false;
+  // Visible whenever the session can navigate to triage (`triage:read`),
+  // mirroring the menu-gate. Mutate buttons inside the page gate on
+  // `triage:exclusion:write` / `triage:exclusion:global:write`
+  // separately so a Security Monitor can navigate-to-view.
+  const showTriageExclusions = session
+    ? await hasPermission(session.roles, "triage:read")
+    : false;
   const showAccountStatus = session
     ? await hasPermission(session.roles, "dashboard:read")
     : false;
@@ -37,6 +44,7 @@ export default async function SettingsLayout({
         showRoles={showRoles}
         showCustomers={showCustomers}
         showPolicies={showPolicies}
+        showTriageExclusions={showTriageExclusions}
         showAccountStatus={showAccountStatus}
         showAimerIntegration={showAimerIntegration}
       />

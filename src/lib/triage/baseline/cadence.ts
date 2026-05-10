@@ -143,8 +143,12 @@ export interface CadencePageResult {
    * when it commits the page so the corpus-state row stays in lockstep
    * with the per-row `exclusions_fp` written into
    * `baseline_triaged_event`. Pre-#457 the resolver returns the
-   * empty-set fingerprint; #457 swaps in real storage without touching
-   * the runner.
+   * empty-set fingerprint; #457 lands the real storage adapter
+   * (`loadActiveExclusionRows`) and the helper module that the
+   * production pager will consume once aicers/review-web#842 ships
+   * `eventListWithTriage`. Until both this issue and #842 are merged
+   * the runner stays wired to `STUB_PAGER`, so the empty-set
+   * fingerprint continues to flow through.
    */
   exclusionsFp: string;
 }
@@ -164,7 +168,12 @@ export interface CadencePager {
   ): Promise<CadencePageResult>;
 }
 
-const LOCK_NAMESPACE = "triage_baseline_cadence:";
+/**
+ * Per-customer advisory-lock namespace. Exported so the exclusion-ADD
+ * path (#457) can build the byte-identical key, ensuring `hashtext()`
+ * collapses to the same lock id and the two writers serialize.
+ */
+export const LOCK_NAMESPACE = "triage_baseline_cadence:";
 
 /**
  * Letting the database compute the hash avoids a Node ↔ Postgres

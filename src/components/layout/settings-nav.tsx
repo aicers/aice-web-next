@@ -9,6 +9,7 @@ interface SettingsNavProps {
   showRoles?: boolean;
   showCustomers?: boolean;
   showPolicies?: boolean;
+  showTriageExclusions?: boolean;
   showAccountStatus?: boolean;
   showAimerIntegration?: boolean;
 }
@@ -18,6 +19,7 @@ export function SettingsNav({
   showRoles,
   showCustomers,
   showPolicies,
+  showTriageExclusions,
   showAccountStatus,
   showAimerIntegration,
 }: SettingsNavProps) {
@@ -30,6 +32,11 @@ export function SettingsNav({
   if (showCustomers)
     items.push({ key: "customers", href: "/settings/customers" });
   if (showPolicies) items.push({ key: "policies", href: "/settings/policies" });
+  if (showTriageExclusions)
+    items.push({
+      key: "triageExclusions",
+      href: "/settings/triage-exclusions",
+    });
   if (showAccountStatus)
     items.push({ key: "accountStatus", href: "/settings/account-status" });
   if (showAimerIntegration)

@@ -111,6 +111,21 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   "triage.policy.create": "customer-scoped",
   "triage.policy.update": "customer-scoped",
   "triage.policy.delete": "customer-scoped",
+  // Triage exclusion CRUD (#457). Global-scope rows live in
+  // `auth_db.global_triage_exclusion` and apply to every active
+  // customer; customer-scope rows live in the tenant DB and apply to
+  // exactly one customer. Per the "one scope per AuditAction" policy,
+  // the global ADD/REMOVE actions are customer-agnostic (they would
+  // otherwise need to fan out one row per active customer at the
+  // emitter); the per-customer fanout DELETEs emit their own
+  // `triage_exclusion.customer_add` row carrying
+  // `details.origin = 'global_fanout'` so the spread is observable in
+  // the audit-log viewer.
+  "triage_exclusion.global_add": "customer-agnostic",
+  "triage_exclusion.global_remove": "customer-agnostic",
+  "triage_exclusion.customer_add": "customer-scoped",
+  "triage_exclusion.customer_remove": "customer-scoped",
+  "triage_exclusion.fanout_failed": "customer-scoped",
 };
 
 /**
