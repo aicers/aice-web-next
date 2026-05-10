@@ -41,15 +41,15 @@ At cadence INSERT (per event, against observed_event_meta history):
 At menu read (per active window, no per-event recomputation):
    │
    ├─ (4) allocate per-kind slots                       ── per-kind aggregates GROUP BY against
-   │                                                       observed_event_meta (volume + P95 confidence)
-   │                                                       + favored bonus
+   │                                                       baseline_triaged_event (volume + average
+   │                                                       selector_tags length) + favored bonus
    │
    └─ (5) merge top-k of each kind                      ── SELECT FROM baseline_triaged_event,
                                                             ORDER BY baseline_score DESC within kind,
                                                             assemble into final_count rows
 ```
 
-Step (3) — including window-level selectors S1/S3/S4 — runs inside the cadence pipeline (#481) by `GROUP BY` against `observed_event_meta` at INSERT time; the resulting `baseline_score` and `selector_tags` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. See §8 for the full timing contract and the trade-off this introduces. Step (5) reads only `baseline_triaged_event` (no joins to derive selector values — they are persisted as columns on each row). Step (4)'s slot-allocation aggregates require a small per-kind GROUP BY against `observed_event_meta` because raw confidence values are needed for `normalized_top_confidence` (§4); `baseline_triaged_event` stores only `baseline_score` (kind-normalized percentile rank) which is uniform within each kind by construction and cannot distinguish kinds. Both reads target tables in the same corpus A schema (`migrations/customer/0003_baseline_corpus_a.sql`) in the active customer-tenant DB, so step (4) is one extra small SELECT, not a cross-DB hop or a re-fetch from `review`.
+Step (3) — including window-level selectors S1/S3/S4 — runs inside the cadence pipeline (#481) by `GROUP BY` against `observed_event_meta` at INSERT time; the resulting `baseline_score` and `selector_tags` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. See §8 for the full timing contract and the trade-off this introduces. Steps (4) and (5) read only `baseline_triaged_event` — slot-allocation aggregates use `selector_tags` array length as the signal-richness proxy (§4), so no raw confidence column is needed at read time and no second-table join. `observed_event_meta` is consulted only at cadence INSERT (step 3), never at menu read.
 
 ## §1. Hard exclusion: `BlockList*`
 
@@ -88,18 +88,24 @@ The "rare" branch of the original S2 is dropped: rarity-of-kind is no longer a s
 ### S3. Recurring (within-kind, continuous, capped)
 
 ```
-s3(event) = min(1, max(0, (repeat_count(event, kind, window) - 1) / R))
+s3(event) = 0
+            if orig_addr(event) IS NULL OR resp_addr(event) IS NULL
+          = min(1, max(0, (repeat_count(event, kind, window) - 1) / R))
+            otherwise
 ```
 
-`repeat_count(event, kind, window)` is the number of `observed_event_meta` rows in the active window that share `(orig_addr, resp_addr, kind)` with the event (the schema has no `asset` column; the `(orig_addr, resp_addr)` pair is the asset-pair stand-in). The `-1` excludes the event itself from its own recurrence count, so a singleton scores 0 (never seen before) rather than `1/R`. `R` (§9) is the saturation cap — beyond `R` *additional* occurrences, more do not raise s3 further, preventing a single noisy pair from dominating the score.
+`repeat_count(event, kind, window)` is the number of `observed_event_meta` rows in the active window that share `(orig_addr, resp_addr, kind)` with the event (the schema has no `asset` column; the `(orig_addr, resp_addr)` pair is the asset-pair stand-in). Both address columns are nullable in the schema; an event missing either address has no asset-pair identity, so it cannot meaningfully participate in recurrence — s3 is 0 in that case rather than letting all NULL-address events collide into one synthetic group. The `-1` excludes the event itself from its own recurrence count, so a singleton scores 0 (never seen before) rather than `1/R`. `R` (§9) is the saturation cap — beyond `R` *additional* occurrences, more do not raise s3 further, preventing a single noisy pair from dominating the score.
 
 ### S4. Correlated (within-kind, continuous, capped)
 
 ```
-s4(event) = min(1, max(0, (distinct_category_count(orig_addr, kind, window) - 1) / C))
+s4(event) = 0
+            if orig_addr(event) IS NULL
+          = min(1, max(0, (distinct_category_count(orig_addr, kind, window) - 1) / C))
+            otherwise
 ```
 
-`distinct_category_count` is the number of distinct `category` values associated with `orig_addr` under this `kind` in the active window from `observed_event_meta`. The `-1` excludes the event's own category, so an asset that has only ever emitted this kind under one category scores 0 — uncorrelated. `C` (§9) is the saturation cap on *additional* categories. The intuition: an asset emitting one kind under multiple categories is a stronger signal than the same asset emitting the same kind under a single category.
+`distinct_category_count` is the number of distinct `category` values associated with `orig_addr` under this `kind` in the active window from `observed_event_meta`. `orig_addr` is nullable; an event with no source address has no asset identity for the per-asset GROUP BY, so s4 is 0 for it. The `-1` excludes the event's own category, so an asset that has only ever emitted this kind under one category scores 0 — uncorrelated. `C` (§9) is the saturation cap on *additional* categories. The intuition: an asset emitting one kind under multiple categories is a stronger signal than the same asset emitting the same kind under a single category.
 
 ### `UNLABELED_BONUS` (per-event, binary)
 
@@ -152,13 +158,13 @@ slot_share(kind) = base_share
 where:
 
 - `base_share` is a small constant given to every kind (newly-observed kinds included). Acts as a discoverability floor: a kind that has never been seen still gets a non-zero share when it first appears.
-- `normalized_volume(kind, window) ∈ [0, 1]`: that kind's event count over the window, divided by the maximum across all kinds in the window. Computed via `GROUP BY kind` against `observed_event_meta` filtered to the active window. Bounded so a flood from one kind cannot drive others to zero.
-- `normalized_top_confidence(kind, window) ∈ [0, 1]`: a measure of how strong the kind's *top* events are this window. Concretely: `percentile_cont(0.95) WITHIN GROUP (ORDER BY confidence)` over `observed_event_meta` rows for this `kind` in the active window — the 95th-percentile raw confidence value for the kind/window. Already in `[0, 1]` because the underlying `confidence` is. This term **does compare absolute confidence values across kinds**, in deliberate tension with the within-kind-only principle that governs event ranking — see open question 6 in §12.
+- `normalized_volume(kind, window) ∈ [0, 1]`: that kind's event count over the active window in `baseline_triaged_event`, divided by the maximum across all kinds in the same window. Bounded so a flood from one kind cannot drive others to zero. Source is `baseline_triaged_event` (not `observed_event_meta`) so the count is over the post-`BlockList*` set — the same denominator that slot allocation distributes among.
+- `normalized_top_confidence(kind, window) ∈ [0, 1]`: a measure of how *signal-rich* the kind's events are this window. Concretely, `avg(array_length(selector_tags, 1)) / MAX_TAGS` over `baseline_triaged_event` rows for this `kind` in the active window, where `MAX_TAGS` is the total number of distinct selector tags the cadence pipeline can emit (§9). A kind whose events frequently fire multiple selectors (S1-high + S3-recurring + S4-correlated, etc.) scores higher than one whose events typically fire only a single selector. Computed entirely from `selector_tags` — no raw confidence column is read, so the within-kind-only rule for confidence (§ "Pipeline" intro) is respected: signal-richness is measured from the algorithm's own selector firings, not from upstream confidence values.
 - `favored_bonus(kind) = β` if `kind ∈ FAVORED_KINDS = {DnsCovertChannel, unlabeled-HttpThreat, LockyRansomware, RepeatedHttpSessions, SuspiciousTlsTraffic}`, else 0. Constant, never decays.
 
 The shares are then normalized to sum to 1 and multiplied by `final_count` (§6) to produce per-kind absolute slot counts. Fractional slots are resolved largest-remainder.
 
-The unlabeled-HttpThreat entry in `FAVORED_KINDS` is a virtual kind: events with `kind = "HttpThreat"` AND `isClusterNone(clusterId)` count toward this slice's share rather than the general-`HttpThreat` slice. Implementation joins on the same `isClusterNone` helper used by `UNLABELED_BONUS`.
+The `unlabeled-HttpThreat` entry in `FAVORED_KINDS` is a virtual kind, and slot-allocation aggregates GROUP BY `(kind, is_unlabeled)` where `is_unlabeled = (kind = 'HttpThreat' AND 'unlabeled-cluster' = ANY(selector_tags))`. The pair `('HttpThreat', true)` is treated as the virtual kind for `FAVORED_KINDS` membership and slot share. Because the unlabeled flag is detected via `selector_tags` — written at cadence INSERT by §3's `UNLABELED_BONUS` — slot allocation does not need a separate `clusterId` column on any read-time table.
 
 ### Why this satisfies the adaptiveness requirement
 
@@ -166,7 +172,7 @@ Three forms of adaptiveness are present without any explicit user-feedback signa
 
 1. **Time-based.** Statistics windows (§7) progressively activate as time passes since deployment (7d window first, 14d at two weeks, 30d at one month). The signal set is strictly monotone-increasing.
 2. **Data-accumulation-based.** As `observed_event_meta` grows, percentile-rank estimates become less noisy; the same algorithm produces tighter rankings.
-3. **Volume × signal-strength-based.** `slot_share` recomputes per window load, so a kind suddenly carrying strong signals (high volume, high P95 confidence) automatically claims more slots, and a kind whose activity ebbs in either dimension shrinks. With the simple `percentile_cont(0.95)` definition above, a kind that consistently produces high-confidence events in absolute terms will tend to claim more share than one whose strong signals sit at lower absolute confidence; this is mitigated by `base_share` (which guarantees newly-observed and quiet kinds a discoverability floor) and by `favored_bonus` (which keeps the empirically-useful kinds visible regardless of confidence-distribution drift). Open question 6 in §12 discusses the option of normalizing against a kind's own historical confidence distribution if this trade-off proves too coarse in practice.
+3. **Volume × signal-richness-based.** `slot_share` recomputes per window load, so a kind suddenly carrying many events with multiple selectors firing (high volume, high average tag count) automatically claims more slots, and a kind whose activity ebbs in either dimension shrinks. Because signal-richness is measured from `selector_tags` — i.e., from the algorithm's own selectors against globally-uniform thresholds — there is no cross-kind confidence comparison and no violation of the within-kind-only rule for raw confidence. The `base_share` floor and `favored_bonus` constant keep newly-observed kinds discoverable and the empirically-useful kinds visible regardless of how the volume × signal-richness term moves.
 
 User-engagement-driven adaptiveness (clicks, action-based feedback) is **out of scope of this RFC**; it is delegated to #485, which will land in subsequent `baseline_version` bumps once signal distribution is observable.
 
@@ -218,13 +224,13 @@ The dial mechanism (continuous vs discrete, percentile cutoff vs volume multipli
 
 ### Read scope: corpus A only
 
-The menu reads from corpus A only — both tables in `migrations/customer/0003_baseline_corpus_a.sql`, in the active customer-tenant DB. `baseline_triaged_event` carries the events themselves and the persisted per-event scoring (`baseline_score`, `selector_tags`); `observed_event_meta` is consulted once per menu load for the per-kind slot-allocation aggregates of §4 (volume + P95 confidence by kind). Neither read calls `review`. The cadence pipeline (#456 / #481) populates both tables from `review` on a schedule using a deliberately loose cadence-side threshold.
+The menu reads from corpus A — `baseline_triaged_event` exclusively at menu read time (#458). `observed_event_meta` is the cadence pipeline's INSERT-time aggregation source (§8) and is not touched at read time; this preserves the "single SELECT against an indexed table" property #471 relies on for instant slider response. Both tables live in the active customer-tenant DB per `migrations/customer/0003_baseline_corpus_a.sql`. Neither read path calls `review`. The cadence pipeline (#456 / #481) populates both tables from `review` on a schedule using a deliberately loose cadence-side threshold.
 
-The user-strictness slider (#471) is narrower in scope than menu load: slider movement does not change slot allocation, only the score cutoff over the already-allocated rows, so a slider step is one SELECT against `baseline_triaged_event` — not a re-ingest, not a slot-allocation recompute, not an `observed_event_meta` round-trip. The slider's widest position ("All" in #471) is bounded by what the cadence threshold has already brought into corpus A; loosening beyond that is a cadence-threshold tuning concern (#456), not a slider concern.
+Slot allocation (§4) is a small per-kind GROUP BY over `baseline_triaged_event`, computed once per menu load. It uses `selector_tags` array length as the signal-richness signal so no raw confidence column is needed and no second-table join is introduced. The user-strictness slider (#471) is narrower still: slider movement does not change slot allocation, only the score cutoff over the already-allocated rows, so a slider step is one SELECT against the same indexed table — not a re-ingest, not a slot-allocation recompute. The slider's widest position ("All" in #471) is bounded by what the cadence threshold has already brought into corpus A; loosening beyond that is a cadence-threshold tuning concern (#456), not a slider concern.
 
 ## §7. Statistics window
 
-All window-level computations (S1 percentile rank, S3 recurring, S4 correlated, `normalized_volume`, `normalized_top_confidence`) run against three concurrent window lengths:
+The window-level *cadence-time* selectors — S1 percentile rank, S3 recurring, S4 correlated — run against three concurrent window lengths at INSERT:
 
 - 7-day window
 - 14-day window
@@ -232,9 +238,11 @@ All window-level computations (S1 percentile rank, S3 recurring, S4 correlated, 
 
 Per-window selector outputs are combined via **max** within a single selector (the strongest signal across the three windows wins for that selector); selector union across selectors remains the weighted sum of §3.
 
+Slot-allocation aggregates (`normalized_volume`, `normalized_top_confidence`, §4) operate at menu read time over the **user-active menu window** rather than the three statistics windows. The user picks the period; slot allocation reflects activity in exactly that period. This is a separate concept from the statistics windows above, which are an INSERT-time scoring artifact.
+
 ### Statistics source
 
-PostgreSQL `GROUP BY` against `observed_event_meta` (#456) on the customer's tenant DB. NOT against `baseline_triaged_event` — that would create a circular selection bias. `review` is never asked to compute aggregates; its RocksDB key layout is not optimized for arbitrary-dimension grouping.
+The cadence-time GROUP BYs for S1/S3/S4 use `observed_event_meta` (#456) on the customer's tenant DB. NOT `baseline_triaged_event` — that would create a circular selection bias. The slot-allocation aggregates (§4) read `baseline_triaged_event` directly, where post-`BlockList*` filtering already matches the slot-allocation denominator. `review` is never asked to compute aggregates from either path; its RocksDB key layout is not optimized for arbitrary-dimension grouping.
 
 ### Cold-start
 
@@ -288,12 +296,20 @@ These values fix the algorithm's **shape** but not necessarily their final calib
 
 | Symbol | Meaning | Provisional value |
 |---|---|---|
-| `R` | S3 saturation cap (repeat count past which s3 stays at 1.0) | 10 |
-| `C` | S4 saturation cap (distinct categories past which s4 stays at 1.0) | 4 |
+| `R` | S3 saturation cap (additional repeats past which s3 stays at 1.0) | 10 |
+| `C` | S4 saturation cap (additional categories past which s4 stays at 1.0) | 4 |
 
 S1 needs no saturation cap — its output is already a percentile rank in `[0, 1]`. S2 and `UNLABELED_BONUS` are binary and saturated by definition.
 
-`selector_tags` content (the analyst-visible label set) parallels but is not identical to selector contributions: a tag is emitted when a selector's value exceeds an implementation-level "this fired meaningfully" threshold (e.g. `s1 > 0.85` → `"S1-high"`, `s3 > 0.5` → `"S3-recurring"`). Exact tag thresholds are implementation details and do not affect `baseline_score`; they exist purely for analyst readability of why an event was elevated.
+### Slot allocation tag normalization (§4)
+
+| Symbol | Meaning | Provisional value |
+|---|---|---|
+| `MAX_TAGS` | maximum distinct selector tags the cadence pipeline can emit (denominator for `normalized_top_confidence` average) | 5 |
+
+The five tags are `S1-high`, `S2-severe`, `S3-recurring`, `S4-correlated`, `unlabeled-cluster`. If a future selector adds a tag, `MAX_TAGS` increases and a `baseline_version` bump follows.
+
+`selector_tags` content (the analyst-visible label set) parallels but is not identical to selector contributions to `baseline_score`: a tag is emitted when a selector's value exceeds an implementation-level "this fired meaningfully" threshold (e.g. `s1 > 0.85` → `"S1-high"`, `s3 > 0.5` → `"S3-recurring"`). Exact tag thresholds are implementation details for the score formula but they do affect `MAX_TAGS` denominator semantics — different thresholds produce different average tag counts. Tag thresholds are therefore part of `baseline_version` (open question 5).
 
 ### Selector membership lists (§3)
 
@@ -330,7 +346,7 @@ Reference values from this curve (`LOWER_FLOOR = 20`, `scale = 30`, dial neutral
 
 ### Selector evaluation timing
 
-All selectors are evaluated at cadence INSERT time (§8) using `observed_event_meta` history at that moment. `score(event)`, `baseline_score(event)`, and `selector_tags(event)` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. The read path needs no joins to derive selector values — they are read directly off `baseline_triaged_event` columns. Per-kind slot allocation (§4) issues a small auxiliary aggregation against `observed_event_meta` once per menu load to read raw confidence; this is unrelated to per-event selector values.
+All selectors are evaluated at cadence INSERT time (§8) using `observed_event_meta` history at that moment. `score(event)`, `baseline_score(event)`, and `selector_tags(event)` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. The read path needs no joins and never touches `observed_event_meta` — both per-event values (selector tags, baseline_score) and per-kind slot-allocation aggregates (volume + average `selector_tags` length, §4) come from `baseline_triaged_event` alone.
 
 | Selector | Source data |
 |---|---|
@@ -370,6 +386,6 @@ The version is **not** surfaced in the menu UI per #458. The cross-version-mix p
 
 4. **Cadence-time aggregation cost.** `migrations/customer/0003_baseline_corpus_a.sql` provides `(event_time DESC)` and `(kind, event_time DESC)` indexes on `observed_event_meta`. The cadence-time GROUP BY for s3 and s4 runs over the kind-and-time-filtered slice with a hash aggregate on `(orig_addr, resp_addr)` or `(orig_addr, kind)`. This needs `EXPLAIN ANALYZE` on a representative tenant DB before merge to confirm the planner picks the composite index and that the per-batch aggregation completes within the cadence runner's time budget. If it does not, §8's fallback (per-cadence-run pattern cache) is taken; the algorithm shape does not change.
 
-5. **`selector_tags` content.** The schema gives `selector_tags TEXT[]`; tag membership is decided by per-selector "fired meaningfully" thresholds set in code, not in this RFC. Whether tag thresholds should ever leak into `baseline_version` (so changing them requires a version bump) is left for ops review — the conservative answer is yes (any change to what tags appear should be auditable through `baseline_version`), but tags are not load-bearing for `baseline_score` so the impact of skipping a bump is purely cosmetic.
+5. **`selector_tags` content and tag thresholds.** The schema gives `selector_tags TEXT[]`; tag membership is decided by per-selector "fired meaningfully" thresholds set in code (§9). Tag thresholds are now load-bearing — they affect both per-event analyst readability **and** `normalized_top_confidence` in slot allocation (§4 reads average tag count). Tag-threshold changes should therefore bump `baseline_version`. Ops review confirms the threshold values before merge.
 
-6. **Cross-kind absolute confidence in `normalized_top_confidence` (§4).** The slot-allocation formula compares raw confidence values across kinds via `percentile_cont(0.95)` on `observed_event_meta.confidence`, in tension with the RFC's broader within-kind-only principle for event ranking. The trade-off is intentional: slot allocation is a system-wide attention decision (how much menu bandwidth each kind deserves), not within-event ranking. If ops review or measurement shows this is too coarse — e.g., a kind whose confidences are absolutely high but stable consistently dominates slots over a kind whose confidences are absolutely low but spiking — the alternative is to normalize against each kind's own historical confidence distribution (a ratio of `percentile_cont(0.95)` over the active window vs. over a longer reference period). That requires a second per-kind aggregation and a longer-than-30d reference, which `observed_event_meta`'s 30-day retention does not currently provide; revisiting this would be a follow-up RFC.
+6. **`selector_tags` length as the signal-richness proxy (§4).** `normalized_top_confidence` is computed as average `selector_tags` array length divided by `MAX_TAGS`. This is a coarse proxy: it counts how many of the algorithm's selectors fire on a typical event in the kind, but does not weight them by per-selector value or distinguish "S2-severe alone" from "S1-high + S3-recurring + S4-correlated". A finer measure — e.g., average raw weighted score — would require either persisting raw `score` on `baseline_triaged_event` (small schema addition) or shifting back to a multi-table read against `observed_event_meta.confidence` (with the cross-kind absolute-confidence comparison this RFC has now removed). Whether the coarse proxy is good enough for slot adaptiveness, or whether one of the alternatives is needed, is left for ops review on representative tenant data.
