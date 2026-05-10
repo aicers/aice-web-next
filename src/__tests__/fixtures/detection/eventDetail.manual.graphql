@@ -3,6 +3,7 @@ query EventDetailManual($filter: EventListFilterInput!) {
     totalCount
     nodes {
       __typename
+      id
       time
       sensor
       confidence

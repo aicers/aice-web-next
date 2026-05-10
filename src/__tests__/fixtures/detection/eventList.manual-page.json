@@ -11,6 +11,7 @@
         "cursor": "cursor-01",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-01",
           "time": "2026-04-22T12:00:00+00:00",
           "sensor": "sensor-east-1",
           "confidence": 0.98,
@@ -23,6 +24,7 @@
         "cursor": "cursor-02",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-02",
           "time": "2026-04-22T11:58:00+00:00",
           "sensor": "sensor-east-1",
           "confidence": 0.94,
@@ -35,6 +37,7 @@
         "cursor": "cursor-03",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-03",
           "time": "2026-04-22T11:55:00+00:00",
           "sensor": "sensor-west-2",
           "confidence": 0.87,
@@ -47,6 +50,7 @@
         "cursor": "cursor-04",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-04",
           "time": "2026-04-22T11:52:00+00:00",
           "sensor": "sensor-west-2",
           "confidence": 0.82,
@@ -59,6 +63,7 @@
         "cursor": "cursor-05",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-05",
           "time": "2026-04-22T11:49:00+00:00",
           "sensor": "sensor-hq-1",
           "confidence": 0.76,
@@ -71,6 +76,7 @@
         "cursor": "cursor-06",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-06",
           "time": "2026-04-22T11:46:00+00:00",
           "sensor": "sensor-hq-1",
           "confidence": 0.71,
@@ -83,6 +89,7 @@
         "cursor": "cursor-07",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-07",
           "time": "2026-04-22T11:44:00+00:00",
           "sensor": "sensor-east-1",
           "confidence": 0.65,
@@ -95,6 +102,7 @@
         "cursor": "cursor-08",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-08",
           "time": "2026-04-22T11:41:00+00:00",
           "sensor": "sensor-east-1",
           "confidence": 0.61,
@@ -107,6 +115,7 @@
         "cursor": "cursor-09",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-09",
           "time": "2026-04-22T11:38:00+00:00",
           "sensor": "sensor-west-2",
           "confidence": 0.58,
@@ -119,6 +128,7 @@
         "cursor": "cursor-10",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-manual-10",
           "time": "2026-04-22T11:35:00+00:00",
           "sensor": "sensor-west-2",
           "confidence": 0.54,
@@ -131,6 +141,7 @@
     "nodes": [
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-01",
         "time": "2026-04-22T12:00:00+00:00",
         "sensor": "sensor-east-1",
         "confidence": 0.98,
@@ -154,6 +165,7 @@
       },
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-02",
         "time": "2026-04-22T11:58:00+00:00",
         "sensor": "sensor-east-1",
         "confidence": 0.94,
@@ -177,6 +189,7 @@
       },
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-03",
         "time": "2026-04-22T11:55:00+00:00",
         "sensor": "sensor-west-2",
         "confidence": 0.87,
@@ -200,6 +213,7 @@
       },
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-04",
         "time": "2026-04-22T11:52:00+00:00",
         "sensor": "sensor-west-2",
         "confidence": 0.82,
@@ -223,6 +237,7 @@
       },
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-05",
         "time": "2026-04-22T11:49:00+00:00",
         "sensor": "sensor-hq-1",
         "confidence": 0.76,
@@ -246,6 +261,7 @@
       },
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-06",
         "time": "2026-04-22T11:46:00+00:00",
         "sensor": "sensor-hq-1",
         "confidence": 0.71,
@@ -269,6 +285,7 @@
       },
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-07",
         "time": "2026-04-22T11:44:00+00:00",
         "sensor": "sensor-east-1",
         "confidence": 0.65,
@@ -292,6 +309,7 @@
       },
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-08",
         "time": "2026-04-22T11:41:00+00:00",
         "sensor": "sensor-east-1",
         "confidence": 0.61,
@@ -315,6 +333,7 @@
       },
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-09",
         "time": "2026-04-22T11:38:00+00:00",
         "sensor": "sensor-west-2",
         "confidence": 0.58,
@@ -338,6 +357,7 @@
       },
       {
         "__typename": "HttpThreat",
+        "id": "evt-manual-10",
         "time": "2026-04-22T11:35:00+00:00",
         "sensor": "sensor-west-2",
         "confidence": 0.54,
