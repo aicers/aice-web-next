@@ -351,12 +351,14 @@ until the operator approves it:
 > above the 20,000 threshold. The fetch may take a while.
 
 When `totalCount` is unavailable for the filter but the cursor
-walk's first page filled, the modal labels the projection as
-approximate and shows the lower bound from that first page:
+walk's first page filled, the projection cannot be compared to the
+20,000 threshold. The modal opens defensively, surfaces the
+first-page lower bound, and is explicit that the total is unknown:
 
-> **Fetch large result set?** Projected size is approximate — at
-> least N events (above the 20,000 threshold). The fetch may take a
-> while.
+> **Fetch large result set?** Projected size could not be verified
+> — the first page returned at least N events, but the total
+> against the 20,000 threshold is unknown. Confirming continues the
+> fetch up to the per-dimension cap.
 
 Cancelling the modal aborts the fetch; the operator can pick a
 different dimension or narrow the period.

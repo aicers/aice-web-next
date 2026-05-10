@@ -391,17 +391,20 @@ export function useTier2Pivot(
           return;
         }
         // Decide whether the projection trips the modal. With a known
-        // `totalCount` we compare directly; without one, fall back to
-        // a "≥ N" estimate from the first page — only show the modal
-        // when the first page filled (otherwise the count is small).
+        // `totalCount` we compare directly; without one, the projection
+        // cannot be compared to the threshold, so the modal opens
+        // defensively when the first page filled — its copy is explicit
+        // that the total is unknown rather than claiming "above
+        // threshold" (a 100-row lower bound does not show the result is
+        // above 20,000).
         const overByTotal = stringNumberGreaterThan(
           peek.totalCount,
           TIER2_PREFETCH_MODAL_THRESHOLD,
         );
-        const overByEstimate =
+        const unverifiedEstimate =
           peek.totalCount === null &&
           peek.events.length >= REVIEW_MAX_PAGE_SIZE;
-        if (overByTotal || overByEstimate) {
+        if (overByTotal || unverifiedEstimate) {
           // Park the peek under its own key and enqueue the projection.
           // Two concurrent large-projection clicks each get a slot in
           // the queue; the modal fronts the head and confirm/cancel
@@ -416,10 +419,10 @@ export function useTier2Pivot(
             truncated: peek.truncated,
           });
           // When `totalCount` is missing the modal needs the first-
-          // page count as a "≥ N" approximation. Carry it on the
-          // projection so the modal can render it; without this the
-          // modal would fall back to "size unknown" and discard the
-          // peek's known lower bound.
+          // page count as a "≥ N" lower bound. Carry it on the
+          // projection so the modal can render it as an unverified
+          // estimate (the copy makes clear the total is unknown — see
+          // the `descriptionApproximateTemplate` i18n string).
           const approximateMinimum =
             peek.totalCount === null ? String(peek.events.length) : null;
           setPendingQueue((prev) => [

@@ -2040,7 +2040,7 @@
       "prefetchModal": {
         "title": "큰 결과를 조회하시겠습니까?",
         "descriptionTemplate": "이 차원의 예상 크기는 {count} 이벤트로 {threshold} 임계값을 초과합니다. 조회에 시간이 걸릴 수 있습니다.",
-        "descriptionApproximateTemplate": "예상 크기는 대략적이며 최소 {count} 이벤트입니다 ({threshold} 임계값 초과). 조회에 시간이 걸릴 수 있습니다.",
+        "descriptionApproximateTemplate": "예상 크기를 확인할 수 없습니다 — 첫 페이지에서 최소 {count} 이벤트가 반환되었지만, {threshold} 임계값과의 비교는 알 수 없습니다. 확인을 누르면 차원별 한도까지 조회를 계속합니다.",
         "descriptionUnknown": "예상 크기를 알 수 없습니다. 한도 또는 끝에 도달할 때까지 페이지를 순회합니다.",
         "confirm": "조회",
         "cancel": "취소"

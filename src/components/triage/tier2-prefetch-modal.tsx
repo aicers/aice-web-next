@@ -18,8 +18,12 @@ export interface Tier2PrefetchModalLabels {
   /**
    * Template used when `projectedCount` is null but the hook surfaced
    * a first-page lower bound on `approximateMinimum`. Same `{count}` /
-   * `{threshold}` placeholders; copy is expected to label the count as
-   * approximate (e.g. "≥ {count}") per #453.
+   * `{threshold}` placeholders; copy is expected to make clear the
+   * total cannot be verified against the threshold and to surface the
+   * lower bound as an approximate "≥ {count}" — never to claim the
+   * result is known to exceed the threshold (per #453 review feedback,
+   * a filled first page is only 100 rows and is not a threshold
+   * crossing).
    */
   descriptionApproximateTemplate: string;
   descriptionUnknown: string;
