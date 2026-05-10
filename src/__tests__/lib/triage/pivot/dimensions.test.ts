@@ -7,6 +7,7 @@ import {
   getPivotDimension,
   lookupPivotEntry,
 } from "@/lib/triage/pivot";
+import { buildTier2Filter } from "@/lib/triage/tier2-filter";
 
 function ev(overrides: Partial<TriageEvent>): TriageEvent {
   return {
@@ -296,6 +297,26 @@ describe("pivot dimension extractors", () => {
         "2026-05-09T12:00:00.000Z",
         "2026-05-09T12:10:00.000Z",
       ]);
+    });
+  });
+
+  describe("categories (Tier-2-only)", () => {
+    it("extracts the integer ordinal as the value key (round-trips through buildTier2Filter)", () => {
+      const event = scored({ category: "COMMAND_AND_CONTROL" });
+      const values = getPivotDimension("categories").extract(event);
+      expect(values).toEqual([{ key: "7", label: "COMMAND_AND_CONTROL" }]);
+      const filter = buildTier2Filter({
+        periodStartIso: "2026-05-08T12:00:00.000Z",
+        periodEndIso: "2026-05-09T12:00:00.000Z",
+        dimension: "categories",
+        valueKey: values[0].key,
+      });
+      expect(filter?.categories).toEqual([7]);
+    });
+
+    it("returns no values for events with a missing category", () => {
+      const event = scored({ category: null });
+      expect(getPivotDimension("categories").extract(event)).toEqual([]);
     });
   });
 

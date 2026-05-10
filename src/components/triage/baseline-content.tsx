@@ -304,6 +304,24 @@ export function TriageBaselineContent({
     return allSections.some((s) => s.dimension === "sameSensor");
   }, [allSections, scope]);
 
+  // Surface truncation from both the Tier 1 loader (5,000-event corpus
+  // cap, applied to the period) and the active Tier 2 dimension fetch
+  // (5,000-event per-dimension cap). Without folding the Tier 2 hit in,
+  // a capped server-filtered pivot would silently look complete even
+  // though the manual promises a truncation hint when either layer
+  // hits its cap. The active Tier 2 step is the one that affects the
+  // currently-rendered panel — earlier breadcrumb steps' caches are
+  // for the prior focus and do not change the present truncation
+  // signal.
+  const panelTruncated = useMemo(() => {
+    if (result.truncated) return true;
+    if (scope !== "tier2") return false;
+    if (!activeStep || activeStep.kind !== "dimension") return false;
+    if (!isTier2ServerDimension(activeStep.dimension)) return false;
+    const cached = tier2.getCached(activeStep.dimension, activeStep.value.key);
+    return cached?.truncated === true;
+  }, [result.truncated, scope, activeStep, tier2]);
+
   const onSelectAsset = useCallback((address: string) => {
     setSelectedAddress(address);
     // Selecting a new asset replaces the trail — selecting from the
@@ -559,7 +577,7 @@ export function TriageBaselineContent({
           />
           <TriagePivotPanel
             sections={sections}
-            truncated={result.truncated}
+            truncated={panelTruncated}
             hasFocus={focusEvents.length > 0}
             onPivot={onPivot}
             labels={labels.pivotPanel}

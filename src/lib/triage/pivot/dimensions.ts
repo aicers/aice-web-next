@@ -12,6 +12,8 @@
  * are #453's scope, not this issue's.
  */
 
+import { THREAT_CATEGORY_VALUE_BY_KEY } from "@/lib/detection/filter-options";
+
 import { classifyTriageEndpoint } from "../classify";
 import type { ScoredTriageEvent } from "../types";
 import {
@@ -375,7 +377,11 @@ const KINDS_DIMENSION: PivotDimension = {
  * Tier-2-only server-filtered dimension: `categories`. The value key
  * is the numeric `ThreatCategory` ordinal as a string, so it
  * round-trips through {@link buildTier2Filter} (which parses the int
- * back). The display label is the category enum spelling.
+ * back). The display label is the category enum spelling — operators
+ * see `COMMAND_AND_CONTROL`, the Tier 2 filter receives `7`. Events
+ * whose `category` is missing from the encoding map (a future schema
+ * addition not yet mirrored in `THREAT_CATEGORY_VALUE_BY_KEY`) are
+ * dropped so we never emit a value key the filter cannot translate.
  */
 const CATEGORIES_DIMENSION: PivotDimension = {
   id: "categories",
@@ -384,7 +390,9 @@ const CATEGORIES_DIMENSION: PivotDimension = {
   extract(event) {
     const cat = event.category;
     if (cat === null || cat === undefined) return [];
-    return [{ key: String(cat), label: String(cat) }];
+    const ordinal = THREAT_CATEGORY_VALUE_BY_KEY[cat];
+    if (ordinal === undefined) return [];
+    return [{ key: String(ordinal), label: String(cat) }];
   },
 };
 
