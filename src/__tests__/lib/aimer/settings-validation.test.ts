@@ -7,7 +7,7 @@ import {
 
 describe("validateAiceId (RFC 1123 hostname)", () => {
   it("accepts a typical deployment hostname", () => {
-    expect(validateAiceId("aice-kepco.example.com").valid).toBe(true);
+    expect(validateAiceId("aice-acme.example.com").valid).toBe(true);
   });
 
   it("accepts a single label", () => {

@@ -822,7 +822,7 @@ Underscores are intentionally rejected — `aice_id` is also the
 JWT `iss` claim, so a strict hostname keeps the trust-registry
 join key portable.
 
-Example: `aice-kepco.example.com`.
+Example: `aice-acme.example.com`.
 
 ### `aimer_web_bridge_url`
 
