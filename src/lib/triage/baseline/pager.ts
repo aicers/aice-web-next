@@ -133,6 +133,13 @@ export interface CadenceFetchPageArgs {
     first: number;
     after: string | null;
   };
+  /**
+   * Optional abort signal forwarded by the runner. The default fetcher
+   * threads it into the GraphQL `fetch` so a dispatcher-issued abort
+   * (e.g. per-customer timeout) terminates the upstream request
+   * promptly rather than waiting for the resolver to return.
+   */
+  signal?: AbortSignal;
 }
 
 export interface CadencePagerOptions {
@@ -176,10 +183,12 @@ export function createCadencePager(
       client: pg.PoolClient,
       customerId: number,
       afterCursor: string | null,
+      signal?: AbortSignal,
     ): Promise<CadencePageResult> {
       // (a) Fetch raw standard-filter page from review.
       const response = await fetchPage({
         customerId,
+        signal,
         variables: {
           filter: { customers: [String(customerId)] },
           triage: null,
@@ -262,7 +271,7 @@ async function defaultFetchPage(
   };
   // biome-ignore format: keep the call on one line so the scope-allowlist
   // override sits on the same line as the graphqlRequest call.
-  return graphqlRequest<CadenceConnectionResponse, typeof args.variables>(EVENT_LIST_WITH_TRIAGE_QUERY, args.variables, context); // scope-allowlist: #481 system-actor cadence; customer scope materialised via JWT customer_ids + filter.customers
+  return graphqlRequest<CadenceConnectionResponse, typeof args.variables>(EVENT_LIST_WITH_TRIAGE_QUERY, args.variables, context, args.signal); // scope-allowlist: #481 system-actor cadence; customer scope materialised via JWT customer_ids + filter.customers
 }
 
 async function insertObservedEventMeta(
