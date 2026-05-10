@@ -127,8 +127,22 @@ export function useTier2Pivot(
   const bump = useCallback(() => forceRender((n) => n + 1), []);
 
   const stateMapRef = useRef<Map<string, Tier2DimensionState>>(new Map());
-  const peekStashRef = useRef<PeekStash | null>(null);
-  const [pending, setPending] = useState<Tier2PendingProjection | null>(null);
+  // Peek results awaiting modal confirmation, keyed by `dim|valueKey`.
+  // A single ref previously held one stash, which let a later peek
+  // overwrite an earlier one when the operator clicked two large
+  // server-filtered dimensions before either peek resolved — leaving
+  // the earlier dimension stuck in `loading` with no confirm/cancel
+  // affordance. Storing per-key stashes keeps each pending projection
+  // separately resolvable, and the queue below decides which one the
+  // modal currently fronts.
+  const peekStashesRef = useRef<Map<string, PeekStash>>(new Map());
+  // Modal-gated projections in click order. The displayed
+  // {@link pending} value is the queue head; confirming or cancelling
+  // pops the head and advances to the next, so two large-projection
+  // clicks each get their own modal turn.
+  const [pendingQueue, setPendingQueue] = useState<Tier2PendingProjection[]>(
+    [],
+  );
   const [evictions, setEvictions] = useState<Tier2EvictionEvent[]>([]);
   // Bumped whenever the period or customer scope rotates. Each
   // in-flight fetch captures the current generation when it starts and
@@ -174,9 +188,9 @@ export function useTier2Pivot(
     generationRef.current += 1;
     cacheRef.current?.clear();
     stateMapRef.current.clear();
-    peekStashRef.current = null;
+    peekStashesRef.current.clear();
     setEvictions([]);
-    setPending(null);
+    setPendingQueue([]);
     bump();
   }, [args.periodStartIso, args.periodEndIso, args.customerScope, bump]);
 
@@ -200,9 +214,14 @@ export function useTier2Pivot(
     (dimension: Tier2Dimension, valueKey: string) => {
       const cache = cacheRef.current;
       if (!cache) return null;
+      // Touch the cache first so the LRU layer tracks hook-level reads.
+      // Without this, a re-pivot of A served from `stateMapRef` would
+      // never refresh A's recency, and a subsequent over-cap insert
+      // could evict A even though it was just used. The hit value is
+      // also reused below for the cache-only branch.
+      const hit = cache.get(cacheKeyFor(dimension, valueKey));
       const inMemory = stateMapRef.current.get(stateKey(dimension, valueKey));
       if (inMemory) return inMemory;
-      const hit = cache.get(cacheKeyFor(dimension, valueKey));
       if (!hit) return null;
       return {
         status: "ready" as const,
@@ -314,7 +333,17 @@ export function useTier2Pivot(
       if (!args.enabled) return;
       if (!isTier2ServerDimension(dimension)) return;
       const existing = getCached(dimension, valueKey);
-      if (existing && existing.status === "ready") return;
+      // Skip when the result is already cached *or* a peek/fetch is
+      // already in flight for this key. Without the `loading` guard,
+      // double-clicking a dimension would issue duplicate first-page
+      // peeks and could overwrite that dimension's own pending stash
+      // when its second peek resolves.
+      if (
+        existing &&
+        (existing.status === "ready" || existing.status === "loading")
+      ) {
+        return;
+      }
       const key = stateKey(dimension, valueKey);
       const capturedGen = generationRef.current;
       stateMapRef.current.set(key, {
@@ -364,7 +393,11 @@ export function useTier2Pivot(
           peek.totalCount === null &&
           peek.events.length >= REVIEW_MAX_PAGE_SIZE;
         if (overByTotal || overByEstimate) {
-          peekStashRef.current = {
+          // Park the peek under its own key and enqueue the projection.
+          // Two concurrent large-projection clicks each get a slot in
+          // the queue; the modal fronts the head and confirm/cancel
+          // pop one entry at a time.
+          peekStashesRef.current.set(key, {
             dimension,
             valueKey,
             events: peek.events,
@@ -372,12 +405,15 @@ export function useTier2Pivot(
             endCursor: peek.endCursor,
             hasMore: peek.hasMore,
             truncated: peek.truncated,
-          };
-          setPending({
-            dimension,
-            valueKey,
-            totalCount: peek.totalCount,
           });
+          setPendingQueue((prev) => [
+            ...prev,
+            {
+              dimension,
+              valueKey,
+              totalCount: peek.totalCount,
+            },
+          ]);
           return;
         }
         // Under threshold — continue the walk silently from the peek's
@@ -410,23 +446,34 @@ export function useTier2Pivot(
   );
 
   const confirmFetch = useCallback(() => {
-    const stash = peekStashRef.current;
-    peekStashRef.current = null;
-    setPending(null);
+    // Pop the queue head and continue its parked peek. If the queue
+    // is empty (e.g. modal already dismissed by a stale click), the
+    // call is a no-op. Reading the queue from closure rather than the
+    // setter callback keeps the side effect (firing continueFromStash)
+    // synchronous with the state update — calling it inside the setter
+    // updater would couple the side effect to React's render-time
+    // execution of the function and break in concurrent mode.
+    if (pendingQueue.length === 0) return;
+    const head = pendingQueue[0];
+    setPendingQueue(pendingQueue.slice(1));
+    const key = stateKey(head.dimension, head.valueKey);
+    const stash = peekStashesRef.current.get(key);
+    peekStashesRef.current.delete(key);
     if (!stash) return;
     void continueFromStash(stash, generationRef.current);
-  }, [continueFromStash]);
+  }, [continueFromStash, pendingQueue, stateKey]);
 
   const cancelFetch = useCallback(() => {
-    const stash = peekStashRef.current;
-    peekStashRef.current = null;
-    setPending(null);
-    if (!stash) return;
+    if (pendingQueue.length === 0) return;
+    const head = pendingQueue[0];
+    setPendingQueue(pendingQueue.slice(1));
+    const key = stateKey(head.dimension, head.valueKey);
+    peekStashesRef.current.delete(key);
     // Drop the loading entry so the panel does not show a permanent
     // spinner on a cancelled pivot.
-    stateMapRef.current.delete(stateKey(stash.dimension, stash.valueKey));
+    stateMapRef.current.delete(key);
     bump();
-  }, [bump, stateKey]);
+  }, [bump, pendingQueue, stateKey]);
 
   const acknowledgeEviction = useCallback((cacheKey: string) => {
     setEvictions((prev) => prev.filter((e) => e.cacheKey !== cacheKey));
@@ -480,6 +527,12 @@ export function useTier2Pivot(
     (event: TriageEvent) => tier1KeySet.has(tier2DedupeKey(event)),
     [tier1KeySet],
   );
+
+  // The modal fronts the head of the queue. Two large-projection
+  // clicks each get a turn — the operator confirms or cancels the
+  // first, the second slides into view next render.
+  const pending: Tier2PendingProjection | null =
+    pendingQueue.length > 0 ? pendingQueue[0] : null;
 
   return {
     scope: args.enabled ? "tier2" : "tier1",
