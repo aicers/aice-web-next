@@ -23,10 +23,15 @@ import "server-only";
  * `perCustomer[].status` is closed; see #487 §2 for the table.
  *   - `ok` / `skipped` / `failed`: forwarded verbatim from
  *     `runTriageBaselineCadence`.
- *   - `timeout`: this customer's run exceeded the per-customer
- *     timeout. The dispatcher aborted it and freed the concurrency
- *     slot. The runner observed the abort and rolled back the
- *     in-flight page.
+ *   - `timeout`: this customer's run exceeded its effective timeout.
+ *     The dispatcher aborted it and freed the concurrency slot. The
+ *     runner observed the abort and rolled back the in-flight page.
+ *     The effective timeout is `min(perCustomerTimeoutMs,
+ *     remainingDispatcherBudget)` — when the total dispatcher
+ *     deadline approaches, in-flight customers are aborted before the
+ *     network-level `--max-time` in the cron wrapper would kill the
+ *     whole HTTP exchange (which would discard the structured
+ *     response body).
  *   - `skipped-timeout`: the dispatcher's overall timeout fired
  *     before this customer was even attempted. The next hourly tick
  *     picks them up via the existing watermark.
@@ -267,6 +272,19 @@ export async function runTriageBaselineDispatch(
   const startedAt = now();
   const deadline = startedAt + totalTimeoutMs;
 
+  // Dispatcher-level abort. Fires when the total deadline elapses so
+  // any in-flight per-customer cadence run is cancelled (its slot
+  // would otherwise hold up to `perCustomerTimeoutMs` *past* the total
+  // deadline, missing the cron wrapper's `--max-time` and turning a
+  // structured `timeout` outcome into a transport-failure exit). This
+  // is in addition to the cap on each newly-started customer's
+  // effective timeout (`min(perCustomerTimeoutMs, remainingBudget)`).
+  const dispatcherController = new AbortController();
+  const dispatcherTimer = setTimeout(
+    () => dispatcherController.abort(),
+    Math.max(0, totalTimeoutMs),
+  );
+
   let nextIndex = 0;
 
   async function worker(): Promise<void> {
@@ -277,7 +295,8 @@ export async function runTriageBaselineDispatch(
 
       const customerId = customers[i];
 
-      if (now() >= deadline) {
+      const remainingBudget = deadline - now();
+      if (remainingBudget <= 0) {
         slots[i] = {
           customerId,
           status: "skipped-timeout",
@@ -288,19 +307,29 @@ export async function runTriageBaselineDispatch(
         continue;
       }
 
+      const effectiveTimeoutMs = Math.min(
+        perCustomerTimeoutMs,
+        remainingBudget,
+      );
+
       slots[i] = await runOneCustomer(
         customerId,
         runCadence,
         options.pager,
-        perCustomerTimeoutMs,
+        effectiveTimeoutMs,
+        dispatcherController.signal,
       );
     }
   }
 
-  const workerCount = Math.min(concurrency, Math.max(customers.length, 1));
-  const workers: Promise<void>[] = [];
-  for (let w = 0; w < workerCount; w += 1) workers.push(worker());
-  await Promise.all(workers);
+  try {
+    const workerCount = Math.min(concurrency, Math.max(customers.length, 1));
+    const workers: Promise<void>[] = [];
+    for (let w = 0; w < workerCount; w += 1) workers.push(worker());
+    await Promise.all(workers);
+  } finally {
+    clearTimeout(dispatcherTimer);
+  }
 
   const perCustomer = slots.filter(
     (slot): slot is DispatcherPerCustomerEntry => slot !== null,
@@ -322,6 +351,7 @@ async function runOneCustomer(
   runCadence: NonNullable<DispatcherOptions["runCadence"]>,
   pager: CadencePager,
   timeoutMs: number,
+  dispatcherSignal: AbortSignal,
 ): Promise<DispatcherPerCustomerEntry> {
   const controller = new AbortController();
   let timedOut = false;
@@ -329,6 +359,23 @@ async function runOneCustomer(
     timedOut = true;
     controller.abort();
   }, timeoutMs);
+
+  // Propagate dispatcher-level abort (total-timeout reached) into this
+  // customer's signal so any in-flight cadence call rolls back its
+  // open page and returns promptly. We classify the outcome as
+  // `timeout` either way — from the operator's perspective both modes
+  // are "ran out of time on this run".
+  const onDispatcherAbort = () => {
+    timedOut = true;
+    controller.abort();
+  };
+  if (dispatcherSignal.aborted) {
+    onDispatcherAbort();
+  } else {
+    dispatcherSignal.addEventListener("abort", onDispatcherAbort, {
+      once: true,
+    });
+  }
 
   try {
     const result = await runCadence(customerId, {
@@ -394,5 +441,6 @@ async function runOneCustomer(
     };
   } finally {
     clearTimeout(timer);
+    dispatcherSignal.removeEventListener("abort", onDispatcherAbort);
   }
 }

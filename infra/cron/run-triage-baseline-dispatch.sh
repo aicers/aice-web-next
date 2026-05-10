@@ -32,8 +32,12 @@
 
 set -u
 
-ENV_FILE=/etc/cron.env
-LOG_DIR=/var/log/cron
+# Both paths are overridable via env so the script can be exercised
+# end-to-end from tests (which cannot write to /var/log/cron and have
+# no /etc/cron.env on the host). Production crontab leaves these
+# unset; the entrypoint controls the real paths.
+ENV_FILE="${CRON_CADENCE_ENV_FILE:-/etc/cron.env}"
+LOG_DIR="${CRON_CADENCE_LOG_DIR:-/var/log/cron}"
 
 if [ -f "$ENV_FILE" ]; then
     # shellcheck source=/dev/null
@@ -51,8 +55,8 @@ URL="${BASE_URL}/api/internal/triage/baseline/dispatch"
 # over the network-level timeout (which would surface as a transport
 # failure with no body). The hourly cron interval (3600s) is the
 # absolute ceiling.
-CONNECT_TIMEOUT_S=10
-MAX_TIME_S=2700
+CONNECT_TIMEOUT_S="${CRON_CADENCE_CONNECT_TIMEOUT_S:-10}"
+MAX_TIME_S="${CRON_CADENCE_MAX_TIME_S:-2700}"
 
 mkdir -p "$LOG_DIR"
 TS=$(date +%Y%m%d-%H%M%S)

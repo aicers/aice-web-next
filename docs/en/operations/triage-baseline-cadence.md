@@ -147,7 +147,7 @@ Response:
 | `ok` | cadence runner | Normal successful pass; rows ingested, watermark advanced. |
 | `skipped` | cadence runner | Advisory lock held by a concurrent run, or no new pages — normal "nothing to do". |
 | `failed` | cadence runner | Cadence transaction rolled back; `error` populated. |
-| `timeout` | dispatcher | Per-customer call exceeded `TRIAGE_BASELINE_DISPATCH_PER_CUSTOMER_TIMEOUT_MS` (default 15 min). The dispatcher cancelled the runner via `AbortSignal`; the in-flight page rolled back. |
+| `timeout` | dispatcher | Per-customer call exceeded its effective timeout — the lesser of `TRIAGE_BASELINE_DISPATCH_PER_CUSTOMER_TIMEOUT_MS` (default 15 min) and the remaining total-dispatcher budget. The dispatcher cancelled the runner via `AbortSignal`; the in-flight page rolled back. The total budget bound also applies to already-running customers when the dispatcher's overall deadline elapses, so the dispatcher always returns within `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`. |
 | `skipped-timeout` | dispatcher | Total dispatcher timeout (`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, default 45 min) reached before this customer was attempted; the next hourly tick picks them up. |
 
 `overall` is derived deterministically:

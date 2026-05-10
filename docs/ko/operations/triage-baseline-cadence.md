@@ -146,7 +146,7 @@ Content-Type: application/json
 | `ok` | 케이던스 러너 | 정상 성공 패스 — 행이 인제스트되고 워터마크가 진행됨. |
 | `skipped` | 케이던스 러너 | 동시 실행이 어드바이저리 락을 보유 중이거나 신규 페이지가 없음. 정상적인 "할 일 없음" 상태. |
 | `failed` | 케이던스 러너 | 케이던스 트랜잭션이 롤백됨. `error` 필드 채워짐. |
-| `timeout` | 디스패처 | 고객별 호출이 `TRIAGE_BASELINE_DISPATCH_PER_CUSTOMER_TIMEOUT_MS`(기본 15분)을 초과. 디스패처가 `AbortSignal`로 러너를 취소했고, 진행 중이던 페이지가 롤백됨. |
+| `timeout` | 디스패처 | 고객별 호출이 유효 타임아웃을 초과 — `TRIAGE_BASELINE_DISPATCH_PER_CUSTOMER_TIMEOUT_MS`(기본 15분)와 남은 디스패처 전체 예산 중 더 작은 값. 디스패처가 `AbortSignal`로 러너를 취소했고, 진행 중이던 페이지가 롤백됨. 이 전체 예산 한도는 디스패처 전체 데드라인이 만료될 때 이미 실행 중인 고객에도 적용되어, 디스패처는 항상 `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS` 내에 반환됨. |
 | `skipped-timeout` | 디스패처 | 디스패처 전체 타임아웃(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, 기본 45분) 도달 전에 이 고객은 시도되지 않음. 다음 시간당 틱이 처리. |
 
 `overall`은 결정적으로 도출됩니다.

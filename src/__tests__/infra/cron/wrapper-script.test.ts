@@ -1,5 +1,14 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const WRAPPER_PATH = resolve(
@@ -81,6 +90,319 @@ describe("infra/cron/crontab — static contract", () => {
     expect(crontab).toMatch(/^0 \* \* \* \*/m);
   });
 });
+
+/**
+ * Detect bash/jq once at module load. The wrapper requires both at
+ * runtime; if a CI environment is missing them we skip the execution
+ * suite rather than fail noisily (the static-contract suite still
+ * runs). `curl` is replaced by a stub on PATH for these tests so the
+ * full body-parsing / status-classification / log-emission pipeline
+ * is exercised without depending on outbound TCP.
+ */
+function hasBin(name: string): boolean {
+  return spawnSync("which", [name]).status === 0;
+}
+
+const EXECUTION_DEPS_AVAILABLE = hasBin("bash") && hasBin("jq");
+
+interface RunResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  bodyFile: string | null;
+  bodyContents: string | null;
+}
+
+interface RunOptions {
+  /** HTTP status the stub curl reports via `-w '%{http_code}'`. */
+  httpCode?: string;
+  /** Body the stub writes to the `-o` output file. */
+  body?: string;
+  /** Stub curl exit code (default 0). 28 simulates `--max-time` hit. */
+  curlExitCode?: number;
+  /** Stub curl stderr (e.g. real curl emits `curl: (28) ...` on timeout). */
+  curlStderr?: string;
+  /** Set to null to omit the bearer token; default is a non-empty token. */
+  token?: string | null;
+}
+
+/**
+ * Stub `curl` script — parses the wrapper's invocation, emits canned
+ * status / body / exit code, and leaves all transport concerns out of
+ * the test. Real curl is not used because the harness sandbox blocks
+ * child processes from connecting to localhost-bound test sockets.
+ * The stub still validates the wrapper's contract because the wrapper
+ * does not care WHERE the response came from — only that:
+ *   - curl exit code != 0 → transport-failure log + non-zero exit
+ *   - http_code 401/403   → auth-failure log + non-zero exit
+ *   - http_code 200       → body parsed by jq, summary emitted
+ *   - http_code other     → structured-body warning + exit 0
+ */
+const CURL_STUB = `#!/bin/bash
+set -u
+output=""
+write_directive=""
+url=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -sS|-s|-S|-v|-i)
+            shift
+            ;;
+        --connect-timeout|--max-time)
+            shift 2
+            ;;
+        -o)
+            output="$2"
+            shift 2
+            ;;
+        -w)
+            write_directive="$2"
+            shift 2
+            ;;
+        -X|-H|--data|--data-raw|--data-binary|--data-urlencode|-F|-A|-e|-u)
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            # Unknown flag with possible arg; assume single-arg flag.
+            shift
+            ;;
+        *)
+            url="$1"
+            shift
+            ;;
+    esac
+done
+if [ -n "\${CRON_CADENCE_TEST_STDERR:-}" ]; then
+    printf '%s' "\${CRON_CADENCE_TEST_STDERR}" >&2
+fi
+if [ -n "$output" ]; then
+    if [ -n "\${CRON_CADENCE_TEST_BODY+x}" ]; then
+        printf '%s' "\${CRON_CADENCE_TEST_BODY}" > "$output"
+    else
+        : > "$output"
+    fi
+fi
+case "$write_directive" in
+    *%\\{http_code\\}*|*http_code*)
+        printf '%s' "\${CRON_CADENCE_TEST_HTTP_CODE:-000}"
+        ;;
+esac
+exit "\${CRON_CADENCE_TEST_EXIT_CODE:-0}"
+`;
+
+describe.skipIf(!EXECUTION_DEPS_AVAILABLE)(
+  "infra/cron/run-triage-baseline-dispatch.sh — execution",
+  () => {
+    function runWrapper(opts: RunOptions): RunResult {
+      const sandbox = mkdtempSync(join(tmpdir(), "wrapper-test-"));
+      const stubDir = join(sandbox, "bin");
+      const logDir = join(sandbox, "log");
+      const envFile = join(sandbox, "cron.env");
+      try {
+        // Set up curl stub on PATH.
+        spawnSync("mkdir", ["-p", stubDir, logDir]);
+        const stubPath = join(stubDir, "curl");
+        writeFileSync(stubPath, CURL_STUB);
+        chmodSync(stubPath, 0o755);
+
+        const env: Record<string, string> = {
+          PATH: `${stubDir}:${process.env.PATH ?? ""}`,
+          NEXT_APP_BASE_URL: "http://stub.invalid:3000",
+          CRON_CADENCE_LOG_DIR: logDir,
+          CRON_CADENCE_ENV_FILE: envFile,
+          CRON_CADENCE_MAX_TIME_S: "5",
+          CRON_CADENCE_CONNECT_TIMEOUT_S: "1",
+          CRON_CADENCE_TEST_HTTP_CODE: opts.httpCode ?? "200",
+          CRON_CADENCE_TEST_EXIT_CODE: String(opts.curlExitCode ?? 0),
+        };
+        if (opts.body !== undefined) {
+          env.CRON_CADENCE_TEST_BODY = opts.body;
+        }
+        if (opts.curlStderr !== undefined) {
+          env.CRON_CADENCE_TEST_STDERR = opts.curlStderr;
+        }
+        if (opts.token !== null) {
+          env.TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN =
+            opts.token ?? "test-token";
+        }
+
+        const result = spawnSync("bash", [WRAPPER_PATH], {
+          env: env as NodeJS.ProcessEnv,
+          encoding: "utf8",
+          timeout: 15_000,
+        });
+        const files = readdirSync(logDir).filter((f) =>
+          f.startsWith("cron-cadence-"),
+        );
+        const bodyFile = files.length > 0 ? join(logDir, files[0]) : null;
+        const bodyContents = bodyFile ? readFileSync(bodyFile, "utf8") : null;
+        return {
+          status: result.status,
+          stdout: result.stdout ?? "",
+          stderr: result.stderr ?? "",
+          bodyFile,
+          bodyContents,
+        };
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    }
+
+    it("HTTP 200 + overall=ok: exits 0, stdout has summary, stderr is clean", () => {
+      const r = runWrapper({
+        httpCode: "200",
+        body: JSON.stringify({
+          overall: "ok",
+          perCustomer: [
+            {
+              customerId: 1,
+              status: "ok",
+              observedInserted: 0,
+              baselineInserted: 0,
+              lastEventCursor: null,
+            },
+          ],
+        }),
+      });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/overall=ok/);
+      expect(r.stdout).toMatch(/ok=1 skipped=0 failed=0 timeout=0/);
+      expect(r.stderr).toBe("");
+      expect(r.bodyContents).toMatch(/"overall":"ok"/);
+    });
+
+    it("HTTP 200 + overall=partial: exits 0, stdout has summary, stderr WARNs with bad ids", () => {
+      const r = runWrapper({
+        httpCode: "200",
+        body: JSON.stringify({
+          overall: "partial",
+          perCustomer: [
+            {
+              customerId: 1,
+              status: "ok",
+              observedInserted: 0,
+              baselineInserted: 0,
+              lastEventCursor: null,
+            },
+            {
+              customerId: 2,
+              status: "failed",
+              observedInserted: 0,
+              baselineInserted: 0,
+              lastEventCursor: null,
+              error: "boom",
+            },
+            {
+              customerId: 3,
+              status: "timeout",
+              observedInserted: 0,
+              baselineInserted: 0,
+              lastEventCursor: null,
+              error: "timed out",
+            },
+          ],
+        }),
+      });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/overall=partial/);
+      expect(r.stdout).toMatch(/failed=1/);
+      expect(r.stdout).toMatch(/timeout=1/);
+      expect(r.stderr).toMatch(/WARN/);
+      expect(r.stderr).toMatch(/2:failed/);
+      expect(r.stderr).toMatch(/3:timeout/);
+    });
+
+    it("HTTP 200 + invalid JSON: exits 0 and warns", () => {
+      const r = runWrapper({
+        httpCode: "200",
+        body: "not json {[",
+      });
+      expect(r.status).toBe(0);
+      expect(r.stderr).toMatch(/not valid JSON/);
+    });
+
+    it("HTTP 401: exits non-zero so cron MAILTO surfaces the auth misconfig", () => {
+      const r = runWrapper({
+        httpCode: "401",
+        body: JSON.stringify({ error: "unauthorized" }),
+      });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/auth failure \(HTTP 401\)/);
+    });
+
+    it("HTTP 403: exits non-zero (same auth-failure path as 401)", () => {
+      const r = runWrapper({
+        httpCode: "403",
+        body: JSON.stringify({ error: "forbidden" }),
+      });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/auth failure \(HTTP 403\)/);
+    });
+
+    it("HTTP 500 with structured body: exits 0, body saved, stderr summarises", () => {
+      const r = runWrapper({
+        httpCode: "500",
+        body: JSON.stringify({
+          overall: "failed",
+          error: "enumeration failed",
+        }),
+      });
+      expect(r.status).toBe(0);
+      expect(r.stderr).toMatch(/HTTP 500 from dispatcher/);
+      expect(r.stderr).toMatch(/enumeration failed/);
+      expect(r.bodyContents).toMatch(/enumeration failed/);
+    });
+
+    it("HTTP 500 with unparseable body: exits 0 and warns", () => {
+      const r = runWrapper({
+        httpCode: "500",
+        body: "<html>internal error</html>",
+      });
+      expect(r.status).toBe(0);
+      expect(r.stderr).toMatch(/HTTP 500 from dispatcher \(body unparseable\)/);
+    });
+
+    it("transport failure (curl exit 28 = --max-time): exits non-zero on the transport-failure path", () => {
+      const r = runWrapper({
+        httpCode: "000",
+        body: "",
+        curlExitCode: 28,
+        curlStderr: "curl: (28) Operation timed out\n",
+      });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/transport failure/);
+      expect(r.stderr).toMatch(/curl_exit=28/);
+    });
+
+    it("transport failure (curl exit 7 = connection refused): exits non-zero", () => {
+      const r = runWrapper({
+        httpCode: "000",
+        body: "",
+        curlExitCode: 7,
+        curlStderr: "curl: (7) Failed to connect\n",
+      });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/transport failure/);
+      expect(r.stderr).toMatch(/curl_exit=7/);
+    });
+
+    it("missing TOKEN: refuses to fire and exits non-zero", () => {
+      const r = runWrapper({
+        httpCode: "200",
+        body: "should not be reached",
+        token: null,
+      });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(
+        /TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN is empty/,
+      );
+    });
+  },
+);
 
 describe("infra/cron/Dockerfile — static contract", () => {
   it("installs jq so the wrapper can parse the response body", () => {

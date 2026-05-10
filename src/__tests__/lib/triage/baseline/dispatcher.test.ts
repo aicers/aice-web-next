@@ -294,6 +294,139 @@ describe("runTriageBaselineDispatch — per-customer timeout", () => {
 });
 
 describe("runTriageBaselineDispatch — total timeout", () => {
+  it("aborts in-flight customers when the dispatcher deadline elapses (does not wait for per-customer timeout to expire after deadline)", async () => {
+    // Regression: previously a customer started just before the total
+    // deadline could keep its full perCustomerTimeoutMs slot, blowing
+    // past the dispatcher's own ceiling. The cron wrapper's
+    // `--max-time` would then kill the HTTP exchange before this
+    // dispatcher returned, dropping the structured response body.
+    const { runTriageBaselineDispatch } = await import(
+      "@/lib/triage/baseline/dispatcher"
+    );
+
+    const observedAborts: number[] = [];
+    const runCadence = vi.fn(
+      async (
+        customerId: number,
+        opts: { signal?: AbortSignal },
+      ): Promise<{
+        customerId: number;
+        status: "ok" | "skipped" | "failed";
+        observedInserted: number;
+        baselineInserted: number;
+        lastEventCursor: string | null;
+        error?: string;
+      }> => {
+        await new Promise<void>((resolve) => {
+          opts.signal?.addEventListener("abort", () => {
+            observedAborts.push(customerId);
+            resolve();
+          });
+        });
+        return {
+          customerId,
+          status: "ok",
+          observedInserted: 0,
+          baselineInserted: 0,
+          lastEventCursor: null,
+        };
+      },
+    );
+
+    const startedAt = Date.now();
+    const result = await runTriageBaselineDispatch({
+      pager: FAKE_PAGER,
+      listActiveCustomers: async () => [1, 2],
+      runCadence,
+      // Per-customer is far longer than total — without dispatcher-
+      // level abort, the in-flight customers would hold their slots
+      // for the full perCustomerTimeoutMs.
+      perCustomerTimeoutMs: 60_000,
+      totalTimeoutMs: 80,
+      concurrency: 2,
+    });
+    const elapsed = Date.now() - startedAt;
+
+    // The dispatcher must return close to totalTimeoutMs, NOT
+    // perCustomerTimeoutMs.
+    expect(elapsed).toBeLessThan(2000);
+    // Both in-flight customers observed the abort.
+    expect(observedAborts.sort()).toEqual([1, 2]);
+    // Both are reported as `timeout`, not lost as transport failure.
+    const one = result.perCustomer.find((e) => e.customerId === 1);
+    const two = result.perCustomer.find((e) => e.customerId === 2);
+    expect(one?.status).toBe("timeout");
+    expect(two?.status).toBe("timeout");
+    expect(result.overall).toBe("partial");
+  });
+
+  it("caps a newly-started customer's effective timeout to the remaining dispatcher budget", async () => {
+    // With concurrency=1 and a short total budget, the second
+    // customer's effective per-customer timeout is the remaining
+    // budget, not the full perCustomerTimeoutMs.
+    const { runTriageBaselineDispatch } = await import(
+      "@/lib/triage/baseline/dispatcher"
+    );
+
+    let secondAborted = false;
+    const runCadence = vi.fn(
+      async (
+        customerId: number,
+        opts: { signal?: AbortSignal },
+      ): Promise<{
+        customerId: number;
+        status: "ok" | "skipped" | "failed";
+        observedInserted: number;
+        baselineInserted: number;
+        lastEventCursor: string | null;
+        error?: string;
+      }> => {
+        if (customerId === 1) {
+          // Burns most of the dispatcher budget but completes ok.
+          await new Promise((r) => setTimeout(r, 60));
+          return {
+            customerId,
+            status: "ok",
+            observedInserted: 0,
+            baselineInserted: 0,
+            lastEventCursor: null,
+          };
+        }
+        // Customer 2 hangs — only the *remaining* budget should bound
+        // it, not the full perCustomerTimeoutMs.
+        await new Promise<void>((resolve) => {
+          opts.signal?.addEventListener("abort", () => {
+            secondAborted = true;
+            resolve();
+          });
+        });
+        return {
+          customerId,
+          status: "ok",
+          observedInserted: 0,
+          baselineInserted: 0,
+          lastEventCursor: null,
+        };
+      },
+    );
+
+    const startedAt = Date.now();
+    const result = await runTriageBaselineDispatch({
+      pager: FAKE_PAGER,
+      listActiveCustomers: async () => [1, 2],
+      runCadence,
+      perCustomerTimeoutMs: 60_000,
+      totalTimeoutMs: 100,
+      concurrency: 1,
+    });
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(2000);
+    expect(secondAborted).toBe(true);
+    const two = result.perCustomer.find((e) => e.customerId === 2);
+    expect(two?.status).toBe("timeout");
+  });
+
   it("reports unattempted customers as skipped-timeout when the overall deadline elapses", async () => {
     const { runTriageBaselineDispatch } = await import(
       "@/lib/triage/baseline/dispatcher"
