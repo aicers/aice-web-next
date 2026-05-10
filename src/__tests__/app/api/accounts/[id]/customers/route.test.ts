@@ -692,6 +692,71 @@ describe("POST /api/accounts/[id]/customers", () => {
     expect(response.status).toBe(400);
   });
 
+  it("bumps target account token_version when assignment set changes (#393)", async () => {
+    // Account exists
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        makeAccountRoleRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS),
+      ],
+    });
+    // Customers exist
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }, { id: 2 }] });
+
+    const txnQuery = vi
+      .fn()
+      // INSERT — both ids are new, so rowCount is 2
+      .mockResolvedValueOnce({ rows: [], rowCount: 2 })
+      // token_version UPDATE
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    mockWithTransaction.mockImplementation(
+      async (fn: (client: unknown) => unknown) => fn({ query: txnQuery }),
+    );
+
+    const { POST } = await import("@/app/api/accounts/[id]/customers/route");
+    const request = new NextRequest(
+      `http://localhost:3000/api/accounts/${TARGET_UUID}/customers`,
+      { method: "POST", body: JSON.stringify({ customerIds: [1, 2] }) },
+    );
+    const response = await POST(request, makeContext());
+
+    expect(response.status).toBe(201);
+    expect(txnQuery).toHaveBeenCalledWith(
+      expect.stringContaining("token_version = token_version + 1"),
+      [TARGET_UUID],
+    );
+  });
+
+  it("does NOT bump token_version on a fully idempotent re-assign (#393)", async () => {
+    // ON CONFLICT DO NOTHING returns 0 rowCount when every requested id
+    // is already assigned. A no-op POST must not invalidate other live
+    // sessions of the target account.
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        makeAccountRoleRow(2, "Tenant Administrator", TENANT_ADMIN_PERMISSIONS),
+      ],
+    });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+
+    const txnQuery = vi.fn().mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    mockWithTransaction.mockImplementation(
+      async (fn: (client: unknown) => unknown) => fn({ query: txnQuery }),
+    );
+
+    const { POST } = await import("@/app/api/accounts/[id]/customers/route");
+    const request = new NextRequest(
+      `http://localhost:3000/api/accounts/${TARGET_UUID}/customers`,
+      { method: "POST", body: JSON.stringify({ customerIds: [1] }) },
+    );
+    const response = await POST(request, makeContext());
+
+    expect(response.status).toBe(201);
+    expect(txnQuery).toHaveBeenCalledTimes(1);
+    expect(txnQuery).not.toHaveBeenCalledWith(
+      expect.stringContaining("token_version"),
+      expect.anything(),
+    );
+  });
+
   it("returns 400 when customerIds contains strings", async () => {
     const { POST } = await import("@/app/api/accounts/[id]/customers/route");
     const request = new NextRequest(

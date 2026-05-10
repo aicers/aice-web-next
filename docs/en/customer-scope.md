@@ -81,5 +81,16 @@ single is implicit and admins know.
 
 The scope is resolved server-side on every navigation. If an
 operator's customer assignments change mid-session (for example,
-an administrator unassigns a customer), the indicator and any
-filtered results update on the next page navigation.
+an administrator unassigns a customer), the affected session is
+forced through sign-in on its next request — the customer
+assignment APIs bump the account's session token version, so the
+existing JWT no longer matches and the operator is redirected to
+the sign-in page with a *Your session has ended* notice. After
+signing in again, the indicator and any filtered results reflect
+the new scope.
+
+Already-mounted views (Detection results, the sensor drawer, the
+nodes status page) also fire a cheap auth probe before serving
+from their in-memory caches, so a scope change cannot surface
+data from a customer the operator no longer has access to even
+between page navigations.

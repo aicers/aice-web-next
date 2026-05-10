@@ -52,8 +52,28 @@ import type { PeriodKey } from "./period";
 import { EMPTY_RESULT_CACHE, type TabId, type TabSnapshot } from "./tabs";
 import type { PivotFilterParams } from "./url-filters";
 
-export const STORAGE_KEY = "detection:tabs:v1";
+export const STORAGE_KEY_PREFIX = "detection:tabs:v1";
 const PAYLOAD_VERSION = 1 as const;
+
+/**
+ * Per-scope `sessionStorage` key. `sessionStorage` survives sign-out /
+ * sign-in in the same browser tab, so a fixed key would let account A's
+ * tab UX state surface to account B (or to the same account after a
+ * customer-assignment change). Namespacing the key by the scope
+ * fingerprint isolates each (account, customerIds) pairing into its
+ * own slot — a sign-in under a different scope reads `null` and falls
+ * back to the URL-only bootstrap tab. (#393 Task C)
+ *
+ * `null` fingerprint means the caller is not yet inside the
+ * `ScopeFingerprintProvider` (e.g. tests, storybook, or a sign-out path
+ * still rendering layout shell). In that mode every storage operation
+ * is a no-op so the previous account's payload cannot be read or
+ * written.
+ */
+export function tabsStorageKey(fingerprint: string | null): string | null {
+  if (!fingerprint) return null;
+  return `${STORAGE_KEY_PREFIX}:${fingerprint}`;
+}
 
 /**
  * Stripped-down per-tab shape written to sessionStorage. Mirrors
@@ -206,13 +226,20 @@ function isStoredTab(candidate: unknown): candidate is StoredTab {
  * Load the saved tabs payload from `sessionStorage`. A best-effort
  * read — absence, quota errors, or a corrupted payload all fold
  * into `null` and the caller falls back to the URL-only bootstrap.
+ *
+ * `fingerprint` namespaces the key by `(accountId, customerIds)` so a
+ * sign-out / sign-in or scope swap in the same browser tab cannot
+ * surface another scope's saved tab UX state. A `null` fingerprint
+ * (no provider) skips the read entirely.
  */
-export function readTabsFromSession(): DeserializedTabs | null {
+export function readTabsFromSession(
+  fingerprint: string | null,
+): DeserializedTabs | null {
   if (typeof window === "undefined") return null;
+  const key = tabsStorageKey(fingerprint);
+  if (!key) return null;
   try {
-    return deserializeTabsFromStorage(
-      window.sessionStorage.getItem(STORAGE_KEY),
-    );
+    return deserializeTabsFromStorage(window.sessionStorage.getItem(key));
   } catch {
     return null;
   }
@@ -223,15 +250,20 @@ export function readTabsFromSession(): DeserializedTabs | null {
  * quota / privacy-mode errors — the result is the same as never
  * having written: on reload we fall back to the URL-only bootstrap,
  * which is preferable to crashing the whole shell render.
+ *
+ * See {@link readTabsFromSession} for the `fingerprint` contract.
  */
 export function writeTabsToSession(
   tabs: readonly TabSnapshot[],
   activeTabId: TabId,
+  fingerprint: string | null,
 ): void {
   if (typeof window === "undefined") return;
+  const key = tabsStorageKey(fingerprint);
+  if (!key) return;
   try {
     window.sessionStorage.setItem(
-      STORAGE_KEY,
+      key,
       serializeTabsForStorage(tabs, activeTabId),
     );
   } catch {
@@ -246,10 +278,12 @@ export function writeTabsToSession(
  * Drop the stored tab payload. Used by tests and any future
  * "Reset tabs" affordance.
  */
-export function clearTabsFromSession(): void {
+export function clearTabsFromSession(fingerprint: string | null): void {
   if (typeof window === "undefined") return;
+  const key = tabsStorageKey(fingerprint);
+  if (!key) return;
   try {
-    window.sessionStorage.removeItem(STORAGE_KEY);
+    window.sessionStorage.removeItem(key);
   } catch {
     // Ignored — see `writeTabsToSession`.
   }

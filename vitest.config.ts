@@ -45,6 +45,11 @@ export default defineConfig({
             // branches and the wrapper-owned customer cache lifecycle.
             "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
+            // #393 Reviewer Round 1: real-render regression coverage for
+            // the sensor cache reopen probe (Task D) and the analytics
+            // cache-key + probe contract (Task B).
+            "src/__tests__/components/detection/detection-shell-sensor-cache-probe.test.tsx",
+            "src/__tests__/components/detection/detection-analytics-cache-probe.test.tsx",
             // Issue #428: the new on-demand presets dropdown replaces
             // the always-visible left rail. Coverage exercises the
             // open/close cycle, recommended preset activation, saved-
@@ -119,6 +124,8 @@ export default defineConfig({
             "src/__tests__/components/node/resource-sparkline.test.tsx",
             "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
+            "src/__tests__/components/detection/detection-shell-sensor-cache-probe.test.tsx",
+            "src/__tests__/components/detection/detection-analytics-cache-probe.test.tsx",
             "src/__tests__/components/detection/presets-dropdown.test.tsx",
             "src/__tests__/components/detection/detection-shell-save-current-filter.test.tsx",
             "src/__tests__/components/detection/result-list-stale-focus.test.tsx",

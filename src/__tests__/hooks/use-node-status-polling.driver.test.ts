@@ -94,7 +94,29 @@ function fireVisibilityChange(): void {
   for (const cb of docListeners.get("visibilitychange") ?? []) cb();
 }
 
-vi.stubGlobal("window", {});
+// `window` needs `addEventListener` / `removeEventListener` for the
+// polling driver's `focus` probe and `location.assign` for the probe-
+// auth helper's redirect on 401 (#393 Task E). Listeners are captured
+// here so tests can simulate a focus regain by calling
+// `fireWindowFocus()`; the location spy lets us assert the sign-in
+// redirect fired.
+const windowListeners = new Map<string, Set<() => void>>();
+const locationAssign = vi.fn();
+
+vi.stubGlobal("window", {
+  addEventListener: (event: string, cb: () => void) => {
+    if (!windowListeners.has(event)) windowListeners.set(event, new Set());
+    windowListeners.get(event)?.add(cb);
+  },
+  removeEventListener: (event: string, cb: () => void) => {
+    windowListeners.get(event)?.delete(cb);
+  },
+  location: { assign: locationAssign },
+});
+
+function fireWindowFocus(): void {
+  for (const cb of windowListeners.get("focus") ?? []) cb();
+}
 
 // ── Fetch stub ────────────────────────────────────────────────────
 
@@ -196,11 +218,18 @@ describe("useNodeStatusPolling — driver lifecycle", () => {
     fetchCallCount = 0;
     fetchScript.length = 0;
     docListeners.clear();
+    windowListeners.clear();
     visibilityState = "visible";
     fetchStub.mockClear();
+    locationAssign.mockClear();
     captured.length = 0;
     const mod = await import("@/hooks/use-node-status-polling");
     mod.__resetNodeStatusStore();
+    // Reset module-level state in `probe-auth` so the post-success
+    // debounce and the one-shot redirect latch from earlier tests do
+    // not bleed into this one.
+    const probe = await import("@/lib/auth/probe-auth");
+    probe.__resetProbeAuthForTests();
   });
 
   afterEach(() => {
@@ -402,5 +431,69 @@ describe("useNodeStatusPolling — driver lifecycle", () => {
     expect(after.isStale).toBe(false);
     expect(after.isManagerUnreachable).toBe(false);
     expect(mod.__getNodeStatusStoreForTests().byNodeId.size).toBe(0);
+  });
+
+  it("routes a 401 from the polling fetch through the probe-auth helper (#393 Task E)", async () => {
+    // Acceptance: a `token_version` mismatch surfacing as 401 from
+    // `/api/nodes/status` must NOT be swallowed by the polling loop's
+    // transient-error path. The buffer must clear and the operator
+    // must be redirected through sign-in so the rolling per-node
+    // samples don't keep painting customer data the caller no longer
+    // has access to.
+    const pollMs = 10_000;
+    pushFetchResponse(new Date());
+    const mod = await import("@/hooks/use-node-status-polling");
+    mod.useNodeStatusPolling({ pollIntervalMs: pollMs });
+    await runAllEffects();
+
+    // First sample lands so the buffer carries something we expect to
+    // be cleared on the 401.
+    await vi.advanceTimersByTimeAsync(pollMs);
+    expect(mod.__getNodeStatusSnapshot().capturedAt).not.toBeNull();
+
+    // Next poll comes back 401; the probe-auth helper then issues a
+    // GET to `/api/auth/me` which also lands on the same fetch stub —
+    // make it return 401 so the redirect path fires.
+    pushFetchStatus(401); // /api/nodes/status
+    pushFetchStatus(401); // /api/auth/me probe
+    await vi.advanceTimersByTimeAsync(pollMs);
+    // Drain the probe-auth fetch microtask + redirect.
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Buffer cleared and redirect fired.
+    const after = mod.__getNodeStatusSnapshot();
+    expect(after.capturedAt).toBeNull();
+    expect(mod.__getNodeStatusStoreForTests().byNodeId.size).toBe(0);
+    expect(locationAssign).toHaveBeenCalledWith(
+      "/sign-in?reason=session-ended",
+    );
+  });
+
+  it("fires the probe on window.focus and clears the buffer on 401 (#393 Task E)", async () => {
+    // Acceptance: refocusing the tab from another window — a path
+    // `visibilitychange` does not always surface — must trigger the
+    // shared probe and route a 401 through the same cache-clear +
+    // redirect handler.
+    const pollMs = 10_000;
+    pushFetchResponse(new Date());
+    const mod = await import("@/hooks/use-node-status-polling");
+    mod.useNodeStatusPolling({ pollIntervalMs: pollMs });
+    await runAllEffects();
+
+    await vi.advanceTimersByTimeAsync(pollMs);
+    expect(mod.__getNodeStatusSnapshot().capturedAt).not.toBeNull();
+
+    // Focus probe sees a 401 from `/api/auth/me` — the only fetch the
+    // focus handler issues. No `/api/nodes/status` call is needed
+    // because the probe runs ahead of the next regular tick.
+    pushFetchStatus(401);
+    fireWindowFocus();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mod.__getNodeStatusSnapshot().capturedAt).toBeNull();
+    expect(mod.__getNodeStatusStoreForTests().byNodeId.size).toBe(0);
+    expect(locationAssign).toHaveBeenCalledWith(
+      "/sign-in?reason=session-ended",
+    );
   });
 });

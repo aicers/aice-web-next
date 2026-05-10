@@ -47,8 +47,17 @@ vi.mock("@/lib/auth/customer-scope", () => ({
   ),
 }));
 
+const mockTransactionClient = vi.hoisted(() => ({
+  query: vi.fn(),
+}));
+
 vi.mock("@/lib/db/client", () => ({
   query: vi.fn((...args: unknown[]) => mockQuery(...args)),
+  withTransaction: vi.fn(
+    async (
+      fn: (client: { query: typeof mockTransactionClient.query }) => unknown,
+    ) => fn(mockTransactionClient),
+  ),
 }));
 
 vi.mock("@/lib/audit/logger", () => ({
@@ -102,6 +111,7 @@ describe("DELETE /api/accounts/[id]/customers/[customerId]", () => {
   beforeEach(() => {
     currentSession = adminSession;
     mockQuery.mockReset();
+    mockTransactionClient.query.mockReset();
     mockAuditRecord.mockReset();
     mockHasPermission.mockReset().mockResolvedValue(true);
     mockGetAccountCustomerIds.mockReset();
@@ -109,11 +119,12 @@ describe("DELETE /api/accounts/[id]/customers/[customerId]", () => {
 
   it("removes assignment as System Administrator", async () => {
     // Assignment exists
-    mockQuery
-      .mockResolvedValueOnce({
-        rows: [{ account_id: TARGET_UUID, customer_id: 1 }],
-      })
-      // DELETE
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ account_id: TARGET_UUID, customer_id: 1 }],
+    });
+    // DELETE then token_version bump inside withTransaction
+    mockTransactionClient.query
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
     const { DELETE } = await import(
@@ -128,6 +139,13 @@ describe("DELETE /api/accounts/[id]/customers/[customerId]", () => {
 
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
+    // #393 Task A: a successful unassign bumps the target account's
+    // token_version so live sessions are forced through sign-in on
+    // their next request.
+    expect(mockTransactionClient.query).toHaveBeenCalledWith(
+      expect.stringContaining("token_version = token_version + 1"),
+      [TARGET_UUID],
+    );
     expect(mockAuditRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "customer.unassign",
@@ -137,6 +155,37 @@ describe("DELETE /api/accounts/[id]/customers/[customerId]", () => {
         customerId: 1,
         details: { customerId: 1 },
       }),
+    );
+  });
+
+  it("does NOT bump token_version when DELETE affects 0 rows (race)", async () => {
+    // Existence check passes, but a concurrent DELETE removed the row
+    // between the existence check and our DELETE. The bump should be
+    // skipped so other live sessions of the target account are not
+    // invalidated by a no-op call.
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ account_id: TARGET_UUID, customer_id: 1 }],
+    });
+    mockTransactionClient.query.mockResolvedValueOnce({
+      rows: [],
+      rowCount: 0,
+    });
+
+    const { DELETE } = await import(
+      "@/app/api/accounts/[id]/customers/[customerId]/route"
+    );
+    const request = new NextRequest(
+      `http://localhost:3000/api/accounts/${TARGET_UUID}/customers/1`,
+      { method: "DELETE" },
+    );
+    const response = await DELETE(request, makeContext());
+
+    expect(response.status).toBe(200);
+    // Only the DELETE ran; the UPDATE was skipped.
+    expect(mockTransactionClient.query).toHaveBeenCalledTimes(1);
+    expect(mockTransactionClient.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("token_version"),
+      expect.anything(),
     );
   });
 
@@ -235,11 +284,12 @@ describe("DELETE /api/accounts/[id]/customers/[customerId]", () => {
     );
 
     // Assignment exists
-    mockQuery
-      .mockResolvedValueOnce({
-        rows: [{ account_id: TARGET_UUID, customer_id: 1 }],
-      })
-      // DELETE
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ account_id: TARGET_UUID, customer_id: 1 }],
+    });
+    // DELETE then token_version bump inside withTransaction
+    mockTransactionClient.query
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
     // Caller has customer 1 in scope

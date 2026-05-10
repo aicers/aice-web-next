@@ -6,10 +6,13 @@ import {
   clearTabsFromSession,
   deserializeTabsFromStorage,
   readTabsFromSession,
-  STORAGE_KEY,
   serializeTabsForStorage,
+  tabsStorageKey,
   writeTabsToSession,
 } from "@/lib/detection/tabs-storage";
+
+const FP_A = "fingerprint-account-a";
+const FP_B = "fingerprint-account-b";
 
 const FILTER_1H: Filter = {
   mode: "structured",
@@ -173,15 +176,47 @@ describe("sessionStorage integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("reads back what was written under STORAGE_KEY", () => {
+  it("reads back what was written under the per-fingerprint key", () => {
     const tab = makeTab();
-    writeTabsToSession([tab], tab.id);
+    writeTabsToSession([tab], tab.id, FP_A);
+    const key = tabsStorageKey(FP_A);
+    expect(key).not.toBeNull();
     expect(
-      (window as Window).sessionStorage.getItem(STORAGE_KEY),
+      // biome-ignore lint/style/noNonNullAssertion: asserted above
+      (window as Window).sessionStorage.getItem(key!),
     ).not.toBeNull();
-    const decoded = readTabsFromSession();
+    const decoded = readTabsFromSession(FP_A);
     expect(decoded?.activeTabId).toBe(tab.id);
     expect(decoded?.tabs[0].id).toBe(tab.id);
+  });
+
+  it("isolates payloads across fingerprints (account A vs B in same tab)", () => {
+    // Account A writes its tab UX state to sessionStorage. The same
+    // browser tab then signs in as account B (different fingerprint).
+    // Reads under account B must NOT surface account A's payload —
+    // even though sessionStorage survives sign-out / sign-in in the
+    // same tab. (#393 Task C regression)
+    const tab = makeTab();
+    writeTabsToSession([tab], tab.id, FP_A);
+    expect(readTabsFromSession(FP_A)?.tabs[0].id).toBe(tab.id);
+    expect(readTabsFromSession(FP_B)).toBeNull();
+  });
+
+  it("invalidates payload on a same-account scope swap (X → Y)", () => {
+    // Same account but a customer-assignment change yields a fresh
+    // fingerprint. A read under the new fingerprint must miss rather
+    // than rehydrating tab state computed against the old scope.
+    const tab = makeTab();
+    writeTabsToSession([tab], tab.id, "scope-x");
+    expect(readTabsFromSession("scope-x")?.tabs[0].id).toBe(tab.id);
+    expect(readTabsFromSession("scope-y")).toBeNull();
+  });
+
+  it("treats a null fingerprint as a no-op (no provider context)", () => {
+    const tab = makeTab();
+    expect(() => writeTabsToSession([tab], tab.id, null)).not.toThrow();
+    expect(readTabsFromSession(null)).toBeNull();
+    expect(() => clearTabsFromSession(null)).not.toThrow();
   });
 
   it("swallows writes that would throw (quota / privacy mode)", () => {
@@ -195,18 +230,18 @@ describe("sessionStorage integration", () => {
       },
     });
     const tab = makeTab();
-    expect(() => writeTabsToSession([tab], tab.id)).not.toThrow();
+    expect(() => writeTabsToSession([tab], tab.id, FP_A)).not.toThrow();
   });
 
   it("clearTabsFromSession removes the payload", () => {
     const tab = makeTab();
-    writeTabsToSession([tab], tab.id);
-    clearTabsFromSession();
-    expect(readTabsFromSession()).toBeNull();
+    writeTabsToSession([tab], tab.id, FP_A);
+    clearTabsFromSession(FP_A);
+    expect(readTabsFromSession(FP_A)).toBeNull();
   });
 
   it("returns null on a read when no payload is present", () => {
-    expect(readTabsFromSession()).toBeNull();
+    expect(readTabsFromSession(FP_A)).toBeNull();
   });
 });
 
