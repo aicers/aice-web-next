@@ -65,6 +65,9 @@ const KNOWN_DIMENSIONS: ReadonlySet<PivotDimensionId> = new Set([
   "sameKindWithin15Min",
   "sameSensor",
   "clusterId",
+  "kinds",
+  "categories",
+  "levels",
 ] as const satisfies readonly PivotDimensionId[]);
 
 function isKnownDimension(value: string): value is PivotDimensionId {

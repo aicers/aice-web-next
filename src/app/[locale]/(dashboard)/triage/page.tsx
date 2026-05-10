@@ -156,6 +156,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           tls: t("pivotPanel.family.tls"),
           dns: t("pivotPanel.family.dns"),
           "time-structure": t("pivotPanel.family.time-structure"),
+          "tier2-only": t("pivotPanel.family.tier2-only"),
         },
         dimensions: pivotDimensionsMap((id) =>
           t(`pivotPanel.dimensions.${id}`),
@@ -196,6 +197,13 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         template: t.raw("tier2.errorTemplate") as string,
         fallbackMessage: t("tier2.errorFallbackMessage"),
         dismiss: t("tier2.errorDismiss"),
+        dimensions: pivotDimensionsMap((id) =>
+          t(`pivotPanel.dimensions.${id}`),
+        ),
+      },
+      tier2Progress: {
+        progress: t("tier2.fetchProgress"),
+        progressTemplate: t.raw("tier2.fetchProgressTemplate") as string,
         dimensions: pivotDimensionsMap((id) =>
           t(`pivotPanel.dimensions.${id}`),
         ),

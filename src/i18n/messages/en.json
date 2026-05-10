@@ -1958,7 +1958,8 @@
         "application": "Application",
         "tls": "TLS",
         "dns": "DNS",
-        "time-structure": "Time / structure"
+        "time-structure": "Time / structure",
+        "tier2-only": "Tier 2 only"
       },
       "dimensions": {
         "externalIp": "External IP",
@@ -1978,7 +1979,10 @@
         "dnsAnswer": "DNS answer",
         "sameKindWithin15Min": "Same kind within ±15 min",
         "sameSensor": "Sensor",
-        "clusterId": "Cluster ID"
+        "clusterId": "Cluster ID",
+        "kinds": "Event kind",
+        "categories": "Threat category",
+        "levels": "Threat level"
       }
     },
     "pivotBreadcrumb": {
@@ -2003,7 +2007,10 @@
         "dnsAnswer": "DNS answer",
         "sameKindWithin15Min": "Same kind ±15 min",
         "sameSensor": "Sensor",
-        "clusterId": "Cluster ID"
+        "clusterId": "Cluster ID",
+        "kinds": "Event kind",
+        "categories": "Threat category",
+        "levels": "Threat level"
       }
     },
     "periodChangeConfirm": {
@@ -2023,6 +2030,7 @@
       "weakBadge": "weak",
       "weakBadgeHint": "Found by Tier 2 fetch and not present in the loaded corpus.",
       "fetchProgress": "Fetching related events…",
+      "fetchProgressTemplate": "Fetching {dimension}: {value}…",
       "fetchError": "Could not fetch related events.",
       "evictionTemplate": "Cache full — evicted {dimension}: {value}. Re-pivoting will refetch.",
       "evictionDismiss": "Dismiss",

@@ -11,15 +11,11 @@ import {
   jwtCustomerIdsForTriage,
 } from "./dispatch-context";
 import { TRIAGE_EVENT_LIST_QUERY } from "./queries";
+import { TIER2_PER_DIMENSION_CAP } from "./tier2-cache";
 import { buildTier2Filter, type Tier2Dimension } from "./tier2-filter";
 import type { TriageEvent, TriageEventListResult } from "./types";
 
-/**
- * Per-dimension fetch cap (#453 acceptance). A single dimension fetch
- * walks at most {@link TIER2_PER_DIMENSION_CAP} events; the cap
- * implies up to 50 round-trips at {@link REVIEW_MAX_PAGE_SIZE}.
- */
-export const TIER2_PER_DIMENSION_CAP = 5_000;
+export { TIER2_PER_DIMENSION_CAP };
 
 export interface Tier2FetchInput {
   periodStartIso: string;
@@ -39,6 +35,13 @@ export interface Tier2FetchInput {
    * does not redo the first page already returned by the peek.
    */
   afterCursor?: string | null;
+  /**
+   * Number of events the caller has already accumulated for this
+   * dimension (e.g., from a prior peek). Subtracted from
+   * {@link TIER2_PER_DIMENSION_CAP} so the merged total never exceeds
+   * the per-dimension cap. Defaults to 0 — full walks start fresh.
+   */
+  alreadyFetched?: number;
 }
 
 export interface Tier2FetchResult {
@@ -94,6 +97,7 @@ export async function fetchTier2DimensionWithSession(
   return paginateTier2(filter, ctx.role, jwtCustomerIds, signal, {
     firstPageOnly: input.firstPageOnly === true,
     afterCursor: input.afterCursor ?? null,
+    alreadyFetched: Math.max(0, input.alreadyFetched ?? 0),
   });
 }
 
@@ -102,7 +106,11 @@ async function paginateTier2(
   role: string,
   jwtCustomerIds: number[] | undefined,
   signal: AbortSignal | undefined,
-  opts: { firstPageOnly: boolean; afterCursor: string | null },
+  opts: {
+    firstPageOnly: boolean;
+    afterCursor: string | null;
+    alreadyFetched: number;
+  },
 ): Promise<Tier2FetchResult> {
   const events: TriageEvent[] = [];
   let cursor: string | null = opts.afterCursor;
@@ -110,15 +118,28 @@ async function paginateTier2(
   let truncated = false;
   let hasMore = false;
   let endCursor: string | null = null;
+  // Per-dimension cap is shared between the peek and any continuation,
+  // so the budget for this call is the cap minus what the caller has
+  // already accumulated.
+  const budget = Math.max(0, TIER2_PER_DIMENSION_CAP - opts.alreadyFetched);
+  if (budget === 0) {
+    return {
+      events,
+      totalCount: null,
+      truncated: true,
+      hasMore: true,
+      endCursor: opts.afterCursor,
+    };
+  }
   // Bound the loop independently of `hasNextPage` so a misbehaving
   // backend cannot wedge the fetch in an infinite walk. Peek calls
-  // cap at one page; full walks at the per-dimension cap (50 pages
-  // plus one safety margin at 100/page).
+  // cap at one page; full walks at the budget plus one safety margin
+  // at 100/page.
   const maxPages = opts.firstPageOnly
     ? 1
-    : Math.ceil(TIER2_PER_DIMENSION_CAP / REVIEW_MAX_PAGE_SIZE) + 1;
+    : Math.ceil(budget / REVIEW_MAX_PAGE_SIZE) + 1;
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-    const remaining = TIER2_PER_DIMENSION_CAP - events.length;
+    const remaining = budget - events.length;
     if (remaining <= 0) break;
     const first = Math.min(REVIEW_MAX_PAGE_SIZE, remaining);
     const data: TriageEventListResult = await withReviewErrorMapping(
@@ -139,7 +160,7 @@ async function paginateTier2(
     }
     cursor = page.pageInfo.endCursor;
     endCursor = cursor;
-    if (events.length >= TIER2_PER_DIMENSION_CAP) {
+    if (events.length >= budget) {
       truncated = true;
       hasMore = true;
       break;

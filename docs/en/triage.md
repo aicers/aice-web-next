@@ -305,17 +305,27 @@ Toggling to **All detection events** does not issue any fetches by
 itself. Round-trips fire only when the operator clicks one of these
 dimensions:
 
-- `kinds`, `categories`, `levels`, `learningMethods`, `keywords`
-  (Tier 2 only — these don't appear in Tier 1 because the loaded
-  corpus has no extractor for them).
+- `kinds`, `categories`, `levels` (Tier 2 only — surfaced in a
+  separate "Tier 2 only" group that appears once the toggle is on).
+  `learningMethods` and `keywords` are also Tier 2-only filter
+  fields, but their values are not derivable from the loaded corpus,
+  so the panel does not yet surface a click affordance for them; a
+  follow-up will add a free-form filter chip.
 - `externalIp`, `internalIp`, `country`, `sameSensor` (the same row
   the operator sees in Tier 1, but the click action issues a fresh
   fetch instead of looking up the loaded index).
 
 Other dimensions — JA3, JA3S, SNI, host, URI pattern, certificate
 fields, user-agent — are intersected client-side against whatever is
-already loaded (the corpus plus any prior Tier 2 result), so they
-remain instant in both modes.
+already loaded (the corpus plus every prior Tier 2 result on the
+breadcrumb trail), so they remain instant in both modes.
+
+### Fetch progress
+
+Once a Tier 2 fetch fires, a non-blocking progress notice appears
+near the panel header naming the dimension and value being fetched.
+The notice clears when the fetch resolves (or surfaces as the error
+notice when the fetch fails).
 
 ### Per-dimension cap and pre-fetch confirmation
 

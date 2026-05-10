@@ -46,6 +46,7 @@ const LABELS: TriagePivotPanelLabels = {
     tls: "TLS",
     dns: "DNS",
     "time-structure": "Time/structure",
+    "tier2-only": "Tier 2 only",
   },
   dimensions: dimensionsMap("Dim"),
   timeColumn: "Time",

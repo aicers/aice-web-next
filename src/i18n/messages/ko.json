@@ -1958,7 +1958,8 @@
         "application": "애플리케이션",
         "tls": "TLS",
         "dns": "DNS",
-        "time-structure": "시간 / 구조"
+        "time-structure": "시간 / 구조",
+        "tier2-only": "Tier 2 전용"
       },
       "dimensions": {
         "externalIp": "외부 IP",
@@ -1978,7 +1979,10 @@
         "dnsAnswer": "DNS 응답",
         "sameKindWithin15Min": "동일 종류 ±15분",
         "sameSensor": "센서",
-        "clusterId": "클러스터 ID"
+        "clusterId": "클러스터 ID",
+        "kinds": "이벤트 종류",
+        "categories": "위협 카테고리",
+        "levels": "위협 레벨"
       }
     },
     "pivotBreadcrumb": {
@@ -2003,7 +2007,10 @@
         "dnsAnswer": "DNS 응답",
         "sameKindWithin15Min": "동일 종류 ±15분",
         "sameSensor": "센서",
-        "clusterId": "클러스터 ID"
+        "clusterId": "클러스터 ID",
+        "kinds": "이벤트 종류",
+        "categories": "위협 카테고리",
+        "levels": "위협 레벨"
       }
     },
     "periodChangeConfirm": {
@@ -2023,6 +2030,7 @@
       "weakBadge": "약신호",
       "weakBadgeHint": "Tier 2 조회로 발견되었으며 적재된 코퍼스에는 없습니다.",
       "fetchProgress": "관련 이벤트를 가져오는 중…",
+      "fetchProgressTemplate": "{dimension}: {value} 가져오는 중…",
       "fetchError": "관련 이벤트를 가져오지 못했습니다.",
       "evictionTemplate": "캐시 가득 참 — {dimension}: {value} 항목이 제거되었습니다. 다시 피벗하면 재조회합니다.",
       "evictionDismiss": "닫기",

@@ -47,7 +47,7 @@ export interface TriagePivotPanelLabels {
   /** Map of dimension id → human-readable label. */
   dimensions: Record<PivotDimensionId, string>;
   family: Record<
-    "network" | "application" | "tls" | "dns" | "time-structure",
+    "network" | "application" | "tls" | "dns" | "time-structure" | "tier2-only",
     string
   >;
   timeColumn: string;

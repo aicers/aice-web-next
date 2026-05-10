@@ -22,6 +22,14 @@ import type { ScoredTriageEvent, TriageEvent } from "./types";
 /** Default ceiling — 100 MB, per #453 acceptance. */
 export const TIER2_CACHE_BYTE_CAP = 100 * 1024 * 1024;
 
+/**
+ * Per-dimension fetch cap (#453 acceptance). A single dimension fetch
+ * walks at most this many events. The cap is held here (not next to
+ * the server-only fetch impl) so the client hook can enforce the same
+ * ceiling when continuing pagination after a peek.
+ */
+export const TIER2_PER_DIMENSION_CAP = 5_000;
+
 export interface Tier2CacheKey {
   periodStartIso: string;
   periodEndIso: string;

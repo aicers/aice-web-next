@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 import { stringNumberGreaterThan } from "./string-number";
 import {
+  TIER2_PER_DIMENSION_CAP,
   Tier2Cache,
   type Tier2EvictionEvent,
   tier2DedupeKey,
@@ -48,6 +49,11 @@ export interface Tier2FetchError {
   message: string;
 }
 
+export interface Tier2FetchInFlight {
+  dimension: Tier2Dimension;
+  valueKey: string;
+}
+
 export interface UseTier2Pivot {
   scope: "tier1" | "tier2";
   /** Get the cached Tier 2 result for a dimension click, if any. */
@@ -73,6 +79,8 @@ export interface UseTier2Pivot {
   errors: Tier2FetchError[];
   /** Dismiss a surfaced fetch error and clear its dimension state. */
   acknowledgeError: (dimension: Tier2Dimension, valueKey: string) => void;
+  /** Dimensions currently fetching — drives the progress indicator. */
+  inFlight: Tier2FetchInFlight[];
   /**
    * `true` when the event already exists in the Tier 1 corpus
    * (per the dedupe key) — used by row rendering to decide whether
@@ -125,17 +133,23 @@ export function useTier2Pivot(
 
   // Wire eviction listener exactly once. The cache lives across
   // renders; we keep the React state in sync with the cache events
-  // through this listener.
+  // through this listener. The listener also drops the corresponding
+  // in-memory state entry so re-pivoting after eviction triggers a
+  // refetch instead of returning the strongly-referenced events that
+  // the cache has already discarded — that would violate both the
+  // memory-cap invariant and the stated eviction behavior.
   useEffect(() => {
     const cache = cacheRef.current;
     if (!cache) return;
     cache.setEvictionListener((event) => {
+      stateMapRef.current.delete(`${event.dimensionId}|${event.valueKey}`);
       setEvictions((prev) => [...prev, event]);
+      bump();
     });
     return () => {
       cache.setEvictionListener(null);
     };
-  }, []);
+  }, [bump]);
 
   // Reset cached state when the period or customer scope rotates —
   // the cache key includes those fields, so stale entries become
@@ -235,20 +249,29 @@ export function useTier2Pivot(
       const key = stateKey(stash.dimension, stash.valueKey);
       try {
         // Resume from the peek's cursor so the first page (already in
-        // `stash.events`) is not refetched. The merged set is at most
-        // TIER2_PER_DIMENSION_CAP because the impl honours the same
-        // cap regardless of where pagination begins.
+        // `stash.events`) is not refetched. Pass `alreadyFetched` so
+        // the impl subtracts the peek rows from the per-dimension cap
+        // budget — without this the merge could exceed
+        // TIER2_PER_DIMENSION_CAP because the impl would otherwise
+        // start a fresh budget from the peek's cursor.
         const rest = await fetchTier2Dimension({
           periodStartIso: args.periodStartIso,
           periodEndIso: args.periodEndIso,
           dimension: stash.dimension,
           valueKey: stash.valueKey,
           afterCursor: stash.endCursor,
+          alreadyFetched: stash.events.length,
         });
+        const merged = [...stash.events, ...rest.events];
+        // Defensive slice — if a downstream change ever lets the
+        // server overshoot the budget (or alreadyFetched is wired
+        // wrong) the merge still respects the cap.
+        const capped = merged.slice(0, TIER2_PER_DIMENSION_CAP);
+        const truncated = rest.truncated || merged.length > capped.length;
         writeReady(stash.dimension, stash.valueKey, {
-          events: [...stash.events, ...rest.events],
+          events: capped,
           totalCount: stash.totalCount ?? rest.totalCount,
-          truncated: rest.truncated,
+          truncated,
         });
       } catch (err) {
         setError(key, err);
@@ -403,6 +426,21 @@ export function useTier2Pivot(
     return list;
   }, [renderTick]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: renderTick is the rebuild trigger
+  const inFlight = useMemo<Tier2FetchInFlight[]>(() => {
+    const list: Tier2FetchInFlight[] = [];
+    for (const [k, state] of stateMapRef.current.entries()) {
+      if (state.status !== "loading") continue;
+      const sep = k.indexOf("|");
+      if (sep <= 0) continue;
+      list.push({
+        dimension: k.slice(0, sep) as Tier2Dimension,
+        valueKey: k.slice(sep + 1),
+      });
+    }
+    return list;
+  }, [renderTick]);
+
   const isInTier1Corpus = useCallback(
     (event: TriageEvent) => tier1KeySet.has(tier2DedupeKey(event)),
     [tier1KeySet],
@@ -419,6 +457,7 @@ export function useTier2Pivot(
     acknowledgeEviction,
     errors,
     acknowledgeError,
+    inFlight,
     isInTier1Corpus,
   };
 }

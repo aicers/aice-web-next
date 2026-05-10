@@ -67,6 +67,10 @@ import {
   Tier2PrefetchModal,
   type Tier2PrefetchModalLabels,
 } from "./tier2-prefetch-modal";
+import {
+  Tier2ProgressNotice,
+  type Tier2ProgressNoticeLabels,
+} from "./tier2-progress-notice";
 
 export interface TriageBaselineLabels {
   funnel: TriageFunnelLabels;
@@ -77,6 +81,7 @@ export interface TriageBaselineLabels {
   tier2Modal: Tier2PrefetchModalLabels;
   tier2Eviction: Tier2EvictionNoticeLabels;
   tier2Error: Tier2ErrorNoticeLabels;
+  tier2Progress: Tier2ProgressNoticeLabels;
   staleHashFallback: string;
 }
 
@@ -180,32 +185,39 @@ export function TriageBaselineContent({
 
   const activeStep = trail.length > 0 ? trail[trail.length - 1] : null;
 
-  // When the active step is a Tier 2 server-filter dimension, splice
-  // any cached fetch results into the corpus so the pivot index sees
-  // the expanded set. The merge is a no-op in Tier 1 mode, on Tier 2
-  // dimensions without a cache hit, or when scoping is back at the
-  // asset root.
-  const activeStepTier2Events: ScoredTriageEvent[] = useMemo(() => {
-    if (scope !== "tier2" || !activeStep || activeStep.kind !== "dimension") {
-      return [];
-    }
-    if (!isTier2ServerDimension(activeStep.dimension)) return [];
-    const cached = tier2.getCached(activeStep.dimension, activeStep.value.key);
-    if (!cached || cached.events.length === 0) return [];
+  // In Tier 2 mode, splice every cached Tier 2 fetch result that
+  // appears anywhere on the trail into the corpus. Restricting the
+  // splice to the active step would lose Tier 2 events as soon as
+  // the operator pivots from a server-filtered dimension into a
+  // client-intersection one (#453 says client-intersection pivots
+  // should compute against the corpus *and* prior Tier 2 fetch
+  // results). The dedupe set keeps a single event from being
+  // counted twice when several trail steps share rows.
+  const expandedTier2Events: ScoredTriageEvent[] = useMemo(() => {
+    if (scope !== "tier2") return [];
     const corpusKeys = new Set<string>();
     for (const ev of result.events) corpusKeys.add(tier2DedupeKey(ev));
+    const seen = new Set<string>();
     const out: ScoredTriageEvent[] = [];
-    for (const ev of cached.events) {
-      if (corpusKeys.has(tier2DedupeKey(ev))) continue;
-      out.push({ ...ev, score: baselineScore(ev) });
+    for (const step of trail) {
+      if (step.kind !== "dimension") continue;
+      if (!isTier2ServerDimension(step.dimension)) continue;
+      const cached = tier2.getCached(step.dimension, step.value.key);
+      if (!cached || cached.events.length === 0) continue;
+      for (const ev of cached.events) {
+        const key = tier2DedupeKey(ev);
+        if (corpusKeys.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        out.push({ ...ev, score: baselineScore(ev) });
+      }
     }
     return out;
-  }, [scope, activeStep, tier2, result.events]);
+  }, [scope, trail, tier2, result.events]);
 
   const expandedEvents: readonly ScoredTriageEvent[] = useMemo(() => {
-    if (activeStepTier2Events.length === 0) return result.events;
-    return [...result.events, ...activeStepTier2Events];
-  }, [result.events, activeStepTier2Events]);
+    if (expandedTier2Events.length === 0) return result.events;
+    return [...result.events, ...expandedTier2Events];
+  }, [result.events, expandedTier2Events]);
 
   const pivotIndex = useMemo(
     () => pivotIndexFor(expandedEvents),
@@ -254,14 +266,34 @@ export function TriageBaselineContent({
     [pivotIndex, focusEvents],
   );
 
-  // In Tier 2 mode the `sameSensor` row is hidden until a `triage:read`
-  // -compatible sensor name→ID lookup ships (#453). The Tier 1 click
-  // action would still be valid, but mixing the two would mislead
-  // operators about what the row's pivot button will do. The panel
-  // surfaces a disabled placeholder with the "requires sensor index"
-  // tooltip so the operator can tell the row is intentionally absent.
+  // Tier-2-only dimensions (`kinds`, `categories`, `levels`) are
+  // hidden in Tier 1 mode — their click action is a Tier 2 fetch and
+  // surfacing them under Tier 1 would let the operator click a row
+  // that goes nowhere. They reappear under the "Tier 2 only" group
+  // when the toggle is on. In Tier 2 mode the `sameSensor` row is
+  // hidden until a `triage:read`-compatible sensor name→ID lookup
+  // ships (#453); the panel surfaces a disabled placeholder with the
+  // "requires sensor index" tooltip so the operator can see that the
+  // row is intentionally absent.
   const sections = useMemo(() => {
-    if (scope !== "tier2") return allSections;
+    const dimById = new Map<string, ReturnType<typeof getPivotDimension>>();
+    const isTier2Only = (dim: string): boolean => {
+      let known = dimById.get(dim);
+      if (!known) {
+        try {
+          known = getPivotDimension(
+            dim as Parameters<typeof getPivotDimension>[0],
+          );
+          dimById.set(dim, known);
+        } catch {
+          return false;
+        }
+      }
+      return known.tier2Only === true;
+    };
+    if (scope !== "tier2") {
+      return allSections.filter((s) => !isTier2Only(s.dimension));
+    }
     return allSections.filter((s) => s.dimension !== "sameSensor");
   }, [allSections, scope]);
   const sensorDeferredInTier2 = useMemo(() => {
@@ -327,23 +359,34 @@ export function TriageBaselineContent({
       { kind: "asset", address: restoredAsset },
     ];
     let stale = false;
+    // Tier 2-only server dimensions are not derivable from the Tier 1
+    // corpus, so a hash carrying them cannot be label-resolved here.
+    // Treat them as restorable with the raw valueKey as the display
+    // label — the confirmed click on Tier 2 refetches anyway. Tier 1
+    // / Tier 1-overlapping dimensions must show at least one event in
+    // the corpus, otherwise the hash is stale and the breadcrumb
+    // falls back to the asset root with a toast.
     for (const step of parsed.steps) {
-      let label = step.valueKey;
+      let dim: ReturnType<typeof getPivotDimension>;
       try {
-        // Walk the corpus once for the dimension's events sharing
-        // this valueKey so the breadcrumb's display label matches
-        // what the panel would show today. Falls back to the raw
-        // valueKey when the dimension's value isn't reachable.
-        const dim = getPivotDimension(step.dimension);
-        for (const ev of result.events) {
-          const values = dim.extract(ev);
-          const hit = values.find((v) => v.key === step.valueKey);
-          if (hit) {
-            label = hit.label;
-            break;
-          }
-        }
+        dim = getPivotDimension(step.dimension);
       } catch {
+        stale = true;
+        break;
+      }
+      const isTier2Only = dim.tier2Only === true;
+      let label = step.valueKey;
+      let found = false;
+      for (const ev of result.events) {
+        const values = dim.extract(ev);
+        const hit = values.find((v) => v.key === step.valueKey);
+        if (hit) {
+          label = hit.label;
+          found = true;
+          break;
+        }
+      }
+      if (!found && !isTier2Only) {
         stale = true;
         break;
       }
@@ -390,6 +433,10 @@ export function TriageBaselineContent({
         evictions={tier2.evictions}
         onDismiss={tier2.acknowledgeEviction}
         labels={labels.tier2Eviction}
+      />
+      <Tier2ProgressNotice
+        inFlight={tier2.inFlight}
+        labels={labels.tier2Progress}
       />
       <Tier2ErrorNotice
         errors={tier2.errors}
