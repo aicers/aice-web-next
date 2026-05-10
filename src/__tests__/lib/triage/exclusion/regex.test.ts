@@ -42,6 +42,16 @@ describe("validateDomainPattern — Rust ∩ JS intersection grammar", () => {
     ["foo\\bbar", /Shorthand \\b is rejected/],
     ["foo\\Bbar", /Shorthand \\B is rejected/],
     ["(?:trk|ads)\\d{1,3}", /Shorthand \\d is rejected/],
+    // Rust class-set operators silently reinterpret the same source in
+    // JavaScript: `[a&&b]` matches `a`, `&`, or `b` in JS but nothing in
+    // Rust; `[a-z--m]` matches the full a-z plus literal `-` in JS but
+    // a-z minus `m` in Rust; `[[a-z]&&[^aeiou]]` is a Rust nested set op
+    // that JS without the `v` flag refuses to parse altogether. All
+    // three diverge stored Domain matching between Stage 1 and cadence.
+    ["[a&&b]", /Class-set operator && is rejected/],
+    ["[a-z--m]", /Class-set operator -- is rejected/],
+    ["[a~~b]", /Class-set operator ~~ is rejected/],
+    ["[[a-z]&&[^aeiou]]", /Nested character class/],
   ])("rejects %s", (pattern, expected) => {
     const result = validateDomainPattern(pattern);
     expect(result.ok).toBe(false);

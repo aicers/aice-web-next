@@ -28,6 +28,16 @@
  * the parser surface this issue is supposed to make shared.
  *
  * The parser:
+ *   - flattens multi-field exclusion objects into one
+ *     {@link ExclusionRule} per populated field, mirroring the resolver
+ *     contract documented in the SDL ("when more than one field is
+ *     populated the object is flattened into independent
+ *     `TriageExclusion` values"). A grouped `{ hostname, uri }` input
+ *     and an equivalent split `[{ hostname }, { uri }]` input therefore
+ *     produce the same active set and the same
+ *     {@link computeExclusionsFingerprint} digest — which matters once
+ *     #457 wires real storage and the same set can arrive grouped or
+ *     split through different code paths;
  *   - rejects an exclusion object with no populated field (the resolver
  *     does the same — keeps the empty rule from silently filtering
  *     nothing while still producing fingerprint churn);
@@ -71,9 +81,11 @@ export class ExclusionInputParseError extends Error {
 }
 
 /**
- * Parse a single `EventTriageExclusionInput`. Returns an
- * {@link ExclusionRule} with at least one populated field, or throws
- * {@link ExclusionInputParseError} for any of:
+ * Parse a single `EventTriageExclusionInput`. Returns one or more
+ * {@link ExclusionRule}s — one per populated field — so a grouped input
+ * like `{ hostname: [...], uri: [...] }` flattens to two independent
+ * single-field rules, matching the resolver contract documented in the
+ * SDL. Throws {@link ExclusionInputParseError} for any of:
  *
  *   - empty / all-null input (the resolver requires at least one field
  *     populated; an empty rule is meaningless and would only churn the
@@ -85,11 +97,13 @@ export class ExclusionInputParseError extends Error {
 export function parseExclusionInput(
   input: EventTriageExclusionInputShape,
   index = -1,
-): ExclusionRule {
-  const rule: ExclusionRule = {};
+): ExclusionRule[] {
+  const rules: ExclusionRule[] = [];
 
   if (input.ipAddress !== null && input.ipAddress !== undefined) {
-    rule.ipAddress = parseHostNetworkGroup(input.ipAddress, index);
+    rules.push({
+      ipAddress: parseHostNetworkGroup(input.ipAddress, index),
+    });
   }
 
   if (input.domain !== null && input.domain !== undefined) {
@@ -113,7 +127,7 @@ export function parseExclusionInput(
       }
       domain.push(pattern);
     }
-    if (domain.length > 0) rule.domain = domain;
+    if (domain.length > 0) rules.push({ domain });
   }
 
   if (input.hostname !== null && input.hostname !== undefined) {
@@ -124,7 +138,7 @@ export function parseExclusionInput(
       );
     }
     const hostname = input.hostname.filter((s) => s.length > 0);
-    if (hostname.length > 0) rule.hostname = hostname;
+    if (hostname.length > 0) rules.push({ hostname });
   }
 
   if (input.uri !== null && input.uri !== undefined) {
@@ -135,15 +149,10 @@ export function parseExclusionInput(
       );
     }
     const uri = input.uri.filter((s) => s.length > 0);
-    if (uri.length > 0) rule.uri = uri;
+    if (uri.length > 0) rules.push({ uri });
   }
 
-  if (
-    rule.ipAddress === undefined &&
-    rule.domain === undefined &&
-    rule.hostname === undefined &&
-    rule.uri === undefined
-  ) {
+  if (rules.length === 0) {
     throw new ExclusionInputParseError(
       formatError(
         index,
@@ -153,7 +162,7 @@ export function parseExclusionInput(
     );
   }
 
-  return rule;
+  return rules;
 }
 
 /**
@@ -175,7 +184,9 @@ export function parseExclusionInputs(
   }
   const rules: ExclusionRule[] = [];
   for (let i = 0; i < inputs.length; i += 1) {
-    rules.push(parseExclusionInput(inputs[i], i));
+    for (const rule of parseExclusionInput(inputs[i], i)) {
+      rules.push(rule);
+    }
   }
   return rules;
 }

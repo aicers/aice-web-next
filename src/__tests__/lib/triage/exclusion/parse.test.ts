@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  computeExclusionsFingerprint,
   ExclusionInputParseError,
   parseExclusionInput,
   parseExclusionInputs,
@@ -8,38 +9,54 @@ import {
 
 describe("parseExclusionInput — single EventTriageExclusionInput", () => {
   it("parses a populated ipAddress with hosts / networks / ranges", () => {
-    const rule = parseExclusionInput({
+    const rules = parseExclusionInput({
       ipAddress: {
         hosts: ["10.0.0.1"],
         networks: ["10.0.0.0/24"],
         ranges: [{ start: "10.1.0.0", end: "10.1.0.255" }],
       },
     });
-    expect(rule.ipAddress).toEqual({
+    expect(rules).toHaveLength(1);
+    expect(rules[0].ipAddress).toEqual({
       hosts: ["10.0.0.1"],
       networks: ["10.0.0.0/24"],
       ranges: [{ start: "10.1.0.0", end: "10.1.0.255" }],
     });
   });
 
-  it("parses domain / hostname / uri lists", () => {
-    const rule = parseExclusionInput({
+  it("flattens multi-field input into one rule per populated field", () => {
+    const rules = parseExclusionInput({
       domain: ["ads\\.example\\.com"],
       hostname: ["safe.example.com"],
       uri: ["/health"],
     });
-    expect(rule.domain).toEqual(["ads\\.example\\.com"]);
-    expect(rule.hostname).toEqual(["safe.example.com"]);
-    expect(rule.uri).toEqual(["/health"]);
+    expect(rules).toHaveLength(3);
+    const domainRule = rules.find((r) => r.domain !== undefined);
+    const hostnameRule = rules.find((r) => r.hostname !== undefined);
+    const uriRule = rules.find((r) => r.uri !== undefined);
+    expect(domainRule?.domain).toEqual(["ads\\.example\\.com"]);
+    expect(hostnameRule?.hostname).toEqual(["safe.example.com"]);
+    expect(uriRule?.uri).toEqual(["/health"]);
+    // Each flattened rule is single-field — none carries a sibling.
+    for (const rule of rules) {
+      const populated = [
+        rule.ipAddress,
+        rule.domain,
+        rule.hostname,
+        rule.uri,
+      ].filter((x) => x !== undefined);
+      expect(populated).toHaveLength(1);
+    }
   });
 
   it("drops empty strings from hostname / uri lists", () => {
-    const rule = parseExclusionInput({
+    const rules = parseExclusionInput({
       hostname: ["a.example.com", ""],
       uri: ["", "/path"],
     });
-    expect(rule.hostname).toEqual(["a.example.com"]);
-    expect(rule.uri).toEqual(["/path"]);
+    expect(rules).toHaveLength(2);
+    expect(rules.find((r) => r.hostname)?.hostname).toEqual(["a.example.com"]);
+    expect(rules.find((r) => r.uri)?.uri).toEqual(["/path"]);
   });
 
   it("rejects an empty exclusion (no populated field)", () => {
@@ -97,5 +114,18 @@ describe("parseExclusionInputs — list", () => {
     expect(rules).toHaveLength(2);
     expect(rules[0].hostname).toEqual(["a.example"]);
     expect(rules[1].uri).toEqual(["/health"]);
+  });
+
+  it("grouped and split inputs produce the same fingerprint after parsing", () => {
+    const grouped = parseExclusionInputs([
+      { hostname: ["a.example"], uri: ["/health"] },
+    ]);
+    const split = parseExclusionInputs([
+      { hostname: ["a.example"] },
+      { uri: ["/health"] },
+    ]);
+    expect(computeExclusionsFingerprint(grouped)).toBe(
+      computeExclusionsFingerprint(split),
+    );
   });
 });

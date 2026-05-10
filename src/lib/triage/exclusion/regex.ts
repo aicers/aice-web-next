@@ -46,6 +46,19 @@
  *     engines on the same stored row. Force authors to spell the
  *     intent with explicit ASCII character classes (e.g. `[0-9]`,
  *     `[A-Za-z0-9_]`, `[ \t\r\n]`) so both engines agree.
+ *   - character-class set operators `&&` (intersection), `--`
+ *     (difference), `~~` (symmetric difference) and nested `[…]`
+ *     classes. Rust's `regex` crate parses `[a&&b]` as a class
+ *     intersection that matches nothing, while JavaScript's `RegExp`
+ *     (without the `v` flag, which the matcher does not enable) parses
+ *     `&` as a literal class member and matches `a`, `&`, or `b`. The
+ *     same divergence applies to `[a--b]` (Rust difference vs JS literal
+ *     `-`s) and to nested classes like `[[a-z]&&[^aeiou]]`. Allowing
+ *     any of these would let a stored Domain pattern match in cadence-
+ *     side JS but not in review-web Stage 1 (or vice-versa) — exactly
+ *     the divergence option (A) is supposed to prevent. Authors should
+ *     spell out the literal class with `\-` / `\&` / `\~` if they need
+ *     those characters as members.
  *
  * Both engines must produce the same matches against `host` /
  * `dns_query` strings; otherwise cadence-time matching diverges from
@@ -162,6 +175,77 @@ function findDivergentShorthand(
   return null;
 }
 
+/**
+ * Walk the pattern looking for character-class set operators that Rust's
+ * `regex` crate honours but JavaScript's `RegExp` (without the `v` flag)
+ * silently treats as literals.
+ *
+ * Inside a `[...]` character class:
+ *   - `&&` is class intersection in Rust (`[a&&b]` matches nothing) but
+ *     a literal `&` repeated twice in JS (`[a&&b]` matches `a`, `&`, or
+ *     `b`).
+ *   - `--` is class difference in Rust (`[a-z--[aeiou]]` excludes the
+ *     vowels) but a literal `-` in JS at most positions, or part of a
+ *     range otherwise.
+ *   - `~~` is class symmetric difference in Rust but literal `~` in JS.
+ *   - A nested `[…]` is the operand syntax for those operators in Rust,
+ *     and a JS `RegExp` without the `v` flag rejects an unescaped inner
+ *     `[`. Even if a pattern would fail to compile in JS, rejecting it
+ *     here gives a precise reason rather than a generic SyntaxError.
+ *
+ * Backslash-escaped characters (`\&`, `\-`, `\~`, `\[`) are skipped — an
+ * author who wants those as literal class members spells them with the
+ * escape and both engines agree.
+ */
+function findClassSetOperator(
+  pattern: string,
+): { token: string; index: number } | null {
+  let i = 0;
+  while (i < pattern.length) {
+    const ch = pattern[i];
+    if (ch === "\\") {
+      // Skip the escape sequence (one char of escape + the escaped
+      // char). If the backslash is the final character, stop.
+      i += 2;
+      continue;
+    }
+    if (ch !== "[") {
+      i += 1;
+      continue;
+    }
+    // Enter a character class.
+    let j = i + 1;
+    if (pattern[j] === "^") j += 1;
+    while (j < pattern.length && pattern[j] !== "]") {
+      const cur = pattern[j];
+      if (cur === "\\") {
+        j += 2;
+        continue;
+      }
+      if (cur === "[") {
+        return { token: "[…]", index: j };
+      }
+      if (j + 1 < pattern.length) {
+        const pair = pattern.slice(j, j + 2);
+        if (pair === "&&" || pair === "--" || pair === "~~") {
+          return { token: pair, index: j };
+        }
+      }
+      j += 1;
+    }
+    i = j + 1;
+  }
+  return null;
+}
+
+const CLASS_SET_REJECTION_REASON: Record<string, string> = {
+  "&&": "Class-set operator && is rejected — Rust treats it as character-class intersection, JS as two literal & characters. Spell the literal members explicitly (e.g. [a\\&b]).",
+  "--": "Class-set operator -- is rejected — Rust treats it as character-class difference, JS as literal - characters. Spell the literal members explicitly (e.g. [a\\-b]).",
+  "~~": "Class-set operator ~~ is rejected — Rust treats it as character-class symmetric difference, JS as two literal ~ characters. Spell the literal members explicitly.",
+  "[…]":
+    "Nested character class [...] is rejected — Rust treats it as the operand syntax for class-set operators, JS (without the v flag) does not support nested classes at all.",
+};
+
 const SHORTHAND_REJECTION_REASON: Record<string, string> = {
   "\\d":
     "Shorthand \\d is rejected — Rust matches Unicode digits, JS only ASCII. Use [0-9] instead.",
@@ -203,6 +287,13 @@ export function validateDomainPattern(
     const reason =
       SHORTHAND_REJECTION_REASON[shorthand.token] ??
       `Shorthand ${shorthand.token} is rejected — Rust and JS regex semantics diverge on this construct.`;
+    return { ok: false, reason };
+  }
+  const classSet = findClassSetOperator(pattern);
+  if (classSet !== null) {
+    const reason =
+      CLASS_SET_REJECTION_REASON[classSet.token] ??
+      `Class-set operator ${classSet.token} is rejected — Rust and JS regex semantics diverge on this construct.`;
     return { ok: false, reason };
   }
   // Final pass: the pattern must compile under JS too. This catches
