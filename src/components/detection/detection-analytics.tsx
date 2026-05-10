@@ -300,10 +300,12 @@ export function DetectionAnalytics({
       // surfacing the cached payload so a session whose
       // `token_version` was bumped by a customer-assignment change
       // encounters 401 and is forced through sign-in instead of
-      // painting stale rows. The probe is debounced + in-flight de-
-      // duped, so multiple cache hits within the same window land on
-      // a single request. On 401 we drop the cached entry so a
-      // surviving render after the redirect cannot resurface it.
+      // painting stale rows. The probe's in-flight de-dup collapses
+      // concurrent callers onto one request; serially-spaced cache
+      // hits each issue their own probe, so a scope change after a
+      // successful probe is not masked (Reviewer Round 2 follow-up).
+      // On 401 we drop the cached entry so a surviving render after
+      // the redirect cannot resurface it.
       //
       // Reviewer Round 1 follow-up: switch the local `status` to
       // `loading` *before* the probe resolves. The previous version

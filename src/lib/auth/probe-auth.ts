@@ -28,18 +28,20 @@
  *       sign-in and every mounted client cache is torn down on the
  *       hard navigation.
  *
- * A short debounce avoids multiplying the request rate when several
- * cache surfaces hit the same fingerprint within milliseconds (e.g.
- * the Detection drawer's sensor + customer fetches firing together).
+ * Concurrent callers hitting the same fingerprint share the same
+ * in-flight request via the `inFlight` de-dup, so several cache
+ * surfaces firing together (e.g. the Detection drawer's sensor +
+ * customer fetches) still produce only one `/api/auth/me` round trip.
+ * There is intentionally no post-success debounce: an admin can bump
+ * `token_version` between two cache hits, and a window where probes
+ * are skipped would let stale rows paint for the duration of that
+ * window. Each fresh cache hit must issue its own probe.
  */
 
 import { useCallback } from "react";
 
 export type ProbeResult = "ok" | "unauthorized" | "error";
 
-const DEBOUNCE_MS = 5_000;
-
-let lastOkAt = 0;
 let inFlight: Promise<ProbeResult> | null = null;
 let redirectStarted = false;
 
@@ -52,10 +54,7 @@ async function performProbe(): Promise<ProbeResult> {
       headers: { Accept: "application/json" },
     });
     if (res.status === 401) return "unauthorized";
-    if (res.ok) {
-      lastOkAt = Date.now();
-      return "ok";
-    }
+    if (res.ok) return "ok";
     return "error";
   } catch {
     return "error";
@@ -63,14 +62,13 @@ async function performProbe(): Promise<ProbeResult> {
 }
 
 /**
- * Run the cheap auth probe. Honours the in-flight de-dup and the short
- * post-success debounce so rapid cache hits do not multiply the request
- * rate. A network error reports `"error"` (the caller decides whether
- * to fall through to the cache or treat as a soft failure); only a
- * confirmed 401 reports `"unauthorized"`.
+ * Run the cheap auth probe. Concurrent callers share the same
+ * in-flight request via the `inFlight` de-dup. A network error reports
+ * `"error"` (the caller decides whether to fall through to the cache
+ * or treat as a soft failure); only a confirmed 401 reports
+ * `"unauthorized"`.
  */
 export async function probeAuth(): Promise<ProbeResult> {
-  if (Date.now() - lastOkAt < DEBOUNCE_MS) return "ok";
   if (inFlight) return inFlight;
   inFlight = performProbe().finally(() => {
     inFlight = null;
@@ -127,7 +125,6 @@ export function useAuthProbeOnCacheHit() {
 
 /** Test-only reset for the module-level probe state. */
 export function __resetProbeAuthForTests(): void {
-  lastOkAt = 0;
   inFlight = null;
   redirectStarted = false;
 }

@@ -1452,10 +1452,10 @@ export function DetectionShell({
   // flip this flag synchronously when reopening on a `loaded` cache;
   // the render path below treats the cache as `loading` (no
   // `sensorOptions`) until `probeAuthOrRedirect` resolves, so a
-  // `token_version` mismatch never paints stale sensor names. The
-  // probe's debounce + in-flight de-dup keeps the verifying flicker
-  // tight when the operator re-opens within seconds of the last
-  // confirmed probe.
+  // `token_version` mismatch never paints stale sensor names. Each
+  // reopen issues its own probe — there is no post-success debounce,
+  // so an admin-side scope change between two reopens cannot be
+  // masked (Reviewer Round 2 follow-up).
   const [sensorCacheVerifying, setSensorCacheVerifying] = useState(false);
   // Target field for the drawer to focus after opening. `focusToken`
   // increments on each openDrawerFocused call so repeated clicks on

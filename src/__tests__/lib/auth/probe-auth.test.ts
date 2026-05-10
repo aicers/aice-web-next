@@ -75,16 +75,23 @@ describe("probeAuth", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("debounces follow-up calls within the post-success window", async () => {
+  it("issues a fresh probe on each non-concurrent cache hit so a token_version bump after a successful probe is not masked", async () => {
+    // Simulate: successful probe → admin bumps token_version → next
+    // cache hit must catch the 401 instead of being suppressed by a
+    // post-success debounce window. The in-flight de-dup only collapses
+    // *concurrent* callers; serially-spaced calls each issue a fetch.
     const fetchSpy = vi
       .fn()
-      .mockResolvedValue(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 401 }));
     vi.stubGlobal("fetch", fetchSpy);
-    await probeAuth();
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    // Second call within debounce window — no fetch
     expect(await probeAuth()).toBe("ok");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // Advance time past what used to be a 5s debounce window — proves
+    // the regression isn't just "wait longer than the old debounce".
+    vi.advanceTimersByTime(50);
+    expect(await probeAuth()).toBe("unauthorized");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
 

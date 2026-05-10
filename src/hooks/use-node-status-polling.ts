@@ -599,9 +599,9 @@ export function useNodeStatusPolling(
       // `visibilitychange` does not surface — refocusing an already-
       // visible tab from another window, OS-level alt-tabs that the
       // browser does not classify as visibility transitions. The
-      // probe is debounced + in-flight de-duped, so a focus event
-      // immediately following a visibilitychange resume does not
-      // multiply the request rate (#393 Task E).
+      // probe's in-flight de-dup collapses concurrent callers, so a
+      // focus event immediately following a visibilitychange resume
+      // does not multiply the request rate (#393 Task E).
       focusHandler = () => {
         void probeAuthOrRedirect(() => {
           resetStoreForUnmount();
