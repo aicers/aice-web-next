@@ -350,6 +350,14 @@ until the operator approves it:
 > **Fetch large result set?** This dimension projects to N events,
 > above the 20,000 threshold. The fetch may take a while.
 
+When `totalCount` is unavailable for the filter but the cursor
+walk's first page filled, the modal labels the projection as
+approximate and shows the lower bound from that first page:
+
+> **Fetch large result set?** Projected size is approximate — at
+> least N events (above the 20,000 threshold). The fetch may take a
+> while.
+
 Cancelling the modal aborts the fetch; the operator can pick a
 different dimension or narrow the period.
 
@@ -364,6 +372,12 @@ least-recently-used dimension result (whole result set, not
 individual events) and shows a non-blocking notice naming the
 evicted dimension. Re-pivoting on the evicted dimension refetches
 from REview.
+
+If a single dimension result is itself larger than the 100 MB cap,
+the cache rejects the candidate up front without disturbing other
+in-budget entries — the operator sees the same non-blocking notice
+naming the rejected dimension, and re-pivoting that dimension
+refetches.
 
 The customer scope is part of the cache key so a Tier 2 result for
 one customer is never reused after the operator switches to a
@@ -396,7 +410,11 @@ sensor lookup that resolves names to IDs is currently gated on
 Until a `triage:read`-compatible lookup ships, Tier 2 sensor pivot
 is unavailable; the panel hides the row with a "requires sensor
 index" tooltip in Tier 2 mode. The Tier 1 sensor pivot is
-unaffected.
+unaffected. A shared URL with a `sameSensor` step under
+`mode=tier2` is treated as a stale step on restore (the page falls
+back to the asset root with a non-blocking notice) so the Tier 1
+sensor name is never sent as a literal `sensors: [ID!]` value to
+REview.
 
 ### URL hash persistence
 

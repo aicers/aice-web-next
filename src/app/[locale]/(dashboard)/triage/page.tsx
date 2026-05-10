@@ -182,6 +182,9 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         descriptionTemplate: t.raw(
           "tier2.prefetchModal.descriptionTemplate",
         ) as string,
+        descriptionApproximateTemplate: t.raw(
+          "tier2.prefetchModal.descriptionApproximateTemplate",
+        ) as string,
         descriptionUnknown: t("tier2.prefetchModal.descriptionUnknown"),
         confirm: t("tier2.prefetchModal.confirm"),
         cancel: t("tier2.prefetchModal.cancel"),

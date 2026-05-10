@@ -56,6 +56,20 @@ export function isTier2ServerDimension(
   return TIER2_SERVER_DIMENSIONS.has(id as Tier2Dimension);
 }
 
+// `sameSensor` is intentionally absent: the Tier 2 sensor pivot is
+// gated on a `triage:read`-compatible sensor name → ID lookup that
+// does not exist in Phase 1 (#453). The panel hides the row in Tier 2
+// mode, but URL-hash restore previously could resurrect a sensor pivot
+// step from a shared link and queue a Tier 2 fetch that would send the
+// sensor name as a literal `sensors: [ID!]` value — REview rejects
+// that with a typing error. Excluding `sameSensor` from the active
+// server-fetch set short-circuits both the panel click action and the
+// hash-restore queue path; in Tier 2 mode hash restore now treats a
+// `sameSensor` step as a client-intersection dim, which falls back to
+// the asset root when the value is not in the loaded corpus. The
+// `sameSensor` arm in {@link buildTier2Filter} is preserved so the
+// switch stays exhaustive over the {@link Tier2Dimension} union; it
+// is unreachable from production paths until the lookup ships.
 const TIER2_SERVER_DIMENSIONS: ReadonlySet<Tier2Dimension> = new Set([
   "kinds",
   "categories",
@@ -65,7 +79,6 @@ const TIER2_SERVER_DIMENSIONS: ReadonlySet<Tier2Dimension> = new Set([
   "externalIp",
   "internalIp",
   "country",
-  "sameSensor",
 ] as const satisfies readonly Tier2Dimension[]);
 
 interface BuildTier2FilterArgs {

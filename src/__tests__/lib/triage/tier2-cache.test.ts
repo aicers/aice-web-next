@@ -128,20 +128,30 @@ describe("Tier2Cache", () => {
     expect(listener.mock.calls[0][0].valueKey).toBe("EVICTED");
   });
 
-  it("rejects a single oversized insert and emits an eviction event for it", () => {
+  it("rejects a single oversized insert without disturbing in-budget entries", () => {
     // The 100 MB cap is a hard ceiling per #453. A single result that
     // alone exceeds the cap must be dropped (not silently retained at
-    // the cost of the invariant). The eviction event lets the UI
-    // surface a refetch toast for the rejected dimension, and `set`
-    // returns `false` so the caller knows not to keep the events in
-    // any sibling in-memory layer.
-    const cache = new Tier2Cache(10);
+    // the cost of the invariant), AND it must be dropped without
+    // walking the LRU loop — otherwise one uncachable >100 MB result
+    // would flush every cached, in-budget entry on its way to being
+    // rejected, turning useful cached pivots into refetches the
+    // operator did not ask for. The rejection happens up front; the
+    // eviction event lets the UI surface a refetch toast for the
+    // rejected dimension, and `set` returns `false` so the caller
+    // knows not to keep the events in any sibling in-memory layer.
+    // Cap is sized to fit one normal entry comfortably but reject a
+    // 100-event oversized one. The single-entry size is computed from
+    // a real event so the test is independent of incidental JSON
+    // padding.
+    const single = JSON.stringify([makeEvent(0)]).length;
+    const cache = new Tier2Cache(single * 2);
     const listener = vi.fn();
     cache.setEvictionListener(listener);
     cache.set(
       { ...KEY_BASE, dimensionId: "country", valueKey: "A" },
       { events: [makeEvent(0)], totalCount: "1" },
     );
+    const sizeAfterA = cache.byteSize();
     const big = Array.from({ length: 100 }, (_, i) => makeEvent(i));
     const accepted = cache.set(
       { ...KEY_BASE, dimensionId: "country", valueKey: "BIG" },
@@ -151,20 +161,52 @@ describe("Tier2Cache", () => {
     expect(
       cache.get({ ...KEY_BASE, dimensionId: "country", valueKey: "BIG" }),
     ).toBeNull();
-    // Older entries were still evicted by the LRU walk — that part of
-    // the loop runs before the protected-entry rejection check fires.
+    // "A" was already in cache and within budget — the oversized
+    // candidate must NOT trigger an LRU walk that evicts unrelated
+    // entries. This is the regression from Round 7.
     expect(
       cache.get({ ...KEY_BASE, dimensionId: "country", valueKey: "A" }),
+    ).not.toBeNull();
+    expect(cache.byteSize()).toBe(sizeAfterA);
+    // Listener fired once for "BIG" (oversize rejection); no spurious
+    // eviction event for "A" because it was preserved.
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0][0].valueKey).toBe("BIG");
+  });
+
+  it("rejects an oversized overwrite and removes the prior entry at that key", () => {
+    // When the oversized candidate overwrites an existing key, the
+    // prior entry is removed (the caller asked for a replacement) and
+    // an eviction event surfaces so the UI shows the refetch toast.
+    // Other unrelated keys are preserved.
+    const single = JSON.stringify([makeEvent(0)]).length;
+    const cache = new Tier2Cache(single * 4);
+    const listener = vi.fn();
+    cache.setEvictionListener(listener);
+    cache.set(
+      { ...KEY_BASE, dimensionId: "country", valueKey: "OTHER" },
+      { events: [makeEvent(0)], totalCount: "1" },
+    );
+    cache.set(
+      { ...KEY_BASE, dimensionId: "country", valueKey: "OVERWRITE" },
+      { events: [makeEvent(1)], totalCount: "1" },
+    );
+    const big = Array.from({ length: 100 }, (_, i) => makeEvent(i));
+    const accepted = cache.set(
+      { ...KEY_BASE, dimensionId: "country", valueKey: "OVERWRITE" },
+      { events: big, totalCount: "100" },
+    );
+    expect(accepted).toBe(false);
+    expect(
+      cache.get({ ...KEY_BASE, dimensionId: "country", valueKey: "OVERWRITE" }),
     ).toBeNull();
-    // Listener fired once for "A" (LRU drop) and once for "BIG"
-    // (oversize rejection); the rejection toast lets the operator know
-    // the just-fetched result is not cached and re-pivoting refetches.
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(listener.mock.calls.map((c) => c[0].valueKey).sort()).toEqual([
-      "A",
-      "BIG",
-    ]);
-    expect(cache.byteSize()).toBe(0);
+    expect(
+      cache.get({ ...KEY_BASE, dimensionId: "country", valueKey: "OTHER" }),
+    ).not.toBeNull();
+    // Listener fires once for the rejected overwrite; "OTHER" was not
+    // touched.
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0][0].valueKey).toBe("OVERWRITE");
   });
 
   it("returns true when an in-budget insert is retained", () => {

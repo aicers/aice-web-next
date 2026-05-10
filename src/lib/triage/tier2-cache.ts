@@ -126,6 +126,33 @@ export class Tier2Cache {
    */
   set(key: Tier2CacheKey, value: Omit<Tier2CacheEntry, "byteSize">): boolean {
     const cacheKey = encodeTier2CacheKey(key);
+    const byteSize = tier2EntryByteSize(value.events);
+    // Reject candidates that overflow the cap on their own *before*
+    // touching any existing entries. Otherwise a single >100 MB result
+    // would walk the LRU loop, evict every other entry to try to fit,
+    // and only then discover the candidate is uncachable — destroying
+    // unrelated cached dimensions that were already within budget. The
+    // cap is a hard ceiling per #453, but it is also "do not displace
+    // cached, in-budget results to make room for an uncachable one".
+    // Existing overwrites are refreshed below; the rejection only
+    // applies when the candidate alone busts the budget.
+    if (byteSize > this.byteCap) {
+      const existing = this.entries.get(cacheKey);
+      if (existing) {
+        // The stored entry is being overwritten by an oversized
+        // candidate; remove it (and refund the bytes) since the caller
+        // expects the prior result to be replaced. Surface a normal
+        // eviction event so the operator sees the same refetch toast.
+        this.byteUsage -= existing.byteSize;
+        this.entries.delete(cacheKey);
+      }
+      this.listener?.({
+        cacheKey,
+        dimensionId: extractDimensionId(cacheKey),
+        valueKey: extractValueKey(cacheKey),
+      });
+      return false;
+    }
     // If a previous entry exists, refund its bytes first so the
     // accounting stays correct on overwrite.
     const existing = this.entries.get(cacheKey);
@@ -133,7 +160,6 @@ export class Tier2Cache {
       this.byteUsage -= existing.byteSize;
       this.entries.delete(cacheKey);
     }
-    const byteSize = tier2EntryByteSize(value.events);
     const entry: InternalEntry = {
       ...value,
       byteSize,
@@ -142,20 +168,6 @@ export class Tier2Cache {
     this.entries.set(cacheKey, entry);
     this.byteUsage += byteSize;
     this.evictUntilWithinCap(cacheKey);
-    // After evicting every other entry, if the protected entry alone
-    // still busts the cap, drop it too — the cap is a hard ceiling per
-    // #453, not "best effort except for the latest fetch". The eviction
-    // listener fires for it so the operator sees the same toast.
-    if (this.byteUsage > this.byteCap && this.entries.has(cacheKey)) {
-      this.byteUsage -= entry.byteSize;
-      this.entries.delete(cacheKey);
-      this.listener?.({
-        cacheKey,
-        dimensionId: extractDimensionId(cacheKey),
-        valueKey: extractValueKey(cacheKey),
-      });
-      return false;
-    }
     return true;
   }
 
@@ -176,12 +188,10 @@ export class Tier2Cache {
   /**
    * Evict least-recently-used entries until the byte usage fits under
    * the cap. The freshly-inserted entry is preferred over older ones
-   * (LRU iteration starts from the oldest). If after evicting every
-   * other entry the protected entry alone still exceeds the cap, the
-   * caller of {@link set} drops it too — see {@link set}'s rejection
-   * path. Until then this loop only walks non-protected entries so a
-   * single oversized result does not silently displace the cache when
-   * other entries can be freed first.
+   * (LRU iteration starts from the oldest). The protected entry is
+   * known to be within the cap by the time this runs ({@link set}
+   * rejects oversized candidates up front), so this loop only needs to
+   * make room for the freshly-inserted entry by freeing older ones.
    */
   private evictUntilWithinCap(protectKey: string): void {
     if (this.byteUsage <= this.byteCap) return;

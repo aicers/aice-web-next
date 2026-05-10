@@ -244,6 +244,39 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
     });
   });
 
+  it("carries an approximate first-page count on the projection when totalCount is unavailable", async () => {
+    // Round 7 regression: when `totalCount` is unknown but the first
+    // page of the cursor walk filled, the modal must render an
+    // approximate "≥ N" estimate from that first page rather than the
+    // generic "size unknown" copy. The hook surfaces the lower bound on
+    // `Tier2PendingProjection.approximateMinimum`; without this field
+    // the modal would discard the estimate before rendering.
+    fetchTier2DimensionMock.mockImplementation(async () => ({
+      events: Array.from({ length: 100 }, (_, i) => makeEvent(i)),
+      totalCount: null,
+      endCursor: "cursor",
+      hasMore: true,
+      truncated: false,
+    }));
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "country";
+
+    await act(async () => {
+      result.current.startFetch(dim, "FALLBACK");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.pending).not.toBeNull();
+    expect(result.current.pending?.totalCount).toBeNull();
+    expect(result.current.pending?.approximateMinimum).toBe("100");
+
+    await act(async () => {
+      result.current.cancelFetch();
+    });
+  });
+
   it("ignores duplicate clicks while a peek for the same dimension is in flight", async () => {
     // Without the `loading` guard in `startFetch`, double-clicking a
     // dimension issues duplicate first-page peeks; if the second peek

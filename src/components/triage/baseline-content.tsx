@@ -647,6 +647,7 @@ export function TriageBaselineContent({
       <Tier2PrefetchModal
         open={tier2.pending !== null}
         projectedCount={tier2.pending?.totalCount ?? null}
+        approximateMinimum={tier2.pending?.approximateMinimum ?? null}
         threshold={TIER2_PREFETCH_MODAL_THRESHOLD}
         onConfirm={tier2.confirmFetch}
         onCancel={tier2.cancelFetch}

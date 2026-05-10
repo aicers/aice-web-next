@@ -2040,6 +2040,7 @@
       "prefetchModal": {
         "title": "Fetch large result set?",
         "descriptionTemplate": "This dimension projects to {count} events, above the {threshold} threshold. The fetch may take a while.",
+        "descriptionApproximateTemplate": "Projected size is approximate — at least {count} events (above the {threshold} threshold). The fetch may take a while.",
         "descriptionUnknown": "Projected size is unknown; the fetch will walk pages until it finds the cap or the end.",
         "confirm": "Fetch",
         "cancel": "Cancel"

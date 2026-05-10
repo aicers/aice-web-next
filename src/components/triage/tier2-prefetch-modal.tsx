@@ -15,6 +15,13 @@ export interface Tier2PrefetchModalLabels {
   title: string;
   /** Template uses `{count}` and `{threshold}` placeholders. */
   descriptionTemplate: string;
+  /**
+   * Template used when `projectedCount` is null but the hook surfaced
+   * a first-page lower bound on `approximateMinimum`. Same `{count}` /
+   * `{threshold}` placeholders; copy is expected to label the count as
+   * approximate (e.g. "≥ {count}") per #453.
+   */
+  descriptionApproximateTemplate: string;
   descriptionUnknown: string;
   confirm: string;
   cancel: string;
@@ -24,6 +31,12 @@ interface Tier2PrefetchModalProps {
   open: boolean;
   /** REview's `totalCount` from the projection, or null when unknown. */
   projectedCount: string | null;
+  /**
+   * Lower-bound count from the first-page cursor walk when
+   * `projectedCount` is null. Drives the approximate "≥ N" copy; null
+   * means no estimate is available.
+   */
+  approximateMinimum: string | null;
   /** Modal threshold (#453 — 20,000). */
   threshold: number;
   onConfirm: () => void;
@@ -41,26 +54,32 @@ const COUNT_FORMAT = new Intl.NumberFormat();
 export function Tier2PrefetchModal({
   open,
   projectedCount,
+  approximateMinimum,
   threshold,
   onConfirm,
   onCancel,
   labels,
 }: Tier2PrefetchModalProps) {
-  const description =
-    projectedCount === null
-      ? labels.descriptionUnknown
-      : labels.descriptionTemplate
-          .replace(
-            "{count}",
-            (() => {
-              try {
-                return BigInt(projectedCount).toLocaleString();
-              } catch {
-                return projectedCount;
-              }
-            })(),
-          )
-          .replace("{threshold}", COUNT_FORMAT.format(threshold));
+  const formatStringNumber = (value: string): string => {
+    try {
+      return BigInt(value).toLocaleString();
+    } catch {
+      return value;
+    }
+  };
+  const description = ((): string => {
+    if (projectedCount !== null) {
+      return labels.descriptionTemplate
+        .replace("{count}", formatStringNumber(projectedCount))
+        .replace("{threshold}", COUNT_FORMAT.format(threshold));
+    }
+    if (approximateMinimum !== null) {
+      return labels.descriptionApproximateTemplate
+        .replace("{count}", formatStringNumber(approximateMinimum))
+        .replace("{threshold}", COUNT_FORMAT.format(threshold));
+    }
+    return labels.descriptionUnknown;
+  })();
 
   return (
     <AlertDialog

@@ -41,6 +41,15 @@ export interface Tier2PendingProjection {
   valueKey: string;
   /** REview's `totalCount` when projection is known, else null. */
   totalCount: string | null;
+  /**
+   * Lower-bound event count from the cursor walk's first page when
+   * `totalCount` is unavailable. Set only on the fallback path
+   * (`totalCount === null` *and* the first page filled), so the modal
+   * can render an approximate "≥ N" count and label it as such per
+   * #453's "approximate" requirement. `null` means no estimate is
+   * available and the modal should render its "size unknown" copy.
+   */
+  approximateMinimum: string | null;
 }
 
 export interface Tier2FetchError {
@@ -406,12 +415,20 @@ export function useTier2Pivot(
             hasMore: peek.hasMore,
             truncated: peek.truncated,
           });
+          // When `totalCount` is missing the modal needs the first-
+          // page count as a "≥ N" approximation. Carry it on the
+          // projection so the modal can render it; without this the
+          // modal would fall back to "size unknown" and discard the
+          // peek's known lower bound.
+          const approximateMinimum =
+            peek.totalCount === null ? String(peek.events.length) : null;
           setPendingQueue((prev) => [
             ...prev,
             {
               dimension,
               valueKey,
               totalCount: peek.totalCount,
+              approximateMinimum,
             },
           ]);
           return;

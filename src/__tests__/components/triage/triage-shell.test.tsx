@@ -194,6 +194,7 @@ const LABELS: TriageShellLabels = {
     tier2Modal: {
       title: "Fetch large result?",
       descriptionTemplate: "{count} > {threshold}",
+      descriptionApproximateTemplate: "≥ {count} (over {threshold})",
       descriptionUnknown: "Projection unknown",
       confirm: "Fetch",
       cancel: "Cancel",
