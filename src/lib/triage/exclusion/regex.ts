@@ -15,7 +15,8 @@
  *   - escaped meta-characters (`\.`, `\*`, …)
  *   - `^`, `$` anchors (`\A`, `\z` are rejected because JS does not
  *     support them — both engines must agree)
- *   - character classes `[abc]`, `[^abc]`, ranges `[a-z]`
+ *   - character classes `[abc]`, `[^abc]`, ranges `[a-z]` (use these
+ *     for ASCII digit / word semantics — e.g. `[0-9]`, `[A-Za-z0-9_]`)
  *   - `.` (any-char-except-newline; both engines agree on this)
  *   - quantifiers `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}` (greedy and
  *     lazy with `?`)
@@ -33,6 +34,18 @@
  *   - named groups `(?<name>…)` (Rust supports `(?P<name>…)` but the
  *     intersection rejects both spellings to keep the validator
  *     simple)
+ *   - shorthand character classes `\d`, `\D`, `\w`, `\W`, `\s`, `\S`
+ *     and word boundaries `\b`, `\B`. Rust's `regex` crate (Unicode
+ *     mode is on by default) treats `\w` / `\d` / `\s` / `\b` as
+ *     Unicode-aware: `\d` matches every Unicode decimal digit, `\w`
+ *     matches Unicode word characters, `\b` is a Unicode word boundary.
+ *     JavaScript's `RegExp` (even with the `u` flag) defines the same
+ *     escapes against ASCII only. A pattern stored in review-web could
+ *     therefore match a Unicode digit / word character at Stage 1 but
+ *     fail to match in cadence-side JS, silently diverging the two
+ *     engines on the same stored row. Force authors to spell the
+ *     intent with explicit ASCII character classes (e.g. `[0-9]`,
+ *     `[A-Za-z0-9_]`, `[ \t\r\n]`) so both engines agree.
  *
  * Both engines must produce the same matches against `host` /
  * `dns_query` strings; otherwise cadence-time matching diverges from
@@ -101,6 +114,74 @@ const REJECTED_TOKENS: { pattern: RegExp; reason: string }[] = [
 ];
 
 /**
+ * Walk the pattern to find an unescaped `\X` shorthand whose semantics
+ * diverge between Rust's Unicode-aware `regex` crate and JavaScript's
+ * `RegExp` (even with the `u` flag).
+ *
+ * `\d` / `\w` / `\s` and the negated forms match Unicode digits / word
+ * characters / whitespace in Rust by default but only ASCII in JS. `\b`
+ * and `\B` are Unicode word boundaries in Rust and ASCII-only in JS
+ * outside of a character class. Allowing any of these would silently
+ * diverge cadence matching from review-web Stage 1 on stored patterns,
+ * which is exactly what option (A) is supposed to prevent.
+ *
+ * The walker counts consecutive backslashes so a literal `\\d` in the
+ * pattern (escaped backslash followed by literal `d`) is **not**
+ * rejected — only an unescaped `\d` shorthand is.
+ */
+function findDivergentShorthand(
+  pattern: string,
+): { token: string; index: number } | null {
+  let i = 0;
+  while (i < pattern.length) {
+    if (pattern[i] !== "\\") {
+      i += 1;
+      continue;
+    }
+    let backslashes = 0;
+    while (i < pattern.length && pattern[i] === "\\") {
+      backslashes += 1;
+      i += 1;
+    }
+    // An odd run leaves one unescaped backslash before the next char,
+    // so the next char is treated as an escape sequence.
+    if (backslashes % 2 === 1 && i < pattern.length) {
+      const next = pattern[i];
+      if (next === "d" || next === "D" || next === "w" || next === "W") {
+        return { token: `\\${next}`, index: i - 1 };
+      }
+      if (next === "s" || next === "S") {
+        return { token: `\\${next}`, index: i - 1 };
+      }
+      if (next === "b" || next === "B") {
+        return { token: `\\${next}`, index: i - 1 };
+      }
+      i += 1;
+    }
+  }
+  return null;
+}
+
+const SHORTHAND_REJECTION_REASON: Record<string, string> = {
+  "\\d":
+    "Shorthand \\d is rejected — Rust matches Unicode digits, JS only ASCII. Use [0-9] instead.",
+  "\\D":
+    "Shorthand \\D is rejected — Rust matches non-Unicode-digits, JS non-ASCII-digits. Use [^0-9] instead.",
+  "\\w":
+    "Shorthand \\w is rejected — Rust matches Unicode word characters, JS only ASCII. Use [A-Za-z0-9_] instead.",
+  "\\W":
+    "Shorthand \\W is rejected — Rust matches non-Unicode-word, JS non-ASCII-word. Use [^A-Za-z0-9_] instead.",
+  "\\s":
+    "Shorthand \\s is rejected — Rust matches Unicode whitespace, JS only ASCII. Use an explicit class like [ \\t\\r\\n] instead.",
+  "\\S":
+    "Shorthand \\S is rejected — Rust matches non-Unicode-whitespace, JS non-ASCII-whitespace. Use an explicit negated class instead.",
+  "\\b":
+    "Shorthand \\b is rejected — outside a character class Rust treats it as a Unicode word boundary while JS uses ASCII; inside a class JS treats it as backspace. Use explicit anchors / character classes instead.",
+  "\\B":
+    "Shorthand \\B is rejected — Rust treats it as a Unicode non-word boundary, JS as ASCII. Use explicit anchors instead.",
+};
+
+/**
  * Validate a stored Domain pattern against the Rust ∩ JS intersection
  * grammar. Returns `{ ok: true }` if the pattern is safe to store and
  * match in either engine; otherwise returns a structured error so the
@@ -116,6 +197,13 @@ export function validateDomainPattern(
     if (token.pattern.test(pattern)) {
       return { ok: false, reason: token.reason };
     }
+  }
+  const shorthand = findDivergentShorthand(pattern);
+  if (shorthand !== null) {
+    const reason =
+      SHORTHAND_REJECTION_REASON[shorthand.token] ??
+      `Shorthand ${shorthand.token} is rejected — Rust and JS regex semantics diverge on this construct.`;
+    return { ok: false, reason };
   }
   // Final pass: the pattern must compile under JS too. This catches
   // nested-quantifier and unbalanced-paren cases without re-implementing

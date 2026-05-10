@@ -32,10 +32,30 @@ describe("validateDomainPattern — Rust ∩ JS intersection grammar", () => {
     ["(foo)\\1", /Back-references/],
     ["(?<n>foo)\\k<n>", /Named back-references|Named capture/],
     ["", /Empty Domain pattern/],
+    ["host\\d+", /Shorthand \\d is rejected/],
+    ["host\\D+", /Shorthand \\D is rejected/],
+    ["[\\d]", /Shorthand \\d is rejected/],
+    ["a\\wb", /Shorthand \\w is rejected/],
+    ["a\\Wb", /Shorthand \\W is rejected/],
+    ["a\\sb", /Shorthand \\s is rejected/],
+    ["a\\Sb", /Shorthand \\S is rejected/],
+    ["foo\\bbar", /Shorthand \\b is rejected/],
+    ["foo\\Bbar", /Shorthand \\B is rejected/],
+    ["(?:trk|ads)\\d{1,3}", /Shorthand \\d is rejected/],
   ])("rejects %s", (pattern, expected) => {
     const result = validateDomainPattern(pattern);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(expected);
+  });
+
+  it.each([
+    "literal-backslash-then-d\\\\d",
+    "literal-backslash-then-w\\\\w",
+    "tracker[0-9]{1,3}\\.example",
+    "host[A-Za-z0-9_]+\\.example",
+    "ws[ \\t\\r\\n]+",
+  ])("accepts ASCII alternative or escaped backslash before letter %s", (pattern) => {
+    expect(validateDomainPattern(pattern)).toEqual({ ok: true });
   });
 
   it("rejects malformed regex even when no engine-specific construct is present", () => {

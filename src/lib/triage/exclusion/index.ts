@@ -20,6 +20,14 @@ export {
 export { isExcluded } from "./match";
 export { normalizeEventColumns } from "./normalize";
 export {
+  type EventTriageExclusionInputShape,
+  ExclusionInputParseError,
+  type HostNetworkGroupInputShape,
+  type IpRangeInputShape,
+  parseExclusionInput,
+  parseExclusionInputs,
+} from "./parse";
+export {
   compileDomainPatterns,
   type DomainPatternValidationResult,
   validateDomainPattern,
