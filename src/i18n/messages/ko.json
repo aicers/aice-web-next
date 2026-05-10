@@ -165,7 +165,7 @@
       "title": "시스템 설정",
       "description": "이 AICE 인스턴스를 aimer-web에 식별시키고 컨텍스트 토큰 전송 위치를 알려주는 설정입니다.",
       "aiceIdLabel": "aice_id",
-      "aiceIdPlaceholder": "aice-acme.example.com",
+      "aiceIdPlaceholder": "acme.example.com",
       "aiceIdHelper": "배포 호스트네임(RFC 1123). JWT iss 클레임과 aimer-web으로 전달되는 aice_id 클레임에 사용됩니다. aimer-web의 trust_registry 조회 키이므로 등록된 값과 일치해야 합니다.",
       "bridgeUrlLabel": "aimer_web_bridge_url",
       "bridgeUrlPlaceholder": "https://aimer.example.com",
