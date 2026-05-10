@@ -249,8 +249,12 @@ read as confirmed absence.
 
 ### Breadcrumb (multi-step pivot)
 
-Pivoting from a row appends a breadcrumb step. The breadcrumb is
-local to the current view — it is not persisted in the URL.
+Pivoting from a row appends a breadcrumb step. The breadcrumb (asset
+focus, every dimension/value pivot step, and the current scope toggle)
+is encoded in the URL hash under the `triage.pivot.*` namespace, so a
+shared link or browser reload restores the trail against the
+freshly-loaded corpus. See [URL hash persistence](#url-hash-persistence)
+for the full hash layout and stale-fallback behavior.
 
 - The first crumb is the asset (e.g., `Asset 10.0.0.1`).
 - Each subsequent crumb names the dimension and value pivoted to

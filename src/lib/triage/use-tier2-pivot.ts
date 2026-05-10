@@ -240,10 +240,25 @@ export function useTier2Pivot(
       },
     ) => {
       const key = stateKey(dimension, valueKey);
-      cacheRef.current?.set(cacheKeyFor(dimension, valueKey), {
-        events: result.events,
-        totalCount: result.totalCount,
-      });
+      // When the cache rejects an oversized result (returns false) the
+      // 100 MB hard cap would be violated by also keeping the events in
+      // `stateMapRef`. Drop the loading entry instead so the operator
+      // sees the eviction toast (emitted by the cache for the rejected
+      // entry) and re-pivoting refetches. The `cacheRef.current === null`
+      // guard is for the SSR-render case where the ref hasn't been
+      // initialised; we treat that as "accepted" since there is no cache
+      // layer to enforce the cap and the assertion is only meaningful on
+      // the client where the eviction listener fires.
+      const accepted =
+        cacheRef.current?.set(cacheKeyFor(dimension, valueKey), {
+          events: result.events,
+          totalCount: result.totalCount,
+        }) ?? true;
+      if (!accepted) {
+        stateMapRef.current.delete(key);
+        bump();
+        return;
+      }
       stateMapRef.current.set(key, {
         status: "ready",
         events: result.events,

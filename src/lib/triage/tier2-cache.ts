@@ -114,7 +114,17 @@ export class Tier2Cache {
     return hit;
   }
 
-  set(key: Tier2CacheKey, value: Omit<Tier2CacheEntry, "byteSize">): void {
+  /**
+   * Insert (or overwrite) an entry. Returns `true` when the new entry
+   * was retained by the cache and `false` when the entry alone exceeds
+   * `byteCap` and was therefore rejected — in the rejection case an
+   * eviction event is emitted for the rejected entry so the caller can
+   * surface the same refetch toast as a normal LRU drop. The boolean
+   * lets the hook layer skip writing the rejected result into its
+   * in-memory ready state, which is what enforces the 100 MB cap as a
+   * hard ceiling per #453.
+   */
+  set(key: Tier2CacheKey, value: Omit<Tier2CacheEntry, "byteSize">): boolean {
     const cacheKey = encodeTier2CacheKey(key);
     // If a previous entry exists, refund its bytes first so the
     // accounting stays correct on overwrite.
@@ -132,6 +142,21 @@ export class Tier2Cache {
     this.entries.set(cacheKey, entry);
     this.byteUsage += byteSize;
     this.evictUntilWithinCap(cacheKey);
+    // After evicting every other entry, if the protected entry alone
+    // still busts the cap, drop it too — the cap is a hard ceiling per
+    // #453, not "best effort except for the latest fetch". The eviction
+    // listener fires for it so the operator sees the same toast.
+    if (this.byteUsage > this.byteCap && this.entries.has(cacheKey)) {
+      this.byteUsage -= entry.byteSize;
+      this.entries.delete(cacheKey);
+      this.listener?.({
+        cacheKey,
+        dimensionId: extractDimensionId(cacheKey),
+        valueKey: extractValueKey(cacheKey),
+      });
+      return false;
+    }
+    return true;
   }
 
   delete(key: Tier2CacheKey): boolean {
@@ -149,10 +174,14 @@ export class Tier2Cache {
   }
 
   /**
-   * Evict least-recently-used entries until the byte usage fits
-   * under the cap. Skips the freshly-inserted entry to preserve the
-   * "cache the result that just succeeded" invariant — a single fetch
-   * larger than the cap evicts everything else but keeps itself.
+   * Evict least-recently-used entries until the byte usage fits under
+   * the cap. The freshly-inserted entry is preferred over older ones
+   * (LRU iteration starts from the oldest). If after evicting every
+   * other entry the protected entry alone still exceeds the cap, the
+   * caller of {@link set} drops it too — see {@link set}'s rejection
+   * path. Until then this loop only walks non-protected entries so a
+   * single oversized result does not silently displace the cache when
+   * other entries can be freed first.
    */
   private evictUntilWithinCap(protectKey: string): void {
     if (this.byteUsage <= this.byteCap) return;

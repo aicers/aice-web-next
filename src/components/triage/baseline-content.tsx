@@ -438,17 +438,50 @@ export function TriageBaselineContent({
   // Drain the hash-restore Tier 2 fetch queue once the scope prop has
   // actually flipped to `"tier2"`. The hook's `startFetch` short-circuits
   // when its `enabled` flag is `false` (which mirrors `scope`), so this
-  // wait is required even when the hash carried `mode=tier2` — the
-  // parent's state update propagates on the next render.
+  // wait is required even when the hash carried `mode=tier2`.
+  //
+  // The drain runs **serially** through the existing pre-fetch modal
+  // path — the hook keeps a single `peekStashRef` / `pending` slot, so
+  // firing every queued step at once would let a later peek's stash
+  // overwrite an earlier one when both projections trip the modal,
+  // leaving the earlier fetch stuck in `loading` with no confirm/cancel
+  // affordance. We instead pop one item, wait for it to leave the
+  // pending/loading state, then pop the next. The effect re-runs on
+  // changes to `scope`, the hook's `pending`, `inFlight`, and `errors`
+  // — those collectively cover both modal-gated and silent completions.
+  const draining = useRef<{
+    dimension: Tier2Dimension;
+    valueKey: string;
+  } | null>(null);
+  // `tier2.inFlight` and `tier2.errors` are listed as deps so the
+  // effect re-runs when the currently-draining fetch resolves
+  // (loading → ready or loading → error). The body does not read them
+  // directly — it consults `tier2.getCached(...)` instead — but without
+  // them in the deps list the next queued item never fires. Biome's
+  // exhaustive-deps reports them as removable; the suppression below
+  // documents the rerun trigger contract.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps drive the serial drain rerun trigger
   useEffect(() => {
     if (scope !== "tier2") return;
-    if (pendingHashFetchesRef.current.length === 0) return;
-    const queue = pendingHashFetchesRef.current;
-    pendingHashFetchesRef.current = [];
-    for (const item of queue) {
-      tier2.startFetch(item.dimension, item.valueKey);
+    if (tier2.pending !== null) return;
+    if (draining.current !== null) {
+      const status = tier2.getCached(
+        draining.current.dimension,
+        draining.current.valueKey,
+      );
+      // Still loading (or modal-gated through `pending`, handled
+      // above): wait for the next render.
+      if (status?.status === "loading") return;
+      // Either ready, errored, or cleared via cancel: this slot is
+      // free again. Fall through to fire the next queued item.
+      draining.current = null;
     }
-  }, [scope, tier2]);
+    if (pendingHashFetchesRef.current.length === 0) return;
+    const next = pendingHashFetchesRef.current.shift();
+    if (!next) return;
+    draining.current = next;
+    tier2.startFetch(next.dimension, next.valueKey);
+  }, [scope, tier2, tier2.pending, tier2.inFlight, tier2.errors]);
 
   // ── URL hash sync (write-side) ──
   // Persist the breadcrumb + scope into the URL hash whenever they
