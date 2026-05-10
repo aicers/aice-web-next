@@ -287,6 +287,52 @@ describe("POST /api/triage/exclusions", () => {
     expect(mockAuditRecord).not.toHaveBeenCalled();
   });
 
+  it("returns 500 with the row id when the drain phase fails (round 3)", async () => {
+    // Round-3 review: a drain failure must not return a hidden 201
+    // warning the UI ignores. The INSERT and first batch are durable;
+    // the route surfaces a hard 500 so the operator sees the error
+    // and audits the partial cleanup.
+    mockCreateCustomerExclusion.mockResolvedValue(sampleRow);
+    const pendingPredicate = {
+      tableKey: "baselineTriagedEvent" as const,
+      statements: [{ sql: "DELETE FROM baseline_triaged_event", params: [] }],
+    };
+    mockExecuteFirstBatch.mockResolvedValue({
+      counts: {
+        baselineTriagedEvent: 1,
+        observedEventMeta: 0,
+        policyTriagedEvent: null,
+      },
+      pending: [pendingPredicate],
+    });
+    mockDrainRemaining.mockRejectedValue(new Error("tenant DB blip"));
+    mockGetCustomerPool.mockResolvedValue({ connect: vi.fn() });
+
+    const { POST } = await import("@/app/api/triage/exclusions/route");
+    const request = new NextRequest(
+      "http://localhost:3000/api/triage/exclusions?customer_id=42",
+      {
+        method: "POST",
+        body: JSON.stringify({ kind: "ipAddress", value: "10.0.0.0/24" }),
+      },
+    );
+    const response = await POST(request, makeContext());
+    const body = await response.json();
+    expect(response.status).toBe(500);
+    expect(body.error).toContain("tenant DB blip");
+    expect(body.data).toEqual(sampleRow);
+    // Audit row records the partial cleanup with drainStatus = 'failed'.
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "triage_exclusion.customer_add",
+        details: expect.objectContaining({
+          drainStatus: "failed",
+          drainError: expect.stringContaining("tenant DB blip"),
+        }),
+      }),
+    );
+  });
+
   it("rejects an invalid kind via parseStoredExclusionInput", async () => {
     const { POST } = await import("@/app/api/triage/exclusions/route");
     const request = new NextRequest(

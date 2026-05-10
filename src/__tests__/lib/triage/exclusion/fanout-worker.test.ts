@@ -647,3 +647,96 @@ describe("runFanoutSweep — global exclusion already deleted", () => {
     expect(mockAuditLogRecord).not.toHaveBeenCalled();
   });
 });
+
+describe("runFanoutSweep — global deleted between initial load and tenant DELETE", () => {
+  // Round-3 race: the worker loads the global row, then the operator
+  // deletes it before the tenant transaction acquires the cadence
+  // lock. The cascade has already removed our job row; the worker
+  // must NOT issue tenant DELETEs against rows the active set no
+  // longer excludes.
+  it("re-checks the global row after acquiring the cadence lock and skips tenant DELETE if it is gone", async () => {
+    let globalLookupCount = 0;
+    const auth = {
+      query: vi.fn(async (sql: string, _params?: unknown[]) => {
+        if (
+          sql.includes("UPDATE triage_exclusion_fanout_job") &&
+          sql.includes("milliseconds")
+        ) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+          return {
+            rows: [
+              {
+                id: "job-race",
+                global_exclusion_id: "glob-race",
+                customer_id: 9,
+                attempt_count: 0,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (
+          sql.includes("UPDATE triage_exclusion_fanout_job") &&
+          sql.includes("status = 'running'")
+        ) {
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes("FROM global_triage_exclusion")) {
+          globalLookupCount += 1;
+          // First load: row exists. Second load (recheck after lock):
+          // row was deleted between the two reads.
+          if (globalLookupCount === 1) {
+            return {
+              rows: [
+                {
+                  id: "glob-race",
+                  kind: "hostname",
+                  value: "race.example",
+                  domain_suffix: null,
+                },
+              ],
+              rowCount: 1,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        if (
+          sql.includes("UPDATE triage_exclusion_fanout_job") &&
+          sql.includes("status = 'completed'")
+        ) {
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+    const tenant = makeTenantPool();
+    mockGetCustomerPool.mockResolvedValue(tenant.pool);
+    let withTxCallCount = 0;
+    mockWithTransaction.mockImplementation(
+      async (fn: (c: unknown) => Promise<unknown>) => {
+        withTxCallCount += 1;
+        return fn(auth);
+      },
+    );
+
+    const result = await runFanoutSweep({ batchSize: 5 });
+
+    expect(result.completed).toBe(1);
+    // The recheck happened (two global lookups, one for the initial
+    // load and one inside the tenant transaction).
+    expect(globalLookupCount).toBeGreaterThanOrEqual(2);
+    // The tenant transaction issued BEGIN + ROLLBACK (NOT COMMIT) and
+    // never reached a DELETE statement: the recheck short-circuited
+    // before the first batch ran.
+    const tenantSqls = tenant.tenantQueries.map((q) => q.sql);
+    expect(tenantSqls).toContain("BEGIN");
+    expect(tenantSqls).toContain("ROLLBACK");
+    expect(tenantSqls.some((s) => s.startsWith("DELETE"))).toBe(false);
+    // No customer_add audit row — there was no work to attribute.
+    expect(mockAuditLogRecord).not.toHaveBeenCalled();
+    // Sanity: the job row finalized as completed (no-op).
+    expect(withTxCallCount).toBeGreaterThan(0);
+  });
+});

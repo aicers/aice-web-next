@@ -149,8 +149,10 @@ export interface CadencePagerOptions {
     args: CadenceFetchPageArgs,
   ) => Promise<CadenceConnectionResponse>;
   /**
-   * Active-exclusion-set resolver. Defaults to the empty-set resolver
-   * (#457 swap point); tests inject a fake to drive the matcher.
+   * Active-exclusion-set resolver. Defaults to the empty-set resolver,
+   * but the production cadence route wires the storage-backed resolver
+   * from `active-set-storage.ts` so stored exclusions (#457) take
+   * effect on every tick. Tests inject a fake to drive the matcher.
    */
   resolver?: ActiveExclusionSetResolver;
   /**

@@ -14,7 +14,10 @@ export {
   compileStoredRowsToActiveSet,
   EMPTY_EXCLUSION_SET_RESOLVER,
 } from "./active-set";
-export { loadActiveExclusions } from "./active-set-storage";
+export {
+  loadActiveExclusions,
+  STORAGE_EXCLUSION_SET_RESOLVER,
+} from "./active-set-storage";
 export {
   computeExclusionsFingerprint,
   EMPTY_EXCLUSIONS_FINGERPRINT,

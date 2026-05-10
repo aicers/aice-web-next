@@ -206,9 +206,11 @@ export const POST = withAuth(
     // Drain the remainder in fresh per-batch transactions to bound
     // lock duration and WAL pressure. Drain failures do NOT roll back
     // the INSERT — the row stays in place and forward enforcement is
-    // already in effect; the partially-cleaned corpus heals on the
-    // next cadence tick. We surface the error so the operator sees it,
-    // but the audit row records the rows actually deleted so far.
+    // already in effect — but a partial cleanup leaves stale corpus
+    // rows that cadence will not revisit, so we surface a hard 500
+    // rather than a hidden warning. Operators can refresh the list to
+    // see the row and use the admin-recovery surface (1B-7) to drive
+    // cleanup to completion.
     const customerPool = await getCustomerPool(customerId);
     let drainCounts: typeof firstBatchCounts | null = null;
     let drainError: unknown = null;
@@ -247,23 +249,34 @@ export const POST = withAuth(
         kind: row.kind,
         value: row.value,
         deletedCorpusRows: counts,
+        ...(drainError !== null
+          ? {
+              drainStatus: "failed",
+              drainError:
+                drainError instanceof Error
+                  ? drainError.message
+                  : String(drainError),
+            }
+          : {}),
       },
     });
 
     if (drainError !== null) {
-      // The INSERT and first batch are durable; surface the drain
-      // error so the operator can re-trigger cleanup (admin recovery
-      // surface lands in 1B-7). 200 + warning rather than 500 so the
-      // client knows the row is in place.
+      // Hard failure: the INSERT and first batch are durable (the row
+      // is visible on the next list refresh) but retroactive cleanup
+      // is incomplete. Returning 500 makes the dialog show the error
+      // instead of silently closing — the operator must inspect state
+      // and run admin recovery (1B-7) before forward enforcement can
+      // be assumed to match the documented retroactive semantics.
+      const message =
+        drainError instanceof Error ? drainError.message : "drain phase failed";
       return NextResponse.json(
         {
+          error: `Exclusion was created but retroactive cleanup failed: ${message}. The row is visible on refresh; please contact an administrator to complete past-corpus cleanup.`,
           data: row,
-          warning:
-            drainError instanceof Error
-              ? drainError.message
-              : "drain phase failed",
+          partialCleanup: counts,
         },
-        { status: 201 },
+        { status: 500 },
       );
     }
     return NextResponse.json({ data: row }, { status: 201 });

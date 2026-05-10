@@ -6,6 +6,7 @@ import {
   verifyTriageBaselineCadenceToken,
 } from "@/lib/triage/baseline/cadence";
 import { createCadencePager } from "@/lib/triage/baseline/pager";
+import { STORAGE_EXCLUSION_SET_RESOLVER } from "@/lib/triage/exclusion/active-set-storage";
 import { CustomerNotFoundError } from "@/lib/triage/policy/customer-db";
 
 /**
@@ -43,7 +44,13 @@ let CACHED_PAGER: ReturnType<typeof createCadencePager> | null = null;
 
 function getProductionPager() {
   if (CACHED_PAGER === null) {
-    CACHED_PAGER = createCadencePager();
+    // Wire the storage-backed resolver so newly-added exclusions
+    // (#457) take effect on the next cadence tick. Defaulting to
+    // `EMPTY_EXCLUSION_SET_RESOLVER` would silently admit events that
+    // should be excluded.
+    CACHED_PAGER = createCadencePager({
+      resolver: STORAGE_EXCLUSION_SET_RESOLVER,
+    });
   }
   return CACHED_PAGER;
 }

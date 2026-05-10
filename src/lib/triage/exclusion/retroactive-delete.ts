@@ -242,15 +242,23 @@ async function runFirstBatchPerStatement(
  * Drain a single DELETE predicate to completion using fresh
  * transactions, one per batch. Each batch acquires its own connection
  * via `withTx`, which MUST begin and commit a transaction.
+ *
+ * `shouldContinue` is consulted before each batch so the caller can
+ * cancel mid-drain — e.g. the global-fanout worker re-checks that the
+ * source `global_triage_exclusion` row still exists, since the active
+ * set must be the source of truth for retroactive cleanup. Returning
+ * `false` aborts the predicate early without deleting more rows.
  */
 async function drainPendingStatements(
   withTx: TxRunner,
   pending: DeleteStatement[],
   batchSize: number,
+  shouldContinue?: () => Promise<boolean>,
 ): Promise<number> {
   let deleted = 0;
   for (const stmt of pending) {
     while (true) {
+      if (shouldContinue && !(await shouldContinue())) return deleted;
       const n = await withTx(async (client) => {
         const result = await client.query(stmt.sql, stmt.params);
         return result.rowCount ?? 0;
@@ -350,7 +358,10 @@ export async function executeFirstRetroactiveDeleteBatch(
 export async function drainRemainingRetroactiveDeletes(
   withTx: TxRunner,
   pending: PendingDrain[],
-  options: { batchSize?: number } = {},
+  options: {
+    batchSize?: number;
+    shouldContinue?: () => Promise<boolean>;
+  } = {},
 ): Promise<DeletedCounts> {
   const batchSize = options.batchSize ?? DEFAULT_DELETE_BATCH_SIZE;
   const out: DeletedCounts = {
@@ -359,10 +370,14 @@ export async function drainRemainingRetroactiveDeletes(
     policyTriagedEvent: null,
   };
   for (const entry of pending) {
+    if (options.shouldContinue && !(await options.shouldContinue())) {
+      return out;
+    }
     const drained = await drainPendingStatements(
       withTx,
       entry.statements,
       batchSize,
+      options.shouldContinue,
     );
     if (entry.tableKey === "policyTriagedEvent") {
       out.policyTriagedEvent = (out.policyTriagedEvent ?? 0) + drained;

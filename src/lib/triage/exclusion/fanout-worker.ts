@@ -159,6 +159,24 @@ async function loadGlobalExclusion(
   };
 }
 
+/**
+ * Quick existence probe for the global exclusion row, used between
+ * tenant DELETE batches so a concurrent `DELETE /global/[id]` does not
+ * leave the worker permanently dropping corpus rows for an exclusion
+ * that is no longer in the active set. Errors propagate to the caller
+ * — a transient auth_db blip should re-queue the job rather than
+ * silently continue past the precheck. Reuses the same SELECT shape as
+ * {@link loadGlobalExclusion} so both queries are interchangeable in
+ * tests and production.
+ */
+async function globalExclusionExists(
+  client: pg.PoolClient,
+  id: string,
+): Promise<boolean> {
+  const row = await loadGlobalExclusion(client, id);
+  return row !== null;
+}
+
 async function finalizeCompleted(
   client: pg.PoolClient,
   jobId: string,
@@ -257,6 +275,21 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
   try {
     await tenantClient.query("BEGIN");
     await acquireCustomerCadenceLock(tenantClient, job.customerId);
+    // Re-check the global row after acquiring the cadence lock. The
+    // operator may have deleted it between the initial load and now;
+    // the FK cascade has already removed our job row, but `processJob`
+    // still holds the in-memory `global` value and would otherwise
+    // permanently drop corpus rows for an exclusion that is no longer
+    // in the active set. (Spec: cascade rationale — cleanup is moot
+    // once the active set no longer contains the row.)
+    const stillExists = await withTransaction((c) =>
+      globalExclusionExists(c, job.globalExclusionId),
+    );
+    if (!stillExists) {
+      await tenantClient.query("ROLLBACK");
+      tenantClient.release();
+      return { outcome: "completed" };
+    }
     const firstBatch = await executeFirstRetroactiveDeleteBatch(tenantClient, {
       kind: global.kind,
       value: global.value,
@@ -279,20 +312,32 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
   let drainCounts: DeletedCounts | null = null;
   if (pending.length > 0) {
     try {
-      drainCounts = await drainRemainingRetroactiveDeletes(async (fn) => {
-        const drainClient = await tenantPool.connect();
-        try {
-          await drainClient.query("BEGIN");
-          const result = await fn(drainClient);
-          await drainClient.query("COMMIT");
-          return result;
-        } catch (err) {
-          await drainClient.query("ROLLBACK").catch(() => {});
-          throw err;
-        } finally {
-          drainClient.release();
-        }
-      }, pending);
+      drainCounts = await drainRemainingRetroactiveDeletes(
+        async (fn) => {
+          const drainClient = await tenantPool.connect();
+          try {
+            await drainClient.query("BEGIN");
+            const result = await fn(drainClient);
+            await drainClient.query("COMMIT");
+            return result;
+          } catch (err) {
+            await drainClient.query("ROLLBACK").catch(() => {});
+            throw err;
+          } finally {
+            drainClient.release();
+          }
+        },
+        pending,
+        {
+          // Re-check before each batch: if the global row was deleted
+          // mid-drain the cascade has already removed our job row, so
+          // stop emitting tenant DELETEs.
+          shouldContinue: () =>
+            withTransaction((c) =>
+              globalExclusionExists(c, job.globalExclusionId),
+            ),
+        },
+      );
     } catch (err) {
       // Drain failure: the global INSERT and first batch are durable
       // in `auth_db` / tenant DB respectively; the row is already in

@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockRunCadence = vi.hoisted(() => vi.fn());
 const mockVerifyToken = vi.hoisted(() => vi.fn());
+const mockCreateCadencePager = vi.hoisted(() =>
+  vi.fn(() => ({ ingestPage: vi.fn() })),
+);
+const mockStorageResolver = vi.hoisted(() => ({
+  resolve: vi.fn(),
+}));
 
 class MockCustomerNotFoundError extends Error {
   constructor(customerId: number) {
@@ -17,9 +23,13 @@ vi.mock("@/lib/triage/baseline/cadence", () => ({
 
 vi.mock("@/lib/triage/baseline/pager", () => ({
   // The route handler instantiates the production pager once per
-  // process; the mock returns a sentinel so route tests can assert
-  // the pager was forwarded into the runner.
-  createCadencePager: () => ({ ingestPage: vi.fn() }),
+  // process; the mock observes the options so route tests can assert
+  // the storage-backed resolver was forwarded.
+  createCadencePager: mockCreateCadencePager,
+}));
+
+vi.mock("@/lib/triage/exclusion/active-set-storage", () => ({
+  STORAGE_EXCLUSION_SET_RESOLVER: mockStorageResolver,
 }));
 
 vi.mock("@/lib/triage/policy/customer-db", () => ({
@@ -191,5 +201,29 @@ describe("POST /api/internal/triage/baseline/cadence", () => {
     const res = await POST(makeRequest("Bearer right", { customer_id: 7 }));
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "DB exploded" });
+  });
+
+  it("constructs the production pager with the storage-backed resolver (round 3)", async () => {
+    // Round-3 review: the production cadence path must NOT default to
+    // EMPTY_EXCLUSION_SET_RESOLVER, otherwise newly-created stored
+    // exclusions silently fail to take effect on the next tick.
+    mockCreateCadencePager.mockClear();
+    mockVerifyToken.mockReturnValue(true);
+    mockRunCadence.mockResolvedValue({
+      customerId: 7,
+      status: "ok",
+      observedInserted: 0,
+      baselineInserted: 0,
+      lastEventCursor: null,
+    });
+    // Reset module cache so the lazy `CACHED_PAGER` constructor fires.
+    vi.resetModules();
+    const { POST } = await import(
+      "@/app/api/internal/triage/baseline/cadence/route"
+    );
+    await POST(makeRequest("Bearer right", { customer_id: 7 }));
+    expect(mockCreateCadencePager).toHaveBeenCalledWith(
+      expect.objectContaining({ resolver: mockStorageResolver }),
+    );
   });
 });
