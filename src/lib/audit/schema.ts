@@ -140,6 +140,35 @@ type TriagePolicyAction =
   | "triage.policy.update"
   | "triage.policy.delete";
 
+/**
+ * Triage exclusion CRUD actions (#457).
+ *
+ * Two scopes:
+ *   - `triage_exclusion.global_*` — customer-agnostic. The row lives
+ *     in `auth_db.global_triage_exclusion` and applies to every
+ *     active customer; the audit row carries no `customerId`. The
+ *     in-request enqueue of fanout jobs is logged on the global ADD
+ *     row; each per-customer fanout DELETE emits its own
+ *     `triage_exclusion.customer_add` row.
+ *   - `triage_exclusion.customer_*` — customer-scoped. The row lives
+ *     in the tenant DB and applies to exactly one customer.
+ *   - `triage_exclusion.fanout_failed` — customer-scoped. Emitted by
+ *     the internal fanout worker when a per-customer job exceeds the
+ *     retry budget.
+ *
+ * The split honors `customer-scope-policy.ts`'s discipline of "one
+ * scope per AuditAction"; there is no `mixed` classification and the
+ * exhaustiveness test in
+ * `src/__tests__/lib/audit/customer-scope-policy.test.ts` enforces
+ * coverage.
+ */
+type TriageExclusionAction =
+  | "triage_exclusion.global_add"
+  | "triage_exclusion.global_remove"
+  | "triage_exclusion.customer_add"
+  | "triage_exclusion.customer_remove"
+  | "triage_exclusion.fanout_failed";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
@@ -155,7 +184,8 @@ export type AuditAction =
   | AimerSigningKeyAction
   | AimerIntegrationSettingAction
   | AimerContextTokenAction
-  | TriagePolicyAction;
+  | TriagePolicyAction
+  | TriageExclusionAction;
 
 /** Target entity types for audit events. */
 export type AuditTargetType =
@@ -167,7 +197,8 @@ export type AuditTargetType =
   | "mfa"
   | "node"
   | "service"
-  | "triage_policy";
+  | "triage_policy"
+  | "triage_exclusion";
 
 /** Canonical runtime list of supported audit actions. */
 export const AUDIT_ACTIONS = [
@@ -231,6 +262,11 @@ export const AUDIT_ACTIONS = [
   "triage.policy.create",
   "triage.policy.update",
   "triage.policy.delete",
+  "triage_exclusion.global_add",
+  "triage_exclusion.global_remove",
+  "triage_exclusion.customer_add",
+  "triage_exclusion.customer_remove",
+  "triage_exclusion.fanout_failed",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */
@@ -244,4 +280,5 @@ export const AUDIT_TARGET_TYPES = [
   "node",
   "service",
   "triage_policy",
+  "triage_exclusion",
 ] as const satisfies readonly AuditTargetType[];

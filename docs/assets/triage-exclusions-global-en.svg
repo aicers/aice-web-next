@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Settings → Triage exclusions (global) wireframe</title>
+  <desc id="desc">Wireframe of the global Triage exclusions page: Settings sidebar on the left with the Triage exclusions (global) entry highlighted; main panel listing globally-scoped exclusions with kind, value, suffix, created-by and created-at columns. The page warns that adding a global exclusion enqueues per-customer fanout jobs that drain out-of-band.</desc>
+
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 6; ry: 6; }
+    .panel-header { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 22px; fill: #18181b; font-weight: 700; }
+    .text-intro { font-size: 12px; fill: #52525b; }
+    .text-section { font-size: 11px; fill: #71717a; font-weight: 600; letter-spacing: 0.05em; }
+    .text-cell { font-size: 12px; fill: #18181b; }
+    .text-mono { font-size: 12px; fill: #18181b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .button-primary { fill: #18181b; stroke: none; rx: 4; ry: 4; }
+    .button-primary-text { fill: #ffffff; font-size: 12px; font-weight: 500; }
+    .nav-active { fill: #f4f4f5; rx: 4; ry: 4; }
+    .nav-active-text { fill: #18181b; font-size: 12px; font-weight: 600; }
+    .nav-text { fill: #52525b; font-size: 12px; }
+    .row-divider { stroke: #e5e7eb; stroke-width: 1; }
+    .danger { fill: #b91c1c; font-size: 11px; }
+    .callout { fill: #fef3c7; stroke: #fcd34d; stroke-width: 1; rx: 4; ry: 4; }
+    .callout-text { font-size: 11px; fill: #78350f; }
+  </style>
+
+  <rect class="bg" width="960" height="480"/>
+
+  <g transform="translate(16, 16)">
+    <rect class="panel" width="216" height="448"/>
+    <text class="text-section" x="16" y="28">Settings</text>
+    <text class="nav-text" x="16" y="64">Account</text>
+    <text class="nav-text" x="16" y="92">Roles</text>
+    <text class="nav-text" x="16" y="120">Customers</text>
+    <text class="nav-text" x="16" y="148">Triage policies</text>
+    <text class="nav-text" x="16" y="176">Triage exclusions</text>
+    <rect class="nav-active" x="8" y="188" width="200" height="28"/>
+    <text class="nav-active-text" x="16" y="206">Triage exclusions (global)</text>
+    <text class="nav-text" x="16" y="236">System settings</text>
+  </g>
+
+  <g transform="translate(248, 16)">
+    <text class="text-title" x="0" y="24">Triage exclusions (global)</text>
+    <text class="text-intro" x="0" y="46">Operator-managed exclusions applied across every active customer.</text>
+
+    <rect class="callout" x="0" y="64" width="688" height="44"/>
+    <text class="callout-text" x="12" y="84">Adding a global exclusion enqueues a per-customer fanout job. The retroactive DELETE drains out-of-band; the active union sees the new row immediately.</text>
+
+    <g transform="translate(0, 124)">
+      <rect class="button-primary" x="588" y="0" width="100" height="28"/>
+      <text class="button-primary-text" x="612" y="18">+ Add exclusion</text>
+    </g>
+
+    <g transform="translate(0, 168)">
+      <rect class="panel" width="688" height="284"/>
+      <rect class="panel-header" width="688" height="32"/>
+      <text class="text-section" x="16" y="20">Kind</text>
+      <text class="text-section" x="120" y="20">Value</text>
+      <text class="text-section" x="360" y="20">Suffix</text>
+      <text class="text-section" x="448" y="20">Created by</text>
+      <text class="text-section" x="572" y="20">Actions</text>
+
+      <g transform="translate(0, 32)">
+        <text class="text-cell" x="16" y="22">IP address</text>
+        <text class="text-mono" x="120" y="22">198.51.100.0/24</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">ops-admin</text>
+        <text class="danger" x="600" y="22">Delete</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 72)">
+        <text class="text-cell" x="16" y="22">Hostname</text>
+        <text class="text-mono" x="120" y="22">healthcheck.internal</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">ops-admin</text>
+        <text class="danger" x="600" y="22">Delete</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 112)">
+        <text class="text-cell" x="16" y="22">Domain (regex)</text>
+        <text class="text-mono" x="120" y="22">^.*\.scanner\.internal$</text>
+        <text class="text-mono" x="360" y="22">.scanner.internal</text>
+        <text class="text-cell" x="448" y="22">ops-admin</text>
+        <text class="danger" x="600" y="22">Delete</text>
+      </g>
+
+      <text class="text-muted" x="16" y="260">3 of 3 global exclusions</text>
+    </g>
+  </g>
+</svg>

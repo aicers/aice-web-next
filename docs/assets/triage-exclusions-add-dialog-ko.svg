@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">예외 추가 대화상자 (와이어프레임)</title>
+  <desc id="desc">예외 추가 대화상자 와이어프레임: 종류 드롭다운이 도메인(정규식)으로 설정됨, 정규식 값 입력란, 종류별 도움말, 환원기 결과 4가지(정확/접미사/정확-또는-접미사/전체 정규식)에 대한 미리보기 라인, 선택적 메모, 취소/저장 버튼.</desc>
+
+  <style>
+    .scrim { fill: rgba(15, 23, 42, 0.45); }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 8; ry: 8; }
+    .text-title { font-size: 16px; fill: #18181b; font-weight: 600; }
+    .text-label { font-size: 11px; fill: #71717a; }
+    .text-helper { font-size: 11px; fill: #52525b; }
+    .text-preview { font-size: 11px; fill: #2563eb; font-style: italic; }
+    .text-preview-muted { font-size: 11px; fill: #71717a; font-style: italic; }
+    .text-cell { font-size: 12px; fill: #18181b; }
+    .text-mono { font-size: 12px; fill: #18181b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .input { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .button-primary { fill: #18181b; stroke: none; rx: 4; ry: 4; }
+    .button-primary-text { fill: #ffffff; font-size: 12px; font-weight: 500; }
+    .button-ghost { fill: transparent; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .button-ghost-text { fill: #18181b; font-size: 12px; }
+  </style>
+
+  <rect class="scrim" width="720" height="480"/>
+
+  <g transform="translate(120, 36)">
+    <rect class="panel" width="480" height="408"/>
+
+    <text class="text-title" x="20" y="32">예외 추가</text>
+
+    <g transform="translate(20, 56)">
+      <text class="text-label" x="0" y="14">종류</text>
+      <rect class="input" x="0" y="22" width="200" height="28"/>
+      <text class="text-cell" x="12" y="40">도메인(정규식)</text>
+    </g>
+
+    <g transform="translate(20, 120)">
+      <text class="text-label" x="0" y="14">값</text>
+      <rect class="input" x="0" y="22" width="440" height="28"/>
+      <text class="text-mono" x="12" y="40">^([a-z0-9-]+\.)*example\.com$</text>
+      <text class="text-helper" x="0" y="68">정규식 패턴. 호스트명 접미사 또는 정확한 호스트명으로 환원되는 패턴은 소급 적용됩니다.</text>
+    </g>
+
+    <g transform="translate(20, 200)">
+      <text class="text-label" x="0" y="14">도메인 환원 미리보기</text>
+      <text class="text-preview" x="0" y="36">정확/접미사 .example.com로 환원됨 — 베어 호스트와 모든 서브도메인이 제거됩니다.</text>
+      <text class="text-preview-muted" x="0" y="56">(다른 입력 예: 정확한 호스트명으로 환원됨 …, 접미사 .example.com로 환원됨(서브도메인만 — 베어 호스트는 유지), 전체 정규식 — 향후 파이프라인 패스에만 적용됩니다.)</text>
+    </g>
+
+    <g transform="translate(20, 296)">
+      <text class="text-label" x="0" y="14">메모 (선택)</text>
+      <rect class="input" x="0" y="22" width="440" height="28"/>
+      <text class="text-cell" x="12" y="40">내부 스테이징 — 담당: Alice</text>
+    </g>
+
+    <g transform="translate(20, 360)">
+      <rect class="button-ghost" x="248" y="0" width="80" height="32"/>
+      <text class="button-ghost-text" x="272" y="20">취소</text>
+      <rect class="button-primary" x="340" y="0" width="100" height="32"/>
+      <text class="button-primary-text" x="376" y="20">저장</text>
+    </g>
+  </g>
+</svg>

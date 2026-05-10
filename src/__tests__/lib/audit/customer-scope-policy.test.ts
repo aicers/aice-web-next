@@ -51,7 +51,7 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
     expect(bad).toEqual([]);
   });
 
-  it("flags customer.* / node.* / service.* / aimer_context_token.issued / triage.policy.* as customer-scoped", () => {
+  it("flags customer.* / node.* / service.* / aimer_context_token.issued / triage.policy.* / triage_exclusion.{customer_*,fanout_failed} as customer-scoped", () => {
     const expectedScoped: AuditAction[] = [
       "customer.create",
       "customer.update",
@@ -70,6 +70,9 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
       "triage.policy.create",
       "triage.policy.update",
       "triage.policy.delete",
+      "triage_exclusion.customer_add",
+      "triage_exclusion.customer_remove",
+      "triage_exclusion.fanout_failed",
     ];
     for (const action of expectedScoped) {
       expect(customerScopeForAction(action)).toBe("customer-scoped");
@@ -95,6 +98,9 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
       "triage.policy.create",
       "triage.policy.update",
       "triage.policy.delete",
+      "triage_exclusion.customer_add",
+      "triage_exclusion.customer_remove",
+      "triage_exclusion.fanout_failed",
     ]);
     for (const action of listAllAuditActions()) {
       if (!scopedActions.has(action)) {

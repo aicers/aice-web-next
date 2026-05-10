@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">설정 → 트리아지 예외 (전역) 와이어프레임</title>
+  <desc id="desc">전역 트리아지 예외 페이지 와이어프레임: 좌측 사이드바에 트리아지 예외(전역) 항목이 강조됨; 메인 패널에 모든 활성 고객에 적용되는 전역 예외 목록과 추가 시 고객별 팬아웃 작업이 비동기로 실행된다는 안내 콜아웃이 표시됩니다.</desc>
+
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 6; ry: 6; }
+    .panel-header { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 22px; fill: #18181b; font-weight: 700; }
+    .text-intro { font-size: 12px; fill: #52525b; }
+    .text-section { font-size: 11px; fill: #71717a; font-weight: 600; letter-spacing: 0.05em; }
+    .text-cell { font-size: 12px; fill: #18181b; }
+    .text-mono { font-size: 12px; fill: #18181b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .button-primary { fill: #18181b; stroke: none; rx: 4; ry: 4; }
+    .button-primary-text { fill: #ffffff; font-size: 12px; font-weight: 500; }
+    .nav-active { fill: #f4f4f5; rx: 4; ry: 4; }
+    .nav-active-text { fill: #18181b; font-size: 12px; font-weight: 600; }
+    .nav-text { fill: #52525b; font-size: 12px; }
+    .row-divider { stroke: #e5e7eb; stroke-width: 1; }
+    .danger { fill: #b91c1c; font-size: 11px; }
+    .callout { fill: #fef3c7; stroke: #fcd34d; stroke-width: 1; rx: 4; ry: 4; }
+    .callout-text { font-size: 11px; fill: #78350f; }
+  </style>
+
+  <rect class="bg" width="960" height="480"/>
+
+  <g transform="translate(16, 16)">
+    <rect class="panel" width="216" height="448"/>
+    <text class="text-section" x="16" y="28">설정</text>
+    <text class="nav-text" x="16" y="64">계정</text>
+    <text class="nav-text" x="16" y="92">역할</text>
+    <text class="nav-text" x="16" y="120">고객</text>
+    <text class="nav-text" x="16" y="148">트리아지 정책</text>
+    <text class="nav-text" x="16" y="176">트리아지 예외</text>
+    <rect class="nav-active" x="8" y="188" width="200" height="28"/>
+    <text class="nav-active-text" x="16" y="206">트리아지 예외 (전역)</text>
+    <text class="nav-text" x="16" y="236">시스템 설정</text>
+  </g>
+
+  <g transform="translate(248, 16)">
+    <text class="text-title" x="0" y="24">트리아지 예외 (전역)</text>
+    <text class="text-intro" x="0" y="46">운영자가 관리하며 모든 활성 고객에 적용되는 예외 목록입니다.</text>
+
+    <rect class="callout" x="0" y="64" width="688" height="44"/>
+    <text class="callout-text" x="12" y="84">전역 예외 추가 시 고객별 팬아웃 작업이 큐잉됩니다. 소급 DELETE는 비동기로 실행되며 활성 합집합은 즉시 새 행을 인식합니다.</text>
+
+    <g transform="translate(0, 124)">
+      <rect class="button-primary" x="588" y="0" width="100" height="28"/>
+      <text class="button-primary-text" x="612" y="18">+ 예외 추가</text>
+    </g>
+
+    <g transform="translate(0, 168)">
+      <rect class="panel" width="688" height="284"/>
+      <rect class="panel-header" width="688" height="32"/>
+      <text class="text-section" x="16" y="20">종류</text>
+      <text class="text-section" x="120" y="20">값</text>
+      <text class="text-section" x="360" y="20">접미사</text>
+      <text class="text-section" x="448" y="20">작성자</text>
+      <text class="text-section" x="572" y="20">작업</text>
+
+      <g transform="translate(0, 32)">
+        <text class="text-cell" x="16" y="22">IP 주소</text>
+        <text class="text-mono" x="120" y="22">198.51.100.0/24</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">ops-admin</text>
+        <text class="danger" x="600" y="22">삭제</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 72)">
+        <text class="text-cell" x="16" y="22">호스트명</text>
+        <text class="text-mono" x="120" y="22">healthcheck.internal</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">ops-admin</text>
+        <text class="danger" x="600" y="22">삭제</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 112)">
+        <text class="text-cell" x="16" y="22">도메인(정규식)</text>
+        <text class="text-mono" x="120" y="22">^.*\.scanner\.internal$</text>
+        <text class="text-mono" x="360" y="22">.scanner.internal</text>
+        <text class="text-cell" x="448" y="22">ops-admin</text>
+        <text class="danger" x="600" y="22">삭제</text>
+      </g>
+
+      <text class="text-muted" x="16" y="260">전체 3개 중 3개 표시</text>
+    </g>
+  </g>
+</svg>

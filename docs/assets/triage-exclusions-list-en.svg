@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Settings → Triage exclusions (per-customer) wireframe</title>
+  <desc id="desc">Wireframe of the per-customer Triage exclusions list page: Settings sidebar on the left with the Triage exclusions entry highlighted; main panel with a customer picker, Add button, and a table of exclusions showing kind, value, suffix, note, created-by and created-at columns; a delete-confirm hover affordance on the right of each row.</desc>
+
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 6; ry: 6; }
+    .panel-header { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 22px; fill: #18181b; font-weight: 700; }
+    .text-intro { font-size: 12px; fill: #52525b; }
+    .text-section { font-size: 11px; fill: #71717a; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .text-label { font-size: 11px; fill: #71717a; }
+    .text-cell { font-size: 12px; fill: #18181b; }
+    .text-mono { font-size: 12px; fill: #18181b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .input { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .button-primary { fill: #18181b; stroke: none; rx: 4; ry: 4; }
+    .button-primary-text { fill: #ffffff; font-size: 12px; font-weight: 500; }
+    .button-ghost { fill: transparent; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .button-ghost-text { fill: #18181b; font-size: 12px; }
+    .nav-active { fill: #f4f4f5; rx: 4; ry: 4; }
+    .nav-active-text { fill: #18181b; font-size: 12px; font-weight: 600; }
+    .nav-text { fill: #52525b; font-size: 12px; }
+    .row-divider { stroke: #e5e7eb; stroke-width: 1; }
+    .danger { fill: #b91c1c; font-size: 11px; }
+  </style>
+
+  <rect class="bg" width="960" height="560"/>
+
+  <!-- Sidebar -->
+  <g transform="translate(16, 16)">
+    <rect class="panel" width="216" height="528"/>
+    <text class="text-section" x="16" y="28">Settings</text>
+    <text class="nav-text" x="16" y="64">Account</text>
+    <text class="nav-text" x="16" y="92">Roles</text>
+    <text class="nav-text" x="16" y="120">Customers</text>
+    <text class="nav-text" x="16" y="148">Triage policies</text>
+    <rect class="nav-active" x="8" y="160" width="200" height="28"/>
+    <text class="nav-active-text" x="16" y="178">Triage exclusions</text>
+    <text class="nav-text" x="16" y="208">Triage exclusions (global)</text>
+    <text class="nav-text" x="16" y="236">System settings</text>
+  </g>
+
+  <!-- Main panel -->
+  <g transform="translate(248, 16)">
+    <text class="text-title" x="0" y="24">Triage exclusions</text>
+    <text class="text-intro" x="0" y="46">Per-customer exclusions. ADD removes matching past corpus rows; REMOVE applies to future cadence ticks only.</text>
+
+    <!-- Customer picker + Add button -->
+    <g transform="translate(0, 64)">
+      <text class="text-label" x="0" y="14">Customer</text>
+      <rect class="input" x="0" y="22" width="240" height="28"/>
+      <text class="text-cell" x="12" y="40">Acme Corp (id 42)</text>
+      <rect class="button-primary" x="588" y="22" width="100" height="28"/>
+      <text class="button-primary-text" x="612" y="40">+ Add exclusion</text>
+    </g>
+
+    <!-- Table -->
+    <g transform="translate(0, 116)">
+      <rect class="panel" width="688" height="408"/>
+      <rect class="panel-header" width="688" height="32"/>
+      <text class="text-section" x="16" y="20">Kind</text>
+      <text class="text-section" x="120" y="20">Value</text>
+      <text class="text-section" x="360" y="20">Suffix</text>
+      <text class="text-section" x="448" y="20">Created by</text>
+      <text class="text-section" x="572" y="20">Actions</text>
+
+      <g transform="translate(0, 32)">
+        <text class="text-cell" x="16" y="22">IP address</text>
+        <text class="text-mono" x="120" y="22">10.0.0.0/24</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">alice</text>
+        <text class="danger" x="600" y="22">Delete</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 72)">
+        <text class="text-cell" x="16" y="22">Hostname</text>
+        <text class="text-mono" x="120" y="22">probe.example.org</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">alice</text>
+        <text class="danger" x="600" y="22">Delete</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 112)">
+        <text class="text-cell" x="16" y="22">URI</text>
+        <text class="text-mono" x="120" y="22">/healthz</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">bob</text>
+        <text class="danger" x="600" y="22">Delete</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 152)">
+        <text class="text-cell" x="16" y="22">Domain (regex)</text>
+        <text class="text-mono" x="120" y="22">^.*\.example\.com$</text>
+        <text class="text-mono" x="360" y="22">.example.com</text>
+        <text class="text-cell" x="448" y="22">alice</text>
+        <text class="danger" x="600" y="22">Delete</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 192)">
+        <text class="text-cell" x="16" y="22">Domain (regex)</text>
+        <text class="text-mono" x="120" y="22">^([a-z0-9-]+\.)*acme\.io$</text>
+        <text class="text-mono" x="360" y="22">.acme.io</text>
+        <text class="text-cell" x="448" y="22">bob</text>
+        <text class="danger" x="600" y="22">Delete</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+
+      <text class="text-muted" x="16" y="380">5 of 5 exclusions</text>
+    </g>
+  </g>
+</svg>

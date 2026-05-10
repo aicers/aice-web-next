@@ -22,6 +22,18 @@ export default async function SettingsLayout({
   const showPolicies = session
     ? await hasPermission(session.roles, "system-settings:read")
     : false;
+  // Visible whenever the session can navigate to triage (`triage:read`),
+  // mirroring the menu-gate. Mutate buttons inside the page gate on
+  // `triage:exclusion:write` / `triage:exclusion:global:write`
+  // separately so a Security Monitor can navigate-to-view.
+  const showTriageExclusions = session
+    ? await hasPermission(session.roles, "triage:read")
+    : false;
+  // Global Triage exclusions sits next to the per-customer entry as a
+  // sibling tab so the global CRUD surface is reachable without
+  // knowing the URL — closes the discoverability gap raised in #457
+  // round 1 review.
+  const showTriageExclusionsGlobal = showTriageExclusions;
   const showAccountStatus = session
     ? await hasPermission(session.roles, "dashboard:read")
     : false;
@@ -37,6 +49,8 @@ export default async function SettingsLayout({
         showRoles={showRoles}
         showCustomers={showCustomers}
         showPolicies={showPolicies}
+        showTriageExclusions={showTriageExclusions}
+        showTriageExclusionsGlobal={showTriageExclusionsGlobal}
         showAccountStatus={showAccountStatus}
         showAimerIntegration={showAimerIntegration}
       />

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">설정 → 트리아지 예외 (고객별) 와이어프레임</title>
+  <desc id="desc">고객별 트리아지 예외 목록 페이지 와이어프레임: 좌측에 트리아지 예외 항목이 강조된 설정 사이드바; 메인 패널에 고객 선택기, 추가 버튼, 종류 / 값 / 접미사 / 작성자 / 작업 컬럼을 가진 표가 표시됩니다.</desc>
+
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 6; ry: 6; }
+    .panel-header { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 22px; fill: #18181b; font-weight: 700; }
+    .text-intro { font-size: 12px; fill: #52525b; }
+    .text-section { font-size: 11px; fill: #71717a; font-weight: 600; letter-spacing: 0.05em; }
+    .text-label { font-size: 11px; fill: #71717a; }
+    .text-cell { font-size: 12px; fill: #18181b; }
+    .text-mono { font-size: 12px; fill: #18181b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .input { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .button-primary { fill: #18181b; stroke: none; rx: 4; ry: 4; }
+    .button-primary-text { fill: #ffffff; font-size: 12px; font-weight: 500; }
+    .nav-active { fill: #f4f4f5; rx: 4; ry: 4; }
+    .nav-active-text { fill: #18181b; font-size: 12px; font-weight: 600; }
+    .nav-text { fill: #52525b; font-size: 12px; }
+    .row-divider { stroke: #e5e7eb; stroke-width: 1; }
+    .danger { fill: #b91c1c; font-size: 11px; }
+  </style>
+
+  <rect class="bg" width="960" height="560"/>
+
+  <g transform="translate(16, 16)">
+    <rect class="panel" width="216" height="528"/>
+    <text class="text-section" x="16" y="28">설정</text>
+    <text class="nav-text" x="16" y="64">계정</text>
+    <text class="nav-text" x="16" y="92">역할</text>
+    <text class="nav-text" x="16" y="120">고객</text>
+    <text class="nav-text" x="16" y="148">트리아지 정책</text>
+    <rect class="nav-active" x="8" y="160" width="200" height="28"/>
+    <text class="nav-active-text" x="16" y="178">트리아지 예외</text>
+    <text class="nav-text" x="16" y="208">트리아지 예외 (전역)</text>
+    <text class="nav-text" x="16" y="236">시스템 설정</text>
+  </g>
+
+  <g transform="translate(248, 16)">
+    <text class="text-title" x="0" y="24">트리아지 예외</text>
+    <text class="text-intro" x="0" y="46">고객별 예외 목록. 추가 시 일치하는 과거 코퍼스 행이 삭제되며, 삭제는 향후 케이던스 틱에만 적용됩니다.</text>
+
+    <g transform="translate(0, 64)">
+      <text class="text-label" x="0" y="14">고객</text>
+      <rect class="input" x="0" y="22" width="240" height="28"/>
+      <text class="text-cell" x="12" y="40">Acme Corp (id 42)</text>
+      <rect class="button-primary" x="588" y="22" width="100" height="28"/>
+      <text class="button-primary-text" x="612" y="40">+ 예외 추가</text>
+    </g>
+
+    <g transform="translate(0, 116)">
+      <rect class="panel" width="688" height="408"/>
+      <rect class="panel-header" width="688" height="32"/>
+      <text class="text-section" x="16" y="20">종류</text>
+      <text class="text-section" x="120" y="20">값</text>
+      <text class="text-section" x="360" y="20">접미사</text>
+      <text class="text-section" x="448" y="20">작성자</text>
+      <text class="text-section" x="572" y="20">작업</text>
+
+      <g transform="translate(0, 32)">
+        <text class="text-cell" x="16" y="22">IP 주소</text>
+        <text class="text-mono" x="120" y="22">10.0.0.0/24</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">alice</text>
+        <text class="danger" x="600" y="22">삭제</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 72)">
+        <text class="text-cell" x="16" y="22">호스트명</text>
+        <text class="text-mono" x="120" y="22">probe.example.org</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">alice</text>
+        <text class="danger" x="600" y="22">삭제</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 112)">
+        <text class="text-cell" x="16" y="22">URI</text>
+        <text class="text-mono" x="120" y="22">/healthz</text>
+        <text class="text-muted" x="360" y="22">—</text>
+        <text class="text-cell" x="448" y="22">bob</text>
+        <text class="danger" x="600" y="22">삭제</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 152)">
+        <text class="text-cell" x="16" y="22">도메인(정규식)</text>
+        <text class="text-mono" x="120" y="22">^.*\.example\.com$</text>
+        <text class="text-mono" x="360" y="22">.example.com</text>
+        <text class="text-cell" x="448" y="22">alice</text>
+        <text class="danger" x="600" y="22">삭제</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+      <g transform="translate(0, 192)">
+        <text class="text-cell" x="16" y="22">도메인(정규식)</text>
+        <text class="text-mono" x="120" y="22">^([a-z0-9-]+\.)*acme\.io$</text>
+        <text class="text-mono" x="360" y="22">.acme.io</text>
+        <text class="text-cell" x="448" y="22">bob</text>
+        <text class="danger" x="600" y="22">삭제</text>
+        <line class="row-divider" x1="0" y1="40" x2="688" y2="40"/>
+      </g>
+
+      <text class="text-muted" x="16" y="380">전체 5개 중 5개 표시</text>
+    </g>
+  </g>
+</svg>
