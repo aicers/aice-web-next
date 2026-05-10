@@ -32,12 +32,18 @@ import {
   TriagePeriodPicker,
   type TriagePeriodPickerLabels,
 } from "./period-picker";
+import {
+  type TriagePivotScope,
+  TriagePivotScopeToggle,
+  type TriagePivotScopeToggleLabels,
+} from "./scope-toggle";
 
 export interface TriageShellLabels {
   title: string;
   intro: string;
   periodPicker: TriagePeriodPickerLabels;
   modeToggle: TriageModeToggleLabels;
+  scopeToggle: TriagePivotScopeToggleLabels;
   errorBanner: string;
   forbiddenBanner: string;
   forbiddenScopeBanner: string;
@@ -60,6 +66,13 @@ interface TriageShellProps {
   initialPeriod: TriagePeriod;
   initialState: TriageShellState;
   initialClamped: boolean;
+  /**
+   * Stable identifier for the customer scope; gates Tier 2 cache reuse
+   * across tenant switches in the same browser session. Computed
+   * server-side in the page so the client never derives it from
+   * potentially-stale state.
+   */
+  customerScope?: string;
   labels: TriageShellLabels;
 }
 
@@ -69,12 +82,19 @@ export function TriageShell({
   initialPeriod,
   initialState,
   initialClamped,
+  customerScope,
   labels,
 }: TriageShellProps) {
   const router = useRouter();
   const [period, setPeriod] = useState<TriagePeriod>(initialPeriod);
   const [pending, startTransition] = useTransition();
   const [mode, setMode] = useState<TriageMode>("baseline");
+  // Tier 1 / Tier 2 pivot scope. Default Tier 1 on every fresh menu
+  // entry per #453 — sticky across sessions risks an analyst
+  // returning to a 5,000-row fetch they did not intend. URL-hash
+  // persistence (set up in baseline-content) covers the share/reload
+  // case.
+  const [scope, setScope] = useState<TriagePivotScope>("tier1");
   // Bumped whenever a period change is committed; baseline-content
   // resets its breadcrumb on this signal. Kept here (not in the
   // component) so the period-change confirmation modal lives in the
@@ -173,6 +193,11 @@ export function TriageShell({
           onChange={setMode}
           labels={labels.modeToggle}
         />
+        <TriagePivotScopeToggle
+          scope={scope}
+          onChange={setScope}
+          labels={labels.scopeToggle}
+        />
       </div>
       {initialClamped ? (
         <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
@@ -191,6 +216,10 @@ export function TriageShell({
           <TriageBaselineContent
             result={initialState.result}
             resetSignal={resetSignal}
+            period={period}
+            customerScope={customerScope}
+            scope={scope}
+            onScopeRestoredFromHash={setScope}
             onPivotTrailChange={(hasPivots) => {
               hasPivotsRef.current = hasPivots;
             }}

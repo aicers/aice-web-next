@@ -43,6 +43,7 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
         startCursor
         endCursor
       }
+      totalCount
       edges {
         cursor
       }

@@ -6,7 +6,10 @@ import {
   type TriageShellLabels,
   type TriageShellState,
 } from "@/components/triage/triage-shell";
-import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
+import {
+  type EffectiveCustomerScope,
+  getEffectiveCustomerScope,
+} from "@/lib/auth/customer-scope";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import { ReviewForbiddenError } from "@/lib/review/errors";
 import {
@@ -92,6 +95,13 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
       policies: t("modeToggle.policies"),
       policiesUnavailable: t("modeToggle.policiesUnavailable"),
     },
+    scopeToggle: {
+      legend: t("scopeToggle.legend"),
+      tier1: t("scopeToggle.tier1"),
+      tier2: t("scopeToggle.tier2"),
+      tier1Hint: t("scopeToggle.tier1Hint"),
+      tier2Hint: t("scopeToggle.tier2Hint"),
+    },
     baseline: {
       funnel: {
         title: t("funnel.title"),
@@ -150,6 +160,10 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         dimensions: pivotDimensionsMap((id) =>
           t(`pivotPanel.dimensions.${id}`),
         ),
+        weakSignal: {
+          badge: t("tier2.weakBadge"),
+          hint: t("tier2.weakBadgeHint"),
+        },
       },
       pivotBreadcrumb: {
         ariaLabel: t("pivotBreadcrumb.ariaLabel"),
@@ -161,6 +175,31 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           t(`pivotBreadcrumb.dimensions.${id}`),
         ),
       },
+      tier2Modal: {
+        title: t("tier2.prefetchModal.title"),
+        descriptionTemplate: t.raw(
+          "tier2.prefetchModal.descriptionTemplate",
+        ) as string,
+        descriptionUnknown: t("tier2.prefetchModal.descriptionUnknown"),
+        confirm: t("tier2.prefetchModal.confirm"),
+        cancel: t("tier2.prefetchModal.cancel"),
+      },
+      tier2Eviction: {
+        template: t.raw("tier2.evictionTemplate") as string,
+        dismiss: t("tier2.evictionDismiss"),
+        dimensions: pivotDimensionsMap((id) =>
+          t(`pivotPanel.dimensions.${id}`),
+        ),
+      },
+      tier2Error: {
+        template: t.raw("tier2.errorTemplate") as string,
+        fallbackMessage: t("tier2.errorFallbackMessage"),
+        dismiss: t("tier2.errorDismiss"),
+        dimensions: pivotDimensionsMap((id) =>
+          t(`pivotPanel.dimensions.${id}`),
+        ),
+      },
+      staleHashFallback: t("staleHashFallback"),
     },
     periodChangeConfirm: {
       title: t("periodChangeConfirm.title"),
@@ -177,8 +216,25 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         initialPeriod={period}
         initialState={initialState}
         initialClamped={clamped}
+        customerScope={cacheKeyForCustomerScope(scope)}
         labels={labels}
       />
     </>
   );
+}
+
+/**
+ * Stable per-tenant string used as part of the Tier 2 cache key so a
+ * cached Tier 2 result for one customer set is not reused after the
+ * operator switches to a different customer in the same browser
+ * session. Admin-with-no-restriction is its own bucket; assigned
+ * scopes are sorted-and-joined customer ids; an empty scope shares the
+ * `none` bucket (it never reaches the cache because Tier 2 fetches
+ * abort on empty scope at the dispatch context).
+ */
+function cacheKeyForCustomerScope(scope: EffectiveCustomerScope): string {
+  if (scope.kind === "admin" && scope.customers.length === 0) return "admin";
+  if (scope.customers.length === 0) return "none";
+  const ids = [...scope.customers.map((c) => c.id)].sort((a, b) => a - b);
+  return `${scope.kind}:${ids.join(",")}`;
 }

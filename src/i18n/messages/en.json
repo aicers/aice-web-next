@@ -2011,7 +2011,34 @@
       "description": "Changing the period will reload the corpus and clear your current pivot trail. Continue?",
       "confirm": "Discard and reload",
       "cancel": "Keep current period"
-    }
+    },
+    "scopeToggle": {
+      "legend": "Pivot scope",
+      "tier1": "Triaged only",
+      "tier2": "All detection events",
+      "tier1Hint": "Pivot only over events that already passed the baseline rule (the loaded corpus).",
+      "tier2Hint": "Server-filtered dimensions trigger a fresh fetch on click. Larger projections will ask for confirmation."
+    },
+    "tier2": {
+      "weakBadge": "weak",
+      "weakBadgeHint": "Found by Tier 2 fetch and not present in the loaded corpus.",
+      "fetchProgress": "Fetching related events…",
+      "fetchError": "Could not fetch related events.",
+      "evictionTemplate": "Cache full — evicted {dimension}: {value}. Re-pivoting will refetch.",
+      "evictionDismiss": "Dismiss",
+      "errorTemplate": "Failed to fetch {dimension}: {value} — {message}",
+      "errorFallbackMessage": "REview did not return a message.",
+      "errorDismiss": "Dismiss",
+      "prefetchModal": {
+        "title": "Fetch large result set?",
+        "descriptionTemplate": "This dimension projects to {count} events, above the {threshold} threshold. The fetch may take a while.",
+        "descriptionUnknown": "Projected size is unknown; the fetch will walk pages until it finds the cap or the end.",
+        "confirm": "Fetch",
+        "cancel": "Cancel"
+      },
+      "sameSensorUnavailable": "Requires a sensor index — Tier 2 sensor pivot is unavailable until a triage:read-compatible lookup ships."
+    },
+    "staleHashFallback": "Pivot trail in the URL no longer matches the loaded period — showing the asset root."
   },
   "changePassword": {
     "heading": "Change Password",
