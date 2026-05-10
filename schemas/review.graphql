@@ -4,7 +4,7 @@
 # section of README.md for the update procedure. Its contents must match
 # the REview release recorded in schemas/review.version.
 #
-# Captured from review 0.49.0 (release), which embeds review-web 0.32.0
+# Captured from review 0.50.0 (release), which embeds review-web 0.33.0
 # — the source of all GraphQL changes — with the `auth-mtls` feature
 # enabled, which is how aice-web-next talks to REview. See README.md for
 # the exact reproduction steps.
@@ -6814,10 +6814,9 @@ type Query {
 	"""
 	node(id: ID!): Node!
 	"""
-	A list of sensors deployed across customers the caller can access.
-	
-	A sensor is an entry in `Node.agents` whose `kind` is `SENSOR` and
-	whose `config` is set. Nodes whose `profile` is `None` are excluded.
+	A list of nodes that have at least one deployed sensor agent
+	(`SENSOR`-kind agent with `config` set), scoped to customers the caller
+	can access. Nodes whose `profile` is `None` are excluded.
 	"""
 	customerSensorList(customerIds: [Int!], after: String, before: String, first: Int, last: Int): SensorConnection!
 	"""
@@ -7343,8 +7342,8 @@ input SearchFilterInput {
 }
 
 """
-A sensor agent that has been deployed (i.e. its `config` is set) on a node
-belonging to a particular customer.
+A node belonging to a customer that has at least one deployed sensor agent
+(a `SENSOR`-kind agent whose `config` is set).
 """
 type Sensor {
 	"""
@@ -7352,11 +7351,13 @@ type Sensor {
 	"""
 	customerId: Int!
 	"""
-	The agent key (e.g., `agent@hostname`).
+	The ID of the node this sensor runs on. Substitute directly into
+	`EventListFilterInput.sensors`.
 	"""
-	agentKey: String!
+	nodeId: ID!
 	"""
 	The fully-qualified hostname of the host on which the sensor runs.
+	Equal to `Event.sensor` for events emitted by this sensor.
 	"""
 	hostFqdn: String!
 }
