@@ -157,11 +157,15 @@ export function TriageExclusionFormDialog({
               <p className="text-xs">
                 {domainPreview === null
                   ? t("domainPreviewFullRegex")
-                  : domainPreview.exact
+                  : domainPreview.subset === "exact"
                     ? t("domainPreviewExact", { host: domainPreview.value })
-                    : t("domainPreviewSuffix", {
-                        suffix: domainPreview.value,
-                      })}
+                    : domainPreview.subset === "exactOrSuffix"
+                      ? t("domainPreviewExactOrSuffix", {
+                          suffix: domainPreview.value,
+                        })
+                      : t("domainPreviewSuffix", {
+                          suffix: domainPreview.value,
+                        })}
               </p>
             )}
           </div>

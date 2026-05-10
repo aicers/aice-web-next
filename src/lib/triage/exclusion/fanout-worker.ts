@@ -354,10 +354,14 @@ export async function runFanoutSweep(
 
   // Claim phase: SELECT FOR UPDATE SKIP LOCKED + UPDATE inside one
   // short transaction so a crash mid-run does not hold row locks
-  // indefinitely.
+  // indefinitely. A failure here means the auth_db is unreachable or
+  // the claim query itself errored — we deliberately let the error
+  // bubble up to the route handler so the sweep returns 500 rather
+  // than silently reporting an empty queue. Swallowing here would
+  // leave the scheduler looking healthy while no jobs can be claimed.
   const claimed: ClaimedJob[] = await withTransaction((client) =>
     claimPendingJobs(client, limit),
-  ).catch(() => [] as ClaimedJob[]);
+  );
 
   let completed = 0;
   let failed = 0;

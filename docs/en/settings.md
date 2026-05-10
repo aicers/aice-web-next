@@ -359,11 +359,19 @@ corpus tables under the customer's cadence advisory lock so
 cadence and the retroactive path always agree on the same final
 corpus.
 
-> **Screenshots forthcoming.** This section currently ships
-> text-only. UI captures of the list and the Add dialog will land
-> in a follow-up screenshot pass once the live capture
-> environment is available for the Settings → Triage exclusions
-> tree.
+![Triage exclusions list (wireframe)](../assets/triage-exclusions-list-en.svg)
+
+![Triage exclusions (global) page (wireframe)](../assets/triage-exclusions-global-en.svg)
+
+> **Wireframe stand-ins.** The figures above and the Add dialog
+> figure below are SVG wireframes per the
+> [authoring exception for infrastructure-gated features](../AUTHORING.md#screenshot-exception-for-infrastructure-gated-features).
+> The Triage exclusions UI depends on a populated
+> `global_triage_exclusion` / per-tenant `triage_exclusion` corpus
+> that the worktree's local environment cannot stand up without
+> the cadence pager (which lands with aicers/review-web#842).
+> They will be replaced with real PNG captures once the
+> dependent infrastructure is available.
 
 ### Kind and value
 
@@ -381,6 +389,8 @@ Maximum length per value is **1024 characters** to bound regex
 compile cost and keep the index footprint predictable.
 
 ### Domain regex preview
+
+![Add exclusion dialog (wireframe)](../assets/triage-exclusions-add-dialog-en.svg)
 
 The Add dialog runs a suffix-reducer over the supplied regex and
 shows one of four previews. The reducer is conservative: it only

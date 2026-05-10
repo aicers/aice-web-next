@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Add exclusion dialog (wireframe)</title>
+  <desc id="desc">Wireframe of the Add exclusion dialog: Kind dropdown set to Domain (regex), value field showing a regex, helper text explaining the kind, a domain-suffix preview line for each of the four reducer outcomes (exact, suffix, exact-or-suffix, full-regex-only), an optional note field, and Cancel / Save buttons.</desc>
+
+  <style>
+    .scrim { fill: rgba(15, 23, 42, 0.45); }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 8; ry: 8; }
+    .text-title { font-size: 16px; fill: #18181b; font-weight: 600; }
+    .text-label { font-size: 11px; fill: #71717a; }
+    .text-helper { font-size: 11px; fill: #52525b; }
+    .text-preview { font-size: 11px; fill: #2563eb; font-style: italic; }
+    .text-preview-muted { font-size: 11px; fill: #71717a; font-style: italic; }
+    .text-cell { font-size: 12px; fill: #18181b; }
+    .text-mono { font-size: 12px; fill: #18181b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .input { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .button-primary { fill: #18181b; stroke: none; rx: 4; ry: 4; }
+    .button-primary-text { fill: #ffffff; font-size: 12px; font-weight: 500; }
+    .button-ghost { fill: transparent; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .button-ghost-text { fill: #18181b; font-size: 12px; }
+  </style>
+
+  <rect class="scrim" width="720" height="480"/>
+
+  <g transform="translate(120, 36)">
+    <rect class="panel" width="480" height="408"/>
+
+    <text class="text-title" x="20" y="32">Add exclusion</text>
+
+    <g transform="translate(20, 56)">
+      <text class="text-label" x="0" y="14">Kind</text>
+      <rect class="input" x="0" y="22" width="200" height="28"/>
+      <text class="text-cell" x="12" y="40">Domain (regex)</text>
+    </g>
+
+    <g transform="translate(20, 120)">
+      <text class="text-label" x="0" y="14">Value</text>
+      <rect class="input" x="0" y="22" width="440" height="28"/>
+      <text class="text-mono" x="12" y="40">^([a-z0-9-]+\.)*example\.com$</text>
+      <text class="text-helper" x="0" y="68">Regex pattern. Patterns that reduce to a hostname suffix or exact match are applied retroactively.</text>
+    </g>
+
+    <g transform="translate(20, 200)">
+      <text class="text-label" x="0" y="14">Domain reducer preview</text>
+      <text class="text-preview" x="0" y="36">Reduces to exact-or-suffix .example.com — bare host and any subdomain are removed.</text>
+      <text class="text-preview-muted" x="0" y="56">(Other inputs would show: Reduces to exact hostname …, Reduces to suffix .example.com (subdomains only — bare host left untouched), or Full-regex-only — applies to future pipeline passes only.)</text>
+    </g>
+
+    <g transform="translate(20, 296)">
+      <text class="text-label" x="0" y="14">Note (optional)</text>
+      <rect class="input" x="0" y="22" width="440" height="28"/>
+      <text class="text-cell" x="12" y="40">Internal staging — owner: Alice</text>
+    </g>
+
+    <g transform="translate(20, 360)">
+      <rect class="button-ghost" x="248" y="0" width="80" height="32"/>
+      <text class="button-ghost-text" x="272" y="20">Cancel</text>
+      <rect class="button-primary" x="340" y="0" width="100" height="32"/>
+      <text class="button-primary-text" x="376" y="20">Save</text>
+    </g>
+  </g>
+</svg>
