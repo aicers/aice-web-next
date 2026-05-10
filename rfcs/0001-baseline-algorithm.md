@@ -128,39 +128,38 @@ score(event) = w_S1·s1(event) + w_S2·s2(event) + w_S3·s3(event)
 
 Weights `w_S` are tunable (§9). Sum (rather than max) is chosen so that an event with multiple converging signals ranks above one with only the strongest single signal — this matches the analyst intuition that converging signals are more interesting than any single strong signal.
 
-### Stored score: `baseline_score`
+### Stored score: `raw_score`, computed view: `baseline_score`
 
-The within-kind score is then **kind-normalized** before storage in `baseline_triaged_event.baseline_score` so that a global percentile cutoff (e.g. #471's slider) is meaningful across kinds:
+The cadence pipeline persists the raw weighted sum at INSERT:
 
 ```
-baseline_score(event) =
-    percentile_rank(score(event), peers(event)) ∈ [0, 1]
-
-where peers(event) =
-    SELECT raw_score
-    FROM baseline_triaged_event
-    WHERE kind = event.kind
-      AND event_time ∈ active_statistics_window
-      AND baseline_version = current_baseline_version
+raw_score(event) = score(event) = w_S1·s1 + w_S2·s2 + w_S3·s3 + w_S4·s4 + w_UNLABELED·unlabeled
 ```
 
-The reference population is `baseline_triaged_event` peers, not `observed_event_meta`. This is the implementable choice because:
+`raw_score` is immutable — once written for a `(event_key, baseline_version)` it is not updated. It carries no order-of-insertion dependency.
 
-- `baseline_triaged_event` is the post-`BlockList*` set — exactly the population the user sees in the menu, so percentile rank against it carries the right "top 5% of what's visible" semantics.
-- `observed_event_meta` cannot serve as the reference: it has no `clusterId` and no selector state, so peer `score(peer)` is not recomputable from it (`UNLABELED_BONUS` and `selector_tags` are unavailable for historical rows).
-- `baseline_triaged_event`'s 180-day retention exceeds the 30-day max statistics window, so the reference is always present.
+`baseline_score` is the kind-normalized percentile rank, **computed at read time** as a window function over `raw_score`:
 
-Implementing this requires the cadence pipeline to **persist the raw weighted sum `score(event)`** alongside `baseline_score(event)` at INSERT — the percentile rank for the next event has to read peer raw scores. §9 lists this as a required schema addition (a `raw_score DOUBLE PRECISION` column on `baseline_triaged_event`); the existing `baseline_score` column stays as the kind-normalized percentile rank, the new `raw_score` column carries the underlying weighted sum.
+```sql
+CUME_DIST() OVER (PARTITION BY kind ORDER BY raw_score)
+    AS baseline_score
+```
 
-Cold-start: when `peers(event)` is empty (first event in a kind, or first event in a fresh `baseline_version`), `baseline_score(event) = 1.0` by convention — a single event is trivially "the top".
+`CUME_DIST` is chosen over `PERCENT_RANK` because it gives natural "top X%" cutoff semantics — `baseline_score >= 0.95` captures exactly the top 5% of a kind's rows in the partition, with no off-by-one at the boundary. For a single-row partition, `CUME_DIST` returns `1.0` (the lone row is at the top of its own kind), so cold-start needs no special handling at the UI layer.
 
-A 0.95 `baseline_score` means "this event is in the top 5% of its own kind in the window", whatever that kind is. Global percentile thresholds remain comparable across kinds because every kind contributes the same uniform-on-`[0, 1]` distribution by construction.
+Computed against the read-time cohort: the rows in the active menu window for that kind, in `baseline_triaged_event`, with the current `baseline_version`. Read-time computation is what makes the uniform-on-`[0, 1]` property hold by construction — every event in a kind contributes one rank-position to its kind's partition, so no insertion order, no batch boundary, and no rising raw-score trend distorts the distribution.
+
+INSERT-time computation was rejected because it would have ranked each new event against only the peers already in the table at that moment. With raw scores trending upward (model improvements, increasing sensitivity over time), every new event would land near 1.0; the first row of every cadence batch would always be a cold-start at 1.0; and the global percentile slider in #471 would no longer cut at the actual top-5% across kinds.
+
+Read-time computation also means `baseline_score` is **not** a persisted column in this RFC's design. The `baseline_score DOUBLE PRECISION` column already in `migrations/customer/0003_baseline_corpus_a.sql` may be retained as a denormalized cache (refreshed periodically by the cadence runner if measurement shows the read-time `PERCENT_RANK` is too slow at production scale), or repurposed; the RFC's contract is only that the value `PERCENT_RANK() OVER (PARTITION BY kind ORDER BY raw_score)` is what `baseline_score` *means*. #471's slider is the single most performance-sensitive consumer; its measurement gate (already documented in #471's RFC) is the place where any caching decision is made empirically.
+
+A 0.95 `baseline_score` means "this event is in the top 5% of its own kind in the active window", whatever that kind is. Global percentile thresholds remain comparable across kinds because every kind contributes the same uniform-on-`[0, 1]` distribution by construction.
 
 **Tie-breaker.** Continuous selector values yield a high-cardinality `baseline_score`, so ties are uncommon in practice — but when they occur, the secondary order is `(event_time DESC, event_key DESC)` at every read site that orders by `baseline_score`. Both columns are NOT NULL in the schema; the i128 `event_key` is unique, so the order is total.
 
 This tie-breaker is **only** about deterministic row ordering among tied rows. It does **not** change the *set* of rows above any `baseline_score` threshold: `WHERE baseline_score >= cutoff` and `percentile_cont(baseline_score)` operate on `baseline_score` alone, so a block of rows tied at the cutoff is included or excluded atomically. If exact "Top N%" semantics matter — e.g. #471's slider stops promising "exactly the top 5% by row count" rather than "everything above the 95th percentile of the score distribution" — the consumer must rank with `row_number() OVER (ORDER BY baseline_score DESC, event_time DESC, event_key DESC)` and threshold the rank, not the score. Whether to do this is owned by #471's RFC; this RFC's contract is only that the tuple `(baseline_score, event_time, event_key)` is a deterministic total ordering.
 
-**INSERT-time evaluation.** All selectors above (S1, S2, S3, S4, `UNLABELED_BONUS`) are evaluated by the cadence pipeline (§481) at INSERT time using `observed_event_meta`'s state at that moment. The resulting `score(event)` and `baseline_score(event)` are persisted on `baseline_triaged_event`. `baseline_score` is therefore a snapshot — it does not retroactively update when later peer events would change S3 or S4. The drift exposure is bounded by retention rather than by re-scoring: see §8 for the full discussion of the 30-day typical menu window vs the 180-day corpus retention.
+**INSERT-time evaluation.** All selectors above (S1, S2, S3, S4, `UNLABELED_BONUS`) are evaluated by the cadence pipeline (§481) at INSERT time using `observed_event_meta`'s state at that moment. The resulting `raw_score(event)` is persisted on `baseline_triaged_event` along with `selector_tags`. `raw_score` is therefore a snapshot — it does not retroactively update when later peer events would change S3 or S4. The drift exposure is bounded by retention rather than by re-scoring: see §8 for the full discussion of the 30-day typical menu window vs the 180-day corpus retention. `baseline_score` is computed at read time from `raw_score` (§3 stored score), so it always reflects the actual cohort at read; it has no INSERT-time snapshot semantics.
 
 ## §4. Per-kind slot allocation (adaptive)
 
@@ -272,29 +271,29 @@ Per-event selectors (S2 severe, `UNLABELED_BONUS`) are unaffected by cold-start;
 
 ## §8. Score computation timing
 
-**Decision: all selectors evaluated at cadence INSERT time, persisted in `baseline_triaged_event.baseline_score`. No persisted pattern tables. No re-scoring at read time.**
+**Decision: per-event raw_score evaluated at cadence INSERT and persisted on `baseline_triaged_event.raw_score`. baseline_score (the kind-normalized percentile rank) is computed at read time as a window function over raw_score (§3). No persisted pattern tables. No re-scoring of `raw_score` at read time.**
 
 Concretely, when the cadence pipeline (§481) processes a new event:
 
 1. The event is appended to `observed_event_meta` (the unbiased denominator) along with its peers in the same cadence batch.
 2. For each event in the batch, the pipeline computes s1 / s3 / s4 by `GROUP BY` against `observed_event_meta` filtered to the active statistics window (§7) and the relevant grouping keys. s2 and `UNLABELED_BONUS` need no aggregation.
-3. The weighted sum `score(event)` and the kind-normalized `baseline_score(event)` are written to `baseline_triaged_event` along with `selector_tags`. Once written, they are not updated within their `baseline_version`.
+3. The weighted sum `raw_score(event)` is written to `baseline_triaged_event` along with `selector_tags`. Once written, it is not updated within its `baseline_version`.
 
 Rationale:
 
-- The schema already commits to a persisted score column: `baseline_triaged_event.baseline_score DOUBLE PRECISION`, with composite index `(event_time DESC, baseline_score DESC)` (`migrations/customer/0003_baseline_corpus_a.sql`). This index is precisely what #471's slider needs, and only works against a stored value.
+- `raw_score` is order-independent: a row's stored value depends only on its own data and on `observed_event_meta` history at that moment, not on what other rows happen to be in `baseline_triaged_event` already. The kind-normalization step that does depend on the cohort is deferred to read time exactly so insertion order cannot distort it (§3 stored score).
 - The relevant `observed_event_meta` indexes for the cadence-time GROUP BY are `event_time DESC` (the time-window slice) and `(kind, event_time DESC)` (kind-filtered window). The schema has no `asset` column; the asset-pair stand-in is `(orig_addr, resp_addr)` (and `orig_addr` for S4's per-asset grouping). The hash aggregate on `(orig_addr, resp_addr)` or `(orig_addr, kind)` runs over the kind/time-filtered slice; planner choice is verified during measurement (§12).
 - Persisted pattern tables would add a separate write path, a retention concern, and a `baseline_version` migration story for what is already a bounded, schedulable computation inside the cadence runner.
-- Score drift from later peer events: snapshot scores on `baseline_triaged_event` are not retroactively updated when new peer events arrive in `observed_event_meta` and would change S3 / S4 / S1 percentile rank. The exposure bound depends on the user's active menu window, not on a single uniform "expiry":
+- `raw_score` drift from later peer events: snapshots on `baseline_triaged_event.raw_score` are not retroactively updated when new peer events arrive in `observed_event_meta` and would change S3 / S4 / S1 percentile rank for already-inserted rows. The exposure bound depends on the user's active menu window, not on a single uniform "expiry":
 
   | Active menu window | Drift exposure for visible rows |
   |---|---|
   | Last 7d / 14d / 30d (typical menu use, per #458) | bounded to that window's age |
   | Up to 180d (corpus A retention is 180d per `migrations/customer/0003_baseline_corpus_a.sql`; `observed_event_meta` is only 30d) | up to 180d in the worst case — and beyond 30d the `observed_event_meta` history that produced the score has itself rolled over, so re-scoring is not even possible from current state |
 
-  In other words, snapshot scores remain stable **within** their `baseline_version`, but the older a row gets the more its score reflects state-of-the-world at its INSERT time rather than now. Mass re-scoring is explicitly not part of the design. If a future requirement makes long-window drift unacceptable, the mitigation is either tighter retention on `baseline_triaged_event` or a `baseline_version` bump that triggers natural turnover — the algorithm shape above does not change.
+  In other words, raw_score snapshots remain stable **within** their `baseline_version`, but the older a row gets the more its raw_score reflects state-of-the-world at its INSERT time rather than now. Mass re-scoring is explicitly not part of the design. If a future requirement makes long-window drift unacceptable, the mitigation is either tighter retention on `baseline_triaged_event` or a `baseline_version` bump that triggers natural turnover — the algorithm shape above does not change.
 
-If measurement on representative production data shows the cadence-time aggregation cost is unacceptable, the fallback is a follow-up RFC introducing per-cadence-run pattern caches; the algorithm shape above (continuous selectors, weighted sum, kind-normalized stored score) does not change, only where the GROUP BY result lives.
+If measurement on representative production data shows the cadence-time aggregation cost is unacceptable, the fallback is a follow-up RFC introducing per-cadence-run pattern caches; the algorithm shape above (continuous selectors, weighted sum, read-time kind-normalized rank) does not change, only where the GROUP BY result lives.
 
 ## §9. Tunable parameters
 
@@ -368,14 +367,20 @@ The algorithm requires two schema-level guarantees that are not in the current `
 
 | Column / constraint | Required form | Reason |
 |---|---|---|
-| `raw_score` | new `DOUBLE PRECISION NOT NULL` column | Reference distribution for `baseline_score`'s percentile rank (§3 stored score). The new event's `baseline_score` is computed by ranking its own raw weighted sum against `raw_score` values of peers in the same kind and statistics window; without persisted peer raw scores the rank is not computable from current schema columns. |
-| `selector_tags` | tightened to `NOT NULL DEFAULT '{}'` | The `coalesce(cardinality(selector_tags), 0)` guard in §4 covers the formula at read time, but tightening the column at INSERT removes the NULL state at the source and lets future readers omit defensive coalescing. The migration backfills any existing NULL rows to `'{}'` first. |
+| `raw_score` | new `DOUBLE PRECISION NOT NULL` column | Persisted weighted sum from §3, used as the input to read-time `PERCENT_RANK()` that produces `baseline_score`. `NOT NULL` is enforced from the migration onward; per-row `baseline_version` tracks which scoring algorithm produced the value. |
+| `selector_tags` | tightened to `NOT NULL DEFAULT '{}'` | The `coalesce(cardinality(selector_tags), 0)` guard in §4 covers the formula at read time, but tightening the column at INSERT removes the NULL state at the source and lets future readers omit defensive coalescing. |
 
-`baseline_score` itself stays as the kind-normalized percentile rank in `[0, 1]` — only the new `raw_score` carries the un-normalized weighted sum.
+**Backfill contract for existing rows.** When the migration runs against a tenant DB that already holds Phase 1.A rows from `0003_baseline_corpus_a.sql`, the rows must be filled before `NOT NULL` is enforced:
+
+1. `UPDATE baseline_triaged_event SET selector_tags = '{}' WHERE selector_tags IS NULL` — Phase 1.A had no selectors, so the empty array is the truthful value.
+2. `UPDATE baseline_triaged_event SET raw_score = baseline_score WHERE raw_score IS NULL` — Phase 1.A's `baseline_score` was a constant placeholder, and using the same value for `raw_score` preserves the existing relative ordering for the few hours/days until those rows age out under the 30-day typical-menu-window or are turned over by the next `baseline_version` bump (which the same migration triggers — see §10). No semantic claim is made that backfilled `raw_score` values are comparable to genuine Phase 1.B `raw_score`; the per-row `baseline_version` distinguishes the regimes.
+3. `ALTER TABLE … ALTER COLUMN … SET NOT NULL` — both columns now safe.
+
+`baseline_score` is **not** added by this migration. It is computed at read time over `raw_score` per §3. The pre-existing `baseline_score DOUBLE PRECISION` column on `baseline_triaged_event` may stay (denormalized cache, refreshed by the cadence runner if measurement requires it) or be dropped in a later migration once Phase 1.B reads no longer depend on it; that is an implementation choice driven by §471's measurement gate, not a contract of this RFC.
 
 ### Selector evaluation timing
 
-All selectors are evaluated at cadence INSERT time (§8) using `observed_event_meta` history at that moment. `score(event)`, `baseline_score(event)`, and `selector_tags(event)` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. The read path needs no joins and never touches `observed_event_meta` — both per-event values (selector tags, baseline_score) and per-kind slot-allocation aggregates (volume + average `selector_tags` length, §4) come from `baseline_triaged_event` alone.
+All selectors are evaluated at cadence INSERT time (§8) using `observed_event_meta` history at that moment. `raw_score(event)` and `selector_tags(event)` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. `baseline_score` is computed at read time from `raw_score` (§3 stored score) and is therefore not stored as part of this RFC's contract. The read path needs no joins and never touches `observed_event_meta` — both per-event values (`raw_score`, `selector_tags`, computed `baseline_score`) and per-kind slot-allocation aggregates (volume + average `selector_tags` length, §4) come from `baseline_triaged_event` alone.
 
 | Selector | Source data |
 |---|---|
