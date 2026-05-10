@@ -45,18 +45,28 @@ At menu read (per active window, no per-event recomputation):
    │                                                       baseline_version ORDER BY raw_score)
    │                                                       over rows in the active window; see §3.
    │
-   ├─ (5) compute per-kind quotas                       ── slot_share(kind) · default_N (§4),
-   │                                                       per-kind aggregates from baseline_triaged_event
-   │                                                       (volume + avg selector_tags length) + favored bonus.
-   │                                                       Quota is the cap, not the actual count.
+   ├─ (5) compute per-bucket quotas                     ── slot_share(b) · default_N where
+   │                                                       b = slot_bucket = (kind, is_unlabeled);
+   │                                                       see §4 for the per-bucket aggregate
+   │                                                       inputs (volume + avg selector_tags length)
+   │                                                       + favored bonus. Quota is the cap, not
+   │                                                       the actual count.
    │
-   └─ (6) merge per-kind cutoff-and-quota               ── For each kind, union events from all
-                                                            (kind, baseline_version) cohorts,
-                                                            filter to baseline_score >= cutoff(slider),
-                                                            ORDER BY baseline_score DESC, take up to
-                                                            quota[kind] (kind-level cap, applied once
-                                                            across versions; §4). Sum across kinds =
-                                                            final_count, ≤ default_N (§6).
+   ├─ (6) merge per-bucket cutoff-and-quota             ── For each slot_bucket b, union events from
+   │                                                       all (kind(b), baseline_version) cohorts,
+   │                                                       filter to baseline_score >= cutoff(slider),
+   │                                                       ORDER BY baseline_score DESC, take up to
+   │                                                       quota[b] (bucket-level cap, applied once
+   │                                                       across versions; §4). Sum across buckets =
+   │                                                       assembled_count, ≤ default_N (§6).
+   │
+   └─ (7) MIN_NONZERO_FLOOR fallback                    ── If assembled_count >= MIN_NONZERO_FLOOR,
+                                                            final_count = assembled_count and the menu
+                                                            shows step (6)'s rows. Otherwise the menu
+                                                            shows the top-MIN_NONZERO_FLOOR events from
+                                                            the active window globally, ordered by
+                                                            baseline_score DESC, bypassing both quota
+                                                            and cutoff. See §6.
 ```
 
 Step (3) — including window-level selectors S1/S3/S4 — runs inside the cadence pipeline (#481) by `GROUP BY` against `observed_event_meta` at INSERT time; the resulting `raw_score` (the weighted sum) and `selector_tags` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. `baseline_score` is **not** persisted at INSERT — it is the read-time `CUME_DIST()` window function defined in §3. See §8 for the full timing contract and §11 for the read-path performance contract. Steps (4)–(6) read only `baseline_triaged_event` — `baseline_score` is derived from `raw_score` in a CTE/window pass, slot-allocation aggregates use `selector_tags` array length as the signal-richness proxy (§4), so no raw confidence column is needed at read time and no second-table join. `observed_event_meta` is consulted only at cadence INSERT (step 3), never at menu read.
@@ -203,41 +213,61 @@ where:
 - `normalized_top_confidence(kind, window) ∈ [0, 1]`: a measure of how *signal-rich* the kind's events are this window. Concretely, `avg(coalesce(cardinality(selector_tags), 0)) / MAX_TAGS` over `baseline_triaged_event` rows for this `kind` in the active window, where `MAX_TAGS` is the total number of distinct selector tags the cadence pipeline can emit (§9). The `coalesce` guards both NULL `selector_tags` columns and PostgreSQL's quirk that `array_length('{}', 1)` returns `NULL` rather than `0`; without it, zero-tag rows would silently drop from `avg` and groups whose rows are all empty/NULL would produce a NULL slot share. A kind whose events frequently fire multiple selectors (S1-high + S3-recurring + S4-correlated, etc.) scores higher than one whose events typically fire only a single selector. Computed entirely from `selector_tags` — no raw confidence column is read, so the within-kind-only rule for confidence (§ "Pipeline" intro) is respected: signal-richness is measured from the algorithm's own selector firings, not from upstream confidence values.
 - `favored_bonus(kind) = β` if `kind ∈ FAVORED_KINDS = {DnsCovertChannel, unlabeled-HttpThreat, LockyRansomware, RepeatedHttpSessions, SuspiciousTlsTraffic}`, else 0. Constant, never decays.
 
-The shares are normalized to sum to 1 and multiplied by **`default_N`** (§6) — *not* by `final_count` — to produce per-kind quotas:
+The shares are normalized to sum to 1 and multiplied by **`default_N`** (§6) — *not* by `final_count` — to produce per-bucket quotas (the bucket key `b` is defined just below as `slot_bucket`, which equals `kind` for everything except the virtual `unlabeled-HttpThreat`):
 
 ```
-quota[kind] = round(slot_share(kind) · default_N)
+quota[b] = round(slot_share(b) · default_N)
 ```
 
-`default_N` is the cognitive-limit cap from §6; `quota[kind]` is the maximum number of events from this kind that the menu will ever show. Fractional slots are resolved by the largest-remainder method. **Tie-breaker** when two kinds have exactly equal remainders: the extra slot goes to the kind whose name sorts first lexicographically. The tie-breaker is included so the algorithm is fully deterministic — `FAVORED_KINDS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
+`default_N` is the cognitive-limit cap from §6; `quota[b]` is the maximum number of events from this bucket that the menu will ever show. Fractional slots are resolved by the largest-remainder method. **Tie-breaker** when two buckets have exactly equal remainders: the extra slot goes to the bucket whose `(kind, is_unlabeled)` key sorts first lexicographically (kind name first, then `is_unlabeled` with `false < true`). The tie-breaker is included so the algorithm is fully deterministic — `FAVORED_KINDS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
 
-The actual per-kind row count in the menu is bounded *both* by `quota[kind]` and by the slider cutoff. **`quota[kind]` applies once per kind, not per `(kind, baseline_version)` cohort** — when a kind's events span multiple `baseline_version`s in the active window, the cohorts are merged by `baseline_score DESC` (which is comparable across versions because every cohort contributes uniformly to `[0, 1]` per §3) before the quota is taken:
+### `slot_bucket`: the unit quota and merge both use
+
+`slot_share` and the merge step both operate on the same key, called `slot_bucket`, defined per event as:
 
 ```
-events_in_kind(kind) =
+slot_bucket(event) =
+    ('HttpThreat', true)   if kind(event) = 'HttpThreat'
+                              AND 'unlabeled-cluster' ∈ selector_tags(event)
+    (kind(event), false)   otherwise
+```
+
+This makes `('HttpThreat', true)` the virtual `unlabeled-HttpThreat` kind from `FAVORED_KINDS`, distinct from the labeled-HttpThreat bucket `('HttpThreat', false)`. For all non-HttpThreat kinds the second component is always `false` and the bucket is effectively just the kind. The slot-allocation aggregates of §4 — `normalized_volume`, `normalized_top_confidence`, `favored_bonus` — are all computed `GROUP BY slot_bucket`, not `GROUP BY kind`. `quota[b] = round(slot_share(b) · default_N)` is therefore per-bucket, not per-kind.
+
+Using a shared key in both stages removes the double-count risk from the previous draft: the same event has exactly one `slot_bucket`, and that bucket is the only one whose quota counts that event.
+
+### Composition: cutoff and quota together
+
+The actual per-bucket row count is bounded *both* by `quota[b]` and by the slider cutoff. `quota[b]` applies **once per bucket, not per `(kind, baseline_version)` cohort** — when a bucket's events span multiple `baseline_version`s in the active window, the cohorts are merged by `baseline_score DESC` (which is comparable across versions because every `(kind, baseline_version)` cohort contributes uniformly to `[0, 1]` per §3) before the quota is taken:
+
+```
+events_in_bucket(b) =
     UNION over baseline_version v of
-        { e in (kind, v) cohort with baseline_score(e) >= cutoff(slider) }
+        { e | slot_bucket(e) = b
+              AND e is in the (kind(e), v) CUME_DIST cohort over the active window
+              AND baseline_score(e) >= cutoff(slider) }
 
-visible[kind] = first quota[kind] rows of events_in_kind(kind)
-                ordered by baseline_score DESC, then §3 tie-breaker
-                (or all of events_in_kind(kind) if it has fewer rows)
+visible[b] = first quota[b] rows of events_in_bucket(b)
+             ordered by baseline_score DESC, then §3 tie-breaker
+             (or all of events_in_bucket(b) if it has fewer rows)
 
-final_count = sum(visible[kind] for all kinds)
-            = bounded above by sum(quota[kind]) = default_N (cognitive cap)
-            = bounded below by MIN_NONZERO_FLOOR when post_exclusion > 0 (§6 floor)
+assembled_count = sum(visible[b] for all buckets b)
+                = bounded above by sum(quota[b]) = default_N (cognitive cap)
 ```
 
-Per-version application of the quota would let a kind exceed its `default_N` share whenever multiple versions co-exist (kind quota 10 with two versions = up to 20 rows), breaking the `final_count ≤ default_N` cap that motivates `default_N` in the first place.
+Per-version application of the quota would let a bucket exceed its `default_N` share whenever multiple versions co-exist (bucket quota 10 with two versions = up to 20 rows), breaking the `assembled_count ≤ default_N` cap that motivates `default_N` in the first place.
 
 **Composition order at menu read** (the order pipeline §3 step (6) implements):
 
-1. `quota[kind]` is computed first (this section, against the active window).
-2. For each kind, the rows passing the cutoff are unioned across all `baseline_version`s present in the active window and ordered by `baseline_score DESC` (with the §3 tie-breaker tuple). `baseline_score` is computed per-`(kind, baseline_version)` cohort by the §3 CUME_DIST formula, but the *quota application* operates on the kind-level union of those cohorts.
-3. The first `quota[kind]` such rows are taken; if fewer than `quota[kind]` rows pass the cutoff for the kind, the kind contributes only what passes (the menu is never padded with sub-cutoff events to fill a quota).
+1. `quota[b]` is computed first against the active window's slot-allocation aggregates.
+2. For each bucket `b`, rows passing the cutoff are unioned across all `baseline_version`s in which the bucket's underlying `kind` appears, then ordered by `baseline_score DESC` with the §3 tie-breaker tuple. `baseline_score` is computed per-`(kind, baseline_version)` cohort by the §3 `CUME_DIST` formula, but the *quota application* operates on the bucket-level union of those cohorts.
+3. The first `quota[b]` such rows are taken; if fewer rows pass the cutoff for the bucket, the bucket contributes only what passes — the menu is never padded with sub-cutoff events to fill a quota.
 
-The slider's "All" stop (no cutoff) produces **up to** `default_N` rows distributed by `slot_share`. The actual count can fall short of `default_N` when a kind's available events do not fill its quota — slack from underfilled quotas is **not** redistributed to other kinds (no padding by lower-priority kinds). Tighter slider stops shrink the visible count further because each kind's qualifying-event count drops; `quota[kind]` becomes the binding constraint only at the loose end of the slider, while the cutoff becomes binding at the strict end.
+`assembled_count` is the count after composition. The final menu count is one more step away — the `MIN_NONZERO_FLOOR` fallback (§6) may surface additional rows when `assembled_count` is below the floor; that fallback is defined formally in §6 and is the only path by which `final_count` differs from `assembled_count`.
 
-The `unlabeled-HttpThreat` entry in `FAVORED_KINDS` is a virtual kind, and slot-allocation aggregates GROUP BY `(kind, is_unlabeled)` where `is_unlabeled = (kind = 'HttpThreat' AND 'unlabeled-cluster' = ANY(selector_tags))`. The pair `('HttpThreat', true)` is treated as the virtual kind for `FAVORED_KINDS` membership and slot share. Because the unlabeled flag is detected via `selector_tags` — written at cadence INSERT by §3's `UNLABELED_BONUS` — slot allocation does not need a separate `clusterId` column on any read-time table.
+### Behavior at the loose and strict ends
+
+The slider's "All" stop (no cutoff) produces **up to** `default_N` rows distributed by `slot_share`. The actual `assembled_count` can fall short of `default_N` when a bucket's available events do not fill its quota — slack from underfilled quotas is **not** redistributed to other buckets (no padding by lower-priority buckets). Tighter slider stops shrink `assembled_count` further because each bucket's qualifying-event count drops; `quota[b]` becomes the binding constraint only at the loose end of the slider, while the cutoff becomes binding at the strict end.
 
 ### Why this satisfies the adaptiveness requirement
 
@@ -278,29 +308,43 @@ The log10 shape buys two properties at once:
 - `LOWER_FLOOR` ensures even very quiet days surface something to look at.
 - The slow growth of log10 naturally bounds the menu near an analyst-readable size without a hard cap constant; the customer's activity level is reflected, not equated to raw volume.
 
-`default_N` is the **cognitive-limit cap**: the upper bound on the number of rows the menu shows. §4 uses it to compute per-kind quotas (`quota[kind] = round(slot_share(kind) · default_N)`); the sum of quotas is exactly `default_N`. The loosest slider stop ("All") produces *up to* `default_N` rows — the actual count can fall short when a kind's available events do not fill its quota, since slack is not redistributed (no padding from lower-priority kinds; no padding by sub-cutoff events). Tighter slider positions shrink `final_count` further because the cutoff filters events out faster than the quota cap binds.
+`default_N` is the **cognitive-limit cap**: the upper bound on the number of rows the menu shows. §4 uses it to compute per-bucket quotas (`quota[b] = round(slot_share(b) · default_N)` where `b = slot_bucket`); the sum of quotas across buckets is exactly `default_N`. The loosest slider stop ("All") produces *up to* `default_N` rows — the actual count can fall short when a bucket's available events do not fill its quota, since slack is not redistributed (no padding from lower-priority buckets; no padding by sub-cutoff events). Tighter slider positions shrink `final_count` further because the cutoff filters events out faster than the quota cap binds.
 
-The formal definition of `final_count` is given in §4 as the sum of `visible[kind]` after composing quota and cutoff. Restating it here for the §6 view:
+`final_count` is `assembled_count` from §4, with one explicit fallback pass when the floor is not met:
 
 ```
-final_count = 0
-              if post_exclusion_event_count = 0
+assembled_count = sum_over_buckets b ( min(
+    quota[b],
+    |events_in_bucket(b)|             // post-cutoff, post-version-union (§4)
+))
 
-final_count = max(
-    MIN_NONZERO_FLOOR,
-    sum_over_kinds( min(
-        quota[kind],
-        |events in kind (union of all (kind, baseline_version) cohorts in the active window)
-         with baseline_score >= cutoff|
-    ))
-  )
-              if post_exclusion_event_count > 0
+final_menu_rows =
+    visible[b] for all buckets b      // the §4 result
+
+If post_exclusion_event_count = 0:
+    final_count = 0
+    (menu shows nothing)
+
+Else if assembled_count >= MIN_NONZERO_FLOOR:
+    final_count = assembled_count
+    (menu shows visible[b] rows; floor not invoked)
+
+Else:  // assembled_count < MIN_NONZERO_FLOOR and post_exclusion > 0
+    floor_rows = top MIN_NONZERO_FLOOR events from the active window
+                 ordered by baseline_score DESC with the §3 tie-breaker,
+                 selected globally across all buckets.
+                 Bypasses both quota[b] and cutoff(slider).
+    final_count = |floor_rows|        // = min(MIN_NONZERO_FLOOR, post_exclusion_event_count)
+    (menu shows floor_rows instead of visible[b]; quota and cutoff are
+     intentionally bypassed because a non-empty menu of clearly-best rows
+     beats a balanced empty menu when the slider is too strict for any
+     bucket to fill its quota.)
 ```
 
 - `final_count` is bounded above by `default_N` (cognitive cap, via the sum of quotas) and by `post_exclusion_event_count`. The menu is never padded with sub-cutoff events to fill a quota.
-- `MIN_NONZERO_FLOOR` guarantees a non-empty menu whenever any event survives Stage 1 exclusion. If the slider cutoff yields zero rows in the active window, the top-`MIN_NONZERO_FLOOR` events by `baseline_score` are surfaced regardless.
+- `MIN_NONZERO_FLOOR` is invoked **only as a global fallback when `assembled_count` is below the floor**. It is not a per-bucket guarantee, and it does not augment the §4 `visible[b]` result — when invoked, it replaces it. The replacement is intentional: by the time the floor is needed, the slider+quota composition has produced too few rows to be useful, so the cleanest behavior is to forget composition for this menu and show the analyst the strongest signals available regardless of bucket distribution.
 - The slider's neutral position should be the slider stop that, on a typical active window, produces a count near the loose end of the meaningful range — somewhere between half `default_N` and `default_N`. The exact stop is owned by #471; this RFC commits only to `default_N` being the cap (loosest stop = "All" = at most `default_N` rows after quota).
-- Slider direction: "more" loosens the cutoff (more rows pass, but capped at `default_N` via the quota); "less" tightens the cutoff (fewer rows pass). The dial is relative to whichever stop neutral lands on; what it actually moves is the percentile cutoff over `baseline_score`, not a multiplier on row count or on `default_N`.
+- Slider direction: "more" loosens the cutoff (more rows pass, but capped at `default_N` via the quota); "less" tightens the cutoff (fewer rows pass; the floor pass eventually kicks in). The dial is relative to whichever stop neutral lands on; what it actually moves is the percentile cutoff over `baseline_score`, not a multiplier on row count or on `default_N`.
 
 The dial mechanism (continuous vs discrete, exact UI shape) is owned by #471. This RFC fixes one piece of the contract: **the dial controls a percentile cutoff on `baseline_score`**, not a multiplier on `final_count`. The two interpretations are not equivalent — a multiplier scales the absolute row count uniformly while leaving §4's per-cohort slot allocation in charge of distribution, whereas a percentile cutoff filters per-cohort by score and lets cohort-specific score distributions drive the final per-cohort counts. #471's slider stops are score thresholds (e.g. 0.95 for the "Top ~5%" stop), so the cutoff interpretation is what the slider implements.
 
