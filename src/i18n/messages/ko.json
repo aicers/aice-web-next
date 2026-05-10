@@ -1672,8 +1672,7 @@
       "back": "탐지로 돌아가기",
       "severity": "심각도",
       "time": "시간",
-      "confidence": "신뢰도",
-      "multipleNotice": "이 링크와 일치하는 이벤트가 여러 개 있습니다. 하나만 표시합니다. 전체 목록을 확인하려면 결과 목록을 여세요."
+      "confidence": "신뢰도"
     },
     "tabs": {
       "overview": "개요",

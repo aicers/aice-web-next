@@ -197,10 +197,10 @@ describe("ResultList row rendering", () => {
     expect(html).not.toMatch(/<button[^>]*>[^<]*<button/);
   });
 
-  it("hides the investigate chevron when the event cannot be located", () => {
-    // ExtraThreat / WindowsThreat / UnusualDestinationPattern without a
-    // singular origAddr have no encodable locator — the chevron would
-    // silently no-op, so it must not render at all.
+  it("renders the investigate chevron for every subtype", () => {
+    // Every `Event` subtype carries a stable `id`, so the chevron
+    // always exposes the "Open full investigation" affordance — even
+    // for schema-limited subtypes that have no addressing fields.
     const html = renderToStaticMarkup(
       <ResultList
         state={state([
@@ -217,17 +217,13 @@ describe("ResultList row rendering", () => {
       />,
     );
 
-    expect(html).not.toContain("Open investigation");
+    expect(html).toContain("Open investigation");
   });
 
-  it("still renders the Quick peek row-open overlay for non-addressable events (issue #290)", () => {
-    // Round 4 feedback: the issue's acceptance says "Selecting any
-    // row opens the peek", so schema-limited subtypes (e.g.
-    // `WindowsThreat`, `ExtraThreat`) still expose the row-open
-    // overlay. The URL persistence limitation — no encodable locator
-    // means reload cannot restore the selection — is tolerated
-    // rather than used as a reason to drop the feature, and the
-    // investigate chevron continues to be hidden independently.
+  it("renders the Quick peek row-open overlay for schema-limited subtypes (issue #290)", () => {
+    // The issue's acceptance says "Selecting any row opens the
+    // peek", so schema-limited subtypes (e.g. `WindowsThreat`,
+    // `ExtraThreat`) still expose the row-open overlay.
     const html = renderToStaticMarkup(
       <ResultList
         state={state([

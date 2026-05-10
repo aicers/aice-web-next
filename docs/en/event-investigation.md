@@ -9,9 +9,9 @@ The page is reached from the Quick peek inspector's **Open full
 investigation** action on the Detection page. Quick peek itself
 lands in Phase Detection-18; until that phase ships, the page is
 still reachable by direct URL (shared links, bookmarks, sibling
-menu pivots). The composite-locator codec the Quick peek action
-calls is already exported from `src/lib/events/event-locator.ts`,
-so wiring the inspector is a consumer-side change only.
+menu pivots). The locator codec the Quick peek action calls is
+exported from `src/lib/events/event-locator.ts`, so wiring the
+inspector is a consumer-side change only.
 
 Viewing the page requires the `detection:read` permission — the same
 permission that gates the Detection page. Accounts without it are
@@ -27,12 +27,12 @@ menu-neutral (not nested under `/detection/`) so that sibling
 menus such as Triage can link to the same page without a
 Detection prefix.
 
-`eventToken` is an opaque, URL-safe string that encodes the
-event's composite locator — sensor, time, source and responder
-addresses, ports, protocol, kind and level. The locator is
-**best-effort**: the link loads the intended event for as long as
-the event exists in the detection store and its composite tuple
-remains unique.
+`eventToken` is an opaque, URL-safe string that wraps the
+event's stable `id`. The detection service issues that `id` on
+every event and its single-event resolver (`event(id:)`) accepts
+it back as the lookup key, so the link loads exactly the
+intended event for as long as the event is retained under the
+current storage key format.
 
 ## Header
 
@@ -49,14 +49,6 @@ The page header shows:
   targets are rejected — the back link only follows
   same-origin relative paths.
 
-When the locator matches more than one event — rare at
-nanosecond precision, but possible — a non-blocking notice
-appears below the header and the first matching event is
-rendered:
-
-> Multiple events match this link; showing one. Open the full
-> result list for the complete set.
-
 ## Error states
 
 ### Invalid event link
@@ -67,11 +59,12 @@ Detection. No network request is made to the detection service.
 
 ### Event no longer available
 
-When the locator resolves successfully but the detection service
+When the locator decodes successfully but the detection service
 returns no matching event, the page renders an **Event no longer
 available** state. This happens when the event has aged out of
-retention, when the sensor has been renamed out of scope, or when
-time precision was lost in the round-trip.
+retention, when the caller's customer/sensor scope no longer
+includes it, or when a future storage-key migration invalidates
+older `id` values.
 
 ### Could not load event
 
@@ -108,7 +101,7 @@ service adds a true packet-capture field, the tab will be re-
 labelled and extended without changing the URL or layout.
 
 The event itself is fetched once when the page loads — a single
-`eventList` lookup whose selection set carries every subtype
+`event(id:)` lookup whose selection set carries every subtype
 fragment the page knows how to render. That call powers Overview,
 Protocol, Payload, and Context without any additional network
 traffic, and it also decides whether the Protocol and Payload

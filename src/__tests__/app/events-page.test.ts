@@ -62,17 +62,7 @@ const validSession: AuthSession = {
 };
 
 function buildToken(): string {
-  const payload = {
-    sensor: "sensor-1",
-    time: "2026-04-22T10:00:00.000000000Z",
-    origAddr: "10.0.0.5",
-    origPort: 54321,
-    respAddr: "203.0.113.45",
-    respPort: 80,
-    proto: 6,
-    kind: "HttpThreat",
-    level: "HIGH",
-  };
+  const payload = { id: "evt-AAAA-BBBB-CCCC" };
   return Buffer.from(JSON.stringify(payload)).toString("base64url");
 }
 
@@ -115,6 +105,7 @@ describe("EventInvestigationPage", () => {
       status: "one",
       event: {
         __typename: "HttpThreat",
+        id: "evt-AAAA-BBBB-CCCC",
         time: "2026-04-22T10:00:00.000000000Z",
         sensor: "sensor-1",
         confidence: 0.8,
@@ -122,7 +113,6 @@ describe("EventInvestigationPage", () => {
         level: "HIGH",
         triageScores: null,
       },
-      totalCount: "1",
     });
     const Page = (
       await import("@/app/[locale]/(dashboard)/events/[token]/page")
@@ -154,64 +144,24 @@ describe("EventInvestigationPage", () => {
     expect(mockFetchEventByLocator).not.toHaveBeenCalled();
   });
 
-  it("renders the invalid-token state for semantically tampered tokens without hitting REview", async () => {
+  it("renders the invalid-token state for tampered payload shapes without hitting REview", async () => {
     mockGetCurrentSession.mockResolvedValue(validSession);
     mockRequirePermission.mockResolvedValue(undefined);
     const Page = (
       await import("@/app/[locale]/(dashboard)/events/[token]/page")
     ).default;
 
-    // Tokens that pass JSON / type validation but carry values the
-    // encoder never produces. Each should short-circuit to
+    // Payloads that pass JSON validation but violate the
+    // `{ id: non-empty string }` contract should short-circuit to
     // invalid-token rather than reaching fetchEventByLocator.
-    const tamperedTokens = [
-      {
-        sensor: "",
-        time: "2026-04-22T10:00:00Z",
-        origAddr: "10.0.0.5",
-        origPort: 0,
-        respAddr: "203.0.113.45",
-        respPort: 0,
-        proto: 0,
-        kind: "HttpThreat",
-        level: "HIGH",
-      },
-      {
-        sensor: "sensor-1",
-        time: "",
-        origAddr: "10.0.0.5",
-        origPort: 0,
-        respAddr: "203.0.113.45",
-        respPort: 0,
-        proto: 0,
-        kind: "HttpThreat",
-        level: "HIGH",
-      },
-      {
-        sensor: "sensor-1",
-        time: "2026-04-22T10:00:00Z",
-        origAddr: "",
-        origPort: 0,
-        respAddr: "203.0.113.45",
-        respPort: 0,
-        proto: 0,
-        kind: "HttpThreat",
-        level: "HIGH",
-      },
-      {
-        sensor: "sensor-1",
-        time: "2026-04-22T10:00:00Z",
-        origAddr: "10.0.0.5",
-        origPort: 0,
-        respAddr: "203.0.113.45",
-        respPort: 0,
-        proto: 0,
-        kind: "not-a-real-kind",
-        level: "HIGH",
-      },
+    const tamperedPayloads = [
+      {},
+      { id: "" },
+      { id: 42 },
+      { id: "x".repeat(2048) },
     ];
 
-    for (const payload of tamperedTokens) {
+    for (const payload of tamperedPayloads) {
       const token = Buffer.from(JSON.stringify(payload)).toString("base64url");
       const result = await Page({
         params: Promise.resolve({ locale: "en", token }),
@@ -259,6 +209,7 @@ describe("EventInvestigationPage", () => {
       status: "one",
       event: {
         __typename: "HttpThreat",
+        id: "evt-AAAA-BBBB-CCCC",
         time: "2026-04-22T10:00:00.000000000Z",
         sensor: "sensor-1",
         confidence: 0.8,
@@ -266,7 +217,6 @@ describe("EventInvestigationPage", () => {
         level: "HIGH",
         triageScores: null,
       },
-      totalCount: "1",
     });
     const Page = (
       await import("@/app/[locale]/(dashboard)/events/[token]/page")
@@ -277,34 +227,6 @@ describe("EventInvestigationPage", () => {
       searchParams: noSearch(),
     });
     expect(result?.props?.event?.__typename).toBe("HttpThreat");
-    expect(result?.props?.multipleMatches).toBe(false);
-  });
-
-  it("marks multipleMatches true when the resolution status is multiple", async () => {
-    mockGetCurrentSession.mockResolvedValue(validSession);
-    mockRequirePermission.mockResolvedValue(undefined);
-    mockFetchEventByLocator.mockResolvedValue({
-      status: "multiple",
-      event: {
-        __typename: "HttpThreat",
-        time: "2026-04-22T10:00:00.000000000Z",
-        sensor: "sensor-1",
-        confidence: 0.8,
-        category: null,
-        level: "HIGH",
-        triageScores: null,
-      },
-      totalCount: "2",
-    });
-    const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
-    ).default;
-
-    const result = await Page({
-      params: Promise.resolve({ locale: "en", token: buildToken() }),
-      searchParams: noSearch(),
-    });
-    expect(result?.props?.multipleMatches).toBe(true);
   });
 
   it("defaults backHref to /detection when no returnTo is supplied", async () => {
@@ -314,6 +236,7 @@ describe("EventInvestigationPage", () => {
       status: "one",
       event: {
         __typename: "HttpThreat",
+        id: "evt-AAAA-BBBB-CCCC",
         time: "2026-04-22T10:00:00.000000000Z",
         sensor: "sensor-1",
         confidence: 0.8,
@@ -321,7 +244,6 @@ describe("EventInvestigationPage", () => {
         level: "HIGH",
         triageScores: null,
       },
-      totalCount: "1",
     });
     const Page = (
       await import("@/app/[locale]/(dashboard)/events/[token]/page")
@@ -341,6 +263,7 @@ describe("EventInvestigationPage", () => {
       status: "one",
       event: {
         __typename: "HttpThreat",
+        id: "evt-AAAA-BBBB-CCCC",
         time: "2026-04-22T10:00:00.000000000Z",
         sensor: "sensor-1",
         confidence: 0.8,
@@ -348,7 +271,6 @@ describe("EventInvestigationPage", () => {
         level: "HIGH",
         triageScores: null,
       },
-      totalCount: "1",
     });
     const Page = (
       await import("@/app/[locale]/(dashboard)/events/[token]/page")
@@ -372,6 +294,7 @@ describe("EventInvestigationPage", () => {
       status: "one",
       event: {
         __typename: "HttpThreat",
+        id: "evt-AAAA-BBBB-CCCC",
         time: "2026-04-22T10:00:00.000000000Z",
         sensor: "sensor-1",
         confidence: 0.8,
@@ -379,7 +302,6 @@ describe("EventInvestigationPage", () => {
         level: "HIGH",
         triageScores: null,
       },
-      totalCount: "1",
     });
     const Page = (
       await import("@/app/[locale]/(dashboard)/events/[token]/page")

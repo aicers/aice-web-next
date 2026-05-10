@@ -83,15 +83,7 @@ function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
 
 function makeLocator(overrides: Record<string, unknown> = {}) {
   return {
-    sensor: "sensor-1",
-    time: "2024-01-01T00:00:00Z",
-    origAddr: "10.0.0.1",
-    origPort: 1234,
-    respAddr: "10.0.0.2",
-    respPort: 80,
-    proto: 6,
-    kind: "HttpThreat",
-    level: "HIGH",
+    id: "evt-AAAA-BBBB-CCCC",
     ...overrides,
   };
 }
@@ -108,29 +100,23 @@ function makeContext() {
   return { params: Promise.resolve({}) };
 }
 
-function eventDetailNodes(n = 1) {
+function eventByIdHit() {
   return {
-    eventList: {
-      totalCount: String(n),
-      nodes: Array.from({ length: n }, (_, i) => ({
-        __typename: "HttpThreat",
-        time: "2024-01-01T00:00:00Z",
-        sensor: "sensor-1",
-        confidence: 0,
-        category: "RECONNAISSANCE",
-        level: "HIGH",
-        triageScores: [],
-        index: i,
-      })),
-      edges: [],
-      pageInfo: {
-        hasPreviousPage: false,
-        hasNextPage: false,
-        startCursor: null,
-        endCursor: null,
-      },
+    event: {
+      __typename: "HttpThreat",
+      id: "evt-AAAA-BBBB-CCCC",
+      time: "2024-01-01T00:00:00Z",
+      sensor: "sensor-1",
+      confidence: 0,
+      category: "RECONNAISSANCE",
+      level: "HIGH",
+      triageScores: [],
     },
   };
+}
+
+function eventByIdMiss() {
+  return { event: null };
 }
 
 describe("POST /api/aimer/context-token", () => {
@@ -161,7 +147,7 @@ describe("POST /api/aimer/context-token", () => {
       rows: [{ id: 42, external_key: "acmecorp.com" }],
       rowCount: 1,
     });
-    mockGraphqlRequest.mockReset().mockResolvedValue(eventDetailNodes(1));
+    mockGraphqlRequest.mockReset().mockResolvedValue(eventByIdHit());
     mockAuditRecord.mockReset().mockResolvedValue(undefined);
     mockRateLimit.mockReset().mockResolvedValue({ limited: false });
   });
@@ -303,8 +289,8 @@ describe("POST /api/aimer/context-token", () => {
   });
 
   it("returns 404 (NOT 403) — same shape as locator-mismatch — to avoid leaking existence", async () => {
-    // Locator resolves to no events under the chosen customer.
-    mockGraphqlRequest.mockResolvedValue(eventDetailNodes(0));
+    // Locator resolves to no event under the chosen customer.
+    mockGraphqlRequest.mockResolvedValue(eventByIdMiss());
     const { POST } = await import("@/app/api/aimer/context-token/route");
     const res = await POST(
       makeRequest({ customerId: 42, locator: makeLocator() }),
@@ -378,7 +364,7 @@ describe("POST /api/aimer/context-token", () => {
     const res = await POST(
       makeRequest({
         customerId: 42,
-        locator: makeLocator({ kind: "NotARealKind" }),
+        locator: makeLocator({ id: "" }),
       }),
       makeContext(),
     );
@@ -398,7 +384,7 @@ describe("POST /api/aimer/context-token", () => {
     const res = await POST(
       makeRequest({
         customerId: 42,
-        locator: makeLocator({ kind: "NotARealKind" }),
+        locator: makeLocator({ id: "" }),
       }),
       makeContext(),
     );
@@ -417,7 +403,7 @@ describe("POST /api/aimer/context-token", () => {
     const res = await POST(
       makeRequest({
         customerId: 42,
-        locator: makeLocator({ kind: "NotARealKind" }),
+        locator: makeLocator({ id: "" }),
       }),
       makeContext(),
     );

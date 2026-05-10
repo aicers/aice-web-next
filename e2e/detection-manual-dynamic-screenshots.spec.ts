@@ -15,19 +15,11 @@ const VIEWPORT = { width: 1440, height: 900 } as const;
 const ASSETS_DIR = path.resolve(__dirname, "..", "docs", "assets");
 const session = mockServerSession();
 
-const INVESTIGATION_EVENT = {
-  __typename: "HttpThreat",
-  time: "2026-04-22T12:00:00+00:00",
-  sensor: "sensor-east-1",
-  level: "HIGH",
-  origAddr: "10.0.0.5",
-  origPort: 51344,
-  respAddr: "203.0.113.45",
-  respPort: 443,
-  proto: 6,
-} as const;
+const INVESTIGATION_EVENT_ID = "evt-manual-dynamic-1";
+const INVESTIGATION_EVENT_ORIG_ADDR = "10.0.0.5";
+const INVESTIGATION_EVENT_RESP_ADDR = "203.0.113.45";
 
-const INVESTIGATION_TOKEN = encodeEventLocator(INVESTIGATION_EVENT);
+const INVESTIGATION_TOKEN = encodeEventLocator({ id: INVESTIGATION_EVENT_ID });
 
 if (!INVESTIGATION_TOKEN) {
   throw new Error("Failed to build event investigation token for screenshots");
@@ -45,24 +37,11 @@ test.beforeAll(async () => {
     },
   });
   await session.registerStub({
-    operation: "eventList",
-    matchVariables: {
-      filter: {
-        start: INVESTIGATION_EVENT.time,
-        // #424: `end` is widened by +1 s in `locatorToEventListFilter`
-        // because REview's `eventList` treats `end` as exclusive. The
-        // stub matcher must mirror the widened bound; the value is
-        // produced by `new Date(Date.parse(time) + 1000).toISOString()`.
-        end: "2026-04-22T12:00:01.000Z",
-        source: INVESTIGATION_EVENT.origAddr,
-        destination: INVESTIGATION_EVENT.respAddr,
-        kinds: [INVESTIGATION_EVENT.__typename],
-        levels: [INVESTIGATION_EVENT.level],
-      },
-    },
+    operation: "event",
+    matchVariables: { id: INVESTIGATION_EVENT_ID },
     response: {
       kind: "fixture",
-      fixture: "detection/eventList.manual-detail.json",
+      fixture: "detection/event.manual-detail.json",
     },
   });
   await session.registerStub({
@@ -81,7 +60,7 @@ test.beforeAll(async () => {
   });
   await session.registerStub({
     operation: "ipLocation",
-    matchVariables: { address: INVESTIGATION_EVENT.origAddr },
+    matchVariables: { address: INVESTIGATION_EVENT_ORIG_ADDR },
     response: {
       kind: "fixture",
       fixture: "detection/ipLocation.orig.manual.json",
@@ -89,7 +68,7 @@ test.beforeAll(async () => {
   });
   await session.registerStub({
     operation: "ipLocation",
-    matchVariables: { address: INVESTIGATION_EVENT.respAddr },
+    matchVariables: { address: INVESTIGATION_EVENT_RESP_ADDR },
     response: {
       kind: "fixture",
       fixture: "detection/ipLocation.resp.manual.json",

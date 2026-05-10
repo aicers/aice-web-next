@@ -1672,8 +1672,7 @@
       "back": "Back to Detection",
       "severity": "Severity level",
       "time": "Time",
-      "confidence": "Confidence",
-      "multipleNotice": "Multiple events match this link; showing one. Open the full result list for the complete set."
+      "confidence": "Confidence"
     },
     "tabs": {
       "overview": "Overview",

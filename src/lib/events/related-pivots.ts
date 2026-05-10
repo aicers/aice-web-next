@@ -4,8 +4,6 @@ import { getCurrentSession } from "@/lib/auth/session";
 import { searchEvents } from "@/lib/detection";
 import type { EventListFilterInput } from "@/lib/detection/types";
 
-import type { EventLocator } from "./event-locator";
-
 /**
  * Per-pivot snippet shown in the Related Events tab.
  *
@@ -51,29 +49,52 @@ interface PivotSpec {
   filter: EventListFilterInput;
 }
 
-function buildPivotSpecs(locator: EventLocator): PivotSpec[] {
-  return [
-    {
+/**
+ * Narrow projection of the resolved event used as the anchor for
+ * the four Related pivot summaries.
+ *
+ * The Related tab passes only these fields across the server-action
+ * boundary so that the larger `Event` payload (which for HTTP-class
+ * subtypes carries `password`, `cookie`, `body`, and other sensitive
+ * fields selected by `EVENT_BY_ID_QUERY`) never leaves the page.
+ */
+export interface RelatedPivotAnchor {
+  time: string;
+  kind: string;
+  origAddr: string | null;
+  respAddr: string | null;
+}
+
+function buildPivotSpecs(anchor: RelatedPivotAnchor): PivotSpec[] {
+  const { origAddr, respAddr, kind } = anchor;
+  const specs: PivotSpec[] = [];
+  if (origAddr) {
+    specs.push({
       id: "same-source",
       windowMs: ONE_DAY_MS,
-      filter: { source: locator.origAddr },
-    },
-    {
+      filter: { source: origAddr },
+    });
+  }
+  if (respAddr) {
+    specs.push({
       id: "same-destination",
       windowMs: ONE_DAY_MS,
-      filter: { destination: locator.respAddr },
-    },
-    {
-      id: "same-kind",
-      windowMs: SEVEN_DAYS_MS,
-      filter: { kinds: [locator.kind] },
-    },
-    {
+      filter: { destination: respAddr },
+    });
+  }
+  specs.push({
+    id: "same-kind",
+    windowMs: SEVEN_DAYS_MS,
+    filter: { kinds: [kind] },
+  });
+  if (origAddr && respAddr) {
+    specs.push({
       id: "same-session",
       windowMs: ONE_DAY_MS,
-      filter: { source: locator.origAddr, destination: locator.respAddr },
-    },
-  ];
+      filter: { source: origAddr, destination: respAddr },
+    });
+  }
+  return specs;
 }
 
 function shiftIso(time: string, deltaMs: number): string {
@@ -91,23 +112,26 @@ function shiftIso(time: string, deltaMs: number): string {
  * `buildDispatchContext`.
  *
  * Each summary uses a tight, time-bounded `EventListFilterInput`
- * anchored on the locator's `time`. Errors are swallowed
+ * anchored on the resolved event's `time`. Errors are swallowed
  * per-pivot — a single failing snippet should not blank the whole
- * tab.
+ * tab. The caller passes the narrow `RelatedPivotAnchor` shape
+ * rather than the full resolved `Event`, so sensitive payload
+ * fields like `password` / `cookie` / `body` never cross the
+ * server-action boundary.
  */
 export async function fetchRelatedPivotSummaries(
-  locator: EventLocator,
+  anchor: RelatedPivotAnchor,
 ): Promise<RelatedPivotSummary[]> {
   const session = await getCurrentSession();
   if (!session) {
-    return buildPivotSpecs(locator).map((spec) => ({
+    return buildPivotSpecs(anchor).map((spec) => ({
       id: spec.id,
       count: "0",
       lastTime: null,
     }));
   }
-  const specs = buildPivotSpecs(locator);
-  const end = locator.time;
+  const specs = buildPivotSpecs(anchor);
+  const end = anchor.time;
   return Promise.all(
     specs.map(async (spec): Promise<RelatedPivotSummary> => {
       const start = shiftIso(end, -spec.windowMs);

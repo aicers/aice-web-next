@@ -621,6 +621,7 @@ describe("quickPeekResetKey", () => {
 
   const addressable = {
     __typename: "HttpThreat" as const,
+    id: "evt-AAAA",
     sensor: "sensor-1",
     time: "2026-04-22T00:00:00.000Z",
     origAddr: "10.0.0.5",
@@ -640,34 +641,14 @@ describe("quickPeekResetKey", () => {
     );
   });
 
-  it("produces different keys for different addressable events", () => {
+  it("produces different keys for different events", () => {
     // Regression (Reviewer Round 6 #1): switching rows on the
     // desktop inline pane must remount the inspector so descendant
     // `MorePopover` panels reset to closed. Without this, the
     // popover on the previous row can stay open on the new one.
-    const other = { ...addressable, origAddr: "10.0.0.6" };
+    const other = { ...addressable, id: "evt-BBBB" };
     expect(quickPeekResetKey(addressable as never)).not.toBe(
       quickPeekResetKey(other as never),
-    );
-  });
-
-  it("falls back to a composite identity for unencodable events", () => {
-    // Schema-limited subtypes (e.g. `ExtraThreat`, or rows missing
-    // both source and destination IP) have no locator token but
-    // still open the Quick peek; the remount key must stay stable
-    // for those rows and still differ from other unencodable rows.
-    const extra = {
-      __typename: "ExtraThreat" as const,
-      sensor: "sensor-a",
-      time: "2026-04-22T00:00:00.000Z",
-      level: "LOW" as const,
-    };
-    const extraOther = { ...extra, time: "2026-04-22T00:00:01.000Z" };
-    expect(quickPeekResetKey(extra as never)).toBe(
-      quickPeekResetKey(extra as never),
-    );
-    expect(quickPeekResetKey(extra as never)).not.toBe(
-      quickPeekResetKey(extraOther as never),
     );
   });
 });

@@ -136,7 +136,7 @@ export interface EventListResult {
 }
 
 export interface EventDetailResult {
-  eventList: EventConnection;
+  event: Event | null;
 }
 
 /** Result shape from `ipLocation(address: IpAddress!): IpLocation`. */

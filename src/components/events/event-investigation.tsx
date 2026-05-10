@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +28,6 @@ export interface EventInvestigationLabels {
   severity: string;
   time: string;
   confidence: string;
-  multipleNotice: string;
   tabs: {
     overview: string;
     endpoints: string;
@@ -223,7 +222,6 @@ export interface EventInvestigationLabels {
 interface Props {
   event: Event;
   locator: EventLocator;
-  multipleMatches: boolean;
   backHref: string;
   labels: EventInvestigationLabels;
   /**
@@ -259,7 +257,6 @@ interface Props {
 export function EventInvestigation({
   event,
   locator,
-  multipleMatches,
   backHref,
   labels,
   customers,
@@ -330,19 +327,6 @@ export function EventInvestigation({
             <dd>{event.confidence.toFixed(2)}</dd>
           </div>
         </dl>
-
-        {multipleMatches ? (
-          <div
-            role="status"
-            className="border-border text-foreground flex items-start gap-2 rounded-md border bg-amber-500/10 px-3 py-2 text-sm"
-          >
-            <AlertTriangle
-              className="mt-0.5 size-4 text-amber-500"
-              aria-hidden="true"
-            />
-            <span>{labels.multipleNotice}</span>
-          </div>
-        ) : null}
       </header>
 
       <Tabs
@@ -383,11 +367,7 @@ export function EventInvestigation({
           className="pt-4"
           forceMount={forceMount("endpoints")}
         >
-          <EndpointsTab
-            event={event}
-            locator={locator}
-            labels={labels.endpoints}
-          />
+          <EndpointsTab event={event} labels={labels.endpoints} />
         </TabsContent>
         {showProtocol ? (
           <TabsContent
@@ -420,7 +400,7 @@ export function EventInvestigation({
           forceMount={forceMount("related")}
         >
           <RelatedTab
-            locator={locator}
+            event={event}
             labels={labels.related}
             customers={customers}
           />

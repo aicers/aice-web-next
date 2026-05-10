@@ -1,16 +1,19 @@
 "use client";
 
 import { ExternalLink } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Link } from "@/i18n/navigation";
+import type { Event } from "@/lib/detection/types";
 import { buildDetectionPivotUrl } from "@/lib/detection/url-filters";
-import type { EventLocator } from "@/lib/events/event-locator";
 import {
   fetchRelatedPivotSummaries,
   type PivotId,
+  type RelatedPivotAnchor,
   type RelatedPivotSummary,
 } from "@/lib/events/related-pivots";
+
+import { readEventAddressing } from "../event-display-helpers";
 
 export interface RelatedLabels {
   sameSource: string;
@@ -28,7 +31,7 @@ export interface RelatedLabels {
 }
 
 interface Props {
-  locator: EventLocator;
+  event: Event;
   labels: RelatedLabels;
   /**
    * Customer IDs the operator was narrowed to on the originating
@@ -45,59 +48,76 @@ interface PivotEntry {
   href: string;
 }
 
-export function RelatedTab({ locator, labels, customers }: Props) {
+export function RelatedTab({ event, labels, customers }: Props) {
+  const addressing = readEventAddressing(event);
+  const sourceAddr = addressing.origAddr ?? addressing.origAddrs[0];
+  const destAddr = addressing.respAddr ?? addressing.respAddrs[0];
+  const anchor: RelatedPivotAnchor = useMemo(
+    () => ({
+      time: event.time,
+      kind: event.__typename,
+      origAddr: sourceAddr ?? null,
+      respAddr: destAddr ?? null,
+    }),
+    [event.time, event.__typename, sourceAddr, destAddr],
+  );
   const customerList =
     customers && customers.length > 0 ? [...customers] : undefined;
-  const pivots: PivotEntry[] = [
-    {
+  const pivots: PivotEntry[] = [];
+  if (sourceAddr) {
+    pivots.push({
       id: "same-source",
       label: labels.sameSource,
       windowLabel: labels.lastDay,
       href: buildDetectionPivotUrl({
-        source: locator.origAddr,
+        source: sourceAddr,
         window: "1d",
         customers: customerList,
       }),
-    },
-    {
+    });
+  }
+  if (destAddr) {
+    pivots.push({
       id: "same-destination",
       label: labels.sameDestination,
       windowLabel: labels.lastDay,
       href: buildDetectionPivotUrl({
-        destination: locator.respAddr,
+        destination: destAddr,
         window: "1d",
         customers: customerList,
       }),
-    },
-    {
-      id: "same-kind",
-      label: labels.sameKind,
-      windowLabel: labels.lastWeek,
-      href: buildDetectionPivotUrl({
-        kind: locator.kind,
-        window: "7d",
-        customers: customerList,
-      }),
-    },
-    {
-      // Session/flow pivot is limited to {source, destination} in v1.
-      // REview's EventListFilterInput has no origPort / respPort / proto
-      // fields yet, so encoding them into the URL would produce a click-
-      // through result list that does not actually narrow to the flow —
-      // the Count / Last seen snippet computed on this page uses the same
-      // 2-tuple so the two stay consistent. When REview adds port / proto
-      // filters, re-add them both here and in fetchRelatedPivotSummaries.
+    });
+  }
+  pivots.push({
+    id: "same-kind",
+    label: labels.sameKind,
+    windowLabel: labels.lastWeek,
+    href: buildDetectionPivotUrl({
+      kind: event.__typename,
+      window: "7d",
+      customers: customerList,
+    }),
+  });
+  if (sourceAddr && destAddr) {
+    // Session/flow pivot is limited to {source, destination} in v1.
+    // REview's EventListFilterInput has no origPort / respPort / proto
+    // fields yet, so encoding them into the URL would produce a click-
+    // through result list that does not actually narrow to the flow —
+    // the Count / Last seen snippet computed on this page uses the same
+    // 2-tuple so the two stay consistent. When REview adds port / proto
+    // filters, re-add them both here and in fetchRelatedPivotSummaries.
+    pivots.push({
       id: "same-session",
       label: labels.sameSession,
       windowLabel: labels.lastDay,
       href: buildDetectionPivotUrl({
-        source: locator.origAddr,
-        destination: locator.respAddr,
+        source: sourceAddr,
+        destination: destAddr,
         window: "1d",
         customers: customerList,
       }),
-    },
-  ];
+    });
+  }
 
   const [summaries, setSummaries] = useState<Record<
     PivotId,
@@ -106,7 +126,7 @@ export function RelatedTab({ locator, labels, customers }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    fetchRelatedPivotSummaries(locator)
+    fetchRelatedPivotSummaries(anchor)
       .then((rows) => {
         if (cancelled) return;
         const map = Object.fromEntries(rows.map((r) => [r.id, r])) as Record<
@@ -122,7 +142,7 @@ export function RelatedTab({ locator, labels, customers }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [locator]);
+  }, [anchor]);
 
   return (
     <div className="flex flex-col gap-3">

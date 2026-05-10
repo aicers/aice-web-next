@@ -491,16 +491,14 @@ other subtypes omit one side or one port (for example
 missing slot falls back to `—`.
 
 Selecting any row opens the Quick peek inspector, including the
-schema-limited subtypes that have no encodable locator —
-`ExtraThreat`, `WindowsThreat`, and rows that happen to carry
-neither source nor destination IP. The inspector still renders
-every field the schema provides for those events. Only the
-investigate chevron is hidden on those rows, because it would
-navigate through the locator token the investigation page needs;
-the Quick peek itself stays available. The URL mirror skips the
-selection for these rows (the token cannot be encoded), so a
-reload or shared link restores the peek only for selections that
-do round-trip through the locator.
+schema-limited subtypes — `ExtraThreat`, `WindowsThreat`, and rows
+that happen to carry neither source nor destination IP. The
+inspector renders every field the schema provides for those
+events, the investigate chevron is exposed on every row (the
+detection service issues a stable `id` for every event, so every
+row is addressable), and the URL mirror persists the selection
+across reloads and shared links by encoding that `id` into the
+`?event=` token.
 
 ### Pivot (drill-down) from result cells
 
@@ -666,10 +664,9 @@ rows rather than a column of dashes.
     view at `/events/<eventToken>`. It is a real anchor tag,
     so **middle-click** or **Cmd/Ctrl-click** opens the full
     page in a new browser tab while leaving the current
-    Detection tab's filter and peek state intact. The anchor
-    is omitted (not disabled) for subtypes that carry no
-    encodable locator — `ExtraThreat`, `WindowsThreat`, and
-    some host-only subtypes — since no link would land on a
+    Detection tab's filter and peek state intact. The action
+    is exposed on every row — the detection service issues a
+    stable `id` for every event, so the link always lands on a
     valid investigation.
   - **Pivot links** — `Same source IP · last 24h`,
     `Same destination IP · last 24h`, and `Same kind ·
@@ -684,7 +681,7 @@ rows rather than a column of dashes.
 The selected event's locator token (the same base64url token the
 Investigation view uses) is mirrored into the tab's URL as an
 `event` query parameter. A page refresh or shared link restores
-the peek on the same row — when the token's locator still matches
+the peek on the same row — when the token's `id` still matches
 an event in the current result slice. When the restored token
 does not match any event in the current slice (pagination
 shifted, filter narrowed, event aged out), the token is stripped
@@ -703,12 +700,6 @@ entry per click.
 
 Only one event is selected at a time; selecting another row
 replaces the token in the URL rather than stacking peeks.
-Selecting a row whose event cannot be encoded into a locator
-(`ExtraThreat`, `WindowsThreat`, or any row that is missing both
-source and destination IP) still opens the Quick peek inspector,
-but the URL `event` parameter is cleared on that selection — the
-peek is live for the current tab only and will not be restored by
-a reload or shared link.
 
 #### Pagination
 

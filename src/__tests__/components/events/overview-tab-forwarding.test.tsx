@@ -44,19 +44,12 @@ import type { Event } from "@/lib/detection/types";
 import type { EventLocator } from "@/lib/events/event-locator";
 
 const LOCATOR: EventLocator = {
-  sensor: "sensor-1",
-  time: "2026-04-22T10:00:00.000000000Z",
-  origAddr: "10.0.0.5",
-  origPort: 54321,
-  respAddr: "203.0.113.45",
-  respPort: 80,
-  proto: 6,
-  kind: "HttpThreat",
-  level: "HIGH",
+  id: "evt-AAAA-BBBB-CCCC",
 };
 
 const EVENT: Event = {
   __typename: "HttpThreat",
+  id: "evt-AAAA-BBBB-CCCC",
   time: "2026-04-22T10:00:00.000000000Z",
   sensor: "sensor-1",
   confidence: 0.8,
@@ -130,7 +123,6 @@ describe("EventInvestigation → OverviewTab forwarding", () => {
         <EventInvestigation
           event={EVENT}
           locator={LOCATOR}
-          multipleMatches={false}
           backHref="/detection"
           labels={fullLabels}
           candidates={CANDIDATES}
@@ -160,7 +152,6 @@ function buildFullLabels(): EventInvestigationLabels {
     severity: e,
     time: e,
     confidence: e,
-    multipleNotice: e,
     tabs: {
       overview: "Overview",
       endpoints: e,

@@ -8,15 +8,7 @@ import {
 import { encodeEventLocator } from "@/lib/events/event-locator";
 
 const sampleEvent = {
-  __typename: "HttpThreat",
-  sensor: "sensor-1",
-  time: "2026-04-22T00:00:00.000Z",
-  origAddr: "10.0.0.5",
-  origPort: 49152,
-  respAddr: "203.0.113.45",
-  respPort: 443,
-  proto: 6,
-  level: "HIGH" as const,
+  id: "evt-AAAA-BBBB-CCCC",
 };
 
 describe("readQuickPeekToken", () => {
@@ -38,8 +30,7 @@ describe("readQuickPeekToken", () => {
     const result = readQuickPeekToken(params);
     expect(result).not.toBeNull();
     expect(result?.token).toBe(token);
-    expect(result?.locator.origAddr).toBe("10.0.0.5");
-    expect(result?.locator.kind).toBe("HttpThreat");
+    expect(result?.locator.id).toBe(sampleEvent.id);
   });
 });
 
