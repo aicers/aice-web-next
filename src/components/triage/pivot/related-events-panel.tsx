@@ -55,6 +55,8 @@ export interface TriagePivotPanelLabels {
   scoreColumn: string;
   pivotColumn: string;
   weakSignal?: WeakSignalBadgeLabels;
+  /** Tooltip surfaced on the deferred Tier 2 sensor row (#453). */
+  sameSensorUnavailable?: string;
 }
 
 interface TriagePivotPanelProps {
@@ -69,6 +71,12 @@ interface TriagePivotPanelProps {
    * reduced opacity with a "weak" badge per #453 acceptance.
    */
   isWeakSignal?: (event: ScoredTriageEvent) => boolean;
+  /**
+   * When `true`, render a disabled placeholder showing the sensor
+   * dimension as deferred under Tier 2 with an explanatory tooltip
+   * (#453 — sensor name→ID lookup is gated on `triage:read`).
+   */
+  deferredSensorDimension?: boolean;
 }
 
 const SCORE_FORMAT = new Intl.NumberFormat(undefined, {
@@ -83,7 +91,10 @@ export function TriagePivotPanel({
   onPivot,
   labels,
   isWeakSignal,
+  deferredSensorDimension = false,
 }: TriagePivotPanelProps) {
+  const showDeferredSensor =
+    deferredSensorDimension && labels.sameSensorUnavailable !== undefined;
   return (
     <section
       aria-labelledby="triage-pivot-heading"
@@ -106,7 +117,7 @@ export function TriagePivotPanel({
         <p className="px-4 py-6 text-sm text-muted-foreground">
           {labels.noFocusHint}
         </p>
-      ) : sections.length === 0 ? (
+      ) : sections.length === 0 && !showDeferredSensor ? (
         <p className="px-4 py-6 text-sm text-muted-foreground">
           {labels.empty}
         </p>
@@ -121,9 +132,39 @@ export function TriagePivotPanel({
               isWeakSignal={isWeakSignal}
             />
           ))}
+          {showDeferredSensor ? (
+            <DeferredDimensionRow
+              dimensionLabel={labels.dimensions.sameSensor}
+              tooltip={labels.sameSensorUnavailable as string}
+            />
+          ) : null}
         </ul>
       )}
     </section>
+  );
+}
+
+function DeferredDimensionRow({
+  dimensionLabel,
+  tooltip,
+}: {
+  dimensionLabel: string;
+  tooltip: string;
+}) {
+  return (
+    <li
+      className="px-4 py-3 opacity-60"
+      data-testid="triage-pivot-deferred-row"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold text-foreground">
+          {dimensionLabel}
+        </h3>
+        <span title={tooltip} className="text-xs text-muted-foreground italic">
+          {tooltip}
+        </span>
+      </div>
+    </li>
   );
 }
 

@@ -257,10 +257,16 @@ export function TriageBaselineContent({
   // In Tier 2 mode the `sameSensor` row is hidden until a `triage:read`
   // -compatible sensor name→ID lookup ships (#453). The Tier 1 click
   // action would still be valid, but mixing the two would mislead
-  // operators about what the row's pivot button will do.
+  // operators about what the row's pivot button will do. The panel
+  // surfaces a disabled placeholder with the "requires sensor index"
+  // tooltip so the operator can tell the row is intentionally absent.
   const sections = useMemo(() => {
     if (scope !== "tier2") return allSections;
     return allSections.filter((s) => s.dimension !== "sameSensor");
+  }, [allSections, scope]);
+  const sensorDeferredInTier2 = useMemo(() => {
+    if (scope !== "tier2") return false;
+    return allSections.some((s) => s.dimension === "sameSensor");
   }, [allSections, scope]);
 
   const onSelectAsset = useCallback((address: string) => {
@@ -436,6 +442,7 @@ export function TriageBaselineContent({
                 ? (event) => !tier2.isInTier1Corpus(event)
                 : undefined
             }
+            deferredSensorDimension={sensorDeferredInTier2}
           />
         </div>
       ) : null}

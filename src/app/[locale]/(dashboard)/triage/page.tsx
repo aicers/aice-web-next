@@ -164,6 +164,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           badge: t("tier2.weakBadge"),
           hint: t("tier2.weakBadgeHint"),
         },
+        sameSensorUnavailable: t("tier2.sameSensorUnavailable"),
       },
       pivotBreadcrumb: {
         ariaLabel: t("pivotBreadcrumb.ariaLabel"),
