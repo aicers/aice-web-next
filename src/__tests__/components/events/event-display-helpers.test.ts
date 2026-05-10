@@ -9,6 +9,7 @@ import type { Event } from "@/lib/detection/types";
 function makeEvent(typename: string, extra: Record<string, unknown>): Event {
   return {
     __typename: typename,
+    id: "evt-1",
     time: "2026-04-22T10:00:00.000000000Z",
     sensor: "sensor-1",
     confidence: 0.8,

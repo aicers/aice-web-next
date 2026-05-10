@@ -10,6 +10,7 @@ query EventListIdentity($filter: EventListFilterInput!, $first: Int) {
       cursor
       node {
         __typename
+        id
         time
         sensor
         confidence
@@ -23,6 +24,7 @@ query EventListIdentity($filter: EventListFilterInput!, $first: Int) {
     }
     nodes {
       __typename
+      id
       time
       sensor
       confidence

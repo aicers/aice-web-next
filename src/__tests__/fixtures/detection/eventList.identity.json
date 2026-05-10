@@ -11,6 +11,7 @@
         "cursor": "cursor-http-threat-1",
         "node": {
           "__typename": "HttpThreat",
+          "id": "evt-http-threat-1",
           "time": "2026-04-22T12:00:00+00:00",
           "sensor": "sensor-east-1",
           "confidence": 0.92,
@@ -23,6 +24,7 @@
         "cursor": "cursor-blocklist-conn-1",
         "node": {
           "__typename": "BlocklistConn",
+          "id": "evt-blocklist-conn-1",
           "time": "2026-04-22T11:55:00+00:00",
           "sensor": "sensor-east-1",
           "confidence": 0.41,
@@ -35,6 +37,7 @@
     "nodes": [
       {
         "__typename": "HttpThreat",
+        "id": "evt-http-threat-1",
         "time": "2026-04-22T12:00:00+00:00",
         "sensor": "sensor-east-1",
         "confidence": 0.92,
@@ -58,6 +61,7 @@
       },
       {
         "__typename": "BlocklistConn",
+        "id": "evt-blocklist-conn-1",
         "time": "2026-04-22T11:55:00+00:00",
         "sensor": "sensor-east-1",
         "confidence": 0.41,

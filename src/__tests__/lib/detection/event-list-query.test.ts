@@ -95,6 +95,7 @@ describe("readEventAddressing", () => {
   function makeBase(__typename: string): EventBase {
     return {
       __typename,
+      id: "evt-1",
       time: "2026-04-22T00:00:00.000Z",
       sensor: "sensor-1",
       confidence: 0.91,

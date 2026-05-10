@@ -125,7 +125,7 @@ service that will actually answer it.
 | File | Backend | Scope |
 |------|---------|-------|
 | `schemas/review.graphql` | `review-web` (REview, the manager) | Detection, Triage, and Node management menus |
-| `schemas/review.version` | — | Semver of the REview release the SDL corresponds to |
+| `schemas/review.version` | — | Semver of the REview release the SDL corresponds to (the `review` repo's release tag, not the embedded `review-web` crate version or a commit SHA) |
 | `schemas/giganto.graphql` | Giganto (data store) | Per-service `status` / `config` / `updateConfig` for the Giganto external service |
 | `schemas/giganto.version` | — | Semver of the Giganto release the SDL corresponds to |
 | `schemas/tivan.graphql` | Tivan (TI container) | Per-service `status` / `config` / `updateConfig` for the Tivan external service |
@@ -184,10 +184,21 @@ call — fails CI with a message pointing back to this section.
 
 #### REview (`schemas/review.graphql`)
 
-1. Obtain the target REview SDL by whatever means are available. There
-   is no canonical location yet; REview does not currently ship an SDL
-   file. The pragmatic option today is to build `review-web` locally
-   with the `auth-mtls` feature and dump the SDL, e.g.:
+The canonical version source is the `review` repo's release tag (e.g.
+`0.49.0`). `review` is a release-only umbrella that pins
+`review-database` and `review-web`; the GraphQL SDL is defined in the
+embedded `review-web` crate, so the `review` release tag identifies
+which `review-web` is in play, and dumping the SDL is purely a capture
+mechanism rather than the version source.
+
+1. Pick the target `review` release tag. Note the embedded `review-web`
+   version from that release's notes (purely informational — the version
+   recorded in `schemas/review.version` is the `review` release tag, not
+   the `review-web` crate version).
+2. Capture the SDL from the matching `review-web` source tree with the
+   `auth-mtls` feature enabled, which is how aice-web-next talks to
+   REview. There is no canonical SDL artifact yet; the pragmatic option
+   today is to build `review-web` locally and dump the SDL, e.g.:
 
    ```rust
    // examples/dump_sdl.rs in a review-web checkout
@@ -208,15 +219,19 @@ call — fails CI with a message pointing back to this section.
    `Schema`, `Query`, `Mutation`, `Subscription` are currently
    `pub(super)` in `review-web::graphql`; the current SDL in this
    repo was produced by temporarily widening their visibility to
-   `pub`. Once REview exposes a stable SDL source, this step can be
-   simplified.
-2. Replace `schemas/review.graphql` with the new SDL (preserve the
-   header comment that records the source and version).
-3. Write the corresponding version (semver or commit SHA) into
-   `schemas/review.version`.
-4. Review `git diff schemas/` and update any code that references
+   `pub`. Once REview exposes a stable SDL artifact, this capture
+   step can be simplified.
+3. Replace `schemas/review.graphql` with the dumped SDL. Preserve the
+   header comment, and refresh it to record both the `review` release
+   tag (e.g. `review 0.49.0`) and the embedded `review-web` version
+   (e.g. `review-web 0.32.0`) for traceability.
+4. Write the `review` release tag (semver, e.g. `0.49.0`) into
+   `schemas/review.version`. Do **not** write the `review-web` crate
+   version or a commit SHA — the file records the umbrella release the
+   SDL corresponds to.
+5. Review `git diff schemas/` and update any code that references
    removed or renamed fields in the same PR.
-5. Regenerate schema-derived TypeScript types:
+6. Regenerate schema-derived TypeScript types:
 
    ```sh
    pnpm codegen:detection
@@ -231,7 +246,7 @@ call — fails CI with a message pointing back to this section.
    interface's common fields). A Vitest spec re-runs the generator
    in CI and fails if the checked-in file drifts, so a schema bump
    that forgets this step is caught at PR time.
-6. Commit the schema, version file, and regenerated types together.
+7. Commit the schema, version file, and regenerated types together.
    Call out any breaking-change mitigation in the PR description.
 
 #### Giganto (`schemas/giganto.graphql`)

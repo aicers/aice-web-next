@@ -53,6 +53,7 @@ export const EVENT_LIST_QUERY = parse(`
         cursor
         node {
           __typename
+          id
           time
           sensor
           confidence
@@ -66,6 +67,7 @@ export const EVENT_LIST_QUERY = parse(`
       }
       nodes {
         __typename
+        id
         time
         sensor
         confidence
@@ -507,6 +509,7 @@ export const EVENT_DETAIL_QUERY = parse(`
       totalCount
       nodes {
         __typename
+        id
         time
         sensor
         confidence
