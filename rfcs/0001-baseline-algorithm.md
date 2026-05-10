@@ -24,24 +24,30 @@ A third constraint, learned during the design discussion, reshaped the algorithm
 
 ## Pipeline
 
+The pipeline splits cleanly across two execution times: per-event scoring runs inside the cadence pipeline at INSERT, while per-window slot allocation and assembly run at menu read.
+
 ```
-post-exclusion events for the active window
+At cadence INSERT (per event, against observed_event_meta history):
    │
-   ├─ (1) hard-exclude BlockList*                      ── never visible to baseline
+   ├─ (1) hard-exclude BlockList*                       ── dropped before any scoring
    │
-   ├─ (2) group by kind
+   ├─ (2) determine kind                                ── implicit; just a column on the event
    │
-   ├─ (3) rank within each kind                         ── selectors S1–S4 fire here only
-   │       │
-   │       ├─ per-event selectors  → selector_tags at INSERT time
-   │       └─ window-level selectors → computed at read time (or persisted; see §10)
+   └─ (3) compute within-kind score → baseline_score,
+          selector_tags                                  ── all selectors S1–S4 + UNLABELED_BONUS,
+                                                            persisted on baseline_triaged_event
+
+
+At menu read (per active window, no per-event recomputation):
    │
-   ├─ (4) allocate per-kind slots                       ── adaptive (volume × confidence-distribution + favored-kind bonus)
+   ├─ (4) allocate per-kind slots                       ── adaptive: volume × confidence-distribution
+   │                                                       (over the active window) + favored bonus
    │
-   └─ (5) merge top-k of each kind into final result    ── final_count bounded by §6
+   └─ (5) merge top-k of each kind                      ── ORDER BY baseline_score DESC within kind,
+                                                            assemble into final_count rows
 ```
 
-The per-event subset of (3) runs inside the cadence pipeline (#481) at INSERT into `baseline_triaged_event` and writes its result into the row's `selector_tags`. The window-level subset of (3), step (4), and step (5) all run at read time when the menu loads a window.
+Step (3) — including window-level selectors S1/S3/S4 — runs inside the cadence pipeline (#481) by `GROUP BY` against `observed_event_meta` at INSERT time; the resulting `baseline_score` and `selector_tags` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. See §8 for the full timing contract and the trade-off this introduces. Steps (4) and (5) operate on persisted columns at read time and require no joins to derive selector values.
 
 ## §1. Hard exclusion: `BlockList*`
 
@@ -124,9 +130,11 @@ baseline_score(event) = within_kind_percentile_rank(score(event), kind, window) 
 
 A 0.95 `baseline_score` therefore means "this event is in the top 5% of its own kind in the window", whatever that kind is. Global percentile thresholds remain comparable across kinds because every kind contributes the same uniform-on-`[0, 1]` distribution by construction.
 
-**Tie-breaker.** Continuous selector values yield a high-cardinality `baseline_score`, but ties remain possible (e.g. when multiple events fall in the same percentile-rank bucket because of identical raw scores). For deterministic ordering — and so #471's percentile stops do not move large tied blocks together — tied rows are broken by `(event_time DESC, event_key DESC)` at every read site that orders by `baseline_score`. Both columns are NOT NULL in the schema; the i128 `event_key` is unique by construction so the ordering is total.
+**Tie-breaker.** Continuous selector values yield a high-cardinality `baseline_score`, so ties are uncommon in practice — but when they occur, the secondary order is `(event_time DESC, event_key DESC)` at every read site that orders by `baseline_score`. Both columns are NOT NULL in the schema; the i128 `event_key` is unique, so the order is total.
 
-**INSERT-time evaluation.** All selectors above (S1, S2, S3, S4, `UNLABELED_BONUS`) are evaluated by the cadence pipeline (§481) at INSERT time using `observed_event_meta`'s state at that moment. The resulting `score(event)` and `baseline_score(event)` are persisted on `baseline_triaged_event`. This makes `baseline_score` a snapshot — it does not retroactively update when later peer events would change S3 or S4. The same natural-expiry mechanism (§10) that handles cross-version drift handles same-version score drift by aging events out within 30 days; mass re-scoring is not part of the design. See §8 for the rationale.
+This tie-breaker is **only** about deterministic row ordering among tied rows. It does **not** change the *set* of rows above any `baseline_score` threshold: `WHERE baseline_score >= cutoff` and `percentile_cont(baseline_score)` operate on `baseline_score` alone, so a block of rows tied at the cutoff is included or excluded atomically. If exact "Top N%" semantics matter — e.g. #471's slider stops promising "exactly the top 5% by row count" rather than "everything above the 95th percentile of the score distribution" — the consumer must rank with `row_number() OVER (ORDER BY baseline_score DESC, event_time DESC, event_key DESC)` and threshold the rank, not the score. Whether to do this is owned by #471's RFC; this RFC's contract is only that the tuple `(baseline_score, event_time, event_key)` is a deterministic total ordering.
+
+**INSERT-time evaluation.** All selectors above (S1, S2, S3, S4, `UNLABELED_BONUS`) are evaluated by the cadence pipeline (§481) at INSERT time using `observed_event_meta`'s state at that moment. The resulting `score(event)` and `baseline_score(event)` are persisted on `baseline_triaged_event`. `baseline_score` is therefore a snapshot — it does not retroactively update when later peer events would change S3 or S4. The drift exposure is bounded by retention rather than by re-scoring: see §8 for the full discussion of the 30-day typical menu window vs the 180-day corpus retention.
 
 ## §4. Per-kind slot allocation (adaptive)
 
@@ -247,13 +255,20 @@ Rationale:
 - The schema already commits to a persisted score column: `baseline_triaged_event.baseline_score DOUBLE PRECISION`, with composite index `(event_time DESC, baseline_score DESC)` (`migrations/customer/0003_baseline_corpus_a.sql`). This index is precisely what #471's slider needs, and only works against a stored value.
 - The relevant `observed_event_meta` indexes for the cadence-time GROUP BY are `event_time DESC` (the time-window slice) and `(kind, event_time DESC)` (kind-filtered window). The schema has no `asset` column; the asset-pair stand-in is `(orig_addr, resp_addr)` (and `orig_addr` for S4's per-asset grouping). The hash aggregate on `(orig_addr, resp_addr)` or `(orig_addr, kind)` runs over the kind/time-filtered slice; planner choice is verified during measurement (§12).
 - Persisted pattern tables would add a separate write path, a retention concern, and a `baseline_version` migration story for what is already a bounded, schedulable computation inside the cadence runner.
-- Score drift from later peer events inserting into `observed_event_meta` is bounded by the same 30-day natural-expiry window that absorbs `baseline_version` drift (§10). Within that window, scores reflect cadence-time state. Beyond 30 days, events have aged out of the menu regardless of any drift.
+- Score drift from later peer events: snapshot scores on `baseline_triaged_event` are not retroactively updated when new peer events arrive in `observed_event_meta` and would change S3 / S4 / S1 percentile rank. The exposure bound depends on the user's active menu window, not on a single uniform "expiry":
+
+  | Active menu window | Drift exposure for visible rows |
+  |---|---|
+  | Last 7d / 14d / 30d (typical menu use, per #458) | bounded to that window's age |
+  | Up to 180d (corpus A retention is 180d per `migrations/customer/0003_baseline_corpus_a.sql`; `observed_event_meta` is only 30d) | up to 180d in the worst case — and beyond 30d the `observed_event_meta` history that produced the score has itself rolled over, so re-scoring is not even possible from current state |
+
+  In other words, snapshot scores remain stable **within** their `baseline_version`, but the older a row gets the more its score reflects state-of-the-world at its INSERT time rather than now. Mass re-scoring is explicitly not part of the design. If a future requirement makes long-window drift unacceptable, the mitigation is either tighter retention on `baseline_triaged_event` or a `baseline_version` bump that triggers natural turnover — the algorithm shape above does not change.
 
 If measurement on representative production data shows the cadence-time aggregation cost is unacceptable, the fallback is a follow-up RFC introducing per-cadence-run pattern caches; the algorithm shape above (continuous selectors, weighted sum, kind-normalized stored score) does not change, only where the GROUP BY result lives.
 
 ## §9. Tunable parameters
 
-These values fix the algorithm's **shape** but not necessarily their final calibration. All values below are **provisional** and finalized via ops review (with measurement on a representative tenant DB) before #462 merges. Tuning post-merge is via `baseline_version` bump + 30-day natural expiry per #458.
+These values fix the algorithm's **shape** but not necessarily their final calibration. All values below are **provisional** and finalized via ops review (with measurement on a representative tenant DB) before #462 merges. Tuning post-merge is via `baseline_version` bump; rows of the older version turn over within the typical menu window (~30 days per #458) and within corpus A's 180-day retention overall (§10).
 
 ### Selector weights (§3)
 
@@ -278,7 +293,9 @@ S1 needs no saturation cap — its output is already a percentile rank in `[0, 1
 
 ### Selector membership lists (§3)
 
-`HIGH_PRECISION_CATEGORIES`, `WELL_VALIDATED_KINDS`, `CRITICAL_CATEGORIES` — initial contents are populated from existing detection metadata at code time and reviewed with ops before merge. Lists are part of source code (e.g., `src/lib/triage/baseline/categories.ts`), not database content; changing them requires a `baseline_version` bump.
+`CRITICAL_CATEGORIES` — the only membership list referenced by the revised selectors (S2 fires when `category(event) ∈ CRITICAL_CATEGORIES`). Initial contents are populated from existing detection metadata at code time and reviewed with ops before merge. Stored in source code (e.g., `src/lib/triage/baseline/categories.ts`), not in the database; changing the list requires a `baseline_version` bump.
+
+`FAVORED_KINDS` (§5) is a related membership list affecting per-kind slot allocation, not within-kind selector firing; it lives next to `CRITICAL_CATEGORIES` and follows the same source-code + version-bump rules.
 
 ### Slot allocation (§4)
 
@@ -328,9 +345,9 @@ A `baseline_version` row is bumped whenever any of:
 - the algorithm's shape changes,
 - a selector is added or removed.
 
-Both corpora pick up the new version on next cadence / next on-demand run. Prior versions converge out of the menu within 30 days via natural expiry. No mass recomputation. Audit retains the per-row `baseline_version` column for reproducibility.
+Both corpora pick up the new version on next cadence / next on-demand run. Prior-version rows converge out of the **typical menu window** (last 30 days, per #458's documented analyst use) via natural turnover; rows in periods past that horizon may still carry an older `baseline_version` for the rest of the **180-day corpus A retention**. The menu therefore presents a single-version view for typical use but can present a version-mix when the user expands the period beyond ~30 days. No mass recomputation. Audit retains the per-row `baseline_version` column for reproducibility.
 
-The version is **not** surfaced in the menu UI per #458. Cross-version mixes within a window are resolved by natural expiry, not by user awareness.
+The version is **not** surfaced in the menu UI per #458. The cross-version-mix possibility on long windows is resolved by natural turnover and audit-side `baseline_version` access, not by user awareness.
 
 ## §11. Out of scope (delegated)
 
