@@ -1447,6 +1447,16 @@ export function DetectionShell({
   const [sensorCache, setSensorCache] = useState<SensorCache>({
     status: "idle",
   });
+  // Reviewer Round 1 (#393 Task D follow-up): the cache-hit probe must
+  // gate paint, not just fire alongside it. Both `openDrawer` paths
+  // flip this flag synchronously when reopening on a `loaded` cache;
+  // the render path below treats the cache as `loading` (no
+  // `sensorOptions`) until `probeAuthOrRedirect` resolves, so a
+  // `token_version` mismatch never paints stale sensor names. The
+  // probe's debounce + in-flight de-dup keeps the verifying flicker
+  // tight when the operator re-opens within seconds of the last
+  // confirmed probe.
+  const [sensorCacheVerifying, setSensorCacheVerifying] = useState(false);
   // Target field for the drawer to focus after opening. `focusToken`
   // increments on each openDrawerFocused call so repeated clicks on
   // the same aggregate chip re-trigger the drawer's focus effect.
@@ -1660,12 +1670,24 @@ export function DetectionShell({
       // otherwise serve last-fetch sensor names without re-checking
       // the session — including names from a customer the caller no
       // longer has access to after a `customer.assign` /
-      // `customer.unassign` mid-session. The probe asks
-      // `/api/auth/me`; on `token_version` mismatch the shared
-      // helper drops our cache and triggers the sign-in redirect, so
-      // the stale options never paint (#393 Task D).
+      // `customer.unassign` mid-session. Reviewer Round 1 flagged the
+      // first iteration: it fired the probe asynchronously while the
+      // drawer (and its `sensorOptions` derived from a `loaded`
+      // cache) had already painted, so stale names surfaced before
+      // `/api/auth/me` returned. We now flip
+      // `sensorCacheVerifying` synchronously *before* the drawer
+      // opens — the render path below maps that to a `loading`
+      // sensor state with empty options, so nothing from the cached
+      // payload reaches the screen until the probe confirms the
+      // session. On 401 the shared helper clears our cache to `idle`
+      // (still mapping to `loading` here) and redirects to sign-in;
+      // on success we drop the verifying flag and the loaded options
+      // paint normally (#393 Task D).
+      setSensorCacheVerifying(true);
       void probeAuthOrRedirect(() => {
         setSensorCache({ status: "idle" });
+      }).finally(() => {
+        setSensorCacheVerifying(false);
       });
     }
     // Customer inventory follows the same lazy-on-first-open
@@ -2873,10 +2895,18 @@ export function DetectionShell({
       else {
         // Same drawer-reopen probe as `openDrawer`: a chip-body open
         // path on a `loaded` sensor cache must not surface stale
-        // options without first checking the session is current
+        // options without first checking the session is current.
+        // The verifying flag is flipped synchronously in the same
+        // event-handler tick as `setDrawerOpen(true)`, so the
+        // `sensorState` / `sensorOptions` derivation below resolves
+        // to `loading` / `[]` on the first paint and the cached
+        // payload only reaches the screen once the probe returns OK
         // (#393 Task D).
+        setSensorCacheVerifying(true);
         void probeAuthOrRedirect(() => {
           setSensorCache({ status: "idle" });
+        }).finally(() => {
+          setSensorCacheVerifying(false);
         });
       }
       // Customer fetch follows the same chip-body wiring (#384).
@@ -2964,6 +2994,19 @@ export function DetectionShell({
   // `ready` state, so no intermediate state leaks IDs into the
   // committed filter.
   const sensorState = sensorStateForCache(sensorCache);
+  // Reviewer Round 1 (#393 Task D follow-up): the cache-hit probe
+  // must gate paint inside the drawer, not just fire alongside it.
+  // Override the values we hand to `FilterDrawer` so that on a
+  // drawer reopen against a `loaded` cache the multi-select renders
+  // its `loading` placeholder with no options until
+  // `probeAuthOrRedirect` resolves. The chip bar's `sensorOptions`
+  // (used by `summarizedChips` for committed-filter name lookup)
+  // intentionally stays in sync with the cache — the leak surface
+  // the reviewer flagged is the drawer's option list, not the
+  // already-painted chip bar that has been showing those names
+  // continuously since the last successful fetch.
+  const drawerSensorOptions = sensorCacheVerifying ? [] : sensorOptions;
+  const drawerSensorState = sensorCacheVerifying ? "loading" : sensorState;
 
   // Customer cache → drawer state + chip-summary options. Mirrors
   // the sensor wiring above; the empty-scope edge case
@@ -3686,8 +3729,8 @@ export function DetectionShell({
           labels={drawerLabels}
           multiSelectLabels={multiSelectLabels}
           openEndpointPanelOnOpen={openEndpointPanelOnDrawerOpen}
-          sensorOptions={sensorOptions}
-          sensorState={sensorState}
+          sensorOptions={drawerSensorOptions}
+          sensorState={drawerSensorState}
           onSensorRetry={triggerSensorFetch}
           customerOptions={customerOptions}
           customerState={customerState}

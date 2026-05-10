@@ -304,14 +304,24 @@ export function DetectionAnalytics({
       // duped, so multiple cache hits within the same window land on
       // a single request. On 401 we drop the cached entry so a
       // surviving render after the redirect cannot resurface it.
+      //
+      // Reviewer Round 1 follow-up: switch the local `status` to
+      // `loading` *before* the probe resolves. The previous version
+      // left a prior `ready` status in place during the round-trip,
+      // so the cached payload painted on first frame and the probe
+      // only ran in parallel — defeating the gate the task calls
+      // for. The async branch below restores `ready` only after the
+      // probe confirms the session is current.
       const controller = new AbortController();
       let cancelled = false;
+      const requestId = ++requestIdRef.current;
+      setStatus({ kind: "loading" });
       void probeAuthOrRedirect(() => {
         cacheRef.current.delete(key);
       }).then((ok) => {
         if (cancelled || controller.signal.aborted) return;
+        if (requestId !== requestIdRef.current) return;
         if (!ok) return;
-        requestIdRef.current += 1;
         setStatus({ kind: "ready", result: cached });
       });
       return () => {
