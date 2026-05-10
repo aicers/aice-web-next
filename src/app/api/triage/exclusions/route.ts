@@ -10,7 +10,8 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { query } from "@/lib/db/client";
 import {
   acquireCustomerCadenceLock,
-  executeRetroactiveDelete,
+  drainRemainingRetroactiveDeletes,
+  executeFirstRetroactiveDeleteBatch,
 } from "@/lib/triage/exclusion/retroactive-delete";
 import {
   connectCustomerClient,
@@ -23,7 +24,10 @@ import {
   parseStoredExclusionInput,
   StoredExclusionValidationError,
 } from "@/lib/triage/exclusion/storage-input";
-import { CustomerNotFoundError } from "@/lib/triage/policy/customer-db";
+import {
+  CustomerNotFoundError,
+  getCustomerPool,
+} from "@/lib/triage/policy/customer-db";
 
 /**
  * GET /api/triage/exclusions?customer_id=<id>
@@ -143,11 +147,18 @@ export const POST = withAuth(
       throw err;
     }
 
+    let row: Awaited<ReturnType<typeof createCustomerExclusion>>;
+    let firstBatchCounts: Awaited<
+      ReturnType<typeof executeFirstRetroactiveDeleteBatch>
+    >["counts"];
+    let pending: Awaited<
+      ReturnType<typeof executeFirstRetroactiveDeleteBatch>
+    >["pending"];
     try {
       await client.query("BEGIN");
       await acquireCustomerCadenceLock(client, customerId);
 
-      const row = await createCustomerExclusion(
+      row = await createCustomerExclusion(
         customerId,
         {
           kind: parsed.kind,
@@ -159,37 +170,29 @@ export const POST = withAuth(
         client,
       );
 
-      const counts = await executeRetroactiveDelete(client, {
+      const firstBatch = await executeFirstRetroactiveDeleteBatch(client, {
         kind: parsed.kind,
         value: parsed.value,
         domainSuffix: parsed.domainSuffix,
       });
+      firstBatchCounts = firstBatch.counts;
+      pending = firstBatch.pending;
 
+      // Commit the INSERT + first DELETE batch together so the row is
+      // durable even if the drain phase crashes. The cadence advisory
+      // lock releases on COMMIT; subsequent batches run without the
+      // lock per #457 — a concurrent cadence tick that sees a
+      // partially-cleaned corpus is benign because the new exclusion
+      // row is already visible and cadence step (c) applies it forward
+      // from that point.
       await client.query("COMMIT");
-
-      await auditLog.record({
-        actor: session.accountId,
-        action: "triage_exclusion.customer_add",
-        target: "triage_exclusion",
-        targetId: row.id,
-        ip: extractClientIp(request),
-        sid: session.sessionId,
-        customerId,
-        details: {
-          id: row.id,
-          kind: row.kind,
-          value: row.value,
-          deletedCorpusRows: counts,
-        },
-      });
-
-      return NextResponse.json({ data: row }, { status: 201 });
     } catch (err) {
       try {
         await client.query("ROLLBACK");
       } catch {
         // ignore rollback failures
       }
+      client.release();
       if (err instanceof StoredExclusionConflictError) {
         return NextResponse.json(
           { error: err.message, field: "value", code: "duplicate" },
@@ -197,12 +200,104 @@ export const POST = withAuth(
         );
       }
       throw err;
-    } finally {
-      client.release();
     }
+    client.release();
+
+    // Drain the remainder in fresh per-batch transactions to bound
+    // lock duration and WAL pressure. Drain failures do NOT roll back
+    // the INSERT — the row stays in place and forward enforcement is
+    // already in effect; the partially-cleaned corpus heals on the
+    // next cadence tick. We surface the error so the operator sees it,
+    // but the audit row records the rows actually deleted so far.
+    const customerPool = await getCustomerPool(customerId);
+    let drainCounts: typeof firstBatchCounts | null = null;
+    let drainError: unknown = null;
+    if (pending.length > 0) {
+      try {
+        drainCounts = await drainRemainingRetroactiveDeletes(async (fn) => {
+          const drainClient = await customerPool.connect();
+          try {
+            await drainClient.query("BEGIN");
+            const result = await fn(drainClient);
+            await drainClient.query("COMMIT");
+            return result;
+          } catch (err) {
+            await drainClient.query("ROLLBACK").catch(() => {});
+            throw err;
+          } finally {
+            drainClient.release();
+          }
+        }, pending);
+      } catch (err) {
+        drainError = err;
+      }
+    }
+    const counts = mergeCounts(firstBatchCounts, drainCounts);
+
+    await auditLog.record({
+      actor: session.accountId,
+      action: "triage_exclusion.customer_add",
+      target: "triage_exclusion",
+      targetId: row.id,
+      ip: extractClientIp(request),
+      sid: session.sessionId,
+      customerId,
+      details: {
+        id: row.id,
+        kind: row.kind,
+        value: row.value,
+        deletedCorpusRows: counts,
+      },
+    });
+
+    if (drainError !== null) {
+      // The INSERT and first batch are durable; surface the drain
+      // error so the operator can re-trigger cleanup (admin recovery
+      // surface lands in 1B-7). 200 + warning rather than 500 so the
+      // client knows the row is in place.
+      return NextResponse.json(
+        {
+          data: row,
+          warning:
+            drainError instanceof Error
+              ? drainError.message
+              : "drain phase failed",
+        },
+        { status: 201 },
+      );
+    }
+    return NextResponse.json({ data: row }, { status: 201 });
   },
   { requiredPermissions: ["triage:exclusion:write"] },
 );
+
+function mergeCounts(
+  first: {
+    baselineTriagedEvent: number;
+    observedEventMeta: number;
+    policyTriagedEvent: number | null;
+  },
+  drain: {
+    baselineTriagedEvent: number;
+    observedEventMeta: number;
+    policyTriagedEvent: number | null;
+  } | null,
+): {
+  baselineTriagedEvent: number;
+  observedEventMeta: number;
+  policyTriagedEvent: number | null;
+} {
+  if (drain === null) return first;
+  return {
+    baselineTriagedEvent:
+      first.baselineTriagedEvent + drain.baselineTriagedEvent,
+    observedEventMeta: first.observedEventMeta + drain.observedEventMeta,
+    policyTriagedEvent:
+      first.policyTriagedEvent === null
+        ? null
+        : first.policyTriagedEvent + (drain.policyTriagedEvent ?? 0),
+  };
+}
 
 // ── Helpers ─────────────────────────────────────────────────────
 

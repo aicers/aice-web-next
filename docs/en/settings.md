@@ -339,13 +339,19 @@ URIs, or domain patterns from the Triage corpus so they neither
 score nor surface in the asset list. Two scopes are available:
 
 - **Global exclusions** — managed at **Settings → Triage
-  exclusions → Global**. Apply to every active customer. Requires
-  the `triage:exclusion:global:write` permission.
+  exclusions (global)** (the dedicated tab next to the
+  per-customer page). Apply to every active customer. Requires
+  the `triage:exclusion:global:write` permission to mutate; the
+  tab is visible to anyone with `triage:read`.
 - **Customer exclusions** — managed at **Settings → Triage
-  exclusions** with a `customer_id` query parameter. Apply only to
-  one customer's tenant database. Read access requires
-  `triage:read`; mutate access requires `triage:exclusion:write`
-  plus that the customer is in the caller's effective scope.
+  exclusions**. Apply only to one customer's tenant database.
+  The page accepts a `customer_id` query parameter
+  (`/settings/triage-exclusions?customer_id=42`) so a deep link
+  loads the requested customer's list directly; out-of-scope ids
+  fall back to the first customer the caller can access. Read
+  access requires `triage:read`; mutate access requires
+  `triage:exclusion:write` plus that the customer is in the
+  caller's effective scope.
 
 Both scopes share the same column shape and the same retroactive
 behavior: an ADD removes matching rows from the Triage baseline
@@ -377,18 +383,28 @@ compile cost and keep the index footprint predictable.
 ### Domain regex preview
 
 The Add dialog runs a suffix-reducer over the supplied regex and
-shows one of three previews:
+shows one of four previews. The reducer is conservative: it only
+maps a regex to a SQL `host LIKE` predicate when the predicate
+matches the regex's exact set of hosts.
 
-- **Reduces to suffix `.example.com`** — patterns like
-  `^.*\.example\.com$` or `^([a-z0-9-]+\.)*example\.com$` reduce
-  to a hostname suffix. The exclusion deletes past corpus rows
-  whose `host` or `dns_query` ends with the suffix.
 - **Reduces to exact hostname `foo.example.com`** — the pattern
   `^foo\.example\.com$` reduces to an exact hostname. Past corpus
-  rows with that hostname are removed.
+  rows with exactly that hostname are removed.
+- **Reduces to suffix `.example.com` (subdomains only)** —
+  patterns like `^.*\.example\.com$` or `^.+\.example\.com$`
+  require at least one label before the literal `.example.com`,
+  so the bare host `example.com` is **not** part of the regex's
+  match set. The exclusion deletes past corpus rows whose `host`
+  or `dns_query` ends with `.example.com`; bare `example.com` is
+  left untouched.
+- **Reduces to exact-or-suffix `.example.com`** — the
+  repeating-label pattern `^([a-z0-9-]+\.)*example\.com$`
+  permits zero label prefixes, so both bare `example.com` and
+  any `*.example.com` are removed.
 - **Full-regex-only** — anything else (alternations, anchored
-  prefixes, wildcards in the middle, etc.). The exclusion still
-  takes effect on **future cadence ticks** but does **not**
+  prefixes, single-label-only `^[^.]+\.example\.com$`,
+  wildcards in the middle, etc.). The exclusion still takes
+  effect on **future cadence ticks** but does **not**
   retroactively delete past corpus rows. The dialog calls this
   out so the operator is not surprised.
 
@@ -397,7 +413,7 @@ shows one of three previews:
 | Path | What happens |
 |---|---|
 | **Forward (cadence)** | The cadence runner reads the active union (global + customer-scoped) on every page and excludes matching events before they are written to the corpus. |
-| **Retroactive (ADD)** | Adding a customer-scoped exclusion runs `DELETE` against `baseline_triaged_event` and `observed_event_meta` (and `policy_triaged_event` once the corpus B table exists), batched at 10,000 rows per statement. Adding a **global** exclusion enqueues per-customer fanout jobs; the worker route drains them under each customer's cadence advisory lock. |
+| **Retroactive (ADD)** | Adding a customer-scoped exclusion runs `DELETE` against `baseline_triaged_event` and `observed_event_meta` (and `policy_triaged_event` once the corpus B table exists), batched at 10,000 rows per statement. The INSERT and the **first** DELETE batch share one transaction so a crashed runner cannot leave a row inserted with no DELETE applied; subsequent batches drain in fresh per-batch transactions to bound lock duration and WAL pressure. The cadence advisory lock releases between the first batch and the drain — a concurrent cadence tick that sees a partially-cleaned corpus is benign because the new exclusion row is already visible to the active union. Adding a **global** exclusion enqueues per-customer fanout jobs; the worker drains them under each customer's cadence advisory lock following the same first-batch-then-drain protocol. |
 | **Removing** | Future cadence ticks only. Past corpus rows that were excluded stay excluded. |
 
 NTLM events have `host`, `dns_query`, and `uri` set to NULL, so

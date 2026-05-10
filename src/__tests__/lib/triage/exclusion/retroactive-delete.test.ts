@@ -4,6 +4,8 @@ import { LOCK_NAMESPACE as CADENCE_LOCK_NAMESPACE } from "@/lib/triage/baseline/
 import {
   _testing,
   acquireCustomerCadenceLock,
+  drainRemainingRetroactiveDeletes,
+  executeFirstRetroactiveDeleteBatch,
   executeRetroactiveDelete,
   PER_CUSTOMER_ADVISORY_LOCK_NAMESPACE,
 } from "@/lib/triage/exclusion/retroactive-delete";
@@ -76,12 +78,39 @@ describe("retroactive-delete planner", () => {
       expect(stmts[0].sql).toContain("uri = $1");
     });
 
-    it("emits exact + LIKE DELETEs for a suffix-reducible domain", () => {
+    it("emits suffix-only LIKE DELETEs for a `.*\\.` domain (bare host excluded)", () => {
+      // Regression guard for issue #457 review round 1: the regex
+      // `^.*\.example\.com$` requires at least one literal dot before
+      // the suffix, so bare `example.com` is NOT in its match set.
+      // Emitting `host = 'example.com'` would permanently remove
+      // corpus rows the regex never matched.
       const stmts = buildStatementsForTable(
         "baseline_triaged_event",
         {
           kind: "domain",
           value: "^.*\\.example\\.com$",
+          domainSuffix: ".example.com",
+        },
+        100,
+      );
+      expect(stmts).toHaveLength(2);
+      expect(stmts[0].sql).toContain("host IS NOT NULL AND host LIKE $1");
+      expect(stmts[0].sql).not.toContain("host = $1");
+      expect(stmts[0].params).toEqual(["%.example.com"]);
+      expect(stmts[1].sql).toContain(
+        "dns_query IS NOT NULL AND dns_query LIKE $1",
+      );
+      expect(stmts[1].sql).not.toContain("dns_query = $1");
+    });
+
+    it("emits exact + LIKE DELETEs for a `([a-z0-9-]+\\.)*` domain (bare host included)", () => {
+      // The repeating-label shape's `*` quantifier allows zero label
+      // prefixes, so both bare and prefixed hosts must be deleted.
+      const stmts = buildStatementsForTable(
+        "baseline_triaged_event",
+        {
+          kind: "domain",
+          value: "^([a-z0-9-]+\\.)*example\\.com$",
           domainSuffix: ".example.com",
         },
         100,
@@ -96,12 +125,46 @@ describe("retroactive-delete planner", () => {
       );
     });
 
+    it("emits exact-only DELETEs for a literal-host domain", () => {
+      const stmts = buildStatementsForTable(
+        "baseline_triaged_event",
+        {
+          kind: "domain",
+          value: "^foo\\.example\\.com$",
+          domainSuffix: "foo.example.com",
+        },
+        100,
+      );
+      expect(stmts).toHaveLength(2);
+      expect(stmts[0].sql).toContain("host = $1");
+      expect(stmts[0].params).toEqual(["foo.example.com"]);
+      expect(stmts[1].sql).toContain("dns_query = $1");
+    });
+
     it("emits no DELETEs for an unreducible domain", () => {
       const stmts = buildStatementsForTable(
         "baseline_triaged_event",
         {
           kind: "domain",
           value: "^(a|b)\\.com$",
+          domainSuffix: null,
+        },
+        100,
+      );
+      expect(stmts).toHaveLength(0);
+    });
+
+    it("emits no DELETEs for a single-label `[^.]+\\.` domain — not retroactively reducible", () => {
+      // Regression guard for issue #457 review round 1: `[^.]+\.`
+      // matches exactly one label before the suffix. The planner has
+      // no efficient SQL predicate for "exactly one label", so we
+      // skip retroactive DELETE entirely. Forward matching still
+      // applies via the active-set regex.
+      const stmts = buildStatementsForTable(
+        "baseline_triaged_event",
+        {
+          kind: "domain",
+          value: "^[^.]+\\.example\\.com$",
           domainSuffix: null,
         },
         100,
@@ -268,6 +331,100 @@ describe("retroactive-delete planner", () => {
         q.sql.includes("DELETE FROM baseline_triaged_event"),
       );
       expect(baselineDeletes).toHaveLength(4);
+    });
+
+    describe("two-phase first-batch-then-drain (#457 round 1 review)", () => {
+      it("first batch returns `pending` when a predicate filled its batch", async () => {
+        // The route handler's transaction is supposed to run only ONE
+        // DELETE batch per predicate; if a batch fills (rowCount ===
+        // batchSize), the remainder must drain in fresh transactions.
+        const client = makeClient((call) => {
+          if (call.sql.includes("to_regclass")) {
+            return { rows: [{ exists: false }], rowCount: 1 };
+          }
+          // hostname yields one statement against
+          // baseline_triaged_event then one against
+          // observed_event_meta. The first fills (50/50), the second
+          // is partial (3/50).
+          if (call.sql.includes("baseline_triaged_event"))
+            return { rows: [], rowCount: 50 };
+          if (call.sql.includes("observed_event_meta"))
+            return { rows: [], rowCount: 3 };
+          return { rows: [], rowCount: 0 };
+        });
+
+        const { counts, pending } = await executeFirstRetroactiveDeleteBatch(
+          client as unknown as Parameters<
+            typeof executeFirstRetroactiveDeleteBatch
+          >[0],
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          { batchSize: 50 },
+        );
+
+        expect(counts.baselineTriagedEvent).toBe(50);
+        expect(counts.observedEventMeta).toBe(3);
+        // Only the full predicate is pending.
+        expect(pending).toHaveLength(1);
+        expect(pending[0].tableKey).toBe("baselineTriagedEvent");
+        // baseline_triaged_event was queried exactly once during the
+        // first batch — it does NOT loop until exhausted.
+        const baselineQueries = client.queries.filter((q) =>
+          q.sql.includes("DELETE FROM baseline_triaged_event"),
+        );
+        expect(baselineQueries).toHaveLength(1);
+      });
+
+      it("drain phase invokes the TxRunner once per batch and stops at partial", async () => {
+        // After the first batch commits, the drain loops in fresh
+        // transactions (one per batch) until a batch returns fewer
+        // rows than `batchSize`. This bounds lock duration and WAL
+        // pressure per #457.
+        const responses = [10, 10, 4]; // 2 full batches, then partial.
+        let txCount = 0;
+        const drained = await drainRemainingRetroactiveDeletes(
+          async (fn) => {
+            txCount += 1;
+            const fakeClient = {
+              query: vi.fn(async () => ({
+                rows: [],
+                rowCount: responses.shift() ?? 0,
+              })),
+            };
+            return fn(fakeClient as unknown as Parameters<typeof fn>[0]);
+          },
+          [
+            {
+              tableKey: "baselineTriagedEvent",
+              statements: [{ sql: "DELETE x", params: [] }],
+            },
+          ],
+          { batchSize: 10 },
+        );
+
+        // 3 batches → 3 fresh transactions.
+        expect(txCount).toBe(3);
+        expect(drained.baselineTriagedEvent).toBe(24);
+      });
+
+      it("first batch with all predicates exhausted returns empty `pending`", async () => {
+        // No predicate filled, so the drain phase is skipped entirely.
+        const client = makeClient((call) => {
+          if (call.sql.includes("to_regclass")) {
+            return { rows: [{ exists: false }], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 1 };
+        });
+
+        const { pending } = await executeFirstRetroactiveDeleteBatch(
+          client as unknown as Parameters<
+            typeof executeFirstRetroactiveDeleteBatch
+          >[0],
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          { batchSize: 50 },
+        );
+
+        expect(pending).toEqual([]);
+      });
     });
 
     it("ipAddress exclusions still target NTLM rows via orig_addr / resp_addr", async () => {

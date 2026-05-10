@@ -9,7 +9,8 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 import {
   acquireCustomerCadenceLock,
   type DeletedCounts,
-  executeRetroactiveDelete,
+  drainRemainingRetroactiveDeletes,
+  executeFirstRetroactiveDeleteBatch,
 } from "./retroactive-delete";
 
 /**
@@ -242,28 +243,81 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
     return { outcome: "completed" };
   }
 
+  // First batch shares one transaction with the cadence advisory
+  // lock so cadence's `pg_try_advisory_xact_lock` exits cleanly while
+  // the per-customer fanout runs. Subsequent batches drain in fresh
+  // transactions per #457 so corpus DELETEs do not hold the cadence
+  // lock for long stretches.
   const tenantPool = await getCustomerPool(job.customerId);
   const tenantClient = await tenantPool.connect();
-  let counts: DeletedCounts;
+  let firstBatchCounts: DeletedCounts;
+  let pending: Awaited<
+    ReturnType<typeof executeFirstRetroactiveDeleteBatch>
+  >["pending"];
   try {
     await tenantClient.query("BEGIN");
     await acquireCustomerCadenceLock(tenantClient, job.customerId);
-    counts = await executeRetroactiveDelete(tenantClient, {
+    const firstBatch = await executeFirstRetroactiveDeleteBatch(tenantClient, {
       kind: global.kind,
       value: global.value,
       domainSuffix: global.domainSuffix,
     });
+    firstBatchCounts = firstBatch.counts;
+    pending = firstBatch.pending;
     await tenantClient.query("COMMIT");
   } catch (err) {
     await tenantClient.query("ROLLBACK").catch(() => {});
+    tenantClient.release();
     return {
       outcome: "retried",
       error: err instanceof Error ? err.message : String(err),
       global,
     };
-  } finally {
-    tenantClient.release();
   }
+  tenantClient.release();
+
+  let drainCounts: DeletedCounts | null = null;
+  if (pending.length > 0) {
+    try {
+      drainCounts = await drainRemainingRetroactiveDeletes(async (fn) => {
+        const drainClient = await tenantPool.connect();
+        try {
+          await drainClient.query("BEGIN");
+          const result = await fn(drainClient);
+          await drainClient.query("COMMIT");
+          return result;
+        } catch (err) {
+          await drainClient.query("ROLLBACK").catch(() => {});
+          throw err;
+        } finally {
+          drainClient.release();
+        }
+      }, pending);
+    } catch (err) {
+      // Drain failure: the global INSERT and first batch are durable
+      // in `auth_db` / tenant DB respectively; the row is already in
+      // the active set. Re-queue the job so the next sweep picks up
+      // the remaining batches with backoff.
+      return {
+        outcome: "retried",
+        error: err instanceof Error ? err.message : String(err),
+        global,
+      };
+    }
+  }
+  const counts: DeletedCounts = {
+    baselineTriagedEvent:
+      firstBatchCounts.baselineTriagedEvent +
+      (drainCounts?.baselineTriagedEvent ?? 0),
+    observedEventMeta:
+      firstBatchCounts.observedEventMeta +
+      (drainCounts?.observedEventMeta ?? 0),
+    policyTriagedEvent:
+      firstBatchCounts.policyTriagedEvent === null
+        ? null
+        : firstBatchCounts.policyTriagedEvent +
+          (drainCounts?.policyTriagedEvent ?? 0),
+  };
 
   await withTransaction((c) => finalizeCompleted(c, job.id));
 

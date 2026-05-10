@@ -61,17 +61,35 @@ interface ManagerProps {
   scope: "global" | "customer";
   customers?: CustomerOption[];
   canMutate: boolean;
+  /**
+   * Initial customer to select when the page loads. Threaded through
+   * from the `?customer_id=…` deep link in
+   * `app/.../triage-exclusions/page.tsx`. If the value is not in
+   * `customers`, the first available customer is used (the caller is
+   * responsible for vetting the id against the session's effective
+   * scope before passing it).
+   */
+  initialCustomerId?: number;
 }
 
 export function TriageExclusionManager({
   scope,
   customers = [],
   canMutate,
+  initialCustomerId,
 }: ManagerProps) {
   const t = useTranslations("triageExclusions");
 
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(
-    customers[0]?.id ?? null,
+    () => {
+      if (
+        initialCustomerId !== undefined &&
+        customers.some((c) => c.id === initialCustomerId)
+      ) {
+        return initialCustomerId;
+      }
+      return customers[0]?.id ?? null;
+    },
   );
   const [rows, setRows] = useState<ExclusionRow[]>([]);
   const [loading, setLoading] = useState(false);

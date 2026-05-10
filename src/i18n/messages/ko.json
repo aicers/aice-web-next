@@ -84,6 +84,7 @@
     "customers": "고객",
     "policies": "정책",
     "triageExclusions": "트리아지 예외",
+    "triageExclusionsGlobal": "트리아지 예외 (전역)",
     "accountStatus": "계정 현황",
     "aimerIntegration": "Aimer 연동"
   },

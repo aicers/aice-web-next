@@ -127,12 +127,16 @@ describe("parseStoredExclusionInput", () => {
       expect(r.domainSuffix).toBe(".example.com");
     });
 
-    it("populates suffix for the [^.]+ shape", () => {
+    it("leaves domain_suffix NULL for the [^.]+ shape — single-label is not retroactively reducible", () => {
+      // Round 1 review for #457 found the SQL planner could not
+      // express "exactly one label before the suffix" without
+      // breaking the index plan; the reducer now returns null and the
+      // pattern stays full-regex-only (forward matching applies).
       const r = parseStoredExclusionInput({
         kind: "domain",
         value: "^[^.]+\\.example\\.com$",
       });
-      expect(r.domainSuffix).toBe(".example.com");
+      expect(r.domainSuffix).toBeNull();
     });
 
     it("populates suffix for the .+ shape", () => {

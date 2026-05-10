@@ -29,6 +29,11 @@ export default async function SettingsLayout({
   const showTriageExclusions = session
     ? await hasPermission(session.roles, "triage:read")
     : false;
+  // Global Triage exclusions sits next to the per-customer entry as a
+  // sibling tab so the global CRUD surface is reachable without
+  // knowing the URL — closes the discoverability gap raised in #457
+  // round 1 review.
+  const showTriageExclusionsGlobal = showTriageExclusions;
   const showAccountStatus = session
     ? await hasPermission(session.roles, "dashboard:read")
     : false;
@@ -45,6 +50,7 @@ export default async function SettingsLayout({
         showCustomers={showCustomers}
         showPolicies={showPolicies}
         showTriageExclusions={showTriageExclusions}
+        showTriageExclusionsGlobal={showTriageExclusionsGlobal}
         showAccountStatus={showAccountStatus}
         showAimerIntegration={showAimerIntegration}
       />

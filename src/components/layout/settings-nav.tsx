@@ -10,6 +10,16 @@ interface SettingsNavProps {
   showCustomers?: boolean;
   showPolicies?: boolean;
   showTriageExclusions?: boolean;
+  /**
+   * Show the global Triage exclusions tab. Gated separately from the
+   * per-customer page (which only needs `triage:read`) because the
+   * global table is ops-managed and only operators with
+   * `triage:exclusion:global:write` can mutate it. We still surface the
+   * link to anyone with `triage:read` so a Security Monitor can see
+   * what is in effect at the global scope; mutate buttons inside the
+   * page gate on the write permission separately.
+   */
+  showTriageExclusionsGlobal?: boolean;
   showAccountStatus?: boolean;
   showAimerIntegration?: boolean;
 }
@@ -20,13 +30,14 @@ export function SettingsNav({
   showCustomers,
   showPolicies,
   showTriageExclusions,
+  showTriageExclusionsGlobal,
   showAccountStatus,
   showAimerIntegration,
 }: SettingsNavProps) {
   const t = useTranslations("settings");
   const pathname = usePathname();
 
-  const items: { key: string; href: string }[] = [];
+  const items: { key: string; href: string; matchExact?: boolean }[] = [];
   if (showAccounts) items.push({ key: "accounts", href: "/settings/accounts" });
   if (showRoles) items.push({ key: "roles", href: "/settings/roles" });
   if (showCustomers)
@@ -36,6 +47,16 @@ export function SettingsNav({
     items.push({
       key: "triageExclusions",
       href: "/settings/triage-exclusions",
+      // The global page lives at `/settings/triage-exclusions/global`,
+      // which would otherwise both highlight as active under the
+      // `startsWith` check. Constrain this entry to its exact path so
+      // the two siblings highlight independently.
+      matchExact: true,
+    });
+  if (showTriageExclusionsGlobal)
+    items.push({
+      key: "triageExclusionsGlobal",
+      href: "/settings/triage-exclusions/global",
     });
   if (showAccountStatus)
     items.push({ key: "accountStatus", href: "/settings/account-status" });
@@ -50,7 +71,9 @@ export function SettingsNav({
   return (
     <nav className="flex gap-1">
       {items.map((item) => {
-        const active = pathname.startsWith(item.href);
+        const active = item.matchExact
+          ? pathname === item.href
+          : pathname.startsWith(item.href);
         return (
           <Link
             key={item.key}

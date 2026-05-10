@@ -84,6 +84,7 @@
     "customers": "Customers",
     "policies": "Policies",
     "triageExclusions": "Triage exclusions",
+    "triageExclusionsGlobal": "Triage exclusions (global)",
     "accountStatus": "Account Status",
     "aimerIntegration": "Aimer Integration"
   },
