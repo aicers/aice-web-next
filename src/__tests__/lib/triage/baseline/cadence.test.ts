@@ -466,3 +466,143 @@ describe("runTriageBaselineCadence — per-page transaction discipline", () => {
     expect(pager.callCount()).toBe(1);
   });
 });
+
+describe("runTriageBaselineCadence — AbortSignal", () => {
+  it("forwards the signal into the pager so the upstream fetch can be cancelled", async () => {
+    const pool = createMockPool({ lockSequence: [true] });
+    mockGetCustomerPool.mockResolvedValue(pool);
+
+    const { runTriageBaselineCadence } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+
+    const seenSignals: Array<AbortSignal | undefined> = [];
+    const controller = new AbortController();
+    const pager = {
+      ingestPage: async (
+        _client: unknown,
+        _customerId: number,
+        _afterCursor: string | null,
+        signal?: AbortSignal,
+      ) => {
+        seenSignals.push(signal);
+        return {
+          observedInserted: 0,
+          baselineInserted: 0,
+          endCursor: null,
+          hasNextPage: false,
+          exclusionsFp: TEST_EXCLUSIONS_FP,
+        };
+      },
+    };
+    await runTriageBaselineCadence(7, {
+      pager,
+      signal: controller.signal,
+    });
+    expect(seenSignals).toHaveLength(1);
+    expect(seenSignals[0]).toBe(controller.signal);
+  });
+
+  it("stops cleanly mid-run after page 1 commits when the signal aborts before page 2", async () => {
+    const pool = createMockPool({ lockSequence: [true, true] });
+    mockGetCustomerPool.mockResolvedValue(pool);
+
+    const { runTriageBaselineCadence } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+
+    const controller = new AbortController();
+    // Wrap the mock client so the post-page COMMIT triggers the
+    // abort *after* the page has already committed. This places the
+    // signal flip between page 1's commit and page 2's top-of-loop
+    // signal check — exactly the failure mode the dispatcher
+    // timeout produces in production.
+    const originalQuery = pool.client.query.getMockImplementation() as (
+      sql: string,
+      params?: unknown[],
+    ) => Promise<QueuedRow>;
+    pool.client.query.mockImplementation(
+      async (sql: string, params?: unknown[]) => {
+        const result = await originalQuery(sql, params);
+        if (sql === "COMMIT") controller.abort();
+        return result;
+      },
+    );
+    let pageIndex = 0;
+    const pager = {
+      ingestPage: vi.fn(async () => {
+        const i = pageIndex;
+        pageIndex += 1;
+        if (i === 0) {
+          return {
+            observedInserted: 4,
+            baselineInserted: 2,
+            endCursor: "c1",
+            hasNextPage: true,
+            exclusionsFp: TEST_EXCLUSIONS_FP,
+          };
+        }
+        // Page 2 must never run — the test fails if ingestPage is
+        // called twice.
+        throw new Error("page 2 should not be invoked");
+      }),
+    };
+    const result = await runTriageBaselineCadence(7, {
+      pager,
+      signal: controller.signal,
+    });
+
+    // Page 1 committed; page 2 was never started.
+    expect(pager.ingestPage).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("ok");
+    expect(result.lastEventCursor).toBe("c1");
+    expect(result.observedInserted).toBe(4);
+    expect(result.baselineInserted).toBe(2);
+
+    // Exactly one COMMIT (page 1), zero ROLLBACKs.
+    const sqls = pool.client.queries.map((q) => q.sql);
+    expect(sqls.filter((s) => s === "COMMIT").length).toBe(1);
+    expect(sqls.filter((s) => s === "ROLLBACK").length).toBe(0);
+  });
+
+  it("rolls back the in-flight page when the signal aborts mid-fetch (after ingestPage returns)", async () => {
+    const pool = createMockPool({ lockSequence: [true] });
+    mockGetCustomerPool.mockResolvedValue(pool);
+
+    const { runTriageBaselineCadence } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+
+    const controller = new AbortController();
+    const pager = {
+      ingestPage: async (
+        _client: unknown,
+        _customerId: number,
+        _afterCursor: string | null,
+        _signal?: AbortSignal,
+      ) => {
+        // Simulate a fetch that completed locally but where the
+        // dispatcher already aborted (e.g. timeout fired during
+        // the resolver round-trip).
+        controller.abort();
+        return {
+          observedInserted: 7,
+          baselineInserted: 1,
+          endCursor: "c1",
+          hasNextPage: false,
+          exclusionsFp: TEST_EXCLUSIONS_FP,
+        };
+      },
+    };
+    await runTriageBaselineCadence(7, {
+      pager,
+      signal: controller.signal,
+    });
+
+    const sqls = pool.client.queries.map((q) => q.sql);
+    // BEGIN ran, but no COMMIT; the abort handler issued ROLLBACK.
+    expect(sqls).toContain("BEGIN");
+    expect(sqls).toContain("ROLLBACK");
+    expect(sqls).not.toContain("COMMIT");
+  });
+});

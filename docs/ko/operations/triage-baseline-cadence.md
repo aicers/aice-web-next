@@ -105,42 +105,152 @@ pg_try_advisory_xact_lock(hashtext('triage_baseline_cadence:' || customer_id))
   획득해 가져가는 경우, 마지막으로 커밋된 워터마크에서 깨끗하게
   멈추고 부분 카운터와 함께 `status: 'ok'`를 반환합니다.
 
+## 디스패처 라우트 — `POST /api/internal/triage/baseline/dispatch`
+
+시간당 팬아웃은 시간당 한 번씩 in-repo `cron` 서비스가 호출하는
+형제 라우트가 처리합니다. 디스패처는 활성 고객을 열거하고
+(`SELECT id FROM customers WHERE status = 'active'`), 고객당 한 번의
+케이던스 패스를 제한된 동시성과 고객별 타임아웃으로 실행합니다.
+고객별 라우트는 변경되지 않으며, 운영자는 단일 고객 수동 실행을
+위해 여전히 `{customer_id: N}`을 POST할 수 있습니다.
+
+```text
+POST /api/internal/triage/baseline/dispatch
+Authorization: Bearer <TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN>
+Content-Type: application/json
+
+(본문 없음)
+```
+
+응답:
+
+```json
+{
+  "overall": "ok",
+  "perCustomer": [
+    {
+      "customerId": 1,
+      "status": "ok",
+      "observedInserted": 142,
+      "baselineInserted": 9,
+      "lastEventCursor": "1234567890123456789"
+    }
+  ]
+}
+```
+
+`perCustomer[].status`는 닫힌 집합입니다.
+
+| 값 | 출처 | 의미 |
+| :-- | :-- | :-- |
+| `ok` | 케이던스 러너 | 정상 성공 패스 — 행이 인제스트되고 워터마크가 진행됨. |
+| `skipped` | 케이던스 러너 | 동시 실행이 어드바이저리 락을 보유 중이거나 신규 페이지가 없음. 정상적인 "할 일 없음" 상태. |
+| `failed` | 케이던스 러너 | 케이던스 트랜잭션이 롤백됨. `error` 필드 채워짐. |
+| `timeout` | 디스패처 | 고객별 호출이 유효 타임아웃을 초과 — `TRIAGE_BASELINE_DISPATCH_PER_CUSTOMER_TIMEOUT_MS`(기본 15분)와 남은 디스패처 전체 예산 중 더 작은 값. 디스패처가 `AbortSignal`로 러너를 취소했고, 진행 중이던 페이지가 롤백됨. 이 전체 예산 한도는 디스패처 전체 데드라인이 만료될 때 이미 실행 중인 고객에도 적용되어, 디스패처는 항상 `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS` 내에 반환됨. |
+| `skipped-timeout` | 디스패처 | 디스패처 전체 타임아웃(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, 기본 45분) 도달 전에 이 고객은 시도되지 않음. 다음 시간당 틱이 처리. |
+
+`overall`은 결정적으로 도출됩니다.
+
+- `ok` ⇔ 모든 고객별 상태가 `ok` 또는 `skipped` (정상적인 skip은
+  실패가 아니라 정상 상태의 일부).
+- `partial` ⇔ 고객별 상태 중 하나 이상이 `failed`, `timeout`,
+  `skipped-timeout`이고 디스패처 자체는 완료됨.
+- `failed` (HTTP 500) ⇔ 디스패처 자체 실패 (예: 고객 열거 쿼리
+  실패). `perCustomer`는 비어있을 수 있음.
+
+한 고객의 실패가 다른 고객의 실행을 중단시키지 않습니다.
+디스패처는 `partial`을 보고하고 계속 진행합니다.
+
 ## 런북 — 케이던스 엔드포인트 등록
 
-릴리스 런북의 배포 스케줄러에 케이던스 라우트를 등록하세요.
-권장 주기는 **고객당 시간당 1회** (논의 #447 §3.4 기준)입니다.
-시간당 주기는 코퍼스를 신선하게 유지하면서 리졸버 부하를
-배가시키지 않습니다. 페이지별 커밋과 커서 진행 덕분에 다음
-틱이 이전이 멈춘 지점에서 이어받아, 1–2 사이클의 일시적 장애는
-무해합니다.
+**`docker-compose.yml`의 `cron` 서비스가 이미 이 작업을 수행합니다** —
+크론 라인은 `infra/cron/crontab`, 래퍼 스크립트는
+`infra/cron/run-triage-baseline-dispatch.sh`를 참고하세요.
+`docker compose --profile prod up -d`로 부팅하면 시간당 케이던스가
+시작되며, 별도의 외부 스케줄러 설정은 필요 없습니다.
+
+cron 서비스는 `next-app`의 `/api/health` 준비 상태 게이트가
+통과되어야 첫 틱을 발사하므로, 절반만 가동된 백엔드가 디스패처
+요청을 받지 않습니다. 래퍼 스크립트는 모든 응답 본문을 cron 컨테이너
+내부의 `/var/log/cron/cron-cadence-<ts>.json`에 저장(`cron-logs`
+네임드 볼륨으로 영속화)하고, 호출당 한 줄 요약을 stdout으로
+출력하므로 `docker compose logs cron`으로 확인할 수 있습니다.
+
+번들된 compose 외부에서 운영하는 경우 어떤 외부 스케줄러에서든
+같은 디스패처 라우트를 사용할 수 있습니다. 권장 주기는
+**시간당 1회**입니다(디스패처가 내부적으로 고객별로 팬아웃).
+
+```bash
+curl -sS -o /tmp/dispatch.json -w '%{http_code}\n' \
+  --connect-timeout 10 --max-time 2700 \
+  -X POST \
+  -H "Authorization: Bearer $TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '' \
+  "$BFF_BASE_URL/api/internal/triage/baseline/dispatch"
+```
+
+`--max-time`은 디스패처 전체 타임아웃
+(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, 기본 2700000ms =
+2700s) 이상으로 유지하십시오. 그래야 구조화된 `timeout` /
+`skipped-timeout` 행을 만드는 애플리케이션 레벨 타임아웃이,
+본문 없는 전송 실패로 표면화되는 네트워크 레벨 타임아웃을
+앞섭니다. 번들된 cron 래퍼는 `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`
+값에서 `--max-time`을 자동으로 도출하므로 두 값이 같은 `.env`에
+설정된 한 자동으로 동기화됩니다. 외부 스케줄러를 사용하는 경우
+디스패처 노브를 재조정할 때 캡 값을 직접 갱신해야 합니다.
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN" \
+  -H 'Content-Type: application/json' \
+  "$BFF_BASE_URL/api/internal/triage/baseline/cadence" \
+  -d '{"customer_id": 1}'
+```
+
+초기 구성 체크리스트:
 
 1. `TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN`에 강한 무작위 토큰을
    준비합니다. 시크릿 매니저에 저장하고, 일반적인 주기로
    순환시키며, 절대 체크인하지 않습니다.
-2. 모든 BFF 인스턴스와 라우트를 호출하는 스케줄러에 환경
-   변수를 설정합니다. 환경 변수가 미설정이면 라우트는 모든
-   요청을 거부하므로, 첫 틱 전에 스케줄러가 명시적으로 변수를
-   로드해야 합니다.
-3. 시간당 한 번씩 호출하는 반복 호출자(cron, Kubernetes
-   `CronJob`, GitHub Actions 스케줄 등)를 연결합니다.
-
-    ```bash
-    curl -fsS -X POST \
-      -H "Authorization: Bearer $TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN" \
-      -H "Content-Type: application/json" \
-      "$BFF_BASE_URL/api/internal/triage/baseline/cadence" \
-      -d '{"customer_id": 1}'
-    ```
-
-    여러 고객 테넌트 DB를 운영하는 경우, 시간당 `customer_id`별로
-    한 번씩 HTTP 호출을 분기합니다. 고객별 어드바이저리 락
-    덕분에 서로 다른 고객의 패스는 동시 실행이 가능합니다.
-
-4. 첫 스케줄 실행을 스케줄러 로그를 추적하며 검증합니다.
+2. `.env`에 환경 변수를 설정합니다(cron 서비스는 `next-app`과
+   동일한 `env_file: .env`를 상속). 환경 변수가 미설정이면
+   라우트는 모든 요청을 거부하므로, 첫 틱 전에 디스패처가
+   명시적으로 변수를 로드해야 합니다.
+3. `docker compose logs cron`으로 첫 스케줄 실행을 검증하고,
+   `/var/log/cron/`의 타임스탬프 응답 본문을 확인합니다.
    조용한 배포에서 정상적인 첫 실행은 보통 보통 수준의 카운터를
    보고합니다. 중단된 틱 직후 첫 실행에서 `status: 'skipped'`가
    나오는 것은 정상이며(이전 실행이 아직 마무리 중), 다음
    패스에서 해소되어야 합니다.
+
+## 모니터링
+
+`200 / overall: 'partial'`은 HTTP 성공이므로 단순한 `curl -fsS`는
+이를 정상으로 취급합니다. 무음 부분 실패가 누적되지 않도록
+**`overall != 'ok'`에 대해 알림을 설정하십시오**. 키잉 가능한
+표면이 세 가지 있습니다.
+
+1. 디스패처가 호출당 `triage_baseline_dispatch` 태그가 붙은 한 줄의
+   구조화된 `console.log` 라인을 출력하며, `overall`, 고객별 상태
+   카운트, 고객별 카운터를 포함합니다. 이것이 정식 라인이며 알림은
+   여기에 키잉합니다. 디스패처 자체 실패(예: 고객 열거 오류 또는
+   열거 타임아웃)에서도 동일한 라인이 `overall: 'failed'`, 비어 있는
+   `perCustomer`, 모든 카운터 0, `error` 필드와 함께 출력되므로,
+   `overall != 'ok'` 단일 알림 규칙으로 부분 실패와 자체 실패 양쪽을
+   모두 잡을 수 있습니다.
+2. cron 래퍼 스크립트(`run-triage-baseline-dispatch.sh`)가
+   `overall != 'ok'`일 때 stderr로 사람이 읽을 수 있는 경고를
+   재출력하며, 이는 `docker compose logs cron`에 표시됩니다.
+3. 고객별 `baseline_corpus_state.last_run_status`가 가장 최근 종료
+   상태를 기록합니다. 1시간 이상 지난 `last_run_status = 'failed'`
+   행이 있으면 확정된 문제입니다.
+
+래퍼 스크립트는 `overall: 'partial'`에서 의도적으로 0으로 종료하므로
+cron의 MAILTO가 중복 호출되지 않습니다. 복구 경로는 구조화된 로그
+라인에 대한 알림입니다. 인증 오설정(HTTP 401/403)과 전송 실패
+(DNS, 연결 거부, `--max-time` 도달)는 비제로 종료하므로 운영자가
+즉시 확인해야 합니다.
 
 ## 관찰성
 

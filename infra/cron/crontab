@@ -1,0 +1,13 @@
+# In-repo cron table (#487).
+#
+# All entries call a wrapper script under /usr/local/bin/ rather than
+# inlining curl. Wrappers own the env-file source, response-body
+# capture, and `overall != 'ok'` detection — see #487 §3 for the
+# contract.
+#
+# Cron interprets `%` as a newline literal, so any wrapper that needs a
+# date format (e.g. for log filenames) MUST do its own
+# `date +%Y%m%d-%H` *inside* the script, not in the crontab line.
+#
+# Triage baseline cadence — hourly per-customer fan-out
+0 * * * * /usr/local/bin/run-triage-baseline-dispatch.sh

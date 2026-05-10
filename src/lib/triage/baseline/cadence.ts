@@ -155,12 +155,19 @@ export interface CadencePageResult {
  * `baseline_corpus_state.last_event_cursor` on the first page) and
  * runs every call inside an open page transaction with the per-customer
  * advisory lock already held.
+ *
+ * `signal` is forwarded into the upstream GraphQL `fetch` so a
+ * dispatcher-issued abort terminates the in-flight request promptly
+ * instead of waiting for the resolver to return. Implementations
+ * should treat `signal.aborted` the same as a transport error: rethrow
+ * and let the runner roll back the open page transaction.
  */
 export interface CadencePager {
   ingestPage(
     client: pg.PoolClient,
     customerId: number,
     afterCursor: string | null,
+    signal?: AbortSignal,
   ): Promise<CadencePageResult>;
 }
 
@@ -266,9 +273,9 @@ const MAX_PAGES_PER_RUN = 200;
  */
 export async function runTriageBaselineCadence(
   customerId: number,
-  options: { pager: CadencePager },
+  options: { pager: CadencePager; signal?: AbortSignal },
 ): Promise<CadenceRunResult> {
-  const { pager } = options;
+  const { pager, signal } = options;
 
   // Lets `CustomerNotFoundError` propagate so the route handler can
   // surface it as a 404. In-process callers (future batched drivers,
@@ -284,6 +291,11 @@ export async function runTriageBaselineCadence(
 
   try {
     for (let page = 0; page < MAX_PAGES_PER_RUN; page += 1) {
+      // Check abort before opening a new page transaction. Stops
+      // cleanly at the previously-committed watermark; the next tick
+      // resumes from `last_event_cursor`.
+      if (signal?.aborted) break;
+
       let pageCommitted = false;
       try {
         await client.query("BEGIN");
@@ -321,7 +333,17 @@ export async function runTriageBaselineCadence(
           client,
           customerId,
           nextStartCursor,
+          signal,
         );
+
+        // After the upstream fetch returns: if a dispatcher-issued
+        // abort raced the in-flight page, roll back this page so the
+        // watermark stays at the previously-committed cursor and the
+        // advisory lock releases promptly.
+        if (signal?.aborted) {
+          await client.query("ROLLBACK");
+          break;
+        }
 
         await markOk(client, ingest.endCursor, ingest.exclusionsFp);
         await client.query("COMMIT");

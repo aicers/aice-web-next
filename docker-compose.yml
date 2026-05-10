@@ -48,6 +48,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Cheap liveness probe gating the `cron` service (#487 §1). The
+    # node:24-bookworm-slim runner does not ship `curl`; the `node -e
+    # fetch(...)` form avoids adding a package to the image. The
+    # endpoint (`/api/health`) intentionally makes no DB call so a
+    # transient upstream blip cannot mask the readiness signal.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   nginx-prod:
     image: nginx:alpine
@@ -60,6 +75,30 @@ services:
     depends_on:
       - next-app
 
+  # In-repo cron service (#487). Hosts every internal-API hourly
+  # trigger for this deployment — currently the Triage baseline
+  # dispatcher, with future cleanup / retention endpoints adding their
+  # own crontab entries. Single service shared across triggers so the
+  # readiness gate / env-passthrough plumbing lives in exactly one
+  # place.
+  cron:
+    build:
+      context: ./infra/cron
+      dockerfile: Dockerfile
+    profiles: [prod]
+    env_file:
+      - .env
+    depends_on:
+      next-app:
+        condition: service_healthy
+    # Persist /var/log/cron across restarts so the timestamped
+    # response bodies survive a `docker compose down`. Operators
+    # inspecting a partial-success incident the next morning need the
+    # full body; the docker logs surface only the one-line summary.
+    volumes:
+      - cron-logs:/var/log/cron
+
 volumes:
   pgdata:
   next-app-data:
+  cron-logs:
