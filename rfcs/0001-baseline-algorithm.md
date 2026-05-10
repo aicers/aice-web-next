@@ -33,23 +33,28 @@ At cadence INSERT (per event, against observed_event_meta history):
    │
    ├─ (2) determine kind                                ── implicit; just a column on the event
    │
-   └─ (3) compute within-kind score → baseline_score,
-          selector_tags                                  ── all selectors S1–S4 + UNLABELED_BONUS,
-                                                            persisted on baseline_triaged_event
+   └─ (3) compute within-kind weighted sum →            ── all selectors S1–S4 + UNLABELED_BONUS;
+          raw_score, selector_tags                          raw_score and selector_tags persisted
+                                                            on baseline_triaged_event.
+                                                            baseline_score is NOT persisted at INSERT.
 
 
 At menu read (per active window, no per-event recomputation):
    │
-   ├─ (4) allocate per-kind slots                       ── per-kind aggregates GROUP BY against
+   ├─ (4) compute baseline_score on the fly             ── CUME_DIST() OVER (PARTITION BY kind
+   │                                                       ORDER BY raw_score) over rows in the
+   │                                                       active window; see §3.
+   │
+   ├─ (5) allocate per-kind slots                       ── per-kind aggregates GROUP BY against
    │                                                       baseline_triaged_event (volume + average
    │                                                       selector_tags length) + favored bonus
    │
-   └─ (5) merge top-k of each kind                      ── SELECT FROM baseline_triaged_event,
+   └─ (6) merge top-k of each kind                      ── SELECT FROM baseline_triaged_event,
                                                             ORDER BY baseline_score DESC within kind,
                                                             assemble into final_count rows
 ```
 
-Step (3) — including window-level selectors S1/S3/S4 — runs inside the cadence pipeline (#481) by `GROUP BY` against `observed_event_meta` at INSERT time; the resulting `raw_score` (the weighted sum), `baseline_score` (the kind-normalized percentile rank), and `selector_tags` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. See §8 for the full timing contract and the trade-off this introduces. Steps (4) and (5) read only `baseline_triaged_event` — slot-allocation aggregates use `selector_tags` array length as the signal-richness proxy (§4), so no raw confidence column is needed at read time and no second-table join. `observed_event_meta` is consulted only at cadence INSERT (step 3), never at menu read.
+Step (3) — including window-level selectors S1/S3/S4 — runs inside the cadence pipeline (#481) by `GROUP BY` against `observed_event_meta` at INSERT time; the resulting `raw_score` (the weighted sum) and `selector_tags` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. `baseline_score` is **not** persisted at INSERT — it is the read-time `CUME_DIST()` window function defined in §3. See §8 for the full timing contract and §11 for the read-path performance contract. Steps (4)–(6) read only `baseline_triaged_event` — `baseline_score` is derived from `raw_score` in a CTE/window pass, slot-allocation aggregates use `selector_tags` array length as the signal-richness proxy (§4), so no raw confidence column is needed at read time and no second-table join. `observed_event_meta` is consulted only at cadence INSERT (step 3), never at menu read.
 
 ## §1. Hard exclusion: `BlockList*`
 
@@ -151,7 +156,7 @@ Computed against the read-time cohort: the rows in the active menu window for th
 
 INSERT-time computation was rejected because it would have ranked each new event against only the peers already in the table at that moment. With raw scores trending upward (model improvements, increasing sensitivity over time), every new event would land near 1.0; the first row of every cadence batch would always be a cold-start at 1.0; and the global percentile slider in #471 would no longer cut at the actual top-5% across kinds.
 
-Read-time computation also means `baseline_score` is **not** a persisted column in this RFC's design. The `baseline_score DOUBLE PRECISION` column already in `migrations/customer/0003_baseline_corpus_a.sql` may be retained as a denormalized cache (refreshed periodically by the cadence runner if measurement shows the read-time `PERCENT_RANK` is too slow at production scale), or repurposed; the RFC's contract is only that the value `PERCENT_RANK() OVER (PARTITION BY kind ORDER BY raw_score)` is what `baseline_score` *means*. #471's slider is the single most performance-sensitive consumer; its measurement gate (already documented in #471's RFC) is the place where any caching decision is made empirically.
+Read-time computation also means `baseline_score` is **not** a persisted column in this RFC's design. The `baseline_score DOUBLE PRECISION` column already in `migrations/customer/0003_baseline_corpus_a.sql` may be retained as a denormalized cache (refreshed periodically by the cadence runner if measurement shows the read-time `CUME_DIST` is too slow at production scale), or repurposed; the RFC's contract is only that the value `CUME_DIST() OVER (PARTITION BY kind ORDER BY raw_score)` is what `baseline_score` *means*. #471's slider is the single most performance-sensitive consumer; its measurement gate (already documented in #471's RFC) is the place where any caching decision is made empirically — see §11 for the contract this RFC actually commits to.
 
 A 0.95 `baseline_score` means "this event is in the top 5% of its own kind in the active window", whatever that kind is. Global percentile thresholds remain comparable across kinds because every kind contributes the same uniform-on-`[0, 1]` distribution by construction.
 
@@ -179,7 +184,7 @@ where:
 - `normalized_top_confidence(kind, window) ∈ [0, 1]`: a measure of how *signal-rich* the kind's events are this window. Concretely, `avg(coalesce(cardinality(selector_tags), 0)) / MAX_TAGS` over `baseline_triaged_event` rows for this `kind` in the active window, where `MAX_TAGS` is the total number of distinct selector tags the cadence pipeline can emit (§9). The `coalesce` guards both NULL `selector_tags` columns and PostgreSQL's quirk that `array_length('{}', 1)` returns `NULL` rather than `0`; without it, zero-tag rows would silently drop from `avg` and groups whose rows are all empty/NULL would produce a NULL slot share. A kind whose events frequently fire multiple selectors (S1-high + S3-recurring + S4-correlated, etc.) scores higher than one whose events typically fire only a single selector. Computed entirely from `selector_tags` — no raw confidence column is read, so the within-kind-only rule for confidence (§ "Pipeline" intro) is respected: signal-richness is measured from the algorithm's own selector firings, not from upstream confidence values.
 - `favored_bonus(kind) = β` if `kind ∈ FAVORED_KINDS = {DnsCovertChannel, unlabeled-HttpThreat, LockyRansomware, RepeatedHttpSessions, SuspiciousTlsTraffic}`, else 0. Constant, never decays.
 
-The shares are then normalized to sum to 1 and multiplied by `final_count` (§6) to produce per-kind absolute slot counts. Fractional slots are resolved largest-remainder.
+The shares are then normalized to sum to 1 and multiplied by `final_count` (§6) to produce per-kind absolute slot counts. Fractional slots are resolved by the largest-remainder method. **Tie-breaker** when two kinds have exactly equal remainders: the extra slot goes to the kind whose name sorts first lexicographically. The tie-breaker is included so the algorithm is fully deterministic — `FAVORED_KINDS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
 
 The `unlabeled-HttpThreat` entry in `FAVORED_KINDS` is a virtual kind, and slot-allocation aggregates GROUP BY `(kind, is_unlabeled)` where `is_unlabeled = (kind = 'HttpThreat' AND 'unlabeled-cluster' = ANY(selector_tags))`. The pair `('HttpThreat', true)` is treated as the virtual kind for `FAVORED_KINDS` membership and slot share. Because the unlabeled flag is detected via `selector_tags` — written at cadence INSERT by §3's `UNLABELED_BONUS` — slot allocation does not need a separate `clusterId` column on any read-time table.
 
@@ -241,9 +246,22 @@ The dial mechanism (continuous vs discrete, percentile cutoff vs volume multipli
 
 ### Read scope: corpus A only
 
-The menu reads from corpus A — `baseline_triaged_event` exclusively at menu read time (#458). `observed_event_meta` is the cadence pipeline's INSERT-time aggregation source (§8) and is not touched at read time; this preserves the "single SELECT against an indexed table" property #471 relies on for instant slider response. Both tables live in the active customer-tenant DB per `migrations/customer/0003_baseline_corpus_a.sql`. Neither read path calls `review`. The cadence pipeline (#456 / #481) populates both tables from `review` on a schedule using a deliberately loose cadence-side threshold.
+The menu reads from corpus A — `baseline_triaged_event` exclusively at menu read time (#458). `observed_event_meta` is the cadence pipeline's INSERT-time aggregation source (§8) and is not touched at read time. Both tables live in the active customer-tenant DB per `migrations/customer/0003_baseline_corpus_a.sql`. Neither read path calls `review`. The cadence pipeline (#456 / #481) populates both tables from `review` on a schedule using a deliberately loose cadence-side threshold.
 
-Slot allocation (§4) is a small per-kind GROUP BY over `baseline_triaged_event`, computed once per menu load. It uses `selector_tags` array length as the signal-richness signal so no raw confidence column is needed and no second-table join is introduced. The user-strictness slider (#471) is narrower still: slider movement does not change slot allocation, only the score cutoff over the already-allocated rows, so a slider step is one SELECT against the same indexed table — not a re-ingest, not a slot-allocation recompute. The slider's widest position ("All" in #471) is bounded by what the cadence threshold has already brought into corpus A; loosening beyond that is a cadence-threshold tuning concern (#456), not a slider concern.
+Slot allocation (§4) is a small per-kind GROUP BY over `baseline_triaged_event`, computed once per menu load. It uses `selector_tags` array length as the signal-richness signal so no raw confidence column is needed and no second-table join is introduced.
+
+### Read-path performance contract
+
+Because `baseline_score` is read-time-computed (§3, §8), the existing `(event_time DESC, baseline_score DESC)` index does **not** apply to the slider's score cutoff. The performance contract this RFC actually commits to:
+
+- **Menu load** runs the `CUME_DIST() OVER (PARTITION BY kind ORDER BY raw_score)` pass once over the active window. The window-function cost scales with the number of rows in the active window per kind. The `(event_time DESC)` index on `baseline_triaged_event` resolves the time slice; the per-kind sort is over the kind's slice within that window. Measurement against representative tenant data is owned by #471's measurement gate (which already requires p50/p95 numbers in the PR description).
+- **Slider movement** does not re-run the window function. It uses cutoffs cached from the menu-load pass (#471's existing design caches the four percentile cutoffs after the first menu load). Each slider stop corresponds to either:
+  - a cached `baseline_score` threshold + client-side filter over already-fetched rows, or
+  - a per-kind `raw_score` threshold derived from the menu-load ranking, used in `WHERE kind = :k AND raw_score >= :cached_kind_cutoff` against an index on `(kind, event_time DESC, raw_score DESC)`. This index is added by the same migration that adds the `raw_score` column (§9 schema requirements) so per-kind raw-score thresholding stays index-resolved when the slider moves.
+- **The choice between the two slider strategies** is owned by #471's measurement: if the menu-load CUME_DIST pass and cached client-side filtering hit the latency targets, no per-stop SELECT is needed; if not, the per-kind raw-score threshold path is used. Either way the contract above — cutoffs cached at menu load, slider movement not triggering a fresh window function — holds.
+- **Eventually, if both strategies miss latency targets** at production scale, the cadence runner can periodically refresh the pre-existing `baseline_score` column as a denormalized cache; the column then carries the same value as `CUME_DIST()` would, but stale by up to one cadence interval. This is an implementation choice the RFC permits but does not require.
+
+The slider's widest position ("All" in #471) is bounded by what the cadence threshold has already brought into corpus A; loosening beyond that is a cadence-threshold tuning concern (#456), not a slider concern.
 
 ## §7. Statistics window
 
@@ -367,8 +385,9 @@ The algorithm requires two schema-level guarantees that are not in the current `
 
 | Column / constraint | Required form | Reason |
 |---|---|---|
-| `raw_score` | new `DOUBLE PRECISION NOT NULL` column | Persisted weighted sum from §3, used as the input to read-time `PERCENT_RANK()` that produces `baseline_score`. `NOT NULL` is enforced from the migration onward; per-row `baseline_version` tracks which scoring algorithm produced the value. |
+| `raw_score` | new `DOUBLE PRECISION NOT NULL` column | Persisted weighted sum from §3, used as the input to read-time `CUME_DIST()` that produces `baseline_score`. `NOT NULL` is enforced from the migration onward; per-row `baseline_version` tracks which scoring algorithm produced the value. |
 | `selector_tags` | tightened to `NOT NULL DEFAULT '{}'` | The `coalesce(cardinality(selector_tags), 0)` guard in §4 covers the formula at read time, but tightening the column at INSERT removes the NULL state at the source and lets future readers omit defensive coalescing. |
+| index on `(kind, event_time DESC, raw_score DESC)` | new btree index | Required by §11's per-kind `raw_score` threshold strategy for slider movement. The leading `kind` column lets the slider's per-stop SELECT use the index when fetching rows above a cached per-kind cutoff. The pre-existing `(event_time DESC, baseline_score DESC)` index does not apply once `baseline_score` is no longer the persisted column. |
 
 **Backfill contract for existing rows.** When the migration runs against a tenant DB that already holds Phase 1.A rows from `0003_baseline_corpus_a.sql`, the rows must be filled before `NOT NULL` is enforced:
 
