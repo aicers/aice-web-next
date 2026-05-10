@@ -165,7 +165,7 @@
       "title": "System settings",
       "description": "These settings identify this AICE instance to aimer-web and tell it where to deliver context tokens.",
       "aiceIdLabel": "aice_id",
-      "aiceIdPlaceholder": "aice-kepco.example.com",
+      "aiceIdPlaceholder": "acme.example.com",
       "aiceIdHelper": "Deployment hostname (RFC 1123). Used as the JWT iss claim and as the aice_id claim sent to aimer-web. Aimer-web's trust_registry uses this as the lookup key, so it must match the value registered there.",
       "bridgeUrlLabel": "aimer_web_bridge_url",
       "bridgeUrlPlaceholder": "https://aimer.example.com",
