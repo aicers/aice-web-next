@@ -15,7 +15,7 @@ import { parse } from "graphql";
 // at a glance. The selection stays minimal — a handful of fields per
 // subtype rather than the full payload the investigation view needs.
 // Heavy payload fields (HTTP body, DNS answer list, FTP commands,
-// etc.) live in EVENT_DETAIL_QUERY and are not requested here.
+// etc.) live in EVENT_BY_ID_QUERY and are not requested here.
 //
 // Subtypes that surface a Username or Host/Hostname per the schema
 // also select those fields here so the result row can render the
@@ -490,35 +490,33 @@ export const EVENT_LIST_QUERY = parse(`
 
 // ── Event detail (investigation view) ──────────────────────────
 //
-// The investigation page at `/events/<token>` decodes a composite
-// locator (see `@/lib/events/event-locator`) into a tight filter
-// and reuses `eventList` for lookup. The selection set below is a
-// superset of the list-view selection — it adds the addressing
-// fields (`origAddr`, `respAddr`, ports, proto, customer, network)
-// plus inline fragments for the curated `Event` subtypes so the
-// Protocol tab can render kind-specific content without a second
-// round-trip.
+// The investigation page at `/events/<token>` decodes a locator
+// (see `@/lib/events/event-locator`) into an opaque REview event
+// `id` and looks up the single event via `event(id:)`. The
+// selection set below is a superset of the list-view selection —
+// it adds the addressing fields (`origAddr`, `respAddr`, ports,
+// proto, customer, network) plus inline fragments for the curated
+// `Event` subtypes so the Protocol tab can render kind-specific
+// content without a second round-trip.
 //
 // Subtypes absent from the inline-fragment set still render via
 // the Overview / Endpoints tabs (they receive the common `Event`
 // interface fields plus the addressing fields from the
 // `EventWithAddressing` fragment).
-export const EVENT_DETAIL_QUERY = parse(`
-  query EventDetail($filter: EventListFilterInput!) {
-    eventList(filter: $filter, first: 5) {
-      totalCount
-      nodes {
-        __typename
-        id
-        time
-        sensor
-        confidence
-        category
-        level
-        triageScores {
-          policyId
-          score
-        }
+export const EVENT_BY_ID_QUERY = parse(`
+  query EventById($id: ID!) {
+    event(id: $id) {
+      __typename
+      id
+      time
+      sensor
+      confidence
+      category
+      level
+      triageScores {
+        policyId
+        score
+      }
         ... on BlocklistConn {
           origAddr
           origCountry
@@ -726,19 +724,18 @@ export const EVENT_DETAIL_QUERY = parse(`
           startTime
           endTime
         }
-        ... on ExternalDdos {
-          origAddrs
-          origCountries
-          respAddr
-          respCountry
-          proto
-          origCustomers { id name }
-          origNetwork { id name }
-          respCustomer { id name }
-          respNetwork { id name }
-          startTime
-          endTime
-        }
+      ... on ExternalDdos {
+        origAddrs
+        origCountries
+        respAddr
+        respCountry
+        proto
+        origCustomers { id name }
+        origNetwork { id name }
+        respCustomer { id name }
+        respNetwork { id name }
+        startTime
+        endTime
       }
     }
   }

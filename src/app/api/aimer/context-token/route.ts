@@ -20,12 +20,8 @@ import { extractClientIp } from "@/lib/auth/ip";
 import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
 import { query } from "@/lib/db/client";
-import { EVENT_DETAIL_QUERY } from "@/lib/detection/queries";
-import { locatorToEventListFilter } from "@/lib/detection/server-actions";
-import type {
-  EventDetailResult,
-  EventListFilterInput,
-} from "@/lib/detection/types";
+import { EVENT_BY_ID_QUERY } from "@/lib/detection/queries";
+import type { EventDetailResult } from "@/lib/detection/types";
 import {
   decodeEventLocator,
   type EventLocator,
@@ -56,8 +52,8 @@ type DenialReason =
   | "event_not_found_for_customer"
   | "rate_limited";
 
-interface EventDetailVariables extends Record<string, unknown> {
-  filter: EventListFilterInput;
+interface EventByIdVariables extends Record<string, unknown> {
+  id: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -269,6 +265,11 @@ export const POST = withAuth(
     // token bound to customer A for an event that lives under
     // customer B.  Bypasses `buildDispatchContext` on purpose.
     //
+    // Per review-web#841 the `event(id:)` resolver applies the same
+    // role guard and customer/sensor scoping as `eventList`, so a
+    // `null` result is the wire-level signal that the event either
+    // does not exist or is outside the scoped customer set.
+    //
     // Error policy:
     //   - `ReviewForbiddenError` (review-side denial) — mask as the
     //     same 404 used for the access gate so existence is not
@@ -279,15 +280,14 @@ export const POST = withAuth(
     //     5xx — these are operational / contract failures, not a
     //     customer/event miss, and auditing them as the latter
     //     would defeat the security guardrails of #405.
-    const filter = locatorToEventListFilter(locator);
     let detail: EventDetailResult;
     try {
       // biome-ignore format: keep the override on the helper-name line so
       // scripts/check-dispatch-context.mjs sees `// scope-allowlist:` within
       // the call expression range (helper-name → opening paren).
       detail = (await withManagerErrorMapping(graphqlRequest( // scope-allowlist: #439 single-customer
-        EVENT_DETAIL_QUERY,
-        { filter } as EventDetailVariables,
+        EVENT_BY_ID_QUERY,
+        { id: locator.id } as EventByIdVariables,
         { role: session.roles[0] ?? "", customerIds: [customerId] },
       ))) as EventDetailResult;
     } catch (err) {
@@ -302,7 +302,7 @@ export const POST = withAuth(
       }
       throw err;
     }
-    if (detail.eventList.nodes.length === 0) {
+    if (detail.event === null) {
       await recordDenial({
         session,
         ip,

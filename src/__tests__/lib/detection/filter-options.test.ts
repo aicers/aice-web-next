@@ -41,10 +41,9 @@ describe("filter-options", () => {
 
   it("initial threat kinds match the canonical REview __typename tokens", () => {
     // The rest of the app submits these PascalCase tokens as
-    // `EventListFilterInput.kinds` (see `locatorToEventListFilter`
-    // in `src/lib/detection/server-actions.ts`). The Detection
-    // drawer must use the same contract so a picked option actually
-    // matches the documents REview returns.
+    // `EventListFilterInput.kinds`. The Detection drawer must use
+    // the same contract so a picked option actually matches the
+    // documents REview returns.
     expect([...INITIAL_THREAT_KINDS]).toEqual([...CURATED_EVENT_TYPENAMES]);
     for (const kind of INITIAL_THREAT_KINDS) {
       expect(kind).toMatch(/^[A-Z][A-Za-z0-9]+$/);

@@ -6,7 +6,10 @@ import type { Event } from "@/lib/detection/types";
 import { buildDetectionPivotUrl } from "@/lib/detection/url-filters";
 import type { EventLocator } from "@/lib/events/event-locator";
 import { AimerBanner } from "../aimer-banner";
-import { EVENT_KIND_FRIENDLY_NAMES } from "../event-display-helpers";
+import {
+  EVENT_KIND_FRIENDLY_NAMES,
+  readEventAddressing,
+} from "../event-display-helpers";
 
 export interface OverviewLabels {
   summary: string;
@@ -53,37 +56,43 @@ export function OverviewTab({
 }: Props) {
   const friendly =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
+  const addressing = readEventAddressing(event);
+  const sourceAddr = addressing.origAddr ?? addressing.origAddrs[0];
+  const destAddr = addressing.respAddr ?? addressing.respAddrs[0];
   const customerList =
     customers && customers.length > 0 ? [...customers] : undefined;
-  const pivots = [
-    {
+  const pivots: Array<{ id: string; label: string; href: string }> = [];
+  if (sourceAddr) {
+    pivots.push({
       id: "same-source",
       label: labels.pivotSameSource,
       href: buildDetectionPivotUrl({
-        source: locator.origAddr,
+        source: sourceAddr,
         window: "1d",
         customers: customerList,
       }),
-    },
-    {
+    });
+  }
+  if (destAddr) {
+    pivots.push({
       id: "same-destination",
       label: labels.pivotSameDestination,
       href: buildDetectionPivotUrl({
-        destination: locator.respAddr,
+        destination: destAddr,
         window: "1d",
         customers: customerList,
       }),
-    },
-    {
-      id: "same-kind",
-      label: labels.pivotSameKind,
-      href: buildDetectionPivotUrl({
-        kind: locator.kind,
-        window: "7d",
-        customers: customerList,
-      }),
-    },
-  ];
+    });
+  }
+  pivots.push({
+    id: "same-kind",
+    label: labels.pivotSameKind,
+    href: buildDetectionPivotUrl({
+      kind: event.__typename,
+      window: "7d",
+      customers: customerList,
+    }),
+  });
   return (
     <div className="flex flex-col gap-6">
       <section

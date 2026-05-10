@@ -23,6 +23,7 @@ import {
   searchArgsForAnchor,
 } from "./pagination";
 import {
+  EVENT_BY_ID_QUERY,
   EVENT_COUNTS_BY_CATEGORY_QUERY,
   EVENT_COUNTS_BY_COUNTRY_QUERY,
   EVENT_COUNTS_BY_IP_ADDRESS_QUERY,
@@ -30,7 +31,6 @@ import {
   EVENT_COUNTS_BY_LEVEL_QUERY,
   EVENT_COUNTS_BY_ORIGINATOR_IP_ADDRESS_QUERY,
   EVENT_COUNTS_BY_RESPONDER_IP_ADDRESS_QUERY,
-  EVENT_DETAIL_QUERY,
   EVENT_FREQUENCY_SERIES_QUERY,
   EVENT_LIST_QUERY,
   IP_LOCATION_QUERY,
@@ -430,65 +430,22 @@ export async function countEventsByResponderIpAddress(
 
 // ── Event detail (investigation view) ────────────────────────────
 //
-// Resolution semantics — see `@/lib/events/event-locator` and the
-// spec in issue #291. The decoded locator is translated into a tight
-// `EventListFilterInput`:
-//   - `time` is used for both `start` and `end` (exact match)
-//   - `origAddr` -> `source`, `respAddr` -> `destination`
-//   - `kind` -> `kinds[0]`, `level` -> `levels[0]`
-// Ports, proto, and sensor-name are kept in the locator for display
-// and forward-compat; they do not narrow the query in v1.
+// Resolution semantics — see `@/lib/events/event-locator`. The
+// decoded locator carries an opaque REview event `id` and the
+// resolver dispatches `event(id:)` directly. `null` collapses to
+// `zero`; a hit returns `one`. There is no multi-match branch:
+// a stable `id` addresses exactly one event.
 
 export type EventDetailResolution =
   | { status: "zero" }
-  | { status: "one"; event: Event; totalCount: string }
-  | { status: "multiple"; event: Event; totalCount: string };
+  | { status: "one"; event: Event };
 
-interface EventDetailVariables extends Record<string, unknown> {
-  filter: EventListFilterInput;
+interface EventByIdVariables extends Record<string, unknown> {
+  id: string;
 }
 
 interface IpLocationVariables extends Record<string, unknown> {
   address: string;
-}
-
-/**
- * Add one second to an RFC 3339 timestamp, returning a UTC ISO
- * string with millisecond precision. Used by
- * {@link locatorToEventListFilter} to widen the end bound; the
- * 1-second gap is intentionally generous so callers don't need to
- * preserve nanosecond fractions across the round-trip.
- */
-function addOneSecond(timestamp: string): string {
-  return new Date(Date.parse(timestamp) + 1000).toISOString();
-}
-
-/**
- * Build the tight `EventListFilterInput` for a decoded locator.
- * Exposed for tests and for the page component, which logs the
- * filter it will dispatch for debuggability.
- *
- * `end` is widened by **+1 second** because REview's `eventList`
- * treats `end` as exclusive: the half-open interval
- * `[locator.time, locator.time)` is empty and the matching event is
- * always filtered out (#424). Disambiguation when more than one
- * event lands inside the 1-second window is handled by the existing
- * `status: "multiple"` branch in {@link fetchEventByLocator}. This
- * is a workaround for REview lacking a single-event lookup API
- * (aicers/review-web#841); when that API ships the widening must be
- * removed and replaced with the direct lookup.
- */
-export function locatorToEventListFilter(
-  locator: EventLocator,
-): EventListFilterInput {
-  return {
-    start: locator.time,
-    end: addOneSecond(locator.time),
-    source: locator.origAddr,
-    destination: locator.respAddr,
-    kinds: [locator.kind],
-    levels: [locator.level],
-  };
 }
 
 export async function fetchEventByLocator(
@@ -496,25 +453,26 @@ export async function fetchEventByLocator(
   locator: EventLocator,
   signal?: AbortSignal,
 ): Promise<EventDetailResolution> {
+  // The locator carries no filter fields; pass an empty filter so
+  // `buildDispatchContext` still runs the permission and customer-
+  // scope gates before any REview round-trip. The dispatch surface
+  // for the single-event lookup is `event(id:)` — review-web#841
+  // applies the same role guard and customer/sensor scoping as
+  // `eventList`, so the BFF gate is the only extra layer required.
   const ctx = await buildDispatchContext(session, {
     mode: "structured",
-    input: locatorToEventListFilter(locator),
+    input: {},
   });
   const data = await withReviewErrorMapping(
-    graphqlRequest<EventDetailResult, EventDetailVariables>(
-      EVENT_DETAIL_QUERY,
-      { filter: ctx.filter },
+    graphqlRequest<EventDetailResult, EventByIdVariables>(
+      EVENT_BY_ID_QUERY,
+      { id: locator.id },
       { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
       signal,
     ),
   );
-  const nodes = data.eventList.nodes;
-  const totalCount = data.eventList.totalCount;
-  if (nodes.length === 0) return { status: "zero" };
-  if (nodes.length === 1) {
-    return { status: "one", event: nodes[0], totalCount };
-  }
-  return { status: "multiple", event: nodes[0], totalCount };
+  if (data.event === null) return { status: "zero" };
+  return { status: "one", event: data.event };
 }
 
 /**

@@ -146,7 +146,6 @@ export {
   type EventDetailResolution,
   eventFrequencySeries,
   fetchEventByLocator,
-  locatorToEventListFilter,
   lookupIpLocation,
   type SearchEventsArgs,
   searchEvents,

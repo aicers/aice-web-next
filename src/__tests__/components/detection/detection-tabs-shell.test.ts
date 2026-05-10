@@ -441,6 +441,7 @@ describe("buildUrlSearchForTab — Reviewer Round 2 (item 2)", () => {
   // refresh contract on Quick peek.
   const httpThreatEvent = {
     __typename: "HttpThreat",
+    id: "evt-AAAA",
     time: "2026-04-25T12:00:00.000Z",
     sensor: "sensor-1",
     confidence: 0.81,
@@ -487,6 +488,7 @@ describe("buildUrlSearchForTab — Reviewer Round 9 (pending token round-trip)",
   // against the recovered slice.
   const resolvedEvent = {
     __typename: "HttpThreat",
+    id: "evt-BBBB",
     time: "2026-04-25T12:00:00.000Z",
     sensor: "sensor-1",
     confidence: 0.81,

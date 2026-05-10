@@ -122,7 +122,6 @@ export default async function EventInvestigationPage({
     <EventInvestigation
       event={event}
       locator={locator}
-      multipleMatches={resolution.status === "multiple"}
       backHref={backHref}
       labels={buildInvestigationLabels(t)}
       customers={investigationCustomers}
@@ -181,7 +180,6 @@ function buildInvestigationLabels(t: EventsTranslator) {
     severity: t("header.severity"),
     time: t("header.time"),
     confidence: t("header.confidence"),
-    multipleNotice: t("header.multipleNotice"),
     tabs: {
       overview: t("tabs.overview"),
       endpoints: t("tabs.endpoints"),

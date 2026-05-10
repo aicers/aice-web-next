@@ -30,15 +30,7 @@ import type { AimerIntegrationSetupStatus } from "@/lib/aimer/setup-status";
 import type { EventLocator } from "@/lib/events/event-locator";
 
 const LOCATOR: EventLocator = {
-  sensor: "sensor-1",
-  time: "2026-04-22T10:00:00.000000000Z",
-  origAddr: "10.0.0.5",
-  origPort: 54321,
-  respAddr: "203.0.113.45",
-  respPort: 80,
-  proto: 6,
-  kind: "HttpThreat",
-  level: "HIGH",
+  id: "evt-AAAA-BBBB-CCCC",
 };
 
 const CONFIGURED: AimerIntegrationSetupStatus = { configured: true };

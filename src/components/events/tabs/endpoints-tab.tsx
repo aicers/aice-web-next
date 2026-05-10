@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { Event, IpLocationResult } from "@/lib/detection/types";
 import { fetchEndpointEnrichments } from "@/lib/events/endpoint-enrichment";
 import type { EndpointEnrichmentMap } from "@/lib/events/endpoint-enrichment-types";
-import type { EventLocator } from "@/lib/events/event-locator";
 import {
   collectMapMarkers,
   type EndpointsMapLabels,
@@ -47,7 +46,6 @@ export type EndpointEnrichment = IpLocationResult["ipLocation"];
 
 interface Props {
   event: Event;
-  locator: EventLocator;
   labels: EndpointsLabels;
 }
 
@@ -69,15 +67,12 @@ interface EndpointShape {
  * unmounts `TabsContent` by default), so `ipLocation` lookups
  * do not run for users who never open the tab.
  */
-export function EndpointsTab({ event, locator, labels }: Props) {
-  // `event` and `locator` are stable for the life of the page;
-  // memoizing on them keeps the fetch effect and the endpoint
-  // render lists from re-running on unrelated re-renders.
-  const sources = useMemo(() => buildSources(event, locator), [event, locator]);
-  const destinations = useMemo(
-    () => buildDestinations(event, locator),
-    [event, locator],
-  );
+export function EndpointsTab({ event, labels }: Props) {
+  // `event` is stable for the life of the page; memoizing on it
+  // keeps the fetch effect and the endpoint render lists from
+  // re-running on unrelated re-renders.
+  const sources = useMemo(() => buildSources(event), [event]);
+  const destinations = useMemo(() => buildDestinations(event), [event]);
   const addresses = useMemo(
     () =>
       Array.from(
@@ -310,7 +305,7 @@ function formatCoordinates(
   return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
 }
 
-function buildSources(event: Event, locator: EventLocator): EndpointShape[] {
+function buildSources(event: Event): EndpointShape[] {
   const e = event as Partial<{
     origAddr: string;
     origAddrs: string[];
@@ -337,13 +332,9 @@ function buildSources(event: Event, locator: EventLocator): EndpointShape[] {
     }));
   }
 
-  // Singular originator fallback. When an event arrives from the list
-  // query without the detail selection (rare, but possible for
-  // subtypes outside the inline-fragment set), fall back to the
-  // locator's `origAddr` so the card still renders an address.
   return [
     {
-      addr: e.origAddr ?? locator.origAddr,
+      addr: e.origAddr,
       country: e.origCountry,
       ports: e.origPort,
       customer: e.origCustomer,
@@ -352,10 +343,7 @@ function buildSources(event: Event, locator: EventLocator): EndpointShape[] {
   ];
 }
 
-function buildDestinations(
-  event: Event,
-  locator: EventLocator,
-): EndpointShape[] {
+function buildDestinations(event: Event): EndpointShape[] {
   const e = event as Partial<{
     respAddr: string;
     respAddrs: string[];
@@ -383,13 +371,9 @@ function buildDestinations(
     }));
   }
 
-  // Singular responder fallback. When an event arrives from the list
-  // query without the detail selection (rare, but possible for
-  // subtypes outside the inline-fragment set), fall back to the
-  // locator's `respAddr` so the card still renders an address.
   return [
     {
-      addr: e.respAddr ?? locator.respAddr,
+      addr: e.respAddr,
       country: e.respCountry,
       ports: e.respPorts ?? e.respPort,
       customer: e.respCustomer,

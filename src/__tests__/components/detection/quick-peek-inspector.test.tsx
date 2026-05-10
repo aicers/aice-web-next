@@ -12,9 +12,8 @@
  *   acceptance requirement for middle-click / Cmd+click.
  * - Pivot links render as real `<a>` tags pointing at
  *   `/detection?...` so they, too, survive middle-click.
- * - Subtypes without an encodable locator suppress the Open
- *   investigation action entirely rather than rendering a disabled
- *   button.
+ * - When `investigateHref` is null the Open investigation action is
+ *   omitted entirely rather than rendering a disabled button.
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -723,13 +722,11 @@ describe("QuickPeekInspector", () => {
     expect(html).toContain("(IT)");
   });
 
-  it("opens Quick peek for subtypes without an encodable locator (ExtraThreat / WindowsThreat, issue #290)", () => {
-    // Round 4 feedback: the acceptance criteria say selecting *any*
-    // row opens the peek. Subtypes that the URL mirror cannot
-    // round-trip (no `origAddr` / `respAddr`) still render a peek —
-    // the Open full investigation anchor is omitted instead of
-    // rendering a dead control, and the missing URL persistence is a
-    // documented limitation rather than a reason to drop the feature.
+  it("opens Quick peek for every subtype and omits the investigate anchor when the host has none to provide", () => {
+    // Acceptance criteria: selecting *any* row opens the peek. The
+    // investigate anchor is gated on the caller-supplied
+    // `investigateHref`; when that is null the affordance is omitted
+    // rather than rendered as a dead control.
     const html = renderToStaticMarkup(
       <QuickPeekInspector
         event={
@@ -750,11 +747,8 @@ describe("QuickPeekInspector", () => {
       />,
     );
 
-    // The peek renders with the summary + detection sections even
-    // though the event cannot be encoded into a locator.
     expect(html).toContain("Summary");
     expect(html).toContain("sensor-1");
-    // Investigate affordance is still hidden (no encodable locator).
     expect(html).not.toContain("Open full investigation");
   });
 });

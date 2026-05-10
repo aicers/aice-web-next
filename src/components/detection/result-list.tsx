@@ -35,7 +35,6 @@ import type {
   ThreatLevel,
   TriageScore,
 } from "@/lib/detection/types";
-import { isEventAddressable } from "@/lib/events/event-locator";
 import { cn } from "@/lib/utils";
 
 /**
@@ -775,10 +774,6 @@ function EventRow({
   const kindLabel =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
   // Issue #290 acceptance: selecting any row opens the Quick peek.
-  // Schema-limited subtypes (e.g. `ExtraThreat` / `WindowsThreat`)
-  // still open the inspector; the URL persistence limitation (no
-  // encodable locator → peek cannot be restored on reload) is
-  // handled separately by `openQuickPeekFor` in the shell.
   const canOpenPeek = typeof onRowOpen === "function";
   const isInteractive = canOpenPeek;
   // Compute the endpoint sides up front so the row can omit the
@@ -802,12 +797,7 @@ function EventRow({
     addressing.respPorts,
   );
   const hasEndpoint = Boolean(origEndpoint || respEndpoint);
-  // Investigation requires an encodable locator (origAddr + respAddr). For
-  // schema-limited subtypes (e.g. ExtraThreat, WindowsThreat, UnusualDestinationPattern
-  // when neither side is present) the chevron would silently no-op, so
-  // hide the affordance rather than rendering a dead control.
-  const canInvestigate =
-    typeof onRowInvestigate === "function" && isEventAddressable(event);
+  const canInvestigate = typeof onRowInvestigate === "function";
   const pivot = onPivot;
   // Resolve the level pivot up front so the level badge can render
   // either as a plain Badge or as a pivot button without duplicating

@@ -1538,13 +1538,10 @@ export function DetectionShell({
   //
   // The selection is cleared whenever a committed query transition
   // replaces the result set (Apply, chip removal, Refresh, error,
-  // zero-results). REview does not expose a stable per-event identity
-  // in v1 — `EventEdge.cursor` is a pagination cursor, and the
-  // `encodeEventLocator` tuple is documented as best-effort — so a
-  // "keep inspector open and revalidate against the new slice"
-  // strategy can silently retarget the inspector at a different
-  // event when a positional cursor is reused across filters. Closing
-  // on every commit is the defensive alternative.
+  // zero-results). The peekLost path below revalidates an open
+  // inspector against the new slice by `Event.id`; closing on
+  // commit is the fallback when the prior selection is no longer
+  // present.
   const [quickPeekEvent, setQuickPeekEvent] = useState<DetectionEvent | null>(
     initialQuickPeekEvent,
   );
@@ -3196,9 +3193,9 @@ export function DetectionShell({
    * Build the `/events/<token>?returnTo=...` href for an event so
    * the Quick peek "Open full investigation" action can render as a
    * real anchor tag — middle-click and Cmd+click open a new browser
-   * tab rather than routing programmatically. Returns `null` when
-   * the event lacks an encodable locator (schema-limited subtypes);
-   * callers hide the affordance in that case.
+   * tab rather than routing programmatically. Returns `null` only on
+   * the defensive path where the event has no `id` (every curated
+   * `Event` subtype carries one in practice).
    */
   const buildInvestigateHref = useCallback(
     (event: DetectionEvent): string | null => {
@@ -3720,13 +3717,9 @@ export function DetectionShell({
 
 /**
  * Stable identity string for a Quick peek selection, used as the
- * inspector's React `key` so changing rows remounts the subtree.
- * `encodeEventLocator` is preferred (it is the same token persisted
- * to the URL and so collides at the same rate as the locator), but
- * it returns null for events missing addressing data; in that case
- * we fall back to the composite tuple the locator itself is built
- * from. The row list already uses a similar epoch-plus-cursor key
- * to reset `MorePopover` state across committed queries.
+ * inspector's React `key` so changing rows remounts the subtree. The
+ * encoded locator is the same token persisted to the URL, so the key
+ * collides exactly when the URL would.
  */
 export function quickPeekResetKey(event: DetectionEvent): string {
   const token = encodeEventLocator(event);
