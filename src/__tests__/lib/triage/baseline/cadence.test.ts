@@ -166,6 +166,7 @@ type PagerScript = Array<{
   baselineInserted?: number;
   endCursor?: string | null;
   hasNextPage?: boolean;
+  exclusionsFp?: string;
   throw?: Error;
 }>;
 
@@ -179,10 +180,13 @@ interface FakePager {
     baselineInserted: number;
     endCursor: string | null;
     hasNextPage: boolean;
+    exclusionsFp: string;
   }>;
   calls: unknown[][];
   callCount: () => number;
 }
+
+const TEST_EXCLUSIONS_FP = "test-empty-exclusions-fingerprint";
 
 function makePager(script: PagerScript = [{ hasNextPage: false }]): FakePager {
   const calls: unknown[][] = [];
@@ -201,6 +205,7 @@ function makePager(script: PagerScript = [{ hasNextPage: false }]): FakePager {
       baselineInserted: step.baselineInserted ?? 0,
       endCursor: step.endCursor ?? null,
       hasNextPage: step.hasNextPage ?? false,
+      exclusionsFp: step.exclusionsFp ?? TEST_EXCLUSIONS_FP,
     };
   };
   return { ingestPage, calls, callCount: () => calls.length };
@@ -305,9 +310,9 @@ describe("runTriageBaselineCadence — advisory lock + status machine", () => {
     const { runTriageBaselineCadence } = await import(
       "@/lib/triage/baseline/cadence"
     );
-    await expect(runTriageBaselineCadence(99)).rejects.toBeInstanceOf(
-      MockCustomerNotFoundError,
-    );
+    await expect(
+      runTriageBaselineCadence(99, { pager: makePager() }),
+    ).rejects.toBeInstanceOf(MockCustomerNotFoundError);
   });
 
   it("re-throws unexpected errors from getCustomerPool", async () => {
@@ -316,43 +321,9 @@ describe("runTriageBaselineCadence — advisory lock + status machine", () => {
     const { runTriageBaselineCadence } = await import(
       "@/lib/triage/baseline/cadence"
     );
-    await expect(runTriageBaselineCadence(99)).rejects.toThrow("DNS down");
-  });
-});
-
-describe("runTriageBaselineCadence — pending pager", () => {
-  it("returns status=pending and does not touch the corpus-state row when no pager is injected", async () => {
-    const pool = createMockPool({ lockSequence: [true] });
-    mockGetCustomerPool.mockResolvedValue(pool);
-
-    const { runTriageBaselineCadence } = await import(
-      "@/lib/triage/baseline/cadence"
-    );
-    const result = await runTriageBaselineCadence(42);
-
-    expect(result.status).toBe("pending");
-    expect(result.observedInserted).toBe(0);
-    expect(result.baselineInserted).toBe(0);
-    expect(result.lastEventCursor).toBeNull();
-
-    const sqls = pool.client.queries.map((q) => q.sql);
-    // Page transaction was attempted but rolled back: no `ok` UPDATE,
-    // no COMMIT, and pool.query was never called for a failure record.
-    expect(sqls).toContain("BEGIN");
-    expect(sqls).toContain("ROLLBACK");
-    expect(sqls).not.toContain("COMMIT");
-    expect(sqls.some((s) => s.includes("last_run_status = 'ok'"))).toBe(false);
-    expect(pool.poolQueries).toEqual([]);
-    expect(pool.client.released).toBe(true);
-  });
-
-  it("exposes CadencePagerNotImplementedError as the stub-pager sentinel", async () => {
-    const { CadencePagerNotImplementedError, STUB_PAGER } = await import(
-      "@/lib/triage/baseline/cadence"
-    );
     await expect(
-      STUB_PAGER.ingestPage({} as never, 1, null),
-    ).rejects.toBeInstanceOf(CadencePagerNotImplementedError);
+      runTriageBaselineCadence(99, { pager: makePager() }),
+    ).rejects.toThrow("DNS down");
   });
 });
 
@@ -431,6 +402,36 @@ describe("runTriageBaselineCadence — per-page transaction discipline", () => {
       q.sql.includes("INSERT INTO baseline_corpus_state"),
     );
     expect(failureWrite?.params?.[0]).toBe("review timeout");
+  });
+
+  it("writes the per-page exclusionsFp from the pager to baseline_corpus_state, not a runner-side constant", async () => {
+    const pool = createMockPool({ lockSequence: [true] });
+    mockGetCustomerPool.mockResolvedValue(pool);
+
+    const { runTriageBaselineCadence } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+    const pager = makePager([
+      {
+        observedInserted: 0,
+        baselineInserted: 0,
+        endCursor: "c1",
+        hasNextPage: false,
+        // The pager is the single source of truth for the active-set
+        // fingerprint of a given page. The runner must propagate this
+        // value as-is, so when #457 swaps in real (non-empty) storage,
+        // the corpus-state row stays in lockstep with the per-row
+        // `exclusions_fp` written into `baseline_triaged_event`.
+        exclusionsFp: "non-empty-fp-from-pager",
+      },
+    ]);
+    const result = await runTriageBaselineCadence(7, { pager });
+
+    expect(result.status).toBe("ok");
+    const okWrite = pool.client.queries.find((q) =>
+      q.sql.includes("last_run_status = 'ok'"),
+    );
+    expect(okWrite?.params?.[2]).toBe("non-empty-fp-from-pager");
   });
 
   it("stops cleanly mid-run if the advisory lock is lost between page commits", async () => {
