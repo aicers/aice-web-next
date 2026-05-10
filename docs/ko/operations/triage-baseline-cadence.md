@@ -190,7 +190,15 @@ curl -sS -o /tmp/dispatch.json -w '%{http_code}\n' \
   "$BFF_BASE_URL/api/internal/triage/baseline/dispatch"
 ```
 
-고객별 수동 실행은 여전히 케이던스 라우트를 사용합니다.
+`--max-time`은 디스패처 전체 타임아웃
+(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, 기본 2700000ms =
+2700s) 이상으로 유지하십시오. 그래야 구조화된 `timeout` /
+`skipped-timeout` 행을 만드는 애플리케이션 레벨 타임아웃이,
+본문 없는 전송 실패로 표면화되는 네트워크 레벨 타임아웃을
+앞섭니다. 번들된 cron 래퍼는 `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`
+값에서 `--max-time`을 자동으로 도출하므로 두 값이 같은 `.env`에
+설정된 한 자동으로 동기화됩니다. 외부 스케줄러를 사용하는 경우
+디스패처 노브를 재조정할 때 캡 값을 직접 갱신해야 합니다.
 
 ```bash
 curl -fsS -X POST \

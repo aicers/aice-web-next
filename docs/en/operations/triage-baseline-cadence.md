@@ -194,6 +194,17 @@ curl -sS -o /tmp/dispatch.json -w '%{http_code}\n' \
   "$BFF_BASE_URL/api/internal/triage/baseline/dispatch"
 ```
 
+Keep `--max-time` at-or-above the dispatcher total timeout
+(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, default 2700000ms =
+2700s), so the application-level timeout — which produces the
+structured `timeout` / `skipped-timeout` rows — wins over the
+network-level timeout (which surfaces as a transport failure with
+no body). The bundled cron wrapper derives `--max-time` from
+`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS` automatically, so the
+two values stay in sync as long as both are set in the same `.env`.
+External schedulers must update their cap manually whenever the
+dispatcher knob is retuned.
+
 Per-customer manual runs still go through the cadence route:
 
 ```bash

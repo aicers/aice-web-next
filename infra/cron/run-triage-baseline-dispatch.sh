@@ -55,8 +55,31 @@ URL="${BASE_URL}/api/internal/triage/baseline/dispatch"
 # over the network-level timeout (which would surface as a transport
 # failure with no body). The hourly cron interval (3600s) is the
 # absolute ceiling.
+#
+# Resolution order (highest precedence first):
+#   1. CRON_CADENCE_MAX_TIME_S — test override only, lets the wrapper
+#      run with sub-second ceilings under vitest.
+#   2. TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS — operator-tunable
+#      knob shared with `next-app`, allowlisted by `entrypoint.sh`
+#      into `/etc/cron.env`. Converted ms → s and rounded UP so the
+#      wrapper never undercuts the app deadline. A floor of 1s
+#      guarantees a positive value even if an operator misconfigures
+#      the knob (e.g. sets it below 500ms).
+#   3. 2700s default — matches the dispatcher's own default total
+#      timeout (45 minutes).
 CONNECT_TIMEOUT_S="${CRON_CADENCE_CONNECT_TIMEOUT_S:-10}"
-MAX_TIME_S="${CRON_CADENCE_MAX_TIME_S:-2700}"
+if [ -n "${CRON_CADENCE_MAX_TIME_S:-}" ]; then
+    MAX_TIME_S="$CRON_CADENCE_MAX_TIME_S"
+elif [ -n "${TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS:-}" ]; then
+    MAX_TIME_S=$((
+        (TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS + 999) / 1000
+    ))
+    if [ "$MAX_TIME_S" -lt 1 ]; then
+        MAX_TIME_S=1
+    fi
+else
+    MAX_TIME_S=2700
+fi
 
 mkdir -p "$LOG_DIR"
 TS=$(date +%Y%m%d-%H%M%S)

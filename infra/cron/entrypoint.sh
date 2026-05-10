@@ -19,6 +19,13 @@ LOG_DIR=/var/log/cron
 ENV_ALLOWLIST=(
     TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN
     NEXT_APP_BASE_URL
+    # Allowlisted so `run-triage-baseline-dispatch.sh` derives its
+    # `--max-time` from the same operator knob `next-app` honours.
+    # Without this passthrough an operator raising the dispatcher
+    # total timeout via `.env` would still be killed by the wrapper's
+    # 2700s default, recreating the transport-failure / no-body mode
+    # the structured `skipped-timeout` row exists to prevent.
+    TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS
 )
 
 : > "$ENV_FILE"

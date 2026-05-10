@@ -17,10 +17,15 @@ const WRAPPER_PATH = resolve(
 );
 const CRONTAB_PATH = resolve(__dirname, "../../../../infra/cron/crontab");
 const DOCKERFILE_PATH = resolve(__dirname, "../../../../infra/cron/Dockerfile");
+const ENTRYPOINT_PATH = resolve(
+  __dirname,
+  "../../../../infra/cron/entrypoint.sh",
+);
 
 const wrapper = readFileSync(WRAPPER_PATH, "utf8");
 const crontab = readFileSync(CRONTAB_PATH, "utf8");
 const dockerfile = readFileSync(DOCKERFILE_PATH, "utf8");
+const entrypoint = readFileSync(ENTRYPOINT_PATH, "utf8");
 
 describe("infra/cron/run-triage-baseline-dispatch.sh — static contract", () => {
   it("uses jq, not grep, to parse `overall`", () => {
@@ -111,6 +116,11 @@ interface RunResult {
   stderr: string;
   bodyFile: string | null;
   bodyContents: string | null;
+  /**
+   * `--max-time` value the wrapper passed to curl (seconds, as a
+   * string), captured by the stub so derivation tests can assert it.
+   */
+  curlMaxTime: string | null;
 }
 
 interface RunOptions {
@@ -124,6 +134,21 @@ interface RunOptions {
   curlStderr?: string;
   /** Set to null to omit the bearer token; default is a non-empty token. */
   token?: string | null;
+  /**
+   * Override the wrapper's max-time fallback chain.
+   *   - undefined (default): use the test's "5s" override so other
+   *     branches stay fast.
+   *   - null: do NOT set CRON_CADENCE_MAX_TIME_S, exercising the
+   *     production fallback (TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS
+   *     → 2700s default).
+   *   - string: explicit override.
+   */
+  maxTimeS?: string | null;
+  /**
+   * Sets TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS to exercise the
+   * wrapper's ms→s derivation when CRON_CADENCE_MAX_TIME_S is unset.
+   */
+  dispatchTotalTimeoutMs?: string;
 }
 
 /**
@@ -143,12 +168,19 @@ set -u
 output=""
 write_directive=""
 url=""
+max_time=""
+connect_timeout=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -sS|-s|-S|-v|-i)
             shift
             ;;
-        --connect-timeout|--max-time)
+        --max-time)
+            max_time="$2"
+            shift 2
+            ;;
+        --connect-timeout)
+            connect_timeout="$2"
             shift 2
             ;;
         -o)
@@ -176,6 +208,11 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+if [ -n "\${CRON_CADENCE_TEST_ARGS_FILE:-}" ]; then
+    printf 'max_time=%s\\nconnect_timeout=%s\\nurl=%s\\n' \\
+        "$max_time" "$connect_timeout" "$url" \\
+        >"\${CRON_CADENCE_TEST_ARGS_FILE}"
+fi
 if [ -n "\${CRON_CADENCE_TEST_STDERR:-}" ]; then
     printf '%s' "\${CRON_CADENCE_TEST_STDERR}" >&2
 fi
@@ -209,16 +246,26 @@ describe.skipIf(!EXECUTION_DEPS_AVAILABLE)(
         writeFileSync(stubPath, CURL_STUB);
         chmodSync(stubPath, 0o755);
 
+        const argsFile = join(sandbox, "curl-args.txt");
         const env: Record<string, string> = {
           PATH: `${stubDir}:${process.env.PATH ?? ""}`,
           NEXT_APP_BASE_URL: "http://stub.invalid:3000",
           CRON_CADENCE_LOG_DIR: logDir,
           CRON_CADENCE_ENV_FILE: envFile,
-          CRON_CADENCE_MAX_TIME_S: "5",
           CRON_CADENCE_CONNECT_TIMEOUT_S: "1",
           CRON_CADENCE_TEST_HTTP_CODE: opts.httpCode ?? "200",
           CRON_CADENCE_TEST_EXIT_CODE: String(opts.curlExitCode ?? 0),
+          CRON_CADENCE_TEST_ARGS_FILE: argsFile,
         };
+        if (opts.maxTimeS === undefined) {
+          env.CRON_CADENCE_MAX_TIME_S = "5";
+        } else if (opts.maxTimeS !== null) {
+          env.CRON_CADENCE_MAX_TIME_S = opts.maxTimeS;
+        }
+        if (opts.dispatchTotalTimeoutMs !== undefined) {
+          env.TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS =
+            opts.dispatchTotalTimeoutMs;
+        }
         if (opts.body !== undefined) {
           env.CRON_CADENCE_TEST_BODY = opts.body;
         }
@@ -240,12 +287,21 @@ describe.skipIf(!EXECUTION_DEPS_AVAILABLE)(
         );
         const bodyFile = files.length > 0 ? join(logDir, files[0]) : null;
         const bodyContents = bodyFile ? readFileSync(bodyFile, "utf8") : null;
+        let curlMaxTime: string | null = null;
+        try {
+          const argsContent = readFileSync(argsFile, "utf8");
+          const m = argsContent.match(/^max_time=(.*)$/m);
+          curlMaxTime = m ? m[1] : null;
+        } catch {
+          curlMaxTime = null;
+        }
         return {
           status: result.status,
           stdout: result.stdout ?? "",
           stderr: result.stderr ?? "",
           bodyFile,
           bodyContents,
+          curlMaxTime,
         };
       } finally {
         rmSync(sandbox, { recursive: true, force: true });
@@ -390,6 +446,56 @@ describe.skipIf(!EXECUTION_DEPS_AVAILABLE)(
       expect(r.stderr).toMatch(/curl_exit=7/);
     });
 
+    it("derives --max-time from TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS when CRON_CADENCE_MAX_TIME_S is unset", () => {
+      // 5 400 000ms = 90min → 5400s. Operator-tunable knob shared
+      // with `next-app`; the wrapper must keep its network ceiling
+      // in sync so the structured `timeout` / `skipped-timeout` rows
+      // reach the cron MAILTO surface instead of being swallowed by
+      // a transport failure.
+      const r = runWrapper({
+        httpCode: "200",
+        body: JSON.stringify({ overall: "ok", perCustomer: [] }),
+        maxTimeS: null,
+        dispatchTotalTimeoutMs: "5400000",
+      });
+      expect(r.status).toBe(0);
+      expect(r.curlMaxTime).toBe("5400");
+    });
+
+    it("rounds derived --max-time UP so wrapper never undercuts the app deadline", () => {
+      // 1500ms → 2s (ceiling), not 1s (floor). Keeps the network
+      // ceiling at-or-above the application deadline by construction.
+      const r = runWrapper({
+        httpCode: "200",
+        body: JSON.stringify({ overall: "ok", perCustomer: [] }),
+        maxTimeS: null,
+        dispatchTotalTimeoutMs: "1500",
+      });
+      expect(r.status).toBe(0);
+      expect(r.curlMaxTime).toBe("2");
+    });
+
+    it("falls back to 2700s default when neither override nor dispatcher knob is set", () => {
+      const r = runWrapper({
+        httpCode: "200",
+        body: JSON.stringify({ overall: "ok", perCustomer: [] }),
+        maxTimeS: null,
+      });
+      expect(r.status).toBe(0);
+      expect(r.curlMaxTime).toBe("2700");
+    });
+
+    it("CRON_CADENCE_MAX_TIME_S override wins over TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS", () => {
+      const r = runWrapper({
+        httpCode: "200",
+        body: JSON.stringify({ overall: "ok", perCustomer: [] }),
+        maxTimeS: "9",
+        dispatchTotalTimeoutMs: "5400000",
+      });
+      expect(r.status).toBe(0);
+      expect(r.curlMaxTime).toBe("9");
+    });
+
     it("missing TOKEN: refuses to fire and exits non-zero", () => {
       const r = runWrapper({
         httpCode: "200",
@@ -403,6 +509,25 @@ describe.skipIf(!EXECUTION_DEPS_AVAILABLE)(
     });
   },
 );
+
+describe("infra/cron/entrypoint.sh — static contract", () => {
+  it("allowlists TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN", () => {
+    expect(entrypoint).toMatch(/TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN/);
+  });
+
+  it("allowlists NEXT_APP_BASE_URL", () => {
+    expect(entrypoint).toMatch(/NEXT_APP_BASE_URL/);
+  });
+
+  it("allowlists TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS so the wrapper can derive --max-time", () => {
+    // Round 2 review fix: without this passthrough, an operator
+    // raising the dispatcher total timeout via .env would still be
+    // killed by the wrapper's 2700s default, recreating the
+    // transport-failure / no-body mode the structured
+    // `skipped-timeout` row exists to prevent.
+    expect(entrypoint).toMatch(/TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS/);
+  });
+});
 
 describe("infra/cron/Dockerfile — static contract", () => {
   it("installs jq so the wrapper can parse the response body", () => {
