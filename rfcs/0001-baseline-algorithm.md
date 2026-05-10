@@ -41,9 +41,9 @@ At cadence INSERT (per event, against observed_event_meta history):
 
 At menu read (per active window, no per-event recomputation):
    │
-   ├─ (4) compute baseline_score on the fly             ── CUME_DIST() OVER (PARTITION BY kind
-   │                                                       ORDER BY raw_score) over rows in the
-   │                                                       active window; see §3.
+   ├─ (4) compute baseline_score on the fly             ── CUME_DIST() OVER (PARTITION BY kind,
+   │                                                       baseline_version ORDER BY raw_score)
+   │                                                       over rows in the active window; see §3.
    │
    ├─ (5) allocate per-kind slots                       ── per-kind aggregates GROUP BY against
    │                                                       baseline_triaged_event (volume + average
@@ -143,20 +143,24 @@ raw_score(event) = score(event) = w_S1·s1 + w_S2·s2 + w_S3·s3 + w_S4·s4 + w_
 
 `raw_score` is immutable — once written for a `(event_key, baseline_version)` it is not updated. It carries no order-of-insertion dependency.
 
-`baseline_score` is the kind-normalized percentile rank, **computed at read time** as a window function over `raw_score`:
+`baseline_score` is the kind-normalized cumulative distribution, **computed at read time** as a window function over `raw_score`:
 
 ```sql
-CUME_DIST() OVER (PARTITION BY kind ORDER BY raw_score)
+CUME_DIST() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score)
     AS baseline_score
 ```
 
-`CUME_DIST` is chosen over `PERCENT_RANK` because it gives natural "top X%" cutoff semantics — `baseline_score >= 0.95` captures exactly the top 5% of a kind's rows in the partition, with no off-by-one at the boundary. For a single-row partition, `CUME_DIST` returns `1.0` (the lone row is at the top of its own kind), so cold-start needs no special handling at the UI layer.
+The partition is `(kind, baseline_version)`, not `kind` alone. `raw_score` values are not comparable across baseline versions (the underlying selector formulas differ between versions), so each `(kind, baseline_version)` cohort is ranked independently. This is what makes §10's long-window version-mix legal: rows from an older `baseline_version` keep their own per-cohort rank instead of being silently dropped from the menu or compared on the new version's scale.
 
-Computed against the read-time cohort: the rows in the active menu window for that kind, in `baseline_triaged_event`, with the current `baseline_version`. Read-time computation is what makes the uniform-on-`[0, 1]` property hold by construction — every event in a kind contributes one rank-position to its kind's partition, so no insertion order, no batch boundary, and no rising raw-score trend distorts the distribution.
+`CUME_DIST` returns the cumulative fraction `(rows_with_value_<=_current) / partition_size`. For a single-row partition it returns `1.0`, so cold-start needs no special handling. Tied `raw_score` peers all receive the same `baseline_score` value (PostgreSQL ties-as-peers semantics).
+
+**`baseline_score >= X` is *not* exactly the top `(1-X)` fraction by row count.** Because `CUME_DIST` takes discrete steps `1/N, 2/N, ..., 1`, a threshold of 0.95 against a 100-row partition admits ranks 95..100 — six rows, not five — and ties at the boundary admit the entire tied block atomically. The slider stops in #471 are score-thresholds against this cumulative distribution; if exact "Top N% by row count" semantics matter for a particular consumer, that consumer ranks with `row_number() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score DESC, event_time DESC, event_key DESC)` and thresholds the rank, not `baseline_score`. This RFC's contract is only that `baseline_score = CUME_DIST(...)` per the formula above and that the resulting cutoffs are stable and deterministic; how each consumer interprets "top X%" is the consumer's choice.
+
+Computed against the read-time cohort: the rows in the active menu window in `baseline_triaged_event`, with no version filter — `PARTITION BY (kind, baseline_version)` does the version separation in-query. Read-time computation is what makes the uniform-on-`[0, 1]` property hold within each `(kind, baseline_version)` partition by construction — every row in a partition contributes one rank-position, so no insertion order, no batch boundary, and no rising raw-score trend distorts the distribution.
 
 INSERT-time computation was rejected because it would have ranked each new event against only the peers already in the table at that moment. With raw scores trending upward (model improvements, increasing sensitivity over time), every new event would land near 1.0; the first row of every cadence batch would always be a cold-start at 1.0; and the global percentile slider in #471 would no longer cut at the actual top-5% across kinds.
 
-Read-time computation also means `baseline_score` is **not** a persisted column in this RFC's design. The `baseline_score DOUBLE PRECISION` column already in `migrations/customer/0003_baseline_corpus_a.sql` may be retained as a denormalized cache (refreshed periodically by the cadence runner if measurement shows the read-time `CUME_DIST` is too slow at production scale), or repurposed; the RFC's contract is only that the value `CUME_DIST() OVER (PARTITION BY kind ORDER BY raw_score)` is what `baseline_score` *means*. #471's slider is the single most performance-sensitive consumer; its measurement gate (already documented in #471's RFC) is the place where any caching decision is made empirically — see §11 for the contract this RFC actually commits to.
+Read-time computation also means `baseline_score` is **not** a persisted column in this RFC's design. The `baseline_score DOUBLE PRECISION` column already in `migrations/customer/0003_baseline_corpus_a.sql` may be retained as a denormalized cache (refreshed periodically by the cadence runner if measurement shows the read-time `CUME_DIST` is too slow at production scale), or repurposed; the RFC's contract is only that the value `CUME_DIST() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score)` is what `baseline_score` *means*. #471's slider is the single most performance-sensitive consumer; its measurement gate (already documented in #471's RFC) is the place where any caching decision is made empirically — see §11 for the contract this RFC actually commits to.
 
 A 0.95 `baseline_score` means "this event is in the top 5% of its own kind in the active window", whatever that kind is. Global percentile thresholds remain comparable across kinds because every kind contributes the same uniform-on-`[0, 1]` distribution by construction.
 
@@ -254,10 +258,10 @@ Slot allocation (§4) is a small per-kind GROUP BY over `baseline_triaged_event`
 
 Because `baseline_score` is read-time-computed (§3, §8), the existing `(event_time DESC, baseline_score DESC)` index does **not** apply to the slider's score cutoff. The performance contract this RFC actually commits to:
 
-- **Menu load** runs the `CUME_DIST() OVER (PARTITION BY kind ORDER BY raw_score)` pass once over the active window. The window-function cost scales with the number of rows in the active window per kind. The `(event_time DESC)` index on `baseline_triaged_event` resolves the time slice; the per-kind sort is over the kind's slice within that window. Measurement against representative tenant data is owned by #471's measurement gate (which already requires p50/p95 numbers in the PR description).
+- **Menu load** runs the `CUME_DIST() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score)` pass once over the active window. The window-function cost scales with the number of rows in the active window per `(kind, baseline_version)` partition. The `(event_time DESC)` index on `baseline_triaged_event` resolves the time slice; the per-partition sort is over each partition's slice within that window. Measurement against representative tenant data is owned by #471's measurement gate (which already requires p50/p95 numbers in the PR description).
 - **Slider movement** does not re-run the window function. It uses cutoffs cached from the menu-load pass (#471's existing design caches the four percentile cutoffs after the first menu load). Each slider stop corresponds to either:
   - a cached `baseline_score` threshold + client-side filter over already-fetched rows, or
-  - a per-kind `raw_score` threshold derived from the menu-load ranking, used in `WHERE kind = :k AND raw_score >= :cached_kind_cutoff` against an index on `(kind, event_time DESC, raw_score DESC)`. This index is added by the same migration that adds the `raw_score` column (§9 schema requirements) so per-kind raw-score thresholding stays index-resolved when the slider moves.
+  - a per-kind `raw_score` threshold derived from the menu-load ranking, used in `WHERE kind = :k AND raw_score >= :cached_kind_cutoff` against an index on `(kind, raw_score DESC, event_time DESC)`. The kind-first, raw_score-next order keeps the cutoff range index-resolved (`event_time` becomes a residual filter applied after the index seek). This index is added by the same migration that adds the `raw_score` column (§9 schema requirements). For very long active windows where the residual `event_time` filter dominates, the existing `(event_time DESC)` index remains an alternative the planner can pick — measurement (§12 / #471) decides per query shape.
 - **The choice between the two slider strategies** is owned by #471's measurement: if the menu-load CUME_DIST pass and cached client-side filtering hit the latency targets, no per-stop SELECT is needed; if not, the per-kind raw-score threshold path is used. Either way the contract above — cutoffs cached at menu load, slider movement not triggering a fresh window function — holds.
 - **Eventually, if both strategies miss latency targets** at production scale, the cadence runner can periodically refresh the pre-existing `baseline_score` column as a denormalized cache; the column then carries the same value as `CUME_DIST()` would, but stale by up to one cadence interval. This is an implementation choice the RFC permits but does not require.
 
@@ -387,7 +391,7 @@ The algorithm requires two schema-level guarantees that are not in the current `
 |---|---|---|
 | `raw_score` | new `DOUBLE PRECISION NOT NULL` column | Persisted weighted sum from §3, used as the input to read-time `CUME_DIST()` that produces `baseline_score`. `NOT NULL` is enforced from the migration onward; per-row `baseline_version` tracks which scoring algorithm produced the value. |
 | `selector_tags` | tightened to `NOT NULL DEFAULT '{}'` | The `coalesce(cardinality(selector_tags), 0)` guard in §4 covers the formula at read time, but tightening the column at INSERT removes the NULL state at the source and lets future readers omit defensive coalescing. |
-| index on `(kind, event_time DESC, raw_score DESC)` | new btree index | Required by §11's per-kind `raw_score` threshold strategy for slider movement. The leading `kind` column lets the slider's per-stop SELECT use the index when fetching rows above a cached per-kind cutoff. The pre-existing `(event_time DESC, baseline_score DESC)` index does not apply once `baseline_score` is no longer the persisted column. |
+| index on `(kind, raw_score DESC, event_time DESC)` | new btree index | Required by §11's per-kind `raw_score` threshold strategy for slider movement. Column order is `kind` (equality) → `raw_score` (range, the load-bearing predicate at slider stops) → `event_time` (residual, available for ordering within a kind+raw_score slice). Putting `event_time` before `raw_score` would block index-resolution of the range cutoff, since a range column at index position N stops the planner from using index columns N+1 onward for further range filtering. The pre-existing `(event_time DESC, baseline_score DESC)` index does not apply once `baseline_score` is no longer the persisted column. |
 
 **Backfill contract for existing rows.** When the migration runs against a tenant DB that already holds Phase 1.A rows from `0003_baseline_corpus_a.sql`, the rows must be filled before `NOT NULL` is enforced:
 
