@@ -1,0 +1,568 @@
+# RFC 0001: Baseline algorithm
+
+- Status: **Draft**
+- Authors: @sehkone
+- Tracks: [#462](https://github.com/aicers/aice-web-next/issues/462)
+- Related: [#456](https://github.com/aicers/aice-web-next/issues/456), [#458](https://github.com/aicers/aice-web-next/issues/458), [#471](https://github.com/aicers/aice-web-next/issues/471), [#481](https://github.com/aicers/aice-web-next/issues/481), [#485](https://github.com/aicers/aice-web-next/issues/485)
+
+## Summary
+
+Baseline scores every detection event that survives Stage 1 exclusions, so the Triage menu can show only the events most worth a human's attention. This RFC fixes the algorithm's shape: hard-exclude `BlockList*` events, group the remainder by threat kind, rank within each kind, and merge across kinds with adaptive per-kind quotas. Confidence is treated as a within-kind quantity only; cross-kind comparison is never performed. Time, accumulated history, and per-kind volume × signal-richness feedback together produce the adaptiveness #462 promises. User-engagement feedback is delegated to #485.
+
+## Motivation
+
+Detection volume is too high for an analyst to read. Triage's job is to surface the high-priority subset of post-exclusion events. Phase 1.A used a constant placeholder score; this RFC defines the real scoring algorithm that Phase 1.B's menu, asset funnel, and pivots all consume.
+
+Two requirements drive the design:
+
+1. **Adaptiveness.** The algorithm should become more accurate over time without manual intervention.
+2. **User-preference (relative).** The user can dial result volume up or down relative to the baseline's recommendation. The dial is owned by #471 (separate RFC).
+
+A third constraint, learned during the design discussion, reshaped the algorithm:
+
+3. **Confidence has no cross-kind meaning.** A 0.8 confidence on `HttpThreat` and a 0.8 confidence on `DnsCovertChannel` are not comparable. Any algorithm step that mixes confidences across kinds is wrong by construction.
+
+## Pipeline
+
+The pipeline splits cleanly across two execution times: per-event scoring runs inside the cadence pipeline at INSERT, while per-window slot allocation and assembly run at menu read.
+
+```
+At cadence INSERT (per event, against observed_event_meta history):
+   │
+   ├─ (1) hard-exclude BlockList*                       ── dropped before any scoring
+   │
+   ├─ (2) determine kind                                ── implicit; just a column on the event
+   │
+   └─ (3) compute within-kind weighted sum →            ── all selectors S1–S4 + UNLABELED_BONUS;
+          raw_score, selector_tags                          raw_score and selector_tags persisted
+                                                            on baseline_triaged_event.
+                                                            baseline_score is NOT persisted at INSERT.
+
+
+At menu read (per active window, no per-event recomputation):
+   │
+   ├─ (4) compute baseline_score on the fly             ── CUME_DIST() OVER (PARTITION BY kind,
+   │                                                       baseline_version ORDER BY raw_score)
+   │                                                       over rows in the active window; see §3.
+   │
+   ├─ (5) compute per-bucket quotas                     ── slot_share(b) · default_N where
+   │                                                       b = slot_bucket = (kind, is_unlabeled);
+   │                                                       see §4 for the per-bucket aggregate
+   │                                                       inputs (volume + avg selector_tags length)
+   │                                                       + favored bonus. Quota is the cap, not
+   │                                                       the actual count.
+   │
+   ├─ (6) merge per-bucket cutoff-and-quota             ── For each slot_bucket b, union events from
+   │                                                       all (kind(b), baseline_version) cohorts,
+   │                                                       filter to baseline_score >= cutoff(slider),
+   │                                                       ORDER BY baseline_score DESC, take up to
+   │                                                       quota[b] (bucket-level cap, applied once
+   │                                                       across versions; §4). Sum across buckets =
+   │                                                       assembled_count, ≤ default_N (§6).
+   │
+   └─ (7) MIN_NONZERO_FLOOR fallback                    ── If assembled_count >= MIN_NONZERO_FLOOR,
+                                                            final_count = assembled_count and the menu
+                                                            shows step (6)'s rows. Otherwise the menu
+                                                            shows the top-MIN_NONZERO_FLOOR events from
+                                                            the active window globally, ordered by
+                                                            baseline_score DESC, bypassing both quota
+                                                            and cutoff. See §6.
+```
+
+Step (3) — including window-level selectors S1/S3/S4 — runs inside the cadence pipeline (#481) by `GROUP BY` against `observed_event_meta` at INSERT time; the resulting `raw_score` (the weighted sum) and `selector_tags` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. `baseline_score` is **not** persisted at INSERT — it is the read-time `CUME_DIST()` window function defined in §3. See §8 for the full timing contract and §11 for the read-path performance contract. Steps (4)–(6) read only `baseline_triaged_event` — `baseline_score` is derived from `raw_score` in a CTE/window pass, slot-allocation aggregates use `selector_tags` array length as the signal-richness proxy (§4), so no raw confidence column is needed at read time and no second-table join. `observed_event_meta` is consulted only at cadence INSERT (step 3), never at menu read.
+
+## §1. Hard exclusion: `BlockList*`
+
+`BlockList*` events are themselves a triage output (the user has already chosen to block these by some upstream rule); they are not events worth re-surfacing in the Triage menu. They are dropped at the very front of the pipeline before any scoring.
+
+**Decision: prefix-match rule, not an explicit list.** Any kind whose name starts with `BlockList` is excluded. New `BlockList*` kinds added later are picked up automatically without an RFC update. The exclusion is implemented as a `WHERE kind NOT LIKE 'BlockList%'` clause on the cadence-side INSERT and (defensively) on the menu SELECT.
+
+## §2. Kind-first grouping
+
+After §1 the remaining events are grouped by `kind`. All scoring, selector firing, and ranking happen *within* a single kind's slice. The output of this stage is, conceptually, one ranked list per kind.
+
+This is a deliberate departure from a single global score across all kinds. Because confidence is not cross-kind comparable, a single global ranking would silently bias toward whatever kinds happen to emit higher raw confidence numbers.
+
+## §3. Within-kind ranking — selectors
+
+The four selectors from #462 are reinterpreted as within-kind operators.
+
+Each selector produces a value in `[0, 1]`. Continuous-valued selectors carry magnitude information (degree of recurrence, percentile of confidence); binary-valued selectors flip on a discrete condition. The score is the weighted sum; the kind-normalization step happens at read time (§3 "Stored score" / §8 timing), not before storage. `raw_score` (the un-normalized weighted sum) is what gets persisted.
+
+### S1. High-confidence (within-kind, continuous)
+
+```
+s1(event) = within_kind_percentile_rank(confidence(event), kind, window) ∈ [0, 1]
+```
+
+The percentile rank is taken against the kind's confidence distribution over the active statistics window from `observed_event_meta` (§7). A 0.92 means "this event's confidence is in the top 8% of same-kind events in the window".
+
+### S2. Severe (within-kind, binary)
+
+```
+s2(event) = 1 if category(event) ∈ CRITICAL_CATEGORIES, else 0
+```
+
+The "rare" branch of the original S2 is dropped: rarity-of-kind is no longer a selector once the algorithm groups by kind. Within-kind rarity (events with unusual feature combinations relative to the kind's history) is captured by S4 instead.
+
+### S3. Recurring (within-kind, continuous, capped)
+
+```
+s3(event) = 0
+            if orig_addr(event) IS NULL OR resp_addr(event) IS NULL
+          = min(1, max(0, (repeat_count(event, kind, window) - 1) / R))
+            otherwise
+```
+
+`repeat_count(event, kind, window)` is the number of `observed_event_meta` rows in the active window that share `(orig_addr, resp_addr, kind)` with the event (the schema has no `asset` column; the `(orig_addr, resp_addr)` pair is the asset-pair stand-in). Both address columns are nullable in the schema; an event missing either address has no asset-pair identity, so it cannot meaningfully participate in recurrence — s3 is 0 in that case rather than letting all NULL-address events collide into one synthetic group. The `-1` excludes the event itself from its own recurrence count, so a singleton scores 0 (never seen before) rather than `1/R`. `R` (§9) is the saturation cap — beyond `R` *additional* occurrences, more do not raise s3 further, preventing a single noisy pair from dominating the score.
+
+### S4. Correlated (within-kind, continuous, capped)
+
+```
+s4(event) = 0
+            if orig_addr(event) IS NULL
+          = min(1, max(0, (distinct_category_count(orig_addr, kind, window) - 1) / C))
+            otherwise
+```
+
+`distinct_category_count` is the number of distinct `category` values associated with `orig_addr` under this `kind` in the active window from `observed_event_meta`. `orig_addr` is nullable; an event with no source address has no asset identity for the per-asset GROUP BY, so s4 is 0 for it. The `-1` excludes the event's own category, so an asset that has only ever emitted this kind under one category scores 0 — uncorrelated. `C` (§9) is the saturation cap on *additional* categories. The intuition: an asset emitting one kind under multiple categories is a stronger signal than the same asset emitting the same kind under a single category.
+
+### `UNLABELED_BONUS` (per-event, binary)
+
+```
+unlabeled(event) = 1 if kind(event) = "HttpThreat" AND isClusterNone(clusterId(event)), else 0
+```
+
+The cluster classifier's "no labeled cluster" sentinels (empty string, `"none"`, `"null"`) are detected via the existing `isClusterNone` helper from #451 / #481. The signal does NOT require a `review-web` schema change — see [aicers/review-web#857](https://github.com/aicers/review-web/issues/857) for the closed exploration of `clusterId` nullability.
+
+The bonus is kept as a distinct selector with its own weight rather than folded into category scoring (Path 1 of #462's three-path enumeration). This is consistent with the favored-kind list (§5) elevating "unlabeled HttpThreat" — the per-event bonus and the per-kind bonus reinforce each other rather than double-counting, because they enter the formula at different stages (per-event → within-kind score; per-kind → slot allocation).
+
+### Selector union semantics
+
+Within-kind score is a **weighted sum** of selector values, each in `[0, 1]`:
+
+```
+score(event) = w_S1·s1(event) + w_S2·s2(event) + w_S3·s3(event)
+             + w_S4·s4(event) + w_UNLABELED·unlabeled(event)
+```
+
+Weights `w_S` are tunable (§9). Sum (rather than max) is chosen so that an event with multiple converging signals ranks above one with only the strongest single signal — this matches the analyst intuition that converging signals are more interesting than any single strong signal.
+
+### Stored score: `raw_score`, computed view: `baseline_score`
+
+The cadence pipeline persists the raw weighted sum at INSERT:
+
+```
+raw_score(event) = score(event) = w_S1·s1 + w_S2·s2 + w_S3·s3 + w_S4·s4 + w_UNLABELED·unlabeled
+```
+
+`raw_score` is immutable — once written for a `(event_key, baseline_version)` it is not updated. It carries no order-of-insertion dependency.
+
+`baseline_score` is the kind-normalized cumulative distribution, **computed at read time** as a window function over `raw_score`:
+
+```sql
+CUME_DIST() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score)
+    AS baseline_score
+```
+
+The partition is `(kind, baseline_version)`, not `kind` alone. `raw_score` values are not comparable across baseline versions (the underlying selector formulas differ between versions), so each `(kind, baseline_version)` cohort is ranked independently. This is what makes §10's long-window version-mix legal: rows from an older `baseline_version` keep their own per-cohort rank instead of being silently dropped from the menu or compared on the new version's scale.
+
+`CUME_DIST` returns the cumulative fraction `(rows_with_value_<=_current) / partition_size`. For a single-row partition it returns `1.0`, so cold-start needs no special handling. Tied `raw_score` peers all receive the same `baseline_score` value (PostgreSQL ties-as-peers semantics).
+
+**`baseline_score >= X` is *not* exactly the top `(1-X)` fraction by row count.** Because `CUME_DIST` takes discrete steps `1/N, 2/N, ..., 1`, a threshold of 0.95 against a 100-row partition admits ranks 95..100 — six rows, not five — and ties at the boundary admit the entire tied block atomically. The slider stops in #471 are score-thresholds against this cumulative distribution; consumers needing exact-row-count semantics rank with `row_number()` over the appropriate ordering, but **the right ordering depends on the consumer's question**:
+
+- For **per-cohort** exact-top-N — "exactly top N rows from each `(kind, baseline_version)` cohort" — use:
+  `row_number() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score DESC, event_time DESC, event_key DESC)`.
+  This preserves §4's per-cohort balance: every cohort contributes its top rows independently. Use this when the consumer is doing per-cohort assembly (e.g. enforcing a kind-level slot count after slot allocation).
+
+- For **global** exact-top-N — "exactly top N rows across the menu, ignoring kind balance" — use:
+  `row_number() OVER (ORDER BY baseline_score DESC, event_time DESC, event_key DESC)`.
+  This sorts all cohorts together by their kind-normalized scores. Use this when the consumer wants an absolute top across the whole menu (e.g. an audit query, or a slider that promises "exactly the top N rows of the menu" rather than "exactly top N% of each cohort").
+
+The two `row_number()` formulations produce different sets at the same `N` because the per-cohort form floors per cohort while the global form floors once. This RFC's contract is only that `baseline_score = CUME_DIST(...)` per the formula above and that the resulting cutoffs are stable and deterministic; choosing per-cohort vs global exact-top semantics is the consumer's call.
+
+Computed against the read-time cohort: the rows in the active menu window in `baseline_triaged_event`, with no version filter — `PARTITION BY (kind, baseline_version)` does the version separation in-query. Read-time computation is what makes the uniform-on-`[0, 1]` property hold within each `(kind, baseline_version)` partition by construction — every row in a partition contributes one rank-position, so no insertion order, no batch boundary, and no rising raw-score trend distorts the distribution.
+
+INSERT-time computation was rejected because it would have ranked each new event against only the peers already in the table at that moment. With raw scores trending upward (model improvements, increasing sensitivity over time), every new event would land near 1.0; the first row of every cadence batch would always be a cold-start at 1.0; and the global percentile slider in #471 would no longer cut at the actual top-5% across kinds.
+
+Read-time computation also means `baseline_score` is **not** a persisted column in this RFC's design — and cannot be, because the value depends on the active menu window (a row's `CUME_DIST` over a 7d window differs from its value over a 30d window). The pre-existing `baseline_score DOUBLE PRECISION` column already in `migrations/customer/0003_baseline_corpus_a.sql` is therefore unused by Phase 1.B reads; it may be dropped in a follow-up migration or repurposed. The RFC's contract is only that the value `CUME_DIST() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score)` over the active-window cohort is what `baseline_score` *means* — see §11 for the read-path performance contract.
+
+A 0.95 `baseline_score` places an event in the high cumulative-distribution tail of its own `(kind, baseline_version)` cohort — roughly the top 5%, with the discrete-step / tied-block boundary semantics noted above. Cross-cohort comparison via global percentile thresholds remains meaningful because every cohort contributes a uniform-on-`[0, 1]` distribution by construction. What is deliberately *not* meaningful is comparing one cohort's `raw_score` to another's, which is why the partition keys include `baseline_version` alongside `kind`.
+
+**Tie-breaker.** Continuous selector values yield a high-cardinality `baseline_score`, so ties are uncommon in practice — but when they occur, the secondary order is `(event_time DESC, event_key DESC)` at every read site that orders by `baseline_score`. Both columns are NOT NULL in the schema; the i128 `event_key` is unique, so the order is total.
+
+This tie-breaker is **only** about deterministic row ordering among tied rows. It does **not** change the *set* of rows above any `baseline_score` threshold: `WHERE baseline_score >= cutoff` and `percentile_cont(baseline_score)` operate on `baseline_score` alone, so a block of rows tied at the cutoff is included or excluded atomically. Exact-row-count semantics (the two `row_number()` forms above) are the consumer's choice, not this RFC's contract. This RFC's contract is only that the tuple `(baseline_score, event_time, event_key)` is a deterministic total ordering — both per-cohort and global rankings inherit determinism from this tuple.
+
+**INSERT-time evaluation.** All selectors above (S1, S2, S3, S4, `UNLABELED_BONUS`) are evaluated by the cadence pipeline (§481) at INSERT time using `observed_event_meta`'s state at that moment. The resulting `raw_score(event)` is persisted on `baseline_triaged_event` along with `selector_tags`. `raw_score` is therefore a snapshot — it does not retroactively update when later peer events would change S3 or S4. The drift exposure is bounded by retention rather than by re-scoring: see §8 for the full discussion of the 30-day typical menu window vs the 180-day corpus retention. `baseline_score` is computed at read time from `raw_score` (§3 stored score), so it always reflects the actual cohort at read; it has no INSERT-time snapshot semantics.
+
+## §4. Per-bucket slot allocation (adaptive)
+
+### `slot_bucket`: the unit quota and merge both use
+
+Slot allocation and the merge step (§3 step (6)) both operate on the same key, called `slot_bucket`, defined per event as:
+
+```
+slot_bucket(event) =
+    ('HttpThreat', true)   if kind(event) = 'HttpThreat'
+                              AND 'unlabeled-cluster' ∈ selector_tags(event)
+    (kind(event), false)   otherwise
+```
+
+This makes `('HttpThreat', true)` the virtual `unlabeled-HttpThreat` kind, distinct from the labeled-HttpThreat bucket `('HttpThreat', false)`. For all non-HttpThreat kinds the second component is always `false` and the bucket is effectively just the kind. **Every formula and aggregate in this section uses `b = slot_bucket` as its key, not raw `kind`** — grouping by raw `kind` would collapse the labeled and unlabeled HttpThreat populations into one quota and one slot share, defeating the FAVORED-list elevation of unlabeled HttpThreat.
+
+The favored set is therefore stated in bucket form:
+
+```
+FAVORED_BUCKETS = {
+    ('DnsCovertChannel', false),
+    ('HttpThreat', true),               // the virtual unlabeled-HttpThreat
+    ('LockyRansomware', false),
+    ('RepeatedHttpSessions', false),
+    ('SuspiciousTlsTraffic', false),
+}
+```
+
+Where this RFC mentions `FAVORED_KINDS` informally (e.g. in §5's narrative), the precise contract is `FAVORED_BUCKETS`.
+
+### Slot share formula
+
+Each bucket's share of the final menu is:
+
+```
+slot_share(b) = base_share
+              + α · normalized_volume(b, window)
+                    · normalized_top_confidence(b, window)
+              + favored_bonus(b)
+```
+
+where:
+
+- `base_share` is a small constant given to every bucket (newly-observed buckets included). Acts as a discoverability floor: a bucket that has never been seen still gets a non-zero share when it first appears.
+- `normalized_volume(b, window) ∈ [0, 1]`: that bucket's event count over the active window in `baseline_triaged_event`, divided by the maximum across all buckets in the same window. Computed `GROUP BY slot_bucket` so the labeled-HttpThreat and unlabeled-HttpThreat buckets compete with each other on equal footing. Bounded so a flood from one bucket cannot drive others to zero. Source is `baseline_triaged_event` (not `observed_event_meta`) so the count is over the post-`BlockList*` set — the same denominator that slot allocation distributes among.
+- `normalized_top_confidence(b, window) ∈ [0, 1]`: a measure of how *signal-rich* the bucket's events are this window. Concretely, `avg(coalesce(cardinality(selector_tags), 0)) / MAX_TAGS` over `baseline_triaged_event` rows whose `slot_bucket` equals `b` in the active window, where `MAX_TAGS` is the total number of distinct selector tags the cadence pipeline can emit (§9). The `coalesce` guards both NULL `selector_tags` columns and PostgreSQL's quirk that `array_length('{}', 1)` returns `NULL` rather than `0`; without it, zero-tag rows would silently drop from `avg` and groups whose rows are all empty/NULL would produce a NULL slot share. A bucket whose events frequently fire multiple selectors (S1-high + S3-recurring + S4-correlated, etc.) scores higher than one whose events typically fire only a single selector. Computed entirely from `selector_tags` — no raw confidence column is read, so the within-kind-only rule for confidence (§ "Pipeline" intro) is respected: signal-richness is measured from the algorithm's own selector firings, not from upstream confidence values.
+- `favored_bonus(b) = β` if `b ∈ FAVORED_BUCKETS`, else 0. Constant, never decays.
+
+### Per-bucket quotas
+
+The shares are normalized to sum to 1 and multiplied by **`default_N`** (§6) — *not* by `final_count`. Independent rounding (`round(slot_share(b) · default_N)` per bucket) does not guarantee that the per-bucket quotas sum to `default_N`: with shares `0.25 / 0.25 / 0.25 / 0.25` and `default_N = 10`, each bucket would round to 3, summing to 12 and breaking the `assembled_count ≤ default_N` cap. The quotas are therefore distributed by the **largest-remainder method**, which guarantees the sum exactly:
+
+```
+ideal[b]     = slot_share(b) · default_N            // real-valued
+floor[b]     = floor(ideal[b])                      // integer floor
+remainder[b] = ideal[b] - floor[b]                  // ∈ [0, 1)
+leftover     = default_N - sum_over_buckets(floor[b])  // 0 ≤ leftover ≤ #buckets
+
+quota[b] = floor[b] + (1 if b is among the top-`leftover` buckets
+                            ranked by remainder[b] DESC, else 0)
+```
+
+Ranking rule for the leftover distribution: descending `remainder[b]`, with ties broken by the bucket's `(kind, is_unlabeled)` key in lexicographic order (kind name first, then `is_unlabeled` with `false < true`). The tie-breaker is included so the allocation is fully deterministic — `FAVORED_BUCKETS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
+
+By construction `sum_over_buckets(quota[b]) = sum(floor[b]) + leftover = default_N`. `quota[b]` is the maximum number of events from this bucket that the menu will ever show; `default_N` is the cognitive-limit cap from §6.
+
+Using a shared key in both stages removes the double-count risk from the previous draft: the same event has exactly one `slot_bucket`, and that bucket is the only one whose quota counts that event.
+
+### Composition: cutoff and quota together
+
+The actual per-bucket row count is bounded *both* by `quota[b]` and by the slider cutoff. `quota[b]` applies **once per bucket, not per `(kind, baseline_version)` cohort** — when a bucket's events span multiple `baseline_version`s in the active window, the cohorts are merged by `baseline_score DESC` (which is comparable across versions because every `(kind, baseline_version)` cohort contributes uniformly to `[0, 1]` per §3) before the quota is taken:
+
+```
+events_in_bucket(b) =
+    UNION over baseline_version v of
+        { e | slot_bucket(e) = b
+              AND e is in the (kind(e), v) CUME_DIST cohort over the active window
+              AND baseline_score(e) >= cutoff(slider) }
+
+visible[b] = first quota[b] rows of events_in_bucket(b)
+             ordered by baseline_score DESC, then §3 tie-breaker
+             (or all of events_in_bucket(b) if it has fewer rows)
+
+assembled_count = sum(visible[b] for all buckets b)
+                = bounded above by sum(quota[b]) = default_N (cognitive cap)
+```
+
+Per-version application of the quota would let a bucket exceed its `default_N` share whenever multiple versions co-exist (bucket quota 10 with two versions = up to 20 rows), breaking the `assembled_count ≤ default_N` cap that motivates `default_N` in the first place.
+
+**Composition order at menu read** (the order pipeline §3 step (6) implements):
+
+1. `quota[b]` is computed first against the active window's slot-allocation aggregates.
+2. For each bucket `b`, rows passing the cutoff are unioned across all `baseline_version`s in which the bucket's underlying `kind` appears, then ordered by `baseline_score DESC` with the §3 tie-breaker tuple. `baseline_score` is computed per-`(kind, baseline_version)` cohort by the §3 `CUME_DIST` formula, but the *quota application* operates on the bucket-level union of those cohorts.
+3. The first `quota[b]` such rows are taken; if fewer rows pass the cutoff for the bucket, the bucket contributes only what passes — the menu is never padded with sub-cutoff events to fill a quota.
+
+`assembled_count` is the count after composition. The final menu count is one more step away — the `MIN_NONZERO_FLOOR` fallback (§6) may surface additional rows when `assembled_count` is below the floor; that fallback is defined formally in §6 and is the only path by which `final_count` differs from `assembled_count`.
+
+### Behavior at the loose and strict ends
+
+The slider's "All" stop (no cutoff) produces **up to** `default_N` rows distributed by `slot_share`. The actual `assembled_count` can fall short of `default_N` when a bucket's available events do not fill its quota — slack from underfilled quotas is **not** redistributed to other buckets (no padding by lower-priority buckets). Tighter slider stops shrink `assembled_count` further because each bucket's qualifying-event count drops; `quota[b]` becomes the binding constraint only at the loose end of the slider, while the cutoff becomes binding at the strict end.
+
+### Why this satisfies the adaptiveness requirement
+
+Three forms of adaptiveness are present without any explicit user-feedback signal:
+
+1. **Time-based.** Statistics windows (§7) progressively activate as time passes since deployment (7d window first, 14d at two weeks, 30d at one month). The signal set is strictly monotone-increasing.
+2. **Data-accumulation-based.** As `observed_event_meta` grows, percentile-rank estimates become less noisy; the same algorithm produces tighter rankings.
+3. **Volume × signal-richness-based.** `slot_share` recomputes per window load, so a kind suddenly carrying many events with multiple selectors firing (high volume, high average tag count) automatically claims more slots, and a kind whose activity ebbs in either dimension shrinks. Because signal-richness is measured from `selector_tags` — i.e., from the algorithm's own selectors against globally-uniform thresholds — there is no cross-kind confidence comparison and no violation of the within-kind-only rule for raw confidence. The `base_share` floor and `favored_bonus` constant keep newly-observed kinds discoverable and the empirically-useful kinds visible regardless of how the volume × signal-richness term moves.
+
+User-engagement-driven adaptiveness (clicks, action-based feedback) is **out of scope of this RFC**; it is delegated to #485, which will land in subsequent `baseline_version` bumps once signal distribution is observable.
+
+## §5. Favored kinds
+
+Empirical experience identifies five kinds as consistently producing useful results — DnsCovertChannel, unlabeled HttpThreat, LockyRansomware, RepeatedHttpSessions, SuspiciousTlsTraffic. The precise contract is the `FAVORED_BUCKETS` set from §4 (which expresses "unlabeled HttpThreat" as the `('HttpThreat', true)` `slot_bucket`); this section uses the kind names informally.
+
+Role: **prior weighting**, not a whitelist. Non-favored buckets still receive `base_share` and can earn additional share through volume × signal-richness (§4). The favored bonus is an additive constant (`β`) and does not decay over time.
+
+## §6. Final count and user-preference dial
+
+`default_N` grows **sublinearly** with post-exclusion volume — neither linearly proportional (which would let a noisy day flood the menu) nor a fixed constant (which would ignore the customer's actual activity level):
+
+```
+default_N = round(LOWER_FLOOR + scale · log10(1 + post_exclusion_event_count))
+```
+
+The log10 shape buys two properties at once:
+
+- `LOWER_FLOOR` ensures even very quiet days surface something to look at.
+- The slow growth of log10 naturally bounds the menu near an analyst-readable size without a hard cap constant; the customer's activity level is reflected, not equated to raw volume.
+
+`default_N` is the **cognitive-limit cap**: the upper bound on the number of rows the menu shows. §4 uses it to compute per-bucket quotas via the largest-remainder method (`floor(slot_share(b) · default_N)` per bucket, with the leftover slots distributed by descending remainder); the sum of quotas across buckets is exactly `default_N` by construction. The loosest slider stop ("All") produces *up to* `default_N` rows — the actual count can fall short when a bucket's available events do not fill its quota, since slack is not redistributed (no padding from lower-priority buckets; no padding by sub-cutoff events). Tighter slider positions shrink `final_count` further because the cutoff filters events out faster than the quota cap binds.
+
+`final_count` is `assembled_count` from §4, with one explicit fallback pass when the floor is not met:
+
+```
+assembled_count = sum_over_buckets b ( min(
+    quota[b],
+    |events_in_bucket(b)|             // post-cutoff, post-version-union (§4)
+))
+
+final_menu_rows =
+    visible[b] for all buckets b      // the §4 result
+
+If post_exclusion_event_count = 0:
+    final_count = 0
+    (menu shows nothing)
+
+Else if assembled_count >= MIN_NONZERO_FLOOR:
+    final_count = assembled_count
+    (menu shows visible[b] rows; floor not invoked)
+
+Else:  // assembled_count < MIN_NONZERO_FLOOR and post_exclusion > 0
+    floor_rows = top MIN_NONZERO_FLOOR events from the active window
+                 ordered by baseline_score DESC with the §3 tie-breaker,
+                 selected globally across all buckets.
+                 Bypasses both quota[b] and cutoff(slider).
+    final_count = |floor_rows|        // = min(MIN_NONZERO_FLOOR, post_exclusion_event_count)
+    (menu shows floor_rows instead of visible[b]; quota and cutoff are
+     intentionally bypassed because a non-empty menu of clearly-best rows
+     beats a balanced empty menu when the slider is too strict for any
+     bucket to fill its quota.)
+```
+
+- `final_count` is bounded above by `default_N`. The reasoning depends on which path produced it:
+  - **Assembled path** (`final_count = assembled_count`): bounded by `sum(quota[b]) = default_N` because every bucket's contribution is capped at `quota[b]` (§4) and the quotas sum to `default_N` by construction. Also bounded by `post_exclusion_event_count`. The menu is never padded with sub-cutoff events to fill a quota.
+  - **Fallback path** (`final_count = |floor_rows|`): the bound is **not** the sum of quotas (the fallback bypasses quota and cutoff). Instead it is the tunable invariant `MIN_NONZERO_FLOOR ≤ default_N` enforced at §9 calibration. With the provisional values (`MIN_NONZERO_FLOOR = 1`, `LOWER_FLOOR = 20`) the invariant trivially holds, but ops review must keep `MIN_NONZERO_FLOOR ≤ LOWER_FLOOR ≤ default_N` for any future calibration so the cognitive cap is preserved on the fallback path too. Also bounded by `post_exclusion_event_count` (the fallback returns `min(MIN_NONZERO_FLOOR, post_exclusion_event_count)` rows).
+- `MIN_NONZERO_FLOOR` is invoked **only as a global fallback when `assembled_count` is below the floor**. It is not a per-bucket guarantee, and it does not augment the §4 `visible[b]` result — when invoked, it replaces it. The replacement is intentional: by the time the floor is needed, the slider+quota composition has produced too few rows to be useful, so the cleanest behavior is to forget composition for this menu and show the analyst the strongest signals available regardless of bucket distribution.
+- The slider's neutral position should be the slider stop that, on a typical active window, produces a count near the loose end of the meaningful range — somewhere between half `default_N` and `default_N`. The exact stop is owned by #471; this RFC commits only to `default_N` being the cap (loosest stop = "All" = at most `default_N` rows after quota).
+- Slider direction: "more" loosens the cutoff (more rows pass, but capped at `default_N` via the quota); "less" tightens the cutoff (fewer rows pass; the floor pass eventually kicks in). The dial is relative to whichever stop neutral lands on; what it actually moves is the percentile cutoff over `baseline_score`, not a multiplier on row count or on `default_N`.
+
+The dial mechanism (continuous vs discrete, exact UI shape) is owned by #471. This RFC fixes one piece of the contract: **the dial controls a percentile cutoff on `baseline_score`**, not a multiplier on `final_count`. The two interpretations are not equivalent — a multiplier scales the absolute row count uniformly while leaving §4's per-cohort slot allocation in charge of distribution, whereas a percentile cutoff filters per-cohort by score and lets cohort-specific score distributions drive the final per-cohort counts. #471's slider stops are score thresholds (e.g. 0.95 for the "Top ~5%" stop), so the cutoff interpretation is what the slider implements.
+
+`default_N` from this section is the **cognitive-limit cap**: the maximum number of rows the menu shows on any path (assembled or fallback). #471's UI translates dial movements into percentile cutoffs over `baseline_score`, not into multipliers on `default_N`; the relationship between dial positions and row counts is governed entirely by the cutoff/quota composition above. `MIN_NONZERO_FLOOR` is the explicit fallback defined in the formula above; the tunable invariant `MIN_NONZERO_FLOOR ≤ default_N` (enforced at §9 calibration) is what guarantees the fallback path also respects the cognitive cap.
+
+### Read scope: corpus A only
+
+The menu reads from corpus A — `baseline_triaged_event` exclusively at menu read time (#458). `observed_event_meta` is the cadence pipeline's INSERT-time aggregation source (§8) and is not touched at read time. Both tables live in the active customer-tenant DB per `migrations/customer/0003_baseline_corpus_a.sql`. Neither read path calls `review`. The cadence pipeline (#456 / #481) populates both tables from `review` on a schedule using a deliberately loose cadence-side threshold.
+
+Slot allocation (§4) is a small per-bucket `GROUP BY slot_bucket` over `baseline_triaged_event`, computed once per menu load. It uses `selector_tags` array length as the signal-richness signal so no raw confidence column is needed and no second-table join is introduced.
+
+### Read-path performance contract
+
+Because `baseline_score` is read-time-computed (§3, §8), the existing `(event_time DESC, baseline_score DESC)` index does **not** apply to the slider's score cutoff. The performance contract this RFC actually commits to:
+
+- **Menu load** runs the `CUME_DIST() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score)` pass once over the active window. The window-function cost scales with the number of rows in the active window per `(kind, baseline_version)` partition. The `(event_time DESC)` index on `baseline_triaged_event` resolves the time slice; the per-partition sort is over each partition's slice within that window. Measurement against representative tenant data is owned by #471's measurement gate (which already requires p50/p95 numbers in the PR description).
+- **Slider movement** does not re-run the window function. It uses cutoffs cached from the menu-load pass (#471's existing design caches the four percentile cutoffs after the first menu load). Each slider stop corresponds to either:
+  - a cached `baseline_score` threshold + client-side filter over already-fetched rows, or
+  - a per-cohort `raw_score` threshold derived from the menu-load ranking, used in `WHERE kind = :k AND baseline_version = :v AND raw_score >= :cached_cutoff_for_(k,v)` against an index on `(kind, baseline_version, raw_score DESC, event_time DESC)`. `baseline_version` must be in the predicate (and in the index) because cutoffs are computed per `(kind, baseline_version)` cohort (§3) — applying one cohort's cutoff to another cohort's `raw_score` would re-introduce the cross-version comparison the partition was set up to avoid. The two-equality, one-range, one-residual order keeps the cutoff index-resolved. This index is added by the same migration that adds the `raw_score` column (§9 schema requirements). For very long active windows where the residual `event_time` filter dominates, the existing `(event_time DESC)` index remains an alternative the planner can pick — measurement (§12 / #471) decides per query shape.
+- **The choice between the two slider strategies** is owned by #471's measurement: if the menu-load CUME_DIST pass and cached client-side filtering hit the latency targets, no per-stop SELECT is needed; if not, the per-cohort raw-score threshold path is used. Either way the contract above — cutoffs cached at menu load, slider movement not triggering a fresh window function — holds.
+- **No persisted `baseline_score` cache is offered as a fallback.** A single column on `baseline_triaged_event` cannot serve as a cache because `baseline_score` is computed against the *active menu window* (§3); the same row's `baseline_score` differs across 7d / 14d / 30d / 180d window selections, so any single stored value would be wrong for all but one window length. If menu-load latency proves unacceptable at production scale, the appropriate response is a separate per-window-keyed cache structure (e.g. a small materialized table keyed by `(window_length, kind, baseline_version, event_key)`), specified in a follow-up RFC; this RFC does not commit to that.
+
+The slider's widest position ("All" in #471) is bounded by what the cadence threshold has already brought into corpus A; loosening beyond that is a cadence-threshold tuning concern (#456), not a slider concern.
+
+## §7. Statistics window
+
+The window-level *cadence-time* selectors — S1 percentile rank, S3 recurring, S4 correlated — run against three concurrent window lengths at INSERT:
+
+- 7-day window
+- 14-day window
+- 30-day window
+
+Per-window selector outputs are combined via **max** within a single selector (the strongest signal across the three windows wins for that selector); selector union across selectors remains the weighted sum of §3.
+
+Slot-allocation aggregates (`normalized_volume`, `normalized_top_confidence`, §4) operate at menu read time over the **user-active menu window** rather than the three statistics windows. The user picks the period; slot allocation reflects activity in exactly that period. This is a separate concept from the statistics windows above, which are an INSERT-time scoring artifact.
+
+### Statistics source
+
+The cadence-time GROUP BYs for S1/S3/S4 use `observed_event_meta` (#456) on the customer's tenant DB. NOT `baseline_triaged_event` — that would create a circular selection bias. The slot-allocation aggregates (§4) read `baseline_triaged_event` directly, where post-`BlockList*` filtering already matches the slot-allocation denominator. `review` is never asked to compute aggregates from either path; its RocksDB key layout is not optimized for arbitrary-dimension grouping.
+
+### Cold-start
+
+A window activates only once that much wall-clock time has elapsed since deployment. The 7d window is available 7 days after first ingest; 14d at 14 days; 30d at 30 days. Before activation, the corresponding window's signals contribute 0.
+
+This makes cold-start a pure function of elapsed time. No row-count threshold is needed — a 7d window with 7 days of low-volume data is still meaningful (it correctly reflects the customer's actual activity), whereas a 30d window with only 2 days of data is meaningless regardless of row count. Time is the right proxy.
+
+Per-event selectors (S2 severe, `UNLABELED_BONUS`) are unaffected by cold-start; they fire on every event from day one.
+
+## §8. Score computation timing
+
+**Decision: per-event raw_score evaluated at cadence INSERT and persisted on `baseline_triaged_event.raw_score`. baseline_score (the kind-normalized percentile rank) is computed at read time as a window function over raw_score (§3). No persisted pattern tables. No re-scoring of `raw_score` at read time.**
+
+Concretely, when the cadence pipeline (§481) processes a new event:
+
+1. The event is appended to `observed_event_meta` (the unbiased denominator) along with its peers in the same cadence batch.
+2. For each event in the batch, the pipeline computes s1 / s3 / s4 by `GROUP BY` against `observed_event_meta` filtered to the active statistics window (§7) and the relevant grouping keys. s2 and `UNLABELED_BONUS` need no aggregation.
+3. The weighted sum `raw_score(event)` is written to `baseline_triaged_event` along with `selector_tags`. Once written, it is not updated within its `baseline_version`.
+
+Rationale:
+
+- `raw_score` is order-independent: a row's stored value depends only on its own data and on `observed_event_meta` history at that moment, not on what other rows happen to be in `baseline_triaged_event` already. The kind-normalization step that does depend on the cohort is deferred to read time exactly so insertion order cannot distort it (§3 stored score).
+- The relevant `observed_event_meta` indexes for the cadence-time GROUP BY are `event_time DESC` (the time-window slice) and `(kind, event_time DESC)` (kind-filtered window). The schema has no `asset` column; the asset-pair stand-in is `(orig_addr, resp_addr)` (and `orig_addr` for S4's per-asset grouping). The hash aggregate on `(orig_addr, resp_addr)` or `(orig_addr, kind)` runs over the kind/time-filtered slice; planner choice is verified during measurement (§12).
+- Persisted pattern tables would add a separate write path, a retention concern, and a `baseline_version` migration story for what is already a bounded, schedulable computation inside the cadence runner.
+- `raw_score` drift from later peer events: snapshots on `baseline_triaged_event.raw_score` are not retroactively updated when new peer events arrive in `observed_event_meta` and would change S3 / S4 / S1 percentile rank for already-inserted rows. The exposure bound depends on the user's active menu window, not on a single uniform "expiry":
+
+  | Active menu window | Drift exposure for visible rows |
+  |---|---|
+  | Last 7d / 14d / 30d (typical menu use, per #458) | bounded to that window's age |
+  | Up to 180d (corpus A retention is 180d per `migrations/customer/0003_baseline_corpus_a.sql`; `observed_event_meta` is only 30d) | up to 180d in the worst case — and beyond 30d the `observed_event_meta` history that produced the score has itself rolled over, so re-scoring is not even possible from current state |
+
+  In other words, raw_score snapshots remain stable **within** their `baseline_version`, but the older a row gets the more its raw_score reflects state-of-the-world at its INSERT time rather than now. Mass re-scoring is explicitly not part of the design. If a future requirement makes long-window drift unacceptable, the mitigation is either tighter retention on `baseline_triaged_event` or a `baseline_version` bump that triggers natural turnover — the algorithm shape above does not change.
+
+If measurement on representative production data shows the cadence-time aggregation cost is unacceptable, the fallback is a follow-up RFC introducing per-cadence-run pattern caches; the algorithm shape above (continuous selectors, weighted sum, read-time kind-normalized rank) does not change, only where the GROUP BY result lives.
+
+## §9. Tunable parameters
+
+These values fix the algorithm's **shape** but not necessarily their final calibration. All values below are **provisional** and finalized via ops review (with measurement on a representative tenant DB) before #462 merges. Tuning post-merge is via `baseline_version` bump; rows of the older version turn over within the typical menu window (~30 days per #458) and within corpus A's 180-day retention overall (§10).
+
+### Selector weights (§3)
+
+| Symbol | Meaning | Provisional value |
+|---|---|---|
+| `w_S1` | S1 high-confidence weight | 1.0 |
+| `w_S2` | S2 severe weight | 1.5 |
+| `w_S3` | S3 recurring weight | 0.8 |
+| `w_S4` | S4 correlated weight | 0.8 |
+| `w_UNLABELED` | UNLABELED_BONUS weight | 0.5 |
+
+### Selector saturation caps (§3)
+
+| Symbol | Meaning | Provisional value |
+|---|---|---|
+| `R` | S3 saturation cap (additional repeats past which s3 stays at 1.0) | 10 |
+| `C` | S4 saturation cap (additional categories past which s4 stays at 1.0) | 4 |
+
+S1 needs no saturation cap — its output is already a percentile rank in `[0, 1]`. S2 and `UNLABELED_BONUS` are binary and saturated by definition.
+
+### Slot allocation tag normalization (§4)
+
+| Symbol | Meaning | Provisional value |
+|---|---|---|
+| `MAX_TAGS` | maximum distinct selector tags the cadence pipeline can emit (denominator for `normalized_top_confidence` average) | 5 |
+
+The five tags are `S1-high`, `S2-severe`, `S3-recurring`, `S4-correlated`, `unlabeled-cluster`. If a future selector adds a tag, `MAX_TAGS` increases and a `baseline_version` bump follows.
+
+`selector_tags` content (the analyst-visible label set) parallels but is not identical to selector contributions to `baseline_score`: a tag is emitted when a selector's value exceeds an implementation-level "this fired meaningfully" threshold (e.g. `s1 > 0.85` → `"S1-high"`, `s3 > 0.5` → `"S3-recurring"`). Exact tag thresholds are implementation details for the score formula but they do affect `MAX_TAGS` denominator semantics — different thresholds produce different average tag counts. Tag thresholds are therefore part of `baseline_version` (open question 5).
+
+### Selector membership lists (§3)
+
+`CRITICAL_CATEGORIES` — the only membership list referenced by the revised selectors (S2 fires when `category(event) ∈ CRITICAL_CATEGORIES`). Initial contents are populated from existing detection metadata at code time and reviewed with ops before merge. Stored in source code (e.g., `src/lib/triage/baseline/categories.ts`), not in the database; changing the list requires a `baseline_version` bump.
+
+`FAVORED_BUCKETS` (§4 / §5) is a related membership list affecting per-bucket slot allocation, not within-kind selector firing; it lives next to `CRITICAL_CATEGORIES` and follows the same source-code + version-bump rules.
+
+### Slot allocation (§4)
+
+| Symbol | Meaning | Provisional value |
+|---|---|---|
+| `base_share` | floor share per bucket | 0.02 |
+| `α` | volume × signal-richness coefficient | 1.0 |
+| `β` | favored-kind constant bonus | 0.10 |
+
+### Final count (§6)
+
+| Symbol | Meaning | Provisional value |
+|---|---|---|
+| `LOWER_FLOOR` | minimum `default_N` (any non-empty corpus, dial neutral) | 20 |
+| `scale` | log10 coefficient on post-exclusion volume | 30 |
+| `MIN_NONZERO_FLOOR` | minimum `final_count` when post-exclusion > 0 | 1 |
+
+Reference values from this curve (`LOWER_FLOOR = 20`, `scale = 30`, dial neutral):
+
+| post-exclusion events | `default_N` |
+|---|---|
+| 100 | 80 |
+| 1,000 | 110 |
+| 10,000 | 140 |
+| 100,000 | 170 |
+
+`scale` and `LOWER_FLOOR` are calibrated on representative tenant data before merge so neutral-dial menu size sits in the analyst-readable range across the customer fleet's activity bands.
+
+### Schema requirements (additions to `baseline_triaged_event`)
+
+The algorithm requires two schema-level guarantees that are not in the current `migrations/customer/0003_baseline_corpus_a.sql`. The implementation PR for #462 carries the migration that adds them; both are additive and do not break existing readers.
+
+| Column / constraint | Required form | Reason |
+|---|---|---|
+| `raw_score` | new `DOUBLE PRECISION NOT NULL` column | Persisted weighted sum from §3, used as the input to read-time `CUME_DIST()` that produces `baseline_score`. `NOT NULL` is enforced from the migration onward; per-row `baseline_version` tracks which scoring algorithm produced the value. |
+| `selector_tags` | tightened to `NOT NULL DEFAULT '{}'` | The `coalesce(cardinality(selector_tags), 0)` guard in §4 covers the formula at read time, but tightening the column at INSERT removes the NULL state at the source and lets future readers omit defensive coalescing. |
+| index on `(kind, baseline_version, raw_score DESC, event_time DESC)` | new btree index | Required by §11's per-cohort `raw_score` threshold strategy for slider movement. Column order is `kind` (equality) → `baseline_version` (equality) → `raw_score` (range, the load-bearing predicate at slider stops) → `event_time` (residual, available for ordering within a cohort+raw_score slice). Both equality columns must precede the range column so the range cutoff stays index-resolved; `baseline_version` is in the predicate because cutoffs are computed per `(kind, baseline_version)` cohort (§3) and applying one cohort's cutoff to another's `raw_score` would re-introduce the cross-version comparison the partition is meant to avoid. Putting `event_time` before `raw_score` would block index-resolution of the range cutoff, since a range column at index position N stops the planner from using index columns N+1 onward for further range filtering. The pre-existing `(event_time DESC, baseline_score DESC)` index does not apply once `baseline_score` is no longer the persisted column. |
+
+**Backfill contract for existing rows.** When the migration runs against a tenant DB that already holds Phase 1.A rows from `0003_baseline_corpus_a.sql`, the rows must be filled before `NOT NULL` is enforced:
+
+1. `UPDATE baseline_triaged_event SET selector_tags = '{}' WHERE selector_tags IS NULL` — Phase 1.A had no selectors, so the empty array is the truthful value.
+2. `UPDATE baseline_triaged_event SET raw_score = baseline_score WHERE raw_score IS NULL` — Phase 1.A's `baseline_score` was a constant placeholder, and using the same value for `raw_score` preserves the existing relative ordering for the few hours/days until those rows age out under the 30-day typical-menu-window or are turned over by the next `baseline_version` bump (which the same migration triggers — see §10). No semantic claim is made that backfilled `raw_score` values are comparable to genuine Phase 1.B `raw_score`; the per-row `baseline_version` distinguishes the regimes.
+3. `ALTER TABLE … ALTER COLUMN … SET NOT NULL` — both columns now safe.
+
+`baseline_score` is **not** added by this migration. It is computed at read time over `raw_score` per §3. The pre-existing `baseline_score DOUBLE PRECISION` column on `baseline_triaged_event` is unused by Phase 1.B reads (it cannot serve as a single-column cache because `baseline_score` is active-window-dependent — see §3, §11). The column may be left in place for backwards compatibility with Phase 1.A code paths still in main, or dropped in a later migration; that is an implementation choice, not a contract of this RFC.
+
+### Selector evaluation timing
+
+All selectors are evaluated at cadence INSERT time (§8) using `observed_event_meta` history at that moment. `raw_score(event)` and `selector_tags(event)` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. `baseline_score` is computed at read time from `raw_score` (§3 stored score) and is therefore not stored as part of this RFC's contract. The read path needs no joins and never touches `observed_event_meta` — both per-event values (`raw_score`, `selector_tags`, computed `baseline_score`) and per-bucket slot-allocation aggregates (volume + average `selector_tags` length, §4) come from `baseline_triaged_event` alone.
+
+| Selector | Source data |
+|---|---|
+| S1 within-kind percentile rank | event's `confidence` + `observed_event_meta.confidence` history for same `kind` in the window |
+| S2 severe | event's `category` only (no aggregation) |
+| S3 recurring | `observed_event_meta` GROUP BY `(orig_addr, resp_addr, kind)` in the window |
+| S4 correlated | `observed_event_meta` GROUP BY `(orig_addr, kind)` with `COUNT(DISTINCT category)` in the window |
+| UNLABELED_BONUS | event's `clusterId` only (no aggregation) |
+
+## §10. `baseline_version`
+
+A `baseline_version` row is bumped whenever any of:
+
+- a tunable in §9 changes,
+- a membership list (§9) changes,
+- the algorithm's shape changes,
+- a selector is added or removed.
+
+Both corpora pick up the new version on next cadence / next on-demand run. Prior-version rows converge out of the **typical menu window** (last 30 days, per #458's documented analyst use) via natural turnover; rows in periods past that horizon may still carry an older `baseline_version` for the rest of the **180-day corpus A retention**. The menu therefore presents a single-version view for typical use but can present a version-mix when the user expands the period beyond ~30 days. No mass recomputation. Audit retains the per-row `baseline_version` column for reproducibility.
+
+The version is **not** surfaced in the menu UI per #458. The cross-version-mix possibility on long windows is resolved by natural turnover and audit-side `baseline_version` access, not by user awareness.
+
+## §11. Out of scope (delegated)
+
+- **User strictness slider** — owned by #471 (separate RFC, separate UX review).
+- **User-engagement feedback** — owned by #485 (Phase 1 capture, Phase 2 per-kind feedback into `slot_share`, Phase 3 within-kind reranking and selector-weight tuning).
+- **Audit/snapshot of baseline parameters at submit time** — owned by #472.
+- **`review-web` schema for cluster nullability** — closed, not pursued; sentinel-based detection in §3 is the agreed convention.
+
+## §12. Open questions
+
+1. **Final calibration of §9 values.** The provisional values above are educated starting points. Final values are set after measurement on a representative tenant DB and ops review, before #462 merges.
+
+2. **`LOWER_FLOOR` / `scale` validation.** The provisional `(LOWER_FLOOR=20, scale=30)` log10 curve needs to be sanity-checked against historical incident counts: does it produce a reasonable menu size at both quiet and busy ends of each customer's activity band? If sqrt produces a more useful curve in practice (more responsive to volume changes than log10), the shape choice is revisited before merge — the §6 narrative on "neither linear nor constant" stands either way.
+
+3. **Per-window weighting in §7.** Currently each of the 7d / 14d / 30d signals contributes equally (max across windows). An alternative is to weight shorter windows higher (recent patterns matter more) or longer windows higher (more stable). Preliminary recommendation: equal weighting via max, revisit after Phase 1.B is in production.
+
+4. **Cadence-time aggregation cost.** `migrations/customer/0003_baseline_corpus_a.sql` provides `(event_time DESC)` and `(kind, event_time DESC)` indexes on `observed_event_meta`. The cadence-time GROUP BY for s3 and s4 runs over the kind-and-time-filtered slice with a hash aggregate on `(orig_addr, resp_addr)` or `(orig_addr, kind)`. This needs `EXPLAIN ANALYZE` on a representative tenant DB before merge to confirm the planner picks the composite index and that the per-batch aggregation completes within the cadence runner's time budget. If it does not, §8's fallback (per-cadence-run pattern cache) is taken; the algorithm shape does not change.
+
+5. **`selector_tags` content and tag thresholds.** The schema gives `selector_tags TEXT[]`; tag membership is decided by per-selector "fired meaningfully" thresholds set in code (§9). Tag thresholds are now load-bearing — they affect both per-event analyst readability **and** `normalized_top_confidence` in slot allocation (§4 reads average tag count). Tag-threshold changes should therefore bump `baseline_version`. Ops review confirms the threshold values before merge.
+
+6. **`selector_tags` length as the signal-richness proxy (§4).** `normalized_top_confidence` is computed as average `selector_tags` array length divided by `MAX_TAGS`. This is a coarse proxy: it counts how many of the algorithm's selectors fire on a typical event in the kind, but does not weight them by per-selector value or distinguish "S2-severe alone" from "S1-high + S3-recurring + S4-correlated". The newly-required `raw_score` column (§9 schema requirements) makes a finer formulation cheap to swap in — e.g., `avg(raw_score) / MAX_POSSIBLE_SCORE` over the same `baseline_triaged_event` slice — without changing the read shape (still single-table, still slot-allocation-only). Whether the coarse tag-length proxy is good enough or whether the implementation should switch to `raw_score` is left for ops review on representative tenant data.
