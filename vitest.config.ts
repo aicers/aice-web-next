@@ -89,6 +89,11 @@ export default defineConfig({
             // the default 10 rows, and only surface it once the user
             // clicks Show more.
             "src/__tests__/components/triage/related-events-panel.test.tsx",
+            // Issue #453 (Reviewer Round 6): hook-layer regression
+            // coverage for the Tier 2 modal queue and the cache LRU
+            // recency contract. Uses `renderHook` so it must run
+            // under jsdom.
+            "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -122,6 +127,7 @@ export default defineConfig({
             "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
             "src/__tests__/components/triage/triage-shell.test.tsx",
             "src/__tests__/components/triage/related-events-panel.test.tsx",
+            "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
           ],
         },
       },

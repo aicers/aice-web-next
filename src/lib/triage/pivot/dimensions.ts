@@ -12,6 +12,8 @@
  * are #453's scope, not this issue's.
  */
 
+import { THREAT_CATEGORY_VALUE_BY_KEY } from "@/lib/detection/filter-options";
+
 import { classifyTriageEndpoint } from "../classify";
 import type { ScoredTriageEvent } from "../types";
 import {
@@ -22,9 +24,15 @@ import {
 } from "./normalize";
 
 /**
- * Stable identifier set for the Phase 1.A pivot dimensions. Strings,
- * not enums, so the panel can render i18n labels keyed by id without
- * threading the enum through every prop.
+ * Stable identifier set for the pivot dimensions surfaced by the
+ * Triage menu. Strings, not enums, so the panel can render i18n
+ * labels keyed by id without threading the enum through every prop.
+ *
+ * `kinds`, `categories`, `levels` are server-filtered Tier-2-only
+ * dimensions: they exist as `EventListFilterInput` fields and are
+ * surfaced as a separate group in Tier 2 mode (#453 §"Server-
+ * filtered, Tier-2-only"). Their click action issues a Tier 2 fetch
+ * rather than reading from the loaded corpus.
  */
 export type PivotDimensionId =
   | "externalIp"
@@ -44,7 +52,10 @@ export type PivotDimensionId =
   | "dnsAnswer"
   | "sameKindWithin15Min"
   | "sameSensor"
-  | "clusterId";
+  | "clusterId"
+  | "kinds"
+  | "categories"
+  | "levels";
 
 /**
  * Pivot value. Carries both the canonical pivot key (the index key
@@ -66,11 +77,18 @@ export interface PivotValue {
 export interface PivotDimension {
   id: PivotDimensionId;
   /**
-   * `network`, `application`, `tls`, `dns`, `time-structure`. Used by
-   * the panel only for grouping section headers; not part of the
-   * pivot key.
+   * `network`, `application`, `tls`, `dns`, `time-structure`,
+   * `tier2-only`. Used by the panel only for grouping section
+   * headers; not part of the pivot key.
    */
   family: PivotDimensionFamily;
+  /**
+   * `true` for Tier-2-only server-filtered dimensions (`kinds`,
+   * `categories`, `levels`). The panel hides them in Tier 1 mode and
+   * surfaces them as a separate group in Tier 2; clicks issue a
+   * Tier 2 fetch rather than reading from the corpus.
+   */
+  tier2Only?: boolean;
   extract(event: ScoredTriageEvent): PivotValue[];
 }
 
@@ -79,7 +97,8 @@ export type PivotDimensionFamily =
   | "application"
   | "tls"
   | "dns"
-  | "time-structure";
+  | "time-structure"
+  | "tier2-only";
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -336,6 +355,59 @@ const CLUSTER_ID_DIMENSION: PivotDimension = {
 };
 
 /**
+ * Tier-2-only server-filtered dimension: `kinds`. Each event's
+ * `__typename` becomes a candidate value; clicking issues a fetch
+ * filtered by `EventListFilterInput.kinds`. The schema's `kinds`
+ * field is a `RawEventKind!` enum, but the dimension uses the
+ * `__typename` literal as the value key — REview's GraphQL layer
+ * accepts the spelling that matches the typename.
+ */
+const KINDS_DIMENSION: PivotDimension = {
+  id: "kinds",
+  family: "tier2-only",
+  tier2Only: true,
+  extract(event) {
+    const value = nonEmptyString(event.__typename);
+    if (!value) return [];
+    return [{ key: value, label: value }];
+  },
+};
+
+/**
+ * Tier-2-only server-filtered dimension: `categories`. The value key
+ * is the numeric `ThreatCategory` ordinal as a string, so it
+ * round-trips through {@link buildTier2Filter} (which parses the int
+ * back). The display label is the category enum spelling — operators
+ * see `COMMAND_AND_CONTROL`, the Tier 2 filter receives `7`. Events
+ * whose `category` is missing from the encoding map (a future schema
+ * addition not yet mirrored in `THREAT_CATEGORY_VALUE_BY_KEY`) are
+ * dropped so we never emit a value key the filter cannot translate.
+ */
+const CATEGORIES_DIMENSION: PivotDimension = {
+  id: "categories",
+  family: "tier2-only",
+  tier2Only: true,
+  extract(event) {
+    const cat = event.category;
+    if (cat === null || cat === undefined) return [];
+    const ordinal = THREAT_CATEGORY_VALUE_BY_KEY[cat];
+    if (ordinal === undefined) return [];
+    return [{ key: String(ordinal), label: String(cat) }];
+  },
+};
+
+const LEVELS_DIMENSION: PivotDimension = {
+  id: "levels",
+  family: "tier2-only",
+  tier2Only: true,
+  extract(event) {
+    const value = nonEmptyString(event.level);
+    if (!value) return [];
+    return [{ key: value, label: value }];
+  },
+};
+
+/**
  * Ordered list of every Phase 1.A pivot dimension. The panel renders
  * dimensions in this order — most-specific (operator-relevant)
  * dimensions first, structural ones last.
@@ -359,6 +431,9 @@ export const PIVOT_DIMENSIONS: readonly PivotDimension[] = [
   SAME_KIND_WITHIN_15_MIN_DIMENSION,
   SAME_SENSOR_DIMENSION,
   CLUSTER_ID_DIMENSION,
+  KINDS_DIMENSION,
+  CATEGORIES_DIMENSION,
+  LEVELS_DIMENSION,
 ];
 
 const DIMENSION_BY_ID = new Map<PivotDimensionId, PivotDimension>(

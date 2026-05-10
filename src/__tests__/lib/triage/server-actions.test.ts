@@ -33,6 +33,7 @@ function makePage({ nodes, hasNextPage, endCursor = null }: PageOpts) {
         startCursor: nodes.length ? "start" : null,
         endCursor: hasNextPage ? (endCursor ?? "cursor") : null,
       },
+      totalCount: String(nodes.length),
       edges: nodes.map((_, i) => ({ cursor: `c-${i}` })),
       nodes: nodes.map((n) => ({
         __typename: "NetworkThreat",
@@ -161,14 +162,14 @@ describe("loadTriagePeriod", () => {
     mockGraphqlRequest
       .mockResolvedValueOnce(
         makePage({
-          nodes: Array.from({ length: 500 }, () => ({})),
+          nodes: Array.from({ length: 100 }, () => ({})),
           hasNextPage: true,
           endCursor: "page-1-end",
         }),
       )
       .mockResolvedValueOnce(
         makePage({
-          nodes: Array.from({ length: 200 }, () => ({})),
+          nodes: Array.from({ length: 40 }, () => ({})),
           hasNextPage: false,
         }),
       );
@@ -181,21 +182,23 @@ describe("loadTriagePeriod", () => {
     );
 
     expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+    const firstCall = mockGraphqlRequest.mock.calls[0][1];
+    expect(firstCall.first).toBe(100);
     const secondCall = mockGraphqlRequest.mock.calls[1][1];
     expect(secondCall.after).toBe("page-1-end");
-    expect(result.loadedEventCount).toBe(700);
+    expect(result.loadedEventCount).toBe(140);
     expect(result.truncated).toBe(false);
   });
 
   it("flags the slice as truncated only when the cap is hit AND more pages remain", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([]);
-    // Ten full 500-event pages each reporting hasNextPage=true so the
-    // cap (5,000) is reached with REview still claiming more rows.
-    for (let i = 0; i < 10; i += 1) {
+    // Fifty full 100-event pages each reporting hasNextPage=true so
+    // the cap (5,000) is reached with REview still claiming more rows.
+    for (let i = 0; i < 50; i += 1) {
       mockGraphqlRequest.mockResolvedValueOnce(
         makePage({
-          nodes: Array.from({ length: 500 }, () => ({})),
+          nodes: Array.from({ length: 100 }, () => ({})),
           hasNextPage: true,
           endCursor: `page-${i}-end`,
         }),
@@ -210,7 +213,7 @@ describe("loadTriagePeriod", () => {
       PERIOD,
     );
 
-    expect(mockGraphqlRequest).toHaveBeenCalledTimes(10);
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(50);
     expect(result.loadedEventCount).toBe(TRIAGE_HARD_EVENT_CAP);
     expect(result.truncated).toBe(true);
   });
@@ -219,10 +222,10 @@ describe("loadTriagePeriod", () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([]);
     // Same volume but the final page reports no further rows.
-    for (let i = 0; i < 9; i += 1) {
+    for (let i = 0; i < 49; i += 1) {
       mockGraphqlRequest.mockResolvedValueOnce(
         makePage({
-          nodes: Array.from({ length: 500 }, () => ({})),
+          nodes: Array.from({ length: 100 }, () => ({})),
           hasNextPage: true,
           endCursor: `page-${i}-end`,
         }),
@@ -230,7 +233,7 @@ describe("loadTriagePeriod", () => {
     }
     mockGraphqlRequest.mockResolvedValueOnce(
       makePage({
-        nodes: Array.from({ length: 500 }, () => ({})),
+        nodes: Array.from({ length: 100 }, () => ({})),
         hasNextPage: false,
       }),
     );
@@ -253,7 +256,7 @@ describe("loadTriagePeriod", () => {
     mockGraphqlRequest
       .mockResolvedValueOnce(
         makePage({
-          nodes: Array.from({ length: 500 }, () => ({})),
+          nodes: Array.from({ length: 100 }, () => ({})),
           hasNextPage: true,
           endCursor: "next",
         }),

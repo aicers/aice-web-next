@@ -25,6 +25,12 @@ import {
 } from "@/lib/triage/pivot";
 import { cn } from "@/lib/utils";
 
+import {
+  WEAK_SIGNAL_ROW_CLASS,
+  WeakSignalBadge,
+  type WeakSignalBadgeLabels,
+} from "../weak-signal-badge";
+
 export interface TriagePivotPanelLabels {
   title: string;
   empty: string;
@@ -41,13 +47,16 @@ export interface TriagePivotPanelLabels {
   /** Map of dimension id → human-readable label. */
   dimensions: Record<PivotDimensionId, string>;
   family: Record<
-    "network" | "application" | "tls" | "dns" | "time-structure",
+    "network" | "application" | "tls" | "dns" | "time-structure" | "tier2-only",
     string
   >;
   timeColumn: string;
   kindColumn: string;
   scoreColumn: string;
   pivotColumn: string;
+  weakSignal?: WeakSignalBadgeLabels;
+  /** Tooltip surfaced on the deferred Tier 2 sensor row (#453). */
+  sameSensorUnavailable?: string;
 }
 
 interface TriagePivotPanelProps {
@@ -56,6 +65,18 @@ interface TriagePivotPanelProps {
   hasFocus: boolean;
   onPivot: (step: PivotStep) => void;
   labels: TriagePivotPanelLabels;
+  /**
+   * Returns `true` for events that came from a Tier 2 fetch and are
+   * not also present in the Tier 1 corpus. Such rows render at
+   * reduced opacity with a "weak" badge per #453 acceptance.
+   */
+  isWeakSignal?: (event: ScoredTriageEvent) => boolean;
+  /**
+   * When `true`, render a disabled placeholder showing the sensor
+   * dimension as deferred under Tier 2 with an explanatory tooltip
+   * (#453 — sensor name→ID lookup is gated on `triage:read`).
+   */
+  deferredSensorDimension?: boolean;
 }
 
 const SCORE_FORMAT = new Intl.NumberFormat(undefined, {
@@ -69,7 +90,11 @@ export function TriagePivotPanel({
   hasFocus,
   onPivot,
   labels,
+  isWeakSignal,
+  deferredSensorDimension = false,
 }: TriagePivotPanelProps) {
+  const showDeferredSensor =
+    deferredSensorDimension && labels.sameSensorUnavailable !== undefined;
   return (
     <section
       aria-labelledby="triage-pivot-heading"
@@ -92,7 +117,7 @@ export function TriagePivotPanel({
         <p className="px-4 py-6 text-sm text-muted-foreground">
           {labels.noFocusHint}
         </p>
-      ) : sections.length === 0 ? (
+      ) : sections.length === 0 && !showDeferredSensor ? (
         <p className="px-4 py-6 text-sm text-muted-foreground">
           {labels.empty}
         </p>
@@ -104,11 +129,42 @@ export function TriagePivotPanel({
               section={section}
               onPivot={onPivot}
               labels={labels}
+              isWeakSignal={isWeakSignal}
             />
           ))}
+          {showDeferredSensor ? (
+            <DeferredDimensionRow
+              dimensionLabel={labels.dimensions.sameSensor}
+              tooltip={labels.sameSensorUnavailable as string}
+            />
+          ) : null}
         </ul>
       )}
     </section>
+  );
+}
+
+function DeferredDimensionRow({
+  dimensionLabel,
+  tooltip,
+}: {
+  dimensionLabel: string;
+  tooltip: string;
+}) {
+  return (
+    <li
+      className="px-4 py-3 opacity-60"
+      data-testid="triage-pivot-deferred-row"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold text-foreground">
+          {dimensionLabel}
+        </h3>
+        <span title={tooltip} className="text-xs text-muted-foreground italic">
+          {tooltip}
+        </span>
+      </div>
+    </li>
   );
 }
 
@@ -116,10 +172,12 @@ function PivotSection({
   section,
   onPivot,
   labels,
+  isWeakSignal,
 }: {
   section: PivotPanelSection;
   onPivot: (step: PivotStep) => void;
   labels: TriagePivotPanelLabels;
+  isWeakSignal?: (event: ScoredTriageEvent) => boolean;
 }) {
   const timezone = useTimezone();
   const [expanded, setExpanded] = useState(false);
@@ -194,6 +252,7 @@ function PivotSection({
               onPivot={onPivot}
               labels={labels}
               timezone={timezone}
+              weak={isWeakSignal?.(event) ?? false}
             />
           ))}
         </tbody>
@@ -231,20 +290,27 @@ function PivotRow({
   onPivot,
   labels,
   timezone,
+  weak,
 }: {
   event: ScoredTriageEvent;
   dimension: PivotDimensionId;
   onPivot: (step: PivotStep) => void;
   labels: TriagePivotPanelLabels;
   timezone: string;
+  weak: boolean;
 }) {
   const dim = labels.dimensions[dimension];
   return (
-    <tr className="border-b last:border-0">
+    <tr className={cn("border-b last:border-0", weak && WEAK_SIGNAL_ROW_CLASS)}>
       <td className="py-1.5 pr-2 font-mono text-xs">
         {formatDateTime(event.time, timezone)}
       </td>
-      <td className="py-1.5 pr-2">{event.__typename}</td>
+      <td className="py-1.5 pr-2">
+        {event.__typename}
+        {weak && labels.weakSignal ? (
+          <WeakSignalBadge labels={labels.weakSignal} />
+        ) : null}
+      </td>
       <td className="py-1.5 pr-2 text-right font-mono">
         {SCORE_FORMAT.format(event.score)}
       </td>

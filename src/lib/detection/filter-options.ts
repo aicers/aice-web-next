@@ -51,6 +51,21 @@ export const THREAT_CATEGORY_KEY_BY_VALUE: Record<number, ThreatCategory> = {
   14: "RESOURCE_DEVELOPMENT",
 };
 
+/**
+ * Inverse of {@link THREAT_CATEGORY_KEY_BY_VALUE}: enum key → integer
+ * encoding. Used by the Triage Tier 2 categories pivot to convert an
+ * event's `category` (a `ThreatCategory` enum string) back to the
+ * integer `EventListFilterInput.categories` expects.
+ */
+export const THREAT_CATEGORY_VALUE_BY_KEY: Record<ThreatCategory, number> =
+  Object.entries(THREAT_CATEGORY_KEY_BY_VALUE).reduce(
+    (acc, [num, key]) => {
+      acc[key] = Number(num);
+      return acc;
+    },
+    {} as Record<ThreatCategory, number>,
+  );
+
 export const LEARNING_METHOD_VALUES: readonly LearningMethod[] = [
   "UNSUPERVISED",
   "SEMI_SUPERVISED",

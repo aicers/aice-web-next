@@ -103,6 +103,14 @@ export interface TriageEventListPage {
     startCursor: string | null;
     endCursor: string | null;
   };
+  /**
+   * REview's `EventConnection.totalCount`, typed as `StringNumber!`.
+   * Kept as a string and compared via {@link compareStringNumber}
+   * (BigInt-safe) so a 2^53+ count never loses precision. Tier 2's
+   * pre-fetch projection compares this to 20,000 before issuing the
+   * dimension fetch.
+   */
+  totalCount: string;
   edges: { cursor: string }[];
   nodes: TriageEvent[];
 }

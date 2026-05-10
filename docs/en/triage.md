@@ -249,8 +249,12 @@ read as confirmed absence.
 
 ### Breadcrumb (multi-step pivot)
 
-Pivoting from a row appends a breadcrumb step. The breadcrumb is
-local to the current view — it is not persisted in the URL.
+Pivoting from a row appends a breadcrumb step. The breadcrumb (asset
+focus, every dimension/value pivot step, and the current scope toggle)
+is encoded in the URL hash under the `triage.pivot.*` namespace, so a
+shared link or browser reload restores the trail against the
+freshly-loaded corpus. See [URL hash persistence](#url-hash-persistence)
+for the full hash layout and stale-fallback behavior.
 
 - The first crumb is the asset (e.g., `Asset 10.0.0.1`).
 - Each subsequent crumb names the dimension and value pivoted to
@@ -279,6 +283,170 @@ period surfaces a confirmation modal:
 Confirming reloads with the new period and clears the trail.
 Cancelling keeps the existing period.
 
+## Pivot scope toggle (Tier 1 / Tier 2)
+
+A second toggle next to the period picker controls the pivot scope:
+
+- **Triaged only** (default — Tier 1) reads only the events already
+  loaded in the corpus. Clicking a dimension never issues a fresh
+  fetch, so navigation is instant but the panel can only surface
+  matches that pass the baseline rule.
+- **All detection events** (Tier 2) keeps the same panel layout but
+  switches certain dimensions to a server-side fetch on click. This
+  widens the pivot into events outside the baseline slice — useful
+  when the loaded corpus is too narrow to show enough context.
+
+The default is **Triaged only** for every fresh menu entry; the
+toggle is *not* persisted in account settings. A sticky default
+risks an analyst returning to a 5,000-row fetch they did not intend.
+Sharing the URL of a Tier 2 view does carry the toggle through —
+the breadcrumb and toggle state are encoded in the URL hash so a
+shared link is reload-stable.
+
+### Server-filtered Tier 2 dimensions
+
+Toggling to **All detection events** does not issue any fetches by
+itself. Round-trips fire only when the operator clicks one of these
+dimensions:
+
+- `kinds`, `categories`, `levels` (Tier 2 only — surfaced in a
+  separate "Tier 2 only" group that appears once the toggle is on).
+  `learningMethods` and `keywords` are also Tier 2-only filter
+  fields, but their values are not derivable from the loaded corpus,
+  so the panel does not yet surface a click affordance for them.
+  Tracked as follow-ups: a static-options group for `learningMethods`
+  (issue #498) and a free-form chip input for `keywords` (issue #499).
+- `externalIp`, `internalIp`, `country`, `sameSensor` (the same row
+  the operator sees in Tier 1, but the click action issues a fresh
+  fetch instead of looking up the loaded index).
+
+Other dimensions — JA3, JA3S, SNI, host, URI pattern, certificate
+fields, user-agent — are intersected client-side against whatever is
+already loaded (the corpus plus every prior Tier 2 result on the
+breadcrumb trail), so they remain instant in both modes.
+
+### Fetch progress
+
+Once a Tier 2 fetch fires, a non-blocking progress notice appears
+near the panel header naming the dimension and value being fetched.
+The notice clears when the fetch resolves (or surfaces as the error
+notice when the fetch fails).
+
+### Per-dimension cap and pre-fetch confirmation
+
+A single Tier 2 dimension fetch walks at most **5,000 events**, in
+pages of 100 (REview's hard `[0, 100]` cap on `first` / `last`). At
+the cap the panel shows a truncation hint similar to the Tier 1
+banner. The hint stays visible while any server-filtered Tier 2 step
+on the breadcrumb is capped, including after the operator pivots
+from a capped ancestor (e.g. `country=KR`) into a client-intersection
+descendant (e.g. JA3) whose panel is still computed against that
+partial 5,000-row result.
+
+When the projected match count exceeds **20,000 events** (read from
+`EventConnection.totalCount`), a confirmation modal blocks the fetch
+until the operator approves it:
+
+> **Fetch large result set?** This dimension projects to N events,
+> above the 20,000 threshold. The fetch may take a while.
+
+When `totalCount` is unavailable for the filter but the cursor
+walk's first page filled, the projection cannot be compared to the
+20,000 threshold. The modal opens defensively, surfaces the
+first-page lower bound, and is explicit that the total is unknown:
+
+> **Fetch large result set?** Projected size could not be verified
+> — the first page returned at least N events, but the total
+> against the 20,000 threshold is unknown. Confirming continues the
+> fetch up to the per-dimension cap.
+
+Cancelling the modal aborts the fetch; the operator can pick a
+different dimension or narrow the period.
+
+### Cache and eviction
+
+Tier 2 results are cached client-side, keyed on
+`(periodStart, periodEnd, dimensionId, valueKey, customerScope)`.
+Cumulative cache size is capped at **100 MB** of raw event payload
+(`JSON.stringify(events).length` summed across dimensions). When an
+insertion would exceed the cap, the cache evicts the
+least-recently-used dimension result (whole result set, not
+individual events) and shows a non-blocking notice naming the
+evicted dimension. Re-pivoting on the evicted dimension refetches
+from REview.
+
+If a single dimension result is itself larger than the 100 MB cap,
+the cache rejects the candidate up front without disturbing other
+in-budget entries — the operator sees the same non-blocking notice
+naming the rejected dimension, and re-pivoting that dimension
+refetches.
+
+The customer scope is part of the cache key so a Tier 2 result for
+one customer is never reused after the operator switches to a
+different customer in the same browser session.
+
+### Fetch failures
+
+If the BFF cannot complete a Tier 2 fetch (REview timeout, transport
+error, or a forbidden response), the page surfaces a dismissible
+red notice naming the dimension and value, and the failed pivot is
+released so the operator can retry by clicking the row again. The
+loaded corpus and the Tier 1 panel are unaffected.
+
+### Weak-signal rendering
+
+A row that came from a Tier 2 fetch and is *not* present in the
+Tier 1 corpus (compared via the dedupe key
+`(typename, time, origAddr, respAddr, origPort, respPort)`) renders
+with reduced opacity and a small **weak** badge. Rows that are in
+both — including non-baseline `score === 0` corpus members — render
+without the badge so the operator can tell at a glance whether a
+row was already in the loaded slice or freshly pulled.
+
+### Sensor-pivot limitation
+
+`EventListFilterInput.sensors` requires REview's opaque sensor
+**ID**, but Triage events carry only the sensor **name**. The shared
+sensor lookup that resolves names to IDs is currently gated on
+`detection:read`, which `triage:read`-only operators may not hold.
+Until a `triage:read`-compatible lookup ships, Tier 2 sensor pivot
+is unavailable; the panel hides the row with a "requires sensor
+index" tooltip in Tier 2 mode. The Tier 1 sensor pivot is
+unaffected. A shared URL with a `sameSensor` step under
+`mode=tier2` is treated as a stale step on restore (the page falls
+back to the asset root with a non-blocking notice) so the Tier 1
+sensor name is never sent as a literal `sensors: [ID!]` value to
+REview.
+
+### URL hash persistence
+
+The asset focus, every dimension step in the breadcrumb, and the
+Tier 1 / Tier 2 toggle state are encoded in the URL hash under the
+`triage.pivot.*` namespace:
+
+```text
+#triage.pivot.asset=10.0.0.1&triage.pivot.step=ja3:abc123&triage.pivot.mode=tier2
+```
+
+Loading the page with a populated hash restores the breadcrumb to
+that step against the freshly loaded corpus. If a step's value is
+no longer reachable in the new period (e.g. a JA3 that no longer
+matches any event), the page falls back to the asset root with a
+non-blocking notice and clears the stale steps from the breadcrumb.
+
+When the restored hash is in Tier 2 mode and contains a
+client-intersection step (e.g. JA3) below a server-filtered
+ancestor (e.g. `country=KR`), the page first dispatches the queued
+Tier 2 ancestor fetches, then validates the descendant against the
+expanded corpus. The descendant is treated as stale only if the
+value is still missing once those fetches resolve, so a shared URL
+remains reload-stable even when the descendant value lives only in
+the ancestor's fetched result.
+
+The hash is namespaced under `triage.pivot.*` so it can coexist
+with future Triage hash extensions (e.g. strictness controls under
+`triage.strictness.*`) without collision.
+
 ## Limitations in Phase 1.A
 
 - Only the last 30 days are loadable.
@@ -288,8 +456,9 @@ Cancelling keeps the existing period.
   plural address fields are not assigned to an asset row.
 - Up to 5,000 events per period are aggregated; wider periods
   show a truncation banner.
-- The page does not persist period choices, mode selection,
-  breadcrumb state, or any per-asset state.
-- Pivot is read-only over the loaded corpus. Expansion into events
-  outside the loaded slice (Tier 2) is tracked separately and is
-  not part of Tier 1.
+- The mode toggle, period choices, and per-asset state do not
+  persist across sessions. The pivot breadcrumb and Tier 1 / Tier 2
+  scope are encoded in the URL hash so a shared / reloaded URL
+  restores them, but they reset on every fresh menu entry.
+- Tier 2 sensor pivot is hidden until a `triage:read`-compatible
+  sensor lookup ships.

@@ -1,14 +1,16 @@
 import "server-only";
 
-import { resolveEffectiveCustomerIds } from "@/lib/auth/customer-scope";
 import type { AuthSession } from "@/lib/auth/jwt";
-import { hasPermission } from "@/lib/auth/permissions";
 import type { EventListFilterInput } from "@/lib/detection";
 import { graphqlRequest } from "@/lib/graphql/client";
 import { withReviewErrorMapping } from "@/lib/review/error-mapping";
+import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 
 import { aggregateTriageEvents } from "./aggregate";
-import { TriageForbiddenError, TriageUnauthorizedError } from "./errors";
+import {
+  buildDispatchContext,
+  jwtCustomerIdsForTriage,
+} from "./dispatch-context";
 import type { TriagePeriod } from "./period";
 import { TRIAGE_EVENT_LIST_QUERY } from "./queries";
 import {
@@ -18,69 +20,19 @@ import {
   type TriageLoadResult,
 } from "./types";
 
-const TRIAGE_READ = "triage:read";
-const CUSTOMERS_ACCESS_ALL = "customers:access-all";
-const SYSTEM_ADMINISTRATOR = "System Administrator";
-
-/** Page size used per `eventList` round-trip while paginating to the cap. */
-const TRIAGE_PAGE_SIZE = 500;
+/**
+ * Page size used per `eventList` round-trip while paginating to the
+ * cap. Capped to {@link REVIEW_MAX_PAGE_SIZE} (100) — review 0.47.0
+ * rejects `first` / `last` outside `[0, 100]` with a GraphQL-level
+ * error. Tier 2 fetches share the same constant so the loader's
+ * page-size story stays consistent across Tier 1 and Tier 2.
+ */
+const TRIAGE_PAGE_SIZE = REVIEW_MAX_PAGE_SIZE;
 
 interface TriageEventListVariables extends Record<string, unknown> {
   filter: EventListFilterInput;
   first: number;
   after: string | null;
-}
-
-interface TriageDispatchContext {
-  role: string;
-  /** Materialized customer scope; never empty when `hasGlobalScope` is false. */
-  customerIds: number[];
-  /** True when the caller holds `customers:access-all`. */
-  hasGlobalScope: boolean;
-}
-
-/**
- * Verify `triage:read`, resolve the caller's customer scope, and
- * reject empty-scope non-admins before any REview round-trip. The
- * shape mirrors Detection's `buildDispatchContext` so the static
- * dispatch-context guard (`pnpm check:scope`) recognises this file
- * as an allowlisted server-action module.
- */
-async function buildDispatchContext(
-  session: AuthSession,
-): Promise<TriageDispatchContext> {
-  if (!(await hasPermission(session.roles, TRIAGE_READ))) {
-    throw new TriageUnauthorizedError(
-      "Caller lacks the triage:read permission.",
-    );
-  }
-  const hasGlobalScope = await hasPermission(
-    session.roles,
-    CUSTOMERS_ACCESS_ALL,
-  );
-  const customerIds = await resolveEffectiveCustomerIds(
-    session.accountId,
-    session.roles,
-  );
-  if (!hasGlobalScope && customerIds.length === 0) {
-    throw new TriageForbiddenError(
-      "Caller has no assigned customers; Triage requires a customer scope.",
-    );
-  }
-  return { role: session.roles[0], customerIds, hasGlobalScope };
-}
-
-/**
- * Derive the Context JWT's `customer_ids` claim. Mirrors Detection's
- * `jwtCustomerIdsForDetection`: review's `validate_context_jwt`
- * accepts `customer_ids = None` only for `Role::SystemAdministrator`,
- * so the JWT omits the field for the bootstrap admin and ships the
- * materialized list for every other caller.
- */
-function jwtCustomerIdsForTriage(
-  ctx: Pick<TriageDispatchContext, "role" | "customerIds">,
-): number[] | undefined {
-  return ctx.role === SYSTEM_ADMINISTRATOR ? undefined : ctx.customerIds;
 }
 
 /**

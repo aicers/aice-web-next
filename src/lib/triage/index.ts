@@ -23,6 +23,11 @@ export {
   TRIAGE_BASELINE_WHITELIST,
 } from "./scoring";
 export {
+  compareStringNumber,
+  parseStringNumber,
+  stringNumberGreaterThan,
+} from "./string-number";
+export {
   type ScoredTriageEvent,
   TRIAGE_HARD_EVENT_CAP,
   type TriageAsset,
