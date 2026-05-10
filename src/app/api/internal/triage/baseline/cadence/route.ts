@@ -5,6 +5,7 @@ import {
   runTriageBaselineCadence,
   verifyTriageBaselineCadenceToken,
 } from "@/lib/triage/baseline/cadence";
+import { createCadencePager } from "@/lib/triage/baseline/pager";
 import { CustomerNotFoundError } from "@/lib/triage/policy/customer-db";
 
 /**
@@ -33,12 +34,20 @@ import { CustomerNotFoundError } from "@/lib/triage/policy/customer-db";
  *   - 500 with `{ status: 'failed', error }` when a cadence page rolled
  *     back. The route still returns a structured body so the scheduler
  *     can log the error string.
- *   - 503 with `{ status: 'pending' }` when the cadence pager is not
- *     yet wired (review-web#842 + aice-web-next#460 still outstanding).
- *     The runner did not touch the corpus-state row; the scheduler can
- *     keep ticking and the response flips to 200 / `ok` automatically
- *     once the pager lands.
  */
+
+// Lazily-instantiated production pager. Built once per process so the
+// graphql-request client and mTLS dispatcher are reused across cadence
+// invocations.
+let CACHED_PAGER: ReturnType<typeof createCadencePager> | null = null;
+
+function getProductionPager() {
+  if (CACHED_PAGER === null) {
+    CACHED_PAGER = createCadencePager();
+  }
+  return CACHED_PAGER;
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   const auth = request.headers.get("authorization");
   const token = auth?.startsWith("Bearer ")
@@ -63,12 +72,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const result = await runTriageBaselineCadence(customerId);
+    const result = await runTriageBaselineCadence(customerId, {
+      pager: getProductionPager(),
+    });
     if (result.status === "failed") {
       return NextResponse.json(result, { status: 500 });
-    }
-    if (result.status === "pending") {
-      return NextResponse.json(result, { status: 503 });
     }
     return NextResponse.json(result);
   } catch (err) {

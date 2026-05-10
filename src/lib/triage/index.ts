@@ -14,6 +14,11 @@ export {
 } from "./period";
 export {
   baselineScore,
+  hasUnlabeledBonus,
+  isClusterNone,
+  PHASE_1A_CLUSTER_NONE_BONUS,
+  PHASE_1A_UNLABELED_BONUS_TAG,
+  PHASE_1A_WHITELIST_SCORE,
   passesBaseline,
   TRIAGE_BASELINE_WHITELIST,
 } from "./scoring";

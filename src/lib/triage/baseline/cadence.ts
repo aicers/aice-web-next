@@ -43,35 +43,20 @@ import "server-only";
  * collisions on re-ingest of the same `event_key` are handled with
  * `ON CONFLICT DO NOTHING`.
  *
- * ## Upstream dependency and the `pending` status
+ * ## Pager wiring
  *
- * This module ships the scheduler entrypoint, the per-page advisory-
- * lock discipline, the corpus-state machine, and the schema migration.
  * The actual GraphQL pager — steps (a)–(e) — is injected via the
- * {@link CadencePager} interface and depends on two pieces that are not
- * yet in this repo: review-web#842 (`eventListWithTriage` resolver +
- * `EventStandardFilterInput` type + `event_key` field selection) needs
- * to be vendored into `schemas/review.graphql`, and aice-web-next#460
- * (the shared `src/lib/triage/exclusion/` helper) must land so cadence-
- * time and retroactive-DELETE paths share one normalization +
- * `exclusions_fp` source of truth.
- *
- * Until those land, `runTriageBaselineCadence` defaults to
- * {@link STUB_PAGER}, which throws {@link CadencePagerNotImplementedError}
- * on the first page. The runner catches that error specifically, rolls
- * back the page transaction (so the corpus-state row stays untouched),
- * and returns `status: 'pending'`. The scheduler can wire the route up
- * today — it will see `pending` responses and the corpus stays empty —
- * without any risk that a no-op run advertises success or advances
- * `last_ingested_at`. When the real pager lands, the same module just
- * swaps `STUB_PAGER` for the production pager and the surrounding
- * lock / transaction / status-machine plumbing is unchanged.
+ * {@link CadencePager} interface so the runner stays focused on the
+ * lock / transaction / status-machine plumbing. Production callers
+ * (the route handler) pass the result of `createCadencePager()` from
+ * `./pager.ts`; tests inject a fake.
  */
 
-import { createHash, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 
 import type pg from "pg";
 
+import { EMPTY_EXCLUSIONS_FINGERPRINT } from "@/lib/triage/exclusion";
 import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
 /**
@@ -92,18 +77,18 @@ export const PHASE_1A_BASELINE_VERSION = "phase1a-simple";
 export const PHASE_1A_SELECTOR_TAG = "phase1a-simple";
 
 /**
- * Constant placeholder score for Phase 1.A rows. Reflects "passed the
- * Phase 1.A simple rule"; replaced per-row by 1B-8's four-selector
- * scoring once that lands.
+ * Phase 1.A additive score components. Replaces the original flat
+ * `PHASE_1A_BASELINE_SCORE` placeholder shipped in PR #478. The scoring
+ * helper in `src/lib/triage/scoring.ts` exports the same numeric
+ * literals so the menu-side and cadence-side scoring agree on the
+ * value of each component.
  */
-export const PHASE_1A_BASELINE_SCORE = 1;
+export {
+  PHASE_1A_CLUSTER_NONE_BONUS,
+  PHASE_1A_WHITELIST_SCORE,
+} from "@/lib/triage/scoring";
 
-export type CadenceRunStatus =
-  | "ok"
-  | "failed"
-  | "running"
-  | "skipped"
-  | "pending";
+export type CadenceRunStatus = "ok" | "failed" | "running" | "skipped";
 
 export interface CadenceRunResult {
   /** Customer the runner targeted. */
@@ -115,11 +100,6 @@ export interface CadenceRunResult {
    *     the very first page; this tick is a no-op.
    *   - `failed`: a page rolled back; `error` carries the message that
    *     was persisted to `baseline_corpus_state.last_error`.
-   *   - `pending`: the cadence pager is not yet wired (see module
-   *     docstring). The runner started a page transaction, observed the
-   *     stub, rolled back, and returned without touching the corpus-
-   *     state row. The scheduler can keep ticking; runs flip to `ok`
-   *     automatically once the pager lands.
    *   - `running`: never returned to the caller — the on-disk marker
    *     used while a run holds the lock so a crash leaves a forensic
    *     breadcrumb.
@@ -174,31 +154,6 @@ export interface CadencePager {
   ): Promise<CadencePageResult>;
 }
 
-/**
- * Sentinel raised by {@link STUB_PAGER}. The runner catches this error
- * specifically and returns `status: 'pending'` so the scheduler does
- * not see a fake-success response while the real pager is unavailable.
- */
-export class CadencePagerNotImplementedError extends Error {
-  constructor() {
-    super(
-      "Triage cadence pager is not yet implemented (pending review-web#842 schema vendor and aicers/aice-web-next#460 shared exclusion helper).",
-    );
-    this.name = "CadencePagerNotImplementedError";
-  }
-}
-
-/**
- * Default pager. Throws {@link CadencePagerNotImplementedError} on
- * every call. Replace at the {@link runTriageBaselineCadence} call site
- * once the real pager lands.
- */
-export const STUB_PAGER: CadencePager = {
-  async ingestPage() {
-    throw new CadencePagerNotImplementedError();
-  },
-};
-
 const LOCK_NAMESPACE = "triage_baseline_cadence:";
 
 /**
@@ -215,20 +170,13 @@ function buildLockKeyParam(customerId: number): string {
 }
 
 /**
- * Compute the canonical exclusions fingerprint placeholder. Phase 1.A
- * has no exclusions wired up (the helper from #460 / shared
- * `src/lib/triage/exclusion/` module has not landed yet); until then,
- * every Phase 1.A row carries a stable empty-set fingerprint so the
- * column is NOT NULL but does not falsely identify rows as having
- * passed any specific exclusion configuration. When #460 lands the
- * cadence runner swaps this constant for the real
- * `computeExclusionsFingerprint(active)` call.
+ * Empty-set exclusion fingerprint, computed once via the shared helper
+ * in `src/lib/triage/exclusion`. Pre-#457 the cadence runs against an
+ * empty active exclusion set; every row therefore carries this real
+ * (NOT NULL) fingerprint until the storage adapter lands and starts
+ * returning real rules.
  */
-const EMPTY_EXCLUSIONS_FP = (() => {
-  return createHash("sha256")
-    .update("phase1a:no-exclusions", "utf8")
-    .digest("hex");
-})();
+const EMPTY_EXCLUSIONS_FP = EMPTY_EXCLUSIONS_FINGERPRINT;
 
 /**
  * Read the corpus-state row, INSERTing the singleton if it does not
@@ -317,9 +265,9 @@ const MAX_PAGES_PER_RUN = 200;
  */
 export async function runTriageBaselineCadence(
   customerId: number,
-  options: { pager?: CadencePager } = {},
+  options: { pager: CadencePager },
 ): Promise<CadenceRunResult> {
-  const pager = options.pager ?? STUB_PAGER;
+  const { pager } = options;
 
   // Lets `CustomerNotFoundError` propagate so the route handler can
   // surface it as a 404. In-process callers (future batched drivers,
@@ -391,19 +339,6 @@ export async function runTriageBaselineCadence(
           await client.query("ROLLBACK").catch(() => {
             // Already rolled back or connection broken; nothing to do.
           });
-        }
-        if (err instanceof CadencePagerNotImplementedError) {
-          // Stub pager: do not advertise success and do not write
-          // failure. The corpus is intentionally idle until the real
-          // pager lands; the scheduler can keep ticking and observe
-          // `pending` until then.
-          return {
-            customerId,
-            status: "pending",
-            observedInserted: totalObserved,
-            baselineInserted: totalBaseline,
-            lastEventCursor: lastCommittedCursor,
-          };
         }
         const message = err instanceof Error ? err.message : "Cadence failed";
         await markFailed(pool, message);

@@ -15,6 +15,13 @@ vi.mock("@/lib/triage/baseline/cadence", () => ({
   verifyTriageBaselineCadenceToken: mockVerifyToken,
 }));
 
+vi.mock("@/lib/triage/baseline/pager", () => ({
+  // The route handler instantiates the production pager once per
+  // process; the mock returns a sentinel so route tests can assert
+  // the pager was forwarded into the runner.
+  createCadencePager: () => ({ ingestPage: vi.fn() }),
+}));
+
 vi.mock("@/lib/triage/policy/customer-db", () => ({
   CustomerNotFoundError: MockCustomerNotFoundError,
 }));
@@ -122,26 +129,10 @@ describe("POST /api/internal/triage/baseline/cadence", () => {
       baselineInserted: 0,
       lastEventCursor: null,
     });
-    expect(mockRunCadence).toHaveBeenCalledWith(7);
-  });
-
-  it("returns 503 with status=pending when the cadence pager is not yet wired", async () => {
-    mockVerifyToken.mockReturnValue(true);
-    mockRunCadence.mockResolvedValue({
-      customerId: 7,
-      status: "pending",
-      observedInserted: 0,
-      baselineInserted: 0,
-      lastEventCursor: null,
-    });
-    const { POST } = await import(
-      "@/app/api/internal/triage/baseline/cadence/route"
+    expect(mockRunCadence).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ pager: expect.any(Object) }),
     );
-    const res = await POST(makeRequest("Bearer right", { customer_id: 7 }));
-    expect(res.status).toBe(503);
-    const body = await res.json();
-    expect(body.status).toBe("pending");
-    expect(body.customerId).toBe(7);
   });
 
   it("returns 200 with status=skipped when the advisory lock was unavailable", async () => {

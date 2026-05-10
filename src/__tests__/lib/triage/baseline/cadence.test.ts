@@ -305,9 +305,9 @@ describe("runTriageBaselineCadence — advisory lock + status machine", () => {
     const { runTriageBaselineCadence } = await import(
       "@/lib/triage/baseline/cadence"
     );
-    await expect(runTriageBaselineCadence(99)).rejects.toBeInstanceOf(
-      MockCustomerNotFoundError,
-    );
+    await expect(
+      runTriageBaselineCadence(99, { pager: makePager() }),
+    ).rejects.toBeInstanceOf(MockCustomerNotFoundError);
   });
 
   it("re-throws unexpected errors from getCustomerPool", async () => {
@@ -316,43 +316,9 @@ describe("runTriageBaselineCadence — advisory lock + status machine", () => {
     const { runTriageBaselineCadence } = await import(
       "@/lib/triage/baseline/cadence"
     );
-    await expect(runTriageBaselineCadence(99)).rejects.toThrow("DNS down");
-  });
-});
-
-describe("runTriageBaselineCadence — pending pager", () => {
-  it("returns status=pending and does not touch the corpus-state row when no pager is injected", async () => {
-    const pool = createMockPool({ lockSequence: [true] });
-    mockGetCustomerPool.mockResolvedValue(pool);
-
-    const { runTriageBaselineCadence } = await import(
-      "@/lib/triage/baseline/cadence"
-    );
-    const result = await runTriageBaselineCadence(42);
-
-    expect(result.status).toBe("pending");
-    expect(result.observedInserted).toBe(0);
-    expect(result.baselineInserted).toBe(0);
-    expect(result.lastEventCursor).toBeNull();
-
-    const sqls = pool.client.queries.map((q) => q.sql);
-    // Page transaction was attempted but rolled back: no `ok` UPDATE,
-    // no COMMIT, and pool.query was never called for a failure record.
-    expect(sqls).toContain("BEGIN");
-    expect(sqls).toContain("ROLLBACK");
-    expect(sqls).not.toContain("COMMIT");
-    expect(sqls.some((s) => s.includes("last_run_status = 'ok'"))).toBe(false);
-    expect(pool.poolQueries).toEqual([]);
-    expect(pool.client.released).toBe(true);
-  });
-
-  it("exposes CadencePagerNotImplementedError as the stub-pager sentinel", async () => {
-    const { CadencePagerNotImplementedError, STUB_PAGER } = await import(
-      "@/lib/triage/baseline/cadence"
-    );
     await expect(
-      STUB_PAGER.ingestPage({} as never, 1, null),
-    ).rejects.toBeInstanceOf(CadencePagerNotImplementedError);
+      runTriageBaselineCadence(99, { pager: makePager() }),
+    ).rejects.toThrow("DNS down");
   });
 });
 
