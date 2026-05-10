@@ -50,10 +50,12 @@ At menu read (per active window, no per-event recomputation):
    │                                                       (volume + avg selector_tags length) + favored bonus.
    │                                                       Quota is the cap, not the actual count.
    │
-   └─ (6) merge per-cohort cutoff-and-quota             ── For each (kind, baseline_version) cohort:
+   └─ (6) merge per-kind cutoff-and-quota               ── For each kind, union events from all
+                                                            (kind, baseline_version) cohorts,
                                                             filter to baseline_score >= cutoff(slider),
                                                             ORDER BY baseline_score DESC, take up to
-                                                            quota[kind]. Sum across cohorts =
+                                                            quota[kind] (kind-level cap, applied once
+                                                            across versions; §4). Sum across kinds =
                                                             final_count, ≤ default_N (§6).
 ```
 
@@ -209,26 +211,31 @@ quota[kind] = round(slot_share(kind) · default_N)
 
 `default_N` is the cognitive-limit cap from §6; `quota[kind]` is the maximum number of events from this kind that the menu will ever show. Fractional slots are resolved by the largest-remainder method. **Tie-breaker** when two kinds have exactly equal remainders: the extra slot goes to the kind whose name sorts first lexicographically. The tie-breaker is included so the algorithm is fully deterministic — `FAVORED_KINDS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
 
-The actual per-kind row count in the menu is then bounded *both* by `quota[kind]` and by the slider cutoff:
+The actual per-kind row count in the menu is bounded *both* by `quota[kind]` and by the slider cutoff. **`quota[kind]` applies once per kind, not per `(kind, baseline_version)` cohort** — when a kind's events span multiple `baseline_version`s in the active window, the cohorts are merged by `baseline_score DESC` (which is comparable across versions because every cohort contributes uniformly to `[0, 1]` per §3) before the quota is taken:
 
 ```
-visible[kind] = min(
-    quota[kind],
-    | { events in kind cohort with baseline_score >= cutoff(slider) } |
-)
+events_in_kind(kind) =
+    UNION over baseline_version v of
+        { e in (kind, v) cohort with baseline_score(e) >= cutoff(slider) }
+
+visible[kind] = first quota[kind] rows of events_in_kind(kind)
+                ordered by baseline_score DESC, then §3 tie-breaker
+                (or all of events_in_kind(kind) if it has fewer rows)
 
 final_count = sum(visible[kind] for all kinds)
             = bounded above by sum(quota[kind]) = default_N (cognitive cap)
             = bounded below by MIN_NONZERO_FLOOR when post_exclusion > 0 (§6 floor)
 ```
 
+Per-version application of the quota would let a kind exceed its `default_N` share whenever multiple versions co-exist (kind quota 10 with two versions = up to 20 rows), breaking the `final_count ≤ default_N` cap that motivates `default_N` in the first place.
+
 **Composition order at menu read** (the order pipeline §3 step (6) implements):
 
 1. `quota[kind]` is computed first (this section, against the active window).
-2. For each `(kind, baseline_version)` cohort, the rows passing the cutoff are ordered by `baseline_score DESC` (with the §3 tie-breaker tuple).
-3. The first `quota[kind]` such rows are taken; if fewer than `quota[kind]` rows pass the cutoff in a cohort, the cohort contributes only what passes (the menu is never padded with sub-cutoff events to fill a quota).
+2. For each kind, the rows passing the cutoff are unioned across all `baseline_version`s present in the active window and ordered by `baseline_score DESC` (with the §3 tie-breaker tuple). `baseline_score` is computed per-`(kind, baseline_version)` cohort by the §3 CUME_DIST formula, but the *quota application* operates on the kind-level union of those cohorts.
+3. The first `quota[kind]` such rows are taken; if fewer than `quota[kind]` rows pass the cutoff for the kind, the kind contributes only what passes (the menu is never padded with sub-cutoff events to fill a quota).
 
-The slider's "All" stop (no cutoff) thus produces the maximum menu — `default_N` rows distributed by `slot_share`. Tighter slider stops shrink the visible count uniformly because each cohort's qualifying-event count drops; `quota[kind]` becomes the binding constraint only at the loose end of the slider, while the cutoff becomes binding at the strict end.
+The slider's "All" stop (no cutoff) produces **up to** `default_N` rows distributed by `slot_share`. The actual count can fall short of `default_N` when a kind's available events do not fill its quota — slack from underfilled quotas is **not** redistributed to other kinds (no padding by lower-priority kinds). Tighter slider stops shrink the visible count further because each kind's qualifying-event count drops; `quota[kind]` becomes the binding constraint only at the loose end of the slider, while the cutoff becomes binding at the strict end.
 
 The `unlabeled-HttpThreat` entry in `FAVORED_KINDS` is a virtual kind, and slot-allocation aggregates GROUP BY `(kind, is_unlabeled)` where `is_unlabeled = (kind = 'HttpThreat' AND 'unlabeled-cluster' = ANY(selector_tags))`. The pair `('HttpThreat', true)` is treated as the virtual kind for `FAVORED_KINDS` membership and slot share. Because the unlabeled flag is detected via `selector_tags` — written at cadence INSERT by §3's `UNLABELED_BONUS` — slot allocation does not need a separate `clusterId` column on any read-time table.
 
@@ -271,7 +278,7 @@ The log10 shape buys two properties at once:
 - `LOWER_FLOOR` ensures even very quiet days surface something to look at.
 - The slow growth of log10 naturally bounds the menu near an analyst-readable size without a hard cap constant; the customer's activity level is reflected, not equated to raw volume.
 
-`default_N` is the **cognitive-limit cap**: the maximum number of rows the menu shows at the loosest slider position ("All"). §4 uses it to compute per-cohort quotas. Tighter slider positions shrink the actual `final_count` below `default_N` because the cutoff filters events out faster than the quota cap binds.
+`default_N` is the **cognitive-limit cap**: the upper bound on the number of rows the menu shows. §4 uses it to compute per-kind quotas (`quota[kind] = round(slot_share(kind) · default_N)`); the sum of quotas is exactly `default_N`. The loosest slider stop ("All") produces *up to* `default_N` rows — the actual count can fall short when a kind's available events do not fill its quota, since slack is not redistributed (no padding from lower-priority kinds; no padding by sub-cutoff events). Tighter slider positions shrink `final_count` further because the cutoff filters events out faster than the quota cap binds.
 
 The formal definition of `final_count` is given in §4 as the sum of `visible[kind]` after composing quota and cutoff. Restating it here for the §6 view:
 
@@ -283,7 +290,8 @@ final_count = max(
     MIN_NONZERO_FLOOR,
     sum_over_kinds( min(
         quota[kind],
-        |events in (kind, baseline_version) cohort with baseline_score >= cutoff|
+        |events in kind (union of all (kind, baseline_version) cohorts in the active window)
+         with baseline_score >= cutoff|
     ))
   )
               if post_exclusion_event_count > 0
