@@ -2,14 +2,12 @@
 #
 # This file is manually maintained. See the "Backend schema versions"
 # section of README.md for the update procedure. Its contents must match
-# the review-web revision recorded in schemas/review.version.
+# the REview release recorded in schemas/review.version.
 #
-# Captured from review-web @ 2231acb52fd101d1efe6937ee7a94987245dc8f4
-# (post-0.31.0; first revision containing aicers/review-web#842 — adds
-# eventListWithTriage and the EventStandardFilterInput / EventTriageInput
-# / EventTriagePolicyInput / EventTriageExclusionInput surface) with the
-# `auth-mtls` feature enabled, which is how aice-web-next talks to REview.
-# See README.md for the exact reproduction steps.
+# Captured from review 0.49.0 (release), which embeds review-web 0.32.0
+# — the source of all GraphQL changes — with the `auth-mtls` feature
+# enabled, which is how aice-web-next talks to REview. See README.md for
+# the exact reproduction steps.
 
 type Agent {
 	node: Int!
@@ -40,6 +38,22 @@ enum AgentKind {
 	SENSOR
 	SEMI_SUPERVISED
 	TIME_SERIES_GENERATOR
+}
+
+type AgentNotifyAttempt {
+	"""
+	The bare agent key (matching `Agent.key`).
+	"""
+	agentKey: String!
+	"""
+	`true` if the manager accepted the notify request. Does not imply that the agent has
+	already applied the new config.
+	"""
+	succeeded: Boolean!
+	"""
+	Populated only when `succeeded` is `false`.
+	"""
+	error: String
 }
 
 type AgentSnapshot {
@@ -108,6 +122,18 @@ input AllowNetworkInput {
 	customerId: ID
 	networks: HostNetworkGroupInput
 	description: String
+}
+
+type ApplyAgentConfigOutput {
+	"""
+	One entry per agent for whom a notify was attempted (current DB `config` is
+	`Some(non-empty)`).
+	"""
+	attempts: [AgentNotifyAttempt!]!
+	"""
+	One entry per agent in the target set that was not notified, with the reason.
+	"""
+	skipped: [SkippedAgent!]!
 }
 
 enum AttrCmpKind {
@@ -230,6 +256,10 @@ input BlockNetworkInput {
 }
 
 type BlocklistBootp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -379,6 +409,10 @@ type BlocklistBootp implements Event {
 
 type BlocklistConn implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -498,6 +532,10 @@ type BlocklistConn implements Event {
 
 type BlocklistDceRpc implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -608,6 +646,10 @@ type BlocklistDceRpc implements Event {
 }
 
 type BlocklistDhcp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -788,6 +830,10 @@ type BlocklistDhcp implements Event {
 
 type BlocklistDns implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -939,6 +985,10 @@ type BlocklistDns implements Event {
 
 type BlocklistFtp implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -1053,6 +1103,10 @@ type BlocklistFtp implements Event {
 }
 
 type BlocklistHttp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -1241,6 +1295,10 @@ type BlocklistHttp implements Event {
 
 type BlocklistKerberos implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -1380,6 +1438,10 @@ type BlocklistKerberos implements Event {
 
 type BlocklistLdap implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -1510,6 +1572,10 @@ type BlocklistLdap implements Event {
 }
 
 type BlocklistMalformedDns implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -1662,6 +1728,10 @@ type BlocklistMalformedDns implements Event {
 
 type BlocklistMqtt implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -1789,6 +1859,10 @@ type BlocklistMqtt implements Event {
 
 type BlocklistNfs implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -1899,6 +1973,10 @@ type BlocklistNfs implements Event {
 }
 
 type BlocklistNtlm implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -2023,6 +2101,10 @@ type BlocklistNtlm implements Event {
 
 type BlocklistRadius implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -2107,9 +2189,9 @@ type BlocklistRadius implements Event {
 	"""
 	respL2Bytes: StringNumber!
 	"""
-	ID
+	RADIUS packet identifier.
 	"""
-	id: Int!
+	packetId: Int!
 	"""
 	Code
 	"""
@@ -2173,6 +2255,10 @@ type BlocklistRadius implements Event {
 }
 
 type BlocklistRdp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -2280,6 +2366,10 @@ type BlocklistRdp implements Event {
 }
 
 type BlocklistSmb implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -2428,6 +2518,10 @@ type BlocklistSmb implements Event {
 
 type BlocklistSmtp implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -2558,6 +2652,10 @@ type BlocklistSmtp implements Event {
 }
 
 type BlocklistSsh implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -2713,6 +2811,10 @@ type BlocklistSsh implements Event {
 }
 
 type BlocklistTls implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -3058,6 +3160,10 @@ input ConfidenceInput {
 }
 
 type CryptocurrencyMiningPool implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -3446,6 +3552,10 @@ type DhcpOption {
 
 type DnsCovertChannel implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -3600,6 +3710,10 @@ type DnsCovertChannel implements Event {
 }
 
 type DomainGenerationAlgorithm implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -3813,6 +3927,7 @@ input EndpointInput {
 Common interface for all event types.
 """
 interface Event {
+	id: ID!
 	time: DateTime!
 	sensor: String!
 	confidence: Float!
@@ -3949,6 +4064,10 @@ union ExclusionReason = IpAddressTriageExclusion | DomainTriageExclusion | Hostn
 
 type ExternalDdos implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -4059,6 +4178,10 @@ enum ExternalServiceStatus {
 
 type ExtraThreat implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -4126,6 +4249,10 @@ enum FlowKind {
 }
 
 type FtpBruteForce implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -4259,6 +4386,10 @@ type FtpCommand {
 
 type FtpPlainText implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -4389,6 +4520,10 @@ type HostnameTriageExclusion {
 }
 
 type HttpThreat implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -4724,6 +4859,10 @@ enum LabelDbRuleKind {
 
 type LdapBruteForce implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -4808,6 +4947,10 @@ type LdapBruteForce implements Event {
 }
 
 type LdapPlainText implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -4954,6 +5097,10 @@ type LineSegment {
 }
 
 type LockyRansomware implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -5168,6 +5315,10 @@ type ModelIndicator {
 }
 
 type MultiHostPortScan implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -5416,6 +5567,23 @@ type Mutation {
 	notifying agents or broadcasting customer ID changes.
 	"""
 	applyNode(id: ID!, node: NodeInput!): ID!
+	"""
+	Applies the draft configuration to the node with the given ID at the database layer.
+	
+	Performs the database promotions (name, profile, agent configs, external services) in a
+	single atomic update, and broadcasts customer-specific networks when the node's
+	`customer_id` changes. Does not send agent-config notifications — use `applyAgentConfig`
+	for that.
+	"""
+	applyNodeDraft(id: ID!, node: NodeInput!): Node!
+	"""
+	Notifies the agents of a node that their config has changed.
+	
+	Reads the current DB state of the node and, for each agent in the target set, attempts a
+	notify when the agent's current DB `config` is `Some(non-empty)`. Skips with reason
+	otherwise. The mutation performs no DB writes.
+	"""
+	applyAgentConfig(nodeId: ID!, agentKeys: [String!]): ApplyAgentConfigOutput!
 	"""
 	Inserts a new node, returning the ID of the new node.
 	"""
@@ -5690,6 +5858,10 @@ type NetworkEdge {
 }
 
 type NetworkThreat implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -5997,6 +6169,10 @@ type NodeStatusEdge {
 
 type NonBrowser implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -6288,6 +6464,10 @@ enum Period {
 
 type PortScan implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -6474,6 +6654,21 @@ type Query {
 	Accessible to `SystemAdministrator` only.
 	"""
 	backupConfig: BackupConfig
+	"""
+	Looks up a single event by its opaque `id`.
+	
+	`id` is the value previously returned from `Event.id`. Decoding the
+	`id` is internal; consumers must not parse it.
+	
+	Returns `null` when no event with the given `id` exists, or when the
+	caller's customer/sensor scope does not include the event. The same
+	role guard and tenant scoping used by `eventList` apply here.
+	
+	IDs are stable for as long as the event is retained under the current
+	storage key format. Retention drop or a future key-format migration
+	may invalidate them.
+	"""
+	event(id: ID!): Event
 	"""
 	A list of events with timestamp on or after `start` and before `end`.
 	"""
@@ -6809,6 +7004,10 @@ enum RawEventKind {
 
 type RdpBruteForce implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -6887,6 +7086,10 @@ type Regression {
 }
 
 type RepeatedHttpSessions implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -7191,6 +7394,25 @@ type SensorEdge {
 	cursor: String!
 }
 
+enum SkipReason {
+	"""
+	The agent's current DB `config` is `None`.
+	"""
+	NOT_CONFIGURED
+	"""
+	The agent's current DB `config` is `Some("")` (direct-setup magic-string marker).
+	"""
+	DIRECT_SETUP
+}
+
+type SkippedAgent {
+	"""
+	The bare agent key (matching `Agent.key`).
+	"""
+	agentKey: String!
+	reason: SkipReason!
+}
+
 type Status {
 	id: ID!
 	description: String!
@@ -7281,6 +7503,10 @@ type Subscription {
 }
 
 type SuspiciousTlsTraffic implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -7586,6 +7812,10 @@ type TopTrendsByColumn {
 
 type TorConnection implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -7772,6 +8002,10 @@ type TorConnection implements Event {
 }
 
 type TorConnectionConn implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -8186,6 +8420,10 @@ input UnstructuredClusteringTemplateInput {
 
 type UnusualDestinationPattern implements Event {
 	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
 	Event Generation Time
 	"""
 	time: DateTime!
@@ -8274,6 +8512,10 @@ enum ValueKind {
 }
 
 type WindowsThreat implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
 	"""
 	Event Generation Time
 	"""
@@ -8373,4 +8615,3 @@ schema {
 	mutation: Mutation
 	subscription: Subscription
 }
-

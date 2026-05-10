@@ -95,6 +95,7 @@ export interface IpRangeInput {
 
 export interface EventBase {
   __typename: string;
+  id: IDScalar;
   time: DateTimeScalar;
   sensor: string;
   confidence: number;
