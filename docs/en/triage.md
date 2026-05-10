@@ -337,7 +337,11 @@ notice when the fetch fails).
 A single Tier 2 dimension fetch walks at most **5,000 events**, in
 pages of 100 (REview's hard `[0, 100]` cap on `first` / `last`). At
 the cap the panel shows a truncation hint similar to the Tier 1
-banner.
+banner. The hint stays visible while any server-filtered Tier 2 step
+on the breadcrumb is capped, including after the operator pivots
+from a capped ancestor (e.g. `country=KR`) into a client-intersection
+descendant (e.g. JA3) whose panel is still computed against that
+partial 5,000-row result.
 
 When the projected match count exceeds **20,000 events** (read from
 `EventConnection.totalCount`), a confirmation modal blocks the fetch
@@ -409,6 +413,15 @@ that step against the freshly loaded corpus. If a step's value is
 no longer reachable in the new period (e.g. a JA3 that no longer
 matches any event), the page falls back to the asset root with a
 non-blocking notice and clears the stale steps from the breadcrumb.
+
+When the restored hash is in Tier 2 mode and contains a
+client-intersection step (e.g. JA3) below a server-filtered
+ancestor (e.g. `country=KR`), the page first dispatches the queued
+Tier 2 ancestor fetches, then validates the descendant against the
+expanded corpus. The descendant is treated as stale only if the
+value is still missing once those fetches resolve, so a shared URL
+remains reload-stable even when the descendant value lives only in
+the ancestor's fetched result.
 
 The hash is namespaced under `triage.pivot.*` so it can coexist
 with future Triage hash extensions (e.g. strictness controls under

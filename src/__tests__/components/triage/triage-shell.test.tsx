@@ -65,7 +65,11 @@ beforeEach(() => {
   // (see baseline-content.tsx). Clear between tests so a previous
   // case's pivot trail doesn't leak into the next render.
   if (typeof window !== "undefined") window.location.hash = "";
-  fetchTier2Mock.mockClear();
+  // `mockReset` (not `mockClear`) is required because individual tests
+  // queue `mockResolvedValueOnce` responses, and a test that fails
+  // before consuming its queued response would otherwise leak it into
+  // the next test's first fetch.
+  fetchTier2Mock.mockReset();
   fetchTier2Mock.mockResolvedValue({
     events: [],
     totalCount: null,
@@ -562,5 +566,237 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     renderShellWithCountry();
     selectTier2Scope();
     expect(window.location.hash).toContain("triage.pivot.mode=tier2");
+  });
+
+  it("keeps the truncated hint visible after pivoting from a capped server-filtered ancestor into a client-intersection step", async () => {
+    // Tier 1 corpus shape:
+    //   - Two `country=KR` events on asset 10.0.0.1 — these are the
+    //     focus events at the asset step.
+    //   - One `country=KR` event on a different asset (10.0.0.9) so
+    //     the country pivot row extends beyond focus and renders.
+    //   - One `country=JP` event with `ja3=newja3` (asset 10.0.0.7) so
+    //     after the country pivot, the JA3=newja3 row has at least one
+    //     matched event outside the country=KR focus and stays visible.
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        respCountry: "KR",
+        ja3: "existing",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.2",
+        respCountry: "KR",
+        ja3: "existing",
+        time: "2026-05-08T12:30:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.9",
+        respAddr: "203.0.113.3",
+        respCountry: "KR",
+        time: "2026-05-08T13:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.7",
+        respAddr: "203.0.113.99",
+        respCountry: "JP",
+        ja3: "newja3",
+        time: "2026-05-08T13:15:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    // Single-page Tier 2 fetch that comes back already truncated —
+    // simulates the per-dimension cap hit on `country=KR`. The fetched
+    // events all carry JA3 `newja3` so a JA3 pivot row surfaces in the
+    // panel after the country click.
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [
+        {
+          __typename: "BlocklistTls",
+          time: "2026-05-08T13:30:00.000Z",
+          sensor: "sensor-a",
+          category: "EXFILTRATION",
+          level: "MEDIUM",
+          origAddr: "10.0.0.5",
+          respAddr: "203.0.113.4",
+          respCountry: "KR",
+          ja3: "newja3",
+        },
+        {
+          __typename: "BlocklistTls",
+          time: "2026-05-08T13:35:00.000Z",
+          sensor: "sensor-a",
+          category: "EXFILTRATION",
+          level: "MEDIUM",
+          origAddr: "10.0.0.6",
+          respAddr: "203.0.113.5",
+          respCountry: "KR",
+          ja3: "newja3",
+        },
+      ],
+      totalCount: "5000",
+      truncated: true,
+      hasMore: false,
+      endCursor: null,
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    selectTier2Scope();
+    pivotByCountry();
+    await flushAsync();
+    // The cap hit on `country=KR` must surface the panel truncation
+    // hint immediately.
+    expect(screen.getByText("truncated")).toBeTruthy();
+    // Now pivot from the country focus into JA3=newja3 — that JA3
+    // value is reachable only because the truncated Tier 2 fetch
+    // surfaced it. The reviewer's repro: before this fix, the hint
+    // disappeared on the JA3 step even though the panel is still
+    // computed against the same partial 5,000-row country result.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pivot to Dim:ja3: newja3" }),
+    );
+    await flushAsync();
+    expect(
+      screen.getByText("Crumb:ja3: newja3").getAttribute("aria-current"),
+    ).toBe("page");
+    // Hint must still be visible: the active step is now a client-
+    // intersection JA3 pivot, but the contributing server-filtered
+    // ancestor (`country=KR`) is still capped.
+    expect(screen.getByText("truncated")).toBeTruthy();
+  });
+
+  it("restores a Tier 2 URL whose client-intersection step is reachable only through a queued ancestor fetch", async () => {
+    // Hash trail: asset → country=KR → ja3=remoteonly. The Tier 1
+    // corpus does NOT contain `ja3=remoteonly`; that value lives only
+    // in the result of the queued `country=KR` Tier 2 fetch. Without
+    // deferred validation the restore loop would treat `ja3=remoteonly`
+    // as stale and fall back to the asset root before the fetch could
+    // populate the expanded corpus.
+    window.location.hash =
+      "#triage.pivot.asset=10.0.0.1" +
+      "&triage.pivot.step=" +
+      encodeURIComponent("country:KR") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("ja3:remoteonly") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        respCountry: "JP",
+        ja3: "corpusja3",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [
+        {
+          __typename: "BlocklistTls",
+          time: "2026-05-08T13:30:00.000Z",
+          sensor: "sensor-a",
+          category: "EXFILTRATION",
+          level: "MEDIUM",
+          origAddr: "10.0.0.5",
+          respAddr: "203.0.113.4",
+          respCountry: "KR",
+          ja3: "remoteonly",
+        },
+        {
+          __typename: "BlocklistTls",
+          time: "2026-05-08T13:35:00.000Z",
+          sensor: "sensor-a",
+          category: "EXFILTRATION",
+          level: "MEDIUM",
+          origAddr: "10.0.0.6",
+          respAddr: "203.0.113.5",
+          respCountry: "KR",
+          ja3: "remoteonly",
+        },
+      ],
+      totalCount: "2",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Queue drained, validation effect must accept the JA3 step
+    // because the freshly-fetched country result populated it. No
+    // stale-hash toast.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    expect(screen.getByText("Crumb:country: KR")).toBeTruthy();
+    expect(
+      screen.getByText("Crumb:ja3: remoteonly").getAttribute("aria-current"),
+    ).toBe("page");
+  });
+
+  it("falls back to the asset root when a client-intersection step is still missing after the queued Tier 2 fetch resolves", async () => {
+    // Same hash shape as the success case, but the country=KR fetch
+    // returns no JA3=remoteonly event — the value is genuinely stale.
+    // The post-drain validation must surface the same fallback toast
+    // the synchronous restore path uses.
+    window.location.hash =
+      "#triage.pivot.asset=10.0.0.1" +
+      "&triage.pivot.step=" +
+      encodeURIComponent("country:KR") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("ja3:remoteonly") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        respCountry: "JP",
+        ja3: "corpusja3",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [
+        {
+          __typename: "BlocklistTls",
+          time: "2026-05-08T13:30:00.000Z",
+          sensor: "sensor-a",
+          category: "EXFILTRATION",
+          level: "MEDIUM",
+          origAddr: "10.0.0.5",
+          respAddr: "203.0.113.4",
+          respCountry: "KR",
+          ja3: "different",
+        },
+      ],
+      totalCount: "1",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
+    expect(screen.queryByText("Crumb:ja3: remoteonly")).toBeNull();
   });
 });

@@ -22,6 +22,7 @@ import {
   clearPivotTrail,
   getPivotDimension,
   hasPivotedAwayFromAsset,
+  type PivotDimensionId,
   type PivotStep,
   pivotIndexFor,
   resolveStepFocusEvents,
@@ -305,22 +306,27 @@ export function TriageBaselineContent({
   }, [allSections, scope]);
 
   // Surface truncation from both the Tier 1 loader (5,000-event corpus
-  // cap, applied to the period) and the active Tier 2 dimension fetch
-  // (5,000-event per-dimension cap). Without folding the Tier 2 hit in,
-  // a capped server-filtered pivot would silently look complete even
-  // though the manual promises a truncation hint when either layer
-  // hits its cap. The active Tier 2 step is the one that affects the
-  // currently-rendered panel — earlier breadcrumb steps' caches are
-  // for the prior focus and do not change the present truncation
-  // signal.
+  // cap, applied to the period) and any Tier 2 dimension fetch on the
+  // trail (5,000-event per-dimension cap). Every server-filtered Tier 2
+  // step on the trail contributes its events to `expandedTier2Events`
+  // and therefore to the current panel, so a truncated ancestor still
+  // taints downstream client-intersection pivots — the hint must follow
+  // the contributing fetch results, not just the active step. Checking
+  // only `activeStep` would let the hint disappear as soon as the
+  // operator pivots from a capped `country=KR` fetch into a local-only
+  // dimension like JA3, even though the JA3 panel is computed from
+  // that same partial 5,000-row country result.
   const panelTruncated = useMemo(() => {
     if (result.truncated) return true;
     if (scope !== "tier2") return false;
-    if (!activeStep || activeStep.kind !== "dimension") return false;
-    if (!isTier2ServerDimension(activeStep.dimension)) return false;
-    const cached = tier2.getCached(activeStep.dimension, activeStep.value.key);
-    return cached?.truncated === true;
-  }, [result.truncated, scope, activeStep, tier2]);
+    for (const step of trail) {
+      if (step.kind !== "dimension") continue;
+      if (!isTier2ServerDimension(step.dimension)) continue;
+      const cached = tier2.getCached(step.dimension, step.value.key);
+      if (cached?.truncated === true) return true;
+    }
+    return false;
+  }, [result.truncated, scope, trail, tier2]);
 
   const onSelectAsset = useCallback((address: string) => {
     setSelectedAddress(address);
@@ -366,6 +372,17 @@ export function TriageBaselineContent({
   const pendingHashFetchesRef = useRef<
     Array<{ dimension: Tier2Dimension; valueKey: string }>
   >([]);
+  // Client-intersection steps decoded from a Tier 2 hash whose value
+  // was not present in the Tier 1 corpus on restore. The queued Tier 2
+  // ancestor fetches may surface them once the cache populates; the
+  // post-drain validation effect re-checks against the now-expanded
+  // corpus and either keeps the trail or falls back to the asset
+  // root. Without this deferred path a URL like
+  // `asset → country=KR → ja3=abc` (where `abc` exists only in the
+  // fetched country result) would always be treated as stale.
+  const pendingValidationsRef = useRef<
+    Array<{ dimension: PivotDimensionId; valueKey: string }>
+  >([]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: restore runs once after the corpus is in hand
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -395,13 +412,26 @@ export function TriageBaselineContent({
       dimension: Tier2Dimension;
       valueKey: string;
     }> = [];
-    // Tier 2-only server dimensions are not derivable from the Tier 1
-    // corpus, so a hash carrying them cannot be label-resolved here.
-    // Treat them as restorable with the raw valueKey as the display
-    // label — the confirmed click on Tier 2 refetches anyway. Tier 1
-    // / Tier 1-overlapping dimensions must show at least one event in
-    // the corpus, otherwise the hash is stale and the breadcrumb
-    // falls back to the asset root with a toast.
+    const deferredValidations: Array<{
+      dimension: PivotDimensionId;
+      valueKey: string;
+    }> = [];
+    const inTier2Mode = parsed.mode === "tier2";
+    // Validation rules per (mode × dimension class):
+    //   - Tier 2-only server dim: cannot be resolved from the Tier 1
+    //     corpus; restore with raw valueKey, queue a Tier 2 fetch.
+    //   - Tier 1-overlapping server dim in Tier 2 mode: queue a fetch
+    //     and skip Tier 1 corpus validation — the click action in
+    //     Tier 2 is a fresh fetch, so requiring corpus presence would
+    //     reject perfectly valid shared URLs whose value is rare in
+    //     the loaded corpus.
+    //   - Tier 1-overlapping server dim in Tier 1 mode: must be in the
+    //     corpus, otherwise stale.
+    //   - Client-intersection dim in Tier 2 mode: may exist only in a
+    //     server-filtered ancestor's Tier 2 fetch result. Restore the
+    //     step, defer validation until after the queue drains, and
+    //     fall back to the asset root only if still missing then.
+    //   - Client-intersection dim in Tier 1 mode: strict corpus check.
     for (const step of parsed.steps) {
       let dim: ReturnType<typeof getPivotDimension>;
       try {
@@ -411,6 +441,7 @@ export function TriageBaselineContent({
         break;
       }
       const isTier2Only = dim.tier2Only === true;
+      const isServerDim = isTier2ServerDimension(step.dimension);
       let label = step.valueKey;
       let found = false;
       for (const ev of result.events) {
@@ -422,9 +453,21 @@ export function TriageBaselineContent({
           break;
         }
       }
-      if (!found && !isTier2Only) {
-        stale = true;
-        break;
+      if (!found) {
+        if (inTier2Mode && (isServerDim || isTier2Only)) {
+          // Server-filtered step in Tier 2 — the queued fetch will
+          // populate the result; do not require corpus presence.
+        } else if (inTier2Mode) {
+          // Client-intersection in Tier 2 — defer validation to the
+          // post-drain effect. Restore optimistically.
+          deferredValidations.push({
+            dimension: step.dimension,
+            valueKey: step.valueKey,
+          });
+        } else {
+          stale = true;
+          break;
+        }
       }
       restoredTrail.push({
         kind: "dimension",
@@ -434,8 +477,11 @@ export function TriageBaselineContent({
       // Server-filtered steps need an actual Tier 2 fetch on restore —
       // the breadcrumb alone gives the operator a misleadingly empty
       // panel computed against the Tier 1 corpus only. Queue them now;
-      // the second effect dispatches once Tier 2 mode is enabled.
-      if (parsed.mode === "tier2" && isTier2ServerDimension(step.dimension)) {
+      // the drain effect dispatches once Tier 2 mode is enabled. The
+      // inline type guard keeps `Tier2Dimension` narrowing in scope —
+      // hoisting it into `isServerDim` would lose the narrowing on
+      // `step.dimension`.
+      if (inTier2Mode && isTier2ServerDimension(step.dimension)) {
         refetchQueue.push({
           dimension: step.dimension,
           valueKey: step.valueKey,
@@ -450,6 +496,9 @@ export function TriageBaselineContent({
     setTrail(restoredTrail);
     if (refetchQueue.length > 0) {
       pendingHashFetchesRef.current = refetchQueue;
+    }
+    if (deferredValidations.length > 0) {
+      pendingValidationsRef.current = deferredValidations;
     }
   }, [result.assets, result.events]);
 
@@ -500,6 +549,61 @@ export function TriageBaselineContent({
     draining.current = next;
     tier2.startFetch(next.dimension, next.valueKey);
   }, [scope, tier2, tier2.pending, tier2.inFlight, tier2.errors]);
+
+  // Validate deferred client-intersection steps once the Tier 2 fetch
+  // queue has fully drained. The expanded corpus now contains every
+  // server-filtered ancestor's fetched events, so a step like
+  // `ja3=abc` reachable only through a `country=KR` fetch can be
+  // checked here. Steps still missing after the queue settles are
+  // genuinely stale: revert to the asset root with the same toast as
+  // the synchronous restore path.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps drive the post-drain rerun
+  useEffect(() => {
+    if (scope !== "tier2") return;
+    if (tier2.pending !== null) return;
+    if (draining.current !== null) return;
+    if (pendingHashFetchesRef.current.length > 0) return;
+    if (pendingValidationsRef.current.length === 0) return;
+    const validations = pendingValidationsRef.current;
+    pendingValidationsRef.current = [];
+    for (const { dimension, valueKey } of validations) {
+      let dim: ReturnType<typeof getPivotDimension>;
+      try {
+        dim = getPivotDimension(dimension);
+      } catch {
+        // Dimension was removed since the URL was produced — stale.
+        setSelectedAddress(initialAddress);
+        setTrail(
+          initialAddress ? [{ kind: "asset", address: initialAddress }] : [],
+        );
+        setStaleHashFallback(true);
+        return;
+      }
+      let found = false;
+      for (const ev of expandedEvents) {
+        const values = dim.extract(ev);
+        if (values.some((v) => v.key === valueKey)) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        setSelectedAddress(initialAddress);
+        setTrail(
+          initialAddress ? [{ kind: "asset", address: initialAddress }] : [],
+        );
+        setStaleHashFallback(true);
+        return;
+      }
+    }
+  }, [
+    scope,
+    tier2.pending,
+    tier2.inFlight,
+    tier2.errors,
+    expandedEvents,
+    initialAddress,
+  ]);
 
   // ── URL hash sync (write-side) ──
   // Persist the breadcrumb + scope into the URL hash whenever they
