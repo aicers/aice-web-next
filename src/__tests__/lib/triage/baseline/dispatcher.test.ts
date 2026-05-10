@@ -519,6 +519,77 @@ describe("runTriageBaselineDispatch — structured log line", () => {
       logSpy.mockRestore();
     }
   });
+
+  it("emits the same structured log line on dispatcher self-failure (Round 4 fix)", async () => {
+    // Regression: previously the canonical `triage_baseline_dispatch`
+    // log was only emitted on successful dispatcher completion. An
+    // enumeration error (or enumeration-timeout) returned HTTP 500 with
+    // `{ overall: 'failed', ... }` but left the canonical monitoring
+    // surface silent. Operators alerting on `overall != 'ok'` from the
+    // app log (the runbook's documented canonical surface) would miss
+    // the failure entirely.
+    const { runTriageBaselineDispatch } = await import(
+      "@/lib/triage/baseline/dispatcher"
+    );
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        runTriageBaselineDispatch({
+          pager: FAKE_PAGER,
+          listActiveCustomers: async () => {
+            throw new Error("enumeration boom");
+          },
+        }),
+      ).rejects.toThrow("enumeration boom");
+      expect(logSpy).toHaveBeenCalledTimes(1);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.message).toBe("triage_baseline_dispatch");
+      expect(parsed.overall).toBe("failed");
+      expect(parsed.perCustomer).toEqual([]);
+      expect(parsed.totalCustomers).toBe(0);
+      expect(parsed.ok).toBe(0);
+      expect(parsed.skipped).toBe(0);
+      expect(parsed.failed).toBe(0);
+      expect(parsed.timeout).toBe(0);
+      expect(parsed.skippedTimeout).toBe(0);
+      expect(parsed.error).toBe("enumeration boom");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("emits the structured log line when enumeration exceeds the total dispatcher timeout (Round 4 fix)", async () => {
+    // Same monitoring requirement as above, exercised through the
+    // enumeration-timeout self-failure path so the `overall: 'failed'`
+    // log line covers both throw branches the route maps to HTTP 500.
+    const { runTriageBaselineDispatch } = await import(
+      "@/lib/triage/baseline/dispatcher"
+    );
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        runTriageBaselineDispatch({
+          pager: FAKE_PAGER,
+          listActiveCustomers: () => new Promise<number[]>(() => {}),
+          totalTimeoutMs: 80,
+        }),
+      ).rejects.toThrow(
+        /Customer enumeration exceeded total dispatcher timeout/,
+      );
+      expect(logSpy).toHaveBeenCalledTimes(1);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.message).toBe("triage_baseline_dispatch");
+      expect(parsed.overall).toBe("failed");
+      expect(parsed.perCustomer).toEqual([]);
+      expect(parsed.error).toMatch(
+        /Customer enumeration exceeded total dispatcher timeout/,
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
 });
 
 describe("runTriageBaselineDispatch — active-customer enumeration", () => {

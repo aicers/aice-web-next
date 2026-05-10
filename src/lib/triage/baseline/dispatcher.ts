@@ -151,6 +151,8 @@ interface DispatchLogLine {
   failed: number;
   timeout: number;
   skippedTimeout: number;
+  /** Populated only on dispatcher self-failure (`overall: 'failed'`). */
+  error?: string;
 }
 
 function buildLogLine(result: DispatcherResult): DispatchLogLine {
@@ -193,6 +195,25 @@ function buildLogLine(result: DispatcherResult): DispatchLogLine {
     failed,
     timeout,
     skippedTimeout,
+  };
+}
+
+function emitLogLine(line: DispatchLogLine): void {
+  console.log(JSON.stringify(line));
+}
+
+function buildSelfFailureLogLine(error: string): DispatchLogLine {
+  return {
+    message: "triage_baseline_dispatch",
+    overall: "failed",
+    perCustomer: [],
+    totalCustomers: 0,
+    ok: 0,
+    skipped: 0,
+    failed: 0,
+    timeout: 0,
+    skippedTimeout: 0,
+    error,
   };
 }
 
@@ -322,6 +343,14 @@ export async function runTriageBaselineDispatch(
     );
   } catch (err) {
     clearTimeout(dispatcherTimer);
+    // Dispatcher self-failure path. Emit the same canonical structured
+    // log line as the success path so monitoring keyed off
+    // `triage_baseline_dispatch` (#487 §2 monitoring requirement, runbook
+    // "Monitoring") observes `overall: 'failed'`. Without this, an
+    // enumeration hang or error returns HTTP 500 with a structured body
+    // but leaves the canonical log surface silent.
+    const message = err instanceof Error ? err.message : "Dispatcher failed";
+    emitLogLine(buildSelfFailureLogLine(message));
     throw err;
   }
 
@@ -387,7 +416,7 @@ export async function runTriageBaselineDispatch(
   // keys off (#487 §2 monitoring requirement). Operators who want a
   // sidecar can stream stdout into their pipeline; the wrapper script
   // also captures the response body to a timestamped file.
-  console.log(JSON.stringify(buildLogLine(result)));
+  emitLogLine(buildLogLine(result));
 
   return result;
 }

@@ -241,7 +241,12 @@ keying surfaces:
 1. The dispatcher emits one structured `console.log` line per
    invocation tagged `triage_baseline_dispatch` carrying `overall`,
    per-customer status counts, and per-customer counters. This is
-   the canonical line; key your alerting on it.
+   the canonical line; key your alerting on it. The same line is
+   also emitted on dispatcher self-failure (e.g. customer
+   enumeration error or enumeration-timeout) with
+   `overall: 'failed'`, an empty `perCustomer`, all counters at 0,
+   and an `error` field — so a single alert rule on
+   `overall != 'ok'` catches both partial and self-failure cases.
 2. The cron wrapper script (`run-triage-baseline-dispatch.sh`)
    re-emits a human-readable warning to stderr on `overall != 'ok'`,
    which surfaces in `docker compose logs cron`.

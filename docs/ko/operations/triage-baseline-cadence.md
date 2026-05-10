@@ -234,7 +234,11 @@ curl -fsS -X POST \
 1. 디스패처가 호출당 `triage_baseline_dispatch` 태그가 붙은 한 줄의
    구조화된 `console.log` 라인을 출력하며, `overall`, 고객별 상태
    카운트, 고객별 카운터를 포함합니다. 이것이 정식 라인이며 알림은
-   여기에 키잉합니다.
+   여기에 키잉합니다. 디스패처 자체 실패(예: 고객 열거 오류 또는
+   열거 타임아웃)에서도 동일한 라인이 `overall: 'failed'`, 비어 있는
+   `perCustomer`, 모든 카운터 0, `error` 필드와 함께 출력되므로,
+   `overall != 'ok'` 단일 알림 규칙으로 부분 실패와 자체 실패 양쪽을
+   모두 잡을 수 있습니다.
 2. cron 래퍼 스크립트(`run-triage-baseline-dispatch.sh`)가
    `overall != 'ok'`일 때 stderr로 사람이 읽을 수 있는 경고를
    재출력하며, 이는 `docker compose logs cron`에 표시됩니다.
