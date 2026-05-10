@@ -195,35 +195,11 @@ This tie-breaker is **only** about deterministic row ordering among tied rows. I
 
 **INSERT-time evaluation.** All selectors above (S1, S2, S3, S4, `UNLABELED_BONUS`) are evaluated by the cadence pipeline (§481) at INSERT time using `observed_event_meta`'s state at that moment. The resulting `raw_score(event)` is persisted on `baseline_triaged_event` along with `selector_tags`. `raw_score` is therefore a snapshot — it does not retroactively update when later peer events would change S3 or S4. The drift exposure is bounded by retention rather than by re-scoring: see §8 for the full discussion of the 30-day typical menu window vs the 180-day corpus retention. `baseline_score` is computed at read time from `raw_score` (§3 stored score), so it always reflects the actual cohort at read; it has no INSERT-time snapshot semantics.
 
-## §4. Per-kind slot allocation (adaptive)
-
-Each kind's share of the final menu is:
-
-```
-slot_share(kind) = base_share
-                 + α · normalized_volume(kind, window)
-                       · normalized_top_confidence(kind, window)
-                 + favored_bonus(kind)
-```
-
-where:
-
-- `base_share` is a small constant given to every kind (newly-observed kinds included). Acts as a discoverability floor: a kind that has never been seen still gets a non-zero share when it first appears.
-- `normalized_volume(kind, window) ∈ [0, 1]`: that kind's event count over the active window in `baseline_triaged_event`, divided by the maximum across all kinds in the same window. Bounded so a flood from one kind cannot drive others to zero. Source is `baseline_triaged_event` (not `observed_event_meta`) so the count is over the post-`BlockList*` set — the same denominator that slot allocation distributes among.
-- `normalized_top_confidence(kind, window) ∈ [0, 1]`: a measure of how *signal-rich* the kind's events are this window. Concretely, `avg(coalesce(cardinality(selector_tags), 0)) / MAX_TAGS` over `baseline_triaged_event` rows for this `kind` in the active window, where `MAX_TAGS` is the total number of distinct selector tags the cadence pipeline can emit (§9). The `coalesce` guards both NULL `selector_tags` columns and PostgreSQL's quirk that `array_length('{}', 1)` returns `NULL` rather than `0`; without it, zero-tag rows would silently drop from `avg` and groups whose rows are all empty/NULL would produce a NULL slot share. A kind whose events frequently fire multiple selectors (S1-high + S3-recurring + S4-correlated, etc.) scores higher than one whose events typically fire only a single selector. Computed entirely from `selector_tags` — no raw confidence column is read, so the within-kind-only rule for confidence (§ "Pipeline" intro) is respected: signal-richness is measured from the algorithm's own selector firings, not from upstream confidence values.
-- `favored_bonus(kind) = β` if `kind ∈ FAVORED_KINDS = {DnsCovertChannel, unlabeled-HttpThreat, LockyRansomware, RepeatedHttpSessions, SuspiciousTlsTraffic}`, else 0. Constant, never decays.
-
-The shares are normalized to sum to 1 and multiplied by **`default_N`** (§6) — *not* by `final_count` — to produce per-bucket quotas (the bucket key `b` is defined just below as `slot_bucket`, which equals `kind` for everything except the virtual `unlabeled-HttpThreat`):
-
-```
-quota[b] = round(slot_share(b) · default_N)
-```
-
-`default_N` is the cognitive-limit cap from §6; `quota[b]` is the maximum number of events from this bucket that the menu will ever show. Fractional slots are resolved by the largest-remainder method. **Tie-breaker** when two buckets have exactly equal remainders: the extra slot goes to the bucket whose `(kind, is_unlabeled)` key sorts first lexicographically (kind name first, then `is_unlabeled` with `false < true`). The tie-breaker is included so the algorithm is fully deterministic — `FAVORED_KINDS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
+## §4. Per-bucket slot allocation (adaptive)
 
 ### `slot_bucket`: the unit quota and merge both use
 
-`slot_share` and the merge step both operate on the same key, called `slot_bucket`, defined per event as:
+Slot allocation and the merge step (§3 step (6)) both operate on the same key, called `slot_bucket`, defined per event as:
 
 ```
 slot_bucket(event) =
@@ -232,7 +208,49 @@ slot_bucket(event) =
     (kind(event), false)   otherwise
 ```
 
-This makes `('HttpThreat', true)` the virtual `unlabeled-HttpThreat` kind from `FAVORED_KINDS`, distinct from the labeled-HttpThreat bucket `('HttpThreat', false)`. For all non-HttpThreat kinds the second component is always `false` and the bucket is effectively just the kind. The slot-allocation aggregates of §4 — `normalized_volume`, `normalized_top_confidence`, `favored_bonus` — are all computed `GROUP BY slot_bucket`, not `GROUP BY kind`. `quota[b] = round(slot_share(b) · default_N)` is therefore per-bucket, not per-kind.
+This makes `('HttpThreat', true)` the virtual `unlabeled-HttpThreat` kind, distinct from the labeled-HttpThreat bucket `('HttpThreat', false)`. For all non-HttpThreat kinds the second component is always `false` and the bucket is effectively just the kind. **Every formula and aggregate in this section uses `b = slot_bucket` as its key, not raw `kind`** — grouping by raw `kind` would collapse the labeled and unlabeled HttpThreat populations into one quota and one slot share, defeating the FAVORED-list elevation of unlabeled HttpThreat.
+
+The favored set is therefore stated in bucket form:
+
+```
+FAVORED_BUCKETS = {
+    ('DnsCovertChannel', false),
+    ('HttpThreat', true),               // the virtual unlabeled-HttpThreat
+    ('LockyRansomware', false),
+    ('RepeatedHttpSessions', false),
+    ('SuspiciousTlsTraffic', false),
+}
+```
+
+Where this RFC mentions `FAVORED_KINDS` informally (e.g. in §5's narrative), the precise contract is `FAVORED_BUCKETS`.
+
+### Slot share formula
+
+Each bucket's share of the final menu is:
+
+```
+slot_share(b) = base_share
+              + α · normalized_volume(b, window)
+                    · normalized_top_confidence(b, window)
+              + favored_bonus(b)
+```
+
+where:
+
+- `base_share` is a small constant given to every bucket (newly-observed buckets included). Acts as a discoverability floor: a bucket that has never been seen still gets a non-zero share when it first appears.
+- `normalized_volume(b, window) ∈ [0, 1]`: that bucket's event count over the active window in `baseline_triaged_event`, divided by the maximum across all buckets in the same window. Computed `GROUP BY slot_bucket` so the labeled-HttpThreat and unlabeled-HttpThreat buckets compete with each other on equal footing. Bounded so a flood from one bucket cannot drive others to zero. Source is `baseline_triaged_event` (not `observed_event_meta`) so the count is over the post-`BlockList*` set — the same denominator that slot allocation distributes among.
+- `normalized_top_confidence(b, window) ∈ [0, 1]`: a measure of how *signal-rich* the bucket's events are this window. Concretely, `avg(coalesce(cardinality(selector_tags), 0)) / MAX_TAGS` over `baseline_triaged_event` rows whose `slot_bucket` equals `b` in the active window, where `MAX_TAGS` is the total number of distinct selector tags the cadence pipeline can emit (§9). The `coalesce` guards both NULL `selector_tags` columns and PostgreSQL's quirk that `array_length('{}', 1)` returns `NULL` rather than `0`; without it, zero-tag rows would silently drop from `avg` and groups whose rows are all empty/NULL would produce a NULL slot share. A bucket whose events frequently fire multiple selectors (S1-high + S3-recurring + S4-correlated, etc.) scores higher than one whose events typically fire only a single selector. Computed entirely from `selector_tags` — no raw confidence column is read, so the within-kind-only rule for confidence (§ "Pipeline" intro) is respected: signal-richness is measured from the algorithm's own selector firings, not from upstream confidence values.
+- `favored_bonus(b) = β` if `b ∈ FAVORED_BUCKETS`, else 0. Constant, never decays.
+
+### Per-bucket quotas
+
+The shares are normalized to sum to 1 and multiplied by **`default_N`** (§6) — *not* by `final_count` — to produce per-bucket quotas:
+
+```
+quota[b] = round(slot_share(b) · default_N)
+```
+
+`default_N` is the cognitive-limit cap from §6; `quota[b]` is the maximum number of events from this bucket that the menu will ever show. Fractional slots are resolved by the largest-remainder method. **Tie-breaker** when two buckets have exactly equal remainders: the extra slot goes to the bucket whose `(kind, is_unlabeled)` key sorts first lexicographically (kind name first, then `is_unlabeled` with `false < true`). The tie-breaker is included so the algorithm is fully deterministic — `FAVORED_BUCKETS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
 
 Using a shared key in both stages removes the double-count risk from the previous draft: the same event has exactly one `slot_bucket`, and that bucket is the only one whose quota counts that event.
 
@@ -281,19 +299,9 @@ User-engagement-driven adaptiveness (clicks, action-based feedback) is **out of 
 
 ## §5. Favored kinds
 
-Empirical experience identifies five kinds as consistently producing useful results:
+Empirical experience identifies five kinds as consistently producing useful results — DnsCovertChannel, unlabeled HttpThreat, LockyRansomware, RepeatedHttpSessions, SuspiciousTlsTraffic. The precise contract is the `FAVORED_BUCKETS` set from §4 (which expresses "unlabeled HttpThreat" as the `('HttpThreat', true)` `slot_bucket`); this section uses the kind names informally.
 
-```
-FAVORED_KINDS = {
-    DnsCovertChannel,
-    unlabeled-HttpThreat,        // virtual kind: HttpThreat + isClusterNone
-    LockyRansomware,
-    RepeatedHttpSessions,
-    SuspiciousTlsTraffic,
-}
-```
-
-Role: **prior weighting**, not a whitelist. Non-favored kinds still receive `base_share` and can earn additional share through volume × signal-richness (§4). The favored bonus is an additive constant (`β`) and does not decay over time.
+Role: **prior weighting**, not a whitelist. Non-favored buckets still receive `base_share` and can earn additional share through volume × signal-richness (§4). The favored bonus is an additive constant (`β`) and does not decay over time.
 
 ## §6. Final count and user-preference dial
 
@@ -341,20 +349,22 @@ Else:  // assembled_count < MIN_NONZERO_FLOOR and post_exclusion > 0
      bucket to fill its quota.)
 ```
 
-- `final_count` is bounded above by `default_N` (cognitive cap, via the sum of quotas) and by `post_exclusion_event_count`. The menu is never padded with sub-cutoff events to fill a quota.
+- `final_count` is bounded above by `default_N`. The reasoning depends on which path produced it:
+  - **Assembled path** (`final_count = assembled_count`): bounded by `sum(quota[b]) = default_N` because every bucket's contribution is capped at `quota[b]` (§4) and the quotas sum to `default_N` by construction. Also bounded by `post_exclusion_event_count`. The menu is never padded with sub-cutoff events to fill a quota.
+  - **Fallback path** (`final_count = |floor_rows|`): the bound is **not** the sum of quotas (the fallback bypasses quota and cutoff). Instead it is the tunable invariant `MIN_NONZERO_FLOOR ≤ default_N` enforced at §9 calibration. With the provisional values (`MIN_NONZERO_FLOOR = 1`, `LOWER_FLOOR = 20`) the invariant trivially holds, but ops review must keep `MIN_NONZERO_FLOOR ≤ LOWER_FLOOR ≤ default_N` for any future calibration so the cognitive cap is preserved on the fallback path too. Also bounded by `post_exclusion_event_count` (the fallback returns `min(MIN_NONZERO_FLOOR, post_exclusion_event_count)` rows).
 - `MIN_NONZERO_FLOOR` is invoked **only as a global fallback when `assembled_count` is below the floor**. It is not a per-bucket guarantee, and it does not augment the §4 `visible[b]` result — when invoked, it replaces it. The replacement is intentional: by the time the floor is needed, the slider+quota composition has produced too few rows to be useful, so the cleanest behavior is to forget composition for this menu and show the analyst the strongest signals available regardless of bucket distribution.
 - The slider's neutral position should be the slider stop that, on a typical active window, produces a count near the loose end of the meaningful range — somewhere between half `default_N` and `default_N`. The exact stop is owned by #471; this RFC commits only to `default_N` being the cap (loosest stop = "All" = at most `default_N` rows after quota).
 - Slider direction: "more" loosens the cutoff (more rows pass, but capped at `default_N` via the quota); "less" tightens the cutoff (fewer rows pass; the floor pass eventually kicks in). The dial is relative to whichever stop neutral lands on; what it actually moves is the percentile cutoff over `baseline_score`, not a multiplier on row count or on `default_N`.
 
 The dial mechanism (continuous vs discrete, exact UI shape) is owned by #471. This RFC fixes one piece of the contract: **the dial controls a percentile cutoff on `baseline_score`**, not a multiplier on `final_count`. The two interpretations are not equivalent — a multiplier scales the absolute row count uniformly while leaving §4's per-cohort slot allocation in charge of distribution, whereas a percentile cutoff filters per-cohort by score and lets cohort-specific score distributions drive the final per-cohort counts. #471's slider stops are score thresholds (e.g. 0.95 for the "Top ~5%" stop), so the cutoff interpretation is what the slider implements.
 
-`default_N` from this section is the **recommended neutral position** for the dial — the row count this RFC suggests as a reasonable starting point given the day's volume. #471's UI maps that recommendation onto its discrete or continuous dial scale; the dial movements the user makes from the neutral position are translated into score thresholds, not into multipliers on `default_N`. `MIN_NONZERO_FLOOR` still applies as a final post-cutoff guarantee: if the cutoff would yield zero rows but post-exclusion events exist, the top-`MIN_NONZERO_FLOOR` events by `baseline_score` are surfaced regardless.
+`default_N` from this section is the **cognitive-limit cap**: the maximum number of rows the menu shows on any path (assembled or fallback). #471's UI translates dial movements into percentile cutoffs over `baseline_score`, not into multipliers on `default_N`; the relationship between dial positions and row counts is governed entirely by the cutoff/quota composition above. `MIN_NONZERO_FLOOR` is the explicit fallback defined in the formula above; the tunable invariant `MIN_NONZERO_FLOOR ≤ default_N` (enforced at §9 calibration) is what guarantees the fallback path also respects the cognitive cap.
 
 ### Read scope: corpus A only
 
 The menu reads from corpus A — `baseline_triaged_event` exclusively at menu read time (#458). `observed_event_meta` is the cadence pipeline's INSERT-time aggregation source (§8) and is not touched at read time. Both tables live in the active customer-tenant DB per `migrations/customer/0003_baseline_corpus_a.sql`. Neither read path calls `review`. The cadence pipeline (#456 / #481) populates both tables from `review` on a schedule using a deliberately loose cadence-side threshold.
 
-Slot allocation (§4) is a small per-kind GROUP BY over `baseline_triaged_event`, computed once per menu load. It uses `selector_tags` array length as the signal-richness signal so no raw confidence column is needed and no second-table join is introduced.
+Slot allocation (§4) is a small per-bucket `GROUP BY slot_bucket` over `baseline_triaged_event`, computed once per menu load. It uses `selector_tags` array length as the signal-richness signal so no raw confidence column is needed and no second-table join is introduced.
 
 ### Read-path performance contract
 
@@ -456,13 +466,13 @@ The five tags are `S1-high`, `S2-severe`, `S3-recurring`, `S4-correlated`, `unla
 
 `CRITICAL_CATEGORIES` — the only membership list referenced by the revised selectors (S2 fires when `category(event) ∈ CRITICAL_CATEGORIES`). Initial contents are populated from existing detection metadata at code time and reviewed with ops before merge. Stored in source code (e.g., `src/lib/triage/baseline/categories.ts`), not in the database; changing the list requires a `baseline_version` bump.
 
-`FAVORED_KINDS` (§5) is a related membership list affecting per-kind slot allocation, not within-kind selector firing; it lives next to `CRITICAL_CATEGORIES` and follows the same source-code + version-bump rules.
+`FAVORED_BUCKETS` (§4 / §5) is a related membership list affecting per-bucket slot allocation, not within-kind selector firing; it lives next to `CRITICAL_CATEGORIES` and follows the same source-code + version-bump rules.
 
 ### Slot allocation (§4)
 
 | Symbol | Meaning | Provisional value |
 |---|---|---|
-| `base_share` | floor share per kind | 0.02 |
+| `base_share` | floor share per bucket | 0.02 |
 | `α` | volume × signal-richness coefficient | 1.0 |
 | `β` | favored-kind constant bonus | 0.10 |
 
@@ -505,7 +515,7 @@ The algorithm requires two schema-level guarantees that are not in the current `
 
 ### Selector evaluation timing
 
-All selectors are evaluated at cadence INSERT time (§8) using `observed_event_meta` history at that moment. `raw_score(event)` and `selector_tags(event)` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. `baseline_score` is computed at read time from `raw_score` (§3 stored score) and is therefore not stored as part of this RFC's contract. The read path needs no joins and never touches `observed_event_meta` — both per-event values (`raw_score`, `selector_tags`, computed `baseline_score`) and per-kind slot-allocation aggregates (volume + average `selector_tags` length, §4) come from `baseline_triaged_event` alone.
+All selectors are evaluated at cadence INSERT time (§8) using `observed_event_meta` history at that moment. `raw_score(event)` and `selector_tags(event)` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. `baseline_score` is computed at read time from `raw_score` (§3 stored score) and is therefore not stored as part of this RFC's contract. The read path needs no joins and never touches `observed_event_meta` — both per-event values (`raw_score`, `selector_tags`, computed `baseline_score`) and per-bucket slot-allocation aggregates (volume + average `selector_tags` length, §4) come from `baseline_triaged_event` alone.
 
 | Selector | Source data |
 |---|---|
