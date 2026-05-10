@@ -69,6 +69,7 @@ import {
   type TabBarTab,
 } from "@/components/detection/tab-bar";
 import { useSavedFilters } from "@/components/detection/use-saved-filters";
+import { useScopeFingerprint } from "@/components/providers/scope-fingerprint-provider";
 import {
   DEFAULT_ANALYTICS_DIMENSION,
   DEFAULT_ANALYTICS_TOP_N,
@@ -216,6 +217,13 @@ export function DetectionTabsShell({
   initialCustomerScope,
 }: DetectionTabsShellProps) {
   const pathname = usePathname();
+  // Scope fingerprint of `(accountId, customerIds)` injected by the
+  // dashboard layout's `ScopeFingerprintProvider`. Threaded into every
+  // sessionStorage call below so account A's saved tab UX state cannot
+  // surface for account B in the same browser tab, and a same-account
+  // scope swap (X → Y) reads `null` instead of the prior payload
+  // (#393 Task C).
+  const scopeFingerprint = useScopeFingerprint();
 
   // Customer cache lifted out of `DetectionShell`. The shell is
   // remounted on every tab switch (`key={activeTabId}`), so its own
@@ -522,10 +530,10 @@ export function DetectionTabsShell({
   // the active tab now activated whoever just got bumped to index
   // 1, not the original neighbour).
   useEffect(() => {
-    const stored = readTabsFromSession();
+    const stored = readTabsFromSession(scopeFingerprint);
     if (!stored) return;
     setTabs((prev) => mergeStoredTabsOnRehydrate(prev, stored.tabs));
-  }, []);
+  }, [scopeFingerprint]);
 
   // Persist tab state to sessionStorage on every relevant change.
   // Captures the live active-tab snapshot so the active tab's draft
@@ -544,8 +552,8 @@ export function DetectionTabsShell({
   // state.
   useEffect(() => {
     const withLive = withActiveSnapshot(tabs);
-    writeTabsToSession(withLive, activeTabId);
-  }, [tabs, activeTabId, withActiveSnapshot]);
+    writeTabsToSession(withLive, activeTabId, scopeFingerprint);
+  }, [tabs, activeTabId, withActiveSnapshot, scopeFingerprint]);
 
   // Tab id that should briefly flash to acknowledge a pivot focus
   // gesture. The TabBar reads the value through the `flashTabId`

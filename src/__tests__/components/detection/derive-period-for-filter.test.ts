@@ -10,6 +10,13 @@ vi.mock("react", () => ({
   useMemo: (fn: () => unknown) => fn(),
   useEffect: () => {},
   startTransition: (fn: () => void) => fn(),
+  createContext: (defaultValue: unknown) => ({
+    Provider: "div",
+    Consumer: "div",
+    displayName: "MockedContext",
+    _currentValue: defaultValue,
+  }),
+  useContext: (ctx: { _currentValue: unknown }) => ctx._currentValue,
 }));
 vi.mock("next-intl", () => ({
   useTranslations: () => () => "",

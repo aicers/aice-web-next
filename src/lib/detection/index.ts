@@ -171,8 +171,9 @@ export {
   type DeserializedTabs,
   deserializeTabsFromStorage,
   readTabsFromSession,
-  STORAGE_KEY as TABS_STORAGE_KEY,
+  STORAGE_KEY_PREFIX as TABS_STORAGE_KEY_PREFIX,
   serializeTabsForStorage,
+  tabsStorageKey,
   writeTabsToSession,
 } from "./tabs-storage";
 export type {

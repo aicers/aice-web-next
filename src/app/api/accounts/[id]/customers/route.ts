@@ -225,17 +225,36 @@ export const POST = withAuth(
         }
       }
 
-      // Insert assignments
+      // Insert assignments and capture how many rows actually landed.
+      // `ON CONFLICT DO NOTHING` skips already-assigned ids, so a fully
+      // idempotent re-POST returns 0 here. We use that to gate the
+      // `token_version` bump below — invalidating other live sessions
+      // of the target account is only correct when the assignment set
+      // actually changes (#393 Task A).
       const insertValues = uniqueIds
         .map((_, i) => `($1, $${i + 2})`)
         .join(", ");
       const insertParams: (string | number)[] = [accountId, ...uniqueIds];
-      await client.query(
+      const insertResult = await client.query(
         `INSERT INTO account_customer (account_id, customer_id)
          VALUES ${insertValues}
          ON CONFLICT DO NOTHING`,
         insertParams,
       );
+      const insertedRows = insertResult.rowCount ?? 0;
+
+      // Force re-auth on every live session of the target account
+      // (token_version mismatch → 401 in `withAuth`) so a session
+      // whose customer scope just changed cannot continue to read
+      // client-side caches keyed against the old scope. Skipping the
+      // bump on a no-op POST keeps idempotent calls from invalidating
+      // unrelated sessions.
+      if (insertedRows > 0) {
+        await client.query(
+          "UPDATE accounts SET token_version = token_version + 1 WHERE id = $1",
+          [accountId],
+        );
+      }
 
       return uniqueIds;
     });

@@ -65,6 +65,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useRouter } from "@/i18n/navigation";
+import { probeAuthOrRedirect } from "@/lib/auth/probe-auth";
 import {
   type ChipRemoveTarget,
   removeActiveChip,
@@ -1654,6 +1655,19 @@ export function DetectionShell({
     // hiccup doesn't freeze Sensor into the "Coming soon" fallback
     // for the rest of the tab session.
     if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
+    else {
+      // Reopening the drawer with a `loaded` sensor cache would
+      // otherwise serve last-fetch sensor names without re-checking
+      // the session — including names from a customer the caller no
+      // longer has access to after a `customer.assign` /
+      // `customer.unassign` mid-session. The probe asks
+      // `/api/auth/me`; on `token_version` mismatch the shared
+      // helper drops our cache and triggers the sign-in redirect, so
+      // the stale options never paint (#393 Task D).
+      void probeAuthOrRedirect(() => {
+        setSensorCache({ status: "idle" });
+      });
+    }
     // Customer inventory follows the same lazy-on-first-open
     // contract (#384). The two fetches fire together on the same
     // drawer-open trigger so both fields settle at the same visible
@@ -2856,6 +2870,15 @@ export function DetectionShell({
       // sensors…" placeholder forever when the operator opens the
       // drawer via a chip without ever having clicked Filters.
       if (shouldTriggerSensorFetch(sensorCache)) triggerSensorFetch();
+      else {
+        // Same drawer-reopen probe as `openDrawer`: a chip-body open
+        // path on a `loaded` sensor cache must not surface stale
+        // options without first checking the session is current
+        // (#393 Task D).
+        void probeAuthOrRedirect(() => {
+          setSensorCache({ status: "idle" });
+        });
+      }
       // Customer fetch follows the same chip-body wiring (#384).
       if (shouldTriggerCustomerFetch(customerCache)) triggerCustomerFetch();
     },

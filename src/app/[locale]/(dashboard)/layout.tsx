@@ -5,6 +5,7 @@ import DashboardLayoutClient from "@/components/layout/dashboard-layout";
 import { routing } from "@/i18n/routing";
 import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { hasPermission } from "@/lib/auth/permissions";
+import { computeScopeFingerprint } from "@/lib/auth/scope-fingerprint";
 import { getCurrentSession } from "@/lib/auth/session";
 import { query } from "@/lib/db/client";
 
@@ -60,6 +61,19 @@ export default async function DashboardLayout({
     "customers:read",
   );
 
+  // Stable fingerprint of `(accountId, sorted(customerIds))` — used by
+  // every client-side cache owner under the dashboard to scope its key.
+  // The token_version bump in the customer-assignment APIs forces the
+  // *next* request from a session whose scope just changed onto the
+  // sign-in path, but already-mounted caches do not see that bump until
+  // their own probe fires. The fingerprint guards those caches in the
+  // meantime: a scope swap derives a new fingerprint, the cached entry
+  // misses, and the stale payload is never surfaced. (#393 Task A)
+  const scopeFingerprint = computeScopeFingerprint(
+    session.accountId,
+    scope.customers.map((c) => c.id),
+  );
+
   // Read the persisted sidebar preference so the first server-rendered
   // HTML matches the user's choice — avoids the expanded-then-collapsed
   // flash on reload. Cookie is authoritative; a missing cookie means
@@ -72,6 +86,7 @@ export default async function DashboardLayout({
     <DashboardLayoutClient
       username={username}
       scope={scope}
+      scopeFingerprint={scopeFingerprint}
       canManageCustomers={canManageCustomers}
       initialSidebarCollapsed={initialSidebarCollapsed}
       hasSidebarCollapsedCookie={hasSidebarCollapsedCookie}

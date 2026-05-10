@@ -18,6 +18,7 @@ import {
   type RunAnalyticsQueryResult,
   runAnalyticsQuery,
 } from "@/app/[locale]/(dashboard)/detection/analytics-actions";
+import { useScopeFingerprint } from "@/components/providers/scope-fingerprint-provider";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -26,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { probeAuthOrRedirect } from "@/lib/auth/probe-auth";
 import {
   ANALYTICS_DIMENSIONS,
   ANALYTICS_TOP_N_OPTIONS,
@@ -192,11 +194,19 @@ type FetchStatus =
     };
 
 function cacheKey(
+  scopeFingerprint: string,
   filterIdentity: string,
   dimension: AnalyticsDimension,
   topN: AnalyticsTopN,
 ): string {
-  return `${filterIdentity}|${dimension}|${topN}`;
+  // Scope fingerprint is the first segment so a same-account customer-
+  // assignment change invalidates the cache: `accountId` alone would
+  // not, since the fingerprint hashes the sorted customer-id set
+  // alongside the account (#393 Task B). A `null` fingerprint (no
+  // provider — tests, storybook) folds into a fixed sentinel so the
+  // cache still works in those contexts but cannot collide with a
+  // real-scope key.
+  return `${scopeFingerprint}|${filterIdentity}|${dimension}|${topN}`;
 }
 
 export function DetectionAnalytics({
@@ -211,15 +221,19 @@ export function DetectionAnalytics({
   onPivot,
 }: DetectionAnalyticsProps) {
   const [status, setStatus] = useState<FetchStatus>({ kind: "idle" });
+  const scopeFingerprint = useScopeFingerprint() ?? "no-scope";
   // Guard against late responses from a superseded request landing
   // after a more-recent dispatch — we drop the payload silently
   // rather than letting it overwrite the fresher state.
   const requestIdRef = useRef(0);
   // Reviewer Round 1 (P2 lazy fetch): cached successful payloads
-  // keyed by `${filterIdentity}|${dimension}|${topN}`. A
-  // collapse-then-reopen at the same inputs hits this map and
+  // keyed by `${scopeFingerprint}|${filterIdentity}|${dimension}|${topN}`.
+  // A collapse-then-reopen at the same inputs hits this map and
   // skips the network round-trip entirely. Lives in a ref so a
-  // cache write does not trigger a re-render.
+  // cache write does not trigger a re-render. The scope segment in
+  // the key invalidates the cache on a same-account scope swap so
+  // results computed for an old `customer_ids` set cannot resurface
+  // under a narrower scope (#393 Task B).
   const cacheRef = useRef<Map<string, ReadyResult>>(new Map());
 
   // Keep a live ref to `filter` so the dispatch closure does not need
@@ -235,7 +249,7 @@ export function DetectionAnalytics({
   const dispatchFetch = useCallback(
     (signal?: AbortSignal) => {
       const requestId = ++requestIdRef.current;
-      const key = cacheKey(filterIdentity, dimension, topN);
+      const key = cacheKey(scopeFingerprint, filterIdentity, dimension, topN);
       setStatus({ kind: "loading" });
       void runAnalyticsQuery(filterRef.current, dimension, topN).then(
         (result) => {
@@ -267,12 +281,12 @@ export function DetectionAnalytics({
         },
       );
     },
-    [dimension, topN, filterIdentity],
+    [dimension, topN, filterIdentity, scopeFingerprint],
   );
 
   useEffect(() => {
     if (!open) return;
-    const key = cacheKey(filterIdentity, dimension, topN);
+    const key = cacheKey(scopeFingerprint, filterIdentity, dimension, topN);
     const cached = cacheRef.current.get(key);
     if (cached) {
       // Reviewer Round 1 (P2 lazy fetch): a collapse-then-reopen with
@@ -281,14 +295,34 @@ export function DetectionAnalytics({
       // dispatching another pair of analytics queries. The Retry
       // button bypasses this branch by calling `dispatchFetch`
       // directly.
-      requestIdRef.current += 1;
-      setStatus({ kind: "ready", result: cached });
-      return;
+      //
+      // Cache-hit probe (#393 Task B): fire `/api/auth/me` before
+      // surfacing the cached payload so a session whose
+      // `token_version` was bumped by a customer-assignment change
+      // encounters 401 and is forced through sign-in instead of
+      // painting stale rows. The probe is debounced + in-flight de-
+      // duped, so multiple cache hits within the same window land on
+      // a single request. On 401 we drop the cached entry so a
+      // surviving render after the redirect cannot resurface it.
+      const controller = new AbortController();
+      let cancelled = false;
+      void probeAuthOrRedirect(() => {
+        cacheRef.current.delete(key);
+      }).then((ok) => {
+        if (cancelled || controller.signal.aborted) return;
+        if (!ok) return;
+        requestIdRef.current += 1;
+        setStatus({ kind: "ready", result: cached });
+      });
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
     }
     const controller = new AbortController();
     dispatchFetch(controller.signal);
     return () => controller.abort();
-  }, [open, filterIdentity, dimension, topN, dispatchFetch]);
+  }, [open, filterIdentity, dimension, topN, dispatchFetch, scopeFingerprint]);
 
   if (!open) return null;
 

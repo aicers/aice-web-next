@@ -7,7 +7,7 @@ import { getAccountCustomerIds } from "@/lib/auth/customer-scope";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import { hasPermission } from "@/lib/auth/permissions";
-import { query } from "@/lib/db/client";
+import { query, withTransaction } from "@/lib/db/client";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -77,11 +77,33 @@ export const DELETE = withAuth(
       }
     }
 
-    // Remove assignment
-    await query(
-      "DELETE FROM account_customer WHERE account_id = $1 AND customer_id = $2",
-      [accountId, customerId],
-    );
+    // Remove assignment and force re-auth on every live session of the
+    // target account when the row actually existed. `withAuth`
+    // returns 401 on `token_version` mismatch, so the next request from
+    // a session whose scope just changed will fail and the operator is
+    // pushed back through sign-in before any client-side cache keyed
+    // against the old scope can surface stale data (#393 Task A).
+    // Wrapping the DELETE + UPDATE in a transaction keeps the bump
+    // gated on the actual row deletion: a `rowCount === 0` (concurrent
+    // unassign already happened) leaves other live sessions alone.
+    const deletedRows = await withTransaction(async (client) => {
+      const deleteResult = await client.query(
+        "DELETE FROM account_customer WHERE account_id = $1 AND customer_id = $2",
+        [accountId, customerId],
+      );
+      const affected = deleteResult.rowCount ?? 0;
+      if (affected > 0) {
+        await client.query(
+          "UPDATE accounts SET token_version = token_version + 1 WHERE id = $1",
+          [accountId],
+        );
+      }
+      return affected;
+    });
+    // The existence check above already returned 404 for missing rows,
+    // so a 0-row delete here is the rare race where a concurrent
+    // unassign won; treating it as success keeps the response stable.
+    void deletedRows;
 
     // Audit
     await auditLog.record({

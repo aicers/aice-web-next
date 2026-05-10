@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
 
+import { probeAuthOrRedirect } from "@/lib/auth/probe-auth";
 import type { NodeStatus } from "@/lib/node/types";
 
 // Sparkline buffer length matches `NODE_STATUS_SPARKLINE_SAMPLES` from
@@ -269,6 +270,21 @@ export class ManagerUnreachableFetchError extends Error {
   }
 }
 
+/**
+ * Marker error raised when `/api/nodes/status` returns HTTP 401.
+ * `withAuth` returns 401 on `token_version` mismatch — i.e. the
+ * session's customer scope was changed mid-session and the JWT is
+ * stale. Without this marker, `tick()` swallowed the failure into the
+ * normal retry loop and the rolling per-node buffer would keep
+ * surfacing data the caller no longer has access to (#393 Task E).
+ */
+export class UnauthorizedFetchError extends Error {
+  constructor(message = "Unauthorized") {
+    super(message);
+    this.name = "UnauthorizedFetchError";
+  }
+}
+
 async function defaultFetcher(
   signal?: AbortSignal,
 ): Promise<NodeStatusListResponse> {
@@ -279,6 +295,9 @@ async function defaultFetcher(
     cache: "no-store",
     signal,
   });
+  if (res.status === 401) {
+    throw new UnauthorizedFetchError();
+  }
   if (res.status === 503) {
     throw new ManagerUnreachableFetchError();
   }
@@ -362,6 +381,7 @@ export interface UseNodeStatusPollingResult {
 let driverCount = 0;
 let activeTimer: ReturnType<typeof setInterval> | null = null;
 let visibilityHandler: (() => void) | null = null;
+let focusHandler: (() => void) | null = null;
 let activeAbort: AbortController | null = null;
 let activePollIntervalMs = DEFAULT_POLL_MS;
 let activeFetcher: (signal?: AbortSignal) => Promise<NodeStatusListResponse> =
@@ -427,6 +447,19 @@ async function tick(): Promise<void> {
   } catch (err) {
     // Aborts are part of normal teardown.
     if (err instanceof DOMException && err.name === "AbortError") return;
+    // 401 from `/api/nodes/status` means the session's `token_version`
+    // mismatched on the server (a customer-assignment change bumped
+    // it). Route through the shared probe-auth helper so the rolling
+    // buffer is dropped *and* the operator is pushed back through
+    // sign-in — the existing transient-error path would otherwise
+    // swallow this into a normal retry and the per-node samples would
+    // keep painting until the next successful sample (#393 Task E).
+    if (err instanceof UnauthorizedFetchError) {
+      void probeAuthOrRedirect(() => {
+        resetStoreForUnmount();
+      });
+      return;
+    }
     // Manager-unreachable (HTTP 503) flips the dedicated flag so the
     // table swaps to the fallback panel mid-session — the SSR-only
     // fallback would otherwise leave a stale snapshot frozen in place
@@ -562,6 +595,20 @@ export function useNodeStatusPolling(
       };
       document.addEventListener("visibilitychange", visibilityHandler);
 
+      // `window.focus` covers the focus-regain cases that
+      // `visibilitychange` does not surface — refocusing an already-
+      // visible tab from another window, OS-level alt-tabs that the
+      // browser does not classify as visibility transitions. The
+      // probe is debounced + in-flight de-duped, so a focus event
+      // immediately following a visibilitychange resume does not
+      // multiply the request rate (#393 Task E).
+      focusHandler = () => {
+        void probeAuthOrRedirect(() => {
+          resetStoreForUnmount();
+        });
+      };
+      window.addEventListener("focus", focusHandler);
+
       return () => {
         clearTimeout(id);
         driverCount -= 1;
@@ -571,6 +618,10 @@ export function useNodeStatusPolling(
           if (visibilityHandler !== null) {
             document.removeEventListener("visibilitychange", visibilityHandler);
             visibilityHandler = null;
+          }
+          if (focusHandler !== null) {
+            window.removeEventListener("focus", focusHandler);
+            focusHandler = null;
           }
           resetStoreForUnmount();
         }
@@ -585,6 +636,10 @@ export function useNodeStatusPolling(
         if (visibilityHandler !== null) {
           document.removeEventListener("visibilitychange", visibilityHandler);
           visibilityHandler = null;
+        }
+        if (focusHandler !== null) {
+          window.removeEventListener("focus", focusHandler);
+          focusHandler = null;
         }
         resetStoreForUnmount();
       }
