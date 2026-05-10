@@ -59,60 +59,74 @@ This is a deliberate departure from a single global score across all kinds. Beca
 
 The four selectors from #462 are reinterpreted as within-kind operators.
 
-### S1. High-confidence (within-kind)
+Each selector produces a value in `[0, 1]`. Continuous-valued selectors carry magnitude information (degree of recurrence, percentile of confidence); binary-valued selectors flip on a discrete condition. The score is the weighted sum, kind-normalized before storage.
 
-For each event, S1 produces a score equal to its **within-kind percentile rank** of the underlying confidence value over the active statistics window.
+### S1. High-confidence (within-kind, continuous)
 
-- Per-event component (fires at INSERT): cluster_id bonus when `cluster_id` is well-validated for that kind (membership in `WELL_VALIDATED_KINDS`, see §9), and category whitelist hit (`HIGH_PRECISION_CATEGORIES`, see §9).
-- Window-level component (fires at read time): the actual percentile rank against the statistics window's distribution.
+```
+s1(event) = within_kind_percentile_rank(confidence(event), kind, window) ∈ [0, 1]
+```
 
-Threshold for "high-confidence" within a kind: `τ_high` (see §9).
+The percentile rank is taken against the kind's confidence distribution over the active statistics window from `observed_event_meta` (§7). A 0.92 means "this event's confidence is in the top 8% of same-kind events in the window".
 
-### S2. Severe (within-kind, per-event)
+### S2. Severe (within-kind, binary)
 
-`category ∈ CRITICAL_CATEGORIES` causes S2-severe to fire on the event regardless of confidence. The "rare" branch of the original S2 is dropped: rarity-of-kind is no longer a selector once the algorithm groups by kind. Within-kind rarity (events with unusual feature combinations relative to the kind's history) is captured by S4 instead.
+```
+s2(event) = 1 if category(event) ∈ CRITICAL_CATEGORIES, else 0
+```
 
-Threshold for "severe": `τ_severe` (see §9).
+The "rare" branch of the original S2 is dropped: rarity-of-kind is no longer a selector once the algorithm groups by kind. Within-kind rarity (events with unusual feature combinations relative to the kind's history) is captured by S4 instead.
 
-### S3. Recurring `(asset, kind, dst)` (within-kind, window-level)
+### S3. Recurring (within-kind, continuous, capped)
 
-For each `(asset, dst)` pair within a kind, S3 fires when the pair appears more than `R` times in the statistics window. Score scales with repetition count, capped to avoid one noisy pair dominating.
+```
+s3(event) = min(1, repeat_count(event, kind, window) / R)
+```
 
-Computed at read time via `GROUP BY asset, dst` against `observed_event_meta` filtered to the kind, per §11.
+`repeat_count(event, kind, window)` is the number of `observed_event_meta` rows in the active window that share `(orig_addr, resp_addr, kind)` with the event (the schema has no `asset` column; the `(orig_addr, resp_addr)` pair is the asset-pair stand-in). `R` (§9) is the saturation cap — beyond `R` repetitions, additional occurrences do not raise s3 further, preventing a single noisy pair from dominating the score.
 
-### S4. Correlated (within-kind, window-level)
+### S4. Correlated (within-kind, continuous, capped)
 
-For each asset within a kind, S4 fires when the asset's events span more than one category in the statistics window. The intuition: an asset emitting one kind under multiple categories is a stronger signal than the same asset emitting the same kind under a single category.
+```
+s4(event) = min(1, distinct_category_count(orig_addr, kind, window) / C)
+```
 
-Score scales with category-count, capped.
+`distinct_category_count` is the number of distinct `category` values associated with `orig_addr` under this `kind` in the active window from `observed_event_meta`. `C` (§9) is the saturation cap. The intuition: an asset emitting one kind under multiple categories is a stronger signal than the same asset emitting the same kind under a single category.
 
-### `UNLABELED_BONUS`
+### `UNLABELED_BONUS` (per-event, binary)
 
-Per-event, fires when the event is `HttpThreat` and its cluster classifier returned no labeled cluster (detected via the existing `isClusterNone` helper from #451 / #481; sentinels `""`, `"none"`, `"null"` all mean "no cluster"). The signal does NOT require a `review-web` schema change — see [aicers/review-web#857](https://github.com/aicers/review-web/issues/857) for the closed exploration of `clusterId` nullability.
+```
+unlabeled(event) = 1 if kind(event) = "HttpThreat" AND isClusterNone(clusterId(event)), else 0
+```
 
-The bonus is kept as a distinct selector with its own weight rather than folded into category scoring (Path 1 of #462's three-path enumeration). This is consistent with the favored-kind list (§5) elevating "unlabeled HttpThreat" — the per-event bonus and the per-kind bonus reinforce each other rather than double-counting, because they enter the formula at different stages (per-event → within-kind ranking; per-kind → slot allocation).
+The cluster classifier's "no labeled cluster" sentinels (empty string, `"none"`, `"null"`) are detected via the existing `isClusterNone` helper from #451 / #481. The signal does NOT require a `review-web` schema change — see [aicers/review-web#857](https://github.com/aicers/review-web/issues/857) for the closed exploration of `clusterId` nullability.
+
+The bonus is kept as a distinct selector with its own weight rather than folded into category scoring (Path 1 of #462's three-path enumeration). This is consistent with the favored-kind list (§5) elevating "unlabeled HttpThreat" — the per-event bonus and the per-kind bonus reinforce each other rather than double-counting, because they enter the formula at different stages (per-event → within-kind score; per-kind → slot allocation).
 
 ### Selector union semantics
 
-Within-kind score for an event is a **weighted sum** of fired selectors:
+Within-kind score is a **weighted sum** of selector values, each in `[0, 1]`:
 
 ```
-score(event) = Σ  w_S · indicator(S fires on event)
-              S ∈ {S1, S2, S3, S4, UNLABELED_BONUS}
+score(event) = w_S1·s1(event) + w_S2·s2(event) + w_S3·s3(event)
+             + w_S4·s4(event) + w_UNLABELED·unlabeled(event)
 ```
 
-Weights `w_S` are tunable (§9). Sum (rather than max) is chosen so that an event firing multiple selectors ranks above one firing only the strongest single selector — this matches the analyst intuition that converging signals are more interesting than any single strong signal.
+Weights `w_S` are tunable (§9). Sum (rather than max) is chosen so that an event with multiple converging signals ranks above one with only the strongest single signal — this matches the analyst intuition that converging signals are more interesting than any single strong signal.
 
 ### Stored score: `baseline_score`
 
-The within-kind score above is then **kind-normalized** before storage in `baseline_triaged_event.baseline_score` so that #471's global percentile slider over `baseline_score` is meaningful:
+The within-kind score is then **kind-normalized** before storage in `baseline_triaged_event.baseline_score` so that a global percentile cutoff (e.g. #471's slider) is meaningful across kinds:
 
 ```
-baseline_score(event) = percentile_rank_within_kind(score(event), kind, window)
-                       ∈ [0, 1]
+baseline_score(event) = within_kind_percentile_rank(score(event), kind, window) ∈ [0, 1]
 ```
 
 A 0.95 `baseline_score` therefore means "this event is in the top 5% of its own kind in the window", whatever that kind is. Global percentile thresholds remain comparable across kinds because every kind contributes the same uniform-on-`[0, 1]` distribution by construction.
+
+**Tie-breaker.** Continuous selector values yield a high-cardinality `baseline_score`, but ties remain possible (e.g. when multiple events fall in the same percentile-rank bucket because of identical raw scores). For deterministic ordering — and so #471's percentile stops do not move large tied blocks together — tied rows are broken by `(event_time DESC, event_key DESC)` at every read site that orders by `baseline_score`. Both columns are NOT NULL in the schema; the i128 `event_key` is unique by construction so the ordering is total.
+
+**INSERT-time evaluation.** All selectors above (S1, S2, S3, S4, `UNLABELED_BONUS`) are evaluated by the cadence pipeline (§481) at INSERT time using `observed_event_meta`'s state at that moment. The resulting `score(event)` and `baseline_score(event)` are persisted on `baseline_triaged_event`. This makes `baseline_score` a snapshot — it does not retroactively update when later peer events would change S3 or S4. The same natural-expiry mechanism (§10) that handles cross-version drift handles same-version score drift by aging events out within 30 days; mass re-scoring is not part of the design. See §8 for the rationale.
 
 ## §4. Per-kind slot allocation (adaptive)
 
@@ -218,17 +232,24 @@ This makes cold-start a pure function of elapsed time. No row-count threshold is
 
 Per-event selectors (S1 cluster_id bonus, S2-severe, `UNLABELED_BONUS`) are unaffected by cold-start; they fire on every event from day one.
 
-## §8. Window-level selector storage
+## §8. Score computation timing
 
-**Decision: read-time computation, no persisted pattern tables.**
+**Decision: all selectors evaluated at cadence INSERT time, persisted in `baseline_triaged_event.baseline_score`. No persisted pattern tables. No re-scoring at read time.**
+
+Concretely, when the cadence pipeline (§481) processes a new event:
+
+1. The event is appended to `observed_event_meta` (the unbiased denominator) along with its peers in the same cadence batch.
+2. For each event in the batch, the pipeline computes s1 / s3 / s4 by `GROUP BY` against `observed_event_meta` filtered to the active statistics window (§7) and the relevant grouping keys. s2 and `UNLABELED_BONUS` need no aggregation.
+3. The weighted sum `score(event)` and the kind-normalized `baseline_score(event)` are written to `baseline_triaged_event` along with `selector_tags`. Once written, they are not updated within their `baseline_version`.
 
 Rationale:
 
-- The set of `(asset, kind, dst)` and `(asset, kind, category)` aggregates is bounded by the menu's window size (≤ 30 days) and is recomputed once per menu load, not per event.
-- Persisted pattern tables would add a new write path on the cadence schedule, a cleanup/retention concern, and a `baseline_version` migration story — none of which justify themselves at the volumes involved.
-- `observed_event_meta` already carries the right indexes for the GROUP BY shape (composite on `(observed_at, kind, asset)` per #456); read-time scans hit them.
+- The schema already commits to a persisted score column: `baseline_triaged_event.baseline_score DOUBLE PRECISION`, with composite index `(event_time DESC, baseline_score DESC)` (`migrations/customer/0003_baseline_corpus_a.sql`). This index is precisely what #471's slider needs, and only works against a stored value.
+- The relevant `observed_event_meta` indexes for the cadence-time GROUP BY are `event_time DESC` (the time-window slice) and `(kind, event_time DESC)` (kind-filtered window). The schema has no `asset` column; the asset-pair stand-in is `(orig_addr, resp_addr)` (and `orig_addr` for S4's per-asset grouping). The hash aggregate on `(orig_addr, resp_addr)` or `(orig_addr, kind)` runs over the kind/time-filtered slice; planner choice is verified during measurement (§12).
+- Persisted pattern tables would add a separate write path, a retention concern, and a `baseline_version` migration story for what is already a bounded, schedulable computation inside the cadence runner.
+- Score drift from later peer events inserting into `observed_event_meta` is bounded by the same 30-day natural-expiry window that absorbs `baseline_version` drift (§10). Within that window, scores reflect cadence-time state. Beyond 30 days, events have aged out of the menu regardless of any drift.
 
-If measurement on representative production data shows the per-load aggregation cost is unacceptable, this decision is revisited via a follow-up RFC introducing a daily-rollup pattern table; the algorithm shape above does not change, only where the GROUP BY result lives.
+If measurement on representative production data shows the cadence-time aggregation cost is unacceptable, the fallback is a follow-up RFC introducing per-cadence-run pattern caches; the algorithm shape above (continuous selectors, weighted sum, kind-normalized stored score) does not change, only where the GROUP BY result lives.
 
 ## §9. Tunable parameters
 
@@ -244,15 +265,16 @@ These values fix the algorithm's **shape** but not necessarily their final calib
 | `w_S4` | S4 correlated weight | 0.8 |
 | `w_UNLABELED` | UNLABELED_BONUS weight | 0.5 |
 
-### Selector thresholds (§3)
+### Selector saturation caps (§3)
 
 | Symbol | Meaning | Provisional value |
 |---|---|---|
-| `τ_high` | percentile rank for S1 high-confidence | 0.90 |
-| `τ_severe` | (currently unused — S2 is per-event categorical, no threshold) | — |
-| `R` | minimum repetitions for S3 | 3 |
+| `R` | S3 saturation cap (repeat count past which s3 stays at 1.0) | 10 |
+| `C` | S4 saturation cap (distinct categories past which s4 stays at 1.0) | 4 |
 
-`τ_high` is a single global value, not per-kind. Per-kind thresholds add a tuning surface that ops would have to maintain per kind without commensurate accuracy gain at this stage.
+S1 needs no saturation cap — its output is already a percentile rank in `[0, 1]`. S2 and `UNLABELED_BONUS` are binary and saturated by definition.
+
+`selector_tags` content (the analyst-visible label set) parallels but is not identical to selector contributions: a tag is emitted when a selector's value exceeds an implementation-level "this fired meaningfully" threshold (e.g. `s1 > 0.85` → `"S1-high"`, `s3 > 0.5` → `"S3-recurring"`). Exact tag thresholds are implementation details and do not affect `baseline_score`; they exist purely for analyst readability of why an event was elevated.
 
 ### Selector membership lists (§3)
 
@@ -285,18 +307,17 @@ Reference values from this curve (`LOWER_FLOOR = 20`, `scale = 30`, dial neutral
 
 `scale` and `LOWER_FLOOR` are calibrated on representative tenant data before merge so neutral-dial menu size sits in the analyst-readable range across the customer fleet's activity bands.
 
-### Per-event vs window-level selector membership
+### Selector evaluation timing
 
-| Selector | Fires at INSERT | Fires at read time |
-|---|---|---|
-| S1 cluster_id bonus | ✓ | — |
-| S1 percentile rank | — | ✓ |
-| S2 severe (category-based) | ✓ | — |
-| S3 recurring | — | ✓ |
-| S4 correlated | — | ✓ |
-| UNLABELED_BONUS | ✓ | — |
+All selectors are evaluated at cadence INSERT time (§8) using `observed_event_meta` history at that moment. `score(event)`, `baseline_score(event)`, and `selector_tags(event)` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. The read path issues a single SELECT against `baseline_triaged_event` with no joins to derive selector values.
 
-`selector_tags` on `baseline_triaged_event` is the per-event subset only. The read path joins window-level selector results onto each row at menu-load time.
+| Selector | Source data |
+|---|---|
+| S1 within-kind percentile rank | event's `confidence` + `observed_event_meta.confidence` history for same `kind` in the window |
+| S2 severe | event's `category` only (no aggregation) |
+| S3 recurring | `observed_event_meta` GROUP BY `(orig_addr, resp_addr, kind)` in the window |
+| S4 correlated | `observed_event_meta` GROUP BY `(orig_addr, kind)` with `COUNT(DISTINCT category)` in the window |
+| UNLABELED_BONUS | event's `clusterId` only (no aggregation) |
 
 ## §10. `baseline_version`
 
@@ -326,4 +347,6 @@ The version is **not** surfaced in the menu UI per #458. Cross-version mixes wit
 
 3. **Per-window weighting in §7.** Currently each of the 7d / 14d / 30d signals contributes equally (max across windows). An alternative is to weight shorter windows higher (recent patterns matter more) or longer windows higher (more stable). Preliminary recommendation: equal weighting via max, revisit after Phase 1.B is in production.
 
-4. **`selector_tags` schema.** This RFC assumes `selector_tags` is a `text[]` or JSONB array of fired selector identifiers. The exact column type and indexing strategy is owned by #456 / #481's schema; this RFC requires only that the per-event selectors of §3 can be persisted at INSERT time and read at menu-load time.
+4. **Cadence-time aggregation cost.** `migrations/customer/0003_baseline_corpus_a.sql` provides `(event_time DESC)` and `(kind, event_time DESC)` indexes on `observed_event_meta`. The cadence-time GROUP BY for s3 and s4 runs over the kind-and-time-filtered slice with a hash aggregate on `(orig_addr, resp_addr)` or `(orig_addr, kind)`. This needs `EXPLAIN ANALYZE` on a representative tenant DB before merge to confirm the planner picks the composite index and that the per-batch aggregation completes within the cadence runner's time budget. If it does not, §8's fallback (per-cadence-run pattern cache) is taken; the algorithm shape does not change.
+
+5. **`selector_tags` content.** The schema gives `selector_tags TEXT[]`; tag membership is decided by per-selector "fired meaningfully" thresholds set in code, not in this RFC. Whether tag thresholds should ever leak into `baseline_version` (so changing them requires a version bump) is left for ops review — the conservative answer is yes (any change to what tags appear should be auditable through `baseline_version`), but tags are not load-bearing for `baseline_score` so the impact of skipping a bump is purely cosmetic.
