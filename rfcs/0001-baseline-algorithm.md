@@ -244,13 +244,21 @@ where:
 
 ### Per-bucket quotas
 
-The shares are normalized to sum to 1 and multiplied by **`default_N`** (§6) — *not* by `final_count` — to produce per-bucket quotas:
+The shares are normalized to sum to 1 and multiplied by **`default_N`** (§6) — *not* by `final_count`. Independent rounding (`round(slot_share(b) · default_N)` per bucket) does not guarantee that the per-bucket quotas sum to `default_N`: with shares `0.25 / 0.25 / 0.25 / 0.25` and `default_N = 10`, each bucket would round to 3, summing to 12 and breaking the `assembled_count ≤ default_N` cap. The quotas are therefore distributed by the **largest-remainder method**, which guarantees the sum exactly:
 
 ```
-quota[b] = round(slot_share(b) · default_N)
+ideal[b]     = slot_share(b) · default_N            // real-valued
+floor[b]     = floor(ideal[b])                      // integer floor
+remainder[b] = ideal[b] - floor[b]                  // ∈ [0, 1)
+leftover     = default_N - sum_over_buckets(floor[b])  // 0 ≤ leftover ≤ #buckets
+
+quota[b] = floor[b] + (1 if b is among the top-`leftover` buckets
+                            ranked by remainder[b] DESC, else 0)
 ```
 
-`default_N` is the cognitive-limit cap from §6; `quota[b]` is the maximum number of events from this bucket that the menu will ever show. Fractional slots are resolved by the largest-remainder method. **Tie-breaker** when two buckets have exactly equal remainders: the extra slot goes to the bucket whose `(kind, is_unlabeled)` key sorts first lexicographically (kind name first, then `is_unlabeled` with `false < true`). The tie-breaker is included so the algorithm is fully deterministic — `FAVORED_BUCKETS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
+Ranking rule for the leftover distribution: descending `remainder[b]`, with ties broken by the bucket's `(kind, is_unlabeled)` key in lexicographic order (kind name first, then `is_unlabeled` with `false < true`). The tie-breaker is included so the allocation is fully deterministic — `FAVORED_BUCKETS` membership and `β` already differentiate priority where it matters; lexicographic ordering only resolves the rare floating-point coincidence.
+
+By construction `sum_over_buckets(quota[b]) = sum(floor[b]) + leftover = default_N`. `quota[b]` is the maximum number of events from this bucket that the menu will ever show; `default_N` is the cognitive-limit cap from §6.
 
 Using a shared key in both stages removes the double-count risk from the previous draft: the same event has exactly one `slot_bucket`, and that bucket is the only one whose quota counts that event.
 
@@ -316,7 +324,7 @@ The log10 shape buys two properties at once:
 - `LOWER_FLOOR` ensures even very quiet days surface something to look at.
 - The slow growth of log10 naturally bounds the menu near an analyst-readable size without a hard cap constant; the customer's activity level is reflected, not equated to raw volume.
 
-`default_N` is the **cognitive-limit cap**: the upper bound on the number of rows the menu shows. §4 uses it to compute per-bucket quotas (`quota[b] = round(slot_share(b) · default_N)` where `b = slot_bucket`); the sum of quotas across buckets is exactly `default_N`. The loosest slider stop ("All") produces *up to* `default_N` rows — the actual count can fall short when a bucket's available events do not fill its quota, since slack is not redistributed (no padding from lower-priority buckets; no padding by sub-cutoff events). Tighter slider positions shrink `final_count` further because the cutoff filters events out faster than the quota cap binds.
+`default_N` is the **cognitive-limit cap**: the upper bound on the number of rows the menu shows. §4 uses it to compute per-bucket quotas via the largest-remainder method (`floor(slot_share(b) · default_N)` per bucket, with the leftover slots distributed by descending remainder); the sum of quotas across buckets is exactly `default_N` by construction. The loosest slider stop ("All") produces *up to* `default_N` rows — the actual count can fall short when a bucket's available events do not fill its quota, since slack is not redistributed (no padding from lower-priority buckets; no padding by sub-cutoff events). Tighter slider positions shrink `final_count` further because the cutoff filters events out faster than the quota cap binds.
 
 `final_count` is `assembled_count` from §4, with one explicit fallback pass when the floor is not met:
 
