@@ -46,6 +46,11 @@ The page has five regions:
    caller's customer scope (composite `(customerId, address)` key);
    selecting a row reveals its score, counts, and most recent
    triaged events on the right.
+5. **Pivot panel and breadcrumb** — appears below the workspace
+   once the operator pivots from the selected asset into a related
+   dimension. Shows the pivot trail along the top and the
+   **Related events** grouped by dimension (external IP, registrable
+   domain, JA3, SNI) below it. Hidden until the first pivot.
 
 ## Period picker
 
@@ -364,8 +369,10 @@ even though the row payload is bounded.
 Clicking a row populates the **Asset detail** panel on the
 right; the first row is preselected when the page loads.
 
-The list shows up to one row per distinct address. If no events
-in the period pass the baseline rule, the list reads
+The list shows up to one row per distinct `(customerId, address)`
+— a multi-customer scope can legitimately render two rows with the
+same private address from different tenants. If no events in the
+period pass the baseline rule, the list reads
 **"No assets matched the baseline rule in this period."**
 
 ## Asset detail
