@@ -145,6 +145,7 @@ describe("resolveStepFocusEvents", () => {
     const sqlShaped: ScoredTriageEvent[] = [
       {
         __typename: "BlocklistTls",
+        id: "event-uuid-1",
         time: "2026-05-09T12:00:00.000Z",
         sensor: "sensor-a",
         category: "EXFILTRATION",
@@ -157,6 +158,7 @@ describe("resolveStepFocusEvents", () => {
       },
       {
         __typename: "BlocklistTls",
+        id: "event-uuid-2",
         time: "2026-05-09T11:00:00.000Z",
         sensor: "sensor-a",
         category: "DISCOVERY",

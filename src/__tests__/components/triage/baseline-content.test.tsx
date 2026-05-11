@@ -138,6 +138,7 @@ function makeEvent(
 ): ScoredTriageEvent {
   return {
     __typename: "BlocklistHttp",
+    id: eventId,
     time: new Date(Date.UTC(2026, 4, 8, 12, 0, timeOffsetSec)).toISOString(),
     sensor: "sensor-a",
     category: "EXFILTRATION",
