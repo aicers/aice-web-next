@@ -420,11 +420,34 @@ dimensions:
 
 - `kinds`, `categories`, `levels` (Tier 2 only — surfaced in a
   separate "Tier 2 only" group that appears once the toggle is on).
-  `learningMethods` and `keywords` are also Tier 2-only filter
-  fields, but their values are not derivable from the loaded corpus,
-  so the panel does not yet surface a click affordance for them.
-  Tracked as follow-ups: a static-options group for `learningMethods`
-  (issue #498) and a free-form chip input for `keywords` (issue #499).
+- `learningMethods` (Tier 2 only — surfaced as a **static-options**
+  section in the same "Tier 2 only" group). The two
+  `LearningMethod` enum values are hard-coded so the section appears
+  whenever the scope is Tier 2, regardless of whether the loaded
+  corpus carries the field. Clicking a row issues a Tier 2 fetch
+  filtered by `EventListFilterInput.learningMethods`.
+
+  ![Learning method static section (wireframe)](../assets/triage-learning-methods-en.svg)
+
+  > **Note:** The figure above is a wireframe stand-in. It ships
+  > before the live REview screenshot environment is wired up for
+  > Triage; the wireframe will be replaced with a real PNG capture
+  > as part of the EN/KR Triage manual screenshot pass tracked by
+  > [issue #455](https://github.com/aicers/aice-web-next/issues/455),
+  > alongside the other Phase 1.A Triage wireframes.
+
+  - **Unsupervised** — events flagged by REview's unsupervised
+    detection models. Pivoting here surfaces every Tier 2 event in
+    the period whose `learningMethod` is `UNSUPERVISED`.
+  - **Semi-supervised** — events flagged by REview's
+    semi-supervised detection models. Pivoting here surfaces every
+    Tier 2 event in the period whose `learningMethod` is
+    `SEMI_SUPERVISED`.
+
+  `keywords` is also a Tier 2-only filter field but its values are
+  not enumerable, so the panel does not yet surface a click
+  affordance for it. Tracked as follow-up #499 (free-form chip
+  input).
 - `externalIp`, `internalIp`, `country`, `sameSensor` (the same row
   the operator sees in Tier 1, but the click action issues a fresh
   fetch instead of looking up the loaded index).

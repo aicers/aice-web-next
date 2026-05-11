@@ -2011,7 +2011,14 @@
         "clusterId": "Cluster ID",
         "kinds": "Event kind",
         "categories": "Threat category",
-        "levels": "Threat level"
+        "levels": "Threat level",
+        "learningMethods": "Learning method"
+      },
+      "values": {
+        "learningMethod": {
+          "UNSUPERVISED": "Unsupervised",
+          "SEMI_SUPERVISED": "Semi-supervised"
+        }
       }
     },
     "pivotBreadcrumb": {
@@ -2039,7 +2046,8 @@
         "clusterId": "Cluster ID",
         "kinds": "Event kind",
         "categories": "Threat category",
-        "levels": "Threat level"
+        "levels": "Threat level",
+        "learningMethods": "Learning method"
       }
     },
     "periodChangeConfirm": {

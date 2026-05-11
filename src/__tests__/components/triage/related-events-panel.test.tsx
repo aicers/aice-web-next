@@ -27,6 +27,10 @@ import {
 function dimensionsMap(prefix: string): Record<PivotDimensionId, string> {
   const out = {} as Record<PivotDimensionId, string>;
   for (const dim of PIVOT_DIMENSIONS) out[dim.id] = `${prefix}:${dim.id}`;
+  // Static-options dimensions (#498 — `learningMethods`) have no entry
+  // in PIVOT_DIMENSIONS but still need a label for breadcrumb /
+  // pivot-focus rendering.
+  out.learningMethods = `${prefix}:learningMethods`;
   return out;
 }
 
@@ -53,6 +57,10 @@ const LABELS: TriagePivotPanelLabels = {
   kindColumn: "Kind",
   scoreColumn: "Score",
   pivotColumn: "Pivot",
+  learningMethodValues: {
+    UNSUPERVISED: "Unsupervised",
+    SEMI_SUPERVISED: "Semi-supervised",
+  },
 };
 
 function makeEvent(i: number): ScoredTriageEvent {
@@ -151,5 +159,99 @@ describe("TriagePivotPanel — collapsed/expanded cap hint", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     expect(screen.getAllByRole("row")).toHaveLength(1 + 30);
     expect(screen.queryByText(/Showing/)).toBeNull();
+  });
+});
+
+describe("TriagePivotPanel — Tier 2 only Learning method static section", () => {
+  // The static-options section is the whole point of #498: the loaded
+  // corpus carries no `learningMethod` field, so the section must
+  // appear regardless of focus event values. The tests below render
+  // the panel with NO focus-driven sections (so the surfacing has to
+  // come from the static branch alone) and pin the click action's
+  // shape — the click must dispatch the GraphQL enum literal verbatim
+  // so the underlying Tier 2 fetch sends the value REview accepts.
+  it("renders both enum rows when scope is Tier 2 even with no focus-driven sections", () => {
+    render(
+      <TriagePivotPanel
+        sections={[]}
+        truncated={false}
+        hasFocus={true}
+        onPivot={vi.fn()}
+        labels={LABELS}
+        showLearningMethodSection={true}
+      />,
+    );
+    // Section heading rendered.
+    expect(screen.getByText("Dim:learningMethods")).toBeTruthy();
+    // Both enum buttons rendered with their localized labels.
+    expect(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:learningMethods: Unsupervised",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:learningMethods: Semi-supervised",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("dispatches the click with the GraphQL enum literal as the value key", () => {
+    const onPivot = vi.fn();
+    render(
+      <TriagePivotPanel
+        sections={[]}
+        truncated={false}
+        hasFocus={true}
+        onPivot={onPivot}
+        labels={LABELS}
+        showLearningMethodSection={true}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:learningMethods: Unsupervised",
+      }),
+    );
+    expect(onPivot).toHaveBeenCalledTimes(1);
+    expect(onPivot.mock.calls[0][0]).toEqual({
+      kind: "dimension",
+      dimension: "learningMethods",
+      // Exact enum spelling — no transformation, no lower-casing.
+      value: { key: "UNSUPERVISED", label: "Unsupervised" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:learningMethods: Semi-supervised",
+      }),
+    );
+    expect(onPivot).toHaveBeenCalledTimes(2);
+    expect(onPivot.mock.calls[1][0]).toEqual({
+      kind: "dimension",
+      dimension: "learningMethods",
+      value: { key: "SEMI_SUPERVISED", label: "Semi-supervised" },
+    });
+  });
+
+  it("does not render the static section when showLearningMethodSection is false (Tier 1 mode)", () => {
+    // Mirrors how `kinds` / `levels` are hidden in Tier 1 today: the
+    // baseline-content wires `showLearningMethodSection` to
+    // `scope === "tier2"`, so a Tier 1 panel never receives the prop.
+    render(
+      <TriagePivotPanel
+        sections={[]}
+        truncated={false}
+        hasFocus={true}
+        onPivot={vi.fn()}
+        labels={LABELS}
+        showLearningMethodSection={false}
+      />,
+    );
+    expect(screen.queryByText("Dim:learningMethods")).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: /Pivot to Dim:learningMethods/,
+      }),
+    ).toBeNull();
   });
 });

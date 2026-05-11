@@ -2011,7 +2011,14 @@
         "clusterId": "클러스터 ID",
         "kinds": "이벤트 종류",
         "categories": "위협 카테고리",
-        "levels": "위협 레벨"
+        "levels": "위협 레벨",
+        "learningMethods": "학습 방식"
+      },
+      "values": {
+        "learningMethod": {
+          "UNSUPERVISED": "비지도",
+          "SEMI_SUPERVISED": "준지도"
+        }
       }
     },
     "pivotBreadcrumb": {
@@ -2039,7 +2046,8 @@
         "clusterId": "클러스터 ID",
         "kinds": "이벤트 종류",
         "categories": "위협 카테고리",
-        "levels": "위협 레벨"
+        "levels": "위협 레벨",
+        "learningMethods": "학습 방식"
       }
     },
     "periodChangeConfirm": {

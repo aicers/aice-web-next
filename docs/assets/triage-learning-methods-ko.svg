@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 320" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Tier 2 학습 방식 섹션 (와이어프레임)</title>
+  <desc id="desc">Triage 관련 이벤트 패널의 Tier 2 전용 정적 옵션 학습 방식 섹션 와이어프레임. 피벗 범위가 Tier 2일 때 포커스 기반 섹션 아래에 항상 표시되며, 비지도와 준지도 두 행을 클릭할 수 있습니다. 클릭하면 서버 필터링된 Tier 2 조회가 발생합니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 6; ry: 6; }
+    .panel-header { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 16px; fill: #18181b; font-weight: 700; }
+    .text-section { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-family { font-size: 11px; fill: #71717a; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .row-divider { stroke: #e5e7eb; stroke-width: 1; }
+    .chip { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .chip-text { fill: #18181b; font-size: 12px; }
+  </style>
+
+  <rect class="bg" width="720" height="320"/>
+
+  <!-- Card -->
+  <rect class="panel" x="20" y="20" width="680" height="280"/>
+  <rect class="panel-header" x="20" y="20" width="680" height="40"/>
+  <text class="text-title" x="36" y="46">관련 이벤트</text>
+  <text class="text-muted" x="36" y="58">Tier 2 모드</text>
+
+  <!-- Existing focus-driven section divider -->
+  <text class="text-muted" x="36" y="92">… 포커스 기반 섹션 (외부 IP, JA3, …) …</text>
+  <line class="row-divider" x1="20" y1="108" x2="700" y2="108"/>
+
+  <!-- Tier 2 only — Learning method -->
+  <g transform="translate(36, 130)">
+    <text class="text-section" x="0" y="14">학습 방식</text>
+    <text class="text-family" x="0" y="32">Tier 2 전용</text>
+
+    <!-- Two clickable enum rows -->
+    <rect class="chip" x="0" y="56" width="148" height="28"/>
+    <text class="chip-text" x="74" y="74" text-anchor="middle">비지도</text>
+
+    <rect class="chip" x="160" y="56" width="148" height="28"/>
+    <text class="chip-text" x="234" y="74" text-anchor="middle">준지도</text>
+
+    <text class="text-muted" x="0" y="120">행을 누르면 기간 내 learningMethod가 선택한 값과 일치하는</text>
+    <text class="text-muted" x="0" y="136">모든 Tier 2 이벤트를 조회합니다.</text>
+  </g>
+</svg>

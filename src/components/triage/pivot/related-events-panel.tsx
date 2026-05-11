@@ -15,6 +15,10 @@ import { useTimezone } from "@/components/providers/timezone-provider";
 import { formatDateTime } from "@/lib/format-date";
 import type { ScoredTriageEvent } from "@/lib/triage";
 import {
+  LEARNING_METHOD_VALUES,
+  type LearningMethodValue,
+} from "@/lib/triage/learning-methods";
+import {
   getPivotDimension,
   PIVOT_GROUP_DEFAULT_ROWS,
   PIVOT_GROUP_EXPANDED_ROWS,
@@ -57,6 +61,13 @@ export interface TriagePivotPanelLabels {
   weakSignal?: WeakSignalBadgeLabels;
   /** Tooltip surfaced on the deferred Tier 2 sensor row (#453). */
   sameSensorUnavailable?: string;
+  /**
+   * Per-value labels for the static Tier-2-only `learningMethods`
+   * section (#498). Keys are the GraphQL `LearningMethod` enum
+   * literals (`UNSUPERVISED`, `SEMI_SUPERVISED`); values are the
+   * localized button labels.
+   */
+  learningMethodValues?: Record<LearningMethodValue, string>;
 }
 
 interface TriagePivotPanelProps {
@@ -77,6 +88,15 @@ interface TriagePivotPanelProps {
    * (#453 — sensor name→ID lookup is gated on `triage:read`).
    */
   deferredSensorDimension?: boolean;
+  /**
+   * When `true`, render the static-options "Learning method" section
+   * (#498) below the focus-driven sections. The section appears
+   * regardless of the focus event values because `LearningMethod` is
+   * a fixed two-value SDL enum with no per-event extractor; it is
+   * only meaningful in Tier 2 mode (where the click action issues a
+   * server-filtered fetch).
+   */
+  showLearningMethodSection?: boolean;
 }
 
 const SCORE_FORMAT = new Intl.NumberFormat(undefined, {
@@ -92,9 +112,12 @@ export function TriagePivotPanel({
   labels,
   isWeakSignal,
   deferredSensorDimension = false,
+  showLearningMethodSection = false,
 }: TriagePivotPanelProps) {
   const showDeferredSensor =
     deferredSensorDimension && labels.sameSensorUnavailable !== undefined;
+  const showLearningMethods =
+    showLearningMethodSection && labels.learningMethodValues !== undefined;
   return (
     <section
       aria-labelledby="triage-pivot-heading"
@@ -117,7 +140,9 @@ export function TriagePivotPanel({
         <p className="px-4 py-6 text-sm text-muted-foreground">
           {labels.noFocusHint}
         </p>
-      ) : sections.length === 0 && !showDeferredSensor ? (
+      ) : sections.length === 0 &&
+        !showDeferredSensor &&
+        !showLearningMethods ? (
         <p className="px-4 py-6 text-sm text-muted-foreground">
           {labels.empty}
         </p>
@@ -138,9 +163,71 @@ export function TriagePivotPanel({
               tooltip={labels.sameSensorUnavailable as string}
             />
           ) : null}
+          {showLearningMethods ? (
+            <LearningMethodSection
+              labels={labels}
+              valueLabels={
+                labels.learningMethodValues as Record<
+                  LearningMethodValue,
+                  string
+                >
+              }
+              onPivot={onPivot}
+            />
+          ) : null}
         </ul>
       )}
     </section>
+  );
+}
+
+function LearningMethodSection({
+  labels,
+  valueLabels,
+  onPivot,
+}: {
+  labels: TriagePivotPanelLabels;
+  valueLabels: Record<LearningMethodValue, string>;
+  onPivot: (step: PivotStep) => void;
+}) {
+  const dimensionLabel = labels.dimensions.learningMethods;
+  const familyLabel = labels.family["tier2-only"];
+  return (
+    <li className="px-4 py-3" data-testid="triage-pivot-learning-methods">
+      <div className="mb-2 flex flex-col gap-0.5">
+        <h3 className="text-sm font-semibold text-foreground">
+          {dimensionLabel}
+        </h3>
+        <p className="text-xs text-muted-foreground">{familyLabel}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {LEARNING_METHOD_VALUES.map((valueKey) => {
+          const label = valueLabels[valueKey];
+          return (
+            <button
+              key={valueKey}
+              type="button"
+              onClick={() =>
+                onPivot({
+                  kind: "dimension",
+                  dimension: "learningMethods",
+                  value: { key: valueKey, label },
+                })
+              }
+              aria-label={labels.pivotActionTemplate
+                .replace("{dimension}", dimensionLabel)
+                .replace("{value}", label)}
+              className={cn(
+                "rounded border border-border/60 px-3 py-1 text-xs",
+                "text-foreground hover:bg-accent",
+              )}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </li>
   );
 }
 

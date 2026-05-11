@@ -93,6 +93,10 @@ const PERIOD = {
 function dimensionsMap(prefix: string): Record<PivotDimensionId, string> {
   const out = {} as Record<PivotDimensionId, string>;
   for (const dim of PIVOT_DIMENSIONS) out[dim.id] = `${prefix}:${dim.id}`;
+  // Static-options dimensions (#498 — `learningMethods`) have no entry
+  // in PIVOT_DIMENSIONS but still need a label for breadcrumb /
+  // pivot-focus rendering.
+  out.learningMethods = `${prefix}:learningMethods`;
   return out;
 }
 
@@ -185,6 +189,10 @@ const LABELS: TriageShellLabels = {
       weakSignal: {
         badge: "weak",
         hint: "Tier 2 only",
+      },
+      learningMethodValues: {
+        UNSUPERVISED: "Unsupervised",
+        SEMI_SUPERVISED: "Semi-supervised",
       },
     },
     pivotBreadcrumb: {
@@ -864,5 +872,197 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     await flushAsync();
     expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
     expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
+  });
+});
+
+describe("TriageShell — Tier 2 only Learning method static section (#498)", () => {
+  function selectTier2Scope() {
+    const scopeTab = screen.getByRole("tab", { name: "All detection events" });
+    fireEvent.click(scopeTab);
+  }
+
+  function renderShellWithSingleAsset() {
+    // A single corpus event so the asset list selects 10.0.0.1 by
+    // default and the breadcrumb (and pivot panel) is visible. The
+    // event intentionally has no `learningMethod` — the whole point of
+    // the static section is that it appears regardless of focus event
+    // values, including when the loaded corpus has none of the field.
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    return render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+  }
+
+  it("hides the Learning method section in Tier 1 mode and renders both rows in Tier 2 mode", () => {
+    renderShellWithSingleAsset();
+    // Tier 1: section absent.
+    expect(
+      screen.queryByRole("button", {
+        name: "Pivot to Dim:learningMethods: Unsupervised",
+      }),
+    ).toBeNull();
+    selectTier2Scope();
+    // Tier 2: both enum rows surfaced even though no focus event
+    // carries `learningMethod`.
+    expect(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:learningMethods: Unsupervised",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:learningMethods: Semi-supervised",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("clicking a row dispatches a Tier 2 fetch with the GraphQL enum literal as the value key", async () => {
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: "5",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    renderShellWithSingleAsset();
+    selectTier2Scope();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:learningMethods: Unsupervised",
+      }),
+    );
+    await flushAsync();
+    expect(fetchTier2Mock).toHaveBeenCalled();
+    expect(fetchTier2Mock.mock.calls[0][0]).toMatchObject({
+      dimension: "learningMethods",
+      // Exact enum spelling — no transformation.
+      valueKey: "UNSUPERVISED",
+      firstPageOnly: true,
+    });
+  });
+
+  it("restores a learningMethods step from the URL hash and queues the Tier 2 fetch", async () => {
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("learningMethods:UNSUPERVISED") +
+      "&triage.pivot.mode=tier2";
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [
+        {
+          __typename: "BlocklistTls",
+          id: "lm-1",
+          time: "2026-05-08T13:30:00.000Z",
+          sensor: "sensor-a",
+          category: "EXFILTRATION",
+          level: "MEDIUM",
+          origAddr: "10.0.0.5",
+          respAddr: "203.0.113.4",
+        },
+      ],
+      totalCount: "1",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Restored crumb shows the localized label, not the raw enum.
+    expect(
+      screen
+        .getByText("Crumb:learningMethods: Unsupervised")
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    // The queued Tier 2 fetch fired with the raw enum literal.
+    expect(fetchTier2Mock).toHaveBeenCalled();
+    expect(fetchTier2Mock.mock.calls[0][0]).toMatchObject({
+      dimension: "learningMethods",
+      valueKey: "UNSUPERVISED",
+    });
+    // No stale-hash fallback toast.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // The fetched event must actually become the active pivot focus —
+    // not just a queued fetch. `pivotFocusAsset` is only non-null when
+    // the static-dim focus resolver (`baseline-content.tsx:232`) finds
+    // events in the cached Tier 2 result, so the "Pivot focus" region
+    // with the dimension-label address line is the operator-visible
+    // proof that the round-trip rendered the returned event. Without
+    // the static-dim branch the asset detail would still show the
+    // 10.0.0.1 corpus row even with the crumb restored, so this is the
+    // assertion that actually pins the rendered focus.
+    const pivotFocus = screen.getByRole("region", { name: "Pivot focus" });
+    expect(
+      within(pivotFocus).getByText("Dim:learningMethods: Unsupervised"),
+    ).toBeTruthy();
+    // The focus events come from the fetch result, not the corpus —
+    // exactly one event was returned, so the events table has one row.
+    const focusRows = within(pivotFocus)
+      .getAllByRole("row")
+      .filter((row) => row.querySelector("td") !== null);
+    expect(focusRows).toHaveLength(1);
+  });
+
+  it("falls back to the asset root with the stale-hash toast when the URL hash carries an invalid learningMethods value", async () => {
+    // The parser whitelists the two SDL enum values. An out-of-enum
+    // literal is reported via `rejectedStepCount`, which the restore
+    // path treats as a stale URL: the asset is still selected, but the
+    // dimension trail collapses to the asset crumb and the shared
+    // stale-hash toast surfaces (#498 negative-path requirement).
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("learningMethods:INVALID_VALUE") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(screen.queryByText(/Crumb:learningMethods/)).toBeNull();
+    // The malformed step never reached the Tier 2 fetch path.
+    expect(fetchTier2Mock).not.toHaveBeenCalled();
+    // Operator sees the same toast as any other stale-hash fallback.
+    expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
   });
 });

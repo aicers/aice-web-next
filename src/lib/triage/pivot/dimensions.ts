@@ -33,6 +33,15 @@ import {
  * surfaced as a separate group in Tier 2 mode (#453 §"Server-
  * filtered, Tier-2-only"). Their click action issues a Tier 2 fetch
  * rather than reading from the loaded corpus.
+ *
+ * `learningMethods` is also a Tier-2-only server-filtered dimension
+ * but is rendered as a *static-options* section (#498) — its values
+ * come from a fixed two-element enum on the SDL, not from the loaded
+ * corpus, so there is no `PivotDimension` object in
+ * {@link PIVOT_DIMENSIONS}. The id is included in the union so the
+ * click handler, hash parser, cache key, and `Tier2Pending*` types
+ * can refer to it; the static section metadata lives in
+ * `src/lib/triage/learning-methods.ts`.
  */
 export type PivotDimensionId =
   | "externalIp"
@@ -55,7 +64,8 @@ export type PivotDimensionId =
   | "clusterId"
   | "kinds"
   | "categories"
-  | "levels";
+  | "levels"
+  | "learningMethods";
 
 /**
  * Pivot value. Carries both the canonical pivot key (the index key
@@ -458,6 +468,30 @@ export const PIVOT_DIMENSIONS: readonly PivotDimension[] = [
 const DIMENSION_BY_ID = new Map<PivotDimensionId, PivotDimension>(
   PIVOT_DIMENSIONS.map((d) => [d.id, d]),
 );
+
+/**
+ * Pivot dimensions that have no `PivotDimension` object in
+ * {@link PIVOT_DIMENSIONS} because their values come from a fixed
+ * static enum rather than per-event extraction. The Tier 2 panel
+ * renders these as a separate static section (see #498).
+ */
+const STATIC_TIER2_DIMENSION_IDS: ReadonlySet<PivotDimensionId> = new Set([
+  "learningMethods",
+] as const satisfies readonly PivotDimensionId[]);
+
+/**
+ * `true` when the dimension has no per-event extractor and is
+ * surfaced through the panel's static section path instead of
+ * `buildPivotPanel()`. Callers that walk the index by id (restore,
+ * focus resolution) consult this before calling
+ * {@link getPivotDimension} so they do not throw on a known-but-
+ * static id.
+ */
+export function isStaticTier2Dimension(
+  id: PivotDimensionId,
+): id is "learningMethods" {
+  return STATIC_TIER2_DIMENSION_IDS.has(id);
+}
 
 export function getPivotDimension(id: PivotDimensionId): PivotDimension {
   const dim = DIMENSION_BY_ID.get(id);

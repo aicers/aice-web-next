@@ -25,12 +25,21 @@ interface TriagePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
+// Static-options Tier-2-only dimension ids that have no entry in
+// {@link PIVOT_DIMENSIONS}; the panel renders them through dedicated
+// section paths but they still need labels in the dimensions map for
+// breadcrumb / pivot-focus rendering.
+const STATIC_DIMENSION_IDS: readonly PivotDimensionId[] = ["learningMethods"];
+
 function pivotDimensionsMap(
   resolver: (id: PivotDimensionId) => string,
 ): Record<PivotDimensionId, string> {
   const out = {} as Record<PivotDimensionId, string>;
   for (const dim of PIVOT_DIMENSIONS) {
     out[dim.id] = resolver(dim.id);
+  }
+  for (const id of STATIC_DIMENSION_IDS) {
+    out[id] = resolver(id);
   }
   return out;
 }
@@ -187,6 +196,12 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           hint: t("tier2.weakBadgeHint"),
         },
         sameSensorUnavailable: t("tier2.sameSensorUnavailable"),
+        learningMethodValues: {
+          UNSUPERVISED: t("pivotPanel.values.learningMethod.UNSUPERVISED"),
+          SEMI_SUPERVISED: t(
+            "pivotPanel.values.learningMethod.SEMI_SUPERVISED",
+          ),
+        },
       },
       pivotBreadcrumb: {
         ariaLabel: t("pivotBreadcrumb.ariaLabel"),

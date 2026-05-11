@@ -21,6 +21,7 @@
  * URL hash) — see `baseline-content.tsx` for the wire-up.
  */
 
+import { isLearningMethodValue } from "./learning-methods";
 import type { PivotDimensionId, PivotValue } from "./pivot/dimensions";
 
 /** Triage Tier 1 / Tier 2 mode encoded in the hash. */
@@ -53,6 +54,15 @@ export interface TriagePivotHashState {
   steps: TriagePivotHashStep[];
   /** Mode toggle state; `null` means "absent" — caller defaults. */
   mode: TriagePivotMode | null;
+  /**
+   * Count of `triage.pivot.step` segments that were present in the
+   * hash but could not be turned into a valid step (unknown dimension,
+   * empty value, static-options enum miss). Distinguishes "no step in
+   * URL" from "step was present but invalid" so the caller can surface
+   * the stale-hash toast for the latter (#498 negative-path
+   * requirement).
+   */
+  rejectedStepCount: number;
 }
 
 const HASH_PREFIX = "triage.pivot.";
@@ -82,6 +92,7 @@ const KNOWN_DIMENSIONS: ReadonlySet<PivotDimensionId> = new Set([
   "kinds",
   "categories",
   "levels",
+  "learningMethods",
 ] as const satisfies readonly PivotDimensionId[]);
 
 function isKnownDimension(value: string): value is PivotDimensionId {
@@ -99,7 +110,12 @@ function isKnownDimension(value: string): value is PivotDimensionId {
  * stale-hash toast when the breadcrumb cannot be restored.
  */
 export function parseTriagePivotHash(hash: string): TriagePivotHashState {
-  const empty: TriagePivotHashState = { asset: null, steps: [], mode: null };
+  const empty: TriagePivotHashState = {
+    asset: null,
+    steps: [],
+    mode: null,
+    rejectedStepCount: 0,
+  };
   if (!hash) return empty;
   const trimmed = hash.startsWith("#") ? hash.slice(1) : hash;
   if (trimmed.length === 0) return empty;
@@ -107,6 +123,7 @@ export function parseTriagePivotHash(hash: string): TriagePivotHashState {
   let asset: TriagePivotAssetFocus | null = null;
   let mode: TriagePivotMode | null = null;
   const steps: TriagePivotHashStep[] = [];
+  let rejectedStepCount = 0;
 
   for (const segment of trimmed.split("&")) {
     if (segment.length === 0) continue;
@@ -119,6 +136,10 @@ export function parseTriagePivotHash(hash: string): TriagePivotHashState {
     try {
       value = decodeURIComponent(rawValue);
     } catch {
+      // A `triage.pivot.step` with an undecodable percent-escape is a
+      // present-but-invalid step — count it so the caller falls back
+      // to the asset root with the stale-hash toast.
+      if (key === STEP_KEY) rejectedStepCount += 1;
       continue;
     }
     if (key === ASSET_KEY) {
@@ -128,11 +149,15 @@ export function parseTriagePivotHash(hash: string): TriagePivotHashState {
       if (value === "tier1" || value === "tier2") mode = value;
     } else if (key === STEP_KEY) {
       const step = parseStepValue(value);
-      if (step) steps.push(step);
+      if (step) {
+        steps.push(step);
+      } else {
+        rejectedStepCount += 1;
+      }
     }
   }
 
-  return { asset, steps, mode };
+  return { asset, steps, mode, rejectedStepCount };
 }
 
 /**
@@ -174,6 +199,18 @@ function parseStepValue(value: string): TriagePivotHashStep | null {
   const valueKey = value.slice(colon + 1);
   if (!isKnownDimension(dimension)) return null;
   if (valueKey.length === 0) return null;
+  // Static-options dimensions whitelist their value keys here so a
+  // shared URL with `learningMethods:UNSUPERVISED` parses, but
+  // `learningMethods:INVALID_VALUE` falls through to the asset-root
+  // fallback (#498). The URL is the only place an arbitrary string
+  // can reach `Tier2Dimension`'s `learningMethods` arm without the
+  // panel's static-section button — without this guard, REview would
+  // reject a typo'd enum literal at the GraphQL layer and the
+  // operator would see the generic error banner instead of the
+  // stale-hash toast.
+  if (dimension === "learningMethods" && !isLearningMethodValue(valueKey)) {
+    return null;
+  }
   return { dimension, valueKey };
 }
 
@@ -236,7 +273,7 @@ export function pivotHashFromTrail(
       steps.push({ dimension: step.dimension, valueKey: step.value.key });
     }
   }
-  return { asset, steps, mode };
+  return { asset, steps, mode, rejectedStepCount: 0 };
 }
 
 /**
