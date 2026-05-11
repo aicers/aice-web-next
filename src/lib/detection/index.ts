@@ -41,6 +41,11 @@ export {
   DetectionNotImplementedError,
   DetectionUnauthorizedError,
 } from "./errors";
+export {
+  classifyEventQueryError,
+  type EventQueryClassification,
+  type EventQueryErrorCode,
+} from "./event-query-error";
 export { type Filter, toEventListFilterInput } from "./filter";
 export {
   parsePositiveCustomerId,

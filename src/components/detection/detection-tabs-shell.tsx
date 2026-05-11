@@ -947,6 +947,13 @@ export function DetectionTabsShell({
           // resets on remount and the operator can re-trigger a walk
           // if needed.
           loading: activeTab.result.loading,
+          // #278: the bootstrap tab's SSR seed carries this for a
+          // cold-load `forbidden-sensor-scope` so the banner renders
+          // on first paint. Subsequent state-change mirrors drop the
+          // field (it is transient until the operator either recovers
+          // or the next committed query replaces the result), which
+          // matches the shell's own clearing behaviour.
+          forbiddenSensorIds: activeTab.result.forbiddenSensorIds,
         }}
         initialEndpoints={activeTab.endpoints}
         initialDraft={activeTab.draft}
@@ -1435,6 +1442,12 @@ export function bootstrapTabToSnapshot(
       queryEpoch: 0,
       loading: false,
       walking: null,
+      // #278: forward the SSR-seeded sensor-scope rejection so the
+      // bootstrap shell mount renders the "selection no longer
+      // accessible" banner on first paint. Transient — handed off
+      // to the shell's local state once and cleared on the next
+      // committed query / recovery / state-change mirror.
+      forbiddenSensorIds: initialTab.result.forbiddenSensorIds ?? null,
     },
     // Issue #429: a bootstrap tab landed via a shared / bookmarked URL
     // does not know which preset (if any) the URL was originally

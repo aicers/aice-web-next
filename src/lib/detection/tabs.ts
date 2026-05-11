@@ -153,6 +153,15 @@ export interface ResultCache {
   loading: boolean;
   /** Go-to-page walk progress hint; null when no walk is in flight. */
   walking: { current: number; target: number } | null;
+  /**
+   * #278: ids the SSR bootstrap query failed against with the typed
+   * `forbidden-sensor-scope` classification (tampered URL / stale
+   * saved filter / mid-session scope change on a cold load). Only
+   * the bootstrap tab seed populates this; subsequent state-change
+   * snapshots from the shell omit the field so it naturally clears
+   * once the operator interacts with the tab.
+   */
+  forbiddenSensorIds?: readonly string[] | null;
 }
 
 export const EMPTY_RESULT_CACHE: ResultCache = {

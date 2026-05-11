@@ -199,14 +199,32 @@ async function captureFor(ctx, locale) {
   await page.keyboard.press("Escape");
   await sleep(200);
 
-  // Categorical filter drawer — open Filters, expand a few categorical
-  // sections so options are visible.
+  // Filter drawer overview — the manual's primary drawer screenshot at
+  // `docs/{en,ko}/detection.md` (line ~883 / ~827) needs the now-
+  // functional Sensor section visible. #278 flipped the control out of
+  // its `Coming soon` fallback once #305 set `SENSOR_LIST_ENDPOINT_AVAILABLE`
+  // to `true`, so the refreshed capture must show the live Sensor
+  // multi-select alongside the rest of the drawer.
   await page
     .getByRole("button", { name: locale === "ko" ? /^필터$/ : /^Filters$/ })
     .first()
     .click();
-  await sleep(300);
-  // Scroll the categorical section into view inside the drawer.
+  await sleep(400);
+  // Scroll the Sensor label into view so the capture frames the now-
+  // functional control. Falls back to the top of the drawer when the
+  // label is offscreen (narrow viewport / scroll lock).
+  const sensorLabel = locale === "ko" ? /^센서$/ : /^Sensor$/;
+  await page
+    .getByText(sensorLabel)
+    .first()
+    .scrollIntoViewIfNeeded()
+    .catch(() => {});
+  await sleep(400);
+  await shoot(page, `detection-drawer-${locale}`);
+
+  // Categorical filter drawer — keep the drawer open, scroll further
+  // down and expand the categorical fields so the per-section options
+  // are visible.
   const sectionLabel = locale === "ko" ? "범주형 필터" : "Categorical filters";
   await page
     .getByText(sectionLabel)

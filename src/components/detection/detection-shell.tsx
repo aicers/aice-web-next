@@ -503,6 +503,19 @@ export interface DetectionShellInitialResult {
    * SSR bootstrap leaves it undefined; the shell defaults to false.
    */
   loading?: boolean;
+  /**
+   * #278: ids the SSR bootstrap query failed against with the new
+   * `forbidden-sensor-scope` classification (review-web 0.33.0's
+   * `eventList` rejection on an out-of-scope `sensors` argument
+   * — reached on a cold load from a tampered URL, stale saved
+   * filter, or mid-session scope change). When non-null the shell
+   * primes its `forbiddenSensorIds` state from this seed so the
+   * "selection no longer accessible" banner and the one-click
+   * drop-and-reapply recovery render on the first paint, matching
+   * the client-side Apply path. `null` / undefined means no sensor-
+   * scope rejection — the banner is suppressed.
+   */
+  forbiddenSensorIds?: readonly string[] | null;
 }
 
 /**
@@ -1551,9 +1564,17 @@ export function DetectionShell({
   // click "drop unavailable sensors and re-apply" recovery. Cleared on
   // the next successful slice, transition to a different error class,
   // or once the operator triggers the recovery.
+  //
+  // Seeded from `initialResult.forbiddenSensorIds` so a cold load that
+  // failed SSR with `forbidden-sensor-scope` (tampered URL / stale
+  // saved filter / mid-session scope change) renders the banner on
+  // the first paint — the SSR bootstrap path runs `searchEventsAtAnchor`
+  // directly rather than going through `runEventQuery`, so without
+  // this seed the typed classification would only ever surface for
+  // client-side Apply.
   const [forbiddenSensorIds, setForbiddenSensorIds] = useState<
     readonly string[] | null
-  >(null);
+  >(initialResult.forbiddenSensorIds ?? null);
   // Acknowledgement timestamp for the post-recovery confirmation
   // notice. The shell flips this on recovery so the inline
   // "Dropped unavailable sensors…" toast renders once after the

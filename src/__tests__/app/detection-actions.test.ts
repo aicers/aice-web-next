@@ -13,6 +13,18 @@ vi.mock("@/lib/auth/session", () => ({
   getCurrentSession: mockGetCurrentSession,
 }));
 
+// The shared classifier in `@/lib/detection/event-query-error.ts`
+// imports the Detection error classes directly from `./errors`, so the
+// mock has to land at that path — substituting the barrel re-export in
+// `@/lib/detection` alone would let the classifier keep using the real
+// classes and `instanceof` checks against the mock instances would
+// silently fall through to `server-error`.
+vi.mock("@/lib/detection/errors", () => ({
+  DetectionUnauthorizedError: MockDetectionUnauthorizedError,
+  DetectionForbiddenError: MockDetectionForbiddenError,
+  DetectionNotImplementedError: class extends Error {},
+}));
+
 vi.mock("@/lib/detection", async () => {
   const actual =
     await vi.importActual<typeof import("@/lib/detection")>("@/lib/detection");

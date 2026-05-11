@@ -8,6 +8,7 @@ import { CustomerScopeCallout } from "@/components/layout/customer-scope-callout
 import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
+  classifyEventQueryError,
   computePeriodRange,
   DEFAULT_PERIOD_KEY,
   type EncodedTabFilter,
@@ -35,7 +36,6 @@ import {
 } from "@/lib/detection";
 import { COUNTRY_CODES } from "@/lib/detection/countries";
 import { FLOW_KINDS } from "@/lib/detection/direction";
-import { DetectionForbiddenError } from "@/lib/detection/errors";
 import {
   INITIAL_THREAT_KINDS,
   LEARNING_METHOD_VALUES,
@@ -52,10 +52,6 @@ import type {
   ThreatLevel,
 } from "@/lib/detection/types";
 import { decodeEventLocator } from "@/lib/events/event-locator";
-import {
-  ReviewForbiddenError,
-  ReviewUnknownGraphQLError,
-} from "@/lib/review/errors";
 
 interface DetectionPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -159,6 +155,15 @@ export default async function DetectionPage({
   let initialEvents: Event[] = [];
   let initialEventKeys: string[] = [];
   let initialPageInfo: PageInfo | null = null;
+  // #278: populated when the SSR bootstrap query fails with the typed
+  // `forbidden-sensor-scope` classification (review-web 0.33.0's
+  // `eventList` rejection on an out-of-scope `sensors` argument
+  // reached via a tampered URL, stale saved filter, or mid-session
+  // scope change on a cold load). Threaded into the bootstrap tab's
+  // initial result so the shell can render the "selection no longer
+  // accessible" banner with the same name-aware copy and one-click
+  // drop-and-reapply recovery the client-side Apply path offers.
+  let initialForbiddenSensorIds: readonly string[] | null = null;
   try {
     // `searchEventsAtAnchor` handles the cold-SSR two-step for a
     // `tail` deep link: the first call discovers `totalCount`, then
@@ -201,24 +206,34 @@ export default async function DetectionPage({
     // security guardrails forbid conflating "denied" with "no
     // data".
     //
-    // Reviewer Round 2 P1: an unrecognised review GraphQL error
-    // (`ReviewUnknownGraphQLError`) is *not* an "ordinary expected
-    // failure" — review answered with a code we don't classify, and
-    // masking that as the generic results banner would hide a real
-    // bug from operators. Re-throw so the route's error boundary
-    // surfaces it. Plain `Error`s (transport drops, BFF bugs)
-    // continue to render the generic banner so the rest of the
-    // shell stays usable.
-    if (err instanceof ReviewUnknownGraphQLError) {
-      throw err;
-    }
-    if (
-      err instanceof ReviewForbiddenError ||
-      err instanceof DetectionForbiddenError
-    ) {
-      initialError = t("filters.resultsForbiddenScope");
-    } else {
-      initialError = t("filters.resultsError");
+    // #278: cold loads from a bookmarked / saved / tampered URL run
+    // through this SSR path, *not* `runEventQuery`, so the typed
+    // classification has to happen here too. Reuse the shared
+    // `classifyEventQueryError` helper so a `Forbidden` against a
+    // filter carrying out-of-scope `sensors` lands the operator on
+    // the same "selection no longer accessible" banner and
+    // drop-and-reapply recovery the client-side Apply path offers.
+    //
+    // Reviewer Round 2 P1: `ReviewUnknownGraphQLError` deliberately
+    // propagates past the classifier — review answered with a code
+    // we don't classify, and masking that as the generic results
+    // banner would hide a real bug from operators. The route's
+    // error boundary surfaces it. Plain `Error`s (transport drops,
+    // BFF bugs) keep rendering the generic banner so the rest of
+    // the shell stays usable.
+    const classified = classifyEventQueryError(err, initialFilter);
+    switch (classified.code) {
+      case "forbidden-sensor-scope":
+        initialError = t("filters.resultsForbiddenSensor.title");
+        initialForbiddenSensorIds = classified.unavailableSensorIds ?? [];
+        break;
+      case "forbidden-customer-scope":
+      case "forbidden":
+        initialError = t("filters.resultsForbiddenScope");
+        break;
+      default:
+        initialError = t("filters.resultsError");
+        break;
     }
   }
 
@@ -725,6 +740,11 @@ export default async function DetectionPage({
             events: initialEvents,
             eventKeys: initialEventKeys,
             pageInfo: initialPageInfo,
+            // #278: seed the bootstrap tab's sensor-scope affordance
+            // when the SSR query failed with the new
+            // `forbidden-sensor-scope` classification. `null` (the
+            // common case) means the shell skips the banner entirely.
+            forbiddenSensorIds: initialForbiddenSensorIds,
           },
           quickPeekToken: initialQuickPeekToken,
         }}
