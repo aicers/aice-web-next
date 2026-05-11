@@ -185,23 +185,29 @@ export function computeBucketQuotas(
 }
 
 /**
+ * Numeric-string DESC compare for non-negative integer-valued strings
+ * (corpus A's `event_key` is `NUMERIC(39,0)` stringified via `::text`).
+ * Compare length first, then lexicographically — that mirrors the SQL
+ * `ORDER BY event_key DESC` and is correct for variable-width keys
+ * like `"9"` vs `"10"` where plain `localeCompare` would be wrong.
+ */
+export function compareEventKeyDesc(a: string, b: string): number {
+  if (a.length !== b.length) return b.length - a.length;
+  if (a === b) return 0;
+  return a < b ? 1 : -1;
+}
+
+/**
  * §3 tie-breaker tuple: `(baseline_score DESC, event_time DESC,
  * event_key DESC)`. The i128 `event_key` is unique, so the order is
- * total. `event_key` is compared as a numeric string (lexicographic
- * works when both keys are the same width; corpus A's event_key is
- * NUMERIC(39,0) so callers stringify it with `::text` — we cope with
- * both same-width and variable-width strings by comparing length
- * first, then lexicographically).
+ * total.
  */
 function tieBreakerCompare(a: MenuRow, b: MenuRow): number {
   if (a.baselineScore !== b.baselineScore)
     return b.baselineScore - a.baselineScore;
   if (a.eventTime.getTime() !== b.eventTime.getTime())
     return b.eventTime.getTime() - a.eventTime.getTime();
-  if (a.eventKey.length !== b.eventKey.length)
-    return b.eventKey.length - a.eventKey.length;
-  if (a.eventKey === b.eventKey) return 0;
-  return a.eventKey < b.eventKey ? 1 : -1;
+  return compareEventKeyDesc(a.eventKey, b.eventKey);
 }
 
 export interface AssembleResult {

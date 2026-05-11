@@ -10,6 +10,7 @@ import { compareAssets } from "./aggregate";
 import {
   type BucketAggregate,
   bucketKey,
+  compareEventKeyDesc,
   composeMenu,
   type MenuRow,
 } from "./baseline/menu";
@@ -820,19 +821,19 @@ export async function loadTriagePeriod(
   // built from the union of per-tenant §4 `final_menu_rows` so the
   // pivot corpus matches the analyst's visible menu end-to-end. The
   // cross-tenant cap is applied in §3 priority order
-  // (`baseline_score DESC, event_time DESC, id DESC`) so a multi-
-  // tenant scope with more than `TRIAGE_HARD_EVENT_CAP` composed rows
-  // drops the lowest-priority rows first rather than evicting older
-  // high-score rows in favor of newer low-score ones. Truncation
-  // matches the §3 tie-breaker (`event_time DESC, event_key DESC`),
-  // and `id` mirrors `event_key` through `rowToEvent` so the cap is
-  // stable across reloads against the same corpus.
+  // (`baseline_score DESC, event_time DESC, event_key DESC`) so a
+  // multi-tenant scope with more than `TRIAGE_HARD_EVENT_CAP`
+  // composed rows drops the lowest-priority rows first. `id` mirrors
+  // `event_key` through `rowToEvent` (a NUMERIC(39,0) stringified via
+  // `::text`), so the numeric-string comparator from menu.ts is the
+  // correct DESC order — plain `localeCompare` would put "10" before
+  // "9" and pick the wrong row at the cap boundary.
   const mergedEvents = slices.flatMap((s) => s.events);
   mergedEvents.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     const t = b.time.localeCompare(a.time);
     if (t !== 0) return t;
-    return b.id.localeCompare(a.id);
+    return compareEventKeyDesc(a.id, b.id);
   });
   const truncated = mergedEvents.length > TRIAGE_HARD_EVENT_CAP;
   const events = truncated

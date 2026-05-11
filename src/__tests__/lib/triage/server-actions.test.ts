@@ -653,6 +653,63 @@ describe("loadTriagePeriod (SQL data source)", () => {
     });
   });
 
+  it("breaks cross-tenant ties on numeric event_key DESC, not lexicographic", async () => {
+    // Regression for Round 4 Item 1: the cross-tenant cap used to
+    // tie-break on `b.id.localeCompare(a.id)`, which is lexicographic
+    // string order. With variable-width numeric event keys like "9"
+    // vs "10", lexicographic puts "9" ahead of "10" — the wrong way
+    // round for `event_key DESC` and inconsistent with the per-tenant
+    // tie-breaker (`compareEventKeyDesc`) and the SQL `ORDER BY
+    // event_key DESC` shape. Under a tight cap, that would evict the
+    // wrong row at the boundary. The fix reuses
+    // `compareEventKeyDesc` from menu.ts.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+    const tiedTs = new Date("2026-05-09T11:30:00.000Z");
+    const customer1 = makeMockPool({
+      customerId: 1,
+      cohortRows: [
+        buildCohortRow({
+          eventKey: "9",
+          address: "10.0.0.1",
+          baselineScore: 0.5,
+          eventTime: tiedTs,
+          bucketCount: 1,
+          cohortCount: 1,
+        }),
+      ],
+      detailRowsByAddress: { "10.0.0.1": [] },
+      observedPerAsset: [{ address: "10.0.0.1", detected_count: "1" }],
+    });
+    const customer2 = makeMockPool({
+      customerId: 2,
+      cohortRows: [
+        buildCohortRow({
+          eventKey: "10",
+          address: "10.0.0.2",
+          baselineScore: 0.5,
+          eventTime: tiedTs,
+          bucketCount: 1,
+          cohortCount: 1,
+        }),
+      ],
+      detailRowsByAddress: { "10.0.0.2": [] },
+      observedPerAsset: [{ address: "10.0.0.2", detected_count: "1" }],
+    });
+    mockGetCustomerPool.mockImplementation(async (id: number) =>
+      id === 1 ? customer1.pool : customer2.pool,
+    );
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+    );
+    expect(result.events).toHaveLength(2);
+    // Numeric DESC: 10 > 9, so the "10" row must come first.
+    expect(result.events[0]).toMatchObject({ id: "10", customerId: 2 });
+    expect(result.events[1]).toMatchObject({ id: "9", customerId: 1 });
+  });
+
   it("freshness header picks the worst state across customers", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);

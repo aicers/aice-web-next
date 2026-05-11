@@ -4,6 +4,7 @@ import {
   assembleMenu,
   type BucketAggregate,
   bucketKey,
+  compareEventKeyDesc,
   composeMenu,
   computeBucketQuotas,
   computeDefaultN,
@@ -253,6 +254,37 @@ describe("assembleMenu", () => {
     // Single bucket → its quota equals defaultN; candidate slice is
     // smaller, so the assembly takes all three rows.
     expect(result.rows.map((r) => r.eventKey).sort()).toEqual(["1", "2", "3"]);
+  });
+
+  it("tie-breaker handles variable-width numeric event_key DESC", () => {
+    // "9" vs "10": numeric DESC must rank "10" first. Plain string
+    // compare would put "9" first (lexicographic). The §3 tie-breaker
+    // and `compareEventKeyDesc` compare length first to model the SQL
+    // `ORDER BY event_key DESC` shape for `NUMERIC(39,0)::text`.
+    const tiedTime = new Date("2026-05-09T11:00:00.000Z");
+    const a = makeRow({
+      eventKey: "9",
+      kind: "DnsCovertChannel",
+      baselineScore: 0.5,
+      eventTime: tiedTime,
+    });
+    const b = makeRow({
+      eventKey: "10",
+      kind: "DnsCovertChannel",
+      baselineScore: 0.5,
+      eventTime: tiedTime,
+    });
+    const result = assembleMenu([a, b], 0);
+    expect(result.rows[0].eventKey).toBe("10");
+    expect(result.rows[1].eventKey).toBe("9");
+  });
+
+  it("compareEventKeyDesc orders by length first, then lexicographically", () => {
+    expect(compareEventKeyDesc("10", "9")).toBeLessThan(0);
+    expect(compareEventKeyDesc("9", "10")).toBeGreaterThan(0);
+    expect(compareEventKeyDesc("123", "45")).toBeLessThan(0);
+    expect(compareEventKeyDesc("100", "099")).toBeLessThan(0);
+    expect(compareEventKeyDesc("42", "42")).toBe(0);
   });
 
   it("tie-breaker: equal baseline_score resolves on (event_time DESC, event_key DESC)", () => {
