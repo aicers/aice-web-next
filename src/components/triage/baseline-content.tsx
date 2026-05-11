@@ -22,6 +22,7 @@ import {
   clearPivotTrail,
   getPivotDimension,
   hasPivotedAwayFromAsset,
+  isStaticTier2Dimension,
   type PivotDimensionId,
   type PivotStep,
   pivotIndexFor,
@@ -275,8 +276,34 @@ export function TriageBaselineContent({
 
   const focusEvents: ScoredTriageEvent[] = useMemo(() => {
     if (!activeStep) return [];
+    // Static Tier-2-only dimensions (#498 — `learningMethods`) carry no
+    // per-event extractor, so the pivot index has no bucket for them.
+    // Resolve the focus directly from the cached Tier 2 fetch result;
+    // those events are already spliced into `expandedEvents` above so
+    // downstream client-intersection pivots still see them, but the
+    // active-step focus needs an explicit lookup.
+    if (
+      activeStep.kind === "dimension" &&
+      isStaticTier2Dimension(activeStep.dimension)
+    ) {
+      const cached = tier2.getCached(
+        activeStep.dimension,
+        activeStep.value.key,
+      );
+      if (!cached) return [];
+      // Tier 2 fetch results lack a per-tenant marker; attribute them
+      // to the trail's asset crumb so the synthesized pivot-focus row
+      // can still identify the customer (see `expandedTier2Events`).
+      const assetCrumbCustomerId =
+        trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
+      return cached.events.map((ev) => ({
+        ...ev,
+        score: baselineScore(ev),
+        customerId: assetCrumbCustomerId,
+      }));
+    }
     return resolveStepFocusEvents(activeStep, expandedEvents, pivotIndex);
-  }, [activeStep, expandedEvents, pivotIndex]);
+  }, [activeStep, expandedEvents, pivotIndex, tier2, trail]);
 
   // When the active step is a dimension pivot, the issue says the
   // new "asset" view is the set of events sharing that value — not
@@ -481,7 +508,20 @@ export function TriageBaselineContent({
     if (parsed.mode !== null) {
       onScopeRestoredFromHash?.(parsed.mode === "tier2" ? "tier2" : "tier1");
     }
-    if (parsed.asset === null && parsed.steps.length === 0) return;
+    // The parser drops malformed / out-of-whitelist `triage.pivot.step`
+    // segments silently, but counts them so the restore path can
+    // distinguish "no step in URL" from "step was present but
+    // rejected" — the latter must fall back to the asset root with the
+    // stale-hash toast (#498 negative-path requirement). Surfaces here
+    // before the early-return below, otherwise a URL like
+    // `?asset=...&step=learningMethods:INVALID` would silently restore
+    // the asset without warning the operator that part of their shared
+    // link was unusable.
+    const hadRejectedSteps = parsed.rejectedStepCount > 0;
+    if (parsed.asset === null && parsed.steps.length === 0) {
+      if (hadRejectedSteps) setStaleHashFallback(true);
+      return;
+    }
     // Resolve the asset against the freshly-loaded corpus. The hash
     // carries a composite `customerId/address`; a legacy URL with the
     // bare address (`customerId === null`) is treated as stale rather
@@ -506,6 +546,22 @@ export function TriageBaselineContent({
       restoredAsset = { customerId: found.customerId, address: found.address };
     }
     if (restoredAsset === null) return;
+    if (hadRejectedSteps) {
+      // Asset resolved but at least one step was rejected: restore the
+      // breadcrumb to the asset crumb only and surface the stale-hash
+      // toast — matches the semantics of the post-drain validation
+      // path so the operator sees one consistent fallback.
+      setSelected(restoredAsset);
+      setTrail([
+        {
+          kind: "asset",
+          customerId: restoredAsset.customerId,
+          address: restoredAsset.address,
+        },
+      ]);
+      setStaleHashFallback(true);
+      return;
+    }
     const restoredTrail: PivotStep[] = [
       {
         kind: "asset",
@@ -539,24 +595,44 @@ export function TriageBaselineContent({
     //     fall back to the asset root only if still missing then.
     //   - Client-intersection dim in Tier 1 mode: strict corpus check.
     for (const step of parsed.steps) {
-      let dim: ReturnType<typeof getPivotDimension>;
-      try {
-        dim = getPivotDimension(step.dimension);
-      } catch {
-        stale = true;
-        break;
+      const isStaticDim = isStaticTier2Dimension(step.dimension);
+      let dim: ReturnType<typeof getPivotDimension> | null = null;
+      if (!isStaticDim) {
+        try {
+          dim = getPivotDimension(step.dimension);
+        } catch {
+          stale = true;
+          break;
+        }
       }
-      const isTier2Only = dim.tier2Only === true;
+      // Static Tier-2-only dims have no `PivotDimension` entry but ARE
+      // Tier-2-only by construction (#498). Treat them as such so the
+      // restore validation skips the corpus presence check the same
+      // way it does for the `tier2Only` flag on existing dims.
+      const isTier2Only = isStaticDim || dim?.tier2Only === true;
       const isServerDim = isTier2ServerDimension(step.dimension);
       let label = step.valueKey;
       let found = false;
-      for (const ev of result.events) {
-        const values = dim.extract(ev);
-        const hit = values.find((v) => v.key === step.valueKey);
-        if (hit) {
-          label = hit.label;
-          found = true;
-          break;
+      if (dim) {
+        for (const ev of result.events) {
+          const values = dim.extract(ev);
+          const hit = values.find((v) => v.key === step.valueKey);
+          if (hit) {
+            label = hit.label;
+            found = true;
+            break;
+          }
+        }
+      } else if (isStaticDim && step.dimension === "learningMethods") {
+        // The localized button label lives in the panel labels record.
+        // Without this, the restored breadcrumb crumb and pivot-focus
+        // header would show the raw enum literal instead of the
+        // operator-facing string.
+        const valueLabels = labels.pivotPanel.learningMethodValues;
+        if (valueLabels) {
+          const localized =
+            valueLabels[step.valueKey as keyof typeof valueLabels];
+          if (localized) label = localized;
         }
       }
       if (!found) {
@@ -815,6 +891,7 @@ export function TriageBaselineContent({
                 : undefined
             }
             deferredSensorDimension={sensorDeferredInTier2}
+            showLearningMethodSection={scope === "tier2"}
           />
         </div>
       ) : null}

@@ -12,6 +12,7 @@ export {
   eventsWithinSameKindWindow,
   getPivotDimension,
   isDimensionAvailableInBaseline,
+  isStaticTier2Dimension,
   PIVOT_DIMENSIONS,
   PIVOT_DIMENSIONS_BASELINE,
   type PivotDimension,

@@ -13,11 +13,13 @@ describe("parseTriagePivotHash", () => {
       asset: null,
       steps: [],
       mode: null,
+      rejectedStepCount: 0,
     });
     expect(parseTriagePivotHash("#")).toEqual({
       asset: null,
       steps: [],
       mode: null,
+      rejectedStepCount: 0,
     });
   });
 
@@ -35,6 +37,7 @@ describe("parseTriagePivotHash", () => {
         { dimension: "country", valueKey: "US" },
       ],
       mode: "tier2",
+      rejectedStepCount: 0,
     });
   });
 
@@ -47,6 +50,7 @@ describe("parseTriagePivotHash", () => {
     expect(state.asset).toEqual({ customerId: 42, address: "10.0.0.1" });
     expect(state.steps).toEqual([]);
     expect(state.mode).toBeNull();
+    expect(state.rejectedStepCount).toBe(0);
   });
 
   it("treats a legacy single-component asset focus as customerId-null", () => {
@@ -71,7 +75,7 @@ describe("parseTriagePivotHash", () => {
     ).toBeNull();
   });
 
-  it("drops malformed step entries", () => {
+  it("drops malformed step entries and reports them via rejectedStepCount", () => {
     const state = parseTriagePivotHash(
       "#triage.pivot.step=" +
         "&triage.pivot.step=unknownDim%3Aabc" +
@@ -79,6 +83,10 @@ describe("parseTriagePivotHash", () => {
         "&triage.pivot.step=ja3%3Avalid",
     );
     expect(state.steps).toEqual([{ dimension: "ja3", valueKey: "valid" }]);
+    // Three present-but-rejected step segments: empty value, unknown
+    // dimension, and empty value-key after the colon. The caller uses
+    // this signal to surface the stale-hash toast (#498).
+    expect(state.rejectedStepCount).toBe(3);
   });
 
   it("ignores invalid mode values", () => {
@@ -92,6 +100,47 @@ describe("parseTriagePivotHash", () => {
     const state = parseTriagePivotHash(`#triage.pivot.step=${encoded}`);
     expect(state.steps).toEqual([{ dimension: "externalIp", valueKey: ipv6 }]);
   });
+
+  it("accepts the two enum values for the static learningMethods dimension", () => {
+    // `LearningMethod` is a fixed two-value SDL enum; the parser
+    // whitelists the literals so a shared URL using either value
+    // round-trips like any other Tier-2-only step (#498).
+    const state = parseTriagePivotHash(
+      "#triage.pivot.step=" +
+        encodeURIComponent("learningMethods:UNSUPERVISED") +
+        "&triage.pivot.step=" +
+        encodeURIComponent("learningMethods:SEMI_SUPERVISED") +
+        "&triage.pivot.mode=tier2",
+    );
+    expect(state.steps).toEqual([
+      { dimension: "learningMethods", valueKey: "UNSUPERVISED" },
+      { dimension: "learningMethods", valueKey: "SEMI_SUPERVISED" },
+    ]);
+    expect(state.mode).toBe("tier2");
+  });
+
+  it("rejects learningMethods value keys outside the SDL enum", () => {
+    // A typo'd or schema-changed enum literal must drop the step
+    // rather than reach the Tier 2 fetch path — REview would otherwise
+    // return a generic GraphQL error and the operator would not see
+    // the stale-hash toast (#498 negative-path requirement).
+    const state = parseTriagePivotHash(
+      "#triage.pivot.step=" +
+        encodeURIComponent("learningMethods:INVALID_VALUE") +
+        "&triage.pivot.step=" +
+        encodeURIComponent("learningMethods:unsupervised") +
+        "&triage.pivot.step=" +
+        encodeURIComponent("learningMethods:UNSUPERVISED"),
+    );
+    expect(state.steps).toEqual([
+      { dimension: "learningMethods", valueKey: "UNSUPERVISED" },
+    ]);
+    // The two whitelist misses are reported so the restore path can
+    // distinguish "no step in URL" from "step was present but the
+    // static-options whitelist rejected it" and trigger the stale-hash
+    // toast for the latter.
+    expect(state.rejectedStepCount).toBe(2);
+  });
 });
 
 describe("serializeTriagePivotHash", () => {
@@ -100,6 +149,7 @@ describe("serializeTriagePivotHash", () => {
       asset: null,
       steps: [],
       mode: null,
+      rejectedStepCount: 0,
     });
     expect(out).toBe("");
   });
@@ -112,6 +162,7 @@ describe("serializeTriagePivotHash", () => {
         { dimension: "country", valueKey: "US" },
       ],
       mode: "tier2",
+      rejectedStepCount: 0,
     });
     expect(out).toBe(
       "triage.pivot.asset=42%2F10.0.0.1" +
@@ -129,6 +180,7 @@ describe("serializeTriagePivotHash", () => {
         { dimension: "host" as const, valueKey: "example.com" },
       ],
       mode: "tier1" as const,
+      rejectedStepCount: 0,
     };
     const encoded = serializeTriagePivotHash(original);
     expect(parseTriagePivotHash(`#${encoded}`)).toEqual(original);
@@ -160,12 +212,18 @@ describe("pivotHashFromTrail", () => {
         { dimension: "country", valueKey: "US" },
       ],
       mode: "tier2",
+      rejectedStepCount: 0,
     });
   });
 
   it("returns nulls when the trail is empty", () => {
     const state = pivotHashFromTrail([], null);
-    expect(state).toEqual({ asset: null, steps: [], mode: null });
+    expect(state).toEqual({
+      asset: null,
+      steps: [],
+      mode: null,
+      rejectedStepCount: 0,
+    });
   });
 });
 
@@ -177,6 +235,7 @@ describe("replaceTriagePivotHash", () => {
         asset: { customerId: 1, address: "10.0.0.2" },
         steps: [{ dimension: "ja3", valueKey: "x" }],
         mode: null,
+        rejectedStepCount: 0,
       },
     );
     expect(next).toContain("triage.strictness.level=high");
@@ -188,7 +247,7 @@ describe("replaceTriagePivotHash", () => {
   it("returns only foreign keys when the new state is empty", () => {
     const next = replaceTriagePivotHash(
       "#triage.strictness.level=high&triage.pivot.asset=stale",
-      { asset: null, steps: [], mode: null },
+      { asset: null, steps: [], mode: null, rejectedStepCount: 0 },
     );
     expect(next).toBe("triage.strictness.level=high");
   });

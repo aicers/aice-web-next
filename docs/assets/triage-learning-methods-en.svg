@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 320" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Tier 2 Learning method section (wireframe)</title>
+  <desc id="desc">Wireframe of the Tier 2 only static-options Learning method section in the Triage related-events panel. The section appears below the focus-driven sections whenever the pivot scope is Tier 2 and offers two clickable rows: Unsupervised and Semi-supervised. Clicking either issues a server-filtered Tier 2 fetch.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 6; ry: 6; }
+    .panel-header { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 16px; fill: #18181b; font-weight: 700; }
+    .text-section { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-family { font-size: 11px; fill: #71717a; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .row-divider { stroke: #e5e7eb; stroke-width: 1; }
+    .chip { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .chip-text { fill: #18181b; font-size: 12px; }
+  </style>
+
+  <rect class="bg" width="720" height="320"/>
+
+  <!-- Card -->
+  <rect class="panel" x="20" y="20" width="680" height="280"/>
+  <rect class="panel-header" x="20" y="20" width="680" height="40"/>
+  <text class="text-title" x="36" y="46">Related events</text>
+  <text class="text-muted" x="36" y="58">Tier 2 mode</text>
+
+  <!-- Existing focus-driven section divider -->
+  <text class="text-muted" x="36" y="92">… focus-driven sections (External IP, JA3, …) …</text>
+  <line class="row-divider" x1="20" y1="108" x2="700" y2="108"/>
+
+  <!-- Tier 2 only — Learning method -->
+  <g transform="translate(36, 130)">
+    <text class="text-section" x="0" y="14">Learning method</text>
+    <text class="text-family" x="0" y="32">Tier 2 only</text>
+
+    <!-- Two clickable enum rows -->
+    <rect class="chip" x="0" y="56" width="148" height="28"/>
+    <text class="chip-text" x="74" y="74" text-anchor="middle">Unsupervised</text>
+
+    <rect class="chip" x="160" y="56" width="148" height="28"/>
+    <text class="chip-text" x="234" y="74" text-anchor="middle">Semi-supervised</text>
+
+    <text class="text-muted" x="0" y="120">Click a row to fetch every Tier 2 event in the period whose</text>
+    <text class="text-muted" x="0" y="136">learningMethod matches the chosen value.</text>
+  </g>
+</svg>
