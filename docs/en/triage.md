@@ -327,20 +327,26 @@ contribute to any asset row.
 The asset list is **derived from the §4 `final_menu_rows`** — the
 same set the [Baseline scoring algorithm](#baseline-scoring-algorithm)
 composes for the pivot corpus. Each tenant's slice runs one
-`cume_dist()` pass over the post-`BlockList*` window, applies the
+`cume_dist()` pass over the post-`BlockList*` window and applies the
 §4 slot-bucket / largest-remainder / quota composition (and the §6
-`MIN_NONZERO_FLOOR` fallback when assembly is below the floor), and
-then groups the surviving rows by `orig_addr` to produce per-asset
-score, triaged count, and `last_event_time`. An asset cannot rank
-highly from rows that did not survive the menu composition —
-quota, cutoff, and the `MIN_NONZERO_FLOOR` fallback determine the
-analyst-facing list end-to-end. Multi-customer scopes issue one
-menu-cohort SELECT per customer and merge the per-tenant asset
-slices in JavaScript using the issue's `score DESC, last_event_time
-DESC` key, so equal-score rows from different tenants stay
-globally ordered by recency rather than by tenant arrival. No
-`OFFSET` is issued in the multi-customer code path so a stable
-global ordering is preserved across tenants.
+`MIN_NONZERO_FLOOR` fallback when assembly is below the floor) to
+produce per-tenant `final_menu_rows`. Multi-customer scopes issue
+one menu-cohort SELECT per customer, merge the per-tenant
+`final_menu_rows`, apply the cross-tenant `final_menu_rows` cap in
+§3 priority order — `baseline_score DESC, event_time DESC,
+event_key DESC` — and then aggregate the visible asset list from
+the **surviving capped rows** by grouping on `orig_addr`. Per-asset
+score, triaged count, and `last_event_time` reflect only the rows
+that survived both the per-tenant menu composition and the
+cross-tenant cap: an asset whose menu rows are all evicted by the
+cap does not appear on the list, and an asset whose rows are
+partially evicted has its score / triaged count / `last_event_time`
+recomputed from the surviving slice. An asset cannot rank highly
+from rows that did not survive the menu composition — quota,
+cutoff, the `MIN_NONZERO_FLOOR` fallback, and the cross-tenant cap
+determine the analyst-facing list end-to-end. No `OFFSET` is issued
+in the multi-customer code path so the §3 ordering used by the cap
+is stable across tenants.
 
 The per-tenant menu-cohort SELECT is a single SQL round-trip — the
 `cume_dist()` CTE attaches the §3 `baseline_score`, a `ranked` CTE
