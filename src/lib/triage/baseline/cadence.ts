@@ -69,6 +69,17 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 export const PHASE_1A_BASELINE_VERSION = "phase1a-simple";
 
 /**
+ * Phase 1.B baseline-version marker. Reserved here so PR 2's cadence
+ * change wires it next to `PHASE_1A_BASELINE_VERSION` without having to
+ * thread a new export through the module graph. Not yet referenced by
+ * the cadence (the dual-write in `pager.ts` still stamps every row with
+ * `PHASE_1A_BASELINE_VERSION`); PR 2 swaps it in once the four-selector
+ * `raw_score` from §3 (RFC 0001) replaces the Phase 1.A additive score
+ * and the §9 backfill + `SET NOT NULL` migration has run.
+ */
+export const PHASE_1B_BASELINE_VERSION = "phase1b-four-selector";
+
+/**
  * Selector tag stamped on every Phase 1.A row. Stored as a
  * single-element TEXT[] so 1B-8 can extend the array without rewriting
  * existing rows.

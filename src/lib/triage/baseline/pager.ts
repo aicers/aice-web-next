@@ -318,19 +318,25 @@ async function insertBaselineTriagedEvent(
 ): Promise<{ rowCount: number | null }> {
   const tags = [PHASE_1A_SELECTOR_TAG];
   if (hasUnlabeledBonus(event)) tags.push(PHASE_1A_UNLABELED_BONUS_TAG);
+  // Phase 1.A dual-writes `raw_score` alongside `baseline_score` with the
+  // same value (issue #512 / RFC 0001 §9 schema-expand). PR 2's migration
+  // sets `raw_score NOT NULL`; without this dual-write here, an old
+  // Phase 1.A replica surviving past PR 2's deploy would INSERT NULL and
+  // trip the constraint. PR 2 will replace `score` on the `raw_score`
+  // position with the four-selector `raw_score(event)` from §3.
   const result = await client.query(
     `INSERT INTO baseline_triaged_event (
         event_key, event_time, kind, sensor,
         orig_addr, orig_port, resp_addr, resp_port, proto,
         host, dns_query, uri,
         baseline_version, exclusions_fp, category,
-        baseline_score, selector_tags, payload_summary
+        baseline_score, raw_score, selector_tags, payload_summary
       ) VALUES (
         $1, $2, $3, $4,
         $5, $6, $7, $8, $9,
         $10, $11, $12,
         $13, $14, $15,
-        $16, $17, $18
+        $16, $17, $18, $19
       )
       ON CONFLICT (event_key) DO NOTHING`,
     [
@@ -352,6 +358,7 @@ async function insertBaselineTriagedEvent(
       PHASE_1A_BASELINE_VERSION,
       exclusionsFp,
       categoryToDb(event.category),
+      score,
       score,
       tags,
       // payload_summary stays NULL in Phase 1.A — 1B-8 will populate it
