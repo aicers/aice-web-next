@@ -342,8 +342,11 @@ one menu-cohort SELECT per customer, merge the per-tenant
 `final_menu_rows`, apply the cross-tenant `final_menu_rows` cap in
 §3 priority order — `baseline_score DESC, event_time DESC,
 event_key DESC` — and then aggregate the visible asset list from
-the **surviving capped rows** by grouping on `orig_addr`. Per-asset
-score, triaged count, and `last_event_time` reflect only the rows
+the **surviving capped rows** by grouping on the composite
+`(customerId, orig_addr)` key (the same multi-tenant key the rest
+of the menu uses, since two tenants can legitimately host the same
+private address). Per-asset score, triaged count, and
+`last_event_time` reflect only the rows
 that survived both the per-tenant menu composition and the
 cross-tenant cap: an asset whose menu rows are all evicted by the
 cap does not appear on the list, and an asset whose rows are
