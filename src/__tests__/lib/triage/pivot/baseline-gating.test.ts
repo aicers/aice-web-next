@@ -42,6 +42,7 @@ describe("Baseline-mode pivot gating", () => {
   function policyEvent(): ScoredTriageEvent {
     return {
       __typename: "TlsBlocklist",
+      id: "evt-policy",
       time: "2026-05-09T12:00:00.000Z",
       sensor: "sensor-a",
       category: "EXFILTRATION",

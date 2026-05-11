@@ -104,6 +104,7 @@ interface CustomerSlice {
 function rowToEvent(row: BaselineEventRow): TriageEvent {
   return {
     __typename: row.kind,
+    id: row.event_key,
     time: row.event_time.toISOString(),
     sensor: row.sensor,
     category: row.category,
