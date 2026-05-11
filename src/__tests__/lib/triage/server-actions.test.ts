@@ -710,6 +710,126 @@ describe("loadTriagePeriod (SQL data source)", () => {
     expect(result.events[1]).toMatchObject({ id: "9", customerId: 1 });
   });
 
+  it("derives the asset list from the capped events when the cross-tenant cap fires", async () => {
+    // Regression for Round 13 Item 3: assets used to aggregate from
+    // every per-tenant `final_menu_rows` row, but the returned pivot
+    // corpus was capped at `TRIAGE_HARD_EVENT_CAP`. With a multi-
+    // tenant scope exceeding the cap that drift left an asset visible
+    // (or ranked higher than warranted) on the analyst-facing list
+    // even when none of its rows survived in `result.events`. The
+    // contract is now: the cross-tenant cap is applied first in §3
+    // priority order, and `result.assets` is aggregated from the
+    // **capped** events. An asset whose menu rows are all evicted
+    // disappears; an asset whose rows are partially evicted has
+    // `score`/`triagedCount`/`lastEventTimeIso` reflect only the
+    // surviving rows.
+    //
+    // The cap is overridden to a small value via `vi.doMock` so the
+    // test can fit in a few cohort rows rather than synthesizing >5k
+    // surviving menu rows across many tenants. The aggregation
+    // contract under test is independent of the cap value.
+    vi.resetModules();
+    vi.doMock("@/lib/triage/types", async () => {
+      const actual =
+        await vi.importActual<typeof import("@/lib/triage/types")>(
+          "@/lib/triage/types",
+        );
+      return { ...actual, TRIAGE_HARD_EVENT_CAP: 2 };
+    });
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+
+    // Tenant 1: one high-score row that should fill the first cap slot.
+    const c1 = makeMockPool({
+      customerId: 1,
+      cohortRows: [
+        buildCohortRow({
+          eventKey: "c1-h-1",
+          address: "10.0.0.1",
+          baselineScore: 0.9,
+          eventTime: new Date("2026-05-09T11:00:00.000Z"),
+          bucketCount: 1,
+          cohortCount: 1,
+        }),
+      ],
+      detailRowsByAddress: { "10.0.0.1": [] },
+      observedPerAsset: [{ address: "10.0.0.1", detected_count: "1" }],
+    });
+
+    // Tenant 2: two mid-score rows on `10.0.0.2` (only the newer-
+    // time one survives the cap) and one low-score row on
+    // `10.0.0.99` (evicted entirely — the asset must disappear from
+    // `result.assets`). Distinct event_time values pin the §3 tie-
+    // breaker so the cap boundary is deterministic.
+    const c2 = makeMockPool({
+      customerId: 2,
+      cohortRows: [
+        buildCohortRow({
+          eventKey: "c2-m-1",
+          address: "10.0.0.2",
+          baselineScore: 0.5,
+          eventTime: new Date("2026-05-09T11:30:01.000Z"),
+          bucketCount: 2,
+          cohortCount: 3,
+        }),
+        buildCohortRow({
+          eventKey: "c2-m-2",
+          address: "10.0.0.2",
+          baselineScore: 0.5,
+          eventTime: new Date("2026-05-09T11:30:00.000Z"),
+          bucketCount: 2,
+          cohortCount: 3,
+        }),
+        buildCohortRow({
+          eventKey: "c2-l-1",
+          address: "10.0.0.99",
+          baselineScore: 0.01,
+          eventTime: new Date("2026-05-09T11:30:00.000Z"),
+          bucketCount: 1,
+          cohortCount: 3,
+        }),
+      ],
+      detailRowsByAddress: {
+        "10.0.0.2": [],
+        "10.0.0.99": [],
+      },
+      observedPerAsset: [
+        { address: "10.0.0.2", detected_count: "2" },
+        { address: "10.0.0.99", detected_count: "1" },
+      ],
+    });
+    mockGetCustomerPool.mockImplementation(async (id: number) =>
+      id === 1 ? c1.pool : c2.pool,
+    );
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+    );
+    expect(result.truncated).toBe(true);
+    // Cap = 2: keeps the 0.9 row (10.0.0.1) and the newer 0.5 row
+    // (10.0.0.2 / `c2-m-1`); evicts the older 0.5 row and the 0.01
+    // row.
+    expect(result.events).toHaveLength(2);
+    const addresses = result.assets.map((a) => a.address);
+    // `10.0.0.99` is gone — its only row was evicted by the cap.
+    expect(addresses).not.toContain("10.0.0.99");
+    expect(addresses).toContain("10.0.0.1");
+    expect(addresses).toContain("10.0.0.2");
+    const a1 = result.assets.find((a) => a.address === "10.0.0.1");
+    expect(a1?.triagedCount).toBe(1);
+    expect(a1?.score).toBeCloseTo(0.9);
+    // `10.0.0.2`: one row survived (the newer-time `c2-m-1`); the
+    // older `c2-m-2` was evicted at the cap boundary. Score and
+    // triagedCount reflect the surviving row only.
+    const a2 = result.assets.find((a) => a.address === "10.0.0.2");
+    expect(a2?.triagedCount).toBe(1);
+    expect(a2?.score).toBeCloseTo(0.5);
+    expect(a2?.lastEventTimeIso).toBe("2026-05-09T11:30:01.000Z");
+    vi.doUnmock("@/lib/triage/types");
+    vi.resetModules();
+  });
+
   it("freshness header picks the worst state across customers", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);

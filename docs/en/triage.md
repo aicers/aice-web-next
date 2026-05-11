@@ -430,12 +430,16 @@ The menu read is bounded in two layers:
    priority order — `baseline_score DESC, event_time DESC, id DESC`
    — so when a multi-tenant scope exceeds the ceiling, the
    lowest-priority rows are dropped first rather than the oldest.
-   This keeps the visible asset list and the pivot corpus aligned
-   on the same priority ranking. In practice the upstream
-   `default_N` cap keeps a single tenant's slice well under that
-   ceiling (the §6 curve grows logarithmically with cohort size),
-   so this cap is a defense-in-depth safety net rather than a
-   routinely-hit limit.
+   The visible asset list is then aggregated from the **capped**
+   event set, so the asset list and the pivot corpus are derived
+   from the same row set: an asset whose menu rows are all evicted
+   by the cap does not appear on the asset list, and an asset whose
+   rows are partially evicted has its score, triaged-event count,
+   and last-event time reflect only the surviving rows. In practice
+   the upstream `default_N` cap keeps a single tenant's slice well
+   under that ceiling (the §6 curve grows logarithmically with
+   cohort size), so this cap is a defense-in-depth safety net
+   rather than a routinely-hit limit.
 
 When the cross-tenant cap is hit, the page renders an amber banner
 above the funnel:

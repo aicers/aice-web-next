@@ -30,8 +30,11 @@ import {
 /**
  * Bound on the asset-list page returned by one Baseline-mode load.
  * `loadTriagePeriod` always returns a single page; future
- * forward-pagination work would extend the cursor model documented
- * below in {@link mergeAssetPages}.
+ * forward-pagination work would extend the cursor model documented on
+ * {@link aggregateAssetsFromCappedEvents} (a true keyset-cursor model
+ * encodes a per-customer continuation cursor, but this issue ships
+ * the first-page shape only — the menu does not yet expose
+ * Next/Prev pagination controls).
  */
 export const TRIAGE_ASSET_PAGE_SIZE = 100;
 
@@ -128,10 +131,33 @@ interface CorpusStateRow {
   last_error: string | null;
 }
 
+/**
+ * Per-asset enrichment carried alongside a tenant's menu rows. The
+ * cross-tenant cap in {@link loadTriagePeriod} aggregates `score`,
+ * `triagedCount`, and `lastEventTimeIso` from the **capped** events,
+ * but `customerName`, `detectedCount`, `detectedCountUnavailable`,
+ * and the per-asset detail-panel `events` array are fixed per-tenant
+ * inputs that travel through the pipeline unchanged.
+ */
+interface AssetEnrichment {
+  detectedCount: number;
+  detectedCountUnavailable: boolean;
+  detailEvents: ScoredTriageEvent[];
+}
+
 interface CustomerSlice {
   customerId: number;
-  assets: TriageAsset[];
+  customerName: string;
+  /**
+   * Per-tenant `final_menu_rows` projected to scored events. Joined
+   * across tenants in {@link loadTriagePeriod}, sorted in §3 priority
+   * order, and capped at {@link TRIAGE_HARD_EVENT_CAP} *before* the
+   * asset list is aggregated — so the visible asset list and the
+   * returned pivot corpus are derived from the same row set.
+   */
   events: ScoredTriageEvent[];
+  /** Per-asset enrichment keyed by `orig_addr` for this tenant. */
+  enrichmentByAddress: Map<string, AssetEnrichment>;
   detected: number;
   triaged: number;
   freshness: TriageCustomerFreshness;
@@ -166,11 +192,14 @@ function rowToEvent(row: BaselineEventRow): TriageEvent {
  * Run one tenant's slice of the Triage menu read. A single
  * `selectMenuCohort` call delivers the post-`BlockList*` cohort with
  * §3 `baseline_score` and §4 per-bucket aggregates attached; the
- * algorithm composes `final_menu_rows`, and `assets` are aggregated
- * from those rows so the analyst-facing list is governed by the same
- * quota / cutoff / `MIN_NONZERO_FLOOR` contract as the pivot corpus.
- * Per-asset observed counts, detail events, and the freshness header
- * row fan out independently.
+ * algorithm composes `final_menu_rows`, which the slice exposes as
+ * `events`. Per-asset enrichment (observed counts, detail-panel rows)
+ * is loaded once per address that contributed to this tenant's menu
+ * and returned in {@link AssetEnrichment} for the cross-tenant cap
+ * step in {@link loadTriagePeriod} to consume — the asset list itself
+ * is aggregated from the **capped** events so the analyst-facing list
+ * and the returned pivot corpus stay derived from the same row set
+ * even when the cap fires.
  */
 async function loadCustomerSlice(
   customerId: number,
@@ -195,22 +224,26 @@ async function loadCustomerSlice(
   const menuRows = menuResult.rows;
   const dbRowByKey = new Map(cohort.candidates.map((r) => [r.event_key, r]));
 
-  // 2. Asset list derives from the §4 final_menu_rows. The visible
-  //    Triage menu is governed by quota / cutoff / MIN_NONZERO_FLOOR
-  //    end-to-end — an asset that ranks highly only by rows outside
-  //    the menu composition does not appear on the list.
-  const assetEntries = aggregateAssetsFromMenu(menuRows, dbRowByKey);
-  const addresses = assetEntries.map((a) => a.address);
+  const events = menuRowsToScoredEvents(menuRows, dbRowByKey, customerId);
 
-  if (assetEntries.length === 0) {
+  // Addresses we need per-asset enrichment for: every distinct
+  // `orig_addr` that contributed at least one row to this tenant's
+  // menu. The cap in `loadTriagePeriod` may drop some of those rows
+  // later, so we load enrichment for the wider set here — an asset
+  // whose menu rows are all evicted by the cap simply never gets
+  // joined back to its enrichment row.
+  const addresses = uniqueAddresses(events);
+
+  if (addresses.length === 0) {
     const [detected, triaged] = await Promise.all([
       countObserved(pool, observedFromIso, period.endIso, signal),
       countTriaged(pool, period, signal),
     ]);
     return {
       customerId,
-      assets: [],
-      events: menuRowsToScoredEvents(menuRows, dbRowByKey, customerId),
+      customerName,
+      events,
+      enrichmentByAddress: new Map(),
       detected,
       triaged,
       freshness,
@@ -238,20 +271,21 @@ async function loadCustomerSlice(
     observedByAddress.set(row.address, Number(row.detected_count));
   }
 
-  const assets: TriageAsset[] = assetEntries.map((entry) => {
-    const detailRows = detailRowsByAddress.get(entry.address) ?? [];
-    const events = detailRows.map((dbRow, eventIdx) => {
+  const enrichmentByAddress = new Map<string, AssetEnrichment>();
+  for (const address of addresses) {
+    const detailRows = detailRowsByAddress.get(address) ?? [];
+    const detailEvents = detailRows.map((dbRow, eventIdx) => {
       const event = rowToEvent(dbRow);
       const score = dbRow.baseline_score ?? 0;
       const scored: ScoredTriageEvent = {
         ...event,
         score,
         customerId,
-        rowKey: `${customerId}/${entry.address}#${eventIdx}`,
+        rowKey: `${customerId}/${address}#${eventIdx}`,
       };
       return scored;
     });
-    const observed = observedByAddress.get(entry.address);
+    const observed = observedByAddress.get(address);
     const detectedCount = observed ?? 0;
     // The per-asset truncation predicate fires when the request-level
     // truncation flag holds AND this asset has no in-retention
@@ -260,31 +294,30 @@ async function loadCustomerSlice(
     // a special-case path.
     const detectedCountUnavailable =
       observedDenominatorTruncated && observed === undefined;
-    return {
-      customerId,
-      customerName,
-      address: entry.address,
+    enrichmentByAddress.set(address, {
       detectedCount,
       detectedCountUnavailable,
-      triagedCount: entry.triagedCount,
-      score: entry.score,
-      // The §3 tie-breaker for the asset-list ordering uses the
-      // newest menu-row event_time for the asset, so the merged
-      // ordering across tenants matches `score DESC, last_event_time
-      // DESC` from the per-asset menu contribution.
-      lastEventTimeIso: entry.lastEventTimeIso,
-      events,
-    };
-  });
+      detailEvents,
+    });
+  }
 
   return {
     customerId,
-    assets,
-    events: menuRowsToScoredEvents(menuRows, dbRowByKey, customerId),
+    customerName,
+    events,
+    enrichmentByAddress,
     detected,
     triaged,
     freshness,
   };
+}
+
+function uniqueAddresses(events: ReadonlyArray<ScoredTriageEvent>): string[] {
+  const seen = new Set<string>();
+  for (const e of events) {
+    if (e.origAddr) seen.add(e.origAddr);
+  }
+  return Array.from(seen);
 }
 
 async function readFreshness(
@@ -499,49 +532,77 @@ function menuRowsToScoredEvents(
   });
 }
 
-interface AssetEntry {
+interface CappedAssetAggregate {
+  customerId: number;
   address: string;
   score: number;
   triagedCount: number;
-  lastEventTimeIso: string | null;
+  lastEventTimeIso: string;
 }
 
 /**
- * Aggregate `final_menu_rows` into the per-asset entries that drive
- * the asset list. `score` is the sum of `baseline_score` across the
- * asset's menu rows (matching the §3 cohort-relative semantic), so
- * the analyst-facing list is governed end-to-end by §4 / §6 — an
- * asset cannot rank highly from rows that did not survive the menu
- * composition.
+ * Aggregate the cross-tenant capped event list into the per-asset
+ * entries that drive the visible asset list. `score` is the sum of
+ * `baseline_score` across the asset's **surviving** menu rows so the
+ * analyst-facing list is governed end-to-end by §4 / §6 *and* by the
+ * cross-tenant `TRIAGE_HARD_EVENT_CAP` — an asset cannot rank highly
+ * from rows that did not survive either step. Per-tenant enrichment
+ * (`customerName`, `detectedCount`, `detectedCountUnavailable`,
+ * detail-panel events) is joined back from the slice that produced
+ * the event.
+ *
+ * The composite key is `(customerId, address)` to match the same
+ * multi-tenant asset key used throughout the menu — two tenants
+ * legitimately host the same RFC1918 address.
  */
-function aggregateAssetsFromMenu(
-  menuRows: ReadonlyArray<MenuRow>,
-  dbRowByKey: ReadonlyMap<string, MenuCohortDbRow>,
-): AssetEntry[] {
-  const byAddress = new Map<string, AssetEntry>();
-  for (const row of menuRows) {
-    const dbRow = dbRowByKey.get(row.eventKey);
-    if (dbRow === undefined) continue;
-    const address = dbRow.orig_addr;
-    if (address === null) continue;
-    const entry = byAddress.get(address);
-    const isoTime = row.eventTime.toISOString();
-    if (entry === undefined) {
-      byAddress.set(address, {
+function aggregateAssetsFromCappedEvents(
+  capped: ReadonlyArray<ScoredTriageEvent>,
+  slices: ReadonlyArray<CustomerSlice>,
+): TriageAsset[] {
+  const slicesById = new Map<number, CustomerSlice>();
+  for (const s of slices) slicesById.set(s.customerId, s);
+
+  const byKey = new Map<string, CappedAssetAggregate>();
+  for (const evt of capped) {
+    const address = evt.origAddr;
+    if (!address) continue;
+    const key = `${evt.customerId}/${address}`;
+    const existing = byKey.get(key);
+    if (existing === undefined) {
+      byKey.set(key, {
+        customerId: evt.customerId,
         address,
-        score: row.baselineScore,
+        score: evt.score,
         triagedCount: 1,
-        lastEventTimeIso: isoTime,
+        lastEventTimeIso: evt.time,
       });
     } else {
-      entry.score += row.baselineScore;
-      entry.triagedCount += 1;
-      if (entry.lastEventTimeIso === null || isoTime > entry.lastEventTimeIso) {
-        entry.lastEventTimeIso = isoTime;
+      existing.score += evt.score;
+      existing.triagedCount += 1;
+      if (evt.time > existing.lastEventTimeIso) {
+        existing.lastEventTimeIso = evt.time;
       }
     }
   }
-  return Array.from(byAddress.values());
+
+  const assets: TriageAsset[] = [];
+  for (const entry of byKey.values()) {
+    const slice = slicesById.get(entry.customerId);
+    const enrichment = slice?.enrichmentByAddress.get(entry.address);
+    assets.push({
+      customerId: entry.customerId,
+      customerName: slice?.customerName ?? String(entry.customerId),
+      address: entry.address,
+      detectedCount: enrichment?.detectedCount ?? 0,
+      detectedCountUnavailable: enrichment?.detectedCountUnavailable ?? false,
+      triagedCount: entry.triagedCount,
+      score: entry.score,
+      lastEventTimeIso: entry.lastEventTimeIso,
+      events: enrichment?.detailEvents ?? [],
+    });
+  }
+  assets.sort(compareAssets);
+  return assets.slice(0, TRIAGE_ASSET_PAGE_SIZE);
 }
 
 /**
@@ -683,26 +744,6 @@ async function perAssetObservedCounts(
 }
 
 /**
- * Merge per-customer asset pages into a unified page. The per-customer
- * SELECTs each produce a slice ordered by
- * `score DESC, last_event_time DESC`; this function merges them and
- * trims to `TRIAGE_ASSET_PAGE_SIZE` keeping the global ordering.
- *
- * Implementation note: a true keyset-cursor model encodes a per-
- * customer continuation cursor (`{ customerId → (last_score,
- * last_event_time, last_address) }`); this issue ships the first-page
- * shape only — the menu does not yet expose Next/Prev pagination
- * controls and the page-size bound holds within one customer's slice.
- * No `OFFSET` is issued in the multi-customer path: each per-customer
- * slice is a single bounded read and the merge happens in JS.
- */
-function mergeAssetPages(slices: CustomerSlice[]): TriageAsset[] {
-  const all = slices.flatMap((s) => s.assets);
-  all.sort(compareAssets);
-  return all.slice(0, TRIAGE_ASSET_PAGE_SIZE);
-}
-
-/**
  * Pick the worst-state customer for the freshness header badge. The
  * ordering matches #458's "summary picks the worst state" rule:
  *   failed > running > rowAbsent > ok.
@@ -769,8 +810,15 @@ async function pMapBatched<T, R>(
  *   3. Fan out per-customer with bounded concurrency to load:
  *      §4 menu cohort, per-asset detail events, per-asset observed
  *      counts, freshness header.
- *   4. Merge per-customer asset pages into one global page sorted by
- *      `(score, triagedCount, detectedCount, address, customerId)`.
+ *   4. Merge per-tenant `final_menu_rows` into one cross-tenant list
+ *      sorted by `(baseline_score DESC, event_time DESC, event_key
+ *      DESC)`, cap at {@link TRIAGE_HARD_EVENT_CAP}, then aggregate
+ *      the asset list from the **capped** events so the visible
+ *      asset list and the returned pivot corpus are derived from the
+ *      same row set. Trim assets to `TRIAGE_ASSET_PAGE_SIZE` keeping
+ *      the global ordering. No `OFFSET` is issued in the
+ *      multi-customer path: each per-customer slice is a single
+ *      bounded read and the cap/aggregation happens in JS.
  *   5. Sum per-customer funnel counts and pick the worst freshness
  *      state across the scope.
  */
@@ -814,7 +862,6 @@ export async function loadTriagePeriod(
     ),
   );
 
-  const assets = mergeAssetPages(slices);
   const detected = slices.reduce((sum, s) => sum + s.detected, 0);
   const triaged = slices.reduce((sum, s) => sum + s.triaged, 0);
   // Pivot index needs a flat scored events list across customers,
@@ -839,6 +886,16 @@ export async function loadTriagePeriod(
   const events = truncated
     ? mergedEvents.slice(0, TRIAGE_HARD_EVENT_CAP)
     : mergedEvents;
+  // Asset list derives from the **capped** events so the visible
+  // analyst list and the returned pivot corpus stay aligned even when
+  // the cross-tenant cap fires. An asset whose menu rows are all
+  // dropped by the cap does not appear; an asset whose menu rows are
+  // partially dropped has its `score` / `triagedCount` /
+  // `lastEventTimeIso` reflect only the surviving rows. Per-tenant
+  // enrichment (`customerName`, `detectedCount`,
+  // `detectedCountUnavailable`, detail-panel events) is joined back
+  // from the slice that produced each surviving row.
+  const assets = aggregateAssetsFromCappedEvents(events, slices);
   const passThroughRate =
     detected > 0 ? Math.min(1, Math.max(0, triaged / detected)) : 0;
   const freshness = buildFreshness(slices.map((s) => s.freshness));
@@ -888,7 +945,7 @@ export const _testing = {
   buildFreshness,
   rowToEvent,
   buildCohort,
-  aggregateAssetsFromMenu,
+  aggregateAssetsFromCappedEvents,
   MENU_CANDIDATES_PER_BUCKET,
   OBSERVED_EVENT_META_RETENTION_MS,
 };
