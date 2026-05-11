@@ -1,30 +1,64 @@
 import "server-only";
 
 /**
- * Real `CadencePager` implementation (1B-1 / discussion #447 §3.4).
+ * Cadence pager (1B-1 / Phase 1.B — RFC 0001 §3, §7, §8).
  *
- * Steps (a)–(e) of the per-page cadence pipeline:
+ * Two-phase per-page flow (extends #481's steps (d)–(e)). Both phases
+ * run inside the same page transaction the runner already opens — the
+ * "phase" labelling is scoring-stage, not transaction-boundary. If
+ * Phase 2 fails the transaction rolls back, so `observed_event_meta` is
+ * never left populated for rows whose `baseline_triaged_event` write
+ * did not happen, and the page's `last_event_cursor` does not advance.
+ *
+ * Per page:
  *
  *   a. Fetch one raw standard-filter page from review via
- *      `eventListWithTriage(triage = null, after = <last_event_cursor>,
- *      first = <page_size>)`.
+ *      `eventListWithTriage(triage = null)`.
  *   b. Normalize each event into `host` / `dns_query` / `uri` per the
  *      shared helper's event-kind mapping (`src/lib/triage/exclusion/`).
- *      NTLM stays NULL on host-like columns by design.
- *   c. Apply the active exclusion set in-memory (currently empty pre-#457;
- *      the helper's resolver returns `{ rules: [] }` so this is a
- *      pass-through until the storage adapter lands).
- *   d. INSERT remaining events into `observed_event_meta` with
- *      `ON CONFLICT (event_key) DO NOTHING`.
- *   e. INSERT the baseline-passing subset (`baselineScore > 0`) into
- *      `baseline_triaged_event` with the Phase 1.A markers
- *      (`PHASE_1A_BASELINE_VERSION`, `PHASE_1A_SELECTOR_TAG`, additive
- *      `baseline_score`, `exclusions_fp` from `computeExclusionsFingerprint`).
+ *   c. Apply the active exclusion set in-memory.
+ *   d1. Drop `Blocklist*` events at the front — they are themselves a
+ *       triage output (RFC §1). Excluding only at the baseline INSERT
+ *       would leave them in `observed_event_meta` and pollute S1 / S3
+ *       / S4 aggregates against the post-exclusion peer population.
+ *
+ *   Phase 1: Denominator INSERT (staging).
+ *
+ *   d2. One batched INSERT lifts all surviving (post-exclusion,
+ *       post-Blocklist*) page events into `observed_event_meta` with
+ *       `ON CONFLICT (event_key) DO NOTHING`. This places the page's
+ *       own events into the denominator that Phase 2 reads — the
+ *       S3 / S4 formulas account for self via their `- 1` terms (§3),
+ *       and S1's `cume_dist()`-style percentile rank conventionally
+ *       includes self.
+ *
+ *   Phase 2: Batch scoring + baseline INSERT.
+ *
+ *   e1. Detect which §7 statistics windows have wall-clock activation
+ *       against the current `observed_event_meta` corpus.
+ *   e2. Run one batched SELECT against `observed_event_meta` for the
+ *       page rows: S1 percentile rank, S3 repeat count, S4 distinct
+ *       categories — all three statistics windows packed into
+ *       per-selector `FILTER` aggregates so the planner resolves the
+ *       kind / time slice once per selector. See `selectors.ts`.
+ *   e3. Per event, combine the per-window values via max (§7), apply
+ *       §9 weights, add the per-event S2 + UNLABELED_BONUS
+ *       contributions, emit `selector_tags` per §9 thresholds.
+ *   e4. One batched INSERT lifts all page rows into
+ *       `baseline_triaged_event` with
+ *       `baseline_version = PHASE_1B_BASELINE_VERSION`,
+ *       `raw_score`, `selector_tags`, and `baseline_score = NULL`
+ *       (§3 makes `baseline_score` read-time-only; co-populating
+ *       it with `raw_score` would falsely suggest a stored
+ *       interpretation). Phase 2 stays at one batched SELECT plus
+ *       one batched INSERT per page so the runner's per-page time
+ *       budget does not get eaten by 500 sequential statement
+ *       executions.
  *
  * Steps (d)–(e) and the corpus-state UPDATE all commit in the per-page
  * transaction the runner already opens. The pager itself is purely
- * SQL + GraphQL; transaction scope, locking, and watermark UPDATE live
- * one level up in `runTriageBaselineCadence`.
+ * SQL + GraphQL; transaction scope, locking, and watermark UPDATE
+ * live one level up in `runTriageBaselineCadence`.
  */
 
 import type pg from "pg";
@@ -39,16 +73,18 @@ import {
   type NormalizedEventColumns,
   normalizeEventColumns,
 } from "@/lib/triage/exclusion";
-import {
-  baselineScore,
-  hasUnlabeledBonus,
-  PHASE_1A_UNLABELED_BONUS_TAG,
-} from "@/lib/triage/scoring";
 import type { TriageEvent } from "@/lib/triage/types";
 
 import type { CadencePageResult, CadencePager } from "./cadence";
-import { PHASE_1A_BASELINE_VERSION, PHASE_1A_SELECTOR_TAG } from "./cadence";
+import { PHASE_1B_BASELINE_VERSION } from "./cadence";
 import { EVENT_LIST_WITH_TRIAGE_QUERY } from "./queries";
+import {
+  type ActiveWindows,
+  detectActiveWindows,
+  type PageScoringRow,
+  scoreEventFromBatch,
+  scoreSelectorsForPage,
+} from "./selectors";
 
 /**
  * Page size for `eventListWithTriage`. Large enough to amortize the
@@ -62,10 +98,7 @@ export const CADENCE_PAGE_SIZE = 500;
  * cadence is a system actor (no user session). REview's Context-JWT
  * role enum names the built-in roles exactly as
  * `"System Administrator"` / `"Security Administrator"` /
- * `"Security Manager"` / `"Security Monitor"` (with the literal space)
- * — the legacy `"admin"` shorthand does not deserialize to any of
- * those, so requests carrying it are rejected before they hit the
- * field guard.
+ * `"Security Manager"` / `"Security Monitor"` (with the literal space).
  *
  * The cadence needs `System Administrator` because the per-customer
  * fetch carries the target customer in `filter.customers` and REview
@@ -74,10 +107,19 @@ export const CADENCE_PAGE_SIZE = 500;
  */
 const CADENCE_ROLE = "System Administrator";
 
+/**
+ * Hard-exclusion prefix (RFC §1). Any event whose `__typename` starts
+ * with this prefix is dropped before both corpus INSERTs. Matches the
+ * `BlocklistBootp`, `BlocklistConn`, … typenames the REview schema
+ * declares (the RFC text "BlockList*" is informal; the schema's
+ * Pascal-case `Blocklist*` is what cadence actually sees on the wire).
+ */
+const BLOCKLIST_KIND_PREFIX = "Blocklist";
+
 interface CadenceEventNode extends TriageEvent {
-  // Re-asserted here so tsc remembers the optional fields the cadence
-  // pager actually consumes from the resolver response. The shape
-  // matches the `EVENT_LIST_WITH_TRIAGE_QUERY` selection set.
+  // Re-asserted so tsc remembers the optional fields the cadence pager
+  // actually consumes from the resolver response. The shape matches the
+  // `EVENT_LIST_WITH_TRIAGE_QUERY` selection set.
 }
 
 interface CadenceEventEdge {
@@ -97,24 +139,6 @@ interface CadenceConnectionResponse {
   };
 }
 
-/**
- * Validate a relay-style edge cursor and return the review RocksDB
- * primary key it carries.
- *
- * The vendored review-web resolver builds connection edges with
- * `Edge::new(k.to_string(), ev)` where `k` is the i128 RocksDB key —
- * so the wire cursor is just the decimal string of that integer (no
- * base64, no opaque wrapping). The cadence corpus tables store that
- * integer in `NUMERIC(39, 0)` PRIMARY KEY columns; we forward the
- * decimal string straight through.
- *
- * The validator rejects anything other than an unsigned decimal
- * literal of up to 39 digits (the unsigned-i128 range bound). A bad
- * cursor throws so the runner marks the page `failed` and leaves the
- * watermark at the previous committed cursor — silently coercing a
- * malformed cursor into a fallback PK would risk mass collisions
- * across event rows.
- */
 const EVENT_KEY_PATTERN = /^[0-9]{1,39}$/;
 export function cursorToEventKey(cursor: string): string {
   if (!EVENT_KEY_PATTERN.test(cursor)) {
@@ -133,45 +157,28 @@ export interface CadenceFetchPageArgs {
     first: number;
     after: string | null;
   };
-  /**
-   * Optional abort signal forwarded by the runner. The default fetcher
-   * threads it into the GraphQL `fetch` so a dispatcher-issued abort
-   * (e.g. per-customer timeout) terminates the upstream request
-   * promptly rather than waiting for the resolver to return.
-   */
   signal?: AbortSignal;
 }
 
 export interface CadencePagerOptions {
-  /**
-   * Override the GraphQL fetch step. Tests inject a stub so the pager
-   * can be unit-tested without hitting review-web. The pager passes
-   * `customerId` alongside the GraphQL variables so the production
-   * fetcher can scope the outbound JWT's `customer_ids` to the same
-   * customer the cadence is processing — REview rejects a system-actor
-   * request that names a customer in `filter.customers` outside the
-   * JWT scope.
-   */
   fetchPage?: (
     args: CadenceFetchPageArgs,
   ) => Promise<CadenceConnectionResponse>;
-  /**
-   * Active-exclusion-set resolver. Defaults to the empty-set resolver,
-   * but the production cadence route wires the storage-backed resolver
-   * from `active-set-storage.ts` so stored exclusions (#457) take
-   * effect on every tick. Tests inject a fake to drive the matcher.
-   */
   resolver?: ActiveExclusionSetResolver;
-  /**
-   * Override the page size. Production code should use the default.
-   */
   pageSize?: number;
+  /**
+   * Test-only override of the §7 active-window detection. Skips the
+   * `min(event_time)` probe so unit tests do not need a real
+   * `observed_event_meta` corpus to exercise the per-window MAX path.
+   */
+  activeWindowsOverride?: ActiveWindows;
 }
 
 /**
- * Build the production cadence pager. Caller is responsible for
- * passing the result to {@link runTriageBaselineCadence} so the runner
- * stops returning `pending` and starts populating both corpus tables.
+ * Build the production cadence pager. The result is wired to
+ * {@link runTriageBaselineCadence} so the runner stops returning
+ * `pending` and starts populating both corpus tables under the
+ * Phase 1.B four-selector scoring.
  */
 export function createCadencePager(
   options: CadencePagerOptions = {},
@@ -179,6 +186,7 @@ export function createCadencePager(
   const fetchPage = options.fetchPage ?? defaultFetchPage;
   const resolver = options.resolver ?? EMPTY_EXCLUSION_SET_RESOLVER;
   const pageSize = options.pageSize ?? CADENCE_PAGE_SIZE;
+  const activeWindowsOverride = options.activeWindowsOverride;
 
   return {
     async ingestPage(
@@ -204,53 +212,95 @@ export function createCadencePager(
       const active = await resolver.resolve(customerId);
       const exclusionsFp = computeExclusionsFingerprint(active.rules);
 
-      let observedInserted = 0;
-      let baselineInserted = 0;
-
+      // (b)–(d1) Normalize + filter + Blocklist* drop. The survivors
+      // list is the input both phases operate on.
+      const survivors: Array<{
+        eventKey: string;
+        event: CadenceEventNode;
+        cols: NormalizedEventColumns;
+      }> = [];
       for (const edge of edges) {
         const event = edge.node;
-        // (b) Normalize.
+        if (event.__typename.startsWith(BLOCKLIST_KIND_PREFIX)) continue;
         const cols = normalizeEventColumns(event);
-        // (c) Apply active exclusions.
         if (isExcluded(cols, active)) continue;
+        survivors.push({
+          eventKey: cursorToEventKey(edge.cursor),
+          event,
+          cols,
+        });
+      }
 
-        const eventKey = cursorToEventKey(edge.cursor);
+      // (d2) Phase 1: stage every survivor into `observed_event_meta`
+      // in one batched INSERT. Page rows must be in the denominator
+      // before Phase 2 reads it — see the RFC's "S3 / S4 already
+      // account for self via `- 1`" contract. ON CONFLICT keeps the
+      // path idempotent against a re-run of the same page after a
+      // Phase 2 failure. A single batched INSERT (vs. per-row) keeps
+      // the Phase 1 round-trip count at O(1) per page so the cadence
+      // runner's per-page time budget is not eaten by 500 sequential
+      // statement executions.
+      const observedResult = await insertObservedEventMetaBatch(
+        client,
+        survivors,
+      );
+      const observedInserted = observedResult.rowCount ?? 0;
 
-        // (d) INSERT into observed_event_meta.
-        const observedResult = await insertObservedEventMeta(
-          client,
+      // (e1) Active windows: derived from observed_event_meta age
+      // unless the caller injected an override (test paths).
+      const activeWindows =
+        activeWindowsOverride ?? (await detectActiveWindows(client));
+
+      // (e2) Phase 2: batch-score the survivors against observed_event_meta.
+      const pageRows: PageScoringRow[] = survivors.map(
+        ({ eventKey, event, cols }) => ({
+          eventKey,
+          kind: event.__typename,
+          origAddr: cols.origAddr,
+          respAddr: cols.respAddr,
+          category: event.category,
+          confidence: readConfidence(event),
+          clusterId: event.clusterId ?? null,
+        }),
+      );
+      const selectorMap = await scoreSelectorsForPage(client, pageRows);
+
+      // (e3)–(e4) INSERT into baseline_triaged_event. Every page row
+      // is persisted (RFC §3 — `raw_score = 0` events still belong to
+      // the corpus; the read-time menu filters on `baseline_score`
+      // cutoffs, not on a stored INSERT gate). One batched INSERT per
+      // page matches the issue's "single batched INSERT writes them"
+      // contract and keeps Phase 2 at O(1) DB round-trips after the
+      // batched selector SELECT.
+      const baselineRows = survivors.map(({ eventKey, event, cols }) => {
+        const outputs = scoreEventFromBatch(
+          event,
+          eventKey,
+          cols.origAddr,
+          cols.respAddr,
+          selectorMap.get(eventKey),
+          activeWindows,
+        );
+        return {
           eventKey,
           event,
           cols,
-        );
-        observedInserted += observedResult.rowCount ?? 0;
-
-        // (e) INSERT into baseline_triaged_event for the baseline-passing
-        // subset.
-        const score = baselineScore(event);
-        if (score > 0) {
-          const baselineResult = await insertBaselineTriagedEvent(
-            client,
-            eventKey,
-            event,
-            cols,
-            score,
-            exclusionsFp,
-          );
-          baselineInserted += baselineResult.rowCount ?? 0;
-        }
-      }
+          rawScore: outputs.rawScore,
+          selectorTags: outputs.selectorTags,
+        };
+      });
+      const baselineResult = await insertBaselineTriagedEventBatch(
+        client,
+        baselineRows,
+        exclusionsFp,
+      );
+      const baselineInserted = baselineResult.rowCount ?? 0;
 
       return {
         observedInserted,
         baselineInserted,
         endCursor: conn.pageInfo.endCursor,
         hasNextPage: conn.pageInfo.hasNextPage,
-        // Surface the page-level fingerprint so the runner can stamp
-        // `baseline_corpus_state.exclusions_fp` with the same value the
-        // per-row INSERTs carried. Otherwise the corpus-state row would
-        // diverge from the per-row fingerprint as soon as #457 wires
-        // real (non-empty) storage.
         exclusionsFp,
       };
     },
@@ -260,13 +310,6 @@ export function createCadencePager(
 async function defaultFetchPage(
   args: CadenceFetchPageArgs,
 ): Promise<CadenceConnectionResponse> {
-  // The cadence runs as a system actor (no user session). The
-  // outbound dispatch context names the `System Administrator` role
-  // (REview's enum spelling — `"admin"` is not accepted) and
-  // materialises the customer scope into the JWT's `customer_ids`
-  // claim from the route handler's `customer_id` parameter. The same
-  // value is also threaded into `filter.customers` so the resolver's
-  // sensor scoping picks the right customer-tenant set.
   const context = {
     role: CADENCE_ROLE,
     customerIds: [args.customerId],
@@ -276,19 +319,32 @@ async function defaultFetchPage(
   return graphqlRequest<CadenceConnectionResponse, typeof args.variables>(EVENT_LIST_WITH_TRIAGE_QUERY, args.variables, context, args.signal); // scope-allowlist: #481 system-actor cadence; customer scope materialised via JWT customer_ids + filter.customers
 }
 
-async function insertObservedEventMeta(
+interface SurvivorRow {
+  eventKey: string;
+  event: CadenceEventNode;
+  cols: NormalizedEventColumns;
+}
+
+interface BaselineRow extends SurvivorRow {
+  rawScore: number;
+  selectorTags: string[];
+}
+
+const BASELINE_COLS_PER_ROW = 19;
+
+async function insertObservedEventMetaBatch(
   client: pg.PoolClient,
-  eventKey: string,
-  event: CadenceEventNode,
-  cols: NormalizedEventColumns,
+  rows: ReadonlyArray<SurvivorRow>,
 ): Promise<{ rowCount: number | null }> {
-  const result = await client.query(
-    `INSERT INTO observed_event_meta (
-        event_key, event_time, kind, category, sensor,
-        orig_addr, resp_addr, host, dns_query, uri, confidence
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      ON CONFLICT (event_key) DO NOTHING`,
-    [
+  if (rows.length === 0) return { rowCount: 0 };
+  const params: unknown[] = [];
+  const placeholders: string[] = [];
+  for (const { eventKey, event, cols } of rows) {
+    const base = params.length;
+    placeholders.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`,
+    );
+    params.push(
       eventKey,
       event.time,
       event.__typename,
@@ -299,47 +355,43 @@ async function insertObservedEventMeta(
       cols.host,
       cols.dnsQuery,
       cols.uri,
-      // `confidence` is on the Event interface (Float!) — used by 1B-8
-      // for within-kind percentile ranking. Default to NULL when the
-      // resolver omits it (defensive: the SDL declares it required).
       readConfidence(event),
-    ],
+    );
+  }
+  const result = await client.query(
+    `INSERT INTO observed_event_meta (
+        event_key, event_time, kind, category, sensor,
+        orig_addr, resp_addr, host, dns_query, uri, confidence
+      ) VALUES ${placeholders.join(", ")}
+      ON CONFLICT (event_key) DO NOTHING`,
+    params,
   );
   return { rowCount: result.rowCount };
 }
 
-async function insertBaselineTriagedEvent(
+async function insertBaselineTriagedEventBatch(
   client: pg.PoolClient,
-  eventKey: string,
-  event: CadenceEventNode,
-  cols: NormalizedEventColumns,
-  score: number,
+  rows: ReadonlyArray<BaselineRow>,
   exclusionsFp: string,
 ): Promise<{ rowCount: number | null }> {
-  const tags = [PHASE_1A_SELECTOR_TAG];
-  if (hasUnlabeledBonus(event)) tags.push(PHASE_1A_UNLABELED_BONUS_TAG);
-  // Phase 1.A dual-writes `raw_score` alongside `baseline_score` with the
-  // same value (issue #512 / RFC 0001 §9 schema-expand). PR 2's migration
-  // sets `raw_score NOT NULL`; without this dual-write here, an old
-  // Phase 1.A replica surviving past PR 2's deploy would INSERT NULL and
-  // trip the constraint. PR 2 will replace `score` on the `raw_score`
-  // position with the four-selector `raw_score(event)` from §3.
-  const result = await client.query(
-    `INSERT INTO baseline_triaged_event (
-        event_key, event_time, kind, sensor,
-        orig_addr, orig_port, resp_addr, resp_port, proto,
-        host, dns_query, uri,
-        baseline_version, exclusions_fp, category,
-        baseline_score, raw_score, selector_tags, payload_summary
-      ) VALUES (
-        $1, $2, $3, $4,
-        $5, $6, $7, $8, $9,
-        $10, $11, $12,
-        $13, $14, $15,
-        $16, $17, $18, $19
-      )
-      ON CONFLICT (event_key) DO NOTHING`,
-    [
+  if (rows.length === 0) return { rowCount: 0 };
+  // Phase 1.B stops writing the legacy `baseline_score` column for new
+  // rows — RFC §3 makes the value read-time-only (computed by
+  // `cume_dist()` over `raw_score` per-`(kind, baseline_version)`
+  // cohort at menu read). Co-populating it with `raw_score` would
+  // suggest a stored interpretation that does not exist. `raw_score`
+  // and `selector_tags` are the new persisted columns; PR 2's
+  // migration sets both NOT NULL.
+  const params: unknown[] = [];
+  const placeholders: string[] = [];
+  for (const { eventKey, event, cols, rawScore, selectorTags } of rows) {
+    const base = params.length;
+    const ph: string[] = [];
+    for (let i = 1; i <= BASELINE_COLS_PER_ROW; i += 1) {
+      ph.push(`$${base + i}`);
+    }
+    placeholders.push(`(${ph.join(", ")})`);
+    params.push(
       eventKey,
       event.time,
       event.__typename,
@@ -348,23 +400,32 @@ async function insertBaselineTriagedEvent(
       event.origPort ?? null,
       cols.respAddr,
       event.respPort ?? null,
-      // `proto` is not exposed on the Event interface — review-web
-      // surfaces protocol kinds as the typename group itself. Leaving
-      // NULL until/unless the resolver exposes a numeric proto field.
       null,
       cols.host,
       cols.dnsQuery,
       cols.uri,
-      PHASE_1A_BASELINE_VERSION,
+      PHASE_1B_BASELINE_VERSION,
       exclusionsFp,
       categoryToDb(event.category),
-      score,
-      score,
-      tags,
-      // payload_summary stays NULL in Phase 1.A — 1B-8 will populate it
-      // once selector evidence requires per-row payload extracts.
+      // Legacy baseline_score: NULL for Phase 1.B rows (RFC §3).
       null,
-    ],
+      rawScore,
+      selectorTags,
+      // payload_summary stays NULL — Phase 1.B does not surface
+      // per-row payload extracts.
+      null,
+    );
+  }
+  const result = await client.query(
+    `INSERT INTO baseline_triaged_event (
+        event_key, event_time, kind, sensor,
+        orig_addr, orig_port, resp_addr, resp_port, proto,
+        host, dns_query, uri,
+        baseline_version, exclusions_fp, category,
+        baseline_score, raw_score, selector_tags, payload_summary
+      ) VALUES ${placeholders.join(", ")}
+      ON CONFLICT (event_key) DO NOTHING`,
+    params,
   );
   return { rowCount: result.rowCount };
 }

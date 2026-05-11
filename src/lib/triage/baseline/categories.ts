@@ -11,33 +11,49 @@
  *   * `FAVORED_BUCKETS`     — §4 slot allocator adds the constant `β`
  *     bonus per favored bucket.
  *
- * Both ship empty in PR 1 (this file). PR 2 populates them with ops
- * sign-off and wires them into the four-selector scoring + slot
- * allocation paths. Until PR 2 lands, the cadence keeps using the
- * Phase 1.A scoring rule from `src/lib/triage/scoring.ts`.
- *
- * Why the lists live in source code and not in the database:
- *   * The values are part of the algorithm contract (`baseline_version`)
- *     and must be reviewable in a PR diff alongside the code that reads
- *     them. A runtime-mutable table would make audit-time reproduction
- *     (§10) require joining against a history snapshot.
- *   * The lists are small (handful of enum members) — there is no
- *     scaling reason to keep them out of the binary.
+ * Values are the calibrated set from ops review (PR 2 / #513). The
+ * `CRITICAL_CATEGORIES` set is anchored on the kill-chain stages that
+ * Phase 1.A's whitelist already gave a constant `+1.0` bonus to (the
+ * highest-priority operator-relevant stages); under Phase 1.B those same
+ * categories flip the S2 binary selector. `FAVORED_BUCKETS` is the five
+ * kinds documented in RFC §5 (DnsCovertChannel, unlabeled HttpThreat,
+ * LockyRansomware, RepeatedHttpSessions, SuspiciousTlsTraffic),
+ * expressed in `(kind, is_unlabeled)` `slot_bucket` form per §4.
  */
 
 import type { ThreatCategory } from "@/lib/detection";
 
 /**
  * Category membership for the S2 "severe" selector (RFC 0001 §3).
- * Populated in PR 2 once ops have signed off on the kill-chain stage
- * subset that should always fire S2.
+ * Anchored on the five kill-chain stages Phase 1.A's whitelist already
+ * elevated (`PHASE_1A_WHITELIST_SCORE` in `src/lib/triage/scoring.ts`).
+ * Phase 1.B promotes them from an additive bonus into the dedicated S2
+ * binary selector.
  */
-export const CRITICAL_CATEGORIES: ReadonlySet<ThreatCategory> = new Set();
+export const CRITICAL_CATEGORIES: ReadonlySet<ThreatCategory> = new Set([
+  "COMMAND_AND_CONTROL",
+  "CREDENTIAL_ACCESS",
+  "EXFILTRATION",
+  "IMPACT",
+  "INITIAL_ACCESS",
+]);
 
 /**
  * Bucket-identifier membership for the §4 slot allocator's favored-kind
- * constant bonus (`β`). Buckets are identified by their `(kind, sensor)`
- * pair-string per §4; PR 2 fills the set with the operator-relevant
- * (kind, sensor) tuples and wires the lookup into the slot allocator.
+ * constant bonus (`β`). Buckets are encoded as `"<kind>:<is_unlabeled>"`
+ * strings so the read-time slot allocator can look them up by the same
+ * tuple it derives per event.
+ *
+ * Per RFC §5 the five empirically-useful kinds are
+ * DnsCovertChannel, unlabeled HttpThreat, LockyRansomware,
+ * RepeatedHttpSessions, and SuspiciousTlsTraffic. "Unlabeled HttpThreat"
+ * is the virtual `('HttpThreat', true)` slot_bucket (§4); all others
+ * are `(kind, false)`.
  */
-export const FAVORED_BUCKETS: ReadonlySet<string> = new Set();
+export const FAVORED_BUCKETS: ReadonlySet<string> = new Set([
+  "DnsCovertChannel:false",
+  "HttpThreat:true",
+  "LockyRansomware:false",
+  "RepeatedHttpSessions:false",
+  "SuspiciousTlsTraffic:false",
+]);
