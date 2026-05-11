@@ -204,8 +204,11 @@ export async function scoreSelectorsForPage(
   // 30d corpus per page row. Per RFC §3:
   //   s3 = repeat count of (orig_addr, resp_addr, kind) in window
   //   s4 = distinct categories of (orig_addr, kind) in window
-  // The `-1` self-exclusion is applied in JS (post-saturation) so the
-  // SQL stays a pure aggregate.
+  // The `-1` self-exclusion is applied in JS so the SQL stays a pure
+  // aggregate. S3 always subtracts 1 (the page row is always counted
+  // by `COUNT(*)` when its addresses are non-NULL); S4 subtracts 1
+  // only when the page row's `category` is non-NULL because
+  // `COUNT(DISTINCT category)` ignores NULL.
   //
   // Pre-activation windows: handled in JS by zeroing the per-window
   // value before the MAX combination — the SQL always returns all
@@ -312,7 +315,24 @@ export async function scoreSelectorsForPage(
     s4_30d: string;
   };
   const res = await client.query<Row>(sql, pageParams);
+  // Lookup table for the page row's `category` — needed for the
+  // conditional S4 self-exclusion below.
+  const pageRowsByKey = new Map(pageRows.map((r) => [r.eventKey, r]));
   for (const row of res.rows) {
+    const pageRow = pageRowsByKey.get(row.event_key);
+    // S3 self-exclusion: `COUNT(*)` always counts the page row when its
+    // (orig_addr, resp_addr) is non-NULL (Phase 1 always inserts those
+    // survivors into `observed_event_meta`, and `s3_aggr` filters out
+    // NULL-address rows so the JOIN misses NULL-address page rows
+    // entirely → COALESCE 0 → max(0, -1) = 0). Subtract unconditionally.
+    //
+    // S4 self-exclusion: `COUNT(DISTINCT o.category)` ignores NULL
+    // categories (standard SQL), so the page row only contributes a
+    // distinct value when its own `category` is non-NULL. Subtracting
+    // unconditionally would undercount when the page row's category is
+    // NULL — e.g., peers contribute {A, B}, page row is NULL → count = 2,
+    // RFC §3 distinct-peer-categories should be 2, not 1.
+    const s4Subtract = pageRow?.category != null ? 1 : 0;
     result.set(row.event_key, {
       s1: {
         7: Number(row.s1_7d) || 0,
@@ -325,9 +345,9 @@ export async function scoreSelectorsForPage(
         30: Math.max(0, Number(row.s3_30d) - 1),
       },
       s4DistinctMinusSelf: {
-        7: Math.max(0, Number(row.s4_7d) - 1),
-        14: Math.max(0, Number(row.s4_14d) - 1),
-        30: Math.max(0, Number(row.s4_30d) - 1),
+        7: Math.max(0, Number(row.s4_7d) - s4Subtract),
+        14: Math.max(0, Number(row.s4_14d) - s4Subtract),
+        30: Math.max(0, Number(row.s4_30d) - s4Subtract),
       },
     });
   }

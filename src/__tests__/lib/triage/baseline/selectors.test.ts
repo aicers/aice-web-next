@@ -327,6 +327,78 @@ describe("scoreSelectorsForPage — batched SELECT shape", () => {
     expect(out?.s1[7]).toBeCloseTo(0.9, 10);
   });
 
+  it("does NOT subtract 1 from S4 when the page row's category is NULL (COUNT(DISTINCT) ignores NULL)", async () => {
+    // Reviewer Round 2 case: peers contribute non-NULL categories
+    // {A, B}, page row carries category=NULL. PG's
+    // `COUNT(DISTINCT o.category)` returns 2 (NULL ignored). The page
+    // row's NULL did NOT participate in the count, so subtracting 1
+    // unconditionally would undercount RFC §3 distinct-peer-categories
+    // (true value is 2, not 1). The conditional self-exclusion in
+    // `scoreSelectorsForPage` keeps the raw count for NULL-category
+    // rows and only subtracts when the page row's category is non-NULL.
+    const client = {
+      query: vi.fn(async () => ({
+        rows: [
+          {
+            event_key: "1",
+            s1_7d: 0,
+            s1_14d: 0,
+            s1_30d: 0,
+            s3_7d: "0",
+            s3_14d: "0",
+            s3_30d: "0",
+            s4_7d: "2",
+            s4_14d: "2",
+            s4_30d: "2",
+          },
+          {
+            event_key: "2",
+            s1_7d: 0,
+            s1_14d: 0,
+            s1_30d: 0,
+            s3_7d: "0",
+            s3_14d: "0",
+            s3_30d: "0",
+            s4_7d: "2",
+            s4_14d: "2",
+            s4_30d: "2",
+          },
+        ],
+        rowCount: 2,
+      })),
+    };
+    const result = await scoreSelectorsForPage(
+      client as unknown as Parameters<typeof scoreSelectorsForPage>[0],
+      [
+        {
+          eventKey: "1",
+          kind: "HttpThreat",
+          origAddr: "10.0.0.1",
+          respAddr: "1.1.1.1",
+          category: null,
+          confidence: 0.5,
+          clusterId: null,
+        },
+        {
+          eventKey: "2",
+          kind: "HttpThreat",
+          origAddr: "10.0.0.1",
+          respAddr: "1.1.1.1",
+          category: "IMPACT",
+          confidence: 0.5,
+          clusterId: null,
+        },
+      ],
+    );
+    // NULL-category page row: COUNT(DISTINCT) = 2 stays at 2
+    // (peers {A, B}; page row's NULL did not get counted).
+    expect(result.get("1")?.s4DistinctMinusSelf[7]).toBe(2);
+    // Non-NULL category page row: COUNT(DISTINCT) = 2 → subtract 1
+    // (page row's own category contributed one of those distinct
+    // values).
+    expect(result.get("2")?.s4DistinctMinusSelf[7]).toBe(1);
+  });
+
   it("clamps -1 self-exclusion at 0 so a row whose count came back 0 does not produce a negative numerator", async () => {
     const client = {
       query: vi.fn(async () => ({

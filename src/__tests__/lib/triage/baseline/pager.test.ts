@@ -29,11 +29,14 @@ type SelectorRow = {
 };
 
 /**
- * Build a FakeClient that recognises the three query shapes the pager
- * issues:
+ * Build a FakeClient that recognises the query shapes the pager issues:
  *
- *   - `INSERT INTO observed_event_meta` / `INSERT INTO
- *     baseline_triaged_event` — return `rowCount: 1`.
+ *   - `INSERT INTO observed_event_meta` (single batched multi-row
+ *     VALUES per page) — return a `rowCount` matching the number of
+ *     parameter rows so the pager's `observedInserted` accumulator
+ *     reflects the true insert count.
+ *   - `INSERT INTO baseline_triaged_event` (single batched multi-row
+ *     VALUES per page) — same pattern, sized by 19 columns per row.
  *   - `SELECT … cume_dist() …` (the batched Phase 2 SELECT) — return a
  *     scripted per-row map keyed by `event_key`.
  *   - any other query — empty rows, `rowCount: 1`.
@@ -42,6 +45,8 @@ type SelectorRow = {
  * values that the batched SELECT would have returned against real
  * `observed_event_meta` history.
  */
+const OBSERVED_COLS_PER_ROW = 11;
+const BASELINE_COLS_PER_ROW = 19;
 function makeClient(
   selectorRows: Map<string, Omit<SelectorRow, "event_key">> = new Map(),
 ): FakeClient {
@@ -71,10 +76,35 @@ function makeClient(
         }
         return { rows, rowCount: rows.length };
       }
+      if (sql.includes("INSERT INTO observed_event_meta")) {
+        const n = Math.floor((params?.length ?? 0) / OBSERVED_COLS_PER_ROW);
+        return { rows: [], rowCount: n };
+      }
+      if (sql.includes("INSERT INTO baseline_triaged_event")) {
+        const n = Math.floor((params?.length ?? 0) / BASELINE_COLS_PER_ROW);
+        return { rows: [], rowCount: n };
+      }
       return { rows: [], rowCount: 1 };
     }),
   };
   return client;
+}
+
+/**
+ * Slice the multi-row VALUES params of a batched INSERT into per-row
+ * windows so per-event assertions stay readable. `colsPerRow` is the
+ * fixed column count for the table the INSERT targets.
+ */
+function sliceRows<T = unknown>(
+  params: unknown[] | undefined,
+  colsPerRow: number,
+): T[][] {
+  const out: T[][] = [];
+  const all = params ?? [];
+  for (let i = 0; i < all.length; i += colsPerRow) {
+    out.push(all.slice(i, i + colsPerRow) as T[]);
+  }
+  return out;
 }
 
 function eventKeyToCursor(value: bigint): string {
@@ -112,7 +142,7 @@ describe("cursorToEventKey", () => {
 });
 
 describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
-  it("two-phase per page: Phase 1 stages observed_event_meta, then the batched SELECT, then Phase 2 INSERTs baseline_triaged_event", async () => {
+  it("two-phase per page: one batched Phase 1 INSERT, then the batched SELECT, then one batched Phase 2 INSERT", async () => {
     const cursor1 = eventKeyToCursor(BigInt(1001));
     const cursor2 = eventKeyToCursor(BigInt(1002));
     const cursor3 = eventKeyToCursor(BigInt(1003));
@@ -243,55 +273,65 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
       exclusionsFp: EMPTY_EXCLUSIONS_FINGERPRINT,
     });
 
-    // Phase 1: one observed insert per surviving event.
+    // Phase 1: one batched observed_event_meta INSERT carrying every
+    // surviving event in one round-trip.
     const observedInserts = client.queries.filter((q) =>
       q.sql.includes("INSERT INTO observed_event_meta"),
     );
-    expect(observedInserts).toHaveLength(3);
+    expect(observedInserts).toHaveLength(1);
+    const observedRows = sliceRows(
+      observedInserts[0].params,
+      OBSERVED_COLS_PER_ROW,
+    );
+    expect(observedRows).toHaveLength(3);
 
-    // Phase 2: one batched SELECT before any baseline insert.
+    // Phase 2: one batched SELECT before any baseline insert, then one
+    // batched baseline INSERT carrying every page row.
     const sqls = client.queries.map((q) => q.sql);
     const cumeIdx = sqls.findIndex((s) => s.includes("cume_dist()"));
     expect(cumeIdx).toBeGreaterThanOrEqual(0);
-    const firstBaselineIdx = sqls.findIndex((s) =>
+    const baselineInsertIdx = sqls.findIndex((s) =>
       s.includes("INSERT INTO baseline_triaged_event"),
     );
-    const lastObservedIdx = sqls.reduce(
-      (acc, s, i) => (s.includes("INSERT INTO observed_event_meta") ? i : acc),
-      -1,
+    const observedInsertIdx = sqls.findIndex((s) =>
+      s.includes("INSERT INTO observed_event_meta"),
     );
-    // Every observed_event_meta INSERT runs before the cume_dist SELECT
-    // (Phase 1 → Phase 2 ordering is load-bearing per RFC §3).
-    expect(lastObservedIdx).toBeLessThan(cumeIdx);
-    expect(cumeIdx).toBeLessThan(firstBaselineIdx);
+    // Phase 1 INSERT runs before the cume_dist SELECT, which runs
+    // before the Phase 2 INSERT (ordering is load-bearing per RFC §3).
+    expect(observedInsertIdx).toBeLessThan(cumeIdx);
+    expect(cumeIdx).toBeLessThan(baselineInsertIdx);
 
-    // Three baseline INSERTs — every surviving page row is persisted
-    // even when raw_score = 0 (cold start) or all §3 selectors miss;
-    // read-time cohort filtering, not an INSERT gate, decides what
-    // the menu shows (RFC §3).
+    // Single batched baseline INSERT — RFC §3: every surviving page
+    // row is persisted even when raw_score = 0 (cold start) or all §3
+    // selectors miss; read-time cohort filtering, not an INSERT gate,
+    // decides what the menu shows.
     const baselineInserts = client.queries.filter((q) =>
       q.sql.includes("INSERT INTO baseline_triaged_event"),
     );
-    expect(baselineInserts).toHaveLength(3);
+    expect(baselineInserts).toHaveLength(1);
+    const baselineRows = sliceRows(
+      baselineInserts[0].params,
+      BASELINE_COLS_PER_ROW,
+    );
+    expect(baselineRows).toHaveLength(3);
 
-    // Param positions (zero-indexed):
+    // Per-row offsets (zero-indexed within each row):
     //   12 → baseline_version, 14 → category,
     //   15 → baseline_score (legacy, now NULL), 16 → raw_score,
     //   17 → selector_tags
-    for (const insert of baselineInserts) {
-      const params = insert.params ?? [];
-      expect(params[12]).toBe("phase1b-four-selector");
+    for (const row of baselineRows) {
+      expect(row[12]).toBe("phase1b-four-selector");
       // baseline_score must be NULL on Phase 1.B rows — RFC §3 makes
       // it read-time-only.
-      expect(params[15]).toBeNull();
-      expect(typeof params[16]).toBe("number");
-      expect(Array.isArray(params[17])).toBe(true);
+      expect(row[15]).toBeNull();
+      expect(typeof row[16]).toBe("number");
+      expect(Array.isArray(row[17])).toBe(true);
     }
 
     // HttpThreat unlabeled CC: s1 (0.95 > 0.85) → S1-high; s2 = 1 →
     // S2-severe; s3 = 9/10 = 0.9 > 0.5 → S3-recurring; s4 = 3/4 =
     // 0.75 > 0.5 → S4-correlated; unlabeled → unlabeled-cluster.
-    const httpThreatTags = baselineInserts[0].params?.[17] as string[];
+    const httpThreatTags = baselineRows[0][17] as string[];
     expect(httpThreatTags.sort()).toEqual([
       "S1-high",
       "S2-severe",
@@ -303,15 +343,15 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
     // NetworkThreat labelled IMPACT: s1 = 0.5 (no S1-high), s2 = 1 →
     // S2-severe, s3 = 0/10 = 0 (no S3), s4 = 0/4 = 0 (no S4), not
     // HttpThreat → no unlabeled. Only S2-severe.
-    expect(baselineInserts[1].params?.[17]).toEqual(["S2-severe"]);
+    expect(baselineRows[1][17]).toEqual(["S2-severe"]);
 
     // PortScan RECONNAISSANCE: nothing fires.
-    expect(baselineInserts[2].params?.[17]).toEqual([]);
+    expect(baselineRows[2][17]).toEqual([]);
 
-    // exclusions_fp threaded through every baseline INSERT.
-    for (const insert of baselineInserts) {
-      const params = insert.params ?? [];
-      expect(params).toContain(EMPTY_EXCLUSIONS_FINGERPRINT);
+    // exclusions_fp threaded into every page-row tuple of the batched
+    // baseline INSERT.
+    for (const row of baselineRows) {
+      expect(row).toContain(EMPTY_EXCLUSIONS_FINGERPRINT);
     }
 
     expect(fetchPage).toHaveBeenCalledTimes(1);
@@ -447,14 +487,26 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
     expect(result.observedInserted).toBe(1);
     expect(result.baselineInserted).toBe(1);
 
-    const observedKeys = client.queries
-      .filter((q) => q.sql.includes("INSERT INTO observed_event_meta"))
-      .map((q) => (q.params ?? [])[0]);
+    // Single batched INSERT per phase. Slice each batched VALUES tuple
+    // back into per-row windows and pull out the event_key (col 0).
+    const observedInserts = client.queries.filter((q) =>
+      q.sql.includes("INSERT INTO observed_event_meta"),
+    );
+    expect(observedInserts).toHaveLength(1);
+    const observedKeys = sliceRows(
+      observedInserts[0].params,
+      OBSERVED_COLS_PER_ROW,
+    ).map((row) => row[0]);
     expect(observedKeys).toEqual([realCursor]);
 
-    const baselineKeys = client.queries
-      .filter((q) => q.sql.includes("INSERT INTO baseline_triaged_event"))
-      .map((q) => (q.params ?? [])[0]);
+    const baselineInserts = client.queries.filter((q) =>
+      q.sql.includes("INSERT INTO baseline_triaged_event"),
+    );
+    expect(baselineInserts).toHaveLength(1);
+    const baselineKeys = sliceRows(
+      baselineInserts[0].params,
+      BASELINE_COLS_PER_ROW,
+    ).map((row) => row[0]);
     expect(baselineKeys).toEqual([realCursor]);
   });
 
