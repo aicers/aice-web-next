@@ -45,6 +45,11 @@ export default defineConfig({
             // branches and the wrapper-owned customer cache lifecycle.
             "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
+            // Issue #278 (Reviewer Round 2 #1): cache lifecycle coverage
+            // for the wrapper-owned sensor cache — exercises the same
+            // "remount of the keyed `<DetectionShell>` does NOT drop
+            // the cache" contract the customer test pins.
+            "src/__tests__/components/detection/detection-tabs-shell-sensor-cache.test.tsx",
             // #393 Reviewer Round 1: real-render regression coverage for
             // the sensor cache reopen probe (Task D) and the analytics
             // cache-key + probe contract (Task B).
@@ -129,6 +134,7 @@ export default defineConfig({
             "src/__tests__/components/node/resource-sparkline.test.tsx",
             "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
+            "src/__tests__/components/detection/detection-tabs-shell-sensor-cache.test.tsx",
             "src/__tests__/components/detection/detection-shell-sensor-cache-probe.test.tsx",
             "src/__tests__/components/detection/detection-analytics-cache-probe.test.tsx",
             "src/__tests__/components/detection/detection-shell-forbidden-sensor-banner.test.tsx",

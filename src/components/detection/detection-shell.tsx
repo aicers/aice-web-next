@@ -16,10 +16,6 @@ import {
   runEventQuery,
 } from "@/app/[locale]/(dashboard)/detection/actions";
 import {
-  type FetchSensorsResult,
-  fetchSensors,
-} from "@/app/[locale]/(dashboard)/detection/sensor-actions";
-import {
   CsvExportConfirmDialog,
   type CsvExportConfirmLabels,
 } from "@/components/detection/csv-export-dialog";
@@ -769,6 +765,36 @@ export interface DetectionShellProps {
    * relied solely on the lazy-loaded cache.
    */
   initialCustomerOptions?: readonly CustomerOption[];
+  /**
+   * Sensor inventory cache, lifted to the multi-tab wrapper for the
+   * same reason as {@link customerCache} (Reviewer Round 2 #1): the
+   * shell is remounted on every active-tab switch (`key={activeTabId}`)
+   * and previously held this state locally, so opening the drawer in
+   * tab A and switching to tab B dropped the cache and forced another
+   * fetch — breaking #278's page-session-shared cache contract.
+   * Owning it on the wrapper keeps the options stable across tab
+   * create / switch / close as long as the Detection page itself is
+   * mounted, and every shell instance reads the same options (so
+   * chips in tab B benefit from a fetch in tab A too).
+   */
+  sensorCache: SensorCache;
+  /**
+   * Manual sensor refresh callback the wrapper supplies. The drawer's
+   * Sensor header `↻` icon and the error-state Retry both call this;
+   * the {@link handleRecoverFromForbiddenSensor} recovery also fires
+   * it to refresh the cache after dropping out-of-scope ids. The
+   * wrapper performs the actual {@link fetchSensors} round-trip and
+   * replaces the cache.
+   */
+  onSensorRefresh: () => void;
+  /**
+   * Drawer-reopen probe hook: when `probeAuthOrRedirect` reports a
+   * 401, the shell asks the wrapper to wipe the sensor cache back to
+   * `idle` so the next drawer-open path falls through to a fresh
+   * fetch instead of serving cached names from a stale session
+   * (#393 Task D). Owned by the wrapper because the cache itself is.
+   */
+  onSensorCacheInvalidate: () => void;
 }
 
 /**
@@ -1276,6 +1302,9 @@ export function DetectionShell({
   customerCache,
   onCustomerRefresh,
   initialCustomerOptions,
+  sensorCache,
+  onSensorRefresh,
+  onSensorCacheInvalidate,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
@@ -1512,9 +1541,10 @@ export function DetectionShell({
     return list;
   }, [committedFilter]);
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(initialDraft);
-  const [sensorCache, setSensorCache] = useState<SensorCache>({
-    status: "idle",
-  });
+  // Sensor cache is owned by the multi-tab wrapper (Reviewer Round 2
+  // #1): same contract as `customerCache` above — the keyed shell
+  // remount on tab switch must not drop the page-session-shared
+  // inventory.
   // Reviewer Round 1 (#393 Task D follow-up): the cache-hit probe must
   // gate paint, not just fire alongside it. Both `openDrawer` paths
   // flip this flag synchronously when reopening on a `loaded` cache;
@@ -1703,39 +1733,14 @@ export function DetectionShell({
   // useCallback and can mid-flight re-create the Go-to-page walker.
   const totalCountRef = useRef<string | null>(initialResult.totalCount);
 
-  // Kicks off a sensor-list fetch and threads the result into the
-  // session cache. Extracted so both the initial lazy-load (on the
-  // first drawer open) and an explicit Retry click from the error
-  // state can share the same side-effect shape. Kept outside the
-  // cache updater so React Strict Mode's double-invocation of state
-  // updaters cannot trigger duplicate network requests.
-  const triggerSensorFetch = useCallback(() => {
-    setSensorCache({ status: "loading" });
-    void fetchSensors().then(
-      (result: FetchSensorsResult) => {
-        if (result.ok) {
-          setSensorCache({
-            status: "loaded",
-            endpointAvailable: result.endpointAvailable,
-            options: result.sensors.map((s) => ({
-              id: s.id,
-              name: s.name,
-            })),
-          });
-        } else {
-          setSensorCache({ status: "error" });
-        }
-      },
-      () => setSensorCache({ status: "error" }),
-    );
-  }, []);
-
-  // Customer fetch is owned by the multi-tab wrapper (Reviewer
-  // Round 1 #1: lifted out of shell-local state so the cache survives
+  // Sensor / Customer fetches are owned by the multi-tab wrapper
+  // (Reviewer Round 1 #1 for customer, Reviewer Round 2 #1 for
+  // sensor: lifted out of shell-local state so the cache survives
   // the keyed remount on tab switch). The wrapper supplies
-  // `onCustomerRefresh` for the manual `↻` and the chip-body /
-  // Filters-button drawer-open paths just call it on an idle/error
-  // cache through `triggerCustomerFetch` below.
+  // `onSensorRefresh` / `onCustomerRefresh` for the manual `↻` and
+  // the chip-body / Filters-button drawer-open paths just call them
+  // on an idle/error cache through the aliases below.
+  const triggerSensorFetch = onSensorRefresh;
   const triggerCustomerFetch = onCustomerRefresh;
 
   const openDrawer = useCallback(() => {
@@ -1775,7 +1780,7 @@ export function DetectionShell({
       // paint normally (#393 Task D).
       setSensorCacheVerifying(true);
       void probeAuthOrRedirect(() => {
-        setSensorCache({ status: "idle" });
+        onSensorCacheInvalidate();
       }).finally(() => {
         setSensorCacheVerifying(false);
       });
@@ -1791,6 +1796,7 @@ export function DetectionShell({
     committedEndpoints,
     sensorCache,
     triggerSensorFetch,
+    onSensorCacheInvalidate,
     customerCache,
     triggerCustomerFetch,
   ]);
@@ -3085,7 +3091,7 @@ export function DetectionShell({
         // (#393 Task D).
         setSensorCacheVerifying(true);
         void probeAuthOrRedirect(() => {
-          setSensorCache({ status: "idle" });
+          onSensorCacheInvalidate();
         }).finally(() => {
           setSensorCacheVerifying(false);
         });
@@ -3099,6 +3105,7 @@ export function DetectionShell({
       committedEndpoints,
       sensorCache,
       triggerSensorFetch,
+      onSensorCacheInvalidate,
       customerCache,
       triggerCustomerFetch,
     ],
