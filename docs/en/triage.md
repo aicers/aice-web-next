@@ -311,13 +311,15 @@ composite key keeps them distinct end-to-end. Single-customer scope
 (the common case) renders identically to a per-tenant view —
 `customerId` is just constant across the page. Rows are sorted by
 total score (highest first); the first tie-breaker is
-`last_event_time` (most recent first), matching the per-tenant
-SQL `ORDER BY score DESC, last_event_time DESC` so the merged
-ordering is the same shape as the single-tenant query. Remaining
-ties break on triaged count, then detected count, then address,
-then customer id — those are not part of the issue contract but
-keep the page deterministic when two rows are tied on both
-`score` and `last_event_time`.
+`last_event_time` (most recent first). Remaining ties break on
+triaged count, then detected count, then address, then customer
+id — those are not part of the issue contract but keep the page
+deterministic when two rows are tied on both `score` and
+`last_event_time`. The sort runs in JavaScript over the
+aggregated `TriageAsset` list (`compareAssets` in
+`src/lib/triage/aggregate.ts`) after the cross-tenant cap; there
+is no per-tenant SQL aggregate SELECT against `baseline_triaged_event`
+on the read path.
 
 Events without a usable originator IP — for example, aggregate
 threat subtypes that emit a plural `origAddrs` field — still
@@ -433,9 +435,11 @@ The menu read is bounded in two layers:
    §4 / §6 composition runs, the merged list of `final_menu_rows`
    across the caller's scope is bounded above by **5,000 events**
    before the pivot index is built. The cap is applied in §3
-   priority order — `baseline_score DESC, event_time DESC, id DESC`
-   — so when a multi-tenant scope exceeds the ceiling, the
-   lowest-priority rows are dropped first rather than the oldest.
+   priority order — `baseline_score DESC, event_time DESC,
+   event_key DESC` (numeric-string DESC: `"10"` before `"9"`,
+   matching the per-tenant menu composition) — so when a
+   multi-tenant scope exceeds the ceiling, the lowest-priority
+   rows are dropped first rather than the oldest.
    The visible asset list is then aggregated from the **capped**
    event set, so the asset list and the pivot corpus are derived
    from the same row set: an asset whose menu rows are all evicted
