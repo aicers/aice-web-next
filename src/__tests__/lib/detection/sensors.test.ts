@@ -39,11 +39,16 @@ function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
   } as AuthSession;
 }
 
+const EMPTY_SENSOR_LIST_RESPONSE = {
+  customerSensorList: { nodes: [] as Array<unknown> },
+};
+
 describe("detection sensors — listSensors()", () => {
   beforeEach(() => {
     mockHasPermission.mockReset();
     mockResolveEffectiveCustomerIds.mockReset();
     mockGraphqlRequest.mockReset();
+    mockGraphqlRequest.mockResolvedValue(EMPTY_SENSOR_LIST_RESPONSE);
   });
 
   // ── Authorization ──────────────────────────────────────────────
@@ -68,7 +73,11 @@ describe("detection sensors — listSensors()", () => {
   it("rejects a non-admin caller with an empty customer scope", async () => {
     // Non-admin (no `customers:access-all`): the empty-scope gate
     // applies as before. The bypass for access-all callers — see
-    // the dedicated test below — is a separate path.
+    // the dedicated test below — is a separate path. The error class
+    // is intentionally `DetectionUnauthorizedError`, not
+    // `DetectionForbiddenError`: `sensor-actions.ts` catches the
+    // former and maps it to `code: "forbidden"` for the drawer; see
+    // the rationale in `sensors.ts`.
     mockHasPermission.mockImplementation(
       async (_roles: string[], permission: string) =>
         permission === "detection:read",
@@ -89,10 +98,10 @@ describe("detection sensors — listSensors()", () => {
   it("does not block an access-all caller (e.g. SysAdmin) with an empty local customers table (#405 L1)", async () => {
     // Symmetric to the bypass in `buildDispatchContext`: a fresh
     // install with no `customers` rows must not lock SysAdmin out
-    // of the sensor enumeration. While the sensor-list endpoint is
-    // still absent the helper returns the `endpoint-absent` variant
-    // rather than throwing, but the empty-scope gate must NOT trip
-    // for an access-all caller along the way.
+    // of the sensor enumeration. The dispatch still happens — review
+    // accepts `customer_ids = None` for SysAdmin (review's "all
+    // customers" wire semantics) and enumerates every customer's
+    // sensors. The BFF's empty-scope gate must NOT trip along the way.
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([]);
 
@@ -100,15 +109,19 @@ describe("detection sensors — listSensors()", () => {
     const result = await listSensors(
       makeSession({ roles: ["System Administrator"] }),
     );
-    expect(result).toEqual({ endpointAvailable: false });
-    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+
+    expect(result).toEqual({ endpointAvailable: true, sensors: [] });
+    expect(mockGraphqlRequest).toHaveBeenCalledOnce();
+    const ctx = mockGraphqlRequest.mock.calls[0][2];
+    expect(ctx).toEqual({
+      role: "System Administrator",
+      // SystemAdministrator → `customer_ids = None` on the wire (the
+      // JWT-claim helper returns `undefined`).
+      customerIds: undefined,
+    });
   });
 
-  it("resolves customer_ids for authorized callers before the endpoint check", async () => {
-    // Forward-looking assertion for the customer-scope contract: the
-    // customer_ids list is materialized on every call, even while the
-    // endpoint is absent, so flipping `SENSOR_LIST_ENDPOINT_AVAILABLE`
-    // and wiring the dispatch does not require touching the auth path.
+  it("resolves customer_ids for authorized callers before dispatch", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([42, 99]);
 
@@ -124,34 +137,6 @@ describe("detection sensors — listSensors()", () => {
     ]);
   });
 
-  // ── Fallback: endpoint absent from vendored schema ─────────────
-
-  it("returns the endpoint-absent variant (and an empty list via sensorsOrEmpty) when the endpoint is missing from the vendored schema", async () => {
-    // The vendored schemas/review.graphql does not yet expose the
-    // sensor-list query (#295). While that is true, authorized callers
-    // must receive the `endpoint-absent` variant rather than an error —
-    // downstream consumers (#278 dropdown, #291 event locator) rely on
-    // this degrade-gracefully contract and choose between the
-    // discriminator (locator) or `sensorsOrEmpty()` (dropdown).
-    mockHasPermission.mockResolvedValue(true);
-    mockResolveEffectiveCustomerIds.mockResolvedValue([42, 99]);
-
-    const { listSensors, SENSOR_LIST_ENDPOINT_AVAILABLE, sensorsOrEmpty } =
-      await import("@/lib/detection");
-
-    // Precondition for this regression: the constant really is `false`
-    // in the current snapshot of the vendored schema.
-    expect(SENSOR_LIST_ENDPOINT_AVAILABLE).toBe(false);
-
-    const result = await listSensors(makeSession());
-    expect(result).toEqual({ endpointAvailable: false });
-    // The documented collapse helper still yields the flat empty list
-    // that the issue's fallback clause calls out.
-    expect(sensorsOrEmpty(result)).toEqual([]);
-    // No network traffic at all while the endpoint is absent.
-    expect(mockGraphqlRequest).not.toHaveBeenCalled();
-  });
-
   // ── Consumer-side compile-time guard ───────────────────────────
 
   it("forces consumers to acknowledge the endpoint-availability state at the type level", async () => {
@@ -161,9 +146,15 @@ describe("detection sensors — listSensors()", () => {
     // as always having a `sensors` field — i.e. assumes the endpoint is
     // always available — fails `tsc --noEmit` because `sensors` does
     // not exist on the `endpoint-absent` variant. The @ts-expect-error
-    // lines below lock that guard in: if anyone widens the return
-    // shape to always expose `sensors`, the directives become dead and
+    // line below locks that guard in: if anyone widens the return
+    // shape to always expose `sensors`, the directive becomes dead and
     // tsc fails the test file.
+    //
+    // The discriminator stays in place even after the endpoint has
+    // shipped because a future REview schema rollback would flip
+    // `SENSOR_LIST_ENDPOINT_AVAILABLE` back to `false` and consumers
+    // need a typed signal to fall back to (#278's "Coming soon"
+    // affordance, #291's name → ID skip).
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([42, 99]);
 
@@ -185,53 +176,47 @@ describe("detection sensors — listSensors()", () => {
     }
   });
 
-  // ── Wire-path guard: activates when the flag flips ─────────────
+  // ── Dispatch contract ──────────────────────────────────────────
 
-  it("dispatches via graphqlRequest with { role, customerIds } once the endpoint flag is true", async () => {
-    // Behavioural counterpart to the schema-vs-constant guard in
-    // `sensors-endpoint-guard.test.ts`. Today this test is a no-op
-    // because `SENSOR_LIST_ENDPOINT_AVAILABLE` is `false`, but it
-    // activates automatically the moment someone flips the constant:
-    //
-    //   - If the dispatch body is still `return []`, `graphqlRequest`
-    //     is never called and this assertion fails — so a future PR
-    //     cannot flip the flag and leave the fallback as the live
-    //     code path.
-    //   - The assertion also locks the wire contract: the caller's
-    //     `customer_ids` travel on the Context JWT (via `graphqlRequest`
-    //     which calls `signContextJwt(role, customerIds)` internally —
-    //     see review-integration.test.ts), not on the query variables.
-    //
-    // Run against the real constant (not a mocked one) so the guard
-    // tracks the production flag, not a test-local override.
-    const { listSensors, SENSOR_LIST_ENDPOINT_AVAILABLE } = await import(
-      "@/lib/detection"
-    );
-    if (!SENSOR_LIST_ENDPOINT_AVAILABLE) {
-      // Flag is still `false`: the fallback path is exercised by the
-      // preceding test. When REview publishes the sensor-list query
-      // (#295) and the constant flips, the assertions below activate
-      // and require a wired graphqlRequest dispatch in listSensors.
-      return;
-    }
-
+  it("dispatches via graphqlRequest with { role, customerIds } and projects the response", async () => {
+    // Wire contract: caller's `customer_ids` travel on the Context JWT
+    // (`graphqlRequest` calls `signContextJwt(role, customerIds)`
+    // internally — see review-integration.test.ts), not on the query
+    // variables. No explicit `customerIds` argument is sent to
+    // `customerSensorList`; review uses the JWT-claim set to scope.
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([42, 99]);
     mockGraphqlRequest.mockResolvedValue({
-      sensorList: [] as Array<{ id: string; name: string; customerId: string }>,
+      customerSensorList: {
+        nodes: [
+          { customerId: 42, nodeId: "1", hostFqdn: "sensor-a.example.com" },
+          { customerId: 99, nodeId: "2", hostFqdn: "sensor-b.example.com" },
+        ],
+      },
     });
 
-    await listSensors(makeSession({ roles: ["Security Monitor"] }));
+    const { listSensors } = await import("@/lib/detection");
+    const result = await listSensors(
+      makeSession({ roles: ["Security Monitor"] }),
+    );
 
     expect(mockGraphqlRequest).toHaveBeenCalledOnce();
     const call = mockGraphqlRequest.mock.calls[0];
     // graphqlRequest signature: (document, variables, context).
-    // Assert only the context — the document and variables are part
-    // of the wiring change and will be locked in by the PR that
-    // flips the flag.
-    expect(call[2]).toMatchObject({
+    expect(call[1]).toBeUndefined();
+    expect(call[2]).toEqual({
       role: "Security Monitor",
       customerIds: [42, 99],
+    });
+
+    // Projection at the boundary: SDL `nodeId` → public `id`,
+    // SDL `hostFqdn` → public `name`, numeric `customerId` preserved.
+    expect(result).toEqual({
+      endpointAvailable: true,
+      sensors: [
+        { id: "1", name: "sensor-a.example.com", customerId: 42 },
+        { id: "2", name: "sensor-b.example.com", customerId: 99 },
+      ],
     });
   });
 });

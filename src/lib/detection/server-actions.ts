@@ -183,11 +183,17 @@ async function buildDispatchContext(
  * the bootstrap admin and ships the materialized list for every
  * other caller — including custom roles that grant
  * `customers:access-all`.
+ *
+ * Exported so `sensors.ts` (and any future Detection dispatch that
+ * does not need `buildDispatchContext`'s filter validation) can
+ * produce a JWT-claim set that matches the event-list path exactly,
+ * without duplicating the SystemAdministrator carve-out.
  */
-function jwtCustomerIdsForDetection(
-  ctx: Pick<DispatchContext, "role" | "customerIds">,
+export function jwtCustomerIdsForDetection(
+  role: string,
+  customerIds: number[],
 ): number[] | undefined {
-  return ctx.role === SYSTEM_ADMINISTRATOR ? undefined : ctx.customerIds;
+  return role === SYSTEM_ADMINISTRATOR ? undefined : customerIds;
 }
 
 // ── Variable shapes (match the `.graphql` operations one-for-one) ──
@@ -238,7 +244,10 @@ export async function searchEvents(
         last: args.last ?? null,
         before: args.before ?? null,
       },
-      { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+      {
+        role: ctx.role,
+        customerIds: jwtCustomerIdsForDetection(ctx.role, ctx.customerIds),
+      },
       signal,
     ),
   );
@@ -304,7 +313,10 @@ async function dispatchCounter<TPayload>(
     graphqlRequest<Record<string, TPayload>, CounterVariables>(
       document,
       { filter: ctx.filter, first },
-      { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+      {
+        role: ctx.role,
+        customerIds: jwtCustomerIdsForDetection(ctx.role, ctx.customerIds),
+      },
       signal,
     ),
   );
@@ -467,7 +479,10 @@ export async function fetchEventByLocator(
     graphqlRequest<EventDetailResult, EventByIdVariables>(
       EVENT_BY_ID_QUERY,
       { id: locator.id },
-      { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+      {
+        role: ctx.role,
+        customerIds: jwtCustomerIdsForDetection(ctx.role, ctx.customerIds),
+      },
       signal,
     ),
   );
@@ -509,7 +524,10 @@ export async function lookupIpLocation(
       graphqlRequest<IpLocationResult, IpLocationVariables>(
         IP_LOCATION_QUERY,
         { address },
-        { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+        {
+          role: ctx.role,
+          customerIds: jwtCustomerIdsForDetection(ctx.role, ctx.customerIds),
+        },
         signal,
       ),
     );
@@ -537,7 +555,10 @@ export async function eventFrequencySeries(
     graphqlRequest<EventFrequencySeriesResult, FrequencySeriesVariables>(
       EVENT_FREQUENCY_SERIES_QUERY,
       { filter: ctx.filter, period },
-      { role: ctx.role, customerIds: jwtCustomerIdsForDetection(ctx) },
+      {
+        role: ctx.role,
+        customerIds: jwtCustomerIdsForDetection(ctx.role, ctx.customerIds),
+      },
       signal,
     ),
   );

@@ -97,8 +97,8 @@ describe("fetchSensors server action", () => {
     mockListSensors.mockResolvedValue({
       endpointAvailable: true,
       sensors: [
-        { id: "s1", name: "Sensor One", customerId: "cust-1" },
-        { id: "s2", name: "Sensor Two", customerId: "cust-2" },
+        { id: "s1", name: "Sensor One", customerId: 1 },
+        { id: "s2", name: "Sensor Two", customerId: 2 },
       ],
     });
 
@@ -111,8 +111,8 @@ describe("fetchSensors server action", () => {
       ok: true,
       endpointAvailable: true,
       sensors: [
-        { id: "s1", name: "Sensor One", customerId: "cust-1" },
-        { id: "s2", name: "Sensor Two", customerId: "cust-2" },
+        { id: "s1", name: "Sensor One", customerId: 1 },
+        { id: "s2", name: "Sensor Two", customerId: 2 },
       ],
     });
   });

@@ -829,3 +829,20 @@ export const EVENT_FREQUENCY_SERIES_QUERY = parse(`
     eventFrequencySeries(filter: $filter, period: $period)
   }
 `);
+
+// Sensor list (Phase Detection-24). Scope travels on the Context JWT,
+// so no explicit `customerIds` argument is passed — review uses the
+// JWT claim set to filter. One row per Node (sensor-bearing node);
+// `first: 1000` is sized for the practical ceiling of nodes with
+// configured SENSOR agents in the caller's customer scope.
+export const SENSOR_LIST_QUERY = parse(`
+  query SensorList {
+    customerSensorList(first: 1000) {
+      nodes {
+        customerId
+        nodeId
+        hostFqdn
+      }
+    }
+  }
+`);
