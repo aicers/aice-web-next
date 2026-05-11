@@ -86,7 +86,15 @@ export function computeDefaultN(postExclusionCount: number): number {
   return Math.round(n);
 }
 
-interface BucketAggregate {
+/**
+ * Per-bucket aggregate over the **full** post-`BlockList*` cohort. The
+ * SQL caller computes these with `COUNT(*) OVER (PARTITION BY kind,
+ * is_unlabeled)` and `SUM(coalesce(cardinality(selector_tags), 0))
+ * OVER (PARTITION BY kind, is_unlabeled)` so that
+ * `normalized_volume` and `normalized_top_confidence` reflect the
+ * cohort and not a pre-truncated top-K slice.
+ */
+export interface BucketAggregate {
   bucket: SlotBucket;
   count: number;
   totalTagCardinality: number;
@@ -212,7 +220,37 @@ export interface AssembleResult {
 }
 
 /**
- * Compose the menu from the in-window cohort.
+ * Inputs to {@link composeMenu}. The SQL caller delivers the cohort
+ * shape that §4 needs (`postExclusionCount`, per-bucket aggregates
+ * over the **full** cohort, and per-bucket top-K `candidates`) so the
+ * algorithm never has to derive `normalized_volume` /
+ * `normalized_top_confidence` / `default_N` from a pre-truncated row
+ * set.
+ *
+ * `candidates` is the union of the per-bucket top-K rows by
+ * `(baseline_score DESC, event_time DESC, event_key DESC)`. K must be
+ * at least the largest possible per-bucket quota — bounded above by
+ * `default_N` — so the assembly's `take up to quota[b]` step never
+ * runs out of rows for a bucket the cohort still has. The §6 floor is
+ * also drawn from this set; the global top is necessarily the top of
+ * some bucket, so `MIN_NONZERO_FLOOR` is satisfied as long as the
+ * candidate set is non-empty.
+ */
+export interface ComposeMenuInput {
+  postExclusionCount: number;
+  bucketAggregates: ReadonlyArray<BucketAggregate>;
+  candidates: ReadonlyArray<MenuRow>;
+  cutoff: number;
+}
+
+/**
+ * §4/§6 composition over precomputed cohort aggregates. The SQL caller
+ * is responsible for computing `postExclusionCount` and
+ * `bucketAggregates` against the full active-window cohort (window
+ * function aggregates inside the `cume_dist()` CTE); this function
+ * runs the largest-remainder pass, the per-bucket cohort union, the
+ * cutoff filter, the §3 tie-breaker, and the `MIN_NONZERO_FLOOR`
+ * fallback over those precomputed quantities.
  *
  * Cutoff semantics (RFC §6, owned by #471): production callers pass
  * `cutoff = 0` (no additional cutoff above the cohort), so output is
@@ -220,43 +258,17 @@ export interface AssembleResult {
  * floor — the global fallback. Tests pass strict cutoffs to drive
  * the cutoff branch.
  */
-export function assembleMenu(
-  rows: ReadonlyArray<MenuRow>,
-  cutoff: number,
-): AssembleResult {
-  const postExclusionCount = rows.length;
+export function composeMenu(input: ComposeMenuInput): AssembleResult {
+  const { postExclusionCount, bucketAggregates, candidates, cutoff } = input;
   const defaultN = computeDefaultN(postExclusionCount);
-
-  // Bucket aggregates over the *full* post-exclusion cohort — `coalesce`
-  // on tag cardinality is built into the `selectorTags.length` call
-  // because TS arrays always have a length (RFC §4's `coalesce` guard
-  // is needed only on the SQL side where `array_length('{}', 1)` is
-  // NULL).
-  const bucketAggMap = new Map<string, BucketAggregate>();
-  for (const row of rows) {
-    const b = slotBucket(row.kind, row.selectorTags);
-    const k = bucketKey(b);
-    const agg = bucketAggMap.get(k);
-    if (agg === undefined) {
-      bucketAggMap.set(k, {
-        bucket: b,
-        count: 1,
-        totalTagCardinality: row.selectorTags.length,
-      });
-    } else {
-      agg.count += 1;
-      agg.totalTagCardinality += row.selectorTags.length;
-    }
-  }
-  const aggregates = Array.from(bucketAggMap.values());
-  const quotas = computeBucketQuotas(aggregates, defaultN);
+  const quotas = computeBucketQuotas(bucketAggregates, defaultN);
 
   // Per-bucket cohort union → cutoff filter → ORDER BY → quota[b].
   // RFC §4: `quota[b]` is the cap *across* baseline_versions, so the
   // union is implicit in grouping rows by `slot_bucket` (which does
   // not include `baseline_version`) before sorting.
   const byBucket = new Map<string, MenuRow[]>();
-  for (const row of rows) {
+  for (const row of candidates) {
     if (row.baselineScore < cutoff) continue;
     const k = bucketKey(slotBucket(row.kind, row.selectorTags));
     const list = byBucket.get(k);
@@ -301,7 +313,7 @@ export function assembleMenu(
       defaultN,
     };
   }
-  const all = [...rows];
+  const all = [...candidates];
   all.sort(tieBreakerCompare);
   const floor = Math.min(FINAL_COUNT.MIN_NONZERO_FLOOR, all.length);
   return {
@@ -311,6 +323,42 @@ export function assembleMenu(
     fallbackInvoked: true,
     defaultN,
   };
+}
+
+/**
+ * Convenience wrapper that derives bucket aggregates from `rows`
+ * before delegating to {@link composeMenu}. Used by tests and any
+ * in-process caller that already has the full cohort in memory.
+ * Production read paths use {@link composeMenu} directly with SQL-
+ * computed cohort aggregates so a pre-truncated row set cannot
+ * silently re-base `normalized_volume` / `default_N`.
+ */
+export function assembleMenu(
+  rows: ReadonlyArray<MenuRow>,
+  cutoff: number,
+): AssembleResult {
+  const bucketAggMap = new Map<string, BucketAggregate>();
+  for (const row of rows) {
+    const b = slotBucket(row.kind, row.selectorTags);
+    const k = bucketKey(b);
+    const agg = bucketAggMap.get(k);
+    if (agg === undefined) {
+      bucketAggMap.set(k, {
+        bucket: b,
+        count: 1,
+        totalTagCardinality: row.selectorTags.length,
+      });
+    } else {
+      agg.count += 1;
+      agg.totalTagCardinality += row.selectorTags.length;
+    }
+  }
+  return composeMenu({
+    postExclusionCount: rows.length,
+    bucketAggregates: Array.from(bucketAggMap.values()),
+    candidates: rows,
+    cutoff,
+  });
 }
 
 export const _testing = {

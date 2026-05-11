@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   assembleMenu,
+  type BucketAggregate,
   bucketKey,
+  composeMenu,
   computeBucketQuotas,
   computeDefaultN,
   type MenuRow,
@@ -217,6 +219,40 @@ describe("assembleMenu", () => {
     });
     const result = assembleMenu([phase1a, phase1b], 0);
     expect(result.rows.map((r) => r.eventKey).sort()).toEqual(["1", "2"]);
+  });
+
+  it("honors SQL-side cohort aggregates even when candidates are a per-bucket top-K slice", () => {
+    // Regression for Round 1 Item 2: the SQL caller computes
+    // `postExclusionCount` and `bucketAggregates` over the FULL
+    // cohort and ships top-K candidates. If `composeMenu` re-derived
+    // those quantities from the candidate slice, `default_N` and the
+    // per-bucket share would silently re-base on the slice — wrong.
+    // Synthesize a cohort whose full size is 100,000 but where the
+    // caller has only delivered 3 candidate rows (e.g. the top of one
+    // bucket); `default_N` must still come from `computeDefaultN(100000)`.
+    const candidates: MenuRow[] = [
+      makeRow({ eventKey: "1", kind: "DnsCovertChannel", baselineScore: 0.99 }),
+      makeRow({ eventKey: "2", kind: "DnsCovertChannel", baselineScore: 0.98 }),
+      makeRow({ eventKey: "3", kind: "DnsCovertChannel", baselineScore: 0.97 }),
+    ];
+    const bucketAggregates: BucketAggregate[] = [
+      {
+        bucket: { kind: "DnsCovertChannel", isUnlabeled: false },
+        count: 100_000,
+        totalTagCardinality: 0,
+      },
+    ];
+    const result = composeMenu({
+      postExclusionCount: 100_000,
+      bucketAggregates,
+      candidates,
+      cutoff: 0,
+    });
+    // computeDefaultN(100_000) = 170 (LOWER_FLOOR + 30 · log10(100_001))
+    expect(result.defaultN).toBe(170);
+    // Single bucket → its quota equals defaultN; candidate slice is
+    // smaller, so the assembly takes all three rows.
+    expect(result.rows.map((r) => r.eventKey).sort()).toEqual(["1", "2", "3"]);
   });
 
   it("tie-breaker: equal baseline_score resolves on (event_time DESC, event_key DESC)", () => {

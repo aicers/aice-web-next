@@ -13,12 +13,14 @@ that grant `triage:read` also qualify.
 
 ![Triage page (wireframe)](../assets/triage-overview-en.svg)
 
-> **Note:** The figure above is a wireframe stand-in. Phase 1.A
-> ships before the live REview screenshot environment is wired up
-> for Triage; the wireframe will be replaced with a real PNG
-> capture in a follow-up once a representative dataset is
-> available against the local-REview procedure documented in the
-> [Authoring guide](../AUTHORING.md).
+> **Note:** The figure above is a wireframe stand-in. Live PNG
+> captures are produced from a staging tenant once the local-REview
+> procedure documented in the [Authoring guide](../AUTHORING.md)
+> has a representative Phase 1.B corpus loaded; screenshot rollout
+> for both the overview and the pivot panel is tracked under
+> [issue #455](https://github.com/aicers/aice-web-next/issues/455)
+> and is folded into the read-path measurement gate (see the
+> "Read-path measurement" section in PR #525).
 
 ## Layout
 
@@ -317,22 +319,34 @@ threat subtypes that emit a plural `origAddrs` field — still
 count toward the funnel's **Detected** total but do not
 contribute to any asset row.
 
-The asset list is read from `baseline_triaged_event` via an
-aggregated SELECT per tenant. The SELECT wraps the period's rows
-in a `cume_dist()` CTE per
-[Baseline scoring algorithm](#baseline-scoring-algorithm), then
-groups by `orig_addr` with `COUNT(*)`, `SUM(baseline_score)`, and
-`MAX(event_time)`. `baseline_score` here is the read-time
-`cume_dist()` value, not the legacy Phase 1.A column; the
-defensive `WHERE kind NOT LIKE 'BlockList%'` from the read path
-applies inside the CTE so the asset score never includes a
-`BlockList*` contribution. Multi-customer scopes
-issue one such aggregated query per customer and merge the results
-in JavaScript using the same `score DESC, last_event_time DESC`
-key the per-tenant SQL uses, so equal-score rows from different
-tenants stay globally ordered by recency rather than by tenant
-arrival. No `OFFSET` is issued in the multi-customer code path so
-a stable global ordering is preserved across tenants.
+The asset list is **derived from the §4 `final_menu_rows`** — the
+same set the [Baseline scoring algorithm](#baseline-scoring-algorithm)
+composes for the pivot corpus. Each tenant's slice runs one
+`cume_dist()` pass over the post-`BlockList*` window, applies the
+§4 slot-bucket / largest-remainder / quota composition (and the §6
+`MIN_NONZERO_FLOOR` fallback when assembly is below the floor), and
+then groups the surviving rows by `orig_addr` to produce per-asset
+score, triaged count, and `last_event_time`. An asset cannot rank
+highly from rows that did not survive the menu composition —
+quota, cutoff, and the `MIN_NONZERO_FLOOR` fallback determine the
+analyst-facing list end-to-end. Multi-customer scopes issue one
+menu-cohort SELECT per customer and merge the per-tenant asset
+slices in JavaScript using the issue's `score DESC, last_event_time
+DESC` key, so equal-score rows from different tenants stay
+globally ordered by recency rather than by tenant arrival. No
+`OFFSET` is issued in the multi-customer code path so a stable
+global ordering is preserved across tenants.
+
+The per-tenant menu-cohort SELECT is a single SQL round-trip — the
+`cume_dist()` CTE attaches the §3 `baseline_score`, a `ranked` CTE
+adds three window aggregates over the full cohort (`bucket_count`
+and `bucket_tag_sum` per `(kind, is_unlabeled)` partition for the
+§4 `normalized_volume` / `normalized_top_confidence`, and
+`cohort_count` over the entire cohort for `default_N`), and the
+outer select returns the top candidates per bucket. The per-bucket
+cap is a strict superset of any quota the §6 curve can produce, so
+the algorithm composes its output against full-cohort aggregates
+even though the row payload is bounded.
 
 Clicking a row populates the **Asset detail** panel on the
 right; the first row is preselected when the page loads.
@@ -354,11 +368,14 @@ The detail panel for the selected asset shows:
 - **Score**, **Triaged**, and **Detected** counts for the asset.
 - The asset's most recent **50 events**, newest first, with each
   event's time, kind (`__typename`), category, and the per-event
-  baseline score read directly from the stored
-  `baseline_triaged_event.baseline_score` (so a row stored with an
-  e.g. cluster-id whitelist exception still renders the same value
-  the cadence persisted, instead of being recomputed against the
-  scalar-only corpus shape).
+  read-time `baseline_score` (the §3 `cume_dist()` value computed
+  against the active window's `(kind, baseline_version)` cohort —
+  the same partition the menu composition uses, so a detail-panel
+  row's score matches the score it would carry in the menu). The
+  detail panel for every asset on the list is fetched in a single
+  batched SELECT that runs the `cume_dist()` pass once over the
+  full cohort and then keeps the newest 50 rows per address — the
+  read path never recomputes the window function per asset.
 
 Times are formatted in the session's preferred timezone (set
 under **Settings**).
@@ -391,20 +408,29 @@ builder skips them when reading from corpus A.
 
 ## Hard cap and truncation
 
-Triage paginates `eventList` cursor-by-cursor until either every
-event in the period is loaded or **5,000 events** have been
-collected, whichever comes first. The 5,000-event cap is a
-demo-stage safety net so a wide period over a noisy day cannot
-silently load tens of thousands of rows.
+The menu read is bounded in two layers:
 
-When the cap is hit while REview still reports more rows, the
-page renders an amber banner above the funnel:
+1. **Per-tenant per-bucket candidate cap.** The §4 menu-cohort
+   SELECT returns at most a few hundred candidate rows per
+   `slot_bucket` — a strict superset of any quota the §6 curve can
+   produce. Full-cohort `bucket_count`, `bucket_tag_sum`, and
+   `cohort_count` ride along as window-function columns so the
+   algorithm's `normalized_volume`, `normalized_top_confidence`,
+   and `default_N` are computed against the active window and not
+   the candidate slice.
+2. **Cross-tenant `final_menu_rows` cap.** After the per-tenant
+   §4 / §6 composition runs, the merged list of `final_menu_rows`
+   across the caller's scope is bounded above by **5,000 events**
+   before the pivot index is built. In practice the upstream
+   `default_N` cap keeps a single tenant's slice well under that
+   ceiling (the §6 curve grows logarithmically with cohort size),
+   so this cap is a defense-in-depth safety net rather than a
+   routinely-hit limit.
+
+When the cross-tenant cap is hit, the page renders an amber banner
+above the funnel:
 
 > Partial: showing 5,000 events of period (truncated at 5,000).
-
-If the cap is reached on the final page (i.e., REview reports no
-further rows), the banner does not appear — the operator did see
-every event in the period.
 
 To work a wider period without the truncation banner, narrow the
 range with the period picker and apply again.
@@ -435,11 +461,14 @@ issuing any additional network requests.
 
 ![Pivot panel (wireframe)](../assets/triage-pivot-en.svg)
 
-> **Note:** The figure above is a wireframe stand-in. Phase 1.A
-> ships before the live REview screenshot environment is wired up
-> for Triage; the wireframe will be replaced with a real PNG capture
-> as part of the EN/KR Triage manual screenshot pass tracked by
-> [issue #455](https://github.com/aicers/aice-web-next/issues/455).
+> **Note:** The figure above is a wireframe stand-in. Live PNG
+> captures are produced from a staging tenant once the local-REview
+> procedure documented in the [Authoring guide](../AUTHORING.md) has
+> a representative Phase 1.B corpus loaded; screenshot rollout is
+> tracked under
+> [issue #455](https://github.com/aicers/aice-web-next/issues/455)
+> and is folded into the read-path measurement gate (see the
+> "Read-path measurement" section in PR #525).
 
 ### Pivot dimensions
 
@@ -712,8 +741,8 @@ with future Triage hash extensions (e.g. strictness controls under
 - The asset key is the composite `(customerId, originator IP)`;
   events that emit plural address fields are not assigned to an
   asset row.
-- Up to 5,000 events per period are aggregated; wider periods
-  show a truncation banner.
+- Up to 5,000 `final_menu_rows` per period are returned across the
+  caller's scope; wider periods show a truncation banner.
 - The mode toggle, period choices, and per-asset state do not
   persist across sessions. The pivot breadcrumb and Tier 1 / Tier 2
   scope are encoded in the URL hash so a shared / reloaded URL

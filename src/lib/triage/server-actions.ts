@@ -7,11 +7,15 @@ import { query as centralQuery } from "@/lib/db/client";
 import type { ThreatCategory } from "@/lib/detection";
 
 import { compareAssets } from "./aggregate";
-import { assembleMenu, type MenuRow } from "./baseline/menu";
+import {
+  type BucketAggregate,
+  bucketKey,
+  composeMenu,
+  type MenuRow,
+} from "./baseline/menu";
 import { buildDispatchContext } from "./dispatch-context";
 import type { TriagePeriod } from "./period";
 import { getCustomerPool } from "./policy/customer-db";
-import { baselineScore } from "./scoring";
 import {
   type ScoredTriageEvent,
   TRIAGE_HARD_EVENT_CAP,
@@ -52,6 +56,22 @@ export const OBSERVED_EVENT_META_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
  */
 const FANOUT_CONCURRENCY = 4;
 
+/**
+ * Upper bound on the per-bucket candidate rows the menu SELECT returns.
+ *
+ * The §4 composition takes at most `quota[b]` rows from each bucket,
+ * and `Σ quota[b] = default_N`, so per-bucket quota is bounded above
+ * by `default_N`. Even at extreme cohort sizes (`post_exclusion ≈
+ * 1e12`) the §6 curve caps `default_N` near 400, so loading the top
+ * 500 rows per bucket is a strict superset of anything the algorithm
+ * can use, while leaving the SQL response bounded by `buckets · 500`
+ * — a few thousand rows in the worst case. Per-bucket COUNT and
+ * tag-cardinality SUMs travel as window-function columns on every
+ * row so the algorithm sees the full-cohort aggregates even though
+ * the row set is capped.
+ */
+const MENU_CANDIDATES_PER_BUCKET = 500;
+
 interface BaselineEventRow {
   event_key: string;
   event_time: Date;
@@ -69,17 +89,24 @@ interface BaselineEventRow {
 }
 
 /**
- * `selectMenuEvents` row shape — extends the read columns with the
- * Phase 1.B fields needed by the read-time menu algorithm
- * ({@link assembleMenu}). `baseline_score` here is the read-time
- * `cume_dist()` over `(kind, baseline_version) ORDER BY raw_score`
- * computed inline by the CTE — distinct from the unused-by-Phase-1.B
- * `baseline_triaged_event.baseline_score` column.
+ * `selectMenuCohort` row shape. Carries the §3 read-time `baseline_score`
+ * plus the per-bucket cohort aggregates (`bucket_count`,
+ * `bucket_tag_sum`) and the cohort total (`cohort_count`) that the
+ * algorithm needs to compute `normalized_volume`,
+ * `normalized_top_confidence`, and `default_N` against the **full**
+ * post-`BlockList*` cohort. The columns are constant across all rows
+ * sharing a `(kind, is_unlabeled)` partition / the entire result set
+ * respectively — surfaced per row so a single SQL response is
+ * sufficient.
  */
-interface MenuEventDbRow extends BaselineEventRow {
+interface MenuCohortDbRow extends BaselineEventRow {
   baseline_version: string;
   raw_score: number;
   selector_tags: string[] | null;
+  is_unlabeled: boolean;
+  bucket_count: string;
+  bucket_tag_sum: string;
+  cohort_count: string;
 }
 
 /**
@@ -88,13 +115,6 @@ interface MenuEventDbRow extends BaselineEventRow {
  * cutoff to drive the §6 `MIN_NONZERO_FLOOR` fallback.
  */
 const DEFAULT_MENU_CUTOFF = 0;
-
-interface AssetAggregateRow {
-  address: string;
-  triaged_count: string;
-  score: number | null;
-  last_event_time: Date | null;
-}
 
 interface ObservedCountRow {
   address: string;
@@ -142,11 +162,14 @@ function rowToEvent(row: BaselineEventRow): TriageEvent {
 }
 
 /**
- * Run one tenant's slice of the Triage menu read: asset-list
- * aggregation, per-asset detail fetch, per-asset detected counts, the
- * freshness header row, and the pivot-index corpus events list. All
- * five queries share the same period window plus the request-scoped
- * `observedFromIso` clamp.
+ * Run one tenant's slice of the Triage menu read. A single
+ * `selectMenuCohort` call delivers the post-`BlockList*` cohort with
+ * §3 `baseline_score` and §4 per-bucket aggregates attached; the
+ * algorithm composes `final_menu_rows`, and `assets` are aggregated
+ * from those rows so the analyst-facing list is governed by the same
+ * quota / cutoff / `MIN_NONZERO_FLOOR` contract as the pivot corpus.
+ * Per-asset observed counts, detail events, and the freshness header
+ * row fan out independently.
  */
 async function loadCustomerSlice(
   customerId: number,
@@ -162,29 +185,40 @@ async function loadCustomerSlice(
   const freshness = await readFreshness(pool, customerId, signal);
   signal?.throwIfAborted();
 
-  // 1. Aggregated asset list — single tenant, LIMIT/OFFSET shape.
-  const assetRows = await selectAssetAggregate(pool, period, signal);
+  // 1. §4/§6 menu cohort — one SQL pass returns the post-exclusion
+  //    cohort aggregates plus per-bucket top-K candidate rows.
+  const cohort = await selectMenuCohort(pool, period, signal);
   signal?.throwIfAborted();
 
-  if (assetRows.length === 0) {
-    const detected = await countObserved(pool, observedFromIso, period.endIso);
-    const triaged = await countTriaged(pool, period);
+  const menuResult = composeMenuFromCohort(cohort);
+  const menuRows = menuResult.rows;
+  const dbRowByKey = new Map(cohort.candidates.map((r) => [r.event_key, r]));
+
+  // 2. Asset list derives from the §4 final_menu_rows. The visible
+  //    Triage menu is governed by quota / cutoff / MIN_NONZERO_FLOOR
+  //    end-to-end — an asset that ranks highly only by rows outside
+  //    the menu composition does not appear on the list.
+  const assetEntries = aggregateAssetsFromMenu(menuRows, dbRowByKey);
+  const addresses = assetEntries.map((a) => a.address);
+
+  if (assetEntries.length === 0) {
+    const [detected, triaged] = await Promise.all([
+      countObserved(pool, observedFromIso, period.endIso, signal),
+      countTriaged(pool, period, signal),
+    ]);
     return {
       customerId,
       assets: [],
-      events: [],
+      events: menuRowsToScoredEvents(menuRows, dbRowByKey, customerId),
       detected,
       triaged,
       freshness,
     };
   }
 
-  const addresses = assetRows.map((r) => r.address);
-
-  // 2. Funnel + 3. per-asset observed COUNT + 4. per-asset detail
-  //    events + 5. flat corpus events for the pivot index fan out in
-  //    parallel — the reads are independent and each one bounded.
-  const [detected, triaged, observedCounts, perAssetEvents, menuEventRows] =
+  // 3. Funnel + per-asset observed COUNT + per-asset detail events
+  //    fan out in parallel — the reads are independent and bounded.
+  const [detected, triaged, observedCounts, detailRowsByAddress] =
     await Promise.all([
       countObserved(pool, observedFromIso, period.endIso, signal),
       countTriaged(pool, period, signal),
@@ -195,12 +229,7 @@ async function loadCustomerSlice(
         addresses,
         signal,
       ),
-      Promise.all(
-        addresses.map((address) =>
-          selectAssetDetailEvents(pool, period, address, signal),
-        ),
-      ),
-      selectMenuEvents(pool, period, signal),
+      selectAssetDetailEventsBatch(pool, period, addresses, signal),
     ]);
 
   const observedByAddress = new Map<string, number>();
@@ -208,19 +237,20 @@ async function loadCustomerSlice(
     observedByAddress.set(row.address, Number(row.detected_count));
   }
 
-  const assets: TriageAsset[] = assetRows.map((row, idx) => {
-    const events = perAssetEvents[idx].map((dbRow, eventIdx) => {
+  const assets: TriageAsset[] = assetEntries.map((entry) => {
+    const detailRows = detailRowsByAddress.get(entry.address) ?? [];
+    const events = detailRows.map((dbRow, eventIdx) => {
       const event = rowToEvent(dbRow);
-      const score = dbRow.baseline_score ?? baselineScore(event);
+      const score = dbRow.baseline_score ?? 0;
       const scored: ScoredTriageEvent = {
         ...event,
         score,
         customerId,
-        rowKey: `${customerId}/${row.address}#${eventIdx}`,
+        rowKey: `${customerId}/${entry.address}#${eventIdx}`,
       };
       return scored;
     });
-    const observed = observedByAddress.get(row.address);
+    const observed = observedByAddress.get(entry.address);
     const detectedCount = observed ?? 0;
     // The per-asset truncation predicate fires when the request-level
     // truncation flag holds AND this asset has no in-retention
@@ -232,37 +262,24 @@ async function loadCustomerSlice(
     return {
       customerId,
       customerName,
-      address: row.address,
+      address: entry.address,
       detectedCount,
       detectedCountUnavailable,
-      triagedCount: Number(row.triaged_count),
-      score: row.score ?? 0,
-      // Carry the per-tenant `MAX(event_time)` through so the cross-
-      // customer merge preserves the issue's `score DESC,
-      // last_event_time DESC` ordering. The SQL ORDER BY uses the
-      // same value within a tenant; the merge step relies on it to
-      // resolve ties across tenants.
-      lastEventTimeIso: row.last_event_time?.toISOString() ?? null,
+      triagedCount: entry.triagedCount,
+      score: entry.score,
+      // The §3 tie-breaker for the asset-list ordering uses the
+      // newest menu-row event_time for the asset, so the merged
+      // ordering across tenants matches `score DESC, last_event_time
+      // DESC` from the per-asset menu contribution.
+      lastEventTimeIso: entry.lastEventTimeIso,
       events,
     };
   });
 
-  // The pivot index runs over the menu algorithm's output — the
-  // §4 `final_menu_rows` set, capped at `default_N` (RFC §6) with the
-  // §6 `MIN_NONZERO_FLOOR` fallback applied when the per-bucket
-  // composition falls below the floor. The assembly here uses
-  // {@link DEFAULT_MENU_CUTOFF} (no additional cutoff above the
-  // cohort) because the slider that owns the cutoff dial is in #471;
-  // production output is determined by quota + fallback alone.
-  const events: ScoredTriageEvent[] = assembleScoredEvents(
-    menuEventRows,
-    customerId,
-  );
-
   return {
     customerId,
     assets,
-    events,
+    events: menuRowsToScoredEvents(menuRows, dbRowByKey, customerId),
     detected,
     triaged,
     freshness,
@@ -299,82 +316,50 @@ async function readFreshness(
   };
 }
 
-async function selectAssetAggregate(
-  pool: pg.Pool,
-  period: TriagePeriod,
-  signal: AbortSignal | undefined,
-): Promise<AssetAggregateRow[]> {
-  signal?.throwIfAborted();
-  // RFC §3 stored-score / §4: `baseline_score` is read-time
-  // `cume_dist()` over `(kind, baseline_version) ORDER BY raw_score`.
-  // The pre-existing `baseline_triaged_event.baseline_score` column
-  // is Phase 1.A-only (NULL for Phase 1.B rows), so summing it here
-  // would silently zero out the score on every Phase 1.B asset.
-  // The CTE computes the read-time score in one window pass and the
-  // aggregate then sums it per asset.
-  //
-  // Defensive `kind NOT LIKE 'BlockList%'` per RFC §1: cadence
-  // already excludes these on the cadence-side INSERT (PR 2 / #513),
-  // but the menu read keeps the guard so a regression on the cadence
-  // side cannot leak BlockList* rows into the menu's slot allocation
-  // or asset scoring.
-  //
-  // Single-tenant fast path — LIMIT/OFFSET is permitted here per
-  // #458's "single-tenant SQL example". The multi-tenant code path
-  // calls this same query per customer and then merges in JS, which
-  // is an aggregate-then-merge equivalent of the keyset-cursor model
-  // documented in the issue (no per-customer OFFSET).
-  const { rows } = await pool.query<AssetAggregateRow>(
-    `WITH scored AS (
-       SELECT orig_addr,
-              event_time,
-              cume_dist() OVER (
-                PARTITION BY kind, baseline_version
-                ORDER BY raw_score
-              ) AS baseline_score
-         FROM baseline_triaged_event
-        WHERE event_time >= $1
-          AND event_time <  $2
-          AND kind NOT LIKE 'BlockList%'
-     )
-     SELECT s.orig_addr::text                       AS address,
-            COUNT(*)::text                          AS triaged_count,
-            SUM(s.baseline_score)::double precision AS score,
-            MAX(s.event_time)                       AS last_event_time
-       FROM scored s
-      WHERE s.orig_addr IS NOT NULL
-      GROUP BY s.orig_addr
-      ORDER BY score DESC NULLS LAST,
-               last_event_time DESC
-      LIMIT $3`,
-    [period.startIso, period.endIso, TRIAGE_ASSET_PAGE_SIZE],
-  );
-  return rows;
+interface MenuCohort {
+  postExclusionCount: number;
+  bucketAggregates: BucketAggregate[];
+  candidates: MenuCohortDbRow[];
 }
 
 /**
- * Read the period's post-`BlockList*` corpus rows with the read-time
- * `cume_dist()` `baseline_score` attached per RFC §3, then hand them
- * to {@link assembleMenu} for the §4 slot-bucket + quota composition
- * and the §6 `MIN_NONZERO_FLOOR` fallback. Bounded above by
- * {@link TRIAGE_HARD_EVENT_CAP} on the SQL side as a defense-in-
- * depth read cap; the algorithm's own `default_N` cap is far smaller
- * in practice.
+ * Read the §4 menu cohort in a single SQL pass.
  *
- * `slot_bucket` is computed in TypeScript rather than in SQL so the
- * algorithm and the SQL stay independently testable. Per RFC §4 the
- * SQL only needs to deliver `raw_score`, `baseline_version`,
- * `selector_tags`, and the per-row metadata — the bucket key is a
- * pure function of `(kind, selector_tags)` and lives next to the
- * largest-remainder pass in {@link assembleMenu}.
+ * The `scored` CTE computes the §3 read-time `baseline_score` over
+ * the full post-`BlockList*` window. The `ranked` CTE attaches three
+ * window aggregates over that cohort:
+ *
+ *   * `bucket_count` and `bucket_tag_sum` per `(kind, is_unlabeled)`
+ *     partition — used by the algorithm for
+ *     `normalized_volume(b) = bucket_count / max(bucket_count)` and
+ *     `normalized_top_confidence(b) =
+ *      bucket_tag_sum / bucket_count / MAX_TAGS` (RFC §4). Both are
+ *     full-cohort aggregates so a per-bucket SQL row cap on the
+ *     returned candidates does not silently re-base them.
+ *   * `cohort_count` over the entire cohort — fed to `default_N` so
+ *     the §6 cognitive-limit cap is computed against the active
+ *     window, not against the candidate slice.
+ *
+ * Returned rows are bounded by `MENU_CANDIDATES_PER_BUCKET` per
+ * bucket, taken in `(baseline_score DESC, event_time DESC, event_key
+ * DESC)` order. `MENU_CANDIDATES_PER_BUCKET` is a strict superset of
+ * any quota the §6 curve can produce, so the algorithm's
+ * `take up to quota[b]` step never starves on a bucket the cohort
+ * still has.
+ *
+ * Defensive `kind NOT LIKE 'BlockList%'` per RFC §1: cadence already
+ * excludes these on the cadence-side INSERT (PR 2 / #513), but the
+ * menu read keeps the guard so a regression on the cadence side
+ * cannot leak BlockList* rows into either the asset list or the
+ * pivot corpus.
  */
-async function selectMenuEvents(
+async function selectMenuCohort(
   pool: pg.Pool,
   period: TriagePeriod,
   signal: AbortSignal | undefined,
-): Promise<MenuEventDbRow[]> {
+): Promise<MenuCohort> {
   signal?.throwIfAborted();
-  const { rows } = await pool.query<MenuEventDbRow>(
+  const { rows } = await pool.query<MenuCohortDbRow>(
     `WITH scored AS (
        SELECT event_key,
               event_time,
@@ -394,18 +379,32 @@ async function selectMenuEvents(
               cume_dist() OVER (
                 PARTITION BY kind, baseline_version
                 ORDER BY raw_score
-              ) AS baseline_score
+              ) AS baseline_score,
+              (kind = 'HttpThreat'
+               AND 'unlabeled-cluster' = ANY(selector_tags)) AS is_unlabeled
          FROM baseline_triaged_event
         WHERE event_time >= $1
           AND event_time <  $2
           AND kind NOT LIKE 'BlockList%'
+     ),
+     ranked AS (
+       SELECT *,
+              ROW_NUMBER() OVER (
+                PARTITION BY kind, is_unlabeled
+                ORDER BY baseline_score DESC, event_time DESC, event_key DESC
+              ) AS bucket_rn,
+              COUNT(*) OVER (PARTITION BY kind, is_unlabeled) AS bucket_count,
+              SUM(coalesce(cardinality(selector_tags), 0))
+                OVER (PARTITION BY kind, is_unlabeled) AS bucket_tag_sum,
+              COUNT(*) OVER () AS cohort_count
+         FROM scored
      )
-     SELECT event_key::text         AS event_key,
+     SELECT event_key::text                       AS event_key,
             event_time,
             kind,
             sensor,
-            orig_addr::text         AS orig_addr,
-            resp_addr::text         AS resp_addr,
+            orig_addr::text                       AS orig_addr,
+            resp_addr::text                       AS resp_addr,
             orig_port,
             resp_port,
             host,
@@ -415,28 +414,51 @@ async function selectMenuEvents(
             baseline_version,
             raw_score,
             selector_tags,
-            baseline_score::double precision AS baseline_score
-       FROM scored
-      ORDER BY baseline_score DESC, event_time DESC, event_key DESC
-      LIMIT $3`,
-    [period.startIso, period.endIso, TRIAGE_HARD_EVENT_CAP],
+            baseline_score::double precision      AS baseline_score,
+            is_unlabeled,
+            bucket_count::text                    AS bucket_count,
+            bucket_tag_sum::text                  AS bucket_tag_sum,
+            cohort_count::text                    AS cohort_count
+       FROM ranked
+      WHERE bucket_rn <= $3
+      ORDER BY baseline_score DESC, event_time DESC, event_key DESC`,
+    [period.startIso, period.endIso, MENU_CANDIDATES_PER_BUCKET],
   );
-  return rows;
+  return buildCohort(rows);
+}
+
+function buildCohort(rows: ReadonlyArray<MenuCohortDbRow>): MenuCohort {
+  if (rows.length === 0) {
+    return { postExclusionCount: 0, bucketAggregates: [], candidates: [] };
+  }
+  const postExclusionCount = Number(rows[0].cohort_count);
+  const seenBuckets = new Map<string, BucketAggregate>();
+  for (const row of rows) {
+    const bucket = { kind: row.kind, isUnlabeled: row.is_unlabeled };
+    const key = bucketKey(bucket);
+    if (seenBuckets.has(key)) continue;
+    seenBuckets.set(key, {
+      bucket,
+      count: Number(row.bucket_count),
+      totalTagCardinality: Number(row.bucket_tag_sum),
+    });
+  }
+  return {
+    postExclusionCount,
+    bucketAggregates: Array.from(seenBuckets.values()),
+    candidates: [...rows],
+  };
 }
 
 /**
- * Run the §4 slot-bucket + quota composition (and the §6 fallback)
- * on a per-tenant {@link selectMenuEvents} result, then re-wrap the
- * surviving rows in {@link ScoredTriageEvent} shape for the menu /
- * pivot consumers. `rowKey` keeps the `${customerId}/${event_key}`
- * convention so the cross-tenant merge in {@link loadTriagePeriod}
- * deduplicates correctly.
+ * Run the §4/§6 composition over the SQL-delivered cohort aggregates
+ * and per-bucket candidates. Production callers pass the
+ * {@link DEFAULT_MENU_CUTOFF} (no additional cutoff above the
+ * cohort) because the slider that owns the cutoff dial is in #471;
+ * output is determined entirely by quota + fallback alone.
  */
-function assembleScoredEvents(
-  dbRows: ReadonlyArray<MenuEventDbRow>,
-  customerId: number,
-): ScoredTriageEvent[] {
-  const menuRows: MenuRow[] = dbRows.map((r) => ({
+function composeMenuFromCohort(cohort: MenuCohort) {
+  const candidates: MenuRow[] = cohort.candidates.map((r) => ({
     eventKey: r.event_key,
     eventTime: r.event_time,
     kind: r.kind,
@@ -445,10 +467,20 @@ function assembleScoredEvents(
     baselineScore: r.baseline_score ?? 0,
     selectorTags: r.selector_tags ?? [],
   }));
-  const dbRowByKey = new Map(dbRows.map((r) => [r.event_key, r]));
+  return composeMenu({
+    postExclusionCount: cohort.postExclusionCount,
+    bucketAggregates: cohort.bucketAggregates,
+    candidates,
+    cutoff: DEFAULT_MENU_CUTOFF,
+  });
+}
 
-  const result = assembleMenu(menuRows, DEFAULT_MENU_CUTOFF);
-  return result.rows.map((row) => {
+function menuRowsToScoredEvents(
+  rows: ReadonlyArray<MenuRow>,
+  dbRowByKey: ReadonlyMap<string, MenuCohortDbRow>,
+  customerId: number,
+): ScoredTriageEvent[] {
+  return rows.map((row) => {
     const dbRow = dbRowByKey.get(row.eventKey);
     if (dbRow === undefined) {
       // The algorithm only re-emits rows it received; this branch is
@@ -466,19 +498,71 @@ function assembleScoredEvents(
   });
 }
 
-async function selectAssetDetailEvents(
+interface AssetEntry {
+  address: string;
+  score: number;
+  triagedCount: number;
+  lastEventTimeIso: string | null;
+}
+
+/**
+ * Aggregate `final_menu_rows` into the per-asset entries that drive
+ * the asset list. `score` is the sum of `baseline_score` across the
+ * asset's menu rows (matching the §3 cohort-relative semantic), so
+ * the analyst-facing list is governed end-to-end by §4 / §6 — an
+ * asset cannot rank highly from rows that did not survive the menu
+ * composition.
+ */
+function aggregateAssetsFromMenu(
+  menuRows: ReadonlyArray<MenuRow>,
+  dbRowByKey: ReadonlyMap<string, MenuCohortDbRow>,
+): AssetEntry[] {
+  const byAddress = new Map<string, AssetEntry>();
+  for (const row of menuRows) {
+    const dbRow = dbRowByKey.get(row.eventKey);
+    if (dbRow === undefined) continue;
+    const address = dbRow.orig_addr;
+    if (address === null) continue;
+    const entry = byAddress.get(address);
+    const isoTime = row.eventTime.toISOString();
+    if (entry === undefined) {
+      byAddress.set(address, {
+        address,
+        score: row.baselineScore,
+        triagedCount: 1,
+        lastEventTimeIso: isoTime,
+      });
+    } else {
+      entry.score += row.baselineScore;
+      entry.triagedCount += 1;
+      if (entry.lastEventTimeIso === null || isoTime > entry.lastEventTimeIso) {
+        entry.lastEventTimeIso = isoTime;
+      }
+    }
+  }
+  return Array.from(byAddress.values());
+}
+
+/**
+ * Batched per-asset detail SELECT. Runs a single `cume_dist()` pass
+ * over the post-`BlockList*` cohort and then keeps the newest
+ * {@link TRIAGE_ASSET_DETAIL_LIMIT} rows for each requested address.
+ * Replaces the prior per-address fanout where `selectAssetDetailEvents`
+ * recomputed the full-cohort `cume_dist()` once per asset row.
+ *
+ * The `cume_dist()` partition stays `(kind, baseline_version)` so the
+ * detail-panel score for any row equals the score it would carry in
+ * the menu — the address filter is applied *after* the window
+ * function, not inside the partition.
+ */
+async function selectAssetDetailEventsBatch(
   pool: pg.Pool,
   period: TriagePeriod,
-  address: string,
+  addresses: ReadonlyArray<string>,
   signal: AbortSignal | undefined,
-): Promise<BaselineEventRow[]> {
+): Promise<Map<string, BaselineEventRow[]>> {
   signal?.throwIfAborted();
-  // `baseline_score` is the read-time CUME_DIST per RFC §3, computed
-  // over the full post-BlockList* cohort in the window so per-cohort
-  // rankings are consistent with the menu read in
-  // {@link selectMenuEvents}. The pre-existing Phase 1.A
-  // `baseline_score` column is unused here (NULL for Phase 1.B rows).
-  // The defensive `kind NOT LIKE 'BlockList%'` mirrors the menu SQL.
+  if (addresses.length === 0) return new Map();
   const { rows } = await pool.query<BaselineEventRow>(
     `WITH scored AS (
        SELECT event_key,
@@ -501,13 +585,23 @@ async function selectAssetDetailEvents(
         WHERE event_time >= $1
           AND event_time <  $2
           AND kind NOT LIKE 'BlockList%'
+     ),
+     filtered AS (
+       SELECT *,
+              ROW_NUMBER() OVER (
+                PARTITION BY orig_addr
+                ORDER BY event_time DESC, event_key DESC
+              ) AS rn
+         FROM scored
+        WHERE orig_addr IS NOT NULL
+          AND orig_addr::text = ANY($3::text[])
      )
-     SELECT event_key::text         AS event_key,
+     SELECT event_key::text                  AS event_key,
             event_time,
             kind,
             sensor,
-            orig_addr::text         AS orig_addr,
-            resp_addr::text         AS resp_addr,
+            orig_addr::text                  AS orig_addr,
+            resp_addr::text                  AS resp_addr,
             orig_port,
             resp_port,
             host,
@@ -515,14 +609,20 @@ async function selectAssetDetailEvents(
             uri,
             category,
             baseline_score::double precision AS baseline_score
-       FROM scored
-      WHERE orig_addr  =  $3
-        AND orig_addr IS NOT NULL
-      ORDER BY event_time DESC
-      LIMIT $4`,
-    [period.startIso, period.endIso, address, TRIAGE_ASSET_DETAIL_LIMIT],
+       FROM filtered
+      WHERE rn <= $4
+      ORDER BY orig_addr, event_time DESC`,
+    [period.startIso, period.endIso, [...addresses], TRIAGE_ASSET_DETAIL_LIMIT],
   );
-  return rows;
+  const grouped = new Map<string, BaselineEventRow[]>();
+  for (const row of rows) {
+    const address = row.orig_addr;
+    if (address === null) continue;
+    const list = grouped.get(address);
+    if (list === undefined) grouped.set(address, [row]);
+    else list.push(row);
+  }
+  return grouped;
 }
 
 async function countObserved(
@@ -583,7 +683,7 @@ async function perAssetObservedCounts(
 
 /**
  * Merge per-customer asset pages into a unified page. The per-customer
- * SELECTs each pull `TRIAGE_ASSET_PAGE_SIZE` candidates ordered by
+ * SELECTs each produce a slice ordered by
  * `score DESC, last_event_time DESC`; this function merges them and
  * trims to `TRIAGE_ASSET_PAGE_SIZE` keeping the global ordering.
  *
@@ -593,7 +693,7 @@ async function perAssetObservedCounts(
  * shape only — the menu does not yet expose Next/Prev pagination
  * controls and the page-size bound holds within one customer's slice.
  * No `OFFSET` is issued in the multi-customer path: each per-customer
- * slice is a single LIMIT-bounded read and the merge happens in JS.
+ * slice is a single bounded read and the merge happens in JS.
  */
 function mergeAssetPages(slices: CustomerSlice[]): TriageAsset[] {
   const all = slices.flatMap((s) => s.assets);
@@ -666,8 +766,8 @@ async function pMapBatched<T, R>(
  *      observed read inside this request shares a single source of
  *      truth.
  *   3. Fan out per-customer with bounded concurrency to load:
- *      asset-list aggregation, per-asset detail events, per-asset
- *      observed counts, freshness header.
+ *      §4 menu cohort, per-asset detail events, per-asset observed
+ *      counts, freshness header.
  *   4. Merge per-customer asset pages into one global page sorted by
  *      `(score, triagedCount, detectedCount, address, customerId)`.
  *   5. Sum per-customer funnel counts and pick the worst freshness
@@ -717,10 +817,9 @@ export async function loadTriagePeriod(
   const detected = slices.reduce((sum, s) => sum + s.detected, 0);
   const triaged = slices.reduce((sum, s) => sum + s.triaged, 0);
   // Pivot index needs a flat scored events list across customers,
-  // ordered newest-first and trimmed to the global cap. Sourced from
-  // per-customer `selectCorpusEvents` results (not `assets[*].events`)
-  // so pivot coverage is not narrowed by the asset page or per-asset
-  // detail cap.
+  // ordered newest-first and trimmed to the global cap. The list is
+  // the union of per-tenant §4 `final_menu_rows`, so the pivot
+  // corpus matches the analyst's visible menu end-to-end.
   const mergedEvents = slices.flatMap((s) => s.events);
   mergedEvents.sort((a, b) => b.time.localeCompare(a.time));
   const truncated = mergedEvents.length > TRIAGE_HARD_EVENT_CAP;
@@ -775,5 +874,8 @@ export const _testing = {
   pickWorstFreshness,
   buildFreshness,
   rowToEvent,
+  buildCohort,
+  aggregateAssetsFromMenu,
+  MENU_CANDIDATES_PER_BUCKET,
   OBSERVED_EVENT_META_RETENTION_MS,
 };
