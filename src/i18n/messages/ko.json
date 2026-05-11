@@ -282,7 +282,12 @@
       "aimer_context_token_denied": "Aimer 컨텍스트 토큰 거부",
       "triage_policy_create": "Triage 정책 생성",
       "triage_policy_update": "Triage 정책 수정",
-      "triage_policy_delete": "Triage 정책 삭제"
+      "triage_policy_delete": "Triage 정책 삭제",
+      "triage_exclusion_global_add": "Triage 제외 추가 (전역)",
+      "triage_exclusion_global_remove": "Triage 제외 삭제 (전역)",
+      "triage_exclusion_customer_add": "Triage 제외 추가 (고객)",
+      "triage_exclusion_customer_remove": "Triage 제외 삭제 (고객)",
+      "triage_exclusion_fanout_failed": "Triage 제외 팬아웃 실패"
     },
     "targetTypes": {
       "account": "계정",
@@ -293,7 +298,8 @@
       "mfa": "MFA",
       "node": "노드",
       "service": "서비스",
-      "triage_policy": "Triage 정책"
+      "triage_policy": "Triage 정책",
+      "triage_exclusion": "Triage 제외"
     }
   },
   "nodes": {

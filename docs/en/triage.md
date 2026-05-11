@@ -1,10 +1,15 @@
 # Triage
 
 The Triage page narrows a high-volume detection feed down to the
-assets most likely to need a human eye next. It loads every
-detection event for a chosen period, applies a baseline scoring
-rule, and ranks source addresses by total score so an analyst can
-work the highest-impact rows first.
+assets most likely to need a human eye next. For a chosen period,
+it reads the per-tenant `baseline_triaged_event` corpus (rows the
+cadence job has already scored), composes a bounded menu of the
+highest-priority rows via the slot-bucket quota in
+[Baseline scoring algorithm](#baseline-scoring-algorithm), and
+ranks source addresses by their score contribution from that menu
+so an analyst can work the highest-impact rows first. The
+detection-event denominator shown in the funnel is counted
+separately from `observed_event_meta`.
 
 Viewing the page requires the `triage:read` permission. The
 built-in roles Security Monitor, Tenant Administrator, and System
@@ -13,12 +18,14 @@ that grant `triage:read` also qualify.
 
 ![Triage page (wireframe)](../assets/triage-overview-en.svg)
 
-> **Note:** The figure above is a wireframe stand-in. Phase 1.A
-> ships before the live REview screenshot environment is wired up
-> for Triage; the wireframe will be replaced with a real PNG
-> capture in a follow-up once a representative dataset is
-> available against the local-REview procedure documented in the
-> [Authoring guide](../AUTHORING.md).
+> **Note:** The figure above is a wireframe stand-in. Live PNG
+> captures are produced from a staging tenant once the local-REview
+> procedure documented in the [Authoring guide](../AUTHORING.md)
+> has a representative Phase 1.B corpus loaded; screenshot rollout
+> for both the overview and the pivot panel is tracked under
+> [issue #455](https://github.com/aicers/aice-web-next/issues/455)
+> and is folded into the read-path measurement gate (see the
+> "Read-path measurement" section in PR #525).
 
 ## Layout
 
@@ -39,6 +46,11 @@ The page has five regions:
    caller's customer scope (composite `(customerId, address)` key);
    selecting a row reveals its score, counts, and most recent
    triaged events on the right.
+5. **Pivot panel and breadcrumb** — appears below the workspace
+   once the operator pivots from the selected asset into a related
+   dimension. Shows the pivot trail along the top and the
+   **Related events** grouped by dimension (external IP, registrable
+   domain, JA3, SNI) below it. Hidden until the first pivot.
 
 ## Period picker
 
@@ -119,33 +131,167 @@ other corpus metadata. Audit and debugging use the stored
 Two modes are visible:
 
 - **Baseline** (active) — the curated rule described
-  in [Baseline scoring rule](#baseline-scoring-rule) below.
+  in [Baseline scoring algorithm](#baseline-scoring-algorithm)
+  below.
 - **With my policies** (disabled) — the seam for the future
   per-operator policy subtree. The button is rendered so the
   toggle is in place from day one, but it cannot be selected
   until the policy feature ships. Hovering it reveals a tooltip
   saying **"Available once Triage policies ship."**
 
-## Baseline scoring rule
+## Baseline scoring algorithm
 
-The baseline scorer is intentionally narrow:
+Phase 1.B replaces the Phase 1.A whitelist + cluster-bonus formula
+with a four-selector cadence-time score and a read-time menu
+composition pass. The shape is fixed by
+[RFC 0001](https://github.com/aicers/aice-web-next/blob/main/rfcs/0001-baseline-algorithm.md);
+the analyst-facing summary below covers what the menu surfaces
+without restating the RFC's full formula derivation.
 
-- **Category whitelist.** An event scores **1.0** when its
-  category is one of the operator-relevant kill-chain stages:
-  `COMMAND_AND_CONTROL`, `EXFILTRATION`, `IMPACT`,
-  `INITIAL_ACCESS`, or `CREDENTIAL_ACCESS`.
-- **Cluster bonus.** An `HttpThreat` event whose `clusterId` is
-  the no-cluster sentinel (empty, `none`, or `null`, case-
-  insensitive) adds another **0.5** on top of the whitelist
-  score. These rows correlate with novel HTTP traffic the
-  upstream model couldn't bucket and are worth surfacing earlier.
+### Cadence-time: `raw_score` and `selector_tags`
 
-An event whose category is outside the whitelist scores **0** and
-is counted in the **Detected** funnel total but not in
-**Triaged**, and contributes nothing to its asset's score.
+When the cadence runner ingests a new event, it computes a
+`raw_score` from five within-kind selectors and writes the result
+to `baseline_triaged_event.raw_score` together with the
+`selector_tags` array that records which selectors fired:
 
-There are no exclusions, no per-operator policies, and no
-persistence in Phase 1.A.
+- **S1 — High-confidence.** Within-kind percentile rank of the
+  event's confidence against the same `kind`'s 7-day / 14-day /
+  30-day history. A 0.92 means "this event sits in the top 8% of
+  same-kind events in the active window." Emits `S1-high` when
+  the rank exceeds the §9 threshold.
+- **S2 — Severe.** Binary signal that flips on when the event's
+  `category` belongs to the operator-relevant kill-chain set
+  (`COMMAND_AND_CONTROL`, `CREDENTIAL_ACCESS`, `EXFILTRATION`,
+  `IMPACT`, `INITIAL_ACCESS`). Emits `S2-severe`.
+- **S3 — Recurring.** Saturated count of repeats for the same
+  `(orig_addr, resp_addr, kind)` triple in the active window;
+  beyond the §9 cap, more repeats do not raise the score. NULL on
+  either address yields `s3 = 0`. Emits `S3-recurring` past the
+  §9 threshold.
+- **S4 — Correlated.** Saturated count of distinct categories the
+  same `orig_addr` emits under this kind in the active window —
+  measures how broadly the asset is implicated under one kind.
+  NULL `orig_addr` yields `s4 = 0`. Emits `S4-correlated` past the
+  §9 threshold.
+- **`UNLABELED_BONUS`.** Binary signal that flips on for
+  `HttpThreat` events whose cluster id is the no-cluster sentinel
+  (empty / `none` / `null`). Emits `unlabeled-cluster`.
+
+`raw_score` is the weighted sum of the five selectors (§9 weights);
+once written it is immutable within its `baseline_version` so a
+later peer event does not retroactively re-rank an already-stored
+row.
+
+The cadence drops `BlockList*` events at the very front of the
+pipeline before any scoring runs (RFC §1), and the menu read keeps a
+defensive `WHERE kind NOT LIKE 'BlockList%'` filter so a regression
+on the cadence side cannot leak those rows back into the menu.
+
+### Read-time: `baseline_score` from `cume_dist()`
+
+The menu does not store `baseline_score`. When the menu loads, the
+read query computes
+
+```sql
+cume_dist() OVER (
+    PARTITION BY kind, baseline_version
+    ORDER BY raw_score
+) AS baseline_score
+```
+
+over the rows in the active window. `baseline_score` is therefore
+a cohort-relative value in `[0, 1]` — a 0.95 places the event in
+the top of its `(kind, baseline_version)` cohort by cumulative
+distribution, with the discrete-step / tied-block boundary
+semantics PostgreSQL's `cume_dist` provides (a single-row partition
+returns `1.0`, so cold-start needs no special handling, and tied
+`raw_score` peers receive identical `baseline_score`).
+
+Partitioning by `(kind, baseline_version)` means rows from
+different `baseline_version`s are ranked independently — the menu
+never compares a `raw_score` from one calibration to a `raw_score`
+from another.
+
+### Slot-bucket composition
+
+After `baseline_score` is attached, the menu composes its output
+per RFC §4:
+
+- **`slot_bucket`.** Every row maps to a bucket key:
+  `('HttpThreat', true)` when the row is an `HttpThreat` carrying
+  the `unlabeled-cluster` tag, `(kind, false)` everywhere else.
+  Unlabeled HttpThreat thus competes for slots as its own virtual
+  kind and a labeled HttpThreat row goes to its own bucket.
+- **Per-bucket quota.** Each bucket's share of the menu is
+  `base_share + α · normalized_volume · normalized_top_confidence
+  + favored_bonus`, where `normalized_top_confidence` is
+  `avg(cardinality(selector_tags)) / MAX_TAGS` and `favored_bonus`
+  is the §9 constant `β` for the five empirically-useful buckets
+  (`DnsCovertChannel`, unlabeled `HttpThreat`, `LockyRansomware`,
+  `RepeatedHttpSessions`, `SuspiciousTlsTraffic`). Shares are
+  distributed across `default_N` slots via the largest-remainder
+  method with a lexicographic `(kind, is_unlabeled)` tie-breaker,
+  so the per-bucket quotas always sum to exactly `default_N`.
+- **`default_N`.** The cognitive-limit cap on menu size:
+  `round(LOWER_FLOOR + scale · log10(1 + post_exclusion_count))`.
+  Log10 keeps the menu analyst-readable across activity bands —
+  a quiet day still surfaces something, a noisy day does not flood
+  the menu.
+- **Cutoff + quota.** Within each bucket, rows passing the cutoff
+  are sorted by `baseline_score DESC` with the `(event_time DESC,
+  event_key DESC)` tie-breaker, and the top `quota[b]` rows
+  survive. A bucket's quota applies once across `baseline_version`s
+  in the active window — when two versions co-exist, their cohorts
+  are merged by `baseline_score DESC` before the cap.
+- **`MIN_NONZERO_FLOOR` fallback.** When the slider is strict
+  enough that the assembled count falls below the floor (and the
+  active window still has at least one post-exclusion row), the
+  menu replaces the bucket-composed result with the top
+  `MIN_NONZERO_FLOOR` rows globally by `baseline_score DESC`,
+  bypassing both quota and cutoff. A clearly-best non-empty menu
+  beats a balanced empty menu when the slider can't fill any
+  bucket's quota.
+
+The strictness slider that drives the cutoff is owned by a
+separate change ([#471](https://github.com/aicers/aice-web-next/issues/471));
+until it ships, the menu runs with no additional cutoff above the
+cohort, so the visible rows are determined entirely by `default_N`
+quota distribution and — when activity is too thin — the
+`MIN_NONZERO_FLOOR` fallback.
+
+### `baseline_version` semantics
+
+Every corpus row carries a `baseline_version` string identifying
+the algorithm that produced it. Phase 1.A rows carry
+`phase1a-simple`; Phase 1.B rows carry `phase1b-four-selector`.
+Two implications matter for analysts:
+
+- **Per-cohort ranking is preserved across upgrades.** The menu's
+  `cume_dist()` partitions on `(kind, baseline_version)`, so an
+  older-version row keeps its relative position within its own
+  cohort instead of being silently re-ranked against the new
+  scale.
+- **Version mix is invisible in the UI.** The header does not
+  surface `baseline_version`; natural turnover resolves the
+  cross-version mix within the menu's typical 30-day window
+  (corpus retention is 180 days, so a long lookback may still
+  span more than one version). Audit and debugging read the
+  stored `baseline_version` column directly.
+
+A `baseline_version` bump follows any change to:
+
+- the §9 tunables (weights, caps, thresholds, slot-allocation
+  constants, `default_N` curve, `MIN_NONZERO_FLOOR`),
+- the membership lists (`CRITICAL_CATEGORIES`,
+  `FAVORED_BUCKETS`),
+- the algorithm's shape (selector addition / removal, scoring
+  formula).
+
+Tuning post-merge is therefore a coordinated change — bump the
+version constant, redeploy, let the cadence write new-version
+rows, and let old-version rows turn over within their retention
+window.
 
 ## Funnel
 
@@ -170,34 +316,66 @@ composite key keeps them distinct end-to-end. Single-customer scope
 (the common case) renders identically to a per-tenant view —
 `customerId` is just constant across the page. Rows are sorted by
 total score (highest first); the first tie-breaker is
-`last_event_time` (most recent first), matching the per-tenant
-SQL `ORDER BY score DESC, last_event_time DESC` so the merged
-ordering is the same shape as the single-tenant query. Remaining
-ties break on triaged count, then detected count, then address,
-then customer id — those are not part of the issue contract but
-keep the page deterministic when two rows are tied on both
-`score` and `last_event_time`.
+`last_event_time` (most recent first). Remaining ties break on
+triaged count, then detected count, then address, then customer
+id — those are not part of the issue contract but keep the page
+deterministic when two rows are tied on both `score` and
+`last_event_time`. The sort runs in JavaScript over the
+aggregated `TriageAsset` list (`compareAssets` in
+`src/lib/triage/aggregate.ts`) after the cross-tenant cap; there
+is no per-tenant SQL aggregate SELECT against `baseline_triaged_event`
+on the read path.
 
 Events without a usable originator IP — for example, aggregate
 threat subtypes that emit a plural `origAddrs` field — still
 count toward the funnel's **Detected** total but do not
 contribute to any asset row.
 
-The asset list is read from `baseline_triaged_event` via an
-aggregated SELECT per tenant (`COUNT(*)`, `SUM(baseline_score)`,
-`MAX(event_time)` grouped by `orig_addr`). Multi-customer scopes
-issue one such aggregated query per customer and merge the results
-in JavaScript using the same `score DESC, last_event_time DESC`
-key the per-tenant SQL uses, so equal-score rows from different
-tenants stay globally ordered by recency rather than by tenant
-arrival. No `OFFSET` is issued in the multi-customer code path so
-a stable global ordering is preserved across tenants.
+The asset list is **derived from the §4 `final_menu_rows`** — the
+same set the [Baseline scoring algorithm](#baseline-scoring-algorithm)
+composes for the pivot corpus. Each tenant's slice runs one
+`cume_dist()` pass over the post-`BlockList*` window and applies the
+§4 slot-bucket / largest-remainder / quota composition (and the §6
+`MIN_NONZERO_FLOOR` fallback when assembly is below the floor) to
+produce per-tenant `final_menu_rows`. Multi-customer scopes issue
+one menu-cohort SELECT per customer, merge the per-tenant
+`final_menu_rows`, apply the cross-tenant `final_menu_rows` cap in
+§3 priority order — `baseline_score DESC, event_time DESC,
+event_key DESC` — and then aggregate the visible asset list from
+the **surviving capped rows** by grouping on the composite
+`(customerId, orig_addr)` key (the same multi-tenant key the rest
+of the menu uses, since two tenants can legitimately host the same
+private address). Per-asset score, triaged count, and
+`last_event_time` reflect only the rows
+that survived both the per-tenant menu composition and the
+cross-tenant cap: an asset whose menu rows are all evicted by the
+cap does not appear on the list, and an asset whose rows are
+partially evicted has its score / triaged count / `last_event_time`
+recomputed from the surviving slice. An asset cannot rank highly
+from rows that did not survive the menu composition — quota,
+cutoff, the `MIN_NONZERO_FLOOR` fallback, and the cross-tenant cap
+determine the analyst-facing list end-to-end. No `OFFSET` is issued
+in the multi-customer code path so the §3 ordering used by the cap
+is stable across tenants.
+
+The per-tenant menu-cohort SELECT is a single SQL round-trip — the
+`cume_dist()` CTE attaches the §3 `baseline_score`, a `ranked` CTE
+adds three window aggregates over the full cohort (`bucket_count`
+and `bucket_tag_sum` per `(kind, is_unlabeled)` partition for the
+§4 `normalized_volume` / `normalized_top_confidence`, and
+`cohort_count` over the entire cohort for `default_N`), and the
+outer select returns the top candidates per bucket. The per-bucket
+cap is a strict superset of any quota the §6 curve can produce, so
+the algorithm composes its output against full-cohort aggregates
+even though the row payload is bounded.
 
 Clicking a row populates the **Asset detail** panel on the
 right; the first row is preselected when the page loads.
 
-The list shows up to one row per distinct address. If no events
-in the period pass the baseline rule, the list reads
+The list shows up to one row per distinct `(customerId, address)`
+— a multi-customer scope can legitimately render two rows with the
+same private address from different tenants. If no events in the
+period pass the baseline rule, the list reads
 **"No assets matched the baseline rule in this period."**
 
 ## Asset detail
@@ -213,11 +391,14 @@ The detail panel for the selected asset shows:
 - **Score**, **Triaged**, and **Detected** counts for the asset.
 - The asset's most recent **50 events**, newest first, with each
   event's time, kind (`__typename`), category, and the per-event
-  baseline score read directly from the stored
-  `baseline_triaged_event.baseline_score` (so a row stored with an
-  e.g. cluster-id whitelist exception still renders the same value
-  the cadence persisted, instead of being recomputed against the
-  scalar-only corpus shape).
+  read-time `baseline_score` (the §3 `cume_dist()` value computed
+  against the active window's `(kind, baseline_version)` cohort —
+  the same partition the menu composition uses, so a detail-panel
+  row's score matches the score it would carry in the menu). The
+  detail panel for every asset on the list is fetched in a single
+  batched SELECT that runs the `cume_dist()` pass once over the
+  full cohort and then keeps the newest 50 rows per address — the
+  read path never recomputes the window function per asset.
 
 Times are formatted in the session's preferred timezone (set
 under **Settings**).
@@ -250,20 +431,40 @@ builder skips them when reading from corpus A.
 
 ## Hard cap and truncation
 
-Triage paginates `eventList` cursor-by-cursor until either every
-event in the period is loaded or **5,000 events** have been
-collected, whichever comes first. The 5,000-event cap is a
-demo-stage safety net so a wide period over a noisy day cannot
-silently load tens of thousands of rows.
+The menu read is bounded in two layers:
 
-When the cap is hit while REview still reports more rows, the
-page renders an amber banner above the funnel:
+1. **Per-tenant per-bucket candidate cap.** The §4 menu-cohort
+   SELECT returns at most a few hundred candidate rows per
+   `slot_bucket` — a strict superset of any quota the §6 curve can
+   produce. Full-cohort `bucket_count`, `bucket_tag_sum`, and
+   `cohort_count` ride along as window-function columns so the
+   algorithm's `normalized_volume`, `normalized_top_confidence`,
+   and `default_N` are computed against the active window and not
+   the candidate slice.
+2. **Cross-tenant `final_menu_rows` cap.** After the per-tenant
+   §4 / §6 composition runs, the merged list of `final_menu_rows`
+   across the caller's scope is bounded above by **5,000 events**
+   before the pivot index is built. The cap is applied in §3
+   priority order — `baseline_score DESC, event_time DESC,
+   event_key DESC` (numeric-string DESC: `"10"` before `"9"`,
+   matching the per-tenant menu composition) — so when a
+   multi-tenant scope exceeds the ceiling, the lowest-priority
+   rows are dropped first rather than the oldest.
+   The visible asset list is then aggregated from the **capped**
+   event set, so the asset list and the pivot corpus are derived
+   from the same row set: an asset whose menu rows are all evicted
+   by the cap does not appear on the asset list, and an asset whose
+   rows are partially evicted has its score, triaged-event count,
+   and last-event time reflect only the surviving rows. In practice
+   the upstream `default_N` cap keeps a single tenant's slice well
+   under that ceiling (the §6 curve grows logarithmically with
+   cohort size), so this cap is a defense-in-depth safety net
+   rather than a routinely-hit limit.
+
+When the cross-tenant cap is hit, the page renders an amber banner
+above the funnel:
 
 > Partial: showing 5,000 events of period (truncated at 5,000).
-
-If the cap is reached on the final page (i.e., REview reports no
-further rows), the banner does not appear — the operator did see
-every event in the period.
 
 To work a wider period without the truncation banner, narrow the
 range with the period picker and apply again.
@@ -294,11 +495,14 @@ issuing any additional network requests.
 
 ![Pivot panel (wireframe)](../assets/triage-pivot-en.svg)
 
-> **Note:** The figure above is a wireframe stand-in. Phase 1.A
-> ships before the live REview screenshot environment is wired up
-> for Triage; the wireframe will be replaced with a real PNG capture
-> as part of the EN/KR Triage manual screenshot pass tracked by
-> [issue #455](https://github.com/aicers/aice-web-next/issues/455).
+> **Note:** The figure above is a wireframe stand-in. Live PNG
+> captures are produced from a staging tenant once the local-REview
+> procedure documented in the [Authoring guide](../AUTHORING.md) has
+> a representative Phase 1.B corpus loaded; screenshot rollout is
+> tracked under
+> [issue #455](https://github.com/aicers/aice-web-next/issues/455)
+> and is folded into the read-path measurement gate (see the
+> "Read-path measurement" section in PR #525).
 
 ### Pivot dimensions
 
@@ -594,8 +798,8 @@ with future Triage hash extensions (e.g. strictness controls under
 - The asset key is the composite `(customerId, originator IP)`;
   events that emit plural address fields are not assigned to an
   asset row.
-- Up to 5,000 events per period are aggregated; wider periods
-  show a truncation banner.
+- Up to 5,000 `final_menu_rows` per period are returned across the
+  caller's scope; wider periods show a truncation banner.
 - The mode toggle, period choices, and per-asset state do not
   persist across sessions. The pivot breadcrumb and Tier 1 / Tier 2
   scope are encoded in the URL hash so a shared / reloaded URL

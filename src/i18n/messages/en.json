@@ -282,7 +282,12 @@
       "aimer_context_token_denied": "Aimer context token denied",
       "triage_policy_create": "Triage policy create",
       "triage_policy_update": "Triage policy update",
-      "triage_policy_delete": "Triage policy delete"
+      "triage_policy_delete": "Triage policy delete",
+      "triage_exclusion_global_add": "Triage exclusion add (global)",
+      "triage_exclusion_global_remove": "Triage exclusion remove (global)",
+      "triage_exclusion_customer_add": "Triage exclusion add (customer)",
+      "triage_exclusion_customer_remove": "Triage exclusion remove (customer)",
+      "triage_exclusion_fanout_failed": "Triage exclusion fanout failed"
     },
     "targetTypes": {
       "account": "Account",
@@ -293,7 +298,8 @@
       "mfa": "MFA",
       "node": "Node",
       "service": "Service",
-      "triage_policy": "Triage Policy"
+      "triage_policy": "Triage Policy",
+      "triage_exclusion": "Triage Exclusion"
     }
   },
   "nodes": {
