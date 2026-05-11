@@ -53,7 +53,7 @@ A successful pass returns HTTP 200 with the per-run counters:
   "customerId": 7,
   "status": "ok",
   "observedInserted": 142,
-  "baselineInserted": 9,
+  "baselineInserted": 142,
   "lastEventCursor": "1234567890123456789"
 }
 ```
@@ -140,7 +140,7 @@ Response:
       "customerId": 1,
       "status": "ok",
       "observedInserted": 142,
-      "baselineInserted": 9,
+      "baselineInserted": 142,
       "lastEventCursor": "1234567890123456789"
     }
   ]

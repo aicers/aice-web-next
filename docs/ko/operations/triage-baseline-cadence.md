@@ -55,7 +55,7 @@ Content-Type: application/json
   "customerId": 7,
   "status": "ok",
   "observedInserted": 142,
-  "baselineInserted": 9,
+  "baselineInserted": 142,
   "lastEventCursor": "1234567890123456789"
 }
 ```
@@ -140,7 +140,7 @@ Content-Type: application/json
       "customerId": 1,
       "status": "ok",
       "observedInserted": 142,
-      "baselineInserted": 9,
+      "baselineInserted": 142,
       "lastEventCursor": "1234567890123456789"
     }
   ]
