@@ -11,12 +11,31 @@ export interface TriageAssetListLabels {
   triagedColumn: string;
   detectedColumn: string;
   rowDetailsTemplate: string;
+  /**
+   * Suffix on the per-row "detected" cell when the observed
+   * denominator for this asset's window contribution is retention-
+   * truncated. The label fires per-row on the subset whose in-
+   * retention slice produced no observed events; the result-level
+   * label on the funnel covers the broader truncation case.
+   */
+  detectedOver30dHint: string;
+}
+
+export interface TriageAssetSelection {
+  customerId: number;
+  address: string;
 }
 
 interface TriageAssetListViewProps {
   assets: TriageAsset[];
-  selectedAddress: string | null;
-  onSelect: (address: string) => void;
+  selected: TriageAssetSelection | null;
+  /**
+   * `true` when the request-level window starts before
+   * `now() − observed_event_meta_retention`. Drives the per-row
+   * truncation badge; mirrors {@link TriageLoadResult.observedDenominatorTruncated}.
+   */
+  observedDenominatorTruncated: boolean;
+  onSelect: (selection: TriageAssetSelection) => void;
   labels: TriageAssetListLabels;
 }
 
@@ -27,7 +46,8 @@ const COUNT_FORMAT = new Intl.NumberFormat();
 
 export function TriageAssetListView({
   assets,
-  selectedAddress,
+  selected,
+  observedDenominatorTruncated,
   onSelect,
   labels,
 }: TriageAssetListViewProps) {
@@ -63,17 +83,32 @@ export function TriageAssetListView({
       </header>
       <ul className="divide-y" aria-label={labels.title}>
         {assets.map((asset) => {
-          const active = asset.address === selectedAddress;
+          const active =
+            selected !== null &&
+            asset.customerId === selected.customerId &&
+            asset.address === selected.address;
           const accessibleLabel = labels.rowDetailsTemplate
             .replace("{address}", asset.address)
             .replace("{score}", SCORE_FORMAT.format(asset.score))
             .replace("{triaged}", COUNT_FORMAT.format(asset.triagedCount))
             .replace("{detected}", COUNT_FORMAT.format(asset.detectedCount));
+          // Per-row truncation label: fires only when the result-level
+          // flag holds AND this row's observed slice is unavailable
+          // (the per-asset condition documented in #458). Visually
+          // tagged so an operator scanning the list can tell apart
+          // "denominator unknown" from "denominator zero".
+          const showTruncationHint =
+            observedDenominatorTruncated && asset.detectedCountUnavailable;
           return (
-            <li key={asset.address}>
+            <li key={`${asset.customerId}/${asset.address}`}>
               <button
                 type="button"
-                onClick={() => onSelect(asset.address)}
+                onClick={() =>
+                  onSelect({
+                    customerId: asset.customerId,
+                    address: asset.address,
+                  })
+                }
                 aria-pressed={active}
                 aria-label={accessibleLabel}
                 className={cn(
@@ -98,6 +133,14 @@ export function TriageAssetListView({
                   <span>
                     {COUNT_FORMAT.format(asset.detectedCount)}{" "}
                     {labels.detectedColumn}
+                    {showTruncationHint ? (
+                      <>
+                        {" "}
+                        <span className="text-amber-700 dark:text-amber-300">
+                          {labels.detectedOver30dHint}
+                        </span>
+                      </>
+                    ) : null}
                   </span>
                 </span>
               </button>

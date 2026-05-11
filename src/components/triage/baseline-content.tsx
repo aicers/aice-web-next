@@ -148,25 +148,40 @@ export function TriageBaselineContent({
     enabled: scope === "tier2",
     tier1Corpus: result.events,
   });
-  const initialAddress = result.assets[0]?.address ?? null;
-  const [selectedAddress, setSelectedAddress] = useState<string | null>(
-    initialAddress,
-  );
+  const initialAsset = result.assets[0] ?? null;
+  const initialFocus = initialAsset
+    ? { customerId: initialAsset.customerId, address: initialAsset.address }
+    : null;
+  const [selected, setSelected] = useState<{
+    customerId: number;
+    address: string;
+  } | null>(initialFocus);
   const [trail, setTrail] = useState<PivotStep[]>(() =>
-    initialAddress ? [{ kind: "asset", address: initialAddress }] : [],
+    initialFocus
+      ? [
+          {
+            kind: "asset",
+            customerId: initialFocus.customerId,
+            address: initialFocus.address,
+          },
+        ]
+      : [],
   );
 
   const selectedAsset = useMemo(() => {
-    if (!selectedAddress) return null;
-    return result.assets.find((a) => a.address === selectedAddress) ?? null;
-  }, [result.assets, selectedAddress]);
+    if (!selected) return null;
+    return (
+      result.assets.find(
+        (a) =>
+          a.customerId === selected.customerId &&
+          a.address === selected.address,
+      ) ?? null
+    );
+  }, [result.assets, selected]);
 
   const effectiveSelection =
-    selectedAsset === null && initialAddress !== null
-      ? initialAddress
-      : selectedAddress;
-  const effectiveAsset =
-    selectedAsset ?? (initialAddress ? (result.assets[0] ?? null) : null);
+    selectedAsset === null && initialFocus !== null ? initialFocus : selected;
+  const effectiveAsset = selectedAsset ?? initialAsset;
 
   // When the loaded result rotates (period change → new corpus), the
   // breadcrumb must reset to the new asset root. The parent already
@@ -177,11 +192,19 @@ export function TriageBaselineContent({
   // top asset) yet still need to clear the trail.
   // biome-ignore lint/correctness/useExhaustiveDependencies: resetSignal is the trigger
   useEffect(() => {
-    setSelectedAddress(initialAddress);
+    setSelected(initialFocus);
     setTrail(
-      initialAddress ? [{ kind: "asset", address: initialAddress }] : [],
+      initialFocus
+        ? [
+            {
+              kind: "asset",
+              customerId: initialFocus.customerId,
+              address: initialFocus.address,
+            },
+          ]
+        : [],
     );
-  }, [initialAddress, resetSignal]);
+  }, [initialFocus?.customerId, initialFocus?.address, resetSignal]);
 
   useEffect(() => {
     onPivotTrailChange?.(hasPivotedAwayFromAsset(trail));
@@ -212,7 +235,22 @@ export function TriageBaselineContent({
         const key = tier2DedupeKey(ev);
         if (corpusKeys.has(key) || seen.has(key)) continue;
         seen.add(key);
-        out.push({ ...ev, score: baselineScore(ev) });
+        // Tier 2 fetch results are flat `TriageEvent[]` from the
+        // Policy fetch service and do not carry a per-tenant marker.
+        // In Baseline mode the operator focuses one asset at a time,
+        // so attribute Tier 2-spliced events to the trail's asset
+        // crumb. The pivot index filters on `(customerId, origAddr)`
+        // for the asset step, which is the only consumer of this
+        // marker.
+        const assetCrumbCustomerId =
+          trail.length > 0 && trail[0].kind === "asset"
+            ? trail[0].customerId
+            : 0;
+        out.push({
+          ...ev,
+          score: baselineScore(ev),
+          customerId: assetCrumbCustomerId,
+        });
       }
     }
     return out;
@@ -223,8 +261,15 @@ export function TriageBaselineContent({
     return [...result.events, ...expandedTier2Events];
   }, [result.events, expandedTier2Events]);
 
+  // The Baseline-mode menu reads from `baseline_triaged_event` whose
+  // row shape lacks the fields Policy-only dimensions consume
+  // (country, userAgent, TLS subtype fields, dnsAnswer, clusterId).
+  // Forcing mode="baseline" here keeps the panel honest about which
+  // sections can produce a value — the index-builder skips Policy-only
+  // dimensions entirely, so the panel never offers a click that would
+  // resolve to an empty group.
   const pivotIndex = useMemo(
-    () => pivotIndexFor(expandedEvents),
+    () => pivotIndexFor(expandedEvents, "baseline"),
     [expandedEvents],
   );
 
@@ -254,19 +299,54 @@ export function TriageBaselineContent({
     const sorted = [...focusEvents].sort((a, b) =>
       a.time === b.time ? 0 : a.time < b.time ? 1 : -1,
     );
+    // Carry the CURRENT trail's asset crumb through to the synthetic
+    // pivot-focus row so the detail header keeps identifying which
+    // tenant the operator is inspecting, even after they select a non-
+    // first asset row and pivot. Using `initialFocus` (which is always
+    // `result.assets[0]`) would mis-label the tenant whenever the
+    // selected asset is not the page's first row. The trail's first
+    // crumb is set by `onSelectAsset` to the actively selected
+    // `(customerId, address)`, so reading from there matches the user's
+    // current selection. Falls back to a synthetic customerId 0 when
+    // the trail has no asset crumb (rare — trail starts with a
+    // dimension step on a hash-restored URL with no asset focus).
+    const assetCrumb =
+      trail.length > 0 && trail[0].kind === "asset" ? trail[0] : null;
+    const focusedAsset = assetCrumb
+      ? (result.assets.find(
+          (a) =>
+            a.customerId === assetCrumb.customerId &&
+            a.address === assetCrumb.address,
+        ) ?? null)
+      : null;
     return {
+      // Synthetic asset row — `customerId` defaults to the asset crumb's
+      // customer; if the trail has no asset crumb (rare), use 0. The
+      // pivot focus card does not key off `customerId`, so the value
+      // is purely structural.
+      customerId: assetCrumb?.customerId ?? 0,
+      customerName:
+        focusedAsset?.customerName ?? String(assetCrumb?.customerId ?? 0),
       address,
       detectedCount: focusEvents.length,
+      detectedCountUnavailable: false,
       triagedCount,
       score: scoreSum,
+      lastEventTimeIso: sorted.length > 0 ? sorted[0].time : null,
       events: sorted.slice(0, PIVOT_FOCUS_DETAIL_EVENT_CAP),
     };
-  }, [activeStep, focusEvents, labels.pivotPanel.dimensions]);
+  }, [
+    activeStep,
+    focusEvents,
+    labels.pivotPanel.dimensions,
+    trail,
+    result.assets,
+  ]);
 
   const detailAsset = pivotFocusAsset ?? effectiveAsset;
 
   const allSections = useMemo(
-    () => buildPivotPanel(pivotIndex, focusEvents),
+    () => buildPivotPanel(pivotIndex, focusEvents, { mode: "baseline" }),
     [pivotIndex, focusEvents],
   );
 
@@ -328,12 +408,21 @@ export function TriageBaselineContent({
     return false;
   }, [result.truncated, scope, trail, tier2]);
 
-  const onSelectAsset = useCallback((address: string) => {
-    setSelectedAddress(address);
-    // Selecting a new asset replaces the trail — selecting from the
-    // asset list is a "fresh start", not a pivot.
-    setTrail([{ kind: "asset", address }]);
-  }, []);
+  const onSelectAsset = useCallback(
+    (focus: { customerId: number; address: string }) => {
+      setSelected(focus);
+      // Selecting a new asset replaces the trail — selecting from the
+      // asset list is a "fresh start", not a pivot.
+      setTrail([
+        {
+          kind: "asset",
+          customerId: focus.customerId,
+          address: focus.address,
+        },
+      ]);
+    },
+    [],
+  );
 
   const onPivot = useCallback(
     (step: PivotStep) => {
@@ -393,19 +482,36 @@ export function TriageBaselineContent({
       onScopeRestoredFromHash?.(parsed.mode === "tier2" ? "tier2" : "tier1");
     }
     if (parsed.asset === null && parsed.steps.length === 0) return;
-    // Resolve the asset against the freshly-loaded corpus.
-    const restoredAsset =
-      parsed.asset !== null
-        ? (result.assets.find((a) => a.address === parsed.asset)?.address ??
-          null)
-        : null;
-    if (parsed.asset !== null && restoredAsset === null) {
-      setStaleHashFallback(true);
-      return;
+    // Resolve the asset against the freshly-loaded corpus. The hash
+    // carries a composite `customerId/address`; a legacy URL with the
+    // bare address (`customerId === null`) is treated as stale rather
+    // than mis-resolving against the first customer's matching
+    // address. If `customerId` is present, the lookup must match
+    // BOTH parts of the composite key.
+    let restoredAsset: { customerId: number; address: string } | null = null;
+    if (parsed.asset !== null) {
+      if (parsed.asset.customerId === null) {
+        setStaleHashFallback(true);
+        return;
+      }
+      const found = result.assets.find(
+        (a) =>
+          a.customerId === parsed.asset?.customerId &&
+          a.address === parsed.asset?.address,
+      );
+      if (!found) {
+        setStaleHashFallback(true);
+        return;
+      }
+      restoredAsset = { customerId: found.customerId, address: found.address };
     }
     if (restoredAsset === null) return;
     const restoredTrail: PivotStep[] = [
-      { kind: "asset", address: restoredAsset },
+      {
+        kind: "asset",
+        customerId: restoredAsset.customerId,
+        address: restoredAsset.address,
+      },
     ];
     let stale = false;
     const refetchQueue: Array<{
@@ -492,7 +598,7 @@ export function TriageBaselineContent({
       setStaleHashFallback(true);
       return;
     }
-    setSelectedAddress(restoredAsset);
+    setSelected(restoredAsset);
     setTrail(restoredTrail);
     if (refetchQueue.length > 0) {
       pendingHashFetchesRef.current = refetchQueue;
@@ -572,9 +678,17 @@ export function TriageBaselineContent({
         dim = getPivotDimension(dimension);
       } catch {
         // Dimension was removed since the URL was produced — stale.
-        setSelectedAddress(initialAddress);
+        setSelected(initialFocus);
         setTrail(
-          initialAddress ? [{ kind: "asset", address: initialAddress }] : [],
+          initialFocus
+            ? [
+                {
+                  kind: "asset",
+                  customerId: initialFocus.customerId,
+                  address: initialFocus.address,
+                },
+              ]
+            : [],
         );
         setStaleHashFallback(true);
         return;
@@ -588,9 +702,17 @@ export function TriageBaselineContent({
         }
       }
       if (!found) {
-        setSelectedAddress(initialAddress);
+        setSelected(initialFocus);
         setTrail(
-          initialAddress ? [{ kind: "asset", address: initialAddress }] : [],
+          initialFocus
+            ? [
+                {
+                  kind: "asset",
+                  customerId: initialFocus.customerId,
+                  address: initialFocus.address,
+                },
+              ]
+            : [],
         );
         setStaleHashFallback(true);
         return;
@@ -602,7 +724,7 @@ export function TriageBaselineContent({
     tier2.inFlight,
     tier2.errors,
     expandedEvents,
-    initialAddress,
+    initialFocus,
   ]);
 
   // ── URL hash sync (write-side) ──
@@ -657,7 +779,8 @@ export function TriageBaselineContent({
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <TriageAssetListView
           assets={result.assets}
-          selectedAddress={effectiveSelection}
+          selected={effectiveSelection}
+          observedDenominatorTruncated={result.observedDenominatorTruncated}
           onSelect={onSelectAsset}
           labels={labels.assetList}
         />

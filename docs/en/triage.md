@@ -22,21 +22,23 @@ that grant `triage:read` also qualify.
 
 ## Layout
 
-The page has four regions:
+The page has five regions:
 
-1. **Header** — title and a one-line description of the current
-   phase (Phase 1.A: corpus retention isn't yet available, so the
-   period is restricted to the last 30 days).
+1. **Header** — title, a one-line description of the menu, and a
+   **freshness badge** showing how recently the per-tenant baseline
+   corpus was last ingested (see [Freshness header](#freshness-header)).
 2. **Period picker and mode toggle** — controls for the period
    under analysis and the scoring mode (only **Baseline** is
    wired today).
 3. **Funnel** — three numbers for the loaded slice: how many
-   events were detected, how many passed the baseline rule, and
+   events were detected (from `observed_event_meta`), how many
+   passed the baseline rule (from `baseline_triaged_event`), and
    the ratio between them.
 4. **Asset list and asset detail** — a two-column workspace.
-   The list ranks source addresses by total score; selecting a row
-   reveals its score, counts, and most recent triaged events on
-   the right.
+   The list ranks source addresses by total score across the
+   caller's customer scope (composite `(customerId, address)` key);
+   selecting a row reveals its score, counts, and most recent
+   triaged events on the right.
 
 ## Period picker
 
@@ -47,23 +49,70 @@ fresh slice loaded server-side.
 
 The selector enforces three rules:
 
-- **Maximum lookback: 30 days.** A start timestamp older than
-  30 days is rejected. Phase 1.A only supports the last-30-days
-  window because corpus retention isn't yet available; when
-  retention lands, the lower bound shifts.
+- **Maximum lookback: 180 days.** A start timestamp older than
+  180 days ago is rejected. The 180-day floor matches the
+  `baseline_triaged_event` corpus retention.
 - **Maximum duration: 30 days.** A range whose end minus start
-  exceeds 30 days is rejected.
+  exceeds 30 days is rejected. The 30-day cap is a working-window
+  choice (UI cost, percentile-pass cost) rather than a corpus
+  property.
 - **End after start.** A range whose end is at or before its
   start is rejected.
 
 If a URL is opened with a `start` / `end` query string that falls
 outside these rules, the page clamps the values into range and
-shows an amber **"Period adjusted to fit the last 30 days."**
-notice above the funnel so the operator notices that the rendered
-window differs from what was requested.
+shows an amber **"Period adjusted to fit the 180-day lookback /
+30-day duration cap."** notice above the funnel so the operator
+notices that the rendered window differs from what was requested.
 
 The page defaults to a 24-hour window ending at the current time
 when no `start` / `end` is supplied.
+
+### Detected denominator and the 30-day retention floor
+
+The funnel's **Detected** number is read from `observed_event_meta`,
+whose retention is **30 days** — shorter than the 180-day
+`baseline_triaged_event` retention. When the selected window's
+earliest moment is older than 30 days ago, the observed denominator
+covers only the in-retention slice. The funnel then surfaces a
+**"Detected counts cover only the last 30 days."** notice above the
+asset list, and per-asset rows whose contribution falls entirely in
+the out-of-retention slice get a small `(over last 30d)` suffix on
+their detected count so the operator can tell apart "denominator
+unknown" from "denominator zero". The asset list's score and
+triaged count keep reading from the corpus and remain accurate
+across the full window.
+
+## Freshness header
+
+A small badge in the page header reports how recently the per-tenant
+baseline corpus was last ingested. The badge reads
+`baseline_corpus_state.last_ingested_at` from each tenant DB the
+caller has scope to and renders one of six states based on the
+combination of `last_run_status` and `last_ingested_at`:
+
+| Status      | `last_ingested_at` | Badge                                  |
+|-------------|--------------------|----------------------------------------|
+| `ok`        | non-NULL           | "Last updated: N min ago"              |
+| `running`   | non-NULL           | "Updating now… (previously N min ago)" |
+| `running`   | NULL               | "First ingest in progress…"            |
+| `failed`    | non-NULL           | "Last attempt failed N min ago"        |
+| `failed`    | NULL               | "First ingest failed"                  |
+| (no row)    | —                  | "Awaiting first ingest"                |
+
+When the caller's scope spans multiple tenants the badge picks the
+**worst** state across the set (failed > running > no row > ok) so
+the operator never sees a green header masking one tenant's failure.
+A multi-tenant `ok` reads "Last updated: N min ago, across K
+customers"; non-`ok` states list the affected customer ids in the
+hover tooltip. The `failed` state surfaces `last_error` on hover
+for triage; in a multi-customer scope the tooltip combines the
+affected-id list with the error detail (`Affected: 1, 2 — <error>`)
+so neither piece of triage context is dropped.
+
+The header intentionally does not surface `baseline_version` or any
+other corpus metadata. Audit and debugging use the stored
+`baseline_version` column directly.
 
 ## Mode toggle
 
@@ -100,24 +149,49 @@ persistence in Phase 1.A.
 
 ## Funnel
 
-The funnel summarises the loaded slice:
+The funnel summarises the loaded slice. Sources after the corpus
+switch:
 
-| Stat | Meaning |
-|---|---|
-| **Detected** | Total events loaded for the period (after the 5,000-event hard cap, see [Hard cap and truncation](#hard-cap-and-truncation)). |
-| **Triaged** | Events whose baseline score is greater than zero. |
-| **Pass-through** | `Triaged ÷ Detected`, expressed as a percentage. |
+| Stat | Source | Meaning |
+|---|---|---|
+| **Detected** | `observed_event_meta` | Events surviving the cadence's exclusion re-application across the period (clamped lower bound: `max(:from, now() − 30d)` — see [Detected denominator and the 30-day retention floor](#detected-denominator-and-the-30-day-retention-floor)). |
+| **Triaged** | `baseline_triaged_event` | Events the baseline rule kept across the full period (180-day retention). |
+| **Pass-through** | derived | `Triaged ÷ Detected`, expressed as a percentage. |
+
+The funnel is recomputed on every period change, customer change,
+or kind-filter change.
 
 ## Asset list
 
-Each row groups events by the originator IP address (`origAddr`).
-Rows are sorted by total score (highest first); ties break on
-triaged count, then detected count, then address.
+Each row groups events by the composite asset key
+**`(customerId, originator IP)`**. Two customers can legitimately
+host the same RFC1918 address on different perimeters; the
+composite key keeps them distinct end-to-end. Single-customer scope
+(the common case) renders identically to a per-tenant view —
+`customerId` is just constant across the page. Rows are sorted by
+total score (highest first); the first tie-breaker is
+`last_event_time` (most recent first), matching the per-tenant
+SQL `ORDER BY score DESC, last_event_time DESC` so the merged
+ordering is the same shape as the single-tenant query. Remaining
+ties break on triaged count, then detected count, then address,
+then customer id — those are not part of the issue contract but
+keep the page deterministic when two rows are tied on both
+`score` and `last_event_time`.
 
 Events without a usable originator IP — for example, aggregate
 threat subtypes that emit a plural `origAddrs` field — still
 count toward the funnel's **Detected** total but do not
 contribute to any asset row.
+
+The asset list is read from `baseline_triaged_event` via an
+aggregated SELECT per tenant (`COUNT(*)`, `SUM(baseline_score)`,
+`MAX(event_time)` grouped by `orig_addr`). Multi-customer scopes
+issue one such aggregated query per customer and merge the results
+in JavaScript using the same `score DESC, last_event_time DESC`
+key the per-tenant SQL uses, so equal-score rows from different
+tenants stay globally ordered by recency rather than by tenant
+arrival. No `OFFSET` is issued in the multi-customer code path so
+a stable global ordering is preserved across tenants.
 
 Clicking a row populates the **Asset detail** panel on the
 right; the first row is preselected when the page loads.
@@ -131,13 +205,48 @@ in the period pass the baseline rule, the list reads
 The detail panel for the selected asset shows:
 
 - The asset's source address.
+- The asset's **customer name** (the row from `customers.name` for
+  the tenant the asset belongs to). Multi-customer scopes commonly
+  surface two rows sharing the same RFC1918 address; the customer
+  line in the detail header keeps them distinguishable after
+  selection.
 - **Score**, **Triaged**, and **Detected** counts for the asset.
 - The asset's most recent **50 events**, newest first, with each
-  event's time, kind (`__typename`), category, and per-event
-  baseline score.
+  event's time, kind (`__typename`), category, and the per-event
+  baseline score read directly from the stored
+  `baseline_triaged_event.baseline_score` (so a row stored with an
+  e.g. cluster-id whitelist exception still renders the same value
+  the cadence persisted, instead of being recomputed against the
+  scalar-only corpus shape).
 
 Times are formatted in the session's preferred timezone (set
 under **Settings**).
+
+### Field availability in Baseline mode
+
+The Baseline-mode detail panel reads from `baseline_triaged_event`
+columns only; subtype-specific fields that are not present on the
+corpus row are omitted from the panel. Fields **not** available
+in Baseline mode (and the dimensions they would have powered):
+
+- `level` (ThreatLevel) — the level chip and any level filter are
+  hidden in Baseline mode.
+- `origCountry` / `respCountry` — the **Country** pivot dimension
+  is hidden in Baseline mode.
+- `origNetwork` / `respNetwork` — the customer-network membership
+  classifier falls back to RFC1918 / IPv6 special-use ranges (the
+  IP pivot dimensions still work).
+- HTTP `userAgent`, DNS `answer`, TLS subtype fields (JA3, JA3S,
+  SNI, certificate serial, certificate subject CN), `clusterId` —
+  the corresponding **User agent**, **DNS answer**, and **TLS**
+  pivot dimensions, plus the **Cluster ID** pivot, are hidden in
+  Baseline mode.
+
+These fields all return automatically in the future "With my
+policies" mode (corpus B) which retains the full `eventList`
+payload through a snapshot JSONB. Inside the Baseline-mode pivot
+panel, the dimensions above appear as no-ops because the index
+builder skips them when reading from corpus A.
 
 ## Hard cap and truncation
 
@@ -424,8 +533,15 @@ Tier 1 / Tier 2 toggle state are encoded in the URL hash under the
 `triage.pivot.*` namespace:
 
 ```text
-#triage.pivot.asset=10.0.0.1&triage.pivot.step=ja3:abc123&triage.pivot.mode=tier2
+#triage.pivot.asset=42/10.0.0.1&triage.pivot.step=ja3:abc123&triage.pivot.mode=tier2
 ```
+
+The asset focus is the composite `customerId/address`, so two
+customers that share an RFC1918 address remain distinct on restore.
+URLs produced before the composite key landed encoded only the
+address; the page treats those as stale and falls back to the asset
+root with the non-blocking notice rather than guessing which
+customer's row to focus.
 
 Loading the page with a populated hash restores the breadcrumb to
 that step against the freshly loaded corpus. If a step's value is
@@ -446,13 +562,15 @@ The hash is namespaced under `triage.pivot.*` so it can coexist
 with future Triage hash extensions (e.g. strictness controls under
 `triage.strictness.*`) without collision.
 
-## Limitations in Phase 1.A
+## Limitations
 
-- Only the last 30 days are loadable.
+- Period start may go back as far as **180 days**; the duration of
+  any one window is capped at 30 days.
 - The baseline rule is fixed; per-operator policies are not yet
   available.
-- The asset key is a single originator IP; events that emit
-  plural address fields are not assigned to an asset row.
+- The asset key is the composite `(customerId, originator IP)`;
+  events that emit plural address fields are not assigned to an
+  asset row.
 - Up to 5,000 events per period are aggregated; wider periods
   show a truncation banner.
 - The mode toggle, period choices, and per-asset state do not
@@ -461,3 +579,9 @@ with future Triage hash extensions (e.g. strictness controls under
   restores them, but they reset on every fresh menu entry.
 - Tier 2 sensor pivot is hidden until a `triage:read`-compatible
   sensor lookup ships.
+- In Baseline mode the **Country**, **User agent**, **TLS** (JA3 /
+  JA3S / SNI / cert serial / cert subject CN), **DNS answer**,
+  **Cluster ID**, and **Threat level** pivot dimensions are
+  hidden — the corresponding columns are not present on
+  `baseline_triaged_event`. They return in the future "With my
+  policies" mode (corpus B).

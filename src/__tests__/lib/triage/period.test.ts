@@ -53,30 +53,55 @@ describe("parseTriagePeriod", () => {
     expect(result.period.startIso).toBe(start);
   });
 
-  it("clamps a start older than 30 days forward", () => {
-    const start = "2025-01-01T00:00:00.000Z";
+  it("clamps a start older than the 180-day lookback floor forward", () => {
+    // 1B-3 (#458) expanded the lookback to 180 days — the corpus A
+    // retention floor. A start more than 180 days before `NOW` is
+    // pulled forward to the floor, then the 30-day duration cap
+    // applies on top.
+    const start = "2024-01-01T00:00:00.000Z";
     const end = "2026-05-09T00:00:00.000Z";
     const result = parseTriagePeriod(start, end, NOW);
     expect(result.clamped).toBe(true);
+    // Lookback clamp fires first; duration cap then trims further so
+    // the window does not exceed 30 days.
     expect(Date.parse(result.period.startIso)).toBe(
-      NOW.getTime() - TRIAGE_MAX_LOOKBACK_MS,
+      Date.parse(end) - TRIAGE_MAX_DURATION_MS,
     );
     expect(result.period.endIso).toBe(end);
   });
 
-  it("never lets the window exceed 30 days even with old start + recent end", () => {
-    // Lookback clamp fires first (start is older than 30 days), then
-    // the duration cap is a no-op because the lookback already trims
-    // the start forward. The post-condition is the same: the visible
-    // window is at most 30 days.
-    const start = "2026-04-08T00:00:00.000Z";
+  it("accepts a start 60 days before now without clamping the lookback", () => {
+    // The 180-day floor explicitly admits this case which would have
+    // been clamped under the previous 30-day lookback.
+    const start = new Date(
+      NOW.getTime() - 60 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const end = new Date(
+      NOW.getTime() - 50 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const result = parseTriagePeriod(start, end, NOW);
+    expect(result.clamped).toBe(false);
+    expect(result.period).toEqual({ startIso: start, endIso: end });
+  });
+
+  it("never lets the window exceed 30 days even when start is well within the lookback", () => {
+    // 90-day window: lookback clamp does not fire (start is inside the
+    // 180-day floor), but the duration cap shrinks `start` forward so
+    // the visible window stays at 30 days.
+    const start = "2026-02-08T00:00:00.000Z";
     const end = "2026-05-09T00:00:00.000Z";
     const result = parseTriagePeriod(start, end, NOW);
     expect(result.clamped).toBe(true);
     const duration =
       Date.parse(result.period.endIso) - Date.parse(result.period.startIso);
-    expect(duration).toBeLessThanOrEqual(TRIAGE_MAX_DURATION_MS);
+    expect(duration).toBe(TRIAGE_MAX_DURATION_MS);
     expect(result.period.endIso).toBe(end);
+  });
+
+  it("expands TRIAGE_MAX_LOOKBACK_MS to 180 days", () => {
+    // Sanity: a regression that re-shrinks the lookback to 30 days
+    // would silently break the Baseline-mode period range.
+    expect(TRIAGE_MAX_LOOKBACK_MS).toBe(180 * 24 * 60 * 60 * 1000);
   });
 
   it("falls back to default when end is not after start", () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import type React from "react";
 import { useEffect, useRef, useState, useTransition } from "react";
 
 import {
@@ -23,6 +24,10 @@ import {
   TriageBaselineContent,
   type TriageBaselineLabels,
 } from "./baseline-content";
+import {
+  TriageFreshnessHeader,
+  type TriageFreshnessHeaderLabels,
+} from "./freshness-header";
 import {
   type TriageMode,
   TriageModeToggle,
@@ -49,6 +54,15 @@ export interface TriageShellLabels {
   forbiddenScopeBanner: string;
   truncatedBannerTemplate: string;
   clampedNotice: string;
+  /**
+   * Funnel-level "Detected over last 30d" affordance (1B-3 / #458).
+   * Surfaces whenever {@link TriageLoadResult.observedDenominatorTruncated}
+   * is `true` — the selected window's earliest moment is older than
+   * 30 days ago, so the funnel's denominator covers only the in-
+   * retention slice.
+   */
+  observedDenominatorTruncatedNotice: string;
+  freshness: TriageFreshnessHeaderLabels;
   baseline: TriageBaselineLabels;
   periodChangeConfirm: {
     title: string;
@@ -179,6 +193,12 @@ export function TriageShell({
       <header className="flex flex-col gap-2">
         <h1 className="text-foreground text-2xl font-bold">{labels.title}</h1>
         <p className="text-sm text-muted-foreground">{labels.intro}</p>
+        {initialState.status === "ok" ? (
+          <TriageFreshnessHeader
+            freshness={initialState.result.freshness}
+            labels={labels.freshness}
+          />
+        ) : null}
       </header>
       <div className="flex flex-wrap items-end gap-4">
         <TriagePeriodPicker
@@ -274,18 +294,32 @@ function BannerForState({
       </p>
     );
   }
+  const banners: React.ReactNode[] = [];
   if (state.result.truncated) {
     const banner = labels.truncatedBannerTemplate
       .replace("{loaded}", COUNT_FORMAT.format(state.result.loadedEventCount))
       .replace("{cap}", COUNT_FORMAT.format(TRIAGE_HARD_EVENT_CAP));
-    return (
+    banners.push(
       <p
+        key="truncated"
         role="status"
         className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
       >
         {banner}
-      </p>
+      </p>,
     );
   }
-  return null;
+  if (state.result.observedDenominatorTruncated) {
+    banners.push(
+      <p
+        key="observed-truncated"
+        role="status"
+        className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
+      >
+        {labels.observedDenominatorTruncatedNotice}
+      </p>,
+    );
+  }
+  if (banners.length === 0) return null;
+  return <>{banners}</>;
 }

@@ -89,6 +89,19 @@ export interface PivotDimension {
    * Tier 2 fetch rather than reading from the corpus.
    */
   tier2Only?: boolean;
+  /**
+   * `true` when the dimension reads from a `TriageEvent` field that
+   * is NOT present on the Baseline-mode corpus row
+   * (`baseline_triaged_event`). Examples: `country` (no orig/resp
+   * country column), `userAgent` (HTTP subtype-specific), TLS
+   * subtype fields, `dnsAnswer`, `clusterId`. The panel and pivot
+   * Tier 1 index builder skip these dimensions when the active mode
+   * is `"baseline"` so the operator does not see a section that can
+   * never produce a value. The "With my policies" mode (#460)
+   * preserves the full `eventList` payload through corpus B and
+   * keeps these dimensions live.
+   */
+  policyOnly?: boolean;
   extract(event: ScoredTriageEvent): PivotValue[];
 }
 
@@ -146,6 +159,7 @@ const PORT_DIMENSION: PivotDimension = {
 const COUNTRY_DIMENSION: PivotDimension = {
   id: "country",
   family: "network",
+  policyOnly: true,
   extract(event) {
     const out: PivotValue[] = [];
     const seen = new Set<string>();
@@ -201,6 +215,7 @@ const URI_PATTERN_DIMENSION: PivotDimension = {
 const USER_AGENT_DIMENSION: PivotDimension = {
   id: "userAgent",
   family: "application",
+  policyOnly: true,
   extract(event) {
     const value = nonEmptyString(event.userAgent);
     if (!value) return [];
@@ -215,6 +230,7 @@ function tlsField(
   return {
     id,
     family: "tls",
+    policyOnly: true,
     extract(event) {
       const value = nonEmptyString(pick(event));
       if (!value) return [];
@@ -246,6 +262,7 @@ const DNS_QUERY_DIMENSION: PivotDimension = {
 const DNS_ANSWER_DIMENSION: PivotDimension = {
   id: "dnsAnswer",
   family: "dns",
+  policyOnly: true,
   extract(event) {
     const value = nonEmptyString(event.answer);
     if (!value) return [];
@@ -347,6 +364,7 @@ const SAME_SENSOR_DIMENSION: PivotDimension = {
 const CLUSTER_ID_DIMENSION: PivotDimension = {
   id: "clusterId",
   family: "time-structure",
+  policyOnly: true,
   extract(event) {
     const value = nonEmptyString(event.clusterId);
     if (!value) return [];
@@ -400,6 +418,7 @@ const LEVELS_DIMENSION: PivotDimension = {
   id: "levels",
   family: "tier2-only",
   tier2Only: true,
+  policyOnly: true,
   extract(event) {
     const value = nonEmptyString(event.level);
     if (!value) return [];
@@ -445,3 +464,26 @@ export function getPivotDimension(id: PivotDimensionId): PivotDimension {
   if (!dim) throw new Error(`Unknown pivot dimension: ${id}`);
   return dim;
 }
+
+/**
+ * `true` when the dimension reads only fields present on the
+ * Baseline-mode corpus row (`baseline_triaged_event` columns plus
+ * the addresses/ports it carries). Used by the Tier 1 panel and the
+ * pivot index builder to gate Policy-only dimensions when the active
+ * mode is `"baseline"`.
+ */
+export function isDimensionAvailableInBaseline(
+  dimension: PivotDimension,
+): boolean {
+  return dimension.policyOnly !== true;
+}
+
+/**
+ * The subset of {@link PIVOT_DIMENSIONS} that reads only fields
+ * present in `baseline_triaged_event`. The pivot Tier 1 panel and
+ * the pivot index builder filter on this list when the active mode
+ * is `"baseline"` so the operator never sees a section that cannot
+ * produce a value.
+ */
+export const PIVOT_DIMENSIONS_BASELINE: readonly PivotDimension[] =
+  PIVOT_DIMENSIONS.filter(isDimensionAvailableInBaseline);

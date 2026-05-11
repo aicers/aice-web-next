@@ -2,7 +2,7 @@
 
 import { useTimezone } from "@/components/providers/timezone-provider";
 import { formatDateTime } from "@/lib/format-date";
-import { baselineScore, type TriageAsset } from "@/lib/triage";
+import type { TriageAsset } from "@/lib/triage";
 
 export interface TriageAssetDetailLabels {
   title: string;
@@ -13,6 +13,12 @@ export interface TriageAssetDetailLabels {
    * row currently means (a JA3 / SNI / etc. value, not an IP).
    */
   pivotFocusTitle: string;
+  /**
+   * Aria/label prefix for the customer name line in the asset detail
+   * header. Required for multi-customer scopes so two tenants sharing
+   * the same RFC1918 address remain distinguishable after selection.
+   */
+  customerLabel: string;
   emptySelection: string;
   emptyEvents: string;
   scoreLabel: string;
@@ -81,6 +87,10 @@ export function TriageAssetDetailView({
         >
           {asset.address}
         </p>
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium">{labels.customerLabel}:</span>{" "}
+          {asset.customerName}
+        </p>
       </header>
       <dl className="grid grid-cols-3 gap-3 text-sm">
         <Stat
@@ -134,7 +144,7 @@ export function TriageAssetDetailView({
                     {event.category ?? "—"}
                   </td>
                   <td className="py-1.5 text-right font-mono">
-                    {SCORE_FORMAT.format(baselineScore(event))}
+                    {SCORE_FORMAT.format(event.score)}
                   </td>
                 </tr>
               ))}

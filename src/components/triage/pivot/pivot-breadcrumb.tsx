@@ -84,6 +84,8 @@ export function TriagePivotBreadcrumb({
 }
 
 function stepKey(step: PivotStep): string {
-  if (step.kind === "asset") return `asset:${step.address}`;
+  if (step.kind === "asset") {
+    return `asset:${step.customerId}/${step.address}`;
+  }
   return `dim:${step.dimension}:${step.value.key}`;
 }
