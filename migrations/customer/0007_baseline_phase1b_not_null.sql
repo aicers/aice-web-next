@@ -6,6 +6,16 @@
 -- so future readers (and the read-time `cume_dist()` over `raw_score`
 -- from §3) can rely on the values being present.
 --
+-- Also adds `baseline_corpus_state.corpus_activated_at` — the explicit
+-- wall-clock marker the §7 cold-start activation reads. Using the
+-- corpus-state singleton (PK-indexed, O(1) lookup) rather than
+-- `min(event_time) FROM observed_event_meta` avoids the failure mode
+-- where an initial catch-up page of historical events would otherwise
+-- immediately activate 7d / 14d / 30d windows whose corpus is still
+-- partial. Pre-existing rows are backfilled from
+-- `min(ingested_at) FROM baseline_triaged_event` so a tenant carrying
+-- Phase 1.A corpus across this migration keeps its accumulated maturity.
+--
 -- Order of operations is load-bearing:
 --   1. The preflight `DO` block aborts before any UPDATE if a Phase 1.A
 --      row sits on disk with `baseline_score IS NULL`. PR 1 / #481's
@@ -36,6 +46,9 @@
 --      across all cadence replicas before this migration runs so no
 --      old replica can INSERT a NULL `raw_score` between the UPDATE
 --      and the `SET NOT NULL`.
+--   5. Add `corpus_activated_at` and backfill from the existing corpus
+--      so a fresh deploy starts at NULL (no windows active) and a
+--      migrated tenant keeps its historical activation timestamp.
 
 DO $$
 DECLARE
@@ -65,3 +78,15 @@ ALTER TABLE baseline_triaged_event
 
 ALTER TABLE baseline_triaged_event
     ALTER COLUMN raw_score SET NOT NULL;
+
+ALTER TABLE baseline_corpus_state
+    ADD COLUMN IF NOT EXISTS corpus_activated_at TIMESTAMPTZ;
+
+-- Backfill the marker from the existing corpus's earliest INSERT.
+-- Fresh deploys (empty `baseline_triaged_event`) leave the column NULL;
+-- the cadence runner sets it via `COALESCE(corpus_activated_at, NOW())`
+-- on the first successful page commit.
+UPDATE baseline_corpus_state
+   SET corpus_activated_at = (SELECT MIN(ingested_at) FROM baseline_triaged_event)
+ WHERE corpus_activated_at IS NULL
+   AND EXISTS (SELECT 1 FROM baseline_triaged_event);

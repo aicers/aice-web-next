@@ -243,11 +243,18 @@ async function markOk(
   endCursor: string | null,
   exclusionsFp: string,
 ): Promise<void> {
+  // `corpus_activated_at` is the §7 cold-start anchor: the wall-clock
+  // moment of the first successful cadence commit. `COALESCE` keeps the
+  // first-ever value sticky across subsequent runs so the §7 windows
+  // measure age against the real start of ingestion, not the latest
+  // commit. Migration 0007 backfills it from `min(ingested_at)` on
+  // existing corpora.
   await client.query(
     `UPDATE baseline_corpus_state
         SET last_run_status = 'ok',
             last_error = NULL,
             last_ingested_at = NOW(),
+            corpus_activated_at = COALESCE(corpus_activated_at, NOW()),
             last_event_cursor = COALESCE($1, last_event_cursor),
             baseline_version = $2,
             exclusions_fp = $3

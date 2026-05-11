@@ -19,7 +19,11 @@ INSERTs both:
   (180-day retention, read directly by the Triage menu) with a
   per-event `raw_score` (RFC 0001 §3) and `selector_tags` set. The
   menu's strictness slider applies a read-time cutoff against the
-  `raw_score`; the cadence does not gate on score at INSERT time.
+  derived `baseline_score`, which the read path computes as
+  `cume_dist() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score)`
+  — `raw_score` is the stored input, `baseline_score` is the
+  read-time percentile the slider thresholds against. The cadence
+  does not gate on score at INSERT time.
 
 `baseline_corpus_state.last_event_cursor` is advanced atomically
 with the per-page INSERTs so a failure rolls back to the previous

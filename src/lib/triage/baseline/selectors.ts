@@ -105,28 +105,38 @@ const EMPTY_PER_WINDOW: PerWindowValues = {
 
 /**
  * Determine which statistics windows have wall-clock activation against
- * the current `observed_event_meta` history. A window of `N` days is
- * active iff the oldest observed event is at least `N` days old —
- * i.e., the corpus spans at least the window's horizon (RFC §7 cold
- * start). Pre-activation windows return `false` so the per-window MAX
- * step zeroes their contribution.
+ * the corpus's first-ingest marker. A window of `N` days is active iff
+ * the cadence has been collecting data for at least `N` wall-clock days
+ * — i.e., the corpus has spent the window's full horizon accumulating
+ * peer events (RFC §7 cold start). Pre-activation windows return
+ * `false` so the per-window MAX step zeroes their contribution.
+ *
+ * The activation anchor is `baseline_corpus_state.corpus_activated_at`,
+ * set by {@link markOk} on the first successful page commit and
+ * backfilled by migration 0007 for tenants carrying a Phase 1.A corpus
+ * across the upgrade. Reading the singleton row is O(1) (PK lookup) and
+ * — crucially — measures elapsed wall-clock time since ingestion began,
+ * not the age of the oldest event in the page. The latter would
+ * misfire on an initial catch-up page of historical events: the oldest
+ * observed event could be months old while the corpus itself is still
+ * minutes old and partial, immediately and incorrectly enabling 7d /
+ * 14d / 30d scoring.
  *
  * Called once per page (before Phase 2) so the scorer can pass the set
- * straight into {@link buildSelectorOutputs}. Cheap: a single
- * `min(event_time)` scan that the `(event_time DESC)` btree resolves.
+ * straight into {@link buildSelectorOutputs}.
  */
 export async function detectActiveWindows(
   client: pg.PoolClient,
 ): Promise<ActiveWindows> {
-  const result = await client.query<{ oldest: Date | null }>(
-    `SELECT min(event_time) AS oldest FROM observed_event_meta`,
+  const result = await client.query<{ corpus_activated_at: Date | null }>(
+    `SELECT corpus_activated_at FROM baseline_corpus_state WHERE id = true`,
   );
-  const oldest = result.rows[0]?.oldest ?? null;
-  if (oldest === null) {
+  const activatedAt = result.rows[0]?.corpus_activated_at ?? null;
+  if (activatedAt === null) {
     return new Set();
   }
   const now = Date.now();
-  const ageMs = now - oldest.getTime();
+  const ageMs = now - activatedAt.getTime();
   const active = new Set<StatisticsWindowDays>();
   for (const days of STATISTICS_WINDOW_DAYS) {
     if (ageMs >= days * 24 * 60 * 60 * 1000) active.add(days);
@@ -175,13 +185,23 @@ export async function scoreSelectorsForPage(
   }
   const pageValues = placeholderRows.join(", ");
 
-  // Three CTEs (one per window) compute s1 = cume_dist over the
-  // same-kind slice. Joined back to the page rows so only page event
-  // keys remain in the projection.
+  // S1 (three windowed CTEs) ranks confidence within each page kind's
+  // same-kind slice. The `kind IN page_kinds` filter restricts the
+  // window-function input to the kinds actually represented in this
+  // page, so the planner never partitions over tenant-wide kinds it
+  // will throw away. `confidence IS NOT NULL` excludes rows the schema
+  // permits to be NULL — PG orders NULLs LAST in ASC, so leaving them
+  // in would give a NULL-confidence row `cume_dist() = 1.0` and falsely
+  // emit `S1-high`. Page rows whose own confidence is NULL therefore
+  // miss the rank entirely and the LEFT JOIN below coalesces them to 0.
   //
-  // s3 / s4 use a single LEFT JOIN against observed_event_meta filtered
-  // to the 30d window with `FILTER (WHERE event_time >= …)` aggregates
-  // projecting the 7d / 14d sub-slices. Per RFC §3:
+  // S3 / S4 use the "aggregate once, join back" shape requested by the
+  // OQ4 review: `s3_aggr` / `s4_aggr` group the 30d corpus once per
+  // (kind, orig_addr [, resp_addr]) tuple actually present in the page
+  // (the inner SELECT is the join key set), with per-window FILTER
+  // aggregates for 7d / 14d, then a single LEFT JOIN projects the
+  // aggregate back to each page row. This avoids re-grouping the
+  // 30d corpus per page row. Per RFC §3:
   //   s3 = repeat count of (orig_addr, resp_addr, kind) in window
   //   s4 = distinct categories of (orig_addr, kind) in window
   // The `-1` self-exclusion is applied in JS (post-saturation) so the
@@ -196,67 +216,87 @@ export async function scoreSelectorsForPage(
       SELECT pr.event_key, pr.kind, pr.orig_addr, pr.resp_addr
       FROM (VALUES ${pageValues}) AS pr(event_key, kind, orig_addr, resp_addr)
     ),
+    page_kinds AS (
+      SELECT DISTINCT kind FROM page_rows
+    ),
     ranked_7d AS (
       SELECT event_key,
              cume_dist() OVER (PARTITION BY kind ORDER BY confidence) AS r
         FROM observed_event_meta
        WHERE event_time >= now() - INTERVAL '7 days'
+         AND confidence IS NOT NULL
+         AND kind IN (SELECT kind FROM page_kinds)
     ),
     ranked_14d AS (
       SELECT event_key,
              cume_dist() OVER (PARTITION BY kind ORDER BY confidence) AS r
         FROM observed_event_meta
        WHERE event_time >= now() - INTERVAL '14 days'
+         AND confidence IS NOT NULL
+         AND kind IN (SELECT kind FROM page_kinds)
     ),
     ranked_30d AS (
       SELECT event_key,
              cume_dist() OVER (PARTITION BY kind ORDER BY confidence) AS r
         FROM observed_event_meta
        WHERE event_time >= now() - INTERVAL '30 days'
+         AND confidence IS NOT NULL
+         AND kind IN (SELECT kind FROM page_kinds)
     ),
-    s3 AS (
-      SELECT pr.event_key,
-             COUNT(o.event_key) FILTER (WHERE o.event_time >= now() - INTERVAL '7 days')  AS c_7d,
-             COUNT(o.event_key) FILTER (WHERE o.event_time >= now() - INTERVAL '14 days') AS c_14d,
-             COUNT(o.event_key) FILTER (WHERE o.event_time >= now() - INTERVAL '30 days') AS c_30d
-        FROM page_rows pr
-        LEFT JOIN observed_event_meta o
-          ON o.kind = pr.kind
-         AND o.orig_addr = pr.orig_addr
-         AND o.resp_addr = pr.resp_addr
-         AND o.event_time >= now() - INTERVAL '30 days'
-       WHERE pr.orig_addr IS NOT NULL AND pr.resp_addr IS NOT NULL
-       GROUP BY pr.event_key
+    s3_aggr AS (
+      SELECT o.kind, o.orig_addr, o.resp_addr,
+             COUNT(*) FILTER (WHERE o.event_time >= now() - INTERVAL '7 days')  AS c_7d,
+             COUNT(*) FILTER (WHERE o.event_time >= now() - INTERVAL '14 days') AS c_14d,
+             COUNT(*) FILTER (WHERE o.event_time >= now() - INTERVAL '30 days') AS c_30d
+        FROM observed_event_meta o
+        JOIN (
+          SELECT DISTINCT kind, orig_addr, resp_addr
+            FROM page_rows
+           WHERE orig_addr IS NOT NULL AND resp_addr IS NOT NULL
+        ) page_s3_keys
+          ON page_s3_keys.kind      = o.kind
+         AND page_s3_keys.orig_addr = o.orig_addr
+         AND page_s3_keys.resp_addr = o.resp_addr
+       WHERE o.event_time >= now() - INTERVAL '30 days'
+       GROUP BY o.kind, o.orig_addr, o.resp_addr
     ),
-    s4 AS (
-      SELECT pr.event_key,
+    s4_aggr AS (
+      SELECT o.kind, o.orig_addr,
              COUNT(DISTINCT o.category) FILTER (WHERE o.event_time >= now() - INTERVAL '7 days')  AS c_7d,
              COUNT(DISTINCT o.category) FILTER (WHERE o.event_time >= now() - INTERVAL '14 days') AS c_14d,
              COUNT(DISTINCT o.category) FILTER (WHERE o.event_time >= now() - INTERVAL '30 days') AS c_30d
-        FROM page_rows pr
-        LEFT JOIN observed_event_meta o
-          ON o.kind = pr.kind
-         AND o.orig_addr = pr.orig_addr
-         AND o.event_time >= now() - INTERVAL '30 days'
-       WHERE pr.orig_addr IS NOT NULL
-       GROUP BY pr.event_key
+        FROM observed_event_meta o
+        JOIN (
+          SELECT DISTINCT kind, orig_addr
+            FROM page_rows
+           WHERE orig_addr IS NOT NULL
+        ) page_s4_keys
+          ON page_s4_keys.kind      = o.kind
+         AND page_s4_keys.orig_addr = o.orig_addr
+       WHERE o.event_time >= now() - INTERVAL '30 days'
+       GROUP BY o.kind, o.orig_addr
     )
     SELECT pr.event_key::text                  AS event_key,
            COALESCE(r7.r, 0)::float8           AS s1_7d,
            COALESCE(r14.r, 0)::float8          AS s1_14d,
            COALESCE(r30.r, 0)::float8          AS s1_30d,
-           COALESCE(s3.c_7d, 0)::bigint        AS s3_7d,
-           COALESCE(s3.c_14d, 0)::bigint       AS s3_14d,
-           COALESCE(s3.c_30d, 0)::bigint       AS s3_30d,
-           COALESCE(s4.c_7d, 0)::bigint        AS s4_7d,
-           COALESCE(s4.c_14d, 0)::bigint       AS s4_14d,
-           COALESCE(s4.c_30d, 0)::bigint       AS s4_30d
+           COALESCE(s3a.c_7d, 0)::bigint       AS s3_7d,
+           COALESCE(s3a.c_14d, 0)::bigint      AS s3_14d,
+           COALESCE(s3a.c_30d, 0)::bigint      AS s3_30d,
+           COALESCE(s4a.c_7d, 0)::bigint       AS s4_7d,
+           COALESCE(s4a.c_14d, 0)::bigint      AS s4_14d,
+           COALESCE(s4a.c_30d, 0)::bigint      AS s4_30d
       FROM page_rows pr
       LEFT JOIN ranked_7d  r7  ON r7.event_key  = pr.event_key
       LEFT JOIN ranked_14d r14 ON r14.event_key = pr.event_key
       LEFT JOIN ranked_30d r30 ON r30.event_key = pr.event_key
-      LEFT JOIN s3              ON s3.event_key  = pr.event_key
-      LEFT JOIN s4              ON s4.event_key  = pr.event_key
+      LEFT JOIN s3_aggr s3a
+             ON s3a.kind      = pr.kind
+            AND s3a.orig_addr = pr.orig_addr
+            AND s3a.resp_addr = pr.resp_addr
+      LEFT JOIN s4_aggr s4a
+             ON s4a.kind      = pr.kind
+            AND s4a.orig_addr = pr.orig_addr
   `;
 
   type Row = {

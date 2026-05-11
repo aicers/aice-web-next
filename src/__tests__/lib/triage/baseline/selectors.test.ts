@@ -297,6 +297,21 @@ describe("scoreSelectorsForPage — batched SELECT shape", () => {
     expect(sql).toMatch(/ranked_14d/);
     expect(sql).toMatch(/ranked_30d/);
     expect(sql).toMatch(/FILTER \(WHERE o\.event_time/);
+    // S1 ranks within the page's kinds only — the planner must not
+    // partition over the tenant-wide kind set.
+    expect(sql).toMatch(/page_kinds/);
+    expect(sql).toMatch(/kind IN \(SELECT kind FROM page_kinds\)/);
+    // S1 excludes NULL confidence from the ranked population (PG sorts
+    // NULLs LAST in ASC, so leaving them in would give NULL-confidence
+    // rows `cume_dist() = 1.0` and falsely emit `S1-high`).
+    expect(sql).toMatch(/confidence IS NOT NULL/);
+    // S3 / S4 use the "aggregate once, join back" shape — corpus rows
+    // group per (kind, orig[, resp]) tuple once, page rows then join
+    // the aggregate. Avoids re-grouping the 30d corpus per page row.
+    expect(sql).toMatch(/s3_aggr/);
+    expect(sql).toMatch(/s4_aggr/);
+    expect(sql).toMatch(/page_s3_keys/);
+    expect(sql).toMatch(/page_s4_keys/);
     // Page-row tuple binds four params per row (event_key, kind,
     // orig_addr, resp_addr).
     expect(params).toHaveLength(4);
@@ -353,9 +368,29 @@ describe("scoreSelectorsForPage — batched SELECT shape", () => {
 });
 
 describe("detectActiveWindows — §7 cold start", () => {
-  it("returns empty set when observed_event_meta is empty", async () => {
+  it("returns empty set when corpus_activated_at is NULL (fresh deploy)", async () => {
     const client = {
-      query: vi.fn(async () => ({ rows: [{ oldest: null }], rowCount: 1 })),
+      query: vi.fn(async () => ({
+        rows: [{ corpus_activated_at: null }],
+        rowCount: 1,
+      })),
+    };
+    const active = await detectActiveWindows(
+      client as unknown as Parameters<typeof detectActiveWindows>[0],
+    );
+    expect(active.size).toBe(0);
+    const [sql] = (client.query.mock.calls[0] ?? []) as unknown as [string];
+    // Anchors on the corpus-state singleton, not on observed_event_meta
+    // event_time — historical catch-up rows must not activate windows
+    // whose corpus is still partial.
+    expect(sql).toMatch(/corpus_activated_at/);
+    expect(sql).toMatch(/baseline_corpus_state/);
+    expect(sql).not.toMatch(/observed_event_meta/);
+  });
+
+  it("returns empty set when the singleton row is missing", async () => {
+    const client = {
+      query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
     };
     const active = await detectActiveWindows(
       client as unknown as Parameters<typeof detectActiveWindows>[0],
@@ -363,11 +398,11 @@ describe("detectActiveWindows — §7 cold start", () => {
     expect(active.size).toBe(0);
   });
 
-  it("returns {7} when the oldest event is 8 days old", async () => {
+  it("returns {7} when the corpus was activated 8 days ago", async () => {
     const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
     const client = {
       query: vi.fn(async () => ({
-        rows: [{ oldest: eightDaysAgo }],
+        rows: [{ corpus_activated_at: eightDaysAgo }],
         rowCount: 1,
       })),
     };
@@ -377,10 +412,13 @@ describe("detectActiveWindows — §7 cold start", () => {
     expect([...active]).toEqual([7]);
   });
 
-  it("returns {7, 14, 30} when the oldest event is 35 days old", async () => {
+  it("returns {7, 14, 30} when the corpus was activated 35 days ago", async () => {
     const old = new Date(Date.now() - 35 * 24 * 60 * 60 * 1000);
     const client = {
-      query: vi.fn(async () => ({ rows: [{ oldest: old }], rowCount: 1 })),
+      query: vi.fn(async () => ({
+        rows: [{ corpus_activated_at: old }],
+        rowCount: 1,
+      })),
     };
     const active = await detectActiveWindows(
       client as unknown as Parameters<typeof detectActiveWindows>[0],

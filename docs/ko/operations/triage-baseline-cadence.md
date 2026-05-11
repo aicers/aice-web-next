@@ -19,9 +19,13 @@
 - 표준 필터 통과한 **모든 이벤트**를 `baseline_triaged_event`
   (보존 180일, 트리아지 메뉴가 직접 읽음)에 저장하며,
   이벤트별 `raw_score`(RFC 0001 §3)와 `selector_tags` 집합을
-  함께 기록합니다. 메뉴의 엄격도 슬라이더는 `raw_score`에 대한
-  읽기 시점 컷오프를 적용하며, 케이던스는 INSERT 시점에 점수로
-  걸러내지 않습니다.
+  함께 기록합니다. 메뉴의 엄격도 슬라이더는 `raw_score`에서
+  파생된 `baseline_score`에 대한 읽기 시점 컷오프를 적용합니다.
+  읽기 경로가
+  `cume_dist() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score)`로
+  계산하는 값으로, `raw_score`는 저장된 입력이고 `baseline_score`는
+  슬라이더가 임계 처리하는 읽기 시점 백분위입니다. 케이던스는
+  INSERT 시점에 점수로 걸러내지 않습니다.
 
 `baseline_corpus_state.last_event_cursor`는 페이지별 INSERT와
 원자적으로 진행되므로, 실패 시 이전 워터마크로 롤백되며 이미

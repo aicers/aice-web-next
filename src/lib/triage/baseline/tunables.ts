@@ -114,8 +114,10 @@ export const FINAL_COUNT = {
  * Statistics windows from §7. Per-selector value across the active
  * windows is combined via `max`; pre-activation windows contribute `0`.
  * Days are wall-clock; activation derives from elapsed time since the
- * customer's first observed event (`min(event_time)` in
- * `observed_event_meta`).
+ * cadence's first successful page commit
+ * (`baseline_corpus_state.corpus_activated_at`), not the age of the
+ * oldest event in the corpus — historical catch-up events would
+ * otherwise activate windows whose corpus is still partial.
  */
 export const STATISTICS_WINDOW_DAYS = [7, 14, 30] as const;
 export type StatisticsWindowDays = (typeof STATISTICS_WINDOW_DAYS)[number];
