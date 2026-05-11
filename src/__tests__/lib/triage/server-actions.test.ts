@@ -106,7 +106,16 @@ function makeMockPool(seed: CustomerSeed): {
         return { rows: [f], rowCount: 1 };
       }
       if (sql.includes("FROM baseline_triaged_event")) {
-        if (sql.includes("GROUP BY b.orig_addr")) {
+        // The Phase 1.B menu read pipes every per-tenant SELECT
+        // through a `cume_dist()` CTE (RFC §3 stored-score). The
+        // asset aggregate, asset detail, and menu-events branches
+        // each carry the marker but apply distinguishing predicates
+        // below — order the matchers from most-specific to least so
+        // the catch-all `cume_dist()` branch does not eat the
+        // `SUM(...)` or per-asset detail shapes.
+        if (sql.includes("GROUP BY s.orig_addr")) {
+          // Phase 1.B asset aggregate (RFC §3 / §4): CTE
+          // `cume_dist()` form with `SUM(s.baseline_score)`.
           return {
             rows: seed.assetRows,
             rowCount: seed.assetRows.length,
@@ -120,18 +129,19 @@ function makeMockPool(seed: CustomerSeed): {
           const rows = seed.detailRows?.[address] ?? [];
           return { rows, rowCount: rows.length };
         }
-        if (sql.includes("SELECT COUNT(*)::text")) {
+        if (
+          sql.includes("SELECT COUNT(*)::text") &&
+          !sql.includes("cume_dist()")
+        ) {
           return {
             rows: [{ count: String(seed.triagedTotal ?? 0) }],
             rowCount: 1,
           };
         }
-        if (
-          sql.includes("ORDER BY event_time DESC") &&
-          sql.includes("LIMIT $3")
-        ) {
-          // Flat corpus events read for the pivot index — no
-          // `orig_addr` predicate, just the event-time range + cap.
+        if (sql.includes("cume_dist()") && sql.includes("LIMIT $3")) {
+          // Phase 1.B menu events SELECT (RFC §3 / §4) — the
+          // post-`BlockList*` cohort that {@link assembleMenu}
+          // composes the menu over.
           const rows = seed.corpusEvents ?? [];
           return { rows, rowCount: rows.length };
         }

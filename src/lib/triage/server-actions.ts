@@ -7,6 +7,7 @@ import { query as centralQuery } from "@/lib/db/client";
 import type { ThreatCategory } from "@/lib/detection";
 
 import { compareAssets } from "./aggregate";
+import { assembleMenu, type MenuRow } from "./baseline/menu";
 import { buildDispatchContext } from "./dispatch-context";
 import type { TriagePeriod } from "./period";
 import { getCustomerPool } from "./policy/customer-db";
@@ -66,6 +67,27 @@ interface BaselineEventRow {
   category: ThreatCategory | null;
   baseline_score: number | null;
 }
+
+/**
+ * `selectMenuEvents` row shape — extends the read columns with the
+ * Phase 1.B fields needed by the read-time menu algorithm
+ * ({@link assembleMenu}). `baseline_score` here is the read-time
+ * `cume_dist()` over `(kind, baseline_version) ORDER BY raw_score`
+ * computed inline by the CTE — distinct from the unused-by-Phase-1.B
+ * `baseline_triaged_event.baseline_score` column.
+ */
+interface MenuEventDbRow extends BaselineEventRow {
+  baseline_version: string;
+  raw_score: number;
+  selector_tags: string[] | null;
+}
+
+/**
+ * Read-time CUME_DIST contract from RFC §3 — production callers pass
+ * no additional cutoff (slider owned by #471). Tests inject a strict
+ * cutoff to drive the §6 `MIN_NONZERO_FLOOR` fallback.
+ */
+const DEFAULT_MENU_CUTOFF = 0;
 
 interface AssetAggregateRow {
   address: string;
@@ -162,7 +184,7 @@ async function loadCustomerSlice(
   // 2. Funnel + 3. per-asset observed COUNT + 4. per-asset detail
   //    events + 5. flat corpus events for the pivot index fan out in
   //    parallel — the reads are independent and each one bounded.
-  const [detected, triaged, observedCounts, perAssetEvents, corpusEventRows] =
+  const [detected, triaged, observedCounts, perAssetEvents, menuEventRows] =
     await Promise.all([
       countObserved(pool, observedFromIso, period.endIso, signal),
       countTriaged(pool, period, signal),
@@ -178,7 +200,7 @@ async function loadCustomerSlice(
           selectAssetDetailEvents(pool, period, address, signal),
         ),
       ),
-      selectCorpusEvents(pool, period, signal),
+      selectMenuEvents(pool, period, signal),
     ]);
 
   const observedByAddress = new Map<string, number>();
@@ -225,22 +247,17 @@ async function loadCustomerSlice(
     };
   });
 
-  // The pivot index runs over the flat corpus events list — not over
-  // `assets[*].events`, which is capped at 50 per first-page asset and
-  // would silently narrow pivot coverage. This separate read uses the
-  // same `event_time` range and returns up to TRIAGE_HARD_EVENT_CAP
-  // rows ordered newest-first; merging across customers and trimming
-  // to the global cap happens in {@link loadTriagePeriod}.
-  const events: ScoredTriageEvent[] = corpusEventRows.map((dbRow) => {
-    const event = rowToEvent(dbRow);
-    const score = dbRow.baseline_score ?? baselineScore(event);
-    return {
-      ...event,
-      score,
-      customerId,
-      rowKey: `${customerId}/${dbRow.event_key}`,
-    };
-  });
+  // The pivot index runs over the menu algorithm's output — the
+  // §4 `final_menu_rows` set, capped at `default_N` (RFC §6) with the
+  // §6 `MIN_NONZERO_FLOOR` fallback applied when the per-bucket
+  // composition falls below the floor. The assembly here uses
+  // {@link DEFAULT_MENU_CUTOFF} (no additional cutoff above the
+  // cohort) because the slider that owns the cutoff dial is in #471;
+  // production output is determined by quota + fallback alone.
+  const events: ScoredTriageEvent[] = assembleScoredEvents(
+    menuEventRows,
+    customerId,
+  );
 
   return {
     customerId,
@@ -288,21 +305,45 @@ async function selectAssetAggregate(
   signal: AbortSignal | undefined,
 ): Promise<AssetAggregateRow[]> {
   signal?.throwIfAborted();
+  // RFC §3 stored-score / §4: `baseline_score` is read-time
+  // `cume_dist()` over `(kind, baseline_version) ORDER BY raw_score`.
+  // The pre-existing `baseline_triaged_event.baseline_score` column
+  // is Phase 1.A-only (NULL for Phase 1.B rows), so summing it here
+  // would silently zero out the score on every Phase 1.B asset.
+  // The CTE computes the read-time score in one window pass and the
+  // aggregate then sums it per asset.
+  //
+  // Defensive `kind NOT LIKE 'BlockList%'` per RFC §1: cadence
+  // already excludes these on the cadence-side INSERT (PR 2 / #513),
+  // but the menu read keeps the guard so a regression on the cadence
+  // side cannot leak BlockList* rows into the menu's slot allocation
+  // or asset scoring.
+  //
   // Single-tenant fast path — LIMIT/OFFSET is permitted here per
   // #458's "single-tenant SQL example". The multi-tenant code path
   // calls this same query per customer and then merges in JS, which
   // is an aggregate-then-merge equivalent of the keyset-cursor model
   // documented in the issue (no per-customer OFFSET).
   const { rows } = await pool.query<AssetAggregateRow>(
-    `SELECT b.orig_addr::text                       AS address,
+    `WITH scored AS (
+       SELECT orig_addr,
+              event_time,
+              cume_dist() OVER (
+                PARTITION BY kind, baseline_version
+                ORDER BY raw_score
+              ) AS baseline_score
+         FROM baseline_triaged_event
+        WHERE event_time >= $1
+          AND event_time <  $2
+          AND kind NOT LIKE 'BlockList%'
+     )
+     SELECT s.orig_addr::text                       AS address,
             COUNT(*)::text                          AS triaged_count,
-            SUM(b.baseline_score)::double precision AS score,
-            MAX(b.event_time)                       AS last_event_time
-       FROM baseline_triaged_event b
-      WHERE b.event_time >= $1
-        AND b.event_time <  $2
-        AND b.orig_addr IS NOT NULL
-      GROUP BY b.orig_addr
+            SUM(s.baseline_score)::double precision AS score,
+            MAX(s.event_time)                       AS last_event_time
+       FROM scored s
+      WHERE s.orig_addr IS NOT NULL
+      GROUP BY s.orig_addr
       ORDER BY score DESC NULLS LAST,
                last_event_time DESC
       LIMIT $3`,
@@ -312,20 +353,54 @@ async function selectAssetAggregate(
 }
 
 /**
- * Read up to {@link TRIAGE_HARD_EVENT_CAP} corpus events in the
- * period window. The output feeds the pivot index — distinct from
- * `assets[*].events`, which is bounded to 50 per first-page asset and
- * would otherwise narrow pivot coverage for assets past the page or
- * events past the per-asset cap.
+ * Read the period's post-`BlockList*` corpus rows with the read-time
+ * `cume_dist()` `baseline_score` attached per RFC §3, then hand them
+ * to {@link assembleMenu} for the §4 slot-bucket + quota composition
+ * and the §6 `MIN_NONZERO_FLOOR` fallback. Bounded above by
+ * {@link TRIAGE_HARD_EVENT_CAP} on the SQL side as a defense-in-
+ * depth read cap; the algorithm's own `default_N` cap is far smaller
+ * in practice.
+ *
+ * `slot_bucket` is computed in TypeScript rather than in SQL so the
+ * algorithm and the SQL stay independently testable. Per RFC §4 the
+ * SQL only needs to deliver `raw_score`, `baseline_version`,
+ * `selector_tags`, and the per-row metadata — the bucket key is a
+ * pure function of `(kind, selector_tags)` and lives next to the
+ * largest-remainder pass in {@link assembleMenu}.
  */
-async function selectCorpusEvents(
+async function selectMenuEvents(
   pool: pg.Pool,
   period: TriagePeriod,
   signal: AbortSignal | undefined,
-): Promise<BaselineEventRow[]> {
+): Promise<MenuEventDbRow[]> {
   signal?.throwIfAborted();
-  const { rows } = await pool.query<BaselineEventRow>(
-    `SELECT event_key::text         AS event_key,
+  const { rows } = await pool.query<MenuEventDbRow>(
+    `WITH scored AS (
+       SELECT event_key,
+              event_time,
+              kind,
+              sensor,
+              orig_addr,
+              resp_addr,
+              orig_port,
+              resp_port,
+              host,
+              dns_query,
+              uri,
+              category,
+              baseline_version,
+              raw_score,
+              selector_tags,
+              cume_dist() OVER (
+                PARTITION BY kind, baseline_version
+                ORDER BY raw_score
+              ) AS baseline_score
+         FROM baseline_triaged_event
+        WHERE event_time >= $1
+          AND event_time <  $2
+          AND kind NOT LIKE 'BlockList%'
+     )
+     SELECT event_key::text         AS event_key,
             event_time,
             kind,
             sensor,
@@ -337,15 +412,58 @@ async function selectCorpusEvents(
             dns_query,
             uri,
             category,
-            baseline_score
-       FROM baseline_triaged_event
-      WHERE event_time >= $1
-        AND event_time <  $2
-      ORDER BY event_time DESC
+            baseline_version,
+            raw_score,
+            selector_tags,
+            baseline_score::double precision AS baseline_score
+       FROM scored
+      ORDER BY baseline_score DESC, event_time DESC, event_key DESC
       LIMIT $3`,
     [period.startIso, period.endIso, TRIAGE_HARD_EVENT_CAP],
   );
   return rows;
+}
+
+/**
+ * Run the §4 slot-bucket + quota composition (and the §6 fallback)
+ * on a per-tenant {@link selectMenuEvents} result, then re-wrap the
+ * surviving rows in {@link ScoredTriageEvent} shape for the menu /
+ * pivot consumers. `rowKey` keeps the `${customerId}/${event_key}`
+ * convention so the cross-tenant merge in {@link loadTriagePeriod}
+ * deduplicates correctly.
+ */
+function assembleScoredEvents(
+  dbRows: ReadonlyArray<MenuEventDbRow>,
+  customerId: number,
+): ScoredTriageEvent[] {
+  const menuRows: MenuRow[] = dbRows.map((r) => ({
+    eventKey: r.event_key,
+    eventTime: r.event_time,
+    kind: r.kind,
+    baselineVersion: r.baseline_version,
+    rawScore: r.raw_score,
+    baselineScore: r.baseline_score ?? 0,
+    selectorTags: r.selector_tags ?? [],
+  }));
+  const dbRowByKey = new Map(dbRows.map((r) => [r.event_key, r]));
+
+  const result = assembleMenu(menuRows, DEFAULT_MENU_CUTOFF);
+  return result.rows.map((row) => {
+    const dbRow = dbRowByKey.get(row.eventKey);
+    if (dbRow === undefined) {
+      // The algorithm only re-emits rows it received; this branch is
+      // defensive against future divergence between the SQL row set
+      // and the algorithm input set.
+      throw new Error(`menu row ${row.eventKey} missing from db row map`);
+    }
+    const event = rowToEvent(dbRow);
+    return {
+      ...event,
+      score: row.baselineScore,
+      customerId,
+      rowKey: `${customerId}/${dbRow.event_key}`,
+    };
+  });
 }
 
 async function selectAssetDetailEvents(
@@ -355,8 +473,36 @@ async function selectAssetDetailEvents(
   signal: AbortSignal | undefined,
 ): Promise<BaselineEventRow[]> {
   signal?.throwIfAborted();
+  // `baseline_score` is the read-time CUME_DIST per RFC §3, computed
+  // over the full post-BlockList* cohort in the window so per-cohort
+  // rankings are consistent with the menu read in
+  // {@link selectMenuEvents}. The pre-existing Phase 1.A
+  // `baseline_score` column is unused here (NULL for Phase 1.B rows).
+  // The defensive `kind NOT LIKE 'BlockList%'` mirrors the menu SQL.
   const { rows } = await pool.query<BaselineEventRow>(
-    `SELECT event_key::text         AS event_key,
+    `WITH scored AS (
+       SELECT event_key,
+              event_time,
+              kind,
+              sensor,
+              orig_addr,
+              resp_addr,
+              orig_port,
+              resp_port,
+              host,
+              dns_query,
+              uri,
+              category,
+              cume_dist() OVER (
+                PARTITION BY kind, baseline_version
+                ORDER BY raw_score
+              ) AS baseline_score
+         FROM baseline_triaged_event
+        WHERE event_time >= $1
+          AND event_time <  $2
+          AND kind NOT LIKE 'BlockList%'
+     )
+     SELECT event_key::text         AS event_key,
             event_time,
             kind,
             sensor,
@@ -368,11 +514,9 @@ async function selectAssetDetailEvents(
             dns_query,
             uri,
             category,
-            baseline_score
-       FROM baseline_triaged_event
-      WHERE event_time >= $1
-        AND event_time <  $2
-        AND orig_addr  =  $3
+            baseline_score::double precision AS baseline_score
+       FROM scored
+      WHERE orig_addr  =  $3
         AND orig_addr IS NOT NULL
       ORDER BY event_time DESC
       LIMIT $4`,

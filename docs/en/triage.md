@@ -119,33 +119,167 @@ other corpus metadata. Audit and debugging use the stored
 Two modes are visible:
 
 - **Baseline** (active) — the curated rule described
-  in [Baseline scoring rule](#baseline-scoring-rule) below.
+  in [Baseline scoring algorithm](#baseline-scoring-algorithm)
+  below.
 - **With my policies** (disabled) — the seam for the future
   per-operator policy subtree. The button is rendered so the
   toggle is in place from day one, but it cannot be selected
   until the policy feature ships. Hovering it reveals a tooltip
   saying **"Available once Triage policies ship."**
 
-## Baseline scoring rule
+## Baseline scoring algorithm
 
-The baseline scorer is intentionally narrow:
+Phase 1.B replaces the Phase 1.A whitelist + cluster-bonus formula
+with a four-selector cadence-time score and a read-time menu
+composition pass. The shape is fixed by
+[RFC 0001](https://github.com/aicers/aice-web-next/blob/main/rfcs/0001-baseline-algorithm.md);
+the analyst-facing summary below covers what the menu surfaces
+without restating the RFC's full formula derivation.
 
-- **Category whitelist.** An event scores **1.0** when its
-  category is one of the operator-relevant kill-chain stages:
-  `COMMAND_AND_CONTROL`, `EXFILTRATION`, `IMPACT`,
-  `INITIAL_ACCESS`, or `CREDENTIAL_ACCESS`.
-- **Cluster bonus.** An `HttpThreat` event whose `clusterId` is
-  the no-cluster sentinel (empty, `none`, or `null`, case-
-  insensitive) adds another **0.5** on top of the whitelist
-  score. These rows correlate with novel HTTP traffic the
-  upstream model couldn't bucket and are worth surfacing earlier.
+### Cadence-time: `raw_score` and `selector_tags`
 
-An event whose category is outside the whitelist scores **0** and
-is counted in the **Detected** funnel total but not in
-**Triaged**, and contributes nothing to its asset's score.
+When the cadence runner ingests a new event, it computes a
+`raw_score` from five within-kind selectors and writes the result
+to `baseline_triaged_event.raw_score` together with the
+`selector_tags` array that records which selectors fired:
 
-There are no exclusions, no per-operator policies, and no
-persistence in Phase 1.A.
+- **S1 — High-confidence.** Within-kind percentile rank of the
+  event's confidence against the same `kind`'s 7-day / 14-day /
+  30-day history. A 0.92 means "this event sits in the top 8% of
+  same-kind events in the active window." Emits `S1-high` when
+  the rank exceeds the §9 threshold.
+- **S2 — Severe.** Binary signal that flips on when the event's
+  `category` belongs to the operator-relevant kill-chain set
+  (`COMMAND_AND_CONTROL`, `CREDENTIAL_ACCESS`, `EXFILTRATION`,
+  `IMPACT`, `INITIAL_ACCESS`). Emits `S2-severe`.
+- **S3 — Recurring.** Saturated count of repeats for the same
+  `(orig_addr, resp_addr, kind)` triple in the active window;
+  beyond the §9 cap, more repeats do not raise the score. NULL on
+  either address yields `s3 = 0`. Emits `S3-recurring` past the
+  §9 threshold.
+- **S4 — Correlated.** Saturated count of distinct categories the
+  same `orig_addr` emits under this kind in the active window —
+  measures how broadly the asset is implicated under one kind.
+  NULL `orig_addr` yields `s4 = 0`. Emits `S4-correlated` past the
+  §9 threshold.
+- **`UNLABELED_BONUS`.** Binary signal that flips on for
+  `HttpThreat` events whose cluster id is the no-cluster sentinel
+  (empty / `none` / `null`). Emits `unlabeled-cluster`.
+
+`raw_score` is the weighted sum of the five selectors (§9 weights);
+once written it is immutable within its `baseline_version` so a
+later peer event does not retroactively re-rank an already-stored
+row.
+
+The cadence drops `BlockList*` events at the very front of the
+pipeline before any scoring runs (RFC §1), and the menu read keeps a
+defensive `WHERE kind NOT LIKE 'BlockList%'` filter so a regression
+on the cadence side cannot leak those rows back into the menu.
+
+### Read-time: `baseline_score` from `cume_dist()`
+
+The menu does not store `baseline_score`. When the menu loads, the
+read query computes
+
+```sql
+cume_dist() OVER (
+    PARTITION BY kind, baseline_version
+    ORDER BY raw_score
+) AS baseline_score
+```
+
+over the rows in the active window. `baseline_score` is therefore
+a cohort-relative value in `[0, 1]` — a 0.95 places the event in
+the top of its `(kind, baseline_version)` cohort by cumulative
+distribution, with the discrete-step / tied-block boundary
+semantics PostgreSQL's `cume_dist` provides (a single-row partition
+returns `1.0`, so cold-start needs no special handling, and tied
+`raw_score` peers receive identical `baseline_score`).
+
+Partitioning by `(kind, baseline_version)` means rows from
+different `baseline_version`s are ranked independently — the menu
+never compares a `raw_score` from one calibration to a `raw_score`
+from another.
+
+### Slot-bucket composition
+
+After `baseline_score` is attached, the menu composes its output
+per RFC §4:
+
+- **`slot_bucket`.** Every row maps to a bucket key:
+  `('HttpThreat', true)` when the row is an `HttpThreat` carrying
+  the `unlabeled-cluster` tag, `(kind, false)` everywhere else.
+  Unlabeled HttpThreat thus competes for slots as its own virtual
+  kind and a labeled HttpThreat row goes to its own bucket.
+- **Per-bucket quota.** Each bucket's share of the menu is
+  `base_share + α · normalized_volume · normalized_top_confidence
+  + favored_bonus`, where `normalized_top_confidence` is
+  `avg(cardinality(selector_tags)) / MAX_TAGS` and `favored_bonus`
+  is the §9 constant `β` for the five empirically-useful buckets
+  (`DnsCovertChannel`, unlabeled `HttpThreat`, `LockyRansomware`,
+  `RepeatedHttpSessions`, `SuspiciousTlsTraffic`). Shares are
+  distributed across `default_N` slots via the largest-remainder
+  method with a lexicographic `(kind, is_unlabeled)` tie-breaker,
+  so the per-bucket quotas always sum to exactly `default_N`.
+- **`default_N`.** The cognitive-limit cap on menu size:
+  `round(LOWER_FLOOR + scale · log10(1 + post_exclusion_count))`.
+  Log10 keeps the menu analyst-readable across activity bands —
+  a quiet day still surfaces something, a noisy day does not flood
+  the menu.
+- **Cutoff + quota.** Within each bucket, rows passing the cutoff
+  are sorted by `baseline_score DESC` with the `(event_time DESC,
+  event_key DESC)` tie-breaker, and the top `quota[b]` rows
+  survive. A bucket's quota applies once across `baseline_version`s
+  in the active window — when two versions co-exist, their cohorts
+  are merged by `baseline_score DESC` before the cap.
+- **`MIN_NONZERO_FLOOR` fallback.** When the slider is strict
+  enough that the assembled count falls below the floor (and the
+  active window still has at least one post-exclusion row), the
+  menu replaces the bucket-composed result with the top
+  `MIN_NONZERO_FLOOR` rows globally by `baseline_score DESC`,
+  bypassing both quota and cutoff. A clearly-best non-empty menu
+  beats a balanced empty menu when the slider can't fill any
+  bucket's quota.
+
+The strictness slider that drives the cutoff is owned by a
+separate change ([#471](https://github.com/aicers/aice-web-next/issues/471));
+until it ships, the menu runs with no additional cutoff above the
+cohort, so the visible rows are determined entirely by `default_N`
+quota distribution and — when activity is too thin — the
+`MIN_NONZERO_FLOOR` fallback.
+
+### `baseline_version` semantics
+
+Every corpus row carries a `baseline_version` string identifying
+the algorithm that produced it. Phase 1.A rows carry
+`phase1a-simple`; Phase 1.B rows carry `phase1b-four-selector`.
+Two implications matter for analysts:
+
+- **Per-cohort ranking is preserved across upgrades.** The menu's
+  `cume_dist()` partitions on `(kind, baseline_version)`, so an
+  older-version row keeps its relative position within its own
+  cohort instead of being silently re-ranked against the new
+  scale.
+- **Version mix is invisible in the UI.** The header does not
+  surface `baseline_version`; natural turnover resolves the
+  cross-version mix within the menu's typical 30-day window
+  (corpus retention is 180 days, so a long lookback may still
+  span more than one version). Audit and debugging read the
+  stored `baseline_version` column directly.
+
+A `baseline_version` bump follows any change to:
+
+- the §9 tunables (weights, caps, thresholds, slot-allocation
+  constants, `default_N` curve, `MIN_NONZERO_FLOOR`),
+- the membership lists (`CRITICAL_CATEGORIES`,
+  `FAVORED_BUCKETS`),
+- the algorithm's shape (selector addition / removal, scoring
+  formula).
+
+Tuning post-merge is therefore a coordinated change — bump the
+version constant, redeploy, let the cadence write new-version
+rows, and let old-version rows turn over within their retention
+window.
 
 ## Funnel
 
@@ -184,8 +318,15 @@ count toward the funnel's **Detected** total but do not
 contribute to any asset row.
 
 The asset list is read from `baseline_triaged_event` via an
-aggregated SELECT per tenant (`COUNT(*)`, `SUM(baseline_score)`,
-`MAX(event_time)` grouped by `orig_addr`). Multi-customer scopes
+aggregated SELECT per tenant. The SELECT wraps the period's rows
+in a `cume_dist()` CTE per
+[Baseline scoring algorithm](#baseline-scoring-algorithm), then
+groups by `orig_addr` with `COUNT(*)`, `SUM(baseline_score)`, and
+`MAX(event_time)`. `baseline_score` here is the read-time
+`cume_dist()` value, not the legacy Phase 1.A column; the
+defensive `WHERE kind NOT LIKE 'BlockList%'` from the read path
+applies inside the CTE so the asset score never includes a
+`BlockList*` contribution. Multi-customer scopes
 issue one such aggregated query per customer and merge the results
 in JavaScript using the same `score DESC, last_event_time DESC`
 key the per-tenant SQL uses, so equal-score rows from different

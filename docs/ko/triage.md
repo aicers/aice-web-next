@@ -112,7 +112,7 @@ DB에서 `baseline_corpus_state.last_ingested_at`를 읽고,
 
 두 가지 모드가 보입니다.
 
-- **기준** (활성) — [기준 점수 규칙](#기준-점수-규칙)에서
+- **기준** (활성) — [기준 점수 알고리즘](#기준-점수-알고리즘)에서
   설명하는 규칙입니다.
 - **내 정책 적용** (비활성) — 향후 사용자별 정책 서브트리를
   위한 자리입니다. 토글은 첫 출시부터 자리잡혀 있지만, 정책
@@ -120,26 +120,151 @@ DB에서 `baseline_corpus_state.last_ingested_at`를 읽고,
   **"트리아지 정책 출시 후 사용할 수 있습니다."** 라는 툴팁이
   표시됩니다.
 
-## 기준 점수 규칙 { #기준-점수-규칙 }
+## 기준 점수 알고리즘 { #기준-점수-알고리즘 }
 
-기준 점수 규칙은 의도적으로 좁게 설계되어 있습니다.
+1.B 단계는 1.A 단계의 화이트리스트 + 클러스터 보너스 공식을
+케이던스 시점의 네 가지 선택자(selector) 점수와 메뉴 읽기 시점의
+구성 단계로 대체합니다. 알고리즘의 형태는
+[RFC 0001](https://github.com/aicers/aice-web-next/blob/main/rfcs/0001-baseline-algorithm.md)에
+고정되어 있으며, 아래 분석가용 요약은 RFC의 수식을 전부 다시
+적지 않고 메뉴가 표면화하는 결과를 중심으로 정리합니다.
 
-- **카테고리 화이트리스트.** 이벤트의 카테고리가 운영자
-  관점에서 의미 있는 킬체인 단계인 `COMMAND_AND_CONTROL`,
-  `EXFILTRATION`, `IMPACT`, `INITIAL_ACCESS`,
-  `CREDENTIAL_ACCESS` 중 하나일 때 점수 **1.0**이 부여됩니다.
-- **클러스터 보너스.** `HttpThreat` 이벤트의 `clusterId`가
-  클러스터 없음 센티넬(빈 문자열, `none`, `null`, 대소문자
-  무관)이면 화이트리스트 점수에 추가로 **0.5**가 더해집니다.
-  이 행들은 상위 모델이 분류하지 못한 새로운 HTTP 트래픽과
-  연관되는 경향이 있어 우선적으로 살펴볼 가치가 있습니다.
+### 케이던스 시점: `raw_score`와 `selector_tags`
 
-카테고리가 화이트리스트 밖인 이벤트는 점수가 **0**이며, 퍼널의
-**탐지** 합계에는 포함되지만 **트리아지** 합계에는 포함되지
-않고, 어떤 자산 점수에도 기여하지 않습니다.
+케이던스 러너가 새 이벤트를 적재할 때, 다음 다섯 가지 선택자로
+`raw_score`를 계산해 `baseline_triaged_event.raw_score`에 기록하고
+어떤 선택자가 발화했는지 `selector_tags` 배열에 함께 저장합니다.
 
-1.A 단계에는 제외 규칙, 사용자별 정책, 그리고 영구화가 모두
-없습니다.
+- **S1 — 높은 신뢰도.** 동일 `kind`의 7일 / 14일 / 30일 이력에
+  대한 이벤트 신뢰도의 동종-종류 백분위 순위. 0.92는 "이 이벤트가
+  활성 윈도우 내 동종-종류 이벤트의 상위 8%에 속한다"는 뜻입니다.
+  순위가 §9 임계값을 넘으면 `S1-high` 태그가 부여됩니다.
+- **S2 — 심각.** 이벤트의 `category`가 운영자 관점의 킬체인 집합
+  (`COMMAND_AND_CONTROL`, `CREDENTIAL_ACCESS`, `EXFILTRATION`,
+  `IMPACT`, `INITIAL_ACCESS`)에 속할 때 켜지는 이진 신호.
+  `S2-severe` 태그를 부여합니다.
+- **S3 — 반복.** 활성 윈도우 내 동일 `(orig_addr, resp_addr,
+  kind)` 트리플의 반복 횟수에 §9 상한을 적용한 값. 상한을 넘는
+  반복은 점수를 더 올리지 않습니다. 두 주소 중 하나라도 NULL이면
+  `s3 = 0`. §9 임계값을 넘으면 `S3-recurring` 태그가 부여됩니다.
+- **S4 — 연관.** 활성 윈도우 내 동일 `orig_addr`이 같은 `kind`에서
+  내보낸 서로 다른 카테고리의 수에 §9 상한을 적용한 값 — 동일
+  자산이 한 종류 안에서 얼마나 광범위하게 연관되는지를 측정합니다.
+  `orig_addr`이 NULL이면 `s4 = 0`. §9 임계값을 넘으면
+  `S4-correlated` 태그가 부여됩니다.
+- **`UNLABELED_BONUS`.** `HttpThreat` 이벤트의 클러스터 ID가
+  클러스터 없음 센티넬(빈 문자열 / `none` / `null`)일 때 켜지는
+  이진 신호. `unlabeled-cluster` 태그를 부여합니다.
+
+`raw_score`는 다섯 선택자의 가중합(§9 가중치)입니다. 한 번 기록된
+값은 그 행의 `baseline_version` 안에서는 변경되지 않으므로, 이후
+다른 이벤트가 들어와도 이미 저장된 행이 소급해서 재정렬되지
+않습니다.
+
+케이던스는 점수 계산 이전 단계에서 `BlockList*` 이벤트를 파이프라인
+앞부분에서 제외하며(RFC §1), 메뉴 읽기에서도 `WHERE kind NOT LIKE
+'BlockList%'` 방어 필터를 그대로 유지해 케이던스 측 회귀가 발생해도
+해당 행들이 다시 메뉴로 새어 나오지 않게 합니다.
+
+### 읽기 시점: `cume_dist()`로 계산하는 `baseline_score`
+
+메뉴는 `baseline_score`를 저장하지 않습니다. 메뉴를 불러올 때,
+읽기 쿼리가 다음 식을
+
+```sql
+cume_dist() OVER (
+    PARTITION BY kind, baseline_version
+    ORDER BY raw_score
+) AS baseline_score
+```
+
+활성 윈도우의 행에 대해 계산합니다. `baseline_score`는 따라서
+`[0, 1]` 범위의 코호트 상대값입니다 — 0.95는 해당 행이 자신의
+`(kind, baseline_version)` 코호트의 누적 분포 기준 상위권에
+위치한다는 의미이며, PostgreSQL `cume_dist`의 이산-스텝 및
+동률 블록 경계 의미가 그대로 적용됩니다(단일 행 파티션은 `1.0`을
+반환하므로 콜드 스타트가 별도 처리 없이 자연스럽게 해결되며,
+`raw_score`가 같은 동률 행은 동일한 `baseline_score`를 받습니다).
+
+`(kind, baseline_version)`로 파티션하기 때문에 서로 다른
+`baseline_version` 간의 행은 독립적으로 정렬됩니다 — 메뉴는 어떤
+보정 값의 `raw_score`도 다른 보정 값의 `raw_score`와 직접
+비교하지 않습니다.
+
+### 슬롯 버킷(slot bucket) 구성
+
+`baseline_score`가 부여되면, RFC §4에 따라 메뉴 출력을 구성합니다.
+
+- **`slot_bucket`.** 모든 행은 버킷 키로 매핑됩니다. 행이
+  `unlabeled-cluster` 태그를 가진 `HttpThreat`이면
+  `('HttpThreat', true)`, 그 외에는 `(kind, false)`입니다.
+  레이블 없는 HttpThreat은 가상의 자체 종류로 슬롯 경쟁에
+  참여하고, 레이블이 있는 HttpThreat은 다른 버킷으로 들어갑니다.
+- **버킷별 할당량.** 각 버킷의 메뉴 점유율은 `base_share + α ·
+  normalized_volume · normalized_top_confidence + favored_bonus`로
+  계산되며, 여기서 `normalized_top_confidence`는
+  `avg(cardinality(selector_tags)) / MAX_TAGS`,
+  `favored_bonus`는 경험적으로 유용한 다섯 버킷
+  (`DnsCovertChannel`, 레이블 없는 `HttpThreat`,
+  `LockyRansomware`, `RepeatedHttpSessions`,
+  `SuspiciousTlsTraffic`)에 대해 §9 상수 `β`입니다. 점유율은
+  최대 나머지(largest-remainder) 방식으로 `default_N` 슬롯에
+  배분하며 동률은 사전식 `(kind, is_unlabeled)` 순서로 처리하므로,
+  버킷별 할당량의 합은 항상 정확히 `default_N`이 됩니다.
+- **`default_N`.** 메뉴 크기에 대한 인지 부담 상한:
+  `round(LOWER_FLOOR + scale · log10(1 + post_exclusion_count))`.
+  log10 곡선은 활동량 대역 전반에서 메뉴를 분석가가 읽기 좋은
+  크기로 유지합니다 — 한산한 날에도 무언가는 보여주고, 노이즈가
+  많은 날에도 메뉴를 무한정 늘리지 않습니다.
+- **컷오프 + 할당량.** 각 버킷 안에서 컷오프를 통과한 행을
+  `baseline_score DESC`와 `(event_time DESC, event_key DESC)`
+  타이브레이커 순으로 정렬한 뒤, 상위 `quota[b]`개를 취합니다.
+  버킷 할당량은 활성 윈도우의 `baseline_version`을 가로질러 한
+  번만 적용되며, 두 버전이 공존하면 두 코호트를
+  `baseline_score DESC`로 합친 다음에 상한이 작동합니다.
+- **`MIN_NONZERO_FLOOR` 폴백.** 슬라이더가 너무 빡빡해서 조립
+  결과가 플로어보다 적게 떨어졌지만 활성 윈도우에 사후-제외 행이
+  하나라도 남아 있다면, 메뉴는 버킷 조립 결과를 폐기하고
+  `baseline_score DESC` 기준 상위 `MIN_NONZERO_FLOOR`개 행을
+  전역 단위로 표시합니다(할당량과 컷오프 모두 무시). 슬라이더가
+  어떤 버킷의 할당량도 채울 수 없을 때, 비어 있는 균형 잡힌
+  메뉴보다 명백히 가장 강한 신호를 보여주는 비어 있지 않은
+  메뉴가 분석가에게 유용합니다.
+
+컷오프를 조절하는 엄격도 슬라이더는 별도 변경
+([#471](https://github.com/aicers/aice-web-next/issues/471))에서
+다룹니다. 그 슬라이더가 출시되기 전까지는 메뉴가 코호트 위로
+별도 컷오프 없이 동작하므로, 보이는 행은 `default_N` 할당량
+분배만으로 결정되며 — 활동량이 너무 적은 경우에만 —
+`MIN_NONZERO_FLOOR` 폴백이 작동합니다.
+
+### `baseline_version` 의미 { #baseline-version-의미 }
+
+모든 코퍼스 행은 자신을 만든 알고리즘을 식별하는
+`baseline_version` 문자열을 가집니다. 1.A 단계 행은
+`phase1a-simple`, 1.B 단계 행은 `phase1b-four-selector`을
+가집니다. 분석가가 알아야 할 점은 두 가지입니다.
+
+- **업그레이드 전후로 코호트별 순위가 보존됩니다.** 메뉴의
+  `cume_dist()`가 `(kind, baseline_version)` 단위로 파티션을
+  나누므로, 이전 버전의 행은 새 스케일에서 묵시적으로 재정렬되지
+  않고 자신의 코호트 안에서 상대 위치를 유지합니다.
+- **버전 혼재는 UI에서 보이지 않습니다.** 헤더는
+  `baseline_version`을 표시하지 않으며, 메뉴의 표준 30일 윈도우
+  내에서는 자연 만료를 통해 버전 혼재가 해소됩니다(코퍼스 보존은
+  180일이라 긴 조회 기간은 둘 이상의 버전을 포함할 수 있습니다).
+  감사·디버깅은 저장된 `baseline_version` 열을 직접 읽습니다.
+
+다음 항목 중 하나라도 변경되면 `baseline_version`이 증가합니다.
+
+- §9 조정값(가중치, 상한, 임계값, 슬롯 배분 상수, `default_N`
+  곡선, `MIN_NONZERO_FLOOR`),
+- 멤버십 목록(`CRITICAL_CATEGORIES`, `FAVORED_BUCKETS`),
+- 알고리즘의 형태(선택자 추가 / 제거, 점수 공식).
+
+따라서 머지 후 튜닝은 조율된 변경이 됩니다 — 버전 상수를
+올리고 재배포해 케이던스가 새 버전 행을 쓰게 한 뒤, 이전 버전
+행이 자신의 보존 윈도우 내에서 자연 만료되도록 둡니다.
 
 ## 퍼널
 
@@ -172,9 +297,15 @@ DB에서 `baseline_corpus_state.last_ingested_at`를 읽고,
 사용 가능한 출발지 IP가 없는 이벤트는 퍼널의 **탐지** 합계에는
 포함되지만 어떤 자산 행에도 기여하지 않습니다.
 
-자산 목록은 고객별로 `baseline_triaged_event`에 대한 집계 SELECT
-(`COUNT(*)`, `SUM(baseline_score)`, `MAX(event_time)`을 `orig_addr`로
-GROUP BY)로 읽습니다. 다중 고객 범위는 고객마다 한 번씩 이런
+자산 목록은 고객별로 `baseline_triaged_event`에 대한 집계
+SELECT로 읽습니다. 이 SELECT는 [기준 점수
+알고리즘](#기준-점수-알고리즘)대로 기간 내 행을 `cume_dist()`
+CTE로 감싼 다음 `orig_addr`로 GROUP BY 해서 `COUNT(*)`,
+`SUM(baseline_score)`, `MAX(event_time)`을 계산합니다. 여기서
+`baseline_score`는 1.A 단계의 레거시 열이 아니라 읽기 시점의
+`cume_dist()` 값이며, 읽기 경로의 방어용 `WHERE kind NOT LIKE
+'BlockList%'`가 CTE 내부에 적용되어 자산 점수에 `BlockList*`
+기여분이 들어가지 않습니다. 다중 고객 범위는 고객마다 한 번씩 이런
 집계 쿼리를 실행하고 결과를 테넌트별 SQL과 동일한
 `score DESC, last_event_time DESC` 키로 자바스크립트에서
 머지하므로, 점수가 같은 다른 테넌트의 행은 도착 순서가 아니라
