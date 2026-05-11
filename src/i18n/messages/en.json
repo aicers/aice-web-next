@@ -2018,13 +2018,24 @@
         "kinds": "Event kind",
         "categories": "Threat category",
         "levels": "Threat level",
-        "learningMethods": "Learning method"
+        "learningMethods": "Learning method",
+        "keywords": "Keywords"
       },
       "values": {
         "learningMethod": {
           "UNSUPERVISED": "Unsupervised",
           "SEMI_SUPERVISED": "Semi-supervised"
         }
+      },
+      "keywords": {
+        "hint": "Free-text search. Submitting issues a Tier 2 fetch — recent submissions appear below for re-use during this session.",
+        "inputLabel": "Keyword",
+        "inputPlaceholder": "Type a keyword and press Enter",
+        "submit": "Search",
+        "recentHeading": "Recent",
+        "recentChipTemplate": "Search again for {value}",
+        "errorEmpty": "Enter a non-empty keyword to search.",
+        "errorTooLongTemplate": "Keyword is too long — keep it under {max} characters."
       }
     },
     "pivotBreadcrumb": {
@@ -2053,7 +2064,8 @@
         "kinds": "Event kind",
         "categories": "Threat category",
         "levels": "Threat level",
-        "learningMethods": "Learning method"
+        "learningMethods": "Learning method",
+        "keywords": "Keywords"
       }
     },
     "periodChangeConfirm": {

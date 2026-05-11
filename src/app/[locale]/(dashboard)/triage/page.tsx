@@ -29,7 +29,10 @@ interface TriagePageProps {
 // {@link PIVOT_DIMENSIONS}; the panel renders them through dedicated
 // section paths but they still need labels in the dimensions map for
 // breadcrumb / pivot-focus rendering.
-const STATIC_DIMENSION_IDS: readonly PivotDimensionId[] = ["learningMethods"];
+const STATIC_DIMENSION_IDS: readonly PivotDimensionId[] = [
+  "learningMethods",
+  "keywords",
+];
 
 function pivotDimensionsMap(
   resolver: (id: PivotDimensionId) => string,
@@ -201,6 +204,20 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           SEMI_SUPERVISED: t(
             "pivotPanel.values.learningMethod.SEMI_SUPERVISED",
           ),
+        },
+        keywords: {
+          hint: t("pivotPanel.keywords.hint"),
+          inputLabel: t("pivotPanel.keywords.inputLabel"),
+          inputPlaceholder: t("pivotPanel.keywords.inputPlaceholder"),
+          submit: t("pivotPanel.keywords.submit"),
+          recentHeading: t("pivotPanel.keywords.recentHeading"),
+          recentChipTemplate: t.raw(
+            "pivotPanel.keywords.recentChipTemplate",
+          ) as string,
+          errorEmpty: t("pivotPanel.keywords.errorEmpty"),
+          errorTooLongTemplate: t.raw(
+            "pivotPanel.keywords.errorTooLongTemplate",
+          ) as string,
         },
       },
       pivotBreadcrumb: {

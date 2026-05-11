@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" font-family="-apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Tier 2 키워드 자유 입력 섹션 (와이어프레임)</title>
+  <desc id="desc">트리아지 관련 이벤트 패널의 Tier 2 전용 키워드 자유 입력 섹션 와이어프레임. 텍스트 입력란과 검색 버튼, 입력 아래의 인라인 검증 영역, 그리고 가장 최근에 운영자가 입력한 값을 보여 주는 클릭 가능한 "최근" 칩 영역으로 구성됩니다. Enter 또는 검색 버튼을 누르면 서버 필터 Tier 2 조회가 실행되고, 최근 칩을 클릭하면 같은 조회를 다시 실행합니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 6; ry: 6; }
+    .panel-header { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 16px; fill: #18181b; font-weight: 700; }
+    .text-section { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-family { font-size: 11px; fill: #71717a; }
+    .text-hint { font-size: 11px; fill: #71717a; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .row-divider { stroke: #e5e7eb; stroke-width: 1; }
+    .input-box { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .input-text { fill: #a1a1aa; font-size: 12px; font-style: italic; }
+    .btn-primary { fill: #18181b; stroke: #18181b; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-primary-text { fill: #ffffff; font-size: 12px; font-weight: 600; }
+    .chip { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .chip-text { fill: #18181b; font-size: 12px; }
+  </style>
+
+  <rect class="bg" width="720" height="360"/>
+
+  <!-- Card -->
+  <rect class="panel" x="20" y="20" width="680" height="320"/>
+  <rect class="panel-header" x="20" y="20" width="680" height="40"/>
+  <text class="text-title" x="36" y="46">관련 이벤트</text>
+  <text class="text-muted" x="36" y="58">Tier 2 모드</text>
+
+  <!-- Existing focus-driven section divider -->
+  <text class="text-muted" x="36" y="92">… 포커스 기반 섹션(외부 IP, JA3 …) …</text>
+  <line class="row-divider" x1="20" y1="108" x2="700" y2="108"/>
+
+  <!-- Tier 2 only — 키워드 -->
+  <g transform="translate(36, 124)">
+    <text class="text-section" x="0" y="14">키워드</text>
+    <text class="text-family" x="0" y="32">Tier 2 전용</text>
+    <text class="text-hint" x="0" y="50">이벤트 필드 전반에서 토큰을 검색합니다. 제출 시 Tier 2 조회가 발생합니다.</text>
+
+    <!-- Input + Search button row -->
+    <rect class="input-box" x="0" y="64" width="448" height="32"/>
+    <text class="input-text" x="12" y="85">키워드를 입력하고 Enter를 누르세요…</text>
+
+    <rect class="btn-primary" x="460" y="64" width="92" height="32"/>
+    <text class="btn-primary-text" x="506" y="85" text-anchor="middle">검색</text>
+
+    <!-- Inline validation slot -->
+    <text class="text-muted" x="0" y="116">(빈 값 / 길이 초과 시 이 영역에 인라인 검증 메시지가 표시됩니다)</text>
+
+    <!-- Recent chips strip -->
+    <text class="text-section" x="0" y="148">최근</text>
+    <rect class="chip" x="0" y="160" width="136" height="26"/>
+    <text class="chip-text" x="68" y="178" text-anchor="middle">lateral movement</text>
+
+    <rect class="chip" x="148" y="160" width="92" height="26"/>
+    <text class="chip-text" x="194" y="178" text-anchor="middle">powershell</text>
+
+    <rect class="chip" x="252" y="160" width="68" height="26"/>
+    <text class="chip-text" x="286" y="178" text-anchor="middle">mimikatz</text>
+
+    <text class="text-muted" x="0" y="208">최근 5건까지만 표시됩니다. 페이지 세션 한정으로 URL 해시에 인코딩되지</text>
+    <text class="text-muted" x="0" y="224">않으며 기간 / 고객 범위 변경 시 함께 비워집니다.</text>
+  </g>
+</svg>

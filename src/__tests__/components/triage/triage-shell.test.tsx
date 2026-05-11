@@ -93,10 +93,11 @@ const PERIOD = {
 function dimensionsMap(prefix: string): Record<PivotDimensionId, string> {
   const out = {} as Record<PivotDimensionId, string>;
   for (const dim of PIVOT_DIMENSIONS) out[dim.id] = `${prefix}:${dim.id}`;
-  // Static-options dimensions (#498 — `learningMethods`) have no entry
-  // in PIVOT_DIMENSIONS but still need a label for breadcrumb /
-  // pivot-focus rendering.
+  // Static-options dimensions (#498 — `learningMethods`, #499 —
+  // `keywords`) have no entry in PIVOT_DIMENSIONS but still need a
+  // label for breadcrumb / pivot-focus rendering.
   out.learningMethods = `${prefix}:learningMethods`;
+  out.keywords = `${prefix}:keywords`;
   return out;
 }
 
@@ -193,6 +194,16 @@ const LABELS: TriageShellLabels = {
       learningMethodValues: {
         UNSUPERVISED: "Unsupervised",
         SEMI_SUPERVISED: "Semi-supervised",
+      },
+      keywords: {
+        hint: "Free-text search",
+        inputLabel: "Keyword",
+        inputPlaceholder: "Type a keyword",
+        submit: "Search",
+        recentHeading: "Recent",
+        recentChipTemplate: "Search again for {value}",
+        errorEmpty: "Enter a non-empty keyword.",
+        errorTooLongTemplate: "Keyword too long — under {max} characters.",
       },
     },
     pivotBreadcrumb: {
@@ -1064,5 +1075,318 @@ describe("TriageShell — Tier 2 only Learning method static section (#498)", ()
     expect(fetchTier2Mock).not.toHaveBeenCalled();
     // Operator sees the same toast as any other stale-hash fallback.
     expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
+  });
+});
+
+describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => {
+  function selectTier2Scope() {
+    const scopeTab = screen.getByRole("tab", { name: "All detection events" });
+    fireEvent.click(scopeTab);
+  }
+
+  function renderShellWithSingleAsset() {
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    return render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+  }
+
+  function submitKeyword(value: string) {
+    const input = screen.getByLabelText("Keyword") as HTMLInputElement;
+    fireEvent.change(input, { target: { value } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  }
+
+  it("dispatches a Tier 2 fetch with the trimmed value on submit", async () => {
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: "5",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    renderShellWithSingleAsset();
+    selectTier2Scope();
+    submitKeyword("  lateral movement  ");
+    await flushAsync();
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+    expect(fetchTier2Mock.mock.calls[0][0]).toMatchObject({
+      dimension: "keywords",
+      // Trimmed before reaching the fetch path.
+      valueKey: "lateral movement",
+      firstPageOnly: true,
+    });
+  });
+
+  it("does not dispatch a fetch for an empty submission and shows the inline validation message", async () => {
+    renderShellWithSingleAsset();
+    selectTier2Scope();
+    const input = screen.getByLabelText("Keyword");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    await flushAsync();
+    expect(fetchTier2Mock).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toMatch(/non-empty/);
+  });
+
+  it("does not dispatch a fetch for an oversized submission", async () => {
+    renderShellWithSingleAsset();
+    selectTier2Scope();
+    const input = screen.getByLabelText("Keyword");
+    fireEvent.change(input, { target: { value: "a".repeat(257) } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await flushAsync();
+    expect(fetchTier2Mock).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toMatch(/too long/i);
+  });
+
+  it("surfaces the projection modal for a keywords fetch whose totalCount exceeds 20,000", async () => {
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: "30000",
+      truncated: false,
+      hasMore: true,
+      endCursor: "cursor-1",
+    });
+    renderShellWithSingleAsset();
+    selectTier2Scope();
+    submitKeyword("noisy");
+    await flushAsync();
+    expect(
+      screen.getByRole("alertdialog", { name: "Fetch large result?" }),
+    ).toBeTruthy();
+  });
+
+  it("adds successful submissions to the recent chips strip in most-recent order, bounded at 5", async () => {
+    fetchTier2Mock.mockResolvedValue({
+      events: [],
+      totalCount: "1",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    renderShellWithSingleAsset();
+    selectTier2Scope();
+
+    // Six distinct submissions — the recent chip strip must cap at 5
+    // and evict the oldest. Note `selectTier2Scope` causes a
+    // re-render; submitting before that triggers the panel keywords
+    // section.
+    for (const word of ["one", "two", "three", "four", "five", "six"]) {
+      submitKeyword(word);
+      await flushAsync();
+    }
+
+    // Most-recent first. "one" was evicted by the sixth submission.
+    expect(
+      screen.queryByRole("button", { name: "Search again for one" }),
+    ).toBeNull();
+    for (const word of ["six", "five", "four", "three", "two"]) {
+      expect(
+        screen.getByRole("button", { name: `Search again for ${word}` }),
+      ).toBeTruthy();
+    }
+  });
+
+  it("re-fires the same fetch when a recent chip is clicked and moves it to the most-recent position", async () => {
+    fetchTier2Mock.mockResolvedValue({
+      events: [],
+      totalCount: "1",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    renderShellWithSingleAsset();
+    selectTier2Scope();
+    submitKeyword("alpha");
+    await flushAsync();
+    submitKeyword("beta");
+    await flushAsync();
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(2);
+
+    // Click the older "alpha" chip — it must re-fire its fetch and
+    // jump to the most-recent position. The mid-trail re-click also
+    // appends the trail step (the active step before the click was
+    // beta, so alpha is a new step on the trail).
+    fireEvent.click(
+      screen.getByRole("button", { name: "Search again for alpha" }),
+    );
+    await flushAsync();
+    // The re-fire should hit the cache (beta already in flight/ready)
+    // so no extra fetch; the chip just moves. The hook short-circuits
+    // when an existing cached `ready` result is found.
+    // The chip strip is now alpha, beta (alpha moved to head).
+    const chips = screen
+      .getAllByRole("button")
+      .filter((b) =>
+        /^Search again for /.test(b.getAttribute("aria-label") ?? ""),
+      );
+    expect(chips.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Search again for alpha",
+      "Search again for beta",
+    ]);
+  });
+
+  it("does not duplicate a chip when the operator submits a value that already exists in recents", async () => {
+    fetchTier2Mock.mockResolvedValue({
+      events: [],
+      totalCount: "1",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    renderShellWithSingleAsset();
+    selectTier2Scope();
+    submitKeyword("alpha");
+    await flushAsync();
+    submitKeyword("beta");
+    await flushAsync();
+    submitKeyword("alpha"); // duplicate of an existing chip
+    await flushAsync();
+    const chips = screen
+      .getAllByRole("button")
+      .filter((b) =>
+        /^Search again for /.test(b.getAttribute("aria-label") ?? ""),
+      );
+    expect(chips).toHaveLength(2);
+    // Most recent first: alpha now leads, beta follows.
+    expect(chips.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Search again for alpha",
+      "Search again for beta",
+    ]);
+  });
+
+  it("restores a keywords step from the URL hash and queues the Tier 2 fetch without corpus validation", async () => {
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("keywords:lateral movement") +
+      "&triage.pivot.mode=tier2";
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      // Zero matches: per #499 the breadcrumb still renders with the
+      // typed string. No stale-hash fallback for keywords.
+      totalCount: "0",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(fetchTier2Mock).toHaveBeenCalled();
+    expect(fetchTier2Mock.mock.calls[0][0]).toMatchObject({
+      dimension: "keywords",
+      valueKey: "lateral movement",
+    });
+    // Breadcrumb renders with the typed string as the label.
+    expect(
+      screen
+        .getByText("Crumb:keywords: lateral movement")
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    // Zero events returned — no stale-hash fallback toast for
+    // keywords, the breadcrumb stays restored.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // A `keywords` search whose server result is empty must still
+    // land on the synthesized pivot-focus card so the operator does
+    // not see the original asset detail body with only the
+    // breadcrumb hinting that anything changed. The card shows the
+    // dimension-label address with zero counts and an empty events
+    // table.
+    const pivotFocus = screen.getByRole("region", { name: "Pivot focus" });
+    expect(
+      within(pivotFocus).getByText("Dim:keywords: lateral movement"),
+    ).toBeTruthy();
+    expect(within(pivotFocus).getByText("No events")).toBeTruthy();
+  });
+
+  it("recents are not persisted across reloads — opening the page with no hash shows an empty recents strip", () => {
+    // Simulate a fresh page mount: no hash, no recent state in any
+    // persisted store. The recent-chip strip must be absent.
+    renderShellWithSingleAsset();
+    selectTier2Scope();
+    expect(
+      screen.queryByRole("button", {
+        name: /^Search again for /,
+      }),
+    ).toBeNull();
+  });
+
+  it("clears recent chips when the customer scope rotates (matching the Tier 2 cache reset trigger)", async () => {
+    fetchTier2Mock.mockResolvedValue({
+      events: [],
+      totalCount: "1",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    const { rerender } = render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        customerScope="scope-a"
+        labels={LABELS}
+      />,
+    );
+    selectTier2Scope();
+    submitKeyword("alpha");
+    await flushAsync();
+    expect(
+      screen.getByRole("button", { name: "Search again for alpha" }),
+    ).toBeTruthy();
+
+    // Rotate the customer scope while the top asset focus stays the
+    // same. Per #499 this must clear the recents alongside the Tier 2
+    // cache so a stale typed value cannot re-fire into the new scope.
+    rerender(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        customerScope="scope-b"
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(
+      screen.queryByRole("button", { name: /^Search again for / }),
+    ).toBeNull();
   });
 });

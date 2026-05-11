@@ -27,10 +27,11 @@ import {
 function dimensionsMap(prefix: string): Record<PivotDimensionId, string> {
   const out = {} as Record<PivotDimensionId, string>;
   for (const dim of PIVOT_DIMENSIONS) out[dim.id] = `${prefix}:${dim.id}`;
-  // Static-options dimensions (#498 — `learningMethods`) have no entry
-  // in PIVOT_DIMENSIONS but still need a label for breadcrumb /
-  // pivot-focus rendering.
+  // Static-options dimensions (#498 — `learningMethods`, #499 —
+  // `keywords`) have no entry in PIVOT_DIMENSIONS but still need a
+  // label for breadcrumb / pivot-focus rendering.
   out.learningMethods = `${prefix}:learningMethods`;
+  out.keywords = `${prefix}:keywords`;
   return out;
 }
 
@@ -60,6 +61,16 @@ const LABELS: TriagePivotPanelLabels = {
   learningMethodValues: {
     UNSUPERVISED: "Unsupervised",
     SEMI_SUPERVISED: "Semi-supervised",
+  },
+  keywords: {
+    hint: "Free-text search",
+    inputLabel: "Keyword",
+    inputPlaceholder: "Type a keyword",
+    submit: "Search",
+    recentHeading: "Recent",
+    recentChipTemplate: "Search again for {value}",
+    errorEmpty: "Enter a non-empty keyword.",
+    errorTooLongTemplate: "Keyword too long — under {max} characters.",
   },
 };
 
@@ -253,5 +264,126 @@ describe("TriagePivotPanel — Tier 2 only Learning method static section", () =
         name: /Pivot to Dim:learningMethods/,
       }),
     ).toBeNull();
+  });
+});
+
+describe("TriagePivotPanel — Tier 2 only Keywords free-form section (#499)", () => {
+  function renderKeywords({
+    recentKeywords = [],
+    onSubmitKeyword,
+  }: {
+    recentKeywords?: readonly string[];
+    onSubmitKeyword: (value: string) => void;
+  }) {
+    return render(
+      <TriagePivotPanel
+        sections={[]}
+        truncated={false}
+        hasFocus={true}
+        onPivot={vi.fn()}
+        labels={LABELS}
+        showKeywordsSection={true}
+        recentKeywords={recentKeywords}
+        onSubmitKeyword={onSubmitKeyword}
+      />,
+    );
+  }
+
+  it("does not render the section when showKeywordsSection is false", () => {
+    render(
+      <TriagePivotPanel
+        sections={[]}
+        truncated={false}
+        hasFocus={true}
+        onPivot={vi.fn()}
+        labels={LABELS}
+        showKeywordsSection={false}
+        recentKeywords={[]}
+        onSubmitKeyword={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Dim:keywords")).toBeNull();
+    expect(screen.queryByLabelText("Keyword")).toBeNull();
+  });
+
+  it("rejects empty and whitespace-only submissions without calling onSubmitKeyword", () => {
+    const onSubmit = vi.fn();
+    renderKeywords({ onSubmitKeyword: onSubmit });
+    const input = screen.getByLabelText("Keyword") as HTMLInputElement;
+    const submit = screen.getByRole("button", { name: "Search" });
+
+    // Empty submit: button click with empty input.
+    fireEvent.click(submit);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Enter a non-empty keyword.",
+    );
+
+    // Whitespace-only submit: same rejection path.
+    fireEvent.change(input, { target: { value: "   \t  " } });
+    fireEvent.click(submit);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Enter a non-empty keyword.",
+    );
+  });
+
+  it("rejects values longer than 256 characters with an inline message", () => {
+    const onSubmit = vi.fn();
+    renderKeywords({ onSubmitKeyword: onSubmit });
+    const input = screen.getByLabelText("Keyword") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "a".repeat(257) } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Keyword too long — under 256 characters.",
+    );
+  });
+
+  it("dispatches onSubmitKeyword with the trimmed value on Enter", () => {
+    const onSubmit = vi.fn();
+    renderKeywords({ onSubmitKeyword: onSubmit });
+    const input = screen.getByLabelText("Keyword") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "  lateral movement  " } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith("lateral movement");
+    // After a successful submit the input clears so the operator can
+    // type the next keyword without manually deleting the previous.
+    expect(input.value).toBe("");
+  });
+
+  it("dispatches onSubmitKeyword on button click", () => {
+    const onSubmit = vi.fn();
+    renderKeywords({ onSubmitKeyword: onSubmit });
+    fireEvent.change(screen.getByLabelText("Keyword"), {
+      target: { value: "credential dump" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(onSubmit).toHaveBeenCalledWith("credential dump");
+  });
+
+  it("Escape clears the input without dispatching a fetch", () => {
+    const onSubmit = vi.fn();
+    renderKeywords({ onSubmitKeyword: onSubmit });
+    const input = screen.getByLabelText("Keyword") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "scratch" } });
+    fireEvent.keyDown(input, { key: "Escape", code: "Escape" });
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(input.value).toBe("");
+  });
+
+  it("renders recent chips and re-fires onSubmitKeyword with the chip value", () => {
+    const onSubmit = vi.fn();
+    renderKeywords({
+      recentKeywords: ["alpha", "beta", "gamma"],
+      onSubmitKeyword: onSubmit,
+    });
+    const chip = screen.getByRole("button", {
+      name: "Search again for beta",
+    });
+    fireEvent.click(chip);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith("beta");
   });
 });

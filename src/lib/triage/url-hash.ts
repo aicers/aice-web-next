@@ -21,6 +21,7 @@
  * URL hash) — see `baseline-content.tsx` for the wire-up.
  */
 
+import { MAX_KEYWORD_LENGTH } from "./keywords";
 import { isLearningMethodValue } from "./learning-methods";
 import type { PivotDimensionId, PivotValue } from "./pivot/dimensions";
 
@@ -93,6 +94,7 @@ const KNOWN_DIMENSIONS: ReadonlySet<PivotDimensionId> = new Set([
   "categories",
   "levels",
   "learningMethods",
+  "keywords",
 ] as const satisfies readonly PivotDimensionId[]);
 
 function isKnownDimension(value: string): value is PivotDimensionId {
@@ -209,6 +211,14 @@ function parseStepValue(value: string): TriagePivotHashStep | null {
   // operator would see the generic error banner instead of the
   // stale-hash toast.
   if (dimension === "learningMethods" && !isLearningMethodValue(valueKey)) {
+    return null;
+  }
+  // Free-text `keywords` (#499) — the parser still enforces the
+  // submit-time max length so a shared URL with an oversized blob is
+  // treated as stale rather than reaching the Tier 2 fetch path. The
+  // panel's submit handler applies the same ceiling, so a legitimate
+  // shared link is always under the cap by construction.
+  if (dimension === "keywords" && valueKey.length > MAX_KEYWORD_LENGTH) {
     return null;
   }
   return { dimension, valueKey };
