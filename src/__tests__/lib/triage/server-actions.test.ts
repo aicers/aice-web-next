@@ -581,6 +581,78 @@ describe("loadTriagePeriod (SQL data source)", () => {
     }
   });
 
+  it("merges multi-tenant final_menu_rows in §3 priority order before the cross-tenant cap", async () => {
+    // Regression for Round 2 Item 1: the cross-tenant cap used to sort
+    // the merged `final_menu_rows` by `time` alone before slicing,
+    // which meant a multi-tenant scope exceeding the cap could evict a
+    // higher `baseline_score` row from one tenant in favor of a newer
+    // lower-score row from another, leaving `result.assets` and
+    // `result.events` ranked on inconsistent orderings. The merge is
+    // now `(score DESC, time DESC, id DESC)` — the same §3 tie-breaker
+    // the per-tenant composition uses — so the cap drops the
+    // lowest-priority rows first. Exercised below at sub-cap volume;
+    // the sort/slice contract is identical at any volume since the cap
+    // is `slice(0, TRIAGE_HARD_EVENT_CAP)` on the same ordered list.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+    // Customer 1: one HIGH-score row from an OLD time.
+    const oldTs = new Date("2026-05-08T13:00:00.000Z");
+    const customer1 = makeMockPool({
+      customerId: 1,
+      cohortRows: [
+        buildCohortRow({
+          eventKey: "c1-high",
+          address: "10.0.0.1",
+          baselineScore: 0.99,
+          eventTime: oldTs,
+          bucketCount: 1,
+          cohortCount: 1,
+        }),
+      ],
+      detailRowsByAddress: { "10.0.0.1": [] },
+      observedPerAsset: [{ address: "10.0.0.1", detected_count: "1" }],
+    });
+    // Customer 2: one LOW-score row from a NEWER time. Under the old
+    // time-only sort it would land ahead of the customer-1 row, so
+    // under a tight cap it would survive while the high-score row was
+    // evicted. The fix puts the high-score row first regardless of age.
+    const newTs = new Date("2026-05-09T11:30:00.000Z");
+    const customer2 = makeMockPool({
+      customerId: 2,
+      cohortRows: [
+        buildCohortRow({
+          eventKey: "c2-low",
+          address: "10.0.0.2",
+          baselineScore: 0.01,
+          eventTime: newTs,
+          bucketCount: 1,
+          cohortCount: 1,
+        }),
+      ],
+      detailRowsByAddress: { "10.0.0.2": [] },
+      observedPerAsset: [{ address: "10.0.0.2", detected_count: "1" }],
+    });
+    mockGetCustomerPool.mockImplementation(async (id: number) =>
+      id === 1 ? customer1.pool : customer2.pool,
+    );
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+    );
+    expect(result.events).toHaveLength(2);
+    expect(result.events[0]).toMatchObject({
+      customerId: 1,
+      score: 0.99,
+      time: oldTs.toISOString(),
+    });
+    expect(result.events[1]).toMatchObject({
+      customerId: 2,
+      score: 0.01,
+      time: newTs.toISOString(),
+    });
+  });
+
   it("freshness header picks the worst state across customers", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);

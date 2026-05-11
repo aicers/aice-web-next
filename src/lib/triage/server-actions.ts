@@ -817,11 +817,23 @@ export async function loadTriagePeriod(
   const detected = slices.reduce((sum, s) => sum + s.detected, 0);
   const triaged = slices.reduce((sum, s) => sum + s.triaged, 0);
   // Pivot index needs a flat scored events list across customers,
-  // ordered newest-first and trimmed to the global cap. The list is
-  // the union of per-tenant §4 `final_menu_rows`, so the pivot
-  // corpus matches the analyst's visible menu end-to-end.
+  // built from the union of per-tenant §4 `final_menu_rows` so the
+  // pivot corpus matches the analyst's visible menu end-to-end. The
+  // cross-tenant cap is applied in §3 priority order
+  // (`baseline_score DESC, event_time DESC, id DESC`) so a multi-
+  // tenant scope with more than `TRIAGE_HARD_EVENT_CAP` composed rows
+  // drops the lowest-priority rows first rather than evicting older
+  // high-score rows in favor of newer low-score ones. Truncation
+  // matches the §3 tie-breaker (`event_time DESC, event_key DESC`),
+  // and `id` mirrors `event_key` through `rowToEvent` so the cap is
+  // stable across reloads against the same corpus.
   const mergedEvents = slices.flatMap((s) => s.events);
-  mergedEvents.sort((a, b) => b.time.localeCompare(a.time));
+  mergedEvents.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const t = b.time.localeCompare(a.time);
+    if (t !== 0) return t;
+    return b.id.localeCompare(a.id);
+  });
   const truncated = mergedEvents.length > TRIAGE_HARD_EVENT_CAP;
   const events = truncated
     ? mergedEvents.slice(0, TRIAGE_HARD_EVENT_CAP)

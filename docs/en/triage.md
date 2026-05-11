@@ -421,7 +421,12 @@ The menu read is bounded in two layers:
 2. **Cross-tenant `final_menu_rows` cap.** After the per-tenant
    §4 / §6 composition runs, the merged list of `final_menu_rows`
    across the caller's scope is bounded above by **5,000 events**
-   before the pivot index is built. In practice the upstream
+   before the pivot index is built. The cap is applied in §3
+   priority order — `baseline_score DESC, event_time DESC, id DESC`
+   — so when a multi-tenant scope exceeds the ceiling, the
+   lowest-priority rows are dropped first rather than the oldest.
+   This keeps the visible asset list and the pivot corpus aligned
+   on the same priority ranking. In practice the upstream
    `default_N` cap keeps a single tenant's slice well under that
    ceiling (the §6 curve grows logarithmically with cohort size),
    so this cap is a defense-in-depth safety net rather than a
