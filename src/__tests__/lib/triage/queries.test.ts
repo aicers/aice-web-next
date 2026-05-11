@@ -183,6 +183,18 @@ describe("TRIAGE_EVENT_LIST_QUERY", () => {
     ).toBe(true);
   });
 
+  it("selects `id` at the interface level so every subtype carries it", () => {
+    // `id` is required on the `Event` interface (review-web 0.32.0 /
+    // review 0.49.0). Selecting it once at the nodes root covers every
+    // concrete subtype — no per-fragment edit needed — and the Tier 2
+    // dedupe key collapses repeats by identity rather than by the
+    // earlier `(typename, time, addresses, ports)` composite.
+    const rootIdField = nodesSelectionSet.selections.find(
+      (s): s is FieldNode => s.kind === Kind.FIELD && s.name.value === "id",
+    );
+    expect(rootIdField).toBeDefined();
+  });
+
   it("selects clusterId on HttpThreat for the cluster-none bonus", () => {
     const fragment = inlineFragmentFor(nodesSelectionSet, "HttpThreat");
     expect(fragment).toBeDefined();

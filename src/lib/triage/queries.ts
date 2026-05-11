@@ -49,6 +49,7 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
       }
       nodes {
         __typename
+        id
         time
         sensor
         category

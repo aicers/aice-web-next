@@ -33,6 +33,7 @@ vi.mock("@/lib/triage/tier2-fetch", () => ({
 function makeEvent(seq: number): TriageEvent {
   return {
     __typename: "NetworkThreat",
+    id: `evt-${seq}`,
     time: `2026-05-09T12:00:00.${String(seq).padStart(3, "0")}Z`,
     sensor: "sensor-a",
     category: "COMMAND_AND_CONTROL",

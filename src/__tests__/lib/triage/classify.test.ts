@@ -8,9 +8,12 @@ import {
   type TriageHostNetworkGroup,
 } from "@/lib/triage";
 
+let evSeq = 0;
 function ev(overrides: Partial<TriageEvent>): TriageEvent {
+  evSeq += 1;
   return {
     __typename: "NetworkThreat",
+    id: `evt-${evSeq}`,
     time: "2026-05-09T12:00:00.000Z",
     sensor: "sensor-a",
     category: "EXFILTRATION",

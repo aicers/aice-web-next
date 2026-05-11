@@ -224,21 +224,14 @@ function extractValueKey(cacheKey: string): string {
 
 /**
  * Per-event dedupe key. Tier 2 results are deduped against the
- * loaded corpus and against prior Tier 2 fetches by this composite
- * — REview does not expose a stable per-event id on `eventList`.
+ * loaded corpus and against prior Tier 2 fetches by REview's stable
+ * `Event.id` (required on the `Event` interface since review-web
+ * 0.32.0 / review 0.49.0). The earlier composite of
+ * `(__typename, time, orig/respAddr, orig/respPort)` was a
+ * placeholder from #453 (Phase 1A-3) that could collide on
+ * high-rate flows sharing a 5-tuple plus timestamp; the id is
+ * collision-free by contract.
  */
-export function tier2DedupeKey(
-  event: Pick<
-    TriageEvent,
-    "__typename" | "time" | "origAddr" | "respAddr" | "origPort" | "respPort"
-  >,
-): string {
-  return [
-    event.__typename,
-    event.time,
-    event.origAddr ?? "",
-    event.respAddr ?? "",
-    event.origPort ?? "",
-    event.respPort ?? "",
-  ].join("|");
+export function tier2DedupeKey(event: Pick<TriageEvent, "id">): string {
+  return event.id;
 }
