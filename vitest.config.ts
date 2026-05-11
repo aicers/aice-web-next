@@ -45,6 +45,12 @@ export default defineConfig({
             // branches and the wrapper-owned customer cache lifecycle.
             "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
+            // Issue #278 (Reviewer Round 5): real-render coverage for
+            // the Sensor drawer field's loading / error / empty-ready
+            // / populated-ready branches — mirrors the Customer render
+            // test once the loading-spinner and disabled-empty-trigger
+            // patterns landed on Sensor as well.
+            "src/__tests__/components/detection/sensor-multi-select-render.test.tsx",
             // Issue #278 (Reviewer Round 2 #1): cache lifecycle coverage
             // for the wrapper-owned sensor cache — exercises the same
             // "remount of the keyed `<DetectionShell>` does NOT drop
@@ -134,6 +140,7 @@ export default defineConfig({
             "src/__tests__/components/node/resource-sparkline.test.tsx",
             "src/__tests__/components/detection/customer-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
+            "src/__tests__/components/detection/sensor-multi-select-render.test.tsx",
             "src/__tests__/components/detection/detection-tabs-shell-sensor-cache.test.tsx",
             "src/__tests__/components/detection/detection-shell-sensor-cache-probe.test.tsx",
             "src/__tests__/components/detection/detection-analytics-cache-probe.test.tsx",
