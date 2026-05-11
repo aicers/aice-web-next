@@ -46,6 +46,14 @@ export interface TriageNetwork {
  */
 export interface TriageEvent {
   __typename: string;
+  /**
+   * Stable opaque per-event id from REview's `Event` interface
+   * (review-web 0.32.0+ / review 0.49.0+). `ID!` end-to-end — treated
+   * as `string` per the codebase's `IDScalar` convention. Sole input
+   * to {@link tier2DedupeKey} so Tier 2 dedupe collapses repeats by
+   * identity rather than by a fragile composite of network fields.
+   */
+  id: string;
   time: string;
   sensor: string;
   category: ThreatCategory | null;

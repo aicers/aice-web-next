@@ -10,9 +10,12 @@ import {
   type TriageEvent,
 } from "@/lib/triage";
 
+let evSeq = 0;
 function event(overrides: Partial<TriageEvent>): TriageEvent {
+  evSeq += 1;
   return {
     __typename: "PortScan",
+    id: `evt-${evSeq}`,
     time: "2026-05-09T12:00:00.000Z",
     sensor: "sensor-a",
     category: "RECONNAISSANCE",

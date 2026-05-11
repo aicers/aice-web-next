@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import { normalizeEventColumns } from "@/lib/triage/exclusion";
 import type { TriageEvent } from "@/lib/triage/types";
 
+let evSeq = 0;
 function ev(overrides: Partial<TriageEvent>): TriageEvent {
+  evSeq += 1;
   return {
     __typename: "PortScan",
+    id: `evt-${evSeq}`,
     time: "2026-05-09T12:00:00.000Z",
     sensor: "sensor-a",
     category: null,

@@ -16,6 +16,7 @@ const KEY_BASE = {
 function makeEvent(seq: number): TriageEvent {
   return {
     __typename: "NetworkThreat",
+    id: `evt-${seq}`,
     time: `2026-05-09T12:00:00.${String(seq).padStart(3, "0")}Z`,
     sensor: "sensor-a",
     category: "COMMAND_AND_CONTROL",
@@ -231,44 +232,22 @@ describe("Tier2Cache", () => {
 });
 
 describe("tier2DedupeKey", () => {
-  it("produces the same key for events that share the dedupe tuple", () => {
-    const a = tier2DedupeKey({
-      __typename: "HttpThreat",
-      time: "2026-05-09T12:00:00.000Z",
-      origAddr: "10.0.0.1",
-      respAddr: "203.0.113.5",
-      origPort: 12345,
-      respPort: 80,
-    });
-    const b = tier2DedupeKey({
-      __typename: "HttpThreat",
-      time: "2026-05-09T12:00:00.000Z",
-      origAddr: "10.0.0.1",
-      respAddr: "203.0.113.5",
-      origPort: 12345,
-      respPort: 80,
-    });
+  it("collapses two events with the same id even when every other field differs", () => {
+    // Same `Event.id` ⇒ same key, regardless of the network 5-tuple or
+    // timestamp. The pre-0.49.0 composite would have ranked these as
+    // distinct because the 5-tuple disagrees.
+    const a = tier2DedupeKey({ id: "evt-shared" });
+    const b = tier2DedupeKey({ id: "evt-shared" });
     expect(a).toBe(b);
   });
 
-  it("differentiates by typename / time / addresses / ports", () => {
-    const ref = tier2DedupeKey({
-      __typename: "HttpThreat",
-      time: "2026-05-09T12:00:00.000Z",
-      origAddr: "10.0.0.1",
-      respAddr: "203.0.113.5",
-      origPort: 12345,
-      respPort: 80,
-    });
-    expect(
-      tier2DedupeKey({
-        __typename: "DnsCovertChannel",
-        time: "2026-05-09T12:00:00.000Z",
-        origAddr: "10.0.0.1",
-        respAddr: "203.0.113.5",
-        origPort: 12345,
-        respPort: 80,
-      }),
-    ).not.toBe(ref);
+  it("keeps two events with different ids distinct even when every other field is identical", () => {
+    // Same 5-tuple + timestamp but different ids ⇒ distinct keys. The
+    // pre-0.49.0 composite would have collapsed these (the case the
+    // switch to `Event.id` was meant to fix — high-rate flows sharing
+    // a 5-tuple in the same millisecond).
+    const a = tier2DedupeKey({ id: "evt-a" });
+    const b = tier2DedupeKey({ id: "evt-b" });
+    expect(a).not.toBe(b);
   });
 });

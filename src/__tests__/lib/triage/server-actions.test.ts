@@ -35,8 +35,9 @@ function makePage({ nodes, hasNextPage, endCursor = null }: PageOpts) {
       },
       totalCount: String(nodes.length),
       edges: nodes.map((_, i) => ({ cursor: `c-${i}` })),
-      nodes: nodes.map((n) => ({
+      nodes: nodes.map((n, i) => ({
         __typename: "NetworkThreat",
+        id: `evt-${i}`,
         time: "2026-05-09T12:00:00.000Z",
         sensor: "sensor-a",
         category: "COMMAND_AND_CONTROL",

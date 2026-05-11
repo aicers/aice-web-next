@@ -58,6 +58,7 @@ const LABELS: TriagePivotPanelLabels = {
 function makeEvent(i: number): ScoredTriageEvent {
   return {
     __typename: "BlocklistTls",
+    id: `evt-${i}`,
     time: new Date(Date.UTC(2026, 4, 8, 12, 0, i)).toISOString(),
     sensor: "sensor-a",
     category: "EXFILTRATION",

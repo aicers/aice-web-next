@@ -38,8 +38,9 @@ function makePage({ nodeCount, hasNextPage, endCursor, totalCount }: PageOpts) {
       edges: Array.from({ length: nodeCount }, (_, i) => ({
         cursor: `c-${i}`,
       })),
-      nodes: Array.from({ length: nodeCount }, () => ({
+      nodes: Array.from({ length: nodeCount }, (_, i) => ({
         __typename: "NetworkThreat",
+        id: `evt-${i}`,
         time: "2026-05-09T12:00:00.000Z",
         sensor: "sensor-a",
         category: "COMMAND_AND_CONTROL",

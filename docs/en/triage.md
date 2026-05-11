@@ -396,9 +396,8 @@ loaded corpus and the Tier 1 panel are unaffected.
 ### Weak-signal rendering
 
 A row that came from a Tier 2 fetch and is *not* present in the
-Tier 1 corpus (compared via the dedupe key
-`(typename, time, origAddr, respAddr, origPort, respPort)`) renders
-with reduced opacity and a small **weak** badge. Rows that are in
+Tier 1 corpus (compared via REview's stable per-event `Event.id`)
+renders with reduced opacity and a small **weak** badge. Rows that are in
 both — including non-baseline `score === 0` corpus members — render
 without the badge so the operator can tell at a glance whether a
 row was already in the loaded slice or freshly pulled.

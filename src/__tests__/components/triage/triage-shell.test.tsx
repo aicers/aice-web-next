@@ -225,9 +225,12 @@ const LABELS: TriageShellLabels = {
   },
 };
 
+let evSeq = 0;
 function ev(overrides: Partial<TriageEvent>): TriageEvent {
+  evSeq += 1;
   return {
     __typename: "BlocklistTls",
+    id: `evt-${evSeq}`,
     time: "2026-05-08T12:00:00.000Z",
     sensor: "sensor-a",
     category: "EXFILTRATION",
@@ -616,6 +619,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
       events: [
         {
           __typename: "BlocklistTls",
+          id: "tier2-1",
           time: "2026-05-08T13:30:00.000Z",
           sensor: "sensor-a",
           category: "EXFILTRATION",
@@ -627,6 +631,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         },
         {
           __typename: "BlocklistTls",
+          id: "tier2-2",
           time: "2026-05-08T13:35:00.000Z",
           sensor: "sensor-a",
           category: "EXFILTRATION",
@@ -702,6 +707,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
       events: [
         {
           __typename: "BlocklistTls",
+          id: "remoteonly-1",
           time: "2026-05-08T13:30:00.000Z",
           sensor: "sensor-a",
           category: "EXFILTRATION",
@@ -713,6 +719,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         },
         {
           __typename: "BlocklistTls",
+          id: "remoteonly-2",
           time: "2026-05-08T13:35:00.000Z",
           sensor: "sensor-a",
           category: "EXFILTRATION",
@@ -773,6 +780,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
       events: [
         {
           __typename: "BlocklistTls",
+          id: "different-1",
           time: "2026-05-08T13:30:00.000Z",
           sensor: "sensor-a",
           category: "EXFILTRATION",
