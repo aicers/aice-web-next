@@ -154,6 +154,19 @@ describe("createCadencePager — full pipeline (a)–(e)", () => {
     );
     expect(baselineInserts).toHaveLength(2);
 
+    // Phase 1.A dual-write (#512 / RFC 0001 §9 schema-expand): every
+    // baseline INSERT must populate both `baseline_score` and `raw_score`
+    // (positions 16 and 17, zero-indexed 15 and 16) with the same non-null
+    // value, so PR 2's `SET NOT NULL` is safe under rolling deploys.
+    for (const insert of baselineInserts) {
+      const params = insert.params ?? [];
+      const baselineScore = params[15];
+      const rawScore = params[16];
+      expect(typeof baselineScore).toBe("number");
+      expect(rawScore).toBe(baselineScore);
+      expect(insert.sql).toContain("raw_score");
+    }
+
     // Each baseline INSERT carries the empty-set exclusions_fp pre-#457.
     for (const insert of baselineInserts) {
       const params = insert.params ?? [];
@@ -352,7 +365,9 @@ describe("createCadencePager — full pipeline (a)–(e)", () => {
       q.sql.includes("INSERT INTO baseline_triaged_event"),
     );
     expect(baseInsert).toBeDefined();
-    // The score parameter (16th positional arg in our SQL) should be 0.5.
+    // The baseline_score (16th positional arg) and the dual-written
+    // raw_score (17th, per #512) should both be 0.5.
     expect(baseInsert?.params?.[15]).toBe(0.5);
+    expect(baseInsert?.params?.[16]).toBe(0.5);
   });
 });
