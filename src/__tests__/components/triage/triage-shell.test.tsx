@@ -1315,6 +1315,17 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
     // Zero events returned — no stale-hash fallback toast for
     // keywords, the breadcrumb stays restored.
     expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // A `keywords` search whose server result is empty must still
+    // land on the synthesized pivot-focus card so the operator does
+    // not see the original asset detail body with only the
+    // breadcrumb hinting that anything changed. The card shows the
+    // dimension-label address with zero counts and an empty events
+    // table.
+    const pivotFocus = screen.getByRole("region", { name: "Pivot focus" });
+    expect(
+      within(pivotFocus).getByText("Dim:keywords: lateral movement"),
+    ).toBeTruthy();
+    expect(within(pivotFocus).getByText("No events")).toBeTruthy();
   });
 
   it("recents are not persisted across reloads — opening the page with no hash shows an empty recents strip", () => {

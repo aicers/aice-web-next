@@ -325,9 +325,23 @@ export function TriageBaselineContent({
   // dimension+value as the header and the focused events in the
   // table. The asset list still highlights the original anchor so
   // the operator can backtrack.
+  //
+  // Static Tier 2 dimensions (#498 / #499) keep the synthetic focus
+  // card even when the server result is empty: `keywords` skips
+  // corpus validation by design, so a valid search with zero matches
+  // should land on a "Keywords: <value>" focus reporting zero counts
+  // rather than falling back to the original asset detail (which
+  // would leave only the breadcrumb hinting that anything changed).
+  // Non-static dimensions still return null on an empty focus — for
+  // those, an empty bucket can only arise from a stale hash where
+  // the safer fallback is the asset card.
   const pivotFocusAsset: TriageAsset | null = useMemo(() => {
     if (!activeStep || activeStep.kind !== "dimension") return null;
-    if (focusEvents.length === 0) return null;
+    const isReadyStaticTier2 =
+      isStaticTier2Dimension(activeStep.dimension) &&
+      tier2.getCached(activeStep.dimension, activeStep.value.key)?.status ===
+        "ready";
+    if (focusEvents.length === 0 && !isReadyStaticTier2) return null;
     const dimensionLabel = labels.pivotPanel.dimensions[activeStep.dimension];
     const address = `${dimensionLabel}: ${activeStep.value.label}`;
     let triagedCount = 0;
@@ -381,6 +395,7 @@ export function TriageBaselineContent({
     labels.pivotPanel.dimensions,
     trail,
     result.assets,
+    tier2,
   ]);
 
   const detailAsset = pivotFocusAsset ?? effectiveAsset;
