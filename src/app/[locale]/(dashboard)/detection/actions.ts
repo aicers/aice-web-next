@@ -2,8 +2,7 @@
 
 import { getCurrentSession } from "@/lib/auth/session";
 import {
-  DetectionForbiddenError,
-  DetectionUnauthorizedError,
+  classifyEventQueryError,
   type Event,
   type Filter,
   type PageAnchor,
@@ -11,11 +10,6 @@ import {
   type PageSize,
   searchEventsAtAnchor,
 } from "@/lib/detection";
-import {
-  ReviewForbiddenError,
-  ReviewInvalidArgumentError,
-  ReviewUnknownGraphQLError,
-} from "@/lib/review/errors";
 
 export interface RunEventQueryOk {
   ok: true;
@@ -57,13 +51,38 @@ export interface RunEventQueryErr {
    * distinct so the route layer / UI can render an actionable message
    * ("drop the offending IDs and retry", or "no customer access")
    * instead of the generic Detection-access denial.
+   *
+   * `forbidden-sensor-scope` (#278) is the typed translation of a
+   * review-side `Forbidden` raised by `eventList` against a `sensors`
+   * argument that carries a `nodeId` outside the caller's customer
+   * scope — the path review-web 0.33.0 introduced for tampered URLs,
+   * stale saved filters, and mid-session scope changes. The classifier
+   * keys off `filter.input.sensors` being non-empty when the typed
+   * `ReviewForbiddenError` surfaces, because review's response itself
+   * does not carry a structured cause and the customer-scope leg has
+   * already been ruled out in-process by `validateFilterScope` (which
+   * throws `DetectionForbiddenError` before any review round-trip).
+   * The shell uses {@link unavailableSensorIds} to render a "selection
+   * no longer accessible" affordance and offer a one-click drop / refresh.
    */
   code:
     | "unauthenticated"
     | "forbidden"
     | "forbidden-customer-scope"
+    | "forbidden-sensor-scope"
     | "invalid-input"
     | "server-error";
+  /**
+   * Populated only when {@link code} is `"forbidden-sensor-scope"`. Carries
+   * the `sensors` argument from the rejected dispatch so the shell can
+   * resolve each entry to its cached `name` (= `hostFqdn`) and render
+   * the selection-no-longer-accessible affordance with a name-aware
+   * message. IDs the cache cannot resolve fall back to id / count copy
+   * — URL-tampered or stale-share-link IDs that were never in the
+   * cache cannot be name-resolved without an extra fetch, which is
+   * out of scope here.
+   */
+  unavailableSensorIds?: readonly string[];
 }
 
 export type RunEventQueryResult = RunEventQueryOk | RunEventQueryErr;
@@ -136,34 +155,25 @@ export async function runEventQuery(
       pageInfo: connection.pageInfo,
     };
   } catch (err) {
-    if (err instanceof DetectionForbiddenError) {
-      return { ok: false, code: "forbidden-customer-scope" };
+    // #405 I / #278: shared classifier — see
+    // `src/lib/detection/event-query-error.ts` for the full mapping
+    // (including the typed `forbidden-sensor-scope` discriminator
+    // for review-web 0.33.0's `eventList` rejection on an out-of-
+    // scope `sensors` argument). The SSR bootstrap path in
+    // `src/app/[locale]/(dashboard)/detection/page.tsx` consumes the
+    // same helper so a tampered URL / stale saved filter / mid-
+    // session scope change on a cold load lands the operator on the
+    // same "selection no longer accessible" affordance as a client-
+    // side Apply would. `ReviewUnknownGraphQLError` propagates so
+    // the route's error boundary surfaces it.
+    const classified = classifyEventQueryError(err, filter);
+    if (classified.code === "forbidden-sensor-scope") {
+      return {
+        ok: false,
+        code: "forbidden-sensor-scope",
+        unavailableSensorIds: classified.unavailableSensorIds ?? [],
+      };
     }
-    if (err instanceof DetectionUnauthorizedError) {
-      return { ok: false, code: "forbidden" };
-    }
-    // #405 I: review's GraphQL-layer denials must surface as their
-    // typed code, not as a generic `server-error` — operators must be
-    // able to tell "review denied this dispatch" from "the BFF crashed
-    // for an unknown reason". `ReviewInvalidArgumentError` likewise
-    // surfaces as a structured `invalid-input` so the shell can
-    // prompt a refresh / corrective action rather than a generic
-    // banner. `ReviewUnknownGraphQLError` (review answered with an
-    // unrecognised code) deliberately re-throws past the
-    // `server-error` fallback per the security guardrail (Reviewer
-    // Round 2 P1) — a future review-side error code we don't
-    // classify must not be silently masked as a generic graceful
-    // state. Plain `Error`s (transport drops, BFF bugs) still fall
-    // through to `server-error`.
-    if (err instanceof ReviewForbiddenError) {
-      return { ok: false, code: "forbidden" };
-    }
-    if (err instanceof ReviewInvalidArgumentError) {
-      return { ok: false, code: "invalid-input" };
-    }
-    if (err instanceof ReviewUnknownGraphQLError) {
-      throw err;
-    }
-    return { ok: false, code: "server-error" };
+    return { ok: false, code: classified.code };
   }
 }

@@ -52,6 +52,10 @@ import {
   type FetchCustomersForFilterResult,
   fetchCustomersForFilter,
 } from "@/app/[locale]/(dashboard)/detection/customer-actions";
+import {
+  type FetchSensorsResult,
+  fetchSensors,
+} from "@/app/[locale]/(dashboard)/detection/sensor-actions";
 import type { CustomerOption } from "@/components/detection/customer-multi-select";
 import {
   type CustomerCache,
@@ -60,9 +64,11 @@ import {
   type DetectionShellLabels,
   type DetectionShellStateSnapshot,
   derivePeriodForFilter,
+  type SensorCache,
 } from "@/components/detection/detection-shell";
 import type { FilterDrawerOptions } from "@/components/detection/filter-drawer";
 import { PivotToast } from "@/components/detection/pivot-toast";
+import type { SensorOption } from "@/components/detection/sensor-multi-select";
 import {
   TabBar,
   type TabBarLabels,
@@ -249,6 +255,52 @@ export function DetectionTabsShell({
   const [customerCache, setCustomerCache] = useState<CustomerCache>(() => ({
     status: "idle",
   }));
+
+  // Sensor cache lifted out of `DetectionShell` for the same reason
+  // as `customerCache` above (Reviewer Round 2 #1): the shell is
+  // remounted on every active-tab switch (`key={activeTabId}`), so
+  // its own state cannot satisfy #278's page-session-shared cache
+  // contract — opening the drawer in tab A and switching to tab B
+  // would drop the cache and force another fetch. Owning the cache
+  // here keeps it stable across tab create / switch / close as long
+  // as the page itself is mounted, and lets every shell instance
+  // read the same options (so chips in tab B benefit from a fetch
+  // in tab A too).
+  const [sensorCache, setSensorCache] = useState<SensorCache>(() => ({
+    status: "idle",
+  }));
+
+  // Manual refresh callback exposed to the shell. Wraps
+  // `fetchSensors()` and writes the result back into the wrapper-
+  // owned cache; pessimistic on error (cache reverts to `error`
+  // state, the drawer surfaces a Retry).
+  const triggerSensorFetch = useCallback(() => {
+    setSensorCache({ status: "loading" });
+    void fetchSensors().then(
+      (result: FetchSensorsResult) => {
+        if (result.ok) {
+          setSensorCache({
+            status: "loaded",
+            endpointAvailable: result.endpointAvailable,
+            options: result.sensors.map(
+              (s): SensorOption => ({ id: s.id, name: s.name }),
+            ),
+          });
+        } else {
+          setSensorCache({ status: "error" });
+        }
+      },
+      () => setSensorCache({ status: "error" }),
+    );
+  }, []);
+
+  // 401 handler exposed to the shell's drawer-reopen probe path
+  // (#393 Task D): on a session-stale response we wipe the cache
+  // back to `idle` so the next open path falls through to a fresh
+  // fetch instead of serving cached names from the stale session.
+  const invalidateSensorCache = useCallback(() => {
+    setSensorCache({ status: "idle" });
+  }, []);
 
   const initialCustomerOptions = useMemo<readonly CustomerOption[]>(
     () =>
@@ -947,6 +999,15 @@ export function DetectionTabsShell({
           // resets on remount and the operator can re-trigger a walk
           // if needed.
           loading: activeTab.result.loading,
+          // #278 (Reviewer Round 3 #1): persisted in the tab cache by
+          // the shell's `onStateChange` mirror, so a client-side Apply
+          // that surfaces `forbidden-sensor-scope` keeps its banner +
+          // `Drop unavailable sensors and re-apply` recovery after a
+          // tab switch / sibling-shell remount. The shell clears its
+          // local state on recovery, on dismissal, and on the next
+          // committed query — the snapshot follows, so the field
+          // remains transient end-to-end.
+          forbiddenSensorIds: activeTab.result.forbiddenSensorIds,
         }}
         initialEndpoints={activeTab.endpoints}
         initialDraft={activeTab.draft}
@@ -972,6 +1033,9 @@ export function DetectionTabsShell({
         customerCache={customerCache}
         onCustomerRefresh={triggerCustomerFetch}
         initialCustomerOptions={initialCustomerOptions}
+        sensorCache={sensorCache}
+        onSensorRefresh={triggerSensorFetch}
+        onSensorCacheInvalidate={invalidateSensorCache}
       />
       <PivotToast
         message={pivotToast}
@@ -1435,6 +1499,12 @@ export function bootstrapTabToSnapshot(
       queryEpoch: 0,
       loading: false,
       walking: null,
+      // #278: forward the SSR-seeded sensor-scope rejection so the
+      // bootstrap shell mount renders the "selection no longer
+      // accessible" banner on first paint. Transient — handed off
+      // to the shell's local state once and cleared on the next
+      // committed query / recovery / state-change mirror.
+      forbiddenSensorIds: initialTab.result.forbiddenSensorIds ?? null,
     },
     // Issue #429: a bootstrap tab landed via a shared / bookmarked URL
     // does not know which preset (if any) the URL was originally

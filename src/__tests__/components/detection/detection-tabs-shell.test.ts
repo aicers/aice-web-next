@@ -177,6 +177,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
         queryEpoch: 7,
         loading: false,
         walking: null,
+        forbiddenSensorIds: null,
       },
     };
     const merged = mergeSnapshot(tab, snapshot);
@@ -188,6 +189,81 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
     expect(merged.result.totalCount).toBe("42");
     expect(merged.result.hasQueried).toBe(true);
     expect(merged.result.queryEpoch).toBe(7);
+  });
+
+  // #278 Reviewer Round 3 #1: `forbiddenSensorIds` must round-trip
+  // through the snapshot mirror or the banner + one-click recovery
+  // disappear on the next tab switch after a client-side Apply.
+  it("mirrors forbiddenSensorIds from the snapshot into the tab cache so the banner survives a tab switch / remount", () => {
+    const tab = createTabSnapshot({ filter: RICH_FILTER, period: "1h" });
+    const snapshot: DetectionShellStateSnapshot = {
+      filter: RICH_FILTER,
+      period: "1h",
+      endpoints: [],
+      pivotOnly: {},
+      pagination: INITIAL_PAGINATION_STATE,
+      draft: null,
+      analyticsOpen: false,
+      analyticsDimension: "srcIp",
+      analyticsTopN: 10,
+      quickPeekEvent: null,
+      pendingQuickPeekToken: null,
+      timeMode: "custom",
+      result: {
+        events: [],
+        eventKeys: [],
+        totalCount: null,
+        pageInfo: null,
+        resultError: "Sensor selection no longer accessible",
+        lastUpdatedMs: null,
+        hasQueried: true,
+        queryEpoch: 1,
+        loading: false,
+        walking: null,
+        forbiddenSensorIds: ["7", "13"],
+      },
+    };
+    const merged = mergeSnapshot(tab, snapshot);
+    expect(merged.result.forbiddenSensorIds).toEqual(["7", "13"]);
+  });
+
+  it("clears forbiddenSensorIds when the shell recovers / dismisses and emits a null mirror", () => {
+    const tab: TabSnapshot = {
+      ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }),
+      result: {
+        ...createTabSnapshot({ filter: RICH_FILTER, period: "1h" }).result,
+        forbiddenSensorIds: ["7", "13"],
+      },
+    };
+    const snapshot: DetectionShellStateSnapshot = {
+      filter: RICH_FILTER,
+      period: "1h",
+      endpoints: [],
+      pivotOnly: {},
+      pagination: INITIAL_PAGINATION_STATE,
+      draft: null,
+      analyticsOpen: false,
+      analyticsDimension: "srcIp",
+      analyticsTopN: 10,
+      quickPeekEvent: null,
+      pendingQuickPeekToken: null,
+      timeMode: "custom",
+      result: {
+        events: [],
+        eventKeys: [],
+        totalCount: "0",
+        pageInfo: null,
+        resultError: null,
+        lastUpdatedMs: 1_700_000_000_000,
+        hasQueried: true,
+        queryEpoch: 2,
+        loading: false,
+        walking: null,
+        forbiddenSensorIds: null,
+      },
+    };
+    const merged = mergeSnapshot(tab, snapshot);
+    expect(merged.result.forbiddenSensorIds).toBeNull();
   });
 
   // Reviewer Round 1 (P2 per-tab state): the multi-tab wrapper has to
@@ -220,6 +296,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
         queryEpoch: 1,
         loading: false,
         walking: null,
+        forbiddenSensorIds: null,
       },
     };
     const merged = mergeSnapshot(tab, snapshot);
@@ -257,6 +334,7 @@ describe("mergeSnapshot — Reviewer Round 1 (item 2)", () => {
         queryEpoch: 0,
         loading: false,
         walking: null,
+        forbiddenSensorIds: null,
       },
     };
     const merged = mergeSnapshot(tab, snapshot);
@@ -399,6 +477,7 @@ describe("routeSnapshotToTab — Reviewer Round 2 (item 1)", () => {
         queryEpoch: 1,
         loading: false,
         walking: null,
+        forbiddenSensorIds: null,
       },
     };
   }
@@ -626,6 +705,7 @@ describe("mergeSnapshot — Reviewer Round 9 (pending token round-trip)", () => 
         queryEpoch: 0,
         loading: false,
         walking: null,
+        forbiddenSensorIds: null,
       },
     };
     const merged = mergeSnapshot(tab, snapshot);
@@ -662,6 +742,7 @@ describe("mergeSnapshot — Reviewer Round 9 (pending token round-trip)", () => 
         queryEpoch: 1,
         loading: false,
         walking: null,
+        forbiddenSensorIds: null,
       },
     };
     const merged = mergeSnapshot(tab, snapshot);

@@ -153,6 +153,19 @@ export interface ResultCache {
   loading: boolean;
   /** Go-to-page walk progress hint; null when no walk is in flight. */
   walking: { current: number; target: number } | null;
+  /**
+   * #278: ids the most recent query (SSR bootstrap or client-side
+   * Apply) failed against with the typed `forbidden-sensor-scope`
+   * classification (tampered URL / stale saved filter / mid-session
+   * scope change). Populated either by the SSR bootstrap seed for a
+   * cold load, or by the shell's `onStateChange` mirror after a
+   * client Apply lands the banner (Reviewer Round 3 #1) — without
+   * that mirror, switching tabs and back would drop the banner and
+   * its one-click recovery. Cleared by the shell on recovery,
+   * dismissal, or the next committed query / non-sensor error and
+   * propagated through the same mirror.
+   */
+  forbiddenSensorIds?: readonly string[] | null;
 }
 
 export const EMPTY_RESULT_CACHE: ResultCache = {

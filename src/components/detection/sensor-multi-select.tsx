@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, RefreshCw, X } from "lucide-react";
+import { ChevronDown, Loader2, RefreshCw, X } from "lucide-react";
 import { useId, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -31,17 +31,25 @@ export interface SensorMultiSelectLabels {
   errorLabel: string;
   errorHint: string;
   retry: string;
+  /** Tooltip + a11y label for the manual-refresh `↻` icon button (#278). */
+  refresh: string;
 }
 
 /**
  * Runtime status of the sensor inventory the control should render:
  *
  *   - `ready`: options are loaded and REview has published the
- *     sensor-list query — the functional multi-select is shown.
+ *     sensor-list query — the functional multi-select is shown. The
+ *     empty sub-state (`options.length === 0`) is folded in: the
+ *     trigger is disabled with the "No sensors available for your
+ *     customer scope" copy and a sibling `↻` refresh affordance, and
+ *     submission of `sensors` never fires. Mirrors the Customer
+ *     pattern (#384) so the two drawer fields behave the same way
+ *     when the live endpoint returns zero options (Reviewer Round 5).
  *   - `loading`: a `fetchSensors()` request is in flight — a
- *     disabled control with a "Loading sensors…" affordance is
- *     shown so the user is not misled into thinking the endpoint
- *     is absent.
+ *     disabled control with a "Loading sensors…" affordance and an
+ *     inline spinner is shown so the user is not misled into thinking
+ *     the endpoint is absent.
  *   - `error`: the last fetch failed transiently — a disabled
  *     control with a distinct error copy plus a **Retry** action
  *     is shown. The retry fires `onRetry` rather than being frozen
@@ -68,6 +76,15 @@ interface SensorMultiSelectProps {
    * state. No-op in other states.
    */
   onRetry?: () => void;
+  /**
+   * Invoked when the user clicks the inline manual-refresh `↻`
+   * button in the panel header (#278's "Refresh sensor list"
+   * affordance from the fetch-and-cache policy). Mirrors the
+   * Customer field's wiring — the shell fires the same
+   * `fetchSensors()` it ran on first open and replaces the cached
+   * options with the result.
+   */
+  onRefresh?: () => void;
 }
 
 /**
@@ -159,6 +176,7 @@ export function SensorMultiSelect({
   labels,
   state = "ready",
   onRetry,
+  onRefresh,
 }: SensorMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -204,6 +222,23 @@ export function SensorMultiSelect({
               displayLabel: labels.comingSoonLabel,
               displayHint: labels.comingSoonHint,
             };
+    // Reviewer Round 5: render an inline spinner alongside the
+    // "Loading sensors…" copy on the loading branch (mirrors the
+    // Customer field). The first drawer-open spends its entire
+    // `fetchSensors()` round trip in this state, so the spinner is
+    // the visible cue that something is in flight rather than a blank
+    // disabled control. Error / unavailable branches keep the chevron
+    // (error has its own Retry button for the actionable affordance).
+    const trailingIcon =
+      state === "loading" ? (
+        <Loader2
+          className="size-4 animate-spin"
+          aria-hidden="true"
+          data-testid="sensor-multi-select-loading-spinner"
+        />
+      ) : (
+        <ChevronDown className="size-4" aria-hidden="true" />
+      );
     return (
       <fieldset className="flex flex-col gap-2">
         <legend className="text-foreground text-sm font-medium">
@@ -222,7 +257,7 @@ export function SensorMultiSelect({
             )}
           >
             <span>{displayLabel}</span>
-            <ChevronDown className="size-4" aria-hidden="true" />
+            {trailingIcon}
           </button>
           {state === "error" && onRetry ? (
             <Button
@@ -235,6 +270,49 @@ export function SensorMultiSelect({
             >
               <RefreshCw className="size-4" aria-hidden="true" />
               <span>{labels.retry}</span>
+            </Button>
+          ) : null}
+        </div>
+      </fieldset>
+    );
+  }
+
+  // Reviewer Round 5: `ready` + zero options ≡ "fetch succeeded but
+  // the caller's customer scope has no nodes with a configured SENSOR
+  // agent" (per #278's UI-state table). Render a disabled trigger with
+  // the empty-scope copy and surface a sibling refresh button so an
+  // operator whose admin just attached a sensor in another tab can
+  // recover in-page without a full reload. Mirrors the Customer
+  // pattern — the previous behaviour kept the trigger interactive and
+  // hid the message inside an open panel, which is not what the issue
+  // calls for.
+  if (options.length === 0) {
+    return (
+      <fieldset className="flex flex-col gap-2">
+        <legend className="text-foreground text-sm font-medium">
+          {labels.label}
+        </legend>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled
+            aria-disabled="true"
+            title={labels.empty}
+            className="border-input bg-background text-muted-foreground flex h-9 flex-1 items-center justify-between rounded-md border px-3 text-sm opacity-60"
+          >
+            <span>{labels.empty}</span>
+            <ChevronDown className="size-4" aria-hidden="true" />
+          </button>
+          {onRefresh ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onRefresh}
+              aria-label={labels.refresh}
+              title={labels.refresh}
+            >
+              <RefreshCw className="size-4" aria-hidden="true" />
             </Button>
           ) : null}
         </div>
@@ -284,65 +362,72 @@ export function SensorMultiSelect({
           id={panelId}
           className="border-input bg-background flex flex-col gap-2 rounded-md border p-2"
         >
-          <Input
-            ref={searchRef}
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={labels.searchPlaceholder}
-            aria-label={labels.searchPlaceholder}
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              ref={searchRef}
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={labels.searchPlaceholder}
+              aria-label={labels.searchPlaceholder}
+              className="flex-1"
+            />
+            {onRefresh ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onRefresh}
+                aria-label={labels.refresh}
+                title={labels.refresh}
+              >
+                <RefreshCw className="size-4" aria-hidden="true" />
+              </Button>
+            ) : null}
+          </div>
 
-          {options.length === 0 ? (
+          <div className="text-foreground flex items-center gap-2 px-1 py-1 text-sm">
+            <Checkbox
+              id={`${panelId}-all`}
+              checked={allFilteredSelected}
+              onCheckedChange={() => toggleAll()}
+            />
+            <label htmlFor={`${panelId}-all`} className="cursor-pointer">
+              {allFilteredSelected ? labels.clearAll : labels.selectAll}
+            </label>
+          </div>
+
+          {filtered.length === 0 ? (
             <p className="text-muted-foreground px-1 py-2 text-sm">
-              {labels.empty}
+              {labels.noMatches}
             </p>
           ) : (
-            <>
-              <div className="text-foreground flex items-center gap-2 px-1 py-1 text-sm">
-                <Checkbox
-                  id={`${panelId}-all`}
-                  checked={allFilteredSelected}
-                  onCheckedChange={() => toggleAll()}
-                />
-                <label htmlFor={`${panelId}-all`} className="cursor-pointer">
-                  {allFilteredSelected ? labels.clearAll : labels.selectAll}
-                </label>
-              </div>
-
-              {filtered.length === 0 ? (
-                <p className="text-muted-foreground px-1 py-2 text-sm">
-                  {labels.noMatches}
-                </p>
-              ) : (
-                <ul className="max-h-48 overflow-y-auto">
-                  {filtered.map((opt) => {
-                    const checkboxId = `${panelId}-opt-${opt.id}`;
-                    const isChecked = selected.has(opt.id);
-                    return (
-                      <li
-                        key={opt.id}
-                        className={cn(
-                          "text-foreground hover:bg-muted flex items-center gap-2 rounded px-1 py-1.5 text-sm",
-                        )}
-                      >
-                        <Checkbox
-                          id={checkboxId}
-                          checked={isChecked}
-                          onCheckedChange={() => toggle(opt.id)}
-                        />
-                        <label
-                          htmlFor={checkboxId}
-                          className="flex-1 cursor-pointer"
-                        >
-                          {opt.name}
-                        </label>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </>
+            <ul className="max-h-48 overflow-y-auto">
+              {filtered.map((opt) => {
+                const checkboxId = `${panelId}-opt-${opt.id}`;
+                const isChecked = selected.has(opt.id);
+                return (
+                  <li
+                    key={opt.id}
+                    className={cn(
+                      "text-foreground hover:bg-muted flex items-center gap-2 rounded px-1 py-1.5 text-sm",
+                    )}
+                  >
+                    <Checkbox
+                      id={checkboxId}
+                      checked={isChecked}
+                      onCheckedChange={() => toggle(opt.id)}
+                    />
+                    <label
+                      htmlFor={checkboxId}
+                      className="flex-1 cursor-pointer"
+                    >
+                      {opt.name}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </div>
       ) : null}

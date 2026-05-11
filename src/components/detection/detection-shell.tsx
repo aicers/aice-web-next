@@ -16,10 +16,6 @@ import {
   runEventQuery,
 } from "@/app/[locale]/(dashboard)/detection/actions";
 import {
-  type FetchSensorsResult,
-  fetchSensors,
-} from "@/app/[locale]/(dashboard)/detection/sensor-actions";
-import {
   CsvExportConfirmDialog,
   type CsvExportConfirmLabels,
 } from "@/components/detection/csv-export-dialog";
@@ -367,6 +363,30 @@ export interface DetectionShellLabels {
    * transient-error copy.
    */
   resultsForbiddenScope: string;
+  /**
+   * Inline affordance shown when {@link runEventQuery} returns
+   * `code: "forbidden-sensor-scope"` — the inbound filter references
+   * a sensor `nodeId` outside the caller's customer scope (#278's
+   * defensive handling: tampered URLs, stale saved filters, mid-
+   * session scope change). The affordance shows the failing sensor
+   * selection (by cached `name` when available, falling back to id /
+   * count) and offers a one-click recovery action that drops the
+   * unavailable sensors from the filter and re-applies.
+   */
+  resultsForbiddenSensor: {
+    /** Headline copy — e.g. "Selection no longer accessible". */
+    title: string;
+    /** Body copy when at least one failing sensor name resolved from cache. ICU `{names}` placeholder. */
+    descriptionNamed: string;
+    /** Body copy when no failing sensor name could be resolved. ICU `{count}` placeholder. */
+    descriptionUnresolved: string;
+    /** Body copy when some names resolved and some did not. ICU `{names}` and `{count}` placeholders. */
+    descriptionMixed: string;
+    /** Recovery button label, e.g. "Drop unavailable sensors and re-apply". */
+    recoveryAction: string;
+    /** Toast / inline confirmation message after the recovery completes. */
+    recoveryConfirmation: string;
+  };
   analyticsToggle: string;
   analyticsShow: string;
   analyticsHide: string;
@@ -479,6 +499,19 @@ export interface DetectionShellInitialResult {
    * SSR bootstrap leaves it undefined; the shell defaults to false.
    */
   loading?: boolean;
+  /**
+   * #278: ids the SSR bootstrap query failed against with the new
+   * `forbidden-sensor-scope` classification (review-web 0.33.0's
+   * `eventList` rejection on an out-of-scope `sensors` argument
+   * — reached on a cold load from a tampered URL, stale saved
+   * filter, or mid-session scope change). When non-null the shell
+   * primes its `forbiddenSensorIds` state from this seed so the
+   * "selection no longer accessible" banner and the one-click
+   * drop-and-reapply recovery render on the first paint, matching
+   * the client-side Apply path. `null` / undefined means no sensor-
+   * scope rejection — the banner is suppressed.
+   */
+  forbiddenSensorIds?: readonly string[] | null;
 }
 
 /**
@@ -537,6 +570,19 @@ export interface DetectionShellStateSnapshot {
     queryEpoch: number;
     loading: boolean;
     walking: { current: number; target: number } | null;
+    /**
+     * #278 Reviewer Round 3 #1: the typed `forbidden-sensor-scope`
+     * banner state must survive a tab switch / sibling-shell
+     * remount, just like `resultError`. Without it the multi-tab
+     * wrapper would replace the bootstrap-seeded
+     * {@link ResultCache.forbiddenSensorIds} with an undefined value
+     * on the first snapshot emission after a client-side Apply that
+     * lands the banner, dropping the one-click recovery affordance
+     * on the next tab activation. Mirrors the shell's live
+     * `forbiddenSensorIds` state; `null` once the operator recovers,
+     * dismisses, or a non-sensor-scope error/success replaces it.
+     */
+    forbiddenSensorIds: readonly string[] | null;
   };
   /**
    * Issue #429: whether the operator has redefined the time window on
@@ -732,6 +778,36 @@ export interface DetectionShellProps {
    * relied solely on the lazy-loaded cache.
    */
   initialCustomerOptions?: readonly CustomerOption[];
+  /**
+   * Sensor inventory cache, lifted to the multi-tab wrapper for the
+   * same reason as {@link customerCache} (Reviewer Round 2 #1): the
+   * shell is remounted on every active-tab switch (`key={activeTabId}`)
+   * and previously held this state locally, so opening the drawer in
+   * tab A and switching to tab B dropped the cache and forced another
+   * fetch — breaking #278's page-session-shared cache contract.
+   * Owning it on the wrapper keeps the options stable across tab
+   * create / switch / close as long as the Detection page itself is
+   * mounted, and every shell instance reads the same options (so
+   * chips in tab B benefit from a fetch in tab A too).
+   */
+  sensorCache: SensorCache;
+  /**
+   * Manual sensor refresh callback the wrapper supplies. The drawer's
+   * Sensor header `↻` icon and the error-state Retry both call this;
+   * the {@link handleRecoverFromForbiddenSensor} recovery also fires
+   * it to refresh the cache after dropping out-of-scope ids. The
+   * wrapper performs the actual {@link fetchSensors} round-trip and
+   * replaces the cache.
+   */
+  onSensorRefresh: () => void;
+  /**
+   * Drawer-reopen probe hook: when `probeAuthOrRedirect` reports a
+   * 401, the shell asks the wrapper to wipe the sensor cache back to
+   * `idle` so the next drawer-open path falls through to a fresh
+   * fetch instead of serving cached names from a stale session
+   * (#393 Task D). Owned by the wrapper because the cache itself is.
+   */
+  onSensorCacheInvalidate: () => void;
 }
 
 /**
@@ -822,6 +898,37 @@ export function customerStateForCache(
  */
 export function shouldTriggerCustomerFetch(cache: CustomerCache): boolean {
   return cache.status !== "loading" && cache.status !== "loaded";
+}
+
+/**
+ * Render-time copy for #278's "sensor selection no longer accessible"
+ * affordance. Resolves each offending sensor id against the page-
+ * session cache to derive a human name; ids the cache cannot resolve
+ * (URL-tampered or stale-share-link ids that were never in the cache)
+ * fall back to a count so the operator still sees the scope of the
+ * problem without an extra fetch. Pure helper so the branch logic is
+ * unit-testable without standing up the full shell.
+ */
+export interface ForbiddenSensorMessage {
+  /** Comma-joined resolved names; empty when none of the ids were in cache. */
+  readonly names: string;
+  /** Count of ids that the cache could not resolve to a name. */
+  readonly unresolvedCount: number;
+}
+
+export function formatForbiddenSensorMessage(
+  ids: readonly string[],
+  options: readonly SensorOption[],
+): ForbiddenSensorMessage {
+  const byId = new Map(options.map((o) => [o.id, o.name]));
+  const names: string[] = [];
+  let unresolvedCount = 0;
+  for (const id of ids) {
+    const name = byId.get(id);
+    if (name) names.push(name);
+    else unresolvedCount += 1;
+  }
+  return { names: names.join(", "), unresolvedCount };
 }
 
 /**
@@ -1208,6 +1315,9 @@ export function DetectionShell({
   customerCache,
   onCustomerRefresh,
   initialCustomerOptions,
+  sensorCache,
+  onSensorRefresh,
+  onSensorCacheInvalidate,
 }: DetectionShellProps) {
   const t = useTranslations("detection.filters");
   const tResults = useTranslations("detection.results");
@@ -1444,9 +1554,10 @@ export function DetectionShell({
     return list;
   }, [committedFilter]);
   const [draft, setDraft] = useState<DetectionFilterDraft | null>(initialDraft);
-  const [sensorCache, setSensorCache] = useState<SensorCache>({
-    status: "idle",
-  });
+  // Sensor cache is owned by the multi-tab wrapper (Reviewer Round 2
+  // #1): same contract as `customerCache` above — the keyed shell
+  // remount on tab switch must not drop the page-session-shared
+  // inventory.
   // Reviewer Round 1 (#393 Task D follow-up): the cache-hit probe must
   // gate paint, not just fire alongside it. Both `openDrawer` paths
   // flip this flag synchronously when reopening on a `loaded` cache;
@@ -1490,6 +1601,31 @@ export function DetectionShell({
   const [resultError, setResultError] = useState<string | null>(
     initialResult.error,
   );
+  // #278: ids returned by `forbidden-sensor-scope`. When non-null, an
+  // inline affordance renders above the result list with the failing
+  // sensor names (cached → name; uncached → id / count) plus a one-
+  // click "drop unavailable sensors and re-apply" recovery. Cleared on
+  // the next successful slice, transition to a different error class,
+  // or once the operator triggers the recovery.
+  //
+  // Seeded from `initialResult.forbiddenSensorIds` so a cold load that
+  // failed SSR with `forbidden-sensor-scope` (tampered URL / stale
+  // saved filter / mid-session scope change) renders the banner on
+  // the first paint — the SSR bootstrap path runs `searchEventsAtAnchor`
+  // directly rather than going through `runEventQuery`, so without
+  // this seed the typed classification would only ever surface for
+  // client-side Apply.
+  const [forbiddenSensorIds, setForbiddenSensorIds] = useState<
+    readonly string[] | null
+  >(initialResult.forbiddenSensorIds ?? null);
+  // Acknowledgement timestamp for the post-recovery confirmation
+  // notice. The shell flips this on recovery so the inline
+  // "Dropped unavailable sensors…" toast renders once after the
+  // recovery dispatches; the next state transition (or operator
+  // dismiss) clears it.
+  const [sensorRecoveryNoticeAt, setSensorRecoveryNoticeAt] = useState<
+    number | null
+  >(null);
   // Reviewer Round 4 (item 1): seed `loading` from the snapshot so a
   // tab remounted mid-Apply (or mid-Refresh / mid-pagination) keeps
   // showing the loading skeleton until the resume effect below
@@ -1610,39 +1746,14 @@ export function DetectionShell({
   // useCallback and can mid-flight re-create the Go-to-page walker.
   const totalCountRef = useRef<string | null>(initialResult.totalCount);
 
-  // Kicks off a sensor-list fetch and threads the result into the
-  // session cache. Extracted so both the initial lazy-load (on the
-  // first drawer open) and an explicit Retry click from the error
-  // state can share the same side-effect shape. Kept outside the
-  // cache updater so React Strict Mode's double-invocation of state
-  // updaters cannot trigger duplicate network requests.
-  const triggerSensorFetch = useCallback(() => {
-    setSensorCache({ status: "loading" });
-    void fetchSensors().then(
-      (result: FetchSensorsResult) => {
-        if (result.ok) {
-          setSensorCache({
-            status: "loaded",
-            endpointAvailable: result.endpointAvailable,
-            options: result.sensors.map((s) => ({
-              id: s.id,
-              name: s.name,
-            })),
-          });
-        } else {
-          setSensorCache({ status: "error" });
-        }
-      },
-      () => setSensorCache({ status: "error" }),
-    );
-  }, []);
-
-  // Customer fetch is owned by the multi-tab wrapper (Reviewer
-  // Round 1 #1: lifted out of shell-local state so the cache survives
+  // Sensor / Customer fetches are owned by the multi-tab wrapper
+  // (Reviewer Round 1 #1 for customer, Reviewer Round 2 #1 for
+  // sensor: lifted out of shell-local state so the cache survives
   // the keyed remount on tab switch). The wrapper supplies
-  // `onCustomerRefresh` for the manual `↻` and the chip-body /
-  // Filters-button drawer-open paths just call it on an idle/error
-  // cache through `triggerCustomerFetch` below.
+  // `onSensorRefresh` / `onCustomerRefresh` for the manual `↻` and
+  // the chip-body / Filters-button drawer-open paths just call them
+  // on an idle/error cache through the aliases below.
+  const triggerSensorFetch = onSensorRefresh;
   const triggerCustomerFetch = onCustomerRefresh;
 
   const openDrawer = useCallback(() => {
@@ -1682,7 +1793,7 @@ export function DetectionShell({
       // paint normally (#393 Task D).
       setSensorCacheVerifying(true);
       void probeAuthOrRedirect(() => {
-        setSensorCache({ status: "idle" });
+        onSensorCacheInvalidate();
       }).finally(() => {
         setSensorCacheVerifying(false);
       });
@@ -1698,6 +1809,7 @@ export function DetectionShell({
     committedEndpoints,
     sensorCache,
     triggerSensorFetch,
+    onSensorCacheInvalidate,
     customerCache,
     triggerCustomerFetch,
   ]);
@@ -1942,6 +2054,10 @@ export function DetectionShell({
                 ),
               });
               setResultError(null);
+              // Reviewer #278: a successful slice supersedes any prior
+              // sensor-out-of-scope rejection — clear the affordance
+              // banner so it does not linger past the next Apply / Refresh.
+              setForbiddenSensorIds(null);
               setLastUpdatedMs(Date.now());
               // Reviewer Round 7: if the mount-error path left a
               // pending `?event=` token in the URL (no in-memory peek
@@ -1978,11 +2094,23 @@ export function DetectionShell({
               // banner. Other failure codes (`forbidden`,
               // `unauthenticated`, `server-error`) keep the generic
               // copy — those are not actionable from the result region.
-              setResultError(
-                result.code === "forbidden-customer-scope"
-                  ? labels.resultsForbiddenScope
-                  : labels.resultsError,
-              );
+              //
+              // #278: `forbidden-sensor-scope` (review-web 0.33.0's
+              // out-of-scope-sensor rejection on `eventList`) routes
+              // through its own affordance with cached-name resolution
+              // and a one-click recovery, rendered in addition to the
+              // generic banner so the operator can recover in-place.
+              if (result.code === "forbidden-sensor-scope") {
+                setResultError(labels.resultsForbiddenSensor.title);
+                setForbiddenSensorIds(result.unavailableSensorIds ?? []);
+              } else {
+                setResultError(
+                  result.code === "forbidden-customer-scope"
+                    ? labels.resultsForbiddenScope
+                    : labels.resultsError,
+                );
+                setForbiddenSensorIds(null);
+              }
             }
             resolve(result);
           } catch {
@@ -2000,6 +2128,7 @@ export function DetectionShell({
             pendingPeekProbeRef.current = null;
             setPageInfo(null);
             setResultError(labels.resultsError);
+            setForbiddenSensorIds(null);
             resolve(null);
           } finally {
             if (latestRequestIdRef.current === requestId) {
@@ -2012,6 +2141,7 @@ export function DetectionShell({
     [
       labels.resultsError,
       labels.resultsForbiddenScope,
+      labels.resultsForbiddenSensor.title,
       writeQuickPeekToUrl,
       reconcileQuickPeekAgainstSlice,
     ],
@@ -2188,6 +2318,79 @@ export function DetectionShell({
       timeMode,
     ],
   );
+
+  /**
+   * #278 recovery for the `forbidden-sensor-scope` path. The
+   * committed filter referenced at least one sensor `nodeId` that is
+   * no longer in the caller's customer scope (review-web 0.33.0's
+   * out-of-scope rejection). The shell does not know exactly which
+   * subset is at fault — review's response carries no structured
+   * cause and the unavailable id may already be missing from the
+   * page-session cache — so the recovery is "drop ALL sensor ids
+   * from the committed filter and re-apply", paired with a sensor-
+   * list refresh so the next drawer-open shows the up-to-date
+   * options. Mirrors `handleApply`'s commit / URL / dispatch contract
+   * so the recovered query is indistinguishable from a manual Apply
+   * with sensors cleared.
+   */
+  const handleRecoverFromForbiddenSensor = useCallback(() => {
+    if (committedFilter.mode !== "structured") {
+      // Defensive: forbidden-sensor-scope can only originate from a
+      // structured filter that supplied `sensors`. The `query` mode
+      // path does not reach here, but the type union forces the
+      // narrowing — bail out without mutating state if it does.
+      setForbiddenSensorIds(null);
+      return;
+    }
+    // Refresh the sensor cache so the next drawer-open reflects the
+    // post-recovery scope rather than the stale options that allowed
+    // the operator to select the out-of-scope id in the first place.
+    triggerSensorFetch();
+
+    // Strip `sensors` from the committed filter. Dropping all ids is
+    // the only safe move: review's `Forbidden` does not name the
+    // offending id and any id missing from the page-session cache
+    // cannot be cross-checked locally.
+    const { sensors: _droppedSensors, ...restInput } = committedFilter.input;
+    const nextFilter: Filter = { mode: "structured", input: restInput };
+
+    setCommittedFilter(nextFilter);
+    // Keep the cached draft in sync so a subsequent drawer-open does
+    // not resurrect the dropped ids on the next Apply.
+    setDraft((current) => (current ? { ...current, sensorIds: [] } : current));
+
+    // Mirror the recovered filter into the URL — same contract as
+    // `handleApply` so a reload after recovery shows the post-recovery
+    // committed state.
+    const search = buildEncodedFilterSearch({
+      filter: nextFilter,
+      period: committedPeriod,
+      endpoints: committedEndpoints,
+      pivotExtras: extrasFromPivotOnly(pivotOnly),
+    });
+    if (pagination.pageSize !== INITIAL_PAGINATION_STATE.pageSize) {
+      search.set("pageSize", String(pagination.pageSize));
+    }
+    preserveActiveTabParam(search);
+    const qs = search.toString();
+    const url = qs ? `${pathname}?${qs}` : pathname;
+    if (typeof window !== "undefined") {
+      window.history.replaceState(window.history.state, "", url);
+    }
+
+    setForbiddenSensorIds(null);
+    setSensorRecoveryNoticeAt(Date.now());
+    runQueryFor(nextFilter);
+  }, [
+    committedEndpoints,
+    committedFilter,
+    committedPeriod,
+    pagination.pageSize,
+    pathname,
+    pivotOnly,
+    runQueryFor,
+    triggerSensorFetch,
+  ]);
 
   /**
    * Replace the active tab's committed filter with a saved-filter
@@ -2901,7 +3104,7 @@ export function DetectionShell({
         // (#393 Task D).
         setSensorCacheVerifying(true);
         void probeAuthOrRedirect(() => {
-          setSensorCache({ status: "idle" });
+          onSensorCacheInvalidate();
         }).finally(() => {
           setSensorCacheVerifying(false);
         });
@@ -2915,6 +3118,7 @@ export function DetectionShell({
       committedEndpoints,
       sensorCache,
       triggerSensorFetch,
+      onSensorCacheInvalidate,
       customerCache,
       triggerCustomerFetch,
     ],
@@ -3459,6 +3663,7 @@ export function DetectionShell({
         queryEpoch,
         loading,
         walking,
+        forbiddenSensorIds,
       },
     });
   }, [
@@ -3485,6 +3690,7 @@ export function DetectionShell({
     queryEpoch,
     loading,
     walking,
+    forbiddenSensorIds,
   ]);
 
   return (
@@ -3610,6 +3816,17 @@ export function DetectionShell({
             aria-live="polite"
             className="flex min-w-0 flex-1 flex-col"
           >
+            <ForbiddenSensorBanner
+              ids={forbiddenSensorIds}
+              sensorOptions={sensorOptions}
+              labels={labels.resultsForbiddenSensor}
+              onRecover={handleRecoverFromForbiddenSensor}
+            />
+            <SensorRecoveryNotice
+              recoveredAt={sensorRecoveryNoticeAt}
+              message={labels.resultsForbiddenSensor.recoveryConfirmation}
+              onDismiss={() => setSensorRecoveryNoticeAt(null)}
+            />
             <ResultList
               state={resultListState}
               labels={resultListLabels}
@@ -3729,6 +3946,7 @@ export function DetectionShell({
           sensorOptions={drawerSensorOptions}
           sensorState={drawerSensorState}
           onSensorRetry={triggerSensorFetch}
+          onSensorRefresh={triggerSensorFetch}
           customerOptions={customerOptions}
           customerState={customerState}
           onCustomerRefresh={triggerCustomerFetch}
@@ -3777,6 +3995,102 @@ export function DetectionShell({
         onCancel={csvExport.cancelConfirmation}
         onNarrow={handleNarrowFilterFromExport}
       />
+    </div>
+  );
+}
+
+/**
+ * #278: inline banner that surfaces when the apply path rejected the
+ * committed filter as `forbidden-sensor-scope`. Resolves the failing
+ * ids against the page-session sensor cache so the message names the
+ * unavailable sensors; ids missing from the cache fall back to a
+ * count so the operator still sees the scope of the problem without
+ * an extra fetch. The recovery button calls
+ * {@link handleRecoverFromForbiddenSensor} on the shell, which drops
+ * all sensor ids from the committed filter, refreshes the sensor
+ * cache, and re-applies.
+ */
+export function ForbiddenSensorBanner({
+  ids,
+  sensorOptions,
+  labels,
+  onRecover,
+}: {
+  ids: readonly string[] | null;
+  sensorOptions: readonly SensorOption[];
+  labels: DetectionShellLabels["resultsForbiddenSensor"];
+  onRecover: () => void;
+}) {
+  if (ids === null || ids.length === 0) return null;
+  const { names, unresolvedCount } = formatForbiddenSensorMessage(
+    ids,
+    sensorOptions,
+  );
+  let body: string;
+  if (names.length > 0 && unresolvedCount === 0) {
+    body = labels.descriptionNamed.replace("{names}", names);
+  } else if (names.length === 0) {
+    body = labels.descriptionUnresolved.replace(
+      "{count}",
+      String(unresolvedCount),
+    );
+  } else {
+    body = labels.descriptionMixed
+      .replace("{names}", names)
+      .replace("{count}", String(unresolvedCount));
+  }
+  return (
+    <div
+      role="alert"
+      data-slot="forbidden-sensor-banner"
+      className="border-destructive/60 bg-destructive/10 text-destructive mb-3 flex flex-col gap-2 rounded-md border px-3 py-2 text-sm"
+    >
+      <strong className="font-semibold">{labels.title}</strong>
+      <span>{body}</span>
+      <div>
+        <Button type="button" variant="outline" size="sm" onClick={onRecover}>
+          {labels.recoveryAction}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * #278: one-shot inline toast confirming the
+ * {@link handleRecoverFromForbiddenSensor} recovery completed. Each
+ * fresh `recoveredAt` timestamp renders the notice once until the
+ * operator dismisses it (or the shell flips the timestamp back to
+ * `null`). Mirrors {@link PeekLostNotice}'s acknowledge-by-timestamp
+ * pattern so a repeat recovery from the same dispatched filter does
+ * not silently drop the toast.
+ */
+function SensorRecoveryNotice({
+  recoveredAt,
+  message,
+  onDismiss,
+}: {
+  recoveredAt: number | null;
+  message: string;
+  onDismiss: () => void;
+}) {
+  if (recoveredAt === null) return null;
+  return (
+    <div
+      role="status"
+      data-slot="sensor-recovery-notice"
+      className="text-muted-foreground border-muted bg-muted/30 mb-3 flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs"
+    >
+      <span>{message}</span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 text-xs"
+        onClick={onDismiss}
+      >
+        ×
+      </Button>
     </div>
   );
 }
