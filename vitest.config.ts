@@ -50,6 +50,11 @@ export default defineConfig({
             // cache-key + probe contract (Task B).
             "src/__tests__/components/detection/detection-shell-sensor-cache-probe.test.tsx",
             "src/__tests__/components/detection/detection-analytics-cache-probe.test.tsx",
+            // Issue #278: real-render coverage for the
+            // forbidden-sensor-scope recovery banner — the branch
+            // selection between cached / unresolved / mixed copy and
+            // the recovery button click wiring.
+            "src/__tests__/components/detection/detection-shell-forbidden-sensor-banner.test.tsx",
             // Issue #428: the new on-demand presets dropdown replaces
             // the always-visible left rail. Coverage exercises the
             // open/close cycle, recommended preset activation, saved-
@@ -126,6 +131,7 @@ export default defineConfig({
             "src/__tests__/components/detection/detection-tabs-shell-customer-cache.test.tsx",
             "src/__tests__/components/detection/detection-shell-sensor-cache-probe.test.tsx",
             "src/__tests__/components/detection/detection-analytics-cache-probe.test.tsx",
+            "src/__tests__/components/detection/detection-shell-forbidden-sensor-banner.test.tsx",
             "src/__tests__/components/detection/presets-dropdown.test.tsx",
             "src/__tests__/components/detection/detection-shell-save-current-filter.test.tsx",
             "src/__tests__/components/detection/result-list-stale-focus.test.tsx",

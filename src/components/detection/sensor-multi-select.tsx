@@ -31,6 +31,8 @@ export interface SensorMultiSelectLabels {
   errorLabel: string;
   errorHint: string;
   retry: string;
+  /** Tooltip + a11y label for the manual-refresh `↻` icon button (#278). */
+  refresh: string;
 }
 
 /**
@@ -68,6 +70,15 @@ interface SensorMultiSelectProps {
    * state. No-op in other states.
    */
   onRetry?: () => void;
+  /**
+   * Invoked when the user clicks the inline manual-refresh `↻`
+   * button in the panel header (#278's "Refresh sensor list"
+   * affordance from the fetch-and-cache policy). Mirrors the
+   * Customer field's wiring — the shell fires the same
+   * `fetchSensors()` it ran on first open and replaces the cached
+   * options with the result.
+   */
+  onRefresh?: () => void;
 }
 
 /**
@@ -159,6 +170,7 @@ export function SensorMultiSelect({
   labels,
   state = "ready",
   onRetry,
+  onRefresh,
 }: SensorMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -284,14 +296,29 @@ export function SensorMultiSelect({
           id={panelId}
           className="border-input bg-background flex flex-col gap-2 rounded-md border p-2"
         >
-          <Input
-            ref={searchRef}
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={labels.searchPlaceholder}
-            aria-label={labels.searchPlaceholder}
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              ref={searchRef}
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={labels.searchPlaceholder}
+              aria-label={labels.searchPlaceholder}
+              className="flex-1"
+            />
+            {onRefresh ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onRefresh}
+                aria-label={labels.refresh}
+                title={labels.refresh}
+              >
+                <RefreshCw className="size-4" aria-hidden="true" />
+              </Button>
+            ) : null}
+          </div>
 
           {options.length === 0 ? (
             <p className="text-muted-foreground px-1 py-2 text-sm">

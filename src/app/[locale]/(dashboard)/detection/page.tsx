@@ -403,6 +403,22 @@ export default async function DetectionPage({
     resultsLoading: t("filters.resultsLoading"),
     resultsError: t("filters.resultsError"),
     resultsForbiddenScope: t("filters.resultsForbiddenScope"),
+    resultsForbiddenSensor: {
+      title: t("filters.resultsForbiddenSensor.title"),
+      descriptionNamed: t.raw(
+        "filters.resultsForbiddenSensor.descriptionNamed",
+      ) as string,
+      descriptionUnresolved: t.raw(
+        "filters.resultsForbiddenSensor.descriptionUnresolved",
+      ) as string,
+      descriptionMixed: t.raw(
+        "filters.resultsForbiddenSensor.descriptionMixed",
+      ) as string,
+      recoveryAction: t("filters.resultsForbiddenSensor.recoveryAction"),
+      recoveryConfirmation: t(
+        "filters.resultsForbiddenSensor.recoveryConfirmation",
+      ),
+    },
     analyticsToggle: t("analytics.toggle"),
     analyticsShow: t("analytics.show"),
     analyticsHide: t("analytics.hide"),
@@ -583,6 +599,7 @@ export default async function DetectionPage({
         errorLabel: t("filters.sensor.errorLabel"),
         errorHint: t("filters.sensor.errorHint"),
         retry: t("filters.sensor.retry"),
+        refresh: t("filters.sensor.refresh"),
       },
       categoricalSectionLabel: t("filters.categoricalSectionLabel"),
       fields: {

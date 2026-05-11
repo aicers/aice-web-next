@@ -57,13 +57,38 @@ export interface RunEventQueryErr {
    * distinct so the route layer / UI can render an actionable message
    * ("drop the offending IDs and retry", or "no customer access")
    * instead of the generic Detection-access denial.
+   *
+   * `forbidden-sensor-scope` (#278) is the typed translation of a
+   * review-side `Forbidden` raised by `eventList` against a `sensors`
+   * argument that carries a `nodeId` outside the caller's customer
+   * scope — the path review-web 0.33.0 introduced for tampered URLs,
+   * stale saved filters, and mid-session scope changes. The classifier
+   * keys off `filter.input.sensors` being non-empty when the typed
+   * `ReviewForbiddenError` surfaces, because review's response itself
+   * does not carry a structured cause and the customer-scope leg has
+   * already been ruled out in-process by `validateFilterScope` (which
+   * throws `DetectionForbiddenError` before any review round-trip).
+   * The shell uses {@link unavailableSensorIds} to render a "selection
+   * no longer accessible" affordance and offer a one-click drop / refresh.
    */
   code:
     | "unauthenticated"
     | "forbidden"
     | "forbidden-customer-scope"
+    | "forbidden-sensor-scope"
     | "invalid-input"
     | "server-error";
+  /**
+   * Populated only when {@link code} is `"forbidden-sensor-scope"`. Carries
+   * the `sensors` argument from the rejected dispatch so the shell can
+   * resolve each entry to its cached `name` (= `hostFqdn`) and render
+   * the selection-no-longer-accessible affordance with a name-aware
+   * message. IDs the cache cannot resolve fall back to id / count copy
+   * — URL-tampered or stale-share-link IDs that were never in the
+   * cache cannot be name-resolved without an extra fetch, which is
+   * out of scope here.
+   */
+  unavailableSensorIds?: readonly string[];
 }
 
 export type RunEventQueryResult = RunEventQueryOk | RunEventQueryErr;
@@ -156,6 +181,23 @@ export async function runEventQuery(
     // state. Plain `Error`s (transport drops, BFF bugs) still fall
     // through to `server-error`.
     if (err instanceof ReviewForbiddenError) {
+      // #278: distinguish "sensor selection no longer accessible" from
+      // generic forbidden. Review's GraphQL response carries no
+      // structured cause, but `DetectionForbiddenError` already
+      // captured the customer-scope leg before any review round-trip,
+      // so a `ReviewForbiddenError` reaching here with a non-empty
+      // `sensors` filter is the new review-web 0.33.0 sensor-out-of-
+      // scope rejection. The shell renders an affordance keyed off
+      // {@link RunEventQueryErr.unavailableSensorIds}.
+      const sensors =
+        filter.mode === "structured" ? (filter.input.sensors ?? []) : [];
+      if (sensors.length > 0) {
+        return {
+          ok: false,
+          code: "forbidden-sensor-scope",
+          unavailableSensorIds: sensors,
+        };
+      }
       return { ok: false, code: "forbidden" };
     }
     if (err instanceof ReviewInvalidArgumentError) {

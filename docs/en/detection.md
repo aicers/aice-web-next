@@ -999,7 +999,11 @@ chip-name lookups during that brief loading window.
 the detection backend maintains for the customers you can access.
 Open the control to reveal a search box, a **Select all / Clear
 selection** toggle, and a scrollable list of sensors; picked
-sensors also appear as removable chips just below the control.
+sensors also appear as removable chips just below the control. A
+small `↻` **Refresh sensor list** button in the panel header
+re-fetches the inventory in place — use it when an administrator
+has just changed Node assignments in another tab and you want the
+freshest list without closing the drawer.
 
 Applying the filter submits the selected sensor IDs; they show up
 in the active chip bar at the top of the page. For one to three
@@ -1021,6 +1025,18 @@ missing endpoint. If the fetch fails transiently, the control
 surfaces a **Could not load sensors** message with an inline
 **Retry** button; clicking Retry re-issues the request without
 having to close and reopen the drawer.
+
+If a saved or bookmarked filter references a sensor your account
+can no longer access — typically because an administrator changed
+Node assignments mid-session, or the link was tampered with —
+applying it surfaces a **Sensor selection no longer accessible**
+banner above the result list. The banner names the unavailable
+sensors when they are still in the page-session cache and falls
+back to a count for sensors it cannot resolve to a name. A single
+**Drop unavailable sensors and re-apply** button clears every
+sensor selection from the filter, refreshes the sensor list, and
+re-runs the query — after which you can reopen the drawer and
+pick from the up-to-date inventory.
 
 ### Source, destination, and user attributes
 

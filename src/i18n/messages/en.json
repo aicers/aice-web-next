@@ -1309,7 +1309,8 @@
         "loadingHint": "Fetching the sensor list from the detection backend.",
         "errorLabel": "Could not load sensors",
         "errorHint": "Retry fetching the sensor list.",
-        "retry": "Retry"
+        "retry": "Retry",
+        "refresh": "Refresh sensor list"
       },
       "attributesLegend": "Source, destination, and user attributes",
       "attributes": {
@@ -1359,6 +1360,14 @@
       "resultsCount": "{count} detection events match the current filter.",
       "resultsError": "Could not load detection results.",
       "resultsForbiddenScope": "This filter references a customer outside your access. Remove the unavailable customers and retry.",
+      "resultsForbiddenSensor": {
+        "title": "Sensor selection no longer accessible",
+        "descriptionNamed": "These sensors are no longer in your scope: {names}. Drop them and re-apply to continue.",
+        "descriptionUnresolved": "{count} sensor selection(s) are no longer in your scope. Drop them and re-apply to continue.",
+        "descriptionMixed": "These sensors are no longer in your scope: {names}, plus {count} other selection(s) we can't name. Drop them and re-apply to continue.",
+        "recoveryAction": "Drop unavailable sensors and re-apply",
+        "recoveryConfirmation": "Dropped unavailable sensors and refreshed the sensor list."
+      },
       "chips": {
         "period": "Period",
         "source": "Source",

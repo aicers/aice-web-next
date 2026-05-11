@@ -211,6 +211,14 @@ interface FilterDrawerProps {
    */
   onSensorRetry?: () => void;
   /**
+   * Invoked from the inline `↻` refresh button in the Sensor panel
+   * header (#278's manual refresh affordance from the cache policy).
+   * Mirrors `onCustomerRefresh`: the parent re-issues the same
+   * `fetchSensors()` it ran on first open and replaces the cached
+   * options with the result.
+   */
+  onSensorRefresh?: () => void;
+  /**
    * Customer options sourced from `getEffectiveCustomerScope(session)`
    * via the page-session cache (#384). Only consumed when
    * `customerState` is `"ready"`; otherwise the control renders the
@@ -276,6 +284,7 @@ export function FilterDrawer({
   sensorOptions,
   sensorState,
   onSensorRetry,
+  onSensorRefresh,
   customerOptions,
   customerState,
   onCustomerRefresh,
@@ -753,6 +762,7 @@ export function FilterDrawer({
                 labels={labels.sensor}
                 state={sensorState}
                 onRetry={onSensorRetry}
+                onRefresh={onSensorRefresh}
               />
             </div>
 

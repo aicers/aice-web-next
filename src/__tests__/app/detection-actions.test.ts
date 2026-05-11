@@ -100,6 +100,61 @@ describe("runEventQuery — review-side error mapping (#405 I)", () => {
     expect(result).toEqual({ ok: false, code: "forbidden" });
   });
 
+  // #278: review-web 0.33.0 rejects `eventList(filter: { sensors: [...] })`
+  // with `Forbidden` if any supplied `nodeId` is outside the caller's
+  // customer scope. The customer-scope leg already throws
+  // `DetectionForbiddenError` before any review round-trip, so a
+  // `ReviewForbiddenError` reaching the action with a non-empty
+  // `sensors` filter is unambiguously the sensor-out-of-scope path.
+  // The classifier must surface the typed `forbidden-sensor-scope`
+  // code so the shell can render the "selection no longer accessible"
+  // affordance instead of a generic forbidden banner.
+  it("maps ReviewForbiddenError with sensors in filter to `forbidden-sensor-scope`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    const { ReviewForbiddenError } = await import("@/lib/review/errors");
+    mockSearchEventsAtAnchor.mockRejectedValue(
+      new ReviewForbiddenError("Forbidden"),
+    );
+
+    const filterWithSensors: Filter = {
+      mode: "structured",
+      input: { start: null, end: null, sensors: ["7", "13", "21"] },
+    };
+
+    const { runEventQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/actions"
+    );
+
+    const result = await runEventQuery(filterWithSensors);
+    expect(result).toEqual({
+      ok: false,
+      code: "forbidden-sensor-scope",
+      unavailableSensorIds: ["7", "13", "21"],
+    });
+  });
+
+  // #278: a filter with no `sensors` cannot have triggered the sensor-
+  // scope rejection; it must collapse back to generic `forbidden`.
+  it("maps ReviewForbiddenError with no sensors in filter to `forbidden`", async () => {
+    mockGetCurrentSession.mockResolvedValue(SESSION);
+    const { ReviewForbiddenError } = await import("@/lib/review/errors");
+    mockSearchEventsAtAnchor.mockRejectedValue(
+      new ReviewForbiddenError("Forbidden"),
+    );
+
+    const filterWithoutSensors: Filter = {
+      mode: "structured",
+      input: { start: null, end: null, sensors: [] },
+    };
+
+    const { runEventQuery } = await import(
+      "@/app/[locale]/(dashboard)/detection/actions"
+    );
+
+    const result = await runEventQuery(filterWithoutSensors);
+    expect(result).toEqual({ ok: false, code: "forbidden" });
+  });
+
   it("maps ReviewInvalidArgumentError to `invalid-input`", async () => {
     mockGetCurrentSession.mockResolvedValue(SESSION);
     const { ReviewInvalidArgumentError } = await import("@/lib/review/errors");

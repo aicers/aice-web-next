@@ -52,8 +52,15 @@ export interface DetectionFilterDraft {
   confidenceMin: number;
   confidenceMax: number;
   /**
-   * Selected sensor Node IDs. Submitted as `sensors: [<id>, ...]`
-   * in the `EventListFilterInput`.
+   * Selected sensor IDs as projected by `listSensors()` — each entry
+   * equals the SDL `Sensor.nodeId` (a stringified u32 Node DB ID).
+   * The field name stays `sensorIds` rather than mirroring the SDL
+   * `nodeId` per #305's boundary decision (the public `Sensor` shape
+   * keeps the UI-friendly `id` / `name` names — see
+   * `src/lib/detection/sensors.ts`). Submitted verbatim as
+   * `EventListFilterInput.sensors: [<id>, ...]`; review-web resolves
+   * each entry against `node.profile.hostname` for matching against
+   * `Event.sensor`.
    */
   sensorIds: string[];
   /**
