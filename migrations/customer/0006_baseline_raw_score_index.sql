@@ -19,6 +19,17 @@
 -- this file carries the `-- no-transaction` marker on line 1 and ships as
 -- a single statement per the migrations/README.md "one statement per file"
 -- convention for no-transaction migrations.
+--
+-- Intentionally omits `IF NOT EXISTS`. When `CREATE INDEX CONCURRENTLY`
+-- is interrupted, PostgreSQL leaves an invalid index shell with the
+-- target name. With `IF NOT EXISTS`, a re-run would silently skip the
+-- create, the runner would then record this migration as applied, and we
+-- would permanently ship with an unusable index — defeating the read-path
+-- performance contract PR 2 depends on. Without `IF NOT EXISTS`, the
+-- second attempt fails with "relation already exists", the migration row
+-- is not inserted, and the operator must `DROP INDEX <name>` (which
+-- removes the invalid shell) before restarting. Loud-failure beats
+-- silent-broken-state.
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS baseline_triaged_event_kind_version_raw_score_event_time_idx
+CREATE INDEX CONCURRENTLY baseline_triaged_event_kind_version_raw_score_event_time_idx
     ON baseline_triaged_event (kind, baseline_version, raw_score DESC, event_time DESC);
