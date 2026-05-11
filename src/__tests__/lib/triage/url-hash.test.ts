@@ -21,15 +21,15 @@ describe("parseTriagePivotHash", () => {
     });
   });
 
-  it("parses an asset + dimension steps + mode", () => {
+  it("parses an asset + dimension steps + mode (composite key)", () => {
     const state = parseTriagePivotHash(
-      "#triage.pivot.asset=10.0.0.1" +
+      "#triage.pivot.asset=42%2F10.0.0.1" +
         "&triage.pivot.step=ja3%3Aabc123" +
         "&triage.pivot.step=country%3AUS" +
         "&triage.pivot.mode=tier2",
     );
     expect(state).toEqual({
-      asset: "10.0.0.1",
+      asset: { customerId: 42, address: "10.0.0.1" },
       steps: [
         { dimension: "ja3", valueKey: "abc123" },
         { dimension: "country", valueKey: "US" },
@@ -40,13 +40,35 @@ describe("parseTriagePivotHash", () => {
 
   it("ignores foreign keys (e.g. triage.strictness.*)", () => {
     const state = parseTriagePivotHash(
-      "#triage.pivot.asset=10.0.0.1" +
+      "#triage.pivot.asset=42%2F10.0.0.1" +
         "&triage.strictness.level=high" +
         "&unrelated=value",
     );
-    expect(state.asset).toBe("10.0.0.1");
+    expect(state.asset).toEqual({ customerId: 42, address: "10.0.0.1" });
     expect(state.steps).toEqual([]);
     expect(state.mode).toBeNull();
+  });
+
+  it("treats a legacy single-component asset focus as customerId-null", () => {
+    // URLs produced before 1B-3 wrote the bare address. Surface them
+    // as `customerId: null` so the caller can render the stale-hash
+    // toast rather than mis-resolving against the first customer's
+    // matching address.
+    const state = parseTriagePivotHash("#triage.pivot.asset=10.0.0.1");
+    expect(state.asset).toEqual({ customerId: null, address: "10.0.0.1" });
+  });
+
+  it("rejects malformed asset focus encodings", () => {
+    // Non-numeric customer prefix → stale.
+    expect(
+      parseTriagePivotHash("#triage.pivot.asset=foo%2F10.0.0.1").asset,
+    ).toBeNull();
+    // Empty address after slash → stale.
+    expect(parseTriagePivotHash("#triage.pivot.asset=42%2F").asset).toBeNull();
+    // Negative customer id → stale.
+    expect(
+      parseTriagePivotHash("#triage.pivot.asset=-1%2F10.0.0.1").asset,
+    ).toBeNull();
   });
 
   it("drops malformed step entries", () => {
@@ -84,7 +106,7 @@ describe("serializeTriagePivotHash", () => {
 
   it("encodes asset + steps + mode", () => {
     const out = serializeTriagePivotHash({
-      asset: "10.0.0.1",
+      asset: { customerId: 42, address: "10.0.0.1" },
       steps: [
         { dimension: "ja3", valueKey: "abc123" },
         { dimension: "country", valueKey: "US" },
@@ -92,7 +114,7 @@ describe("serializeTriagePivotHash", () => {
       mode: "tier2",
     });
     expect(out).toBe(
-      "triage.pivot.asset=10.0.0.1" +
+      "triage.pivot.asset=42%2F10.0.0.1" +
         "&triage.pivot.step=ja3%3Aabc123" +
         "&triage.pivot.step=country%3AUS" +
         "&triage.pivot.mode=tier2",
@@ -101,7 +123,7 @@ describe("serializeTriagePivotHash", () => {
 
   it("round-trips through parse", () => {
     const original = {
-      asset: "192.168.1.7",
+      asset: { customerId: 7, address: "192.168.1.7" },
       steps: [
         { dimension: "uriPattern" as const, valueKey: "/login?id=:n" },
         { dimension: "host" as const, valueKey: "example.com" },
@@ -117,7 +139,7 @@ describe("pivotHashFromTrail", () => {
   it("collects asset + dimension steps in trail order", () => {
     const state = pivotHashFromTrail(
       [
-        { kind: "asset", address: "10.0.0.1" },
+        { kind: "asset", customerId: 42, address: "10.0.0.1" },
         {
           kind: "dimension",
           dimension: "ja3",
@@ -132,7 +154,7 @@ describe("pivotHashFromTrail", () => {
       "tier2",
     );
     expect(state).toEqual({
-      asset: "10.0.0.1",
+      asset: { customerId: 42, address: "10.0.0.1" },
       steps: [
         { dimension: "ja3", valueKey: "abc123" },
         { dimension: "country", valueKey: "US" },
@@ -152,13 +174,13 @@ describe("replaceTriagePivotHash", () => {
     const next = replaceTriagePivotHash(
       "#triage.pivot.asset=old&triage.strictness.level=high",
       {
-        asset: "10.0.0.2",
+        asset: { customerId: 1, address: "10.0.0.2" },
         steps: [{ dimension: "ja3", valueKey: "x" }],
         mode: null,
       },
     );
     expect(next).toContain("triage.strictness.level=high");
-    expect(next).toContain("triage.pivot.asset=10.0.0.2");
+    expect(next).toContain("triage.pivot.asset=1%2F10.0.0.2");
     expect(next).toContain("triage.pivot.step=ja3%3Ax");
     expect(next).not.toContain("triage.pivot.asset=old");
   });

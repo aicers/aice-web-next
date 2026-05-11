@@ -85,6 +85,59 @@ describe("aggregateTriageEvents", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("populates TriageAsset.lastEventTimeIso from the newest baseline-passing event", () => {
+    // Regression for Round 2 Item 3: cross-customer asset merge orders
+    // by `score DESC, last_event_time DESC`. Asset rows must carry the
+    // newest-event timestamp through the aggregation so the comparator
+    // can read it. Non-baseline events do NOT bump this timestamp —
+    // they are not part of the asset's score and should not drive
+    // ordering.
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        category: "EXFILTRATION",
+        time: "2026-05-09T10:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.1",
+        category: "EXFILTRATION",
+        time: "2026-05-09T12:00:00.000Z",
+      }),
+      // Non-baseline event newer than the latest baseline event —
+      // must NOT become `lastEventTimeIso`.
+      ev({
+        origAddr: "10.0.0.1",
+        category: "RECONNAISSANCE",
+        time: "2026-05-09T18:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    expect(result.assets[0].lastEventTimeIso).toBe("2026-05-09T12:00:00.000Z");
+  });
+
+  it("orders ties on `score DESC, last_event_time DESC`", () => {
+    // Regression for Round 2 Item 3: `compareAssets` is the merge
+    // comparator. Two equal-score rows must order on
+    // `lastEventTimeIso` DESC before any other tiebreaker.
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        category: "EXFILTRATION",
+        time: "2026-05-09T10:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        category: "EXFILTRATION",
+        time: "2026-05-09T11:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    expect(result.assets[0].score).toBe(result.assets[1].score);
+    expect(result.assets[0].address).toBe("10.0.0.2");
+    expect(result.assets[0].lastEventTimeIso).toBe("2026-05-09T11:00:00.000Z");
+    expect(result.assets[1].address).toBe("10.0.0.1");
+  });
+
   it("counts every event toward the asset's detectedCount", () => {
     const events: TriageEvent[] = [
       ev({ origAddr: "10.0.0.1", category: "DISCOVERY" }),

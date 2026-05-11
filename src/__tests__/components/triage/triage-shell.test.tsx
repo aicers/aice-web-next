@@ -141,11 +141,13 @@ const LABELS: TriageShellLabels = {
       scoreColumn: "Score",
       triagedColumn: "Triaged",
       detectedColumn: "Detected",
+      detectedOver30dHint: "(over last 30d)",
       rowDetailsTemplate: "{address}",
     },
     assetDetail: {
       title: "Asset detail",
       pivotFocusTitle: "Pivot focus",
+      customerLabel: "Customer",
       emptySelection: "Select an asset",
       emptyEvents: "No events",
       scoreLabel: "Score",
@@ -223,6 +225,23 @@ const LABELS: TriageShellLabels = {
     confirm: "Discard and reload",
     cancel: "Keep current period",
   },
+  observedDenominatorTruncatedNotice: "Detected covers only the last 30 days.",
+  freshness: {
+    okTemplate: "Last updated: {ago}",
+    runningWithPreviousTemplate: "Updating now ({ago})",
+    runningFirstIngest: "First ingest in progress",
+    failedTemplate: "Failed {ago}",
+    failedFirstIngest: "First ingest failed",
+    awaitingFirstIngest: "Awaiting first ingest",
+    okMultiTemplate: "Last updated: {ago}, across {count} customers",
+    affectedCustomersHeading: "Affected",
+    relative: {
+      justNow: "just now",
+      minutesTemplate: "{n} min ago",
+      hoursTemplate: "{n} h ago",
+      daysTemplate: "{n} d ago",
+    },
+  },
 };
 
 let evSeq = 0;
@@ -246,13 +265,13 @@ function renderShell() {
     ev({
       origAddr: "10.0.0.1",
       respAddr: "203.0.113.1",
-      ja3: "deadbeef",
+      host: "deadbeef.example",
       time: "2026-05-08T12:00:00.000Z",
     }),
     ev({
       origAddr: "10.0.0.2",
       respAddr: "203.0.113.1",
-      ja3: "deadbeef",
+      host: "deadbeef.example",
       time: "2026-05-08T12:30:00.000Z",
     }),
   ];
@@ -267,12 +286,12 @@ function renderShell() {
   );
 }
 
-function pivotByJa3() {
+function pivotByHost() {
   // The JA3 row in the related-events panel renders a pivot button
   // labelled by `pivotActionTemplate`. Click it to add a dimension
   // crumb to the trail.
   const pivotButton = screen.getByRole("button", {
-    name: "Pivot to Dim:ja3: deadbeef",
+    name: "Pivot to Dim:host: deadbeef.example",
   });
   fireEvent.click(pivotButton);
 }
@@ -300,11 +319,13 @@ describe("TriageShell — period-change confirmation", () => {
 
   it("opens the AlertDialog when the trail has a dimension pivot, and Cancel preserves the trail", () => {
     renderShell();
-    pivotByJa3();
+    pivotByHost();
     // Last crumb is the JA3 dimension step — `aria-current="page"`
     // marks the active crumb.
     expect(
-      screen.getByText("Crumb:ja3: deadbeef").getAttribute("aria-current"),
+      screen
+        .getByText("Crumb:host: deadbeef.example")
+        .getAttribute("aria-current"),
     ).toBe("page");
 
     const startBefore = (screen.getByLabelText("Start") as HTMLInputElement)
@@ -321,7 +342,9 @@ describe("TriageShell — period-change confirmation", () => {
     expect(replaceMock).not.toHaveBeenCalled();
     // Trail still has the JA3 step.
     expect(
-      screen.getByText("Crumb:ja3: deadbeef").getAttribute("aria-current"),
+      screen
+        .getByText("Crumb:host: deadbeef.example")
+        .getAttribute("aria-current"),
     ).toBe("page");
     // Picker draft was rejected — Start / End must snap back to the
     // currently loaded period rather than continuing to display the
@@ -336,7 +359,7 @@ describe("TriageShell — period-change confirmation", () => {
 
   it("treats Escape (and other non-confirm dismissals) as Cancel: keeps trail and resets picker draft", () => {
     renderShell();
-    pivotByJa3();
+    pivotByHost();
     const startBefore = (screen.getByLabelText("Start") as HTMLInputElement)
       .value;
     const endBefore = (screen.getByLabelText("End") as HTMLInputElement).value;
@@ -356,7 +379,9 @@ describe("TriageShell — period-change confirmation", () => {
       screen.queryByRole("alertdialog", { name: "Discard pivot trail?" }),
     ).toBeNull();
     expect(
-      screen.getByText("Crumb:ja3: deadbeef").getAttribute("aria-current"),
+      screen
+        .getByText("Crumb:host: deadbeef.example")
+        .getAttribute("aria-current"),
     ).toBe("page");
     expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe(
       startBefore,
@@ -368,7 +393,7 @@ describe("TriageShell — period-change confirmation", () => {
 
   it("clears the trail and reloads when the operator confirms the period change", () => {
     renderShell();
-    pivotByJa3();
+    pivotByHost();
     submitNewPeriod();
     const dialog = screen.getByRole("alertdialog", {
       name: "Discard pivot trail?",
@@ -382,43 +407,72 @@ describe("TriageShell — period-change confirmation", () => {
   });
 });
 
+describe("TriageShell — legacy URL hash fallback", () => {
+  it("falls back to the asset root with a stale-hash toast for a legacy single-component asset hash", async () => {
+    // Legacy hashes from before the composite `(customerId, address)`
+    // key encoded only the address. The page must treat them as stale
+    // — mis-resolving to the first customer's matching row could
+    // misattribute pivots across two tenants that share an RFC1918
+    // address.
+    window.location.hash = `#triage.pivot.asset=${encodeURIComponent("10.0.0.1")}`;
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
+  });
+});
+
 describe("TriageShell — Tier 2 pivot wiring", () => {
   function selectTier2Scope() {
     const scopeTab = screen.getByRole("tab", { name: "All detection events" });
     fireEvent.click(scopeTab);
   }
 
-  function pivotByCountry() {
+  function pivotByExternalIp() {
     const pivotButton = screen.getByRole("button", {
-      name: "Pivot to Dim:country: KR",
+      name: "Pivot to Dim:externalIp: 203.0.113.1",
     });
     fireEvent.click(pivotButton);
   }
 
-  function renderShellWithCountry() {
-    // Three corpus events sharing country=KR. The first two share an
-    // asset (10.0.0.1) and form the focus when the asset row is
-    // selected; the third belongs to a different asset so the
-    // country pivot section actually surfaces a non-empty row group.
-    // Without that third event the section is hidden by
-    // `buildPivotPanel`'s "matches must extend beyond the focus" rule.
+  function renderShellWithExternalIp() {
+    // Three corpus events sharing the responder external IP
+    // 203.0.113.1. The first two share an asset (10.0.0.1) and form
+    // the focus when the asset row is selected; the third belongs to
+    // a different asset so the externalIp pivot section actually
+    // surfaces a non-empty row group beyond the focus.
+    // (The pre-1B-3 version of this test pivoted on `country=KR`,
+    // which is now a Policy-only dimension and gated out of the
+    // Baseline-mode panel — `externalIp` is the equivalent server-
+    // filtered Tier 2 dim that stays available in Baseline mode.)
     const events: TriageEvent[] = [
       ev({
         origAddr: "10.0.0.1",
         respAddr: "203.0.113.1",
-        respCountry: "KR",
         time: "2026-05-08T12:00:00.000Z",
       }),
       ev({
         origAddr: "10.0.0.1",
-        respAddr: "203.0.113.2",
-        respCountry: "KR",
+        respAddr: "203.0.113.1",
         time: "2026-05-08T12:30:00.000Z",
       }),
       ev({
         origAddr: "10.0.0.9",
-        respAddr: "203.0.113.3",
-        respCountry: "KR",
+        respAddr: "203.0.113.1",
         time: "2026-05-08T13:00:00.000Z",
       }),
     ];
@@ -434,8 +488,8 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
   }
 
   it("does not call fetchTier2Dimension while in Tier 1 mode", async () => {
-    renderShellWithCountry();
-    pivotByCountry();
+    renderShellWithExternalIp();
+    pivotByExternalIp();
     await flushAsync();
     expect(fetchTier2Mock).not.toHaveBeenCalled();
   });
@@ -457,14 +511,14 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
       hasMore: false,
       endCursor: null,
     });
-    renderShellWithCountry();
+    renderShellWithExternalIp();
     selectTier2Scope();
-    pivotByCountry();
+    pivotByExternalIp();
     await flushAsync();
     expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
     expect(fetchTier2Mock.mock.calls[0][0]).toMatchObject({
-      dimension: "country",
-      valueKey: "KR",
+      dimension: "externalIp",
+      valueKey: "203.0.113.1",
       firstPageOnly: true,
     });
     // Modal blocks the continuation until the operator confirms.
@@ -475,8 +529,8 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     await flushAsync();
     expect(fetchTier2Mock).toHaveBeenCalledTimes(2);
     expect(fetchTier2Mock.mock.calls[1][0]).toMatchObject({
-      dimension: "country",
-      valueKey: "KR",
+      dimension: "externalIp",
+      valueKey: "203.0.113.1",
       afterCursor: "cursor-1",
     });
   });
@@ -496,9 +550,9 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
       hasMore: false,
       endCursor: null,
     });
-    renderShellWithCountry();
+    renderShellWithExternalIp();
     selectTier2Scope();
-    pivotByCountry();
+    pivotByExternalIp();
     await flushAsync();
     expect(fetchTier2Mock).toHaveBeenCalledTimes(2);
     expect(
@@ -518,9 +572,9 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
       hasMore: false,
       endCursor: null,
     });
-    renderShellWithCountry();
+    renderShellWithExternalIp();
     selectTier2Scope();
-    pivotByCountry();
+    pivotByExternalIp();
     await flushAsync();
     expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
     expect(
@@ -536,9 +590,9 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
       hasMore: true,
       endCursor: "cursor-1",
     });
-    renderShellWithCountry();
+    renderShellWithExternalIp();
     selectTier2Scope();
-    pivotByCountry();
+    pivotByExternalIp();
     await flushAsync();
     const modal = screen.getByRole("alertdialog", {
       name: "Fetch large result?",
@@ -551,70 +605,72 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
 
   it("surfaces a fetch error notice and clears it on dismiss", async () => {
     fetchTier2Mock.mockRejectedValueOnce(new Error("review timed out"));
-    renderShellWithCountry();
+    renderShellWithExternalIp();
     selectTier2Scope();
-    pivotByCountry();
+    pivotByExternalIp();
     await flushAsync();
-    const notice = screen.getByText("error Dim:country: KR — review timed out");
+    const notice = screen.getByText(
+      "error Dim:externalIp: 203.0.113.1 — review timed out",
+    );
     expect(notice).toBeTruthy();
     // Dismiss button removes the notice and clears the loading state
     // for that pivot so a retry click is possible.
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     await flushAsync();
     expect(
-      screen.queryByText("error Dim:country: KR — review timed out"),
+      screen.queryByText(
+        "error Dim:externalIp: 203.0.113.1 — review timed out",
+      ),
     ).toBeNull();
   });
 
   it("encodes the Tier 2 mode in the URL hash so a shared link is reload-stable", () => {
-    renderShellWithCountry();
+    renderShellWithExternalIp();
     selectTier2Scope();
     expect(window.location.hash).toContain("triage.pivot.mode=tier2");
   });
 
   it("keeps the truncated hint visible after pivoting from a capped server-filtered ancestor into a client-intersection step", async () => {
-    // Tier 1 corpus shape:
-    //   - Two `country=KR` events on asset 10.0.0.1 — these are the
-    //     focus events at the asset step.
-    //   - One `country=KR` event on a different asset (10.0.0.9) so
-    //     the country pivot row extends beyond focus and renders.
-    //   - One `country=JP` event with `ja3=newja3` (asset 10.0.0.7) so
-    //     after the country pivot, the JA3=newja3 row has at least one
-    //     matched event outside the country=KR focus and stays visible.
+    // Tier 1 corpus shape (1B-3 substitution: respAddr-as-externalIp
+    // and `host` replace the pre-1B-3 country / ja3 dims, which are
+    // now Policy-only and gated out of the Baseline-mode panel):
+    //   - Two events on asset 10.0.0.1 sharing externalIp 203.0.113.1
+    //     plus host=existing.example — focus events.
+    //   - One event on a different asset 10.0.0.9 sharing the
+    //     externalIp so the panel row extends beyond the focus.
+    //   - One event on 10.0.0.7 with externalIp 203.0.113.99 and
+    //     host=newhost.example so the host pivot row picks up at
+    //     least one match outside the externalIp focus.
     const events: TriageEvent[] = [
       ev({
         origAddr: "10.0.0.1",
         respAddr: "203.0.113.1",
-        respCountry: "KR",
-        ja3: "existing",
+        host: "existing.example",
         time: "2026-05-08T12:00:00.000Z",
       }),
       ev({
         origAddr: "10.0.0.1",
-        respAddr: "203.0.113.2",
-        respCountry: "KR",
-        ja3: "existing",
+        respAddr: "203.0.113.1",
+        host: "existing.example",
         time: "2026-05-08T12:30:00.000Z",
       }),
       ev({
         origAddr: "10.0.0.9",
-        respAddr: "203.0.113.3",
-        respCountry: "KR",
+        respAddr: "203.0.113.1",
         time: "2026-05-08T13:00:00.000Z",
       }),
       ev({
         origAddr: "10.0.0.7",
         respAddr: "203.0.113.99",
-        respCountry: "JP",
-        ja3: "newja3",
+        host: "newhost.example",
         time: "2026-05-08T13:15:00.000Z",
       }),
     ];
     const result = aggregateTriageEvents(events, false);
     // Single-page Tier 2 fetch that comes back already truncated —
-    // simulates the per-dimension cap hit on `country=KR`. The fetched
-    // events all carry JA3 `newja3` so a JA3 pivot row surfaces in the
-    // panel after the country click.
+    // simulates the per-dimension cap hit on `externalIp=203.0.113.1`.
+    // The fetched events all carry host=newhost.example so a host
+    // pivot row surfaces in the panel after the externalIp click.
     fetchTier2Mock.mockResolvedValueOnce({
       events: [
         {
@@ -625,9 +681,8 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
           category: "EXFILTRATION",
           level: "MEDIUM",
           origAddr: "10.0.0.5",
-          respAddr: "203.0.113.4",
-          respCountry: "KR",
-          ja3: "newja3",
+          respAddr: "203.0.113.1",
+          host: "newhost.example",
         },
         {
           __typename: "BlocklistTls",
@@ -637,9 +692,8 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
           category: "EXFILTRATION",
           level: "MEDIUM",
           origAddr: "10.0.0.6",
-          respAddr: "203.0.113.5",
-          respCountry: "KR",
-          ja3: "newja3",
+          respAddr: "203.0.113.1",
+          host: "newhost.example",
         },
       ],
       totalCount: "5000",
@@ -656,49 +710,53 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
       />,
     );
     selectTier2Scope();
-    pivotByCountry();
+    pivotByExternalIp();
     await flushAsync();
-    // The cap hit on `country=KR` must surface the panel truncation
-    // hint immediately.
+    // The cap hit on `externalIp=203.0.113.1` must surface the panel
+    // truncation hint immediately.
     expect(screen.getByText("truncated")).toBeTruthy();
-    // Now pivot from the country focus into JA3=newja3 — that JA3
-    // value is reachable only because the truncated Tier 2 fetch
-    // surfaced it. The reviewer's repro: before this fix, the hint
-    // disappeared on the JA3 step even though the panel is still
-    // computed against the same partial 5,000-row country result.
+    // Now pivot from the externalIp focus into host=newhost.example —
+    // that host value is reachable only because the truncated Tier 2
+    // fetch surfaced it. Before the contributing-fetch fix the hint
+    // disappeared on the host step.
     fireEvent.click(
-      screen.getByRole("button", { name: "Pivot to Dim:ja3: newja3" }),
+      screen.getByRole("button", {
+        name: "Pivot to Dim:host: newhost.example",
+      }),
     );
     await flushAsync();
     expect(
-      screen.getByText("Crumb:ja3: newja3").getAttribute("aria-current"),
+      screen
+        .getByText("Crumb:host: newhost.example")
+        .getAttribute("aria-current"),
     ).toBe("page");
     // Hint must still be visible: the active step is now a client-
-    // intersection JA3 pivot, but the contributing server-filtered
-    // ancestor (`country=KR`) is still capped.
+    // intersection host pivot, but the contributing server-filtered
+    // ancestor (`externalIp=203.0.113.1`) is still capped.
     expect(screen.getByText("truncated")).toBeTruthy();
   });
 
   it("restores a Tier 2 URL whose client-intersection step is reachable only through a queued ancestor fetch", async () => {
-    // Hash trail: asset → country=KR → ja3=remoteonly. The Tier 1
-    // corpus does NOT contain `ja3=remoteonly`; that value lives only
-    // in the result of the queued `country=KR` Tier 2 fetch. Without
-    // deferred validation the restore loop would treat `ja3=remoteonly`
-    // as stale and fall back to the asset root before the fetch could
-    // populate the expanded corpus.
+    // Hash trail: asset → externalIp=203.0.113.1 → host=remoteonly.example.
+    // The Tier 1 corpus does NOT contain `host=remoteonly.example`;
+    // that value lives only in the result of the queued
+    // externalIp Tier 2 fetch. Without deferred validation the
+    // restore loop would treat the host step as stale and fall back
+    // to the asset root before the fetch could populate the
+    // expanded corpus.
     window.location.hash =
-      "#triage.pivot.asset=10.0.0.1" +
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
       "&triage.pivot.step=" +
-      encodeURIComponent("country:KR") +
+      encodeURIComponent("externalIp:203.0.113.1") +
       "&triage.pivot.step=" +
-      encodeURIComponent("ja3:remoteonly") +
+      encodeURIComponent("host:remoteonly.example") +
       "&triage.pivot.mode=tier2";
     const events: TriageEvent[] = [
       ev({
         origAddr: "10.0.0.1",
         respAddr: "203.0.113.10",
-        respCountry: "JP",
-        ja3: "corpusja3",
+        host: "corpushost.example",
         time: "2026-05-08T12:00:00.000Z",
       }),
     ];
@@ -713,9 +771,8 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
           category: "EXFILTRATION",
           level: "MEDIUM",
           origAddr: "10.0.0.5",
-          respAddr: "203.0.113.4",
-          respCountry: "KR",
-          ja3: "remoteonly",
+          respAddr: "203.0.113.1",
+          host: "remoteonly.example",
         },
         {
           __typename: "BlocklistTls",
@@ -725,9 +782,8 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
           category: "EXFILTRATION",
           level: "MEDIUM",
           origAddr: "10.0.0.6",
-          respAddr: "203.0.113.5",
-          respCountry: "KR",
-          ja3: "remoteonly",
+          respAddr: "203.0.113.1",
+          host: "remoteonly.example",
         },
       ],
       totalCount: "2",
@@ -744,34 +800,36 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
       />,
     );
     await flushAsync();
-    // Queue drained, validation effect must accept the JA3 step
-    // because the freshly-fetched country result populated it. No
+    // Queue drained, validation effect must accept the host step
+    // because the freshly-fetched externalIp result populated it. No
     // stale-hash toast.
     expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
-    expect(screen.getByText("Crumb:country: KR")).toBeTruthy();
+    expect(screen.getByText("Crumb:externalIp: 203.0.113.1")).toBeTruthy();
     expect(
-      screen.getByText("Crumb:ja3: remoteonly").getAttribute("aria-current"),
+      screen
+        .getByText("Crumb:host: remoteonly.example")
+        .getAttribute("aria-current"),
     ).toBe("page");
   });
 
   it("falls back to the asset root when a client-intersection step is still missing after the queued Tier 2 fetch resolves", async () => {
-    // Same hash shape as the success case, but the country=KR fetch
-    // returns no JA3=remoteonly event — the value is genuinely stale.
-    // The post-drain validation must surface the same fallback toast
-    // the synchronous restore path uses.
+    // Same hash shape as the success case, but the externalIp fetch
+    // returns no host=remoteonly.example event — the value is
+    // genuinely stale. The post-drain validation must surface the
+    // same fallback toast the synchronous restore path uses.
     window.location.hash =
-      "#triage.pivot.asset=10.0.0.1" +
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
       "&triage.pivot.step=" +
-      encodeURIComponent("country:KR") +
+      encodeURIComponent("externalIp:203.0.113.1") +
       "&triage.pivot.step=" +
-      encodeURIComponent("ja3:remoteonly") +
+      encodeURIComponent("host:remoteonly.example") +
       "&triage.pivot.mode=tier2";
     const events: TriageEvent[] = [
       ev({
         origAddr: "10.0.0.1",
         respAddr: "203.0.113.10",
-        respCountry: "JP",
-        ja3: "corpusja3",
+        host: "corpushost.example",
         time: "2026-05-08T12:00:00.000Z",
       }),
     ];
@@ -786,9 +844,8 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
           category: "EXFILTRATION",
           level: "MEDIUM",
           origAddr: "10.0.0.5",
-          respAddr: "203.0.113.4",
-          respCountry: "KR",
-          ja3: "different",
+          respAddr: "203.0.113.1",
+          host: "differenthost.example",
         },
       ],
       totalCount: "1",
@@ -806,6 +863,6 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     );
     await flushAsync();
     expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
-    expect(screen.queryByText("Crumb:ja3: remoteonly")).toBeNull();
+    expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
   });
 });

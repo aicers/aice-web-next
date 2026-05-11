@@ -57,7 +57,15 @@ export interface TriageEvent {
   time: string;
   sensor: string;
   category: ThreatCategory | null;
-  level: ThreatLevel;
+  /**
+   * Threat level. `null` in Baseline mode (1B-3 / #458): the column is
+   * not present on `baseline_triaged_event`, so corpus-sourced rows
+   * arrive without a level. Policy mode keeps full `eventList` payload
+   * coverage and surfaces a real `ThreatLevel`. Consumers must treat
+   * `null` as "level not available" — Baseline mode hides the
+   * level-based UI affordances rather than guessing a value.
+   */
+  level: ThreatLevel | null;
   /** Originator IP — present on every curated subtype the page handles. */
   origAddr?: string | null;
   /** Responder IP — present on most but not all subtypes. */
@@ -98,9 +106,17 @@ export interface TriageEvent {
  * score attached. `score === 0` for events that do not pass the
  * baseline rule. Carries `score` separately from `TriageEvent` so
  * the GraphQL-mapping type stays free of computed fields.
+ *
+ * `customerId` is the tenant attribution for the event. Required for
+ * multi-customer scopes so two customers hosting the same RFC1918
+ * address keep their event sets distinct in the pivot index and in
+ * `resolveStepFocusEvents` — filtering on `origAddr` alone would
+ * collapse them. Defaults to `0` when callers do not yet thread the
+ * value through (legacy in-memory aggregation paths).
  */
 export interface ScoredTriageEvent extends TriageEvent {
   score: number;
+  customerId: number;
 }
 
 /** Result of one `eventList` page in the triage query. */
@@ -128,18 +144,66 @@ export interface TriageEventListResult {
 }
 
 /**
- * Aggregate stats for one asset (one originator IP) within the
- * loaded period. Score / triagedCount come from the baseline rule.
+ * Aggregate stats for one asset within the loaded period. Score /
+ * triagedCount come from the baseline rule.
+ *
+ * The asset key is the composite `(customerId, address)` — two
+ * customers can legitimately host the same private RFC1918 address on
+ * different perimeters and the menu must keep them distinct end-to-
+ * end. Single-customer scope is the common case and renders
+ * identically to the pre-multi-customer model with a constant
+ * `customerId`.
  */
 export interface TriageAsset {
-  /** Originator IP address; the asset key. */
+  /**
+   * Customer the asset belongs to. Part of the composite asset key.
+   * The asset list, URL hash focus, React keys, and pivot Tier 2
+   * fetch keys all key off `(customerId, address)`.
+   */
+  customerId: number;
+  /**
+   * Display name of the customer (`customers.name`). Surfaced in the
+   * asset detail header so two tenants hosting the same RFC1918
+   * address remain understandable after selection. Falls back to the
+   * stringified `customerId` when the central DB has no matching row
+   * (a tenant DB present in the customer pool but not registered in
+   * `customers`).
+   */
+  customerName: string;
+  /** Originator IP address. The other half of the composite asset key. */
   address: string;
-  /** Total events observed for this asset within the period. */
+  /**
+   * Total events observed for this asset's window contribution from
+   * `observed_event_meta`. Stays `number` (no `null` widening) so the
+   * existing sort / label / formatting code keeps working. The
+   * "denominator unavailable" signal lives on
+   * {@link detectedCountUnavailable} instead.
+   */
   detectedCount: number;
+  /**
+   * `true` when the observed denominator for this asset's window
+   * contribution is retention-truncated — i.e. the window starts
+   * before `now() − observed_event_meta_retention` AND the in-
+   * retention slice produces no observed rows for this address. Drives
+   * the per-row "Detected over last 30d" label. Defaults to `false`.
+   */
+  detectedCountUnavailable: boolean;
   /** Events that pass the baseline rule. */
   triagedCount: number;
   /** Sum of per-event baseline scores. Sort key for the asset list. */
   score: number;
+  /**
+   * ISO timestamp of the most recent baseline-passing event for this
+   * asset within the period. Carried through from
+   * `MAX(b.event_time)` in the per-tenant aggregate SELECT so the
+   * cross-customer merge can preserve the issue's
+   * `score DESC, last_event_time DESC` ordering — without it, equal-
+   * score rows from different tenants reorder on tiebreakers that
+   * are not part of the issue contract. `null` only when the asset
+   * has no events in the loaded window (degenerate path from the
+   * in-memory `aggregateTriageEvents` test fixtures).
+   */
+  lastEventTimeIso: string | null;
   /**
    * Up to 50 baseline-passing events for the asset detail panel;
    * ordered newest first. Each event carries its per-event `score`
@@ -170,6 +234,57 @@ export interface TriageLoadResult {
    * which is capped at 50 and filters out non-baseline events.
    */
   events: ScoredTriageEvent[];
+  /**
+   * `true` whenever the selected window starts before
+   * `now() − observed_event_meta_retention` (i.e. the window's
+   * earliest moment is older than 30 days ago). Drives the funnel's
+   * "Detected over last 30d" affordance. Independent of per-row
+   * availability — a 45-day-old window with plenty of observed rows
+   * in its in-retention slice still sets this flag.
+   */
+  observedDenominatorTruncated: boolean;
+  /**
+   * Per-customer cadence freshness summary, keyed for the freshness
+   * header. Aggregated across the caller's customer scope so the
+   * header can render the worst-state badge plus a tooltip listing
+   * affected customer ids.
+   */
+  freshness: TriageFreshness;
+}
+
+/**
+ * One customer's freshness reading, as derived from
+ * `baseline_corpus_state` in that customer's tenant DB. The header's
+ * UI states are computed from `(status, lastIngestedAtIso, present)`.
+ */
+export interface TriageCustomerFreshness {
+  customerId: number;
+  /** `null` when the corpus-state row has not been written yet. */
+  status: "ok" | "running" | "failed" | null;
+  /** ISO timestamp; `null` when the first cadence has not committed. */
+  lastIngestedAtIso: string | null;
+  /** `true` when no row exists in `baseline_corpus_state`. */
+  rowAbsent: boolean;
+  /** Operator-facing error message, present only when `status === 'failed'`. */
+  lastError: string | null;
+}
+
+/**
+ * Result-level freshness summary. The header derives its rendering
+ * from `worst` (the picked customer's state, surfaced in the badge)
+ * plus the full `customers[]` list (used for the "across K customers"
+ * tooltip and the affected-customer ids when one tenant is failed
+ * while others are ok).
+ */
+export interface TriageFreshness {
+  /**
+   * Picked customer's freshness — the worst state across the scope so
+   * the operator never sees a green header masking a tenant failure.
+   * `null` only when the caller's customer scope is empty.
+   */
+  worst: TriageCustomerFreshness | null;
+  /** Per-customer breakdown for the multi-customer tooltip. */
+  customers: TriageCustomerFreshness[];
 }
 
 export interface TriageError {

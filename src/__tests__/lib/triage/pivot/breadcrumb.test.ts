@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregateTriageEvents, type TriageEvent } from "@/lib/triage";
+import {
+  aggregateTriageEvents,
+  type ScoredTriageEvent,
+  type TriageEvent,
+} from "@/lib/triage";
 import {
   appendPivotStep,
   backtrackPivotTrail,
@@ -25,7 +29,11 @@ function ev(overrides: Partial<TriageEvent>): TriageEvent {
   };
 }
 
-const ASSET_STEP: PivotStep = { kind: "asset", address: "10.0.0.1" };
+const ASSET_STEP: PivotStep = {
+  kind: "asset",
+  customerId: 0,
+  address: "10.0.0.1",
+};
 const JA3_STEP: PivotStep = {
   kind: "dimension",
   dimension: "ja3",
@@ -126,5 +134,51 @@ describe("resolveStepFocusEvents", () => {
   it("resolves a dimension step to events sharing that value", () => {
     const events = resolveStepFocusEvents(JA3_STEP, corpus.events, index);
     expect(events).toHaveLength(3);
+  });
+
+  it("resolves an asset step against SQL-loader-shaped corpus events (rowKey of the customerId / event_key form)", () => {
+    // Regression for Round 2 Item 1: `selectCorpusEvents` emits a
+    // rowKey shape that does NOT match the per-asset detail event
+    // shape (`${customerId}/${address}#index`). The asset focus
+    // filter must rely on the explicit `customerId` field, not on
+    // `rowKey.startsWith(...)`.
+    const sqlShaped: ScoredTriageEvent[] = [
+      {
+        __typename: "BlocklistTls",
+        time: "2026-05-09T12:00:00.000Z",
+        sensor: "sensor-a",
+        category: "EXFILTRATION",
+        level: null,
+        origAddr: "10.0.0.1",
+        ja3: "abc",
+        score: 1,
+        customerId: 7,
+        rowKey: "7/event-uuid-1",
+      },
+      {
+        __typename: "BlocklistTls",
+        time: "2026-05-09T11:00:00.000Z",
+        sensor: "sensor-a",
+        category: "DISCOVERY",
+        level: null,
+        origAddr: "10.0.0.1",
+        ja3: "abc",
+        score: 0.5,
+        // Same address on a DIFFERENT tenant — must NOT collapse into
+        // customer 7's asset focus.
+        customerId: 8,
+        rowKey: "8/event-uuid-2",
+      },
+    ];
+    const sqlIndex = pivotIndexFor(sqlShaped);
+    const customer7Step: PivotStep = {
+      kind: "asset",
+      customerId: 7,
+      address: "10.0.0.1",
+    };
+    const got = resolveStepFocusEvents(customer7Step, sqlShaped, sqlIndex);
+    expect(got).toHaveLength(1);
+    expect(got[0].customerId).toBe(7);
+    expect(got[0].rowKey).toBe("7/event-uuid-1");
   });
 });

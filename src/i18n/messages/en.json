@@ -1898,12 +1898,29 @@
   },
   "triage": {
     "title": "Triage",
-    "intro": "Baseline scoring over events in the selected period. Phase 1.A only — corpus retention isn't yet available, so the period is restricted to the last 30 days.",
+    "intro": "Baseline scoring over events in the selected period. Reads from the per-tenant baseline corpus (180-day retention). The 30-day duration cap on the picker is a working-window choice, not a corpus property.",
     "errorBanner": "Could not load events for this period. Try a different range.",
     "forbiddenBanner": "You are not authorized to view triage results.",
     "forbiddenScopeBanner": "You have no customers in scope. Contact an administrator.",
     "truncatedBannerTemplate": "Partial: showing {loaded} events of period (truncated at {cap}).",
-    "clampedNotice": "Period adjusted to fit the last 30 days.",
+    "clampedNotice": "Period adjusted to fit the 180-day lookback / 30-day duration cap.",
+    "observedDenominatorTruncatedNotice": "Detected counts cover only the last 30 days — the observed denominator's retention is shorter than the selected window.",
+    "freshness": {
+      "okTemplate": "Last updated: {ago}",
+      "runningWithPreviousTemplate": "Updating now… (previously {ago})",
+      "runningFirstIngest": "First ingest in progress…",
+      "failedTemplate": "Last attempt failed {ago}",
+      "failedFirstIngest": "First ingest failed",
+      "awaitingFirstIngest": "Awaiting first ingest",
+      "okMultiTemplate": "Last updated: {ago}, across {count} customers",
+      "affectedCustomersHeading": "Affected customers",
+      "relative": {
+        "justNow": "just now",
+        "minutesTemplate": "{n} min ago",
+        "hoursTemplate": "{n} h ago",
+        "daysTemplate": "{n} d ago"
+      }
+    },
     "periodPicker": {
       "legend": "Period",
       "startLabel": "Start",
@@ -1911,7 +1928,7 @@
       "apply": "Apply",
       "invalidRange": "End must be after start.",
       "durationCapHint": "Period cannot exceed 30 days.",
-      "lookbackHint": "Start cannot be earlier than 30 days ago."
+      "lookbackHint": "Start cannot be earlier than 180 days ago."
     },
     "modeToggle": {
       "legend": "Triage mode",
@@ -1933,11 +1950,13 @@
       "scoreColumn": "score",
       "triagedColumn": "triaged",
       "detectedColumn": "detected",
+      "detectedOver30dHint": "(over last 30d)",
       "rowDetailsTemplate": "{address} — score {score}, {triaged} triaged of {detected} detected"
     },
     "assetDetail": {
       "title": "Asset detail",
       "pivotFocusTitle": "Pivot focus",
+      "customerLabel": "Customer",
       "emptySelection": "Select an asset to inspect its events.",
       "emptyEvents": "No triaged events to display.",
       "scoreLabel": "Score",

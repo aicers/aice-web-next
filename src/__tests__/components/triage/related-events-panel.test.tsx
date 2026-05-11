@@ -65,6 +65,7 @@ function makeEvent(i: number): ScoredTriageEvent {
     level: "MEDIUM",
     ja3: "ja3-shared",
     score: 100 - i,
+    customerId: 0,
   };
 }
 

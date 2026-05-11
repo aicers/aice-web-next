@@ -17,10 +17,11 @@ import {
   buildPivotIndex,
   lookupPivotEntry,
   type PivotIndex,
+  type TriagePivotMode,
 } from "./index-builder";
 
 export type PivotStep =
-  | { kind: "asset"; address: string }
+  | { kind: "asset"; customerId: number; address: string }
   | {
       kind: "dimension";
       dimension: PivotDimensionId;
@@ -76,7 +77,7 @@ export function hasPivotedAwayFromAsset(trail: readonly PivotStep[]): boolean {
 function stepEquals(a: PivotStep, b: PivotStep): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "asset" && b.kind === "asset") {
-    return a.address === b.address;
+    return a.customerId === b.customerId && a.address === b.address;
   }
   if (a.kind === "dimension" && b.kind === "dimension") {
     return a.dimension === b.dimension && a.value.key === b.value.key;
@@ -101,7 +102,16 @@ export function resolveStepFocusEvents(
   index: PivotIndex,
 ): ScoredTriageEvent[] {
   if (step.kind === "asset") {
-    return events.filter((ev) => ev.origAddr === step.address);
+    // Asset focus matches on `(customerId, address)` so two same-IP
+    // assets on different customers stay distinct. The SQL-backed
+    // corpus rows from `selectCorpusEvents` carry a `${customerId}/
+    // ${event_key}` `rowKey` (not the `${customerId}/${address}#index`
+    // shape used by per-asset detail events), so we filter on the
+    // event's explicit `customerId` tenant marker rather than on the
+    // rowKey prefix.
+    return events.filter(
+      (ev) => ev.origAddr === step.address && ev.customerId === step.customerId,
+    );
   }
   const entry = lookupPivotEntry(index, step.dimension, step.value.key);
   return entry ? entry.events.slice() : [];
@@ -118,7 +128,10 @@ export function describePivotStep(
   dimensionLabel: (id: PivotDimensionId) => string,
 ): { dimensionLabel: string; valueLabel: string } {
   if (step.kind === "asset") {
-    return { dimensionLabel: "asset", valueLabel: step.address };
+    return {
+      dimensionLabel: "asset",
+      valueLabel: step.address,
+    };
   }
   return {
     dimensionLabel: dimensionLabel(step.dimension),
@@ -133,6 +146,7 @@ export function describePivotStep(
  */
 export function pivotIndexFor(
   events: readonly ScoredTriageEvent[],
+  mode: TriagePivotMode = "policy",
 ): PivotIndex {
-  return buildPivotIndex(events);
+  return buildPivotIndex(events, mode);
 }

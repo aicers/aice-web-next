@@ -1898,12 +1898,29 @@
   },
   "triage": {
     "title": "트리아지",
-    "intro": "선택한 기간의 이벤트에 대한 기준 점수입니다. 1.A 단계 — 코퍼스 보존이 아직 제공되지 않으므로 기간은 최근 30일로 제한됩니다.",
+    "intro": "선택한 기간의 이벤트에 대한 기준 점수입니다. 고객별 베이스라인 코퍼스(180일 보존)에서 읽으며, 30일의 기간 상한은 코퍼스 속성이 아닌 작업 창 선택입니다.",
     "errorBanner": "이 기간의 이벤트를 불러오지 못했습니다. 다른 기간을 시도해 주세요.",
     "forbiddenBanner": "트리아지 결과를 볼 권한이 없습니다.",
     "forbiddenScopeBanner": "할당된 고객이 없습니다. 관리자에게 문의하세요.",
     "truncatedBannerTemplate": "일부만 표시: 기간의 {loaded}건 표시 ({cap}건에서 잘림).",
-    "clampedNotice": "기간을 최근 30일에 맞게 조정했습니다.",
+    "clampedNotice": "기간을 180일 룩백 / 30일 기간 상한에 맞게 조정했습니다.",
+    "observedDenominatorTruncatedNotice": "관측된 분모의 보존 기간이 선택한 기간보다 짧아 탐지 카운트는 최근 30일만 포함합니다.",
+    "freshness": {
+      "okTemplate": "마지막 업데이트: {ago}",
+      "runningWithPreviousTemplate": "지금 업데이트 중… (이전: {ago})",
+      "runningFirstIngest": "첫 번째 수집 진행 중…",
+      "failedTemplate": "마지막 시도 실패: {ago}",
+      "failedFirstIngest": "첫 번째 수집 실패",
+      "awaitingFirstIngest": "첫 번째 수집 대기 중",
+      "okMultiTemplate": "마지막 업데이트: {ago}, {count}개 고객 기준",
+      "affectedCustomersHeading": "영향받은 고객",
+      "relative": {
+        "justNow": "방금",
+        "minutesTemplate": "{n}분 전",
+        "hoursTemplate": "{n}시간 전",
+        "daysTemplate": "{n}일 전"
+      }
+    },
     "periodPicker": {
       "legend": "기간",
       "startLabel": "시작",
@@ -1911,7 +1928,7 @@
       "apply": "적용",
       "invalidRange": "종료는 시작보다 뒤여야 합니다.",
       "durationCapHint": "기간은 30일을 넘을 수 없습니다.",
-      "lookbackHint": "시작은 30일 이전보다 빠를 수 없습니다."
+      "lookbackHint": "시작은 180일 이전보다 빠를 수 없습니다."
     },
     "modeToggle": {
       "legend": "트리아지 모드",
@@ -1933,11 +1950,13 @@
       "scoreColumn": "점수",
       "triagedColumn": "트리아지",
       "detectedColumn": "탐지",
+      "detectedOver30dHint": "(최근 30일 기준)",
       "rowDetailsTemplate": "{address} — 점수 {score}, {detected}건 중 {triaged}건 트리아지"
     },
     "assetDetail": {
       "title": "자산 상세",
       "pivotFocusTitle": "피벗 포커스",
+      "customerLabel": "고객사",
       "emptySelection": "이벤트를 보려면 자산을 선택하세요.",
       "emptyEvents": "표시할 트리아지 이벤트가 없습니다.",
       "scoreLabel": "점수",

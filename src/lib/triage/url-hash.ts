@@ -32,9 +32,23 @@ export interface TriagePivotHashStep {
   valueKey: string;
 }
 
+/**
+ * Composite asset focus encoded in the hash. Two customers can host
+ * the same RFC1918 address on different perimeters, so the focus key
+ * carries `customerId/address`. Hashes produced by an earlier build
+ * that wrote a single-component asset (just the address) parse with
+ * `customerId === null`; the caller treats those as stale and falls
+ * back to the asset root rather than mis-resolving against the first
+ * customer's matching address.
+ */
+export interface TriagePivotAssetFocus {
+  customerId: number | null;
+  address: string;
+}
+
 export interface TriagePivotHashState {
-  /** Asset (originator IP) the breadcrumb is rooted at. */
-  asset: string | null;
+  /** Asset focus (composite `(customerId, address)`); `null` when absent. */
+  asset: TriagePivotAssetFocus | null;
   /** Pivot dimension steps in trail order, after the asset root. */
   steps: TriagePivotHashStep[];
   /** Mode toggle state; `null` means "absent" — caller defaults. */
@@ -90,7 +104,7 @@ export function parseTriagePivotHash(hash: string): TriagePivotHashState {
   const trimmed = hash.startsWith("#") ? hash.slice(1) : hash;
   if (trimmed.length === 0) return empty;
 
-  let asset: string | null = null;
+  let asset: TriagePivotAssetFocus | null = null;
   let mode: TriagePivotMode | null = null;
   const steps: TriagePivotHashStep[] = [];
 
@@ -108,7 +122,8 @@ export function parseTriagePivotHash(hash: string): TriagePivotHashState {
       continue;
     }
     if (key === ASSET_KEY) {
-      if (value.length > 0) asset = value;
+      const parsed = parseAssetValue(value);
+      if (parsed) asset = parsed;
     } else if (key === MODE_KEY) {
       if (value === "tier1" || value === "tier2") mode = value;
     } else if (key === STEP_KEY) {
@@ -118,6 +133,38 @@ export function parseTriagePivotHash(hash: string): TriagePivotHashState {
   }
 
   return { asset, steps, mode };
+}
+
+/**
+ * Decode the `triage.pivot.asset` value into its composite shape.
+ * Two encodings are accepted:
+ *
+ *   - `customerId/address` — the current shape. `customerId` parses
+ *     as a non-negative integer; `address` is the rest of the value
+ *     (preserving any further `/` characters in case a future address
+ *     format includes them).
+ *   - `address` (no `/`) — legacy single-component shape from URLs
+ *     produced before the multi-customer key landed. Returns
+ *     `customerId: null` so the caller can render the stale-hash
+ *     toast and fall back to the asset root rather than mis-resolving
+ *     against the first customer's matching address.
+ */
+function parseAssetValue(value: string): TriagePivotAssetFocus | null {
+  if (value.length === 0) return null;
+  const slash = value.indexOf("/");
+  if (slash < 0) {
+    return { customerId: null, address: value };
+  }
+  const customerStr = value.slice(0, slash);
+  const address = value.slice(slash + 1);
+  if (customerStr.length === 0 || address.length === 0) return null;
+  // Reject empty / non-numeric / negative customer ids — those would
+  // also mis-resolve. They get the same stale-hash treatment as the
+  // legacy single-component encoding.
+  if (!/^\d+$/.test(customerStr)) return null;
+  const customerId = Number.parseInt(customerStr, 10);
+  if (!Number.isFinite(customerId) || customerId < 0) return null;
+  return { customerId, address };
 }
 
 function parseStepValue(value: string): TriagePivotHashStep | null {
@@ -134,11 +181,17 @@ function parseStepValue(value: string): TriagePivotHashStep | null {
  * Serialize a pivot hash state back into a `location.hash` string
  * (without the leading `#`). Empty / null fields are omitted so a
  * fresh menu URL stays tidy.
+ *
+ * The asset focus is encoded as `customerId/address` whenever a
+ * `customerId` is present, falling back to bare `address` only for
+ * the legacy single-component round-trip shape (which a freshly-
+ * built state should never need).
  */
 export function serializeTriagePivotHash(state: TriagePivotHashState): string {
   const entries: string[] = [];
-  if (state.asset && state.asset.length > 0) {
-    entries.push(`${ASSET_KEY}=${encodeURIComponent(state.asset)}`);
+  if (state.asset && state.asset.address.length > 0) {
+    const encoded = encodeURIComponent(serializeAssetFocus(state.asset));
+    entries.push(`${ASSET_KEY}=${encoded}`);
   }
   for (const step of state.steps) {
     if (!isKnownDimension(step.dimension)) continue;
@@ -152,10 +205,15 @@ export function serializeTriagePivotHash(state: TriagePivotHashState): string {
   return entries.join("&");
 }
 
+function serializeAssetFocus(asset: TriagePivotAssetFocus): string {
+  if (asset.customerId === null) return asset.address;
+  return `${asset.customerId}/${asset.address}`;
+}
+
 /** Build a hash state from breadcrumb steps for serialization. */
 export function pivotHashFromTrail(
   trail: ReadonlyArray<
-    | { kind: "asset"; address: string }
+    | { kind: "asset"; customerId: number; address: string }
     | {
         kind: "dimension";
         dimension: PivotDimensionId;
@@ -164,14 +222,16 @@ export function pivotHashFromTrail(
   >,
   mode: TriagePivotMode | null,
 ): TriagePivotHashState {
-  let asset: string | null = null;
+  let asset: TriagePivotAssetFocus | null = null;
   const steps: TriagePivotHashStep[] = [];
   for (const step of trail) {
     if (step.kind === "asset") {
       // The first asset crumb wins; nested asset crumbs are not
       // expected in the Phase 1 trail model but we keep the first
       // for resilience.
-      if (asset === null) asset = step.address;
+      if (asset === null) {
+        asset = { customerId: step.customerId, address: step.address };
+      }
     } else {
       steps.push({ dimension: step.dimension, valueKey: step.value.key });
     }

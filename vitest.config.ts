@@ -105,6 +105,12 @@ export default defineConfig({
             // `AlertDialog` whose Cancel preserves the trail and
             // whose Confirm clears it.
             "src/__tests__/components/triage/triage-shell.test.tsx",
+            // Issue #458 (Reviewer Round 2 #2): multi-customer pivot-
+            // focus header reads the selected asset's customerName,
+            // not `result.assets[0]`'s. Renders TriageBaselineContent
+            // directly because the regression is invisible with a
+            // single-customer `aggregateTriageEvents` fixture.
+            "src/__tests__/components/triage/baseline-content.test.tsx",
             // Issue #452 (Reviewer Round 5): pivot panel must hide the
             // "Showing 50 of N" hint while the group is collapsed at
             // the default 10 rows, and only surface it once the user
@@ -152,6 +158,7 @@ export default defineConfig({
             "src/__tests__/components/events/aimer-banner.test.tsx",
             "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
             "src/__tests__/components/triage/triage-shell.test.tsx",
+            "src/__tests__/components/triage/baseline-content.test.tsx",
             "src/__tests__/components/triage/related-events-panel.test.tsx",
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
           ],

@@ -16,12 +16,16 @@ import type { ScoredTriageEvent } from "../types";
 import {
   eventsWithinSameKindWindow,
   getPivotDimension,
+  isDimensionAvailableInBaseline,
   PIVOT_DIMENSIONS,
   type PivotDimension,
   type PivotDimensionId,
   type PivotValue,
   parseSameKindKey,
 } from "./dimensions";
+
+/** Triage menu mode toggle — gates which dimensions the index covers. */
+export type TriagePivotMode = "baseline" | "policy";
 
 /** Default rows shown per dimension before "Show more" is clicked. */
 export const PIVOT_GROUP_DEFAULT_ROWS = 10;
@@ -67,21 +71,36 @@ const DYNAMIC_DIMENSIONS: ReadonlySet<PivotDimensionId> = new Set([
   "sameKindWithin15Min",
 ]);
 
+function activeDimensionsFor(mode: TriagePivotMode): readonly PivotDimension[] {
+  return mode === "baseline"
+    ? PIVOT_DIMENSIONS.filter(isDimensionAvailableInBaseline)
+    : PIVOT_DIMENSIONS;
+}
+
 /**
  * Build the index over a flat scored-event list. O(events × dims) but
  * dims is a fixed ~18, so the cost is dominated by the 5,000-event
  * corpus cap from #451.
+ *
+ * `mode` (default `"baseline"`) gates Policy-only dimensions out of
+ * the index when reading from the corpus A row shape — those
+ * dimensions read from `TriageEvent` fields that are not present on
+ * `baseline_triaged_event` and would always extract no values, so
+ * skipping them at index time keeps the panel honest about which
+ * sections are available in Baseline mode.
  */
 export function buildPivotIndex(
   events: readonly ScoredTriageEvent[],
+  mode: TriagePivotMode = "policy",
 ): PivotIndex {
+  const dimensions = activeDimensionsFor(mode);
   const byDimension: PivotIndex["byDimension"] = new Map();
-  for (const dim of PIVOT_DIMENSIONS) {
+  for (const dim of dimensions) {
     if (DYNAMIC_DIMENSIONS.has(dim.id)) continue;
     byDimension.set(dim.id, new Map());
   }
   for (const event of events) {
-    for (const dim of PIVOT_DIMENSIONS) {
+    for (const dim of dimensions) {
       if (DYNAMIC_DIMENSIONS.has(dim.id)) continue;
       const values = dim.extract(event);
       if (values.length === 0) continue;
@@ -266,12 +285,12 @@ export interface PivotPanelSection {
 export function buildPivotPanel(
   index: PivotIndex,
   focusEvents: readonly ScoredTriageEvent[],
-  options: { excludeFocusEvents?: boolean } = {},
+  options: { excludeFocusEvents?: boolean; mode?: TriagePivotMode } = {},
 ): PivotPanelSection[] {
-  const { excludeFocusEvents = true } = options;
+  const { excludeFocusEvents = true, mode = "policy" } = options;
   const focusSet = excludeFocusEvents ? new Set(focusEvents) : null;
   const sections: PivotPanelSection[] = [];
-  for (const dim of PIVOT_DIMENSIONS) {
+  for (const dim of activeDimensionsFor(mode)) {
     const focusValues = collectValues(dim, focusEvents);
     if (focusValues.length === 0) continue;
     const matched = eventsMatchingFocusValues(

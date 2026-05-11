@@ -11,7 +11,9 @@ export {
 export {
   eventsWithinSameKindWindow,
   getPivotDimension,
+  isDimensionAvailableInBaseline,
   PIVOT_DIMENSIONS,
+  PIVOT_DIMENSIONS_BASELINE,
   type PivotDimension,
   type PivotDimensionFamily,
   type PivotDimensionId,
@@ -29,6 +31,7 @@ export {
   type PivotIndex,
   type PivotIndexEntry,
   type PivotPanelSection,
+  type TriagePivotMode as TriagePivotIndexMode,
 } from "./index-builder";
 export {
   extractRegistrableDomain,

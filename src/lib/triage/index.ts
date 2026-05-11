@@ -1,4 +1,4 @@
-export { aggregateTriageEvents } from "./aggregate";
+export { aggregateTriageEvents, compareAssets } from "./aggregate";
 export {
   classifyTriageEndpoint,
   type TriageEndpointClassification,
@@ -31,9 +31,11 @@ export {
   type ScoredTriageEvent,
   TRIAGE_HARD_EVENT_CAP,
   type TriageAsset,
+  type TriageCustomerFreshness,
   type TriageEvent,
   type TriageEventListPage,
   type TriageEventListResult,
+  type TriageFreshness,
   type TriageFunnel,
   type TriageHostNetworkGroup,
   type TriageLoadResult,
