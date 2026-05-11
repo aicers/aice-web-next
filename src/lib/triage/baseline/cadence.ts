@@ -69,13 +69,12 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 export const PHASE_1A_BASELINE_VERSION = "phase1a-simple";
 
 /**
- * Phase 1.B baseline-version marker. Reserved here so PR 2's cadence
- * change wires it next to `PHASE_1A_BASELINE_VERSION` without having to
- * thread a new export through the module graph. Not yet referenced by
- * the cadence (the dual-write in `pager.ts` still stamps every row with
- * `PHASE_1A_BASELINE_VERSION`); PR 2 swaps it in once the four-selector
- * `raw_score` from §3 (RFC 0001) replaces the Phase 1.A additive score
- * and the §9 backfill + `SET NOT NULL` migration has run.
+ * Phase 1.B baseline-version marker. Stamped on every row the cadence
+ * inserts into `baseline_triaged_event` once the four-selector
+ * `raw_score` from §3 (RFC 0001) has replaced the Phase 1.A additive
+ * score. Older Phase 1.A rows keep their own marker on disk so the
+ * read-time `cume_dist()` partition keys (§3 stored score) rank each
+ * `(kind, baseline_version)` cohort independently.
  */
 export const PHASE_1B_BASELINE_VERSION = "phase1b-four-selector";
 
@@ -253,7 +252,7 @@ async function markOk(
             baseline_version = $2,
             exclusions_fp = $3
       WHERE id = true`,
-    [endCursor, PHASE_1A_BASELINE_VERSION, exclusionsFp],
+    [endCursor, PHASE_1B_BASELINE_VERSION, exclusionsFp],
   );
 }
 

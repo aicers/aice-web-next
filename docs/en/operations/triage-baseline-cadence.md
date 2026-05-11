@@ -13,10 +13,13 @@ resolver in order, applies the active exclusion set in-memory, and
 INSERTs both:
 
 - the **observed-event metadata** for every standard-filter survivor
-  into `observed_event_meta` (30-day retention, used by future
-  window-aggregate signals); and
-- the **baseline-passing subset** into `baseline_triaged_event`
-  (180-day retention, read directly by the Triage menu).
+  into `observed_event_meta` (30-day retention, used by the
+  four-selector window-aggregate signals); and
+- **every standard-filter survivor** into `baseline_triaged_event`
+  (180-day retention, read directly by the Triage menu) with a
+  per-event `raw_score` (RFC 0001 §3) and `selector_tags` set. The
+  menu's strictness slider applies a read-time cutoff against the
+  `raw_score`; the cadence does not gate on score at INSERT time.
 
 `baseline_corpus_state.last_event_cursor` is advanced atomically
 with the per-page INSERTs so a failure rolls back to the previous
@@ -269,7 +272,7 @@ Every successful pass updates `baseline_corpus_state` with:
 - `last_run_status = 'ok'`
 - `last_ingested_at = NOW()`
 - `last_event_cursor = <end-cursor of last page>`
-- `baseline_version = 'phase1a-simple'`
+- `baseline_version = 'phase1b-four-selector'`
 - `exclusions_fp = <fingerprint of active exclusion set>`
 
 A failed pass leaves `last_run_status = 'failed'` with the error

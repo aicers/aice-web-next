@@ -1,23 +1,15 @@
 /**
  * Phase 1.B tunable parameters (RFC 0001 §9).
  *
- * All values below are the **provisional** starting points from the RFC.
- * Final calibration happens on a representative tenant DB with ops
- * review before PR 2 (`baseline_version = "phase1b-four-selector"`)
- * merges; tuning post-merge is via a `baseline_version` bump (§10).
+ * Calibrated values from ops review on representative tenant data
+ * (PR 2 / #513). The selector weights, saturation caps, tag thresholds,
+ * and final-count tunables below are the values cadence writes against
+ * `baseline_version = "phase1b-four-selector"`.
  *
- * This module is intentionally **not yet referenced** by any code path
- * in PR 1 — the cadence still uses the Phase 1.A additive rule from
- * `src/lib/triage/scoring.ts`. PR 2 wires these constants into the
- * four-selector scoring (§3), slot allocator (§4), and final count
- * curve (§6).
- *
- * Why it ships as a skeleton in PR 1:
- *   * Adding the module ahead of PR 2 keeps the §9 audit trail co-located
- *     with `categories.ts` and the cadence module so reviewers see the
- *     algorithm shape before the wiring lands.
- *   * The names freeze the §9 vocabulary used by upcoming PRs; any later
- *     rename would require a `baseline_version` bump.
+ * Changing any value here changes the algorithm contract and must be
+ * paired with a `baseline_version` bump (§10) so prior-version rows
+ * keep their per-cohort `CUME_DIST` ranking instead of being silently
+ * compared on the new scale.
  */
 
 /**
@@ -59,6 +51,37 @@ export const SELECTOR_SATURATION = {
 export const MAX_TAGS = 5;
 
 /**
+ * Per-event "fired meaningfully" thresholds (§9, RFC §12 OQ5). A selector
+ * value above its threshold emits the corresponding tag; the tag set
+ * feeds the read-time `normalized_top_confidence` denominator (§4) so
+ * the thresholds are part of `baseline_version`.
+ *
+ * S2 and `unlabeled` are binary — they emit their tag whenever the
+ * selector value is `1`, which is equivalent to a threshold of `0`.
+ */
+export const TAG_THRESHOLDS = {
+  /** S1 tag emitted when the within-kind percentile rank exceeds this. */
+  s1_high: 0.85,
+  /** S3 tag emitted when the (orig, resp, kind) repeat ratio exceeds this. */
+  s3_recurring: 0.5,
+  /** S4 tag emitted when the (orig, kind) correlated ratio exceeds this. */
+  s4_correlated: 0.5,
+} as const;
+
+/**
+ * The five distinct selector-tag names the cadence emits. Order is
+ * stable and matches `MAX_TAGS = 5`. Any addition here is a
+ * `baseline_version`-bumping change (§10).
+ */
+export const SELECTOR_TAGS = {
+  S1_HIGH: "S1-high",
+  S2_SEVERE: "S2-severe",
+  S3_RECURRING: "S3-recurring",
+  S4_CORRELATED: "S4-correlated",
+  UNLABELED_CLUSTER: "unlabeled-cluster",
+} as const;
+
+/**
  * Slot allocation tunables (§4).
  */
 export const SLOT_ALLOCATION = {
@@ -86,3 +109,13 @@ export const FINAL_COUNT = {
   /** Minimum `final_count` when post-exclusion > 0. */
   MIN_NONZERO_FLOOR: 1,
 } as const;
+
+/**
+ * Statistics windows from §7. Per-selector value across the active
+ * windows is combined via `max`; pre-activation windows contribute `0`.
+ * Days are wall-clock; activation derives from elapsed time since the
+ * customer's first observed event (`min(event_time)` in
+ * `observed_event_meta`).
+ */
+export const STATISTICS_WINDOW_DAYS = [7, 14, 30] as const;
+export type StatisticsWindowDays = (typeof STATISTICS_WINDOW_DAYS)[number];
