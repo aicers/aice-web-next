@@ -119,6 +119,32 @@ describe("parseTriagePivotHash", () => {
     expect(state.mode).toBe("tier2");
   });
 
+  it("accepts free-form keywords values up to the max length", () => {
+    // `keywords` (#499) has no whitelist — the parser passes the
+    // typed string through and the panel's submit handler caps the
+    // length at 256.
+    const state = parseTriagePivotHash(
+      `#triage.pivot.step=${encodeURIComponent("keywords:lateral movement")}`,
+    );
+    expect(state.steps).toEqual([
+      { dimension: "keywords", valueKey: "lateral movement" },
+    ]);
+    expect(state.rejectedStepCount).toBe(0);
+  });
+
+  it("rejects keywords values longer than the 256-character cap", () => {
+    // The submit handler rejects this client-side; the parser
+    // enforces the same ceiling so a hand-crafted shared URL with an
+    // oversized blob falls back to the asset root via the stale-hash
+    // path rather than blowing up the LRU cache key.
+    const tooLong = "a".repeat(257);
+    const state = parseTriagePivotHash(
+      `#triage.pivot.step=${encodeURIComponent(`keywords:${tooLong}`)}`,
+    );
+    expect(state.steps).toEqual([]);
+    expect(state.rejectedStepCount).toBe(1);
+  });
+
   it("rejects learningMethods value keys outside the SDL enum", () => {
     // A typo'd or schema-changed enum literal must drop the step
     // rather than reach the Tier 2 fetch path — REview would otherwise

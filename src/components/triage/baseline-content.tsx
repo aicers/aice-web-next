@@ -15,6 +15,7 @@ import type {
   TriageLoadResult,
   TriagePeriod,
 } from "@/lib/triage";
+import { appendRecentKeyword } from "@/lib/triage/keywords";
 import {
   appendPivotStep,
   backtrackPivotTrail,
@@ -168,6 +169,13 @@ export function TriageBaselineContent({
         ]
       : [],
   );
+  // Page-session-only recent `keywords` submissions (#499). Bounded
+  // at 5 entries via {@link appendRecentKeyword}; cleared whenever the
+  // period / customer scope rotates (same trigger as the Tier 2 cache).
+  // The list is intentionally not persisted to URL hash or localStorage
+  // so a stale typed value cannot be revived without the operator
+  // re-typing it.
+  const [recentKeywords, setRecentKeywords] = useState<readonly string[]>([]);
 
   const selectedAsset = useMemo(() => {
     if (!selected) return null;
@@ -205,6 +213,11 @@ export function TriageBaselineContent({
           ]
         : [],
     );
+    // Recent `keywords` chips are page-session-only and share the
+    // Tier 2 cache's rotate trigger (period / customer scope change).
+    // Without this clear the operator could see chips that no longer
+    // make sense against the freshly-loaded corpus.
+    setRecentKeywords([]);
   }, [initialFocus?.customerId, initialFocus?.address, resetSignal]);
 
   useEffect(() => {
@@ -472,6 +485,24 @@ export function TriageBaselineContent({
   const onCrumb = useCallback((indexInclusive: number) => {
     setTrail((current) => backtrackPivotTrail(current, indexInclusive));
   }, []);
+
+  // Free-form `keywords` submit (#499). Same dispatch path as a
+  // dimension click (`onPivot` handles the Tier 2 fetch + trail
+  // append), with an extra side-effect: the submitted value joins the
+  // recent-chips list at most-recent position. The duplicate-of-recent
+  // rule is handled by {@link appendRecentKeyword}, which moves an
+  // existing chip to the head rather than adding a second copy.
+  const onSubmitKeyword = useCallback(
+    (value: string) => {
+      setRecentKeywords((current) => appendRecentKeyword(current, value));
+      onPivot({
+        kind: "dimension",
+        dimension: "keywords",
+        value: { key: value, label: value },
+      });
+    },
+    [onPivot],
+  );
 
   // ── URL hash restore (client-only — Server Components cannot read
   // location.hash) ──
@@ -892,6 +923,9 @@ export function TriageBaselineContent({
             }
             deferredSensorDimension={sensorDeferredInTier2}
             showLearningMethodSection={scope === "tier2"}
+            showKeywordsSection={scope === "tier2"}
+            recentKeywords={recentKeywords}
+            onSubmitKeyword={onSubmitKeyword}
           />
         </div>
       ) : null}

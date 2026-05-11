@@ -2012,13 +2012,24 @@
         "kinds": "이벤트 종류",
         "categories": "위협 카테고리",
         "levels": "위협 레벨",
-        "learningMethods": "학습 방식"
+        "learningMethods": "학습 방식",
+        "keywords": "키워드"
       },
       "values": {
         "learningMethod": {
           "UNSUPERVISED": "비지도",
           "SEMI_SUPERVISED": "준지도"
         }
+      },
+      "keywords": {
+        "hint": "자유 텍스트 검색. 제출하면 Tier 2 조회가 발생하며, 최근 입력은 아래에서 다시 사용할 수 있습니다(현재 세션 한정).",
+        "inputLabel": "키워드",
+        "inputPlaceholder": "키워드를 입력하고 Enter를 누르세요",
+        "submit": "검색",
+        "recentHeading": "최근",
+        "recentChipTemplate": "{value} 다시 검색",
+        "errorEmpty": "검색할 키워드를 입력하세요.",
+        "errorTooLongTemplate": "키워드가 너무 깁니다 — {max}자 이내로 입력하세요."
       }
     },
     "pivotBreadcrumb": {
@@ -2047,7 +2058,8 @@
         "kinds": "이벤트 종류",
         "categories": "위협 카테고리",
         "levels": "위협 레벨",
-        "learningMethods": "학습 방식"
+        "learningMethods": "학습 방식",
+        "keywords": "키워드"
       }
     },
     "periodChangeConfirm": {

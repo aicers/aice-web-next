@@ -15,6 +15,10 @@ import { useTimezone } from "@/components/providers/timezone-provider";
 import { formatDateTime } from "@/lib/format-date";
 import type { ScoredTriageEvent } from "@/lib/triage";
 import {
+  MAX_KEYWORD_LENGTH,
+  validateKeywordInput,
+} from "@/lib/triage/keywords";
+import {
   LEARNING_METHOD_VALUES,
   type LearningMethodValue,
 } from "@/lib/triage/learning-methods";
@@ -68,6 +72,42 @@ export interface TriagePivotPanelLabels {
    * localized button labels.
    */
   learningMethodValues?: Record<LearningMethodValue, string>;
+  /**
+   * Localized strings for the Tier-2-only free-form `keywords` section
+   * (#499). Optional: the section is gated on
+   * `showKeywordsSection` so panels that never render it (Tier 1) do
+   * not have to provide them. Present-but-missing falls back to a
+   * disabled section so a TypeScript-clean caller never crashes the
+   * panel.
+   */
+  keywords?: KeywordsSectionLabels;
+}
+
+export interface KeywordsSectionLabels {
+  /** Hint text shown above the input. */
+  hint: string;
+  /** Accessible label for the typed-input field. */
+  inputLabel: string;
+  /** Placeholder shown inside the input when empty. */
+  inputPlaceholder: string;
+  /** Submit button label. */
+  submit: string;
+  /** Heading for the recent-chips strip. */
+  recentHeading: string;
+  /**
+   * Template for a recent-chip's accessible name. `{value}` is the
+   * keyword text. Used for the aria-label so screen readers announce
+   * the actual keyword rather than just "chip".
+   */
+  recentChipTemplate: string;
+  /** Validation messages — inline below the input, role="alert". */
+  errorEmpty: string;
+  /**
+   * Template for the too-long validation message. `{max}` is the
+   * maximum length (typically 256). Rendered when the trimmed value
+   * exceeds {@link MAX_KEYWORD_LENGTH}.
+   */
+  errorTooLongTemplate: string;
 }
 
 interface TriagePivotPanelProps {
@@ -97,6 +137,27 @@ interface TriagePivotPanelProps {
    * server-filtered fetch).
    */
   showLearningMethodSection?: boolean;
+  /**
+   * When `true`, render the Tier-2-only free-form `keywords` section
+   * (#499) — a typed-input chip with explicit submit and a recent-
+   * chips strip. Only meaningful in Tier 2 mode; Tier 1 panels never
+   * receive the prop.
+   */
+  showKeywordsSection?: boolean;
+  /**
+   * Most-recent-first list of operator-submitted keywords, scoped to
+   * the page session. The panel renders each as a clickable chip that
+   * re-fires the same Tier 2 fetch. Owned by the parent so the same
+   * list survives across the panel mount/unmount cycle that pivoting
+   * triggers.
+   */
+  recentKeywords?: readonly string[];
+  /**
+   * Called when the operator submits a valid keyword (explicit submit:
+   * Enter or button click only). The trimmed value is passed through;
+   * the panel does not call this for invalid input.
+   */
+  onSubmitKeyword?: (value: string) => void;
 }
 
 const SCORE_FORMAT = new Intl.NumberFormat(undefined, {
@@ -113,11 +174,18 @@ export function TriagePivotPanel({
   isWeakSignal,
   deferredSensorDimension = false,
   showLearningMethodSection = false,
+  showKeywordsSection = false,
+  recentKeywords,
+  onSubmitKeyword,
 }: TriagePivotPanelProps) {
   const showDeferredSensor =
     deferredSensorDimension && labels.sameSensorUnavailable !== undefined;
   const showLearningMethods =
     showLearningMethodSection && labels.learningMethodValues !== undefined;
+  const showKeywords =
+    showKeywordsSection &&
+    labels.keywords !== undefined &&
+    onSubmitKeyword !== undefined;
   return (
     <section
       aria-labelledby="triage-pivot-heading"
@@ -136,28 +204,44 @@ export function TriagePivotPanel({
           </p>
         ) : null}
       </header>
-      {!hasFocus ? (
+      {/*
+       * Render order:
+       *   1. Focus-driven sections + the deferred-sensor placeholder
+       *      need a focus event to be meaningful; when `hasFocus` is
+       *      false we render only the focus hint for them.
+       *   2. Static Tier 2 sections (`learningMethods` static options
+       *      and `keywords` free-form input) do not depend on focus
+       *      values — the operator must be able to submit a new
+       *      keyword or pick an enum row even after a zero-result
+       *      fetch leaves the focus list empty. They render whenever
+       *      Tier 2 scope flips them on, regardless of `hasFocus`.
+       */}
+      {!hasFocus && !showLearningMethods && !showKeywords ? (
         <p className="px-4 py-6 text-sm text-muted-foreground">
           {labels.noFocusHint}
         </p>
-      ) : sections.length === 0 &&
+      ) : hasFocus &&
+        sections.length === 0 &&
         !showDeferredSensor &&
-        !showLearningMethods ? (
+        !showLearningMethods &&
+        !showKeywords ? (
         <p className="px-4 py-6 text-sm text-muted-foreground">
           {labels.empty}
         </p>
       ) : (
         <ul className="divide-y">
-          {sections.map((section) => (
-            <PivotSection
-              key={section.dimension}
-              section={section}
-              onPivot={onPivot}
-              labels={labels}
-              isWeakSignal={isWeakSignal}
-            />
-          ))}
-          {showDeferredSensor ? (
+          {hasFocus
+            ? sections.map((section) => (
+                <PivotSection
+                  key={section.dimension}
+                  section={section}
+                  onPivot={onPivot}
+                  labels={labels}
+                  isWeakSignal={isWeakSignal}
+                />
+              ))
+            : null}
+          {hasFocus && showDeferredSensor ? (
             <DeferredDimensionRow
               dimensionLabel={labels.dimensions.sameSensor}
               tooltip={labels.sameSensorUnavailable as string}
@@ -173,6 +257,16 @@ export function TriagePivotPanel({
                 >
               }
               onPivot={onPivot}
+            />
+          ) : null}
+          {showKeywords ? (
+            <KeywordsSection
+              dimensionLabel={labels.dimensions.keywords}
+              familyLabel={labels.family["tier2-only"]}
+              actionTemplate={labels.pivotActionTemplate}
+              keywordsLabels={labels.keywords as KeywordsSectionLabels}
+              recents={recentKeywords ?? []}
+              onSubmit={onSubmitKeyword as (value: string) => void}
             />
           ) : null}
         </ul>
@@ -227,6 +321,126 @@ function LearningMethodSection({
           );
         })}
       </div>
+    </li>
+  );
+}
+
+function KeywordsSection({
+  dimensionLabel,
+  familyLabel,
+  actionTemplate,
+  keywordsLabels,
+  recents,
+  onSubmit,
+}: {
+  dimensionLabel: string;
+  familyLabel: string;
+  actionTemplate: string;
+  keywordsLabels: KeywordsSectionLabels;
+  recents: readonly string[];
+  onSubmit: (value: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<null | "empty" | "tooLong">(null);
+
+  const submit = () => {
+    const result = validateKeywordInput(value);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    setValue("");
+    onSubmit(result.value);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setValue("");
+      setError(null);
+    }
+  };
+
+  const errorMessage =
+    error === "empty"
+      ? keywordsLabels.errorEmpty
+      : error === "tooLong"
+        ? keywordsLabels.errorTooLongTemplate.replace(
+            "{max}",
+            String(MAX_KEYWORD_LENGTH),
+          )
+        : null;
+
+  return (
+    <li className="px-4 py-3" data-testid="triage-pivot-keywords">
+      <div className="mb-2 flex flex-col gap-0.5">
+        <h3 className="text-sm font-semibold text-foreground">
+          {dimensionLabel}
+        </h3>
+        <p className="text-xs text-muted-foreground">{familyLabel}</p>
+        <p className="text-xs text-muted-foreground">{keywordsLabels.hint}</p>
+      </div>
+      <div className="flex flex-wrap items-start gap-2">
+        <input
+          type="text"
+          value={value}
+          aria-label={keywordsLabels.inputLabel}
+          placeholder={keywordsLabels.inputPlaceholder}
+          onChange={(e) => {
+            setValue(e.target.value);
+            if (error !== null) setError(null);
+          }}
+          onKeyDown={handleKeyDown}
+          className={cn(
+            "min-w-[14rem] flex-1 rounded border border-border/60 bg-background px-2 py-1 text-sm",
+            "focus:outline-none focus:ring-2 focus:ring-primary/40",
+          )}
+        />
+        <button
+          type="button"
+          onClick={submit}
+          className={cn(
+            "rounded border border-border/60 bg-primary px-3 py-1 text-xs font-medium text-primary-foreground",
+            "hover:bg-primary/90",
+          )}
+        >
+          {keywordsLabels.submit}
+        </button>
+      </div>
+      {errorMessage !== null ? (
+        <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-300">
+          {errorMessage}
+        </p>
+      ) : null}
+      {recents.length > 0 ? (
+        <div className="mt-3">
+          <p className="mb-1 text-xs font-medium text-muted-foreground">
+            {keywordsLabels.recentHeading}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {recents.map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                onClick={() => onSubmit(chip)}
+                aria-label={actionTemplate
+                  .replace("{dimension}", dimensionLabel)
+                  .replace("{value}", chip)}
+                className={cn(
+                  "max-w-[32ch] truncate rounded border border-border/60 px-2 py-0.5 text-xs",
+                  "text-foreground hover:bg-accent",
+                )}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </li>
   );
 }

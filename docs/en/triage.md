@@ -444,10 +444,40 @@ dimensions:
     Tier 2 event in the period whose `learningMethod` is
     `SEMI_SUPERVISED`.
 
-  `keywords` is also a Tier 2-only filter field but its values are
-  not enumerable, so the panel does not yet surface a click
-  affordance for it. Tracked as follow-up #499 (free-form chip
-  input).
+- `keywords` (Tier 2 only — surfaced as a **free-form input chip**
+  section in the same "Tier 2 only" group). Unlike the enum-shaped
+  Tier-2-only dimensions, `keywords` accepts an operator-typed value
+  rather than a fixed list of clickable rows. The section renders a
+  single text input plus a **Search** button.
+
+  - **Submit is explicit.** Typing alone does not trigger a fetch.
+    Pressing **Enter** or clicking **Search** dispatches a Tier 2
+    fetch filtered by `EventListFilterInput.keywords`. **Escape**
+    clears the input.
+  - **Input rules.** The submitted value is trimmed. Whitespace-only
+    or empty input is rejected with an inline validation message; so
+    is input longer than **256 characters** (the cap keeps the URL
+    hash and the LRU cache key from blowing up).
+  - **Recent chips.** The five most-recent submissions appear below
+    the input as clickable chips. Clicking one re-fires the same
+    Tier 2 fetch. Submitting a value already in the recents list
+    moves the chip to the most-recent position rather than adding a
+    duplicate.
+  - **Recents are page-session only.** They are not encoded in the
+    URL hash, not stored in `localStorage`, and not synced to the
+    account profile. Changing the period or customer scope clears
+    the recent-chips strip alongside the Tier 2 cache. Reloading the
+    page with no hash content shows empty recents.
+  - **Shared URL.** A breadcrumb step with a `keywords` value is
+    encoded into the URL hash like any other Tier-2-only step
+    (`triage.pivot.step=keywords:<encoded value>`). Restoring the
+    URL queues the same Tier 2 fetch; the typed string is rendered
+    verbatim as the breadcrumb label. A `keywords` fetch that
+    returns zero events renders an empty pivot focus rather than
+    falling back to the asset root — the corpus carries no
+    `keywords` field, so the synchronous staleness check used by
+    other dimensions is intentionally skipped.
+
 - `externalIp`, `internalIp`, `country`, `sameSensor` (the same row
   the operator sees in Tier 1, but the click action issues a fresh
   fetch instead of looking up the loaded index).

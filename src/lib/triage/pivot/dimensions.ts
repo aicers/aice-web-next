@@ -42,6 +42,14 @@ import {
  * click handler, hash parser, cache key, and `Tier2Pending*` types
  * can refer to it; the static section metadata lives in
  * `src/lib/triage/learning-methods.ts`.
+ *
+ * `keywords` is a Tier-2-only server-filtered free-text dimension
+ * (#499). It has no corpus extractor and no fixed enum — the panel
+ * renders a typed-input chip section and submits the trimmed value
+ * verbatim through the same `tier2.startFetch` path as the other
+ * server-filtered dimensions. Like `learningMethods`, the id is in
+ * the union for the type integration but there is no `PivotDimension`
+ * object in {@link PIVOT_DIMENSIONS}.
  */
 export type PivotDimensionId =
   | "externalIp"
@@ -65,7 +73,8 @@ export type PivotDimensionId =
   | "kinds"
   | "categories"
   | "levels"
-  | "learningMethods";
+  | "learningMethods"
+  | "keywords";
 
 /**
  * Pivot value. Carries both the canonical pivot key (the index key
@@ -477,6 +486,7 @@ const DIMENSION_BY_ID = new Map<PivotDimensionId, PivotDimension>(
  */
 const STATIC_TIER2_DIMENSION_IDS: ReadonlySet<PivotDimensionId> = new Set([
   "learningMethods",
+  "keywords",
 ] as const satisfies readonly PivotDimensionId[]);
 
 /**
@@ -489,7 +499,7 @@ const STATIC_TIER2_DIMENSION_IDS: ReadonlySet<PivotDimensionId> = new Set([
  */
 export function isStaticTier2Dimension(
   id: PivotDimensionId,
-): id is "learningMethods" {
+): id is "learningMethods" | "keywords" {
   return STATIC_TIER2_DIMENSION_IDS.has(id);
 }
 
