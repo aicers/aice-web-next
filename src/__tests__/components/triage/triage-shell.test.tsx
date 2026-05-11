@@ -1191,11 +1191,11 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
 
     // Most-recent first. "one" was evicted by the sixth submission.
     expect(
-      screen.queryByRole("button", { name: "Pivot to Dim:keywords: one" }),
+      screen.queryByRole("button", { name: "Search again for one" }),
     ).toBeNull();
     for (const word of ["six", "five", "four", "three", "two"]) {
       expect(
-        screen.getByRole("button", { name: `Pivot to Dim:keywords: ${word}` }),
+        screen.getByRole("button", { name: `Search again for ${word}` }),
       ).toBeTruthy();
     }
   });
@@ -1221,7 +1221,7 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
     // appends the trail step (the active step before the click was
     // beta, so alpha is a new step on the trail).
     fireEvent.click(
-      screen.getByRole("button", { name: "Pivot to Dim:keywords: alpha" }),
+      screen.getByRole("button", { name: "Search again for alpha" }),
     );
     await flushAsync();
     // The re-fire should hit the cache (beta already in flight/ready)
@@ -1231,11 +1231,11 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
     const chips = screen
       .getAllByRole("button")
       .filter((b) =>
-        /Pivot to Dim:keywords:/.test(b.getAttribute("aria-label") ?? ""),
+        /^Search again for /.test(b.getAttribute("aria-label") ?? ""),
       );
     expect(chips.map((b) => b.getAttribute("aria-label"))).toEqual([
-      "Pivot to Dim:keywords: alpha",
-      "Pivot to Dim:keywords: beta",
+      "Search again for alpha",
+      "Search again for beta",
     ]);
   });
 
@@ -1258,13 +1258,13 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
     const chips = screen
       .getAllByRole("button")
       .filter((b) =>
-        /Pivot to Dim:keywords:/.test(b.getAttribute("aria-label") ?? ""),
+        /^Search again for /.test(b.getAttribute("aria-label") ?? ""),
       );
     expect(chips).toHaveLength(2);
     // Most recent first: alpha now leads, beta follows.
     expect(chips.map((b) => b.getAttribute("aria-label"))).toEqual([
-      "Pivot to Dim:keywords: alpha",
-      "Pivot to Dim:keywords: beta",
+      "Search again for alpha",
+      "Search again for beta",
     ]);
   });
 
@@ -1324,7 +1324,7 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
     selectTier2Scope();
     expect(
       screen.queryByRole("button", {
-        name: /Pivot to Dim:keywords:/,
+        name: /^Search again for /,
       }),
     ).toBeNull();
   });

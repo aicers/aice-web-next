@@ -263,7 +263,6 @@ export function TriagePivotPanel({
             <KeywordsSection
               dimensionLabel={labels.dimensions.keywords}
               familyLabel={labels.family["tier2-only"]}
-              actionTemplate={labels.pivotActionTemplate}
               keywordsLabels={labels.keywords as KeywordsSectionLabels}
               recents={recentKeywords ?? []}
               onSubmit={onSubmitKeyword as (value: string) => void}
@@ -328,14 +327,12 @@ function LearningMethodSection({
 function KeywordsSection({
   dimensionLabel,
   familyLabel,
-  actionTemplate,
   keywordsLabels,
   recents,
   onSubmit,
 }: {
   dimensionLabel: string;
   familyLabel: string;
-  actionTemplate: string;
   keywordsLabels: KeywordsSectionLabels;
   recents: readonly string[];
   onSubmit: (value: string) => void;
@@ -427,9 +424,10 @@ function KeywordsSection({
                 key={chip}
                 type="button"
                 onClick={() => onSubmit(chip)}
-                aria-label={actionTemplate
-                  .replace("{dimension}", dimensionLabel)
-                  .replace("{value}", chip)}
+                aria-label={keywordsLabels.recentChipTemplate.replace(
+                  "{value}",
+                  chip,
+                )}
                 className={cn(
                   "max-w-[32ch] truncate rounded border border-border/60 px-2 py-0.5 text-xs",
                   "text-foreground hover:bg-accent",

@@ -380,7 +380,7 @@ describe("TriagePivotPanel — Tier 2 only Keywords free-form section (#499)", (
       onSubmitKeyword: onSubmit,
     });
     const chip = screen.getByRole("button", {
-      name: "Pivot to Dim:keywords: beta",
+      name: "Search again for beta",
     });
     fireEvent.click(chip);
     expect(onSubmit).toHaveBeenCalledTimes(1);

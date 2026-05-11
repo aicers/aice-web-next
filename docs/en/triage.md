@@ -450,6 +450,15 @@ dimensions:
   rather than a fixed list of clickable rows. The section renders a
   single text input plus a **Search** button.
 
+  ![Keywords free-form input section (wireframe)](../assets/triage-keywords-en.svg)
+
+  > **Note:** The figure above is a wireframe stand-in. It ships
+  > before the live REview screenshot environment is wired up for
+  > Triage; the wireframe will be replaced with a real PNG capture
+  > as part of the EN/KR Triage manual screenshot pass tracked by
+  > [issue #455](https://github.com/aicers/aice-web-next/issues/455),
+  > alongside the other Phase 1.A Triage wireframes.
+
   - **Submit is explicit.** Typing alone does not trigger a fetch.
     Pressing **Enter** or clicking **Search** dispatches a Tier 2
     fetch filtered by `EventListFilterInput.keywords`. **Escape**
