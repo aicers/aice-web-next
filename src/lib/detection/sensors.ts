@@ -3,17 +3,29 @@ import "server-only";
 import { resolveEffectiveCustomerIds } from "@/lib/auth/customer-scope";
 import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
+import { graphqlRequest } from "@/lib/graphql/client";
+import { withReviewErrorMapping } from "@/lib/review/error-mapping";
 
 import { DetectionUnauthorizedError } from "./errors";
+import { SENSOR_LIST_QUERY } from "./queries";
+import { jwtCustomerIdsForDetection } from "./server-actions";
 
 const DETECTION_READ = "detection:read";
 const CUSTOMERS_ACCESS_ALL = "customers:access-all";
 
 /**
  * A sensor (Node) known to REview, scoped to customers the caller can
- * access. The exact field set is a product of the REview query signature
- * and will be finalized when the endpoint lands — see
- * `SENSOR_LIST_ENDPOINT_AVAILABLE` below.
+ * access.
+ *
+ * Field mapping at the dispatch boundary (see `listSensors`):
+ *
+ *   - `id`         ← `customerSensorList.nodes[].nodeId`   (SDL: `ID!`)
+ *   - `name`       ← `customerSensorList.nodes[].hostFqdn` (SDL: `String!`)
+ *   - `customerId` ← `customerSensorList.nodes[].customerId` (SDL: `Int!`)
+ *
+ * `id` substitutes directly into `EventListFilterInput.sensors`, which
+ * review resolves to `node.profile.hostname` for matching against
+ * `Event.sensor` — equal to `hostFqdn` here.
  */
 export interface Sensor {
   /** Opaque REview Node ID. Matches `EventListFilterInput.sensors` entries. */
@@ -21,36 +33,34 @@ export interface Sensor {
   /** Human-readable sensor name as emitted on `Event.sensor`. */
   name: string;
   /** REview customer ID the sensor belongs to. */
-  customerId: string;
+  customerId: number;
 }
 
 /**
  * Whether the vendored REview schema at `schemas/review.graphql` exposes
  * the sensor-list query consumed by this module.
  *
- * The REview-side endpoint is being added in a follow-up schema bump
- * (tracked by #295). Until that bump reaches this repo's
- * `schemas/review.graphql`, this flag stays `false` and `listSensors()`
- * short-circuits to the `endpoint-absent` variant — see the fallback
- * note on `listSensors()`.
+ * The REview-side endpoint shipped in review-web 0.33.0 (review 0.50.0)
+ * as `customerSensorList`, with one row per Node (Sensor.nodeId: ID!).
+ * The constant is retained — not deleted — so a future schema rollback
+ * (or a schema bump that removes the field) flips back to `false`
+ * automatically via the endpoint-guard test, and `listSensors()`
+ * degrades to the `{ endpointAvailable: false }` variant rather than
+ * dispatching against a missing field.
  *
  * ## Three-way CI guard
  *
- * When REview ships the endpoint, flip this constant to `true` in the
- * **same PR** that bumps the vendored schema and wires the inline
- * `parse(...)` dispatch.
  * `src/__tests__/lib/detection/sensors-endpoint-guard.test.ts` enforces
- * the three-way contract at CI time — flipping the constant without a
- * matching schema field fails, and schema drift without a constant
- * flip fails.
+ * the three-way contract at CI time: the constant must match what the
+ * vendored SDL exposes (both `Query.customerSensorList` and
+ * `Sensor.nodeId: ID!` must be present). A pre-0.33.0 schema that
+ * exposes only `customerSensorList` (without `Sensor.nodeId`) is
+ * treated as endpoint-absent so the projection below stays safe.
  * `src/__tests__/lib/detection/sensors.test.ts` additionally asserts
- * that, when the constant is `true`, `listSensors()` dispatches through
- * `graphqlRequest` with `{ role, customerIds }` — so flipping the
- * constant while leaving the dispatch body a placeholder also fails CI.
- * The schema bump, constant flip, and dispatch wiring therefore cannot
- * land piecemeal.
+ * that, when the constant is `true`, `listSensors()` dispatches
+ * through `graphqlRequest` with `{ role, customerIds }`.
  */
-export const SENSOR_LIST_ENDPOINT_AVAILABLE = false as const;
+export const SENSOR_LIST_ENDPOINT_AVAILABLE = true as const;
 
 /**
  * Result shape returned by `listSensors()`.
@@ -91,6 +101,22 @@ export function sensorsOrEmpty(result: SensorListResult): readonly Sensor[] {
   return result.endpointAvailable ? result.sensors : [];
 }
 
+// Wire-shape of the `customerSensorList` payload. Hand-written rather
+// than codegen'd: `scripts/codegen-detection-types.mjs` is a fixed
+// root-type walker (events only). Keeping this inline matches the rest
+// of Detection's "selection set is small, the projection is local"
+// pattern. Three scalars, one projection point.
+interface SensorListNode {
+  customerId: number;
+  nodeId: string;
+  hostFqdn: string;
+}
+interface SensorListResponse {
+  customerSensorList: {
+    nodes: SensorListNode[];
+  };
+}
+
 /**
  * Return the sensors visible to the caller.
  *
@@ -102,37 +128,38 @@ export function sensorsOrEmpty(result: SensorListResult): readonly Sensor[] {
  *   1. Caller must hold `detection:read`.
  *   2. The caller's effective `customer_ids` must resolve to a
  *      non-empty list — an empty scope is rejected as a
- *      misconfiguration.
+ *      misconfiguration (except for callers holding
+ *      `customers:access-all`; see below).
+ *
+ * Empty-scope handling intentionally throws `DetectionUnauthorizedError`
+ * (not `DetectionForbiddenError`). The `sensor-actions.ts` server
+ * action catches the former and maps it to `code: "forbidden"` for
+ * the drawer; aligning with `buildDispatchContext`'s `Forbidden` would
+ * fall through that catch and surface as a generic `server-error` to
+ * the dropdown — a UX regression. Broader Detection auth-error
+ * alignment is out of scope for this module.
  *
  * When REview is reached, scope travels on the Context JWT
  * (`signContextJwt(role, customerIds)`), not on query arguments. REview
  * applies the scope from the JWT claim set and returns only sensors
- * belonging to the caller's accessible customers.
+ * belonging to the caller's accessible customers. SystemAdministrator
+ * callers ship `customer_ids = undefined` (review's "all customers"
+ * wire semantics) so the bootstrap admin on a fresh install reaches
+ * the endpoint even before any `customers` rows are materialized;
+ * every other role ships the materialized list. The branch is shared
+ * with `searchEvents` via {@link jwtCustomerIdsForDetection}.
  *
  * ## Fallback when the endpoint is absent
  *
- * If `SENSOR_LIST_ENDPOINT_AVAILABLE` is `false` (REview has not yet
- * published the query in the vendored schema), this function resolves
- * to the `{ endpointAvailable: false }` variant **instead of throwing**.
- * Pass the result through `sensorsOrEmpty()` to recover the "empty
- * list" iteration shape — the two consumers degrade gracefully:
- *
- *   - #278 Sensor dropdown: renders a disabled "Coming soon"
- *     placeholder (the same affordance as Customer) so operators
- *     immediately understand why the control is non-interactive. A
- *     transient fetch failure is surfaced as a separate retryable
- *     error state rather than being collapsed into this
- *     endpoint-absent copy. When REview ships the endpoint and the
- *     constant flips to `true`, the placeholder is replaced with the
- *     functional multi-select without any further client-side
- *     refactor.
- *   - #291 event locator: skips name → ID resolution and omits
- *     `sensors: [<id>]` from the tight filter (same behaviour as a
- *     name mismatch / out-of-scope event).
- *
- * The fallback is **after** the authorization check, not before: an
- * unauthorized caller is rejected even while the endpoint is missing,
- * so the auth contract is uniform regardless of schema state.
+ * The compile guard and `SENSOR_LIST_ENDPOINT_AVAILABLE` constant are
+ * retained even now that the endpoint has shipped: a future REview
+ * schema rollback (or accidental removal of `customerSensorList` /
+ * `Sensor.nodeId`) flips the endpoint-guard test, the constant goes
+ * back to `false`, and this function degrades gracefully to the
+ * `{ endpointAvailable: false }` variant instead of dispatching
+ * against a missing field. Consumers (#278 dropdown, #291 locator)
+ * branch on the discriminator and degrade the same way they did
+ * during the pre-rollout window.
  */
 export async function listSensors(
   session: AuthSession,
@@ -164,28 +191,45 @@ export async function listSensors(
   }
 
   if (!SENSOR_LIST_ENDPOINT_AVAILABLE) {
-    // REview has not yet published the sensor-list query in the
-    // vendored schema (#295). The `endpoint-absent` variant signals
-    // this state to consumers at the type level — see
-    // `SENSOR_LIST_ENDPOINT_AVAILABLE` for the promote-to-live
-    // procedure.
+    // Defensive branch retained for a future schema rollback. The
+    // endpoint-guard test flips the constant back to `false` if the
+    // vendored SDL ever loses `customerSensorList` or `Sensor.nodeId`,
+    // and the `{ endpointAvailable: false }` variant signals the state
+    // to consumers at the type level.
     return { endpointAvailable: false };
   }
 
-  // When REview ships `sensorList` (or `sensorsForCustomers` — exact
-  // identifier TBD), add the `parse(...)` document to `./queries.ts`
-  // and dispatch here via `graphqlRequest` with
-  // `{ role: session.roles[0], customerIds }`. The customer scope MUST
-  // travel on the Context JWT, not as a query argument — mirror the
-  // contract in `buildDispatchContext` (server-actions.ts). The
-  // `endpointAvailable: true` discriminator must be set on the returned
-  // object so the type-level guard in `SensorListResult` narrows the
-  // `sensors` field for consumers.
-  //
-  // Unreachable while SENSOR_LIST_ENDPOINT_AVAILABLE is the literal
-  // `false`; the narrowed type documents the intent, and the
-  // behavioural guard in `sensors.test.ts` (which imports the real
-  // constant and asserts dispatch when it is `true`) prevents this
-  // branch from staying a no-op if the constant is ever flipped.
-  return { endpointAvailable: true, sensors: [] };
+  const role = session.roles[0];
+  // listSensors runs its own permission + customer-scope gates above
+  // (see DetectionUnauthorizedError throws) and reuses
+  // `jwtCustomerIdsForDetection` from server-actions.ts for the JWT
+  // claim shape. `buildDispatchContext` is filter-oriented (validates
+  // `filter.input.customers`) and would change the empty-scope error
+  // class to DetectionForbiddenError, which sensor-actions.ts does not
+  // catch — see this module's docstring.
+  const data = await withReviewErrorMapping(
+    // biome-ignore format: keep the override on the helper-name line so
+    // scripts/check-dispatch-context.mjs sees `// scope-allowlist:` within
+    // the call expression range (helper-name → opening paren).
+    graphqlRequest<SensorListResponse>( // scope-allowlist: own auth gate + reused JWT helper (see comment above)
+      SENSOR_LIST_QUERY,
+      undefined,
+      {
+        role,
+        customerIds: jwtCustomerIdsForDetection(role, customerIds),
+      },
+    ),
+  );
+
+  // Map the wire payload onto the consumer-facing `Sensor` shape.
+  // The boundary lives here so the rest of Detection keeps the
+  // `{ id, name, customerId }` projection used by #278's dropdown
+  // and the page-session cache. SDL field names (`nodeId`,
+  // `hostFqdn`) are intentionally not leaked through the public API.
+  const sensors: Sensor[] = data.customerSensorList.nodes.map((node) => ({
+    id: node.nodeId,
+    name: node.hostFqdn,
+    customerId: node.customerId,
+  }));
+  return { endpointAvailable: true, sensors };
 }

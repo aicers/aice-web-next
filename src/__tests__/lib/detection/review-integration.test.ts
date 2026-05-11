@@ -199,6 +199,100 @@ describe("detection ↔ REview wiring (network mocked)", () => {
     expect(typeof result.totalCount).toBe("string");
   });
 
+  it("dispatches listSensors() through the Context JWT and projects { customerId, nodeId, hostFqdn } into { id, name, customerId }", async () => {
+    // Phase Detection-24 wiring: drive the real `listSensors` server
+    // action through the real `graphqlRequest` helper. Verifies:
+    //   1. A POST happens against REview with the SensorList operation.
+    //   2. No explicit `customerIds` argument on the query — scope
+    //      travels on the Context JWT (`signContextJwt(role, customerIds)`).
+    //   3. The wire payload `customerSensorList.nodes[]` (SDL fields
+    //      `customerId: Int!`, `nodeId: ID!`, `hostFqdn: String!`) is
+    //      projected into the consumer-facing
+    //      `{ id, name, customerId: number }` shape.
+    //   4. SystemAdministrator callers ship `customer_ids = undefined`
+    //      on the JWT (review's "all customers" wire semantics) — same
+    //      contract as the event-list path.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42, 99]);
+
+    fetchSpy.mockResolvedValue(
+      okJson({
+        data: {
+          customerSensorList: {
+            nodes: [
+              {
+                customerId: 42,
+                nodeId: "1",
+                hostFqdn: "sensor-a.example.com",
+              },
+              {
+                customerId: 99,
+                nodeId: "2",
+                hostFqdn: "sensor-b.example.com",
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const { listSensors } = await import("@/lib/detection");
+    const result = await listSensors(makeSession(["Security Monitor"]));
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [, init] = fetchSpy.mock.calls[0];
+    const headers = new Headers(init.headers);
+    expect(headers.get("Authorization")).toBe("Bearer mock-jwt-token");
+    expect(signContextJwtSpy).toHaveBeenCalledWith(
+      "Security Monitor",
+      [42, 99],
+    );
+
+    const body = JSON.parse(init.body);
+    expect(body.query).toContain("query SensorList");
+    expect(body.query).toContain("customerSensorList");
+    // No `customerIds` argument shipped to the query — the JWT carries
+    // the scope. The query is parameter-less; review applies the JWT
+    // claims to scope.
+    expect(body.query).not.toContain("$customerIds");
+    expect(body.query).not.toContain("customerIds:");
+
+    expect(result).toEqual({
+      endpointAvailable: true,
+      sensors: [
+        { id: "1", name: "sensor-a.example.com", customerId: 42 },
+        { id: "2", name: "sensor-b.example.com", customerId: 99 },
+      ],
+    });
+    // `customerId` is numeric (post-migration), matching SDL `Int!`.
+    if (result.endpointAvailable) {
+      for (const s of result.sensors) {
+        expect(typeof s.customerId).toBe("number");
+      }
+    }
+  });
+
+  it("listSensors() for SystemAdministrator ships customer_ids = undefined on the JWT", async () => {
+    // Symmetric to the event-list path's JWT claim contract: SysAdmin
+    // omits `customer_ids` from the JWT so review's "all customers"
+    // semantics apply. A fresh install with no `customers` rows still
+    // reaches the endpoint.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([]);
+
+    fetchSpy.mockResolvedValue(
+      okJson({ data: { customerSensorList: { nodes: [] } } }),
+    );
+
+    const { listSensors } = await import("@/lib/detection");
+    await listSensors(makeSession(["System Administrator"]));
+
+    expect(signContextJwtSpy).toHaveBeenCalledWith(
+      "System Administrator",
+      undefined,
+    );
+  });
+
   it("fixture validates against schemas/review.graphql", async () => {
     // Two-stage regression guard against silent drift:
     //
