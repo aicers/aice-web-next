@@ -1339,4 +1339,54 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
       }),
     ).toBeNull();
   });
+
+  it("clears recent chips when the customer scope rotates (matching the Tier 2 cache reset trigger)", async () => {
+    fetchTier2Mock.mockResolvedValue({
+      events: [],
+      totalCount: "1",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    const { rerender } = render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        customerScope="scope-a"
+        labels={LABELS}
+      />,
+    );
+    selectTier2Scope();
+    submitKeyword("alpha");
+    await flushAsync();
+    expect(
+      screen.getByRole("button", { name: "Search again for alpha" }),
+    ).toBeTruthy();
+
+    // Rotate the customer scope while the top asset focus stays the
+    // same. Per #499 this must clear the recents alongside the Tier 2
+    // cache so a stale typed value cannot re-fire into the new scope.
+    rerender(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        customerScope="scope-b"
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(
+      screen.queryByRole("button", { name: /^Search again for / }),
+    ).toBeNull();
+  });
 });

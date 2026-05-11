@@ -218,7 +218,17 @@ export function TriageBaselineContent({
     // Without this clear the operator could see chips that no longer
     // make sense against the freshly-loaded corpus.
     setRecentKeywords([]);
-  }, [initialFocus?.customerId, initialFocus?.address, resetSignal]);
+    // `customerScope` is named here because the Tier 2 cache reset in
+    // `useTier2Pivot` rotates on it too; without it a scope switch that
+    // happens to land on the same top asset would clear the cache but
+    // leave stale keyword chips visible, potentially re-firing a search
+    // from the prior scope into the new one (#499).
+  }, [
+    initialFocus?.customerId,
+    initialFocus?.address,
+    customerScope,
+    resetSignal,
+  ]);
 
   useEffect(() => {
     onPivotTrailChange?.(hasPivotedAwayFromAsset(trail));
