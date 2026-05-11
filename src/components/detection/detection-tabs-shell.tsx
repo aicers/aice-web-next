@@ -999,12 +999,14 @@ export function DetectionTabsShell({
           // resets on remount and the operator can re-trigger a walk
           // if needed.
           loading: activeTab.result.loading,
-          // #278: the bootstrap tab's SSR seed carries this for a
-          // cold-load `forbidden-sensor-scope` so the banner renders
-          // on first paint. Subsequent state-change mirrors drop the
-          // field (it is transient until the operator either recovers
-          // or the next committed query replaces the result), which
-          // matches the shell's own clearing behaviour.
+          // #278 (Reviewer Round 3 #1): persisted in the tab cache by
+          // the shell's `onStateChange` mirror, so a client-side Apply
+          // that surfaces `forbidden-sensor-scope` keeps its banner +
+          // `Drop unavailable sensors and re-apply` recovery after a
+          // tab switch / sibling-shell remount. The shell clears its
+          // local state on recovery, on dismissal, and on the next
+          // committed query — the snapshot follows, so the field
+          // remains transient end-to-end.
           forbiddenSensorIds: activeTab.result.forbiddenSensorIds,
         }}
         initialEndpoints={activeTab.endpoints}

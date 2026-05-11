@@ -570,6 +570,19 @@ export interface DetectionShellStateSnapshot {
     queryEpoch: number;
     loading: boolean;
     walking: { current: number; target: number } | null;
+    /**
+     * #278 Reviewer Round 3 #1: the typed `forbidden-sensor-scope`
+     * banner state must survive a tab switch / sibling-shell
+     * remount, just like `resultError`. Without it the multi-tab
+     * wrapper would replace the bootstrap-seeded
+     * {@link ResultCache.forbiddenSensorIds} with an undefined value
+     * on the first snapshot emission after a client-side Apply that
+     * lands the banner, dropping the one-click recovery affordance
+     * on the next tab activation. Mirrors the shell's live
+     * `forbiddenSensorIds` state; `null` once the operator recovers,
+     * dismisses, or a non-sensor-scope error/success replaces it.
+     */
+    forbiddenSensorIds: readonly string[] | null;
   };
   /**
    * Issue #429: whether the operator has redefined the time window on
@@ -3650,6 +3663,7 @@ export function DetectionShell({
         queryEpoch,
         loading,
         walking,
+        forbiddenSensorIds,
       },
     });
   }, [
@@ -3676,6 +3690,7 @@ export function DetectionShell({
     queryEpoch,
     loading,
     walking,
+    forbiddenSensorIds,
   ]);
 
   return (
