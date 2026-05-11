@@ -1,10 +1,15 @@
 # Triage
 
 The Triage page narrows a high-volume detection feed down to the
-assets most likely to need a human eye next. It loads every
-detection event for a chosen period, applies a baseline scoring
-rule, and ranks source addresses by total score so an analyst can
-work the highest-impact rows first.
+assets most likely to need a human eye next. For a chosen period,
+it reads the per-tenant `baseline_triaged_event` corpus (rows the
+cadence job has already scored), composes a bounded menu of the
+highest-priority rows via the slot-bucket quota in
+[Baseline scoring algorithm](#baseline-scoring-algorithm), and
+ranks source addresses by their score contribution from that menu
+so an analyst can work the highest-impact rows first. The
+detection-event denominator shown in the funnel is counted
+separately from `observed_event_meta`.
 
 Viewing the page requires the `triage:read` permission. The
 built-in roles Security Monitor, Tenant Administrator, and System
