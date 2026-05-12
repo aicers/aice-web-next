@@ -73,6 +73,7 @@ import {
   type NormalizedEventColumns,
   normalizeEventColumns,
 } from "@/lib/triage/exclusion";
+import { runStepF } from "@/lib/triage/story/correlator";
 import type { TriageEvent } from "@/lib/triage/types";
 
 import type { CadencePageResult, CadencePager } from "./cadence";
@@ -296,6 +297,19 @@ export function createCadencePager(
       );
       const baselineInserted = baselineResult.rowCount ?? 0;
 
+      // (f) Story correlator. Empty-page no-op: when no survivors
+      // landed in baseline_triaged_event the correlator returns early
+      // and does NOT advance `story_finalized_through` — the next
+      // non-empty page resumes finalization from the previously-held
+      // watermark. Per-page transaction discipline: a step (f)
+      // failure rolls the entire page back, so a Story is never
+      // persisted for events that did not land.
+      const pageEventTimeRange =
+        baselineRows.length === 0
+          ? null
+          : computeEventTimeRange(baselineRows.map((r) => r.event.time));
+      await runStepF({ client, pageEventTimeRange, signal });
+
       return {
         observedInserted,
         baselineInserted,
@@ -439,4 +453,18 @@ function readConfidence(event: CadenceEventNode): number | null {
   const value = (event as TriageEvent & { confidence?: number | null })
     .confidence;
   return typeof value === "number" ? value : null;
+}
+
+function computeEventTimeRange(timestamps: ReadonlyArray<string>): {
+  min: Date;
+  max: Date;
+} {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const t of timestamps) {
+    const ms = new Date(t).getTime();
+    if (ms < min) min = ms;
+    if (ms > max) max = ms;
+  }
+  return { min: new Date(min), max: new Date(max) };
 }
