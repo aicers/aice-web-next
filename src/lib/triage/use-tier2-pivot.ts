@@ -99,6 +99,15 @@ export interface Tier2SensorFallback {
   kind: Tier2SensorFallbackKind;
   /** The clicked / restored sensor name (not the resolved nodeId). */
   sensorName: string;
+  /**
+   * Asset-root `customerId` the fallback was raised under. The whole
+   * Tier 2 path keys on this — without it, two tenants pivoting the
+   * same sensor name would land on a shared queue identity and a
+   * single `acknowledgeSensorFallback(...)` call would drop both
+   * entries, silently losing one of the two asset-root reversions
+   * the parent has to render (#502).
+   */
+  customerId: number;
 }
 
 export interface UseTier2Pivot {
@@ -164,8 +173,18 @@ export interface UseTier2Pivot {
    * the stale-hash-shaped toast for each entry.
    */
   sensorFallbacks: Tier2SensorFallback[];
-  /** Dismiss a surfaced sensor fallback after the parent has reverted. */
-  acknowledgeSensorFallback: (sensorName: string) => void;
+  /**
+   * Dismiss a surfaced sensor fallback after the parent has reverted.
+   * The full identity tuple is required so an acknowledgement for one
+   * tenant's queued fallback cannot also drop another tenant's entry
+   * for the same sensor name, or a `name-unresolved` entry whose
+   * sibling `scope-forbidden` is still awaiting the operator (#502).
+   */
+  acknowledgeSensorFallback: (
+    kind: Tier2SensorFallbackKind,
+    sensorName: string,
+    customerId: number,
+  ) => void;
   /**
    * `true` when the event already exists in the Tier 1 corpus
    * (per the dedupe key) — used by row rendering to decide whether
@@ -419,7 +438,11 @@ export function useTier2Pivot(
       stateMapRef.current.delete(stateKey(dimension, valueKey, customerId));
       setSensorFallbacks((prev) => [
         ...prev,
-        { kind: fallback.kind, sensorName: fallback.sensorName },
+        {
+          kind: fallback.kind,
+          sensorName: fallback.sensorName,
+          customerId,
+        },
       ]);
       bump();
     },
@@ -658,11 +681,28 @@ export function useTier2Pivot(
     setEvictions((prev) => prev.filter((e) => e.cacheKey !== cacheKey));
   }, []);
 
-  const acknowledgeSensorFallback = useCallback((sensorName: string) => {
-    setSensorFallbacks((prev) =>
-      prev.filter((f) => f.sensorName !== sensorName),
-    );
-  }, []);
+  const acknowledgeSensorFallback = useCallback(
+    (kind: Tier2SensorFallbackKind, sensorName: string, customerId: number) => {
+      setSensorFallbacks((prev) => {
+        // Drop only the first entry that matches the full identity
+        // tuple; entries are queued in click/restore order and the
+        // parent acknowledges the queue head, so a `filter()` that
+        // removed every match would also discard a later duplicate
+        // (e.g. a second `sameSensor=edge-01` pivot under the same
+        // tenant after the first failed) that still needs the
+        // parent's revert.
+        const idx = prev.findIndex(
+          (f) =>
+            f.kind === kind &&
+            f.sensorName === sensorName &&
+            f.customerId === customerId,
+        );
+        if (idx < 0) return prev;
+        return prev.slice(0, idx).concat(prev.slice(idx + 1));
+      });
+    },
+    [],
+  );
 
   const acknowledgeError = useCallback(
     (dimension: Tier2Dimension, valueKey: string, customerId: number) => {

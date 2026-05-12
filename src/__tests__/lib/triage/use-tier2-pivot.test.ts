@@ -468,7 +468,7 @@ describe("useTier2Pivot — sameSensor fallback surfaces through the hook (#502)
     });
 
     expect(result.current.sensorFallbacks).toEqual([
-      { kind: "name-unresolved", sensorName: "edge-01" },
+      { kind: "name-unresolved", sensorName: "edge-01", customerId: 7 },
     ]);
     // The loading entry must be cleared so the panel does not show a
     // permanent spinner for a name that no longer resolves.
@@ -476,7 +476,63 @@ describe("useTier2Pivot — sameSensor fallback surfaces through the hook (#502)
 
     // Parent-side acknowledgement drains the queue.
     act(() => {
-      result.current.acknowledgeSensorFallback("edge-01");
+      result.current.acknowledgeSensorFallback("name-unresolved", "edge-01", 7);
+    });
+    expect(result.current.sensorFallbacks).toEqual([]);
+  });
+
+  it("scopes queued sensor fallbacks by (kind, sensorName, customerId) so cross-tenant ack does not drop both entries", async () => {
+    // Round 6 regression: two tenants pivoting `sameSensor=edge-01`
+    // before the first React effect drains both land in
+    // `sensorFallbacks`. Acknowledging customer 42's entry must NOT
+    // also remove customer 99's — the queue identity has to match the
+    // full asset-root tuple so each tenant's revert reaches the UI.
+    fetchTier2DimensionMock.mockImplementation(async (input) => ({
+      events: [],
+      totalCount: null,
+      endCursor: null,
+      hasMore: false,
+      truncated: false,
+      sensorFallback: {
+        kind: "name-unresolved" as const,
+        sensorName: input.valueKey,
+      },
+    }));
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "sameSensor";
+
+    await act(async () => {
+      result.current.startFetch(dim, "edge-01", 42);
+      result.current.startFetch(dim, "edge-01", 99);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.sensorFallbacks).toEqual([
+      { kind: "name-unresolved", sensorName: "edge-01", customerId: 42 },
+      { kind: "name-unresolved", sensorName: "edge-01", customerId: 99 },
+    ]);
+
+    // Ack customer 42's entry; customer 99's must remain.
+    act(() => {
+      result.current.acknowledgeSensorFallback(
+        "name-unresolved",
+        "edge-01",
+        42,
+      );
+    });
+    expect(result.current.sensorFallbacks).toEqual([
+      { kind: "name-unresolved", sensorName: "edge-01", customerId: 99 },
+    ]);
+
+    // Then ack customer 99's; the queue drains fully.
+    act(() => {
+      result.current.acknowledgeSensorFallback(
+        "name-unresolved",
+        "edge-01",
+        99,
+      );
     });
     expect(result.current.sensorFallbacks).toEqual([]);
   });

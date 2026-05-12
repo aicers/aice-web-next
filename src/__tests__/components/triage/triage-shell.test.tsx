@@ -1140,6 +1140,81 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     ).toBeNull();
     expect(screen.queryByText("Crumb:sameSensor: edge-01")).toBeNull();
   });
+
+  it("renders at most one fallback notice at a time and clears it on a fresh asset selection", async () => {
+    // Round 6 regression for Item 2. The two fallback notices were
+    // tracked as independent latching booleans, so after a
+    // `scope-forbidden` fallback a subsequent `name-unresolved` fallback
+    // would leave the "no longer accessible" banner on screen alongside
+    // the new stale-URL one. Likewise nothing cleared either flag on a
+    // subsequent successful pivot / asset change. This test pins both:
+    // (a) the active notice replaces the prior one (mutually exclusive),
+    // and (b) selecting a different asset clears the notice.
+    //
+    // Two assets so the asset list has something to navigate to after
+    // the fallback.
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "h1.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.2",
+        host: "h2.example",
+        sensor: "edge-02",
+        time: "2026-05-08T12:01:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+
+    // First hash-restore lands on the `scope-forbidden` arm.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.mode=tier2";
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+      sensorFallback: { kind: "scope-forbidden", sensorName: "edge-01" },
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(
+      screen.getByText("Sensor no longer accessible — showing asset root"),
+    ).toBeTruthy();
+
+    // Selecting a different asset must clear the fallback notice —
+    // it described the prior trail. The asset list button's aria-label
+    // is the asset address (`rowDetailsTemplate: "{address}"` in
+    // LABELS).
+    const assetButton = screen.getByRole("button", {
+      name: "10.0.0.2",
+    });
+    await act(async () => {
+      fireEvent.click(assetButton);
+      await Promise.resolve();
+    });
+    expect(
+      screen.queryByText("Sensor no longer accessible — showing asset root"),
+    ).toBeNull();
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+  });
 });
 
 describe("TriageShell — Tier 2 only Learning method static section (#498)", () => {

@@ -228,6 +228,10 @@ export function TriageBaselineContent({
     // Without this clear the operator could see chips that no longer
     // make sense against the freshly-loaded corpus.
     setRecentKeywords([]);
+    // The fallback notice describes the prior trail; once the corpus
+    // rotates it is no longer accurate and would otherwise persist
+    // across the reset.
+    setFallbackNotice(null);
     // `customerScope` is named here because the Tier 2 cache reset in
     // `useTier2Pivot` rotates on it too; without it a scope switch that
     // happens to land on the same top asset would clear the cache but
@@ -509,6 +513,10 @@ export function TriageBaselineContent({
           address: focus.address,
         },
       ]);
+      // Any prior fallback notice described the previous trail; once
+      // the operator moves to a fresh asset it would just be stale
+      // copy on the page.
+      setFallbackNotice(null);
     },
     [],
   );
@@ -537,12 +545,19 @@ export function TriageBaselineContent({
         tier2.startFetch(step.dimension, step.value.key, customerId);
       }
       setTrail((current) => appendPivotStep(current, step));
+      // A subsequent pivot describes a new trail; any leftover
+      // fallback notice from the prior trail would otherwise sit above
+      // the panel claiming the URL or sensor scope is stale.
+      setFallbackNotice(null);
     },
     [effectiveSelection, scope, tier2, trail],
   );
 
   const onCrumb = useCallback((indexInclusive: number) => {
     setTrail((current) => backtrackPivotTrail(current, indexInclusive));
+    // Backtracking is a deliberate navigation — clear any stale notice
+    // so the operator sees a clean trail.
+    setFallbackNotice(null);
   }, []);
 
   // Free-form `keywords` submit (#499). Same dispatch path as a
@@ -566,15 +581,19 @@ export function TriageBaselineContent({
   // ── URL hash restore (client-only — Server Components cannot read
   // location.hash) ──
   const hashRestoreAttempted = useRef(false);
-  const [staleHashFallback, setStaleHashFallback] = useState(false);
-  // Surfaced only on the `scope-forbidden` arm of a `sameSensor`
-  // pivot: the resolved `nodeId` was rejected by review-web's
-  // tightened sensor-scope check (#502). Tracked separately from
-  // {@link staleHashFallback} so the two arms render their distinct
-  // copies — the issue specifies a "no longer accessible" toast for
-  // this branch and the existing stale-URL copy for `name-unresolved`.
-  const [sensorScopeForbiddenFallback, setSensorScopeForbiddenFallback] =
-    useState(false);
+  // A single mutually-exclusive state describing the active fallback
+  // notice — `"stale-hash"` for the URL-no-longer-matches-corpus case
+  // (and the `name-unresolved` arm of a `sameSensor` pivot),
+  // `"sensor-scope-forbidden"` for the `scope-forbidden` arm where the
+  // resolved `nodeId` was rejected by review-web's tightened sensor-
+  // scope check (#502). Modelling these as two independent booleans
+  // previously let a `scope-forbidden` notice persist alongside a
+  // subsequent `name-unresolved` (or vice versa) because nothing
+  // cleared the prior flag; collapsing to a single string makes the
+  // two arms mutually exclusive at the type level and lets a single
+  // reset point clear whichever notice is active.
+  type FallbackNotice = "stale-hash" | "sensor-scope-forbidden" | null;
+  const [fallbackNotice, setFallbackNotice] = useState<FallbackNotice>(null);
   // Server-filtered steps decoded from the hash whose data still has
   // to be fetched after restore. The restore effect parses the hash
   // and seeds the trail, but `useTier2Pivot.startFetch` would no-op if
@@ -626,7 +645,7 @@ export function TriageBaselineContent({
     // link was unusable.
     const hadRejectedSteps = parsed.rejectedStepCount > 0;
     if (parsed.asset === null && parsed.steps.length === 0) {
-      if (hadRejectedSteps) setStaleHashFallback(true);
+      if (hadRejectedSteps) setFallbackNotice("stale-hash");
       return;
     }
     // Resolve the asset against the freshly-loaded corpus. The hash
@@ -638,7 +657,7 @@ export function TriageBaselineContent({
     let restoredAsset: { customerId: number; address: string } | null = null;
     if (parsed.asset !== null) {
       if (parsed.asset.customerId === null) {
-        setStaleHashFallback(true);
+        setFallbackNotice("stale-hash");
         return;
       }
       const found = result.assets.find(
@@ -647,7 +666,7 @@ export function TriageBaselineContent({
           a.address === parsed.asset?.address,
       );
       if (!found) {
-        setStaleHashFallback(true);
+        setFallbackNotice("stale-hash");
         return;
       }
       restoredAsset = { customerId: found.customerId, address: found.address };
@@ -666,7 +685,7 @@ export function TriageBaselineContent({
           address: restoredAsset.address,
         },
       ]);
-      setStaleHashFallback(true);
+      setFallbackNotice("stale-hash");
       return;
     }
     const restoredTrail: PivotStep[] = [
@@ -780,7 +799,7 @@ export function TriageBaselineContent({
       }
     }
     if (stale) {
-      setStaleHashFallback(true);
+      setFallbackNotice("stale-hash");
       return;
     }
     setSelected(restoredAsset);
@@ -885,7 +904,7 @@ export function TriageBaselineContent({
         if (assetIndex < 0) return current;
         return current.slice(0, assetIndex + 1);
       });
-      setStaleHashFallback(true);
+      setFallbackNotice("stale-hash");
     };
     for (const { dimension, valueKey } of validations) {
       let dim: ReturnType<typeof getPivotDimension>;
@@ -933,11 +952,15 @@ export function TriageBaselineContent({
       return current.slice(0, assetCrumbIndex + 1);
     });
     if (fallback.kind === "scope-forbidden") {
-      setSensorScopeForbiddenFallback(true);
+      setFallbackNotice("sensor-scope-forbidden");
     } else {
-      setStaleHashFallback(true);
+      setFallbackNotice("stale-hash");
     }
-    tier2.acknowledgeSensorFallback(fallback.sensorName);
+    tier2.acknowledgeSensorFallback(
+      fallback.kind,
+      fallback.sensorName,
+      fallback.customerId,
+    );
   }, [tier2]);
 
   // ── URL hash sync (write-side) ──
@@ -957,7 +980,7 @@ export function TriageBaselineContent({
 
   return (
     <div className="space-y-6">
-      {staleHashFallback ? (
+      {fallbackNotice === "stale-hash" ? (
         <p
           role="status"
           className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
@@ -965,7 +988,7 @@ export function TriageBaselineContent({
           {labels.staleHashFallback}
         </p>
       ) : null}
-      {sensorScopeForbiddenFallback ? (
+      {fallbackNotice === "sensor-scope-forbidden" ? (
         <p
           role="status"
           className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
@@ -1018,6 +1041,7 @@ export function TriageBaselineContent({
             onSelect={(idx) => {
               if (idx === 0) {
                 setTrail((current) => clearPivotTrail(current));
+                setFallbackNotice(null);
               } else {
                 onCrumb(idx);
               }
