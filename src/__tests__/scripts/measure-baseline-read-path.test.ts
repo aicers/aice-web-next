@@ -1,9 +1,9 @@
 /**
  * Unit tests for the measurement harness's pure helpers. The full
  * end-to-end harness run requires a representative-profile Postgres
- * tenant (and #528 owns the end-to-end campaign), but the parsing
- * and address-sampling helpers are pure functions / pool-stubbable
- * coroutines and can be exercised offline.
+ * tenant (and #528 owns the end-to-end campaign), but the parsing,
+ * address-sampling, and cold-command helpers are pure functions /
+ * pool-stubbable coroutines and can be exercised offline.
  */
 
 import { describe, expect, it } from "vitest";
@@ -13,11 +13,35 @@ import {
   parseExplainAnalyze,
   redactDsn,
   resolveWindow,
+  runColdCommand,
   sampleAddresses,
 } from "../../../scripts/measure-baseline-read-path.mjs";
 
-interface MenuCohortStubRow {
-  orig_addr: string | null | undefined;
+type StubCohortRow = Record<string, unknown>;
+
+/**
+ * Build a minimal cohort row carrying the columns
+ * `addressesFromCohortRows` actually reads. Real rows have many more
+ * fields; defaults below are RFC-shape compatible (HttpThreat with
+ * the unlabeled-cluster tag = the `('HttpThreat', true)` favored
+ * bucket, so the row is always allocated quota).
+ */
+function makeCohortRow(overrides: Partial<StubCohortRow>): StubCohortRow {
+  return {
+    event_key: "1",
+    event_time: new Date("2026-05-09T12:00:00.000Z"),
+    kind: "HttpThreat",
+    baseline_version: "phase1b-four-selector",
+    raw_score: 1.0,
+    baseline_score: 1.0,
+    selector_tags: ["unlabeled-cluster"],
+    is_unlabeled: true,
+    bucket_count: "1",
+    bucket_tag_sum: "1",
+    cohort_count: "1",
+    orig_addr: "10.0.0.1",
+    ...overrides,
+  };
 }
 
 describe("measure-baseline-read-path — parseExplainAnalyze", () => {
@@ -54,12 +78,12 @@ describe("measure-baseline-read-path — sampleAddresses", () => {
     query: (
       sql: string,
       params: ReadonlyArray<unknown>,
-    ) => Promise<{ rows: ReadonlyArray<MenuCohortStubRow> }>;
+    ) => Promise<{ rows: ReadonlyArray<StubCohortRow> }>;
     capturedSql: string | null;
     capturedParams: ReadonlyArray<unknown> | null;
   }
 
-  function makePool(rows: ReadonlyArray<MenuCohortStubRow>): StubbedPool {
+  function makePool(rows: ReadonlyArray<StubCohortRow>): StubbedPool {
     const pool: StubbedPool = {
       capturedSql: null,
       capturedParams: null,
@@ -88,37 +112,32 @@ describe("measure-baseline-read-path — sampleAddresses", () => {
     ]);
   });
 
-  it("deduplicates orig_addr in cohort order and caps at the limit", async () => {
-    const pool = makePool([
-      { orig_addr: "10.0.0.1" },
-      { orig_addr: "10.0.0.2" },
-      { orig_addr: "10.0.0.1" },
-      { orig_addr: "10.0.0.3" },
-      { orig_addr: "10.0.0.4" },
-    ]);
+  it("returns the addresses produced by composeMenu over the cohort rows (not a SQL-only superset)", async () => {
+    // Two rows in the favored unlabeled-HttpThreat bucket, plus a
+    // duplicate orig_addr to exercise the dedupe pass and a row with
+    // null orig_addr to exercise the skip-null pass that
+    // `uniqueAddresses` performs in production.
+    const rows = [
+      makeCohortRow({ event_key: "1", orig_addr: "10.0.0.1" }),
+      makeCohortRow({ event_key: "2", orig_addr: "10.0.0.2" }),
+      makeCohortRow({ event_key: "3", orig_addr: "10.0.0.1" }),
+      makeCohortRow({ event_key: "4", orig_addr: null }),
+      makeCohortRow({ event_key: "5", orig_addr: "10.0.0.3" }),
+    ].map((r, i) => ({
+      ...r,
+      cohort_count: "5",
+      bucket_count: "5",
+      // Distinct baseline_score so production sort order is deterministic.
+      baseline_score: 1 - i * 0.01,
+    }));
+    const pool = makePool(rows);
     const addresses = await sampleAddresses(
       pool,
       "2026-04-12T00:00:00.000Z",
       "2026-05-12T00:00:00.000Z",
-      3,
+      10,
     );
     expect(addresses).toEqual(["10.0.0.1", "10.0.0.2", "10.0.0.3"]);
-  });
-
-  it("skips null/undefined orig_addr values", async () => {
-    const pool = makePool([
-      { orig_addr: null },
-      { orig_addr: "10.0.0.1" },
-      { orig_addr: undefined },
-      { orig_addr: "10.0.0.2" },
-    ]);
-    const addresses = await sampleAddresses(
-      pool,
-      "2026-04-12T00:00:00.000Z",
-      "2026-05-12T00:00:00.000Z",
-      100,
-    );
-    expect(addresses).toEqual(["10.0.0.1", "10.0.0.2"]);
   });
 });
 
@@ -153,5 +172,37 @@ describe("measure-baseline-read-path — redactDsn", () => {
 
   it("returns a sentinel for an unparseable DSN", () => {
     expect(redactDsn("not a url")).toBe("<unparseable-dsn>");
+  });
+});
+
+describe("measure-baseline-read-path — runColdCommand", () => {
+  it("returns mode 'absent' with the host-policy label when no command is supplied", () => {
+    const result = runColdCommand(null);
+    expect(result.mode).toBe("absent");
+    expect(result.label).toMatch(/not available — host policy/);
+  });
+
+  it("returns mode 'captured' when the command exits 0", () => {
+    let invokedWith: string | null = null;
+    const result = runColdCommand("/bin/true", (cmd) => {
+      invokedWith = cmd;
+      return { status: 0 };
+    });
+    expect(invokedWith).toBe("/bin/true");
+    expect(result.mode).toBe("captured");
+    expect(result.label).toMatch(/captured via --cold-command=/);
+  });
+
+  it("returns mode 'failed' when the command exits non-zero — caller must NOT emit cold-phase samples", () => {
+    const result = runColdCommand("/bin/false", () => ({ status: 1 }));
+    expect(result.mode).toBe("failed");
+    expect(result.label).toMatch(/exited 1/);
+    expect(result.label).toMatch(/no cold-phase samples emitted/);
+  });
+
+  it("labels signal exits when status is null", () => {
+    const result = runColdCommand("/bin/false", () => ({ status: null }));
+    expect(result.mode).toBe("failed");
+    expect(result.label).toMatch(/<signal>/);
   });
 });

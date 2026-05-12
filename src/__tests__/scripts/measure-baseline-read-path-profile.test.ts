@@ -119,7 +119,7 @@ describe("assertRepresentativeProfile", () => {
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 
-  it("rejects a tenant whose baseline event_time coverage is < 30 days", async () => {
+  it("rejects a tenant whose baseline event_time history is < 30 days", async () => {
     const responses = passingResponses();
     responses.set(PROFILE_PROBE_SQL.baselineEventTimeSpan, {
       rows: [
@@ -128,6 +128,66 @@ describe("assertRepresentativeProfile", () => {
           hi: new Date(NOW_MS - HOUR).toISOString(),
         },
       ],
+    });
+    const pool = makePool(responses);
+    await expect(
+      assertRepresentativeProfile(pool, NOW_MS),
+    ).rejects.toBeInstanceOf(ProfileAssertionError);
+  });
+
+  it("rejects a tenant whose baseline event_time high-water mark is stale (30+ day span, but newest row is months old)", async () => {
+    // Regression guard for the Round 2 review item: the original
+    // `coverageMs = min(now, hi) - lo` formulation accepted this
+    // shape because `hi - lo >= 30 days`, even though `hi` was 90
+    // days in the past and the recent window the harness probes
+    // would be empty.
+    const responses = passingResponses();
+    responses.set(PROFILE_PROBE_SQL.baselineEventTimeSpan, {
+      rows: [
+        {
+          lo: new Date(NOW_MS - 180 * DAY).toISOString(),
+          hi: new Date(NOW_MS - 90 * DAY).toISOString(),
+        },
+      ],
+    });
+    const pool = makePool(responses);
+    try {
+      await assertRepresentativeProfile(pool, NOW_MS);
+      throw new Error("assertion should have thrown");
+    } catch (err) {
+      if (!(err instanceof ProfileAssertionError)) throw err;
+      expect(err.failures.map((f) => f.check)).toContain(
+        "baselineEventTimeFreshness",
+      );
+    }
+  });
+
+  it("rejects a tenant whose observed event_time high-water mark is stale", async () => {
+    const responses = passingResponses();
+    responses.set(PROFILE_PROBE_SQL.observedEventTimeSpan, {
+      rows: [
+        {
+          lo: new Date(NOW_MS - 60 * DAY).toISOString(),
+          hi: new Date(NOW_MS - 1 * DAY).toISOString(),
+        },
+      ],
+    });
+    const pool = makePool(responses);
+    try {
+      await assertRepresentativeProfile(pool, NOW_MS);
+      throw new Error("assertion should have thrown");
+    } catch (err) {
+      if (!(err instanceof ProfileAssertionError)) throw err;
+      expect(err.failures.map((f) => f.check)).toContain(
+        "observedEventTimeFreshness",
+      );
+    }
+  });
+
+  it("rejects a tenant whose corpus is entirely empty (no min/max)", async () => {
+    const responses = passingResponses();
+    responses.set(PROFILE_PROBE_SQL.baselineEventTimeSpan, {
+      rows: [{ lo: null, hi: null }],
     });
     const pool = makePool(responses);
     await expect(

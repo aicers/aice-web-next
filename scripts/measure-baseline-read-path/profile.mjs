@@ -21,6 +21,14 @@ export const PROFILE_THRESHOLDS = {
   baselineEventTimeMinSpanMs: 30 * 24 * 60 * 60 * 1000,
   observedEventTimeMinSpanMs: 30 * 24 * 60 * 60 * 1000,
   maxCorpusStalenessMs: 2 * 60 * 60 * 1000,
+  // The "recent 30 days are covered" check (issue #524 §2) needs a
+  // staleness bound on the high-water mark — a corpus whose newest
+  // row is months old can technically have a 30-day-wide span but
+  // is not representative of the window the harness measures. We
+  // reuse the corpus-state staleness threshold (2h) so both checks
+  // tell operators the same story: production-shaped ingest is
+  // current.
+  maxEventTimeStalenessMs: 2 * 60 * 60 * 1000,
 };
 
 /**
@@ -135,14 +143,12 @@ export async function assertRepresentativeProfile(pool, nowMs = Date.now()) {
     nowMs,
   );
   results.baselineEventTimeSpan = baselineSpan;
-  if (baselineSpan.coverageMs < PROFILE_THRESHOLDS.baselineEventTimeMinSpanMs) {
-    failures.push({
-      check: "baselineEventTimeSpan",
-      detail:
-        `baseline_triaged_event covers ${formatMs(baselineSpan.coverageMs)} ` +
-        "of the most recent window; profile requires ≥ 30 days",
-    });
-  }
+  appendSpanFailures(failures, "baseline", baselineSpan, {
+    minRecentMs: PROFILE_THRESHOLDS.baselineEventTimeMinSpanMs,
+    maxStalenessMs: PROFILE_THRESHOLDS.maxEventTimeStalenessMs,
+    tableLabel: "baseline_triaged_event",
+    requirementLabel: "the most recent 30 days",
+  });
 
   const observedSpan = await spanQuery(
     pool,
@@ -150,14 +156,12 @@ export async function assertRepresentativeProfile(pool, nowMs = Date.now()) {
     nowMs,
   );
   results.observedEventTimeSpan = observedSpan;
-  if (observedSpan.coverageMs < PROFILE_THRESHOLDS.observedEventTimeMinSpanMs) {
-    failures.push({
-      check: "observedEventTimeSpan",
-      detail:
-        `observed_event_meta covers ${formatMs(observedSpan.coverageMs)}; ` +
-        "profile requires the full 30-day retention window",
-    });
-  }
+  appendSpanFailures(failures, "observed", observedSpan, {
+    minRecentMs: PROFILE_THRESHOLDS.observedEventTimeMinSpanMs,
+    maxStalenessMs: PROFILE_THRESHOLDS.maxEventTimeStalenessMs,
+    tableLabel: "observed_event_meta",
+    requirementLabel: "the full 30-day retention window",
+  });
 
   const corpus = await corpusStateQuery(pool, PROFILE_PROBE_SQL.corpusState);
   results.corpusState = corpus;
@@ -211,17 +215,62 @@ async function scalarCount(pool, sql) {
 async function spanQuery(pool, sql, nowMs) {
   const { rows } = await pool.query(sql);
   if (rows.length === 0 || rows[0].lo === null) {
-    return { lo: null, hi: null, coverageMs: 0 };
+    return {
+      lo: null,
+      hi: null,
+      historicalSpanMs: 0,
+      stalenessMs: Number.POSITIVE_INFINITY,
+    };
   }
   const lo = new Date(rows[0].lo).getTime();
   const hi = new Date(rows[0].hi).getTime();
-  // Coverage is measured against the *upper* bound of the window the
-  // harness will actually probe — i.e. `now`. A corpus whose newest
-  // row is six months old has 6 months of data but zero coverage of
-  // the recent window the harness is about to query, so the planner
-  // estimates would be unrepresentative.
-  const coverageMs = Math.min(nowMs, hi) - lo;
-  return { lo: rows[0].lo, hi: rows[0].hi, coverageMs };
+  return {
+    lo: rows[0].lo,
+    hi: rows[0].hi,
+    // `historicalSpanMs` answers "does the corpus extend back ≥ N
+    // days?" — independent of how recent the newest row is.
+    historicalSpanMs: hi - lo,
+    // `stalenessMs` answers "is the newest row recent?" — a corpus
+    // whose newest row is six months old has zero coverage of the
+    // recent window the harness is about to probe, so the planner
+    // estimates would be unrepresentative even if `hi - lo` is wide.
+    stalenessMs: Math.max(0, nowMs - hi),
+  };
+}
+
+/**
+ * Translate one `{historicalSpanMs, stalenessMs}` result from
+ * `spanQuery` into zero-or-more failures. Splitting "history extends
+ * back" and "high-water mark is recent" lets the failure message tell
+ * the operator which side is wrong — operator gets a 30-day-only
+ * corpus or a stale-high-water-mark corpus, not a single span
+ * coverage number that conflates the two.
+ */
+function appendSpanFailures(failures, key, span, opts) {
+  if (span.lo === null) {
+    failures.push({
+      check: `${key}EventTimeSpan`,
+      detail: `${opts.tableLabel} is empty; profile requires ${opts.requirementLabel}`,
+    });
+    return;
+  }
+  if (span.historicalSpanMs < opts.minRecentMs) {
+    failures.push({
+      check: `${key}EventTimeSpan`,
+      detail:
+        `${opts.tableLabel} spans only ${formatMs(span.historicalSpanMs)} ` +
+        `from oldest to newest row; profile requires ${opts.requirementLabel}`,
+    });
+  }
+  if (span.stalenessMs > opts.maxStalenessMs) {
+    failures.push({
+      check: `${key}EventTimeFreshness`,
+      detail:
+        `${opts.tableLabel} newest row is ${formatMs(span.stalenessMs)} old; ` +
+        `profile requires the newest row within ${formatMs(opts.maxStalenessMs)} ` +
+        "so the recent window the harness probes is actually populated",
+    });
+  }
 }
 
 async function corpusStateQuery(pool, sql) {

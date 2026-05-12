@@ -29,11 +29,19 @@
 // the warm-up batch and then records one cold-cache sample per query
 // (`phase: "cold"` in the output rows; same `EXPLAIN ANALYZE` total
 // time the warm samples report) so #528 has a concrete cold reading
-// to compare against. The harness labels the run `"cold reading:
-// captured via --cold-command=…"` in `meta.coldReading`. When the
-// flag is absent the harness records `"cold reading: not available —
-// host policy"`, emits no cold-phase samples, and proceeds straight
-// to warm-up; it never restarts Postgres or drops OS caches on its
+// to compare against. The cold-phase rows are emitted ONLY when the
+// command exits 0; a non-zero exit means cold state was not
+// established, so the harness records the failure in
+// `meta.coldReading` and emits NO `phase: "cold"` rows. Labels by
+// mode:
+//
+//   * absent  — `"cold reading: not available — host policy"`
+//   * captured — `"cold reading: captured via --cold-command=…"`
+//   * failed   — `"cold reading: --cold-command=… exited N;
+//                   no cold-phase samples emitted (cold state was
+//                   not established)"`
+//
+// The harness never restarts Postgres or drops OS caches on its
 // own because those operations are destructive on a shared staging
 // DB. Connection drop/recreate is NOT cold (shared buffers and OS
 // cache survive) and `pg_prewarm` is warm-side tooling — neither is
@@ -108,6 +116,7 @@
 import { spawnSync } from "node:child_process";
 import pg from "pg";
 
+import { addressesFromCohortRows } from "../src/lib/triage/baseline/compose.mjs";
 import {
   MEASURED_QUERIES,
   MENU_CANDIDATES_PER_BUCKET,
@@ -205,49 +214,67 @@ export function resolveWindow(spec, nowMs = Date.now()) {
 
 /**
  * Run the operator-supplied cold command (if any) before the warm-up
- * batch. Returns the label that travels into the harness output so the
- * consumer can record the cold environment without re-running the
- * command. Best-effort and non-gating: a non-zero exit still proceeds
- * to warm-up but flags the label so #528 sees the failure mode.
+ * batch. Returns a `{mode, label}` pair so the caller can distinguish
+ * three cases without parsing the free-form label:
+ *
+ *   * `mode: "absent"`  — no `--cold-command` was supplied (default
+ *     behavior). Caller proceeds to warm-up; no cold samples are
+ *     emitted.
+ *   * `mode: "captured"` — command exited 0. Caller emits one
+ *     cold-phase sample per query before warm-up; #528 can compare
+ *     the cold reading directly against the warm distribution.
+ *   * `mode: "failed"`   — command exited non-zero (or by signal).
+ *     Caller still proceeds to warm-up — measurement must not be
+ *     gated on a destructive operation — but does NOT emit any
+ *     cold-phase samples, because no cold state was established. The
+ *     failure surfaces in `meta.coldReading` so #528 sees why no
+ *     cold samples appear.
+ *
+ * `spawn` is injected so tests can exercise the non-zero-exit branch
+ * without invoking a real shell.
  */
-function runColdCommand(cmd) {
+export function runColdCommand(cmd, spawn = spawnSync) {
   if (cmd === null || cmd === undefined) {
-    return "cold reading: not available — host policy";
+    return {
+      mode: "absent",
+      label: "cold reading: not available — host policy",
+    };
   }
-  const result = spawnSync(cmd, { shell: true, stdio: "inherit" });
+  const result = spawn(cmd, { shell: true, stdio: "inherit" });
   if (result.status === 0) {
-    return `cold reading: captured via --cold-command=${JSON.stringify(cmd)}`;
+    return {
+      mode: "captured",
+      label: `cold reading: captured via --cold-command=${JSON.stringify(cmd)}`,
+    };
   }
-  return (
-    `cold reading: --cold-command=${JSON.stringify(cmd)} exited ` +
-    `${result.status ?? "<signal>"}, treated as warm`
-  );
+  return {
+    mode: "failed",
+    label:
+      `cold reading: --cold-command=${JSON.stringify(cmd)} exited ` +
+      `${result.status ?? "<signal>"}; no cold-phase samples emitted ` +
+      "(cold state was not established)",
+  };
 }
 
 /**
- * Pick a small sample of distinct addresses by running the production
- * `selectMenuCohort` SQL (via the shared `read-path-sql.mjs` module)
- * and taking distinct `orig_addr` values from its candidates in the
- * same ordering that drives §4/§6 menu composition (`baseline_score
- * DESC, event_time DESC, event_key DESC` — the cohort SQL already
- * sorts that way). The candidates SELECT applies the production
- * `kind NOT LIKE 'BlockList%'` filter and is bounded by
- * `MENU_CANDIDATES_PER_BUCKET` per `(kind, is_unlabeled)` bucket, so
- * the address slice has the same cardinality/distribution shape that
- * `perAssetObservedCounts` and `selectAssetDetailEventsBatch` see in
- * production after `uniqueAddresses(events)`.
+ * Pick the addresses production would surface for one menu load by
+ * replaying the full read-path pipeline:
  *
- * The §6 cognitive-limit cap (`default_N`) and the §4 per-bucket
- * quota are not replayed here because their implementation lives in
- * TypeScript (`src/lib/triage/baseline/menu.ts`) and the harness must
- * run as plain Node ESM without a transpile step (issue §4). The
- * candidates pool is a strict superset of what composeMenu selects,
- * but the deduplicated, score-ordered slice we take is the closest
- * SQL-only approximation to the addresses that actually surface on
- * the asset page. The result is capped at `limit`
- * (`TRIAGE_ASSET_PAGE_SIZE = 100`) so the planner's input cardinality
- * for the address-driven queries matches one page of production
- * traffic.
+ *   1. Run the shared `SELECT_MENU_COHORT_SQL` (same byte-for-byte
+ *      string production uses).
+ *   2. Feed the rows into `addressesFromCohortRows` from the shared
+ *      `compose.mjs` module, which runs `composeMenu` with cutoff = 0
+ *      (the production default — slider owned by #471) and then
+ *      replays `uniqueAddresses(events)` over the resulting menu
+ *      rows. Same composition code as `composeMenuFromCohort` in
+ *      `server-actions.ts`.
+ *
+ * This gives the planner the exact `ANY($3::inet[])` cardinality and
+ * address distribution production sees after §4 per-bucket quota and
+ * the §6 `MIN_NONZERO_FLOOR` fallback have run — not the SQL-only
+ * superset the previous draft of this harness sampled. The result is
+ * additionally capped at `limit` (`TRIAGE_ASSET_PAGE_SIZE = 100`)
+ * because the production menu page applies the same cap upstream.
  */
 export async function sampleAddresses(
   pool,
@@ -260,17 +287,7 @@ export async function sampleAddresses(
     periodEndIso,
     MENU_CANDIDATES_PER_BUCKET,
   ]);
-  const seen = new Set();
-  const addresses = [];
-  for (const row of rows) {
-    const addr = row.orig_addr;
-    if (addr === null || addr === undefined) continue;
-    if (seen.has(addr)) continue;
-    seen.add(addr);
-    addresses.push(addr);
-    if (addresses.length >= limit) break;
-  }
-  return addresses;
+  return addressesFromCohortRows(rows, { limit });
 }
 
 /**
@@ -447,9 +464,12 @@ async function main(argv) {
   // BEFORE we open the measurement pool. The cold command may
   // restart Postgres or drop OS caches; the fresh `pg.Pool` and
   // `client` below see the cold state on their first query.
-  const coldLabel = runColdCommand(args.coldCommand);
-  const hasColdCommand =
-    args.coldCommand !== null && args.coldCommand !== undefined;
+  // Cold-phase samples are emitted ONLY when `mode === "captured"`
+  // — a failed cold command means no cold state was actually
+  // established, so emitting `phase: "cold"` rows would mislabel
+  // warm measurements as cold.
+  const cold = runColdCommand(args.coldCommand);
+  const emitColdSamples = cold.mode === "captured";
 
   const pool = new pg.Pool({ connectionString: args.connectionString });
   try {
@@ -458,7 +478,7 @@ async function main(argv) {
       const allSamples = [];
       const explainByQuery = {};
 
-      if (hasColdCommand) {
+      if (emitColdSamples) {
         // One cold sample per query, before any warm-up, so #528 has
         // a directly-comparable cold reading next to the warm
         // distribution. Cold samples run as `EXPLAIN (ANALYZE)` to
@@ -491,7 +511,7 @@ async function main(argv) {
         observedFromIso,
         warmups: args.warmups,
         samples: args.samples,
-        coldReading: coldLabel,
+        coldReading: cold.label,
         addressSampleSize: addresses.length,
         menuCandidatesPerBucket: MENU_CANDIDATES_PER_BUCKET,
         explainByQuery,

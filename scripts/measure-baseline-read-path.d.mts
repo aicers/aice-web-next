@@ -19,9 +19,7 @@ export interface SampleAddressesPool {
   query: (
     sql: string,
     params: ReadonlyArray<unknown>,
-  ) => Promise<{
-    rows: ReadonlyArray<{ orig_addr: string | null | undefined }>;
-  }>;
+  ) => Promise<{ rows: ReadonlyArray<Record<string, unknown>> }>;
 }
 
 export function sampleAddresses(
@@ -30,3 +28,20 @@ export function sampleAddresses(
   periodEndIso: string,
   limit: number,
 ): Promise<string[]>;
+
+export interface SpawnSyncResultLike {
+  status: number | null;
+}
+
+export type ColdCommandResult =
+  | { mode: "absent"; label: string }
+  | { mode: "captured"; label: string }
+  | { mode: "failed"; label: string };
+
+export function runColdCommand(
+  cmd: string | null | undefined,
+  spawn?: (
+    cmd: string,
+    opts: { shell: true; stdio: "inherit" },
+  ) => SpawnSyncResultLike,
+): ColdCommandResult;
