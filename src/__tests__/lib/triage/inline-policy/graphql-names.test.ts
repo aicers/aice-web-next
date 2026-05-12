@@ -3,19 +3,17 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  cmpKindToGraphql,
-  rawEventKindToGraphql,
-  responseKindToGraphql,
-  threatCategoryToGraphql,
-  valueKindToGraphql,
-} from "@/lib/triage/policy/inline-input";
-import {
   CMP_KINDS,
+  cmpKindToGraphql,
   RAW_EVENT_KINDS,
   RESPONSE_KINDS,
+  rawEventKindToGraphql,
+  responseKindToGraphql,
   THREAT_CATEGORIES,
+  threatCategoryToGraphql,
   VALUE_KINDS,
-} from "@/lib/triage/policy/types";
+  valueKindToGraphql,
+} from "@/lib/triage/inline-policy";
 
 /**
  * Round-trip guard: every literal accepted by the stored TriagePolicy
@@ -40,7 +38,7 @@ function readEnumMembers(enumName: string): Set<string> {
   );
 }
 
-describe("inline-input enum translators", () => {
+describe("inline-policy graphql-name translators", () => {
   it("maps every RAW_EVENT_KINDS literal to a GraphQL RawEventKind member", () => {
     const members = readEnumMembers("RawEventKind");
     for (const kind of RAW_EVENT_KINDS) {

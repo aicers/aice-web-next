@@ -236,7 +236,7 @@ describe("POST /api/triage/policies", () => {
   it("rejects a legacy 'match' cmp_kind that is not in AttrCmpKind", async () => {
     // `match` / `not_match` were dropped in Round 5 to keep the stored
     // shape aligned with review-web's `AttrCmpKind` enum (see
-    // src/lib/triage/policy/inline-input.ts). Zod's enum check now
+    // src/lib/triage/inline-policy/kinds.ts). Zod's enum check now
     // rejects the value before it ever reaches the repository.
     const { POST } = await import("@/app/api/triage/policies/route");
     const request = new NextRequest(

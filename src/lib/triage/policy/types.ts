@@ -12,8 +12,10 @@
  * input without any kind-by-kind reinterpretation. The byte-array
  * encoding of `first_value` / `second_value` for the GraphQL
  * `[Int!]!` shape happens at that boundary; we keep human-readable
- * strings here for storage and UI editing. See `inline-input.ts` for
- * the enum-name translator and round-trip test.
+ * strings here for storage and UI editing. See `./inline-translator.ts`
+ * for the storage→wire translator and
+ * `@/lib/triage/inline-policy/graphql-names` for the enum-name
+ * translator and its round-trip test.
  *
  * No `server-only` import: this module is also consumed by the form
  * components for client-side input shape parity.
@@ -21,101 +23,43 @@
 
 import { z } from "zod";
 
-// ── Enum-like literal sets ────────────────────────────────────────
+// ── Wire enum literals (shared with the inline-policy seam) ──────
 //
-// Each set mirrors the matching GraphQL enum in `schemas/review.graphql`.
-// `inline-input.ts` proves the round-trip mapping; if you edit a list
-// here, update that translator and its test together.
+// The literal sets and their types live in `src/lib/triage/inline-policy/kinds.ts`
+// so the inline-policy boundary (encoder, GraphQL-name mapping) can
+// compile without importing from this storage namespace. The §6
+// deprecatability seam allows `triage/policy/ → triage/inline-policy/`
+// but never the reverse, so re-exports flow in this direction only.
+// `inline-policy/graphql-names.ts` proves the round-trip mapping; if
+// you edit a list there, update that translator and its test together.
 
-export const VALUE_KINDS = [
-  "string",
-  "integer",
-  "u_integer",
-  "vector",
-  "float",
-  "ipaddr",
-  "bool",
-] as const;
-export type ValueKind = (typeof VALUE_KINDS)[number];
+import {
+  CMP_KINDS,
+  type CmpKind,
+  RANGE_CMP_KINDS,
+  RAW_EVENT_KINDS,
+  type RawEventKind,
+  RESPONSE_KINDS,
+  type ResponseKind,
+  THREAT_CATEGORIES,
+  type ThreatCategory,
+  VALUE_KINDS,
+  type ValueKind,
+} from "@/lib/triage/inline-policy/kinds";
 
-export const CMP_KINDS = [
-  "less",
-  "equal",
-  "greater",
-  "less_or_equal",
-  "greater_or_equal",
-  "contain",
-  "open_range",
-  "close_range",
-  "left_open_range",
-  "right_open_range",
-  "not_equal",
-  "not_contain",
-  "not_open_range",
-  "not_close_range",
-  "not_left_open_range",
-  "not_right_open_range",
-] as const;
-export type CmpKind = (typeof CMP_KINDS)[number];
-
-// Range cmp kinds require a non-empty `second_value` so the engine has
-// both ends of the interval. Listed here so `validation.ts` and the
-// inline-input translator can share a single source of truth.
-export const RANGE_CMP_KINDS = new Set<CmpKind>([
-  "open_range",
-  "close_range",
-  "left_open_range",
-  "right_open_range",
-  "not_open_range",
-  "not_close_range",
-  "not_left_open_range",
-  "not_right_open_range",
-]);
-
-export const RESPONSE_KINDS = ["manual", "blacklist", "whitelist"] as const;
-export type ResponseKind = (typeof RESPONSE_KINDS)[number];
-
-export const RAW_EVENT_KINDS = [
-  "bootp",
-  "conn",
-  "dhcp",
-  "dns",
-  "ftp",
-  "http",
-  "kerberos",
-  "ldap",
-  "log",
-  "mqtt",
-  "network",
-  "nfs",
-  "ntlm",
-  "radius",
-  "rdp",
-  "smb",
-  "smtp",
-  "ssh",
-  "tls",
-  "window",
-] as const;
-export type RawEventKind = (typeof RAW_EVENT_KINDS)[number];
-
-export const THREAT_CATEGORIES = [
-  "reconnaissance",
-  "initial_access",
-  "execution",
-  "credential_access",
-  "discovery",
-  "lateral_movement",
-  "command_and_control",
-  "exfiltration",
-  "impact",
-  "collection",
-  "defense_evasion",
-  "persistence",
-  "privilege_escalation",
-  "resource_development",
-] as const;
-export type ThreatCategory = (typeof THREAT_CATEGORIES)[number];
+export {
+  CMP_KINDS,
+  type CmpKind,
+  RANGE_CMP_KINDS,
+  RAW_EVENT_KINDS,
+  type RawEventKind,
+  RESPONSE_KINDS,
+  type ResponseKind,
+  THREAT_CATEGORIES,
+  type ThreatCategory,
+  VALUE_KINDS,
+  type ValueKind,
+};
 
 // ── Rule schemas ─────────────────────────────────────────────────
 
