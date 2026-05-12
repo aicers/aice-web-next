@@ -264,6 +264,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         ),
       },
       staleHashFallback: t("staleHashFallback"),
+      sensorScopeForbiddenFallback: t("sensorScopeForbiddenFallback"),
     },
     periodChangeConfirm: {
       title: t("periodChangeConfirm.title"),

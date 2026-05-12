@@ -89,6 +89,16 @@ export interface TriageBaselineLabels {
   tier2Error: Tier2ErrorNoticeLabels;
   tier2Progress: Tier2ProgressNoticeLabels;
   staleHashFallback: string;
+  /**
+   * Surfaced when the Tier 2 `sameSensor` pivot resolved a sensor name
+   * to a `nodeId` that REview rejected with `Forbidden` because the
+   * sensor is no longer in the caller's customer scope (#502 —
+   * `scope-forbidden` arm). Distinct from {@link staleHashFallback},
+   * which covers the URL-no-longer-matches-corpus case (and the
+   * `name-unresolved` arm), so the operator can tell "no longer
+   * accessible in your scope" apart from "this URL is stale".
+   */
+  sensorScopeForbiddenFallback: string;
 }
 
 interface TriageBaselineContentProps {
@@ -557,6 +567,14 @@ export function TriageBaselineContent({
   // location.hash) ──
   const hashRestoreAttempted = useRef(false);
   const [staleHashFallback, setStaleHashFallback] = useState(false);
+  // Surfaced only on the `scope-forbidden` arm of a `sameSensor`
+  // pivot: the resolved `nodeId` was rejected by review-web's
+  // tightened sensor-scope check (#502). Tracked separately from
+  // {@link staleHashFallback} so the two arms render their distinct
+  // copies — the issue specifies a "no longer accessible" toast for
+  // this branch and the existing stale-URL copy for `name-unresolved`.
+  const [sensorScopeForbiddenFallback, setSensorScopeForbiddenFallback] =
+    useState(false);
   // Server-filtered steps decoded from the hash whose data still has
   // to be fetched after restore. The restore effect parses the hash
   // and seeds the trail, but `useTier2Pivot.startFetch` would no-op if
@@ -895,11 +913,14 @@ export function TriageBaselineContent({
 
   // Tier 2 `sameSensor` pivots that cannot complete against the
   // asset's customer scope (name-unresolved or scope-forbidden, see
-  // #502) revert the trail to the asset root and surface the same
-  // stale-hash toast as a missing-step restore. Without this, a
-  // panel click on a sensor whose name no longer maps would leave
-  // the breadcrumb pointing at an unreachable pivot and the operator
-  // staring at an empty pivot focus.
+  // #502) revert the trail to the asset root and surface a
+  // non-blocking notice. The two arms render distinct copy:
+  //   - `name-unresolved` — name does not map under the asset's
+  //     tenant; routes through the existing stale-URL notice.
+  //   - `scope-forbidden` — REview tightened scope mid-session and
+  //     rejected the resolved `nodeId`; routes through the new
+  //     "no longer accessible" notice so the operator can tell the
+  //     two failure modes apart (#502 round 5 review).
   useEffect(() => {
     if (tier2.sensorFallbacks.length === 0) return;
     const fallback = tier2.sensorFallbacks[0];
@@ -911,7 +932,11 @@ export function TriageBaselineContent({
       if (assetCrumbIndex < 0) return current;
       return current.slice(0, assetCrumbIndex + 1);
     });
-    setStaleHashFallback(true);
+    if (fallback.kind === "scope-forbidden") {
+      setSensorScopeForbiddenFallback(true);
+    } else {
+      setStaleHashFallback(true);
+    }
     tier2.acknowledgeSensorFallback(fallback.sensorName);
   }, [tier2]);
 
@@ -938,6 +963,14 @@ export function TriageBaselineContent({
           className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
         >
           {labels.staleHashFallback}
+        </p>
+      ) : null}
+      {sensorScopeForbiddenFallback ? (
+        <p
+          role="status"
+          className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          {labels.sensorScopeForbiddenFallback}
         </p>
       ) : null}
       <Tier2EvictionNotice

@@ -31,14 +31,33 @@ vi.mock("next/navigation", () => ({
 // BFF. The component-level tests mock the boundary so the assertions
 // can pin the call shape and the cache write without standing up a
 // GraphQL transport.
+interface MockTier2Result {
+  events: unknown[];
+  totalCount: string | null;
+  truncated: boolean;
+  hasMore: boolean;
+  endCursor: string | null;
+  /**
+   * Optional sensor fallback discriminator. The hook routes the
+   * `scope-forbidden` arm through a distinct UI banner from the
+   * `name-unresolved` arm (#502 round 5).
+   */
+  sensorFallback?: {
+    kind: "name-unresolved" | "scope-forbidden";
+    sensorName: string;
+  };
+}
+
 const fetchTier2Mock = vi.hoisted(() =>
-  vi.fn(async (_input: Record<string, unknown>) => ({
-    events: [] as unknown[],
-    totalCount: null as string | null,
-    truncated: false,
-    hasMore: false,
-    endCursor: null as string | null,
-  })),
+  vi.fn(
+    async (_input: Record<string, unknown>): Promise<MockTier2Result> => ({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    }),
+  ),
 );
 vi.mock("@/lib/triage/tier2-fetch", () => ({
   fetchTier2Dimension: fetchTier2Mock,
@@ -237,6 +256,8 @@ const LABELS: TriageShellLabels = {
       dimensions: dimensionsMap("Dim"),
     },
     staleHashFallback: "Stale hash — showing asset root",
+    sensorScopeForbiddenFallback:
+      "Sensor no longer accessible — showing asset root",
   },
   periodChangeConfirm: {
     title: "Discard pivot trail?",
@@ -1016,6 +1037,108 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     // trail did NOT reset to just the asset root crumb.
     expect(screen.getByText("Crumb:externalIp: 203.0.113.1")).toBeTruthy();
     expect(screen.getByText("Crumb:host: remoteonly.example")).toBeTruthy();
+  });
+
+  it("renders the distinct 'no longer accessible' notice (not the stale-hash copy) for a scope-forbidden sameSensor pivot", async () => {
+    // Regression for Round 5 Item 1. The fetch impl distinguishes
+    // `name-unresolved` from `scope-forbidden` at the sensorFallback
+    // discriminator (#502), but the hook/UI previously collapsed both
+    // arms into the stale-hash banner. The issue requires the
+    // scope-forbidden arm to surface a distinct "no longer accessible"
+    // toast so the operator can tell access change apart from a stale
+    // URL.
+    //
+    // Drives the pivot through the Tier 2 hash-restore queue so the
+    // test does not depend on the panel surfacing a `sameSensor` row
+    // (which only appears when other corpus events share the sensor).
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "deadbeef.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+      sensorFallback: { kind: "scope-forbidden", sensorName: "edge-01" },
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Distinct copy renders.
+    expect(
+      screen.getByText("Sensor no longer accessible — showing asset root"),
+    ).toBeTruthy();
+    // The stale-hash copy must NOT also render — collapsing both arms
+    // into the same banner is exactly what this regression pins
+    // against.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // Trail reverted to the asset crumb only.
+    expect(screen.queryByText("Crumb:sameSensor: edge-01")).toBeNull();
+  });
+
+  it("keeps the stale-hash copy for a name-unresolved sameSensor pivot", async () => {
+    // Counterpart of the scope-forbidden regression above: the
+    // `name-unresolved` arm must continue to render the existing
+    // stale-URL copy, not the new distinct notice. Pins the routing
+    // so the two arms cannot drift back into sharing one banner.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "deadbeef.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+      sensorFallback: { kind: "name-unresolved", sensorName: "edge-01" },
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
+    expect(
+      screen.queryByText("Sensor no longer accessible — showing asset root"),
+    ).toBeNull();
+    expect(screen.queryByText("Crumb:sameSensor: edge-01")).toBeNull();
   });
 });
 

@@ -2101,7 +2101,8 @@
         "cancel": "Cancel"
       }
     },
-    "staleHashFallback": "Pivot trail in the URL no longer matches the loaded period — showing the asset root."
+    "staleHashFallback": "Pivot trail in the URL no longer matches the loaded period — showing the asset root.",
+    "sensorScopeForbiddenFallback": "Sensor pivot is no longer accessible in your customer scope — showing the asset root."
   },
   "changePassword": {
     "heading": "Change Password",

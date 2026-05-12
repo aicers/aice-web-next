@@ -123,6 +123,8 @@ const LABELS: TriageBaselineLabels = {
     dimensions: dimensionsMap("Dim"),
   },
   staleHashFallback: "Stale hash — showing asset root",
+  sensorScopeForbiddenFallback:
+    "Sensor no longer accessible — showing asset root",
 };
 
 const PERIOD = {

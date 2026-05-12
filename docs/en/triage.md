@@ -787,13 +787,23 @@ shared sensor lookup (now callable with `triage:read` or
 `(name, customerId)` so a sensor named `edge-01` under one tenant
 cannot accidentally select the same-named sensor under another.
 
-If the name no longer maps to an accessible sensor — either zero
-matches under the asset's customer scope, or REview tightened scope
-mid-session and rejected the resolved `nodeId` — the trail reverts
-to the asset root and the page surfaces the same non-blocking notice
-as a stale shared URL. Transport / generic failures still surface as
-the red error notice so the operator can tell "no longer accessible"
-apart from "lookup did not run".
+If the name no longer maps to an accessible sensor the trail reverts
+to the asset root and the page surfaces a non-blocking notice. The
+two reasons render distinct copy so the operator can tell them apart:
+
+- **Stale name** — zero matches under the asset's customer scope.
+  The page renders the same notice as a stale shared URL ("Pivot
+  trail in the URL no longer matches the loaded period — showing the
+  asset root.").
+- **No longer accessible** — REview tightened scope mid-session and
+  rejected the resolved `nodeId`. The page renders a dedicated
+  notice ("Sensor pivot is no longer accessible in your customer
+  scope — showing the asset root.") so the operator can recognise
+  the access change rather than mistake it for a stale URL.
+
+Transport / generic failures still surface as the red error notice
+so the operator can tell either fallback above apart from "lookup
+did not run".
 
 ### URL hash persistence
 

@@ -2101,7 +2101,8 @@
         "cancel": "취소"
       }
     },
-    "staleHashFallback": "URL의 피벗 경로가 로드된 기간과 일치하지 않아 자산 루트를 표시합니다."
+    "staleHashFallback": "URL의 피벗 경로가 로드된 기간과 일치하지 않아 자산 루트를 표시합니다.",
+    "sensorScopeForbiddenFallback": "대상 센서가 현재 고객 범위에서 더 이상 접근할 수 없어 자산 루트를 표시합니다."
   },
   "changePassword": {
     "heading": "비밀번호 변경",
