@@ -64,9 +64,15 @@ CREATE TABLE IF NOT EXISTS policy_triage_run (
     -- recompute and points back at the row it supersedes;
     -- `superseded_by` is set on the old row when the new row commits.
     -- ON DELETE SET NULL so 1B-7 retention can prune old rows without
-    -- a foreign-key cascade chain.
+    -- a foreign-key cascade chain. `superseded_by` is DEFERRABLE
+    -- INITIALLY DEFERRED so the recompute transaction (§3.5) can pre-
+    -- allocate `new_id` from the sequence, mark the old row
+    -- `superseded` with `superseded_by=new_id`, then INSERT the new
+    -- row with `id=new_id` in the same transaction without tripping
+    -- the FK check at statement boundary.
     replaces                BIGINT REFERENCES policy_triage_run(id) ON DELETE SET NULL,
-    superseded_by           BIGINT REFERENCES policy_triage_run(id) ON DELETE SET NULL,
+    superseded_by           BIGINT REFERENCES policy_triage_run(id) ON DELETE SET NULL
+                            DEFERRABLE INITIALLY DEFERRED,
     refresh_reason          TEXT,
 
     -- Diagnostics. `last_error` is populated for `failed` rows
