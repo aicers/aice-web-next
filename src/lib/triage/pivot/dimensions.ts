@@ -67,6 +67,18 @@ export type PivotDimensionId =
   | "certSubjectCn"
   | "dnsQuery"
   | "dnsAnswer"
+  | "sshClient"
+  | "sshServer"
+  | "sshHassh"
+  | "sshHasshServer"
+  | "smbPath"
+  | "smbService"
+  | "smbFileName"
+  | "ftpCommand"
+  | "ldapOpcode"
+  | "ldapObject"
+  | "ldapArgument"
+  | "mqttSubscribe"
   | "sameKindWithin15Min"
   | "sameSensor"
   | "clusterId"
@@ -307,6 +319,149 @@ const DNS_ANSWER_DIMENSION: PivotDimension = {
 };
 
 /**
+ * Per-protocol scalar identifier dimension factory (#503 sub-item A).
+ * The extractor takes a single string field from the event and emits
+ * one value when non-empty. Marked `policyOnly` because the Baseline
+ * corpus row (`baseline_triaged_event`) does not carry SSH / SMB
+ * subtype-specific columns — without this gate the Baseline-mode
+ * panel would render perpetually empty sections.
+ */
+function protocolScalarField(
+  id: PivotDimensionId,
+  family: PivotDimensionFamily,
+  pick: (event: ScoredTriageEvent) => string | null | undefined,
+): PivotDimension {
+  return {
+    id,
+    family,
+    policyOnly: true,
+    extract(event) {
+      const value = nonEmptyString(pick(event));
+      if (!value) return [];
+      return [{ key: value, label: value }];
+    },
+  };
+}
+
+/**
+ * Per-protocol list-element identifier dimension factory (#503 sub-
+ * item A). Emits one pivot value per non-empty element so a single
+ * FTP / LDAP / MQTT event with N elements produces N values — the
+ * panel groups by the per-element key so two events that share an
+ * `RETR` command (or an LDAP `bindRequest` opcode) collapse into the
+ * same row. Marked `policyOnly` for the same Baseline-corpus reason
+ * as {@link protocolScalarField}.
+ */
+function protocolListField(
+  id: PivotDimensionId,
+  family: PivotDimensionFamily,
+  pick: (event: ScoredTriageEvent) => readonly string[] | null | undefined,
+): PivotDimension {
+  return {
+    id,
+    family,
+    policyOnly: true,
+    extract(event) {
+      const values = pick(event);
+      if (!values || values.length === 0) return [];
+      const seen = new Set<string>();
+      const out: PivotValue[] = [];
+      for (const raw of values) {
+        const value = nonEmptyString(raw);
+        if (!value) continue;
+        if (seen.has(value)) continue;
+        seen.add(value);
+        out.push({ key: value, label: value });
+      }
+      return out;
+    },
+  };
+}
+
+const SSH_CLIENT_DIMENSION = protocolScalarField(
+  "sshClient",
+  "application",
+  (e) => e.sshClient,
+);
+const SSH_SERVER_DIMENSION = protocolScalarField(
+  "sshServer",
+  "application",
+  (e) => e.sshServer,
+);
+const SSH_HASSH_DIMENSION = protocolScalarField(
+  "sshHassh",
+  "application",
+  (e) => e.sshHassh,
+);
+const SSH_HASSH_SERVER_DIMENSION = protocolScalarField(
+  "sshHasshServer",
+  "application",
+  (e) => e.sshHasshServer,
+);
+const SMB_PATH_DIMENSION = protocolScalarField(
+  "smbPath",
+  "application",
+  (e) => e.smbPath,
+);
+const SMB_SERVICE_DIMENSION = protocolScalarField(
+  "smbService",
+  "application",
+  (e) => e.smbService,
+);
+const SMB_FILE_NAME_DIMENSION = protocolScalarField(
+  "smbFileName",
+  "application",
+  (e) => e.smbFileName,
+);
+
+/**
+ * FTP `commands { command }` (#503). The schema exposes `commands` as
+ * `[FtpCommand!]!`, so the dimension extracts the nested `command`
+ * scalar (e.g. `RETR`, `STOR`, `LIST`) from each element and emits one
+ * pivot value per unique command per event.
+ */
+const FTP_COMMAND_DIMENSION: PivotDimension = {
+  id: "ftpCommand",
+  family: "application",
+  policyOnly: true,
+  extract(event) {
+    const commands = event.ftpCommands;
+    if (!commands || commands.length === 0) return [];
+    const seen = new Set<string>();
+    const out: PivotValue[] = [];
+    for (const entry of commands) {
+      const value = nonEmptyString(entry?.command);
+      if (!value) continue;
+      if (seen.has(value)) continue;
+      seen.add(value);
+      out.push({ key: value, label: value });
+    }
+    return out;
+  },
+};
+
+const LDAP_OPCODE_DIMENSION = protocolListField(
+  "ldapOpcode",
+  "application",
+  (e) => e.ldapOpcode,
+);
+const LDAP_OBJECT_DIMENSION = protocolListField(
+  "ldapObject",
+  "application",
+  (e) => e.ldapObject,
+);
+const LDAP_ARGUMENT_DIMENSION = protocolListField(
+  "ldapArgument",
+  "application",
+  (e) => e.ldapArgument,
+);
+const MQTT_SUBSCRIBE_DIMENSION = protocolListField(
+  "mqttSubscribe",
+  "application",
+  (e) => e.mqttSubscribe,
+);
+
+/**
  * Encode the event's typename and exact time-as-ms into the value
  * key. Each event carries a unique key — matching is not done by
  * key intersection (that would only ever match the event with
@@ -466,6 +621,18 @@ export const PIVOT_DIMENSIONS: readonly PivotDimension[] = [
   CERT_SUBJECT_CN_DIMENSION,
   DNS_QUERY_DIMENSION,
   DNS_ANSWER_DIMENSION,
+  SSH_CLIENT_DIMENSION,
+  SSH_SERVER_DIMENSION,
+  SSH_HASSH_DIMENSION,
+  SSH_HASSH_SERVER_DIMENSION,
+  SMB_PATH_DIMENSION,
+  SMB_SERVICE_DIMENSION,
+  SMB_FILE_NAME_DIMENSION,
+  FTP_COMMAND_DIMENSION,
+  LDAP_OPCODE_DIMENSION,
+  LDAP_OBJECT_DIMENSION,
+  LDAP_ARGUMENT_DIMENSION,
+  MQTT_SUBSCRIBE_DIMENSION,
   SAME_KIND_WITHIN_15_MIN_DIMENSION,
   SAME_SENSOR_DIMENSION,
   CLUSTER_ID_DIMENSION,

@@ -521,6 +521,23 @@ The panel surfaces events grouped by:
   `/api/v1/users/{id}`.
 - **TLS** — JA3, JA3S, SNI (server name), certificate serial,
   certificate subject CN.
+- **Per-protocol identifiers** (Policy mode only — the Baseline
+  corpus row does not carry these subtype-specific fields):
+  - **SSH** — client / server version strings (e.g.,
+    `SSH-2.0-OpenSSH_8.4`) and the HASSH client / server
+    fingerprints. HASSH is the SSH analogue of JA3 / JA3S, so the
+    fingerprint pivots answer "find every event sharing this SSH
+    stack" the same way the TLS JA3 pivots do.
+  - **SMB** — path, service, file name.
+  - **FTP** — command (one pivot value per element of the
+    per-session `commands` list; e.g., `RETR`, `STOR`, `LIST`).
+    `FtpBruteForce` events do not carry commands and stay outside
+    this section.
+  - **LDAP** — opcode, object, argument (each is a string list per
+    event; one pivot value per element).
+    `LdapBruteForce` events do not carry these fields.
+  - **MQTT** — subscribe (one pivot value per element of the per-
+    session topic subscription list).
 - **DNS** — DNS query, DNS answer (multi-answer rows are split, and
   only IPv4 / IPv6 literal tokens are kept; CNAMEs and status text
   such as `NXDOMAIN` that REview sometimes surfaces in the same
