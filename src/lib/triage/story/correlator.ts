@@ -133,14 +133,14 @@ export async function runStepF(args: RunStepFArgs): Promise<StepFResult> {
       ? null
       : new Date(previousWatermark.getTime() - MAX_RULE_WINDOW_MS);
 
-  // Per-rule SQL push-down (Story RFC §3, §5). Each rule reads its
-  // own candidate set with the row-level predicate evaluated by
-  // PostgreSQL — `category = ANY(...)` for R1, `selector_tags && ...`
-  // for R3 — so the `EXPLAIN ANALYZE` shape demanded by the issue's
-  // measurement gate runs against the SQL that production runs, and
-  // the correlator does not materialize the entire member-scan range
-  // in app memory before filtering. Same-asset narrowing stays in
-  // the rule layer (a clustering operation, not a row-level filter).
+  // Per-rule SQL push-down (Story RFC §3, §5). R1 reads its
+  // candidate set with `category = ANY(...)` as a single SELECT.
+  // R3 is two-phase: phase 1 pre-aggregates candidate assets
+  // (`GROUP BY orig_addr HAVING COUNT(*) >= 3` over
+  // `selector_tags && ...`), phase 2 reads per-asset rows via
+  // `orig_addr = ANY($::inet[])` — the per-asset shape the issue's
+  // measurement gate validates against the `orig_addr` GiST index.
+  // Final sliding-window clustering stays in the rule layer.
   const [r1Candidates, r3Candidates] = await Promise.all([
     readR1Candidates({ client, memberScanStart, memberScanEnd: newHorizon }),
     readR3Candidates({ client, memberScanStart, memberScanEnd: newHorizon }),

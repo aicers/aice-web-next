@@ -236,21 +236,30 @@ describe("runStepF — first-tick / NULL watermark", () => {
     });
     expect(result.storiesInserted).toBe(1);
 
-    // The member-scan SELECT omits the lower-bound predicate
+    // The member-scan SELECTs omit the lower-bound predicate
     // entirely on the first tick — only the upper bound
-    // (new_horizon = pageMax - slop) is bound. After R1's per-rule
-    // SQL push-down (Story RFC §3.R1, §5), the second positional
-    // parameter is the critical-category array (R1) or the
-    // critical-selector array (R3); the time bound stays $1.
+    // (new_horizon = pageMax - slop) is bound. R3 runs as two
+    // phases (candidate-asset GROUP BY → per-asset member read);
+    // R1 stays a single SELECT. Every member-scan SELECT must
+    // share the same upper-bound parameter.
     const scanQueries = h.queries.filter((q) =>
       q.sql.includes("FROM baseline_triaged_event"),
     );
-    expect(scanQueries).toHaveLength(2); // R1 + R3
+    expect(scanQueries).toHaveLength(3); // R1 + R3 phase 1 + R3 phase 2
     for (const q of scanQueries) {
-      expect(q.sql).not.toMatch(/event_time >= \$1/);
+      expect(q.sql).not.toMatch(/event_time >= /);
       expect(q.params?.[0]).toEqual(new Date(pageMax.getTime() - SLOP_MS));
-      expect(q.params).toHaveLength(2);
     }
+    const r1Scan = scanQueries.find((q) => q.sql.includes("category = ANY"));
+    const r3Phase1 = scanQueries.find(
+      (q) =>
+        q.sql.includes("GROUP BY orig_addr") &&
+        q.sql.includes("HAVING COUNT(*) >= 3"),
+    );
+    const r3Phase2 = scanQueries.find((q) => q.sql.includes("orig_addr = ANY"));
+    expect(r1Scan?.params).toHaveLength(2);
+    expect(r3Phase1?.params).toHaveLength(2);
+    expect(r3Phase2?.params).toHaveLength(3);
   });
 
   it("first-tick historical catch-up: rows older than pageMin are still candidates", async () => {
@@ -342,17 +351,17 @@ describe("runStepF — slop-replay member lookback", () => {
     });
     expect(result.storiesInserted).toBe(1);
 
-    // The member-scan SELECTs (one per rule, after the §3 / §5
-    // SQL push-down) used previousWatermark − 1h as the lower
-    // bound (MAX_RULE_WINDOW_MS) and new_horizon (pageMax − slop)
-    // as the upper bound. Events in the slop window
-    // `(new_horizon, pageMax]` are intentionally excluded — they
-    // cannot finalize this tick anyway and become visible on the
-    // next tick via the lookback range.
+    // The member-scan SELECTs (R1 single SELECT + R3 two-phase
+    // SELECT after the §3 / §5 per-asset push-down) used
+    // previousWatermark − 1h as the lower bound (MAX_RULE_WINDOW_MS)
+    // and new_horizon (pageMax − slop) as the upper bound. Events
+    // in the slop window `(new_horizon, pageMax]` are intentionally
+    // excluded — they cannot finalize this tick anyway and become
+    // visible on the next tick via the lookback range.
     const scanQueries = h.queries.filter((q) =>
       q.sql.includes("FROM baseline_triaged_event"),
     );
-    expect(scanQueries).toHaveLength(2); // R1 + R3
+    expect(scanQueries).toHaveLength(3); // R1 + R3 phase 1 + R3 phase 2
     const expectedLower = new Date(
       previousWatermark.getTime() - 60 * 60 * 1000,
     );
@@ -361,17 +370,30 @@ describe("runStepF — slop-replay member lookback", () => {
       expect(q.params?.[0]).toEqual(expectedLower);
       expect(q.params?.[1]).toEqual(expectedUpper);
     }
-    // R3's read pushes `selector_tags && $::text[]` into SQL so
-    // the issue's measurement-gate `EXPLAIN ANALYZE` runs against
-    // the actual production shape. R1's read pushes
-    // `category = ANY($::text[])` for the same reason.
-    const r3Scan = scanQueries.find((q) => q.sql.includes("selector_tags &&"));
+    // R1's read pushes `category = ANY($::text[])` into SQL.
+    // R3's read pushes `selector_tags && $::text[]` and then a
+    // per-asset `orig_addr = ANY($::inet[])` phase-2 SELECT — the
+    // shape the issue's measurement-gate `EXPLAIN ANALYZE`
+    // validates against the `orig_addr` GiST index path.
     const r1Scan = scanQueries.find((q) => q.sql.includes("category = ANY"));
+    const r3Phase1 = scanQueries.find(
+      (q) =>
+        q.sql.includes("GROUP BY orig_addr") &&
+        q.sql.includes("HAVING COUNT(*) >= 3"),
+    );
+    const r3Phase2 = scanQueries.find((q) => q.sql.includes("orig_addr = ANY"));
     expect(r1Scan).toBeDefined();
-    expect(r3Scan).toBeDefined();
+    expect(r3Phase1).toBeDefined();
+    expect(r3Phase2).toBeDefined();
     expect(r1Scan?.sql).toMatch(/orig_addr IS NOT NULL/);
-    expect(r3Scan?.sql).toMatch(/orig_addr IS NOT NULL/);
-    expect(r3Scan?.params?.[2]).toEqual(
+    expect(r3Phase1?.sql).toMatch(/orig_addr IS NOT NULL/);
+    expect(r3Phase1?.sql).toMatch(/selector_tags && \$3::text\[\]/);
+    expect(r3Phase2?.sql).toMatch(/orig_addr = ANY\(\$3::inet\[\]\)/);
+    expect(r3Phase2?.sql).toMatch(/selector_tags && \$4::text\[\]/);
+    expect(r3Phase1?.params?.[2]).toEqual(
+      expect.arrayContaining(["S2-severe", "unlabeled-cluster"]),
+    );
+    expect(r3Phase2?.params?.[3]).toEqual(
       expect.arrayContaining(["S2-severe", "unlabeled-cluster"]),
     );
   });

@@ -224,24 +224,38 @@ describe("readR1Candidates — SQL push-down for measurement gate", () => {
   });
 });
 
-describe("readR3Candidates — SQL push-down for measurement gate", () => {
-  function makeReadClient(): {
+describe("readR3Candidates — two-phase per-asset access for measurement gate", () => {
+  // The R3 measurement gate from the issue specifically requires
+  // EXPLAIN ANALYZE on the same-asset-1h scan, confirming use of
+  // the `orig_addr` GiST index. The implementation is two phases:
+  //   phase 1 — `GROUP BY orig_addr HAVING COUNT(*) >= 3` to
+  //             pre-aggregate candidate assets;
+  //   phase 2 — `orig_addr = ANY($::inet[])` per-asset row read,
+  //             which the planner can resolve via the GiST index.
+  function makeReadClient(opts?: {
+    phase1Rows?: Array<{ orig_addr: string }>;
+  }): {
     client: unknown;
     queries: Array<{ sql: string; params: unknown[] | undefined }>;
   } {
     const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
+    let queryIdx = 0;
     const query = vi.fn(async (sql: string, params?: unknown[]) => {
       queries.push({ sql, params });
+      const idx = queryIdx;
+      queryIdx += 1;
+      // First call is phase 1 (candidate-asset aggregate). Returning
+      // a non-empty rows array triggers the phase 2 SELECT in the
+      // implementation; an empty array short-circuits.
+      if (idx === 0 && opts?.phase1Rows) {
+        return { rows: opts.phase1Rows, rowCount: opts.phase1Rows.length };
+      }
       return { rows: [], rowCount: 0 };
     });
     return { client: { query }, queries };
   }
 
-  it("pushes orig_addr IS NOT NULL and selector_tags && ARRAY[...] into SQL with a [start, end] range", async () => {
-    // The R3 measurement gate from the issue specifically requires
-    // EXPLAIN ANALYZE on the `selector_tags && ARRAY[...]` overlap
-    // shape. Without the SQL push-down, the broad-range SELECT has
-    // nothing R3-specific for the planner to explain.
+  it("phase 1: pre-aggregates candidate assets with GROUP BY / HAVING COUNT(*) >= 3", async () => {
     const h = makeReadClient();
     const start = new Date("2026-05-09T11:00:00Z");
     const end = new Date("2026-05-09T13:00:00Z");
@@ -251,20 +265,64 @@ describe("readR3Candidates — SQL push-down for measurement gate", () => {
       memberScanStart: start,
       memberScanEnd: end,
     });
-    const q = h.queries[0];
-    expect(q.sql).toMatch(/event_time >= \$1/);
-    expect(q.sql).toMatch(/event_time <= \$2/);
-    expect(q.sql).toMatch(/orig_addr IS NOT NULL/);
-    expect(q.sql).toMatch(/selector_tags && \$3::text\[\]/);
-    expect(q.params?.[0]).toEqual(start);
-    expect(q.params?.[1]).toEqual(end);
-    expect(q.params?.[2]).toEqual(
+    const phase1 = h.queries[0];
+    expect(phase1.sql).toMatch(/event_time >= \$1/);
+    expect(phase1.sql).toMatch(/event_time <= \$2/);
+    expect(phase1.sql).toMatch(/orig_addr IS NOT NULL/);
+    expect(phase1.sql).toMatch(/selector_tags && \$3::text\[\]/);
+    expect(phase1.sql).toMatch(/GROUP BY orig_addr/);
+    expect(phase1.sql).toMatch(/HAVING COUNT\(\*\) >= 3/);
+    expect(phase1.params?.[0]).toEqual(start);
+    expect(phase1.params?.[1]).toEqual(end);
+    expect(phase1.params?.[2]).toEqual(
       expect.arrayContaining(["S2-severe", "unlabeled-cluster"]),
     );
   });
 
-  it("omits the lower bound on first tick (memberScanStart === null)", async () => {
+  it("phase 2: per-asset member read uses orig_addr = ANY($::inet[]) (the measurement-gate target)", async () => {
+    const h = makeReadClient({
+      phase1Rows: [{ orig_addr: "10.0.0.5" }, { orig_addr: "10.0.0.7" }],
+    });
+    const start = new Date("2026-05-09T11:00:00Z");
+    const end = new Date("2026-05-09T13:00:00Z");
+    await readR3Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: start,
+      memberScanEnd: end,
+    });
+    expect(h.queries).toHaveLength(2);
+    const phase2 = h.queries[1];
+    expect(phase2.sql).toMatch(/event_time >= \$1/);
+    expect(phase2.sql).toMatch(/event_time <= \$2/);
+    expect(phase2.sql).toMatch(/orig_addr = ANY\(\$3::inet\[\]\)/);
+    expect(phase2.sql).toMatch(/selector_tags && \$4::text\[\]/);
+    expect(phase2.params?.[0]).toEqual(start);
+    expect(phase2.params?.[1]).toEqual(end);
+    expect(phase2.params?.[2]).toEqual(["10.0.0.5", "10.0.0.7"]);
+    expect(phase2.params?.[3]).toEqual(
+      expect.arrayContaining(["S2-severe", "unlabeled-cluster"]),
+    );
+  });
+
+  it("phase 1 returns no candidate assets: phase 2 is skipped (no tenant-wide row materialization)", async () => {
     const h = makeReadClient();
+    const start = new Date("2026-05-09T11:00:00Z");
+    const end = new Date("2026-05-09T13:00:00Z");
+    const rows = await readR3Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: start,
+      memberScanEnd: end,
+    });
+    expect(rows).toEqual([]);
+    expect(h.queries).toHaveLength(1);
+  });
+
+  it("omits the lower bound on first tick (memberScanStart === null) in both phases", async () => {
+    const h = makeReadClient({
+      phase1Rows: [{ orig_addr: "10.0.0.5" }],
+    });
     const end = new Date("2026-05-09T13:00:00Z");
     await readR3Candidates({
       // biome-ignore lint/suspicious/noExplicitAny: fake test client
@@ -272,11 +330,18 @@ describe("readR3Candidates — SQL push-down for measurement gate", () => {
       memberScanStart: null,
       memberScanEnd: end,
     });
-    const q = h.queries[0];
-    expect(q.sql).not.toMatch(/event_time >= /);
-    expect(q.sql).toMatch(/event_time <= \$1/);
-    expect(q.sql).toMatch(/selector_tags && \$2::text\[\]/);
-    expect(q.params).toHaveLength(2);
+    expect(h.queries).toHaveLength(2);
+    const phase1 = h.queries[0];
+    expect(phase1.sql).not.toMatch(/event_time >= /);
+    expect(phase1.sql).toMatch(/event_time <= \$1/);
+    expect(phase1.sql).toMatch(/selector_tags && \$2::text\[\]/);
+    expect(phase1.params).toHaveLength(2);
+    const phase2 = h.queries[1];
+    expect(phase2.sql).not.toMatch(/event_time >= /);
+    expect(phase2.sql).toMatch(/event_time <= \$1/);
+    expect(phase2.sql).toMatch(/orig_addr = ANY\(\$2::inet\[\]\)/);
+    expect(phase2.sql).toMatch(/selector_tags && \$3::text\[\]/);
+    expect(phase2.params).toHaveLength(3);
   });
 });
 

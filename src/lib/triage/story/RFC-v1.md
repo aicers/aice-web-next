@@ -89,20 +89,41 @@ stays reserved so the rule-ID enum does not shift.
 - Score: `member_count` (after the §8 member cap).
 - `correlation_rule_id = 'R3'`.
 - **SQL push-down (§5).** R3's per-page candidate read in
-  `repository.ts` is:
+  `repository.ts` is two-phase. Phase 1 pre-aggregates candidate
+  assets:
+
+  ```sql
+  SELECT host(orig_addr) AS orig_addr
+    FROM baseline_triaged_event
+   WHERE event_time IN [memberScanStart, memberScanEnd]
+     AND orig_addr IS NOT NULL
+     AND selector_tags && $criticalSelectors::text[]
+   GROUP BY orig_addr
+  HAVING COUNT(*) >= 3
+  ```
+
+  Phase 2 is the per-asset row read — the shape the issue's
+  measurement gate names ("R3 same-asset-1h scan"):
 
   ```sql
   SELECT … FROM baseline_triaged_event
    WHERE event_time IN [memberScanStart, memberScanEnd]
-     AND orig_addr IS NOT NULL
+     AND orig_addr = ANY($assets::inet[])
      AND selector_tags && $criticalSelectors::text[]
   ```
 
-  This is the exact shape the issue's measurement gate runs
-  `EXPLAIN ANALYZE` against. Same-asset narrowing (1-hour window
-  per `orig_addr`) is a clustering operation across the returned
-  rows and lives in the rule layer. If measurement at scale shows
-  the planner cannot resolve `selector_tags &&` efficiently on
+  The `orig_addr = ANY(…)` predicate is what the planner uses to
+  resolve per-asset narrowing through
+  `baseline_triaged_event_orig_addr_gist`
+  (`gist_inet_ops` supports `=`), and what
+  `EXPLAIN ANALYZE` validates against the GiST path. Phase 1's
+  `HAVING COUNT(*) >= 3` matches R3's per-rule member threshold,
+  so assets that cannot reach the threshold in the scan range are
+  dropped before phase 2 reads them. Final sliding-window
+  clustering remains a rule-layer operation across phase 2's
+  returned rows — the SQL only narrows *which* assets are read,
+  not how their events cluster. If measurement at scale shows the
+  planner cannot resolve `selector_tags &&` efficiently on
   `baseline_triaged_event`, the additive follow-up named in the
   issue is a GIN index on `selector_tags` — migration-only, no
   callsite churn.
@@ -183,35 +204,44 @@ transaction the runner already opens.
 single broad-range candidate scan:
 
 - `readR1Candidates({ memberScanStart, memberScanEnd })` —
-  `category = ANY($criticalCategories::text[])` plus the time
-  range and `orig_addr IS NOT NULL`.
+  single SELECT: `category = ANY($criticalCategories::text[])`
+  plus the time range and `orig_addr IS NOT NULL`.
 - `readR3Candidates({ memberScanStart, memberScanEnd })` —
-  `selector_tags && $criticalSelectors::text[]` plus the time
-  range and `orig_addr IS NOT NULL`.
+  two-phase. Phase 1 pre-aggregates candidate assets
+  (`GROUP BY orig_addr HAVING COUNT(*) >= 3` over the
+  `selector_tags && $criticalSelectors::text[]` predicate);
+  phase 2 reads per-asset rows via
+  `orig_addr = ANY($assets::inet[])`.
 
 The correlator runs both reads in parallel, then dispatches each
 result set to its rule's pure in-memory clusterer. The split
-serves two goals:
+serves three goals:
 
 1. **Measurement gate is meaningful.** The issue's measurement
-   gate demands `EXPLAIN ANALYZE` on R3's
-   `selector_tags && ARRAY[...]` shape. A single broad-range
-   SELECT has nothing rule-specific for the planner to explain;
-   the per-rule SQL gives the gate a target that matches what
-   production runs.
+   gate demands `EXPLAIN ANALYZE` on R3's same-asset-1h scan,
+   confirming `(event_time DESC)` and the `orig_addr` GiST index
+   participate in the plan. The phase-2 SELECT's
+   `orig_addr = ANY(...)` is the predicate that resolves through
+   `baseline_triaged_event_orig_addr_gist`
+   (`gist_inet_ops` supports `=`), so the gate has a concrete
+   production-shape target.
 2. **App-side memory bound.** A typical-volume tenant produces a
    large number of `baseline_triaged_event` rows in the slop-
    replay range; predicate-pushed reads cap the in-memory set at
    the rows R1/R3 actually evaluate, instead of materializing the
    full range and filtering in app memory inside the per-page
-   transaction.
-
-Same-asset narrowing (the 10-min / 1-hour per-`orig_addr` window)
-remains a clustering operation across the returned rows in
-`rules.ts` (`groupByAsset` + `clusterByWindow`). Same-asset
-narrowing is what produces the cluster boundaries the rule scores
-against; it is not a row-level filter that could collapse before
-clustering, so it stays out of the SQL.
+   transaction. Phase 1's `HAVING COUNT(*) >= 3` further drops
+   assets that cannot reach R3's member threshold before phase 2
+   reads any of their rows.
+3. **Rule-layer separation stays clean.** Final sliding-window
+   clustering (the 10-min / 1-hour per-`orig_addr` window) is the
+   shape the rule scores against; that stays in `rules.ts`
+   (`groupByAsset` + `clusterByWindow`). The SQL only narrows
+   which rows the rule evaluates — phase 1's `COUNT(*) >= 3` is
+   the rule's member-count threshold in the scan range, not the
+   sliding window itself, so a candidate that phase 1 admits may
+   still fail the in-memory window check, and that is the
+   intended behaviour.
 
 ### Analyst-curated path
 

@@ -85,9 +85,12 @@ function rowToCandidate(row: CandidateRow): CandidateEvent {
  *      AND category = ANY($criticalCategories::text[])
  *
  * Same-asset narrowing is a clustering operation across the returned
- * rows and stays in the rule layer (`rules.ts`). The issue's
- * measurement gate (R1 same-asset 10-min scan) is run against the
- * SQL above.
+ * rows and stays in the rule layer (`rules.ts`). R1 is a single
+ * SELECT (no candidate-asset pre-aggregation): the critical-category
+ * set is small, so `category = ANY(...)` is enough to bound the
+ * working set, and R1's per-cluster member threshold (≥2 distinct
+ * categories) does not map to a `COUNT(*) >= N` pre-aggregation in
+ * the way R3's ≥3-member threshold does.
  */
 export async function readR1Candidates(
   args: ReadCandidatesArgs,
@@ -124,28 +127,87 @@ export async function readR1Candidates(
 /**
  * R3's per-page candidate scan (Story RFC §3.R3, §5).
  *
- * Pushes R3's row-level predicate into SQL — `selector_tags`
- * overlap with the critical-selector set — so the measurement gate's
- * `EXPLAIN ANALYZE` runs against the same shape that production runs.
- * Without the push-down, the broad-range SELECT has nothing
- * R3-specific for the planner to explain.
+ * Two-phase per-asset access pattern, so the issue's measurement
+ * gate has a concrete production-shape target for
+ * `EXPLAIN ANALYZE` — specifically, the per-asset narrowing that
+ * rides the existing `baseline_triaged_event_orig_addr_gist`
+ * (`gist_inet_ops` supports `=`).
  *
- *   SELECT ... FROM baseline_triaged_event
+ * Phase 1 — candidate-asset pre-aggregation:
+ *
+ *   SELECT host(orig_addr) AS orig_addr
+ *     FROM baseline_triaged_event
  *    WHERE event_time IN [memberScanStart, memberScanEnd]
  *      AND orig_addr IS NOT NULL
  *      AND selector_tags && $criticalSelectors::text[]
+ *    GROUP BY orig_addr
+ *   HAVING COUNT(*) >= 3
  *
- * The `(event_time DESC)` btree handles the time-range scan. If
- * measurement at scale shows the planner cannot resolve
- * `selector_tags &&` efficiently, a GIN index on `selector_tags` is
- * the additive follow-up named in the issue's measurement-gate
- * section — purely a migration-only change, no callsite churn.
+ * Phase 2 — per-asset member scan against the candidates phase 1
+ * returned (this is the "R3 same-asset-1h" SELECT shape the issue
+ * gate names):
+ *
+ *   SELECT ... FROM baseline_triaged_event
+ *    WHERE event_time IN [memberScanStart, memberScanEnd]
+ *      AND orig_addr = ANY($assets::inet[])
+ *      AND selector_tags && $criticalSelectors::text[]
+ *
+ * The `orig_addr = ANY(...)` predicate is what the planner uses to
+ * fan out into per-asset GiST index probes, instead of materializing
+ * every critical-selector row in the tenant-wide scan range.
+ * `COUNT(*) >= 3` matches R3's per-rule member threshold, so an
+ * asset that cannot reach the threshold in this scan range is
+ * dropped at phase 1 instead of paid for in phase 2. Same-asset
+ * sliding-window clustering remains a rule-layer operation
+ * (`clusterByWindow` in `rules.ts`); the SQL only narrows which
+ * assets are read, not how their events cluster.
+ *
+ * If measurement at scale shows the planner cannot resolve
+ * `selector_tags &&` efficiently in phase 1, a GIN index on
+ * `selector_tags` is the additive follow-up named in the issue's
+ * measurement-gate section — migration-only, no callsite churn.
  */
 export async function readR3Candidates(
   args: ReadCandidatesArgs,
 ): Promise<CandidateEvent[]> {
   const { client, memberScanStart, memberScanEnd } = args;
   const selectors = Array.from(CRITICAL_SELECTOR_SET);
+
+  const phase1Sql =
+    memberScanStart === null
+      ? `SELECT host(orig_addr) AS orig_addr
+           FROM baseline_triaged_event
+          WHERE event_time <= $1
+            AND orig_addr IS NOT NULL
+            AND selector_tags && $2::text[]
+          GROUP BY orig_addr
+         HAVING COUNT(*) >= 3`
+      : `SELECT host(orig_addr) AS orig_addr
+           FROM baseline_triaged_event
+          WHERE event_time >= $1
+            AND event_time <= $2
+            AND orig_addr IS NOT NULL
+            AND selector_tags && $3::text[]
+          GROUP BY orig_addr
+         HAVING COUNT(*) >= 3`;
+  const phase1Params =
+    memberScanStart === null
+      ? [memberScanEnd, selectors]
+      : [memberScanStart, memberScanEnd, selectors];
+  const phase1 = await client.query<{ orig_addr: string }>(
+    phase1Sql,
+    phase1Params,
+  );
+  // Mock query layers in unit tests reuse one handler for every
+  // `FROM baseline_triaged_event` SELECT, so a result row carrying
+  // duplicates is plausible there even though production phase-1
+  // SQL is `GROUP BY orig_addr`. Dedupe here so the phase-2 ANY
+  // array is well-formed regardless of caller.
+  const assets = Array.from(
+    new Set(phase1.rows.map((r) => r.orig_addr).filter((a) => a !== null)),
+  );
+  if (assets.length === 0) return [];
+
   const baseSelect = `SELECT event_key::text   AS event_key,
                               event_time,
                               kind,
@@ -154,22 +216,22 @@ export async function readR3Candidates(
                               selector_tags,
                               raw_score
                          FROM baseline_triaged_event`;
-  const sql =
+  const phase2Sql =
     memberScanStart === null
       ? `${baseSelect}
           WHERE event_time <= $1
-            AND orig_addr IS NOT NULL
-            AND selector_tags && $2::text[]`
+            AND orig_addr = ANY($2::inet[])
+            AND selector_tags && $3::text[]`
       : `${baseSelect}
           WHERE event_time >= $1
             AND event_time <= $2
-            AND orig_addr IS NOT NULL
-            AND selector_tags && $3::text[]`;
-  const params =
+            AND orig_addr = ANY($3::inet[])
+            AND selector_tags && $4::text[]`;
+  const phase2Params =
     memberScanStart === null
-      ? [memberScanEnd, selectors]
-      : [memberScanStart, memberScanEnd, selectors];
-  const result = await client.query<CandidateRow>(sql, params);
+      ? [memberScanEnd, assets, selectors]
+      : [memberScanStart, memberScanEnd, assets, selectors];
+  const result = await client.query<CandidateRow>(phase2Sql, phase2Params);
   return result.rows.map(rowToCandidate);
 }
 
