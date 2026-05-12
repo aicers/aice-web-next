@@ -516,13 +516,9 @@ async function defaultFetchPage(
     role: CORPUS_B_ROLE,
     customerIds: Number.isFinite(customerIdNum) ? [customerIdNum] : [],
   };
-  return graphqlRequest<ResolverPage, CorpusBFetchVariables>(
-    // scope-allowlist: corpus B system-actor runner; customer scope materialised via JWT customer_ids + filter.customers
-    CORPUS_B_EVENT_LIST_QUERY,
-    variables,
-    context,
-    signal,
-  );
+  // biome-ignore format: keep the call on one line so the scope-allowlist
+  // override sits on the same line as the graphqlRequest call.
+  return graphqlRequest<ResolverPage, CorpusBFetchVariables>(CORPUS_B_EVENT_LIST_QUERY, variables, context, signal); // scope-allowlist: corpus B system-actor runner; customer scope materialised via JWT customer_ids + filter.customers
 }
 
 export const _testing = {
