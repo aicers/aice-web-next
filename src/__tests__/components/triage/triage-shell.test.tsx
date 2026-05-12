@@ -1215,6 +1215,182 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     ).toBeNull();
     expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
   });
+
+  it("does not surface the stale-hash fallback when the operator selects a different asset before the queued Tier 2 fetch resolves", async () => {
+    // Round 7 regression. A Tier 2 hash restore queues an `externalIp`
+    // ancestor fetch and defers a `host=remoteonly.example` client-
+    // intersection validation. The operator selects a different asset
+    // before the queued fetch resolves; afterwards the deferred
+    // validator must NOT run against the new trail and surface the
+    // stale-hash banner / trim any pivot. The fix aborts
+    // `pendingHashFetchesRef`, `pendingValidationsRef`, and
+    // `draining.current` on explicit user navigation, so the post-drain
+    // validator stops describing a trail the operator has left.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("externalIp:203.0.113.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("host:remoteonly.example") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        host: "corpushost.example",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.11",
+        host: "second.example",
+        time: "2026-05-08T11:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    // Deferred fetch — controlled by the test so the operator can
+    // navigate before it resolves.
+    let resolveFetch!: (v: MockTier2Result) => void;
+    fetchTier2Mock.mockImplementationOnce(
+      () =>
+        new Promise<MockTier2Result>((res) => {
+          resolveFetch = res;
+        }),
+    );
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Operator switches to the other asset while the queued fetch is
+    // still in flight.
+    const assetButton = screen.getByRole("button", { name: "10.0.0.2" });
+    await act(async () => {
+      fireEvent.click(assetButton);
+      await Promise.resolve();
+    });
+    // Now resolve the in-flight fetch with rows that do NOT carry the
+    // deferred host value — the validator (had restore state survived)
+    // would treat `host=remoteonly.example` as stale.
+    await act(async () => {
+      resolveFetch({
+        events: [
+          {
+            __typename: "BlocklistTls",
+            id: "stale-1",
+            time: "2026-05-08T13:30:00.000Z",
+            sensor: "sensor-a",
+            category: "EXFILTRATION",
+            level: "MEDIUM",
+            origAddr: "10.0.0.5",
+            respAddr: "203.0.113.1",
+            host: "differenthost.example",
+          },
+        ],
+        totalCount: "1",
+        truncated: false,
+        hasMore: false,
+        endCursor: null,
+      });
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // Stale-hash banner must NOT appear — restore-owned state was
+    // aborted at navigation time.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // Trail is the freshly selected asset only.
+    expect(
+      screen.getByText("Asset 10.0.0.2").getAttribute("aria-current"),
+    ).toBe("page");
+    expect(screen.queryByText("Crumb:externalIp: 203.0.113.1")).toBeNull();
+    expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
+  });
+
+  it("drops a late sameSensor fallback whose originating trail is no longer current", async () => {
+    // Round 7 regression. Pivot `sameSensor=edge-01` on asset A, then
+    // switch to asset B before the lookup resolves; when A's fetch
+    // eventually returns `sensorFallback: scope-forbidden`, the queued
+    // fallback effect must NOT trim B's trail back to its asset crumb
+    // and render A's "no longer accessible" banner on top of B's view.
+    // The fallback's `(sensorName, customerId)` identity now lets the
+    // effect verify the trail still owns the fallback; if not, it
+    // ack-and-drops silently.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "h1.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.2",
+        host: "h2.example",
+        sensor: "edge-02",
+        time: "2026-05-08T11:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    let resolveFetch!: (v: MockTier2Result) => void;
+    fetchTier2Mock.mockImplementationOnce(
+      () =>
+        new Promise<MockTier2Result>((res) => {
+          resolveFetch = res;
+        }),
+    );
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Switch to the other asset before the lookup resolves.
+    const assetButton = screen.getByRole("button", { name: "10.0.0.2" });
+    await act(async () => {
+      fireEvent.click(assetButton);
+      await Promise.resolve();
+    });
+    // Resolve the in-flight fetch with a scope-forbidden fallback for
+    // the prior trail's `(edge-01, customerId=0)`.
+    await act(async () => {
+      resolveFetch({
+        events: [],
+        totalCount: null,
+        truncated: false,
+        hasMore: false,
+        endCursor: null,
+        sensorFallback: { kind: "scope-forbidden", sensorName: "edge-01" },
+      });
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // Neither fallback banner appears — the originating trail no longer
+    // exists, so the queued entry is silently dropped.
+    expect(
+      screen.queryByText("Sensor no longer accessible — showing asset root"),
+    ).toBeNull();
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // Trail shows the freshly selected asset; nothing was trimmed by
+    // the abandoned fallback.
+    expect(
+      screen.getByText("Asset 10.0.0.2").getAttribute("aria-current"),
+    ).toBe("page");
+  });
 });
 
 describe("TriageShell — Tier 2 only Learning method static section (#498)", () => {

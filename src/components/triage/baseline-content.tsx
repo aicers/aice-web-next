@@ -232,6 +232,14 @@ export function TriageBaselineContent({
     // rotates it is no longer accurate and would otherwise persist
     // across the reset.
     setFallbackNotice(null);
+    // The corpus has rotated — any pending hash-restore work was
+    // queued against the prior corpus and would no longer make sense
+    // against the freshly loaded events. Clear it so a queued ancestor
+    // fetch does not fire under the wrong period / customer scope and
+    // so the deferred validator does not run against the new asset.
+    pendingHashFetchesRef.current = [];
+    pendingValidationsRef.current = [];
+    draining.current = null;
     // `customerScope` is named here because the Tier 2 cache reset in
     // `useTier2Pivot` rotates on it too; without it a scope switch that
     // happens to land on the same top asset would clear the cache but
@@ -501,6 +509,27 @@ export function TriageBaselineContent({
     return false;
   }, [result.truncated, scope, trail, tier2]);
 
+  // Cancel any hash-restore work still in flight. Explicit user
+  // navigation (new asset, pivot click, crumb backtrack) replaces or
+  // extends the trail the restore was driving; without aborting,
+  // (a) the queued Tier 2 ancestor fetches would keep firing under the
+  // restored asset's `customerId` even though the trail no longer
+  // shows them, (b) the post-drain client-intersection validator would
+  // run against a now-different trail and could fire
+  // `revertToRestoredAssetRoot()` — surfacing the stale-hash banner on
+  // top of the operator's fresh selection and trimming any pivot they
+  // added in the meantime, and (c) `draining.current` would let the
+  // next render dispatch a stale queued item even after the queue was
+  // cleared. The reviewer's repro (#502 Round 7) is: hash-restore
+  // `asset A → country=KR → ja3=abc`, click a different asset before
+  // the queued `country=KR` resolves, then let it finish — the
+  // deferred validator would otherwise still run.
+  const abortHashRestore = useCallback(() => {
+    pendingHashFetchesRef.current = [];
+    pendingValidationsRef.current = [];
+    draining.current = null;
+  }, []);
+
   const onSelectAsset = useCallback(
     (focus: { customerId: number; address: string }) => {
       setSelected(focus);
@@ -517,8 +546,9 @@ export function TriageBaselineContent({
       // the operator moves to a fresh asset it would just be stale
       // copy on the page.
       setFallbackNotice(null);
+      abortHashRestore();
     },
-    [],
+    [abortHashRestore],
   );
 
   const onPivot = useCallback(
@@ -549,16 +579,27 @@ export function TriageBaselineContent({
       // fallback notice from the prior trail would otherwise sit above
       // the panel claiming the URL or sensor scope is stale.
       setFallbackNotice(null);
+      // The post-drain validator would otherwise revert the trail back
+      // to the asset crumb (dropping the new pivot) if any deferred
+      // client-intersection step failed to materialize — a user
+      // continuing to navigate has already accepted the optimistic
+      // restored trail, so the validator's automatic revert is no
+      // longer appropriate.
+      abortHashRestore();
     },
-    [effectiveSelection, scope, tier2, trail],
+    [abortHashRestore, effectiveSelection, scope, tier2, trail],
   );
 
-  const onCrumb = useCallback((indexInclusive: number) => {
-    setTrail((current) => backtrackPivotTrail(current, indexInclusive));
-    // Backtracking is a deliberate navigation — clear any stale notice
-    // so the operator sees a clean trail.
-    setFallbackNotice(null);
-  }, []);
+  const onCrumb = useCallback(
+    (indexInclusive: number) => {
+      setTrail((current) => backtrackPivotTrail(current, indexInclusive));
+      // Backtracking is a deliberate navigation — clear any stale notice
+      // so the operator sees a clean trail.
+      setFallbackNotice(null);
+      abortHashRestore();
+    },
+    [abortHashRestore],
+  );
 
   // Free-form `keywords` submit (#499). Same dispatch path as a
   // dimension click (`onPivot` handles the Tier 2 fetch + trail
@@ -940,9 +981,41 @@ export function TriageBaselineContent({
   //     rejected the resolved `nodeId`; routes through the new
   //     "no longer accessible" notice so the operator can tell the
   //     two failure modes apart (#502 round 5 review).
+  //
+  // A queued fallback may resolve AFTER the operator has navigated
+  // away from the trail that produced it — e.g. pivot
+  // `sameSensor=edge-01` on asset A, immediately switch to asset B,
+  // then let A's lookup land in the queue. The fallback's
+  // `(sensorName, customerId)` identity is recorded at startFetch
+  // time (#502 Round 6), so we can detect "no longer current" by
+  // checking that the trail still describes the same pivot: the
+  // asset crumb's customer matches and a `sameSensor` step for that
+  // name is still on the trail. If not, ack-and-drop the fallback
+  // silently — it would otherwise trim the unrelated current trail
+  // back to its asset crumb and render A's banner on top of B's view
+  // (#502 Round 7).
   useEffect(() => {
     if (tier2.sensorFallbacks.length === 0) return;
     const fallback = tier2.sensorFallbacks[0];
+    const assetCrumb =
+      trail.length > 0 && trail[0].kind === "asset" ? trail[0] : null;
+    const trailOwnsFallback =
+      assetCrumb !== null &&
+      assetCrumb.customerId === fallback.customerId &&
+      trail.some(
+        (s) =>
+          s.kind === "dimension" &&
+          s.dimension === "sameSensor" &&
+          s.value.key === fallback.sensorName,
+      );
+    if (!trailOwnsFallback) {
+      tier2.acknowledgeSensorFallback(
+        fallback.kind,
+        fallback.sensorName,
+        fallback.customerId,
+      );
+      return;
+    }
     setTrail((current) => {
       // Trim back to the first asset crumb so the failed sensor step
       // (and anything past it) is removed. If the trail is empty
@@ -961,7 +1034,7 @@ export function TriageBaselineContent({
       fallback.sensorName,
       fallback.customerId,
     );
-  }, [tier2]);
+  }, [tier2, trail]);
 
   // ── URL hash sync (write-side) ──
   // Persist the breadcrumb + scope into the URL hash whenever they
@@ -1042,6 +1115,7 @@ export function TriageBaselineContent({
               if (idx === 0) {
                 setTrail((current) => clearPivotTrail(current));
                 setFallbackNotice(null);
+                abortHashRestore();
               } else {
                 onCrumb(idx);
               }
