@@ -25,21 +25,32 @@
 // now)`. `--window=Nh` is also accepted.
 //
 // `--cold-command="<shell>"` is the cold-cache reference hook. When
-// present, the harness runs the supplied shell command once before
-// the warm-up batch and then records one cold-cache sample per query
-// (`phase: "cold"` in the output rows; same `EXPLAIN ANALYZE` total
-// time the warm samples report) so #528 has a concrete cold reading
-// to compare against. The cold-phase rows are emitted ONLY when the
-// command exits 0; a non-zero exit means cold state was not
-// established, so the harness records the failure in
-// `meta.coldReading` and emits NO `phase: "cold"` rows. Labels by
-// mode:
+// present, the harness invokes the supplied shell command once
+// before EACH measured query and then records one cold-cache sample
+// for that query on a fresh connection. The per-query re-invocation
+// is required because the first cold sample warms the shared buffers
+// / OS cache; without re-establishing cold state between queries,
+// only the first query would observe a genuine cold cache and the
+// remaining `phase: "cold"` rows would silently be warm-after-cold.
+// The cold sample uses the same `EXPLAIN ANALYZE` form the warm
+// samples use, so the timings are directly comparable. The cold
+// phase has atomic semantics: if any cold-command invocation exits
+// non-zero (or by signal), the harness emits NO `phase: "cold"`
+// rows and records the failure in `meta.coldReading`. Partial cold
+// phases are deliberately not emitted because #528 would otherwise
+// silently mix genuine cold readings with warm-after-cold readings.
+// Labels by mode:
 //
 //   * absent  — `"cold reading: not available — host policy"`
-//   * captured — `"cold reading: captured via --cold-command=…"`
+//   * captured — `"cold reading: captured via --cold-command=…
+//                   (one invocation per measured query)"`
 //   * failed   — `"cold reading: --cold-command=… exited N;
 //                   no cold-phase samples emitted (cold state was
-//                   not established)"`
+//                   not established)"` (failure on the first query)
+//                or `"cold reading: --cold-command=… failed on query
+//                   K/N (<queryName>); no cold-phase samples emitted
+//                   (cold state was not established for all
+//                   measured queries)"` (failure mid-phase).
 //
 // The harness never restarts Postgres or drops OS caches on its
 // own because those operations are destructive on a shared staging
@@ -63,7 +74,9 @@
 // (ANALYZE, BUFFERS, VERBOSE)` form and its plan text is recorded in
 // `meta.explainByQuery` so #528 can attribute timings to a planner
 // choice. Cold-phase samples (when `--cold-command` is provided) run
-// the same `EXPLAIN ANALYZE` once per query before warm-up so cold
+// the same `EXPLAIN ANALYZE` once per query before warm-up — with
+// the cold command re-invoked between queries on a fresh connection
+// so each cold sample observes a genuinely cold cache — so cold
 // numbers are directly comparable to warm numbers.
 //
 // Output
@@ -213,22 +226,26 @@ export function resolveWindow(spec, nowMs = Date.now()) {
 }
 
 /**
- * Run the operator-supplied cold command (if any) before the warm-up
- * batch. Returns a `{mode, label}` pair so the caller can distinguish
- * three cases without parsing the free-form label:
+ * Run the operator-supplied cold command once. Returns a
+ * `{mode, label}` pair so the caller can distinguish three cases
+ * without parsing the free-form label:
  *
  *   * `mode: "absent"`  — no `--cold-command` was supplied (default
  *     behavior). Caller proceeds to warm-up; no cold samples are
  *     emitted.
- *   * `mode: "captured"` — command exited 0. Caller emits one
- *     cold-phase sample per query before warm-up; #528 can compare
- *     the cold reading directly against the warm distribution.
+ *   * `mode: "captured"` — command exited 0. The DB / page cache is
+ *     in a freshly-cold state on the connection the caller opens
+ *     next.
  *   * `mode: "failed"`   — command exited non-zero (or by signal).
- *     Caller still proceeds to warm-up — measurement must not be
- *     gated on a destructive operation — but does NOT emit any
- *     cold-phase samples, because no cold state was established. The
- *     failure surfaces in `meta.coldReading` so #528 sees why no
- *     cold samples appear.
+ *     Caller must NOT emit cold-phase samples for this invocation
+ *     because no cold state was established. The failure surfaces in
+ *     `meta.coldReading` so #528 sees why no cold samples appear.
+ *
+ * Note: a single `runColdCommand` invocation establishes cold state
+ * for ONE subsequent query only. The cold phase invokes this once
+ * per measured query (orchestrated by `runColdPhase`) so each cold
+ * sample observes a genuinely cold cache — see that helper for the
+ * atomic-semantics rationale.
  *
  * `spawn` is injected so tests can exercise the non-zero-exit branch
  * without invoking a real shell.
@@ -244,7 +261,9 @@ export function runColdCommand(cmd, spawn = spawnSync) {
   if (result.status === 0) {
     return {
       mode: "captured",
-      label: `cold reading: captured via --cold-command=${JSON.stringify(cmd)}`,
+      label:
+        `cold reading: captured via --cold-command=${JSON.stringify(cmd)} ` +
+        "(one invocation per measured query)",
     };
   }
   return {
@@ -253,6 +272,73 @@ export function runColdCommand(cmd, spawn = spawnSync) {
       `cold reading: --cold-command=${JSON.stringify(cmd)} exited ` +
       `${result.status ?? "<signal>"}; no cold-phase samples emitted ` +
       "(cold state was not established)",
+  };
+}
+
+/**
+ * Run the cold phase atomically: for each measured query, invoke the
+ * operator-supplied cold command on a fresh `pg.Pool` and capture one
+ * `phase: "cold"` sample for that query. The per-query re-invocation
+ * is intentional — after the first cold sample executes, the
+ * underlying tables are warm in shared buffers and OS cache, so
+ * queries 2..N would otherwise see a warm-after-cold state and the
+ * emitted `phase: "cold"` rows past the first would be mislabeled.
+ *
+ * Atomic semantics: if any cold-command invocation fails (non-zero
+ * exit, signal exit, or absent on the first iteration when one was
+ * expected), the harness emits NO cold-phase samples and records the
+ * failure in `meta.coldReading`. A partial cold phase would force
+ * #528 to special-case "queries 1..K are cold, K+1..N are missing or
+ * worse warm-after-cold" — better to emit none than a confusing mix.
+ *
+ * `makePool` and `spawn` are injected so tests can exercise the
+ * orchestration (pool lifecycle, per-query invocation count, atomic-
+ * failure paths) without a real Postgres or a real subprocess.
+ */
+export async function runColdPhase({
+  coldCommand,
+  queries,
+  ctx,
+  makePool,
+  spawn = spawnSync,
+}) {
+  if (coldCommand === null || coldCommand === undefined) {
+    return { samples: [], label: runColdCommand(null, spawn).label };
+  }
+  const samples = [];
+  let lastLabel = null;
+  for (let i = 0; i < queries.length; i++) {
+    const query = queries[i];
+    const cold = runColdCommand(coldCommand, spawn);
+    if (cold.mode !== "captured") {
+      if (i === 0) {
+        return { samples: [], label: cold.label };
+      }
+      return {
+        samples: [],
+        label:
+          `cold reading: --cold-command=${JSON.stringify(coldCommand)} ` +
+          `failed on query ${i + 1}/${queries.length} (${query.name}); ` +
+          "no cold-phase samples emitted (cold state was not established " +
+          "for all measured queries)",
+      };
+    }
+    lastLabel = cold.label;
+    const pool = makePool();
+    try {
+      const client = await pool.connect();
+      try {
+        samples.push(await coldSampleQuery(client, query, ctx));
+      } finally {
+        client.release();
+      }
+    } finally {
+      await pool.end();
+    }
+  }
+  return {
+    samples,
+    label: lastLabel ?? runColdCommand(null, spawn).label,
   };
 }
 
@@ -468,33 +554,26 @@ async function main(argv) {
     addresses,
   };
 
-  // Run the cold command (if any) AFTER the probe pool is closed and
-  // BEFORE we open the measurement pool. The cold command may
-  // restart Postgres or drop OS caches; the fresh `pg.Pool` and
-  // `client` below see the cold state on their first query.
-  // Cold-phase samples are emitted ONLY when `mode === "captured"`
-  // — a failed cold command means no cold state was actually
-  // established, so emitting `phase: "cold"` rows would mislabel
-  // warm measurements as cold.
-  const cold = runColdCommand(args.coldCommand);
-  const emitColdSamples = cold.mode === "captured";
+  // Cold phase (AFTER the probe pool closes, BEFORE the measurement
+  // pool opens). Re-runs `--cold-command` on a fresh `pg.Pool` for
+  // each measured query so every cold sample observes a genuinely
+  // cold cache — running the cold command once would warm the cache
+  // for queries 2..N. See `runColdPhase` for the atomic-failure
+  // contract: any cold-command failure yields zero cold samples,
+  // never a partial mix.
+  const cold = await runColdPhase({
+    coldCommand: args.coldCommand,
+    queries: MEASURED_QUERIES,
+    ctx,
+    makePool: () => new pg.Pool({ connectionString: args.connectionString }),
+  });
 
   const pool = new pg.Pool({ connectionString: args.connectionString });
   try {
     const client = await pool.connect();
     try {
-      const allSamples = [];
+      const allSamples = [...cold.samples];
       const explainByQuery = {};
-
-      if (emitColdSamples) {
-        // One cold sample per query, before any warm-up, so #528 has
-        // a directly-comparable cold reading next to the warm
-        // distribution. Cold samples run as `EXPLAIN (ANALYZE)` to
-        // keep the timing measurement consistent with the warm path.
-        for (const query of MEASURED_QUERIES) {
-          allSamples.push(await coldSampleQuery(client, query, ctx));
-        }
-      }
 
       // The queries share the connection and must run serially so
       // the planner cache state stays comparable across queries

@@ -14,6 +14,7 @@ import {
   redactDsn,
   resolveWindow,
   runColdCommand,
+  runColdPhase,
   sampleAddresses,
 } from "../../../scripts/measure-baseline-read-path.mjs";
 
@@ -220,6 +221,7 @@ describe("measure-baseline-read-path — runColdCommand", () => {
     expect(invokedWith).toBe("/bin/true");
     expect(result.mode).toBe("captured");
     expect(result.label).toMatch(/captured via --cold-command=/);
+    expect(result.label).toMatch(/one invocation per measured query/);
   });
 
   it("returns mode 'failed' when the command exits non-zero — caller must NOT emit cold-phase samples", () => {
@@ -233,5 +235,185 @@ describe("measure-baseline-read-path — runColdCommand", () => {
     const result = runColdCommand("/bin/false", () => ({ status: null }));
     expect(result.mode).toBe("failed");
     expect(result.label).toMatch(/<signal>/);
+  });
+});
+
+describe("measure-baseline-read-path — runColdPhase", () => {
+  interface StubClient {
+    queries: string[];
+    query: (
+      sql: string,
+      params?: ReadonlyArray<unknown>,
+    ) => Promise<{ rows: ReadonlyArray<Record<string, string>> }>;
+    release: () => void;
+  }
+
+  interface StubPool {
+    id: number;
+    ended: boolean;
+    client: StubClient;
+    connect: () => Promise<StubClient>;
+    end: () => Promise<void>;
+  }
+
+  /**
+   * Build a stub `pg.Pool` whose `EXPLAIN ANALYZE` response includes
+   * the minimal "Execution Time:" + "actual time ... rows=..." lines
+   * `parseExplainAnalyze` requires.
+   */
+  function makeStubPool(idCounter: { next: number }): StubPool {
+    const id = idCounter.next++;
+    const pool: StubPool = {
+      id,
+      ended: false,
+      client: {
+        queries: [],
+        async query(sql) {
+          pool.client.queries.push(sql);
+          return {
+            rows: [
+              {
+                "QUERY PLAN":
+                  `Seq Scan on x (actual time=0.010..1.234 rows=${id + 7} loops=1)\n` +
+                  "Execution Time: 4.321 ms",
+              },
+            ],
+          };
+        },
+        release() {
+          /* no-op */
+        },
+      },
+      async connect() {
+        return pool.client;
+      },
+      async end() {
+        pool.ended = true;
+      },
+    };
+    return pool;
+  }
+
+  const measuredQueries = [
+    {
+      name: "q1",
+      sql: "SELECT 1",
+      buildParams: () => [] as ReadonlyArray<unknown>,
+    },
+    {
+      name: "q2",
+      sql: "SELECT 2",
+      buildParams: () => [] as ReadonlyArray<unknown>,
+    },
+    {
+      name: "q3",
+      sql: "SELECT 3",
+      buildParams: () => [] as ReadonlyArray<unknown>,
+    },
+  ];
+
+  it("emits no cold samples and reports 'host policy' when --cold-command is absent", async () => {
+    let spawnCalls = 0;
+    const result = await runColdPhase({
+      coldCommand: null,
+      queries: measuredQueries,
+      ctx: {},
+      makePool: () => {
+        throw new Error("makePool must not be called when no cold command");
+      },
+      spawn: () => {
+        spawnCalls += 1;
+        return { status: 0 };
+      },
+    });
+    expect(spawnCalls).toBe(0);
+    expect(result.samples).toEqual([]);
+    expect(result.label).toMatch(/not available — host policy/);
+  });
+
+  it("re-invokes --cold-command and opens a fresh pool for EACH measured query when all invocations succeed", async () => {
+    const idCounter = { next: 0 };
+    const pools: StubPool[] = [];
+    const spawnCalls: string[] = [];
+    const result = await runColdPhase({
+      coldCommand: "drop-caches",
+      queries: measuredQueries,
+      ctx: {},
+      makePool: () => {
+        const p = makeStubPool(idCounter);
+        pools.push(p);
+        return p;
+      },
+      spawn: (cmd) => {
+        spawnCalls.push(cmd);
+        return { status: 0 };
+      },
+    });
+    // The cold command is invoked once per query (NOT once for the
+    // whole phase) — this is the regression guard for the Round 4
+    // correctness fix.
+    expect(spawnCalls).toEqual(["drop-caches", "drop-caches", "drop-caches"]);
+    // One fresh pool per query, each closed after its sample.
+    expect(pools).toHaveLength(measuredQueries.length);
+    expect(pools.every((p) => p.ended)).toBe(true);
+    // Each pool received exactly one EXPLAIN ANALYZE call.
+    expect(pools.map((p) => p.client.queries.length)).toEqual([1, 1, 1]);
+    // One cold sample per query, all phase: "cold".
+    expect(result.samples).toHaveLength(measuredQueries.length);
+    expect(result.samples.map((s) => s.query)).toEqual(["q1", "q2", "q3"]);
+    expect(result.samples.every((s) => s.phase === "cold")).toBe(true);
+    expect(result.label).toMatch(/captured via --cold-command=/);
+  });
+
+  it("emits NO cold samples when the FIRST cold-command invocation fails (atomic semantics)", async () => {
+    const pools: StubPool[] = [];
+    const idCounter = { next: 0 };
+    const result = await runColdPhase({
+      coldCommand: "drop-caches",
+      queries: measuredQueries,
+      ctx: {},
+      makePool: () => {
+        const p = makeStubPool(idCounter);
+        pools.push(p);
+        return p;
+      },
+      spawn: () => ({ status: 1 }),
+    });
+    expect(pools).toEqual([]);
+    expect(result.samples).toEqual([]);
+    expect(result.label).toMatch(/exited 1/);
+    expect(result.label).toMatch(/no cold-phase samples emitted/);
+  });
+
+  it("DISCARDS partial cold samples when a later cold-command invocation fails (atomic semantics)", async () => {
+    const pools: StubPool[] = [];
+    const idCounter = { next: 0 };
+    let spawnCalls = 0;
+    const result = await runColdPhase({
+      coldCommand: "drop-caches",
+      queries: measuredQueries,
+      ctx: {},
+      makePool: () => {
+        const p = makeStubPool(idCounter);
+        pools.push(p);
+        return p;
+      },
+      // Succeed on iteration 0 and 1, fail on iteration 2.
+      spawn: () => {
+        spawnCalls += 1;
+        return { status: spawnCalls === 3 ? 7 : 0 };
+      },
+    });
+    // First two iterations opened pools and captured cold samples,
+    // but the third invocation failed — atomic semantics discard the
+    // partial cold samples so #528 doesn't silently consume a
+    // mix of cold + warm-after-cold + missing.
+    expect(pools).toHaveLength(2);
+    expect(pools.every((p) => p.ended)).toBe(true);
+    expect(result.samples).toEqual([]);
+    expect(result.label).toMatch(/failed on query 3\/3 \(q3\)/);
+    expect(result.label).toMatch(
+      /no cold-phase samples emitted \(cold state was not established for all measured queries\)/,
+    );
   });
 });

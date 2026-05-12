@@ -298,15 +298,25 @@ export function buildCohortFromRows(rows) {
  * `selectAssetDetailEventsBatch` for one menu load, in insertion
  * order (production also calls `Array.from(new Set(...))`).
  *
- * `optionalLimit` is the per-page cap (`TRIAGE_ASSET_PAGE_SIZE`) the
- * production read path applies upstream; the harness passes it so the
- * planner's input cardinality matches one page of production traffic.
+ * The measurement harness in `scripts/measure-baseline-read-path.mjs`
+ * deliberately calls this helper WITHOUT `opts.limit`, mirroring
+ * production: `loadCustomerSlice` drives the per-tenant fanout from
+ * the uncapped `uniqueAddresses(events)` (`server-actions.ts:217-223`)
+ * and the `TRIAGE_ASSET_PAGE_SIZE` cap only applies to the aggregated
+ * asset list at the very end of `loadTriagePeriod`
+ * (`server-actions.ts:533`). `opts.limit` is retained as a general-
+ * purpose escape hatch for callers that DO want a bounded slice
+ * (e.g. unit tests), but should NOT be used to approximate the
+ * production read-path cardinality — that approximation was the bug
+ * fixed in Round 3 of #524 review.
  *
  * @param {ReadonlyArray<Record<string, unknown>>} rows raw rows from
  *   `SELECT_MENU_COHORT_SQL`.
  * @param {object} [opts]
  * @param {number} [opts.cutoff] cutoff (production = 0).
- * @param {number} [opts.limit] cap on the returned address list.
+ * @param {number} [opts.limit] optional cap on the returned address
+ *   list; defaults to unbounded. Not used by the harness or
+ *   production read path.
  */
 export function addressesFromCohortRows(rows, opts = {}) {
   const cutoff = opts.cutoff ?? DEFAULT_MENU_CUTOFF;

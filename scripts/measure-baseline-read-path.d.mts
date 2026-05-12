@@ -44,3 +44,39 @@ export function runColdCommand(
     opts: { shell: true; stdio: "inherit" },
   ) => SpawnSyncResultLike,
 ): ColdCommandResult;
+
+export interface ColdPhasePoolLike {
+  connect: () => Promise<{
+    query: (
+      sql: string,
+      params?: ReadonlyArray<unknown>,
+    ) => Promise<{ rows: ReadonlyArray<Record<string, unknown>> }>;
+    release: () => void;
+  }>;
+  end: () => Promise<void>;
+}
+
+export interface MeasuredQueryLike {
+  name: string;
+  sql: string;
+  buildParams: (ctx: unknown) => ReadonlyArray<unknown>;
+}
+
+export interface ColdSampleRow {
+  query: string;
+  phase: "cold";
+  sampleIndex: 0;
+  elapsedMs: number;
+  rowCount: number;
+}
+
+export function runColdPhase(opts: {
+  coldCommand: string | null | undefined;
+  queries: ReadonlyArray<MeasuredQueryLike>;
+  ctx: unknown;
+  makePool: () => ColdPhasePoolLike;
+  spawn?: (
+    cmd: string,
+    opts: { shell: true; stdio: "inherit" },
+  ) => SpawnSyncResultLike;
+}): Promise<{ samples: ColdSampleRow[]; label: string }>;
