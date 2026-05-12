@@ -692,6 +692,64 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
   });
 
+  it("invalidates an in-flight first-page peek when the operator selects a different asset before it resolves", async () => {
+    // Round 9 regression. Same trail abandonment as the prior test,
+    // except the operator switches assets *before* the >20k peek
+    // resolves. Without invalidating in-flight peeks, the late
+    // callback would still call `peekStashesRef.set(...)` +
+    // `setPendingQueue([...projection])`, reopening the pre-fetch
+    // modal under the new trail and showing the abandoned
+    // projection's count — and Confirm would resume the parked stash
+    // under the prior trail's `(dimension, valueKey, customerId)`.
+    // The fix bumps a trail token on `dismissAllPending` and gates
+    // every async write-back behind a captured-token check (see
+    // `use-tier2-pivot.ts`).
+    let resolvePeek: (v: MockTier2Result) => void = () => {};
+    fetchTier2Mock.mockReturnValueOnce(
+      new Promise<MockTier2Result>((res) => {
+        resolvePeek = res;
+      }),
+    );
+    renderShellWithExternalIp();
+    selectTier2Scope();
+    pivotByExternalIp();
+    await flushAsync();
+    // Peek is pending — modal not yet shown, and the continuation
+    // path hasn't fired.
+    expect(
+      screen.queryByRole("alertdialog", { name: "Fetch large result?" }),
+    ).toBeNull();
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+    // Operator switches assets before the peek lands.
+    const otherAssetButton = screen.getByRole("button", { name: "10.0.0.9" });
+    await act(async () => {
+      fireEvent.click(otherAssetButton);
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // Resolve the peek with a >20k projection that would otherwise
+    // open the pre-fetch modal.
+    await act(async () => {
+      resolvePeek({
+        events: [],
+        totalCount: "30000",
+        truncated: false,
+        hasMore: true,
+        endCursor: "cursor-1",
+      });
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // The late peek's projection must not have re-opened the modal
+    // under the new trail.
+    expect(
+      screen.queryByRole("alertdialog", { name: "Fetch large result?" }),
+    ).toBeNull();
+    // And no continuation fetch was dispatched on the abandoned
+    // trail's `(dimension, valueKey, customerId)`.
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces a fetch error notice and clears it on dismiss", async () => {
     fetchTier2Mock.mockRejectedValueOnce(new Error("review timed out"));
     renderShellWithExternalIp();

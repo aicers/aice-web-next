@@ -148,13 +148,15 @@ export interface UseTier2Pivot {
   cancelFetch: () => void;
   /**
    * Drop every queued modal-gated projection along with its parked
-   * peek stash and loading entry. Called by the parent on explicit
-   * navigation (new asset, pivot, breadcrumb backtrack, asset-root
-   * crumb click) so a pre-fetch modal raised against the trail the
-   * operator just left does not survive into the new trail — without
-   * this, confirming the modal would resume a fetch keyed on the
-   * abandoned `(dimension, valueKey, customerId)` tuple even though
-   * the operator has moved on (#502).
+   * peek stash and loading entry, *and* invalidate every in-flight
+   * first-page peek. Called by the parent on explicit navigation
+   * (new asset, breadcrumb backtrack, asset-root crumb click) so a
+   * pre-fetch modal raised against the trail the operator just left
+   * does not survive into the new trail — confirming the modal would
+   * otherwise resume a fetch keyed on the abandoned `(dimension,
+   * valueKey, customerId)` tuple, and a peek that landed *after* the
+   * navigation could reopen the modal under the new trail showing
+   * the abandoned projection's count (#502).
    */
   dismissAllPending: () => void;
   pending: Tier2PendingProjection | null;
@@ -282,6 +284,26 @@ export function useTier2Pivot(
   // carries the full scoped key; the generation guard keeps the
   // unscoped layer from leaking cross-scope rows.
   const generationRef = useRef(0);
+  // Bumped on *trail abandonment* (new asset selection, breadcrumb
+  // backtrack, asset-root crumb click) — distinct from
+  // {@link generationRef}, which only rotates on period/scope change.
+  // The reviewer's Round 9 repro: click a Tier 2 server dimension on
+  // asset A whose first page will trip the 20,000-event modal, switch
+  // to asset B *before* the peek resolves, then let A's peek land.
+  // Without this token the late callback still parks the stash and
+  // enqueues the projection, reopening the modal under B for A's
+  // abandoned `(dimension, valueKey, customerId)`. Each async peek /
+  // continuation captures the current token at start and refuses to
+  // write back (`peekStashesRef.set`, `setPendingQueue`, `setError`,
+  // `writeReady`, `surfaceSensorFallback`) when the token has advanced.
+  const trailTokenRef = useRef(0);
+  // Keys of in-flight first-page peeks. Each `startFetch` adds its
+  // key here before awaiting the network and removes it on resolve /
+  // reject. {@link dismissAllPending} walks this set to clear the
+  // `loading` state-map entries for peeks abandoned mid-flight —
+  // without this, the loading entry would outlive the aborted peek
+  // and `getCached` would refuse a fresh refetch on the same trail.
+  const inFlightPeeksRef = useRef<Set<string>>(new Set());
 
   // Wire eviction listener exactly once. The cache lives across
   // renders; we keep the React state in sync with the cache events
@@ -321,6 +343,12 @@ export function useTier2Pivot(
   // biome-ignore lint/correctness/useExhaustiveDependencies: deps name the period/scope rotate trigger
   useEffect(() => {
     generationRef.current += 1;
+    // Period/scope rotation also abandons every active trail; bumping
+    // the trail token here keeps the two abort-signal contracts
+    // consistent (an in-flight peek must observe *either* a generation
+    // bump *or* a trail-token bump as a write-back veto).
+    trailTokenRef.current += 1;
+    inFlightPeeksRef.current.clear();
     cacheRef.current?.clear();
     stateMapRef.current.clear();
     peekStashesRef.current.clear();
@@ -461,7 +489,7 @@ export function useTier2Pivot(
   );
 
   const continueFromStash = useCallback(
-    async (stash: PeekStash, capturedGen: number) => {
+    async (stash: PeekStash, capturedGen: number, capturedToken: number) => {
       const key = stateKey(stash.dimension, stash.valueKey, stash.customerId);
       try {
         // Resume from the peek's cursor so the first page (already in
@@ -480,6 +508,7 @@ export function useTier2Pivot(
           alreadyFetched: stash.events.length,
         });
         if (capturedGen !== generationRef.current) return;
+        if (capturedToken !== trailTokenRef.current) return;
         if (rest.sensorFallback) {
           surfaceSensorFallback(
             stash.dimension,
@@ -505,6 +534,7 @@ export function useTier2Pivot(
         });
       } catch (err) {
         if (capturedGen !== generationRef.current) return;
+        if (capturedToken !== trailTokenRef.current) return;
         setError(key, err);
       }
     },
@@ -536,6 +566,7 @@ export function useTier2Pivot(
       }
       const key = stateKey(dimension, valueKey, customerId);
       const capturedGen = generationRef.current;
+      const capturedToken = trailTokenRef.current;
       stateMapRef.current.set(key, {
         status: "loading",
         events: [],
@@ -543,6 +574,7 @@ export function useTier2Pivot(
         truncated: false,
         error: null,
       });
+      inFlightPeeksRef.current.add(key);
       bump();
 
       void (async () => {
@@ -557,11 +589,15 @@ export function useTier2Pivot(
             firstPageOnly: true,
           });
         } catch (err) {
+          inFlightPeeksRef.current.delete(key);
           if (capturedGen !== generationRef.current) return;
+          if (capturedToken !== trailTokenRef.current) return;
           setError(key, err);
           return;
         }
+        inFlightPeeksRef.current.delete(key);
         if (capturedGen !== generationRef.current) return;
+        if (capturedToken !== trailTokenRef.current) return;
         if (peek.sensorFallback) {
           surfaceSensorFallback(dimension, valueKey, customerId, {
             kind: peek.sensorFallback.kind,
@@ -641,6 +677,7 @@ export function useTier2Pivot(
             truncated: peek.truncated,
           },
           capturedGen,
+          capturedToken,
         );
       })();
     },
@@ -673,7 +710,7 @@ export function useTier2Pivot(
     const stash = peekStashesRef.current.get(key);
     peekStashesRef.current.delete(key);
     if (!stash) return;
-    void continueFromStash(stash, generationRef.current);
+    void continueFromStash(stash, generationRef.current, trailTokenRef.current);
   }, [continueFromStash, pendingQueue, stateKey]);
 
   const cancelFetch = useCallback(() => {
@@ -689,11 +726,45 @@ export function useTier2Pivot(
   }, [bump, pendingQueue, stateKey]);
 
   const dismissAllPending = useCallback(() => {
-    // Mirrors `cancelFetch` over every queued entry: drop the parked
-    // peek stash and the corresponding `loading` state-map entry so
-    // the panel does not show a permanent spinner on a now-abandoned
-    // pivot. Called by the parent on explicit navigation away from
-    // the trail the modal was raised against (#502 — Round 8 review).
+    // Drop every modal-gated projection (queued entry → parked peek
+    // stash + `loading` state-map entry) *and* invalidate every
+    // in-flight first-page peek so a late callback cannot reopen the
+    // modal under the new trail. Called by the parent on explicit
+    // navigation away from the trail the modal was raised against
+    // (#502 — Round 8 covered queued entries; Round 9 extended this
+    // to also cover peeks that had not yet resolved at navigation
+    // time).
+    //
+    // The trail-token bump is the abort signal for callbacks captured
+    // by `startFetch` / `continueFromStash`: they each compare the
+    // captured token against {@link trailTokenRef} before writing back
+    // (`setPendingQueue`, `peekStashesRef.set`, `writeReady`,
+    // `setError`, `surfaceSensorFallback`). Without this bump the
+    // late peek would still enqueue the projection — reopening the
+    // pre-fetch modal on the new trail showing the abandoned
+    // projection's count, and Confirm would resume the parked stash
+    // under the prior trail's `(dimension, valueKey, customerId)`.
+    trailTokenRef.current += 1;
+    for (const key of inFlightPeeksRef.current) {
+      stateMapRef.current.delete(key);
+    }
+    inFlightPeeksRef.current.clear();
+    // A continuation kicked off by Confirm before the operator
+    // navigated away is no longer tracked in `inFlightPeeksRef` (that
+    // set covers first-page peeks only). Its `loading` state-map
+    // entry would otherwise outlive the abandoned trail and block a
+    // fresh click on the same `(dimension, valueKey, customerId)` if
+    // the operator ever navigates back. Drop every non-terminal entry
+    // here — `ready` rows stay so cache hits keep firing on return.
+    const nonTerminalKeys: string[] = [];
+    for (const [key, state] of stateMapRef.current) {
+      if (state.status === "loading" || state.status === "error") {
+        nonTerminalKeys.push(key);
+      }
+    }
+    for (const key of nonTerminalKeys) {
+      stateMapRef.current.delete(key);
+    }
     setPendingQueue((prev) => {
       if (prev.length === 0) return prev;
       for (const p of prev) {
