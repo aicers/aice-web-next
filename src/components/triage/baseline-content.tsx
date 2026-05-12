@@ -841,25 +841,28 @@ export function TriageBaselineContent({
     if (pendingValidationsRef.current.length === 0) return;
     const validations = pendingValidationsRef.current;
     pendingValidationsRef.current = [];
+    // Stale-restore fallback for the deferred validator: trim the trail
+    // back to the restored asset crumb, NOT the page's first asset.
+    // Using `initialFocus` (always `result.assets[0]`) would jump the
+    // UI to the wrong tenant/asset when the shared URL was restored
+    // onto any non-first asset row. The current trail already carries
+    // the resolved asset crumb at index 0 (set by the synchronous hash
+    // restore at line 768), so reuse it.
+    const revertToRestoredAssetRoot = () => {
+      setTrail((current) => {
+        const assetIndex = current.findIndex((s) => s.kind === "asset");
+        if (assetIndex < 0) return current;
+        return current.slice(0, assetIndex + 1);
+      });
+      setStaleHashFallback(true);
+    };
     for (const { dimension, valueKey } of validations) {
       let dim: ReturnType<typeof getPivotDimension>;
       try {
         dim = getPivotDimension(dimension);
       } catch {
         // Dimension was removed since the URL was produced — stale.
-        setSelected(initialFocus);
-        setTrail(
-          initialFocus
-            ? [
-                {
-                  kind: "asset",
-                  customerId: initialFocus.customerId,
-                  address: initialFocus.address,
-                },
-              ]
-            : [],
-        );
-        setStaleHashFallback(true);
+        revertToRestoredAssetRoot();
         return;
       }
       let found = false;
@@ -871,30 +874,11 @@ export function TriageBaselineContent({
         }
       }
       if (!found) {
-        setSelected(initialFocus);
-        setTrail(
-          initialFocus
-            ? [
-                {
-                  kind: "asset",
-                  customerId: initialFocus.customerId,
-                  address: initialFocus.address,
-                },
-              ]
-            : [],
-        );
-        setStaleHashFallback(true);
+        revertToRestoredAssetRoot();
         return;
       }
     }
-  }, [
-    scope,
-    tier2.pending,
-    tier2.inFlight,
-    tier2.errors,
-    expandedEvents,
-    initialFocus,
-  ]);
+  }, [scope, tier2.pending, tier2.inFlight, tier2.errors, expandedEvents]);
 
   // Tier 2 `sameSensor` pivots that cannot complete against the
   // asset's customer scope (name-unresolved or scope-forbidden, see

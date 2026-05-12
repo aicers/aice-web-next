@@ -884,6 +884,86 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
     expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
   });
+
+  it("post-drain stale fallback preserves the RESTORED asset crumb when the URL targets a non-first asset row", async () => {
+    // Regression for Round 3 Item 1. The shared URL restores onto the
+    // SECOND asset row (10.0.0.2), then queues an externalIp Tier 2
+    // fetch whose result does not contain the deferred host step. The
+    // post-drain validator previously reset trail/selected to
+    // `initialFocus` (always `result.assets[0]` — 10.0.0.1), jumping
+    // the UI to the wrong asset. The fix trims back to the restored
+    // asset's crumb instead. Two corpus events with distinct origAddrs
+    // produce two assets; 10.0.0.1's event time is newer so it sorts
+    // first under `score DESC, last_event_time DESC` — making 10.0.0.2
+    // the non-first row the hash explicitly targets.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.2") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("externalIp:203.0.113.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("host:remoteonly.example") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        host: "first.example",
+        // Newer → sorts to assets[0], i.e. `initialFocus`.
+        time: "2026-05-08T13:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.11",
+        host: "second.example",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    // externalIp fetch succeeds but its rows do NOT carry the host
+    // value the URL claims — host step stays genuinely stale.
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [
+        {
+          __typename: "BlocklistTls",
+          id: "ext-1",
+          time: "2026-05-08T13:30:00.000Z",
+          sensor: "sensor-a",
+          category: "EXFILTRATION",
+          level: "MEDIUM",
+          origAddr: "10.0.0.5",
+          respAddr: "203.0.113.1",
+          host: "otherhost.example",
+        },
+      ],
+      totalCount: "1",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Stale-hash toast appears (host step did not resolve after drain).
+    expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
+    // The breadcrumb's only crumb must be the RESTORED asset
+    // (10.0.0.2), not the page's first asset (10.0.0.1). Before the
+    // fix, the fallback reset to `initialFocus` and the crumb showed
+    // 10.0.0.1, dropping the operator on the wrong tenant/asset row.
+    expect(
+      screen.getByText("Asset 10.0.0.2").getAttribute("aria-current"),
+    ).toBe("page");
+    expect(screen.queryByText("Asset 10.0.0.1")).toBeNull();
+    // The stale step is gone from the trail.
+    expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
+    expect(screen.queryByText("Crumb:externalIp: 203.0.113.1")).toBeNull();
+  });
 });
 
 describe("TriageShell — Tier 2 only Learning method static section (#498)", () => {
