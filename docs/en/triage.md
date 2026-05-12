@@ -777,20 +777,23 @@ both — including non-baseline `score === 0` corpus members — render
 without the badge so the operator can tell at a glance whether a
 row was already in the loaded slice or freshly pulled.
 
-### Sensor-pivot limitation
+### Sensor pivot
 
 `EventListFilterInput.sensors` requires REview's opaque sensor
-**ID**, but Triage events carry only the sensor **name**. The shared
-sensor lookup that resolves names to IDs is currently gated on
-`detection:read`, which `triage:read`-only operators may not hold.
-Until a `triage:read`-compatible lookup ships, Tier 2 sensor pivot
-is unavailable; the panel hides the row with a "requires sensor
-index" tooltip in Tier 2 mode. The Tier 1 sensor pivot is
-unaffected. A shared URL with a `sameSensor` step under
-`mode=tier2` is treated as a stale step on restore (the page falls
-back to the asset root with a non-blocking notice) so the Tier 1
-sensor name is never sent as a literal `sensors: [ID!]` value to
-REview.
+**ID**, but Triage events carry only the sensor **name**. The Tier 2
+sensor pivot resolves the clicked name to that opaque ID against the
+shared sensor lookup (now callable with `triage:read` or
+`detection:read`) and keys the match on the asset root's
+`(name, customerId)` so a sensor named `edge-01` under one tenant
+cannot accidentally select the same-named sensor under another.
+
+If the name no longer maps to an accessible sensor — either zero
+matches under the asset's customer scope, or REview tightened scope
+mid-session and rejected the resolved `nodeId` — the trail reverts
+to the asset root and the page surfaces the same non-blocking notice
+as a stale shared URL. Transport / generic failures still surface as
+the red error notice so the operator can tell "no longer accessible"
+apart from "lookup did not run".
 
 ### URL hash persistence
 
@@ -843,8 +846,6 @@ with future Triage hash extensions (e.g. strictness controls under
   persist across sessions. The pivot breadcrumb and Tier 1 / Tier 2
   scope are encoded in the URL hash so a shared / reloaded URL
   restores them, but they reset on every fresh menu entry.
-- Tier 2 sensor pivot is hidden until a `triage:read`-compatible
-  sensor lookup ships.
 - In Baseline mode the **Country**, **User agent**, **TLS** (JA3 /
   JA3S / SNI / cert serial / cert subject CN), **DNS answer**,
   **Cluster ID**, and **Threat level** pivot dimensions are

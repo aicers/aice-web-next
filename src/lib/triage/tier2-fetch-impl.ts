@@ -2,8 +2,10 @@ import "server-only";
 
 import type { AuthSession } from "@/lib/auth/jwt";
 import type { EventListFilterInput } from "@/lib/detection";
+import { listSensors } from "@/lib/detection/sensors";
 import { graphqlRequest } from "@/lib/graphql/client";
 import { withReviewErrorMapping } from "@/lib/review/error-mapping";
+import { classifyReviewSensorScopeError } from "@/lib/review/event-query-error";
 import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 
 import {
@@ -22,6 +24,16 @@ export interface Tier2FetchInput {
   periodEndIso: string;
   dimension: Tier2Dimension;
   valueKey: string;
+  /**
+   * Customer ID of the asset root the Tier 2 trail is anchored at.
+   * Required so the `sameSensor` pivot can disambiguate a sensor
+   * `name` (which is not unique across customers) to a unique
+   * `(name, customerId)` tuple before resolving it to REview's
+   * opaque `nodeId`. For other dimensions the value is unused but
+   * required so the call sites cannot forget to thread the asset
+   * context.
+   */
+  customerId: number;
   /**
    * When true, paginate only a single first page so the caller can
    * peek `totalCount` (and the first-page event count) before
@@ -44,6 +56,32 @@ export interface Tier2FetchInput {
   alreadyFetched?: number;
 }
 
+/**
+ * Discriminator returned in {@link Tier2FetchResult.sensorFallback}
+ * when the Tier 2 `sameSensor` pivot cannot complete against the
+ * caller's scope. Both kinds surface a non-blocking toast and revert
+ * the trail to the asset root, mirroring the stale-hash UX so the
+ * operator never sees a generic error banner for a name that simply
+ * no longer maps to an accessible sensor.
+ *
+ *   - `name-unresolved` — the clicked sensor name (or restored hash
+ *     value) does not match a unique sensor under the asset's
+ *     customer scope. Zero matches or — defensively — multiple
+ *     matches after the customer filter both surface here.
+ *   - `scope-forbidden` — review-web 0.33.0 tightened
+ *     `eventList(filter: { sensors: [...] })` to return `Forbidden`
+ *     when any supplied `nodeId` lies outside the caller's customer
+ *     scope. Reaches this branch when a stale or rotated scope drops
+ *     a previously-visible sensor mid-session.
+ */
+export type Tier2SensorFallbackKind = "name-unresolved" | "scope-forbidden";
+
+export interface Tier2SensorFallback {
+  kind: Tier2SensorFallbackKind;
+  /** The clicked / restored sensor name (not the resolved nodeId). */
+  sensorName: string;
+}
+
 export interface Tier2FetchResult {
   events: TriageEvent[];
   /** REview's `EventConnection.totalCount` from the first page (or null). */
@@ -63,6 +101,15 @@ export interface Tier2FetchResult {
    * first page.
    */
   endCursor: string | null;
+  /**
+   * Set when the `sameSensor` pivot resolved to a non-actionable
+   * state (name unresolved within the asset's customer scope, or a
+   * forbidden-sensor-scope rejection on the dispatch). The caller
+   * surfaces a non-blocking toast and falls back to the asset root
+   * rather than rendering the generic error banner — see
+   * {@link Tier2SensorFallback}. Absent on every non-sensor pivot.
+   */
+  sensorFallback?: Tier2SensorFallback;
 }
 
 interface Tier2EventListVariables extends Record<string, unknown> {
@@ -70,6 +117,17 @@ interface Tier2EventListVariables extends Record<string, unknown> {
   first: number;
   after: string | null;
 }
+
+const EMPTY_SENSOR_RESULT: Pick<
+  Tier2FetchResult,
+  "events" | "totalCount" | "truncated" | "hasMore" | "endCursor"
+> = {
+  events: [],
+  totalCount: null,
+  truncated: false,
+  hasMore: false,
+  endCursor: null,
+};
 
 export async function fetchTier2DimensionWithSession(
   session: AuthSession,
@@ -79,26 +137,98 @@ export async function fetchTier2DimensionWithSession(
   const ctx = await buildDispatchContext(session);
   const jwtCustomerIds = jwtCustomerIdsForTriage(ctx);
 
+  // `sameSensor` carries a sensor *name*, but
+  // `EventListFilterInput.sensors` is `[ID!]`. Resolve to REview's
+  // opaque `nodeId` against the shared lookup (now relaxed to a
+  // `detection:read | triage:read` union — #502) and key the match
+  // on `(name, customerId)` so a sensor named `edge-01` under one
+  // tenant cannot select the same-named sensor under another. A
+  // lookup transport error propagates as an ordinary fetch failure;
+  // a name that does not resolve within the asset's customer scope
+  // surfaces a non-blocking sensorFallback that the hook layer maps
+  // to the asset-root toast.
+  let resolvedValueKey = input.valueKey;
+  if (input.dimension === "sameSensor") {
+    const lookup = await listSensors(session);
+    if (!lookup.endpointAvailable) {
+      // Defensive: the endpoint guard would have to regress for this
+      // branch to trip. Treat as name-unresolved so the operator sees
+      // the same "name no longer maps" affordance rather than a
+      // crash.
+      return {
+        ...EMPTY_SENSOR_RESULT,
+        sensorFallback: {
+          kind: "name-unresolved",
+          sensorName: input.valueKey,
+        },
+      };
+    }
+    const matches = lookup.sensors.filter(
+      (s) => s.name === input.valueKey && s.customerId === input.customerId,
+    );
+    if (matches.length !== 1) {
+      // Zero matches → genuine stale-name. Multiple matches after the
+      // customer filter is defensively impossible (the lookup
+      // contract is unique-by-(name, customerId)), but a regression
+      // in REview shouldn't crash the menu — fall through to the
+      // same fallback so the operator at least sees the trail revert.
+      if (matches.length > 1) {
+        console.warn(
+          `Tier 2 sensor pivot: ${matches.length} sensors share name ` +
+            `"${input.valueKey}" under customerId=${input.customerId}; ` +
+            `expected a unique match. Falling back to the asset root.`,
+        );
+      }
+      return {
+        ...EMPTY_SENSOR_RESULT,
+        sensorFallback: {
+          kind: "name-unresolved",
+          sensorName: input.valueKey,
+        },
+      };
+    }
+    resolvedValueKey = matches[0].id;
+  }
+
   const filter = buildTier2Filter({
     periodStartIso: input.periodStartIso,
     periodEndIso: input.periodEndIso,
     dimension: input.dimension,
-    valueKey: input.valueKey,
+    valueKey: resolvedValueKey,
   });
   if (filter === null) {
-    return {
-      events: [],
-      totalCount: null,
-      truncated: false,
-      hasMore: false,
-      endCursor: null,
-    };
+    return { ...EMPTY_SENSOR_RESULT };
   }
-  return paginateTier2(filter, ctx.role, jwtCustomerIds, signal, {
-    firstPageOnly: input.firstPageOnly === true,
-    afterCursor: input.afterCursor ?? null,
-    alreadyFetched: Math.max(0, input.alreadyFetched ?? 0),
-  });
+  try {
+    return await paginateTier2(filter, ctx.role, jwtCustomerIds, signal, {
+      firstPageOnly: input.firstPageOnly === true,
+      afterCursor: input.afterCursor ?? null,
+      alreadyFetched: Math.max(0, input.alreadyFetched ?? 0),
+    });
+  } catch (err) {
+    // Map review-web 0.33.0's forbidden-on-sensor-scope back into a
+    // sensorFallback so the menu reverts to the asset root with a
+    // toast rather than the generic error banner. The shared
+    // classifier (`@/lib/review/event-query-error`) is the single
+    // source of truth for this discriminator across Detection and
+    // Triage.
+    if (input.dimension === "sameSensor") {
+      const classification = classifyReviewSensorScopeError(
+        err,
+        filter.sensors ?? [],
+      );
+      if (classification.code === "forbidden-sensor-scope") {
+        return {
+          ...EMPTY_SENSOR_RESULT,
+          sensorFallback: {
+            kind: "scope-forbidden",
+            sensorName: input.valueKey,
+          },
+        };
+      }
+    }
+    throw err;
+  }
 }
 
 async function paginateTier2(

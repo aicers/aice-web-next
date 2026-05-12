@@ -63,8 +63,6 @@ export interface TriagePivotPanelLabels {
   scoreColumn: string;
   pivotColumn: string;
   weakSignal?: WeakSignalBadgeLabels;
-  /** Tooltip surfaced on the deferred Tier 2 sensor row (#453). */
-  sameSensorUnavailable?: string;
   /**
    * Per-value labels for the static Tier-2-only `learningMethods`
    * section (#498). Keys are the GraphQL `LearningMethod` enum
@@ -123,12 +121,6 @@ interface TriagePivotPanelProps {
    */
   isWeakSignal?: (event: ScoredTriageEvent) => boolean;
   /**
-   * When `true`, render a disabled placeholder showing the sensor
-   * dimension as deferred under Tier 2 with an explanatory tooltip
-   * (#453 — sensor name→ID lookup is gated on `triage:read`).
-   */
-  deferredSensorDimension?: boolean;
-  /**
    * When `true`, render the static-options "Learning method" section
    * (#498) below the focus-driven sections. The section appears
    * regardless of the focus event values because `LearningMethod` is
@@ -172,14 +164,11 @@ export function TriagePivotPanel({
   onPivot,
   labels,
   isWeakSignal,
-  deferredSensorDimension = false,
   showLearningMethodSection = false,
   showKeywordsSection = false,
   recentKeywords,
   onSubmitKeyword,
 }: TriagePivotPanelProps) {
-  const showDeferredSensor =
-    deferredSensorDimension && labels.sameSensorUnavailable !== undefined;
   const showLearningMethods =
     showLearningMethodSection && labels.learningMethodValues !== undefined;
   const showKeywords =
@@ -222,7 +211,6 @@ export function TriagePivotPanel({
         </p>
       ) : hasFocus &&
         sections.length === 0 &&
-        !showDeferredSensor &&
         !showLearningMethods &&
         !showKeywords ? (
         <p className="px-4 py-6 text-sm text-muted-foreground">
@@ -241,12 +229,6 @@ export function TriagePivotPanel({
                 />
               ))
             : null}
-          {hasFocus && showDeferredSensor ? (
-            <DeferredDimensionRow
-              dimensionLabel={labels.dimensions.sameSensor}
-              tooltip={labels.sameSensorUnavailable as string}
-            />
-          ) : null}
           {showLearningMethods ? (
             <LearningMethodSection
               labels={labels}
@@ -439,30 +421,6 @@ function KeywordsSection({
           </div>
         </div>
       ) : null}
-    </li>
-  );
-}
-
-function DeferredDimensionRow({
-  dimensionLabel,
-  tooltip,
-}: {
-  dimensionLabel: string;
-  tooltip: string;
-}) {
-  return (
-    <li
-      className="px-4 py-3 opacity-60"
-      data-testid="triage-pivot-deferred-row"
-    >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-sm font-semibold text-foreground">
-          {dimensionLabel}
-        </h3>
-        <span title={tooltip} className="text-xs text-muted-foreground italic">
-          {tooltip}
-        </span>
-      </div>
     </li>
   );
 }

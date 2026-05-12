@@ -56,20 +56,14 @@ export function isTier2ServerDimension(
   return TIER2_SERVER_DIMENSIONS.has(id as Tier2Dimension);
 }
 
-// `sameSensor` is intentionally absent: the Tier 2 sensor pivot is
-// gated on a `triage:read`-compatible sensor name → ID lookup that
-// does not exist in Phase 1 (#453). The panel hides the row in Tier 2
-// mode, but URL-hash restore previously could resurrect a sensor pivot
-// step from a shared link and queue a Tier 2 fetch that would send the
-// sensor name as a literal `sensors: [ID!]` value — REview rejects
-// that with a typing error. Excluding `sameSensor` from the active
-// server-fetch set short-circuits both the panel click action and the
-// hash-restore queue path; in Tier 2 mode hash restore now treats a
-// `sameSensor` step as a client-intersection dim, which falls back to
-// the asset root when the value is not in the loaded corpus. The
-// `sameSensor` arm in {@link buildTier2Filter} is preserved so the
-// switch stays exhaustive over the {@link Tier2Dimension} union; it
-// is unreachable from production paths until the lookup ships.
+// `sameSensor` is included here as of #502: the Tier 2 sensor pivot
+// resolves the sensor *name* to REview's opaque `nodeId` against the
+// shared {@link listSensors} lookup (relaxed to `triage:read |
+// detection:read`) before invoking {@link buildTier2Filter}, so the
+// `case "sameSensor"` arm now sees the resolved `nodeId` as
+// `valueKey`. URL-hash restore re-issues the same resolution path,
+// and a name that does not resolve within the asset's customer scope
+// falls back to the asset root with the stale-name toast.
 const TIER2_SERVER_DIMENSIONS: ReadonlySet<Tier2Dimension> = new Set([
   "kinds",
   "categories",
@@ -79,6 +73,7 @@ const TIER2_SERVER_DIMENSIONS: ReadonlySet<Tier2Dimension> = new Set([
   "externalIp",
   "internalIp",
   "country",
+  "sameSensor",
 ] as const satisfies readonly Tier2Dimension[]);
 
 interface BuildTier2FilterArgs {
@@ -144,11 +139,12 @@ export function buildTier2Filter(
       };
     }
     case "sameSensor":
-      // `EventListFilterInput.sensors` is `[ID!]`. We never reach
-      // here in Phase 1 (the panel hides the row until a triage:read
-      // -compatible sensor name→ID lookup exists), but if the click
-      // does fire, treat the clicked name literally — REview will
-      // either accept it as an opaque ID or reject the query.
+      // `EventListFilterInput.sensors` is `[ID!]`. The async caller
+      // (`fetchTier2DimensionWithSession`) resolves the sensor name
+      // to REview's opaque `nodeId` against {@link listSensors},
+      // keyed on `(name, customerId)`, and passes that resolved id as
+      // `valueKey` so the literal sensor name never reaches REview as
+      // an `ID`.
       return { ...base, sensors: [valueKey] };
   }
 }

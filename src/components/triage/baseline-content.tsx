@@ -419,11 +419,10 @@ export function TriageBaselineContent({
   // hidden in Tier 1 mode — their click action is a Tier 2 fetch and
   // surfacing them under Tier 1 would let the operator click a row
   // that goes nowhere. They reappear under the "Tier 2 only" group
-  // when the toggle is on. In Tier 2 mode the `sameSensor` row is
-  // hidden until a `triage:read`-compatible sensor name→ID lookup
-  // ships (#453); the panel surfaces a disabled placeholder with the
-  // "requires sensor index" tooltip so the operator can see that the
-  // row is intentionally absent.
+  // when the toggle is on. As of #502 the `sameSensor` row is now
+  // live in Tier 2 mode (the panel click resolves the sensor name to
+  // REview's opaque `nodeId` against the shared lookup before
+  // issuing the fetch), so no Tier 2 suppression is needed.
   const sections = useMemo(() => {
     const dimById = new Map<string, ReturnType<typeof getPivotDimension>>();
     const isTier2Only = (dim: string): boolean => {
@@ -443,11 +442,7 @@ export function TriageBaselineContent({
     if (scope !== "tier2") {
       return allSections.filter((s) => !isTier2Only(s.dimension));
     }
-    return allSections.filter((s) => s.dimension !== "sameSensor");
-  }, [allSections, scope]);
-  const sensorDeferredInTier2 = useMemo(() => {
-    if (scope !== "tier2") return false;
-    return allSections.some((s) => s.dimension === "sameSensor");
+    return allSections;
   }, [allSections, scope]);
 
   // Surface truncation from both the Tier 1 loader (5,000-event corpus
@@ -500,11 +495,21 @@ export function TriageBaselineContent({
         step.kind === "dimension" &&
         isTier2ServerDimension(step.dimension)
       ) {
-        tier2.startFetch(step.dimension, step.value.key);
+        // Tier 2 fetches need the asset crumb's `customerId` so the
+        // `sameSensor` resolution path can disambiguate sensor names
+        // (not unique across tenants) under the asset's customer
+        // scope. The asset crumb is always the trail head when a
+        // Tier 2 server-filtered dimension is clicked; absent that,
+        // the trail's `effectiveSelection` carries the same value.
+        const customerId =
+          trail.length > 0 && trail[0].kind === "asset"
+            ? trail[0].customerId
+            : (effectiveSelection?.customerId ?? 0);
+        tier2.startFetch(step.dimension, step.value.key, customerId);
       }
       setTrail((current) => appendPivotStep(current, step));
     },
-    [scope, tier2],
+    [effectiveSelection, scope, tier2, trail],
   );
 
   const onCrumb = useCallback((indexInclusive: number) => {
@@ -542,7 +547,16 @@ export function TriageBaselineContent({
   // server fetches (including the pre-fetch modal path when the
   // projection trips the threshold).
   const pendingHashFetchesRef = useRef<
-    Array<{ dimension: Tier2Dimension; valueKey: string }>
+    Array<{
+      dimension: Tier2Dimension;
+      valueKey: string;
+      /**
+       * Asset-root `customerId` captured at hash-restore time so the
+       * Tier 2 fetch's `sameSensor` resolution path keys on the
+       * restored asset's tenant, not the live selection at drain time.
+       */
+      customerId: number;
+    }>
   >([]);
   // Client-intersection steps decoded from a Tier 2 hash whose value
   // was not present in the Tier 1 corpus on restore. The queued Tier 2
@@ -629,6 +643,7 @@ export function TriageBaselineContent({
     const refetchQueue: Array<{
       dimension: Tier2Dimension;
       valueKey: string;
+      customerId: number;
     }> = [];
     const deferredValidations: Array<{
       dimension: PivotDimensionId;
@@ -723,6 +738,7 @@ export function TriageBaselineContent({
         refetchQueue.push({
           dimension: step.dimension,
           valueKey: step.valueKey,
+          customerId: restoredAsset.customerId,
         });
       }
     }
@@ -785,7 +801,7 @@ export function TriageBaselineContent({
     const next = pendingHashFetchesRef.current.shift();
     if (!next) return;
     draining.current = next;
-    tier2.startFetch(next.dimension, next.valueKey);
+    tier2.startFetch(next.dimension, next.valueKey, next.customerId);
   }, [scope, tier2, tier2.pending, tier2.inFlight, tier2.errors]);
 
   // Validate deferred client-intersection steps once the Tier 2 fetch
@@ -858,6 +874,28 @@ export function TriageBaselineContent({
     expandedEvents,
     initialFocus,
   ]);
+
+  // Tier 2 `sameSensor` pivots that cannot complete against the
+  // asset's customer scope (name-unresolved or scope-forbidden, see
+  // #502) revert the trail to the asset root and surface the same
+  // stale-hash toast as a missing-step restore. Without this, a
+  // panel click on a sensor whose name no longer maps would leave
+  // the breadcrumb pointing at an unreachable pivot and the operator
+  // staring at an empty pivot focus.
+  useEffect(() => {
+    if (tier2.sensorFallbacks.length === 0) return;
+    const fallback = tier2.sensorFallbacks[0];
+    setTrail((current) => {
+      // Trim back to the first asset crumb so the failed sensor step
+      // (and anything past it) is removed. If the trail is empty
+      // somehow, leave it alone — defensive only.
+      const assetCrumbIndex = current.findIndex((s) => s.kind === "asset");
+      if (assetCrumbIndex < 0) return current;
+      return current.slice(0, assetCrumbIndex + 1);
+    });
+    setStaleHashFallback(true);
+    tier2.acknowledgeSensorFallback(fallback.sensorName);
+  }, [tier2]);
 
   // ── URL hash sync (write-side) ──
   // Persist the breadcrumb + scope into the URL hash whenever they
@@ -946,7 +984,6 @@ export function TriageBaselineContent({
                 ? (event) => !tier2.isInTier1Corpus(event)
                 : undefined
             }
-            deferredSensorDimension={sensorDeferredInTier2}
             showLearningMethodSection={scope === "tier2"}
             showKeywordsSection={scope === "tier2"}
             recentKeywords={recentKeywords}

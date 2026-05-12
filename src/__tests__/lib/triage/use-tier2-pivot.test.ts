@@ -48,6 +48,10 @@ interface FetchResolution {
   endCursor: string | null;
   hasMore: boolean;
   truncated: boolean;
+  sensorFallback?: {
+    kind: "name-unresolved" | "scope-forbidden";
+    sensorName: string;
+  };
 }
 
 function deferred(): {
@@ -108,7 +112,7 @@ describe("useTier2Pivot — LRU recency tracks hook reads", () => {
     const dim: Tier2Dimension = "country";
 
     await act(async () => {
-      result.current.startFetch(dim, "A");
+      result.current.startFetch(dim, "A", 7);
       // Allow the awaited peek to resolve and the result to land in
       // both the cache and `stateMapRef`.
       await Promise.resolve();
@@ -163,8 +167,8 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
 
     // Fire two clicks back-to-back, before either peek resolves.
     act(() => {
-      result.current.startFetch(dim, "A");
-      result.current.startFetch(dim, "B");
+      result.current.startFetch(dim, "A", 7);
+      result.current.startFetch(dim, "B", 7);
     });
     expect(result.current.getCached(dim, "A")?.status).toBe("loading");
     expect(result.current.getCached(dim, "B")?.status).toBe("loading");
@@ -264,7 +268,7 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
     const dim: Tier2Dimension = "country";
 
     await act(async () => {
-      result.current.startFetch(dim, "FALLBACK");
+      result.current.startFetch(dim, "FALLBACK", 7);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -290,9 +294,9 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
     const dim: Tier2Dimension = "country";
 
     act(() => {
-      result.current.startFetch(dim, "A");
-      result.current.startFetch(dim, "A");
-      result.current.startFetch(dim, "A");
+      result.current.startFetch(dim, "A", 7);
+      result.current.startFetch(dim, "A", 7);
+      result.current.startFetch(dim, "A", 7);
     });
 
     expect(fetchTier2DimensionMock).toHaveBeenCalledTimes(1);
@@ -310,5 +314,49 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       await Promise.resolve();
     });
     expect(result.current.getCached(dim, "A")?.status).toBe("ready");
+  });
+});
+
+describe("useTier2Pivot — sameSensor fallback surfaces through the hook (#502)", () => {
+  it("clears the loading entry and queues a sensorFallback when the peek returns one", async () => {
+    // The impl returns `sensorFallback` when the clicked sensor name
+    // does not resolve under the asset's customer scope (or when
+    // review-web tightens scope mid-session). The hook must drop the
+    // loading entry — otherwise the panel shows a permanent spinner —
+    // and enqueue the fallback so the parent can revert the trail
+    // and render the stale-hash toast.
+    fetchTier2DimensionMock.mockImplementation(async () => ({
+      events: [],
+      totalCount: null,
+      endCursor: null,
+      hasMore: false,
+      truncated: false,
+      sensorFallback: {
+        kind: "name-unresolved" as const,
+        sensorName: "edge-01",
+      },
+    }));
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "sameSensor";
+
+    await act(async () => {
+      result.current.startFetch(dim, "edge-01", 7);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.sensorFallbacks).toEqual([
+      { kind: "name-unresolved", sensorName: "edge-01" },
+    ]);
+    // The loading entry must be cleared so the panel does not show a
+    // permanent spinner for a name that no longer resolves.
+    expect(result.current.getCached(dim, "edge-01")).toBeNull();
+
+    // Parent-side acknowledgement drains the queue.
+    act(() => {
+      result.current.acknowledgeSensorFallback("edge-01");
+    });
+    expect(result.current.sensorFallbacks).toEqual([]);
   });
 });

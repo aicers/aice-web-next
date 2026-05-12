@@ -2099,8 +2099,7 @@
         "descriptionUnknown": "Projected size is unknown; the fetch will walk pages until it finds the cap or the end.",
         "confirm": "Fetch",
         "cancel": "Cancel"
-      },
-      "sameSensorUnavailable": "Requires a sensor index — Tier 2 sensor pivot is unavailable until a triage:read-compatible lookup ships."
+      }
     },
     "staleHashFallback": "Pivot trail in the URL no longer matches the loaded period — showing the asset root."
   },
