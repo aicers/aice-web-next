@@ -146,6 +146,17 @@ export interface UseTier2Pivot {
   confirmFetch: () => void;
   /** Cancel a pending pre-fetch projection. */
   cancelFetch: () => void;
+  /**
+   * Drop every queued modal-gated projection along with its parked
+   * peek stash and loading entry. Called by the parent on explicit
+   * navigation (new asset, pivot, breadcrumb backtrack, asset-root
+   * crumb click) so a pre-fetch modal raised against the trail the
+   * operator just left does not survive into the new trail — without
+   * this, confirming the modal would resume a fetch keyed on the
+   * abandoned `(dimension, valueKey, customerId)` tuple even though
+   * the operator has moved on (#502).
+   */
+  dismissAllPending: () => void;
   pending: Tier2PendingProjection | null;
   evictions: Tier2EvictionEvent[];
   acknowledgeEviction: (cacheKey: string) => void;
@@ -677,6 +688,24 @@ export function useTier2Pivot(
     bump();
   }, [bump, pendingQueue, stateKey]);
 
+  const dismissAllPending = useCallback(() => {
+    // Mirrors `cancelFetch` over every queued entry: drop the parked
+    // peek stash and the corresponding `loading` state-map entry so
+    // the panel does not show a permanent spinner on a now-abandoned
+    // pivot. Called by the parent on explicit navigation away from
+    // the trail the modal was raised against (#502 — Round 8 review).
+    setPendingQueue((prev) => {
+      if (prev.length === 0) return prev;
+      for (const p of prev) {
+        const key = stateKey(p.dimension, p.valueKey, p.customerId);
+        peekStashesRef.current.delete(key);
+        stateMapRef.current.delete(key);
+      }
+      return [];
+    });
+    bump();
+  }, [bump, stateKey]);
+
   const acknowledgeEviction = useCallback((cacheKey: string) => {
     setEvictions((prev) => prev.filter((e) => e.cacheKey !== cacheKey));
   }, []);
@@ -767,6 +796,7 @@ export function useTier2Pivot(
     startFetch,
     confirmFetch,
     cancelFetch,
+    dismissAllPending,
     pending,
     evictions,
     acknowledgeEviction,

@@ -643,6 +643,55 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
   });
 
+  it("dismisses the pre-fetch modal when the operator selects a different asset", async () => {
+    // Round 8 regression. Click a Tier 2 server dimension on asset A
+    // whose first page trips the 20,000-event modal, then select
+    // asset B before answering. Without the dismissal the modal stays
+    // open under B's trail showing A's projection count, and Confirm
+    // would resume A's parked stash under A's `(dimension, valueKey,
+    // customerId)` — i.e., restore-owned work outliving the trail it
+    // was created for. Explicit asset navigation must dismiss every
+    // pending modal-gated projection along with its parked peek
+    // stash and loading entry (#502).
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: "30000",
+      truncated: false,
+      hasMore: true,
+      endCursor: "cursor-1",
+    });
+    renderShellWithExternalIp();
+    selectTier2Scope();
+    pivotByExternalIp();
+    await flushAsync();
+    // Modal is open showing the >20k projection.
+    expect(
+      screen.getByRole("alertdialog", { name: "Fetch large result?" }),
+    ).toBeTruthy();
+    // The peek fired but the continuation is still gated.
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+    // Operator switches to the other asset on the list. Radix's
+    // alertdialog applies `aria-hidden` to the rest of the DOM while
+    // open, so the asset list buttons are only reachable through the
+    // `hidden: true` query option.
+    const otherAssetButton = screen.getByRole("button", {
+      name: "10.0.0.9",
+      hidden: true,
+    });
+    await act(async () => {
+      fireEvent.click(otherAssetButton);
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // Modal is gone — no abandoned-trail confirm affordance survives.
+    expect(
+      screen.queryByRole("alertdialog", { name: "Fetch large result?" }),
+    ).toBeNull();
+    // Crucially, no continuation fetch was dispatched — the peek's
+    // parked stash for the abandoned trail was dropped, not resumed.
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces a fetch error notice and clears it on dismiss", async () => {
     fetchTier2Mock.mockRejectedValueOnce(new Error("review timed out"));
     renderShellWithExternalIp();

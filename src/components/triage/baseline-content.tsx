@@ -530,6 +530,23 @@ export function TriageBaselineContent({
     draining.current = null;
   }, []);
 
+  // Dismiss every modal-gated Tier 2 projection along with its parked
+  // peek stash and loading entry. Called on *trail abandonment*
+  // (selecting a different asset, backtracking via a crumb, clicking
+  // the asset-root crumb) — not on extension (a fresh pivot click on
+  // the same trail still queues behind any open modal, since that is
+  // the intentional two-large-projection-per-trail behavior documented
+  // at `use-tier2-pivot.ts`'s `pendingQueue` declaration). The
+  // reviewer's Round 8 repro is: click a Tier 2 server dimension on
+  // asset A whose first page trips the 20,000-event modal, then
+  // select asset B before answering — without this the modal stays
+  // open on B showing A's projection and Confirm would resume A's
+  // parked stash under A's `(dimension, valueKey, customerId)` even
+  // though the trail is now B's.
+  const abortPendingTier2Projections = useCallback(() => {
+    tier2.dismissAllPending();
+  }, [tier2]);
+
   const onSelectAsset = useCallback(
     (focus: { customerId: number; address: string }) => {
       setSelected(focus);
@@ -547,8 +564,13 @@ export function TriageBaselineContent({
       // copy on the page.
       setFallbackNotice(null);
       abortHashRestore();
+      // The prior trail's modal-gated Tier 2 projection (if any) is
+      // tied to its `(dimension, valueKey, customerId)` tuple; a
+      // Confirm after the asset swap would resume work for the trail
+      // the operator just left (#502 Round 8).
+      abortPendingTier2Projections();
     },
-    [abortHashRestore],
+    [abortHashRestore, abortPendingTier2Projections],
   );
 
   const onPivot = useCallback(
@@ -597,8 +619,12 @@ export function TriageBaselineContent({
       // so the operator sees a clean trail.
       setFallbackNotice(null);
       abortHashRestore();
+      // Backtracking discards the trailing pivot crumbs; any modal
+      // queued for one of those (now-removed) steps would otherwise
+      // outlive the trail it was raised against (#502 Round 8).
+      abortPendingTier2Projections();
     },
-    [abortHashRestore],
+    [abortHashRestore, abortPendingTier2Projections],
   );
 
   // Free-form `keywords` submit (#499). Same dispatch path as a
@@ -1116,6 +1142,11 @@ export function TriageBaselineContent({
                 setTrail((current) => clearPivotTrail(current));
                 setFallbackNotice(null);
                 abortHashRestore();
+                // The asset-root crumb click clears every pivot from the
+                // trail — any modal-gated Tier 2 projection queued for
+                // one of those pivots would otherwise outlive its trail
+                // (#502 Round 8).
+                abortPendingTier2Projections();
               } else {
                 onCrumb(idx);
               }
