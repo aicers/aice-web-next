@@ -336,4 +336,142 @@ describe("pivot dimension extractors", () => {
       ).toEqual([]);
     });
   });
+
+  describe("per-protocol scalar identifiers (#503)", () => {
+    it("sshClient / sshServer / sshHassh / sshHasshServer extract the SSH string fields", () => {
+      const event = scored({
+        __typename: "BlocklistSsh",
+        sshClient: "SSH-2.0-OpenSSH_8.4",
+        sshServer: "SSH-2.0-OpenSSH_7.4p1",
+        sshHassh: "abc123",
+        sshHasshServer: "def456",
+      });
+      expect(
+        getPivotDimension("sshClient")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["SSH-2.0-OpenSSH_8.4"]);
+      expect(
+        getPivotDimension("sshServer")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["SSH-2.0-OpenSSH_7.4p1"]);
+      expect(
+        getPivotDimension("sshHassh")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["abc123"]);
+      expect(
+        getPivotDimension("sshHasshServer")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["def456"]);
+    });
+
+    it("smbPath / smbService / smbFileName extract the SMB string fields", () => {
+      const event = scored({
+        __typename: "BlocklistSmb",
+        smbPath: "\\\\server\\share\\dir",
+        smbService: "IPC",
+        smbFileName: "secret.docx",
+      });
+      expect(
+        getPivotDimension("smbPath")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["\\\\server\\share\\dir"]);
+      expect(
+        getPivotDimension("smbService")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["IPC"]);
+      expect(
+        getPivotDimension("smbFileName")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["secret.docx"]);
+    });
+
+    it("returns no values when the per-protocol scalar field is missing or empty", () => {
+      const event = scored({ __typename: "BlocklistSsh" });
+      expect(getPivotDimension("sshClient").extract(event)).toEqual([]);
+      const empty = scored({ __typename: "BlocklistSmb", smbPath: "" });
+      expect(getPivotDimension("smbPath").extract(empty)).toEqual([]);
+    });
+  });
+
+  describe("per-protocol list identifiers (#503)", () => {
+    it("ftpCommand emits one value per nested command, deduped per event", () => {
+      const event = scored({
+        __typename: "BlocklistFtp",
+        ftpCommands: [
+          { command: "RETR" },
+          { command: "STOR" },
+          { command: "RETR" },
+        ],
+      });
+      expect(
+        getPivotDimension("ftpCommand")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["RETR", "STOR"]);
+    });
+
+    it("ftpCommand returns empty for an event without commands", () => {
+      const event = scored({ __typename: "FtpBruteForce" });
+      expect(getPivotDimension("ftpCommand").extract(event)).toEqual([]);
+      const emptyArr = scored({
+        __typename: "BlocklistFtp",
+        ftpCommands: [],
+      });
+      expect(getPivotDimension("ftpCommand").extract(emptyArr)).toEqual([]);
+    });
+
+    it("ldap list dimensions emit one value per array element, deduped per event", () => {
+      const event = scored({
+        __typename: "BlocklistLdap",
+        ldapOpcode: ["bindRequest", "searchRequest", "bindRequest"],
+        ldapObject: ["cn=admin"],
+        ldapArgument: ["filter", "filter", ""],
+      });
+      expect(
+        getPivotDimension("ldapOpcode")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["bindRequest", "searchRequest"]);
+      expect(
+        getPivotDimension("ldapObject")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["cn=admin"]);
+      // Empty-string elements are dropped, duplicates collapse.
+      expect(
+        getPivotDimension("ldapArgument")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["filter"]);
+    });
+
+    it("mqttSubscribe emits one value per topic, deduped per event", () => {
+      const event = scored({
+        __typename: "BlocklistMqtt",
+        mqttSubscribe: ["sensors/+/temp", "sensors/+/humid", "sensors/+/temp"],
+      });
+      expect(
+        getPivotDimension("mqttSubscribe")
+          .extract(event)
+          .map((v) => v.key),
+      ).toEqual(["sensors/+/temp", "sensors/+/humid"]);
+    });
+
+    it("per-protocol list dimensions return empty for missing / empty arrays", () => {
+      const missing = scored({ __typename: "BlocklistLdap" });
+      expect(getPivotDimension("ldapOpcode").extract(missing)).toEqual([]);
+      const empty = scored({
+        __typename: "BlocklistMqtt",
+        mqttSubscribe: [],
+      });
+      expect(getPivotDimension("mqttSubscribe").extract(empty)).toEqual([]);
+    });
+  });
 });

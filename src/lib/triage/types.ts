@@ -93,6 +93,35 @@ export interface TriageEvent {
   serverName?: string | null;
   serial?: string | null;
   subjectCommonName?: string | null;
+  // SSH (BlocklistSsh only). Per-protocol identifier pivots (#503).
+  /** SSH client version string (e.g. `SSH-2.0-OpenSSH_8.4`). */
+  sshClient?: string | null;
+  /** SSH server version string. */
+  sshServer?: string | null;
+  /** HASSH client fingerprint (SSH analogue of JA3). */
+  sshHassh?: string | null;
+  /** HASSH server fingerprint (SSH analogue of JA3S). */
+  sshHasshServer?: string | null;
+  // SMB (BlocklistSmb only). Per-protocol identifier pivots (#503).
+  smbPath?: string | null;
+  smbService?: string | null;
+  smbFileName?: string | null;
+  /**
+   * FTP commands (BlocklistFtp, FtpPlainText). The schema exposes this
+   * as `[FtpCommand!]!` — an object list — so the selection picks the
+   * pivot-meaningful nested `command` scalar. The extractor walks the
+   * array and emits one pivot value per element (`RETR`, `STOR`, etc.).
+   * `FtpBruteForce` does not carry this field.
+   */
+  ftpCommands?: { command: string }[] | null;
+  // LDAP (BlocklistLdap, LdapPlainText). `LdapBruteForce` does not
+  // carry these fields.
+  ldapOpcode?: string[] | null;
+  ldapObject?: string[] | null;
+  ldapArgument?: string[] | null;
+  // MQTT (BlocklistMqtt). Topic subscription list — the SDL exposes
+  // no scalar `topic` field, so the dimension is named after the SDL.
+  mqttSubscribe?: string[] | null;
   /**
    * Stable per-render React key for the asset detail panel. Populated
    * by {@link aggregateTriageEvents} so the list rows have a unique

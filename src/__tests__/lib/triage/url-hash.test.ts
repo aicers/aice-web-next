@@ -145,6 +145,27 @@ describe("parseTriagePivotHash", () => {
     expect(state.rejectedStepCount).toBe(1);
   });
 
+  it("round-trips per-protocol identifier dimensions (#503)", () => {
+    // Without the KNOWN_DIMENSIONS extension a shared URL referencing
+    // a per-protocol dimension would be silently dropped at parse
+    // time as an unknown dimension. Spot-check the SSH HASSH and
+    // FTP-command ids — the rest go through the same validation path.
+    const state = parseTriagePivotHash(
+      "#triage.pivot.step=" +
+        encodeURIComponent("sshHassh:aabbccdd") +
+        "&triage.pivot.step=" +
+        encodeURIComponent("ftpCommand:RETR") +
+        "&triage.pivot.step=" +
+        encodeURIComponent("mqttSubscribe:sensors/+/temp"),
+    );
+    expect(state.steps).toEqual([
+      { dimension: "sshHassh", valueKey: "aabbccdd" },
+      { dimension: "ftpCommand", valueKey: "RETR" },
+      { dimension: "mqttSubscribe", valueKey: "sensors/+/temp" },
+    ]);
+    expect(state.rejectedStepCount).toBe(0);
+  });
+
   it("rejects learningMethods value keys outside the SDL enum", () => {
     // A typo'd or schema-changed enum literal must drop the step
     // rather than reach the Tier 2 fetch path — REview would otherwise

@@ -20,6 +20,14 @@ import { parse } from "graphql";
  *     question/answer counts, no payload).
  *   - TLS-shaped fields (`ja3`, `ja3S`, `serverName`, `serial`,
  *     `subjectCommonName`) on the two TLS-shaped subtypes.
+ *   - Per-protocol identifier fields (#503): SSH `client`, `server`,
+ *     `hassh`, `hasshServer`; SMB `path`, `service`, `fileName`; FTP
+ *     `commands { command }` (object-list — the nested `command`
+ *     subfield is the pivot-meaningful scalar); LDAP `opcode`,
+ *     `object`, `argument` (string lists); MQTT `subscribe` (topic
+ *     subscription list). The brute-force shapes (`FtpBruteForce`,
+ *     `LdapBruteForce`) deliberately omit these fields because the
+ *     schema does not expose them on those subtypes.
  *
  * `origNetwork` / `respNetwork` select the membership shape
  * (`HostNetworkGroup`) needed by the customer-network classifier so
@@ -187,6 +195,7 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
               ranges { start end }
             }
           }
+          ftpCommands: commands { command }
         }
         ... on BlocklistHttp {
           origAddr
@@ -256,6 +265,9 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
               ranges { start end }
             }
           }
+          ldapOpcode: opcode
+          ldapObject: object
+          ldapArgument: argument
         }
         ... on BlocklistMalformedDns {
           origAddr
@@ -300,6 +312,7 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
               ranges { start end }
             }
           }
+          mqttSubscribe: subscribe
         }
         ... on BlocklistNfs {
           origAddr
@@ -410,6 +423,9 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
               ranges { start end }
             }
           }
+          smbPath: path
+          smbService: service
+          smbFileName: fileName
         }
         ... on BlocklistSmtp {
           origAddr
@@ -454,6 +470,10 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
               ranges { start end }
             }
           }
+          sshClient: client
+          sshServer: server
+          sshHassh: hassh
+          sshHasshServer: hasshServer
         }
         ... on BlocklistTls {
           origAddr
@@ -597,6 +617,7 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
               ranges { start end }
             }
           }
+          ftpCommands: commands { command }
         }
         ... on HttpThreat {
           origAddr
@@ -666,6 +687,9 @@ export const TRIAGE_EVENT_LIST_QUERY = parse(`
               ranges { start end }
             }
           }
+          ldapOpcode: opcode
+          ldapObject: object
+          ldapArgument: argument
         }
         ... on LockyRansomware {
           origAddr
