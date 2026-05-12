@@ -159,8 +159,12 @@ export function encodeValueByKind(kind: ValueKind, value: string): number[] {
 }
 
 function encodeBool(value: string): number {
-  if (value === "true" || value === "True" || value === "TRUE") return 0x01;
-  if (value === "false" || value === "False" || value === "FALSE") return 0x00;
+  // Per issue #460: accepted stored inputs are the JSON `true`/`false`
+  // literals and the strings `"true"`/`"false"` — case-sensitive.
+  // Anything else (including `"True"`, `"TRUE"`, `"False"`, `"FALSE"`)
+  // is an encoding error.
+  if (value === "true") return 0x01;
+  if (value === "false") return 0x00;
   throw new InlinePolicyEncodingError(
     "bool_invalid",
     `Expected 'true' or 'false' for value_kind=bool, got ${JSON.stringify(value)}`,

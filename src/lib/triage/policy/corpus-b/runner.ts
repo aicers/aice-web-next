@@ -57,7 +57,7 @@ import {
   insertComputingRun,
   insertTriagedEventsBatch,
   markRunFailed,
-  markRunReady,
+  markRunReadyOnClient,
   PolicyTriageRunActiveSlotConflict,
   recomputeRun,
 } from "./repository";
@@ -198,17 +198,12 @@ export async function runCorpusBTriage(
   const pageSize = options.pageSize ?? CORPUS_B_PAGE_SIZE;
   const startedAt = Date.now();
 
-  // Encode policies up front so an encoding error fails the run
-  // before any DB writes happen. The runner converts the error into
-  // `status='failed'` with a structured `last_error` rather than a
-  // panic (acceptance criterion).
-  let encodedPolicies: EncodedEventTriagePolicyInput[];
-  try {
-    encodedPolicies = request.policies.map(translatePolicyToInlineInput);
-  } catch (err) {
-    return failBeforeInsert(request, err);
-  }
-
+  // Fingerprinting does not depend on byte encoding, so the slot can
+  // be claimed before policies are encoded. Encoding happens inside
+  // `runInsideClaimedSlot` so an `InlinePolicyEncodingError` flows
+  // through the same `markRunFailed` path as fetch / DB errors —
+  // every failure mode ends up as a real `status='failed'` row with
+  // `last_error` populated, never a synthesised pseudo-row.
   const policiesFingerprint = computePoliciesFingerprint(request.policies);
   const active = await exclusionResolver.resolve(request.customerId);
   const exclusionsFingerprint = computeExclusionsFingerprint(active.rules);
@@ -256,7 +251,6 @@ export async function runCorpusBTriage(
   return runInsideClaimedSlot({
     request,
     run,
-    encodedPolicies,
     active,
     fetchPage,
     pageSize,
@@ -279,13 +273,6 @@ export async function recomputeCorpusBRun(
   const fetchPage = options.fetchPage ?? defaultFetchPage;
   const pageSize = options.pageSize ?? CORPUS_B_PAGE_SIZE;
   const startedAt = Date.now();
-
-  let encodedPolicies: EncodedEventTriagePolicyInput[];
-  try {
-    encodedPolicies = request.policies.map(translatePolicyToInlineInput);
-  } catch (err) {
-    return failBeforeInsert(request, err);
-  }
 
   const policiesFingerprint = computePoliciesFingerprint(request.policies);
   const active = await exclusionResolver.resolve(request.customerId);
@@ -326,7 +313,6 @@ export async function recomputeCorpusBRun(
   return runInsideClaimedSlot({
     request,
     run,
-    encodedPolicies,
     active,
     fetchPage,
     pageSize,
@@ -337,7 +323,6 @@ export async function recomputeCorpusBRun(
 interface ClaimedSlotArgs {
   request: CorpusBRunRequest;
   run: PolicyTriageRunRow;
-  encodedPolicies: EncodedEventTriagePolicyInput[];
   active: ActiveExclusionSet;
   fetchPage: (
     variables: CorpusBFetchVariables,
@@ -347,24 +332,43 @@ interface ClaimedSlotArgs {
   startedAt: number;
 }
 
+/**
+ * Raised when the per-run page cap fires while the resolver still
+ * reports `hasNextPage = true`. Surfaced as a structured run failure
+ * so a truncated run is never silently materialised as `ready`.
+ */
+class CorpusBPageCapExceededError extends Error {
+  constructor(maxPages: number) {
+    super(
+      `Corpus B: page cap of ${maxPages} reached with more pages still available; run truncated and marked failed`,
+    );
+    this.name = "CorpusBPageCapExceededError";
+  }
+}
+
 async function runInsideClaimedSlot(
   args: ClaimedSlotArgs,
 ): Promise<CorpusBRunResult> {
-  const {
-    request,
-    run,
-    encodedPolicies,
-    active,
-    fetchPage,
-    pageSize,
-    startedAt,
-  } = args;
+  const { request, run, active, fetchPage, pageSize, startedAt } = args;
   const pool = await getCustomerPool(request.customerId);
   const client = await pool.connect();
   let inserted = 0;
+  let elapsed = 0;
   try {
     await client.query("BEGIN");
+
+    // Encode policies inside the transaction so an
+    // `InlinePolicyEncodingError` rolls back any partial work and
+    // flows through the same `markRunFailed` path as fetch / DB
+    // errors. The claimed `policy_triage_run` row already exists at
+    // this point; marking it `failed` honours #460's acceptance
+    // criterion that encoding errors transition the run to
+    // `status='failed'` with `last_error` populated.
+    const encodedPolicies = request.policies.map(translatePolicyToInlineInput);
+
     let after: string | null = null;
+    let truncated = false;
+    let lastHasNextPage = false;
     for (let page = 0; page < MAX_PAGES_PER_RUN; page += 1) {
       if (request.signal?.aborted) {
         throw new Error("aborted by caller");
@@ -419,16 +423,32 @@ async function runInsideClaimedSlot(
       if (rows.length > 0) {
         inserted += await insertTriagedEventsBatch(client, run.id, rows);
       }
+      lastHasNextPage = conn.pageInfo.hasNextPage;
       if (!conn.pageInfo.hasNextPage) break;
       if (conn.pageInfo.endCursor === null) break;
       after = conn.pageInfo.endCursor;
+      if (page + 1 === MAX_PAGES_PER_RUN) {
+        truncated = true;
+      }
     }
+    if (truncated && lastHasNextPage) {
+      throw new CorpusBPageCapExceededError(MAX_PAGES_PER_RUN);
+    }
+
+    // Mark the run `ready` inside the same transaction as the event
+    // INSERTs so the `computing → ready` flip is atomic with the
+    // event rows. A crash between event commit and a separate ready
+    // UPDATE would otherwise leave the slot occupied as `computing`
+    // until 1B-7's reaper noticed.
+    elapsed = Date.now() - startedAt;
+    await markRunReadyOnClient(client, run.id, elapsed);
+
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {
       // Already rolled back / connection broken.
     });
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatRunError(err);
     await markRunFailed(request.customerId, run.id, message).catch(() => {
       // Best-effort: the original error is what matters.
     });
@@ -440,8 +460,6 @@ async function runInsideClaimedSlot(
   } finally {
     client.release();
   }
-  const elapsed = Date.now() - startedAt;
-  await markRunReady(request.customerId, run.id, elapsed);
   return {
     run: {
       ...run,
@@ -454,6 +472,16 @@ async function runInsideClaimedSlot(
   };
 }
 
+function formatRunError(err: unknown): string {
+  if (err instanceof InlinePolicyEncodingError) {
+    return `${err.kind}: ${err.message}`;
+  }
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return String(err);
+}
+
 const EVENT_KEY_PATTERN = /^[0-9]{1,39}$/;
 function cursorToEventKey(cursor: string): string {
   if (!EVENT_KEY_PATTERN.test(cursor)) {
@@ -462,49 +490,6 @@ function cursorToEventKey(cursor: string): string {
     );
   }
   return cursor;
-}
-
-/**
- * Shape an encoding-error failure response without writing any row.
- * The acceptance criterion requires encoding errors to surface as
- * `status='failed'` with `last_error` populated — but encoding fails
- * before a row is INSERTed, so we synthesise a pseudo-row that carries
- * the same shape the caller would otherwise see, and leave the
- * persistence as a no-op. Production callers should also forward the
- * structured `InlinePolicyEncodingError` to their audit log.
- */
-function failBeforeInsert(
-  request: CorpusBRunRequest,
-  err: unknown,
-): CorpusBRunResult {
-  const message =
-    err instanceof InlinePolicyEncodingError
-      ? `${err.kind}: ${err.message}`
-      : err instanceof Error
-        ? err.message
-        : String(err);
-  const nowIso = new Date().toISOString();
-  return {
-    run: {
-      id: "0",
-      ownerAccountId: request.ownerAccountId,
-      periodStartIso: request.periodStartIso,
-      periodEndIso: request.periodEndIso,
-      policiesFingerprint: "",
-      exclusionsFingerprint: "",
-      baselineVersion: request.baselineVersion,
-      status: "failed",
-      replaces: null,
-      supersededBy: null,
-      refreshReason: request.refreshReason,
-      computationDurationMs: null,
-      lastError: message,
-      createdAtIso: nowIso,
-      finalizedAtIso: nowIso,
-    },
-    insertedEventCount: 0,
-    reusedCache: false,
-  };
 }
 
 async function defaultFetchPage(
@@ -524,5 +509,6 @@ async function defaultFetchPage(
 export const _testing = {
   cursorToEventKey,
   exclusionsForResolver,
-  failBeforeInsert,
+  CorpusBPageCapExceededError,
+  MAX_PAGES_PER_RUN,
 };

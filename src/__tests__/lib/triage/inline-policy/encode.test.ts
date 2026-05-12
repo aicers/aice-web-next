@@ -122,6 +122,18 @@ describe("encodeValueByKind", () => {
     );
   });
 
+  it("rejects bool with non-lowercase letter casing", () => {
+    // Per #460: accepted stored inputs are case-sensitive `"true"` /
+    // `"false"`. Any other casing is an encoding error so the runner
+    // surfaces it as a structured `last_error` rather than silently
+    // accepting widened storage shapes.
+    for (const v of ["True", "TRUE", "False", "FALSE"]) {
+      expect(() => encodeValueByKind("bool", v)).toThrow(
+        InlinePolicyEncodingError,
+      );
+    }
+  });
+
   it("rejects i64 overflow", () => {
     expect(() => encodeValueByKind("integer", "9223372036854775808")).toThrow(
       InlinePolicyEncodingError,

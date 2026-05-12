@@ -18,6 +18,7 @@ export {
   listTriagedEvents,
   markRunFailed,
   markRunReady,
+  markRunReadyOnClient,
   PolicyTriageRunActiveSlotConflict,
   recomputeRun,
 } from "./repository";

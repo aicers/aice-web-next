@@ -15,6 +15,15 @@ import { parse } from "graphql";
  *     exclusions app-side before INSERT (closes the TLS / NTLM gap
  *     from aicers/review-database#723).
  *
+ * The IP-bearing curated subtype fragments mirror corpus A's set
+ * (`src/lib/triage/baseline/queries.ts`) one-for-one. The issue's
+ * "same exclusion-matching columns as corpus A" contract and 1B-2's
+ * symmetric DELETE planner both rely on `policy_triaged_event` rows
+ * carrying the same `orig_addr` / `resp_addr` / `host` / `dns_query`
+ * / `uri` coverage as corpus A — omitting a subtype here would leave
+ * those columns NULL for that event kind and IP exclusions would
+ * silently miss it.
+ *
  * Edge `cursor` is selected so the runner can derive `event_key`
  * straight into `policy_triaged_event.event_key` (NUMERIC(39, 0));
  * the per-event `id` is not needed because identity flows through
@@ -55,12 +64,42 @@ export const CORPUS_B_EVENT_LIST_QUERY = parse(`
             policyId
             score
           }
+          ... on BlocklistBootp {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistConn {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistDceRpc {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistDhcp {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
           ... on BlocklistDns {
             origAddr
             respAddr
             origPort
             respPort
             query
+          }
+          ... on BlocklistFtp {
+            origAddr
+            respAddr
+            origPort
+            respPort
           }
           ... on BlocklistHttp {
             origAddr
@@ -70,7 +109,61 @@ export const CORPUS_B_EVENT_LIST_QUERY = parse(`
             host
             uri
           }
+          ... on BlocklistKerberos {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistLdap {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistMqtt {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistNfs {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
           ... on BlocklistNtlm {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistRadius {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistRdp {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistSmb {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistSmtp {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
+          ... on BlocklistSsh {
             origAddr
             respAddr
             origPort
@@ -105,6 +198,17 @@ export const CORPUS_B_EVENT_LIST_QUERY = parse(`
             host
             uri
           }
+          ... on FtpBruteForce {
+            origAddr
+            respAddr
+            respPort
+          }
+          ... on FtpPlainText {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
           ... on HttpThreat {
             origAddr
             respAddr
@@ -114,12 +218,33 @@ export const CORPUS_B_EVENT_LIST_QUERY = parse(`
             host
             uri
           }
+          ... on LdapBruteForce {
+            origAddr
+            respAddr
+            respPort
+          }
+          ... on LdapPlainText {
+            origAddr
+            respAddr
+            origPort
+            respPort
+          }
           ... on LockyRansomware {
             origAddr
             respAddr
             origPort
             respPort
             query
+          }
+          ... on MultiHostPortScan {
+            origAddr
+            respPort
+          }
+          ... on NetworkThreat {
+            origAddr
+            respAddr
+            origPort
+            respPort
           }
           ... on NonBrowser {
             origAddr
@@ -128,6 +253,13 @@ export const CORPUS_B_EVENT_LIST_QUERY = parse(`
             respPort
             host
             uri
+          }
+          ... on PortScan {
+            origAddr
+            respAddr
+          }
+          ... on RdpBruteForce {
+            origAddr
           }
           ... on RepeatedHttpSessions {
             origAddr

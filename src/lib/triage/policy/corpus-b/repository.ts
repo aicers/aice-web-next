@@ -277,6 +277,10 @@ export async function recomputeRun(
  * `policy_triaged_event` rows; this UPDATE only flips the status flag
  * and records duration. `created_at` from the row is read to compute
  * the elapsed duration if not provided.
+ *
+ * Pool-scoped wrapper for callers that do not need to compose with an
+ * outer transaction. The runner uses {@link markRunReadyOnClient} so
+ * the status flip stays in the same transaction as the event inserts.
  */
 export async function markRunReady(
   customerId: number,
@@ -284,7 +288,22 @@ export async function markRunReady(
   computationDurationMs: number,
 ): Promise<void> {
   const pool = await getCustomerPool(customerId);
-  await pool.query(
+  await markRunReadyOnClient(pool, runId, computationDurationMs);
+}
+
+/**
+ * Same UPDATE as {@link markRunReady} but runs on a caller-supplied
+ * `pg` client (or pool). The runner uses this to keep the
+ * `computing → ready` transition in the same transaction as the event
+ * INSERTs, so a crash between event commit and ready flip cannot
+ * leave the slot occupied as `computing` until 1B-7's reaper notices.
+ */
+export async function markRunReadyOnClient(
+  executor: Pick<pg.PoolClient, "query"> | Pick<pg.Pool, "query">,
+  runId: string,
+  computationDurationMs: number,
+): Promise<void> {
+  await executor.query(
     `UPDATE policy_triage_run
         SET status = 'ready',
             computation_duration_ms = $2,

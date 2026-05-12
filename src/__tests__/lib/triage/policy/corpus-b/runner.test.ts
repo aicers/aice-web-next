@@ -5,7 +5,7 @@ const mockFindActiveRun = vi.hoisted(() => vi.fn());
 const mockInsertComputingRun = vi.hoisted(() => vi.fn());
 const mockRecomputeRun = vi.hoisted(() => vi.fn());
 const mockInsertTriagedEventsBatch = vi.hoisted(() => vi.fn());
-const mockMarkRunReady = vi.hoisted(() => vi.fn());
+const mockMarkRunReadyOnClient = vi.hoisted(() => vi.fn());
 const mockMarkRunFailed = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/triage/policy/customer-db", () => ({
@@ -22,7 +22,7 @@ vi.mock("@/lib/triage/policy/corpus-b/repository", async () => {
     insertComputingRun: mockInsertComputingRun,
     recomputeRun: mockRecomputeRun,
     insertTriagedEventsBatch: mockInsertTriagedEventsBatch,
-    markRunReady: mockMarkRunReady,
+    markRunReadyOnClient: mockMarkRunReadyOnClient,
     markRunFailed: mockMarkRunFailed,
   };
 });
@@ -70,7 +70,7 @@ describe("runCorpusBTriage", () => {
     mockInsertComputingRun.mockReset();
     mockRecomputeRun.mockReset();
     mockInsertTriagedEventsBatch.mockReset();
-    mockMarkRunReady.mockReset();
+    mockMarkRunReadyOnClient.mockReset();
     mockMarkRunFailed.mockReset();
   });
 
@@ -119,7 +119,7 @@ describe("runCorpusBTriage", () => {
     mockFindActiveRun.mockResolvedValueOnce(null);
     mockInsertComputingRun.mockResolvedValueOnce(buildRun({ id: "42" }));
     mockInsertTriagedEventsBatch.mockResolvedValueOnce(1);
-    mockMarkRunReady.mockResolvedValueOnce(undefined);
+    mockMarkRunReadyOnClient.mockResolvedValueOnce(undefined);
 
     const { runCorpusBTriage } = await import(
       "@/lib/triage/policy/corpus-b/runner"
@@ -175,7 +175,7 @@ describe("runCorpusBTriage", () => {
     expect(result.reusedCache).toBe(false);
     expect(result.run.status).toBe("ready");
     expect(result.insertedEventCount).toBe(1);
-    expect(mockMarkRunReady).toHaveBeenCalledOnce();
+    expect(mockMarkRunReadyOnClient).toHaveBeenCalledOnce();
     const insertCall = mockInsertTriagedEventsBatch.mock.calls[0];
     const insertedRows = insertCall[2];
     expect(insertedRows).toHaveLength(1);
@@ -194,7 +194,7 @@ describe("runCorpusBTriage", () => {
     mockFindActiveRun.mockResolvedValueOnce(null);
     mockInsertComputingRun.mockResolvedValueOnce(buildRun({ id: "43" }));
     mockInsertTriagedEventsBatch.mockResolvedValue(0);
-    mockMarkRunReady.mockResolvedValueOnce(undefined);
+    mockMarkRunReadyOnClient.mockResolvedValueOnce(undefined);
 
     const { runCorpusBTriage } = await import(
       "@/lib/triage/policy/corpus-b/runner"
@@ -275,6 +275,12 @@ describe("runCorpusBTriage", () => {
   });
 
   it("transitions to failed and persists last_error on encoding failure", async () => {
+    const fakePool = buildFakePool();
+    mockGetCustomerPool.mockResolvedValue(fakePool.pool);
+    mockFindActiveRun.mockResolvedValueOnce(null);
+    mockInsertComputingRun.mockResolvedValueOnce(buildRun({ id: "44" }));
+    mockMarkRunFailed.mockResolvedValueOnce(undefined);
+
     const { runCorpusBTriage } = await import(
       "@/lib/triage/policy/corpus-b/runner"
     );
@@ -319,8 +325,67 @@ describe("runCorpusBTriage", () => {
         },
       },
     );
+    // Encoding errors must now persist a real `failed` row so the
+    // menu / audit can surface them and 1B-7 retention can clean
+    // them up — synthesised pseudo-rows are no longer acceptable.
     expect(result.run.status).toBe("failed");
     expect(result.run.lastError).toContain("vector_unsupported");
-    expect(mockInsertComputingRun).not.toHaveBeenCalled();
+    expect(mockInsertComputingRun).toHaveBeenCalledOnce();
+    expect(mockMarkRunFailed).toHaveBeenCalledOnce();
+    const failCall = mockMarkRunFailed.mock.calls[0];
+    expect(failCall[1]).toBe("44");
+    expect(String(failCall[2])).toContain("vector_unsupported");
+  });
+
+  it("fails the run when the page cap is reached with more pages available", async () => {
+    const fakePool = buildFakePool();
+    mockGetCustomerPool.mockResolvedValue(fakePool.pool);
+    mockFindActiveRun.mockResolvedValueOnce(null);
+    mockInsertComputingRun.mockResolvedValueOnce(buildRun({ id: "45" }));
+    mockInsertTriagedEventsBatch.mockResolvedValue(0);
+    mockMarkRunFailed.mockResolvedValueOnce(undefined);
+
+    const { _testing, runCorpusBTriage } = await import(
+      "@/lib/triage/policy/corpus-b/runner"
+    );
+
+    let fetchCalls = 0;
+    const result = await runCorpusBTriage(
+      {
+        customerId: 1,
+        ownerAccountId: "00000000-0000-0000-0000-000000000001",
+        periodStartIso: "2026-04-01T00:00:00.000Z",
+        periodEndIso: "2026-04-30T00:00:00.000Z",
+        policies: [],
+        baselineVersion: "phase1b-four-selector",
+        refreshReason: null,
+      },
+      {
+        exclusionResolver: {
+          async resolve() {
+            return { rules: [] };
+          },
+        },
+        fetchPage: async () => {
+          fetchCalls += 1;
+          return {
+            eventListWithTriage: {
+              pageInfo: {
+                hasPreviousPage: false,
+                hasNextPage: true,
+                startCursor: null,
+                endCursor: String(fetchCalls),
+              },
+              edges: [],
+            },
+          };
+        },
+      },
+    );
+
+    expect(fetchCalls).toBe(_testing.MAX_PAGES_PER_RUN);
+    expect(result.run.status).toBe("failed");
+    expect(result.run.lastError).toContain("page cap");
+    expect(mockMarkRunFailed).toHaveBeenCalledOnce();
   });
 });
