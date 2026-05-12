@@ -26,14 +26,18 @@
 //
 // `--cold-command="<shell>"` is the cold-cache reference hook. When
 // present, the harness runs the supplied shell command once before
-// each window's warm-up batch and labels the run `"cold reading:
-// captured via --cold-command=…"`. When absent, the harness records
-// `"cold reading: not available — host policy"` and proceeds straight
-// to warm-up; it never restarts Postgres or drops OS caches on its own
-// because those operations are destructive on a shared staging DB.
-// Connection drop/recreate is NOT cold (shared buffers and OS cache
-// survive) and `pg_prewarm` is warm-side tooling — neither is used as
-// a cold-cache approximation.
+// the warm-up batch and then records one cold-cache sample per query
+// (`phase: "cold"` in the output rows; same `EXPLAIN ANALYZE` total
+// time the warm samples report) so #528 has a concrete cold reading
+// to compare against. The harness labels the run `"cold reading:
+// captured via --cold-command=…"` in `meta.coldReading`. When the
+// flag is absent the harness records `"cold reading: not available —
+// host policy"`, emits no cold-phase samples, and proceeds straight
+// to warm-up; it never restarts Postgres or drops OS caches on its
+// own because those operations are destructive on a shared staging
+// DB. Connection drop/recreate is NOT cold (shared buffers and OS
+// cache survive) and `pg_prewarm` is warm-side tooling — neither is
+// used as a cold-cache approximation.
 //
 // Typical local-only `--cold-command` value (Linux dev box):
 //   --cold-command="sudo systemctl restart postgresql && \
@@ -42,27 +46,36 @@
 // Whatever value the operator passes must be recorded in the #528 PR
 // so the cold environment is auditable.
 //
-// Per query, per window: 5 warm-up runs (timings discarded) + 30 sample
-// runs back-to-back against the same connection. `EXPLAIN (ANALYZE,
-// BUFFERS, VERBOSE)` is captured on the first warm-sample run.
+// Per query, per window: 5 warm-up runs (timings discarded) + 30
+// sample runs back-to-back against the same connection. Each sample
+// is run as `EXPLAIN ANALYZE` so the emitted `elapsedMs` is the
+// server-side execution time the planner observed, not a client-side
+// wall-clock that mixes in result-set serialization and round trip.
+// The first warm-sample run for each query uses the `EXPLAIN
+// (ANALYZE, BUFFERS, VERBOSE)` form and its plan text is recorded in
+// `meta.explainByQuery` so #528 can attribute timings to a planner
+// choice. Cold-phase samples (when `--cold-command` is provided) run
+// the same `EXPLAIN ANALYZE` once per query before warm-up so cold
+// numbers are directly comparable to warm numbers.
 //
 // Output
 // ------
 //
-// Default JSON to stdout. One top-level object with `meta` (run config,
-// resolved window, cold-reading label) and `samples` (one row per
-// query × sample). `--output=tsv` emits a tab-separated table with
-// columns: query, sample_index, elapsed_ms. The structured-JSON shape
-// is the canonical form #528 consumes; TSV is a convenience for ad-hoc
-// inspection.
+// Default JSON to stdout. One top-level object with `meta` (run
+// config, resolved window, cold-reading label) and `samples` (one
+// row per query × sample × phase). `--output=tsv` emits a
+// tab-separated table with columns: query, phase, sample_index,
+// elapsed_ms, row_count. The structured-JSON shape is the canonical
+// form #528 consumes; TSV is a convenience for ad-hoc inspection.
 //
 // Sample row (JSON):
-//   { "query": "selectMenuCohort", "sampleIndex": 0,
-//     "elapsedMs": 18.42, "rowCount": 1837 }
+//   { "query": "selectMenuCohort", "phase": "warm",
+//     "sampleIndex": 0, "elapsedMs": 18.42, "rowCount": 1837 }
 //
 // `EXPLAIN` plans live under `meta.explainByQuery`, keyed by query
-// name. The harness emits the raw multi-line plan text; #528's
-// consumer is expected to pretty-print or summarize as it sees fit.
+// name. The harness emits the raw multi-line plan text from the
+// first warm-sample run's `EXPLAIN (ANALYZE, BUFFERS, VERBOSE)` so
+// #528's consumer can pretty-print or summarize as it sees fit.
 //
 // Profile assertion
 // -----------------
@@ -93,12 +106,12 @@
 // #528 measurement campaign assumes a profile-conformant tenant.
 
 import { spawnSync } from "node:child_process";
-import { performance } from "node:perf_hooks";
 import pg from "pg";
 
 import {
   MEASURED_QUERIES,
   MENU_CANDIDATES_PER_BUCKET,
+  SELECT_MENU_COHORT_SQL,
 } from "../src/lib/triage/baseline/read-path-sql.mjs";
 import {
   assertRepresentativeProfile,
@@ -212,41 +225,96 @@ function runColdCommand(cmd) {
 }
 
 /**
- * Pick a small sample of distinct addresses from the cohort the menu
- * actually produces. The address-driven queries (`perAssetObservedCounts`,
- * `selectAssetDetailEventsBatch`) operate on the per-asset page; the
- * representative size in production is `TRIAGE_ASSET_PAGE_SIZE = 100`,
- * but the production path uses only addresses that actually appear in
- * the cohort. Sampling from the cohort here keeps the planner's row
- * estimates aligned with what production sees.
+ * Pick a small sample of distinct addresses by running the production
+ * `selectMenuCohort` SQL (via the shared `read-path-sql.mjs` module)
+ * and taking distinct `orig_addr` values from its candidates in the
+ * same ordering that drives §4/§6 menu composition (`baseline_score
+ * DESC, event_time DESC, event_key DESC` — the cohort SQL already
+ * sorts that way). The candidates SELECT applies the production
+ * `kind NOT LIKE 'BlockList%'` filter and is bounded by
+ * `MENU_CANDIDATES_PER_BUCKET` per `(kind, is_unlabeled)` bucket, so
+ * the address slice has the same cardinality/distribution shape that
+ * `perAssetObservedCounts` and `selectAssetDetailEventsBatch` see in
+ * production after `uniqueAddresses(events)`.
+ *
+ * The §6 cognitive-limit cap (`default_N`) and the §4 per-bucket
+ * quota are not replayed here because their implementation lives in
+ * TypeScript (`src/lib/triage/baseline/menu.ts`) and the harness must
+ * run as plain Node ESM without a transpile step (issue §4). The
+ * candidates pool is a strict superset of what composeMenu selects,
+ * but the deduplicated, score-ordered slice we take is the closest
+ * SQL-only approximation to the addresses that actually surface on
+ * the asset page. The result is capped at `limit`
+ * (`TRIAGE_ASSET_PAGE_SIZE = 100`) so the planner's input cardinality
+ * for the address-driven queries matches one page of production
+ * traffic.
  */
-async function sampleAddresses(pool, periodStartIso, periodEndIso, limit) {
-  const { rows } = await pool.query(
-    `SELECT DISTINCT orig_addr::text AS address
-       FROM baseline_triaged_event
-      WHERE event_time >= $1
-        AND event_time <  $2
-        AND orig_addr IS NOT NULL
-      ORDER BY orig_addr
-      LIMIT $3`,
-    [periodStartIso, periodEndIso, limit],
-  );
-  return rows.map((r) => r.address);
+export async function sampleAddresses(
+  pool,
+  periodStartIso,
+  periodEndIso,
+  limit,
+) {
+  const { rows } = await pool.query(SELECT_MENU_COHORT_SQL, [
+    periodStartIso,
+    periodEndIso,
+    MENU_CANDIDATES_PER_BUCKET,
+  ]);
+  const seen = new Set();
+  const addresses = [];
+  for (const row of rows) {
+    const addr = row.orig_addr;
+    if (addr === null || addr === undefined) continue;
+    if (seen.has(addr)) continue;
+    seen.add(addr);
+    addresses.push(addr);
+    if (addresses.length >= limit) break;
+  }
+  return addresses;
 }
 
-async function captureExplain(client, sql, params) {
-  const { rows } = await client.query(
-    `EXPLAIN (ANALYZE, BUFFERS, VERBOSE) ${sql}`,
-    params,
-  );
-  return rows.map((r) => r["QUERY PLAN"]).join("\n");
+/**
+ * Parse the text-format `EXPLAIN ANALYZE` output Postgres emits.
+ * Returns the server-side execution time (in ms) and the top-level
+ * plan node's actual row count. Throws if `Execution Time:` is
+ * missing — that would indicate either a non-ANALYZE EXPLAIN was run
+ * by mistake or the Postgres version emits a different format than
+ * supported here.
+ */
+export function parseExplainAnalyze(planText) {
+  let executionMs = null;
+  let actualRows = null;
+  for (const line of planText.split("\n")) {
+    const execMatch = /^Execution Time:\s+([\d.]+)\s+ms/.exec(line);
+    if (execMatch !== null) executionMs = Number.parseFloat(execMatch[1]);
+    if (actualRows === null) {
+      const topMatch = /actual time=[\d.]+\.\.[\d.]+ rows=(\d+) loops=/.exec(
+        line,
+      );
+      if (topMatch !== null) actualRows = Number.parseInt(topMatch[1], 10);
+    }
+  }
+  if (executionMs === null) {
+    throw new Error(
+      `unable to parse EXPLAIN ANALYZE output (missing "Execution Time"): ${planText.slice(0, 400)}`,
+    );
+  }
+  return { elapsedMs: executionMs, rowCount: actualRows ?? 0 };
 }
 
-async function timedQuery(client, sql, params) {
-  const start = performance.now();
-  const { rowCount } = await client.query(sql, params);
-  const elapsedMs = performance.now() - start;
-  return { elapsedMs, rowCount: rowCount ?? 0 };
+/**
+ * Run one `EXPLAIN ANALYZE` execution and return the parsed timing
+ * alongside the raw plan text. `verbose` selects between the
+ * `(ANALYZE, BUFFERS, VERBOSE)` form (captured once per query as the
+ * planner-choice snapshot) and the lighter `(ANALYZE)` form used for
+ * the remaining samples.
+ */
+async function explainAnalyzeSample(client, sql, params, verbose) {
+  const options = verbose ? "ANALYZE, BUFFERS, VERBOSE" : "ANALYZE";
+  const { rows } = await client.query(`EXPLAIN (${options}) ${sql}`, params);
+  const planText = rows.map((r) => r["QUERY PLAN"]).join("\n");
+  const { elapsedMs, rowCount } = parseExplainAnalyze(planText);
+  return { elapsedMs, rowCount, planText };
 }
 
 async function measureQuery(client, query, ctx, warmups, samples) {
@@ -254,20 +322,48 @@ async function measureQuery(client, query, ctx, warmups, samples) {
   for (let i = 0; i < warmups; i++) {
     await client.query(query.sql, params);
   }
-  const explainPlan = await captureExplain(client, query.sql, params);
+  let verbosePlan = null;
   const queryRows = [];
   // Samples run serially against the same connection — concurrent
-  // execution would invalidate the per-query timing.
+  // execution would invalidate the per-query timing. The first
+  // sample doubles as the planner-choice snapshot via the VERBOSE
+  // form, and its `elapsedMs` is the EXPLAIN ANALYZE execution time
+  // reported on the same run.
   for (let i = 0; i < samples; i++) {
-    const { elapsedMs, rowCount } = await timedQuery(client, query.sql, params);
+    const verbose = i === 0;
+    const { elapsedMs, rowCount, planText } = await explainAnalyzeSample(
+      client,
+      query.sql,
+      params,
+      verbose,
+    );
+    if (verbose) verbosePlan = planText;
     queryRows.push({
       query: query.name,
+      phase: "warm",
       sampleIndex: i,
       elapsedMs,
       rowCount,
     });
   }
-  return { samples: queryRows, explainPlan };
+  return { samples: queryRows, verbosePlan };
+}
+
+async function coldSampleQuery(client, query, ctx) {
+  const params = query.buildParams(ctx);
+  const { elapsedMs, rowCount } = await explainAnalyzeSample(
+    client,
+    query.sql,
+    params,
+    false,
+  );
+  return {
+    query: query.name,
+    phase: "cold",
+    sampleIndex: 0,
+    elapsedMs,
+    rowCount,
+  };
 }
 
 function emitJson(meta, samples) {
@@ -281,10 +377,10 @@ function emitTsv(meta, samples) {
       `# ${k}\t${typeof v === "object" ? JSON.stringify(v) : v}\n`,
     );
   }
-  process.stdout.write("query\tsample_index\telapsed_ms\trow_count\n");
+  process.stdout.write("query\tphase\tsample_index\telapsed_ms\trow_count\n");
   for (const r of samples) {
     process.stdout.write(
-      `${r.query}\t${r.sampleIndex}\t${r.elapsedMs.toFixed(3)}\t${r.rowCount}\n`,
+      `${r.query}\t${r.phase}\t${r.sampleIndex}\t${r.elapsedMs.toFixed(3)}\t${r.rowCount}\n`,
     );
   }
 }
@@ -304,48 +400,79 @@ async function main(argv) {
   );
   const observedFromIso = new Date(observedFromMs).toISOString();
 
+  // First connection: profile assertion + address sampling. We close
+  // this pool before invoking `--cold-command` so a destructive cold
+  // command (e.g. `systemctl restart postgresql`) cannot strand
+  // in-flight queries or leak a dead connection into the measurement
+  // pool below.
+  let addresses;
+  {
+    const probePool = new pg.Pool({ connectionString: args.connectionString });
+    try {
+      if (!args.skipProfileAssert) {
+        try {
+          await assertRepresentativeProfile(probePool);
+        } catch (err) {
+          if (err instanceof ProfileAssertionError) {
+            process.stderr.write(formatProfileAssertionFailure(err));
+            process.stderr.write("\n");
+            return 2;
+          }
+          throw err;
+        }
+      }
+
+      // Sample at most 100 addresses (matches `TRIAGE_ASSET_PAGE_SIZE`)
+      // so the per-asset queries plan against the same input size
+      // production would feed them.
+      addresses = await sampleAddresses(
+        probePool,
+        periodStartIso,
+        periodEndIso,
+        100,
+      );
+    } finally {
+      await probePool.end();
+    }
+  }
+
+  const ctx = {
+    periodStartIso,
+    periodEndIso,
+    observedFromIso,
+    addresses,
+  };
+
+  // Run the cold command (if any) AFTER the probe pool is closed and
+  // BEFORE we open the measurement pool. The cold command may
+  // restart Postgres or drop OS caches; the fresh `pg.Pool` and
+  // `client` below see the cold state on their first query.
+  const coldLabel = runColdCommand(args.coldCommand);
+  const hasColdCommand =
+    args.coldCommand !== null && args.coldCommand !== undefined;
+
   const pool = new pg.Pool({ connectionString: args.connectionString });
   try {
-    if (!args.skipProfileAssert) {
-      try {
-        await assertRepresentativeProfile(pool);
-      } catch (err) {
-        if (err instanceof ProfileAssertionError) {
-          process.stderr.write(formatProfileAssertionFailure(err));
-          process.stderr.write("\n");
-          return 2;
-        }
-        throw err;
-      }
-    }
-
-    // Sample at most 100 addresses (matches `TRIAGE_ASSET_PAGE_SIZE`)
-    // so the per-asset queries plan against the same input size
-    // production would feed them.
-    const addresses = await sampleAddresses(
-      pool,
-      periodStartIso,
-      periodEndIso,
-      100,
-    );
-
-    const ctx = {
-      periodStartIso,
-      periodEndIso,
-      observedFromIso,
-      addresses,
-    };
-
-    const coldLabel = runColdCommand(args.coldCommand);
-
     const client = await pool.connect();
     try {
       const allSamples = [];
       const explainByQuery = {};
-      // The queries share the connection and must run serially so the
-      // planner cache state stays comparable across queries within a run.
+
+      if (hasColdCommand) {
+        // One cold sample per query, before any warm-up, so #528 has
+        // a directly-comparable cold reading next to the warm
+        // distribution. Cold samples run as `EXPLAIN (ANALYZE)` to
+        // keep the timing measurement consistent with the warm path.
+        for (const query of MEASURED_QUERIES) {
+          allSamples.push(await coldSampleQuery(client, query, ctx));
+        }
+      }
+
+      // The queries share the connection and must run serially so
+      // the planner cache state stays comparable across queries
+      // within a run.
       for (const query of MEASURED_QUERIES) {
-        const { samples, explainPlan } = await measureQuery(
+        const { samples, verbosePlan } = await measureQuery(
           client,
           query,
           ctx,
@@ -353,7 +480,7 @@ async function main(argv) {
           args.samples,
         );
         allSamples.push(...samples);
-        explainByQuery[query.name] = explainPlan;
+        explainByQuery[query.name] = verbosePlan;
       }
 
       const meta = {
