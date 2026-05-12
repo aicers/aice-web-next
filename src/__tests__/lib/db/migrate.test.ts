@@ -151,6 +151,15 @@ describe("migrate", () => {
 
       expect(migrations).toEqual([]);
     });
+
+    it("throws when two files share the same numeric prefix", () => {
+      writeMigration("customer", "0008_event_group_story.sql", "SELECT 1");
+      writeMigration("customer", "0008_policy_corpus_b.sql", "SELECT 1");
+
+      expect(() =>
+        migrate._scanMigrations(path.join(tmpDir, "migrations", "customer")),
+      ).toThrow(/Duplicate migration version "0008"/);
+    });
   });
 
   // ── computeChecksum ─────────────────────────────────────────────────

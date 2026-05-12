@@ -1,7 +1,7 @@
 /**
  * Corpus B run / event domain types.
  *
- * Mirrors the columns in `migrations/customer/0008_policy_corpus_b.sql`.
+ * Mirrors the columns in `migrations/customer/0009_policy_corpus_b.sql`.
  * Used by the runner, repository, and (eventually) the menu read-path
  * for "With my policies" mode.
  */

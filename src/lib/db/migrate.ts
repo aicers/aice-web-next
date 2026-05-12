@@ -62,7 +62,7 @@ function scanMigrations(directory: string): MigrationFile[] {
     return [];
   }
 
-  return entries
+  const migrations = entries
     .filter((f) => f.endsWith(".sql"))
     .sort()
     .map((f) => {
@@ -75,6 +75,26 @@ function scanMigrations(directory: string): MigrationFile[] {
       };
     })
     .filter((m): m is MigrationFile => m !== null);
+
+  // Two files sharing the same numeric prefix both pass the
+  // `!applied.has(version)` filter on a fresh DB and both enter `pending`,
+  // so the second INSERT into `_migrations` collides on the version PK
+  // and rolls back. In `provisionCustomerDb` that surfaces as a freshly
+  // dropped tenant DB and 500s on every customer API call. Fail loud at
+  // scan time so the collision is caught at PR review instead.
+  const seen = new Map<string, string>();
+  for (const m of migrations) {
+    const prior = seen.get(m.version);
+    if (prior !== undefined) {
+      throw new Error(
+        `Duplicate migration version "${m.version}" in ${directory}: ` +
+          `${prior} and ${m.name}. Renumber one of them.`,
+      );
+    }
+    seen.set(m.version, m.name);
+  }
+
+  return migrations;
 }
 
 async function ensureMigrationsTable(client: pg.PoolClient): Promise<void> {
