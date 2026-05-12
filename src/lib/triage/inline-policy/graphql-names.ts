@@ -12,9 +12,8 @@
  *
  * Lives in `triage/inline-policy/` so callers other than corpus B can
  * reach the translator without depending on `triage/policy/`. The
- * storage namespace at `src/lib/triage/policy/inline-input.ts`
- * re-exports these for backwards compatibility with internal callers
- * that pre-date the split.
+ * storage-side translator at `src/lib/triage/policy/inline-translator.ts`
+ * imports these names directly.
  */
 
 import type {

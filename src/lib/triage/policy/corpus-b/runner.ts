@@ -546,12 +546,55 @@ async function runInsideClaimedSlot(
 
 function formatRunError(err: unknown): string {
   if (err instanceof InlinePolicyEncodingError) {
-    return `${err.kind}: ${err.message}`;
+    // Per #460, encoding failures must persist a `last_error` that
+    // identifies the offending policy/rule. The translator attaches
+    // `policyId`, `ruleIndex`, and `path` to the error context; we
+    // serialize those into the persisted string so the menu / audit /
+    // 1B-7 retention surfaces can pinpoint the bad rule without having
+    // to re-derive it from the raw error kind.
+    const context = formatEncodingErrorContext(err.context);
+    const suffix = context.length === 0 ? "" : ` (${context})`;
+    return `${err.kind}: ${err.message}${suffix}`;
   }
   if (err instanceof Error) {
     return err.message;
   }
   return String(err);
+}
+
+function formatEncodingErrorContext(
+  context: Record<string, unknown> | undefined,
+): string {
+  if (!context) return "";
+  // Stable key order so the persisted `last_error` is diffable across
+  // runs and tests. The most identifying fields come first.
+  const ORDER = [
+    "policyId",
+    "ruleIndex",
+    "path",
+    "valueKind",
+    "cmpKind",
+  ] as const;
+  const parts: string[] = [];
+  for (const key of ORDER) {
+    const value = context[key];
+    if (value === undefined || value === null) continue;
+    parts.push(`${key}=${formatContextValue(value)}`);
+  }
+  for (const [key, value] of Object.entries(context)) {
+    if ((ORDER as readonly string[]).includes(key)) continue;
+    if (value === undefined || value === null) continue;
+    parts.push(`${key}=${formatContextValue(value)}`);
+  }
+  return parts.join(", ");
+}
+
+function formatContextValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 const EVENT_KEY_PATTERN = /^[0-9]{1,39}$/;

@@ -38,7 +38,7 @@ function readEnumMembers(enumName: string): Set<string> {
   );
 }
 
-describe("inline-input enum translators", () => {
+describe("inline-policy graphql-name translators", () => {
   it("maps every RAW_EVENT_KINDS literal to a GraphQL RawEventKind member", () => {
     const members = readEnumMembers("RawEventKind");
     for (const kind of RAW_EVENT_KINDS) {

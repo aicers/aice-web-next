@@ -198,11 +198,24 @@ export interface RecomputeInput extends NewRunInput {
  * unique slot is never double-occupied (§3.5 "Recompute transaction
  * model").
  *
+ * The supersede UPDATE is guarded on `(owner_account_id, period_start,
+ * period_end)` in addition to `id`, so a stale, mistaken, or hostile
+ * caller cannot terminalise a `ready` row belonging to a different
+ * owner / window by passing the wrong `oldRunId`. The recompute model
+ * is defined for "the same user's same window with new selection
+ * conditions", so the fingerprints (policies / exclusions /
+ * baseline_version) are intentionally NOT in the WHERE clause — those
+ * are exactly what changes across a recompute. Route-level checks
+ * remain useful, but this repository helper is the lifecycle boundary
+ * that mutates terminal state and must not rely on `id` alone.
+ *
  * Returns the new run row on success. Throws
  * {@link PolicyTriageRunActiveSlotConflict} when:
  *
  *   - the existing row's status changed (already superseded / reaped),
- *     in which case the caller re-queries the active slot, or
+ *     the row does not match the supplied owner / window, or no row
+ *     exists for the id, in which case the caller re-queries the
+ *     active slot, or
  *   - the INSERT trips the partial unique index (a concurrent
  *     recompute won the race).
  */
@@ -222,13 +235,27 @@ export async function recomputeRun(
     );
     const newId = idResult.rows[0].new_id;
 
-    // Step 2: supersede the old row, but only if it's still `ready`.
-    // Rowcount = 0 means another transaction got there first.
+    // Step 2: supersede the old row, but only if it is still `ready`
+    // AND it belongs to the same owner / window we are recomputing
+    // for. Rowcount = 0 means another transaction got there first OR
+    // the supplied `oldRunId` does not match the recompute target —
+    // either way the caller must re-query the active slot rather than
+    // terminalise an unrelated row.
     const upd = await client.query(
       `UPDATE policy_triage_run
           SET status = 'superseded', superseded_by = $1, finalized_at = NOW()
-        WHERE id = $2 AND status = 'ready'`,
-      [newId, input.oldRunId],
+        WHERE id = $2
+          AND status = 'ready'
+          AND owner_account_id = $3
+          AND period_start = $4
+          AND period_end = $5`,
+      [
+        newId,
+        input.oldRunId,
+        input.ownerAccountId,
+        input.periodStartIso,
+        input.periodEndIso,
+      ],
     );
     if ((upd.rowCount ?? 0) === 0) {
       await client.query("ROLLBACK");

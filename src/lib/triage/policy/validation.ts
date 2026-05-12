@@ -9,7 +9,7 @@
  * under ticket 1B-2 (#447 §2.1, §3.4) and is not part of TriagePolicy
  * under the new model. Removing the legacy `match` / `not_match`
  * cmp kinds here keeps the stored shape aligned with review-web's
- * `AttrCmpKind` enum (see `inline-input.ts`).
+ * `AttrCmpKind` enum (see `@/lib/triage/inline-policy/kinds`).
  */
 
 import { isIP } from "node:net";

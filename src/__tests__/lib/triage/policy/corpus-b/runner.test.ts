@@ -420,11 +420,19 @@ describe("runCorpusBTriage", () => {
     // them up — synthesised pseudo-rows are no longer acceptable.
     expect(result.run.status).toBe("failed");
     expect(result.run.lastError).toContain("vector_unsupported");
+    // The persisted `last_error` must identify the offending policy
+    // and rule so the menu / audit / 1B-7 retention surfaces can act
+    // on it without re-deriving the location from the raw error kind.
+    expect(result.run.lastError).toContain("policyId=7");
+    expect(result.run.lastError).toContain("packet_attr.0");
     expect(mockInsertComputingRun).toHaveBeenCalledOnce();
     expect(mockMarkRunFailed).toHaveBeenCalledOnce();
     const failCall = mockMarkRunFailed.mock.calls[0];
     expect(failCall[1]).toBe("44");
-    expect(String(failCall[2])).toContain("vector_unsupported");
+    const persisted = String(failCall[2]);
+    expect(persisted).toContain("vector_unsupported");
+    expect(persisted).toContain("policyId=7");
+    expect(persisted).toContain("packet_attr.0");
   });
 
   it("fails the run when the page cap is reached with more pages available", async () => {

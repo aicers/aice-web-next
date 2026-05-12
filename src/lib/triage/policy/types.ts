@@ -12,8 +12,10 @@
  * input without any kind-by-kind reinterpretation. The byte-array
  * encoding of `first_value` / `second_value` for the GraphQL
  * `[Int!]!` shape happens at that boundary; we keep human-readable
- * strings here for storage and UI editing. See `inline-input.ts` for
- * the enum-name translator and round-trip test.
+ * strings here for storage and UI editing. See `./inline-translator.ts`
+ * for the storage→wire translator and
+ * `@/lib/triage/inline-policy/graphql-names` for the enum-name
+ * translator and its round-trip test.
  *
  * No `server-only` import: this module is also consumed by the form
  * components for client-side input shape parity.
