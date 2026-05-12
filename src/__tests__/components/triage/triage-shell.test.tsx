@@ -964,6 +964,59 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
     expect(screen.queryByText("Crumb:externalIp: 203.0.113.1")).toBeNull();
   });
+
+  it("post-drain validator does NOT also fall back to the asset root when the queued Tier 2 fetch errors", async () => {
+    // Regression for Round 4 Item 1. A Tier 2 hash restore queues the
+    // server-filtered ancestor fetch (`externalIp:203.0.113.1`) and
+    // defers a client-intersection step (`host:remoteonly.example`).
+    // The queued fetch fails (transport / backend error) — the user
+    // must see ONLY the standard error notice, not also the stale-hash
+    // toast and a trail reset to the asset root. #502 explicitly
+    // routes lookup/fetch failures through the standard error banner
+    // path. Before the fix, the drain effect cleared `draining.current`
+    // on the error transition and the post-drain validator then ran
+    // against an unexpanded corpus, missed the deferred host step, and
+    // fired `revertToRestoredAssetRoot()` on top of the error.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("externalIp:203.0.113.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("host:remoteonly.example") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        host: "corpushost.example",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    fetchTier2Mock.mockRejectedValueOnce(new Error("review timed out"));
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // The standard error notice surfaces.
+    expect(
+      screen.getByText(/error Dim:externalIp: 203.0.113.1 — review timed out/),
+    ).toBeTruthy();
+    // The stale-hash toast must NOT appear — the failure is a
+    // transport error, not a stale URL.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // The optimistically-restored trail stays intact (asset + the two
+    // steps) so the operator can retry by re-clicking. Crucially the
+    // trail did NOT reset to just the asset root crumb.
+    expect(screen.getByText("Crumb:externalIp: 203.0.113.1")).toBeTruthy();
+    expect(screen.getByText("Crumb:host: remoteonly.example")).toBeTruthy();
+  });
 });
 
 describe("TriageShell — Tier 2 only Learning method static section (#498)", () => {

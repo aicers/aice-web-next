@@ -814,6 +814,19 @@ export function TriageBaselineContent({
       // Still loading (or modal-gated through `pending`, handled
       // above): wait for the next render.
       if (status?.status === "loading") return;
+      // A queued ancestor fetch landed in error: surface only the
+      // error notice, not also the stale-hash toast / asset-root
+      // reset. #502 says lookup/fetch failures take the standard
+      // error banner path, so abort the rest of the restore chain —
+      // both the remaining queued fetches (whose corpus context is
+      // already incomplete) and the deferred client-intersection
+      // validations (which would otherwise misclassify a missing
+      // value as genuinely stale and fire `revertToRestoredAssetRoot`
+      // on top of the error).
+      if (status?.status === "error") {
+        pendingHashFetchesRef.current = [];
+        pendingValidationsRef.current = [];
+      }
       // Either ready, errored, or cleared via cancel: this slot is
       // free again. Fall through to fire the next queued item.
       draining.current = null;
