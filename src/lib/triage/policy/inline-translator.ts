@@ -1,22 +1,34 @@
 /**
  * Stored TriagePolicy row → inline `EventTriagePolicyInput`.
  *
- * Combines the enum-name translator (`src/lib/triage/policy/inline-input.ts`)
- * with the byte-array encoder from `./encode.ts` so the corpus B runner
- * can call `eventListWithTriage(triage: { policies: [...] })` with a
- * faithful wire representation of stored rows. Lives outside
- * `src/lib/triage/policy/` per §6: this is the inline-policy boundary
- * (shared with any future inline-policy caller), not a policy-mode
- * orchestrator.
+ * Composes the GraphQL enum-name translator
+ * (`src/lib/triage/inline-policy/graphql-names.ts`) with the byte-array
+ * encoder (`src/lib/triage/inline-policy/encode.ts`) so the corpus B
+ * runner can call `eventListWithTriage(triage: { policies: [...] })`
+ * with a faithful wire representation of stored `TriagePolicyRow`s.
+ *
+ * Lives inside `src/lib/triage/policy/` because it legitimately consumes
+ * the storage shape (`TriagePolicyRow` from `./types`). Per §6, the
+ * dependency direction is `triage/policy/ → triage/inline-policy/`
+ * (this module) and never the reverse — the inline-policy seam itself
+ * has no knowledge of stored-row shapes, so removing the policy mode
+ * leaves the encoder and GraphQL-name translator intact for any other
+ * inline-policy caller.
  */
 
+import {
+  type EncodedPacketAttrInput,
+  encodeRuleBytes,
+  InlinePolicyEncodingError,
+} from "@/lib/triage/inline-policy/encode";
 import {
   cmpKindToGraphql,
   rawEventKindToGraphql,
   responseKindToGraphql,
   threatCategoryToGraphql,
   valueKindToGraphql,
-} from "@/lib/triage/policy/inline-input";
+} from "@/lib/triage/inline-policy/graphql-names";
+
 import type {
   CmpKind,
   Confidence,
@@ -27,13 +39,7 @@ import type {
   ThreatCategory,
   TriagePolicyRow,
   ValueKind,
-} from "@/lib/triage/policy/types";
-
-import {
-  type EncodedPacketAttrInput,
-  encodeRuleBytes,
-  InlinePolicyEncodingError,
-} from "./encode";
+} from "./types";
 
 /**
  * Wire-shape ConfidenceInput. `threatCategory` is nullable to mirror
@@ -41,7 +47,7 @@ import {
  * matches against any category for its `(threatKind, confidence)`
  * pair. The runner-side panic-free contract requires us to round-trip
  * this null faithfully — see the smoke test in
- * `__tests__/lib/triage/inline-policy/translate.test.ts`.
+ * `__tests__/lib/triage/policy/inline-translator.test.ts`.
  */
 export interface EncodedConfidenceInput {
   threatCategory: string | null;
@@ -89,9 +95,6 @@ export function translatePolicyToInlineInput(
     };
   } catch (err) {
     if (err instanceof InlinePolicyEncodingError) {
-      // Re-throw with policy id context populated. Throw the same
-      // structured error type so the runner's catch sees a single
-      // class.
       throw new InlinePolicyEncodingError(err.kind, err.message, {
         ...err.context,
         policyId: policy.id,

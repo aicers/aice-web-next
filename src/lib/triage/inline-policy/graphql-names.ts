@@ -1,19 +1,20 @@
 /**
- * Translator from the stored TriagePolicy shape to review-web's
- * GraphQL inline policy input enum names.
+ * lower_snake_case → GraphQL SCREAMING_SNAKE_CASE enum-name translator
+ * for the inline triage policy boundary.
  *
- * The downstream `eventListWithTriage` path described in #447 §2.1
- * passes a stored policy inline as `PacketAttrInput` /
- * `ConfidenceInput` / `ResponseInput`. The byte-array encoding of
- * `firstValue` / `secondValue` (`[Int!]!` in GraphQL) is owned by the
- * inline-policy boundary that lives outside this `triage/policy/`
- * deprecatability namespace, so this module only handles the enum
- * name translation. The accompanying test
- * (`__tests__/lib/triage/policy/inline-input.test.ts`) iterates every
- * literal in `VALUE_KINDS` / `CMP_KINDS` / `RESPONSE_KINDS` /
- * `THREAT_CATEGORIES` and confirms the mapping is total — i.e. the
- * stored schema cannot persist a kind the GraphQL contract has no
- * name for.
+ * Every kind defined in `./kinds.ts` maps to its review-web GraphQL
+ * enum member here. The accompanying test
+ * (`__tests__/lib/triage/inline-policy/graphql-names.test.ts`) iterates
+ * every literal in `VALUE_KINDS` / `CMP_KINDS` / `RESPONSE_KINDS` /
+ * `RAW_EVENT_KINDS` / `THREAT_CATEGORIES` and confirms the mapping is
+ * total — i.e. no kind that storage accepts is silently dropped by the
+ * inline-policy encoder.
+ *
+ * Lives in `triage/inline-policy/` so callers other than corpus B can
+ * reach the translator without depending on `triage/policy/`. The
+ * storage namespace at `src/lib/triage/policy/inline-input.ts`
+ * re-exports these for backwards compatibility with internal callers
+ * that pre-date the split.
  */
 
 import type {
@@ -22,7 +23,7 @@ import type {
   ResponseKind,
   ThreatCategory,
   ValueKind,
-} from "./types";
+} from "./kinds";
 
 /**
  * Mirror of `enum ValueKind` in `schemas/review.graphql:8095`.

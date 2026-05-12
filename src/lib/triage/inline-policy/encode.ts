@@ -3,18 +3,17 @@
  *
  * `eventListWithTriage`'s `PacketAttrInput` carries `firstValue:
  * [Int!]!` and `secondValue: [Int!]` on the wire — packed byte arrays
- * whose layout depends on the rule's `value_kind`. The stored
- * TriagePolicy shape (#459 / `src/lib/triage/policy/types.ts`) keeps
- * those values as human-readable JSONB strings tagged by `value_kind`.
- * This module bridges the two so the corpus B runner can call the
- * resolver with a faithful inline policy without policy-side code
- * touching wire encoding.
+ * whose layout depends on the rule's `value_kind`. This module is the
+ * **inline-policy seam**: it knows the wire enums (`./kinds`) and the
+ * GraphQL name mapping (`./graphql-names`) but does NOT depend on the
+ * storage namespace at `src/lib/triage/policy/`, so the encoder can
+ * be reused by any future inline-policy caller without dragging in the
+ * policy-mode CRUD layer (§6 deprecatability seam in #447).
  *
- * Lives outside `src/lib/triage/policy/` per the §6 deprecatability
- * rule — the encoder is the **inline-policy boundary** and is shared
- * with any future inline-policy caller. Removing the policy mode
- * leaves this module in place; baseline-side code never needs it but
- * the encoder does not depend on the policy/ namespace either.
+ * The storage→wire translator that consumes a stored `TriagePolicyRow`
+ * lives at `src/lib/triage/policy/inline-translator.ts` because it
+ * legitimately depends on the storage shape; the dependency direction
+ * is `triage/policy/ → triage/inline-policy/`, never the reverse.
  *
  * The encoding rules below are anchored in `eventListWithTriage`'s
  * resolver expectations (review-web#842); any deviation is a bug,
@@ -25,8 +24,25 @@
 
 import { isIPv4, isIPv6 } from "node:net";
 
-import type { CmpKind, PacketAttr, ValueKind } from "@/lib/triage/policy/types";
-import { RANGE_CMP_KINDS } from "@/lib/triage/policy/types";
+import { type CmpKind, RANGE_CMP_KINDS, type ValueKind } from "./kinds";
+
+/**
+ * Minimal wire-shape view of one stored `packet_attr` rule that the
+ * encoder consumes. Mirrors the subset of the storage `PacketAttr`
+ * shape the encoder cares about so the inline-policy seam does not
+ * import `triage/policy/types`. Storage callers feed their stored row
+ * in directly — the shape is structurally compatible with `PacketAttr`
+ * but does not require the storage namespace to be present.
+ */
+export interface PacketAttrRule {
+  raw_event_kind: string;
+  attr_name: string;
+  value_kind: string;
+  cmp_kind: string;
+  first_value: unknown;
+  second_value?: unknown;
+  weight?: number | null;
+}
 
 /**
  * Structured error surfaced when a stored `packet_attr` rule cannot be
@@ -93,7 +109,7 @@ const U64_MAX = (BigInt(1) << BigInt(64)) - BigInt(1);
  * mismatch must surface as a structured `InlinePolicyEncodingError`
  * rather than a `TypeError` from `.trim()` or similar.
  */
-export function encodeRuleBytes(rule: PacketAttr): {
+export function encodeRuleBytes(rule: PacketAttrRule): {
   firstValue: number[];
   secondValue: number[] | null;
 } {

@@ -4,8 +4,8 @@ import {
   encodeRuleBytes,
   encodeValueByKind,
   InlinePolicyEncodingError,
+  type PacketAttrRule,
 } from "@/lib/triage/inline-policy";
-import type { PacketAttr } from "@/lib/triage/policy/types";
 
 /**
  * Round-trip guard for the byte-array encoder.
@@ -17,7 +17,7 @@ import type { PacketAttr } from "@/lib/triage/policy/types";
  * fields.
  */
 
-function buildRule(overrides: Partial<PacketAttr>): PacketAttr {
+function buildRule(overrides: Partial<PacketAttrRule>): PacketAttrRule {
   return {
     raw_event_kind: "http",
     attr_name: "host",

@@ -40,14 +40,14 @@ import {
   normalizeEventColumns,
   STORAGE_EXCLUSION_SET_RESOLVER,
 } from "@/lib/triage/exclusion";
-import {
-  type EncodedEventTriagePolicyInput,
-  InlinePolicyEncodingError,
-  translatePolicyToInlineInput,
-} from "@/lib/triage/inline-policy";
+import { InlinePolicyEncodingError } from "@/lib/triage/inline-policy";
 import type { TriageEvent } from "@/lib/triage/types";
 
 import { getCustomerPool } from "../customer-db";
+import {
+  type EncodedEventTriagePolicyInput,
+  translatePolicyToInlineInput,
+} from "../inline-translator";
 import type { TriagePolicyRow } from "../types";
 
 import { computePoliciesFingerprint } from "./fingerprint";

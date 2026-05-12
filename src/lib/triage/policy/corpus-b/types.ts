@@ -15,9 +15,12 @@ export type PolicyTriageRunStatus =
 /**
  * Corpus B-specific triage outcome stored on each
  * `policy_triaged_event` row. Matches review-web's `TriageScore` shape
- * (one entry per matching policy with the raw score). Empty list when
- * no policy matched; the run still owns the row because the runner
- * persists everything that passed standard filter + exclusions.
+ * (one entry per matching policy with the raw score). Every persisted
+ * row carries at least one matching policy score — the runner drops
+ * events whose `triageScores` is null or empty after the app-side
+ * exclusion pass, so a no-match period materialises as a `ready` run
+ * with zero `policy_triaged_event` rows rather than rows with empty
+ * score lists.
  */
 export interface PolicyTriageScoreSnapshot {
   scores: { policyId: number; score: number }[];

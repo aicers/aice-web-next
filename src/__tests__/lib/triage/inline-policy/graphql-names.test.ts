@@ -3,19 +3,17 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  cmpKindToGraphql,
-  rawEventKindToGraphql,
-  responseKindToGraphql,
-  threatCategoryToGraphql,
-  valueKindToGraphql,
-} from "@/lib/triage/policy/inline-input";
-import {
   CMP_KINDS,
+  cmpKindToGraphql,
   RAW_EVENT_KINDS,
   RESPONSE_KINDS,
+  rawEventKindToGraphql,
+  responseKindToGraphql,
   THREAT_CATEGORIES,
+  threatCategoryToGraphql,
   VALUE_KINDS,
-} from "@/lib/triage/policy/types";
+  valueKindToGraphql,
+} from "@/lib/triage/inline-policy";
 
 /**
  * Round-trip guard: every literal accepted by the stored TriagePolicy

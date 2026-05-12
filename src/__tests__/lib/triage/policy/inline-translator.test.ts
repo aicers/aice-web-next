@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  InlinePolicyEncodingError,
-  translatePolicyToInlineInput,
-} from "@/lib/triage/inline-policy";
+import { InlinePolicyEncodingError } from "@/lib/triage/inline-policy";
+import { translatePolicyToInlineInput } from "@/lib/triage/policy/inline-translator";
 import type { TriagePolicyRow } from "@/lib/triage/policy/types";
 
 /**
