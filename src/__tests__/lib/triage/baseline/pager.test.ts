@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 import {
-  CADENCE_PAGE_SIZE,
   type CadencePagerOptions,
   createCadencePager,
   cursorToEventKey,
@@ -355,15 +355,34 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
     }
 
     expect(fetchPage).toHaveBeenCalledTimes(1);
-    expect((fetchPage.mock.calls[0] as unknown[])[0]).toMatchObject({
+    const firstCallArgs = (
+      fetchPage.mock.calls[0] as Array<{
+        customerId: number;
+        variables: {
+          filter: { customers: string[] };
+          triage: null;
+          first: number;
+          after: string | null;
+        };
+      }>
+    )[0];
+    expect(firstCallArgs).toMatchObject({
       customerId: 42,
       variables: {
         filter: { customers: ["42"] },
         triage: null,
-        first: CADENCE_PAGE_SIZE,
         after: null,
       },
     });
+    // #537: review-web's `Connection::pagination_input` rejects any
+    // `first` outside `[0, 100]`, so the cadence pager MUST stay at or
+    // below `REVIEW_MAX_PAGE_SIZE`. This bound (not an exact value)
+    // is the contract — drift back to a higher constant has bricked
+    // Phase 1.A/1.B corpus ingestion before.
+    expect(firstCallArgs.variables.first).toBeGreaterThan(0);
+    expect(firstCallArgs.variables.first).toBeLessThanOrEqual(
+      REVIEW_MAX_PAGE_SIZE,
+    );
   });
 
   it("drops events matching an active exclusion before BOTH corpus INSERTs", async () => {
