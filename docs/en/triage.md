@@ -513,16 +513,16 @@ The panel surfaces events grouped by:
   used elsewhere in Triage (customer-defined network membership wins;
   RFC1918 / IPv6 special-use ranges are the fallback).
 - **Application** — registrable domain (Public Suffix List), host
-  header, URI pattern, user-agent. The URI is normalized to a
-  pattern: query and fragment stripped; numeric segments templated
-  to `{id}`, canonical UUIDs to `{uuid}`, long pure-hex segments to
-  `{hex}`. So `/api/v1/users/42?token=…` and
-  `/api/v1/users/99?token=…` collapse into the same pivot value
-  `/api/v1/users/{id}`.
-- **TLS** — JA3, JA3S, SNI (server name), certificate serial,
-  certificate subject CN.
-- **Per-protocol identifiers** (Policy mode only — the Baseline
-  corpus row does not carry these subtype-specific fields):
+  header, URI pattern, user-agent, plus per-protocol identifiers
+  for SSH, SMB, FTP, LDAP, and MQTT (Policy mode only — the
+  Baseline corpus row does not carry these subtype-specific
+  fields). The URI is normalized to a pattern: query and fragment
+  stripped; numeric segments templated to `{id}`, canonical UUIDs
+  to `{uuid}`, long pure-hex segments to `{hex}`. So
+  `/api/v1/users/42?token=…` and `/api/v1/users/99?token=…`
+  collapse into the same pivot value `/api/v1/users/{id}`. The
+  per-protocol identifiers share the Application family label in
+  the panel header but render as separate per-dimension sections:
   - **SSH** — client / server version strings (e.g.,
     `SSH-2.0-OpenSSH_8.4`) and the HASSH client / server
     fingerprints. HASSH is the SSH analogue of JA3 / JA3S, so the
@@ -538,6 +538,8 @@ The panel surfaces events grouped by:
     `LdapBruteForce` events do not carry these fields.
   - **MQTT** — subscribe (one pivot value per element of the per-
     session topic subscription list).
+- **TLS** — JA3, JA3S, SNI (server name), certificate serial,
+  certificate subject CN.
 - **DNS** — DNS query, DNS answer (multi-answer rows are split, and
   only IPv4 / IPv6 literal tokens are kept; CNAMEs and status text
   such as `NXDOMAIN` that REview sometimes surfaces in the same
