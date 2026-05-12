@@ -134,6 +134,67 @@ describe("encodeValueByKind", () => {
     }
   });
 
+  it("accepts JSON boolean literals for value_kind=bool", () => {
+    // Per #460's encoding-rules table, the JSONB boundary may hand us
+    // a native `true`/`false` in addition to the case-sensitive
+    // strings. Both must encode to the same single-byte payload.
+    expect(encodeValueByKind("bool", true)).toEqual([0x01]);
+    expect(encodeValueByKind("bool", false)).toEqual([0x00]);
+  });
+
+  it("rejects bool with other shapes (number / null / object)", () => {
+    for (const v of [0, 1, null, {}, "1", "0"] as unknown[]) {
+      expect(() => encodeValueByKind("bool", v)).toThrow(
+        InlinePolicyEncodingError,
+      );
+    }
+  });
+
+  it("accepts JSON numeric integers for integer / u_integer", () => {
+    // Safe-integer-range JSON numbers must encode the same as their
+    // string representation. Numbers outside the safe-integer range
+    // are rejected separately because JSON has already lost precision.
+    expect(encodeValueByKind("integer", 1)).toEqual([0, 0, 0, 0, 0, 0, 0, 1]);
+    expect(encodeValueByKind("u_integer", 42)).toEqual([
+      0, 0, 0, 0, 0, 0, 0, 42,
+    ]);
+    expect(() =>
+      encodeValueByKind("integer", Number.MAX_SAFE_INTEGER + 1),
+    ).toThrow(InlinePolicyEncodingError);
+    expect(() => encodeValueByKind("integer", 1.5)).toThrow(
+      InlinePolicyEncodingError,
+    );
+  });
+
+  it("accepts JSON numbers for float", () => {
+    expect(encodeValueByKind("float", 1)).toEqual([
+      0x3f, 0xf0, 0, 0, 0, 0, 0, 0,
+    ]);
+    expect(() => encodeValueByKind("float", Number.NaN)).toThrow(
+      InlinePolicyEncodingError,
+    );
+  });
+
+  it("rejects non-string / non-number shapes with structured errors", () => {
+    // Each of these would previously throw a `TypeError: value.trim is
+    // not a function` (or similar) without policy/rule context. The
+    // defensive boundary must convert them to `InlinePolicyEncodingError`.
+    for (const kind of ["integer", "u_integer", "float"] as const) {
+      expect(() => encodeValueByKind(kind, null)).toThrow(
+        InlinePolicyEncodingError,
+      );
+      expect(() => encodeValueByKind(kind, {})).toThrow(
+        InlinePolicyEncodingError,
+      );
+    }
+    expect(() => encodeValueByKind("string", 42 as unknown as string)).toThrow(
+      InlinePolicyEncodingError,
+    );
+    expect(() =>
+      encodeValueByKind("ipaddr", null as unknown as string),
+    ).toThrow(InlinePolicyEncodingError);
+  });
+
   it("rejects i64 overflow", () => {
     expect(() => encodeValueByKind("integer", "9223372036854775808")).toThrow(
       InlinePolicyEncodingError,

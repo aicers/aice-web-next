@@ -275,8 +275,10 @@ export async function recomputeRun(
  * Mark a `computing` run `ready` after its events have been inserted.
  * The caller is expected to have already populated
  * `policy_triaged_event` rows; this UPDATE only flips the status flag
- * and records duration. `created_at` from the row is read to compute
- * the elapsed duration if not provided.
+ * and records duration. Returns the number of rows updated — `0` means
+ * the row was no longer `computing` (already reaped by 1B-7 or
+ * superseded by a concurrent recompute), in which case the caller must
+ * not commit the in-flight transaction.
  *
  * Pool-scoped wrapper for callers that do not need to compose with an
  * outer transaction. The runner uses {@link markRunReadyOnClient} so
@@ -286,9 +288,9 @@ export async function markRunReady(
   customerId: number,
   runId: string,
   computationDurationMs: number,
-): Promise<void> {
+): Promise<number> {
   const pool = await getCustomerPool(customerId);
-  await markRunReadyOnClient(pool, runId, computationDurationMs);
+  return markRunReadyOnClient(pool, runId, computationDurationMs);
 }
 
 /**
@@ -297,21 +299,31 @@ export async function markRunReady(
  * `computing → ready` transition in the same transaction as the event
  * INSERTs, so a crash between event commit and ready flip cannot
  * leave the slot occupied as `computing` until 1B-7's reaper notices.
+ *
+ * The `AND status = 'computing'` guard is load-bearing: without it, a
+ * runner that finishes after 1B-7's reaper transitioned its row to
+ * `failed` (or after a concurrent recompute marked it `superseded`)
+ * would revive that terminal row back to `ready`, violating the
+ * "`failed` and `superseded` are terminal" contract from #460's
+ * "Run lifecycle and zombie recovery" section. Returns the rowcount
+ * so the caller can detect the lost-slot case and roll back instead
+ * of committing.
  */
 export async function markRunReadyOnClient(
   executor: Pick<pg.PoolClient, "query"> | Pick<pg.Pool, "query">,
   runId: string,
   computationDurationMs: number,
-): Promise<void> {
-  await executor.query(
+): Promise<number> {
+  const result = await executor.query(
     `UPDATE policy_triage_run
         SET status = 'ready',
             computation_duration_ms = $2,
             finalized_at = NOW(),
             last_error = NULL
-      WHERE id = $1`,
+      WHERE id = $1 AND status = 'computing'`,
     [runId, computationDurationMs],
   );
+  return result.rowCount ?? 0;
 }
 
 /**

@@ -54,6 +54,7 @@ import { computePoliciesFingerprint } from "./fingerprint";
 import { CORPUS_B_EVENT_LIST_QUERY } from "./queries";
 import {
   findActiveRun,
+  getRunById,
   insertComputingRun,
   insertTriagedEventsBatch,
   markRunFailed,
@@ -346,6 +347,40 @@ class CorpusBPageCapExceededError extends Error {
   }
 }
 
+/**
+ * Raised when the resolver returns `hasNextPage = true` but
+ * `endCursor = null`. Without an `endCursor` the runner cannot
+ * continue paging, so this is the same user-visible failure mode as
+ * the page cap: the run is incomplete and must not silently
+ * materialise as `ready`.
+ */
+class CorpusBMalformedPaginationError extends Error {
+  constructor() {
+    super(
+      "Corpus B: resolver returned hasNextPage=true with endCursor=null; cannot continue paging, run marked failed",
+    );
+    this.name = "CorpusBMalformedPaginationError";
+  }
+}
+
+/**
+ * Raised when the `computing → ready` UPDATE finds zero rows — meaning
+ * the run was already transitioned to a terminal status (`failed` by
+ * 1B-7's reaper, `superseded` by a concurrent recompute) before this
+ * runner reached the ready flip. The transaction is rolled back so the
+ * already-inserted events do not get committed under a stale run id;
+ * the runner re-reads the current row and returns it as-is rather than
+ * reviving a terminal row.
+ */
+class CorpusBRunSlotLostError extends Error {
+  constructor() {
+    super(
+      "Corpus B: run row was no longer in 'computing' state at the ready flip; another transition has already terminalised it",
+    );
+    this.name = "CorpusBRunSlotLostError";
+  }
+}
+
 async function runInsideClaimedSlot(
   args: ClaimedSlotArgs,
 ): Promise<CorpusBRunResult> {
@@ -425,7 +460,13 @@ async function runInsideClaimedSlot(
       }
       lastHasNextPage = conn.pageInfo.hasNextPage;
       if (!conn.pageInfo.hasNextPage) break;
-      if (conn.pageInfo.endCursor === null) break;
+      // `hasNextPage = true` with `endCursor = null` is a malformed
+      // pagination response: the runner cannot continue paging, so
+      // treating it as a clean exit would materialise an incomplete
+      // run as `ready`. Surface as a structured failure instead.
+      if (conn.pageInfo.endCursor === null) {
+        throw new CorpusBMalformedPaginationError();
+      }
       after = conn.pageInfo.endCursor;
       if (page + 1 === MAX_PAGES_PER_RUN) {
         truncated = true;
@@ -441,13 +482,35 @@ async function runInsideClaimedSlot(
     // UPDATE would otherwise leave the slot occupied as `computing`
     // until 1B-7's reaper noticed.
     elapsed = Date.now() - startedAt;
-    await markRunReadyOnClient(client, run.id, elapsed);
+    const flipped = await markRunReadyOnClient(client, run.id, elapsed);
+    if (flipped === 0) {
+      // The row was transitioned to a terminal status (`failed` by the
+      // reaper, `superseded` by a concurrent recompute) before this
+      // runner reached the ready flip. Roll back so the events do not
+      // commit under a stale run id and surface the current state of
+      // the row instead of reviving the terminal one.
+      throw new CorpusBRunSlotLostError();
+    }
 
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {
       // Already rolled back / connection broken.
     });
+    if (err instanceof CorpusBRunSlotLostError) {
+      // The row already has a terminal status — re-read it so the
+      // caller sees the actual outcome (failed / superseded) instead
+      // of a synthesised one. `markRunFailed` is intentionally NOT
+      // called here: its `WHERE status='computing'` guard would no-op
+      // anyway, and we must not write `last_error` over the existing
+      // terminal row.
+      const current = await getRunById(request.customerId, run.id);
+      return {
+        run: current ?? { ...run, status: "failed", lastError: err.message },
+        insertedEventCount: 0,
+        reusedCache: false,
+      };
+    }
     const message = formatRunError(err);
     await markRunFailed(request.customerId, run.id, message).catch(() => {
       // Best-effort: the original error is what matters.
@@ -510,5 +573,7 @@ export const _testing = {
   cursorToEventKey,
   exclusionsForResolver,
   CorpusBPageCapExceededError,
+  CorpusBMalformedPaginationError,
+  CorpusBRunSlotLostError,
   MAX_PAGES_PER_RUN,
 };

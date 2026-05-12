@@ -85,6 +85,13 @@ const U64_MAX = (BigInt(1) << BigInt(64)) - BigInt(1);
  * have already been rejected at policy storage time
  * (`validatePolicySemantics`), but the encoder defends again so a
  * hand-crafted inline call cannot smuggle one through.
+ *
+ * `rule.first_value` / `rule.second_value` are typed as `string` at the
+ * stored-row layer (#459's Zod schema), but the JSONB storage boundary
+ * may hand us strings, numbers, or booleans depending on caller. The
+ * encoder is the defensive boundary called out in #460: every shape
+ * mismatch must surface as a structured `InlinePolicyEncodingError`
+ * rather than a `TypeError` from `.trim()` or similar.
  */
 export function encodeRuleBytes(rule: PacketAttr): {
   firstValue: number[];
@@ -93,12 +100,13 @@ export function encodeRuleBytes(rule: PacketAttr): {
   const valueKind = rule.value_kind as ValueKind;
   const cmpKind = rule.cmp_kind as CmpKind;
   const firstValue = encodeValueByKind(valueKind, rule.first_value);
+  const second = rule.second_value as unknown;
+  const hasSecond =
+    second !== null &&
+    second !== undefined &&
+    !(typeof second === "string" && second.length === 0);
   if (!RANGE_CMP_KINDS.has(cmpKind)) {
-    if (
-      rule.second_value !== null &&
-      rule.second_value !== undefined &&
-      rule.second_value.length > 0
-    ) {
+    if (hasSecond) {
       // Stored row has a non-empty `second_value` for a non-range
       // comparison; the resolver expects `secondValue: null` here.
       // Encoding it would silently change the rule's semantics — the
@@ -112,32 +120,34 @@ export function encodeRuleBytes(rule: PacketAttr): {
     }
     return { firstValue, secondValue: null };
   }
-  if (
-    rule.second_value === null ||
-    rule.second_value === undefined ||
-    rule.second_value.length === 0
-  ) {
+  if (!hasSecond) {
     throw new InlinePolicyEncodingError(
       "second_value_required",
       `cmp_kind '${cmpKind}' requires a non-empty second_value`,
       { cmpKind },
     );
   }
-  const secondValue = encodeValueByKind(valueKind, rule.second_value);
+  const secondValue = encodeValueByKind(valueKind, second);
   return { firstValue, secondValue };
 }
 
 /**
- * Encode one stored value (as JSONB-stored text) according to its
- * declared `value_kind`. Returns an array of `[0, 255]` integers ready
- * for the GraphQL `[Int!]!` shape.
+ * Encode one stored value according to its declared `value_kind`.
+ * Returns an array of `[0, 255]` integers ready for the GraphQL
+ * `[Int!]!` shape.
+ *
+ * The stored TriagePolicy JSONB boundary may hand us strings, numbers,
+ * or booleans depending on origin. Each branch below normalizes the
+ * accepted shapes up front and converts every other shape into a
+ * structured {@link InlinePolicyEncodingError}, so the runner sees one
+ * error class regardless of where the bad shape came from.
  */
-export function encodeValueByKind(kind: ValueKind, value: string): number[] {
+export function encodeValueByKind(kind: ValueKind, value: unknown): number[] {
   switch (kind) {
     case "bool":
       return [encodeBool(value)];
     case "string":
-      return encodeUtf8(value);
+      return encodeUtf8(requireString(value, "string"));
     case "integer":
       return encodeI64(value);
     case "u_integer":
@@ -145,7 +155,7 @@ export function encodeValueByKind(kind: ValueKind, value: string): number[] {
     case "float":
       return encodeF64(value);
     case "ipaddr":
-      return encodeIpLiteral(value);
+      return encodeIpLiteral(requireString(value, "ipaddr"));
     case "vector":
       // Vector is out of scope for this issue per §3.5 — the stored
       // shape has no separate element kind, so the wire-format target
@@ -158,16 +168,36 @@ export function encodeValueByKind(kind: ValueKind, value: string): number[] {
   }
 }
 
-function encodeBool(value: string): number {
-  // Per issue #460: accepted stored inputs are the JSON `true`/`false`
-  // literals and the strings `"true"`/`"false"` — case-sensitive.
-  // Anything else (including `"True"`, `"TRUE"`, `"False"`, `"FALSE"`)
-  // is an encoding error.
+function requireString(value: unknown, kind: string): string {
+  if (typeof value !== "string") {
+    throw new InlinePolicyEncodingError(
+      `${kind}_invalid`,
+      `Expected string for value_kind=${kind}, got ${describeShape(value)}`,
+      { valueKind: kind },
+    );
+  }
+  return value;
+}
+
+function describeShape(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function encodeBool(value: unknown): number {
+  // Per #460's "Encoding rules per `value_kind`" table: accepted
+  // lexical inputs from JSONB storage are the JSON `true`/`false`
+  // literals **and** the strings `"true"`/`"false"` (case-sensitive).
+  // Anything else (`"True"`, `"TRUE"`, `1`, `0`, etc.) is an
+  // encoding error.
+  if (value === true) return 0x01;
+  if (value === false) return 0x00;
   if (value === "true") return 0x01;
   if (value === "false") return 0x00;
   throw new InlinePolicyEncodingError(
     "bool_invalid",
-    `Expected 'true' or 'false' for value_kind=bool, got ${JSON.stringify(value)}`,
+    `Expected boolean or 'true'/'false' for value_kind=bool, got ${JSON.stringify(value)}`,
     { valueKind: "bool" },
   );
 }
@@ -179,15 +209,50 @@ function encodeUtf8(value: string): number[] {
   return out;
 }
 
-function encodeI64(value: string): number[] {
-  const trimmed = value.trim();
+/**
+ * Normalize a JSONB scalar into a bigint-parseable string for the
+ * fixed-width integer encoders. JSON numbers beyond
+ * `Number.MAX_SAFE_INTEGER` cannot be trusted as i64 / u64 because
+ * the lexer has already lost precision — those are rejected with a
+ * structured error so the runner does not silently encode the wrong
+ * value.
+ */
+function normalizeIntegerSource(value: unknown, kind: string): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      throw new InlinePolicyEncodingError(
+        `${kind}_invalid`,
+        `Expected integer for value_kind=${kind}, got non-integer number ${JSON.stringify(value)}`,
+        { valueKind: kind },
+      );
+    }
+    if (!Number.isSafeInteger(value)) {
+      throw new InlinePolicyEncodingError(
+        `${kind}_invalid`,
+        `JSON number ${value} exceeds safe-integer range for value_kind=${kind}; pass as a string to preserve precision`,
+        { valueKind: kind },
+      );
+    }
+    return String(value);
+  }
+  if (typeof value === "bigint") return value.toString();
+  throw new InlinePolicyEncodingError(
+    `${kind}_invalid`,
+    `Expected integer for value_kind=${kind}, got ${describeShape(value)}`,
+    { valueKind: kind },
+  );
+}
+
+function encodeI64(value: unknown): number[] {
+  const trimmed = normalizeIntegerSource(value, "integer");
   let big: bigint;
   try {
     big = BigInt(trimmed);
   } catch {
     throw new InlinePolicyEncodingError(
       "integer_invalid",
-      `Expected i64 string for value_kind=integer, got ${JSON.stringify(value)}`,
+      `Expected i64 value for value_kind=integer, got ${JSON.stringify(value)}`,
       { valueKind: "integer" },
     );
   }
@@ -204,15 +269,15 @@ function encodeI64(value: string): number[] {
   return Array.from(buf.values());
 }
 
-function encodeU64(value: string): number[] {
-  const trimmed = value.trim();
+function encodeU64(value: unknown): number[] {
+  const trimmed = normalizeIntegerSource(value, "u_integer");
   let big: bigint;
   try {
     big = BigInt(trimmed);
   } catch {
     throw new InlinePolicyEncodingError(
       "u_integer_invalid",
-      `Expected u64 string for value_kind=u_integer, got ${JSON.stringify(value)}`,
+      `Expected u64 value for value_kind=u_integer, got ${JSON.stringify(value)}`,
       { valueKind: "u_integer" },
     );
   }
@@ -228,8 +293,26 @@ function encodeU64(value: string): number[] {
   return Array.from(buf.values());
 }
 
-function encodeF64(value: string): number[] {
-  const num = Number(value);
+function encodeF64(value: unknown): number[] {
+  let num: number;
+  if (typeof value === "number") {
+    num = value;
+  } else if (typeof value === "string") {
+    if (value.trim().length === 0) {
+      throw new InlinePolicyEncodingError(
+        "float_invalid",
+        `Expected finite IEEE-754 number for value_kind=float, got empty string`,
+        { valueKind: "float" },
+      );
+    }
+    num = Number(value);
+  } else {
+    throw new InlinePolicyEncodingError(
+      "float_invalid",
+      `Expected number or numeric string for value_kind=float, got ${describeShape(value)}`,
+      { valueKind: "float" },
+    );
+  }
   if (!Number.isFinite(num)) {
     throw new InlinePolicyEncodingError(
       "float_invalid",

@@ -7,6 +7,7 @@ const mockRecomputeRun = vi.hoisted(() => vi.fn());
 const mockInsertTriagedEventsBatch = vi.hoisted(() => vi.fn());
 const mockMarkRunReadyOnClient = vi.hoisted(() => vi.fn());
 const mockMarkRunFailed = vi.hoisted(() => vi.fn());
+const mockGetRunById = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/triage/policy/customer-db", () => ({
   getCustomerPool: mockGetCustomerPool,
@@ -24,6 +25,7 @@ vi.mock("@/lib/triage/policy/corpus-b/repository", async () => {
     insertTriagedEventsBatch: mockInsertTriagedEventsBatch,
     markRunReadyOnClient: mockMarkRunReadyOnClient,
     markRunFailed: mockMarkRunFailed,
+    getRunById: mockGetRunById,
   };
 });
 
@@ -72,6 +74,7 @@ describe("runCorpusBTriage", () => {
     mockInsertTriagedEventsBatch.mockReset();
     mockMarkRunReadyOnClient.mockReset();
     mockMarkRunFailed.mockReset();
+    mockGetRunById.mockReset();
   });
 
   it("returns the cache hit when an active ready run exists", async () => {
@@ -119,7 +122,7 @@ describe("runCorpusBTriage", () => {
     mockFindActiveRun.mockResolvedValueOnce(null);
     mockInsertComputingRun.mockResolvedValueOnce(buildRun({ id: "42" }));
     mockInsertTriagedEventsBatch.mockResolvedValueOnce(1);
-    mockMarkRunReadyOnClient.mockResolvedValueOnce(undefined);
+    mockMarkRunReadyOnClient.mockResolvedValueOnce(1);
 
     const { runCorpusBTriage } = await import(
       "@/lib/triage/policy/corpus-b/runner"
@@ -194,7 +197,7 @@ describe("runCorpusBTriage", () => {
     mockFindActiveRun.mockResolvedValueOnce(null);
     mockInsertComputingRun.mockResolvedValueOnce(buildRun({ id: "43" }));
     mockInsertTriagedEventsBatch.mockResolvedValue(0);
-    mockMarkRunReadyOnClient.mockResolvedValueOnce(undefined);
+    mockMarkRunReadyOnClient.mockResolvedValueOnce(1);
 
     const { runCorpusBTriage } = await import(
       "@/lib/triage/policy/corpus-b/runner"
@@ -387,5 +390,117 @@ describe("runCorpusBTriage", () => {
     expect(result.run.status).toBe("failed");
     expect(result.run.lastError).toContain("page cap");
     expect(mockMarkRunFailed).toHaveBeenCalledOnce();
+  });
+
+  it("fails the run when hasNextPage=true but endCursor is null", async () => {
+    // A malformed pagination response — the resolver claims more pages
+    // exist but does not give us a cursor to fetch them with. Treating
+    // this as a clean exit would materialise an incomplete run as
+    // `ready`; instead it must transition to `failed` like the page-cap
+    // case.
+    const fakePool = buildFakePool();
+    mockGetCustomerPool.mockResolvedValue(fakePool.pool);
+    mockFindActiveRun.mockResolvedValueOnce(null);
+    mockInsertComputingRun.mockResolvedValueOnce(buildRun({ id: "46" }));
+    mockInsertTriagedEventsBatch.mockResolvedValue(0);
+    mockMarkRunFailed.mockResolvedValueOnce(undefined);
+
+    const { runCorpusBTriage } = await import(
+      "@/lib/triage/policy/corpus-b/runner"
+    );
+
+    const result = await runCorpusBTriage(
+      {
+        customerId: 1,
+        ownerAccountId: "00000000-0000-0000-0000-000000000001",
+        periodStartIso: "2026-04-01T00:00:00.000Z",
+        periodEndIso: "2026-04-30T00:00:00.000Z",
+        policies: [],
+        baselineVersion: "phase1b-four-selector",
+        refreshReason: null,
+      },
+      {
+        exclusionResolver: {
+          async resolve() {
+            return { rules: [] };
+          },
+        },
+        fetchPage: async () => ({
+          eventListWithTriage: {
+            pageInfo: {
+              hasPreviousPage: false,
+              hasNextPage: true,
+              startCursor: null,
+              endCursor: null,
+            },
+            edges: [],
+          },
+        }),
+      },
+    );
+
+    expect(result.run.status).toBe("failed");
+    expect(result.run.lastError).toContain("endCursor=null");
+    expect(mockMarkRunFailed).toHaveBeenCalledOnce();
+    expect(mockMarkRunReadyOnClient).not.toHaveBeenCalled();
+  });
+
+  it("does not revive a terminal row when the ready flip finds zero rows", async () => {
+    // Simulates 1B-7's reaper transitioning the row to `failed` (or a
+    // concurrent recompute marking it `superseded`) while this runner
+    // was mid-flight. `markRunReadyOnClient` returns rowCount 0 because
+    // of its `AND status = 'computing'` guard, and the runner must
+    // surface the terminal row instead of resurrecting it.
+    const fakePool = buildFakePool();
+    mockGetCustomerPool.mockResolvedValue(fakePool.pool);
+    mockFindActiveRun.mockResolvedValueOnce(null);
+    mockInsertComputingRun.mockResolvedValueOnce(buildRun({ id: "47" }));
+    mockInsertTriagedEventsBatch.mockResolvedValue(0);
+    mockMarkRunReadyOnClient.mockResolvedValueOnce(0);
+    mockGetRunById.mockResolvedValueOnce(
+      buildRun({
+        id: "47",
+        status: "failed",
+        lastError: "timeout: runner did not finalize",
+      }),
+    );
+
+    const { runCorpusBTriage } = await import(
+      "@/lib/triage/policy/corpus-b/runner"
+    );
+    const result = await runCorpusBTriage(
+      {
+        customerId: 1,
+        ownerAccountId: "00000000-0000-0000-0000-000000000001",
+        periodStartIso: "2026-04-01T00:00:00.000Z",
+        periodEndIso: "2026-04-30T00:00:00.000Z",
+        policies: [],
+        baselineVersion: "phase1b-four-selector",
+        refreshReason: null,
+      },
+      {
+        exclusionResolver: {
+          async resolve() {
+            return { rules: [] };
+          },
+        },
+        fetchPage: async () => ({
+          eventListWithTriage: {
+            pageInfo: {
+              hasPreviousPage: false,
+              hasNextPage: false,
+              startCursor: null,
+              endCursor: "1",
+            },
+            edges: [],
+          },
+        }),
+      },
+    );
+
+    expect(result.run.status).toBe("failed");
+    expect(result.run.lastError).toBe("timeout: runner did not finalize");
+    expect(mockMarkRunFailed).not.toHaveBeenCalled();
+    expect(mockGetRunById).toHaveBeenCalledOnce();
   });
 });
