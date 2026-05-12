@@ -26,10 +26,17 @@ import "server-only";
  *       * Member-scan range (events read to populate predicates):
  *         `[previous_watermark − MAX_RULE_WINDOW_MS, new_horizon]`.
  *   - When `previous_watermark IS NULL` (fresh tenant), both ranges
- *     degenerate to `(-∞, new_horizon]`. `corpus_activated_at` is
- *     intentionally NOT used as an event-time floor (it is a
- *     wall-clock anchor for §7 active-window age, not an event-time
- *     marker; using it here would mis-bound a historical catch-up).
+ *     degenerate to `(-∞, new_horizon]` — no event-time lower bound
+ *     is applied. `corpus_activated_at` is intentionally NOT used
+ *     as an event-time floor (it is a wall-clock anchor for §7
+ *     active-window age, not an event-time marker; using it here
+ *     would mis-bound a historical catch-up). The page's own
+ *     `event_time.min` is also not used as a floor, because a
+ *     tenant that already has `baseline_triaged_event` rows when
+ *     migration 0008 lands carries rows that sit before this
+ *     page's min — those rows must be candidates on the first
+ *     tick or they would never be considered for finalization
+ *     again after the watermark advances past them.
  *   - Empty page (zero `baseline_triaged_event` survivors) is a
  *     no-op: `story_finalized_through` is NOT advanced. Advancing
  *     on an empty page would push the finalization horizon past
@@ -93,26 +100,36 @@ export async function runStepF(args: RunStepFArgs): Promise<StepFResult> {
     pageEventTimeRange.max.getTime() - SLOP_WINDOW_MS,
   );
 
-  // Member-scan range:
+  // Member-scan range (Story RFC §4):
   //   - first tick (NULL watermark): degenerate (-∞, new_horizon].
-  //     The page's own `event_time.min` is a natural lower bound but
-  //     we DO NOT clamp to `corpus_activated_at` (see file header).
-  //     Use `pageEventTimeRange.min` as a conservative lower bound;
-  //     the page's own min is by construction the earliest event
-  //     this customer has produced in step (e) for this page, and
-  //     prior-page rows are already finalized.
+  //     `corpus_activated_at` is intentionally NOT used as an
+  //     event-time floor (wall-clock anchor, not event-time
+  //     marker). Clamping to `pageEventTimeRange.min` would also
+  //     mis-bound a tenant that already had `baseline_triaged_event`
+  //     rows when migration 0008 landed: those rows sit before the
+  //     current page, the watermark would advance past them on
+  //     this commit, and they would never be considered for
+  //     finalization again. Use `null` to mean "no lower bound".
   //   - second+ tick: `previous_watermark − MAX_RULE_WINDOW_MS` so
   //     cross-page clusters whose `time_window_end` falls just past
   //     the previous watermark can pick up earlier members.
+  //
+  // The scan upper bound is `new_horizon`, NOT
+  // `pageEventTimeRange.max`. Events inside the slop window
+  // `(new_horizon, page_max]` cannot finalize this tick anyway —
+  // including them in the member scan would let them participate
+  // in clustering and could defer an otherwise-eligible Story
+  // whose other members all sit at-or-before `new_horizon`. They
+  // become visible on the next tick via the lookback range.
   const memberScanStart =
     previousWatermark === null
-      ? pageEventTimeRange.min
+      ? null
       : new Date(previousWatermark.getTime() - MAX_RULE_WINDOW_MS);
 
   const candidates = await readCandidateEventsInRange({
     client,
     memberScanStart,
-    memberScanEnd: pageEventTimeRange.max,
+    memberScanEnd: newHorizon,
   });
 
   const drafts = detectAllStories(candidates);

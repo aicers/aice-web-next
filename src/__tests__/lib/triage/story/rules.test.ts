@@ -135,6 +135,37 @@ describe("detectR1", () => {
     ]);
     expect(stories).toEqual([]);
   });
+
+  it("sliding-window: an R1 window starting inside a prior greedy bucket still fires", () => {
+    // Regression for the greedy-partition bug: events at 00:00 A,
+    // 00:09 A, 00:11 B contain a valid 10-minute window at
+    // [00:09, 00:11] with categories {A, B}. The greedy partition
+    // resets at 00:11 (because 00:11 − 00:00 = 11 min > 10 min)
+    // and produces buckets [00:00, 00:09] (only A) + [00:11]
+    // (only B), missing the valid {A, B} window.
+    const stories = detectR1([
+      event({
+        eventKey: "1",
+        eventTime: "2026-05-09T00:00:00Z",
+        category: "INITIAL_ACCESS",
+      }),
+      event({
+        eventKey: "2",
+        eventTime: "2026-05-09T00:09:00Z",
+        category: "INITIAL_ACCESS",
+      }),
+      event({
+        eventKey: "3",
+        eventTime: "2026-05-09T00:11:00Z",
+        category: "COMMAND_AND_CONTROL",
+      }),
+    ]);
+    expect(stories).toHaveLength(1);
+    const [s] = stories;
+    expect(s.members.map((m) => m.eventKey)).toEqual(["2", "3"]);
+    expect(s.timeWindowStart.toISOString()).toBe("2026-05-09T00:09:00.000Z");
+    expect(s.timeWindowEnd.toISOString()).toBe("2026-05-09T00:11:00.000Z");
+  });
 });
 
 describe("detectR3", () => {
@@ -226,6 +257,42 @@ describe("detectR3", () => {
       }),
     ]);
     expect(stories).toEqual([]);
+  });
+
+  it("sliding-window: a valid 1-hour window starting inside a prior greedy bucket still fires", () => {
+    // Regression for the greedy-partition bug: events at 00:00,
+    // 00:59, 01:01, 01:02 contain a valid 1-hour window at
+    // [00:59, 01:02] with 3 critical-selector hits. A greedy
+    // partition resets at 01:01 (because 01:01 − 00:00 = 61 min >
+    // 60 min) and produces buckets [00:00, 00:59] (size 2) +
+    // [01:01, 01:02] (size 2), missing the valid window.
+    const stories = detectR3([
+      event({
+        eventKey: "1",
+        eventTime: "2026-05-09T00:00:00Z",
+        selectorTags: ["S2-severe"],
+      }),
+      event({
+        eventKey: "2",
+        eventTime: "2026-05-09T00:59:00Z",
+        selectorTags: ["S2-severe"],
+      }),
+      event({
+        eventKey: "3",
+        eventTime: "2026-05-09T01:01:00Z",
+        selectorTags: ["S2-severe"],
+      }),
+      event({
+        eventKey: "4",
+        eventTime: "2026-05-09T01:02:00Z",
+        selectorTags: ["S2-severe"],
+      }),
+    ]);
+    expect(stories).toHaveLength(1);
+    const [s] = stories;
+    expect(s.members.map((m) => m.eventKey)).toEqual(["2", "3", "4"]);
+    expect(s.timeWindowStart.toISOString()).toBe("2026-05-09T00:59:00.000Z");
+    expect(s.timeWindowEnd.toISOString()).toBe("2026-05-09T01:02:00.000Z");
   });
 });
 

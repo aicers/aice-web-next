@@ -20,7 +20,7 @@ import "server-only";
 import type pg from "pg";
 
 import type { CandidateEvent, StoryDraft, StorySummaryPayload } from "./rules";
-import { STORY_VERSION } from "./rules";
+import { applyMemberCap, buildSummaryPayload, STORY_VERSION } from "./rules";
 
 export interface ReadCandidatesArgs {
   client: pg.PoolClient;
@@ -30,9 +30,11 @@ export interface ReadCandidatesArgs {
    * `[previous_watermark − max_rule_window, new_horizon]` so that an
    * R3 cluster whose `time_window_end` falls just past the previous
    * watermark can still pick up members that sit before the
-   * watermark but inside the rule window.
+   * watermark but inside the rule window. `null` means "no lower
+   * bound" — used on the first tick (NULL watermark), where the
+   * range degenerates to `(-∞, new_horizon]`.
    */
-  memberScanStart: Date;
+  memberScanStart: Date | null;
   /** Inclusive upper bound on `event_time` for the member scan. */
   memberScanEnd: Date;
 }
@@ -51,6 +53,31 @@ export async function readCandidateEventsInRange(
   args: ReadCandidatesArgs,
 ): Promise<CandidateEvent[]> {
   const { client, memberScanStart, memberScanEnd } = args;
+  const sql =
+    memberScanStart === null
+      ? `SELECT event_key::text   AS event_key,
+                event_time,
+                kind,
+                host(orig_addr)   AS orig_addr,
+                category,
+                selector_tags,
+                raw_score
+           FROM baseline_triaged_event
+          WHERE event_time <= $1`
+      : `SELECT event_key::text   AS event_key,
+                event_time,
+                kind,
+                host(orig_addr)   AS orig_addr,
+                category,
+                selector_tags,
+                raw_score
+           FROM baseline_triaged_event
+          WHERE event_time >= $1
+            AND event_time <= $2`;
+  const params =
+    memberScanStart === null
+      ? [memberScanEnd]
+      : [memberScanStart, memberScanEnd];
   const result = await client.query<{
     event_key: string;
     event_time: Date;
@@ -59,19 +86,7 @@ export async function readCandidateEventsInRange(
     category: string | null;
     selector_tags: string[];
     raw_score: number;
-  }>(
-    `SELECT event_key::text   AS event_key,
-            event_time,
-            kind,
-            host(orig_addr)   AS orig_addr,
-            category,
-            selector_tags,
-            raw_score
-       FROM baseline_triaged_event
-      WHERE event_time >= $1
-        AND event_time <= $2`,
-    [memberScanStart, memberScanEnd],
-  );
+  }>(sql, params);
   return result.rows.map((row) => ({
     eventKey: row.event_key,
     eventTime: row.event_time,
@@ -130,6 +145,90 @@ export async function insertAutoStory(
   }
   const groupId = insertGroup.rows[0].id;
   await insertStoryMembers(client, groupId, draft.members, "primary");
+  return { groupId };
+}
+
+export interface InsertCuratedStoryArgs {
+  /**
+   * Analyst's chosen focus asset. May be `null` for curated Stories
+   * — the partial unique-index dedup applies only to
+   * `kind = 'auto_correlated'`, so a curated row with NULL
+   * `primary_asset` is legal.
+   */
+  primaryAsset: string | null;
+  /**
+   * Analyst's selected period. Persisted verbatim to
+   * `time_window_start` / `time_window_end` on the `event_group`
+   * row.
+   */
+  timeWindowStart: Date;
+  timeWindowEnd: Date;
+  /**
+   * Member events. The §8 cap and deterministic sampling order are
+   * enforced here so #490's mutation cannot accidentally bypass
+   * the LLM context-budget contract that auto-correlated Stories
+   * obey.
+   */
+  members: ReadonlyArray<CandidateEvent>;
+  /**
+   * Optional Story-side `score`. Curated rows are not produced by
+   * a rule, so the column is nullable; when omitted, defaults to
+   * the post-cap `memberCount` for consistency with R3's score
+   * model (count of admitted members).
+   */
+  score?: number | null;
+}
+
+export interface InsertCuratedStoryResult {
+  /** Newly-inserted `event_group.id`. Curated rows are NOT subject
+   *  to the partial unique-index dedup (which is scoped to
+   *  `kind = 'auto_correlated'`), so the insert always succeeds. */
+  groupId: string;
+}
+
+/**
+ * INSERT one analyst-curated `event_group` row plus its members in
+ * the caller's open transaction. Mirrors `insertAutoStory`'s shape
+ * with three differences:
+ *
+ *   - `kind = 'analyst_curated'`.
+ *   - `correlation_rule_id = NULL` (curated rows have no rule).
+ *   - No `ON CONFLICT` clause — the partial unique index is scoped
+ *     to `kind = 'auto_correlated'`, so a curated save can
+ *     legitimately repeat a `(asset, window)` an analyst already
+ *     stored.
+ *
+ * Built so #490's "Save as Story" mutation has a stable storage
+ * path that obeys the §7 fixed-key `summary_payload` contract and
+ * the §8 member cap / sampling order. The UI control itself ships
+ * with #490.
+ */
+export async function insertCuratedStory(
+  client: pg.PoolClient,
+  args: InsertCuratedStoryArgs,
+): Promise<InsertCuratedStoryResult> {
+  const members = applyMemberCap(args.members);
+  const summary = buildSummaryPayload(members);
+  const score = args.score ?? members.length;
+  const insertGroup = await client.query<{ id: string }>(
+    `INSERT INTO event_group (
+        kind, correlation_rule_id, story_version,
+        time_window_start, time_window_end,
+        primary_asset, score, summary_payload
+      )
+      VALUES ('analyst_curated', NULL, $1, $2, $3, $4::inet, $5, $6::jsonb)
+      RETURNING id::text AS id`,
+    [
+      STORY_VERSION,
+      args.timeWindowStart,
+      args.timeWindowEnd,
+      args.primaryAsset,
+      score,
+      JSON.stringify(summary satisfies StorySummaryPayload),
+    ],
+  );
+  const groupId = insertGroup.rows[0].id;
+  await insertStoryMembers(client, groupId, members, "primary");
   return { groupId };
 }
 

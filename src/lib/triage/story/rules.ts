@@ -201,38 +201,55 @@ function groupByAsset(
 }
 
 /**
- * Greedy time-bounded clustering: sort by event_time, slide a window
- * of `windowMs`. Two events sit in the same cluster iff
- * `max(event_time) − min(event_time) ≤ windowMs`. Returns one
- * contiguous member list per cluster, in time order.
+ * True sliding-window clustering. For each event in ascending-time
+ * order, compute the maximal contiguous suffix `[i, j]` such that
+ * `events[j].time − events[i].time ≤ windowMs`. A cluster is emitted
+ * only when it is **left-maximal** — i.e., extending the cluster
+ * leftward by one event would break the window. This finds every
+ * maximal valid window, including overlapping ones, instead of the
+ * greedy "reset whenever the current window breaks" partition that
+ * misses windows starting inside a prior bucket.
  *
- * The greedy boundary is good enough for v1: a re-scan of the same
- * candidate set produces identical clusters, so the partial unique
- * index on `(rule, asset, window_start, window_end)` dedups
- * idempotently.
+ * Example (windowMs = 1 h): events at 00:00, 00:59, 01:01, 01:02.
+ *   - i=0 → [00:00, 00:59] (extending to 01:01 breaks: 61 min).
+ *     Left-maximal. Size 2.
+ *   - i=1 → [00:59, 01:01, 01:02] (window 3 min ≤ 1 h). Left-
+ *     maximal because adding events[0] would make the span
+ *     01:02 − 00:00 = 62 min > 60. Size 3.
+ *   - i=2, i=3 → contained in the i=1 cluster. Not left-maximal.
+ * The greedy partition misses the i=1 cluster entirely.
+ *
+ * Idempotency: the algorithm is deterministic given a sorted input,
+ * so a re-scan of the same candidate set produces identical
+ * clusters, and the partial unique index on
+ * `(rule, asset, window_start, window_end)` dedups across ticks.
  */
 function clusterByWindow(
   events: ReadonlyArray<CandidateEvent>,
   windowMs: number,
 ): CandidateEvent[][] {
+  const n = events.length;
+  if (n === 0) return [];
   const clusters: CandidateEvent[][] = [];
-  let current: CandidateEvent[] = [];
-  let clusterStart = 0;
-  for (const e of events) {
-    if (current.length === 0) {
-      current = [e];
-      clusterStart = e.eventTime.getTime();
-      continue;
+  let j = 0;
+  for (let i = 0; i < n; i += 1) {
+    if (j < i) j = i;
+    while (
+      j + 1 < n &&
+      events[j + 1].eventTime.getTime() - events[i].eventTime.getTime() <=
+        windowMs
+    ) {
+      j += 1;
     }
-    if (e.eventTime.getTime() - clusterStart <= windowMs) {
-      current.push(e);
-    } else {
-      clusters.push(current);
-      current = [e];
-      clusterStart = e.eventTime.getTime();
-    }
+    // Left-maximal: either at the start, or extending one step left
+    // would make the span exceed windowMs at `events[j]`.
+    const leftMaximal =
+      i === 0 ||
+      events[j].eventTime.getTime() - events[i - 1].eventTime.getTime() >
+        windowMs;
+    if (!leftMaximal) continue;
+    clusters.push(events.slice(i, j + 1));
   }
-  if (current.length > 0) clusters.push(current);
   return clusters;
 }
 

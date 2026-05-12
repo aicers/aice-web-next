@@ -204,13 +204,10 @@ describe("runStepF — slop window finalization filter", () => {
 });
 
 describe("runStepF — first-tick / NULL watermark", () => {
-  it("uses pageEventTimeRange.min as the member-scan lower bound (no corpus_activated_at floor)", async () => {
+  it("scans (-∞, new_horizon] — no event-time lower bound at all (no page-min floor, no corpus_activated_at floor)", async () => {
     const pageMax = new Date("2026-05-09T13:00:00Z");
     const pageMin = new Date("2026-05-09T10:00:00Z");
     const h = makeClient();
-    // No previous watermark, so the scan lower bound is the
-    // page's own `event_time.min`. The corpus_activated_at column
-    // is never consulted.
     h.setWatermark(null);
     h.setCandidates([
       {
@@ -239,17 +236,62 @@ describe("runStepF — first-tick / NULL watermark", () => {
     });
     expect(result.storiesInserted).toBe(1);
 
-    // The member-scan SELECT used pageMin as its lower bound.
+    // The member-scan SELECT omits the lower-bound predicate
+    // entirely on the first tick — only the upper bound
+    // (new_horizon = pageMax - slop) is bound.
     const scanQuery = h.queries.find((q) =>
       q.sql.includes("FROM baseline_triaged_event"),
     );
-    expect(scanQuery?.params?.[0]).toEqual(pageMin);
-    expect(scanQuery?.params?.[1]).toEqual(pageMax);
+    expect(scanQuery?.sql).not.toMatch(/event_time >= \$1/);
+    expect(scanQuery?.params?.[0]).toEqual(
+      new Date(pageMax.getTime() - SLOP_MS),
+    );
+    expect(scanQuery?.params).toHaveLength(1);
+  });
+
+  it("first-tick historical catch-up: rows older than pageMin are still candidates", async () => {
+    // Regression for the page-min floor bug: a tenant with
+    // pre-existing baseline_triaged_event rows (e.g., cadence
+    // started before migration 0008 landed) carries rows older
+    // than the current page's min. They must be visible on the
+    // first tick — otherwise the watermark advances past them and
+    // they are never considered for finalization again.
+    const pageMax = new Date("2026-05-09T13:00:00Z");
+    const pageMin = new Date("2026-05-09T12:00:00Z");
+    const h = makeClient();
+    h.setWatermark(null);
+    h.setCandidates([
+      {
+        // Older than pageMin: must still feed the predicate.
+        event_key: "old-1",
+        event_time: new Date("2026-05-09T11:00:00Z"),
+        kind: "HttpThreat",
+        orig_addr: "10.0.0.5",
+        category: "INITIAL_ACCESS",
+        selector_tags: [],
+        raw_score: 1.5,
+      },
+      {
+        event_key: "old-2",
+        event_time: new Date("2026-05-09T11:05:00Z"),
+        kind: "HttpThreat",
+        orig_addr: "10.0.0.5",
+        category: "COMMAND_AND_CONTROL",
+        selector_tags: [],
+        raw_score: 1.5,
+      },
+    ]);
+    const result = await runStepF({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      pageEventTimeRange: { min: pageMin, max: pageMax },
+    });
+    expect(result.storiesInserted).toBe(1);
   });
 });
 
 describe("runStepF — slop-replay member lookback", () => {
-  it("scans [previous_watermark − max_rule_window, page_max] so cross-watermark members are included", async () => {
+  it("scans [previous_watermark − max_rule_window, new_horizon] so cross-watermark members are included", async () => {
     const pageMax = new Date("2026-05-09T15:00:00Z");
     const pageMin = new Date("2026-05-09T13:30:00Z");
     const previousWatermark = new Date("2026-05-09T13:30:00Z");
@@ -297,14 +339,20 @@ describe("runStepF — slop-replay member lookback", () => {
     expect(result.storiesInserted).toBe(1);
 
     // The member-scan SELECT used previousWatermark − 1h as its
-    // lower bound (MAX_RULE_WINDOW_MS).
+    // lower bound (MAX_RULE_WINDOW_MS) and new_horizon (pageMax −
+    // slop) as its upper bound. Events in the slop window
+    // `(new_horizon, pageMax]` are intentionally excluded — they
+    // cannot finalize this tick anyway and become visible on the
+    // next tick via the lookback range.
     const scanQuery = h.queries.find((q) =>
       q.sql.includes("FROM baseline_triaged_event"),
     );
     const expectedLower = new Date(
       previousWatermark.getTime() - 60 * 60 * 1000,
     );
+    const expectedUpper = new Date(pageMax.getTime() - SLOP_MS);
     expect(scanQuery?.params?.[0]).toEqual(expectedLower);
+    expect(scanQuery?.params?.[1]).toEqual(expectedUpper);
   });
 
   it("skips drafts whose time_window_end is already past on the previous watermark", async () => {

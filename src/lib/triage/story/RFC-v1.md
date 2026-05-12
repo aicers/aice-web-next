@@ -105,12 +105,16 @@ window grows with it.
     sit before the watermark but inside the rule window.
 - **First-tick / NULL watermark.** When
   `story_finalized_through IS NULL`, both ranges degenerate to
-  `(-∞, new_horizon]`. The lower bound is the page's own
-  `event_time.min` (by construction the earliest event this
-  customer has produced for this page). `corpus_activated_at` is
-  intentionally NOT used as an event-time floor: it is a
-  wall-clock anchor for §7 active-window age, not an event-time
-  marker; using it here would mis-bound a historical catch-up.
+  `(-∞, new_horizon]` — no event-time lower bound is applied.
+  `corpus_activated_at` is intentionally NOT used as an
+  event-time floor (wall-clock anchor for §7 active-window age,
+  not an event-time marker; using it here would mis-bound a
+  historical catch-up). The page's own `event_time.min` is also
+  NOT used as a floor: a tenant that already has
+  `baseline_triaged_event` rows when migration 0008 lands carries
+  rows that sit before this page's min — those rows must be
+  candidates on the first tick or they would never be considered
+  for finalization again after the watermark advances past them.
 - **Empty page (zero `baseline_triaged_event` survivors).** Step
   (f) is a no-op and `story_finalized_through` is NOT advanced.
   The next non-empty page resumes from the previously-held
@@ -138,6 +142,22 @@ The cadence pager imports `runStepF` from
 `src/lib/triage/story/correlator.ts` and calls it immediately after
 `insertBaselineTriagedEventBatch`, inside the same per-page
 transaction the runner already opens.
+
+### Analyst-curated path
+
+`src/lib/triage/story/repository.ts` exports `insertCuratedStory`
+for the "Save as Story" mutation #490 ships. The shape mirrors
+`insertAutoStory` with three differences:
+
+- `kind = 'analyst_curated'`.
+- `correlation_rule_id = NULL` (curated rows have no rule).
+- No `ON CONFLICT` clause — the partial unique index is scoped to
+  `kind = 'auto_correlated'`, so a curated save can legitimately
+  repeat a `(asset, window)` an analyst already stored.
+
+The same §7 `summary_payload` contract and §8 member cap /
+sampling order apply, so curated rows are interchangeable with
+auto-correlated rows from the LLM's perspective.
 
 ## §6 — `story_version`
 
