@@ -14,6 +14,7 @@
     "format": "biome format --write",
     "check": "biome ci --error-on-warnings .",
     "check:scope": "node scripts/check-dispatch-context.mjs",
+    "check:sql-drift": "node scripts/check-read-path-sql-drift.mjs",
     "fix": "biome check --write src",
     "markdownlint": "markdownlint-cli2 '**/*.md'",
     "test": "vitest run",
