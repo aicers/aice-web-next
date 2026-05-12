@@ -52,6 +52,7 @@ interface FetchResolution {
     kind: "name-unresolved" | "scope-forbidden";
     sensorName: string;
   };
+  resolvedSensorId?: string;
 }
 
 function deferred(): {
@@ -374,6 +375,96 @@ describe("useTier2Pivot — cross-tenant sameSensor pivots do not share a cache 
     expect(result.current.getCached(dim, "edge-01", 42)?.events[0].id).toBe(
       "evt-42",
     );
+  });
+});
+
+describe("useTier2Pivot — modal-gated sameSensor preserves the peek's resolved nodeId on confirm (#502)", () => {
+  it("passes the peek's resolvedSensorId to the continuation so a lookup race between peek and confirm cannot drift onto a different sensor", async () => {
+    // Reviewer Round 11 repro: a `sameSensor=edge-01` first-page peek
+    // resolves the name to `nodeId=node-A-42` and trips the 20,000-
+    // event modal. Between peek and Confirm the lookup result shifts
+    // (sensor renamed, new tenant entry, or a race on the lookup
+    // endpoint). If the continuation re-ran `listSensors()` it would
+    // paginate a *different* sensor with the peek's `afterCursor` and
+    // merge unrelated rows into the first page. The hook must instead
+    // carry the resolved id on the stash and replay it verbatim on
+    // confirm.
+    const peek = deferred();
+    const continuation = deferred();
+    const fullPage = Array.from({ length: 100 }, (_, i) => makeEvent(i));
+    const continuationInputs: Array<{
+      valueKey: string;
+      afterCursor?: string | null;
+      resolvedSensorId?: string;
+      firstPageOnly?: boolean;
+    }> = [];
+
+    fetchTier2DimensionMock.mockImplementation(
+      async (input: {
+        valueKey: string;
+        firstPageOnly?: boolean;
+        afterCursor?: string | null;
+        resolvedSensorId?: string;
+      }): Promise<FetchResolution> => {
+        if (input.firstPageOnly === true) return peek.promise;
+        continuationInputs.push(input);
+        return continuation.promise;
+      },
+    );
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "sameSensor";
+
+    act(() => {
+      result.current.startFetch(dim, "edge-01", 42);
+    });
+
+    await act(async () => {
+      peek.resolve({
+        events: fullPage,
+        totalCount: "25000",
+        endCursor: "cursor-after-peek",
+        hasMore: true,
+        truncated: false,
+        // The peek's `(name, customerId)` lookup resolved to this id.
+        resolvedSensorId: "node-A-42",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.pending?.valueKey).toBe("edge-01");
+    expect(result.current.pending?.customerId).toBe(42);
+
+    await act(async () => {
+      result.current.confirmFetch();
+      await Promise.resolve();
+    });
+
+    // The continuation must carry the peek's resolved id verbatim. If
+    // the hook re-ran `listSensors()` (no `resolvedSensorId` on the
+    // input), the server might land on a different sensor and the
+    // merged page would be cross-sensor garbage.
+    expect(continuationInputs).toHaveLength(1);
+    expect(continuationInputs[0].afterCursor).toBe("cursor-after-peek");
+    expect(continuationInputs[0].resolvedSensorId).toBe("node-A-42");
+    // Original sensor *name* still flows through so the impl's own
+    // path is unambiguous and observable in fallback toasts.
+    expect(continuationInputs[0].valueKey).toBe("edge-01");
+
+    // Drain the continuation so vitest doesn't warn.
+    await act(async () => {
+      continuation.resolve({
+        events: [makeEvent(101)],
+        totalCount: "25000",
+        endCursor: null,
+        hasMore: false,
+        truncated: false,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.getCached(dim, "edge-01", 42)?.status).toBe("ready");
   });
 });
 

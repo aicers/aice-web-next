@@ -54,6 +54,17 @@ export interface Tier2FetchInput {
    * the per-dimension cap. Defaults to 0 — full walks start fresh.
    */
   alreadyFetched?: number;
+  /**
+   * Resolved REview `nodeId` from a prior peek's `(name, customerId)`
+   * → `nodeId` lookup. Only meaningful for the `sameSensor` dimension.
+   * When set, the dispatch reuses this id verbatim instead of running
+   * `listSensors()` again — without this bypass, a modal-gated walk
+   * would re-resolve the sensor name on Confirm, and if the lookup
+   * result changed between peek and confirm the continuation would
+   * paginate a different sensor against a stale `afterCursor` and
+   * merge unrelated rows into the first page (#502).
+   */
+  resolvedSensorId?: string;
 }
 
 /**
@@ -110,6 +121,18 @@ export interface Tier2FetchResult {
    * {@link Tier2SensorFallback}. Absent on every non-sensor pivot.
    */
   sensorFallback?: Tier2SensorFallback;
+  /**
+   * REview `nodeId` resolved from the `sameSensor` pivot's `(name,
+   * customerId)` lookup, surfaced to the hook so a modal-gated
+   * continuation can replay the *same* id against the peek's
+   * `endCursor` instead of re-running `listSensors()` on Confirm —
+   * without this, a lookup result that changed between peek and
+   * confirm would let the resumed page paginate a different sensor
+   * with a stale cursor (#502). Absent on every non-sensor pivot and
+   * on `sameSensor` calls that landed in a `sensorFallback` (no id
+   * was resolved).
+   */
+  resolvedSensorId?: string;
 }
 
 interface Tier2EventListVariables extends Record<string, unknown> {
@@ -148,46 +171,62 @@ export async function fetchTier2DimensionWithSession(
   // surfaces a non-blocking sensorFallback that the hook layer maps
   // to the asset-root toast.
   let resolvedValueKey = input.valueKey;
+  let resolvedSensorId: string | undefined;
   if (input.dimension === "sameSensor") {
-    const lookup = await listSensors(session);
-    if (!lookup.endpointAvailable) {
-      // Defensive: the endpoint guard would have to regress for this
-      // branch to trip. Treat as name-unresolved so the operator sees
-      // the same "name no longer maps" affordance rather than a
-      // crash.
-      return {
-        ...EMPTY_SENSOR_RESULT,
-        sensorFallback: {
-          kind: "name-unresolved",
-          sensorName: input.valueKey,
-        },
-      };
-    }
-    const matches = lookup.sensors.filter(
-      (s) => s.name === input.valueKey && s.customerId === input.customerId,
-    );
-    if (matches.length !== 1) {
-      // Zero matches → genuine stale-name. Multiple matches after the
-      // customer filter is defensively impossible (the lookup
-      // contract is unique-by-(name, customerId)), but a regression
-      // in REview shouldn't crash the menu — fall through to the
-      // same fallback so the operator at least sees the trail revert.
-      if (matches.length > 1) {
-        console.warn(
-          `Tier 2 sensor pivot: ${matches.length} sensors share name ` +
-            `"${input.valueKey}" under customerId=${input.customerId}; ` +
-            `expected a unique match. Falling back to the asset root.`,
-        );
+    if (input.resolvedSensorId !== undefined) {
+      // Continuation path: reuse the peek's resolved id so the
+      // `afterCursor` replay stays bound to the exact `nodeId` the
+      // peek's first page was paginated against. If we re-ran
+      // `listSensors()` here and the lookup result changed between
+      // peek and confirm (sensor renamed / new tenant entry added /
+      // race on the lookup endpoint), the continuation would
+      // paginate a different sensor with a stale cursor and the
+      // merged result would mix unrelated rows into the first page
+      // (#502).
+      resolvedValueKey = input.resolvedSensorId;
+      resolvedSensorId = input.resolvedSensorId;
+    } else {
+      const lookup = await listSensors(session);
+      if (!lookup.endpointAvailable) {
+        // Defensive: the endpoint guard would have to regress for this
+        // branch to trip. Treat as name-unresolved so the operator sees
+        // the same "name no longer maps" affordance rather than a
+        // crash.
+        return {
+          ...EMPTY_SENSOR_RESULT,
+          sensorFallback: {
+            kind: "name-unresolved",
+            sensorName: input.valueKey,
+          },
+        };
       }
-      return {
-        ...EMPTY_SENSOR_RESULT,
-        sensorFallback: {
-          kind: "name-unresolved",
-          sensorName: input.valueKey,
-        },
-      };
+      const matches = lookup.sensors.filter(
+        (s) => s.name === input.valueKey && s.customerId === input.customerId,
+      );
+      if (matches.length !== 1) {
+        // Zero matches → genuine stale-name. Multiple matches after the
+        // customer filter is defensively impossible (the lookup
+        // contract is unique-by-(name, customerId)), but a regression
+        // in REview shouldn't crash the menu — fall through to the
+        // same fallback so the operator at least sees the trail revert.
+        if (matches.length > 1) {
+          console.warn(
+            `Tier 2 sensor pivot: ${matches.length} sensors share name ` +
+              `"${input.valueKey}" under customerId=${input.customerId}; ` +
+              `expected a unique match. Falling back to the asset root.`,
+          );
+        }
+        return {
+          ...EMPTY_SENSOR_RESULT,
+          sensorFallback: {
+            kind: "name-unresolved",
+            sensorName: input.valueKey,
+          },
+        };
+      }
+      resolvedValueKey = matches[0].id;
+      resolvedSensorId = matches[0].id;
     }
-    resolvedValueKey = matches[0].id;
   }
 
   const filter = buildTier2Filter({
@@ -200,11 +239,20 @@ export async function fetchTier2DimensionWithSession(
     return { ...EMPTY_SENSOR_RESULT };
   }
   try {
-    return await paginateTier2(filter, ctx.role, jwtCustomerIds, signal, {
-      firstPageOnly: input.firstPageOnly === true,
-      afterCursor: input.afterCursor ?? null,
-      alreadyFetched: Math.max(0, input.alreadyFetched ?? 0),
-    });
+    const result = await paginateTier2(
+      filter,
+      ctx.role,
+      jwtCustomerIds,
+      signal,
+      {
+        firstPageOnly: input.firstPageOnly === true,
+        afterCursor: input.afterCursor ?? null,
+        alreadyFetched: Math.max(0, input.alreadyFetched ?? 0),
+      },
+    );
+    return resolvedSensorId !== undefined
+      ? { ...result, resolvedSensorId }
+      : result;
   } catch (err) {
     // Map review-web 0.33.0's forbidden-on-sensor-scope back into a
     // sensorFallback so the menu reverts to the asset root with a

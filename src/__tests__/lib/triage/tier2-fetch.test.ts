@@ -434,6 +434,94 @@ describe("fetchTier2DimensionWithSession", () => {
     });
   });
 
+  it("surfaces the resolvedSensorId on the result so the hook can replay it on continuation", async () => {
+    // The hook's modal-gated path needs the peek's resolved nodeId
+    // so a Confirm-time continuation can pass it back as
+    // `resolvedSensorId` and skip the lookup. The peek itself must
+    // therefore return the id it just resolved against
+    // `(name, customerId)`.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+    mockGraphqlRequest
+      .mockResolvedValueOnce(
+        sensorListResponse([
+          { nodeId: "node-A-42", hostFqdn: "edge-01", customerId: 42 },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        makePage({
+          nodeCount: 100,
+          hasNextPage: true,
+          endCursor: "page-1",
+          totalCount: "25000",
+        }),
+      );
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["Security Monitor"] }),
+      {
+        ...PERIOD,
+        dimension: "sameSensor",
+        valueKey: "edge-01",
+        customerId: 42,
+        firstPageOnly: true,
+      },
+    );
+
+    expect(result.resolvedSensorId).toBe("node-A-42");
+    expect(result.endCursor).toBe("page-1");
+  });
+
+  it("reuses the supplied resolvedSensorId verbatim on continuation and does NOT re-run listSensors()", async () => {
+    // Reviewer Round 11 repro at the impl boundary: the peek
+    // resolved `edge-01` to `node-A-42`. Between peek and Confirm
+    // the lookup result shifted — if the impl re-ran
+    // `listSensors()` here it would land on the wrong sensor and
+    // paginate against the peek's stale cursor. With
+    // `resolvedSensorId` on the input, the lookup is skipped
+    // entirely and the dispatched filter carries the peek's id.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+    // Only one GraphQL call should land — the eventList
+    // continuation. Stub a `listSensors()` response too so the
+    // assertion below pins the *absence* of the lookup call rather
+    // than a missing-mock crash.
+    mockGraphqlRequest.mockResolvedValueOnce(
+      makePage({
+        nodeCount: 40,
+        hasNextPage: false,
+        totalCount: "25000",
+      }),
+    );
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+    await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["Security Monitor"] }),
+      {
+        ...PERIOD,
+        dimension: "sameSensor",
+        valueKey: "edge-01",
+        customerId: 42,
+        afterCursor: "cursor-from-peek",
+        alreadyFetched: 100,
+        resolvedSensorId: "node-A-42",
+      },
+    );
+
+    // Exactly one round-trip — the eventList continuation. No
+    // lookup; without the bypass this would be two calls and the
+    // first would be `customerSensorList`.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+    const variables = mockGraphqlRequest.mock.calls[0][1];
+    expect(variables.filter.sensors).toEqual(["node-A-42"]);
+    expect(variables.after).toBe("cursor-from-peek");
+  });
+
   it("propagates a lookup transport error rather than surfacing it as a sensorFallback", async () => {
     // Per #502: "If the lookup itself fails (e.g., transport error),
     // surface the standard error banner rather than the stale-hash

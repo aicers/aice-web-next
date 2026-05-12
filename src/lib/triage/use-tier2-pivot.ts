@@ -228,6 +228,18 @@ interface PeekStash {
    * if the focus rotates between peek and confirm.
    */
   customerId: number;
+  /**
+   * REview `nodeId` the peek resolved `(name, customerId)` to. Only
+   * populated for the `sameSensor` dimension; the continuation passes
+   * this back through `fetchTier2Dimension({ resolvedSensorId })` so
+   * the resumed `afterCursor` replay paginates the *same* sensor the
+   * peek's first page came from. Without this, a lookup result that
+   * changed between peek and Confirm (sensor renamed / new tenant
+   * entry / race on the lookup endpoint) would let the continuation
+   * paginate a different sensor with a stale cursor and merge
+   * unrelated rows into the first page (#502).
+   */
+  resolvedSensorId: string | null;
   events: TriageEvent[];
   totalCount: string | null;
   endCursor: string | null;
@@ -506,6 +518,12 @@ export function useTier2Pivot(
           customerId: stash.customerId,
           afterCursor: stash.endCursor,
           alreadyFetched: stash.events.length,
+          // Reuse the peek's resolved nodeId so the continuation
+          // paginates the same sensor the cursor was issued against
+          // — see PeekStash.resolvedSensorId (#502).
+          ...(stash.resolvedSensorId !== null && {
+            resolvedSensorId: stash.resolvedSensorId,
+          }),
         });
         if (capturedGen !== generationRef.current) return;
         if (capturedToken !== trailTokenRef.current) return;
@@ -638,6 +656,7 @@ export function useTier2Pivot(
             dimension,
             valueKey,
             customerId,
+            resolvedSensorId: peek.resolvedSensorId ?? null,
             events: peek.events,
             totalCount: peek.totalCount,
             endCursor: peek.endCursor,
@@ -670,6 +689,7 @@ export function useTier2Pivot(
             dimension,
             valueKey,
             customerId,
+            resolvedSensorId: peek.resolvedSensorId ?? null,
             events: peek.events,
             totalCount: peek.totalCount,
             endCursor: peek.endCursor,
