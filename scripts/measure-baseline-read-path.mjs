@@ -271,23 +271,27 @@ export function runColdCommand(cmd, spawn = spawnSync) {
  *
  * This gives the planner the exact `ANY($3::inet[])` cardinality and
  * address distribution production sees after §4 per-bucket quota and
- * the §6 `MIN_NONZERO_FLOOR` fallback have run — not the SQL-only
- * superset the previous draft of this harness sampled. The result is
- * additionally capped at `limit` (`TRIAGE_ASSET_PAGE_SIZE = 100`)
- * because the production menu page applies the same cap upstream.
+ * the §6 `MIN_NONZERO_FLOOR` fallback have run.
+ *
+ * NOTE: the harness does NOT cap the address list at
+ * `TRIAGE_ASSET_PAGE_SIZE`. `loadCustomerSlice` drives the per-tenant
+ * fanout from `uniqueAddresses(events)` *without* a cap
+ * (`src/lib/triage/server-actions.ts:217-223`); the
+ * `TRIAGE_ASSET_PAGE_SIZE` cap only applies to the aggregated, sorted
+ * asset list at the end of `loadTriagePeriod`
+ * (`src/lib/triage/server-actions.ts:533`). `default_N` is unbounded
+ * (`computeDefaultN` in `compose.mjs`), so a representative tenant
+ * may legitimately send `perAssetObservedCounts` /
+ * `selectAssetDetailEventsBatch` an `ANY($3::inet[])` array larger
+ * than 100, and the harness must reproduce that.
  */
-export async function sampleAddresses(
-  pool,
-  periodStartIso,
-  periodEndIso,
-  limit,
-) {
+export async function sampleAddresses(pool, periodStartIso, periodEndIso) {
   const { rows } = await pool.query(SELECT_MENU_COHORT_SQL, [
     periodStartIso,
     periodEndIso,
     MENU_CANDIDATES_PER_BUCKET,
   ]);
-  return addressesFromCohortRows(rows, { limit });
+  return addressesFromCohortRows(rows);
 }
 
 /**
@@ -439,14 +443,18 @@ async function main(argv) {
         }
       }
 
-      // Sample at most 100 addresses (matches `TRIAGE_ASSET_PAGE_SIZE`)
-      // so the per-asset queries plan against the same input size
-      // production would feed them.
+      // Replay the production composition pipeline to derive the
+      // address list. Intentionally NOT capped at
+      // `TRIAGE_ASSET_PAGE_SIZE`: `loadCustomerSlice` drives the
+      // per-tenant fanout from the uncapped `uniqueAddresses(events)`
+      // (`server-actions.ts:217-223`), and the 100-asset cap only
+      // applies to the aggregated asset list at the very end of
+      // `loadTriagePeriod`. `default_N` is not bounded to 100, so the
+      // planner can legitimately see >100 addresses in production.
       addresses = await sampleAddresses(
         probePool,
         periodStartIso,
         periodEndIso,
-        100,
       );
     } finally {
       await probePool.end();

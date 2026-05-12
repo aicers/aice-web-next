@@ -102,7 +102,6 @@ describe("measure-baseline-read-path — sampleAddresses", () => {
       pool,
       "2026-04-12T00:00:00.000Z",
       "2026-05-12T00:00:00.000Z",
-      100,
     );
     expect(pool.capturedSql).toBe(SELECT_MENU_COHORT_SQL);
     expect(pool.capturedParams).toEqual([
@@ -135,9 +134,39 @@ describe("measure-baseline-read-path — sampleAddresses", () => {
       pool,
       "2026-04-12T00:00:00.000Z",
       "2026-05-12T00:00:00.000Z",
-      10,
     );
     expect(addresses).toEqual(["10.0.0.1", "10.0.0.2", "10.0.0.3"]);
+  });
+
+  it("does NOT cap the returned address list at TRIAGE_ASSET_PAGE_SIZE — production drives the per-tenant fanout from the uncapped uniqueAddresses(events)", async () => {
+    // Build a cohort large enough that composeMenu's §6 default_N
+    // (≈ 20 + 30 * log10(1 + postExclusionCount)) selects more than
+    // 100 menu rows. With postExclusionCount = 300, default_N ≈ 94;
+    // bump to 100k so default_N is well above the 100-row mark
+    // (≈ 20 + 30 * log10(100001) ≈ 170). Each row carries a unique
+    // orig_addr so the dedupe pass cannot shave the list back down.
+    const TOTAL = 300;
+    const rows = Array.from({ length: TOTAL }, (_, i) =>
+      makeCohortRow({
+        event_key: String(i + 1),
+        orig_addr: `10.${Math.floor(i / 256)}.${i % 256}.1`,
+        cohort_count: "100000",
+        bucket_count: String(TOTAL),
+        baseline_score: 1 - i * 1e-5,
+      }),
+    );
+    const pool = makePool(rows);
+    const addresses = await sampleAddresses(
+      pool,
+      "2026-04-12T00:00:00.000Z",
+      "2026-05-12T00:00:00.000Z",
+    );
+    // Regression: the prior harness truncated to 100. The production
+    // read path does not — `loadCustomerSlice` calls
+    // `uniqueAddresses(events)` without a cap, so the planner can
+    // legitimately see >100 addresses for `perAssetObservedCounts` /
+    // `selectAssetDetailEventsBatch`.
+    expect(addresses.length).toBeGreaterThan(100);
   });
 });
 
