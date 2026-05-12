@@ -213,6 +213,23 @@ describe("encodeValueByKind", () => {
     );
   });
 
+  it("rejects empty / whitespace-only integer and u_integer strings", () => {
+    // `BigInt("")` and `BigInt("   ".trim())` both evaluate to `0n`,
+    // so without an explicit guard a malformed JSONB `first_value: ""`
+    // would silently encode as zero rather than failing the run.
+    for (const kind of ["integer", "u_integer"] as const) {
+      expect(() => encodeValueByKind(kind, "")).toThrow(
+        InlinePolicyEncodingError,
+      );
+      expect(() => encodeValueByKind(kind, "   ")).toThrow(
+        InlinePolicyEncodingError,
+      );
+      expect(() => encodeValueByKind(kind, "\t\n")).toThrow(
+        InlinePolicyEncodingError,
+      );
+    }
+  });
+
   it("rejects invalid IP literal", () => {
     expect(() => encodeValueByKind("ipaddr", "not-an-ip")).toThrow(
       InlinePolicyEncodingError,

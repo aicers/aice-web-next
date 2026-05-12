@@ -433,6 +433,15 @@ async function runInsideClaimedSlot(
         // semantics. Drops are fine — corpus B is a single bounded
         // run, so watermark forward-progress is not a concern.
         if (isExcluded(cols, { rules: active.rules })) continue;
+        // `eventListWithTriage` returns every event passing the
+        // standard filter; non-matching events have `triageScores`
+        // null/empty. Persisting them would make "With my policies"
+        // surface the full standard-filter corpus with empty score
+        // lists instead of the documented zero-row ready result for a
+        // no-match run. Drop here so `policy_triaged_event` only
+        // carries policy-matched rows.
+        const scores = event.triageScores ?? [];
+        if (scores.length === 0) continue;
         rows.push({
           eventKey: cursorToEventKey(edge.cursor),
           eventTimeIso: event.time,
@@ -448,7 +457,7 @@ async function runInsideClaimedSlot(
           uri: cols.uri,
           category: event.category ?? null,
           snapshot: {
-            scores: (event.triageScores ?? []).map((s) => ({
+            scores: scores.map((s) => ({
               policyId: Number(s.policyId),
               score: s.score,
             })),

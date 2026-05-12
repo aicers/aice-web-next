@@ -244,7 +244,7 @@ describe("runCorpusBTriage", () => {
                   origAddr: "10.0.0.1",
                   respAddr: "10.0.0.2",
                   serverName: "evil.example",
-                  triageScores: [],
+                  triageScores: [{ policyId: "1", score: 2.0 }],
                 },
               },
               {
@@ -259,7 +259,7 @@ describe("runCorpusBTriage", () => {
                   origAddr: "10.0.0.1",
                   respAddr: "10.0.0.2",
                   serverName: "good.example",
-                  triageScores: [],
+                  triageScores: [{ policyId: "1", score: 1.0 }],
                 },
               },
             ],
@@ -275,6 +275,93 @@ describe("runCorpusBTriage", () => {
     const insertedRows = mockInsertTriagedEventsBatch.mock.calls[0][2];
     expect(insertedRows).toHaveLength(1);
     expect(insertedRows[0].host).toBe("good.example");
+  });
+
+  it("drops events with no policy match (null/empty triageScores)", async () => {
+    // `eventListWithTriage` returns every event passing the standard
+    // filter; non-matching events have `triageScores` null or empty.
+    // The runner must not persist those — "With my policies" should
+    // be a zero-row ready run when nothing matched, not the full
+    // standard-filter corpus with empty score lists.
+    const fakePool = buildFakePool();
+    mockGetCustomerPool.mockResolvedValue(fakePool.pool);
+    mockFindActiveRun.mockResolvedValueOnce(null);
+    mockInsertComputingRun.mockResolvedValueOnce(buildRun({ id: "45" }));
+    mockInsertTriagedEventsBatch.mockResolvedValue(0);
+    mockMarkRunReadyOnClient.mockResolvedValueOnce(1);
+
+    const { runCorpusBTriage } = await import(
+      "@/lib/triage/policy/corpus-b/runner"
+    );
+
+    const result = await runCorpusBTriage(
+      {
+        customerId: 1,
+        ownerAccountId: "00000000-0000-0000-0000-000000000001",
+        periodStartIso: "2026-04-01T00:00:00.000Z",
+        periodEndIso: "2026-04-30T00:00:00.000Z",
+        policies: [],
+        baselineVersion: "phase1b-four-selector",
+        refreshReason: null,
+      },
+      {
+        exclusionResolver: {
+          async resolve() {
+            return { rules: [] };
+          },
+        },
+        fetchPage: async () => ({
+          eventListWithTriage: {
+            pageInfo: {
+              hasPreviousPage: false,
+              hasNextPage: false,
+              startCursor: null,
+              endCursor: "2",
+            },
+            edges: [
+              {
+                cursor: "1",
+                node: {
+                  __typename: "HttpThreat",
+                  id: "1",
+                  time: "2026-04-15T00:00:00.000Z",
+                  sensor: "s",
+                  category: null,
+                  level: null,
+                  origAddr: "10.0.0.1",
+                  respAddr: "10.0.0.2",
+                  host: "a.example",
+                  uri: "/x",
+                  triageScores: null,
+                },
+              },
+              {
+                cursor: "2",
+                node: {
+                  __typename: "HttpThreat",
+                  id: "2",
+                  time: "2026-04-15T00:00:00.000Z",
+                  sensor: "s",
+                  category: null,
+                  level: null,
+                  origAddr: "10.0.0.1",
+                  respAddr: "10.0.0.2",
+                  host: "b.example",
+                  uri: "/y",
+                  triageScores: [],
+                },
+              },
+            ],
+          },
+        }),
+      },
+    );
+
+    expect(result.run.status).toBe("ready");
+    expect(result.insertedEventCount).toBe(0);
+    // The batch INSERT is not called at all when no row survived
+    // the exclusion + score filter — preferred over a zero-row call.
+    expect(mockInsertTriagedEventsBatch).not.toHaveBeenCalled();
   });
 
   it("transitions to failed and persists last_error on encoding failure", async () => {

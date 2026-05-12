@@ -218,7 +218,24 @@ function encodeUtf8(value: string): number[] {
  * value.
  */
 function normalizeIntegerSource(value: unknown, kind: string): string {
-  if (typeof value === "string") return value.trim();
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    // `BigInt("")` and `BigInt("   ".trim())` both evaluate to `0n`, so
+    // an empty / whitespace-only JSONB `first_value` (or `second_value`)
+    // would silently encode as zero — a real, valid wire payload that
+    // does not represent any rule the operator wrote. The encoder is
+    // the defensive boundary per #460, so reject up front with a
+    // structured error instead of letting the runner persist a
+    // zero-bytes rule.
+    if (trimmed.length === 0) {
+      throw new InlinePolicyEncodingError(
+        `${kind}_invalid`,
+        `Expected integer for value_kind=${kind}, got empty string`,
+        { valueKind: kind },
+      );
+    }
+    return trimmed;
+  }
   if (typeof value === "number") {
     if (!Number.isFinite(value) || !Number.isInteger(value)) {
       throw new InlinePolicyEncodingError(
