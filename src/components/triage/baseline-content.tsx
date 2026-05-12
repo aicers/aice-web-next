@@ -89,6 +89,16 @@ export interface TriageBaselineLabels {
   tier2Error: Tier2ErrorNoticeLabels;
   tier2Progress: Tier2ProgressNoticeLabels;
   staleHashFallback: string;
+  /**
+   * Surfaced when the Tier 2 `sameSensor` pivot resolved a sensor name
+   * to a `nodeId` that REview rejected with `Forbidden` because the
+   * sensor is no longer in the caller's customer scope (#502 —
+   * `scope-forbidden` arm). Distinct from {@link staleHashFallback},
+   * which covers the URL-no-longer-matches-corpus case (and the
+   * `name-unresolved` arm), so the operator can tell "no longer
+   * accessible in your scope" apart from "this URL is stale".
+   */
+  sensorScopeForbiddenFallback: string;
 }
 
 interface TriageBaselineContentProps {
@@ -218,6 +228,18 @@ export function TriageBaselineContent({
     // Without this clear the operator could see chips that no longer
     // make sense against the freshly-loaded corpus.
     setRecentKeywords([]);
+    // The fallback notice describes the prior trail; once the corpus
+    // rotates it is no longer accurate and would otherwise persist
+    // across the reset.
+    setFallbackNotice(null);
+    // The corpus has rotated — any pending hash-restore work was
+    // queued against the prior corpus and would no longer make sense
+    // against the freshly loaded events. Clear it so a queued ancestor
+    // fetch does not fire under the wrong period / customer scope and
+    // so the deferred validator does not run against the new asset.
+    pendingHashFetchesRef.current = [];
+    pendingValidationsRef.current = [];
+    draining.current = null;
     // `customerScope` is named here because the Tier 2 cache reset in
     // `useTier2Pivot` rotates on it too; without it a scope switch that
     // happens to land on the same top asset would clear the cache but
@@ -250,10 +272,21 @@ export function TriageBaselineContent({
     for (const ev of result.events) corpusKeys.add(tier2DedupeKey(ev));
     const seen = new Set<string>();
     const out: ScoredTriageEvent[] = [];
+    // The asset crumb's `customerId` keys the Tier 2 cache lookup
+    // (#502 — without it, two tenants pivoting the same value would
+    // cross-contaminate). The crumb is always the trail head in
+    // Baseline mode; fall back to 0 only for the defensive empty-
+    // trail case so the lookup stays a no-op cache miss.
+    const assetCrumbCustomerId =
+      trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
     for (const step of trail) {
       if (step.kind !== "dimension") continue;
       if (!isTier2ServerDimension(step.dimension)) continue;
-      const cached = tier2.getCached(step.dimension, step.value.key);
+      const cached = tier2.getCached(
+        step.dimension,
+        step.value.key,
+        assetCrumbCustomerId,
+      );
       if (!cached || cached.events.length === 0) continue;
       for (const ev of cached.events) {
         const key = tier2DedupeKey(ev);
@@ -261,15 +294,9 @@ export function TriageBaselineContent({
         seen.add(key);
         // Tier 2 fetch results are flat `TriageEvent[]` from the
         // Policy fetch service and do not carry a per-tenant marker.
-        // In Baseline mode the operator focuses one asset at a time,
-        // so attribute Tier 2-spliced events to the trail's asset
-        // crumb. The pivot index filters on `(customerId, origAddr)`
-        // for the asset step, which is the only consumer of this
-        // marker.
-        const assetCrumbCustomerId =
-          trail.length > 0 && trail[0].kind === "asset"
-            ? trail[0].customerId
-            : 0;
+        // Attribute the spliced events to the trail's asset crumb so
+        // the pivot index's `(customerId, origAddr)` filter for the
+        // asset step still resolves.
         out.push({
           ...ev,
           score: baselineScore(ev),
@@ -309,16 +336,19 @@ export function TriageBaselineContent({
       activeStep.kind === "dimension" &&
       isStaticTier2Dimension(activeStep.dimension)
     ) {
-      const cached = tier2.getCached(
-        activeStep.dimension,
-        activeStep.value.key,
-      );
-      if (!cached) return [];
       // Tier 2 fetch results lack a per-tenant marker; attribute them
       // to the trail's asset crumb so the synthesized pivot-focus row
       // can still identify the customer (see `expandedTier2Events`).
+      // The same crumb keys the Tier 2 lookup so cross-tenant cache
+      // entries cannot collide (#502).
       const assetCrumbCustomerId =
         trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
+      const cached = tier2.getCached(
+        activeStep.dimension,
+        activeStep.value.key,
+        assetCrumbCustomerId,
+      );
+      if (!cached) return [];
       return cached.events.map((ev) => ({
         ...ev,
         score: baselineScore(ev),
@@ -347,10 +377,15 @@ export function TriageBaselineContent({
   // the safer fallback is the asset card.
   const pivotFocusAsset: TriageAsset | null = useMemo(() => {
     if (!activeStep || activeStep.kind !== "dimension") return null;
+    const assetCrumbCustomerId =
+      trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
     const isReadyStaticTier2 =
       isStaticTier2Dimension(activeStep.dimension) &&
-      tier2.getCached(activeStep.dimension, activeStep.value.key)?.status ===
-        "ready";
+      tier2.getCached(
+        activeStep.dimension,
+        activeStep.value.key,
+        assetCrumbCustomerId,
+      )?.status === "ready";
     if (focusEvents.length === 0 && !isReadyStaticTier2) return null;
     const dimensionLabel = labels.pivotPanel.dimensions[activeStep.dimension];
     const address = `${dimensionLabel}: ${activeStep.value.label}`;
@@ -419,11 +454,10 @@ export function TriageBaselineContent({
   // hidden in Tier 1 mode — their click action is a Tier 2 fetch and
   // surfacing them under Tier 1 would let the operator click a row
   // that goes nowhere. They reappear under the "Tier 2 only" group
-  // when the toggle is on. In Tier 2 mode the `sameSensor` row is
-  // hidden until a `triage:read`-compatible sensor name→ID lookup
-  // ships (#453); the panel surfaces a disabled placeholder with the
-  // "requires sensor index" tooltip so the operator can see that the
-  // row is intentionally absent.
+  // when the toggle is on. As of #502 the `sameSensor` row is now
+  // live in Tier 2 mode (the panel click resolves the sensor name to
+  // REview's opaque `nodeId` against the shared lookup before
+  // issuing the fetch), so no Tier 2 suppression is needed.
   const sections = useMemo(() => {
     const dimById = new Map<string, ReturnType<typeof getPivotDimension>>();
     const isTier2Only = (dim: string): boolean => {
@@ -443,11 +477,7 @@ export function TriageBaselineContent({
     if (scope !== "tier2") {
       return allSections.filter((s) => !isTier2Only(s.dimension));
     }
-    return allSections.filter((s) => s.dimension !== "sameSensor");
-  }, [allSections, scope]);
-  const sensorDeferredInTier2 = useMemo(() => {
-    if (scope !== "tier2") return false;
-    return allSections.some((s) => s.dimension === "sameSensor");
+    return allSections;
   }, [allSections, scope]);
 
   // Surface truncation from both the Tier 1 loader (5,000-event corpus
@@ -464,14 +494,58 @@ export function TriageBaselineContent({
   const panelTruncated = useMemo(() => {
     if (result.truncated) return true;
     if (scope !== "tier2") return false;
+    const assetCrumbCustomerId =
+      trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
     for (const step of trail) {
       if (step.kind !== "dimension") continue;
       if (!isTier2ServerDimension(step.dimension)) continue;
-      const cached = tier2.getCached(step.dimension, step.value.key);
+      const cached = tier2.getCached(
+        step.dimension,
+        step.value.key,
+        assetCrumbCustomerId,
+      );
       if (cached?.truncated === true) return true;
     }
     return false;
   }, [result.truncated, scope, trail, tier2]);
+
+  // Cancel any hash-restore work still in flight. Explicit user
+  // navigation (new asset, pivot click, crumb backtrack) replaces or
+  // extends the trail the restore was driving; without aborting,
+  // (a) the queued Tier 2 ancestor fetches would keep firing under the
+  // restored asset's `customerId` even though the trail no longer
+  // shows them, (b) the post-drain client-intersection validator would
+  // run against a now-different trail and could fire
+  // `revertToRestoredAssetRoot()` — surfacing the stale-hash banner on
+  // top of the operator's fresh selection and trimming any pivot they
+  // added in the meantime, and (c) `draining.current` would let the
+  // next render dispatch a stale queued item even after the queue was
+  // cleared. The reviewer's repro (#502 Round 7) is: hash-restore
+  // `asset A → country=KR → ja3=abc`, click a different asset before
+  // the queued `country=KR` resolves, then let it finish — the
+  // deferred validator would otherwise still run.
+  const abortHashRestore = useCallback(() => {
+    pendingHashFetchesRef.current = [];
+    pendingValidationsRef.current = [];
+    draining.current = null;
+  }, []);
+
+  // Dismiss every modal-gated Tier 2 projection along with its parked
+  // peek stash and loading entry. Called on *trail abandonment*
+  // (selecting a different asset, backtracking via a crumb, clicking
+  // the asset-root crumb) — not on extension (a fresh pivot click on
+  // the same trail still queues behind any open modal, since that is
+  // the intentional two-large-projection-per-trail behavior documented
+  // at `use-tier2-pivot.ts`'s `pendingQueue` declaration). The
+  // reviewer's Round 8 repro is: click a Tier 2 server dimension on
+  // asset A whose first page trips the 20,000-event modal, then
+  // select asset B before answering — without this the modal stays
+  // open on B showing A's projection and Confirm would resume A's
+  // parked stash under A's `(dimension, valueKey, customerId)` even
+  // though the trail is now B's.
+  const abortPendingTier2Projections = useCallback(() => {
+    tier2.dismissAllPending();
+  }, [tier2]);
 
   const onSelectAsset = useCallback(
     (focus: { customerId: number; address: string }) => {
@@ -485,8 +559,18 @@ export function TriageBaselineContent({
           address: focus.address,
         },
       ]);
+      // Any prior fallback notice described the previous trail; once
+      // the operator moves to a fresh asset it would just be stale
+      // copy on the page.
+      setFallbackNotice(null);
+      abortHashRestore();
+      // The prior trail's modal-gated Tier 2 projection (if any) is
+      // tied to its `(dimension, valueKey, customerId)` tuple; a
+      // Confirm after the asset swap would resume work for the trail
+      // the operator just left (#502 Round 8).
+      abortPendingTier2Projections();
     },
-    [],
+    [abortHashRestore, abortPendingTier2Projections],
   );
 
   const onPivot = useCallback(
@@ -500,16 +584,48 @@ export function TriageBaselineContent({
         step.kind === "dimension" &&
         isTier2ServerDimension(step.dimension)
       ) {
-        tier2.startFetch(step.dimension, step.value.key);
+        // Tier 2 fetches need the asset crumb's `customerId` so the
+        // `sameSensor` resolution path can disambiguate sensor names
+        // (not unique across tenants) under the asset's customer
+        // scope. The asset crumb is always the trail head when a
+        // Tier 2 server-filtered dimension is clicked; absent that,
+        // the trail's `effectiveSelection` carries the same value.
+        const customerId =
+          trail.length > 0 && trail[0].kind === "asset"
+            ? trail[0].customerId
+            : (effectiveSelection?.customerId ?? 0);
+        tier2.startFetch(step.dimension, step.value.key, customerId);
       }
       setTrail((current) => appendPivotStep(current, step));
+      // A subsequent pivot describes a new trail; any leftover
+      // fallback notice from the prior trail would otherwise sit above
+      // the panel claiming the URL or sensor scope is stale.
+      setFallbackNotice(null);
+      // The post-drain validator would otherwise revert the trail back
+      // to the asset crumb (dropping the new pivot) if any deferred
+      // client-intersection step failed to materialize — a user
+      // continuing to navigate has already accepted the optimistic
+      // restored trail, so the validator's automatic revert is no
+      // longer appropriate.
+      abortHashRestore();
     },
-    [scope, tier2],
+    [abortHashRestore, effectiveSelection, scope, tier2, trail],
   );
 
-  const onCrumb = useCallback((indexInclusive: number) => {
-    setTrail((current) => backtrackPivotTrail(current, indexInclusive));
-  }, []);
+  const onCrumb = useCallback(
+    (indexInclusive: number) => {
+      setTrail((current) => backtrackPivotTrail(current, indexInclusive));
+      // Backtracking is a deliberate navigation — clear any stale notice
+      // so the operator sees a clean trail.
+      setFallbackNotice(null);
+      abortHashRestore();
+      // Backtracking discards the trailing pivot crumbs; any modal
+      // queued for one of those (now-removed) steps would otherwise
+      // outlive the trail it was raised against (#502 Round 8).
+      abortPendingTier2Projections();
+    },
+    [abortHashRestore, abortPendingTier2Projections],
+  );
 
   // Free-form `keywords` submit (#499). Same dispatch path as a
   // dimension click (`onPivot` handles the Tier 2 fetch + trail
@@ -532,7 +648,19 @@ export function TriageBaselineContent({
   // ── URL hash restore (client-only — Server Components cannot read
   // location.hash) ──
   const hashRestoreAttempted = useRef(false);
-  const [staleHashFallback, setStaleHashFallback] = useState(false);
+  // A single mutually-exclusive state describing the active fallback
+  // notice — `"stale-hash"` for the URL-no-longer-matches-corpus case
+  // (and the `name-unresolved` arm of a `sameSensor` pivot),
+  // `"sensor-scope-forbidden"` for the `scope-forbidden` arm where the
+  // resolved `nodeId` was rejected by review-web's tightened sensor-
+  // scope check (#502). Modelling these as two independent booleans
+  // previously let a `scope-forbidden` notice persist alongside a
+  // subsequent `name-unresolved` (or vice versa) because nothing
+  // cleared the prior flag; collapsing to a single string makes the
+  // two arms mutually exclusive at the type level and lets a single
+  // reset point clear whichever notice is active.
+  type FallbackNotice = "stale-hash" | "sensor-scope-forbidden" | null;
+  const [fallbackNotice, setFallbackNotice] = useState<FallbackNotice>(null);
   // Server-filtered steps decoded from the hash whose data still has
   // to be fetched after restore. The restore effect parses the hash
   // and seeds the trail, but `useTier2Pivot.startFetch` would no-op if
@@ -542,7 +670,16 @@ export function TriageBaselineContent({
   // server fetches (including the pre-fetch modal path when the
   // projection trips the threshold).
   const pendingHashFetchesRef = useRef<
-    Array<{ dimension: Tier2Dimension; valueKey: string }>
+    Array<{
+      dimension: Tier2Dimension;
+      valueKey: string;
+      /**
+       * Asset-root `customerId` captured at hash-restore time so the
+       * Tier 2 fetch's `sameSensor` resolution path keys on the
+       * restored asset's tenant, not the live selection at drain time.
+       */
+      customerId: number;
+    }>
   >([]);
   // Client-intersection steps decoded from a Tier 2 hash whose value
   // was not present in the Tier 1 corpus on restore. The queued Tier 2
@@ -575,7 +712,7 @@ export function TriageBaselineContent({
     // link was unusable.
     const hadRejectedSteps = parsed.rejectedStepCount > 0;
     if (parsed.asset === null && parsed.steps.length === 0) {
-      if (hadRejectedSteps) setStaleHashFallback(true);
+      if (hadRejectedSteps) setFallbackNotice("stale-hash");
       return;
     }
     // Resolve the asset against the freshly-loaded corpus. The hash
@@ -587,7 +724,7 @@ export function TriageBaselineContent({
     let restoredAsset: { customerId: number; address: string } | null = null;
     if (parsed.asset !== null) {
       if (parsed.asset.customerId === null) {
-        setStaleHashFallback(true);
+        setFallbackNotice("stale-hash");
         return;
       }
       const found = result.assets.find(
@@ -596,7 +733,7 @@ export function TriageBaselineContent({
           a.address === parsed.asset?.address,
       );
       if (!found) {
-        setStaleHashFallback(true);
+        setFallbackNotice("stale-hash");
         return;
       }
       restoredAsset = { customerId: found.customerId, address: found.address };
@@ -615,7 +752,7 @@ export function TriageBaselineContent({
           address: restoredAsset.address,
         },
       ]);
-      setStaleHashFallback(true);
+      setFallbackNotice("stale-hash");
       return;
     }
     const restoredTrail: PivotStep[] = [
@@ -629,6 +766,7 @@ export function TriageBaselineContent({
     const refetchQueue: Array<{
       dimension: Tier2Dimension;
       valueKey: string;
+      customerId: number;
     }> = [];
     const deferredValidations: Array<{
       dimension: PivotDimensionId;
@@ -723,11 +861,12 @@ export function TriageBaselineContent({
         refetchQueue.push({
           dimension: step.dimension,
           valueKey: step.valueKey,
+          customerId: restoredAsset.customerId,
         });
       }
     }
     if (stale) {
-      setStaleHashFallback(true);
+      setFallbackNotice("stale-hash");
       return;
     }
     setSelected(restoredAsset);
@@ -757,6 +896,7 @@ export function TriageBaselineContent({
   const draining = useRef<{
     dimension: Tier2Dimension;
     valueKey: string;
+    customerId: number;
   } | null>(null);
   // `tier2.inFlight` and `tier2.errors` are listed as deps so the
   // effect re-runs when the currently-draining fetch resolves
@@ -773,10 +913,48 @@ export function TriageBaselineContent({
       const status = tier2.getCached(
         draining.current.dimension,
         draining.current.valueKey,
+        draining.current.customerId,
       );
       // Still loading (or modal-gated through `pending`, handled
       // above): wait for the next render.
       if (status?.status === "loading") return;
+      // A queued ancestor fetch landed in error: surface only the
+      // error notice, not also the stale-hash toast / asset-root
+      // reset. #502 says lookup/fetch failures take the standard
+      // error banner path, so abort the rest of the restore chain —
+      // both the remaining queued fetches (whose corpus context is
+      // already incomplete) and the deferred client-intersection
+      // validations (which would otherwise misclassify a missing
+      // value as genuinely stale and fire `revertToRestoredAssetRoot`
+      // on top of the error).
+      if (status?.status === "error") {
+        pendingHashFetchesRef.current = [];
+        pendingValidationsRef.current = [];
+      }
+      // A queued `sameSensor` ancestor resolved to a sensor-scope
+      // fallback (`name-unresolved` or `scope-forbidden`): the hook
+      // intentionally deletes the loading entry and queues the
+      // fallback instead of writing `ready` / `error`, so `status`
+      // is `null` here. The fallback effect below will trim the trail
+      // to the asset root and render the distinct fallback notice,
+      // but without this branch the drain would keep firing queued
+      // descendants (their corpus context is already incomplete) and
+      // the post-drain validator would run against the reverted trail
+      // and overwrite the fallback notice with the generic stale-hash
+      // banner. Treat the fallback case like `error` and abort the
+      // rest of the restore chain.
+      if (
+        !status &&
+        draining.current.dimension === "sameSensor" &&
+        tier2.sensorFallbacks.some(
+          (f) =>
+            f.sensorName === draining.current?.valueKey &&
+            f.customerId === draining.current.customerId,
+        )
+      ) {
+        pendingHashFetchesRef.current = [];
+        pendingValidationsRef.current = [];
+      }
       // Either ready, errored, or cleared via cancel: this slot is
       // free again. Fall through to fire the next queued item.
       draining.current = null;
@@ -785,7 +963,7 @@ export function TriageBaselineContent({
     const next = pendingHashFetchesRef.current.shift();
     if (!next) return;
     draining.current = next;
-    tier2.startFetch(next.dimension, next.valueKey);
+    tier2.startFetch(next.dimension, next.valueKey, next.customerId);
   }, [scope, tier2, tier2.pending, tier2.inFlight, tier2.errors]);
 
   // Validate deferred client-intersection steps once the Tier 2 fetch
@@ -804,25 +982,28 @@ export function TriageBaselineContent({
     if (pendingValidationsRef.current.length === 0) return;
     const validations = pendingValidationsRef.current;
     pendingValidationsRef.current = [];
+    // Stale-restore fallback for the deferred validator: trim the trail
+    // back to the restored asset crumb, NOT the page's first asset.
+    // Using `initialFocus` (always `result.assets[0]`) would jump the
+    // UI to the wrong tenant/asset when the shared URL was restored
+    // onto any non-first asset row. The current trail already carries
+    // the resolved asset crumb at index 0 (set by the synchronous hash
+    // restore at line 768), so reuse it.
+    const revertToRestoredAssetRoot = () => {
+      setTrail((current) => {
+        const assetIndex = current.findIndex((s) => s.kind === "asset");
+        if (assetIndex < 0) return current;
+        return current.slice(0, assetIndex + 1);
+      });
+      setFallbackNotice("stale-hash");
+    };
     for (const { dimension, valueKey } of validations) {
       let dim: ReturnType<typeof getPivotDimension>;
       try {
         dim = getPivotDimension(dimension);
       } catch {
         // Dimension was removed since the URL was produced — stale.
-        setSelected(initialFocus);
-        setTrail(
-          initialFocus
-            ? [
-                {
-                  kind: "asset",
-                  customerId: initialFocus.customerId,
-                  address: initialFocus.address,
-                },
-              ]
-            : [],
-        );
-        setStaleHashFallback(true);
+        revertToRestoredAssetRoot();
         return;
       }
       let found = false;
@@ -834,30 +1015,76 @@ export function TriageBaselineContent({
         }
       }
       if (!found) {
-        setSelected(initialFocus);
-        setTrail(
-          initialFocus
-            ? [
-                {
-                  kind: "asset",
-                  customerId: initialFocus.customerId,
-                  address: initialFocus.address,
-                },
-              ]
-            : [],
-        );
-        setStaleHashFallback(true);
+        revertToRestoredAssetRoot();
         return;
       }
     }
-  }, [
-    scope,
-    tier2.pending,
-    tier2.inFlight,
-    tier2.errors,
-    expandedEvents,
-    initialFocus,
-  ]);
+  }, [scope, tier2.pending, tier2.inFlight, tier2.errors, expandedEvents]);
+
+  // Tier 2 `sameSensor` pivots that cannot complete against the
+  // asset's customer scope (name-unresolved or scope-forbidden, see
+  // #502) revert the trail to the asset root and surface a
+  // non-blocking notice. The two arms render distinct copy:
+  //   - `name-unresolved` — name does not map under the asset's
+  //     tenant; routes through the existing stale-URL notice.
+  //   - `scope-forbidden` — REview tightened scope mid-session and
+  //     rejected the resolved `nodeId`; routes through the new
+  //     "no longer accessible" notice so the operator can tell the
+  //     two failure modes apart (#502 round 5 review).
+  //
+  // A queued fallback may resolve AFTER the operator has navigated
+  // away from the trail that produced it — e.g. pivot
+  // `sameSensor=edge-01` on asset A, immediately switch to asset B,
+  // then let A's lookup land in the queue. The fallback's
+  // `(sensorName, customerId)` identity is recorded at startFetch
+  // time (#502 Round 6), so we can detect "no longer current" by
+  // checking that the trail still describes the same pivot: the
+  // asset crumb's customer matches and a `sameSensor` step for that
+  // name is still on the trail. If not, ack-and-drop the fallback
+  // silently — it would otherwise trim the unrelated current trail
+  // back to its asset crumb and render A's banner on top of B's view
+  // (#502 Round 7).
+  useEffect(() => {
+    if (tier2.sensorFallbacks.length === 0) return;
+    const fallback = tier2.sensorFallbacks[0];
+    const assetCrumb =
+      trail.length > 0 && trail[0].kind === "asset" ? trail[0] : null;
+    const trailOwnsFallback =
+      assetCrumb !== null &&
+      assetCrumb.customerId === fallback.customerId &&
+      trail.some(
+        (s) =>
+          s.kind === "dimension" &&
+          s.dimension === "sameSensor" &&
+          s.value.key === fallback.sensorName,
+      );
+    if (!trailOwnsFallback) {
+      tier2.acknowledgeSensorFallback(
+        fallback.kind,
+        fallback.sensorName,
+        fallback.customerId,
+      );
+      return;
+    }
+    setTrail((current) => {
+      // Trim back to the first asset crumb so the failed sensor step
+      // (and anything past it) is removed. If the trail is empty
+      // somehow, leave it alone — defensive only.
+      const assetCrumbIndex = current.findIndex((s) => s.kind === "asset");
+      if (assetCrumbIndex < 0) return current;
+      return current.slice(0, assetCrumbIndex + 1);
+    });
+    if (fallback.kind === "scope-forbidden") {
+      setFallbackNotice("sensor-scope-forbidden");
+    } else {
+      setFallbackNotice("stale-hash");
+    }
+    tier2.acknowledgeSensorFallback(
+      fallback.kind,
+      fallback.sensorName,
+      fallback.customerId,
+    );
+  }, [tier2, trail]);
 
   // ── URL hash sync (write-side) ──
   // Persist the breadcrumb + scope into the URL hash whenever they
@@ -876,12 +1103,20 @@ export function TriageBaselineContent({
 
   return (
     <div className="space-y-6">
-      {staleHashFallback ? (
+      {fallbackNotice === "stale-hash" ? (
         <p
           role="status"
           className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
         >
           {labels.staleHashFallback}
+        </p>
+      ) : null}
+      {fallbackNotice === "sensor-scope-forbidden" ? (
+        <p
+          role="status"
+          className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          {labels.sensorScopeForbiddenFallback}
         </p>
       ) : null}
       <Tier2EvictionNotice
@@ -929,6 +1164,13 @@ export function TriageBaselineContent({
             onSelect={(idx) => {
               if (idx === 0) {
                 setTrail((current) => clearPivotTrail(current));
+                setFallbackNotice(null);
+                abortHashRestore();
+                // The asset-root crumb click clears every pivot from the
+                // trail — any modal-gated Tier 2 projection queued for
+                // one of those pivots would otherwise outlive its trail
+                // (#502 Round 8).
+                abortPendingTier2Projections();
               } else {
                 onCrumb(idx);
               }
@@ -946,7 +1188,6 @@ export function TriageBaselineContent({
                 ? (event) => !tier2.isInTier1Corpus(event)
                 : undefined
             }
-            deferredSensorDimension={sensorDeferredInTier2}
             showLearningMethodSection={scope === "tier2"}
             showKeywordsSection={scope === "tier2"}
             recentKeywords={recentKeywords}

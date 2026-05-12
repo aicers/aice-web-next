@@ -95,6 +95,7 @@ describe("fetchTier2DimensionWithSession", () => {
         ...PERIOD,
         dimension: "country",
         valueKey: "US",
+        customerId: 1,
       }),
     ).rejects.toBeInstanceOf(TriageUnauthorizedError);
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
@@ -118,7 +119,7 @@ describe("fetchTier2DimensionWithSession", () => {
 
     const result = await fetchTier2DimensionWithSession(
       makeSession({ roles: ["System Administrator"] }),
-      { ...PERIOD, dimension: "country", valueKey: "US" },
+      { ...PERIOD, dimension: "country", valueKey: "US", customerId: 1 },
     );
 
     expect(result.events).toEqual([]);
@@ -162,7 +163,7 @@ describe("fetchTier2DimensionWithSession", () => {
 
     const result = await fetchTier2DimensionWithSession(
       makeSession({ roles: ["System Administrator"] }),
-      { ...PERIOD, dimension: "country", valueKey: "US" },
+      { ...PERIOD, dimension: "country", valueKey: "US", customerId: 1 },
     );
 
     expect(mockGraphqlRequest).toHaveBeenCalledTimes(3);
@@ -197,7 +198,7 @@ describe("fetchTier2DimensionWithSession", () => {
 
     const result = await fetchTier2DimensionWithSession(
       makeSession({ roles: ["System Administrator"] }),
-      { ...PERIOD, dimension: "country", valueKey: "US" },
+      { ...PERIOD, dimension: "country", valueKey: "US", customerId: 1 },
     );
 
     expect(result.events).toHaveLength(TIER2_PER_DIMENSION_CAP);
@@ -213,7 +214,12 @@ describe("fetchTier2DimensionWithSession", () => {
 
     const result = await fetchTier2DimensionWithSession(
       makeSession({ roles: ["System Administrator"] }),
-      { ...PERIOD, dimension: "categories", valueKey: "not-a-number" },
+      {
+        ...PERIOD,
+        dimension: "categories",
+        valueKey: "not-a-number",
+        customerId: 1,
+      },
     );
 
     expect(result.events).toEqual([]);
@@ -245,6 +251,7 @@ describe("fetchTier2DimensionWithSession", () => {
         ...PERIOD,
         dimension: "country",
         valueKey: "US",
+        customerId: 1,
         firstPageOnly: true,
       },
     );
@@ -276,6 +283,7 @@ describe("fetchTier2DimensionWithSession", () => {
         ...PERIOD,
         dimension: "country",
         valueKey: "US",
+        customerId: 1,
         afterCursor: "cursor-from-peek",
       },
     );
@@ -299,11 +307,249 @@ describe("fetchTier2DimensionWithSession", () => {
 
     await fetchTier2DimensionWithSession(
       makeSession({ roles: ["System Administrator"] }),
-      { ...PERIOD, dimension: "externalIp", valueKey: "203.0.113.10" },
+      {
+        ...PERIOD,
+        dimension: "externalIp",
+        valueKey: "203.0.113.10",
+        customerId: 1,
+      },
     );
 
     const filter = mockGraphqlRequest.mock.calls[0][1].filter;
     expect(filter.endpoints[0].direction).toBeNull();
     expect(filter.endpoints[0].custom.hosts).toEqual(["203.0.113.10"]);
+  });
+
+  // ── sameSensor pivot — name → nodeId resolution (#502) ─────────
+
+  function sensorListResponse(
+    nodes: ReadonlyArray<{
+      nodeId: string;
+      hostFqdn: string;
+      customerId: number;
+    }>,
+  ) {
+    return { customerSensorList: { nodes } };
+  }
+
+  it("resolves (name, customerId) → nodeId before issuing the sameSensor fetch", async () => {
+    // Two sensors share the name `edge-01` across two tenants. The
+    // Tier 2 sensor pivot keys on `(name, customerId)` so the
+    // dispatched `sensors: [ID!]` carries the asset's tenant's
+    // sensor id — never the other tenant's.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42, 99]);
+    mockGraphqlRequest
+      // listSensors() call goes first.
+      .mockResolvedValueOnce(
+        sensorListResponse([
+          { nodeId: "node-A-42", hostFqdn: "edge-01", customerId: 42 },
+          { nodeId: "node-A-99", hostFqdn: "edge-01", customerId: 99 },
+        ]),
+      )
+      // Then the eventList call.
+      .mockResolvedValueOnce(makePage({ nodeCount: 0, hasNextPage: false }));
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["Security Monitor"] }),
+      {
+        ...PERIOD,
+        dimension: "sameSensor",
+        valueKey: "edge-01",
+        customerId: 42,
+      },
+    );
+
+    expect(result.sensorFallback).toBeUndefined();
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+    // The second call is the actual fetch — the filter must carry
+    // the resolved nodeId for customer 42, not the raw name.
+    const filter = mockGraphqlRequest.mock.calls[1][1].filter;
+    expect(filter.sensors).toEqual(["node-A-42"]);
+  });
+
+  it("returns a name-unresolved sensorFallback when no sensor matches the asset's customer scope", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+    // No sensors named `edge-01` under customerId 42; only an
+    // unrelated tenant's matches by name.
+    mockGraphqlRequest.mockResolvedValueOnce(
+      sensorListResponse([
+        { nodeId: "node-other", hostFqdn: "edge-01", customerId: 99 },
+      ]),
+    );
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["Security Monitor"] }),
+      {
+        ...PERIOD,
+        dimension: "sameSensor",
+        valueKey: "edge-01",
+        customerId: 42,
+      },
+    );
+
+    expect(result.sensorFallback).toEqual({
+      kind: "name-unresolved",
+      sensorName: "edge-01",
+    });
+    // No eventList round-trip happens when the name doesn't resolve.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a Forbidden response on the resolved nodeId to a scope-forbidden sensorFallback", async () => {
+    const { ReviewForbiddenError } = await import("@/lib/review/errors");
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+    mockGraphqlRequest
+      .mockResolvedValueOnce(
+        sensorListResponse([
+          { nodeId: "node-A", hostFqdn: "edge-01", customerId: 42 },
+        ]),
+      )
+      .mockRejectedValueOnce(new ReviewForbiddenError("Forbidden"));
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["Security Monitor"] }),
+      {
+        ...PERIOD,
+        dimension: "sameSensor",
+        valueKey: "edge-01",
+        customerId: 42,
+      },
+    );
+
+    expect(result.sensorFallback).toEqual({
+      kind: "scope-forbidden",
+      sensorName: "edge-01",
+    });
+  });
+
+  it("surfaces the resolvedSensorId on the result so the hook can replay it on continuation", async () => {
+    // The hook's modal-gated path needs the peek's resolved nodeId
+    // so a Confirm-time continuation can pass it back as
+    // `resolvedSensorId` and skip the lookup. The peek itself must
+    // therefore return the id it just resolved against
+    // `(name, customerId)`.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+    mockGraphqlRequest
+      .mockResolvedValueOnce(
+        sensorListResponse([
+          { nodeId: "node-A-42", hostFqdn: "edge-01", customerId: 42 },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        makePage({
+          nodeCount: 100,
+          hasNextPage: true,
+          endCursor: "page-1",
+          totalCount: "25000",
+        }),
+      );
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["Security Monitor"] }),
+      {
+        ...PERIOD,
+        dimension: "sameSensor",
+        valueKey: "edge-01",
+        customerId: 42,
+        firstPageOnly: true,
+      },
+    );
+
+    expect(result.resolvedSensorId).toBe("node-A-42");
+    expect(result.endCursor).toBe("page-1");
+  });
+
+  it("reuses the supplied resolvedSensorId verbatim on continuation and does NOT re-run listSensors()", async () => {
+    // Reviewer Round 11 repro at the impl boundary: the peek
+    // resolved `edge-01` to `node-A-42`. Between peek and Confirm
+    // the lookup result shifted — if the impl re-ran
+    // `listSensors()` here it would land on the wrong sensor and
+    // paginate against the peek's stale cursor. With
+    // `resolvedSensorId` on the input, the lookup is skipped
+    // entirely and the dispatched filter carries the peek's id.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+    // Only one GraphQL call should land — the eventList
+    // continuation. Stub a `listSensors()` response too so the
+    // assertion below pins the *absence* of the lookup call rather
+    // than a missing-mock crash.
+    mockGraphqlRequest.mockResolvedValueOnce(
+      makePage({
+        nodeCount: 40,
+        hasNextPage: false,
+        totalCount: "25000",
+      }),
+    );
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+    await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["Security Monitor"] }),
+      {
+        ...PERIOD,
+        dimension: "sameSensor",
+        valueKey: "edge-01",
+        customerId: 42,
+        afterCursor: "cursor-from-peek",
+        alreadyFetched: 100,
+        resolvedSensorId: "node-A-42",
+      },
+    );
+
+    // Exactly one round-trip — the eventList continuation. No
+    // lookup; without the bypass this would be two calls and the
+    // first would be `customerSensorList`.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+    const variables = mockGraphqlRequest.mock.calls[0][1];
+    expect(variables.filter.sensors).toEqual(["node-A-42"]);
+    expect(variables.after).toBe("cursor-from-peek");
+  });
+
+  it("propagates a lookup transport error rather than surfacing it as a sensorFallback", async () => {
+    // Per #502: "If the lookup itself fails (e.g., transport error),
+    // surface the standard error banner rather than the stale-hash
+    // fallback — the analyst should know the resolution did not run,
+    // not see a silent revert." A listSensors() rejection must
+    // propagate so the hook layer's error path renders the generic
+    // error banner; it must not be classified as `name-unresolved`.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+    mockGraphqlRequest.mockRejectedValueOnce(new Error("transport boom"));
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    await expect(
+      fetchTier2DimensionWithSession(
+        makeSession({ roles: ["Security Monitor"] }),
+        {
+          ...PERIOD,
+          dimension: "sameSensor",
+          valueKey: "edge-01",
+          customerId: 42,
+        },
+      ),
+    ).rejects.toThrow("transport boom");
+    // No eventList round-trip is attempted when the lookup itself
+    // fails — only the listSensors() call was issued.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
   });
 });

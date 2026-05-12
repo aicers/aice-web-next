@@ -11,6 +11,7 @@ const KEY_BASE = {
   periodStartIso: "2026-05-08T12:00:00.000Z",
   periodEndIso: "2026-05-09T12:00:00.000Z",
   customerScope: "global",
+  customerId: 0,
 };
 
 function makeEvent(seq: number): TriageEvent {
@@ -38,6 +39,29 @@ describe("encodeTier2CacheKey", () => {
       dimensionId: "country",
       valueKey: "US",
       customerScope: "tenant-b",
+    });
+    expect(a).not.toBe(b);
+  });
+
+  it("includes the asset-root customerId so two tenants in the same visible scope don't collide on a shared dimension value (#502)", () => {
+    // Without `customerId` in the key, two assets under different
+    // customers within the same visible `customerScope` would share
+    // a cache slot for `sameSensor=edge-01` even though the resolved
+    // REview `nodeId` differs per tenant — leaking customer 42's
+    // sensor result into customer 99's pivot menu.
+    const a = encodeTier2CacheKey({
+      ...KEY_BASE,
+      dimensionId: "sameSensor",
+      valueKey: "edge-01",
+      customerScope: "global",
+      customerId: 42,
+    });
+    const b = encodeTier2CacheKey({
+      ...KEY_BASE,
+      dimensionId: "sameSensor",
+      valueKey: "edge-01",
+      customerScope: "global",
+      customerId: 99,
     });
     expect(a).not.toBe(b);
   });
@@ -127,6 +151,47 @@ describe("Tier2Cache", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener.mock.calls[0][0].dimensionId).toBe("country");
     expect(listener.mock.calls[0][0].valueKey).toBe("EVICTED");
+  });
+
+  it("reports the structured identity on an eviction event even when valueKey contains the encoded separator", () => {
+    // The cache key encodes as
+    // `${start}|${end}|${dimensionId}|${valueKey}|${scope}|${customerId}`.
+    // `valueKey` is not escaped — a free-form `keywords` entry like
+    // `foo|bar` is a valid submission per `validateKeywordInput`, which
+    // only trims and length-checks. Earlier revisions reconstructed the
+    // eviction event by splitting the encoded key on `|` and reading
+    // fixed indices, which mis-reported `valueKey="foo"` and
+    // `customerId=0` for `foo|bar`. The hook-layer listener then
+    // deleted the wrong `stateMapRef` entry, leaving the supposedly-
+    // evicted events strongly referenced (and over the 100 MB cap).
+    // The fix carries `(dimensionId, valueKey, customerId)` on the
+    // internal entry instead of reparsing the opaque encoded key.
+    const single = JSON.stringify([makeEvent(0)]).length;
+    const cache = new Tier2Cache(single);
+    const listener = vi.fn();
+    cache.setEvictionListener(listener);
+    cache.set(
+      {
+        ...KEY_BASE,
+        dimensionId: "keywords",
+        valueKey: "foo|bar",
+        customerId: 42,
+      },
+      { events: [makeEvent(0)], totalCount: "1" },
+    );
+    cache.set(
+      {
+        ...KEY_BASE,
+        dimensionId: "keywords",
+        valueKey: "baz",
+        customerId: 42,
+      },
+      { events: [makeEvent(0)], totalCount: "1" },
+    );
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0][0].dimensionId).toBe("keywords");
+    expect(listener.mock.calls[0][0].valueKey).toBe("foo|bar");
+    expect(listener.mock.calls[0][0].customerId).toBe(42);
   });
 
   it("rejects a single oversized insert without disturbing in-budget entries", () => {

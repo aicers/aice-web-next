@@ -53,7 +53,7 @@ describe("detection sensors — listSensors()", () => {
 
   // ── Authorization ──────────────────────────────────────────────
 
-  it("rejects a caller without detection:read before resolving scope", async () => {
+  it("rejects a caller without detection:read or triage:read before resolving scope", async () => {
     mockHasPermission.mockResolvedValue(false);
 
     const { listSensors, DetectionUnauthorizedError } = await import(
@@ -68,6 +68,33 @@ describe("detection sensors — listSensors()", () => {
     // and before any GraphQL dispatch.
     expect(mockResolveEffectiveCustomerIds).not.toHaveBeenCalled();
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("accepts a triage:read-only caller (no detection:read) — #502 permission union", async () => {
+    // Tier 2 sensor pivot reuses listSensors() and operators may
+    // hold triage:read without detection:read. The lookup is
+    // read-only metadata already customer-scoped via the JWT, so
+    // the permission union does not widen what data the caller
+    // sees — it just keeps the sensor pivot from implicitly
+    // requiring detection:read.
+    mockHasPermission.mockImplementation(
+      async (_roles: string[], permission: string) =>
+        permission === "triage:read" || permission === "customers:access-all",
+    );
+    mockResolveEffectiveCustomerIds.mockResolvedValue([42]);
+    mockGraphqlRequest.mockResolvedValue({
+      customerSensorList: {
+        nodes: [{ customerId: 42, nodeId: "1", hostFqdn: "edge-01" }],
+      },
+    });
+
+    const { listSensors } = await import("@/lib/detection");
+    const result = await listSensors(makeSession({ roles: ["Triage Reader"] }));
+
+    expect(result).toEqual({
+      endpointAvailable: true,
+      sensors: [{ id: "1", name: "edge-01", customerId: 42 }],
+    });
   });
 
   it("rejects a non-admin caller with an empty customer scope", async () => {

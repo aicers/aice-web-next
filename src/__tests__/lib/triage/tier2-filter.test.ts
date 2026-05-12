@@ -20,12 +20,11 @@ describe("isTier2ServerDimension", () => {
     expect(isTier2ServerDimension("externalIp")).toBe(true);
     expect(isTier2ServerDimension("internalIp")).toBe(true);
     expect(isTier2ServerDimension("country")).toBe(true);
-    // `sameSensor` is excluded in Phase 1 because the Tier 2 sensor
-    // pivot needs a `triage:read`-compatible sensor name → ID lookup
-    // that does not yet exist (#453). Excluding it here also blocks
-    // hash-restore from queueing a known-bad server fetch when a
-    // shared link carries `step=sameSensor:<name>` under `mode=tier2`.
-    expect(isTier2ServerDimension("sameSensor")).toBe(false);
+    // `sameSensor` is a server-filtered Tier 2 dimension as of #502:
+    // the async caller resolves the sensor name to REview's opaque
+    // `nodeId` against the shared lookup (now callable with
+    // `triage:read | detection:read`) before issuing the fetch.
+    expect(isTier2ServerDimension("sameSensor")).toBe(true);
     // Client-intersection dimensions
     expect(isTier2ServerDimension("ja3")).toBe(false);
     expect(isTier2ServerDimension("host")).toBe(false);

@@ -48,6 +48,11 @@ interface FetchResolution {
   endCursor: string | null;
   hasMore: boolean;
   truncated: boolean;
+  sensorFallback?: {
+    kind: "name-unresolved" | "scope-forbidden";
+    sensorName: string;
+  };
+  resolvedSensorId?: string;
 }
 
 function deferred(): {
@@ -108,7 +113,7 @@ describe("useTier2Pivot — LRU recency tracks hook reads", () => {
     const dim: Tier2Dimension = "country";
 
     await act(async () => {
-      result.current.startFetch(dim, "A");
+      result.current.startFetch(dim, "A", 7);
       // Allow the awaited peek to resolve and the result to land in
       // both the cache and `stateMapRef`.
       await Promise.resolve();
@@ -120,7 +125,7 @@ describe("useTier2Pivot — LRU recency tracks hook reads", () => {
     // Re-pivot A — this is the hook-layer read path that previously
     // bypassed `cache.get()`.
     act(() => {
-      const cached = result.current.getCached(dim, "A");
+      const cached = result.current.getCached(dim, "A", 7);
       expect(cached?.status).toBe("ready");
     });
 
@@ -163,11 +168,11 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
 
     // Fire two clicks back-to-back, before either peek resolves.
     act(() => {
-      result.current.startFetch(dim, "A");
-      result.current.startFetch(dim, "B");
+      result.current.startFetch(dim, "A", 7);
+      result.current.startFetch(dim, "B", 7);
     });
-    expect(result.current.getCached(dim, "A")?.status).toBe("loading");
-    expect(result.current.getCached(dim, "B")?.status).toBe("loading");
+    expect(result.current.getCached(dim, "A", 7)?.status).toBe("loading");
+    expect(result.current.getCached(dim, "B", 7)?.status).toBe("loading");
 
     const fullPage = Array.from({ length: 100 }, (_, i) => makeEvent(i));
 
@@ -210,7 +215,7 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       await Promise.resolve();
     });
     expect(result.current.pending?.valueKey).toBe("B");
-    expect(result.current.getCached(dim, "B")?.status).toBe("loading");
+    expect(result.current.getCached(dim, "B", 7)?.status).toBe("loading");
 
     // Drain the continuation for A.
     await act(async () => {
@@ -224,7 +229,7 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(result.current.getCached(dim, "A")?.status).toBe("ready");
+    expect(result.current.getCached(dim, "A", 7)?.status).toBe("ready");
 
     // Cancelling B clears its loading entry — the orphaned-loading
     // bug repro should NOT happen: B is reachable through the queue.
@@ -232,7 +237,7 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       result.current.cancelFetch();
     });
     expect(result.current.pending).toBeNull();
-    expect(result.current.getCached(dim, "B")).toBeNull();
+    expect(result.current.getCached(dim, "B", 7)).toBeNull();
 
     // Drain B's continuation promise so vitest doesn't warn about
     // unresolved promises.
@@ -264,7 +269,7 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
     const dim: Tier2Dimension = "country";
 
     await act(async () => {
-      result.current.startFetch(dim, "FALLBACK");
+      result.current.startFetch(dim, "FALLBACK", 7);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -290,9 +295,9 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
     const dim: Tier2Dimension = "country";
 
     act(() => {
-      result.current.startFetch(dim, "A");
-      result.current.startFetch(dim, "A");
-      result.current.startFetch(dim, "A");
+      result.current.startFetch(dim, "A", 7);
+      result.current.startFetch(dim, "A", 7);
+      result.current.startFetch(dim, "A", 7);
     });
 
     expect(fetchTier2DimensionMock).toHaveBeenCalledTimes(1);
@@ -309,6 +314,317 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(result.current.getCached(dim, "A")?.status).toBe("ready");
+    expect(result.current.getCached(dim, "A", 7)?.status).toBe("ready");
+  });
+});
+
+describe("useTier2Pivot — cross-tenant sameSensor pivots do not share a cache entry (#502)", () => {
+  it("keys the cache by asset-root customerId so two tenants pivoting the same sensor name fetch independently", async () => {
+    // Two assets under different customers (42 and 99) share the
+    // visible `customerScope` but pivot a sensor named `edge-01`
+    // whose REview `nodeId` differs per tenant. Without `customerId`
+    // in the cache/state key, the second click would hit customer
+    // 42's cached result and customer 99 would see the wrong tenant's
+    // events. The key must include `customerId` so each tenant's
+    // pivot issues its own fetch and stores its own result.
+    let callCount = 0;
+    fetchTier2DimensionMock.mockImplementation(async (input: unknown) => {
+      callCount += 1;
+      const typed = input as { customerId: number };
+      return {
+        events: [makeEvent(typed.customerId)],
+        totalCount: "1",
+        endCursor: null,
+        hasMore: false,
+        truncated: false,
+      };
+    });
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "sameSensor";
+
+    await act(async () => {
+      result.current.startFetch(dim, "edge-01", 42);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Customer 42's result is cached for `(sameSensor, edge-01, 42)`.
+    const forty2 = result.current.getCached(dim, "edge-01", 42);
+    expect(forty2?.status).toBe("ready");
+    expect(forty2?.events).toHaveLength(1);
+    expect(forty2?.events[0].id).toBe("evt-42");
+
+    // Looking up the same `(dimension, valueKey)` under a different
+    // customer must miss the cache — otherwise we'd cross-contaminate.
+    expect(result.current.getCached(dim, "edge-01", 99)).toBeNull();
+
+    // Firing customer 99's pivot issues a *fresh* fetch and stores its
+    // own result; customer 42's entry is untouched.
+    await act(async () => {
+      result.current.startFetch(dim, "edge-01", 99);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(2);
+    const ninety9 = result.current.getCached(dim, "edge-01", 99);
+    expect(ninety9?.status).toBe("ready");
+    expect(ninety9?.events[0].id).toBe("evt-99");
+    // Customer 42's entry stays untouched — no cross-tenant leak.
+    expect(result.current.getCached(dim, "edge-01", 42)?.events[0].id).toBe(
+      "evt-42",
+    );
+  });
+});
+
+describe("useTier2Pivot — modal-gated sameSensor preserves the peek's resolved nodeId on confirm (#502)", () => {
+  it("passes the peek's resolvedSensorId to the continuation so a lookup race between peek and confirm cannot drift onto a different sensor", async () => {
+    // Reviewer Round 11 repro: a `sameSensor=edge-01` first-page peek
+    // resolves the name to `nodeId=node-A-42` and trips the 20,000-
+    // event modal. Between peek and Confirm the lookup result shifts
+    // (sensor renamed, new tenant entry, or a race on the lookup
+    // endpoint). If the continuation re-ran `listSensors()` it would
+    // paginate a *different* sensor with the peek's `afterCursor` and
+    // merge unrelated rows into the first page. The hook must instead
+    // carry the resolved id on the stash and replay it verbatim on
+    // confirm.
+    const peek = deferred();
+    const continuation = deferred();
+    const fullPage = Array.from({ length: 100 }, (_, i) => makeEvent(i));
+    const continuationInputs: Array<{
+      valueKey: string;
+      afterCursor?: string | null;
+      resolvedSensorId?: string;
+      firstPageOnly?: boolean;
+    }> = [];
+
+    fetchTier2DimensionMock.mockImplementation(
+      async (input: {
+        valueKey: string;
+        firstPageOnly?: boolean;
+        afterCursor?: string | null;
+        resolvedSensorId?: string;
+      }): Promise<FetchResolution> => {
+        if (input.firstPageOnly === true) return peek.promise;
+        continuationInputs.push(input);
+        return continuation.promise;
+      },
+    );
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "sameSensor";
+
+    act(() => {
+      result.current.startFetch(dim, "edge-01", 42);
+    });
+
+    await act(async () => {
+      peek.resolve({
+        events: fullPage,
+        totalCount: "25000",
+        endCursor: "cursor-after-peek",
+        hasMore: true,
+        truncated: false,
+        // The peek's `(name, customerId)` lookup resolved to this id.
+        resolvedSensorId: "node-A-42",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.pending?.valueKey).toBe("edge-01");
+    expect(result.current.pending?.customerId).toBe(42);
+
+    await act(async () => {
+      result.current.confirmFetch();
+      await Promise.resolve();
+    });
+
+    // The continuation must carry the peek's resolved id verbatim. If
+    // the hook re-ran `listSensors()` (no `resolvedSensorId` on the
+    // input), the server might land on a different sensor and the
+    // merged page would be cross-sensor garbage.
+    expect(continuationInputs).toHaveLength(1);
+    expect(continuationInputs[0].afterCursor).toBe("cursor-after-peek");
+    expect(continuationInputs[0].resolvedSensorId).toBe("node-A-42");
+    // Original sensor *name* still flows through so the impl's own
+    // path is unambiguous and observable in fallback toasts.
+    expect(continuationInputs[0].valueKey).toBe("edge-01");
+
+    // Drain the continuation so vitest doesn't warn.
+    await act(async () => {
+      continuation.resolve({
+        events: [makeEvent(101)],
+        totalCount: "25000",
+        endCursor: null,
+        hasMore: false,
+        truncated: false,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.getCached(dim, "edge-01", 42)?.status).toBe("ready");
+  });
+});
+
+describe("useTier2Pivot — eviction drops the matching in-memory state entry", () => {
+  it("clears `stateMapRef` for a `keywords` value containing the encoded separator when the cache evicts it", async () => {
+    // The cache key encodes as `${start}|${end}|${dimensionId}|${valueKey}|${scope}|${customerId}`
+    // with `valueKey` unescaped — a free-form `keywords` entry like
+    // `foo|bar` is a valid submission. Earlier revisions reconstructed
+    // the eviction event by splitting on `|` and reading fixed
+    // indices, which mis-reported the trailing fields. The hook
+    // listener then deleted the wrong `stateMapRef` slot, leaving the
+    // evicted events strongly referenced. The fix carries the
+    // structured identity on the cache entry, and the hook listener
+    // uses that payload verbatim to drop the in-memory state.
+    fetchTier2DimensionMock.mockImplementation(
+      async (input: { valueKey: string }) => ({
+        events: [makeEvent(input.valueKey === "foo|bar" ? 1 : 2)],
+        totalCount: "1",
+        endCursor: null,
+        hasMore: false,
+        truncated: false,
+      }),
+    );
+
+    // Cap large enough for a single small entry, but a second insert
+    // forces the first one out via LRU.
+    const single = JSON.stringify([makeEvent(0)]).length;
+    const { result } = renderHook(() =>
+      useTier2Pivot({ ...HOOK_ARGS_BASE, cacheByteCap: single }),
+    );
+    const dim: Tier2Dimension = "keywords";
+
+    await act(async () => {
+      result.current.startFetch(dim, "foo|bar", 42);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.getCached(dim, "foo|bar", 42)?.status).toBe("ready");
+
+    await act(async () => {
+      result.current.startFetch(dim, "baz", 42);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // After the second insert the cache evicted `foo|bar`. The hook
+    // listener must have deleted the `stateMapRef` entry for that
+    // exact key — not the truncated `foo` it would have computed if
+    // it still parsed the encoded cache key by index. Re-pivoting
+    // `foo|bar` therefore misses the in-memory state and issues a
+    // fresh fetch (callCount goes from 2 to 3).
+    expect(result.current.getCached(dim, "foo|bar", 42)).toBeNull();
+    expect(fetchTier2DimensionMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      result.current.startFetch(dim, "foo|bar", 42);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchTier2DimensionMock).toHaveBeenCalledTimes(3);
+    expect(result.current.getCached(dim, "foo|bar", 42)?.status).toBe("ready");
+  });
+});
+
+describe("useTier2Pivot — sameSensor fallback surfaces through the hook (#502)", () => {
+  it("clears the loading entry and queues a sensorFallback when the peek returns one", async () => {
+    // The impl returns `sensorFallback` when the clicked sensor name
+    // does not resolve under the asset's customer scope (or when
+    // review-web tightens scope mid-session). The hook must drop the
+    // loading entry — otherwise the panel shows a permanent spinner —
+    // and enqueue the fallback so the parent can revert the trail
+    // and render the stale-hash toast.
+    fetchTier2DimensionMock.mockImplementation(async () => ({
+      events: [],
+      totalCount: null,
+      endCursor: null,
+      hasMore: false,
+      truncated: false,
+      sensorFallback: {
+        kind: "name-unresolved" as const,
+        sensorName: "edge-01",
+      },
+    }));
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "sameSensor";
+
+    await act(async () => {
+      result.current.startFetch(dim, "edge-01", 7);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.sensorFallbacks).toEqual([
+      { kind: "name-unresolved", sensorName: "edge-01", customerId: 7 },
+    ]);
+    // The loading entry must be cleared so the panel does not show a
+    // permanent spinner for a name that no longer resolves.
+    expect(result.current.getCached(dim, "edge-01", 7)).toBeNull();
+
+    // Parent-side acknowledgement drains the queue.
+    act(() => {
+      result.current.acknowledgeSensorFallback("name-unresolved", "edge-01", 7);
+    });
+    expect(result.current.sensorFallbacks).toEqual([]);
+  });
+
+  it("scopes queued sensor fallbacks by (kind, sensorName, customerId) so cross-tenant ack does not drop both entries", async () => {
+    // Round 6 regression: two tenants pivoting `sameSensor=edge-01`
+    // before the first React effect drains both land in
+    // `sensorFallbacks`. Acknowledging customer 42's entry must NOT
+    // also remove customer 99's — the queue identity has to match the
+    // full asset-root tuple so each tenant's revert reaches the UI.
+    fetchTier2DimensionMock.mockImplementation(async (input) => ({
+      events: [],
+      totalCount: null,
+      endCursor: null,
+      hasMore: false,
+      truncated: false,
+      sensorFallback: {
+        kind: "name-unresolved" as const,
+        sensorName: input.valueKey,
+      },
+    }));
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "sameSensor";
+
+    await act(async () => {
+      result.current.startFetch(dim, "edge-01", 42);
+      result.current.startFetch(dim, "edge-01", 99);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.sensorFallbacks).toEqual([
+      { kind: "name-unresolved", sensorName: "edge-01", customerId: 42 },
+      { kind: "name-unresolved", sensorName: "edge-01", customerId: 99 },
+    ]);
+
+    // Ack customer 42's entry; customer 99's must remain.
+    act(() => {
+      result.current.acknowledgeSensorFallback(
+        "name-unresolved",
+        "edge-01",
+        42,
+      );
+    });
+    expect(result.current.sensorFallbacks).toEqual([
+      { kind: "name-unresolved", sensorName: "edge-01", customerId: 99 },
+    ]);
+
+    // Then ack customer 99's; the queue drains fully.
+    act(() => {
+      result.current.acknowledgeSensorFallback(
+        "name-unresolved",
+        "edge-01",
+        99,
+      );
+    });
+    expect(result.current.sensorFallbacks).toEqual([]);
   });
 });

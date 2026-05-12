@@ -31,14 +31,33 @@ vi.mock("next/navigation", () => ({
 // BFF. The component-level tests mock the boundary so the assertions
 // can pin the call shape and the cache write without standing up a
 // GraphQL transport.
+interface MockTier2Result {
+  events: unknown[];
+  totalCount: string | null;
+  truncated: boolean;
+  hasMore: boolean;
+  endCursor: string | null;
+  /**
+   * Optional sensor fallback discriminator. The hook routes the
+   * `scope-forbidden` arm through a distinct UI banner from the
+   * `name-unresolved` arm (#502 round 5).
+   */
+  sensorFallback?: {
+    kind: "name-unresolved" | "scope-forbidden";
+    sensorName: string;
+  };
+}
+
 const fetchTier2Mock = vi.hoisted(() =>
-  vi.fn(async (_input: Record<string, unknown>) => ({
-    events: [] as unknown[],
-    totalCount: null as string | null,
-    truncated: false,
-    hasMore: false,
-    endCursor: null as string | null,
-  })),
+  vi.fn(
+    async (_input: Record<string, unknown>): Promise<MockTier2Result> => ({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    }),
+  ),
 );
 vi.mock("@/lib/triage/tier2-fetch", () => ({
   fetchTier2Dimension: fetchTier2Mock,
@@ -237,6 +256,8 @@ const LABELS: TriageShellLabels = {
       dimensions: dimensionsMap("Dim"),
     },
     staleHashFallback: "Stale hash — showing asset root",
+    sensorScopeForbiddenFallback:
+      "Sensor no longer accessible — showing asset root",
   },
   periodChangeConfirm: {
     title: "Discard pivot trail?",
@@ -622,6 +643,113 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
   });
 
+  it("dismisses the pre-fetch modal when the operator selects a different asset", async () => {
+    // Round 8 regression. Click a Tier 2 server dimension on asset A
+    // whose first page trips the 20,000-event modal, then select
+    // asset B before answering. Without the dismissal the modal stays
+    // open under B's trail showing A's projection count, and Confirm
+    // would resume A's parked stash under A's `(dimension, valueKey,
+    // customerId)` — i.e., restore-owned work outliving the trail it
+    // was created for. Explicit asset navigation must dismiss every
+    // pending modal-gated projection along with its parked peek
+    // stash and loading entry (#502).
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: "30000",
+      truncated: false,
+      hasMore: true,
+      endCursor: "cursor-1",
+    });
+    renderShellWithExternalIp();
+    selectTier2Scope();
+    pivotByExternalIp();
+    await flushAsync();
+    // Modal is open showing the >20k projection.
+    expect(
+      screen.getByRole("alertdialog", { name: "Fetch large result?" }),
+    ).toBeTruthy();
+    // The peek fired but the continuation is still gated.
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+    // Operator switches to the other asset on the list. Radix's
+    // alertdialog applies `aria-hidden` to the rest of the DOM while
+    // open, so the asset list buttons are only reachable through the
+    // `hidden: true` query option.
+    const otherAssetButton = screen.getByRole("button", {
+      name: "10.0.0.9",
+      hidden: true,
+    });
+    await act(async () => {
+      fireEvent.click(otherAssetButton);
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // Modal is gone — no abandoned-trail confirm affordance survives.
+    expect(
+      screen.queryByRole("alertdialog", { name: "Fetch large result?" }),
+    ).toBeNull();
+    // Crucially, no continuation fetch was dispatched — the peek's
+    // parked stash for the abandoned trail was dropped, not resumed.
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates an in-flight first-page peek when the operator selects a different asset before it resolves", async () => {
+    // Round 9 regression. Same trail abandonment as the prior test,
+    // except the operator switches assets *before* the >20k peek
+    // resolves. Without invalidating in-flight peeks, the late
+    // callback would still call `peekStashesRef.set(...)` +
+    // `setPendingQueue([...projection])`, reopening the pre-fetch
+    // modal under the new trail and showing the abandoned
+    // projection's count — and Confirm would resume the parked stash
+    // under the prior trail's `(dimension, valueKey, customerId)`.
+    // The fix bumps a trail token on `dismissAllPending` and gates
+    // every async write-back behind a captured-token check (see
+    // `use-tier2-pivot.ts`).
+    let resolvePeek: (v: MockTier2Result) => void = () => {};
+    fetchTier2Mock.mockReturnValueOnce(
+      new Promise<MockTier2Result>((res) => {
+        resolvePeek = res;
+      }),
+    );
+    renderShellWithExternalIp();
+    selectTier2Scope();
+    pivotByExternalIp();
+    await flushAsync();
+    // Peek is pending — modal not yet shown, and the continuation
+    // path hasn't fired.
+    expect(
+      screen.queryByRole("alertdialog", { name: "Fetch large result?" }),
+    ).toBeNull();
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+    // Operator switches assets before the peek lands.
+    const otherAssetButton = screen.getByRole("button", { name: "10.0.0.9" });
+    await act(async () => {
+      fireEvent.click(otherAssetButton);
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // Resolve the peek with a >20k projection that would otherwise
+    // open the pre-fetch modal.
+    await act(async () => {
+      resolvePeek({
+        events: [],
+        totalCount: "30000",
+        truncated: false,
+        hasMore: true,
+        endCursor: "cursor-1",
+      });
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // The late peek's projection must not have re-opened the modal
+    // under the new trail.
+    expect(
+      screen.queryByRole("alertdialog", { name: "Fetch large result?" }),
+    ).toBeNull();
+    // And no continuation fetch was dispatched on the abandoned
+    // trail's `(dimension, valueKey, customerId)`.
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces a fetch error notice and clears it on dismiss", async () => {
     fetchTier2Mock.mockRejectedValueOnce(new Error("review timed out"));
     renderShellWithExternalIp();
@@ -883,6 +1011,566 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     await flushAsync();
     expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
     expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
+  });
+
+  it("post-drain stale fallback preserves the RESTORED asset crumb when the URL targets a non-first asset row", async () => {
+    // Regression for Round 3 Item 1. The shared URL restores onto the
+    // SECOND asset row (10.0.0.2), then queues an externalIp Tier 2
+    // fetch whose result does not contain the deferred host step. The
+    // post-drain validator previously reset trail/selected to
+    // `initialFocus` (always `result.assets[0]` — 10.0.0.1), jumping
+    // the UI to the wrong asset. The fix trims back to the restored
+    // asset's crumb instead. Two corpus events with distinct origAddrs
+    // produce two assets; 10.0.0.1's event time is newer so it sorts
+    // first under `score DESC, last_event_time DESC` — making 10.0.0.2
+    // the non-first row the hash explicitly targets.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.2") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("externalIp:203.0.113.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("host:remoteonly.example") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        host: "first.example",
+        // Newer → sorts to assets[0], i.e. `initialFocus`.
+        time: "2026-05-08T13:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.11",
+        host: "second.example",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    // externalIp fetch succeeds but its rows do NOT carry the host
+    // value the URL claims — host step stays genuinely stale.
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [
+        {
+          __typename: "BlocklistTls",
+          id: "ext-1",
+          time: "2026-05-08T13:30:00.000Z",
+          sensor: "sensor-a",
+          category: "EXFILTRATION",
+          level: "MEDIUM",
+          origAddr: "10.0.0.5",
+          respAddr: "203.0.113.1",
+          host: "otherhost.example",
+        },
+      ],
+      totalCount: "1",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Stale-hash toast appears (host step did not resolve after drain).
+    expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
+    // The breadcrumb's only crumb must be the RESTORED asset
+    // (10.0.0.2), not the page's first asset (10.0.0.1). Before the
+    // fix, the fallback reset to `initialFocus` and the crumb showed
+    // 10.0.0.1, dropping the operator on the wrong tenant/asset row.
+    expect(
+      screen.getByText("Asset 10.0.0.2").getAttribute("aria-current"),
+    ).toBe("page");
+    expect(screen.queryByText("Asset 10.0.0.1")).toBeNull();
+    // The stale step is gone from the trail.
+    expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
+    expect(screen.queryByText("Crumb:externalIp: 203.0.113.1")).toBeNull();
+  });
+
+  it("post-drain validator does NOT also fall back to the asset root when the queued Tier 2 fetch errors", async () => {
+    // Regression for Round 4 Item 1. A Tier 2 hash restore queues the
+    // server-filtered ancestor fetch (`externalIp:203.0.113.1`) and
+    // defers a client-intersection step (`host:remoteonly.example`).
+    // The queued fetch fails (transport / backend error) — the user
+    // must see ONLY the standard error notice, not also the stale-hash
+    // toast and a trail reset to the asset root. #502 explicitly
+    // routes lookup/fetch failures through the standard error banner
+    // path. Before the fix, the drain effect cleared `draining.current`
+    // on the error transition and the post-drain validator then ran
+    // against an unexpanded corpus, missed the deferred host step, and
+    // fired `revertToRestoredAssetRoot()` on top of the error.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("externalIp:203.0.113.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("host:remoteonly.example") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        host: "corpushost.example",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    fetchTier2Mock.mockRejectedValueOnce(new Error("review timed out"));
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // The standard error notice surfaces.
+    expect(
+      screen.getByText(/error Dim:externalIp: 203.0.113.1 — review timed out/),
+    ).toBeTruthy();
+    // The stale-hash toast must NOT appear — the failure is a
+    // transport error, not a stale URL.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // The optimistically-restored trail stays intact (asset + the two
+    // steps) so the operator can retry by re-clicking. Crucially the
+    // trail did NOT reset to just the asset root crumb.
+    expect(screen.getByText("Crumb:externalIp: 203.0.113.1")).toBeTruthy();
+    expect(screen.getByText("Crumb:host: remoteonly.example")).toBeTruthy();
+  });
+
+  it("renders the distinct 'no longer accessible' notice (not the stale-hash copy) for a scope-forbidden sameSensor pivot", async () => {
+    // Regression for Round 5 Item 1. The fetch impl distinguishes
+    // `name-unresolved` from `scope-forbidden` at the sensorFallback
+    // discriminator (#502), but the hook/UI previously collapsed both
+    // arms into the stale-hash banner. The issue requires the
+    // scope-forbidden arm to surface a distinct "no longer accessible"
+    // toast so the operator can tell access change apart from a stale
+    // URL.
+    //
+    // Drives the pivot through the Tier 2 hash-restore queue so the
+    // test does not depend on the panel surfacing a `sameSensor` row
+    // (which only appears when other corpus events share the sensor).
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "deadbeef.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+      sensorFallback: { kind: "scope-forbidden", sensorName: "edge-01" },
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Distinct copy renders.
+    expect(
+      screen.getByText("Sensor no longer accessible — showing asset root"),
+    ).toBeTruthy();
+    // The stale-hash copy must NOT also render — collapsing both arms
+    // into the same banner is exactly what this regression pins
+    // against.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // Trail reverted to the asset crumb only.
+    expect(screen.queryByText("Crumb:sameSensor: edge-01")).toBeNull();
+  });
+
+  it("keeps the stale-hash copy for a name-unresolved sameSensor pivot", async () => {
+    // Counterpart of the scope-forbidden regression above: the
+    // `name-unresolved` arm must continue to render the existing
+    // stale-URL copy, not the new distinct notice. Pins the routing
+    // so the two arms cannot drift back into sharing one banner.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "deadbeef.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+      sensorFallback: { kind: "name-unresolved", sensorName: "edge-01" },
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
+    expect(
+      screen.queryByText("Sensor no longer accessible — showing asset root"),
+    ).toBeNull();
+    expect(screen.queryByText("Crumb:sameSensor: edge-01")).toBeNull();
+  });
+
+  it("aborts queued descendants and deferred validations when a queued sameSensor ancestor falls back during hash restore", async () => {
+    // Round 10 regression. A Tier 2 hash restore queues a `sameSensor`
+    // ancestor, a server-filtered descendant (`externalIp`), and a
+    // deferred client-intersection child whose value lives only inside
+    // the ancestor's would-be fetch result (`host=remoteonly.example`).
+    // When the ancestor resolves to a sensor-scope fallback
+    // (`scope-forbidden` here), the hook intentionally deletes the
+    // loading entry and queues the fallback instead of writing
+    // `ready`/`error`, so the drain effect would otherwise see
+    // `status === null` for the draining slot, treat it as free, and
+    // (a) pop the descendant `externalIp` step and dispatch a second
+    // fetch even though the restored trail has been abandoned, and
+    // (b) let the post-drain validator run against the
+    // reverted-to-asset-root trail. The fix detects the fallback case
+    // in the drain branch and clears both `pendingHashFetchesRef` and
+    // `pendingValidationsRef` — the same restore-abort treatment the
+    // queued-fetch-error branch already applies.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("externalIp:203.0.113.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("host:remoteonly.example") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.99",
+        host: "corpushost.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    // Only the `sameSensor` peek is configured to resolve — if the
+    // drain were to continue past the fallback it would call
+    // `fetchTier2Mock` a second time for `externalIp`.
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+      sensorFallback: { kind: "scope-forbidden", sensorName: "edge-01" },
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Distinct scope-forbidden notice surfaces and the trail is
+    // trimmed to the asset crumb only.
+    expect(
+      screen.getByText("Sensor no longer accessible — showing asset root"),
+    ).toBeTruthy();
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    expect(screen.queryByText("Crumb:sameSensor: edge-01")).toBeNull();
+    expect(screen.queryByText("Crumb:externalIp: 203.0.113.1")).toBeNull();
+    expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
+    // Critically, the descendant `externalIp` fetch must NOT have been
+    // dispatched — the drain queue is aborted when the ancestor falls
+    // back. Before the fix, the drain effect saw the deleted loading
+    // entry as `null`, cleared `draining.current`, and popped the next
+    // queued item.
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders at most one fallback notice at a time and clears it on a fresh asset selection", async () => {
+    // Round 6 regression for Item 2. The two fallback notices were
+    // tracked as independent latching booleans, so after a
+    // `scope-forbidden` fallback a subsequent `name-unresolved` fallback
+    // would leave the "no longer accessible" banner on screen alongside
+    // the new stale-URL one. Likewise nothing cleared either flag on a
+    // subsequent successful pivot / asset change. This test pins both:
+    // (a) the active notice replaces the prior one (mutually exclusive),
+    // and (b) selecting a different asset clears the notice.
+    //
+    // Two assets so the asset list has something to navigate to after
+    // the fallback.
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "h1.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.2",
+        host: "h2.example",
+        sensor: "edge-02",
+        time: "2026-05-08T12:01:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+
+    // First hash-restore lands on the `scope-forbidden` arm.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.mode=tier2";
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+      sensorFallback: { kind: "scope-forbidden", sensorName: "edge-01" },
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    expect(
+      screen.getByText("Sensor no longer accessible — showing asset root"),
+    ).toBeTruthy();
+
+    // Selecting a different asset must clear the fallback notice —
+    // it described the prior trail. The asset list button's aria-label
+    // is the asset address (`rowDetailsTemplate: "{address}"` in
+    // LABELS).
+    const assetButton = screen.getByRole("button", {
+      name: "10.0.0.2",
+    });
+    await act(async () => {
+      fireEvent.click(assetButton);
+      await Promise.resolve();
+    });
+    expect(
+      screen.queryByText("Sensor no longer accessible — showing asset root"),
+    ).toBeNull();
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+  });
+
+  it("does not surface the stale-hash fallback when the operator selects a different asset before the queued Tier 2 fetch resolves", async () => {
+    // Round 7 regression. A Tier 2 hash restore queues an `externalIp`
+    // ancestor fetch and defers a `host=remoteonly.example` client-
+    // intersection validation. The operator selects a different asset
+    // before the queued fetch resolves; afterwards the deferred
+    // validator must NOT run against the new trail and surface the
+    // stale-hash banner / trim any pivot. The fix aborts
+    // `pendingHashFetchesRef`, `pendingValidationsRef`, and
+    // `draining.current` on explicit user navigation, so the post-drain
+    // validator stops describing a trail the operator has left.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("externalIp:203.0.113.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("host:remoteonly.example") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.10",
+        host: "corpushost.example",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.11",
+        host: "second.example",
+        time: "2026-05-08T11:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    // Deferred fetch — controlled by the test so the operator can
+    // navigate before it resolves.
+    let resolveFetch!: (v: MockTier2Result) => void;
+    fetchTier2Mock.mockImplementationOnce(
+      () =>
+        new Promise<MockTier2Result>((res) => {
+          resolveFetch = res;
+        }),
+    );
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Operator switches to the other asset while the queued fetch is
+    // still in flight.
+    const assetButton = screen.getByRole("button", { name: "10.0.0.2" });
+    await act(async () => {
+      fireEvent.click(assetButton);
+      await Promise.resolve();
+    });
+    // Now resolve the in-flight fetch with rows that do NOT carry the
+    // deferred host value — the validator (had restore state survived)
+    // would treat `host=remoteonly.example` as stale.
+    await act(async () => {
+      resolveFetch({
+        events: [
+          {
+            __typename: "BlocklistTls",
+            id: "stale-1",
+            time: "2026-05-08T13:30:00.000Z",
+            sensor: "sensor-a",
+            category: "EXFILTRATION",
+            level: "MEDIUM",
+            origAddr: "10.0.0.5",
+            respAddr: "203.0.113.1",
+            host: "differenthost.example",
+          },
+        ],
+        totalCount: "1",
+        truncated: false,
+        hasMore: false,
+        endCursor: null,
+      });
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // Stale-hash banner must NOT appear — restore-owned state was
+    // aborted at navigation time.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // Trail is the freshly selected asset only.
+    expect(
+      screen.getByText("Asset 10.0.0.2").getAttribute("aria-current"),
+    ).toBe("page");
+    expect(screen.queryByText("Crumb:externalIp: 203.0.113.1")).toBeNull();
+    expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
+  });
+
+  it("drops a late sameSensor fallback whose originating trail is no longer current", async () => {
+    // Round 7 regression. Pivot `sameSensor=edge-01` on asset A, then
+    // switch to asset B before the lookup resolves; when A's fetch
+    // eventually returns `sensorFallback: scope-forbidden`, the queued
+    // fallback effect must NOT trim B's trail back to its asset crumb
+    // and render A's "no longer accessible" banner on top of B's view.
+    // The fallback's `(sensorName, customerId)` identity now lets the
+    // effect verify the trail still owns the fallback; if not, it
+    // ack-and-drops silently.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "h1.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.2",
+        host: "h2.example",
+        sensor: "edge-02",
+        time: "2026-05-08T11:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    let resolveFetch!: (v: MockTier2Result) => void;
+    fetchTier2Mock.mockImplementationOnce(
+      () =>
+        new Promise<MockTier2Result>((res) => {
+          resolveFetch = res;
+        }),
+    );
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Switch to the other asset before the lookup resolves.
+    const assetButton = screen.getByRole("button", { name: "10.0.0.2" });
+    await act(async () => {
+      fireEvent.click(assetButton);
+      await Promise.resolve();
+    });
+    // Resolve the in-flight fetch with a scope-forbidden fallback for
+    // the prior trail's `(edge-01, customerId=0)`.
+    await act(async () => {
+      resolveFetch({
+        events: [],
+        totalCount: null,
+        truncated: false,
+        hasMore: false,
+        endCursor: null,
+        sensorFallback: { kind: "scope-forbidden", sensorName: "edge-01" },
+      });
+      await Promise.resolve();
+    });
+    await flushAsync();
+    // Neither fallback banner appears — the originating trail no longer
+    // exists, so the queued entry is silently dropped.
+    expect(
+      screen.queryByText("Sensor no longer accessible — showing asset root"),
+    ).toBeNull();
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    // Trail shows the freshly selected asset; nothing was trimmed by
+    // the abandoned fallback.
+    expect(
+      screen.getByText("Asset 10.0.0.2").getAttribute("aria-current"),
+    ).toBe("page");
   });
 });
 

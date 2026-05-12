@@ -18,6 +18,7 @@ interface Tier2ErrorNoticeProps {
   onDismiss: (
     dimension: Tier2FetchError["dimension"],
     valueKey: string,
+    customerId: number,
   ) => void;
   labels: Tier2ErrorNoticeLabels;
 }
@@ -48,13 +49,15 @@ export function Tier2ErrorNotice({
           );
         return (
           <li
-            key={`${err.dimension}|${err.valueKey}`}
+            key={`${err.dimension}|${err.valueKey}|${err.customerId}`}
             className="flex items-start justify-between gap-2 rounded-md border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive"
           >
             <span>{message}</span>
             <button
               type="button"
-              onClick={() => onDismiss(err.dimension, err.valueKey)}
+              onClick={() =>
+                onDismiss(err.dimension, err.valueKey, err.customerId)
+              }
               className="font-medium underline hover:no-underline"
             >
               {labels.dismiss}

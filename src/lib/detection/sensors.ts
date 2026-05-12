@@ -11,6 +11,7 @@ import { SENSOR_LIST_QUERY } from "./queries";
 import { jwtCustomerIdsForDetection } from "./server-actions";
 
 const DETECTION_READ = "detection:read";
+const TRIAGE_READ = "triage:read";
 const CUSTOMERS_ACCESS_ALL = "customers:access-all";
 
 /**
@@ -125,7 +126,12 @@ interface SensorListResponse {
  * Mirrors `searchEvents` / counter actions (see
  * `src/lib/detection/server-actions.ts`). Before any network traffic:
  *
- *   1. Caller must hold `detection:read`.
+ *   1. Caller must hold `detection:read` OR `triage:read`. The Triage
+ *      Tier 2 sensor pivot (#502) reuses this lookup, and the sensor
+ *      list is read-only metadata already customer-scoped via the
+ *      JWT, so the permission union does not widen what data the
+ *      caller can see — it just keeps Tier 2 sensor pivot from
+ *      implicitly requiring `detection:read`.
  *   2. The caller's effective `customer_ids` must resolve to a
  *      non-empty list — an empty scope is rejected as a
  *      misconfiguration (except for callers holding
@@ -164,9 +170,13 @@ interface SensorListResponse {
 export async function listSensors(
   session: AuthSession,
 ): Promise<SensorListResult> {
-  if (!(await hasPermission(session.roles, DETECTION_READ))) {
+  const [hasDetectionRead, hasTriageRead] = await Promise.all([
+    hasPermission(session.roles, DETECTION_READ),
+    hasPermission(session.roles, TRIAGE_READ),
+  ]);
+  if (!hasDetectionRead && !hasTriageRead) {
     throw new DetectionUnauthorizedError(
-      "Caller lacks the detection:read permission.",
+      "Caller lacks the detection:read or triage:read permission.",
     );
   }
 

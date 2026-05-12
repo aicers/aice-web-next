@@ -10,6 +10,7 @@ import {
   tier2DedupeKey,
 } from "./tier2-cache";
 import { fetchTier2Dimension } from "./tier2-fetch";
+import type { Tier2SensorFallbackKind } from "./tier2-fetch-impl";
 import { isTier2ServerDimension, type Tier2Dimension } from "./tier2-filter";
 import type { TriageEvent } from "./types";
 
@@ -26,6 +27,12 @@ export interface UseTier2PivotArgs {
   customerScope: string;
   /** True when the menu is in Tier 2 mode. */
   enabled: boolean;
+  /**
+   * Optional override for the internal {@link Tier2Cache} byte cap.
+   * Used only by tests that exercise the LRU eviction path; production
+   * callers should omit this so the cache uses {@link TIER2_CACHE_BYTE_CAP}.
+   */
+  cacheByteCap?: number;
 }
 
 export interface Tier2DimensionState {
@@ -39,6 +46,13 @@ export interface Tier2DimensionState {
 export interface Tier2PendingProjection {
   dimension: Tier2Dimension;
   valueKey: string;
+  /**
+   * Asset-root `customerId` the projection was peeked under. The
+   * stash and continuation key on `(dimension, valueKey, customerId)`
+   * so a confirm cannot drift onto a different tenant if the focus
+   * rotates between peek and confirm (#502).
+   */
+  customerId: number;
   /** REview's `totalCount` when projection is known, else null. */
   totalCount: string | null;
   /**
@@ -55,41 +69,135 @@ export interface Tier2PendingProjection {
 export interface Tier2FetchError {
   dimension: Tier2Dimension;
   valueKey: string;
+  /**
+   * Asset-root `customerId` the fetch was issued for. Carried so the
+   * dismissal callback can target the exact `(dimension, valueKey,
+   * customerId)` entry — without this, two tenants that share a
+   * dimension value would dismiss each other's error (#502).
+   */
+  customerId: number;
   message: string;
 }
 
 export interface Tier2FetchInFlight {
   dimension: Tier2Dimension;
   valueKey: string;
+  /** Asset-root `customerId` the fetch was issued for. */
+  customerId: number;
+}
+
+/**
+ * Surfaced when a Tier 2 `sameSensor` pivot resolves to a
+ * non-actionable state — either the sensor name does not map to a
+ * unique sensor under the asset's customer scope
+ * (`name-unresolved`), or review-web tightened scope mid-session and
+ * rejected the resolved `nodeId` (`scope-forbidden`). The parent
+ * reverts the trail to the asset root and renders the stale-hash-
+ * shaped toast rather than the generic error banner — see #502.
+ */
+export interface Tier2SensorFallback {
+  kind: Tier2SensorFallbackKind;
+  /** The clicked / restored sensor name (not the resolved nodeId). */
+  sensorName: string;
+  /**
+   * Asset-root `customerId` the fallback was raised under. The whole
+   * Tier 2 path keys on this — without it, two tenants pivoting the
+   * same sensor name would land on a shared queue identity and a
+   * single `acknowledgeSensorFallback(...)` call would drop both
+   * entries, silently losing one of the two asset-root reversions
+   * the parent has to render (#502).
+   */
+  customerId: number;
 }
 
 export interface UseTier2Pivot {
   scope: "tier1" | "tier2";
-  /** Get the cached Tier 2 result for a dimension click, if any. */
+  /**
+   * Get the cached Tier 2 result for a dimension click, if any.
+   *
+   * `customerId` is the asset-root `customerId` the cached entry was
+   * fetched for — required so a lookup against the wrong tenant
+   * cannot return a sensor-pivot result that was resolved for a
+   * different `(name, customerId)` tuple (#502).
+   */
   getCached: (
     dimension: Tier2Dimension,
     valueKey: string,
+    customerId: number,
   ) => Tier2DimensionState | null;
   /**
    * Trigger a Tier 2 fetch for a dimension click. If the projection
    * is known to exceed the modal threshold, the call resolves to
    * `{ pending: <projection> }` and the caller is expected to render
    * the confirmation modal; calling {@link confirmFetch} resumes.
+   *
+   * `customerId` is the asset root's customer scope — required so
+   * the `sameSensor` pivot can disambiguate a sensor `name` (not
+   * unique across tenants) to a unique `(name, customerId)` tuple
+   * before resolution. Required on every call regardless of
+   * dimension so callers cannot forget to thread the asset context.
    */
-  startFetch: (dimension: Tier2Dimension, valueKey: string) => void;
+  startFetch: (
+    dimension: Tier2Dimension,
+    valueKey: string,
+    customerId: number,
+  ) => void;
   /** Resume a fetch the operator confirmed through the modal. */
   confirmFetch: () => void;
   /** Cancel a pending pre-fetch projection. */
   cancelFetch: () => void;
+  /**
+   * Drop every queued modal-gated projection along with its parked
+   * peek stash and loading entry, *and* invalidate every in-flight
+   * first-page peek. Called by the parent on explicit navigation
+   * (new asset, breadcrumb backtrack, asset-root crumb click) so a
+   * pre-fetch modal raised against the trail the operator just left
+   * does not survive into the new trail — confirming the modal would
+   * otherwise resume a fetch keyed on the abandoned `(dimension,
+   * valueKey, customerId)` tuple, and a peek that landed *after* the
+   * navigation could reopen the modal under the new trail showing
+   * the abandoned projection's count (#502).
+   */
+  dismissAllPending: () => void;
   pending: Tier2PendingProjection | null;
   evictions: Tier2EvictionEvent[];
   acknowledgeEviction: (cacheKey: string) => void;
   /** Outstanding fetch errors awaiting operator acknowledgement. */
   errors: Tier2FetchError[];
-  /** Dismiss a surfaced fetch error and clear its dimension state. */
-  acknowledgeError: (dimension: Tier2Dimension, valueKey: string) => void;
+  /**
+   * Dismiss a surfaced fetch error and clear its dimension state.
+   * `customerId` must be the same asset-root tenant the failed fetch
+   * was issued under so two tenants pivoting the same value cannot
+   * dismiss each other's error (#502).
+   */
+  acknowledgeError: (
+    dimension: Tier2Dimension,
+    valueKey: string,
+    customerId: number,
+  ) => void;
   /** Dimensions currently fetching — drives the progress indicator. */
   inFlight: Tier2FetchInFlight[];
+  /**
+   * Pending `sameSensor` fallbacks awaiting parent-side
+   * acknowledgement. Each entry is one click whose name did not
+   * resolve to an accessible sensor (or whose resolved id was
+   * rejected by review-web's tightened sensor-scope arm). The
+   * parent reverts the breadcrumb to the asset root and surfaces
+   * the stale-hash-shaped toast for each entry.
+   */
+  sensorFallbacks: Tier2SensorFallback[];
+  /**
+   * Dismiss a surfaced sensor fallback after the parent has reverted.
+   * The full identity tuple is required so an acknowledgement for one
+   * tenant's queued fallback cannot also drop another tenant's entry
+   * for the same sensor name, or a `name-unresolved` entry whose
+   * sibling `scope-forbidden` is still awaiting the operator (#502).
+   */
+  acknowledgeSensorFallback: (
+    kind: Tier2SensorFallbackKind,
+    sensorName: string,
+    customerId: number,
+  ) => void;
   /**
    * `true` when the event already exists in the Tier 1 corpus
    * (per the dedupe key) — used by row rendering to decide whether
@@ -113,6 +221,25 @@ export interface UseTier2Pivot {
 interface PeekStash {
   dimension: Tier2Dimension;
   valueKey: string;
+  /**
+   * Asset-root customer scope captured at peek time. Continued walks
+   * must replay the same `(name, customerId)` resolution so a click
+   * confirmed through the modal cannot drift onto a different tenant
+   * if the focus rotates between peek and confirm.
+   */
+  customerId: number;
+  /**
+   * REview `nodeId` the peek resolved `(name, customerId)` to. Only
+   * populated for the `sameSensor` dimension; the continuation passes
+   * this back through `fetchTier2Dimension({ resolvedSensorId })` so
+   * the resumed `afterCursor` replay paginates the *same* sensor the
+   * peek's first page came from. Without this, a lookup result that
+   * changed between peek and Confirm (sensor renamed / new tenant
+   * entry / race on the lookup endpoint) would let the continuation
+   * paginate a different sensor with a stale cursor and merge
+   * unrelated rows into the first page (#502).
+   */
+  resolvedSensorId: string | null;
   events: TriageEvent[];
   totalCount: string | null;
   endCursor: string | null;
@@ -124,7 +251,9 @@ export function useTier2Pivot(
   args: UseTier2PivotArgs & { tier1Corpus: ReadonlyArray<TriageEvent> },
 ): UseTier2Pivot {
   const cacheRef = useRef<Tier2Cache | null>(null);
-  if (cacheRef.current === null) cacheRef.current = new Tier2Cache();
+  if (cacheRef.current === null) {
+    cacheRef.current = new Tier2Cache(args.cacheByteCap);
+  }
 
   const tier1KeySet = useMemo(() => {
     const set = new Set<string>();
@@ -153,6 +282,9 @@ export function useTier2Pivot(
     [],
   );
   const [evictions, setEvictions] = useState<Tier2EvictionEvent[]>([]);
+  const [sensorFallbacks, setSensorFallbacks] = useState<Tier2SensorFallback[]>(
+    [],
+  );
   // Bumped whenever the period or customer scope rotates. Each
   // in-flight fetch captures the current generation when it starts and
   // refuses to write its result back if the generation no longer
@@ -164,6 +296,26 @@ export function useTier2Pivot(
   // carries the full scoped key; the generation guard keeps the
   // unscoped layer from leaking cross-scope rows.
   const generationRef = useRef(0);
+  // Bumped on *trail abandonment* (new asset selection, breadcrumb
+  // backtrack, asset-root crumb click) — distinct from
+  // {@link generationRef}, which only rotates on period/scope change.
+  // The reviewer's Round 9 repro: click a Tier 2 server dimension on
+  // asset A whose first page will trip the 20,000-event modal, switch
+  // to asset B *before* the peek resolves, then let A's peek land.
+  // Without this token the late callback still parks the stash and
+  // enqueues the projection, reopening the modal under B for A's
+  // abandoned `(dimension, valueKey, customerId)`. Each async peek /
+  // continuation captures the current token at start and refuses to
+  // write back (`peekStashesRef.set`, `setPendingQueue`, `setError`,
+  // `writeReady`, `surfaceSensorFallback`) when the token has advanced.
+  const trailTokenRef = useRef(0);
+  // Keys of in-flight first-page peeks. Each `startFetch` adds its
+  // key here before awaiting the network and removes it on resolve /
+  // reject. {@link dismissAllPending} walks this set to clear the
+  // `loading` state-map entries for peeks abandoned mid-flight —
+  // without this, the loading entry would outlive the aborted peek
+  // and `getCached` would refuse a fresh refetch on the same trail.
+  const inFlightPeeksRef = useRef<Set<string>>(new Set());
 
   // Wire eviction listener exactly once. The cache lives across
   // renders; we keep the React state in sync with the cache events
@@ -171,12 +323,20 @@ export function useTier2Pivot(
   // in-memory state entry so re-pivoting after eviction triggers a
   // refetch instead of returning the strongly-referenced events that
   // the cache has already discarded — that would violate both the
-  // memory-cap invariant and the stated eviction behavior.
+  // memory-cap invariant and the stated eviction behavior. Since the
+  // hook's in-memory key includes the asset-root `customerId` (#502)
+  // and the cache eviction event only carries `(dimensionId,
+  // valueKey)`, the listener walks every in-memory state entry whose
+  // dim/value matches and drops them all — any matching entry was
+  // necessarily backed by the now-evicted cache row (one in-memory
+  // entry per cache row by construction).
   useEffect(() => {
     const cache = cacheRef.current;
     if (!cache) return;
     cache.setEvictionListener((event) => {
-      stateMapRef.current.delete(`${event.dimensionId}|${event.valueKey}`);
+      stateMapRef.current.delete(
+        `${event.dimensionId}|${event.valueKey}|${event.customerId}`,
+      );
       setEvictions((prev) => [...prev, event]);
       bump();
     });
@@ -195,32 +355,46 @@ export function useTier2Pivot(
   // biome-ignore lint/correctness/useExhaustiveDependencies: deps name the period/scope rotate trigger
   useEffect(() => {
     generationRef.current += 1;
+    // Period/scope rotation also abandons every active trail; bumping
+    // the trail token here keeps the two abort-signal contracts
+    // consistent (an in-flight peek must observe *either* a generation
+    // bump *or* a trail-token bump as a write-back veto).
+    trailTokenRef.current += 1;
+    inFlightPeeksRef.current.clear();
     cacheRef.current?.clear();
     stateMapRef.current.clear();
     peekStashesRef.current.clear();
     setEvictions([]);
     setPendingQueue([]);
+    setSensorFallbacks([]);
     bump();
   }, [args.periodStartIso, args.periodEndIso, args.customerScope, bump]);
 
+  // Per #502: the in-memory state key now includes the asset-root
+  // `customerId` so two tenants pivoting the same dimension value
+  // (e.g. `sameSensor=edge-01` resolving to different REview nodeIds
+  // under each tenant) keep isolated entries. The cache key carries
+  // the same field, so a hit at the cache layer also keys on tenant.
   const stateKey = useCallback(
-    (dimension: Tier2Dimension, valueKey: string) => `${dimension}|${valueKey}`,
+    (dimension: Tier2Dimension, valueKey: string, customerId: number) =>
+      `${dimension}|${valueKey}|${customerId}`,
     [],
   );
 
   const cacheKeyFor = useCallback(
-    (dimension: Tier2Dimension, valueKey: string) => ({
+    (dimension: Tier2Dimension, valueKey: string, customerId: number) => ({
       periodStartIso: args.periodStartIso,
       periodEndIso: args.periodEndIso,
       dimensionId: dimension,
       valueKey,
       customerScope: args.customerScope,
+      customerId,
     }),
     [args.periodStartIso, args.periodEndIso, args.customerScope],
   );
 
   const getCached = useCallback(
-    (dimension: Tier2Dimension, valueKey: string) => {
+    (dimension: Tier2Dimension, valueKey: string, customerId: number) => {
       const cache = cacheRef.current;
       if (!cache) return null;
       // Touch the cache first so the LRU layer tracks hook-level reads.
@@ -228,8 +402,10 @@ export function useTier2Pivot(
       // never refresh A's recency, and a subsequent over-cap insert
       // could evict A even though it was just used. The hit value is
       // also reused below for the cache-only branch.
-      const hit = cache.get(cacheKeyFor(dimension, valueKey));
-      const inMemory = stateMapRef.current.get(stateKey(dimension, valueKey));
+      const hit = cache.get(cacheKeyFor(dimension, valueKey, customerId));
+      const inMemory = stateMapRef.current.get(
+        stateKey(dimension, valueKey, customerId),
+      );
       if (inMemory) return inMemory;
       if (!hit) return null;
       return {
@@ -261,13 +437,14 @@ export function useTier2Pivot(
     (
       dimension: Tier2Dimension,
       valueKey: string,
+      customerId: number,
       result: {
         events: TriageEvent[];
         totalCount: string | null;
         truncated: boolean;
       },
     ) => {
-      const key = stateKey(dimension, valueKey);
+      const key = stateKey(dimension, valueKey, customerId);
       // When the cache rejects an oversized result (returns false) the
       // 100 MB hard cap would be violated by also keeping the events in
       // `stateMapRef`. Drop the loading entry instead so the operator
@@ -278,7 +455,7 @@ export function useTier2Pivot(
       // layer to enforce the cap and the assertion is only meaningful on
       // the client where the eviction listener fires.
       const accepted =
-        cacheRef.current?.set(cacheKeyFor(dimension, valueKey), {
+        cacheRef.current?.set(cacheKeyFor(dimension, valueKey, customerId), {
           events: result.events,
           totalCount: result.totalCount,
         }) ?? true;
@@ -299,9 +476,33 @@ export function useTier2Pivot(
     [bump, cacheKeyFor, stateKey],
   );
 
+  const surfaceSensorFallback = useCallback(
+    (
+      dimension: Tier2Dimension,
+      valueKey: string,
+      customerId: number,
+      fallback: { kind: Tier2SensorFallbackKind; sensorName: string },
+    ) => {
+      // Drop any loading entry — the parent reverts the trail to the
+      // asset root and the panel must not show a permanent spinner
+      // for a name that no longer resolves.
+      stateMapRef.current.delete(stateKey(dimension, valueKey, customerId));
+      setSensorFallbacks((prev) => [
+        ...prev,
+        {
+          kind: fallback.kind,
+          sensorName: fallback.sensorName,
+          customerId,
+        },
+      ]);
+      bump();
+    },
+    [bump, stateKey],
+  );
+
   const continueFromStash = useCallback(
-    async (stash: PeekStash, capturedGen: number) => {
-      const key = stateKey(stash.dimension, stash.valueKey);
+    async (stash: PeekStash, capturedGen: number, capturedToken: number) => {
+      const key = stateKey(stash.dimension, stash.valueKey, stash.customerId);
       try {
         // Resume from the peek's cursor so the first page (already in
         // `stash.events`) is not refetched. Pass `alreadyFetched` so
@@ -314,34 +515,62 @@ export function useTier2Pivot(
           periodEndIso: args.periodEndIso,
           dimension: stash.dimension,
           valueKey: stash.valueKey,
+          customerId: stash.customerId,
           afterCursor: stash.endCursor,
           alreadyFetched: stash.events.length,
+          // Reuse the peek's resolved nodeId so the continuation
+          // paginates the same sensor the cursor was issued against
+          // — see PeekStash.resolvedSensorId (#502).
+          ...(stash.resolvedSensorId !== null && {
+            resolvedSensorId: stash.resolvedSensorId,
+          }),
         });
         if (capturedGen !== generationRef.current) return;
+        if (capturedToken !== trailTokenRef.current) return;
+        if (rest.sensorFallback) {
+          surfaceSensorFallback(
+            stash.dimension,
+            stash.valueKey,
+            stash.customerId,
+            {
+              kind: rest.sensorFallback.kind,
+              sensorName: rest.sensorFallback.sensorName,
+            },
+          );
+          return;
+        }
         const merged = [...stash.events, ...rest.events];
         // Defensive slice — if a downstream change ever lets the
         // server overshoot the budget (or alreadyFetched is wired
         // wrong) the merge still respects the cap.
         const capped = merged.slice(0, TIER2_PER_DIMENSION_CAP);
         const truncated = rest.truncated || merged.length > capped.length;
-        writeReady(stash.dimension, stash.valueKey, {
+        writeReady(stash.dimension, stash.valueKey, stash.customerId, {
           events: capped,
           totalCount: stash.totalCount ?? rest.totalCount,
           truncated,
         });
       } catch (err) {
         if (capturedGen !== generationRef.current) return;
+        if (capturedToken !== trailTokenRef.current) return;
         setError(key, err);
       }
     },
-    [args.periodStartIso, args.periodEndIso, stateKey, setError, writeReady],
+    [
+      args.periodStartIso,
+      args.periodEndIso,
+      stateKey,
+      setError,
+      surfaceSensorFallback,
+      writeReady,
+    ],
   );
 
   const startFetch = useCallback(
-    (dimension: Tier2Dimension, valueKey: string) => {
+    (dimension: Tier2Dimension, valueKey: string, customerId: number) => {
       if (!args.enabled) return;
       if (!isTier2ServerDimension(dimension)) return;
-      const existing = getCached(dimension, valueKey);
+      const existing = getCached(dimension, valueKey, customerId);
       // Skip when the result is already cached *or* a peek/fetch is
       // already in flight for this key. Without the `loading` guard,
       // double-clicking a dimension would issue duplicate first-page
@@ -353,8 +582,9 @@ export function useTier2Pivot(
       ) {
         return;
       }
-      const key = stateKey(dimension, valueKey);
+      const key = stateKey(dimension, valueKey, customerId);
       const capturedGen = generationRef.current;
+      const capturedToken = trailTokenRef.current;
       stateMapRef.current.set(key, {
         status: "loading",
         events: [],
@@ -362,6 +592,7 @@ export function useTier2Pivot(
         truncated: false,
         error: null,
       });
+      inFlightPeeksRef.current.add(key);
       bump();
 
       void (async () => {
@@ -372,18 +603,30 @@ export function useTier2Pivot(
             periodEndIso: args.periodEndIso,
             dimension,
             valueKey,
+            customerId,
             firstPageOnly: true,
           });
         } catch (err) {
+          inFlightPeeksRef.current.delete(key);
           if (capturedGen !== generationRef.current) return;
+          if (capturedToken !== trailTokenRef.current) return;
           setError(key, err);
           return;
         }
+        inFlightPeeksRef.current.delete(key);
         if (capturedGen !== generationRef.current) return;
+        if (capturedToken !== trailTokenRef.current) return;
+        if (peek.sensorFallback) {
+          surfaceSensorFallback(dimension, valueKey, customerId, {
+            kind: peek.sensorFallback.kind,
+            sensorName: peek.sensorFallback.sensorName,
+          });
+          return;
+        }
         // Single-page fits the whole result: skip the modal and the
         // continuation round-trip.
         if (!peek.hasMore) {
-          writeReady(dimension, valueKey, {
+          writeReady(dimension, valueKey, customerId, {
             events: peek.events,
             totalCount: peek.totalCount,
             truncated: peek.truncated,
@@ -412,6 +655,8 @@ export function useTier2Pivot(
           peekStashesRef.current.set(key, {
             dimension,
             valueKey,
+            customerId,
+            resolvedSensorId: peek.resolvedSensorId ?? null,
             events: peek.events,
             totalCount: peek.totalCount,
             endCursor: peek.endCursor,
@@ -430,6 +675,7 @@ export function useTier2Pivot(
             {
               dimension,
               valueKey,
+              customerId,
               totalCount: peek.totalCount,
               approximateMinimum,
             },
@@ -442,6 +688,8 @@ export function useTier2Pivot(
           {
             dimension,
             valueKey,
+            customerId,
+            resolvedSensorId: peek.resolvedSensorId ?? null,
             events: peek.events,
             totalCount: peek.totalCount,
             endCursor: peek.endCursor,
@@ -449,6 +697,7 @@ export function useTier2Pivot(
             truncated: peek.truncated,
           },
           capturedGen,
+          capturedToken,
         );
       })();
     },
@@ -461,6 +710,7 @@ export function useTier2Pivot(
       getCached,
       setError,
       stateKey,
+      surfaceSensorFallback,
       writeReady,
     ],
   );
@@ -476,18 +726,18 @@ export function useTier2Pivot(
     if (pendingQueue.length === 0) return;
     const head = pendingQueue[0];
     setPendingQueue(pendingQueue.slice(1));
-    const key = stateKey(head.dimension, head.valueKey);
+    const key = stateKey(head.dimension, head.valueKey, head.customerId);
     const stash = peekStashesRef.current.get(key);
     peekStashesRef.current.delete(key);
     if (!stash) return;
-    void continueFromStash(stash, generationRef.current);
+    void continueFromStash(stash, generationRef.current, trailTokenRef.current);
   }, [continueFromStash, pendingQueue, stateKey]);
 
   const cancelFetch = useCallback(() => {
     if (pendingQueue.length === 0) return;
     const head = pendingQueue[0];
     setPendingQueue(pendingQueue.slice(1));
-    const key = stateKey(head.dimension, head.valueKey);
+    const key = stateKey(head.dimension, head.valueKey, head.customerId);
     peekStashesRef.current.delete(key);
     // Drop the loading entry so the panel does not show a permanent
     // spinner on a cancelled pivot.
@@ -495,13 +745,88 @@ export function useTier2Pivot(
     bump();
   }, [bump, pendingQueue, stateKey]);
 
+  const dismissAllPending = useCallback(() => {
+    // Drop every modal-gated projection (queued entry → parked peek
+    // stash + `loading` state-map entry) *and* invalidate every
+    // in-flight first-page peek so a late callback cannot reopen the
+    // modal under the new trail. Called by the parent on explicit
+    // navigation away from the trail the modal was raised against
+    // (#502 — Round 8 covered queued entries; Round 9 extended this
+    // to also cover peeks that had not yet resolved at navigation
+    // time).
+    //
+    // The trail-token bump is the abort signal for callbacks captured
+    // by `startFetch` / `continueFromStash`: they each compare the
+    // captured token against {@link trailTokenRef} before writing back
+    // (`setPendingQueue`, `peekStashesRef.set`, `writeReady`,
+    // `setError`, `surfaceSensorFallback`). Without this bump the
+    // late peek would still enqueue the projection — reopening the
+    // pre-fetch modal on the new trail showing the abandoned
+    // projection's count, and Confirm would resume the parked stash
+    // under the prior trail's `(dimension, valueKey, customerId)`.
+    trailTokenRef.current += 1;
+    for (const key of inFlightPeeksRef.current) {
+      stateMapRef.current.delete(key);
+    }
+    inFlightPeeksRef.current.clear();
+    // A continuation kicked off by Confirm before the operator
+    // navigated away is no longer tracked in `inFlightPeeksRef` (that
+    // set covers first-page peeks only). Its `loading` state-map
+    // entry would otherwise outlive the abandoned trail and block a
+    // fresh click on the same `(dimension, valueKey, customerId)` if
+    // the operator ever navigates back. Drop every non-terminal entry
+    // here — `ready` rows stay so cache hits keep firing on return.
+    const nonTerminalKeys: string[] = [];
+    for (const [key, state] of stateMapRef.current) {
+      if (state.status === "loading" || state.status === "error") {
+        nonTerminalKeys.push(key);
+      }
+    }
+    for (const key of nonTerminalKeys) {
+      stateMapRef.current.delete(key);
+    }
+    setPendingQueue((prev) => {
+      if (prev.length === 0) return prev;
+      for (const p of prev) {
+        const key = stateKey(p.dimension, p.valueKey, p.customerId);
+        peekStashesRef.current.delete(key);
+        stateMapRef.current.delete(key);
+      }
+      return [];
+    });
+    bump();
+  }, [bump, stateKey]);
+
   const acknowledgeEviction = useCallback((cacheKey: string) => {
     setEvictions((prev) => prev.filter((e) => e.cacheKey !== cacheKey));
   }, []);
 
+  const acknowledgeSensorFallback = useCallback(
+    (kind: Tier2SensorFallbackKind, sensorName: string, customerId: number) => {
+      setSensorFallbacks((prev) => {
+        // Drop only the first entry that matches the full identity
+        // tuple; entries are queued in click/restore order and the
+        // parent acknowledges the queue head, so a `filter()` that
+        // removed every match would also discard a later duplicate
+        // (e.g. a second `sameSensor=edge-01` pivot under the same
+        // tenant after the first failed) that still needs the
+        // parent's revert.
+        const idx = prev.findIndex(
+          (f) =>
+            f.kind === kind &&
+            f.sensorName === sensorName &&
+            f.customerId === customerId,
+        );
+        if (idx < 0) return prev;
+        return prev.slice(0, idx).concat(prev.slice(idx + 1));
+      });
+    },
+    [],
+  );
+
   const acknowledgeError = useCallback(
-    (dimension: Tier2Dimension, valueKey: string) => {
-      stateMapRef.current.delete(stateKey(dimension, valueKey));
+    (dimension: Tier2Dimension, valueKey: string, customerId: number) => {
+      stateMapRef.current.delete(stateKey(dimension, valueKey, customerId));
       bump();
     },
     [bump, stateKey],
@@ -517,11 +842,12 @@ export function useTier2Pivot(
     const list: Tier2FetchError[] = [];
     for (const [k, state] of stateMapRef.current.entries()) {
       if (state.status !== "error") continue;
-      const sep = k.indexOf("|");
-      if (sep <= 0) continue;
+      const parsed = parseStateKey(k);
+      if (parsed === null) continue;
       list.push({
-        dimension: k.slice(0, sep) as Tier2Dimension,
-        valueKey: k.slice(sep + 1),
+        dimension: parsed.dimension,
+        valueKey: parsed.valueKey,
+        customerId: parsed.customerId,
         message: state.error ?? "",
       });
     }
@@ -533,11 +859,12 @@ export function useTier2Pivot(
     const list: Tier2FetchInFlight[] = [];
     for (const [k, state] of stateMapRef.current.entries()) {
       if (state.status !== "loading") continue;
-      const sep = k.indexOf("|");
-      if (sep <= 0) continue;
+      const parsed = parseStateKey(k);
+      if (parsed === null) continue;
       list.push({
-        dimension: k.slice(0, sep) as Tier2Dimension,
-        valueKey: k.slice(sep + 1),
+        dimension: parsed.dimension,
+        valueKey: parsed.valueKey,
+        customerId: parsed.customerId,
       });
     }
     return list;
@@ -560,12 +887,38 @@ export function useTier2Pivot(
     startFetch,
     confirmFetch,
     cancelFetch,
+    dismissAllPending,
     pending,
     evictions,
     acknowledgeEviction,
     errors,
     acknowledgeError,
     inFlight,
+    sensorFallbacks,
+    acknowledgeSensorFallback,
     isInTier1Corpus,
+  };
+}
+
+// State map keys are encoded as `${dimension}|${valueKey}|${customerId}`.
+// The customerId is the trailing numeric segment; valueKey can in
+// principle carry a `|` (e.g. an unusual sensor name), so peel the
+// customerId off the right with `lastIndexOf` before extracting the
+// dimension separator at the front.
+function parseStateKey(key: string): {
+  dimension: Tier2Dimension;
+  valueKey: string;
+  customerId: number;
+} | null {
+  const lastSep = key.lastIndexOf("|");
+  if (lastSep <= 0) return null;
+  const firstSep = key.indexOf("|");
+  if (firstSep <= 0 || firstSep >= lastSep) return null;
+  const customerId = Number(key.slice(lastSep + 1));
+  if (!Number.isFinite(customerId)) return null;
+  return {
+    dimension: key.slice(0, firstSep) as Tier2Dimension,
+    valueKey: key.slice(firstSep + 1, lastSep),
+    customerId,
   };
 }

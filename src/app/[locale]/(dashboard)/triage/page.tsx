@@ -198,7 +198,6 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           badge: t("tier2.weakBadge"),
           hint: t("tier2.weakBadgeHint"),
         },
-        sameSensorUnavailable: t("tier2.sameSensorUnavailable"),
         learningMethodValues: {
           UNSUPERVISED: t("pivotPanel.values.learningMethod.UNSUPERVISED"),
           SEMI_SUPERVISED: t(
@@ -265,6 +264,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         ),
       },
       staleHashFallback: t("staleHashFallback"),
+      sensorScopeForbiddenFallback: t("sensorScopeForbiddenFallback"),
     },
     periodChangeConfirm: {
       title: t("periodChangeConfirm.title"),
