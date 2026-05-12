@@ -11,6 +11,7 @@ const KEY_BASE = {
   periodStartIso: "2026-05-08T12:00:00.000Z",
   periodEndIso: "2026-05-09T12:00:00.000Z",
   customerScope: "global",
+  customerId: 0,
 };
 
 function makeEvent(seq: number): TriageEvent {
@@ -38,6 +39,29 @@ describe("encodeTier2CacheKey", () => {
       dimensionId: "country",
       valueKey: "US",
       customerScope: "tenant-b",
+    });
+    expect(a).not.toBe(b);
+  });
+
+  it("includes the asset-root customerId so two tenants in the same visible scope don't collide on a shared dimension value (#502)", () => {
+    // Without `customerId` in the key, two assets under different
+    // customers within the same visible `customerScope` would share
+    // a cache slot for `sameSensor=edge-01` even though the resolved
+    // REview `nodeId` differs per tenant — leaking customer 42's
+    // sensor result into customer 99's pivot menu.
+    const a = encodeTier2CacheKey({
+      ...KEY_BASE,
+      dimensionId: "sameSensor",
+      valueKey: "edge-01",
+      customerScope: "global",
+      customerId: 42,
+    });
+    const b = encodeTier2CacheKey({
+      ...KEY_BASE,
+      dimensionId: "sameSensor",
+      valueKey: "edge-01",
+      customerScope: "global",
+      customerId: 99,
     });
     expect(a).not.toBe(b);
   });

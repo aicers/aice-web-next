@@ -40,6 +40,13 @@ export interface Tier2DimensionState {
 export interface Tier2PendingProjection {
   dimension: Tier2Dimension;
   valueKey: string;
+  /**
+   * Asset-root `customerId` the projection was peeked under. The
+   * stash and continuation key on `(dimension, valueKey, customerId)`
+   * so a confirm cannot drift onto a different tenant if the focus
+   * rotates between peek and confirm (#502).
+   */
+  customerId: number;
   /** REview's `totalCount` when projection is known, else null. */
   totalCount: string | null;
   /**
@@ -56,12 +63,21 @@ export interface Tier2PendingProjection {
 export interface Tier2FetchError {
   dimension: Tier2Dimension;
   valueKey: string;
+  /**
+   * Asset-root `customerId` the fetch was issued for. Carried so the
+   * dismissal callback can target the exact `(dimension, valueKey,
+   * customerId)` entry — without this, two tenants that share a
+   * dimension value would dismiss each other's error (#502).
+   */
+  customerId: number;
   message: string;
 }
 
 export interface Tier2FetchInFlight {
   dimension: Tier2Dimension;
   valueKey: string;
+  /** Asset-root `customerId` the fetch was issued for. */
+  customerId: number;
 }
 
 /**
@@ -81,10 +97,18 @@ export interface Tier2SensorFallback {
 
 export interface UseTier2Pivot {
   scope: "tier1" | "tier2";
-  /** Get the cached Tier 2 result for a dimension click, if any. */
+  /**
+   * Get the cached Tier 2 result for a dimension click, if any.
+   *
+   * `customerId` is the asset-root `customerId` the cached entry was
+   * fetched for — required so a lookup against the wrong tenant
+   * cannot return a sensor-pivot result that was resolved for a
+   * different `(name, customerId)` tuple (#502).
+   */
   getCached: (
     dimension: Tier2Dimension,
     valueKey: string,
+    customerId: number,
   ) => Tier2DimensionState | null;
   /**
    * Trigger a Tier 2 fetch for a dimension click. If the projection
@@ -112,8 +136,17 @@ export interface UseTier2Pivot {
   acknowledgeEviction: (cacheKey: string) => void;
   /** Outstanding fetch errors awaiting operator acknowledgement. */
   errors: Tier2FetchError[];
-  /** Dismiss a surfaced fetch error and clear its dimension state. */
-  acknowledgeError: (dimension: Tier2Dimension, valueKey: string) => void;
+  /**
+   * Dismiss a surfaced fetch error and clear its dimension state.
+   * `customerId` must be the same asset-root tenant the failed fetch
+   * was issued under so two tenants pivoting the same value cannot
+   * dismiss each other's error (#502).
+   */
+  acknowledgeError: (
+    dimension: Tier2Dimension,
+    valueKey: string,
+    customerId: number,
+  ) => void;
   /** Dimensions currently fetching — drives the progress indicator. */
   inFlight: Tier2FetchInFlight[];
   /**
@@ -218,12 +251,20 @@ export function useTier2Pivot(
   // in-memory state entry so re-pivoting after eviction triggers a
   // refetch instead of returning the strongly-referenced events that
   // the cache has already discarded — that would violate both the
-  // memory-cap invariant and the stated eviction behavior.
+  // memory-cap invariant and the stated eviction behavior. Since the
+  // hook's in-memory key includes the asset-root `customerId` (#502)
+  // and the cache eviction event only carries `(dimensionId,
+  // valueKey)`, the listener walks every in-memory state entry whose
+  // dim/value matches and drops them all — any matching entry was
+  // necessarily backed by the now-evicted cache row (one in-memory
+  // entry per cache row by construction).
   useEffect(() => {
     const cache = cacheRef.current;
     if (!cache) return;
     cache.setEvictionListener((event) => {
-      stateMapRef.current.delete(`${event.dimensionId}|${event.valueKey}`);
+      stateMapRef.current.delete(
+        `${event.dimensionId}|${event.valueKey}|${event.customerId}`,
+      );
       setEvictions((prev) => [...prev, event]);
       bump();
     });
@@ -251,24 +292,31 @@ export function useTier2Pivot(
     bump();
   }, [args.periodStartIso, args.periodEndIso, args.customerScope, bump]);
 
+  // Per #502: the in-memory state key now includes the asset-root
+  // `customerId` so two tenants pivoting the same dimension value
+  // (e.g. `sameSensor=edge-01` resolving to different REview nodeIds
+  // under each tenant) keep isolated entries. The cache key carries
+  // the same field, so a hit at the cache layer also keys on tenant.
   const stateKey = useCallback(
-    (dimension: Tier2Dimension, valueKey: string) => `${dimension}|${valueKey}`,
+    (dimension: Tier2Dimension, valueKey: string, customerId: number) =>
+      `${dimension}|${valueKey}|${customerId}`,
     [],
   );
 
   const cacheKeyFor = useCallback(
-    (dimension: Tier2Dimension, valueKey: string) => ({
+    (dimension: Tier2Dimension, valueKey: string, customerId: number) => ({
       periodStartIso: args.periodStartIso,
       periodEndIso: args.periodEndIso,
       dimensionId: dimension,
       valueKey,
       customerScope: args.customerScope,
+      customerId,
     }),
     [args.periodStartIso, args.periodEndIso, args.customerScope],
   );
 
   const getCached = useCallback(
-    (dimension: Tier2Dimension, valueKey: string) => {
+    (dimension: Tier2Dimension, valueKey: string, customerId: number) => {
       const cache = cacheRef.current;
       if (!cache) return null;
       // Touch the cache first so the LRU layer tracks hook-level reads.
@@ -276,8 +324,10 @@ export function useTier2Pivot(
       // never refresh A's recency, and a subsequent over-cap insert
       // could evict A even though it was just used. The hit value is
       // also reused below for the cache-only branch.
-      const hit = cache.get(cacheKeyFor(dimension, valueKey));
-      const inMemory = stateMapRef.current.get(stateKey(dimension, valueKey));
+      const hit = cache.get(cacheKeyFor(dimension, valueKey, customerId));
+      const inMemory = stateMapRef.current.get(
+        stateKey(dimension, valueKey, customerId),
+      );
       if (inMemory) return inMemory;
       if (!hit) return null;
       return {
@@ -309,13 +359,14 @@ export function useTier2Pivot(
     (
       dimension: Tier2Dimension,
       valueKey: string,
+      customerId: number,
       result: {
         events: TriageEvent[];
         totalCount: string | null;
         truncated: boolean;
       },
     ) => {
-      const key = stateKey(dimension, valueKey);
+      const key = stateKey(dimension, valueKey, customerId);
       // When the cache rejects an oversized result (returns false) the
       // 100 MB hard cap would be violated by also keeping the events in
       // `stateMapRef`. Drop the loading entry instead so the operator
@@ -326,7 +377,7 @@ export function useTier2Pivot(
       // layer to enforce the cap and the assertion is only meaningful on
       // the client where the eviction listener fires.
       const accepted =
-        cacheRef.current?.set(cacheKeyFor(dimension, valueKey), {
+        cacheRef.current?.set(cacheKeyFor(dimension, valueKey, customerId), {
           events: result.events,
           totalCount: result.totalCount,
         }) ?? true;
@@ -351,12 +402,13 @@ export function useTier2Pivot(
     (
       dimension: Tier2Dimension,
       valueKey: string,
+      customerId: number,
       fallback: { kind: Tier2SensorFallbackKind; sensorName: string },
     ) => {
       // Drop any loading entry — the parent reverts the trail to the
       // asset root and the panel must not show a permanent spinner
       // for a name that no longer resolves.
-      stateMapRef.current.delete(stateKey(dimension, valueKey));
+      stateMapRef.current.delete(stateKey(dimension, valueKey, customerId));
       setSensorFallbacks((prev) => [
         ...prev,
         { kind: fallback.kind, sensorName: fallback.sensorName },
@@ -368,7 +420,7 @@ export function useTier2Pivot(
 
   const continueFromStash = useCallback(
     async (stash: PeekStash, capturedGen: number) => {
-      const key = stateKey(stash.dimension, stash.valueKey);
+      const key = stateKey(stash.dimension, stash.valueKey, stash.customerId);
       try {
         // Resume from the peek's cursor so the first page (already in
         // `stash.events`) is not refetched. Pass `alreadyFetched` so
@@ -387,10 +439,15 @@ export function useTier2Pivot(
         });
         if (capturedGen !== generationRef.current) return;
         if (rest.sensorFallback) {
-          surfaceSensorFallback(stash.dimension, stash.valueKey, {
-            kind: rest.sensorFallback.kind,
-            sensorName: rest.sensorFallback.sensorName,
-          });
+          surfaceSensorFallback(
+            stash.dimension,
+            stash.valueKey,
+            stash.customerId,
+            {
+              kind: rest.sensorFallback.kind,
+              sensorName: rest.sensorFallback.sensorName,
+            },
+          );
           return;
         }
         const merged = [...stash.events, ...rest.events];
@@ -399,7 +456,7 @@ export function useTier2Pivot(
         // wrong) the merge still respects the cap.
         const capped = merged.slice(0, TIER2_PER_DIMENSION_CAP);
         const truncated = rest.truncated || merged.length > capped.length;
-        writeReady(stash.dimension, stash.valueKey, {
+        writeReady(stash.dimension, stash.valueKey, stash.customerId, {
           events: capped,
           totalCount: stash.totalCount ?? rest.totalCount,
           truncated,
@@ -423,7 +480,7 @@ export function useTier2Pivot(
     (dimension: Tier2Dimension, valueKey: string, customerId: number) => {
       if (!args.enabled) return;
       if (!isTier2ServerDimension(dimension)) return;
-      const existing = getCached(dimension, valueKey);
+      const existing = getCached(dimension, valueKey, customerId);
       // Skip when the result is already cached *or* a peek/fetch is
       // already in flight for this key. Without the `loading` guard,
       // double-clicking a dimension would issue duplicate first-page
@@ -435,7 +492,7 @@ export function useTier2Pivot(
       ) {
         return;
       }
-      const key = stateKey(dimension, valueKey);
+      const key = stateKey(dimension, valueKey, customerId);
       const capturedGen = generationRef.current;
       stateMapRef.current.set(key, {
         status: "loading",
@@ -464,7 +521,7 @@ export function useTier2Pivot(
         }
         if (capturedGen !== generationRef.current) return;
         if (peek.sensorFallback) {
-          surfaceSensorFallback(dimension, valueKey, {
+          surfaceSensorFallback(dimension, valueKey, customerId, {
             kind: peek.sensorFallback.kind,
             sensorName: peek.sensorFallback.sensorName,
           });
@@ -473,7 +530,7 @@ export function useTier2Pivot(
         // Single-page fits the whole result: skip the modal and the
         // continuation round-trip.
         if (!peek.hasMore) {
-          writeReady(dimension, valueKey, {
+          writeReady(dimension, valueKey, customerId, {
             events: peek.events,
             totalCount: peek.totalCount,
             truncated: peek.truncated,
@@ -521,6 +578,7 @@ export function useTier2Pivot(
             {
               dimension,
               valueKey,
+              customerId,
               totalCount: peek.totalCount,
               approximateMinimum,
             },
@@ -569,7 +627,7 @@ export function useTier2Pivot(
     if (pendingQueue.length === 0) return;
     const head = pendingQueue[0];
     setPendingQueue(pendingQueue.slice(1));
-    const key = stateKey(head.dimension, head.valueKey);
+    const key = stateKey(head.dimension, head.valueKey, head.customerId);
     const stash = peekStashesRef.current.get(key);
     peekStashesRef.current.delete(key);
     if (!stash) return;
@@ -580,7 +638,7 @@ export function useTier2Pivot(
     if (pendingQueue.length === 0) return;
     const head = pendingQueue[0];
     setPendingQueue(pendingQueue.slice(1));
-    const key = stateKey(head.dimension, head.valueKey);
+    const key = stateKey(head.dimension, head.valueKey, head.customerId);
     peekStashesRef.current.delete(key);
     // Drop the loading entry so the panel does not show a permanent
     // spinner on a cancelled pivot.
@@ -599,8 +657,8 @@ export function useTier2Pivot(
   }, []);
 
   const acknowledgeError = useCallback(
-    (dimension: Tier2Dimension, valueKey: string) => {
-      stateMapRef.current.delete(stateKey(dimension, valueKey));
+    (dimension: Tier2Dimension, valueKey: string, customerId: number) => {
+      stateMapRef.current.delete(stateKey(dimension, valueKey, customerId));
       bump();
     },
     [bump, stateKey],
@@ -616,11 +674,12 @@ export function useTier2Pivot(
     const list: Tier2FetchError[] = [];
     for (const [k, state] of stateMapRef.current.entries()) {
       if (state.status !== "error") continue;
-      const sep = k.indexOf("|");
-      if (sep <= 0) continue;
+      const parsed = parseStateKey(k);
+      if (parsed === null) continue;
       list.push({
-        dimension: k.slice(0, sep) as Tier2Dimension,
-        valueKey: k.slice(sep + 1),
+        dimension: parsed.dimension,
+        valueKey: parsed.valueKey,
+        customerId: parsed.customerId,
         message: state.error ?? "",
       });
     }
@@ -632,11 +691,12 @@ export function useTier2Pivot(
     const list: Tier2FetchInFlight[] = [];
     for (const [k, state] of stateMapRef.current.entries()) {
       if (state.status !== "loading") continue;
-      const sep = k.indexOf("|");
-      if (sep <= 0) continue;
+      const parsed = parseStateKey(k);
+      if (parsed === null) continue;
       list.push({
-        dimension: k.slice(0, sep) as Tier2Dimension,
-        valueKey: k.slice(sep + 1),
+        dimension: parsed.dimension,
+        valueKey: parsed.valueKey,
+        customerId: parsed.customerId,
       });
     }
     return list;
@@ -668,5 +728,28 @@ export function useTier2Pivot(
     sensorFallbacks,
     acknowledgeSensorFallback,
     isInTier1Corpus,
+  };
+}
+
+// State map keys are encoded as `${dimension}|${valueKey}|${customerId}`.
+// The customerId is the trailing numeric segment; valueKey can in
+// principle carry a `|` (e.g. an unusual sensor name), so peel the
+// customerId off the right with `lastIndexOf` before extracting the
+// dimension separator at the front.
+function parseStateKey(key: string): {
+  dimension: Tier2Dimension;
+  valueKey: string;
+  customerId: number;
+} | null {
+  const lastSep = key.lastIndexOf("|");
+  if (lastSep <= 0) return null;
+  const firstSep = key.indexOf("|");
+  if (firstSep <= 0 || firstSep >= lastSep) return null;
+  const customerId = Number(key.slice(lastSep + 1));
+  if (!Number.isFinite(customerId)) return null;
+  return {
+    dimension: key.slice(0, firstSep) as Tier2Dimension,
+    valueKey: key.slice(firstSep + 1, lastSep),
+    customerId,
   };
 }

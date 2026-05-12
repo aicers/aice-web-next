@@ -7,14 +7,20 @@
  * event count, so a cache of 5,000 small DNS queries and a cache of
  * 5,000 fat HTTP rows account for very different memory footprints.
  *
- * Cache key (per #453 acceptance):
+ * Cache key (per #453 acceptance, extended per #502):
  *
- *     `${periodStart}|${periodEnd}|${dimensionId}|${valueKey}|${customerScope}`
+ *     `${periodStart}|${periodEnd}|${dimensionId}|${valueKey}|${customerScope}|${customerId}`
  *
  * The customer scope keeps cross-tenant entries from colliding when
  * the menu is opened against a different customer in the same
- * session. The format is opaque to the cache — the caller decides
- * how to encode the scope.
+ * session; the asset-root `customerId` keeps two assets *within* the
+ * same visible scope from colliding when they share a dimension
+ * value whose resolution depends on the asset's tenant (per #502,
+ * a `sameSensor` name like `edge-01` can map to a different REview
+ * `nodeId` under each tenant — without `customerId` in the key, two
+ * tenants pivoting `sameSensor=edge-01` would cross-contaminate).
+ * The format is opaque to the cache — the caller decides how to
+ * encode the scope.
  */
 
 import type { ScoredTriageEvent, TriageEvent } from "./types";
@@ -37,6 +43,13 @@ export interface Tier2CacheKey {
   valueKey: string;
   /** Stable identifier for the customer scope. */
   customerScope: string;
+  /**
+   * Asset-root `customerId` the fetch was issued for. Two assets
+   * under different tenants within the same visible `customerScope`
+   * must not share a cache entry for dimensions whose resolution
+   * depends on the asset's tenant (`sameSensor` — see #502).
+   */
+  customerId: number;
 }
 
 export interface Tier2CacheEntry {
@@ -60,6 +73,8 @@ export interface Tier2EvictionEvent {
   cacheKey: string;
   dimensionId: string;
   valueKey: string;
+  /** Asset-root `customerId` the evicted entry was fetched for. */
+  customerId: number;
 }
 
 export type Tier2EvictionListener = (event: Tier2EvictionEvent) => void;
@@ -71,6 +86,7 @@ export function encodeTier2CacheKey(key: Tier2CacheKey): string {
     key.dimensionId,
     key.valueKey,
     key.customerScope,
+    String(key.customerId),
   ].join("|");
 }
 
@@ -150,6 +166,7 @@ export class Tier2Cache {
         cacheKey,
         dimensionId: extractDimensionId(cacheKey),
         valueKey: extractValueKey(cacheKey),
+        customerId: extractCustomerId(cacheKey),
       });
       return false;
     }
@@ -209,6 +226,7 @@ export class Tier2Cache {
         cacheKey: entry.cacheKey,
         dimensionId: extractDimensionId(entry.cacheKey),
         valueKey: extractValueKey(entry.cacheKey),
+        customerId: extractCustomerId(entry.cacheKey),
       });
     }
   }
@@ -220,6 +238,13 @@ function extractDimensionId(cacheKey: string): string {
 
 function extractValueKey(cacheKey: string): string {
   return cacheKey.split("|")[3] ?? "";
+}
+
+function extractCustomerId(cacheKey: string): number {
+  const parts = cacheKey.split("|");
+  const raw = parts[5] ?? "";
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 /**

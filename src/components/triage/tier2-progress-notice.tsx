@@ -42,7 +42,7 @@ export function Tier2ProgressNotice({
           : labels.progress;
         return (
           <li
-            key={`${entry.dimension}|${entry.valueKey}`}
+            key={`${entry.dimension}|${entry.valueKey}|${entry.customerId}`}
             className="rounded-md border border-sky-300/60 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-500/40 dark:bg-sky-950/40 dark:text-sky-200"
           >
             {message}

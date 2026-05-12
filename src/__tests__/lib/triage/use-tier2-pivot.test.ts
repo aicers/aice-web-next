@@ -124,7 +124,7 @@ describe("useTier2Pivot — LRU recency tracks hook reads", () => {
     // Re-pivot A — this is the hook-layer read path that previously
     // bypassed `cache.get()`.
     act(() => {
-      const cached = result.current.getCached(dim, "A");
+      const cached = result.current.getCached(dim, "A", 7);
       expect(cached?.status).toBe("ready");
     });
 
@@ -170,8 +170,8 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       result.current.startFetch(dim, "A", 7);
       result.current.startFetch(dim, "B", 7);
     });
-    expect(result.current.getCached(dim, "A")?.status).toBe("loading");
-    expect(result.current.getCached(dim, "B")?.status).toBe("loading");
+    expect(result.current.getCached(dim, "A", 7)?.status).toBe("loading");
+    expect(result.current.getCached(dim, "B", 7)?.status).toBe("loading");
 
     const fullPage = Array.from({ length: 100 }, (_, i) => makeEvent(i));
 
@@ -214,7 +214,7 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       await Promise.resolve();
     });
     expect(result.current.pending?.valueKey).toBe("B");
-    expect(result.current.getCached(dim, "B")?.status).toBe("loading");
+    expect(result.current.getCached(dim, "B", 7)?.status).toBe("loading");
 
     // Drain the continuation for A.
     await act(async () => {
@@ -228,7 +228,7 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(result.current.getCached(dim, "A")?.status).toBe("ready");
+    expect(result.current.getCached(dim, "A", 7)?.status).toBe("ready");
 
     // Cancelling B clears its loading entry — the orphaned-loading
     // bug repro should NOT happen: B is reachable through the queue.
@@ -236,7 +236,7 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       result.current.cancelFetch();
     });
     expect(result.current.pending).toBeNull();
-    expect(result.current.getCached(dim, "B")).toBeNull();
+    expect(result.current.getCached(dim, "B", 7)).toBeNull();
 
     // Drain B's continuation promise so vitest doesn't warn about
     // unresolved promises.
@@ -313,7 +313,67 @@ describe("useTier2Pivot — modal queue serializes large-projection clicks", () 
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(result.current.getCached(dim, "A")?.status).toBe("ready");
+    expect(result.current.getCached(dim, "A", 7)?.status).toBe("ready");
+  });
+});
+
+describe("useTier2Pivot — cross-tenant sameSensor pivots do not share a cache entry (#502)", () => {
+  it("keys the cache by asset-root customerId so two tenants pivoting the same sensor name fetch independently", async () => {
+    // Two assets under different customers (42 and 99) share the
+    // visible `customerScope` but pivot a sensor named `edge-01`
+    // whose REview `nodeId` differs per tenant. Without `customerId`
+    // in the cache/state key, the second click would hit customer
+    // 42's cached result and customer 99 would see the wrong tenant's
+    // events. The key must include `customerId` so each tenant's
+    // pivot issues its own fetch and stores its own result.
+    let callCount = 0;
+    fetchTier2DimensionMock.mockImplementation(async (input: unknown) => {
+      callCount += 1;
+      const typed = input as { customerId: number };
+      return {
+        events: [makeEvent(typed.customerId)],
+        totalCount: "1",
+        endCursor: null,
+        hasMore: false,
+        truncated: false,
+      };
+    });
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "sameSensor";
+
+    await act(async () => {
+      result.current.startFetch(dim, "edge-01", 42);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Customer 42's result is cached for `(sameSensor, edge-01, 42)`.
+    const forty2 = result.current.getCached(dim, "edge-01", 42);
+    expect(forty2?.status).toBe("ready");
+    expect(forty2?.events).toHaveLength(1);
+    expect(forty2?.events[0].id).toBe("evt-42");
+
+    // Looking up the same `(dimension, valueKey)` under a different
+    // customer must miss the cache — otherwise we'd cross-contaminate.
+    expect(result.current.getCached(dim, "edge-01", 99)).toBeNull();
+
+    // Firing customer 99's pivot issues a *fresh* fetch and stores its
+    // own result; customer 42's entry is untouched.
+    await act(async () => {
+      result.current.startFetch(dim, "edge-01", 99);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(2);
+    const ninety9 = result.current.getCached(dim, "edge-01", 99);
+    expect(ninety9?.status).toBe("ready");
+    expect(ninety9?.events[0].id).toBe("evt-99");
+    // Customer 42's entry stays untouched — no cross-tenant leak.
+    expect(result.current.getCached(dim, "edge-01", 42)?.events[0].id).toBe(
+      "evt-42",
+    );
   });
 });
 
@@ -351,7 +411,7 @@ describe("useTier2Pivot — sameSensor fallback surfaces through the hook (#502)
     ]);
     // The loading entry must be cleared so the panel does not show a
     // permanent spinner for a name that no longer resolves.
-    expect(result.current.getCached(dim, "edge-01")).toBeNull();
+    expect(result.current.getCached(dim, "edge-01", 7)).toBeNull();
 
     // Parent-side acknowledgement drains the queue.
     act(() => {

@@ -250,10 +250,21 @@ export function TriageBaselineContent({
     for (const ev of result.events) corpusKeys.add(tier2DedupeKey(ev));
     const seen = new Set<string>();
     const out: ScoredTriageEvent[] = [];
+    // The asset crumb's `customerId` keys the Tier 2 cache lookup
+    // (#502 — without it, two tenants pivoting the same value would
+    // cross-contaminate). The crumb is always the trail head in
+    // Baseline mode; fall back to 0 only for the defensive empty-
+    // trail case so the lookup stays a no-op cache miss.
+    const assetCrumbCustomerId =
+      trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
     for (const step of trail) {
       if (step.kind !== "dimension") continue;
       if (!isTier2ServerDimension(step.dimension)) continue;
-      const cached = tier2.getCached(step.dimension, step.value.key);
+      const cached = tier2.getCached(
+        step.dimension,
+        step.value.key,
+        assetCrumbCustomerId,
+      );
       if (!cached || cached.events.length === 0) continue;
       for (const ev of cached.events) {
         const key = tier2DedupeKey(ev);
@@ -261,15 +272,9 @@ export function TriageBaselineContent({
         seen.add(key);
         // Tier 2 fetch results are flat `TriageEvent[]` from the
         // Policy fetch service and do not carry a per-tenant marker.
-        // In Baseline mode the operator focuses one asset at a time,
-        // so attribute Tier 2-spliced events to the trail's asset
-        // crumb. The pivot index filters on `(customerId, origAddr)`
-        // for the asset step, which is the only consumer of this
-        // marker.
-        const assetCrumbCustomerId =
-          trail.length > 0 && trail[0].kind === "asset"
-            ? trail[0].customerId
-            : 0;
+        // Attribute the spliced events to the trail's asset crumb so
+        // the pivot index's `(customerId, origAddr)` filter for the
+        // asset step still resolves.
         out.push({
           ...ev,
           score: baselineScore(ev),
@@ -309,16 +314,19 @@ export function TriageBaselineContent({
       activeStep.kind === "dimension" &&
       isStaticTier2Dimension(activeStep.dimension)
     ) {
-      const cached = tier2.getCached(
-        activeStep.dimension,
-        activeStep.value.key,
-      );
-      if (!cached) return [];
       // Tier 2 fetch results lack a per-tenant marker; attribute them
       // to the trail's asset crumb so the synthesized pivot-focus row
       // can still identify the customer (see `expandedTier2Events`).
+      // The same crumb keys the Tier 2 lookup so cross-tenant cache
+      // entries cannot collide (#502).
       const assetCrumbCustomerId =
         trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
+      const cached = tier2.getCached(
+        activeStep.dimension,
+        activeStep.value.key,
+        assetCrumbCustomerId,
+      );
+      if (!cached) return [];
       return cached.events.map((ev) => ({
         ...ev,
         score: baselineScore(ev),
@@ -347,10 +355,15 @@ export function TriageBaselineContent({
   // the safer fallback is the asset card.
   const pivotFocusAsset: TriageAsset | null = useMemo(() => {
     if (!activeStep || activeStep.kind !== "dimension") return null;
+    const assetCrumbCustomerId =
+      trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
     const isReadyStaticTier2 =
       isStaticTier2Dimension(activeStep.dimension) &&
-      tier2.getCached(activeStep.dimension, activeStep.value.key)?.status ===
-        "ready";
+      tier2.getCached(
+        activeStep.dimension,
+        activeStep.value.key,
+        assetCrumbCustomerId,
+      )?.status === "ready";
     if (focusEvents.length === 0 && !isReadyStaticTier2) return null;
     const dimensionLabel = labels.pivotPanel.dimensions[activeStep.dimension];
     const address = `${dimensionLabel}: ${activeStep.value.label}`;
@@ -459,10 +472,16 @@ export function TriageBaselineContent({
   const panelTruncated = useMemo(() => {
     if (result.truncated) return true;
     if (scope !== "tier2") return false;
+    const assetCrumbCustomerId =
+      trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
     for (const step of trail) {
       if (step.kind !== "dimension") continue;
       if (!isTier2ServerDimension(step.dimension)) continue;
-      const cached = tier2.getCached(step.dimension, step.value.key);
+      const cached = tier2.getCached(
+        step.dimension,
+        step.value.key,
+        assetCrumbCustomerId,
+      );
       if (cached?.truncated === true) return true;
     }
     return false;
@@ -773,6 +792,7 @@ export function TriageBaselineContent({
   const draining = useRef<{
     dimension: Tier2Dimension;
     valueKey: string;
+    customerId: number;
   } | null>(null);
   // `tier2.inFlight` and `tier2.errors` are listed as deps so the
   // effect re-runs when the currently-draining fetch resolves
@@ -789,6 +809,7 @@ export function TriageBaselineContent({
       const status = tier2.getCached(
         draining.current.dimension,
         draining.current.valueKey,
+        draining.current.customerId,
       );
       // Still loading (or modal-gated through `pending`, handled
       // above): wait for the next render.
