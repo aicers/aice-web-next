@@ -1248,6 +1248,80 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
     expect(screen.queryByText("Crumb:sameSensor: edge-01")).toBeNull();
   });
 
+  it("aborts queued descendants and deferred validations when a queued sameSensor ancestor falls back during hash restore", async () => {
+    // Round 10 regression. A Tier 2 hash restore queues a `sameSensor`
+    // ancestor, a server-filtered descendant (`externalIp`), and a
+    // deferred client-intersection child whose value lives only inside
+    // the ancestor's would-be fetch result (`host=remoteonly.example`).
+    // When the ancestor resolves to a sensor-scope fallback
+    // (`scope-forbidden` here), the hook intentionally deletes the
+    // loading entry and queues the fallback instead of writing
+    // `ready`/`error`, so the drain effect would otherwise see
+    // `status === null` for the draining slot, treat it as free, and
+    // (a) pop the descendant `externalIp` step and dispatch a second
+    // fetch even though the restored trail has been abandoned, and
+    // (b) let the post-drain validator run against the
+    // reverted-to-asset-root trail. The fix detects the fallback case
+    // in the drain branch and clears both `pendingHashFetchesRef` and
+    // `pendingValidationsRef` — the same restore-abort treatment the
+    // queued-fetch-error branch already applies.
+    window.location.hash =
+      "#triage.pivot.asset=" +
+      encodeURIComponent("0/10.0.0.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("sameSensor:edge-01") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("externalIp:203.0.113.1") +
+      "&triage.pivot.step=" +
+      encodeURIComponent("host:remoteonly.example") +
+      "&triage.pivot.mode=tier2";
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.99",
+        host: "corpushost.example",
+        sensor: "edge-01",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    // Only the `sameSensor` peek is configured to resolve — if the
+    // drain were to continue past the fallback it would call
+    // `fetchTier2Mock` a second time for `externalIp`.
+    fetchTier2Mock.mockResolvedValueOnce({
+      events: [],
+      totalCount: null,
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+      sensorFallback: { kind: "scope-forbidden", sensorName: "edge-01" },
+    });
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={LABELS}
+      />,
+    );
+    await flushAsync();
+    // Distinct scope-forbidden notice surfaces and the trail is
+    // trimmed to the asset crumb only.
+    expect(
+      screen.getByText("Sensor no longer accessible — showing asset root"),
+    ).toBeTruthy();
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    expect(screen.queryByText("Crumb:sameSensor: edge-01")).toBeNull();
+    expect(screen.queryByText("Crumb:externalIp: 203.0.113.1")).toBeNull();
+    expect(screen.queryByText("Crumb:host: remoteonly.example")).toBeNull();
+    // Critically, the descendant `externalIp` fetch must NOT have been
+    // dispatched — the drain queue is aborted when the ancestor falls
+    // back. Before the fix, the drain effect saw the deleted loading
+    // entry as `null`, cleared `draining.current`, and popped the next
+    // queued item.
+    expect(fetchTier2Mock).toHaveBeenCalledTimes(1);
+  });
+
   it("renders at most one fallback notice at a time and clears it on a fresh asset selection", async () => {
     // Round 6 regression for Item 2. The two fallback notices were
     // tracked as independent latching booleans, so after a

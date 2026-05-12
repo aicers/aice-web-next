@@ -931,6 +931,30 @@ export function TriageBaselineContent({
         pendingHashFetchesRef.current = [];
         pendingValidationsRef.current = [];
       }
+      // A queued `sameSensor` ancestor resolved to a sensor-scope
+      // fallback (`name-unresolved` or `scope-forbidden`): the hook
+      // intentionally deletes the loading entry and queues the
+      // fallback instead of writing `ready` / `error`, so `status`
+      // is `null` here. The fallback effect below will trim the trail
+      // to the asset root and render the distinct fallback notice,
+      // but without this branch the drain would keep firing queued
+      // descendants (their corpus context is already incomplete) and
+      // the post-drain validator would run against the reverted trail
+      // and overwrite the fallback notice with the generic stale-hash
+      // banner. Treat the fallback case like `error` and abort the
+      // rest of the restore chain.
+      if (
+        !status &&
+        draining.current.dimension === "sameSensor" &&
+        tier2.sensorFallbacks.some(
+          (f) =>
+            f.sensorName === draining.current?.valueKey &&
+            f.customerId === draining.current.customerId,
+        )
+      ) {
+        pendingHashFetchesRef.current = [];
+        pendingValidationsRef.current = [];
+      }
       // Either ready, errored, or cleared via cancel: this slot is
       // free again. Fall through to fire the next queued item.
       draining.current = null;
