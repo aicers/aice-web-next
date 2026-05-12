@@ -27,6 +27,12 @@ export interface UseTier2PivotArgs {
   customerScope: string;
   /** True when the menu is in Tier 2 mode. */
   enabled: boolean;
+  /**
+   * Optional override for the internal {@link Tier2Cache} byte cap.
+   * Used only by tests that exercise the LRU eviction path; production
+   * callers should omit this so the cache uses {@link TIER2_CACHE_BYTE_CAP}.
+   */
+  cacheByteCap?: number;
 }
 
 export interface Tier2DimensionState {
@@ -201,7 +207,9 @@ export function useTier2Pivot(
   args: UseTier2PivotArgs & { tier1Corpus: ReadonlyArray<TriageEvent> },
 ): UseTier2Pivot {
   const cacheRef = useRef<Tier2Cache | null>(null);
-  if (cacheRef.current === null) cacheRef.current = new Tier2Cache();
+  if (cacheRef.current === null) {
+    cacheRef.current = new Tier2Cache(args.cacheByteCap);
+  }
 
   const tier1KeySet = useMemo(() => {
     const set = new Set<string>();

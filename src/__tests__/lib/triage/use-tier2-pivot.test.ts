@@ -377,6 +377,67 @@ describe("useTier2Pivot — cross-tenant sameSensor pivots do not share a cache 
   });
 });
 
+describe("useTier2Pivot — eviction drops the matching in-memory state entry", () => {
+  it("clears `stateMapRef` for a `keywords` value containing the encoded separator when the cache evicts it", async () => {
+    // The cache key encodes as `${start}|${end}|${dimensionId}|${valueKey}|${scope}|${customerId}`
+    // with `valueKey` unescaped — a free-form `keywords` entry like
+    // `foo|bar` is a valid submission. Earlier revisions reconstructed
+    // the eviction event by splitting on `|` and reading fixed
+    // indices, which mis-reported the trailing fields. The hook
+    // listener then deleted the wrong `stateMapRef` slot, leaving the
+    // evicted events strongly referenced. The fix carries the
+    // structured identity on the cache entry, and the hook listener
+    // uses that payload verbatim to drop the in-memory state.
+    fetchTier2DimensionMock.mockImplementation(
+      async (input: { valueKey: string }) => ({
+        events: [makeEvent(input.valueKey === "foo|bar" ? 1 : 2)],
+        totalCount: "1",
+        endCursor: null,
+        hasMore: false,
+        truncated: false,
+      }),
+    );
+
+    // Cap large enough for a single small entry, but a second insert
+    // forces the first one out via LRU.
+    const single = JSON.stringify([makeEvent(0)]).length;
+    const { result } = renderHook(() =>
+      useTier2Pivot({ ...HOOK_ARGS_BASE, cacheByteCap: single }),
+    );
+    const dim: Tier2Dimension = "keywords";
+
+    await act(async () => {
+      result.current.startFetch(dim, "foo|bar", 42);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.getCached(dim, "foo|bar", 42)?.status).toBe("ready");
+
+    await act(async () => {
+      result.current.startFetch(dim, "baz", 42);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // After the second insert the cache evicted `foo|bar`. The hook
+    // listener must have deleted the `stateMapRef` entry for that
+    // exact key — not the truncated `foo` it would have computed if
+    // it still parsed the encoded cache key by index. Re-pivoting
+    // `foo|bar` therefore misses the in-memory state and issues a
+    // fresh fetch (callCount goes from 2 to 3).
+    expect(result.current.getCached(dim, "foo|bar", 42)).toBeNull();
+    expect(fetchTier2DimensionMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      result.current.startFetch(dim, "foo|bar", 42);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchTier2DimensionMock).toHaveBeenCalledTimes(3);
+    expect(result.current.getCached(dim, "foo|bar", 42)?.status).toBe("ready");
+  });
+});
+
 describe("useTier2Pivot — sameSensor fallback surfaces through the hook (#502)", () => {
   it("clears the loading entry and queues a sensorFallback when the peek returns one", async () => {
     // The impl returns `sensorFallback` when the clicked sensor name

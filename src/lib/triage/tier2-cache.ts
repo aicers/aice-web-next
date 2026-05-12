@@ -63,6 +63,18 @@ export interface Tier2CacheEntry {
 interface InternalEntry extends Tier2CacheEntry {
   /** Encoded cache key — kept on the entry so eviction can locate it cheaply. */
   cacheKey: string;
+  /**
+   * Structured identity carried alongside the encoded key so eviction
+   * events can be emitted without reparsing `cacheKey`. The encoding
+   * uses `|` as a separator and `valueKey` is not escaped, so values
+   * that themselves contain `|` (e.g. a free-form `keywords` entry like
+   * `foo|bar`) would split into the wrong indices on the way back out.
+   * Carrying the fields directly removes the need for any right-to-left
+   * parsing in the eviction path.
+   */
+  dimensionId: string;
+  valueKey: string;
+  customerId: number;
 }
 
 /**
@@ -164,9 +176,9 @@ export class Tier2Cache {
       }
       this.listener?.({
         cacheKey,
-        dimensionId: extractDimensionId(cacheKey),
-        valueKey: extractValueKey(cacheKey),
-        customerId: extractCustomerId(cacheKey),
+        dimensionId: key.dimensionId,
+        valueKey: key.valueKey,
+        customerId: key.customerId,
       });
       return false;
     }
@@ -181,6 +193,9 @@ export class Tier2Cache {
       ...value,
       byteSize,
       cacheKey,
+      dimensionId: key.dimensionId,
+      valueKey: key.valueKey,
+      customerId: key.customerId,
     };
     this.entries.set(cacheKey, entry);
     this.byteUsage += byteSize;
@@ -224,27 +239,12 @@ export class Tier2Cache {
       this.entries.delete(candidate);
       this.listener?.({
         cacheKey: entry.cacheKey,
-        dimensionId: extractDimensionId(entry.cacheKey),
-        valueKey: extractValueKey(entry.cacheKey),
-        customerId: extractCustomerId(entry.cacheKey),
+        dimensionId: entry.dimensionId,
+        valueKey: entry.valueKey,
+        customerId: entry.customerId,
       });
     }
   }
-}
-
-function extractDimensionId(cacheKey: string): string {
-  return cacheKey.split("|")[2] ?? "";
-}
-
-function extractValueKey(cacheKey: string): string {
-  return cacheKey.split("|")[3] ?? "";
-}
-
-function extractCustomerId(cacheKey: string): number {
-  const parts = cacheKey.split("|");
-  const raw = parts[5] ?? "";
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 /**
