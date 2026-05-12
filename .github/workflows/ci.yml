@@ -80,6 +80,7 @@ jobs:
           version: 2.4.12
       - run: pnpm check
       - run: pnpm check:scope
+      - run: pnpm check:sql-drift
       - run: pnpm typecheck
       - uses: DavidAnson/markdownlint-cli2-action@v23
       - uses: hadolint/hadolint-action@v3.3.0

@@ -886,7 +886,7 @@ describe("loadTriagePeriod (SQL data source)", () => {
     // Regression for Round 1 Item 3: detail events used to fan out
     // one `cume_dist()` SELECT per asset row. After the batch refactor
     // the per-tenant detail read is a single SELECT keyed on
-    // `orig_addr = ANY($3::text[])`.
+    // `orig_addr = ANY($3::inet[])`.
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
     const cohortRows: MenuCohortRow[] = [];

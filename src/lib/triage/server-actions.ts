@@ -14,6 +14,15 @@ import {
   composeMenu,
   type MenuRow,
 } from "./baseline/menu";
+import {
+  COUNT_OBSERVED_SQL,
+  COUNT_TRIAGED_SQL,
+  MENU_CANDIDATES_PER_BUCKET,
+  PER_ASSET_OBSERVED_COUNTS_SQL,
+  SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL,
+  SELECT_MENU_COHORT_SQL,
+  TRIAGE_ASSET_DETAIL_LIMIT,
+} from "./baseline/read-path-sql.mjs";
 import { buildDispatchContext } from "./dispatch-context";
 import type { TriagePeriod } from "./period";
 import { getCustomerPool } from "./policy/customer-db";
@@ -29,17 +38,12 @@ import {
 
 /**
  * Bound on the asset-list page returned by one Baseline-mode load.
- * `loadTriagePeriod` always returns a single page; future
- * forward-pagination work would extend the cursor model documented on
- * {@link aggregateAssetsFromCappedEvents} (a true keyset-cursor model
- * encodes a per-customer continuation cursor, but this issue ships
- * the first-page shape only — the menu does not yet expose
- * Next/Prev pagination controls).
+ * `loadTriagePeriod` always returns a single page. The menu does not
+ * expose Next/Prev pagination — PR #525 superseded the earlier
+ * keyset-pagination proposal (#523), so the asset list ships as a
+ * single capped page with no continuation cursor.
  */
 export const TRIAGE_ASSET_PAGE_SIZE = 100;
-
-/** Bound on the per-asset detail panel (newest-first). */
-export const TRIAGE_ASSET_DETAIL_LIMIT = 50;
 
 /**
  * `observed_event_meta` retention floor. The lower bound on every
@@ -59,22 +63,6 @@ export const OBSERVED_EVENT_META_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
  * common 1–4 customer scope completes in one batch.
  */
 const FANOUT_CONCURRENCY = 4;
-
-/**
- * Upper bound on the per-bucket candidate rows the menu SELECT returns.
- *
- * The §4 composition takes at most `quota[b]` rows from each bucket,
- * and `Σ quota[b] = default_N`, so per-bucket quota is bounded above
- * by `default_N`. Even at extreme cohort sizes (`post_exclusion ≈
- * 1e12`) the §6 curve caps `default_N` near 400, so loading the top
- * 500 rows per bucket is a strict superset of anything the algorithm
- * can use, while leaving the SQL response bounded by `buckets · 500`
- * — a few thousand rows in the worst case. Per-bucket COUNT and
- * tag-cardinality SUMs travel as window-function columns on every
- * row so the algorithm sees the full-cohort aggregates even though
- * the row set is capped.
- */
-const MENU_CANDIDATES_PER_BUCKET = 500;
 
 interface BaselineEventRow {
   event_key: string;
@@ -393,71 +381,11 @@ async function selectMenuCohort(
   signal: AbortSignal | undefined,
 ): Promise<MenuCohort> {
   signal?.throwIfAborted();
-  const { rows } = await pool.query<MenuCohortDbRow>(
-    `WITH scored AS (
-       SELECT event_key,
-              event_time,
-              kind,
-              sensor,
-              orig_addr,
-              resp_addr,
-              orig_port,
-              resp_port,
-              host,
-              dns_query,
-              uri,
-              category,
-              baseline_version,
-              raw_score,
-              selector_tags,
-              cume_dist() OVER (
-                PARTITION BY kind, baseline_version
-                ORDER BY raw_score
-              ) AS baseline_score,
-              (kind = 'HttpThreat'
-               AND 'unlabeled-cluster' = ANY(selector_tags)) AS is_unlabeled
-         FROM baseline_triaged_event
-        WHERE event_time >= $1
-          AND event_time <  $2
-          AND kind NOT LIKE 'BlockList%'
-     ),
-     ranked AS (
-       SELECT *,
-              ROW_NUMBER() OVER (
-                PARTITION BY kind, is_unlabeled
-                ORDER BY baseline_score DESC, event_time DESC, event_key DESC
-              ) AS bucket_rn,
-              COUNT(*) OVER (PARTITION BY kind, is_unlabeled) AS bucket_count,
-              SUM(coalesce(cardinality(selector_tags), 0))
-                OVER (PARTITION BY kind, is_unlabeled) AS bucket_tag_sum,
-              COUNT(*) OVER () AS cohort_count
-         FROM scored
-     )
-     SELECT event_key::text                       AS event_key,
-            event_time,
-            kind,
-            sensor,
-            orig_addr::text                       AS orig_addr,
-            resp_addr::text                       AS resp_addr,
-            orig_port,
-            resp_port,
-            host,
-            dns_query,
-            uri,
-            category,
-            baseline_version,
-            raw_score,
-            selector_tags,
-            baseline_score::double precision      AS baseline_score,
-            is_unlabeled,
-            bucket_count::text                    AS bucket_count,
-            bucket_tag_sum::text                  AS bucket_tag_sum,
-            cohort_count::text                    AS cohort_count
-       FROM ranked
-      WHERE bucket_rn <= $3
-      ORDER BY baseline_score DESC, event_time DESC, event_key DESC`,
-    [period.startIso, period.endIso, MENU_CANDIDATES_PER_BUCKET],
-  );
+  const { rows } = await pool.query<MenuCohortDbRow>(SELECT_MENU_COHORT_SQL, [
+    period.startIso,
+    period.endIso,
+    MENU_CANDIDATES_PER_BUCKET,
+  ]);
   return buildCohort(rows);
 }
 
@@ -626,54 +554,7 @@ async function selectAssetDetailEventsBatch(
   signal?.throwIfAborted();
   if (addresses.length === 0) return new Map();
   const { rows } = await pool.query<BaselineEventRow>(
-    `WITH scored AS (
-       SELECT event_key,
-              event_time,
-              kind,
-              sensor,
-              orig_addr,
-              resp_addr,
-              orig_port,
-              resp_port,
-              host,
-              dns_query,
-              uri,
-              category,
-              cume_dist() OVER (
-                PARTITION BY kind, baseline_version
-                ORDER BY raw_score
-              ) AS baseline_score
-         FROM baseline_triaged_event
-        WHERE event_time >= $1
-          AND event_time <  $2
-          AND kind NOT LIKE 'BlockList%'
-     ),
-     filtered AS (
-       SELECT *,
-              ROW_NUMBER() OVER (
-                PARTITION BY orig_addr
-                ORDER BY event_time DESC, event_key DESC
-              ) AS rn
-         FROM scored
-        WHERE orig_addr IS NOT NULL
-          AND orig_addr::text = ANY($3::text[])
-     )
-     SELECT event_key::text                  AS event_key,
-            event_time,
-            kind,
-            sensor,
-            orig_addr::text                  AS orig_addr,
-            resp_addr::text                  AS resp_addr,
-            orig_port,
-            resp_port,
-            host,
-            dns_query,
-            uri,
-            category,
-            baseline_score::double precision AS baseline_score
-       FROM filtered
-      WHERE rn <= $4
-      ORDER BY orig_addr, event_time DESC`,
+    SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL,
     [period.startIso, period.endIso, [...addresses], TRIAGE_ASSET_DETAIL_LIMIT],
   );
   const grouped = new Map<string, BaselineEventRow[]>();
@@ -694,13 +575,10 @@ async function countObserved(
   signal?: AbortSignal,
 ): Promise<number> {
   signal?.throwIfAborted();
-  const { rows } = await pool.query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count
-       FROM observed_event_meta
-      WHERE event_time >= $1
-        AND event_time <  $2`,
-    [observedFromIso, endIso],
-  );
+  const { rows } = await pool.query<{ count: string }>(COUNT_OBSERVED_SQL, [
+    observedFromIso,
+    endIso,
+  ]);
   return rows.length === 0 ? 0 : Number(rows[0].count);
 }
 
@@ -710,13 +588,10 @@ async function countTriaged(
   signal?: AbortSignal,
 ): Promise<number> {
   signal?.throwIfAborted();
-  const { rows } = await pool.query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count
-       FROM baseline_triaged_event
-      WHERE event_time >= $1
-        AND event_time <  $2`,
-    [period.startIso, period.endIso],
-  );
+  const { rows } = await pool.query<{ count: string }>(COUNT_TRIAGED_SQL, [
+    period.startIso,
+    period.endIso,
+  ]);
   return rows.length === 0 ? 0 : Number(rows[0].count);
 }
 
@@ -730,14 +605,7 @@ async function perAssetObservedCounts(
   signal?.throwIfAborted();
   if (addresses.length === 0) return [];
   const { rows } = await pool.query<ObservedCountRow>(
-    `SELECT o.orig_addr::text AS address,
-            COUNT(*)::text     AS detected_count
-       FROM observed_event_meta o
-      WHERE o.event_time >= $1
-        AND o.event_time <  $2
-        AND o.orig_addr IS NOT NULL
-        AND o.orig_addr::text = ANY($3::text[])
-      GROUP BY o.orig_addr`,
+    PER_ASSET_OBSERVED_COUNTS_SQL,
     [observedFromIso, endIso, addresses],
   );
   return rows;
