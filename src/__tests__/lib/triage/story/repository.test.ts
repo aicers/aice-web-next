@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-
-import { insertCuratedStory } from "@/lib/triage/story/repository";
+import { CRITICAL_CATEGORIES } from "@/lib/triage/baseline/categories";
+import {
+  insertCuratedStory,
+  readR1Candidates,
+  readR3Candidates,
+} from "@/lib/triage/story/repository";
 import type { CandidateEvent } from "@/lib/triage/story/rules";
 import { STORY_MEMBER_CAP } from "@/lib/triage/story/rules";
 
@@ -165,7 +169,118 @@ describe("insertCuratedStory", () => {
     const summary = JSON.parse(insertGroup?.params?.[5] as string);
     expect(summary.memberCount).toBe(STORY_MEMBER_CAP);
   });
+});
 
+describe("readR1Candidates — SQL push-down for measurement gate", () => {
+  function makeReadClient(): {
+    client: unknown;
+    queries: Array<{ sql: string; params: unknown[] | undefined }>;
+  } {
+    const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    });
+    return { client: { query }, queries };
+  }
+
+  it("pushes orig_addr IS NOT NULL and category = ANY into SQL with a [start, end] range", async () => {
+    const h = makeReadClient();
+    const start = new Date("2026-05-09T11:00:00Z");
+    const end = new Date("2026-05-09T13:00:00Z");
+    await readR1Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: start,
+      memberScanEnd: end,
+    });
+    expect(h.queries).toHaveLength(1);
+    const q = h.queries[0];
+    expect(q.sql).toMatch(/event_time >= \$1/);
+    expect(q.sql).toMatch(/event_time <= \$2/);
+    expect(q.sql).toMatch(/orig_addr IS NOT NULL/);
+    expect(q.sql).toMatch(/category = ANY\(\$3::text\[\]\)/);
+    expect(q.params?.[0]).toEqual(start);
+    expect(q.params?.[1]).toEqual(end);
+    expect(q.params?.[2]).toEqual(
+      expect.arrayContaining(Array.from(CRITICAL_CATEGORIES)),
+    );
+  });
+
+  it("omits the lower bound on first tick (memberScanStart === null)", async () => {
+    const h = makeReadClient();
+    const end = new Date("2026-05-09T13:00:00Z");
+    await readR1Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: null,
+      memberScanEnd: end,
+    });
+    const q = h.queries[0];
+    expect(q.sql).not.toMatch(/event_time >= /);
+    expect(q.sql).toMatch(/event_time <= \$1/);
+    expect(q.sql).toMatch(/category = ANY\(\$2::text\[\]\)/);
+    expect(q.params).toHaveLength(2);
+  });
+});
+
+describe("readR3Candidates — SQL push-down for measurement gate", () => {
+  function makeReadClient(): {
+    client: unknown;
+    queries: Array<{ sql: string; params: unknown[] | undefined }>;
+  } {
+    const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    });
+    return { client: { query }, queries };
+  }
+
+  it("pushes orig_addr IS NOT NULL and selector_tags && ARRAY[...] into SQL with a [start, end] range", async () => {
+    // The R3 measurement gate from the issue specifically requires
+    // EXPLAIN ANALYZE on the `selector_tags && ARRAY[...]` overlap
+    // shape. Without the SQL push-down, the broad-range SELECT has
+    // nothing R3-specific for the planner to explain.
+    const h = makeReadClient();
+    const start = new Date("2026-05-09T11:00:00Z");
+    const end = new Date("2026-05-09T13:00:00Z");
+    await readR3Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: start,
+      memberScanEnd: end,
+    });
+    const q = h.queries[0];
+    expect(q.sql).toMatch(/event_time >= \$1/);
+    expect(q.sql).toMatch(/event_time <= \$2/);
+    expect(q.sql).toMatch(/orig_addr IS NOT NULL/);
+    expect(q.sql).toMatch(/selector_tags && \$3::text\[\]/);
+    expect(q.params?.[0]).toEqual(start);
+    expect(q.params?.[1]).toEqual(end);
+    expect(q.params?.[2]).toEqual(
+      expect.arrayContaining(["S2-severe", "unlabeled-cluster"]),
+    );
+  });
+
+  it("omits the lower bound on first tick (memberScanStart === null)", async () => {
+    const h = makeReadClient();
+    const end = new Date("2026-05-09T13:00:00Z");
+    await readR3Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: null,
+      memberScanEnd: end,
+    });
+    const q = h.queries[0];
+    expect(q.sql).not.toMatch(/event_time >= /);
+    expect(q.sql).toMatch(/event_time <= \$1/);
+    expect(q.sql).toMatch(/selector_tags && \$2::text\[\]/);
+    expect(q.params).toHaveLength(2);
+  });
+});
+
+describe("insertCuratedStory — primary_asset NULL", () => {
   it("accepts a NULL primary_asset (analyst curated rows are not subject to the partial-index NULL exclusion)", async () => {
     const h = makeClient();
     await expect(

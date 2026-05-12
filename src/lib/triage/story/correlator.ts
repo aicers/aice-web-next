@@ -48,10 +48,17 @@ import type pg from "pg";
 import {
   advanceStoryWatermark,
   insertAutoStory,
-  readCandidateEventsInRange,
+  readR1Candidates,
+  readR3Candidates,
   readStoryWatermark,
 } from "./repository";
-import { detectAllStories, MAX_RULE_WINDOW_MS, SLOP_WINDOW_MS } from "./rules";
+import {
+  detectR1,
+  detectR3,
+  MAX_RULE_WINDOW_MS,
+  SLOP_WINDOW_MS,
+  type StoryDraft,
+} from "./rules";
 
 export interface RunStepFArgs {
   client: pg.PoolClient;
@@ -126,13 +133,23 @@ export async function runStepF(args: RunStepFArgs): Promise<StepFResult> {
       ? null
       : new Date(previousWatermark.getTime() - MAX_RULE_WINDOW_MS);
 
-  const candidates = await readCandidateEventsInRange({
-    client,
-    memberScanStart,
-    memberScanEnd: newHorizon,
-  });
+  // Per-rule SQL push-down (Story RFC §3, §5). Each rule reads its
+  // own candidate set with the row-level predicate evaluated by
+  // PostgreSQL — `category = ANY(...)` for R1, `selector_tags && ...`
+  // for R3 — so the `EXPLAIN ANALYZE` shape demanded by the issue's
+  // measurement gate runs against the SQL that production runs, and
+  // the correlator does not materialize the entire member-scan range
+  // in app memory before filtering. Same-asset narrowing stays in
+  // the rule layer (a clustering operation, not a row-level filter).
+  const [r1Candidates, r3Candidates] = await Promise.all([
+    readR1Candidates({ client, memberScanStart, memberScanEnd: newHorizon }),
+    readR3Candidates({ client, memberScanStart, memberScanEnd: newHorizon }),
+  ]);
 
-  const drafts = detectAllStories(candidates);
+  const drafts: StoryDraft[] = [
+    ...detectR1(r1Candidates),
+    ...detectR3(r3Candidates),
+  ];
 
   // Finalization-candidate filter: only drafts whose
   // `time_window_end` falls strictly past the previous watermark

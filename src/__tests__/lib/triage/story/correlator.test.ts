@@ -238,15 +238,19 @@ describe("runStepF — first-tick / NULL watermark", () => {
 
     // The member-scan SELECT omits the lower-bound predicate
     // entirely on the first tick — only the upper bound
-    // (new_horizon = pageMax - slop) is bound.
-    const scanQuery = h.queries.find((q) =>
+    // (new_horizon = pageMax - slop) is bound. After R1's per-rule
+    // SQL push-down (Story RFC §3.R1, §5), the second positional
+    // parameter is the critical-category array (R1) or the
+    // critical-selector array (R3); the time bound stays $1.
+    const scanQueries = h.queries.filter((q) =>
       q.sql.includes("FROM baseline_triaged_event"),
     );
-    expect(scanQuery?.sql).not.toMatch(/event_time >= \$1/);
-    expect(scanQuery?.params?.[0]).toEqual(
-      new Date(pageMax.getTime() - SLOP_MS),
-    );
-    expect(scanQuery?.params).toHaveLength(1);
+    expect(scanQueries).toHaveLength(2); // R1 + R3
+    for (const q of scanQueries) {
+      expect(q.sql).not.toMatch(/event_time >= \$1/);
+      expect(q.params?.[0]).toEqual(new Date(pageMax.getTime() - SLOP_MS));
+      expect(q.params).toHaveLength(2);
+    }
   });
 
   it("first-tick historical catch-up: rows older than pageMin are still candidates", async () => {
@@ -338,21 +342,38 @@ describe("runStepF — slop-replay member lookback", () => {
     });
     expect(result.storiesInserted).toBe(1);
 
-    // The member-scan SELECT used previousWatermark − 1h as its
-    // lower bound (MAX_RULE_WINDOW_MS) and new_horizon (pageMax −
-    // slop) as its upper bound. Events in the slop window
+    // The member-scan SELECTs (one per rule, after the §3 / §5
+    // SQL push-down) used previousWatermark − 1h as the lower
+    // bound (MAX_RULE_WINDOW_MS) and new_horizon (pageMax − slop)
+    // as the upper bound. Events in the slop window
     // `(new_horizon, pageMax]` are intentionally excluded — they
     // cannot finalize this tick anyway and become visible on the
     // next tick via the lookback range.
-    const scanQuery = h.queries.find((q) =>
+    const scanQueries = h.queries.filter((q) =>
       q.sql.includes("FROM baseline_triaged_event"),
     );
+    expect(scanQueries).toHaveLength(2); // R1 + R3
     const expectedLower = new Date(
       previousWatermark.getTime() - 60 * 60 * 1000,
     );
     const expectedUpper = new Date(pageMax.getTime() - SLOP_MS);
-    expect(scanQuery?.params?.[0]).toEqual(expectedLower);
-    expect(scanQuery?.params?.[1]).toEqual(expectedUpper);
+    for (const q of scanQueries) {
+      expect(q.params?.[0]).toEqual(expectedLower);
+      expect(q.params?.[1]).toEqual(expectedUpper);
+    }
+    // R3's read pushes `selector_tags && $::text[]` into SQL so
+    // the issue's measurement-gate `EXPLAIN ANALYZE` runs against
+    // the actual production shape. R1's read pushes
+    // `category = ANY($::text[])` for the same reason.
+    const r3Scan = scanQueries.find((q) => q.sql.includes("selector_tags &&"));
+    const r1Scan = scanQueries.find((q) => q.sql.includes("category = ANY"));
+    expect(r1Scan).toBeDefined();
+    expect(r3Scan).toBeDefined();
+    expect(r1Scan?.sql).toMatch(/orig_addr IS NOT NULL/);
+    expect(r3Scan?.sql).toMatch(/orig_addr IS NOT NULL/);
+    expect(r3Scan?.params?.[2]).toEqual(
+      expect.arrayContaining(["S2-severe", "unlabeled-cluster"]),
+    );
   });
 
   it("skips drafts whose time_window_end is already past on the previous watermark", async () => {

@@ -18,9 +18,15 @@ import "server-only";
  */
 
 import type pg from "pg";
-
+import type { ThreatCategory } from "@/lib/detection";
+import { CRITICAL_CATEGORIES } from "@/lib/triage/baseline/categories";
 import type { CandidateEvent, StoryDraft, StorySummaryPayload } from "./rules";
-import { applyMemberCap, buildSummaryPayload, STORY_VERSION } from "./rules";
+import {
+  applyMemberCap,
+  buildSummaryPayload,
+  CRITICAL_SELECTOR_SET,
+  STORY_VERSION,
+} from "./rules";
 
 export interface ReadCandidatesArgs {
   client: pg.PoolClient;
@@ -39,55 +45,18 @@ export interface ReadCandidatesArgs {
   memberScanEnd: Date;
 }
 
-/**
- * Pull the candidate events from `baseline_triaged_event` for the
- * member-scan range. The correlator passes the result straight into
- * `detectAllStories`. The scan rides the existing
- * `(event_time DESC)` btree index; no new indexes are required.
- *
- * NULL-`orig_addr` rows are intentionally retained in the result so
- * the rule layer is the single place that filters them out (R1 and
- * R3 both skip them at the predicate level).
- */
-export async function readCandidateEventsInRange(
-  args: ReadCandidatesArgs,
-): Promise<CandidateEvent[]> {
-  const { client, memberScanStart, memberScanEnd } = args;
-  const sql =
-    memberScanStart === null
-      ? `SELECT event_key::text   AS event_key,
-                event_time,
-                kind,
-                host(orig_addr)   AS orig_addr,
-                category,
-                selector_tags,
-                raw_score
-           FROM baseline_triaged_event
-          WHERE event_time <= $1`
-      : `SELECT event_key::text   AS event_key,
-                event_time,
-                kind,
-                host(orig_addr)   AS orig_addr,
-                category,
-                selector_tags,
-                raw_score
-           FROM baseline_triaged_event
-          WHERE event_time >= $1
-            AND event_time <= $2`;
-  const params =
-    memberScanStart === null
-      ? [memberScanEnd]
-      : [memberScanStart, memberScanEnd];
-  const result = await client.query<{
-    event_key: string;
-    event_time: Date;
-    kind: string;
-    orig_addr: string | null;
-    category: string | null;
-    selector_tags: string[];
-    raw_score: number;
-  }>(sql, params);
-  return result.rows.map((row) => ({
+interface CandidateRow {
+  event_key: string;
+  event_time: Date;
+  kind: string;
+  orig_addr: string | null;
+  category: string | null;
+  selector_tags: string[];
+  raw_score: number;
+}
+
+function rowToCandidate(row: CandidateRow): CandidateEvent {
+  return {
     eventKey: row.event_key,
     eventTime: row.event_time,
     kind: row.kind,
@@ -95,7 +64,113 @@ export async function readCandidateEventsInRange(
     category: row.category,
     selectorTags: row.selector_tags ?? [],
     rawScore: Number(row.raw_score),
-  }));
+  };
+}
+
+/**
+ * R1's per-page candidate scan (Story RFC §3.R1, §5).
+ *
+ * Pushes the row-level predicate into SQL so the planner can use the
+ * `(event_time DESC)` btree on the time range and a category-set
+ * filter on `category`, instead of materializing the full range in
+ * memory and filtering app-side. `orig_addr IS NOT NULL` is also
+ * pushed down because R1 explicitly skips NULL-asset rows at the
+ * predicate level (the partial unique index on `event_group` requires
+ * a non-NULL `primary_asset`, so a NULL-asset cluster is unreachable
+ * by construction).
+ *
+ *   SELECT ... FROM baseline_triaged_event
+ *    WHERE event_time IN [memberScanStart, memberScanEnd]
+ *      AND orig_addr IS NOT NULL
+ *      AND category = ANY($criticalCategories::text[])
+ *
+ * Same-asset narrowing is a clustering operation across the returned
+ * rows and stays in the rule layer (`rules.ts`). The issue's
+ * measurement gate (R1 same-asset 10-min scan) is run against the
+ * SQL above.
+ */
+export async function readR1Candidates(
+  args: ReadCandidatesArgs,
+): Promise<CandidateEvent[]> {
+  const { client, memberScanStart, memberScanEnd } = args;
+  const categories = Array.from(CRITICAL_CATEGORIES) as ThreatCategory[];
+  const baseSelect = `SELECT event_key::text   AS event_key,
+                              event_time,
+                              kind,
+                              host(orig_addr)   AS orig_addr,
+                              category,
+                              selector_tags,
+                              raw_score
+                         FROM baseline_triaged_event`;
+  const sql =
+    memberScanStart === null
+      ? `${baseSelect}
+          WHERE event_time <= $1
+            AND orig_addr IS NOT NULL
+            AND category = ANY($2::text[])`
+      : `${baseSelect}
+          WHERE event_time >= $1
+            AND event_time <= $2
+            AND orig_addr IS NOT NULL
+            AND category = ANY($3::text[])`;
+  const params =
+    memberScanStart === null
+      ? [memberScanEnd, categories]
+      : [memberScanStart, memberScanEnd, categories];
+  const result = await client.query<CandidateRow>(sql, params);
+  return result.rows.map(rowToCandidate);
+}
+
+/**
+ * R3's per-page candidate scan (Story RFC §3.R3, §5).
+ *
+ * Pushes R3's row-level predicate into SQL — `selector_tags`
+ * overlap with the critical-selector set — so the measurement gate's
+ * `EXPLAIN ANALYZE` runs against the same shape that production runs.
+ * Without the push-down, the broad-range SELECT has nothing
+ * R3-specific for the planner to explain.
+ *
+ *   SELECT ... FROM baseline_triaged_event
+ *    WHERE event_time IN [memberScanStart, memberScanEnd]
+ *      AND orig_addr IS NOT NULL
+ *      AND selector_tags && $criticalSelectors::text[]
+ *
+ * The `(event_time DESC)` btree handles the time-range scan. If
+ * measurement at scale shows the planner cannot resolve
+ * `selector_tags &&` efficiently, a GIN index on `selector_tags` is
+ * the additive follow-up named in the issue's measurement-gate
+ * section — purely a migration-only change, no callsite churn.
+ */
+export async function readR3Candidates(
+  args: ReadCandidatesArgs,
+): Promise<CandidateEvent[]> {
+  const { client, memberScanStart, memberScanEnd } = args;
+  const selectors = Array.from(CRITICAL_SELECTOR_SET);
+  const baseSelect = `SELECT event_key::text   AS event_key,
+                              event_time,
+                              kind,
+                              host(orig_addr)   AS orig_addr,
+                              category,
+                              selector_tags,
+                              raw_score
+                         FROM baseline_triaged_event`;
+  const sql =
+    memberScanStart === null
+      ? `${baseSelect}
+          WHERE event_time <= $1
+            AND orig_addr IS NOT NULL
+            AND selector_tags && $2::text[]`
+      : `${baseSelect}
+          WHERE event_time >= $1
+            AND event_time <= $2
+            AND orig_addr IS NOT NULL
+            AND selector_tags && $3::text[]`;
+  const params =
+    memberScanStart === null
+      ? [memberScanEnd, selectors]
+      : [memberScanStart, memberScanEnd, selectors];
+  const result = await client.query<CandidateRow>(sql, params);
+  return result.rows.map(rowToCandidate);
 }
 
 export interface InsertAutoStoryResult {

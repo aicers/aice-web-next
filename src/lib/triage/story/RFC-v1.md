@@ -52,6 +52,22 @@ stays reserved so the rule-ID enum does not shift.
 - Score: `member_count + λ · distinct_category_count`,
   with `λ = 1.0`.
 - `correlation_rule_id = 'R1'`.
+- **SQL push-down (§5).** R1's per-page candidate read in
+  `repository.ts` is:
+
+  ```sql
+  SELECT … FROM baseline_triaged_event
+   WHERE event_time IN [memberScanStart, memberScanEnd]
+     AND orig_addr IS NOT NULL
+     AND category = ANY($criticalCategories::text[])
+  ```
+
+  Same-asset narrowing (10-minute window per `orig_addr`) is a
+  clustering operation across the returned rows and lives in the
+  rule layer (`rules.ts` `clusterByWindow` + `groupByAsset`), not
+  the SQL — same-asset clustering is what produces the cluster
+  boundaries the rule scores against. The issue's measurement
+  gate runs `EXPLAIN ANALYZE` against the SQL above.
 
 ### R3 — Repeated critical-selector activity on same asset
 
@@ -72,6 +88,24 @@ stays reserved so the rule-ID enum does not shift.
 - Predicate excludes events with `orig_addr IS NULL`.
 - Score: `member_count` (after the §8 member cap).
 - `correlation_rule_id = 'R3'`.
+- **SQL push-down (§5).** R3's per-page candidate read in
+  `repository.ts` is:
+
+  ```sql
+  SELECT … FROM baseline_triaged_event
+   WHERE event_time IN [memberScanStart, memberScanEnd]
+     AND orig_addr IS NOT NULL
+     AND selector_tags && $criticalSelectors::text[]
+  ```
+
+  This is the exact shape the issue's measurement gate runs
+  `EXPLAIN ANALYZE` against. Same-asset narrowing (1-hour window
+  per `orig_addr`) is a clustering operation across the returned
+  rows and lives in the rule layer. If measurement at scale shows
+  the planner cannot resolve `selector_tags &&` efficiently on
+  `baseline_triaged_event`, the additive follow-up named in the
+  issue is a GIN index on `selector_tags` — migration-only, no
+  callsite churn.
 
 ### `max_rule_window`
 
@@ -142,6 +176,42 @@ The cadence pager imports `runStepF` from
 `src/lib/triage/story/correlator.ts` and calls it immediately after
 `insertBaselineTriagedEventBatch`, inside the same per-page
 transaction the runner already opens.
+
+### Per-rule SQL push-down
+
+`repository.ts` exposes one read function **per rule**, not a
+single broad-range candidate scan:
+
+- `readR1Candidates({ memberScanStart, memberScanEnd })` —
+  `category = ANY($criticalCategories::text[])` plus the time
+  range and `orig_addr IS NOT NULL`.
+- `readR3Candidates({ memberScanStart, memberScanEnd })` —
+  `selector_tags && $criticalSelectors::text[]` plus the time
+  range and `orig_addr IS NOT NULL`.
+
+The correlator runs both reads in parallel, then dispatches each
+result set to its rule's pure in-memory clusterer. The split
+serves two goals:
+
+1. **Measurement gate is meaningful.** The issue's measurement
+   gate demands `EXPLAIN ANALYZE` on R3's
+   `selector_tags && ARRAY[...]` shape. A single broad-range
+   SELECT has nothing rule-specific for the planner to explain;
+   the per-rule SQL gives the gate a target that matches what
+   production runs.
+2. **App-side memory bound.** A typical-volume tenant produces a
+   large number of `baseline_triaged_event` rows in the slop-
+   replay range; predicate-pushed reads cap the in-memory set at
+   the rows R1/R3 actually evaluate, instead of materializing the
+   full range and filtering in app memory inside the per-page
+   transaction.
+
+Same-asset narrowing (the 10-min / 1-hour per-`orig_addr` window)
+remains a clustering operation across the returned rows in
+`rules.ts` (`groupByAsset` + `clusterByWindow`). Same-asset
+narrowing is what produces the cluster boundaries the rule scores
+against; it is not a row-level filter that could collapse before
+clustering, so it stays out of the SQL.
 
 ### Analyst-curated path
 
