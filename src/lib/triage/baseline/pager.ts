@@ -65,6 +65,7 @@ import type pg from "pg";
 
 import type { ThreatCategory } from "@/lib/detection";
 import { graphqlRequest } from "@/lib/graphql/client";
+import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 import {
   type ActiveExclusionSetResolver,
   computeExclusionsFingerprint,
@@ -86,13 +87,6 @@ import {
   scoreEventFromBatch,
   scoreSelectorsForPage,
 } from "./selectors";
-
-/**
- * Page size for `eventListWithTriage`. Large enough to amortize the
- * resolver round-trip cost over many INSERTs but bounded so a single
- * page transaction does not hold the connection too long.
- */
-export const CADENCE_PAGE_SIZE = 500;
 
 /**
  * Role the cadence runner uses for outbound REview GraphQL. The
@@ -186,7 +180,13 @@ export function createCadencePager(
 ): CadencePager {
   const fetchPage = options.fetchPage ?? defaultFetchPage;
   const resolver = options.resolver ?? EMPTY_EXCLUSION_SET_RESOLVER;
-  const pageSize = options.pageSize ?? CADENCE_PAGE_SIZE;
+  // review-web's `Connection::pagination_input` validator rejects any
+  // `first` outside `[0, 100]` with a GraphQL-level error
+  // (`"The value of first and last must be within 0-100"`, #537), so
+  // the cadence pager pins its default to the shared BFF cap. Tests
+  // can still inject a smaller `pageSize` for deterministic per-page
+  // behaviour.
+  const pageSize = options.pageSize ?? REVIEW_MAX_PAGE_SIZE;
   const activeWindowsOverride = options.activeWindowsOverride;
 
   return {
