@@ -195,12 +195,6 @@ export function parseArgs(argv) {
       `--observed-rows (${args.observedRows}) must be >= --baseline-rows (${args.baselineRows})`,
     );
   }
-  if (args.observedRows % args.baselineRows !== 0) {
-    throw new Error(
-      `--observed-rows (${args.observedRows}) must be an integer multiple of --baseline-rows (${args.baselineRows}) ` +
-        "so the baseline subset is exact and the event-key spacing is deterministic",
-    );
-  }
   if (!Number.isFinite(args.days) || args.days < 1) {
     throw new Error(`invalid --days: ${args.days}`);
   }
@@ -427,7 +421,7 @@ async function flushBaseline(client, rows) {
   for (const r of rows) {
     const base = params.length;
     const ph = [];
-    for (let j = 1; j <= 19; j += 1) ph.push(`$${base + j}`);
+    for (let j = 1; j <= 20; j += 1) ph.push(`$${base + j}`);
     placeholders.push(`(${ph.join(", ")})`);
     params.push(
       r.eventKey,
@@ -442,6 +436,7 @@ async function flushBaseline(client, rows) {
       r.host,
       r.dnsQuery,
       r.uri,
+      r.ingestedAtIso,
       r.baselineVersion,
       r.exclusionsFp,
       r.category,
@@ -456,7 +451,7 @@ async function flushBaseline(client, rows) {
         event_key, event_time, kind, sensor,
         orig_addr, orig_port, resp_addr, resp_port, proto,
         host, dns_query, uri,
-        baseline_version, exclusions_fp, category,
+        ingested_at, baseline_version, exclusions_fp, category,
         baseline_score, raw_score, selector_tags, payload_summary
       ) VALUES ${placeholders.join(", ")}`,
     params,
@@ -491,6 +486,12 @@ export async function seedCorpus({
   const kindCum = buildKindCumulative();
   const addrPool = buildAddressPool(origAddrs);
   const addrCum = buildAddressCumulative(origAddrs);
+  // `ingested_at` is anchor-derived (NOT `now()` from the schema default)
+  // so identical `--seed` + `--anchor-time` invocations produce byte-
+  // identical row state, satisfying the issue's idempotency contract.
+  // Aligning with `baseline_corpus_state.last_ingested_at = anchor − 1h`
+  // keeps both clocks consistent.
+  const ingestedAtIso = new Date(anchorMs - 60 * 60 * 1000).toISOString();
 
   // Sentinels go on the first two baseline-subset rows — they MUST be
   // in both tables so `MAX(event_time) − MIN(event_time) = days`
@@ -599,6 +600,7 @@ export async function seedCorpus({
         host: fields.host,
         dnsQuery: fields.dnsQuery,
         uri: fields.uri,
+        ingestedAtIso,
         baselineVersion,
         exclusionsFp,
         category,

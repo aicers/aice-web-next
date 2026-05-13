@@ -137,6 +137,7 @@ async function corpusHash(
       COALESCE(host, '')                                    || '|' ||
       COALESCE(dns_query, '')                               || '|' ||
       COALESCE(uri, '')                                     || '|' ||
+      EXTRACT(EPOCH FROM ingested_at)::text                 || '|' ||
       baseline_version                                      || '|' ||
       exclusions_fp,
       ',' ORDER BY event_key
