@@ -737,7 +737,12 @@ export async function recoverPendingNodeApplyAudits(): Promise<number> {
       if (!claimed) continue;
     }
     const appliedServices = row.planned_dispatches
-      .filter((d) => d.kind !== "MANAGER" && d.state === "succeeded")
+      .filter(
+        (d) =>
+          d.kind !== "MANAGER_DB" &&
+          d.kind !== "MANAGER_NOTIFY" &&
+          d.state === "succeeded",
+      )
       .map((d) => d.kind);
     try {
       await auditLog.record({

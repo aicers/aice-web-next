@@ -22,12 +22,15 @@ import { describe, expect, it } from "vitest";
  * sanctioned surface that binds them to a production GraphQL
  * dispatcher.
  *
- * `apply.ts` ships the production `ApplyDispatcher` and the renamed
- * `_internal_applyNodeViaManager` helper. It must NOT carry
- * `"use server"` and must NOT export an `applyNode` symbol — the
- * deny-list below catches a future contributor accidentally
- * re-promoting the manager wrapper to a server action and
- * bypassing the bulk-apply lifecycle.
+ * `apply.ts` ships the production `ApplyDispatcher` and the split
+ * `_internal_applyNodeDraftViaManager` / `_internal_applyAgentConfigViaManager`
+ * helpers (Phase Node-12, #333). It must NOT carry `"use server"` and
+ * must NOT export an `applyNode` symbol — the deny-list below catches
+ * a future contributor accidentally re-promoting the manager wrapper to
+ * a server action and bypassing the bulk-apply lifecycle. The unsafe
+ * v1 `buildNodeInputFromDraft` helper has been replaced by
+ * `buildNodeInputForApplyDraft` (Decision 4 / #333) and must not be
+ * present.
  */
 
 const ROOT = resolve(__dirname, "../../../..");
@@ -110,28 +113,43 @@ describe("apply-attempts public surface", () => {
     expect(firstSubstantiveLine).not.toBe('"use server";');
   });
 
-  it("apply.ts retains the renamed manager helper under _internal_applyNodeViaManager", async () => {
+  it("apply.ts exposes the split manager helpers under _internal_applyNodeDraftViaManager and _internal_applyAgentConfigViaManager (#333)", async () => {
     const mod = await import("@/lib/node/apply");
     const exportedFunctions = Object.entries(mod)
       .filter(([, value]) => typeof value === "function")
       .map(([name]) => name);
-    expect(exportedFunctions).toContain("_internal_applyNodeViaManager");
-    // Deny-list: the renamed helper must NOT be re-exposed under the
-    // old name. A future contributor accidentally re-promoting it to
-    // a server action would surface here. The prior surface
-    // (server-actions.ts:applyNode) is also covered below.
+    expect(exportedFunctions).toContain("_internal_applyNodeDraftViaManager");
+    expect(exportedFunctions).toContain("_internal_applyAgentConfigViaManager");
+    // Deny-list: the v1 single-stage helper and the legacy server-action
+    // name must NOT be re-exposed. A future contributor accidentally
+    // re-promoting them to a server action would surface here.
+    expect(exportedFunctions).not.toContain("_internal_applyNodeViaManager");
     expect(exportedFunctions).not.toContain("applyNode");
   });
 
-  it("server-actions.ts no longer exposes the applyNode wrapper as a public export (#361 deny-list)", async () => {
+  it("apply-attempt-lifecycle.ts no longer exports the unsafe v1 buildNodeInputFromDraft (#333, Decision 8)", async () => {
+    const mod = await import("@/lib/node/apply-attempt-lifecycle");
+    const exportedFunctions = Object.entries(mod)
+      .filter(([, value]) => typeof value === "function")
+      .map(([name]) => name);
+    // The v1 builder unconditionally fabricated `draft = null` on every
+    // row, which would delete every agent / external from the node per
+    // upstream's `update_db` contract. It is replaced by
+    // `buildNodeInputForApplyDraft` (Decision 4) which passes drafts
+    // verbatim.
+    expect(exportedFunctions).toContain("buildNodeInputForApplyDraft");
+    expect(exportedFunctions).not.toContain("buildNodeInputFromDraft");
+  });
+
+  it("server-actions.ts no longer exposes the applyNode wrapper as a public export (deny-list)", async () => {
     const mod = await import("@/lib/node/server-actions");
     const exportedFunctions = Object.entries(mod)
       .filter(([, value]) => typeof value === "function")
       .map(([name]) => name);
-    // The wrapper has been relocated to apply.ts and renamed to
-    // `_internal_applyNodeViaManager`. The user-facing entry is now
-    // the `confirmApplyAttempt` lifecycle path. Re-promoting it to a
-    // server action accidentally fails CI here.
+    // The wrapper has been relocated to apply.ts and split into
+    // `_internal_applyNodeDraftViaManager` /
+    // `_internal_applyAgentConfigViaManager`. The user-facing entry is
+    // now the `confirmApplyAttempt` lifecycle path.
     expect(exportedFunctions).not.toContain("applyNode");
   });
 });

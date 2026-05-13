@@ -1,0 +1,5 @@
+mutation ApplyNodeDraft($id: ID!, $node: NodeInput!) {
+  applyNodeDraft(id: $id, node: $node) {
+    id
+  }
+}

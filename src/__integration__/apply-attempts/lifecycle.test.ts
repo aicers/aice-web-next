@@ -123,7 +123,12 @@ function makeDispatcher(
   } = {},
 ): ApplyDispatcher {
   return {
-    async manager() {
+    async managerDb() {
+      recorder.managerCalls += 1;
+      if (opts.failManager)
+        throw new Error(opts.managerError ?? "manager fail");
+    },
+    async managerNotify() {
       recorder.managerCalls += 1;
       if (opts.failManager)
         throw new Error(opts.managerError ?? "manager fail");
@@ -201,7 +206,7 @@ describe("Lifecycle — sequential advance happy path", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -255,7 +260,7 @@ describe("Lifecycle — stop on first failure", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -307,7 +312,7 @@ describe("Lifecycle — failed_retryable preserves expires_at", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -354,7 +359,7 @@ describe("Lifecycle — APPLY_DISPATCH_MAX_ATTEMPTS cap cascades to failed_termi
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -411,7 +416,7 @@ describe("Lifecycle — confirm against failed_retryable is idempotent", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -471,7 +476,7 @@ describe("Lifecycle — busy / terminal / stale / expired observation", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "in_flight",
         attemptCount: 1,
         lastError: null,
@@ -503,7 +508,7 @@ describe("Lifecycle — busy / terminal / stale / expired observation", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -531,7 +536,7 @@ describe("Lifecycle — busy / terminal / stale / expired observation", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "failed_terminal",
         attemptCount: 3,
         lastError: "x",
@@ -558,7 +563,7 @@ describe("Lifecycle — busy / terminal / stale / expired observation", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -587,7 +592,7 @@ describe("Lifecycle — step-2a expiry short-circuit", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -622,7 +627,7 @@ describe("Lifecycle — just-before-dispatch sequence (5a–5d)", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -665,7 +670,7 @@ describe("Lifecycle — just-before-dispatch sequence (5a–5d)", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -704,7 +709,7 @@ describe("Lifecycle — retry pre-claim validation (step 2b)", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -788,7 +793,7 @@ describe("Cleanup — runApplyAttemptCleanup", () => {
       plannedDispatches: [
         {
           dispatchId: randomUUID(),
-          kind: "MANAGER",
+          kind: "MANAGER_DB",
           state: "succeeded",
           attemptCount: 1,
           lastError: null,
@@ -811,7 +816,7 @@ describe("Cleanup — runApplyAttemptCleanup", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -851,7 +856,7 @@ describe("Cleanup — runApplyAttemptCleanup", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "in_flight",
         attemptCount: 1,
         lastError: null,
@@ -875,7 +880,7 @@ describe("Cleanup — runApplyAttemptCleanup", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -925,7 +930,7 @@ describe("Cleanup — runApplyAttemptCleanup", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "in_flight",
         attemptCount: 1,
         lastError: null,
@@ -998,7 +1003,7 @@ describe("Lifecycle — writeStaleAndClear loser-write rejection", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,

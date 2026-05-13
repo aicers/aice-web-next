@@ -320,25 +320,37 @@ and the audit row operators will see when applies start landing.
 
 ### What bulk apply does
 
-Bulk apply runs a two-phase fan-out behind a single user
+Bulk apply runs a three-phase fan-out behind a single user
 confirmation:
 
-1. **Manager step.** Dispatches the upstream `applyNode` mutation,
-   which atomically promotes every pending draft on the node
-   (name, profile, agents, external services) to applied state in
-   the manager DB.
-2. **External step.** For each external service that had a pending
-   `draft` at apply-build time (Giganto for `DATA_STORE`, Tivan for
-   `TI_CONTAINER`), dispatches the upstream `updateConfig(old,
-   new)` mutation against the service. `old` is read fresh from the
-   service on every dispatch (including retries); `new` is the
-   frozen draft string captured at apply-build time and never
-   re-read.
+1. **Manager DB step.** Dispatches the upstream `applyNodeDraft`
+   mutation, which atomically promotes every pending draft on the
+   node (name, profile, agents, external services) to applied state
+   in the manager DB. An agent or external service whose `draft` is
+   `null` (operator delete intent) is **removed** from the node by
+   this step.
+2. **Manager notify step.** Dispatches the upstream
+   `applyAgentConfig` mutation, which notifies every agent on the
+   node whose post-promotion `config` is `Some(non-empty)` so the
+   agent re-pulls the new config. If the node's `hostname` is empty
+   the mutation rejects the call and the dispatch is marked
+   `failed_terminal` immediately (no retry will succeed until the
+   operator edits the profile).
+3. **External step.** For each external service that had a pending
+   non-null `draft` at apply-build time (Giganto for `DATA_STORE`,
+   Tivan for `TI_CONTAINER`), dispatches the upstream
+   `updateConfig(old, new)` mutation against the service. `old` is
+   read fresh from the service on every dispatch (including
+   retries); `new` is the frozen draft string captured at
+   apply-build time and never re-read.
 
-The dispatches run sequentially in a fixed order: manager first,
-then each external in plan order. A failure at any step stops the
-fan-out — the next dispatch only runs after the previous one
-succeeds.
+The dispatches run sequentially in plan order: manager DB first,
+then manager notify, then each external. A failure at any step
+stops the fan-out — the next dispatch only runs after the previous
+one succeeds. The two manager-side dispatches are independently
+observable and retryable: an operator-driven retry of the notify
+dispatch on a row whose DB stage has already succeeded does not
+re-run the DB mutation.
 
 ### Permissions and tenant scope
 
@@ -595,16 +607,18 @@ status** view once the operator clicks **Apply**.
 
 Opening the modal calls `createApplyAttempt({ nodeId })`. The BFF
 returns the planned dispatch list — the **top-level dispatches the
-BFF itself orchestrates**: the upstream `applyNode` mutation followed
-by one `updateConfig` per external service whose draft is pending at
-plan-build time. Internal review-web execution stages are not
-surfaced; the modal only renders the dispatch sequence the BFF will
-issue.
+BFF itself orchestrates**: the upstream `applyNodeDraft` mutation,
+the upstream `applyAgentConfig` mutation, then one `updateConfig`
+per external service whose draft is pending at plan-build time.
+Internal review-web execution stages are not surfaced; the modal
+only renders the dispatch sequence the BFF will issue.
 
 Each row shows the dispatch kind label
-(`Manager (applyNode)` / `Data Store (updateConfig)` /
-`TI Container (updateConfig)`). The **Apply** button is enabled when
-at least one dispatch is planned; an empty plan renders a "no pending
+(`Manager DB (applyNodeDraft)` /
+`Manager notify (applyAgentConfig)` /
+`Data Store (updateConfig)` / `TI Container (updateConfig)`). The
+**Apply** button is enabled when at least one dispatch is planned;
+an empty plan renders a "no pending
 changes" message and disables Apply.
 
 ### Per-dispatch status (during and after execution)

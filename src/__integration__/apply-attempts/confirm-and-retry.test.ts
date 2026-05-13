@@ -251,7 +251,7 @@ describe("confirmApplyAttempt — apply fan-out order", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -295,7 +295,7 @@ describe("retry safety — old fresh, new frozen", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -410,7 +410,7 @@ describe("partial failure + retry recovery — sequential-advance contract", () 
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -490,7 +490,7 @@ describe("stale-plan abort — pre-claim path", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -546,7 +546,7 @@ describe("node.apply audit — persisted once-only emission", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -652,7 +652,7 @@ describe("wrapper-level node-scope recheck — round 2 acceptance", () => {
       const dispatches: PlannedDispatch[] = [
         {
           dispatchId: randomUUID(),
-          kind: "MANAGER",
+          kind: "MANAGER_DB",
           state: "succeeded",
           attemptCount: 1,
           lastError: null,
@@ -747,7 +747,7 @@ describe("audit-emission recovery — round 2 acceptance", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -816,7 +816,7 @@ describe("single-actor ApplyAttempt", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -909,7 +909,7 @@ describe("single-actor ApplyAttempt", () => {
       const dispatches: PlannedDispatch[] = [
         {
           dispatchId: mgrId,
-          kind: "MANAGER",
+          kind: "MANAGER_DB",
           state: "succeeded",
           attemptCount: 1,
           lastError: null,
@@ -1045,7 +1045,7 @@ describe("single-actor ApplyAttempt", () => {
       const dispatches: PlannedDispatch[] = [
         {
           dispatchId: randomUUID(),
-          kind: "MANAGER",
+          kind: "MANAGER_DB",
           state: "succeeded",
           attemptCount: 1,
           lastError: null,

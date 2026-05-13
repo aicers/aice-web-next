@@ -478,7 +478,7 @@ describe("NodeDetailDashboard — apply preview modal wiring", () => {
     const planned: PlannedDispatch[] = [
       {
         dispatchId: "d-manager",
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,

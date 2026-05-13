@@ -25,7 +25,7 @@
  *      tenant scope changed after they created the attempt — or
  *      whose retry target is an external service that would
  *      otherwise bypass the per-node guard inside
- *      `_internal_applyNodeViaManager` — cannot drive a manager /
+ *      `_internal_applyNodeDraftViaManager` — cannot drive a manager /
  *      external dispatch on the back of a stale row.
  *   3. Runs the `_internal_*` core from #359 with the production
  *      `ApplyDispatcher` and `ManagerDraftReader` from #361. The
@@ -144,7 +144,7 @@ async function resolveSession(): Promise<AuthSession> {
  *      jump straight to `dispatcher.external()` (the deployment-
  *      global Giganto / Tivan endpoints) and emit `node.apply` for a
  *      node that no longer exists. The manager-side scope guard
- *      inside `_internal_applyNodeViaManager` only fires on manager
+ *      inside `_internal_applyNodeDraftViaManager` only fires on manager
  *      dispatches and only checks scope, never existence — so this
  *      wrapper-level read is the security boundary that closes the
  *      deleted-node-on-external-retry gap.
@@ -351,7 +351,12 @@ async function maybeEmitNodeApplyAudit(
   const claimed = await claimNodeApplyAuditSlot(result.attemptId);
   if (!claimed) return;
   const appliedServices = result.plannedDispatches
-    .filter((d) => d.kind !== "MANAGER" && d.state === "succeeded")
+    .filter(
+      (d) =>
+        d.kind !== "MANAGER_DB" &&
+        d.kind !== "MANAGER_NOTIFY" &&
+        d.state === "succeeded",
+    )
     .map((d) => d.kind);
   try {
     await auditLog.record({

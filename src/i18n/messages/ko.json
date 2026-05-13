@@ -532,7 +532,8 @@
       "plannedHeading": "예정된 디스패치",
       "executingHeading": "디스패치 진행 중",
       "dispatchKind": {
-        "MANAGER": "매니저 (applyNode)",
+        "MANAGER_DB": "매니저 DB (applyNodeDraft)",
+        "MANAGER_NOTIFY": "매니저 알림 (applyAgentConfig)",
         "DATA_STORE": "데이터 저장소 (updateConfig)",
         "TI_CONTAINER": "TI 컨테이너 (updateConfig)"
       },

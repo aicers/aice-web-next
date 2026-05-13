@@ -48,7 +48,7 @@ function persistedRow(
     planned_dispatches: [
       {
         dispatchId: "dd111111-1111-1111-1111-111111111111",
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -85,7 +85,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const dispatcher = {
-      manager: vi.fn(),
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
       external: vi.fn(),
     };
     const draftReader = { readNodeDraft: vi.fn() };
@@ -103,7 +104,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     // No executor and no claim transaction.
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockWithTransaction).not.toHaveBeenCalled();
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
     expect(dispatcher.external).not.toHaveBeenCalled();
     expect(draftReader.readNodeDraft).not.toHaveBeenCalled();
   });
@@ -126,7 +128,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
     const dispatcher = {
-      manager: vi.fn(),
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
       external: vi.fn(),
     };
     const draftReader = { readNodeDraft: vi.fn() };
@@ -145,7 +148,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     // dispatcher call; no draft reader call.
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockWithTransaction).not.toHaveBeenCalled();
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
     expect(dispatcher.external).not.toHaveBeenCalled();
     expect(draftReader.readNodeDraft).not.toHaveBeenCalled();
   });
@@ -177,7 +181,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
     const dispatcher = {
-      manager: vi.fn(),
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
       external: vi.fn(),
     };
     const draftReader = { readNodeDraft: vi.fn() };
@@ -194,7 +199,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     ).rejects.toThrow(/expired/);
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockWithTransaction).not.toHaveBeenCalled();
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
     expect(dispatcher.external).not.toHaveBeenCalled();
     expect(draftReader.readNodeDraft).not.toHaveBeenCalled();
   });
@@ -215,7 +221,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const dispatcher = {
-      manager: vi.fn(),
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
       external: vi.fn(),
     };
     const draftReader = { readNodeDraft: vi.fn() };
@@ -233,7 +240,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     // the failed_retryable branch.
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockWithTransaction).not.toHaveBeenCalled();
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
   });
 });
 
@@ -265,7 +273,11 @@ describe("_internal_confirmApplyAttempt — step 3 fingerprint hint", () => {
     await _internal_confirmApplyAttempt({
       session: makeSession(),
       attemptId: ATTEMPT_ID,
-      dispatcher: { manager: vi.fn(), external: vi.fn() },
+      dispatcher: {
+        managerDb: vi.fn(),
+        managerNotify: vi.fn(),
+        external: vi.fn(),
+      },
       draftReader: { readNodeDraft: vi.fn() },
       // Hint that does not match the all-zeros persisted fingerprint.
       expectedDraftFingerprint: "deadbeef",
@@ -300,7 +312,11 @@ describe("_internal_confirmApplyAttempt — step 3 fingerprint hint", () => {
     await _internal_confirmApplyAttempt({
       session: makeSession(),
       attemptId: ATTEMPT_ID,
-      dispatcher: { manager: vi.fn(), external: vi.fn() },
+      dispatcher: {
+        managerDb: vi.fn(),
+        managerNotify: vi.fn(),
+        external: vi.fn(),
+      },
       draftReader: { readNodeDraft: vi.fn() },
       expectedDraftFingerprint: expectedHex,
     });
@@ -347,7 +363,11 @@ describe("Atomic claim SQL — predicates", () => {
       session: makeSession(),
       attemptId: ATTEMPT_ID,
       dispatchId: RETRY_DISPATCH_ID,
-      dispatcher: { manager: vi.fn(), external: vi.fn() },
+      dispatcher: {
+        managerDb: vi.fn(),
+        managerNotify: vi.fn(),
+        external: vi.fn(),
+      },
       draftReader: { readNodeDraft: vi.fn() },
     });
 
@@ -396,7 +416,11 @@ describe("Atomic claim SQL — predicates", () => {
       _internal_confirmApplyAttempt({
         session: makeSession(),
         attemptId: ATTEMPT_ID,
-        dispatcher: { manager: vi.fn(), external: vi.fn() },
+        dispatcher: {
+          managerDb: vi.fn(),
+          managerNotify: vi.fn(),
+          external: vi.fn(),
+        },
         draftReader: { readNodeDraft: vi.fn() },
       }),
     ).rejects.toThrow();
@@ -450,7 +474,11 @@ describe("resolveLostClaim — SQL-authoritative expiry", () => {
       _internal_confirmApplyAttempt({
         session: makeSession(),
         attemptId: ATTEMPT_ID,
-        dispatcher: { manager: vi.fn(), external: vi.fn() },
+        dispatcher: {
+          managerDb: vi.fn(),
+          managerNotify: vi.fn(),
+          external: vi.fn(),
+        },
         draftReader: { readNodeDraft: vi.fn() },
       }),
     ).rejects.toThrow(/expired/);
@@ -475,7 +503,7 @@ describe("writeStaleAndClear — loser-write rejection", () => {
           planned_dispatches: [
             {
               dispatchId: "dd111111-1111-1111-1111-111111111111",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "queued",
               attemptCount: 0,
               lastError: null,
@@ -505,7 +533,7 @@ describe("writeStaleAndClear — loser-write rejection", () => {
                 planned_dispatches: [
                   {
                     dispatchId: "dd111111-1111-1111-1111-111111111111",
-                    kind: "MANAGER",
+                    kind: "MANAGER_DB",
                     state: "queued",
                     attemptCount: 0,
                     lastError: null,
@@ -525,7 +553,7 @@ describe("writeStaleAndClear — loser-write rejection", () => {
                 planned_dispatches: [
                   {
                     dispatchId: "dd111111-1111-1111-1111-111111111111",
-                    kind: "MANAGER",
+                    kind: "MANAGER_DB",
                     state: "in_flight",
                     attemptCount: 1,
                     lastError: null,
@@ -555,7 +583,11 @@ describe("writeStaleAndClear — loser-write rejection", () => {
     const { _internal_confirmApplyAttempt } = await import(
       "@/lib/node/apply-attempt-lifecycle"
     );
-    const dispatcher = { manager: vi.fn(), external: vi.fn() };
+    const dispatcher = {
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
+      external: vi.fn(),
+    };
     await expect(
       _internal_confirmApplyAttempt({
         session: makeSession(),
@@ -569,6 +601,7 @@ describe("writeStaleAndClear — loser-write rejection", () => {
       }),
     ).rejects.toThrow(/lost its claim/);
     // Manager dispatcher never invoked — drift caught at 5b before 5d.
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
   });
 });

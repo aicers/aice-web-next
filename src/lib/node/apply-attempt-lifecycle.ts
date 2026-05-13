@@ -66,6 +66,7 @@ import {
   ApplyAttemptTerminalError,
   DispatchNotFoundError,
   DispatchNotRetryableError,
+  DispatchTerminalFailureError,
   StalePlanError,
 } from "./errors";
 
@@ -170,32 +171,43 @@ function cmp(a: string, b: string): number {
 }
 
 /**
- * Build a `NodeInput`-shaped payload from the freshly-read manager-DB
- * draft state (step 5d). Promotes drafts to applied: every draft
- * field becomes the new applied field, drafts cleared.
+ * Build a `NodeInput`-shaped payload from the canonical manager-DB
+ * read (step 5d) for the upstream `applyNodeDraft` mutation.
+ *
+ * Per Decision 4 of #333 (Phase Node-12), this builder passes
+ * `agents[i].draft` and `externalServices[i].draft` to upstream
+ * **verbatim, including `null`**. No synthesis, no rewrite, no
+ * null-rejection — `draft = null` is operator delete-intent, which
+ * upstream `update_db` honours by removing the row from the node.
+ *
+ * This builder MUST NOT be confused with the v1
+ * `buildNodeInputFromDraft` (which forced `draft = null` on every row
+ * and would unconditionally delete every agent / external from the
+ * node — see Decision 8 / acceptance test). The legacy builder is
+ * removed in this phase.
  *
  * Typed as `unknown` on the dispatcher boundary so this module does
  * not have to import the full NodeInput graph; the production
- * dispatcher (#361) casts back to the canonical `NodeInput`.
+ * dispatcher casts back to the canonical `NodeInput`.
  */
-export function buildNodeInputFromDraft(node: NodeDraftSnapshot): unknown {
+export function buildNodeInputForApplyDraft(node: NodeDraftSnapshot): unknown {
   return {
     name: node.nameDraft ?? node.name,
-    nameDraft: null,
+    nameDraft: node.nameDraft,
     profile: node.profileDraft ?? node.profile,
-    profileDraft: null,
+    profileDraft: node.profileDraft,
     agents: node.agents.map((a) => ({
       kind: a.kind,
       key: a.key,
       status: a.status,
-      config: a.draft ?? a.config,
-      draft: null,
+      config: a.config,
+      draft: a.draft,
     })),
     externalServices: node.externalServices.map((s) => ({
       kind: s.kind,
       key: s.key,
       status: s.status,
-      draft: null,
+      draft: s.draft,
     })),
   };
 }
@@ -731,9 +743,15 @@ async function runExecutor(
     }
 
     const reachedCap = dispatch.attemptCount >= getDispatchMaxAttempts();
-    const newState: DispatchState = reachedCap
-      ? "failed_terminal"
-      : "failed_retryable";
+    // Phase Node-12 (#333): a dispatcher may surface
+    // `DispatchTerminalFailureError` to signal a structurally non-
+    // retryable failure (e.g. `applyAgentConfig` rejecting an empty
+    // hostname). Land in `failed_terminal` immediately so the operator
+    // is not forced to burn `APPLY_DISPATCH_MAX_ATTEMPTS` slots before
+    // settling.
+    const terminalNow = dispatchError instanceof DispatchTerminalFailureError;
+    const newState: DispatchState =
+      reachedCap || terminalNow ? "failed_terminal" : "failed_retryable";
     const updated = await commitDispatchFailure(
       row,
       correlationId,
@@ -761,7 +779,7 @@ async function runOneDispatch(
   dispatcher: ApplyDispatcher,
   draftReader: ManagerDraftReader,
 ): Promise<void> {
-  if (dispatch.kind === "MANAGER") {
+  if (dispatch.kind === "MANAGER_DB") {
     // 5a: read manager node fresh.
     const nodeNow = await draftReader.readNodeDraft(row.nodeId);
     // 5b: recompute fingerprint.
@@ -772,12 +790,26 @@ async function runOneDispatch(
         `Draft fingerprint drifted for attempt ${row.attemptId}.`,
       );
     }
-    // 5d: dispatch.
-    const nodeInput = buildNodeInputFromDraft(nodeNow);
-    await dispatcher.manager({
+    // 5d: dispatch the DB-write stage. Per Decision 4 (#333), the
+    // builder passes `draft` fields verbatim — delete intent
+    // (`draft = null`) is preserved and upstream removes the row.
+    const nodeInput = buildNodeInputForApplyDraft(nodeNow);
+    await dispatcher.managerDb({
       attemptId: row.attemptId,
       nodeId: row.nodeId,
       nodeInput,
+    });
+    return;
+  }
+  if (dispatch.kind === "MANAGER_NOTIFY") {
+    // No fingerprint guard on the notify stage: by the time we get
+    // here the DB stage has already succeeded and the manager DB is
+    // authoritative. Per Decision 5, `agentKeys: null` notifies every
+    // agent.
+    await dispatcher.managerNotify({
+      attemptId: row.attemptId,
+      nodeId: row.nodeId,
+      agentKeys: null,
     });
     return;
   }

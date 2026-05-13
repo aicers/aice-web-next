@@ -6,7 +6,7 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 import {
-  buildNodeInputFromDraft,
+  buildNodeInputForApplyDraft,
   computeDraftFingerprint,
   type NodeDraftSnapshot,
 } from "@/lib/node/apply-attempt-lifecycle";
@@ -97,8 +97,8 @@ describe("computeDraftFingerprint", () => {
   });
 });
 
-describe("buildNodeInputFromDraft", () => {
-  it("promotes drafts to applied and clears every draft field", () => {
+describe("buildNodeInputForApplyDraft", () => {
+  it("passes nameDraft / profileDraft and every agent / external draft verbatim (Decision 4, #333)", () => {
     const node = snapshot({
       name: "old",
       nameDraft: "new",
@@ -121,21 +121,27 @@ describe("buildNodeInputFromDraft", () => {
         { kind: "DATA_STORE", key: "k", status: "ENABLED", draft: "ds-draft" },
       ],
     });
-    const result = buildNodeInputFromDraft(node) as Record<string, unknown>;
+    const result = buildNodeInputForApplyDraft(node) as Record<string, unknown>;
     expect(result.name).toBe("new");
-    expect(result.nameDraft).toBeNull();
-    expect((result.profile as { description: string }).description).toBe(
+    // Per Decision 4 the builder MUST NOT clobber nameDraft / profileDraft
+    // or agents[i].draft / externalServices[i].draft. The drafts are
+    // carried verbatim so upstream `update_db` can honour operator
+    // intent (including `null` = delete intent).
+    expect(result.nameDraft).toBe("new");
+    expect((result.profileDraft as { description: string }).description).toBe(
       "new desc",
     );
-    expect(result.profileDraft).toBeNull();
-    const agents = result.agents as Array<{ config: string; draft: null }>;
-    expect(agents[0].config).toBe("new-cfg");
-    expect(agents[0].draft).toBeNull();
-    const ext = result.externalServices as Array<{ draft: null }>;
-    expect(ext[0].draft).toBeNull();
+    const agents = result.agents as Array<{
+      config: string | null;
+      draft: string | null;
+    }>;
+    expect(agents[0].config).toBe("old-cfg");
+    expect(agents[0].draft).toBe("new-cfg");
+    const ext = result.externalServices as Array<{ draft: string | null }>;
+    expect(ext[0].draft).toBe("ds-draft");
   });
 
-  it("leaves applied state untouched when no draft is pending", () => {
+  it("preserves agent / external delete intent (draft = null) verbatim", () => {
     const node = snapshot({
       name: "n",
       nameDraft: null,
@@ -150,10 +156,37 @@ describe("buildNodeInputFromDraft", () => {
           draft: null,
         },
       ],
+      externalServices: [
+        { kind: "DATA_STORE", key: "k", status: "ENABLED", draft: null },
+      ],
     });
-    const result = buildNodeInputFromDraft(node) as Record<string, unknown>;
+    const result = buildNodeInputForApplyDraft(node) as Record<string, unknown>;
     expect(result.name).toBe("n");
-    const agents = result.agents as Array<{ config: string }>;
+    expect(result.nameDraft).toBeNull();
+    const agents = result.agents as Array<{
+      config: string | null;
+      draft: string | null;
+    }>;
     expect(agents[0].config).toBe("applied");
+    expect(agents[0].draft).toBeNull();
+    const ext = result.externalServices as Array<{ draft: string | null }>;
+    expect(ext[0].draft).toBeNull();
+  });
+
+  it("preserves direct-setup magic-string drafts (draft = '') verbatim", () => {
+    const node = snapshot({
+      agents: [
+        {
+          kind: "SENSOR",
+          key: "k",
+          status: "ENABLED",
+          config: "old",
+          draft: "",
+        },
+      ],
+    });
+    const result = buildNodeInputForApplyDraft(node) as Record<string, unknown>;
+    const agents = result.agents as Array<{ draft: string | null }>;
+    expect(agents[0].draft).toBe("");
   });
 });

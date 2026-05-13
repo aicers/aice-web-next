@@ -22,7 +22,7 @@ function makeDispatches(): PlannedDispatch[] {
   return [
     {
       dispatchId: "d-manager",
-      kind: "MANAGER",
+      kind: "MANAGER_DB",
       state: "queued",
       attemptCount: 0,
       lastError: null,
@@ -107,7 +107,7 @@ describe("ApplyPreviewModal", () => {
       expect(create).toHaveBeenCalledWith({ nodeId: "node-1" });
     });
     expect(create).toHaveBeenCalledTimes(1);
-    await screen.findByText("Manager (applyNode)");
+    await screen.findByText("Manager DB (applyNodeDraft)");
     expect(screen.getByText("Data Store (updateConfig)")).toBeTruthy();
     expect(screen.getByText("TI Container (updateConfig)")).toBeTruthy();
     // Plan view: no per-row state badges yet, no Retry buttons.
@@ -326,7 +326,7 @@ describe("ApplyPreviewModal", () => {
       confirmApplyAttempt: vi.fn(),
       retryDispatch: vi.fn(),
     });
-    await screen.findByText("Manager (applyNode)");
+    await screen.findByText("Manager DB (applyNodeDraft)");
     expect(container.textContent).not.toContain("ingest_srv_addr");
     expect(container.textContent).not.toContain("graphql_srv_addr");
   });
@@ -347,7 +347,7 @@ describe("ApplyPreviewModal", () => {
     const planned: PlannedDispatch[] = [
       {
         dispatchId: "d-manager",
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -527,7 +527,7 @@ describe("ApplyPreviewModal", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("reopen"));
     });
-    await screen.findByText("Manager (applyNode)");
+    await screen.findByText("Manager DB (applyNodeDraft)");
     expect(create).toHaveBeenCalledTimes(3);
     // (5) Now resolve the stale Rebuild promise. If the generation
     // guard is missing, this would call `setPhase` with `stalePlan`
@@ -613,7 +613,7 @@ describe("ApplyPreviewModal", () => {
     }
     render(<ForceCloseHarness />);
     // (1) Initial open: plan loads with `initialAttemptId`.
-    await screen.findByText("Manager (applyNode)");
+    await screen.findByText("Manager DB (applyNodeDraft)");
     // (2) Click Apply: stale confirm is held by capturing its resolver.
     const applyButton = await screen.findByTestId("apply-preview-apply");
     await act(async () => {
@@ -630,7 +630,7 @@ describe("ApplyPreviewModal", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("reopen"));
     });
-    await screen.findByText("Manager (applyNode)");
+    await screen.findByText("Manager DB (applyNodeDraft)");
     expect(create).toHaveBeenCalledTimes(2);
     // (5) Resolve the stale confirm last. Without the generation guard
     // on the confirm path, this would call setPhase with the stale
@@ -738,7 +738,7 @@ describe("ApplyPreviewModal", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("reopen"));
     });
-    await screen.findByText("Manager (applyNode)");
+    await screen.findByText("Manager DB (applyNodeDraft)");
     expect(create).toHaveBeenCalledTimes(2);
     // (5) Resolve the stale retry last — must be dropped.
     await act(async () => {
@@ -805,7 +805,7 @@ describe("ApplyPreviewModal", () => {
       );
     }
     render(<ReopenHarness />);
-    await screen.findByText("Manager (applyNode)");
+    await screen.findByText("Manager DB (applyNodeDraft)");
     await act(async () => {
       fireEvent.click(screen.getByTestId("force-close"));
     });
@@ -815,11 +815,11 @@ describe("ApplyPreviewModal", () => {
       fireEvent.click(screen.getByTestId("reopen"));
     });
     expect(screen.getByTestId("apply-preview-loading")).toBeTruthy();
-    expect(screen.queryByText("Manager (applyNode)")).toBeNull();
+    expect(screen.queryByText("Manager DB (applyNodeDraft)")).toBeNull();
     await act(async () => {
       resolveSecond?.(makePlanResult(makeAttemptId("2")));
     });
-    await screen.findByText("Manager (applyNode)");
+    await screen.findByText("Manager DB (applyNodeDraft)");
   });
 
   // Accessibility checks — equivalent to axe-core's role / aria-modal /
