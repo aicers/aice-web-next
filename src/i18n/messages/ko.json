@@ -2168,7 +2168,7 @@
     "ruleCountsValue": "{packetAttr} attr · {confidence} confidence · {response} response",
     "createdAt": "생성일",
     "packetAttr": "패킷 속성 규칙",
-    "packetAttrHelp": "packet_attr 규칙 JSON 배열입니다. IP/CIDR(value_kind=ipaddr) 값과 범위 cmp_kind(open_range / close_range / left_open_range / right_open_range 및 not_* 변형)는 서버에서 검증됩니다.",
+    "packetAttrHelp": "packet_attr 규칙 JSON 배열입니다. IP 리터럴만 허용됩니다(value_kind=ipaddr); CIDR은 허용되지 않습니다. 범위 cmp_kind(open_range / close_range / left_open_range / right_open_range 및 not_* 변형)는 서버에서 검증됩니다.",
     "confidence": "신뢰도 규칙",
     "response": "응답 규칙",
     "deleteConfirm": "트리아지 정책 '{name}'을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",

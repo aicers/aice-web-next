@@ -204,7 +204,7 @@ describe("POST /api/triage/policies", () => {
     );
   });
 
-  it("rejects an invalid IP/CIDR in a packet_attr ipaddr rule", async () => {
+  it("rejects an invalid IP literal in a packet_attr ipaddr rule", async () => {
     const { POST } = await import("@/app/api/triage/policies/route");
     const request = new NextRequest(
       "http://localhost:3000/api/triage/policies?customer_id=42",
@@ -230,6 +230,43 @@ describe("POST /api/triage/policies", () => {
     const body = await response.json();
     expect(response.status).toBe(400);
     expect(body.details).toBeDefined();
+    expect(mockCreatePolicy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a CIDR-shaped ipaddr value at the API write path", async () => {
+    // Previously this value was accepted at storage and only failed
+    // at corpus B run time with a `status='failed'` row. The
+    // storage-time rejection here pins the new contract: CIDR is
+    // never persisted under `value_kind=ipaddr`.
+    const { POST } = await import("@/app/api/triage/policies/route");
+    const request = new NextRequest(
+      "http://localhost:3000/api/triage/policies?customer_id=42",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name: "p",
+          packet_attr: [
+            {
+              raw_event_kind: "conn",
+              attr_name: "src_addr",
+              value_kind: "ipaddr",
+              cmp_kind: "equal",
+              first_value: "10.0.0.0/24",
+            },
+          ],
+          confidence: [],
+          response: [],
+        }),
+      },
+    );
+    const response = await POST(request, makeContext());
+    const body = await response.json();
+    expect(response.status).toBe(400);
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "packet_attr.0.first_value" }),
+      ]),
+    );
     expect(mockCreatePolicy).not.toHaveBeenCalled();
   });
 

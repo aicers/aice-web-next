@@ -2,14 +2,18 @@
  * Semantic validation for TriagePolicy rules beyond Zod's structural
  * checks.
  *
- * Scope here is the IP/CIDR validity of `ipaddr`-typed `packet_attr`
+ * Scope here is the IP literal validity of `ipaddr`-typed `packet_attr`
  * values and the range-cmp invariant that range comparisons carry both
- * ends of the interval. Domain exclusion regex compilability — the
- * other half of the wording in #459 — lives on `ExclusionReason` rows
- * under ticket 1B-2 (#447 §2.1, §3.4) and is not part of TriagePolicy
- * under the new model. Removing the legacy `match` / `not_match`
- * cmp kinds here keeps the stored shape aligned with review-web's
- * `AttrCmpKind` enum (see `@/lib/triage/inline-policy/kinds`).
+ * ends of the interval. CIDR notation is rejected here so the failure
+ * surfaces at authoring time — the inline-policy encoder
+ * (`@/lib/triage/inline-policy/encode`) keeps its CIDR-reject branch
+ * as a belt-and-braces guard at the wire boundary. Domain exclusion
+ * regex compilability — the other half of the wording in #459 — lives
+ * on `ExclusionReason` rows under ticket 1B-2 (#447 §2.1, §3.4) and is
+ * not part of TriagePolicy under the new model. Removing the legacy
+ * `match` / `not_match` cmp kinds here keeps the stored shape aligned
+ * with review-web's `AttrCmpKind` enum (see
+ * `@/lib/triage/inline-policy/kinds`).
  */
 
 import { isIP } from "node:net";
@@ -34,29 +38,15 @@ export interface PolicyValidationResult {
   issues: PolicyValidationIssue[];
 }
 
-// Match the prefix as a non-empty digit-only string. `Number()` coerces
-// "", "+8", "1e1", and " 8" silently — none of which are valid CIDR
-// prefixes — so we parse the raw substring with a strict regex first
-// and only then range-check the integer.
-const CIDR_PREFIX_RE = /^\d+$/;
-
-function validateIpOrCidr(value: string): string | null {
-  const slash = value.indexOf("/");
-  if (slash === -1) {
-    if (isIP(value) === 0) return "Not a valid IP address";
-    return null;
-  }
-  const ip = value.slice(0, slash);
-  const prefixStr = value.slice(slash + 1);
-  const version = isIP(ip);
-  if (version === 0) return "Not a valid IP address in CIDR";
-  if (!CIDR_PREFIX_RE.test(prefixStr)) {
-    return "Invalid CIDR prefix length";
-  }
-  const prefix = Number(prefixStr);
-  if ((version === 4 && prefix > 32) || (version === 6 && prefix > 128)) {
-    return "Invalid CIDR prefix length";
-  }
+function validateIp(value: string): string | null {
+  // CIDR notation has no agreed wire shape inside a packet-attr
+  // equality / range comparison and the inline-policy encoder rejects
+  // it at the wire boundary. Reject here too so the failure surfaces
+  // at authoring time rather than at corpus B run time. If CIDR
+  // semantics are needed later, introduce a separate `value_kind`
+  // rather than overloading `ipaddr`.
+  if (value.includes("/")) return "CIDR notation is not accepted";
+  if (isIP(value) === 0) return "Not a valid IP address";
   return null;
 }
 
@@ -66,7 +56,7 @@ function validatePacketAttr(
   issues: PolicyValidationIssue[],
 ): void {
   if (rule.value_kind === "ipaddr") {
-    const firstErr = validateIpOrCidr(rule.first_value);
+    const firstErr = validateIp(rule.first_value);
     if (firstErr) {
       issues.push({
         path: `packet_attr.${index}.first_value`,
@@ -78,7 +68,7 @@ function validatePacketAttr(
       rule.second_value !== null &&
       rule.second_value.length > 0
     ) {
-      const secondErr = validateIpOrCidr(rule.second_value);
+      const secondErr = validateIp(rule.second_value);
       if (secondErr) {
         issues.push({
           path: `packet_attr.${index}.second_value`,
@@ -161,4 +151,4 @@ export function validatePolicySemantics(
 }
 
 // Re-exported for tests covering address parsing in isolation.
-export { validateIpOrCidr as _validateIpOrCidr };
+export { validateIp as _validateIp };
