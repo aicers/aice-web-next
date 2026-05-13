@@ -1,0 +1,13 @@
+mutation ApplyAgentConfig($nodeId: ID!, $agentKeys: [String!]) {
+  applyAgentConfig(nodeId: $nodeId, agentKeys: $agentKeys) {
+    attempts {
+      agentKey
+      succeeded
+      error
+    }
+    skipped {
+      agentKey
+      reason
+    }
+  }
+}

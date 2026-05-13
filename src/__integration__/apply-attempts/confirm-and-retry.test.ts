@@ -180,6 +180,7 @@ async function insertAttempt(
 interface OutboundEvent {
   channel:
     | "manager-applyNode"
+    | "manager-applyAgentConfig"
     | "manager-readNode"
     | "giganto-config"
     | "giganto-update";
@@ -190,15 +191,22 @@ function recordOutbound(
   events: OutboundEvent[],
   snap: NodeDraftSnapshot,
 ): void {
-  // The first manager call inside the executor is step 5a's
-  // canonical-node read (NODE_DETAIL_QUERY). The second is the
-  // applyNode mutation. We distinguish them by inspecting whether
-  // the variables contain a `node` key.
+  // The mock distinguishes between three manager-side GraphQL calls:
+  // canonical-node reads (NODE_DETAIL_QUERY, identified by a plain
+  // `{ id }` variables shape), the `applyNodeDraft` mutation (`{ id,
+  // node }`), and the `applyAgentConfig` mutation (`{ nodeId,
+  // agentKeys }`). The `manager-applyNode` channel name is preserved
+  // for the DB-promotion mutation so existing test assertions on
+  // step-5d ordering continue to apply.
   mockGraphqlRequest.mockImplementation(async (_doc, vars) => {
     const v = (vars ?? {}) as Record<string, unknown>;
     if ("node" in v) {
       events.push({ channel: "manager-applyNode" });
-      return { applyNode: "node-1" };
+      return { applyNodeDraft: { id: "node-1" } };
+    }
+    if ("agentKeys" in v) {
+      events.push({ channel: "manager-applyAgentConfig" });
+      return { applyAgentConfig: { attempts: [], skipped: [] } };
     }
     events.push({ channel: "manager-readNode" });
     return nodePayload(snap);
@@ -698,7 +706,11 @@ describe("wrapper-level node-scope recheck — round 2 acceptance", () => {
         const v = (vars ?? {}) as Record<string, unknown>;
         if ("node" in v) {
           events.push({ channel: "manager-applyNode" });
-          return { applyNode: "node-1" };
+          return { applyNodeDraft: { id: "node-1" } };
+        }
+        if ("agentKeys" in v) {
+          events.push({ channel: "manager-applyAgentConfig" });
+          return { applyAgentConfig: { attempts: [], skipped: [] } };
         }
         events.push({ channel: "manager-readNode" });
         return nodePayload(node);

@@ -142,5 +142,31 @@
         "externalServices": []
       }
     }
+  },
+  {
+    "operation": "applyNodeDraft",
+    "query": "node/applyNodeDraft.success.graphql",
+    "fixture": "node/applyNodeDraft.success.json",
+    "variables": {
+      "id": "11",
+      "node": {
+        "name": "alpha-node",
+        "nameDraft": null,
+        "profile": {
+          "customerId": "1",
+          "description": "Primary sensor cluster",
+          "hostname": "alpha.lan"
+        },
+        "profileDraft": null,
+        "agents": [],
+        "externalServices": []
+      }
+    }
+  },
+  {
+    "operation": "applyAgentConfig",
+    "query": "node/applyAgentConfig.success.graphql",
+    "fixture": "node/applyAgentConfig.success.json",
+    "variables": { "nodeId": "11", "agentKeys": null }
   }
 ]
