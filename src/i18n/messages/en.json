@@ -2168,7 +2168,7 @@
     "ruleCountsValue": "{packetAttr} attr · {confidence} confidence · {response} response",
     "createdAt": "Created",
     "packetAttr": "Packet attribute rules",
-    "packetAttrHelp": "JSON array of packet_attr rules. IP/CIDR (value_kind=ipaddr) values and range cmp_kinds (open_range / close_range / left_open_range / right_open_range and their not_* variants) are validated server-side.",
+    "packetAttrHelp": "JSON array of packet_attr rules. IP literal only (value_kind=ipaddr); CIDR is not accepted. Range cmp_kinds (open_range / close_range / left_open_range / right_open_range and their not_* variants) are validated server-side.",
     "confidence": "Confidence rules",
     "response": "Response rules",
     "deleteConfirm": "Delete triage policy '{name}'? This cannot be undone.",

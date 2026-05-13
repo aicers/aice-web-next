@@ -232,7 +232,7 @@ describe("PATCH /api/triage/policies/[id]", () => {
     expect(response.status).toBe(400);
   });
 
-  it("rejects an invalid IP/CIDR in a packet_attr ipaddr rule", async () => {
+  it("rejects an invalid IP literal in a packet_attr ipaddr rule", async () => {
     const { PATCH } = await import("@/app/api/triage/policies/[id]/route");
     const request = new NextRequest(
       "http://localhost:3000/api/triage/policies/7?customer_id=42",
@@ -245,7 +245,7 @@ describe("PATCH /api/triage/policies/[id]", () => {
               attr_name: "src_addr",
               value_kind: "ipaddr",
               cmp_kind: "equal",
-              first_value: "10.0.0.0/40",
+              first_value: "not-an-ip",
             },
           ],
         }),
@@ -253,6 +253,39 @@ describe("PATCH /api/triage/policies/[id]", () => {
     );
     const response = await PATCH(request, makeContext("7"));
     expect(response.status).toBe(400);
+    expect(mockUpdatePolicy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a CIDR-shaped ipaddr value at the API write path", async () => {
+    // Previously a syntactically valid CIDR was accepted at PATCH
+    // and only failed at corpus B run time. Pin the new
+    // storage-time rejection here.
+    const { PATCH } = await import("@/app/api/triage/policies/[id]/route");
+    const request = new NextRequest(
+      "http://localhost:3000/api/triage/policies/7?customer_id=42",
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          packet_attr: [
+            {
+              raw_event_kind: "conn",
+              attr_name: "src_addr",
+              value_kind: "ipaddr",
+              cmp_kind: "equal",
+              first_value: "10.0.0.0/24",
+            },
+          ],
+        }),
+      },
+    );
+    const response = await PATCH(request, makeContext("7"));
+    const body = await response.json();
+    expect(response.status).toBe(400);
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "packet_attr.0.first_value" }),
+      ]),
+    );
     expect(mockUpdatePolicy).not.toHaveBeenCalled();
   });
 

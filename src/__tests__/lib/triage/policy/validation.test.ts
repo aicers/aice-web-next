@@ -1,56 +1,38 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  _validateIpOrCidr,
+  _validateIp,
   validatePolicySemantics,
 } from "@/lib/triage/policy/validation";
 
-describe("validateIpOrCidr", () => {
+describe("validateIp", () => {
   it("accepts plain IPv4", () => {
-    expect(_validateIpOrCidr("192.168.1.1")).toBeNull();
+    expect(_validateIp("192.168.1.1")).toBeNull();
   });
 
   it("accepts plain IPv6", () => {
-    expect(_validateIpOrCidr("::1")).toBeNull();
-    expect(_validateIpOrCidr("2001:db8::1")).toBeNull();
-  });
-
-  it("accepts IPv4 CIDR", () => {
-    expect(_validateIpOrCidr("10.0.0.0/8")).toBeNull();
-    expect(_validateIpOrCidr("10.0.0.0/32")).toBeNull();
-    expect(_validateIpOrCidr("10.0.0.0/0")).toBeNull();
-  });
-
-  it("accepts IPv6 CIDR", () => {
-    expect(_validateIpOrCidr("2001:db8::/32")).toBeNull();
-    expect(_validateIpOrCidr("::/0")).toBeNull();
+    expect(_validateIp("::1")).toBeNull();
+    expect(_validateIp("2001:db8::1")).toBeNull();
   });
 
   it("rejects invalid IPs", () => {
-    expect(_validateIpOrCidr("not-an-ip")).not.toBeNull();
-    expect(_validateIpOrCidr("999.999.999.999")).not.toBeNull();
+    expect(_validateIp("not-an-ip")).not.toBeNull();
+    expect(_validateIp("999.999.999.999")).not.toBeNull();
   });
 
-  it("rejects out-of-range CIDR prefix", () => {
-    expect(_validateIpOrCidr("10.0.0.0/33")).not.toBeNull();
-    expect(_validateIpOrCidr("2001:db8::/129")).not.toBeNull();
-    expect(_validateIpOrCidr("10.0.0.0/-1")).not.toBeNull();
-  });
-
-  it("rejects non-decimal CIDR prefixes that Number() would coerce", () => {
-    // Empty / whitespace prefixes.
-    expect(_validateIpOrCidr("10.0.0.0/")).not.toBeNull();
-    expect(_validateIpOrCidr("10.0.0.0/ ")).not.toBeNull();
-    expect(_validateIpOrCidr("10.0.0.0/ 8")).not.toBeNull();
-    expect(_validateIpOrCidr("10.0.0.0/8 ")).not.toBeNull();
-    // Signed prefixes.
-    expect(_validateIpOrCidr("10.0.0.0/+8")).not.toBeNull();
-    // Exponent / hex / float / underscore notation.
-    expect(_validateIpOrCidr("10.0.0.0/1e1")).not.toBeNull();
-    expect(_validateIpOrCidr("10.0.0.0/0x8")).not.toBeNull();
-    expect(_validateIpOrCidr("10.0.0.0/8.0")).not.toBeNull();
-    expect(_validateIpOrCidr("10.0.0.0/0_8")).not.toBeNull();
-    expect(_validateIpOrCidr("2001:db8::/0x10")).not.toBeNull();
+  it("rejects any value containing '/'", () => {
+    // CIDR notation has no wire shape inside a packet-attr equality /
+    // range comparison; the encoder rejects it and so does this
+    // storage-time validator. Any slash is enough — we do not parse
+    // the prefix.
+    expect(_validateIp("10.0.0.0/8")).not.toBeNull();
+    expect(_validateIp("10.0.0.0/32")).not.toBeNull();
+    expect(_validateIp("10.0.0.0/0")).not.toBeNull();
+    expect(_validateIp("2001:db8::/32")).not.toBeNull();
+    expect(_validateIp("::/0")).not.toBeNull();
+    expect(_validateIp("10.0.0.0/33")).not.toBeNull();
+    expect(_validateIp("10.0.0.0/")).not.toBeNull();
+    expect(_validateIp("not-an-ip/8")).not.toBeNull();
   });
 });
 
@@ -74,7 +56,7 @@ describe("validatePolicySemantics", () => {
     expect(result.issues[0].path).toBe("packet_attr.0.first_value");
   });
 
-  it("accepts a packet_attr ipaddr rule with a valid CIDR", () => {
+  it("rejects a packet_attr ipaddr rule whose first_value is CIDR", () => {
     const result = validatePolicySemantics({
       name: "p",
       packet_attr: [
@@ -89,7 +71,8 @@ describe("validatePolicySemantics", () => {
       confidence: [],
       response: [],
     });
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.issues[0].path).toBe("packet_attr.0.first_value");
   });
 
   it("flags a range cmp_kind without a second_value", () => {
