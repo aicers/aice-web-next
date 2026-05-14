@@ -790,6 +790,12 @@ Story origin in this release — Pivot-from-Story operates on the
 Tier 1 client-side index over the Story's member events. Tier 2
 plumbing for the Story-member corpus is a follow-up.
 
+The Pivot panel's "truncated" hint reports the period-wide
+5,000-event asset corpus cap. Because the Story-origin Pivot
+panel reads from the Story's complete member set, the hint is
+suppressed while the origin is a Story — it would otherwise
+falsely imply that the Story-scoped grouping was partial.
+
 `baseline_score` is `null` for members whose `event_time` falls
 outside the menu period (the period-scoped LEFT JOIN behaviour
 documented in [#547](https://github.com/aicers/aice-web-next/pull/547)).

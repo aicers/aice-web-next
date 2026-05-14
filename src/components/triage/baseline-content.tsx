@@ -797,6 +797,12 @@ export function TriageBaselineContent({
   // dimension like JA3, even though the JA3 panel is computed from
   // that same partial 5,000-row country result.
   const panelTruncated = useMemo(() => {
+    // Story-origin trails (#553) read from the complete Story member
+    // set, not the period-wide asset corpus, so the period-level
+    // truncation flag does not apply. Tier 2 expansion is already
+    // suppressed for Story origin (see {@link expandedEvents}), so the
+    // Tier 2 cached-truncation walk is also unreachable here.
+    if (pivotOrigin.kind === "story") return false;
     if (result.truncated) return true;
     if (scope !== "tier2") return false;
     const assetCrumbCustomerId =
@@ -812,7 +818,7 @@ export function TriageBaselineContent({
       if (cached?.truncated === true) return true;
     }
     return false;
-  }, [result.truncated, scope, trail, tier2]);
+  }, [pivotOrigin, result.truncated, scope, trail, tier2]);
 
   // Cancel any hash-restore work still in flight. Explicit user
   // navigation (new asset, pivot click, crumb backtrack) replaces or

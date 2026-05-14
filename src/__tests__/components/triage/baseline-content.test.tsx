@@ -980,3 +980,89 @@ describe("TriageBaselineContent — Story-origin marker stripped on Asset list (
     expect(window.location.hash).toContain("triage.pivot.story=9%2F42");
   });
 });
+
+describe("TriageBaselineContent — Pivot panel truncation hint reflects active corpus (#553 Round 4)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+    window.location.hash = "";
+  });
+
+  it("suppresses the truncation hint on a Story-origin pivot panel even when the period-wide result is truncated", async () => {
+    // Reviewer Round 4: the Pivot panel previously surfaced the
+    // truncation banner whenever `result.truncated === true`, regardless
+    // of origin. On a Story-origin trail the panel actually reads from
+    // the Story member set (a complete corpus), not the period-wide
+    // 5,000-row asset corpus that the flag describes. Showing the
+    // banner there falsely implies the Story-scoped pivots are partial
+    // — contradicting the #553 data-source decision that only the asset
+    // list stays period-wide. The fix gates `panelTruncated` on
+    // `pivotOrigin.kind !== "story"`.
+    const truncatedResult: TriageLoadResult = {
+      ...makeMultiCustomerResult(),
+      truncated: true,
+    };
+    const story = makeStory();
+    const member = makeStoryMember();
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={truncatedResult}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[story]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    // Precondition: with the asset-rooted Pivot tab (the period-wide
+    // corpus actually drove the panel), the truncation banner renders.
+    // This sanity-checks that the gate fires on origin, not on a stale
+    // result.truncated read.
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+    expect(screen.getByText(LABELS.pivotPanel.truncatedHint)).toBeTruthy();
+
+    // Drive Pivot-from-Story so `pivotOrigin.kind === "story"`.
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    let pivotButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      pivotButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "host") ??
+        null;
+      expect(pivotButton).not.toBeNull();
+    });
+    if (!pivotButton) throw new Error("pivot button never rendered");
+    await act(async () => {
+      fireEvent.click(pivotButton as HTMLElement);
+    });
+
+    // Story-origin trail is active on the Pivot peer view. The Pivot
+    // panel reads from the Story member set (complete), so the period-
+    // wide truncation hint must NOT render even though
+    // `result.truncated === true`.
+    expect(screen.queryByText(LABELS.pivotPanel.truncatedHint)).toBeNull();
+  });
+});
