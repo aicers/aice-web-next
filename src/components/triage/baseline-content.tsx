@@ -1666,10 +1666,15 @@ export function TriageBaselineContent({
   // effect). The asset crumb itself is left to the trail; only the
   // dimension-step persistence is gated.
   //
-  // The Story-origin marker (#553) is persisted on a separate axis:
-  // it survives the Pivot→Stories→Pivot tab swap, so when the trail
-  // is hidden (asset-list tab) the dimension steps are stripped but
-  // the `triage.pivot.story` marker stays. The Stories tab itself
+  // The Story-origin marker (#553) is persisted on the same axis as
+  // the dimension steps for the same reason: it must survive the
+  // Pivot↔Stories tab swap (the Pivot-origin marker is namespaced
+  // under `triage.pivot.*` so it travels alongside the trail), but
+  // when the analyst switches to the Asset list — encoded by
+  // omitting `triage.tab` — the marker must be stripped. Otherwise
+  // a reload sees `triage.pivot.story` without an explicit
+  // `triage.tab` and the restore branch routes the analyst back to
+  // the Pivot tab they had explicitly left. The Stories tab itself
   // clears its `triage.story` focus on swap; the two keys are
   // independent by design.
   useEffect(() => {
@@ -1679,7 +1684,7 @@ export function TriageBaselineContent({
         ? trail
         : trail.filter((step) => step.kind !== "dimension");
     const storyOrigin =
-      pivotOrigin.kind === "story"
+      pivotOrigin.kind === "story" && tab !== "asset-list"
         ? {
             customerId: pivotOrigin.customerId,
             storyId: pivotOrigin.storyId,

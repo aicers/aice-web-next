@@ -822,3 +822,161 @@ describe("TriageBaselineContent — Story-origin restore respects triage.tab=sto
     ).toBe("active");
   });
 });
+
+describe("TriageBaselineContent — Story-origin marker stripped on Asset list (#553 Round 3)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+    window.location.hash = "";
+  });
+
+  it("removes `triage.pivot.story` from the hash when the analyst switches from a Pivot-from-Story trail back to Asset list", async () => {
+    // Reviewer Round 3: the hash-sync effect serialized
+    // `triage.pivot.story` whenever `pivotOrigin.kind === "story"`,
+    // regardless of `tab`. Because Asset list is encoded by omitting
+    // `triage.tab`, a reload of the resulting hash (no `triage.tab`,
+    // `triage.pivot.story` present) bounced the analyst back to the
+    // Pivot tab even though they had explicitly left to Asset list.
+    // The marker must be stripped when `tab === "asset-list"`;
+    // Stories↔Pivot swap preservation remains intact (covered by the
+    // Round 2 tests above).
+    const story = makeStory();
+    const member = makeStoryMember();
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[story]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    // Drive the Pivot-from-Story flow so `pivotOrigin.kind === "story"`.
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    let pivotButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      pivotButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "host") ??
+        null;
+      expect(pivotButton).not.toBeNull();
+    });
+    if (!pivotButton) throw new Error("pivot button never rendered");
+    await act(async () => {
+      fireEvent.click(pivotButton as HTMLElement);
+    });
+
+    // Sanity-check the precondition: while on the Pivot tab with the
+    // Story origin active, the hash carries `triage.pivot.story` so a
+    // reload (or Stories tab swap) lands the analyst back on the Story
+    // origin.
+    expect(window.location.hash).toContain("triage.pivot.story=9%2F42");
+
+    // The analyst leaves the pivot for Asset list — Asset list omits
+    // `triage.tab` from the hash, so leaving the Story-origin marker
+    // in place would forcibly route the next reload back to Pivot.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-tab-asset-list"));
+    });
+    expect(window.location.hash).not.toContain("triage.pivot.story");
+    // Defense in depth: the dimension steps are likewise stripped while
+    // the trail is hidden (this was the existing Pivot-tab gate).
+    expect(window.location.hash).not.toContain("triage.pivot.step");
+
+    // And swapping back to Pivot re-serializes the marker (the in-
+    // memory `pivotOrigin` is unchanged), so the Story-origin breadcrumb
+    // returns without re-parsing the hash.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+    });
+    expect(window.location.hash).toContain("triage.pivot.story=9%2F42");
+  });
+
+  it("keeps `triage.pivot.story` in the hash when the analyst switches from Pivot to Stories", async () => {
+    // Counter-test for the Asset-list strip: the Stories tab swap must
+    // still preserve the Pivot-origin marker (Round 2 acceptance). The
+    // Stories tab encodes `triage.tab=stories` explicitly, so a reload
+    // of `triage.tab=stories&triage.pivot.story=<id>` still lands the
+    // analyst on Stories with the Pivot origin ready for a later swap.
+    const story = makeStory();
+    const member = makeStoryMember();
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[story]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    let pivotButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      pivotButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "host") ??
+        null;
+      expect(pivotButton).not.toBeNull();
+    });
+    if (!pivotButton) throw new Error("pivot button never rendered");
+    await act(async () => {
+      fireEvent.click(pivotButton as HTMLElement);
+    });
+    expect(window.location.hash).toContain("triage.pivot.story=9%2F42");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    });
+    // Stories tab encodes itself explicitly; the Pivot-origin marker
+    // survives the swap.
+    expect(window.location.hash).toContain("triage.tab=stories");
+    expect(window.location.hash).toContain("triage.pivot.story=9%2F42");
+  });
+});

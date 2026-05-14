@@ -834,6 +834,19 @@ the same Story-origin breadcrumb without re-parsing the
 hash — the active-tab key always wins over the pivot-origin
 key during restore.
 
+Switching from a Pivot-from-Story state to the **Asset list**
+tab strips `triage.pivot.story` from the hash. The Asset list
+tab is encoded by omitting `triage.tab` entirely (it is the
+default landing tab); leaving the pivot-origin marker behind
+would produce a URL with no `triage.tab` but a
+`triage.pivot.story` segment, which on reload would forcibly
+route the analyst back to the Pivot tab they had explicitly
+left. The marker only persists while the visible tab is one
+that the Pivot origin is meaningful to (Pivot itself, or
+Stories — preserving the swap path back to Pivot). The
+in-memory Pivot origin is unchanged, so swapping back to the
+Pivot tab during the same session re-serializes the marker.
+
 ### Permission
 
 The Stories tab requires `triage:read`, the same gate as the
