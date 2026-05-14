@@ -434,6 +434,47 @@ NTLM 이벤트는 `host`, `dns_query`, `uri`가 NULL이므로 소급
 - `triage_exclusion.fanout_failed` — 고객별 팬아웃 작업이 재시도
   예산(지수 백오프 5회: 1분 → 5분 → 25분 → 2시간 → 12시간)을
   소진했을 때 발행됩니다.
+- `triage_exclusion.global_recover` / `.customer_recover` —
+  운영자가 제외 항목 목록의 **정리 재실행** 메뉴(또는 내부 복구
+  라우트)를 통해 `failed` 상태의 정리 작업을 재설정할 때
+  발행됩니다. 메뉴 항목은 과거 코퍼스 정리가 멈춘 행에서
+  표시됩니다 — `auth_db` 팬아웃 큐에 `failed` 센티넬이 있거나,
+  고객 범위 제외의 경우 `details.drainStatus = 'failed'`를
+  기록한 `triage_exclusion.customer_add` 감사 행이 아직
+  복구되지 않은 상태입니다. 이 감사 행 폴백은 실패한 ADD 경로의
+  센티넬 INSERT 자체가 실패한 드문 경우(예: auth_db 일시 장애)를
+  보완합니다. 큐 행이 없는 경우 **정리 재실행** 클릭은 감사
+  기록에서 새 `pending` 센티넬을 백필하고, 그 외에는 기존 큐
+  행을 `pending`으로 되돌립니다. 어느 경우든 다음 틱에서 팬아웃
+  워커가 다시 처리합니다. `global_recover`는 고객 비종속이고,
+  `customer_recover`는 `customer_id`를 포함합니다.
+
+### 백그라운드 보존
+
+cron 컨테이너는 코퍼스와 팬아웃 큐가 무한정 커지지 않도록 세
+개의 보존 스윕을 실행합니다:
+
+- **기준 코퍼스** (`run-triage-baseline-retention.sh`, 매일 UTC
+  03:15) — 180일을 초과한 `baseline_triaged_event`와 30일을
+  초과한 `observed_event_meta`를 `DELETE`문당 10,000행씩
+  배치로 제거합니다.
+- **정책 코퍼스 B** (`run-triage-policy-retention.sh`, 6시간마다)
+  — `computing` 상태로 30분 이상 정체된 `policy_triage_run` 행을
+  `failed`로 전환하고
+  (`last_error = 'timeout: runner did not finalize'`),
+  차등 보존(ready 30일 / superseded 7일 / failed 1일)을 적용한
+  뒤, `owner_account_id`가 더 이상 해석되지 않는 행을
+  정리합니다. `policy_triaged_event` 행은 함께 캐스케이드됩니다.
+- **제외 팬아웃** (`run-triage-exclusion-fanout.sh`, 매분) —
+  `triage_exclusion_fanout_job` 큐를 비웁니다. 분 단위 케이던스는
+  워커의 1차 백오프(1분)와 맞춰져 있어 일시적인 테넌트 DB 장애가
+  빠르게 재시도됩니다.
+
+각 래퍼는 타임스탬프가 찍힌 JSON 응답을 `/var/log/cron/`에
+기록하고 `overall != 'ok'` 경고를 stderr로 다시 내보냅니다.
+알림은 `cron-baseline-retention`, `cron-policy-retention`,
+`cron-fanout`으로 태깅된 구조화 로그 라인을 키로 사용해야
+합니다.
 
 ## 프로필
 

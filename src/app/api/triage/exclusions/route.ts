@@ -7,7 +7,8 @@ import { auditLog } from "@/lib/audit/logger";
 import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import { hasPermission } from "@/lib/auth/permissions";
-import { query } from "@/lib/db/client";
+import { query, withTransaction } from "@/lib/db/client";
+import { insertCustomerDrainFailureSentinel } from "@/lib/triage/exclusion/recovery";
 import {
   acquireCustomerCadenceLock,
   drainRemainingRetroactiveDeletes,
@@ -235,6 +236,35 @@ export const POST = withAuth(
       }
     }
     const counts = mergeCounts(firstBatchCounts, drainCounts);
+
+    // Enqueue (or refresh) a sentinel row in the auth_db fanout queue
+    // so admin recovery (#461 / 1B-7) has a `failed` row to reset in
+    // place. Audit-only signalling is not enough: without this sentinel
+    // the recovery surface would need a parallel detection path.
+    // Failing to enqueue must not mask the original drain error — log
+    // the secondary failure and continue to the 500 response below.
+    if (drainError !== null) {
+      const drainMessage =
+        drainError instanceof Error ? drainError.message : String(drainError);
+      try {
+        await withTransaction((c) =>
+          insertCustomerDrainFailureSentinel(
+            c,
+            row.id,
+            customerId,
+            drainMessage,
+          ),
+        );
+      } catch (sentinelErr) {
+        // Do not throw — the 500 response already surfaces the drain
+        // failure, and re-throwing here would mask it with a queue
+        // error the operator cannot disambiguate from the audit row.
+        console.error(
+          "[triage_exclusion] failed to enqueue drain-failure sentinel",
+          sentinelErr,
+        );
+      }
+    }
 
     await auditLog.record({
       actor: session.accountId,

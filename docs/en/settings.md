@@ -445,6 +445,49 @@ Each ADD and REMOVE emits an audit row:
 - `triage_exclusion.fanout_failed` — emitted when a per-customer
   fanout job exhausts its retry budget (5 attempts with
   exponential backoff: 1m → 5m → 25m → 2h → 12h).
+- `triage_exclusion.global_recover` / `.customer_recover` —
+  emitted when an operator resets a `failed` cleanup row from the
+  exclusion list's **Re-trigger cleanup** menu item (or from the
+  internal recovery route). The menu item appears on rows whose
+  past-corpus cleanup is stuck — either a `failed` sentinel in the
+  `auth_db` fanout queue, or (for customer-scoped exclusions) a
+  `triage_exclusion.customer_add` audit row recording
+  `details.drainStatus = 'failed'` that has not yet been recovered.
+  This audit-row fallback covers the rare case where the failed ADD
+  path's sentinel insert itself failed (auth_db blip) so the queue
+  has no row: clicking **Re-trigger cleanup** backfills a fresh
+  `pending` sentinel from the audit record. Otherwise the click
+  transitions the existing queue row back to `pending`. Either way
+  the fanout worker picks it up on the next tick.
+  `global_recover` is customer-agnostic; `customer_recover` carries
+  `customer_id`.
+
+### Background retention
+
+The cron container runs three retention sweeps so the corpus and
+the fanout queue do not grow without bound:
+
+- **Baseline corpus** (`run-triage-baseline-retention.sh`, daily
+  at 03:15 UTC) — prunes `baseline_triaged_event` older than 180
+  days and `observed_event_meta` older than 30 days, batched at
+  10,000 rows per `DELETE` statement.
+- **Policy corpus B** (`run-triage-policy-retention.sh`, every 6
+  hours) — flips stuck `policy_triage_run` rows in `computing`
+  state (>30 min) to `failed` with
+  `last_error = 'timeout: runner did not finalize'`, then applies
+  differential retention (ready 30d / superseded 7d / failed 1d)
+  and prunes rows whose `owner_account_id` no longer resolves.
+  `policy_triaged_event` rows cascade.
+- **Exclusion fanout** (`run-triage-exclusion-fanout.sh`, every
+  minute) — drains the `triage_exclusion_fanout_job` queue. The
+  minute cadence matches the worker's first-tier backoff (1 min)
+  so a transient tenant-DB outage retries promptly.
+
+Each wrapper writes a timestamped JSON response to
+`/var/log/cron/` and re-emits an `overall != 'ok'` warning to
+stderr; alerting should key on the structured log lines tagged
+`cron-baseline-retention`, `cron-policy-retention`, and
+`cron-fanout`.
 
 ## Profile
 

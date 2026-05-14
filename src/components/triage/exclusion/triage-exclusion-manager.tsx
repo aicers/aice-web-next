@@ -1,6 +1,6 @@
 "use client";
 
-import { CirclePlus, MoreVertical, Trash2 } from "lucide-react";
+import { CirclePlus, MoreVertical, RotateCcw, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -98,6 +98,15 @@ export function TriageExclusionManager({
   const [deleteTarget, setDeleteTarget] = useState<ExclusionRow | null>(null);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Set of exclusion ids that have a `failed` row in the fanout queue.
+  // Customer scope: ids of customer-only sentinels for `selectedCustomerId`.
+  // Global scope: global-exclusion ids with at least one failed fanout row.
+  const [failedCleanupIds, setFailedCleanupIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [recoverTarget, setRecoverTarget] = useState<ExclusionRow | null>(null);
+  const [recoverSubmitting, setRecoverSubmitting] = useState(false);
+  const [recoverError, setRecoverError] = useState<string | null>(null);
 
   const baseUrl = useMemo(() => {
     if (scope === "global") return "/api/triage/exclusions/global";
@@ -109,6 +118,7 @@ export function TriageExclusionManager({
   const fetchRows = useCallback(async () => {
     if (scope === "customer" && selectedCustomerId === null) {
       setRows([]);
+      setFailedCleanupIds(new Set());
       return;
     }
     setLoading(true);
@@ -125,6 +135,26 @@ export function TriageExclusionManager({
       }
       const body = (await res.json()) as { data: ExclusionRow[] };
       setRows(body.data);
+
+      // Failed-cleanup probe runs in parallel-friendly order after the
+      // list so the table renders first even on a slow auth_db. The
+      // probe failure does not surface as a hard UI error — the menu
+      // simply lacks the recovery entry, which is the safe default.
+      try {
+        const statusUrl =
+          scope === "global"
+            ? "/api/triage/exclusions/global/cleanup-status"
+            : `/api/triage/exclusions/cleanup-status?customer_id=${selectedCustomerId}`;
+        const statusRes = await fetch(statusUrl);
+        if (statusRes.ok) {
+          const sb = (await statusRes.json()) as { failed: string[] };
+          setFailedCleanupIds(new Set(sb.failed));
+        } else {
+          setFailedCleanupIds(new Set());
+        }
+      } catch {
+        setFailedCleanupIds(new Set());
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t("error"));
     } finally {
@@ -135,6 +165,35 @@ export function TriageExclusionManager({
   useEffect(() => {
     void fetchRows();
   }, [fetchRows]);
+
+  const handleRecover = async () => {
+    if (!recoverTarget) return;
+    setRecoverError(null);
+    setRecoverSubmitting(true);
+    try {
+      const csrfToken = readCsrfToken();
+      const headers: Record<string, string> = {};
+      if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+      // Global scope sweeps every failed customer for this exclusion in
+      // one click. Per-customer pinpointing remains available via the
+      // internal token route for operators.
+      const url =
+        scope === "global"
+          ? `/api/triage/exclusions/global/${recoverTarget.id}/recover?all_failed=1`
+          : `/api/triage/exclusions/${recoverTarget.id}/recover?customer_id=${selectedCustomerId}`;
+      const res = await fetch(url, { method: "POST", headers });
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        throw new Error(body.error ?? t("error"));
+      }
+      setRecoverTarget(null);
+      void fetchRows();
+    } catch (err) {
+      setRecoverError(err instanceof Error ? err.message : t("error"));
+    } finally {
+      setRecoverSubmitting(false);
+    }
+  };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -284,6 +343,14 @@ export function TriageExclusionManager({
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          {failedCleanupIds.has(r.id) && (
+                            <DropdownMenuItem
+                              onClick={() => setRecoverTarget(r)}
+                            >
+                              <RotateCcw className="mr-2 h-4 w-4" />
+                              {t("retriggerCleanup")}
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem
                             onClick={() => setDeleteTarget(r)}
                             className="text-destructive focus:text-destructive"
@@ -311,6 +378,42 @@ export function TriageExclusionManager({
           onSuccess={fetchRows}
         />
       )}
+
+      <AlertDialog
+        open={!!recoverTarget}
+        onOpenChange={(open) => {
+          if (!open && !recoverSubmitting) {
+            setRecoverTarget(null);
+            setRecoverError(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("retriggerCleanup")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("retriggerCleanupConfirm")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {recoverError && (
+            <p className="text-destructive text-sm">{recoverError}</p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={recoverSubmitting}>
+              {t("cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleRecover();
+              }}
+              disabled={recoverSubmitting}
+            >
+              {t("retriggerCleanup")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={!!deleteTarget}

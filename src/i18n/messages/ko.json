@@ -2210,6 +2210,8 @@
     "domainPreviewFullRegex": "전체 정규식 — 향후 파이프라인 패스에만 적용됩니다. 과거 코퍼스 행은 영향을 받지 않습니다.",
     "deleteConfirm": "이 예외를 삭제하시겠습니까? 향후 패스에만 영향을 미치며 과거 코퍼스 행은 변경되지 않습니다.",
     "deniedGlobal": "전역 예외를 관리할 권한이 없습니다.",
-    "deniedCustomer": "고객 예외를 관리할 권한이 없습니다."
+    "deniedCustomer": "고객 예외를 관리할 권한이 없습니다.",
+    "retriggerCleanup": "정리 재실행",
+    "retriggerCleanupConfirm": "이 예외에 대한 소급 정리를 다시 실행할까요? 이 규칙과 일치하는 과거 코퍼스 행이 백그라운드에서 제거됩니다."
   }
 }

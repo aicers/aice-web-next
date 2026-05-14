@@ -16,6 +16,7 @@ interface WithAuthOptions {
 const mockHasPermission = vi.hoisted(() => vi.fn());
 const mockAuditRecord = vi.hoisted(() => vi.fn());
 const mockQuery = vi.hoisted(() => vi.fn());
+const mockWithTransaction = vi.hoisted(() => vi.fn());
 const mockListCustomerExclusions = vi.hoisted(() => vi.fn());
 const mockCreateCustomerExclusion = vi.hoisted(() => vi.fn());
 const mockConnectCustomerClient = vi.hoisted(() => vi.fn());
@@ -23,6 +24,7 @@ const mockExecuteFirstBatch = vi.hoisted(() => vi.fn());
 const mockDrainRemaining = vi.hoisted(() => vi.fn());
 const mockAcquireLock = vi.hoisted(() => vi.fn());
 const mockGetCustomerPool = vi.hoisted(() => vi.fn());
+const mockInsertSentinel = vi.hoisted(() => vi.fn());
 
 let currentSession: AuthSession;
 
@@ -60,6 +62,13 @@ vi.mock("@/lib/auth/ip", () => ({
 
 vi.mock("@/lib/db/client", () => ({
   query: vi.fn((...args: unknown[]) => mockQuery(...args)),
+  withTransaction: vi.fn((...args: unknown[]) => mockWithTransaction(...args)),
+}));
+
+vi.mock("@/lib/triage/exclusion/recovery", () => ({
+  insertCustomerDrainFailureSentinel: vi.fn((...args: unknown[]) =>
+    mockInsertSentinel(...args),
+  ),
 }));
 
 vi.mock("@/lib/triage/exclusion/storage", async () => {
@@ -221,6 +230,12 @@ describe("POST /api/triage/exclusions", () => {
     mockConnectCustomerClient
       .mockReset()
       .mockImplementation(async () => makeFakeClient());
+    mockWithTransaction
+      .mockReset()
+      .mockImplementation(async (fn: (c: unknown) => Promise<unknown>) =>
+        fn({}),
+      );
+    mockInsertSentinel.mockReset().mockResolvedValue(undefined);
   });
 
   it("creates a customer exclusion and emits an audit row", async () => {
@@ -331,6 +346,50 @@ describe("POST /api/triage/exclusions", () => {
         }),
       }),
     );
+    // 1B-7: the drain-failure path enqueues a sentinel into the auth_db
+    // fanout queue so admin recovery has a `failed` row to reset.
+    expect(mockInsertSentinel).toHaveBeenCalledWith(
+      expect.anything(),
+      sampleRow.id,
+      42,
+      expect.stringContaining("tenant DB blip"),
+    );
+  });
+
+  it("still returns 500 with the drain error if the sentinel enqueue itself fails", async () => {
+    // The sentinel insertion is best-effort: failing to enqueue must not
+    // mask the original drain failure that the dialog needs to surface.
+    mockCreateCustomerExclusion.mockResolvedValue(sampleRow);
+    const pendingPredicate = {
+      tableKey: "baselineTriagedEvent" as const,
+      statements: [{ sql: "DELETE FROM baseline_triaged_event", params: [] }],
+    };
+    mockExecuteFirstBatch.mockResolvedValue({
+      counts: {
+        baselineTriagedEvent: 1,
+        observedEventMeta: 0,
+        policyTriagedEvent: null,
+      },
+      pending: [pendingPredicate],
+    });
+    mockDrainRemaining.mockRejectedValue(new Error("tenant DB blip"));
+    mockGetCustomerPool.mockResolvedValue({ connect: vi.fn() });
+    mockInsertSentinel.mockRejectedValue(new Error("auth_db unreachable"));
+
+    const { POST } = await import("@/app/api/triage/exclusions/route");
+    const request = new NextRequest(
+      "http://localhost:3000/api/triage/exclusions?customer_id=42",
+      {
+        method: "POST",
+        body: JSON.stringify({ kind: "ipAddress", value: "10.0.0.0/24" }),
+      },
+    );
+    const response = await POST(request, makeContext());
+    const body = await response.json();
+    expect(response.status).toBe(500);
+    expect(body.error).toContain("tenant DB blip");
+    // The sentinel enqueue error must not surface to the client.
+    expect(body.error).not.toContain("auth_db unreachable");
   });
 
   it("rejects an invalid kind via parseStoredExclusionInput", async () => {
