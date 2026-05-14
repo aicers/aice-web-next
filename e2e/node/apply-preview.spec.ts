@@ -3,40 +3,45 @@
  * #377). Discharges the deferred Playwright spec from PR #372 / Phase
  * Node-9d (#362) — the modal can now be reached through the detail
  * page mounted by Phase Node-5a (#376), and the mock-server harness
- * has been extended with an `applyNode` mutation handler under
- * `src/__tests__/fixtures/manifest.json`.
+ * carries `applyNodeDraft` + `applyAgentConfig` mutation handlers (the
+ * manager pair that replaced the single-shot `applyNode` in Phase
+ * Node-12 / #333).
  *
  * The detail page's `applyActions` prop wires the production
  * `createApplyAttempt` / `confirmApplyAttempt` / `retryDispatch`
  * server actions. `createApplyAttempt` reads the canonical node from
  * the mock manager (no external services dispatch yet) and persists a
  * row in `apply_attempts`. `confirmApplyAttempt` runs the manager
- * dispatch via the upstream `applyNode` mutation (also against the
- * mock manager). The `nodeDetail.alpha.json` fixture used here has
+ * dispatch as the split pair `applyNodeDraft` (atomic draft commit)
+ * then `applyAgentConfig` (agent notify), both stubbed against the
+ * mock manager. The `nodeDetail.alpha.json` fixture used here has
  * `draft: null` on every external service, so the planned-dispatch
- * sequence is just the single `MANAGER` step — the spec exercises the
- * UI state machine end-to-end without needing separate Giganto / Tivan
- * mock infrastructure (which the wider mock harness does not provide
- * in the `#296` baseline that landed for Phase Node-5b).
+ * sequence is just the two manager rows `MANAGER_DB` +
+ * `MANAGER_NOTIFY` — the spec exercises the UI state machine
+ * end-to-end without needing separate Giganto / Tivan mock
+ * infrastructure (which the wider mock harness does not provide in
+ * the `#296` baseline that landed for Phase Node-5b).
  *
  * Spec coverage:
  *
- *   - **Success path**: open modal → planned list → Apply → confirm
- *     succeeds → modal renders the succeeded heading.
- *   - **Retry path**: open modal → planned list → Apply → manager
- *     dispatch returns GraphQL errors → modal shows the
- *     `failed_retryable` row with a Retry button → re-stub `applyNode`
- *     to succeed → click Retry → modal renders the succeeded heading.
+ *   - **Success path**: open modal → planned list → Apply → both
+ *     manager dispatches succeed → modal renders the succeeded
+ *     heading.
+ *   - **Retry path**: open modal → planned list → Apply → manager-DB
+ *     dispatch (`applyNodeDraft`) returns GraphQL errors → modal
+ *     shows the `failed_retryable` row with a Retry button → re-stub
+ *     `applyNodeDraft` to succeed → click Retry → modal renders the
+ *     succeeded heading once `MANAGER_NOTIFY` also clears.
  *
  * The retry variant simulates the Giganto-fails-then-succeeds scenario
- * documented in #362 against the manager dispatch, which is the only
- * dispatch the v1 mock harness can drive end-to-end. The UI state
- * machine the spec asserts is identical: a `failed_retryable` row
- * surfaces a Retry button, clicking it transitions the row to
- * `in_flight` and then to `succeeded`, and the resume rule advances
- * any subsequent queued rows when the retried row clears. Because
- * this plan only carries one dispatch, the resume rule is a no-op for
- * this fixture but is exercised by the unit-test layer in
+ * documented in #362 against the manager-DB dispatch, which is the
+ * first manager-pair step the v1 mock harness can drive end-to-end.
+ * The UI state machine the spec asserts is identical: a
+ * `failed_retryable` row surfaces a Retry button, clicking it
+ * transitions the row to `in_flight` and then to `succeeded`, and the
+ * resume rule advances the queued `MANAGER_NOTIFY` row once the
+ * retried `MANAGER_DB` row clears. The same resume rule is exercised
+ * more broadly by the unit-test layer in
  * `src/__tests__/lib/node/apply-attempt-lifecycle*.test.ts`.
  */
 import { readFileSync } from "node:fs";

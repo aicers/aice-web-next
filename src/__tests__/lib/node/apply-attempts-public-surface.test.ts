@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -151,5 +151,96 @@ describe("apply-attempts public surface", () => {
     // `_internal_applyAgentConfigViaManager`. The user-facing entry is
     // now the `confirmApplyAttempt` lifecycle path.
     expect(exportedFunctions).not.toContain("applyNode");
+  });
+
+  /**
+   * Static-analysis acceptance for #552 (legacy single-shot mutation
+   * removal). The four targeted patterns below catch a future commit
+   * that reintroduces any part of the legacy GraphQL surface under
+   * `src/`. A broad word-boundary scan on the bare manager name is
+   * deliberately avoided — it would false-positive on the split-call
+   * helpers (Draft / AgentConfig), channel names that embed the old
+   * manager identifier, fixture-manifest entries, and prose comments
+   * mentioning the historical name.
+   *
+   * The patterns are assembled from concatenated string fragments so
+   * the raw acceptance greps in #552 return no hits on this test
+   * file itself. Embedding the literal banned strings here would make
+   * CI green while the documented acceptance commands still report a
+   * match under `src/`, which defeats the purpose of the gate.
+   */
+  describe("legacy single-shot manager surface removed (#552)", () => {
+    const SRC_ROOT = resolve(ROOT, "src");
+    const SCANNABLE_EXTENSIONS = new Set([
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".graphql",
+      ".json",
+    ]);
+
+    // Banned tokens, built from pieces so this file does not contain
+    // any of them as a literal substring. Each token is the exact
+    // text the corresponding issue grep looks for.
+    const TOKEN_CONST = `APPLY_NODE${"_"}MUTATION`;
+    const TOKEN_PATH = `queries/apply${"-"}node.graphql`;
+    const TOKEN_MUTATION_NAME = `Apply${""}Node`;
+    const TOKEN_RESULT_TYPE = `Apply${""}NodeResult`;
+
+    function collectSourceFiles(dir: string, acc: string[] = []): string[] {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        const stat = statSync(full);
+        if (stat.isDirectory()) {
+          collectSourceFiles(full, acc);
+          continue;
+        }
+        const dot = entry.lastIndexOf(".");
+        if (dot === -1) continue;
+        if (SCANNABLE_EXTENSIONS.has(entry.slice(dot))) acc.push(full);
+      }
+      return acc;
+    }
+
+    function findMatches(pattern: RegExp): string[] {
+      const hits: string[] = [];
+      for (const file of collectSourceFiles(SRC_ROOT)) {
+        const source = readFileSync(file, "utf8");
+        const lines = source.split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+          if (pattern.test(lines[i])) {
+            hits.push(`${file}:${i + 1}: ${lines[i].trim()}`);
+          }
+        }
+      }
+      return hits;
+    }
+
+    it("no production references to the legacy mutation constant export", () => {
+      const pattern = new RegExp(`\\b${TOKEN_CONST}\\b`);
+      expect(findMatches(pattern)).toEqual([]);
+    });
+
+    it("no references to the legacy GraphQL document path", () => {
+      const escaped = TOKEN_PATH.replace(/\./g, "\\.");
+      const pattern = new RegExp(escaped);
+      expect(findMatches(pattern)).toEqual([]);
+    });
+
+    it("no legacy single-shot operation declarations (split-call operations are fine)", () => {
+      // Matches `mutation <legacy-name><word-boundary>` so that
+      // `mutation ApplyNodeDraft` / `mutation ApplyAgentConfig` are
+      // not flagged.
+      const pattern = new RegExp(
+        `^[\\t ]*mutation[\\t ]+${TOKEN_MUTATION_NAME}\\b`,
+      );
+      expect(findMatches(pattern)).toEqual([]);
+    });
+
+    it("no references to the legacy result type (split-call result types are fine)", () => {
+      const pattern = new RegExp(`\\b${TOKEN_RESULT_TYPE}\\b`);
+      expect(findMatches(pattern)).toEqual([]);
+    });
   });
 });

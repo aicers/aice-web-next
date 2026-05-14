@@ -36,12 +36,13 @@ import type {
  *     `null`. The dispatch entry is preserved so callers can iterate
  *     over all seven service kinds without a special case.
  *
- * Write operations are NOT exposed here. Phase Node-9 composes
- * node-scoped writes (`applyNode` + the two `updateConfig` follow-ups)
- * into bulk apply directly. A `saveDraft` / `apply` helper keyed on
- * `serviceKind` would suggest a per-service apply capability that
- * does not exist in v1; that uniform per-service abstraction lands
- * with Phase Node-12 (#333). See the service-dispatch comment in
+ * Write operations are NOT exposed here. Bulk apply composes
+ * node-scoped writes (the manager pair `applyNodeDraft` +
+ * `applyAgentConfig`, plus the external `updateConfig` follow-ups)
+ * directly. A `saveDraft` / `apply` helper keyed on `serviceKind`
+ * would suggest a per-service apply capability that does not exist in
+ * v1; the uniform per-service abstraction is deferred to a later
+ * phase (tracked under #333). See the service-dispatch comment in
  * `decisions/node-and-service-mgmt.md` for the full rationale.
  *
  * The dispatch context is the first argument by convention and is

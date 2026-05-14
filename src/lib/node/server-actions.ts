@@ -645,16 +645,14 @@ export async function removeNodes(
 }
 
 /**
- * The previous `applyNode(session, id, node, signal?)` wrapper has
- * been relocated to `src/lib/node/apply.ts` and split into
+ * Apply-node dispatch lives in `src/lib/node/apply.ts` as a split pair:
  * `_internal_applyNodeDraftViaManager` (DB write) and
- * `_internal_applyAgentConfigViaManager` (agent notify) — Phase
- * Node-12 (#333) replaces the single v1 `applyNode` call with the
- * upstream-split pair. The user-facing entry point for applying a
- * node's pending drafts remains `confirmApplyAttempt` from
- * `apply-actions.ts`, which routes through the `ApplyAttempt`
- * lifecycle. The split helpers are the only sanctioned callers of
- * the upstream `applyNodeDraft` and `applyAgentConfig` mutations.
+ * `_internal_applyAgentConfigViaManager` (agent notify). The
+ * user-facing entry point for applying a node's pending drafts is
+ * `confirmApplyAttempt` from `apply-actions.ts`, which routes through
+ * the `ApplyAttempt` lifecycle. The split helpers are the only
+ * sanctioned callers of the upstream `applyNodeDraft` and
+ * `applyAgentConfig` mutations.
  */
 
 interface NodeRebootVariables extends Record<string, unknown> {
@@ -710,11 +708,11 @@ export async function nodeShutdown(
 /**
  * The two external `updateConfig` dispatches and their `status` /
  * `config` reads. v1 does not expose a per-service apply abstraction —
- * Phase Node-9's bulk-apply orchestrator drives these as direct
- * follow-ups to `applyNode`. Adding a `saveDraft` / `apply` keyed on
- * `serviceKind` here would suggest a per-service capability that
- * does not exist in v1; that abstraction lands uniformly across all
- * service kinds with Phase Node-12 (#333).
+ * the bulk-apply orchestrator drives these as direct follow-ups to
+ * the manager-side `applyNodeDraft` / `applyAgentConfig` pair.
+ * Adding a `saveDraft` / `apply` keyed on `serviceKind` here would
+ * suggest a per-service capability that does not exist; per-service
+ * apply lands uniformly across all service kinds in a later phase.
  *
  * Tenant scope: external endpoints are global per deployment
  * (one Giganto, one Tivan) so there is no node-level customer scope
