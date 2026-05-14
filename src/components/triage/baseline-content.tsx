@@ -340,6 +340,11 @@ export function TriageBaselineContent({
     pendingHashFetchesRef.current = [];
     pendingValidationsRef.current = [];
     draining.current = null;
+    // Story-origin hash restore (#553) is async; on a period / customer
+    // scope rotation any in-flight `fetchStoryDetail` is keyed on the
+    // old period so its resolve branches must not run against the new
+    // corpus.
+    storyRestoreTokenRef.current += 1;
     // `customerScope` is named here because the Tier 2 cache reset in
     // `useTier2Pivot` rotates on it too; without it a scope switch that
     // happens to land on the same top asset would clear the cache but
@@ -650,14 +655,47 @@ export function TriageBaselineContent({
             a.address === assetCrumb.address,
         ) ?? null)
       : null;
+    // Story-origin trails (#553) intentionally have no asset crumb, so
+    // the customer identity must come from the Story origin itself.
+    // Resolve the display name from the matching loaded Story
+    // (`focusedStory` first, then the `stories` slice) before falling
+    // back to the customer name carried on any loaded asset that
+    // shares the customerId, and finally to the stringified
+    // `customerId` — the same fallback shape `TriageAsset` documents.
+    const storyOriginCustomerId =
+      pivotOrigin.kind === "story" ? pivotOrigin.customerId : null;
+    const storyOriginMatch =
+      pivotOrigin.kind === "story"
+        ? ((focusedStory?.customerId === pivotOrigin.customerId &&
+          focusedStory?.storyId === pivotOrigin.storyId
+            ? focusedStory
+            : null) ??
+          stories.find(
+            (s) =>
+              s.customerId === pivotOrigin.customerId &&
+              s.storyId === pivotOrigin.storyId,
+          ) ??
+          null)
+        : null;
+    const storyOriginCustomerName =
+      pivotOrigin.kind === "story"
+        ? (storyOriginMatch?.customerName ??
+          result.assets.find((a) => a.customerId === pivotOrigin.customerId)
+            ?.customerName ??
+          String(pivotOrigin.customerId))
+        : null;
     return {
       // Synthetic asset row — `customerId` defaults to the asset crumb's
-      // customer; if the trail has no asset crumb (rare), use 0. The
+      // customer; for Story-origin trails (#553) there is no asset
+      // crumb, so use the Story origin's `customerId` instead so the
+      // detail header does not render `0` as the customer label. The
       // pivot focus card does not key off `customerId`, so the value
       // is purely structural.
-      customerId: assetCrumb?.customerId ?? 0,
+      customerId: assetCrumb?.customerId ?? storyOriginCustomerId ?? 0,
       customerName:
-        focusedAsset?.customerName ?? String(assetCrumb?.customerId ?? 0),
+        storyOriginCustomerName ??
+        focusedAsset?.customerName ??
+        String(assetCrumb?.customerId ?? 0),
       address,
       detectedCount: focusEvents.length,
       detectedCountUnavailable: false,
@@ -673,6 +711,9 @@ export function TriageBaselineContent({
     trail,
     result.assets,
     tier2,
+    pivotOrigin,
+    focusedStory,
+    stories,
   ]);
 
   // Pivot focus is a Pivot-tab concept: it only re-skins the right-hand
@@ -780,6 +821,11 @@ export function TriageBaselineContent({
     pendingHashFetchesRef.current = [];
     pendingValidationsRef.current = [];
     draining.current = null;
+    // Invalidate any in-flight Story-origin `fetchStoryDetail` so its
+    // `.then` / `.catch` branches cannot overwrite the user's fresh
+    // intent after the operator has navigated away from the restored
+    // state. See {@link storyRestoreTokenRef}.
+    storyRestoreTokenRef.current += 1;
   }, []);
 
   // Dismiss every modal-gated Tier 2 projection along with its parked
@@ -1044,6 +1090,18 @@ export function TriageBaselineContent({
   const pendingValidationsRef = useRef<
     Array<{ dimension: PivotDimensionId; valueKey: string }>
   >([]);
+  // Story-origin hash restore (#553) is asynchronous — `fetchStoryDetail`
+  // resolves after the operator may have already abandoned the
+  // restored state (selecting an asset, backtracking, clicking the
+  // asset root crumb). Without a cancellation guard, the late-arriving
+  // `.then` / `.catch` branches would unconditionally rewrite
+  // `pivotOrigin`, `trail`, and `tab` — overwriting the fresh user
+  // intent and surfacing a stale-hash banner on a state the operator
+  // never asked to restore. The token is incremented by
+  // `abortHashRestore()` (which is fired by every user-navigation
+  // path), so the pre-fetch capture lets the resolve branches detect
+  // that they are stale and bail out before any `setState` runs.
+  const storyRestoreTokenRef = useRef(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: restore runs once after the corpus is in hand
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1084,8 +1142,17 @@ export function TriageBaselineContent({
       }));
       setTrail(restoredSteps);
       setTab("pivot");
+      // Capture the cancellation token *before* the fetch so any user
+      // navigation between issue and resolution invalidates this
+      // restore — `abortHashRestore()` bumps the ref, and the resolve
+      // branches below bail out when the captured value no longer
+      // matches the live ref. Without this guard a slow restore could
+      // race with a `setSelected` (asset list click) and later flip
+      // `pivotOrigin` / `trail` / `tab` back to the restored state.
+      const restoreToken = storyRestoreTokenRef.current;
       void fetchStoryDetail(origin.customerId, origin.storyId, 0, period)
         .then((detail) => {
+          if (storyRestoreTokenRef.current !== restoreToken) return;
           if (detail === null) {
             // Story is gone (out of scope, deleted, period drift).
             // Revert to asset-rooted shape and surface the stale-hash
@@ -1142,6 +1209,7 @@ export function TriageBaselineContent({
           }
         })
         .catch(() => {
+          if (storyRestoreTokenRef.current !== restoreToken) return;
           setPivotOrigin({ kind: "asset" });
           setStoryMemberEvents([]);
           setTrail(
