@@ -238,6 +238,18 @@ export function TriageBaselineContent({
   // strip itself omits the entry, so flipping mode while on Stories
   // coerces the selection back to `asset-list` via the effect.
   const [tab, setTab] = useState<TriageTabId>("asset-list");
+  // Capture the initial location.hash at first render, before the
+  // first commit's Stories-URL-sync effect can strip `triage.tab=...`
+  // or `triage.story=...` segments that don't yet match the (default-
+  // initialized) component state. The Pivot restore effect reads this
+  // snapshot instead of `window.location.hash` so it can distinguish
+  // "the hash originally said `triage.tab=stories`" from "the hash no
+  // longer says it because we just rewrote it" — that distinction is
+  // what gates the Pivot tab seed when a Pivot-from-Story origin
+  // marker is present (#553 Round 2 Item 2).
+  const [initialHash] = useState<string>(() =>
+    typeof window === "undefined" ? "" : window.location.hash,
+  );
   const [focusedStory, setFocusedStory] = useState<TriageStory | null>(null);
   // Pivot-origin marker (#553). `"asset"` is the default Phase 1
   // shape; `"story"` is set when the analyst drills into the Pivot
@@ -1122,14 +1134,27 @@ export function TriageBaselineContent({
     // momentary loading state is acceptable per #553 acceptance).
     if (parsed.story !== null) {
       const origin = parsed.story;
-      // Seed the visible state synchronously: Pivot tab, Story
-      // origin, dimension steps as decoded. The dimension steps are
-      // surfaced optimistically — `fetchStoryDetail` may discover the
-      // value is absent from the loaded member set (stale link). The
-      // pivot panel renders an empty section list until the member
-      // set lands (the index is empty without `storyMemberEvents`),
-      // which is the acceptable "loading/empty state during client
-      // restore" #553 calls for — no asset-corpus surfaces leak.
+      // `triage.pivot.story` persists across the Stories↔Pivot tab
+      // swap by design (the Pivot-origin marker is namespaced under
+      // `triage.pivot.*` so it survives the swap that clears the
+      // Stories-tab `triage.story` focus). When the hash also carries
+      // `triage.tab=stories`, the analyst was visibly on the Stories
+      // tab when the URL was captured — restore the origin marker
+      // (and any dimension steps, validated against the Story corpus
+      // below) without forcing Pivot, so the active-tab key stays
+      // authoritative and the analyst lands on the Stories tab they
+      // bookmarked. The Pivot tab still has the Story origin ready
+      // when the analyst manually swaps to it. Only seed Pivot as the
+      // active tab when the hash either says so (`triage.tab=pivot`)
+      // or is silent on the active tab.
+      // Read the *initial* hash (snapshotted at first render) rather
+      // than the live `window.location.hash` — by the time this effect
+      // runs the Stories-URL-sync effect has already committed once and
+      // stripped the `triage.tab=stories` segment if it didn't match
+      // the default `tab="asset-list"` state. Without the snapshot the
+      // bookmark's tab intent is invisible here.
+      const storiesHash = parseTriageStoriesHash(initialHash);
+      const forceStaysOnStories = storiesHash.tab === "stories";
       setPivotOrigin({
         kind: "story",
         customerId: origin.customerId,
@@ -1141,7 +1166,9 @@ export function TriageBaselineContent({
         value: { key: step.valueKey, label: step.valueKey },
       }));
       setTrail(restoredSteps);
-      setTab("pivot");
+      if (!forceStaysOnStories) {
+        setTab("pivot");
+      }
       // Capture the cancellation token *before* the fetch so any user
       // navigation between issue and resolution invalidates this
       // restore — `abortHashRestore()` bumps the ref, and the resolve
@@ -1156,7 +1183,11 @@ export function TriageBaselineContent({
           if (detail === null) {
             // Story is gone (out of scope, deleted, period drift).
             // Revert to asset-rooted shape and surface the stale-hash
-            // notice the same way the asset path does.
+            // notice the same way the asset path does. When the hash
+            // also said `triage.tab=stories` the analyst was visibly
+            // on the Stories tab, so leave them there rather than
+            // bouncing them to asset-list — the Pivot tab fallback is
+            // only meaningful when Pivot was the visible tab.
             setPivotOrigin({ kind: "asset" });
             setStoryMemberEvents([]);
             setTrail(
@@ -1170,7 +1201,9 @@ export function TriageBaselineContent({
                   ]
                 : [],
             );
-            setTab("asset-list");
+            if (!forceStaysOnStories) {
+              setTab("asset-list");
+            }
             setFallbackNotice("stale-hash");
             return;
           }
@@ -1223,7 +1256,9 @@ export function TriageBaselineContent({
                 ]
               : [],
           );
-          setTab("asset-list");
+          if (!forceStaysOnStories) {
+            setTab("asset-list");
+          }
           setFallbackNotice("stale-hash");
         });
       return;
@@ -1830,6 +1865,16 @@ export function TriageBaselineContent({
               ) : null}
             </div>
           ) : null}
+          {/*
+           * Tier 2 affordances (server-filtered Learning method,
+           * Keywords, weak-signal classifier) are asset-rooted: their
+           * fallback fetches read from the asset's event set and have
+           * no plumbing for a Story-member corpus in this PR (per the
+           * "Tier 2 scope" decision in #553). When the origin is a
+           * Story we suppress those sections entirely — the click
+           * targets would otherwise append a breadcrumb step with no
+           * backing fetch, contradicting the Tier 1-only contract.
+           */}
           <TriagePivotPanel
             sections={sections}
             truncated={panelTruncated}
@@ -1837,12 +1882,16 @@ export function TriageBaselineContent({
             onPivot={onPivot}
             labels={labels.pivotPanel}
             isWeakSignal={
-              scope === "tier2"
+              scope === "tier2" && pivotOrigin.kind !== "story"
                 ? (event) => !tier2.isInTier1Corpus(event)
                 : undefined
             }
-            showLearningMethodSection={scope === "tier2"}
-            showKeywordsSection={scope === "tier2"}
+            showLearningMethodSection={
+              scope === "tier2" && pivotOrigin.kind !== "story"
+            }
+            showKeywordsSection={
+              scope === "tier2" && pivotOrigin.kind !== "story"
+            }
             recentKeywords={recentKeywords}
             onSubmitKeyword={onSubmitKeyword}
           />

@@ -824,6 +824,16 @@ breadcrumb and the dimension step applied; a momentary
 fetches, but no asset-rooted breadcrumb or asset-corpus pivot
 panel is ever rendered during restore.
 
+`triage.tab` stays authoritative on restore: a URL carrying
+`triage.tab=stories&triage.pivot.story=<id>` (the shape a
+bookmark from the Stories tab takes after a Pivot drill-in,
+because the pivot-origin marker survives the swap) reloads
+into the **Stories** tab. The Pivot-origin marker is seeded
+in the background so a manual swap to the Pivot tab restores
+the same Story-origin breadcrumb without re-parsing the
+hash — the active-tab key always wins over the pivot-origin
+key during restore.
+
 ### Permission
 
 The Stories tab requires `triage:read`, the same gate as the
