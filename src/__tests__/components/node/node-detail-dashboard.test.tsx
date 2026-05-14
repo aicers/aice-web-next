@@ -148,6 +148,35 @@ describe("NodeDetailDashboard — sections", () => {
     expect((applyButton as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("keeps the unknown badge and disables Apply when a known-pending source coexists with an unavailable non-delete external (#551)", () => {
+    // createApplyAttempt re-reads the endpoint at request time and
+    // rejects with ExternalServiceUnavailableError before persisting,
+    // so the aggregate must stay Apply-blocking even though a name
+    // draft is a known-pending source.
+    const node = makeNode({
+      nameDraft: "alpha-renamed",
+      externalServices: [
+        {
+          node: 1,
+          key: "k1",
+          kind: "DATA_STORE",
+          status: "ENABLED",
+          draft: 'ingest_srv_addr = "x"\n',
+        },
+      ],
+    });
+    renderDashboard({
+      node,
+      externalConfigSnapshot: { DATA_STORE: "unavailable" },
+    });
+    expect(
+      screen.getByTestId("node-detail-pending-unknown-badge"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("node-detail-pending-badge")).toBeNull();
+    const applyButton = screen.getByTestId("node-detail-apply-all");
+    expect((applyButton as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("treats a steady-state external (draft structurally equals applied) as not pending", () => {
     const node = makeNode({
       externalServices: [

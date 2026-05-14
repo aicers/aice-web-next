@@ -137,13 +137,44 @@ describe("nodePendingState — aggregate", () => {
     ).toBe("unknown");
   });
 
-  it("returns pending when a known-pending source exists alongside an unknown external", () => {
+  it("returns unknown when a known-pending source exists alongside an unavailable non-delete external", () => {
+    // Apply-blocking unknown wins: createApplyAttempt would reject with
+    // ExternalServiceUnavailableError before persisting an apply_attempts
+    // row, so the aggregate must not invite the operator into Apply.
     expect(
       nodePendingState(
         {
           ...baseNode,
           nameDraft: "different",
           externalServices: [{ kind: "DATA_STORE", draft: "x" }],
+        },
+        { DATA_STORE: "unavailable" },
+      ),
+    ).toBe("unknown");
+  });
+
+  it("returns pending when a known-pending source exists alongside a delete-intent unavailable external", () => {
+    // Delete intent skips the request-time endpoint read; Apply will
+    // succeed against MANAGER_DB alone, so the unavailable external does
+    // not block the aggregate.
+    expect(
+      nodePendingState(
+        {
+          ...baseNode,
+          nameDraft: "different",
+          externalServices: [{ kind: "DATA_STORE", draft: null }],
+        },
+        { DATA_STORE: "unavailable" },
+      ),
+    ).toBe("pending");
+  });
+
+  it("returns pending when a delete-intent unavailable external is the only signal", () => {
+    expect(
+      nodePendingState(
+        {
+          ...baseNode,
+          externalServices: [{ kind: "DATA_STORE", draft: null }],
         },
         { DATA_STORE: "unavailable" },
       ),

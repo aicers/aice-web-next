@@ -95,11 +95,21 @@ export function externalServicePendingState(
 
 /**
  * Aggregate pending state for a node — name / profile / agents /
- * externals. Returns `"unknown"` when at least one external is
- * unavailable AND no other pending source has fired; if a separately
- * known source (name draft, agent draft, external change) already says
- * pending the aggregate is `"pending"` regardless of the unknown
- * external, because the Apply button still has work to do.
+ * externals.
+ *
+ * Apply-blocking unknown wins: if any external has a non-delete-intent
+ * draft (`draft !== null`) AND its page-load snapshot is `"unavailable"`,
+ * the aggregate is `"unknown"` regardless of other known-pending sources.
+ * Reason: `createApplyAttempt` re-reads the endpoint at request time and
+ * rejects with `ExternalServiceUnavailableError` before persisting any
+ * `apply_attempts` row, so the UI must not invite the operator into an
+ * Apply flow that cannot plan.
+ *
+ * Delete-intent + unavailable (`draft === null` with an unavailable
+ * snapshot) does *not* block Apply: `buildPlannedDispatches` skips the
+ * endpoint read for delete intent and the apply succeeds against
+ * `MANAGER_DB` alone. That case contributes a regular pending signal,
+ * not an unknown one.
  */
 export function nodePendingState(
   node: {
@@ -123,11 +133,25 @@ export function nodePendingState(
   },
   snapshot: ExternalConfigSnapshot,
 ): "pending" | "not-pending" | "unknown" {
-  let knownPending = false;
-  if (node.nameDraft !== null && node.nameDraft !== node.name) {
-    knownPending = true;
+  let anyApplyBlockingUnknown = false;
+  let anyPendingExternal = false;
+  for (const ext of node.externalServices) {
+    if (snapshotIsUnavailable(snapshot, ext.kind)) {
+      if (ext.draft !== null) {
+        anyApplyBlockingUnknown = true;
+      } else {
+        anyPendingExternal = true;
+      }
+      continue;
+    }
+    if (externalServicePendingState(ext, snapshot) === "pending") {
+      anyPendingExternal = true;
+    }
   }
-  if (!knownPending && node.profileDraft !== null) {
+  if (anyApplyBlockingUnknown) return "unknown";
+
+  if (node.nameDraft !== null && node.nameDraft !== node.name) return "pending";
+  if (node.profileDraft !== null) {
     const a = node.profile;
     const d = node.profileDraft;
     if (
@@ -136,23 +160,11 @@ export function nodePendingState(
       a.description !== d.description ||
       a.hostname !== d.hostname
     ) {
-      knownPending = true;
+      return "pending";
     }
   }
-  if (!knownPending) {
-    for (const agent of node.agents) {
-      if (agentPendingState(agent) === "pending") {
-        knownPending = true;
-        break;
-      }
-    }
+  for (const agent of node.agents) {
+    if (agentPendingState(agent) === "pending") return "pending";
   }
-  let anyUnknown = false;
-  for (const ext of node.externalServices) {
-    const state = externalServicePendingState(ext, snapshot);
-    if (state === "pending") return "pending";
-    if (state === "unknown") anyUnknown = true;
-  }
-  if (knownPending) return "pending";
-  return anyUnknown ? "unknown" : "not-pending";
+  return anyPendingExternal ? "pending" : "not-pending";
 }
