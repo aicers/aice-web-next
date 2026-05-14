@@ -58,7 +58,7 @@ import {
   NodeNotFoundError,
   NodePermissionError,
 } from "./errors";
-import { buildExternalConfigSnapshot } from "./external-config-snapshot";
+import { buildExternalConfigSnapshotForApply } from "./external-config-snapshot";
 import {
   type ExternalConfigSnapshot,
   snapshotApplied,
@@ -143,11 +143,19 @@ export async function createApplyAttempt(
   // endpoint case must not block a delete-intent apply. The kinds set
   // therefore strictly tracks the kinds whose plan-build outcome
   // requires the endpoint config.
+  //
+  // The snapshot read goes through `buildExternalConfigSnapshotForApply`
+  // rather than the public `buildExternalConfigSnapshot`: the bulk-apply
+  // gate is `nodes:write + services:write` (above) and the page-load
+  // helper would silently widen that to also require `services:read`
+  // via the public `getGigantoConfig` / `getTivanConfig` getters. The
+  // request-time read still surfaces real endpoint unavailability as
+  // `ExternalServiceUnavailableError` without persisting an attempt.
   const kindsRequiringEndpointRead = collectKindsRequiringEndpointRead(node);
   const endpointSnapshot =
     kindsRequiringEndpointRead.length > 0
-      ? await buildExternalConfigSnapshot(
-          session,
+      ? await buildExternalConfigSnapshotForApply(
+          ctx,
           kindsRequiringEndpointRead,
           signal,
         )

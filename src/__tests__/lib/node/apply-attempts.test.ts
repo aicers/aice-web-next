@@ -31,7 +31,8 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 vi.mock("@/lib/node/external-config-snapshot", () => ({
-  buildExternalConfigSnapshot: mockBuildExternalConfigSnapshot,
+  buildExternalConfigSnapshot: vi.fn(),
+  buildExternalConfigSnapshotForApply: mockBuildExternalConfigSnapshot,
   externalKindsOnNode: vi.fn(),
   externalKindsOnNodes: vi.fn(),
 }));
@@ -282,6 +283,53 @@ describe("createApplyAttempt — permission boundary", () => {
     );
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("plans normally when the caller lacks services:read but holds nodes:write + services:write (#551 Round 6)", async () => {
+    // Regression for #551 Round 6: createApplyAttempt's documented gate
+    // is `nodes:write + services:write` (decisions/node-permissions.md).
+    // The request-time plan-build endpoint read must not silently widen
+    // that to also require `services:read` — a write-only custom role
+    // would otherwise lose the ability to apply change-intent externals
+    // while still being able to apply delete-intent externals (no read).
+    mockHasPermission.mockImplementation(
+      async (_roles, perm) =>
+        perm === "nodes:write" || perm === "services:write",
+    );
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockBuildExternalConfigSnapshot.mockResolvedValue({
+      // Change-intent: applied side present but unequal to the draft.
+      DATA_STORE: 'applied = "old"',
+    });
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        externalServices: [
+          {
+            kind: "DATA_STORE",
+            key: "k1",
+            status: "ENABLED",
+            draft: 'applied = "new"',
+          },
+        ],
+      }),
+    );
+    mockQuery.mockResolvedValue({
+      rows: [{ created_at: new Date(), expires_at: new Date() }],
+      rowCount: 1,
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const result = await createApplyAttempt({ nodeId: "node-1" });
+
+    expect(result.plannedDispatches).toHaveLength(3);
+    expect(result.plannedDispatches[0].kind).toBe("MANAGER_DB");
+    expect(result.plannedDispatches[1].kind).toBe("MANAGER_NOTIFY");
+    expect(result.plannedDispatches[2].kind).toBe("DATA_STORE");
+    // The plan-build read must not have re-run a `services:read` gate.
+    const checkedPerms = mockHasPermission.mock.calls.map(
+      (call: unknown[]) => call[1] as string,
+    );
+    expect(checkedPerms).not.toContain("services:read");
   });
 
   it("rejects when customer scope excludes the node (BFF defense-in-depth: upstream returned the out-of-scope payload)", async () => {

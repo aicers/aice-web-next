@@ -746,6 +746,27 @@ export async function getGigantoConfig(
 ): Promise<GigantoConfig> {
   await requireAllPermissions(session, [SERVICES_READ]);
   const ctx = await buildDispatchContext(session);
+  return readGigantoConfigWithContext(ctx, signal);
+}
+
+/**
+ * Internal endpoint reader for callers that already hold an
+ * authorization boundary other than `services:read` — specifically
+ * `createApplyAttempt`, whose documented gate is
+ * `nodes:write + services:write` (`decisions/node-permissions.md`).
+ *
+ * `getGigantoConfig` keeps the `services:read` gate for the page-load
+ * UI snapshot path; this helper exposes the same wire call without it
+ * so the plan-build read inside `createApplyAttempt` does not silently
+ * widen the documented bulk-apply gate into
+ * `nodes:write + services:write + services:read`. Takes a
+ * pre-built `DispatchContext` so the caller's session has already been
+ * resolved and scoped before reaching this point.
+ */
+export async function readGigantoConfigWithContext(
+  ctx: DispatchContext,
+  signal?: AbortSignal,
+): Promise<GigantoConfig> {
   const data = await withExternalErrorMapping(
     "DATA_STORE",
     gigantoClient<GigantoConfigResult>(
@@ -807,6 +828,19 @@ export async function getTivanConfig(
 ): Promise<TivanConfig> {
   await requireAllPermissions(session, [SERVICES_READ]);
   const ctx = await buildDispatchContext(session);
+  return readTivanConfigWithContext(ctx, signal);
+}
+
+/**
+ * Internal endpoint reader for `createApplyAttempt`. See
+ * {@link readGigantoConfigWithContext} for the rationale — the bulk-
+ * apply gate is `nodes:write + services:write`, so the plan-build
+ * endpoint read must not require `services:read`.
+ */
+export async function readTivanConfigWithContext(
+  ctx: DispatchContext,
+  signal?: AbortSignal,
+): Promise<TivanConfig> {
   const data = await withExternalErrorMapping(
     "TI_CONTAINER",
     tivanClient<TivanConfigResult>(

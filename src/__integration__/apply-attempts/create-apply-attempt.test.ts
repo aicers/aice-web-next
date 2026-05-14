@@ -51,7 +51,8 @@ vi.mock("@/lib/auth/session", () => ({
 // the change-intent path (applied side absent ⇒ emit dispatch). The
 // other DB-backed write paths still hit the real Postgres.
 vi.mock("@/lib/node/external-config-snapshot", () => ({
-  buildExternalConfigSnapshot: mockBuildExternalConfigSnapshot,
+  buildExternalConfigSnapshot: vi.fn(),
+  buildExternalConfigSnapshotForApply: mockBuildExternalConfigSnapshot,
   externalKindsOnNode: vi.fn(),
   externalKindsOnNodes: vi.fn(),
 }));
