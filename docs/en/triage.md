@@ -117,6 +117,158 @@ The header intentionally does not surface `baseline_version` or any
 other corpus metadata. Audit and debugging use the stored
 `baseline_version` column directly.
 
+## Force-rebuild a period (admin)
+
+The freshness badge sits next to a small **Rebuild this period**
+button visible only to the named **System Administrator** role.
+The button is an operational escape hatch out of the natural-
+expiry default for corpus A: it deletes every
+`baseline_triaged_event` / `observed_event_meta` row in the
+currently selected period and re-ingests the same period from the
+detector store under the current exclusion set.
+
+When to use it:
+
+- Post-incident corpus repair after a bad exclusion rule has
+  retro-DELETEd rows that should not have been removed.
+- Urgent refresh of the baseline-version stamp on a window's worth
+  of rows ahead of natural expiry.
+- Recovery from any other state where the cadence's incremental
+  fill cannot produce the desired corpus on its own.
+
+It is **not** a user-facing tuning surface — analysts who want to
+see more or fewer events use the strictness controls instead.
+
+### Single-customer scope is required
+
+The button is only enabled when the caller's effective customer
+scope contains exactly one customer — the rebuild operates on
+exactly one customer-tenant DB per call, and the menu's header has
+no in-modal tenant picker. When the scope spans two or more
+customers the button is shown disabled with the tooltip **"Switch
+to a single-customer scope to enable per-period rebuild"** so the
+gate is visible. Switch customer scope and reload the page to
+enable the button.
+
+The server enforces the same gate independently of the UI. A
+direct POST to `/api/triage/baseline/rebuild` (or
+`.../estimate`) is rejected with `RebuildValidation` (HTTP 400)
+when the caller's effective scope spans 2+ customers or when the
+submitted `customerId` does not match the caller's single
+authorized tenant. This blocks a `customers:access-all`
+administrator from bypassing the UI guard by hand-crafting a
+request for an arbitrary tenant id.
+
+### Confirm modal
+
+![Rebuild confirm modal (wireframe)](../assets/triage-rebuild-modal-en.svg)
+
+> **Wireframe stand-in.** The admin force-rebuild affordance can
+> only be rendered against a System Administrator session paired
+> with a Phase 1.B seeded customer-tenant DB. The authoring
+> worktree's e2e harness signs in as a separate "E2E Test Admin"
+> role and does not include the seeded corpus required for a
+> non-zero estimate; the same staging tenant used to refresh the
+> rest of the Triage PNGs in #455 is the canonical capture
+> environment. The wireframe will be replaced with a real PNG
+> capture in a follow-up alongside that staging refresh.
+
+Clicking the button opens a confirmation modal that shows:
+
+- **Customer** — the single resolved customer (name + id) so the
+  operator visually confirms which tenant they are mutating.
+- **Period** — the menu's currently selected `[from, to)` window.
+- **What this does** — "Re-fetches events for this period from the
+  detector store and rebuilds the baseline corpus. Existing rows
+  in this period are deleted and replaced. The cadence watermark
+  is not affected."
+- **Estimated impact** — the number of rows currently in
+  `baseline_triaged_event` for the period, fetched from
+  `GET /api/triage/baseline/rebuild/estimate`. The number is a
+  snapshot; if cadence ticks between the modal and confirm, the
+  actual rebuild's deletion count may differ slightly. The
+  completion toast shows the precise counts.
+- **Detector retention warning** — when the period's `to` is older
+  than the detector store's retention horizon, the modal warns
+  that the rebuild may produce fewer rows than currently shown.
+  This is the operator's chance to back out before the existing
+  rows are deleted.
+- **Tab-and-page note** — the rebuild's completion toast is fired
+  only while the originating Triage menu page remains mounted in
+  the same tab. Closing the tab, reloading the page, **or
+  navigating in-app to another page** all unmount the toast
+  surface; the in-flight request may still commit, but the
+  operator will not see a toast. The audit log is the canonical
+  post-hoc record of the outcome in those cases. (A durable,
+  app-level notification surface that survives route unmounts is
+  out of scope for this issue.)
+
+### Outcomes
+
+After confirm, the page submits `POST /api/triage/baseline/rebuild`
+and replaces the button with a spinner. While the rebuild is in
+flight, the menu row list (funnel + asset list) shows a
+non-blocking **"Rebuilding this period..."** overlay so the
+operator can see that the visible corpus may briefly drop to 0
+and refill — not just by the button label. The overlay does not
+block clicks; the operator can still navigate or cancel the page
+without affecting the in-flight rebuild. On completion:
+
+- **Success** — a toast like *"Rebuilt: deleted N, inserted M
+  events"* fires and the page refreshes the menu so the post-
+  rebuild corpus is visible.
+- **RebuildBusy** (HTTP 409) — the cadence runner or another
+  rebuild holds the per-customer advisory lock for this customer.
+  The toast surfaces *"cadence or another rebuild is currently
+  writing for this customer; retry shortly"*; the operator
+  re-clicks once the contender releases.
+- **RebuildTimeout** (HTTP 504) — the rebuild exceeded the 300 s
+  hard cap. The in-flight transaction is rolled back and the lock
+  is released, so the corpus is in its pre-rebuild state. Split
+  the period and retry.
+- **RebuildIncomplete** (HTTP 504) — review's paginator never
+  reported `hasNextPage = false` within the safety cap, or
+  returned `hasNextPage = true` with a missing cursor. The
+  rebuild aborts **before** the DB transaction begins, so the
+  corpus is left exactly as it was. The toast distinguishes this
+  case from `RebuildTimeout` because the operator's next step is
+  different: split the period and retry, or investigate the
+  resolver if the page count was unexpected for the range.
+- **Other failures** — the toast surfaces the error message; no
+  partial state is left on disk because the DELETE and the
+  reinsert share a single DB transaction.
+
+### Audit trail
+
+Every successfully committed rebuild emits one
+`triage_baseline.rebuild` audit row carrying the actor account,
+the customer id, the `[from, to)` window, the deleted / inserted
+row counts, the wall-clock duration, and explicit `startedAt` /
+`completedAt` ISO-8601 timestamps so the audit row is a complete
+record of the rebuild window — operators can correlate the entry
+against external incident timelines without re-deriving timestamps
+from the duration. The row is reachable from the standard audit-log
+viewer.
+
+If `audit_db` is unreachable when the rebuild commits, the
+mutation still returns success and the same payload (actor,
+customer id, period, `startedAt`, `completedAt`, duration, and
+the full deleted/inserted observed/triaged counts) is emitted as
+a structured `[triage_baseline.rebuild] audit log write failed`
+app-log line — the secondary persistent record the operator can
+follow when no audit row exists.
+
+Failed attempts (`RebuildBusy`, `RebuildTimeout`,
+`RebuildIncomplete`, validation rejections, or any error that
+rolls back the corpus transaction) leave the corpus unchanged and
+do **not** emit an audit row. If the operator's tab is closed or
+reloaded mid-rebuild, the absence of an audit row therefore means
+either "the rebuild has not committed yet" or "the rebuild
+failed"; the structured app log is the operator-side trace of the
+failure path. Confirm completion by checking the audit log a few
+minutes after the rebuild is expected to finish — a row means the
+DB transaction committed; no row means the operator must retry.
+
 ## Mode toggle
 
 Two modes are visible:

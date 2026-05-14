@@ -2101,6 +2101,27 @@
       "confirm": "Discard and reload",
       "cancel": "Keep current period"
     },
+    "rebuild": {
+      "button": "Rebuild this period",
+      "multiScopeTooltip": "Switch to a single-customer scope to enable per-period rebuild",
+      "modalTitle": "Rebuild baseline corpus for this period",
+      "modalIntro": "Re-fetches events for this period from the detector store and rebuilds the baseline corpus. Existing rows in this period are deleted and replaced. The cadence watermark is not affected.",
+      "customerLabel": "Customer",
+      "periodLabel": "Period",
+      "whatThisDoesLabel": "What this does",
+      "whatThisDoesBody": "Rows shown will briefly drop to 0 then refill.",
+      "estimateLabel": "Estimated impact",
+      "estimateHint": "rows currently in the period (estimate)",
+      "abortNote": "Keep this tab open and stay on the Triage page until the rebuild finishes. Closing the tab, reloading, or navigating in-app to another page all hide the completion toast; check the audit log to confirm the outcome.",
+      "confirmButton": "Rebuild",
+      "cancelButton": "Cancel",
+      "toastSuccessTemplate": "Rebuilt: deleted {deleted}, inserted {inserted} events",
+      "toastBusy": "Cadence or another rebuild is currently writing for this customer; retry shortly.",
+      "toastTimeout": "Rebuild timed out (300s cap). Split the period and retry.",
+      "toastIncomplete": "Rebuild aborted: review's paginator did not exhaust the range. The corpus was left untouched. Split the period and retry, or investigate the resolver if the page count was unexpected.",
+      "toastErrorPrefix": "Rebuild failed:",
+      "rebuildingOverlay": "Rebuilding this period..."
+    },
     "scopeToggle": {
       "legend": "Pivot scope",
       "tier1": "Triaged only",

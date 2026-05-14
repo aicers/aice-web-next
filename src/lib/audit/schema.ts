@@ -197,6 +197,30 @@ type TriageExclusionAction =
   | "triage_exclusion.global_recover"
   | "triage_exclusion.customer_recover";
 
+/**
+ * Triage baseline rebuild action (#473).
+ *
+ * Emitted only after the corpus transaction has committed
+ * successfully — pre-commit failures (`RebuildBusy`,
+ * `RebuildTimeout`, `RebuildIncomplete`, validation, transaction
+ * rollback) leave the corpus unchanged and produce no audit row.
+ * Failure-attempt audit rows are intentionally out of scope: they
+ * would require fanning the same payload through an audit emitter
+ * on every error branch, and the corresponding tenant operator has
+ * no actionable signal in "an admin tried to mutate the corpus and
+ * the request bounced before any DB write". The structured app log
+ * remains the operator-side trace of failed attempts.
+ *
+ * The action is intrinsically customer-scoped — the rebuild
+ * operates against exactly one customer-tenant DB per call, so the
+ * emitter populates `customerId` with the route's `customerId`
+ * argument. The target reuses the existing `"customer"` target type
+ * rather than introducing a first-class "baseline corpus" entity,
+ * matching the reuse pattern established for
+ * `aimer_context_token.issued`.
+ */
+type TriageBaselineAction = "triage_baseline.rebuild";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
@@ -214,7 +238,8 @@ export type AuditAction =
   | AimerContextTokenAction
   | TriagePolicyAction
   | TriageStoryAction
-  | TriageExclusionAction;
+  | TriageExclusionAction
+  | TriageBaselineAction;
 
 /** Target entity types for audit events. */
 export type AuditTargetType =
@@ -300,6 +325,7 @@ export const AUDIT_ACTIONS = [
   "triage_exclusion.fanout_failed",
   "triage_exclusion.global_recover",
   "triage_exclusion.customer_recover",
+  "triage_baseline.rebuild",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */

@@ -2170,3 +2170,165 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
     ).toBeNull();
   });
 });
+
+/**
+ * Shell-level coverage for the admin rebuild affordance (#473). The
+ * button's own scope-gate/modal/toast contract is exercised in
+ * `rebuild-button.test.tsx`; this block pins the *shell-owned*
+ * wiring — that the button surfaces only when `rebuild` is passed,
+ * and that the `rebuildingOverlay` becomes visible exactly when the
+ * button reports an in-flight submit through `onSubmittingChange`.
+ */
+describe("TriageShell — admin rebuild wiring", () => {
+  const REBUILD_LABELS: NonNullable<TriageShellLabels["rebuild"]> = {
+    button: "Rebuild this period",
+    multiScopeTooltip: "Switch to a single-customer scope",
+    modalTitle: "Confirm rebuild",
+    modalIntro: "destructive",
+    customerLabel: "Customer",
+    periodLabel: "Period",
+    whatThisDoesLabel: "What",
+    whatThisDoesBody: "body",
+    estimateLabel: "Estimated rows",
+    estimateHint: "rows",
+    abortNote: "keep tab open",
+    confirmButton: "Confirm",
+    cancelButton: "Cancel",
+    toastSuccessTemplate: "Rebuilt deleted={deleted} inserted={inserted}",
+    toastBusy: "busy",
+    toastTimeout: "timeout",
+    toastIncomplete: "incomplete",
+    toastErrorPrefix: "Rebuild failed:",
+    rebuildingOverlay: "Rebuilding this period…",
+  };
+
+  function labelsWithRebuild(): TriageShellLabels {
+    return { ...LABELS, rebuild: REBUILD_LABELS };
+  }
+
+  function renderShellForRebuild(opts: {
+    rebuild:
+      | {
+          customer: { id: number; name: string } | null;
+          multiCustomerScope: boolean;
+        }
+      | undefined;
+  }) {
+    const result = aggregateTriageEvents([], false);
+    return render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={labelsWithRebuild()}
+        rebuild={opts.rebuild}
+      />,
+    );
+  }
+
+  it("does not render the rebuild button when the `rebuild` prop is absent", () => {
+    const result = aggregateTriageEvents([], false);
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        labels={labelsWithRebuild()}
+        // `rebuild` intentionally omitted — non-admin pages must NOT
+        // surface the affordance even if the labels prop is provided.
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: REBUILD_LABELS.button }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: REBUILD_LABELS.multiScopeTooltip }),
+    ).toBeNull();
+  });
+
+  it("renders the rebuild button enabled when scope is a single customer", () => {
+    renderShellForRebuild({
+      rebuild: {
+        customer: { id: 7, name: "Acme" },
+        multiCustomerScope: false,
+      },
+    });
+    const btn = screen.getByRole("button", {
+      name: REBUILD_LABELS.button,
+    }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("renders the disabled multi-scope affordance when scope spans 2+ customers", () => {
+    // The destructive rebuild names exactly one tenant, so the shell
+    // must hide the active button under a disabled affordance until
+    // the operator narrows the scope. This is the UI half of the
+    // server-side `RebuildValidation` gate.
+    renderShellForRebuild({
+      rebuild: {
+        customer: { id: 7, name: "Acme" },
+        multiCustomerScope: true,
+      },
+    });
+    const btn = screen.getByRole("button", {
+      name: REBUILD_LABELS.multiScopeTooltip,
+    }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("toggles the `rebuildingOverlay` over the row list while the rebuild is in flight", async () => {
+    // Hold the POST open so we can observe both the in-flight overlay
+    // and its cleanup once the POST resolves. The estimate fetch is
+    // resolved synchronously so the modal becomes confirmable.
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    let resolvePost: ((value: Response) => void) | undefined;
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ currentTriagedRowCount: 1, warnings: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockReturnValueOnce(
+        new Promise<Response>((r) => {
+          resolvePost = r;
+        }),
+      );
+
+    renderShellForRebuild({
+      rebuild: {
+        customer: { id: 7, name: "Acme" },
+        multiCustomerScope: false,
+      },
+    });
+
+    // Overlay is absent before the rebuild starts.
+    expect(screen.queryByText(REBUILD_LABELS.rebuildingOverlay)).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: REBUILD_LABELS.button }),
+    );
+    await flushAsync();
+    fireEvent.click(
+      screen.getByRole("button", { name: REBUILD_LABELS.confirmButton }),
+    );
+    await flushAsync();
+
+    // While the POST is pending, the shell paints the non-blocking
+    // overlay over the menu row list.
+    expect(screen.getByText(REBUILD_LABELS.rebuildingOverlay)).toBeTruthy();
+
+    resolvePost?.(
+      new Response(
+        JSON.stringify({ deletedTriagedRows: 0, insertedTriagedRows: 0 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    await flushAsync();
+
+    // Overlay clears once the POST settles.
+    expect(screen.queryByText(REBUILD_LABELS.rebuildingOverlay)).toBeNull();
+
+    fetchSpy.mockRestore();
+  });
+});

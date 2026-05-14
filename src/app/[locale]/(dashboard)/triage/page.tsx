@@ -6,6 +6,7 @@ import {
   type TriageShellLabels,
   type TriageShellState,
 } from "@/components/triage/triage-shell";
+import { isSystemAdministrator } from "@/lib/aimer/role-guard";
 import {
   type EffectiveCustomerScope,
   getEffectiveCustomerScope,
@@ -391,6 +392,47 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
     },
   };
 
+  // Admin rebuild affordance (#473). Visible to System Administrators
+  // only; the button itself further hides when scope spans 2+
+  // customers. The page resolves the role+scope server-side so the
+  // client never has to guess.
+  const showRebuildAffordance = isSystemAdministrator(session.roles);
+  if (showRebuildAffordance) {
+    labels.rebuild = {
+      button: t("rebuild.button"),
+      multiScopeTooltip: t("rebuild.multiScopeTooltip"),
+      modalTitle: t("rebuild.modalTitle"),
+      modalIntro: t("rebuild.modalIntro"),
+      customerLabel: t("rebuild.customerLabel"),
+      periodLabel: t("rebuild.periodLabel"),
+      whatThisDoesLabel: t("rebuild.whatThisDoesLabel"),
+      whatThisDoesBody: t("rebuild.whatThisDoesBody"),
+      estimateLabel: t("rebuild.estimateLabel"),
+      estimateHint: t("rebuild.estimateHint"),
+      abortNote: t("rebuild.abortNote"),
+      confirmButton: t("rebuild.confirmButton"),
+      cancelButton: t("rebuild.cancelButton"),
+      toastSuccessTemplate: t.raw("rebuild.toastSuccessTemplate") as string,
+      toastBusy: t("rebuild.toastBusy"),
+      toastTimeout: t("rebuild.toastTimeout"),
+      toastIncomplete: t("rebuild.toastIncomplete"),
+      toastErrorPrefix: t("rebuild.toastErrorPrefix"),
+      rebuildingOverlay: t("rebuild.rebuildingOverlay"),
+    };
+  }
+  const rebuildProps = showRebuildAffordance
+    ? {
+        customer:
+          scope.customers.length === 1
+            ? {
+                id: scope.customers[0].id,
+                name: scope.customers[0].name,
+              }
+            : null,
+        multiCustomerScope: scope.customers.length > 1,
+      }
+    : undefined;
+
   return (
     <>
       <CustomerScopeCallout scope={scope} className="mb-4" />
@@ -401,6 +443,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         customerScope={cacheKeyForCustomerScope(scope)}
         initialStories={stories}
         initialStoriesTruncated={storiesTruncated}
+        rebuild={rebuildProps}
         labels={labels}
       />
     </>

@@ -147,7 +147,19 @@ export function cursorToEventKey(cursor: string): string {
 export interface CadenceFetchPageArgs {
   customerId: number;
   variables: {
-    filter: { customers: string[] };
+    /**
+     * The cadence path passes `{ customers: [...] }` only. The rebuild
+     * path (#473) extends the filter with `start` / `end` to bound the
+     * fetch to a specific `[from, to)` window. The `EventStandardFilterInput`
+     * schema allows both fields to be NULL — see `schemas/review.graphql`
+     * line 4004 — so this `Partial` union lets one shape carry both
+     * callers without a separate query.
+     */
+    filter: {
+      customers: string[];
+      start?: string;
+      end?: string;
+    };
     triage: null;
     first: number;
     after: string | null;
@@ -207,119 +219,155 @@ export function createCadencePager(
           after: afterCursor,
         },
       });
-      const conn = response.eventListWithTriage;
-      const edges = conn.edges;
 
-      const active = await resolver.resolve(customerId);
-      const exclusionsFp = computeExclusionsFingerprint(active.rules);
-
-      // (b)–(d1) Normalize + filter + Blocklist* drop. The survivors
-      // list is the input both phases operate on.
-      const survivors: Array<{
-        eventKey: string;
-        event: CadenceEventNode;
-        cols: NormalizedEventColumns;
-      }> = [];
-      for (const edge of edges) {
-        const event = edge.node;
-        if (event.__typename.startsWith(BLOCKLIST_KIND_PREFIX)) continue;
-        const cols = normalizeEventColumns(event);
-        if (isExcluded(cols, active)) continue;
-        survivors.push({
-          eventKey: cursorToEventKey(edge.cursor),
-          event,
-          cols,
-        });
-      }
-
-      // (d2) Phase 1: stage every survivor into `observed_event_meta`
-      // in one batched INSERT. Page rows must be in the denominator
-      // before Phase 2 reads it — see the RFC's "S3 / S4 already
-      // account for self via `- 1`" contract. ON CONFLICT keeps the
-      // path idempotent against a re-run of the same page after a
-      // Phase 2 failure. A single batched INSERT (vs. per-row) keeps
-      // the Phase 1 round-trip count at O(1) per page so the cadence
-      // runner's per-page time budget is not eaten by 500 sequential
-      // statement executions.
-      const observedResult = await insertObservedEventMetaBatch(
-        client,
-        survivors,
-      );
-      const observedInserted = observedResult.rowCount ?? 0;
-
-      // (e1) Active windows: derived from observed_event_meta age
-      // unless the caller injected an override (test paths).
-      const activeWindows =
-        activeWindowsOverride ?? (await detectActiveWindows(client));
-
-      // (e2) Phase 2: batch-score the survivors against observed_event_meta.
-      const pageRows: PageScoringRow[] = survivors.map(
-        ({ eventKey, event, cols }) => ({
-          eventKey,
-          kind: event.__typename,
-          origAddr: cols.origAddr,
-          respAddr: cols.respAddr,
-          category: event.category,
-          confidence: readConfidence(event),
-          clusterId: event.clusterId ?? null,
-        }),
-      );
-      const selectorMap = await scoreSelectorsForPage(client, pageRows);
-
-      // (e3)–(e4) INSERT into baseline_triaged_event. Every page row
-      // is persisted (RFC §3 — `raw_score = 0` events still belong to
-      // the corpus; the read-time menu filters on `baseline_score`
-      // cutoffs, not on a stored INSERT gate). One batched INSERT per
-      // page matches the issue's "single batched INSERT writes them"
-      // contract and keeps Phase 2 at O(1) DB round-trips after the
-      // batched selector SELECT.
-      const baselineRows = survivors.map(({ eventKey, event, cols }) => {
-        const outputs = scoreEventFromBatch(
-          event,
-          eventKey,
-          cols.origAddr,
-          cols.respAddr,
-          selectorMap.get(eventKey),
-          activeWindows,
-        );
-        return {
-          eventKey,
-          event,
-          cols,
-          rawScore: outputs.rawScore,
-          selectorTags: outputs.selectorTags,
-        };
+      const result = await processFetchedPage(client, customerId, response, {
+        resolver,
+        activeWindowsOverride,
+        signal,
+        runStoryCorrelator: true,
       });
-      const baselineResult = await insertBaselineTriagedEventBatch(
-        client,
-        baselineRows,
-        exclusionsFp,
-      );
-      const baselineInserted = baselineResult.rowCount ?? 0;
-
-      // (f) Story correlator. Empty-page no-op: when no survivors
-      // landed in baseline_triaged_event the correlator returns early
-      // and does NOT advance `story_finalized_through` — the next
-      // non-empty page resumes finalization from the previously-held
-      // watermark. Per-page transaction discipline: a step (f)
-      // failure rolls the entire page back, so a Story is never
-      // persisted for events that did not land.
-      const pageEventTimeRange =
-        baselineRows.length === 0
-          ? null
-          : computeEventTimeRange(baselineRows.map((r) => r.event.time));
-      await runStepF({ client, pageEventTimeRange, signal });
-
-      return {
-        observedInserted,
-        baselineInserted,
-        endCursor: conn.pageInfo.endCursor,
-        hasNextPage: conn.pageInfo.hasNextPage,
-        exclusionsFp,
-      };
+      return result;
     },
   };
 }
+
+/**
+ * Shared post-fetch pipeline (#473): normalize → exclusion → insert.
+ *
+ * Extracted from `createCadencePager` so the cadence path and the
+ * admin rebuild path (#473) share the same code for steps (b)–(f).
+ * The *fetch shape* differs between the two callers — cadence passes
+ * cursor-only, rebuild passes `(start, end)` + cursor — but the
+ * survivor-extraction, observed-meta INSERT, batch-scoring, and
+ * baseline INSERT logic is byte-identical because both ingest from
+ * the same `eventListWithTriage(triage = null)` resolver output.
+ *
+ * `runStoryCorrelator` controls step (f). Cadence always runs it.
+ * The rebuild path turns it off because the story finalization
+ * watermark is owned by cadence; re-running it for a historical
+ * `[from, to)` window would either no-op (the watermark is already
+ * ahead) or perversely re-finalize already-finalized stories.
+ */
+export async function processFetchedPage(
+  client: pg.PoolClient,
+  customerId: number,
+  response: CadenceConnectionResponse,
+  options: {
+    resolver: ActiveExclusionSetResolver;
+    activeWindowsOverride?: ActiveWindows;
+    signal?: AbortSignal;
+    runStoryCorrelator: boolean;
+  },
+): Promise<CadencePageResult> {
+  const conn = response.eventListWithTriage;
+  const edges = conn.edges;
+
+  const active = await options.resolver.resolve(customerId);
+  const exclusionsFp = computeExclusionsFingerprint(active.rules);
+
+  // (b)–(d1) Normalize + filter + Blocklist* drop.
+  const survivors: Array<{
+    eventKey: string;
+    event: CadenceEventNode;
+    cols: NormalizedEventColumns;
+  }> = [];
+  for (const edge of edges) {
+    const event = edge.node;
+    if (event.__typename.startsWith(BLOCKLIST_KIND_PREFIX)) continue;
+    const cols = normalizeEventColumns(event);
+    if (isExcluded(cols, active)) continue;
+    survivors.push({
+      eventKey: cursorToEventKey(edge.cursor),
+      event,
+      cols,
+    });
+  }
+
+  // (d2) Phase 1: stage every survivor into `observed_event_meta`.
+  const observedResult = await insertObservedEventMetaBatch(client, survivors);
+  const observedInserted = observedResult.rowCount ?? 0;
+
+  // (e1) Active windows.
+  const activeWindows =
+    options.activeWindowsOverride ?? (await detectActiveWindows(client));
+
+  // (e2) Phase 2: batch-score the survivors against observed_event_meta.
+  const pageRows: PageScoringRow[] = survivors.map(
+    ({ eventKey, event, cols }) => ({
+      eventKey,
+      kind: event.__typename,
+      origAddr: cols.origAddr,
+      respAddr: cols.respAddr,
+      category: event.category,
+      confidence: readConfidence(event),
+      clusterId: event.clusterId ?? null,
+    }),
+  );
+  const selectorMap = await scoreSelectorsForPage(client, pageRows);
+
+  // (e3)–(e4) INSERT into baseline_triaged_event.
+  const baselineRows = survivors.map(({ eventKey, event, cols }) => {
+    const outputs = scoreEventFromBatch(
+      event,
+      eventKey,
+      cols.origAddr,
+      cols.respAddr,
+      selectorMap.get(eventKey),
+      activeWindows,
+    );
+    return {
+      eventKey,
+      event,
+      cols,
+      rawScore: outputs.rawScore,
+      selectorTags: outputs.selectorTags,
+    };
+  });
+  const baselineResult = await insertBaselineTriagedEventBatch(
+    client,
+    baselineRows,
+    exclusionsFp,
+  );
+  const baselineInserted = baselineResult.rowCount ?? 0;
+
+  // (f) Story correlator — cadence-only. The rebuild path skips this
+  // because the story finalization watermark is owned by cadence.
+  if (options.runStoryCorrelator) {
+    const pageEventTimeRange =
+      baselineRows.length === 0
+        ? null
+        : computeEventTimeRange(baselineRows.map((r) => r.event.time));
+    await runStepF({
+      client,
+      pageEventTimeRange,
+      signal: options.signal,
+    });
+  }
+
+  return {
+    observedInserted,
+    baselineInserted,
+    endCursor: conn.pageInfo.endCursor,
+    hasNextPage: conn.pageInfo.hasNextPage,
+    exclusionsFp,
+  };
+}
+
+/**
+ * Production fetch helper exposed for the rebuild runner. Calls
+ * `eventListWithTriage(triage = null)` with the cadence's system-actor
+ * role and a customer-scoped filter, matching the cadence's outbound
+ * call shape exactly except that the rebuild passes `start` / `end`
+ * to bound the page set to a `[from, to)` window.
+ */
+export async function fetchEventPage(
+  args: CadenceFetchPageArgs,
+): Promise<CadenceConnectionResponse> {
+  return defaultFetchPage(args);
+}
+
+export type { CadenceConnectionResponse };
+export { REVIEW_MAX_PAGE_SIZE };
 
 async function defaultFetchPage(
   args: CadenceFetchPageArgs,

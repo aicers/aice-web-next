@@ -39,6 +39,10 @@ import {
   type TriagePeriodPickerLabels,
 } from "./period-picker";
 import {
+  TriageRebuildButton,
+  type TriageRebuildLabels,
+} from "./rebuild-button";
+import {
   type TriagePivotScope,
   TriagePivotScopeToggle,
   type TriagePivotScopeToggleLabels,
@@ -64,6 +68,13 @@ export interface TriageShellLabels {
    */
   observedDenominatorTruncatedNotice: string;
   freshness: TriageFreshnessHeaderLabels;
+  /**
+   * Admin-only rebuild affordance labels (#473). When omitted, the
+   * button is not rendered — pages that load this shell for non-
+   * `SystemAdministrator` callers (or in a context where the rebuild
+   * affordance is not appropriate) leave `rebuild` undefined.
+   */
+  rebuild?: TriageRebuildLabels;
   baseline: TriageBaselineLabels;
   periodChangeConfirm: {
     title: string;
@@ -96,6 +107,17 @@ interface TriageShellProps {
   initialStories?: ReadonlyArray<TriageStory>;
   /** True whenever any per-tenant Stories page hit the page cap. */
   initialStoriesTruncated?: boolean;
+  /**
+   * Admin-only rebuild affordance (#473). When the caller is a
+   * `SystemAdministrator`, the page passes the resolved single
+   * customer (or `null` to render the disabled multi-scope tooltip)
+   * and `multiCustomerScope` flag. When the caller is not an admin,
+   * this prop is omitted entirely and the button is not rendered.
+   */
+  rebuild?: {
+    customer: { id: number; name: string } | null;
+    multiCustomerScope: boolean;
+  };
   labels: TriageShellLabels;
 }
 
@@ -108,6 +130,7 @@ export function TriageShell({
   customerScope,
   initialStories = [],
   initialStoriesTruncated = false,
+  rebuild,
   labels,
 }: TriageShellProps) {
   const router = useRouter();
@@ -136,6 +159,13 @@ export function TriageShell({
   // Bubbled up via a callback from baseline-content so the shell can
   // decide whether to surface the confirmation modal.
   const hasPivotsRef = useRef(false);
+  // Tracks the admin force-rebuild's in-flight status (#473). The
+  // rebuild button owns its own submit state internally; this mirror
+  // lets the shell paint a non-blocking "rebuilding..." overlay over
+  // the menu row list while the destructive operation runs, so the
+  // operator can see at a glance that the visible corpus may briefly
+  // drop and refill — not just the button label.
+  const [rebuildInProgress, setRebuildInProgress] = useState(false);
 
   // Resync local state to the server-resolved period whenever the
   // page rerenders with a new `initialPeriod`. The server clamps
@@ -205,10 +235,21 @@ export function TriageShell({
         <h1 className="text-foreground text-2xl font-bold">{labels.title}</h1>
         <p className="text-sm text-muted-foreground">{labels.intro}</p>
         {initialState.status === "ok" ? (
-          <TriageFreshnessHeader
-            freshness={initialState.result.freshness}
-            labels={labels.freshness}
-          />
+          <div className="flex items-center gap-3">
+            <TriageFreshnessHeader
+              freshness={initialState.result.freshness}
+              labels={labels.freshness}
+            />
+            {rebuild && labels.rebuild ? (
+              <TriageRebuildButton
+                customer={rebuild.customer}
+                multiCustomerScope={rebuild.multiCustomerScope}
+                period={period}
+                labels={labels.rebuild}
+                onSubmittingChange={setRebuildInProgress}
+              />
+            ) : null}
+          </div>
         ) : null}
       </header>
       <div className="flex flex-wrap items-end gap-4">
@@ -244,21 +285,42 @@ export function TriageShell({
         // here in practice; keep the explicit guard so the seam is
         // visible at the import boundary.
         mode === "baseline" ? (
-          <TriageBaselineContent
-            result={initialState.result}
-            resetSignal={resetSignal}
-            period={period}
-            customerScope={customerScope}
-            scope={scope}
-            onScopeRestoredFromHash={setScope}
-            onPivotTrailChange={(hasPivots) => {
-              hasPivotsRef.current = hasPivots;
-            }}
-            mode={mode}
-            stories={initialStories}
-            storiesTruncated={initialStoriesTruncated}
-            labels={labels.baseline}
-          />
+          // Position the rebuild overlay *over* the baseline content
+          // so the menu row list (asset list + funnel) is clearly
+          // marked as in-flight while the destructive rebuild runs —
+          // matching the issue's "non-blocking 'rebuilding...' overlay
+          // on the menu row list" contract. `pointer-events-none`
+          // keeps the overlay non-blocking: the rows under it remain
+          // clickable while the rebuild is in flight (the operator can
+          // still cancel the page, navigate away, etc.).
+          <div className="relative">
+            <TriageBaselineContent
+              result={initialState.result}
+              resetSignal={resetSignal}
+              period={period}
+              customerScope={customerScope}
+              scope={scope}
+              onScopeRestoredFromHash={setScope}
+              onPivotTrailChange={(hasPivots) => {
+                hasPivotsRef.current = hasPivots;
+              }}
+              mode={mode}
+              stories={initialStories}
+              storiesTruncated={initialStoriesTruncated}
+              labels={labels.baseline}
+            />
+            {rebuildInProgress && labels.rebuild ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="pointer-events-none absolute inset-0 flex items-start justify-center pt-4"
+              >
+                <span className="rounded-md border border-input/60 bg-background/90 px-3 py-1.5 text-xs font-medium shadow-md backdrop-blur-sm">
+                  {labels.rebuild.rebuildingOverlay}
+                </span>
+              </div>
+            ) : null}
+          </div>
         ) : null
       ) : null}
       <AlertDialog open={confirmOpen} onOpenChange={onConfirmDialogOpenChange}>

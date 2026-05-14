@@ -2101,6 +2101,27 @@
       "confirm": "버리고 다시 적재",
       "cancel": "현재 기간 유지"
     },
+    "rebuild": {
+      "button": "이 기간 다시 빌드",
+      "multiScopeTooltip": "기간 단위 재빌드를 사용하려면 단일 고객 범위로 전환하세요",
+      "modalTitle": "이 기간의 기준 코퍼스 다시 빌드",
+      "modalIntro": "이 기간의 이벤트를 탐지 저장소에서 다시 가져와 기준 코퍼스를 재구성합니다. 기존 행은 삭제 후 교체됩니다. 케이던스 워터마크는 영향을 받지 않습니다.",
+      "customerLabel": "고객",
+      "periodLabel": "기간",
+      "whatThisDoesLabel": "동작",
+      "whatThisDoesBody": "표시 행이 잠시 0으로 떨어졌다가 다시 채워집니다.",
+      "estimateLabel": "예상 영향",
+      "estimateHint": "현재 기간의 행 수 (추정치)",
+      "abortNote": "재빌드가 끝날 때까지 이 탭을 열어두고 Triage 페이지에 머물러 주세요. 탭을 닫거나 새로 고치거나 앱 내에서 다른 페이지로 이동하면 완료 토스트가 표시되지 않습니다. 결과는 감사 로그에서 확인하세요.",
+      "confirmButton": "다시 빌드",
+      "cancelButton": "취소",
+      "toastSuccessTemplate": "재빌드 완료: {deleted}건 삭제, {inserted}건 삽입",
+      "toastBusy": "이 고객에 대해 케이던스 또는 다른 재빌드가 쓰는 중입니다. 잠시 후 다시 시도하세요.",
+      "toastTimeout": "재빌드 시간 초과 (300초 한도). 기간을 분할하여 다시 시도하세요.",
+      "toastIncomplete": "재빌드 중단: review 페이지네이터가 범위를 소진하지 못했습니다. 코퍼스는 변경되지 않았습니다. 기간을 분할하여 다시 시도하거나, 페이지 수가 예상과 다르면 리졸버를 점검하세요.",
+      "toastErrorPrefix": "재빌드 실패:",
+      "rebuildingOverlay": "이 기간 다시 빌드 중..."
+    },
     "scopeToggle": {
       "legend": "피벗 범위",
       "tier1": "트리아지된 이벤트만",
