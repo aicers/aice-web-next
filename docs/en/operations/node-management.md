@@ -642,31 +642,38 @@ changes" message and disables Apply.
 
 ### Per-dispatch status (during and after execution)
 
-Clicking **Apply** calls `confirmApplyAttempt({ attemptId })`. While
-the call is in flight the modal:
+Clicking **Apply** calls `confirmApplyAttempt({ attemptId })`. The
+BFF call is one-shot — it does not stream per-dispatch progress
+back to the client. While the call is in flight the modal:
 
 - Ignores Escape and outside-clicks — the underlying BFF call cannot
   be cancelled, so dismissing the UI mid-flight would orphan the row
   in `executing`.
-- Projects the **Manager DB** row to **In flight** while the DB
-  stage is running. On DB success the modal projects every remaining
-  post-DB row (manager notify and each external) to **In flight**
-  simultaneously, mirroring the BFF's parallel-after-DB fan-out
-  (`commitDbSuccessAndFanOut` in `apply-attempt-lifecycle.ts`). Rows
-  flip to **Succeeded** / **Failed** independently as their own
-  dispatch settles.
+- Optimistically projects the first queued row (the **Manager DB**
+  dispatch) to **In flight** to signal that the apply is running.
+  Later rows stay **Queued** in the modal view while the call is
+  pending; the modal cannot mirror the BFF's DB-success handoff or
+  the parallel post-DB fan-out because that transition is not
+  streamed.
 - Shows the **Applying…** label on the action button.
 
+Once `confirmApplyAttempt` resolves, the modal renders the final
+per-dispatch states returned by the BFF — every post-DB dispatch
+will already be settled at that point (`succeeded`,
+`failed_retryable`, or `failed_terminal`) because the executor
+runs the post-DB fan-out to completion before returning. Operators
+see the final per-row outcome; intermediate "DB succeeded, post-DB
+running" states are not visible in the modal.
+
 Each row renders one of five states. **Queued** is shown before the
-user clicks Apply (the planned-list view) and on every post-DB row
-while the DB stage is still running — a DB failure halts the
-sequence with the post-DB dispatches still `queued`, awaiting resume
-on a successful retry of the DB stage.
+user clicks Apply (the planned-list view) and, in the modal's
+optimistic projection, on every non-DB row while
+`confirmApplyAttempt` is still pending.
 
 | State | Meaning |
 | :-- | :-- |
-| **Queued** | Not yet started — shown on the planned list before Apply and on post-DB dispatches while the DB stage is still in flight. After the DB stage succeeds, every remaining post-DB dispatch is promoted to **In flight** in parallel. |
-| **In flight** | Dispatch is running. While `confirmApplyAttempt` is pending the modal projects this state on the DB row first, then on every post-DB row in parallel once the DB stage succeeds. While `retryDispatch` is pending it projects this state on the retried row only. |
+| **Queued** | Not yet started — shown on the planned list before Apply and on non-DB rows while `confirmApplyAttempt` is pending. |
+| **In flight** | Dispatch is running. While `confirmApplyAttempt` is pending the modal projects this state on the **Manager DB** row only (the BFF's DB-success / parallel post-DB transition is not streamed back to the client). While `retryDispatch` is pending it projects this state on the retried row only. |
 | **Succeeded** | Dispatch returned successfully. |
 | **Failed (retryable)** | Soft failure; the row offers a **Retry** button. |
 | **Failed (terminal)** | Cap exhausted, abandoned, or stale-lock recovery cascade — no Retry. |
