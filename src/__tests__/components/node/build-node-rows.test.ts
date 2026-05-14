@@ -318,6 +318,85 @@ describe("buildNodeRows", () => {
     expect(rows[1].hasStatus).toBe(false);
   });
 
+  it("marks delete-intent unavailable external as pending and renders the unknown cell (#551)", () => {
+    // Issue #551: list-row aggregate must match `nodePendingState`
+    // semantics. A delete-intent external (`draft === null`) with an
+    // unavailable page-load snapshot is a real pending manager-DB
+    // change that stays applyable even when the external is down.
+    // Counting only the `"pending"` state would drop this case and
+    // let the list and detail aggregates disagree for the same node.
+    const rows = buildNodeRows(
+      nodeConnection([
+        {
+          node: {
+            id: "delete-intent-unavailable",
+            name: "n",
+            nameDraft: null,
+            profile: { customerId: "1", description: "", hostname: "n.lan" },
+            profileDraft: null,
+            agents: [],
+            externalServices: [
+              {
+                node: 1,
+                key: "n-store",
+                kind: "DATA_STORE",
+                status: "ENABLED",
+                draft: null,
+              },
+            ],
+          },
+        },
+      ]),
+      statusConnection([]),
+      { DATA_STORE: "unavailable" },
+    );
+
+    expect(rows[0].hasPending).toBe(true);
+    expect(rows[0].serviceCells.dataStore).toEqual({
+      state: "configured-here-unknown",
+      hasDraft: false,
+    });
+  });
+
+  it("marks non-delete unavailable external as pending and renders the unknown cell (#551)", () => {
+    // Apply-blocking unknown: `nodePendingState` returns `"unknown"`
+    // for this combination so the per-node Apply button is disabled
+    // with the unknown tooltip. The list row must still surface a
+    // pending signal so the row badge / pending filter / pending
+    // summary count behave consistently with the detail page.
+    const rows = buildNodeRows(
+      nodeConnection([
+        {
+          node: {
+            id: "non-delete-unavailable",
+            name: "n",
+            nameDraft: null,
+            profile: { customerId: "1", description: "", hostname: "n.lan" },
+            profileDraft: null,
+            agents: [],
+            externalServices: [
+              {
+                node: 1,
+                key: "n-store",
+                kind: "DATA_STORE",
+                status: "ENABLED",
+                draft: "[store] retention = '7d'",
+              },
+            ],
+          },
+        },
+      ]),
+      statusConnection([]),
+      { DATA_STORE: "unavailable" },
+    );
+
+    expect(rows[0].hasPending).toBe(true);
+    expect(rows[0].serviceCells.dataStore).toEqual({
+      state: "configured-here-unknown",
+      hasDraft: false,
+    });
+  });
+
   it("marks hasStatus true even when ping is null (dead node)", () => {
     // The alive/dead chips read `hasStatus` to decide availability,
     // not `ping !== null`. A node that returns a status row with

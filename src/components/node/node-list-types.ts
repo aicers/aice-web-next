@@ -158,9 +158,17 @@ export function buildNodeRows(
     const anyAgentDraft = node.agents.some(
       (agent) => agent.draft !== null && agent.draft !== agent.config,
     );
+    // Match `nodePendingState` semantics: an external whose page-load
+    // snapshot is `"unavailable"` contributes to the row-level pending
+    // signal regardless of draft intent. For non-delete intent it is
+    // an Apply-blocking unknown; for delete intent it is a real pending
+    // manager-DB change that stays applyable even with the external
+    // down. Counting only `"pending"` would drop the delete-intent case
+    // and let the list / detail aggregates disagree for the same node.
     const anyExternalPending = node.externalServices.some(
       (ext) =>
-        externalServicePendingState(ext, externalConfigSnapshot) === "pending",
+        externalServicePendingState(ext, externalConfigSnapshot) !==
+        "not-pending",
     );
 
     const hasPending =
