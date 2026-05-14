@@ -150,6 +150,40 @@ describe("GET /api/triage/exclusions/cleanup-status", () => {
     expect(mockAuditOnly).toHaveBeenCalledWith(42);
   });
 
+  it("falls back to queue-backed ids when the audit-only probe throws (audit_db blip)", async () => {
+    // Round-3 review: the audit-only source must be best-effort. If
+    // `audit_db` is temporarily unavailable, the route must still
+    // return the queue-backed `failed` sentinels — making the audit
+    // query a hard dependency hides the ordinary recovery affordance
+    // during exactly the kind of infrastructure blip this fallback
+    // exists to make recoverable from.
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    try {
+      mockHasPermission.mockResolvedValue(true);
+      mockQuery.mockResolvedValueOnce({
+        rows: [{ customer_only_exclusion_id: "queue-1" }],
+        rowCount: 1,
+      });
+      mockAuditOnly.mockRejectedValueOnce(new Error("audit_db unreachable"));
+
+      const { GET } = await import(
+        "@/app/api/triage/exclusions/cleanup-status/route"
+      );
+      const req = new NextRequest(
+        "http://localhost:3000/api/triage/exclusions/cleanup-status?customer_id=42",
+      );
+      const res = await GET(req, makeContext());
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.failed).toEqual(["queue-1"]);
+      expect(consoleError).toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("unions audit-only drain failures with the queue rows so audit-only failures surface", async () => {
     // Round-2 review: an `auth_db` blip during the failed ADD path can
     // leave a `drainStatus='failed'` audit row with no matching sentinel

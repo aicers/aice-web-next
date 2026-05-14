@@ -29,6 +29,13 @@ import { listAuditOnlyCustomerDrainFailures } from "@/lib/triage/exclusion/recov
  *      500 response. Without this fallback the exclusion would be
  *      permanently unrecoverable from the UI.
  *
+ * The audit-only source is best-effort: if `audit_db` is unreachable
+ * the route still returns the queue-backed failed ids and logs the
+ * audit error. Making the audit query a hard dependency would hide
+ * the ordinary `failed` sentinels too during exactly the kind of
+ * infrastructure blip this recovery surface exists to make
+ * recoverable from.
+ *
  * Gated on `triage:read` plus the caller's effective customer scope —
  * same predicate as `GET /api/triage/exclusions`. The failed-row list
  * itself is per-customer, so a caller whose scope excludes
@@ -61,10 +68,21 @@ export const GET = withAuth(
           AND status = 'failed'`,
       [customerId],
     );
-    const auditOnly = await listAuditOnlyCustomerDrainFailures(customerId);
     const failed = new Set<string>();
     for (const r of rows) failed.add(r.customer_only_exclusion_id);
-    for (const id of auditOnly) failed.add(id);
+
+    // Best-effort: an `audit_db` outage must not hide the queue-backed
+    // sentinels — those are the primary recovery target. Log and degrade
+    // to the queue-only view rather than failing the whole endpoint.
+    try {
+      const auditOnly = await listAuditOnlyCustomerDrainFailures(customerId);
+      for (const id of auditOnly) failed.add(id);
+    } catch (err) {
+      console.error(
+        "cleanup-status: audit-only fallback unavailable; returning queue-backed ids only",
+        err,
+      );
+    }
     return NextResponse.json({ failed: Array.from(failed) });
   },
   { requiredPermissions: ["triage:read"] },
