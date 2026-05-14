@@ -242,14 +242,12 @@ interface BuildDraftArgs {
   sensorPool: readonly string[];
   /**
    * Applied-config baseline for external services, keyed by registry kind
-   * (`data-store`, `ti-container`). Used to detect a touched external
-   * section whose serialised value already matches the applied baseline
-   * — that case is a no-op and must emit `draft: null` rather than a
-   * fresh serialised string, otherwise a Keep-editing reconcile (where
-   * the user's form values match what a concurrent writer just applied)
-   * persists a phantom pending draft. Optional: when omitted the
-   * comparison is skipped and the helper falls back to the prior
-   * "always re-serialise on touch" behaviour.
+   * (`data-store`, `ti-container`). Accepted for compatibility with
+   * other helpers in this module (`seedExternalDrafts`) that consume the
+   * same baseline. Under #551 (#333 Decision 9) a touched section that
+   * round-trips to the applied value is encoded as
+   * `draft = serialised` (steady state under the comparison rule), so
+   * the submission builder no longer special-cases the baseline match.
    */
   appliedExternalDrafts?: Readonly<Record<string, string>>;
   /** Registry adapter, injected so unit tests can stub serialise. */
@@ -287,15 +285,7 @@ export function buildDraftSubmission(args: BuildDraftArgs): {
   agents: AgentDraftInput[];
   externalServices: ExternalServiceInput[];
 } {
-  const {
-    values,
-    dirtyFields,
-    mode,
-    node,
-    sensorPool,
-    appliedExternalDrafts,
-    serialise,
-  } = args;
+  const { values, dirtyFields, mode, node, sensorPool, serialise } = args;
   const agents: AgentDraftInput[] = [];
   const externalServices: ExternalServiceInput[] = [];
 
@@ -326,29 +316,16 @@ export function buildDraftSubmission(args: BuildDraftArgs): {
       } else if (isManual) {
         draft = "";
       } else {
-        const serialised = serialise(entry.kind, values[prefix], sensorPool);
-        // Applied-baseline no-op: a touched Configure-Here section whose
-        // serialised value byte-for-byte matches the canonical applied
-        // config is a no-op vs. the persisted state. Emit `draft: null`
-        // (no pending change) instead of the fresh string so the manager
-        // does not record a phantom pending draft and `diffChangedServices`
-        // does not emit a spurious `service.draft_save` audit. This
-        // covers the Keep-editing reconcile path: the user's edits and
-        // a concurrent writer's edits resolve to the same TOML, so once
-        // the dialog refreshes the baseline the touched section's
-        // re-serialised value equals `original.config` and the save
-        // should be a no-op for that section.
-        if (
-          mode === "edit" &&
-          touched &&
-          original &&
-          original.config !== null &&
-          serialised === original.config
-        ) {
-          draft = null;
-        } else {
-          draft = serialised;
-        }
+        // Applied-baseline round-trip is encoded as `draft = serialised`
+        // (which then equals `config`). Under #551 (#333 Decision 9)
+        // pending state is `draft != config`, so the steady-state wire
+        // shape is `draft == config`. Emitting `null` here would be
+        // delete intent against a non-null config and a subsequent Apply
+        // would `MANAGER_DB`-delete the agent instead of being a no-op.
+        // The Keep-editing reconcile path (user's edits converge on a
+        // concurrent writer's applied config) therefore lands as a
+        // steady-state save, not as `draft: null`.
+        draft = serialise(entry.kind, values[prefix], sensorPool);
       }
       // Status is per-service runtime state owned by Phase Node-8, not
       // by this dialog. On create the agent has no prior status, so the
@@ -378,27 +355,15 @@ export function buildDraftSubmission(args: BuildDraftArgs): {
       if (mode === "edit" && !touched && original) {
         draft = original.draft;
       } else {
-        const serialised = serialise(entry.kind, values[prefix], sensorPool);
-        // External applied-baseline no-op (mirrors the agent branch
-        // above). Externals don't carry `config` on the Node payload —
-        // their applied baseline is fetched server-side from
-        // Giganto / Tivan and threaded in here as `appliedExternalDrafts`.
-        // When the touched section's serialised value equals that
-        // baseline, emit `draft: null` so the save round-trips as a
-        // no-op for this section instead of persisting a phantom pending
-        // draft.
-        const appliedBaseline = appliedExternalDrafts?.[entry.kind];
-        if (
-          mode === "edit" &&
-          touched &&
-          original &&
-          appliedBaseline !== undefined &&
-          serialised === appliedBaseline
-        ) {
-          draft = null;
-        } else {
-          draft = serialised;
-        }
+        // External applied-baseline round-trip mirrors the agent branch
+        // above. Under #551 the steady-state encoding is
+        // `manager.draft == endpoint.config`, so a touched section that
+        // serialises back to the page-load applied baseline must persist
+        // that value as the draft — not `null`. `null` against a
+        // non-null endpoint config is delete intent and
+        // `buildPlannedDispatches` would plan a `MANAGER_DB`-only removal
+        // on the next Apply.
+        draft = serialise(entry.kind, values[prefix], sensorPool);
       }
       // Same rule as agents above: preserve the existing runtime
       // status on edit; only freshly-added services (no `original`)

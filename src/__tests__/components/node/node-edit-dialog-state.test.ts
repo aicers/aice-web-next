@@ -543,14 +543,14 @@ describe("buildDraftSubmission", () => {
     expect(externalServices[0]?.status).toBe("UNKNOWN");
   });
 
-  it("emits null for a touched agent whose serialised value matches the applied config", () => {
-    // Round 19 reviewer's Keep-editing reconcile case: another writer
-    // applies the same change before the retry, so the user's edits
-    // and the canonical applied config converge byte-for-byte. The
-    // helper must collapse the touched section to `draft: null` instead
-    // of re-serialising into a fresh pending draft string — otherwise
-    // the manager records a phantom pending draft and `saveDraft`
-    // emits a spurious `service.draft_save` audit.
+  it("emits the serialised baseline for a touched agent whose form value round-trips to the applied config", async () => {
+    // Round 7 reviewer's #551 follow-up: under #333 Decision 9 the
+    // steady-state encoding is `draft == config`, not `draft == null`.
+    // A touched section that re-serialises to the applied config must
+    // therefore land as `draft = serialised` so the post-save node is
+    // steady under `agentPendingState`. Emitting `null` here would be
+    // delete intent against a non-null config and a subsequent Apply
+    // would `MANAGER_DB`-delete the agent instead of being a no-op.
     const applied = "<serialised:sensor>";
     const node = buildNode({
       agents: [
@@ -581,17 +581,26 @@ describe("buildDraftSubmission", () => {
       sensorPool: [],
       serialise: stubSerialise,
     });
-    expect(agents[0]?.draft).toBeNull();
+    expect(agents[0]?.draft).toBe(applied);
     // Status preservation contract still holds.
     expect(agents[0]?.status).toBe("ENABLED");
+
+    // Regression: post-save state is steady under the comparison rule
+    // and does not plan a delete-style manager-only apply.
+    const { agentPendingState } = await import("@/lib/node/pending-state");
+    expect(
+      agentPendingState({ config: applied, draft: agents[0]?.draft ?? null }),
+    ).toBe("not-pending");
   });
 
-  it("emits null for a touched external service whose serialised value matches the applied baseline", () => {
-    // Externals don't carry `config` on the Node payload — the applied
-    // baseline is threaded in via `appliedExternalDrafts`. Same reconcile
-    // case as the agent test above: a touched external section that now
-    // matches the applied baseline must emit `draft: null` so the save
-    // is a true no-op for that section.
+  it("emits the serialised baseline for a touched external service whose form value round-trips to the applied baseline", async () => {
+    // Round 7 reviewer's #551 follow-up (external mirror of the agent
+    // case above). External steady state is
+    // `manager.draft == endpoint.config`, so a touched section whose
+    // serialised value equals the page-load baseline must persist that
+    // value as the draft — not `null`. `null` against a non-null
+    // endpoint config is delete intent and
+    // `buildPlannedDispatches` would plan a `MANAGER_DB`-only removal.
     const applied = "<serialised:data-store>";
     const node = buildNode({
       externalServices: [
@@ -620,8 +629,42 @@ describe("buildDraftSubmission", () => {
       appliedExternalDrafts: { "data-store": applied },
       serialise: stubSerialise,
     });
-    expect(externalServices[0]?.draft).toBeNull();
+    expect(externalServices[0]?.draft).toBe(applied);
     expect(externalServices[0]?.status).toBe("ENABLED");
+
+    // Regression: against the page-load snapshot recording the same
+    // applied baseline, the post-save external reads as steady — not
+    // as a delete-intent dispatch waiting for the next Apply. Use a
+    // valid TOML scalar so `diffServiceConfig` round-trips through
+    // `fromToml`.
+    const baselineToml = 'ingest_ip = "10.0.0.1"\n';
+    const { externalServices: externalServicesToml } = buildDraftSubmission({
+      values: {
+        membership: membershipFor({
+          "data-store": { enabled: true, configMode: "configure-here" },
+        }),
+        dataStore: {},
+      },
+      dirtyFields: {
+        dataStore: { ingestIp: true } as unknown,
+      },
+      mode: "edit",
+      node,
+      sensorPool: [],
+      serialise: (_kind, _values, _pool) => baselineToml,
+    });
+    const { externalServicePendingState } = await import(
+      "@/lib/node/pending-state"
+    );
+    expect(
+      externalServicePendingState(
+        {
+          kind: "DATA_STORE",
+          draft: externalServicesToml[0]?.draft ?? null,
+        },
+        { DATA_STORE: baselineToml },
+      ),
+    ).toBe("not-pending");
   });
 
   it("seeds a pending Configure-Here agent and preserves its draft when untouched", () => {
