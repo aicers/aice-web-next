@@ -387,33 +387,14 @@ function mergeProfile(
  * `(kind, key)` also exists in fresh (concurrent same-key add). The
  * user's intent is the only signal for the editable fields, so we
  * forward their full row in that fallback case.
- */
-/**
- * Normalize a user-proposed agent draft against the freshly-read
- * applied baseline. When the user's draft string equals the canonical
- * applied config byte-for-byte, the proposed change is a no-op for that
- * agent — collapse it to `null` so the manager does not persist a
- * phantom pending draft and `diffChangedServices` does not emit a
- * spurious `service.draft_save` audit. Defense in depth alongside the
- * client-side `buildDraftSubmission` baseline check: any caller (not
- * just our dialog) that posts a draft equal to the applied config gets
- * the same no-op semantics here.
  *
- * Only collapses to `null` when the fresh state has no pending draft
- * (`fresh.draft === null`); when a pending draft exists the user-
- * proposed value is forwarded unchanged, leaving the existing
- * draft-vs-draft comparison to do its job.
+ * The user's draft is forwarded byte-for-byte; we never collapse
+ * `userDraft === fresh.config` to `null`. Under the #551 comparison
+ * rule that wire shape is delete intent (manager would `MANAGER_DB`-
+ * remove the agent on the next Apply), so a user who reset their
+ * draft to the applied baseline must persist `draft = baseline`
+ * (steady state), not `draft = null` (delete intent).
  */
-function normalizeAgentDraftAgainstFresh(
-  userDraft: string | null,
-  fresh: AgentInput,
-): string | null {
-  if (userDraft === null) return null;
-  if (fresh.draft !== null) return userDraft;
-  if (fresh.config === null) return userDraft;
-  return userDraft === fresh.config ? null : userDraft;
-}
-
 function mergeAgentEntry(
   user: AgentDraftInput,
   prior: AgentInput | undefined,
@@ -424,19 +405,16 @@ function mergeAgentEntry(
       kind: fresh.kind,
       key: fresh.key,
       status: user.status,
-      draft: normalizeAgentDraftAgainstFresh(user.draft ?? null, fresh),
+      draft: user.draft ?? null,
     };
   }
   const statusTouched = user.status !== prior.status;
   const draftTouched = (user.draft ?? null) !== (prior.draft ?? null);
-  const mergedDraft = draftTouched
-    ? normalizeAgentDraftAgainstFresh(user.draft ?? null, fresh)
-    : (fresh.draft ?? null);
   return {
     kind: fresh.kind,
     key: fresh.key,
     status: statusTouched ? user.status : fresh.status,
-    draft: mergedDraft,
+    draft: draftTouched ? (user.draft ?? null) : (fresh.draft ?? null),
   };
 }
 
