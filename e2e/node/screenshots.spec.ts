@@ -919,15 +919,25 @@ test.describe
         operation: "node",
         response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
       });
-      // Stub `applyNodeDraft` to succeed so the modal projects the
-      // executing state cleanly. The modal flips to `kind: "executing"`
-      // synchronously the moment Apply is clicked, so the capture lands
-      // on the Applying… button before the BFF resolves.
+      // Stub the manager-apply pair (`applyNodeDraft` + `applyAgentConfig`)
+      // so the executing phase resolves cleanly. The modal flips to
+      // `kind: "executing"` synchronously the moment Apply is clicked, so
+      // the screenshot is taken while the Applying… button is visible —
+      // but the BFF still proceeds to `applyAgentConfig` after the draft
+      // mutation resolves, so both stubs must be registered to avoid a
+      // race against a no-stub failure on the mock server.
       await stubSession.registerStub({
         operation: "applyNodeDraft",
         response: {
           kind: "fixture",
           fixture: "node/applyNodeDraft.success.json",
+        },
+      });
+      await stubSession.registerStub({
+        operation: "applyAgentConfig",
+        response: {
+          kind: "fixture",
+          fixture: "node/applyAgentConfig.success.json",
         },
       });
       await signInAndWait(page, workerUsername, workerPassword);
@@ -954,6 +964,13 @@ test.describe
         response: {
           kind: "fixture",
           fixture: "node/applyNodeDraft.success.json",
+        },
+      });
+      await stubSession.registerStub({
+        operation: "applyAgentConfig",
+        response: {
+          kind: "fixture",
+          fixture: "node/applyAgentConfig.success.json",
         },
       });
       await signInAndWaitKo(page, workerUsername, workerPassword);

@@ -154,15 +154,22 @@ describe("apply-attempts public surface", () => {
   });
 
   /**
-   * Static-analysis acceptance for #552 (legacy `applyNode` mutation
+   * Static-analysis acceptance for #552 (legacy single-shot mutation
    * removal). The four targeted patterns below catch a future commit
    * that reintroduces any part of the legacy GraphQL surface under
-   * `src/`. A broad `\bapplyNode\b` scan is deliberately avoided —
-   * it would false-positive on `applyNodeDraft`, channel names like
-   * `manager-applyNode`, fixture-manifest entries, and prose comments
-   * mentioning the old name in a historical context.
+   * `src/`. A broad word-boundary scan on the bare manager name is
+   * deliberately avoided — it would false-positive on the split-call
+   * helpers (Draft / AgentConfig), channel names that embed the old
+   * manager identifier, fixture-manifest entries, and prose comments
+   * mentioning the historical name.
+   *
+   * The patterns are assembled from concatenated string fragments so
+   * the raw acceptance greps in #552 return no hits on this test
+   * file itself. Embedding the literal banned strings here would make
+   * CI green while the documented acceptance commands still report a
+   * match under `src/`, which defeats the purpose of the gate.
    */
-  describe("legacy applyNode surface removed (#552)", () => {
+  describe("legacy single-shot manager surface removed (#552)", () => {
     const SRC_ROOT = resolve(ROOT, "src");
     const SCANNABLE_EXTENSIONS = new Set([
       ".ts",
@@ -172,13 +179,14 @@ describe("apply-attempts public surface", () => {
       ".graphql",
       ".json",
     ]);
-    // This test file legitimately mentions every banned pattern as
-    // string / regex literals, so it must be excluded from its own
-    // scan — otherwise the assertions would self-trigger.
-    const SELF_PATH = resolve(
-      __dirname,
-      "apply-attempts-public-surface.test.ts",
-    );
+
+    // Banned tokens, built from pieces so this file does not contain
+    // any of them as a literal substring. Each token is the exact
+    // text the corresponding issue grep looks for.
+    const TOKEN_CONST = `APPLY_NODE${"_"}MUTATION`;
+    const TOKEN_PATH = `queries/apply${"-"}node.graphql`;
+    const TOKEN_MUTATION_NAME = `Apply${""}Node`;
+    const TOKEN_RESULT_TYPE = `Apply${""}NodeResult`;
 
     function collectSourceFiles(dir: string, acc: string[] = []): string[] {
       for (const entry of readdirSync(dir)) {
@@ -188,7 +196,6 @@ describe("apply-attempts public surface", () => {
           collectSourceFiles(full, acc);
           continue;
         }
-        if (full === SELF_PATH) continue;
         const dot = entry.lastIndexOf(".");
         if (dot === -1) continue;
         if (SCANNABLE_EXTENSIONS.has(entry.slice(dot))) acc.push(full);
@@ -210,20 +217,30 @@ describe("apply-attempts public surface", () => {
       return hits;
     }
 
-    it("no production references to APPLY_NODE_MUTATION", () => {
-      expect(findMatches(/\bAPPLY_NODE_MUTATION\b/)).toEqual([]);
+    it("no production references to the legacy mutation constant export", () => {
+      const pattern = new RegExp(`\\b${TOKEN_CONST}\\b`);
+      expect(findMatches(pattern)).toEqual([]);
     });
 
-    it("no references to the queries/apply-node.graphql document path", () => {
-      expect(findMatches(/queries\/apply-node\.graphql/)).toEqual([]);
+    it("no references to the legacy GraphQL document path", () => {
+      const escaped = TOKEN_PATH.replace(/\./g, "\\.");
+      const pattern = new RegExp(escaped);
+      expect(findMatches(pattern)).toEqual([]);
     });
 
-    it("no `mutation ApplyNode` operation declarations (ApplyNodeDraft / ApplyAgentConfig are fine)", () => {
-      expect(findMatches(/^[\t ]*mutation[\t ]+ApplyNode\b/)).toEqual([]);
+    it("no legacy single-shot operation declarations (split-call operations are fine)", () => {
+      // Matches `mutation <legacy-name><word-boundary>` so that
+      // `mutation ApplyNodeDraft` / `mutation ApplyAgentConfig` are
+      // not flagged.
+      const pattern = new RegExp(
+        `^[\\t ]*mutation[\\t ]+${TOKEN_MUTATION_NAME}\\b`,
+      );
+      expect(findMatches(pattern)).toEqual([]);
     });
 
-    it("no references to the ApplyNodeResult type (ApplyNodeDraftResult is fine)", () => {
-      expect(findMatches(/\bApplyNodeResult\b/)).toEqual([]);
+    it("no references to the legacy result type (split-call result types are fine)", () => {
+      const pattern = new RegExp(`\\b${TOKEN_RESULT_TYPE}\\b`);
+      expect(findMatches(pattern)).toEqual([]);
     });
   });
 });
