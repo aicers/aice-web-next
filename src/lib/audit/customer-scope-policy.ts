@@ -111,6 +111,11 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   "triage.policy.create": "customer-scoped",
   "triage.policy.update": "customer-scoped",
   "triage.policy.delete": "customer-scoped",
+  // Triage Story curated-save (#490). The `event_group` row lives in
+  // the per-customer tenant DB and the saved Story is intrinsically
+  // scoped to one customer; the action's input carries `customerId`
+  // explicitly and the emitter populates it.
+  "triage.story.create": "customer-scoped",
   // Triage exclusion CRUD (#457). Global-scope rows live in
   // `auth_db.global_triage_exclusion` and apply to every active
   // customer; customer-scope rows live in the tenant DB and apply to

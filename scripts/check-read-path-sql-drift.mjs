@@ -41,6 +41,10 @@
 // patterns:
 //
 //   * The shared module itself — the SQL legitimately lives here.
+//   * Sibling shared SQL modules under `src/lib/triage/*/read-path-sql.mjs`
+//     (e.g. the Stories tab module from #490) follow the same
+//     co-location pattern — the SQL legitimately lives there and is
+//     imported by the production caller, not inlined into it.
 //   * Tests under `src/__tests__/` and `src/__integration__/` —
 //     fixture SQL doesn't compete with production drift.
 //   * Migration files under `migrations/` — `cume_dist() OVER (PARTITION BY`
@@ -102,6 +106,8 @@ const SOURCE_EXTS = new Set([
 const EXEMPT_PATHS = [
   "src/lib/triage/baseline/read-path-sql.mjs",
   "src/lib/triage/baseline/read-path-sql.d.ts",
+  "src/lib/triage/story/read-path-sql.mjs",
+  "src/lib/triage/story/read-path-sql.d.ts",
   "src/__tests__",
   "src/__integration__",
   "scripts/check-read-path-sql-drift.mjs",

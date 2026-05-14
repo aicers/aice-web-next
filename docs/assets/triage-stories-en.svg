@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Stories tab in the Triage menu (wireframe)</title>
+  <desc id="desc">Wireframe of the Stories tab in Baseline mode. The tab strip shows Asset list, Stories, and Pivot peer views; the Stories pane shows a list of story cards with title, rule badge, score, member count, time window, top-3 preview, and Open / Send-to-aimer-web actions. The Send-to-aimer-web button is rendered disabled in this issue and will be wired by #493.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 16px; fill: #18181b; font-weight: 700; }
+    .text-section { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-card-title { font-size: 13px; fill: #18181b; font-weight: 700; }
+    .text-meta { font-size: 11px; fill: #52525b; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .text-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #18181b; }
+    .tab-active { fill: #18181b; }
+    .tab-inactive { fill: #71717a; }
+    .tab-underline { stroke: #18181b; stroke-width: 2; }
+    .badge { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 3; ry: 3; }
+    .badge-text { fill: #18181b; font-size: 10px; font-weight: 600; }
+    .btn-primary { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-primary-text { fill: #18181b; font-size: 11px; font-weight: 600; }
+    .btn-disabled { fill: #fafafa; stroke: #e5e7eb; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-disabled-text { fill: #a1a1aa; font-size: 11px; font-weight: 600; }
+    .row-divider { stroke: #f4f4f5; stroke-width: 1; }
+  </style>
+
+  <rect class="bg" width="720" height="460"/>
+
+  <!-- Tab strip -->
+  <text x="24" y="32" class="tab-inactive" font-size="13">Asset list</text>
+  <text x="110" y="32" class="tab-active" font-size="13" font-weight="700">Stories</text>
+  <line x1="100" y1="42" x2="160" y2="42" class="tab-underline"/>
+  <text x="180" y="32" class="tab-inactive" font-size="13">Pivot</text>
+  <line x1="24" y1="48" x2="696" y2="48" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- Header -->
+  <text x="24" y="76" class="text-title">Stories</text>
+  <text x="560" y="76" class="text-meta">Sort: Most recent ▾</text>
+
+  <!-- Story card 1 (auto-correlated) -->
+  <rect class="panel" x="24" y="92" width="672" height="148" rx="6" ry="6"/>
+  <text x="40" y="116" class="text-card-title">192.168.1.20 · 12 min · COMMAND_AND_CONTROL, EXFILTRATION, IMPACT</text>
+  <rect class="badge" x="500" y="102" width="32" height="18"/>
+  <text x="508" y="115" class="badge-text">R1</text>
+  <text x="544" y="116" class="text-meta">Score 4.25</text>
+  <text x="620" y="116" class="text-meta">12 events</text>
+  <text x="40" y="136" class="text-muted">2026-05-09 12:00 ~ 12:12</text>
+  <text x="40" y="158" class="text-section">Top events</text>
+  <line x1="40" y1="166" x2="680" y2="166" class="row-divider"/>
+  <text x="40" y="184" class="text-mono">2026-05-09 12:11:42</text>
+  <text x="200" y="184" class="text-meta">HttpThreat</text>
+  <text x="320" y="184" class="text-muted">IMPACT</text>
+  <line x1="40" y1="192" x2="680" y2="192" class="row-divider"/>
+  <text x="40" y="208" class="text-mono">2026-05-09 12:09:18</text>
+  <text x="200" y="208" class="text-meta">DnsCovertChannel</text>
+  <text x="320" y="208" class="text-muted">EXFILTRATION</text>
+  <rect class="btn-primary" x="540" y="200" width="56" height="24"/>
+  <text x="552" y="216" class="btn-primary-text">Open</text>
+  <rect class="btn-disabled" x="604" y="200" width="76" height="24"/>
+  <text x="612" y="216" class="btn-disabled-text">Send to aimer-web</text>
+
+  <!-- Story card 2 (analyst-curated, sent indicator) -->
+  <rect class="panel" x="24" y="252" width="672" height="148" rx="6" ry="6"/>
+  <text x="40" y="276" class="text-card-title">10.0.0.5 · 5 min · IMPACT, EXFILTRATION</text>
+  <rect class="badge" x="480" y="262" width="74" height="18"/>
+  <text x="488" y="275" class="badge-text">analyst-curated</text>
+  <text x="566" y="276" class="text-meta">Score 3.00</text>
+  <text x="640" y="276" class="text-meta">3 events</text>
+  <text x="40" y="296" class="text-muted">2026-05-09 13:20 ~ 13:25 · Sent to aimer-web · 7 min ago</text>
+  <text x="40" y="318" class="text-section">Top events</text>
+  <line x1="40" y1="326" x2="680" y2="326" class="row-divider"/>
+  <text x="40" y="344" class="text-mono">2026-05-09 13:24:00</text>
+  <text x="200" y="344" class="text-meta">HttpThreat</text>
+  <text x="320" y="344" class="text-muted">IMPACT</text>
+  <line x1="40" y1="352" x2="680" y2="352" class="row-divider"/>
+  <text x="40" y="368" class="text-mono">2026-05-09 13:22:15</text>
+  <text x="200" y="368" class="text-meta">DnsCovertChannel</text>
+  <text x="320" y="368" class="text-muted">EXFILTRATION</text>
+  <rect class="btn-primary" x="540" y="360" width="56" height="24"/>
+  <text x="552" y="376" class="btn-primary-text">Open</text>
+  <rect class="btn-disabled" x="604" y="360" width="76" height="24"/>
+  <text x="612" y="376" class="btn-disabled-text">Send to aimer-web</text>
+
+  <!-- Footer hint -->
+  <text x="24" y="436" class="text-muted">The Send-to-aimer-web button is the inert shape this issue ships; the click handler lands with #493.</text>
+</svg>

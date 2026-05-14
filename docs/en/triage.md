@@ -476,6 +476,159 @@ renders the empty shell with one of these banners:
   administrator."** — the caller holds `triage:read` but no
   customers are assigned to their account.
 
+## Stories tab
+
+Inside Baseline mode the Triage page exposes three peer views
+through a tab strip above the workspace: **Asset list** (the
+default landing tab described above), **Stories**, and **Pivot**.
+Stories surfaces clusters that the cadence-side correlator (see
+the Story RFC and `event_group` schema) has already grouped, plus
+clusters the analyst has saved by hand from a pivot focus.
+
+The Stories tab is hidden in "With my policies" mode. Story v1
+runs on the baseline corpus only; the policy corpus has no
+`event_group` rows, so a tab there would always be empty.
+
+![Stories tab (wireframe)](../assets/triage-stories-en.svg)
+
+> **Note:** The figure above is a wireframe stand-in. Live PNG
+> captures land once a staging tenant with a representative Story
+> fixture is available; the screenshot debt is folded into the
+> manual-screenshot rollout tracked under [issue
+> #455](https://github.com/aicers/aice-web-next/issues/455).
+
+### Stories list
+
+The list reverse-chronologically renders every `event_group` row
+whose time window **overlaps** the menu's selected period — a
+Story that started before `period.start` but extends into it
+appears here, not only Stories that started inside the period.
+The default sort is `time_window_end DESC`; a small toggle in the
+header swaps to `score DESC`.
+
+The list fans out one bounded query per tenant in the caller's
+effective customer scope, so a single-customer session keeps the
+existing fast path and a multi-customer session issues one query
+per tenant. Results are merged on
+`(time_window_end DESC, score DESC, customerId, storyId)` so the
+secondary sort key is stable across both orderings. When any
+per-tenant slice hits the per-page cap a small muted hint above
+the cards reads "Some Stories were not loaded — narrow the period
+to see the rest."
+
+A **Show only unsent** checkbox filters out Stories whose
+`last_sent_at` column has been written. The column is populated
+by a follow-up issue (#493); until that ships every Story is
+"unsent" and the filter is effectively a no-op. The toggle is
+included now so the UI surface does not need a second pass once
+#493 lands.
+
+### Story card
+
+Each Story renders as one card with:
+
+- **Title** — auto-generated from the stored `summary_payload`:
+  `<primary asset> · <duration> · <top-3 categories>`. For an
+  analyst-curated Story that supplied a title at save time the
+  card renders the analyst's title verbatim instead.
+- **Rule badge** — `R1` / `R3` for auto-correlated Stories,
+  `analyst-curated` for the curated kind.
+- **Score** — `event_group.score`, two decimal places.
+- **Member count** — the stored
+  `summary_payload.memberCount` (NOT the runtime-joined count);
+  the value stays stable as members age out of the underlying
+  corpus.
+- **Time window** — start and end timestamps.
+- **Top-3 event preview** — three rows from the
+  `event_group_member` ⨝ `baseline_triaged_event` join sorted by
+  `raw_score DESC, event_time DESC`. Aged-out members are
+  silently absent. The list query computes the whole page's
+  previews in a single CTE rather than issuing N small joins.
+- **β submission indicator** — when `last_sent_at` is not null,
+  a small muted line `"Sent to aimer-web · <time-ago>"` plus an
+  optional `<send_count>×` suffix. Re-clicking the send button
+  is allowed; the indicator is awareness-only.
+
+The card carries a stable HTML identity attribute
+`data-story-id="<customerId>/<storyId>"` so two tenants hosting
+the same per-DB `event_group.id` produce two distinguishable
+entries.
+
+### Open: Story detail panel
+
+Clicking **Open** drills into a detail panel whose header
+mirrors the Story identity the analyst clicked: the same auto-
+generated (or `manualTitle`) title, the rule badge, the score,
+the stored member count from `summary_payload.memberCount`, the
+customer, and the Story time window. The body renders the full
+member table. The same row source is used as the asset detail
+(the `event_group_member` join), with read-time `baseline_score`
+computed via `cume_dist()` over the menu's `(kind,
+baseline_version)` cohort so a row's score matches what it would
+show in the asset list. The optional Source / Destination columns
+reuse the same address rendering as the asset detail.
+
+When `summary_payload.memberCount` exceeds the runtime joined
+count, the detail panel renders a one-line muted notice:
+`"<shown> of <stored> events shown — <aged> aged past corpus A
+retention."` The notice is purely informational; the stored
+member count remains the authoritative shape of the Story.
+
+### Save as Story
+
+When the operator has pivoted away from the asset root, a small
+**Save as Story** button appears next to the pivot breadcrumb.
+Clicking it opens a modal pre-seeded with the events visible at
+the current pivot focus. The analyst can:
+
+- Toggle individual events off before saving.
+- Optionally provide a title (otherwise the auto-generated
+  title is used).
+- Confirm to create an `event_group` row of `kind =
+  'analyst_curated'`.
+
+The button is **disabled** whenever the pivot focus spans events
+from more than one customer; a curated Story is single-tenant by
+contract. Narrowing the focus to one customer re-enables it.
+
+Server-side validation enforces:
+
+- The caller's session has the chosen `customerId` in scope.
+- Every selected event key resolves in that customer's
+  `baseline_triaged_event`.
+- The chosen primary asset matches at least one selected
+  member's `orig_addr`.
+- The member count is between 1 and 50.
+
+On success the new Story is recorded in `event_group`, a
+corresponding member set in `event_group_member`, and an audit
+event `triage.story.create` (target type `triage_story`) is
+written with the composite `(customerId, storyId)` identity, the
+saved member count, and the analyst-provided title (or `null`
+when blank). The UI redirects to the Stories tab and focuses the
+new row.
+
+### URL hash routing
+
+The Stories tab participates in the same URL-hash routing as
+the rest of the Triage menu. The active tab is encoded under
+`triage.tab=stories` and the focused Story under
+`triage.story=<customerId>/<storyId>`. Existing
+`triage.pivot.*` and `triage.strictness.*` keys (the latter
+landing alongside #471) are preserved across writes.
+
+A `triage.story=<id>` segment that omits the `customerId/`
+prefix is treated as stale because `event_group.id` is per
+tenant: the UI falls back to the Stories list root with a
+"Stale Story link — open from the list" toast.
+
+### Permission
+
+The Stories tab requires `triage:read`, the same gate as the
+rest of the Triage menu. The Save-as-Story action requires no
+additional permission because the saved row is scoped to a
+single tenant that the caller can already read.
+
 ## Related events panel and pivot
 
 When an asset is selected, the page also renders a **Related events**

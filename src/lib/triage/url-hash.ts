@@ -12,10 +12,19 @@
  *     &triage.pivot.step=<dimension>:<encoded-value>
  *     &triage.pivot.step=<dimension>:<encoded-value>
  *     &triage.pivot.mode=tier2
+ *     &triage.tab=stories
+ *     &triage.story=<customerId>/<storyId>
  *
  * Steps appear in trail order. The value portion of a step is
  * percent-encoded so colons / ampersands inside a key (e.g. an IPv6
  * literal) don't collide with the separators.
+ *
+ * Stories tab state (#490) lives in a sibling namespace
+ * (`triage.tab=stories` + optional `triage.story=customerId/storyId`)
+ * so the existing `triage.pivot.*` parsing path is unaffected. A
+ * `triage.story=<id>` value missing the `customerId/` prefix is
+ * treated as stale: the caller renders the Stories list root and
+ * surfaces a "Stale Story link — open from the list" toast.
  *
  * Restoration is client-only (Server Components cannot read the
  * URL hash) — see `baseline-content.tsx` for the wire-up.
@@ -70,6 +79,51 @@ const HASH_PREFIX = "triage.pivot.";
 const ASSET_KEY = "triage.pivot.asset";
 const STEP_KEY = "triage.pivot.step";
 const MODE_KEY = "triage.pivot.mode";
+
+const TAB_KEY = "triage.tab";
+const STORY_KEY = "triage.story";
+
+/**
+ * Discriminator for the active Triage subview inside Baseline mode.
+ * The default value (`asset-list`) is implicit — absence in the hash
+ * means "asset list", same as the Phase 1.A landing tab.
+ */
+export type TriageTabId = "asset-list" | "stories" | "pivot";
+
+/**
+ * Composite Story focus encoded in the hash (#490). `customerId` is
+ * mandatory in v1 because `event_group.id` is `BIGSERIAL` per tenant
+ * DB. A bare `storyId` (no `customerId/`) parses with
+ * `customerId = null` so the consumer can render the stale-hash
+ * fallback toast.
+ */
+export interface TriageStoryHashFocus {
+  customerId: number | null;
+  storyId: string;
+}
+
+export interface TriageStoriesHashState {
+  /** `null` when the hash has no `triage.tab=...` key (caller defaults). */
+  tab: TriageTabId | null;
+  /** `null` when no `triage.story=...` key is present. */
+  story: TriageStoryHashFocus | null;
+  /**
+   * `true` when a `triage.story=...` value was present but rejected
+   * (legacy bare-id, empty halves, non-numeric customerId). The
+   * caller surfaces the stale-hash toast in that case.
+   */
+  storyStaleHash: boolean;
+}
+
+const KNOWN_TABS: ReadonlySet<TriageTabId> = new Set([
+  "asset-list",
+  "stories",
+  "pivot",
+]);
+
+function isKnownTab(value: string): value is TriageTabId {
+  return KNOWN_TABS.has(value as TriageTabId);
+}
 
 const KNOWN_DIMENSIONS: ReadonlySet<PivotDimensionId> = new Set([
   "externalIp",
@@ -296,6 +350,123 @@ export function pivotHashFromTrail(
     }
   }
   return { asset, steps, mode, rejectedStepCount: 0 };
+}
+
+/**
+ * Parse the Stories-tab segments out of a hash string. Foreign keys
+ * (`triage.pivot.*`, `triage.strictness.*`) are ignored — the caller
+ * runs {@link parseTriagePivotHash} separately when it needs the
+ * pivot state too.
+ *
+ * A `triage.story=<value>` segment where `<value>` lacks the
+ * mandatory `customerId/` prefix is rejected (`storyStaleHash = true`)
+ * because two tenants can host the same `event_group.id`; falling
+ * back to "open whichever tenant has that id" would mis-resolve.
+ */
+export function parseTriageStoriesHash(hash: string): TriageStoriesHashState {
+  const empty: TriageStoriesHashState = {
+    tab: null,
+    story: null,
+    storyStaleHash: false,
+  };
+  if (!hash) return empty;
+  const trimmed = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (trimmed.length === 0) return empty;
+
+  let tab: TriageTabId | null = null;
+  let story: TriageStoryHashFocus | null = null;
+  let storyStaleHash = false;
+
+  for (const segment of trimmed.split("&")) {
+    if (segment.length === 0) continue;
+    const eq = segment.indexOf("=");
+    if (eq <= 0) continue;
+    const key = segment.slice(0, eq);
+    const rawValue = segment.slice(eq + 1);
+    let value: string;
+    try {
+      value = decodeURIComponent(rawValue);
+    } catch {
+      if (key === STORY_KEY) storyStaleHash = true;
+      continue;
+    }
+    if (key === TAB_KEY) {
+      if (isKnownTab(value)) tab = value;
+    } else if (key === STORY_KEY) {
+      const parsed = parseStoryFocus(value);
+      if (parsed === null) {
+        storyStaleHash = true;
+      } else if (parsed.customerId === null) {
+        // Bare `storyId` from a legacy / mis-typed URL — the composite
+        // is required for unambiguous tenant resolution.
+        storyStaleHash = true;
+      } else {
+        story = parsed;
+      }
+    }
+  }
+
+  return { tab, story, storyStaleHash };
+}
+
+function parseStoryFocus(value: string): TriageStoryHashFocus | null {
+  if (value.length === 0) return null;
+  const slash = value.indexOf("/");
+  if (slash < 0) {
+    return { customerId: null, storyId: value };
+  }
+  const customerStr = value.slice(0, slash);
+  const storyId = value.slice(slash + 1);
+  if (customerStr.length === 0 || storyId.length === 0) return null;
+  if (!/^\d+$/.test(customerStr)) return null;
+  if (!/^\d+$/.test(storyId)) return null;
+  const customerId = Number.parseInt(customerStr, 10);
+  if (!Number.isFinite(customerId) || customerId < 0) return null;
+  return { customerId, storyId };
+}
+
+/**
+ * Serialize the Stories tab segments back into a hash fragment
+ * (without the leading `#`). Stable ordering: `triage.tab` first,
+ * then optional `triage.story`. Empty / null fields are omitted.
+ */
+export function serializeTriageStoriesHash(
+  state: TriageStoriesHashState,
+): string {
+  const entries: string[] = [];
+  if (state.tab !== null) {
+    entries.push(`${TAB_KEY}=${encodeURIComponent(state.tab)}`);
+  }
+  if (state.story && state.story.customerId !== null) {
+    const value = `${state.story.customerId}/${state.story.storyId}`;
+    entries.push(`${STORY_KEY}=${encodeURIComponent(value)}`);
+  }
+  return entries.join("&");
+}
+
+/**
+ * Update only the `triage.tab` / `triage.story` keys inside a hash
+ * string, preserving every other segment (including the entire
+ * `triage.pivot.*` block and any future Triage namespace).
+ */
+export function replaceTriageStoriesHash(
+  existingHash: string,
+  state: TriageStoriesHashState,
+): string {
+  const trimmed = existingHash.startsWith("#")
+    ? existingHash.slice(1)
+    : existingHash;
+  const foreign: string[] = [];
+  for (const segment of trimmed.split("&")) {
+    if (segment.length === 0) continue;
+    const eq = segment.indexOf("=");
+    const key = eq > 0 ? segment.slice(0, eq) : segment;
+    if (key === TAB_KEY || key === STORY_KEY) continue;
+    foreign.push(segment);
+  }
+  const ours = serializeTriageStoriesHash(state);
+  const merged = [...foreign, ours].filter((s) => s.length > 0).join("&");
+  return merged;
 }
 
 /**

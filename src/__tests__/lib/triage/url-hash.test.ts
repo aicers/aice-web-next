@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseTriagePivotHash,
+  parseTriageStoriesHash,
   pivotHashFromTrail,
   replaceTriagePivotHash,
+  replaceTriageStoriesHash,
   serializeTriagePivotHash,
+  serializeTriageStoriesHash,
 } from "@/lib/triage/url-hash";
 
 describe("parseTriagePivotHash", () => {
@@ -297,5 +300,119 @@ describe("replaceTriagePivotHash", () => {
       { asset: null, steps: [], mode: null, rejectedStepCount: 0 },
     );
     expect(next).toBe("triage.strictness.level=high");
+  });
+});
+
+/**
+ * #490 acceptance: "URL hash carries `(customerId, storyId)` in both
+ * cases; reloading the page restores the focused Story by composite
+ * key (single-id legacy hash falls back to the list root with the
+ * documented toast)."
+ */
+describe("parseTriageStoriesHash", () => {
+  it("parses `triage.tab=stories` and a composite story focus", () => {
+    expect(
+      parseTriageStoriesHash("#triage.tab=stories&triage.story=42%2F7"),
+    ).toEqual({
+      tab: "stories",
+      story: { customerId: 42, storyId: "7" },
+      storyStaleHash: false,
+    });
+  });
+
+  it("flags a bare storyId (legacy single-id form) as stale", () => {
+    // `event_group.id` is BIGSERIAL per tenant DB — without
+    // `customerId/` the focus cannot resolve unambiguously.
+    const parsed = parseTriageStoriesHash("#triage.story=7");
+    expect(parsed.story).toBeNull();
+    expect(parsed.storyStaleHash).toBe(true);
+  });
+
+  it("flags non-numeric customerId as stale", () => {
+    expect(parseTriageStoriesHash("#triage.story=abc%2F7").storyStaleHash).toBe(
+      true,
+    );
+  });
+
+  it("flags non-numeric storyId as stale", () => {
+    expect(
+      parseTriageStoriesHash("#triage.story=42%2Fabc").storyStaleHash,
+    ).toBe(true);
+  });
+
+  it("ignores foreign keys (triage.pivot.*, triage.strictness.*)", () => {
+    expect(
+      parseTriageStoriesHash(
+        "#triage.pivot.asset=1%2F10.0.0.1&triage.strictness.level=high",
+      ),
+    ).toEqual({ tab: null, story: null, storyStaleHash: false });
+  });
+
+  it("rejects unknown tab ids without surfacing the stale-hash flag", () => {
+    expect(parseTriageStoriesHash("#triage.tab=ghost")).toEqual({
+      tab: null,
+      story: null,
+      storyStaleHash: false,
+    });
+  });
+});
+
+describe("serializeTriageStoriesHash", () => {
+  it("emits both keys when both are set", () => {
+    expect(
+      serializeTriageStoriesHash({
+        tab: "stories",
+        story: { customerId: 42, storyId: "7" },
+        storyStaleHash: false,
+      }),
+    ).toBe("triage.tab=stories&triage.story=42%2F7");
+  });
+
+  it("omits the story key when the focus is null", () => {
+    expect(
+      serializeTriageStoriesHash({
+        tab: "stories",
+        story: null,
+        storyStaleHash: false,
+      }),
+    ).toBe("triage.tab=stories");
+  });
+
+  it("omits the story key when customerId is null (never serializes legacy bare-id)", () => {
+    expect(
+      serializeTriageStoriesHash({
+        tab: "stories",
+        story: { customerId: null, storyId: "7" },
+        storyStaleHash: false,
+      }),
+    ).toBe("triage.tab=stories");
+  });
+
+  it("returns an empty string when both fields are absent", () => {
+    expect(
+      serializeTriageStoriesHash({
+        tab: null,
+        story: null,
+        storyStaleHash: false,
+      }),
+    ).toBe("");
+  });
+});
+
+describe("replaceTriageStoriesHash", () => {
+  it("preserves foreign keys (triage.pivot.*) while updating story keys", () => {
+    const next = replaceTriageStoriesHash(
+      "#triage.pivot.asset=1%2F10.0.0.1&triage.tab=pivot&triage.story=99%2F1",
+      {
+        tab: "stories",
+        story: { customerId: 42, storyId: "7" },
+        storyStaleHash: false,
+      },
+    );
+    expect(next).toContain("triage.pivot.asset=1%2F10.0.0.1");
+    expect(next).toContain("triage.tab=stories");
+    expect(next).toContain("triage.story=42%2F7");
+    expect(next).not.toContain("triage.tab=pivot");
+    expect(next).not.toContain("triage.story=99%2F1");
   });
 });

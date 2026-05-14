@@ -125,6 +125,84 @@ const LABELS: TriageBaselineLabels = {
   staleHashFallback: "Stale hash — showing asset root",
   sensorScopeForbiddenFallback:
     "Sensor no longer accessible — showing asset root",
+  tabStrip: {
+    legend: "Triage views",
+    assetList: "Asset list",
+    stories: "Stories",
+    pivot: "Pivot",
+  },
+  stories: {
+    heading: "Stories",
+    empty: "No stories",
+    truncatedTemplate: "Truncated",
+    emptyUnsentOnly: "No unsent",
+    showOnlyUnsentLabel: "Unsent only",
+    sortLabel: "Sort",
+    sortByTimeWindowEnd: "Recent",
+    sortByScore: "Score",
+    staleHashFallback: "Stale story",
+    card: {
+      ruleBadgeAuto: "auto",
+      ruleBadgeAnalyst: "analyst",
+      scoreLabel: "Score",
+      memberCountTemplate: "{count} events",
+      open: "Open",
+      sendToAimerWeb: "Send",
+      sendToAimerWebTooltip: "not yet",
+      sentIndicatorTemplate: "Sent {relative}",
+      sentMultiTemplate: "{count}×",
+      timeColumn: "Time",
+      kindColumn: "Kind",
+      categoryColumn: "Category",
+      topMembersHeading: "Top",
+      relative: {
+        justNow: "just now",
+        secondsTemplate: "{n}s ago",
+        minutesTemplate: "{n} min ago",
+        hoursTemplate: "{n} h ago",
+        daysTemplate: "{n} d ago",
+      },
+      duration: {
+        lessThanMinute: "< 1 min",
+        minutesTemplate: "{n} min",
+        hoursTemplate: "{n} h",
+        hoursMinutesTemplate: "{h} h {m} min",
+      },
+    },
+    detail: {
+      heading: "Detail",
+      emptySelection: "Pick",
+      emptyMembers: "Empty",
+      customerLabel: "Customer",
+      scoreLabel: "Score",
+      ruleLabel: "Rule",
+      danglingNoticeTemplate: "{shown}/{stored} (aged {aged})",
+      timeColumn: "Time",
+      kindColumn: "Kind",
+      categoryColumn: "Category",
+      scoreColumn: "Score",
+      loading: "Loading",
+      close: "Close",
+    },
+  },
+  saveAsStory: {
+    button: "Save as Story",
+    disabledMultiCustomer: "narrow first",
+    modalTitle: "Save",
+    titleLabel: "Title",
+    titlePlaceholder: "placeholder",
+    membersHeading: "Members",
+    confirm: "Confirm",
+    cancel: "Cancel",
+    successToast: "Saved",
+    errorOverCap: "over",
+    errorEmpty: "empty",
+    errorMemberNotFound: "missing",
+    errorAssetMismatch: "mismatch",
+    errorCustomerOutOfScope: "scope",
+    errorMultiCustomer: "multi",
+    errorGeneric: "generic",
+  },
 };
 
 const PERIOD = {
@@ -220,6 +298,7 @@ describe("TriageBaselineContent — multi-customer pivot focus", () => {
         resetSignal={0}
         period={PERIOD}
         scope="tier1"
+        mode="baseline"
         labels={LABELS}
       />,
     );
@@ -238,6 +317,11 @@ describe("TriageBaselineContent — multi-customer pivot focus", () => {
     // After selection, the detail header reflects Beta.
     expect(screen.getByText("Beta")).toBeTruthy();
 
+    // Switch to the Pivot tab — Round 4 split moved the pivot
+    // breadcrumb/panel off the Asset list tab; the pivot button is
+    // only rendered when the analyst is on the Pivot peer view.
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+
     // Pivot to host=shared.example — that value appears on both
     // Beta's focus event AND on the (non-focus) Acme event, so the
     // pivot panel renders an Acme row whose pivot button targets
@@ -252,5 +336,47 @@ describe("TriageBaselineContent — multi-customer pivot focus", () => {
     );
     expect(screen.getByText("Beta")).toBeTruthy();
     expect(screen.queryByText("Acme")).toBeNull();
+  });
+});
+
+describe("TriageBaselineContent — Asset list vs Pivot peer view isolation", () => {
+  it("clears the pivot-focus override from the detail panel when the user switches back to Asset list", () => {
+    // Round 5 finding: the Round 4 split hid the breadcrumb / related-
+    // events panel outside the Pivot tab, but the right-hand detail
+    // panel still preferred `pivotFocusAsset` regardless of tab. As a
+    // peer view, Asset list must reflect the selected asset row, not
+    // the now-hidden pivot focus.
+    render(
+      <TriageBaselineContent
+        result={makeMultiCustomerResult()}
+        resetSignal={0}
+        period={PERIOD}
+        scope="tier1"
+        mode="baseline"
+        labels={LABELS}
+      />,
+    );
+
+    // Select Beta and pivot on the shared host so a pivotFocusAsset is
+    // active.
+    const rows = screen.getAllByRole("button", { name: "row-10.0.0.1" });
+    fireEvent.click(rows[1]);
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:host: shared.example",
+      }),
+    );
+    // On the Pivot tab the detail header carries the pivot-focus title.
+    expect(screen.getByText("Pivot focus")).toBeTruthy();
+
+    // Switch back to Asset list. The detail panel must drop the
+    // pivot-focus override and reflect the selected asset row instead.
+    fireEvent.click(screen.getByTestId("triage-tab-asset-list"));
+    expect(screen.queryByText("Pivot focus")).toBeNull();
+    expect(screen.getByText("Asset detail")).toBeTruthy();
+    // The selected asset (Beta) still shows in the header — the trail
+    // is preserved across tab toggles, just not surfaced as a focus.
+    expect(screen.getByText("Beta")).toBeTruthy();
   });
 });

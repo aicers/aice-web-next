@@ -121,6 +121,11 @@ export default defineConfig({
             // recency contract. Uses `renderHook` so it must run
             // under jsdom.
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
+            // Issue #490: Stories tab list / sort / filter, the inert
+            // Send-to-aimer-web button shape, and the dangling-member
+            // detail-panel notice — real-DOM coverage for the v1 card
+            // and detail panel.
+            "src/__tests__/components/triage/story/stories-view.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -160,6 +165,7 @@ export default defineConfig({
             "src/__tests__/components/triage/triage-shell.test.tsx",
             "src/__tests__/components/triage/baseline-content.test.tsx",
             "src/__tests__/components/triage/related-events-panel.test.tsx",
+            "src/__tests__/components/triage/story/stories-view.test.tsx",
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
           ],
         },
