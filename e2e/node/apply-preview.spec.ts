@@ -83,6 +83,14 @@ function getDatabaseUrl(): string {
 const pool = new pg.Pool({ connectionString: getDatabaseUrl(), max: 2 });
 const NODE_ID = "11";
 const MULTI_SERVICE_NODE_ID = "41";
+// `old` is `JSON.stringify(canonicalGigantoConfig(...))` — the
+// production dispatcher canonicalises the live `config` payload to a
+// stable key order before sending it as the CAS `old`. `new` is the
+// `service.draft` payload verbatim; under #551's comparison-based
+// pending model the draft wire shape is the same TOML the edit-dialog's
+// `serialiseDataStore` produces (so `diffServiceConfig` can structurally
+// compare it against the page-load snapshot's TOML projection of the
+// upstream's structured `config`).
 const GIGANTO_UPDATE_VARIABLES = {
   old: JSON.stringify({
     ackTransmission: 4,
@@ -97,19 +105,18 @@ const GIGANTO_UPDATE_VARIABLES = {
     publishSrvAddr: "127.0.0.1:38371",
     retention: "168h",
   }),
-  new: JSON.stringify({
-    ackTransmission: 8,
-    dataDir: "/srv/giganto/data-next",
-    exportDir: "/srv/giganto/export-next",
-    graphqlSrvAddr: "127.0.0.1:9444",
-    ingestSrvAddr: "127.0.0.1:48370",
-    maxMbOfLevelBase: "1024",
-    maxOpenFiles: 8192,
-    maxSubcompactions: "4",
-    numOfThread: 16,
-    publishSrvAddr: "127.0.0.1:48371",
-    retention: "336h",
-  }),
+  new:
+    'ingest_srv_addr = "127.0.0.1:48370"\n' +
+    'publish_srv_addr = "127.0.0.1:48371"\n' +
+    'graphql_srv_addr = "127.0.0.1:9444"\n' +
+    'retention = "14d"\n' +
+    'data_dir = "/srv/giganto/data-next"\n' +
+    'export_dir = "/srv/giganto/export-next"\n' +
+    "max_open_files = 8192\n" +
+    "max_mb_of_level_base = 1024\n" +
+    "num_of_thread = 16\n" +
+    "max_subcompactions = 4\n" +
+    "ack_transmission = 8\n",
 } as const;
 const TIVAN_UPDATE_VARIABLES = {
   old: JSON.stringify({
@@ -118,12 +125,11 @@ const TIVAN_UPDATE_VARIABLES = {
     originMitre: null,
     translateMitre: "/srv/tivan/translate.json",
   }),
-  new: JSON.stringify({
-    graphqlSrvAddr: "127.0.0.1:48371",
-    translateMitre: "/srv/tivan/translate-next.json",
-    excelData: "/srv/tivan/excel.xlsx",
-    originMitre: "/srv/tivan/origin.json",
-  }),
+  new:
+    'graphql_srv_addr = "127.0.0.1:48371"\n' +
+    'translate_mitre = "/srv/tivan/translate-next.json"\n' +
+    'excel_data = "/srv/tivan/excel.xlsx"\n' +
+    'origin_mitre = "/srv/tivan/origin.json"\n',
 } as const;
 
 async function clearApplyAttempts(nodeId: string): Promise<void> {

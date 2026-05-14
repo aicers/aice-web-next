@@ -25,14 +25,14 @@
         "key": "beta-data-store",
         "kind": "DATA_STORE",
         "status": "ENABLED",
-        "draft": "{\"ackTransmission\":8,\"dataDir\":\"/srv/giganto/data-next\",\"exportDir\":\"/srv/giganto/export-next\",\"graphqlSrvAddr\":\"127.0.0.1:9444\",\"ingestSrvAddr\":\"127.0.0.1:48370\",\"maxMbOfLevelBase\":\"1024\",\"maxOpenFiles\":8192,\"maxSubcompactions\":\"4\",\"numOfThread\":16,\"publishSrvAddr\":\"127.0.0.1:48371\",\"retention\":\"336h\"}"
+        "draft": "ingest_srv_addr = \"127.0.0.1:48370\"\npublish_srv_addr = \"127.0.0.1:48371\"\ngraphql_srv_addr = \"127.0.0.1:9444\"\nretention = \"14d\"\ndata_dir = \"/srv/giganto/data-next\"\nexport_dir = \"/srv/giganto/export-next\"\nmax_open_files = 8192\nmax_mb_of_level_base = 1024\nnum_of_thread = 16\nmax_subcompactions = 4\nack_transmission = 8\n"
       },
       {
         "node": 41,
         "key": "beta-ti-container",
         "kind": "TI_CONTAINER",
         "status": "ENABLED",
-        "draft": "{\"graphqlSrvAddr\":\"127.0.0.1:48371\",\"translateMitre\":\"/srv/tivan/translate-next.json\",\"excelData\":\"/srv/tivan/excel.xlsx\",\"originMitre\":\"/srv/tivan/origin.json\"}"
+        "draft": "graphql_srv_addr = \"127.0.0.1:48371\"\ntranslate_mitre = \"/srv/tivan/translate-next.json\"\nexcel_data = \"/srv/tivan/excel.xlsx\"\norigin_mitre = \"/srv/tivan/origin.json\"\n"
       }
     ]
   }
