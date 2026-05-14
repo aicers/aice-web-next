@@ -248,6 +248,9 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         dimensions: pivotDimensionsMap((id) =>
           t(`pivotBreadcrumb.dimensions.${id}`),
         ),
+        storyOriginTemplate: t.raw(
+          "pivotBreadcrumb.storyOriginTemplate",
+        ) as string,
       },
       tier2Modal: {
         title: t("tier2.prefetchModal.title"),
@@ -363,6 +366,13 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           scoreColumn: t("stories.detail.scoreColumn"),
           loading: t("stories.detail.loading"),
           close: t("stories.detail.close"),
+          pivotActionsColumn: t("stories.detail.pivotActionsColumn"),
+          pivotActionTemplate: t.raw(
+            "stories.detail.pivotActionTemplate",
+          ) as string,
+          pivotDimensions: pivotDimensionsMap((id) =>
+            t(`pivotBreadcrumb.dimensions.${id}`),
+          ),
         },
       },
       saveAsStory: {

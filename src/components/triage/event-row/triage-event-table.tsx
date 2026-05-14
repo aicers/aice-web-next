@@ -99,6 +99,13 @@ export interface TriageEventTableLabels {
    * {@link origAddrColumn}.
    */
   respAddrColumn?: string;
+  /**
+   * Trailing actions column header. Presence enables the column —
+   * {@link TriageEventTableProps.renderRowActions} provides the cell
+   * contents per row. Story member rows (#553) use this slot to
+   * render Pivot-from-Story dimension buttons.
+   */
+  actionsColumn?: string;
 }
 
 /**
@@ -125,15 +132,29 @@ export interface TriageEventTableProps {
    * real marker once the slider ships).
    */
   renderProtectedByStoryMarker?: (props: { score: number }) => ReactNode;
+  /**
+   * Optional per-row trailing-cell renderer. Activated alongside
+   * {@link TriageEventTableLabels.actionsColumn} — both must be set
+   * for the column to surface. Story member rows (#553) use this to
+   * emit Pivot-from-Story dimension buttons; the asset surface leaves
+   * both undefined and the column collapses out.
+   */
+  renderRowActions?: (row: TriageEventRow) => ReactNode;
 }
 
 export function TriageEventTable({
   rows,
   labels,
   renderProtectedByStoryMarker,
+  renderRowActions,
 }: TriageEventTableProps) {
   const showOrig = labels.origAddrColumn !== undefined;
   const showResp = labels.respAddrColumn !== undefined;
+  // Actions column requires BOTH the header label and the renderer.
+  // Either side missing leaves the column collapsed so today's asset
+  // surface (which provides neither) keeps its existing layout.
+  const showActions =
+    labels.actionsColumn !== undefined && renderRowActions !== undefined;
   return (
     <table className="w-full text-sm">
       <thead className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -160,6 +181,11 @@ export function TriageEventTable({
           <th scope="col" className="py-2 text-right font-medium">
             {labels.scoreColumn}
           </th>
+          {showActions ? (
+            <th scope="col" className="py-2 pl-2 text-right font-medium">
+              {labels.actionsColumn}
+            </th>
+          ) : null}
         </tr>
       </thead>
       <tbody>
@@ -169,7 +195,9 @@ export function TriageEventTable({
             row={row}
             showOrig={showOrig}
             showResp={showResp}
+            showActions={showActions}
             renderProtectedByStoryMarker={renderProtectedByStoryMarker}
+            renderRowActions={renderRowActions}
           />
         ))}
       </tbody>
@@ -181,14 +209,18 @@ interface TriageEventTableRowProps {
   row: TriageEventRow;
   showOrig: boolean;
   showResp: boolean;
+  showActions: boolean;
   renderProtectedByStoryMarker?: (props: { score: number }) => ReactNode;
+  renderRowActions?: (row: TriageEventRow) => ReactNode;
 }
 
 function TriageEventTableRow({
   row,
   showOrig,
   showResp,
+  showActions,
   renderProtectedByStoryMarker,
+  renderRowActions,
 }: TriageEventTableRowProps) {
   // Marker is rendered ONLY when both the row carries the payload AND
   // the surface supplied a renderer. Either side missing leaves the
@@ -238,6 +270,14 @@ function TriageEventTableRow({
       >
         {formatBaselineScore(row.baselineScore)}
       </td>
+      {showActions ? (
+        <td
+          className="py-1.5 pl-2 text-right"
+          data-testid="triage-event-row-actions"
+        >
+          {renderRowActions?.(row)}
+        </td>
+      ) : null}
     </tr>
   );
 }

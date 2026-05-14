@@ -5,13 +5,32 @@
  * when the loaded result carries assets from more than one tenant.
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
   usePathname: () => "/triage",
   useSearchParams: () => new URLSearchParams(),
+}));
+
+const storyActionsMocks = vi.hoisted(() => ({
+  fetchStoryDetail: vi.fn(),
+  refreshTriageStories: vi.fn(),
+  submitSaveAnalystCuratedStory: vi.fn(),
+}));
+
+vi.mock("@/app/[locale]/(dashboard)/triage/story-actions", () => ({
+  fetchStoryDetail: storyActionsMocks.fetchStoryDetail,
+  refreshTriageStories: storyActionsMocks.refreshTriageStories,
+  submitSaveAnalystCuratedStory:
+    storyActionsMocks.submitSaveAnalystCuratedStory,
 }));
 
 import {
@@ -24,6 +43,10 @@ import type {
   TriageLoadResult,
 } from "@/lib/triage";
 import { PIVOT_DIMENSIONS, type PivotDimensionId } from "@/lib/triage/pivot";
+import type {
+  TriageStory,
+  TriageStoryMemberDetail,
+} from "@/lib/triage/story/types";
 
 function dimensionsMap(prefix: string): Record<PivotDimensionId, string> {
   const out = {} as Record<PivotDimensionId, string>;
@@ -183,6 +206,9 @@ const LABELS: TriageBaselineLabels = {
       scoreColumn: "Score",
       loading: "Loading",
       close: "Close",
+      pivotActionsColumn: "Pivot",
+      pivotActionTemplate: "Pivot to {dimension}: {value}",
+      pivotDimensions: dimensionsMap("Dim"),
     },
   },
   saveAsStory: {
@@ -378,5 +404,665 @@ describe("TriageBaselineContent — Asset list vs Pivot peer view isolation", ()
     // The selected asset (Beta) still shows in the header — the trail
     // is preserved across tab toggles, just not surfaced as a focus.
     expect(screen.getByText("Beta")).toBeTruthy();
+  });
+});
+
+function makeStory(overrides: Partial<TriageStory> = {}): TriageStory {
+  return {
+    customerId: 9,
+    customerName: "Gamma Corp",
+    storyId: "42",
+    kind: "auto_correlated",
+    ruleId: "R1",
+    storyVersion: "v1",
+    timeWindowStartIso: "2026-05-08T12:00:00.000Z",
+    timeWindowEndIso: "2026-05-08T12:30:00.000Z",
+    primaryAsset: "10.0.0.9",
+    score: 4.25,
+    summary: {
+      kindHistogram: { HttpThreat: 1 },
+      categoryHistogram: { IMPACT: 1 },
+      memberCount: 1,
+      durationMs: 0,
+      distinctAssetCount: 1,
+      topRawScore: 4.5,
+    },
+    createdAtIso: "2026-05-08T12:31:00.000Z",
+    lastSentAtIso: null,
+    sendCount: 0,
+    topMembers: [
+      {
+        eventKey: "m1",
+        eventTimeIso: "2026-05-08T12:10:00.000Z",
+        kind: "HttpThreat",
+        category: "IMPACT",
+        rawScore: 4.5,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function makeStoryMember(
+  overrides: Partial<TriageStoryMemberDetail> = {},
+): TriageStoryMemberDetail {
+  return {
+    eventKey: "m1",
+    eventTimeIso: "2026-05-08T12:10:00.000Z",
+    kind: "HttpThreat",
+    sensor: "sensor-a",
+    origAddr: "10.0.0.9",
+    respAddr: "203.0.113.4",
+    origPort: 12345,
+    respPort: 443,
+    host: "story-host.example",
+    dnsQuery: null,
+    uri: null,
+    category: "IMPACT",
+    baselineScore: 0.91,
+    ...overrides,
+  };
+}
+
+describe("TriageBaselineContent — Story-origin pivot focus customer label (#553)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+  });
+
+  it("derives the synthetic pivot-focus customerName from the Story origin, not from the asset-root fallback", async () => {
+    // Reviewer Round 1 Item 1: a Story-origin trail has no asset
+    // crumb, so the previous `assetCrumb?.customerId ?? 0` fallback
+    // labeled every Story-origin pivot focus as customer `0`. The fix
+    // resolves the customer label from the matching Story (here
+    // "Gamma Corp"), not the asset crumb.
+    const story = makeStory();
+    const member = makeStoryMember();
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[story]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    // Drive the Pivot-from-Story flow: open the story card, wait for
+    // the per-row pivot button, then click the host pivot.
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    // Flush microtasks so the loader's `.then(...)` lands and the
+    // detail status flips to "ready" — only then does the per-row
+    // pivot actions column render.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let pivotButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      pivotButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "host") ??
+        null;
+      expect(pivotButton).not.toBeNull();
+    });
+    if (!pivotButton) throw new Error("pivot button never rendered");
+    await act(async () => {
+      fireEvent.click(pivotButton as HTMLElement);
+    });
+
+    // Pivot tab is active, and the detail header reads the Story
+    // origin's customerName (Gamma Corp), not "0" — the asset crumb
+    // is intentionally absent on a Story-origin trail.
+    expect(screen.getByText("Pivot focus")).toBeTruthy();
+    expect(screen.getByText("Gamma Corp")).toBeTruthy();
+    expect(screen.queryByText("Customer: 0")).toBeNull();
+  });
+});
+
+describe("TriageBaselineContent — Story-origin hash-restore cancellation (#553)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+    window.location.hash = "";
+  });
+
+  it("ignores a late `fetchStoryDetail` rejection after the user has navigated away from the restored state", async () => {
+    // Reviewer Round 1 Item 2: the Story-origin hash restore awaits
+    // `fetchStoryDetail` and its `.then` / `.catch` branches
+    // unconditionally rewrote `pivotOrigin` / `trail` / `tab` after
+    // resolve. A slow restore could therefore overwrite a fresh
+    // asset selection. `abortHashRestore()` now bumps a token that
+    // the resolve branches check before applying any state.
+    window.location.hash =
+      "#triage.tab=pivot&triage.pivot.story=9/42&triage.pivot.step=host:story-host.example";
+
+    // Promise that never resolves until we explicitly reject below —
+    // the user's asset click must happen WHILE the fetch is still
+    // pending so the cancellation guard is the only mechanism
+    // preventing the late branch from overwriting the new state.
+    let rejectStory: (err: Error) => void = () => {};
+    const storyPromise = new Promise<null>((_, reject) => {
+      rejectStory = reject;
+    });
+    storyActionsMocks.fetchStoryDetail.mockReturnValue(storyPromise);
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    // Hash restore seeds Pivot tab synchronously. The detail panel
+    // still renders (asset-rooted fallback is suppressed for Story
+    // origin), but the header is empty until the fetch resolves.
+    expect(screen.getByTestId("triage-tab-pivot")).toBeTruthy();
+
+    // User abandons the restored state: switch back to Asset list and
+    // pick the second asset (Beta). `onSelectAsset` calls
+    // `abortHashRestore()`, which bumps the cancellation token.
+    fireEvent.click(screen.getByTestId("triage-tab-asset-list"));
+    const rows = screen.getAllByRole("button", { name: "row-10.0.0.1" });
+    fireEvent.click(rows[1]);
+    expect(screen.getByText("Beta")).toBeTruthy();
+
+    // Now resolve the deferred `fetchStoryDetail` with a rejection —
+    // the `.catch` branch would otherwise reset state to
+    // `initialFocus` (Acme) and surface the stale-hash banner.
+    await act(async () => {
+      rejectStory(new Error("simulated late rejection"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The user's selection survives: Beta still shows, Acme does not,
+    // and the stale-hash banner did not appear.
+    expect(screen.getByText("Beta")).toBeTruthy();
+    expect(screen.queryByText("Acme")).toBeNull();
+    expect(screen.queryByText(LABELS.staleHashFallback)).toBeNull();
+  });
+});
+
+describe("TriageBaselineContent — Story-origin suppresses Tier 2 affordances (#553 Round 2)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+  });
+
+  it("hides the Tier 2 Learning method + Keywords sections on the pivot panel when the trail is rooted at a Story", async () => {
+    // Reviewer Round 2 Item 1: on a Story-origin trail, `onPivot`
+    // already skips the Tier 2 fetch for server-filtered dimensions
+    // (no asset crumb to scope `sameSensor` etc.), but the panel still
+    // rendered the static Tier 2 sections (Learning method, Keywords)
+    // whenever `scope === "tier2"`. Clicking those affordances queued a
+    // breadcrumb step with no backing fetch — contradicting the PR's
+    // Tier 1-only contract for Story origin. The fix gates the static
+    // sections on `pivotOrigin.kind !== "story"`.
+    const story = makeStory();
+    const member = makeStoryMember();
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+    // Augment LABELS with the optional Tier 2 static-section labels —
+    // without these the panel hides the sections regardless of scope,
+    // which would mask the gating logic under test. The
+    // `dimensionsMap` helper at the top of the file iterates
+    // PIVOT_DIMENSIONS only; the static-options dimensions
+    // (`learningMethods`, `keywords`) have no entry there, so the
+    // dimension labels are added explicitly here.
+    const tier2Labels: TriageBaselineLabels = {
+      ...LABELS,
+      pivotPanel: {
+        ...LABELS.pivotPanel,
+        dimensions: {
+          ...LABELS.pivotPanel.dimensions,
+          learningMethods: "Dim:learningMethods",
+          keywords: "Dim:keywords",
+        },
+        learningMethodValues: {
+          UNSUPERVISED: "Unsupervised",
+          SEMI_SUPERVISED: "Semi-supervised",
+        },
+        keywords: {
+          hint: "Free-text search",
+          inputLabel: "Keyword",
+          inputPlaceholder: "Type a keyword",
+          submit: "Search",
+          recentHeading: "Recent",
+          recentChipTemplate: "Search again for {value}",
+          errorEmpty: "Enter a non-empty keyword.",
+          errorTooLongTemplate: "Keyword too long — under {max} characters.",
+        },
+      },
+    };
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier2"
+          mode="baseline"
+          stories={[story]}
+          labels={tier2Labels}
+        />,
+      );
+    });
+
+    // Sanity-check the precondition: with an asset-rooted Tier 2 panel,
+    // the Learning method + Keywords sections render. (This is the
+    // baseline that would be wrong if the gate fired on the asset root.)
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+    expect(screen.getByText("Dim:learningMethods")).toBeTruthy();
+    expect(screen.getByLabelText("Keyword")).toBeTruthy();
+
+    // Drive the Pivot-from-Story flow.
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    let pivotButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      pivotButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "host") ??
+        null;
+      expect(pivotButton).not.toBeNull();
+    });
+    if (!pivotButton) throw new Error("pivot button never rendered");
+    await act(async () => {
+      fireEvent.click(pivotButton as HTMLElement);
+    });
+
+    // Story-origin trail is active on the Pivot peer view. The Tier 2
+    // static sections must be suppressed: clicking them would otherwise
+    // queue a no-op step with no backing fetch.
+    expect(screen.queryByText("Dim:learningMethods")).toBeNull();
+    expect(screen.queryByLabelText("Keyword")).toBeNull();
+  });
+});
+
+describe("TriageBaselineContent — Story-origin restore respects triage.tab=stories (#553 Round 2)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+    window.location.hash = "";
+  });
+
+  it("does not flip the active tab to Pivot when the hash carries triage.tab=stories alongside triage.pivot.story", async () => {
+    // Reviewer Round 2 Item 2: after a Pivot-from-Story drill-in, the
+    // analyst may navigate back to the Stories tab — the Stories↔Pivot
+    // swap preserves `triage.pivot.story` in the hash by design (Pivot
+    // origin survives the swap). On reload, the Stories restore first
+    // applies `triage.tab=stories`, but the prior pivot-restore code
+    // unconditionally set `tab` back to `"pivot"` whenever
+    // `triage.pivot.story` was present. The reload acceptance is
+    // specifically for `triage.tab=pivot + story origin`; when the hash
+    // says the active tab is Stories, the Pivot-origin marker must be
+    // seeded without forcing Pivot.
+    window.location.hash =
+      "#triage.tab=stories&triage.pivot.story=9/42&triage.pivot.step=host:story-host.example";
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [makeStoryMember()],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[makeStory()]}
+          labels={LABELS}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Stories tab is the active tab (the hash's authoritative
+    // `triage.tab=stories` survives, not overridden by the pivot
+    // restore branch).
+    expect(
+      screen.getByTestId("triage-tab-stories").getAttribute("data-state"),
+    ).toBe("active");
+    expect(
+      screen.getByTestId("triage-tab-pivot").getAttribute("data-state"),
+    ).toBe("inactive");
+
+    // The Pivot-origin marker still landed: switching to the Pivot tab
+    // restores the Story-origin breadcrumb without a fresh round of
+    // hash parsing (the restore already populated `pivotOrigin`).
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+    expect(screen.getByText("Pivot focus")).toBeTruthy();
+    expect(screen.getByText("Gamma Corp")).toBeTruthy();
+  });
+
+  it("still forces the Pivot tab on restore when the hash explicitly says triage.tab=pivot", async () => {
+    // Counter-test for the gate: when the hash IS rooted at the Pivot
+    // tab (the documented `tab=pivot + story origin + pivot trail`
+    // reload acceptance), the restore must still seed the Pivot tab.
+    window.location.hash =
+      "#triage.tab=pivot&triage.pivot.story=9/42&triage.pivot.step=host:story-host.example";
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [makeStoryMember()],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[makeStory()]}
+          labels={LABELS}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.getByTestId("triage-tab-pivot").getAttribute("data-state"),
+    ).toBe("active");
+  });
+});
+
+describe("TriageBaselineContent — Story-origin marker stripped on Asset list (#553 Round 3)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+    window.location.hash = "";
+  });
+
+  it("removes `triage.pivot.story` from the hash when the analyst switches from a Pivot-from-Story trail back to Asset list", async () => {
+    // Reviewer Round 3: the hash-sync effect serialized
+    // `triage.pivot.story` whenever `pivotOrigin.kind === "story"`,
+    // regardless of `tab`. Because Asset list is encoded by omitting
+    // `triage.tab`, a reload of the resulting hash (no `triage.tab`,
+    // `triage.pivot.story` present) bounced the analyst back to the
+    // Pivot tab even though they had explicitly left to Asset list.
+    // The marker must be stripped when `tab === "asset-list"`;
+    // Stories↔Pivot swap preservation remains intact (covered by the
+    // Round 2 tests above).
+    const story = makeStory();
+    const member = makeStoryMember();
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[story]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    // Drive the Pivot-from-Story flow so `pivotOrigin.kind === "story"`.
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    let pivotButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      pivotButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "host") ??
+        null;
+      expect(pivotButton).not.toBeNull();
+    });
+    if (!pivotButton) throw new Error("pivot button never rendered");
+    await act(async () => {
+      fireEvent.click(pivotButton as HTMLElement);
+    });
+
+    // Sanity-check the precondition: while on the Pivot tab with the
+    // Story origin active, the hash carries `triage.pivot.story` so a
+    // reload (or Stories tab swap) lands the analyst back on the Story
+    // origin.
+    expect(window.location.hash).toContain("triage.pivot.story=9%2F42");
+
+    // The analyst leaves the pivot for Asset list — Asset list omits
+    // `triage.tab` from the hash, so leaving the Story-origin marker
+    // in place would forcibly route the next reload back to Pivot.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-tab-asset-list"));
+    });
+    expect(window.location.hash).not.toContain("triage.pivot.story");
+    // Defense in depth: the dimension steps are likewise stripped while
+    // the trail is hidden (this was the existing Pivot-tab gate).
+    expect(window.location.hash).not.toContain("triage.pivot.step");
+
+    // And swapping back to Pivot re-serializes the marker (the in-
+    // memory `pivotOrigin` is unchanged), so the Story-origin breadcrumb
+    // returns without re-parsing the hash.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+    });
+    expect(window.location.hash).toContain("triage.pivot.story=9%2F42");
+  });
+
+  it("keeps `triage.pivot.story` in the hash when the analyst switches from Pivot to Stories", async () => {
+    // Counter-test for the Asset-list strip: the Stories tab swap must
+    // still preserve the Pivot-origin marker (Round 2 acceptance). The
+    // Stories tab encodes `triage.tab=stories` explicitly, so a reload
+    // of `triage.tab=stories&triage.pivot.story=<id>` still lands the
+    // analyst on Stories with the Pivot origin ready for a later swap.
+    const story = makeStory();
+    const member = makeStoryMember();
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[story]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    let pivotButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      pivotButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "host") ??
+        null;
+      expect(pivotButton).not.toBeNull();
+    });
+    if (!pivotButton) throw new Error("pivot button never rendered");
+    await act(async () => {
+      fireEvent.click(pivotButton as HTMLElement);
+    });
+    expect(window.location.hash).toContain("triage.pivot.story=9%2F42");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    });
+    // Stories tab encodes itself explicitly; the Pivot-origin marker
+    // survives the swap.
+    expect(window.location.hash).toContain("triage.tab=stories");
+    expect(window.location.hash).toContain("triage.pivot.story=9%2F42");
+  });
+});
+
+describe("TriageBaselineContent — Pivot panel truncation hint reflects active corpus (#553 Round 4)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+    window.location.hash = "";
+  });
+
+  it("suppresses the truncation hint on a Story-origin pivot panel even when the period-wide result is truncated", async () => {
+    // Reviewer Round 4: the Pivot panel previously surfaced the
+    // truncation banner whenever `result.truncated === true`, regardless
+    // of origin. On a Story-origin trail the panel actually reads from
+    // the Story member set (a complete corpus), not the period-wide
+    // 5,000-row asset corpus that the flag describes. Showing the
+    // banner there falsely implies the Story-scoped pivots are partial
+    // — contradicting the #553 data-source decision that only the asset
+    // list stays period-wide. The fix gates `panelTruncated` on
+    // `pivotOrigin.kind !== "story"`.
+    const truncatedResult: TriageLoadResult = {
+      ...makeMultiCustomerResult(),
+      truncated: true,
+    };
+    const story = makeStory();
+    const member = makeStoryMember();
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={truncatedResult}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[story]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    // Precondition: with the asset-rooted Pivot tab (the period-wide
+    // corpus actually drove the panel), the truncation banner renders.
+    // This sanity-checks that the gate fires on origin, not on a stale
+    // result.truncated read.
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+    expect(screen.getByText(LABELS.pivotPanel.truncatedHint)).toBeTruthy();
+
+    // Drive Pivot-from-Story so `pivotOrigin.kind === "story"`.
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    let pivotButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      pivotButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "host") ??
+        null;
+      expect(pivotButton).not.toBeNull();
+    });
+    if (!pivotButton) throw new Error("pivot button never rendered");
+    await act(async () => {
+      fireEvent.click(pivotButton as HTMLElement);
+    });
+
+    // Story-origin trail is active on the Pivot peer view. The Pivot
+    // panel reads from the Story member set (complete), so the period-
+    // wide truncation hint must NOT render even though
+    // `result.truncated === true`.
+    expect(screen.queryByText(LABELS.pivotPanel.truncatedHint)).toBeNull();
   });
 });

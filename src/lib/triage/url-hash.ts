@@ -9,6 +9,7 @@
  * Encoding form (location.hash without the leading `#`):
  *
  *     triage.pivot.asset=<address>
+ *     &triage.pivot.story=<customerId>/<storyId>
  *     &triage.pivot.step=<dimension>:<encoded-value>
  *     &triage.pivot.step=<dimension>:<encoded-value>
  *     &triage.pivot.mode=tier2
@@ -25,6 +26,13 @@
  * `triage.story=<id>` value missing the `customerId/` prefix is
  * treated as stale: the caller renders the Stories list root and
  * surfaces a "Stale Story link — open from the list" toast.
+ *
+ * Pivot-from-Story (#553) carries a separate `triage.pivot.story`
+ * marker under the pivot namespace so the Pivot-origin survives a
+ * Stories↔Pivot tab swap. `triage.story` (Stories tab focus) clears
+ * on the tab swap by design, but `triage.pivot.story` must persist —
+ * splitting the two keys keeps each consumer's clear-on-swap rules
+ * independent of the other's.
  *
  * Restoration is client-only (Server Components cannot read the
  * URL hash) — see `baseline-content.tsx` for the wire-up.
@@ -57,9 +65,29 @@ export interface TriagePivotAssetFocus {
   address: string;
 }
 
+/**
+ * Composite Story focus encoded in the Pivot-origin marker
+ * (`triage.pivot.story`) added by #553. Same `(customerId, storyId)`
+ * shape as the Stories-tab focus, but kept under the `triage.pivot.*`
+ * namespace so it persists across a Stories↔Pivot tab swap (the
+ * Stories tab clears `triage.story` on swap by design). A bare
+ * `storyId` (no `customerId/`) is rejected because `event_group.id`
+ * is `BIGSERIAL` per tenant DB.
+ */
+export interface TriagePivotStoryOrigin {
+  customerId: number;
+  storyId: string;
+}
+
 export interface TriagePivotHashState {
   /** Asset focus (composite `(customerId, address)`); `null` when absent. */
   asset: TriagePivotAssetFocus | null;
+  /**
+   * Story-origin marker (#553). When non-null the trail is rooted at
+   * a Story rather than an asset — the asset crumb is absent and the
+   * pivot panel reads the Story's member events as its corpus.
+   */
+  story: TriagePivotStoryOrigin | null;
   /** Pivot dimension steps in trail order, after the asset root. */
   steps: TriagePivotHashStep[];
   /** Mode toggle state; `null` means "absent" — caller defaults. */
@@ -73,10 +101,18 @@ export interface TriagePivotHashState {
    * requirement).
    */
   rejectedStepCount: number;
+  /**
+   * `true` when a `triage.pivot.story=...` value was present but
+   * rejected (legacy bare-id, empty halves, non-numeric customerId).
+   * Treated like a rejected step on restore — the caller surfaces the
+   * stale-hash toast and falls back to the asset root.
+   */
+  storyOriginStaleHash: boolean;
 }
 
 const HASH_PREFIX = "triage.pivot.";
 const ASSET_KEY = "triage.pivot.asset";
+const STORY_ORIGIN_KEY = "triage.pivot.story";
 const STEP_KEY = "triage.pivot.step";
 const MODE_KEY = "triage.pivot.mode";
 
@@ -180,15 +216,19 @@ function isKnownDimension(value: string): value is PivotDimensionId {
 export function parseTriagePivotHash(hash: string): TriagePivotHashState {
   const empty: TriagePivotHashState = {
     asset: null,
+    story: null,
     steps: [],
     mode: null,
     rejectedStepCount: 0,
+    storyOriginStaleHash: false,
   };
   if (!hash) return empty;
   const trimmed = hash.startsWith("#") ? hash.slice(1) : hash;
   if (trimmed.length === 0) return empty;
 
   let asset: TriagePivotAssetFocus | null = null;
+  let story: TriagePivotStoryOrigin | null = null;
+  let storyOriginStaleHash = false;
   let mode: TriagePivotMode | null = null;
   const steps: TriagePivotHashStep[] = [];
   let rejectedStepCount = 0;
@@ -208,11 +248,19 @@ export function parseTriagePivotHash(hash: string): TriagePivotHashState {
       // present-but-invalid step — count it so the caller falls back
       // to the asset root with the stale-hash toast.
       if (key === STEP_KEY) rejectedStepCount += 1;
+      if (key === STORY_ORIGIN_KEY) storyOriginStaleHash = true;
       continue;
     }
     if (key === ASSET_KEY) {
       const parsed = parseAssetValue(value);
       if (parsed) asset = parsed;
+    } else if (key === STORY_ORIGIN_KEY) {
+      const parsed = parseStoryOriginValue(value);
+      if (parsed) {
+        story = parsed;
+      } else {
+        storyOriginStaleHash = true;
+      }
     } else if (key === MODE_KEY) {
       if (value === "tier1" || value === "tier2") mode = value;
     } else if (key === STEP_KEY) {
@@ -225,7 +273,36 @@ export function parseTriagePivotHash(hash: string): TriagePivotHashState {
     }
   }
 
-  return { asset, steps, mode, rejectedStepCount };
+  return {
+    asset,
+    story,
+    steps,
+    mode,
+    rejectedStepCount,
+    storyOriginStaleHash,
+  };
+}
+
+/**
+ * Decode the `triage.pivot.story` value into the composite Story
+ * origin. Mirrors the validation rules of {@link parseStoryFocus}:
+ * `customerId` must be numeric and non-negative, `storyId` must be
+ * numeric (matches `event_group.id`'s BIGSERIAL serialization), and a
+ * bare `storyId` (no `customerId/`) is rejected because two tenants
+ * can host the same id.
+ */
+function parseStoryOriginValue(value: string): TriagePivotStoryOrigin | null {
+  if (value.length === 0) return null;
+  const slash = value.indexOf("/");
+  if (slash < 0) return null;
+  const customerStr = value.slice(0, slash);
+  const storyId = value.slice(slash + 1);
+  if (customerStr.length === 0 || storyId.length === 0) return null;
+  if (!/^\d+$/.test(customerStr)) return null;
+  if (!/^\d+$/.test(storyId)) return null;
+  const customerId = Number.parseInt(customerStr, 10);
+  if (!Number.isFinite(customerId) || customerId < 0) return null;
+  return { customerId, storyId };
 }
 
 /**
@@ -306,6 +383,10 @@ export function serializeTriagePivotHash(state: TriagePivotHashState): string {
     const encoded = encodeURIComponent(serializeAssetFocus(state.asset));
     entries.push(`${ASSET_KEY}=${encoded}`);
   }
+  if (state.story) {
+    const value = `${state.story.customerId}/${state.story.storyId}`;
+    entries.push(`${STORY_ORIGIN_KEY}=${encodeURIComponent(value)}`);
+  }
   for (const step of state.steps) {
     if (!isKnownDimension(step.dimension)) continue;
     if (!step.valueKey || step.valueKey.length === 0) continue;
@@ -323,7 +404,14 @@ function serializeAssetFocus(asset: TriagePivotAssetFocus): string {
   return `${asset.customerId}/${asset.address}`;
 }
 
-/** Build a hash state from breadcrumb steps for serialization. */
+/**
+ * Build a hash state from breadcrumb steps for serialization.
+ *
+ * `storyOrigin` (added by #553) is the Pivot-origin marker for the
+ * Story-rooted trail. When non-null the trail has no asset crumb —
+ * only dimension steps — and the asset-root assumption documented at
+ * top of file is replaced by Story-member-set seeding.
+ */
 export function pivotHashFromTrail(
   trail: ReadonlyArray<
     | { kind: "asset"; customerId: number; address: string }
@@ -334,6 +422,7 @@ export function pivotHashFromTrail(
       }
   >,
   mode: TriagePivotMode | null,
+  storyOrigin: TriagePivotStoryOrigin | null = null,
 ): TriagePivotHashState {
   let asset: TriagePivotAssetFocus | null = null;
   const steps: TriagePivotHashStep[] = [];
@@ -349,7 +438,14 @@ export function pivotHashFromTrail(
       steps.push({ dimension: step.dimension, valueKey: step.value.key });
     }
   }
-  return { asset, steps, mode, rejectedStepCount: 0 };
+  return {
+    asset,
+    story: storyOrigin,
+    steps,
+    mode,
+    rejectedStepCount: 0,
+    storyOriginStaleHash: false,
+  };
 }
 
 /**
@@ -490,7 +586,13 @@ export function replaceTriagePivotHash(
       foreign.push(segment);
       continue;
     }
-    if (key === ASSET_KEY || key === STEP_KEY || key === MODE_KEY) continue;
+    if (
+      key === ASSET_KEY ||
+      key === STORY_ORIGIN_KEY ||
+      key === STEP_KEY ||
+      key === MODE_KEY
+    )
+      continue;
     foreign.push(segment);
   }
   const ours = serializeTriagePivotHash(state);

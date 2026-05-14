@@ -2057,6 +2057,7 @@
       "ariaLabel": "Pivot trail",
       "rootCrumbPrefix": "Asset",
       "dimensionCrumbTemplate": "{dimension}: {value}",
+      "storyOriginTemplate": "Story #{id}",
       "dimensions": {
         "externalIp": "External IP",
         "internalIp": "Internal IP",
@@ -2210,7 +2211,9 @@
         "respAddrColumn": "Destination",
         "scoreColumn": "Score",
         "loading": "Loading members…",
-        "close": "Close"
+        "close": "Close",
+        "pivotActionsColumn": "Pivot",
+        "pivotActionTemplate": "Pivot on {dimension}: {value}"
       }
     },
     "saveAsStory": {

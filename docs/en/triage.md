@@ -760,6 +760,49 @@ saved member count, and the analyst-provided title (or `null`
 when blank). The UI redirects to the Stories tab and focuses the
 new row.
 
+### Pivot from a Story
+
+Each row in the Story detail member table carries inline **Pivot**
+buttons in a trailing actions column. Each button advertises one
+pivot dimension that the underlying member event actually carries
+(host, port, source / destination IP, URI pattern, DNS query, or
+sensor); the button is hidden for any dimension whose extractor
+finds no value on that row, so the affordance is always backed by
+a value the index can group on.
+
+Clicking a button switches into the Pivot peer view with the trail
+seeded by the chosen dimension. The view differs from the
+asset-rooted Pivot in three ways:
+
+- The breadcrumb reads **`Story #<customerId>/<storyId> > <pivot
+  dim>`**. Clicking the Story segment returns to the Story
+  detail panel.
+- The Pivot panel and the dimension-focus detail card read from
+  the **Story's member set** as their corpus rather than the
+  period-wide events. The left-hand asset list keeps showing the
+  period-wide asset rows so the analyst keeps situational
+  context.
+- The trail has **no asset crumb**. The Story origin acts as the
+  root.
+
+Tier 2 (server-filtered) dimensions are not surfaced from a
+Story origin in this release — Pivot-from-Story operates on the
+Tier 1 client-side index over the Story's member events. Tier 2
+plumbing for the Story-member corpus is a follow-up.
+
+The Pivot panel's "truncated" hint reports the period-wide
+5,000-event asset corpus cap. Because the Story-origin Pivot
+panel reads from the Story's complete member set, the hint is
+suppressed while the origin is a Story — it would otherwise
+falsely imply that the Story-scoped grouping was partial.
+
+`baseline_score` is `null` for members whose `event_time` falls
+outside the menu period (the period-scoped LEFT JOIN behaviour
+documented in [#547](https://github.com/aicers/aice-web-next/pull/547)).
+Null-scored members still participate in Tier 1 grouping — the
+adapter maps null to score `0` so the row sorts to the bottom of
+its (dimension, value) bucket rather than being dropped.
+
 ### URL hash routing
 
 The Stories tab participates in the same URL-hash routing as
@@ -773,6 +816,42 @@ A `triage.story=<id>` segment that omits the `customerId/`
 prefix is treated as stale because `event_group.id` is per
 tenant: the UI falls back to the Stories list root with a
 "Stale Story link — open from the list" toast.
+
+The Pivot-from-Story state uses a **separate**
+`triage.pivot.story=<customerId>/<storyId>` marker. This key
+lives in the `triage.pivot.*` namespace so it survives a
+Stories↔Pivot tab swap — the Stories-tab focus key
+(`triage.story`) clears on swap by design, but the pivot origin
+must persist. A URL carrying
+`triage.tab=pivot&triage.pivot.story=<id>&triage.pivot.step=<dim>:<value>`
+reloads into the Pivot tab with the Story origin in the
+breadcrumb and the dimension step applied; a momentary
+"loading" empty panel appears while the Story's member set
+fetches, but no asset-rooted breadcrumb or asset-corpus pivot
+panel is ever rendered during restore.
+
+`triage.tab` stays authoritative on restore: a URL carrying
+`triage.tab=stories&triage.pivot.story=<id>` (the shape a
+bookmark from the Stories tab takes after a Pivot drill-in,
+because the pivot-origin marker survives the swap) reloads
+into the **Stories** tab. The Pivot-origin marker is seeded
+in the background so a manual swap to the Pivot tab restores
+the same Story-origin breadcrumb without re-parsing the
+hash — the active-tab key always wins over the pivot-origin
+key during restore.
+
+Switching from a Pivot-from-Story state to the **Asset list**
+tab strips `triage.pivot.story` from the hash. The Asset list
+tab is encoded by omitting `triage.tab` entirely (it is the
+default landing tab); leaving the pivot-origin marker behind
+would produce a URL with no `triage.tab` but a
+`triage.pivot.story` segment, which on reload would forcibly
+route the analyst back to the Pivot tab they had explicitly
+left. The marker only persists while the visible tab is one
+that the Pivot origin is meaningful to (Pivot itself, or
+Stories — preserving the swap path back to Pivot). The
+in-memory Pivot origin is unchanged, so swapping back to the
+Pivot tab during the same session re-serializes the marker.
 
 ### Permission
 

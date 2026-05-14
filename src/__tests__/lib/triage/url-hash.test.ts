@@ -14,15 +14,19 @@ describe("parseTriagePivotHash", () => {
   it("returns empty state for an empty / hash-only input", () => {
     expect(parseTriagePivotHash("")).toEqual({
       asset: null,
+      story: null,
       steps: [],
       mode: null,
       rejectedStepCount: 0,
+      storyOriginStaleHash: false,
     });
     expect(parseTriagePivotHash("#")).toEqual({
       asset: null,
+      story: null,
       steps: [],
       mode: null,
       rejectedStepCount: 0,
+      storyOriginStaleHash: false,
     });
   });
 
@@ -35,12 +39,14 @@ describe("parseTriagePivotHash", () => {
     );
     expect(state).toEqual({
       asset: { customerId: 42, address: "10.0.0.1" },
+      story: null,
       steps: [
         { dimension: "ja3", valueKey: "abc123" },
         { dimension: "country", valueKey: "US" },
       ],
       mode: "tier2",
       rejectedStepCount: 0,
+      storyOriginStaleHash: false,
     });
   });
 
@@ -169,6 +175,38 @@ describe("parseTriagePivotHash", () => {
     expect(state.rejectedStepCount).toBe(0);
   });
 
+  it("parses the Story-origin marker (#553)", () => {
+    // The Pivot-origin marker survives a Stories↔Pivot tab swap and
+    // travels alongside the standard pivot keys. A bare `triage.story`
+    // value is the Stories-tab focus (cleared on swap by design) — it
+    // is parsed by `parseTriageStoriesHash`, not here.
+    const state = parseTriagePivotHash(
+      "#triage.pivot.story=42%2F7" +
+        "&triage.pivot.step=" +
+        encodeURIComponent("host:example.com"),
+    );
+    expect(state.story).toEqual({ customerId: 42, storyId: "7" });
+    expect(state.steps).toEqual([
+      { dimension: "host", valueKey: "example.com" },
+    ]);
+    expect(state.storyOriginStaleHash).toBe(false);
+  });
+
+  it("flags malformed Story-origin markers as stale", () => {
+    // Same rules as `parseTriageStoriesHash`'s `parseStoryFocus`:
+    // composite required, both halves numeric, customerId non-negative.
+    expect(parseTriagePivotHash("#triage.pivot.story=7").story).toBeNull();
+    expect(
+      parseTriagePivotHash("#triage.pivot.story=7").storyOriginStaleHash,
+    ).toBe(true);
+    expect(
+      parseTriagePivotHash("#triage.pivot.story=abc%2F7").storyOriginStaleHash,
+    ).toBe(true);
+    expect(
+      parseTriagePivotHash("#triage.pivot.story=42%2Fabc").storyOriginStaleHash,
+    ).toBe(true);
+  });
+
   it("rejects learningMethods value keys outside the SDL enum", () => {
     // A typo'd or schema-changed enum literal must drop the step
     // rather than reach the Tier 2 fetch path — REview would otherwise
@@ -197,9 +235,11 @@ describe("serializeTriagePivotHash", () => {
   it("omits empty fields", () => {
     const out = serializeTriagePivotHash({
       asset: null,
+      story: null,
       steps: [],
       mode: null,
       rejectedStepCount: 0,
+      storyOriginStaleHash: false,
     });
     expect(out).toBe("");
   });
@@ -207,12 +247,14 @@ describe("serializeTriagePivotHash", () => {
   it("encodes asset + steps + mode", () => {
     const out = serializeTriagePivotHash({
       asset: { customerId: 42, address: "10.0.0.1" },
+      story: null,
       steps: [
         { dimension: "ja3", valueKey: "abc123" },
         { dimension: "country", valueKey: "US" },
       ],
       mode: "tier2",
       rejectedStepCount: 0,
+      storyOriginStaleHash: false,
     });
     expect(out).toBe(
       "triage.pivot.asset=42%2F10.0.0.1" +
@@ -225,12 +267,50 @@ describe("serializeTriagePivotHash", () => {
   it("round-trips through parse", () => {
     const original = {
       asset: { customerId: 7, address: "192.168.1.7" },
+      story: null,
       steps: [
         { dimension: "uriPattern" as const, valueKey: "/login?id=:n" },
         { dimension: "host" as const, valueKey: "example.com" },
       ],
       mode: "tier1" as const,
       rejectedStepCount: 0,
+      storyOriginStaleHash: false,
+    };
+    const encoded = serializeTriagePivotHash(original);
+    expect(parseTriagePivotHash(`#${encoded}`)).toEqual(original);
+  });
+});
+
+describe("serializeTriagePivotHash with Story origin (#553)", () => {
+  it("emits the Story-origin marker alongside dimension steps", () => {
+    const out = serializeTriagePivotHash({
+      asset: null,
+      story: { customerId: 42, storyId: "7" },
+      steps: [{ dimension: "host", valueKey: "example.com" }],
+      mode: "tier1",
+      rejectedStepCount: 0,
+      storyOriginStaleHash: false,
+    });
+    expect(out).toBe(
+      "triage.pivot.story=42%2F7" +
+        "&triage.pivot.step=host%3Aexample.com" +
+        "&triage.pivot.mode=tier1",
+    );
+  });
+
+  it("round-trips Story-origin + steps through parse", () => {
+    const original = {
+      asset: null,
+      story: { customerId: 42, storyId: "7" },
+      steps: [
+        {
+          dimension: "host" as const,
+          valueKey: "example.com",
+        },
+      ],
+      mode: "tier1" as const,
+      rejectedStepCount: 0,
+      storyOriginStaleHash: false,
     };
     const encoded = serializeTriagePivotHash(original);
     expect(parseTriagePivotHash(`#${encoded}`)).toEqual(original);
@@ -257,12 +337,14 @@ describe("pivotHashFromTrail", () => {
     );
     expect(state).toEqual({
       asset: { customerId: 42, address: "10.0.0.1" },
+      story: null,
       steps: [
         { dimension: "ja3", valueKey: "abc123" },
         { dimension: "country", valueKey: "US" },
       ],
       mode: "tier2",
       rejectedStepCount: 0,
+      storyOriginStaleHash: false,
     });
   });
 
@@ -270,9 +352,11 @@ describe("pivotHashFromTrail", () => {
     const state = pivotHashFromTrail([], null);
     expect(state).toEqual({
       asset: null,
+      story: null,
       steps: [],
       mode: null,
       rejectedStepCount: 0,
+      storyOriginStaleHash: false,
     });
   });
 });
@@ -283,9 +367,11 @@ describe("replaceTriagePivotHash", () => {
       "#triage.pivot.asset=old&triage.strictness.level=high",
       {
         asset: { customerId: 1, address: "10.0.0.2" },
+        story: null,
         steps: [{ dimension: "ja3", valueKey: "x" }],
         mode: null,
         rejectedStepCount: 0,
+        storyOriginStaleHash: false,
       },
     );
     expect(next).toContain("triage.strictness.level=high");
@@ -294,10 +380,44 @@ describe("replaceTriagePivotHash", () => {
     expect(next).not.toContain("triage.pivot.asset=old");
   });
 
+  it("preserves the Story-origin marker on Stories tab swap (#553)", () => {
+    // Acceptance: with a Pivot-from-Story trail active, manually
+    // clicking the Stories peer tab and back must restore the same
+    // Story origin in the breadcrumb — the marker survives the swap
+    // even though the Stories tab's `triage.story` focus clears on
+    // swap. Replacing the Story-tab keys must not touch
+    // `triage.pivot.story`.
+    const beforeSwap =
+      "#triage.tab=pivot" +
+      "&triage.pivot.story=42%2F7" +
+      "&triage.pivot.step=host%3Aexample.com";
+    const afterSwap = replaceTriageStoriesHash(beforeSwap, {
+      tab: "stories",
+      story: null,
+      storyStaleHash: false,
+    });
+    expect(afterSwap).toContain("triage.pivot.story=42%2F7");
+    expect(afterSwap).toContain("triage.pivot.step=host%3Aexample.com");
+    // …and swapping back to the Pivot tab still carries the marker.
+    const backToPivot = replaceTriageStoriesHash(afterSwap, {
+      tab: "pivot",
+      story: null,
+      storyStaleHash: false,
+    });
+    expect(backToPivot).toContain("triage.pivot.story=42%2F7");
+  });
+
   it("returns only foreign keys when the new state is empty", () => {
     const next = replaceTriagePivotHash(
       "#triage.strictness.level=high&triage.pivot.asset=stale",
-      { asset: null, steps: [], mode: null, rejectedStepCount: 0 },
+      {
+        asset: null,
+        story: null,
+        steps: [],
+        mode: null,
+        rejectedStepCount: 0,
+        storyOriginStaleHash: false,
+      },
     );
     expect(next).toBe("triage.strictness.level=high");
   });
