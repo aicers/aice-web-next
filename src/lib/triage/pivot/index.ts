@@ -4,6 +4,7 @@ export {
   clearPivotTrail,
   describePivotStep,
   hasPivotedAwayFromAsset,
+  type PivotOrigin,
   type PivotStep,
   pivotIndexFor,
   resolveStepFocusEvents,

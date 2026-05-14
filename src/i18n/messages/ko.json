@@ -2057,6 +2057,7 @@
       "ariaLabel": "피벗 경로",
       "rootCrumbPrefix": "자산",
       "dimensionCrumbTemplate": "{dimension}: {value}",
+      "storyOriginTemplate": "스토리 #{id}",
       "dimensions": {
         "externalIp": "외부 IP",
         "internalIp": "내부 IP",
@@ -2210,7 +2211,9 @@
         "respAddrColumn": "목적지",
         "scoreColumn": "점수",
         "loading": "구성원 불러오는 중…",
-        "close": "닫기"
+        "close": "닫기",
+        "pivotActionsColumn": "피벗",
+        "pivotActionTemplate": "{dimension}: {value}(으)로 피벗"
       }
     },
     "saveAsStory": {

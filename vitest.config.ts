@@ -139,6 +139,10 @@ export default defineConfig({
             // protectedByStory-slot contracts can be asserted against
             // the DOM.
             "src/__tests__/components/triage/event-row/triage-event-table.test.tsx",
+            // Issue #553: Pivot-from-Story breadcrumb segment — real-
+            // render coverage for the Story-origin chip's interactive
+            // / current-page branches and the click-to-restore wiring.
+            "src/__tests__/components/triage/pivot/pivot-breadcrumb.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -181,6 +185,7 @@ export default defineConfig({
             "src/__tests__/components/triage/story/stories-view.test.tsx",
             "src/__tests__/components/triage/rebuild-button.test.tsx",
             "src/__tests__/components/triage/event-row/triage-event-table.test.tsx",
+            "src/__tests__/components/triage/pivot/pivot-breadcrumb.test.tsx",
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
           ],
         },

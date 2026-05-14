@@ -30,12 +30,18 @@ import {
   hasPivotedAwayFromAsset,
   isStaticTier2Dimension,
   type PivotDimensionId,
+  type PivotOrigin,
   type PivotStep,
+  type PivotValue,
   pivotIndexFor,
   resolveStepFocusEvents,
 } from "@/lib/triage/pivot";
 import { baselineScore } from "@/lib/triage/scoring";
-import type { TriageStory } from "@/lib/triage/story/types";
+import { storyMembersToScoredEvents } from "@/lib/triage/story/pivot-adapter";
+import type {
+  TriageStory,
+  TriageStoryMemberDetail,
+} from "@/lib/triage/story/types";
 import { tier2DedupeKey } from "@/lib/triage/tier2-cache";
 import {
   isTier2ServerDimension,
@@ -233,6 +239,25 @@ export function TriageBaselineContent({
   // coerces the selection back to `asset-list` via the effect.
   const [tab, setTab] = useState<TriageTabId>("asset-list");
   const [focusedStory, setFocusedStory] = useState<TriageStory | null>(null);
+  // Pivot-origin marker (#553). `"asset"` is the default Phase 1
+  // shape; `"story"` is set when the analyst drills into the Pivot
+  // peer view from a Story member row (or restores the same state
+  // from a `triage.pivot.story=...` URL hash). When set, the trail
+  // carries dimension steps only — no asset crumb — and the pivot
+  // panel reads `storyMemberEvents` as its corpus instead of
+  // `result.events`. See PR description for the rationale.
+  const [pivotOrigin, setPivotOrigin] = useState<PivotOrigin>({
+    kind: "asset",
+  });
+  // The Story's member events normalized into the pivot index's
+  // input shape. Populated when {@link pivotOrigin} flips to
+  // `"story"` — either through a `Pivot-from-Story` click (the
+  // stories-view callback hands the full member-detail list down)
+  // or after a hash-restore call to {@link fetchStoryDetail}.
+  // Cleared whenever the origin returns to `"asset"`.
+  const [storyMemberEvents, setStoryMemberEvents] = useState<
+    readonly ScoredTriageEvent[]
+  >([]);
   // When the post-save flow seeds `focusedStory` with a synthetic
   // placeholder, the placeholder is by construction absent from the
   // current `stories` prop until `router.refresh()` returns the new
@@ -280,6 +305,13 @@ export function TriageBaselineContent({
   // biome-ignore lint/correctness/useExhaustiveDependencies: resetSignal is the trigger
   useEffect(() => {
     setSelected(initialFocus);
+    // Period / customer-scope rotation also retires any Story-origin
+    // pivot trail (#553) — the Story's member corpus is period-
+    // independent at the SQL layer, but the menu's read-time
+    // `baseline_score` cohort depends on the loaded period so the
+    // adapted ScoredTriageEvent list goes stale on rotation.
+    setPivotOrigin({ kind: "asset" });
+    setStoryMemberEvents([]);
     setTrail(
       initialFocus
         ? [
@@ -490,9 +522,17 @@ export function TriageBaselineContent({
   }, [scope, trail, tier2, result.events]);
 
   const expandedEvents: readonly ScoredTriageEvent[] = useMemo(() => {
+    // Story-origin trails (#553) replace the corpus entirely — the
+    // pivot panel and the related-events surface read from the
+    // Story's member set, not the period-wide events. Asset list
+    // stays period-wide (see "Data-source scope" PR decision), so the
+    // swap is local to this memo. Tier 2 expansion is not surfaced
+    // for Story origin (Tier 2 fallback is asset-rooted in this PR;
+    // see PR description), so the splice is unnecessary here.
+    if (pivotOrigin.kind === "story") return storyMemberEvents;
     if (expandedTier2Events.length === 0) return result.events;
     return [...result.events, ...expandedTier2Events];
-  }, [result.events, expandedTier2Events]);
+  }, [pivotOrigin, storyMemberEvents, result.events, expandedTier2Events]);
 
   // The Baseline-mode menu reads from `baseline_triaged_event` whose
   // row shape lacks the fields Policy-only dimensions consume
@@ -642,8 +682,18 @@ export function TriageBaselineContent({
   // labeled as a pivot focus the user can't see breadcrumbs for. The
   // trail itself is preserved across tab toggles so switching back to
   // Pivot restores the prior drill-in.
+  //
+  // Story-origin trails (#553) keep the synthetic pivot-focus card on
+  // the Pivot tab. The asset-rooted fallback (`effectiveAsset`) is
+  // suppressed — falling back to it would render an asset card the
+  // breadcrumb cannot back, and during hash-restore that read as the
+  // "asset-rooted state flash" the issue explicitly forbids.
   const detailAsset =
-    tab === "pivot" ? (pivotFocusAsset ?? effectiveAsset) : effectiveAsset;
+    tab === "pivot"
+      ? pivotOrigin.kind === "story"
+        ? pivotFocusAsset
+        : (pivotFocusAsset ?? effectiveAsset)
+      : effectiveAsset;
 
   const allSections = useMemo(
     () => buildPivotPanel(pivotIndex, focusEvents, { mode: "baseline" }),
@@ -674,11 +724,13 @@ export function TriageBaselineContent({
       }
       return known.tier2Only === true;
     };
-    if (scope !== "tier2") {
+    if (scope !== "tier2" || pivotOrigin.kind === "story") {
+      // Story-origin trails (#553) render Tier 1 panels only — Tier 2
+      // suppression matches the "Tier 2 scope" PR design decision.
       return allSections.filter((s) => !isTier2Only(s.dimension));
     }
     return allSections;
-  }, [allSections, scope]);
+  }, [allSections, scope, pivotOrigin]);
 
   // Surface truncation from both the Tier 1 loader (5,000-event corpus
   // cap, applied to the period) and any Tier 2 dimension fetch on the
@@ -751,7 +803,12 @@ export function TriageBaselineContent({
     (focus: { customerId: number; address: string }) => {
       setSelected(focus);
       // Selecting a new asset replaces the trail — selecting from the
-      // asset list is a "fresh start", not a pivot.
+      // asset list is a "fresh start", not a pivot. Story-origin trails
+      // are also abandoned when the analyst picks an asset row; the
+      // asset list never silently switches origin so this is the
+      // explicit transition back to the asset-rooted shape.
+      setPivotOrigin({ kind: "asset" });
+      setStoryMemberEvents([]);
       setTrail([
         {
           kind: "asset",
@@ -773,14 +830,109 @@ export function TriageBaselineContent({
     [abortHashRestore, abortPendingTier2Projections],
   );
 
+  // Pivot-from-Story (#553). The Stories view fires this when the
+  // analyst clicks a pivot dimension button on a member event row in
+  // the Story detail panel. The handler:
+  //   1. Adapts the Story's member-detail list into ScoredTriageEvent
+  //      so the pivot index can build over the Story corpus.
+  //   2. Flips `pivotOrigin` to `"story"` and seeds the trail with
+  //      the chosen dimension step — no asset crumb is emitted (the
+  //      origin acts as the root).
+  //   3. Routes the analyst onto the Pivot peer view so the
+  //      breadcrumb + related-events panel surfaces are visible.
+  //   4. Clears the focused Story so a subsequent Stories↔Pivot tab
+  //      swap can drop the Stories detail focus while the Pivot
+  //      origin survives (the two states are independent post-#553).
+  const onPivotFromStory = useCallback(
+    (args: {
+      story: TriageStory;
+      members: readonly TriageStoryMemberDetail[];
+      dimension: PivotDimensionId;
+      value: PivotValue;
+    }) => {
+      const events = storyMembersToScoredEvents(
+        args.members,
+        args.story.customerId,
+      );
+      setStoryMemberEvents(events);
+      setPivotOrigin({
+        kind: "story",
+        customerId: args.story.customerId,
+        storyId: args.story.storyId,
+      });
+      setTrail([
+        {
+          kind: "dimension",
+          dimension: args.dimension,
+          value: args.value,
+        },
+      ]);
+      setTab("pivot");
+      setFocusedStory(null);
+      setFallbackNotice(null);
+      abortHashRestore();
+      abortPendingTier2Projections();
+    },
+    [abortHashRestore, abortPendingTier2Projections],
+  );
+
+  // Click handler for the Story-origin breadcrumb segment. Returns
+  // the analyst to the Story detail panel: re-focuses the Story on
+  // the Stories tab, drops the Pivot trail, and resets the origin to
+  // `"asset"` so the Pivot tab is no longer reachable from the
+  // breadcrumb's now-cleared state. Mirrors the standard breadcrumb
+  // "click an earlier crumb" semantics for the special root.
+  const onSelectStoryOrigin = useCallback(() => {
+    if (pivotOrigin.kind !== "story") return;
+    const customerId = pivotOrigin.customerId;
+    const storyId = pivotOrigin.storyId;
+    setPivotOrigin({ kind: "asset" });
+    setStoryMemberEvents([]);
+    setTrail(
+      initialFocus
+        ? [
+            {
+              kind: "asset",
+              customerId: initialFocus.customerId,
+              address: initialFocus.address,
+            },
+          ]
+        : [],
+    );
+    setFallbackNotice(null);
+    abortHashRestore();
+    // Re-focus the Story whose origin we just closed; the reconcile
+    // effect promotes it to the loaded row when the prop slice
+    // contains a matching `(customerId, storyId)`. A miss surfaces
+    // through the existing stale-hash toast.
+    const matched = stories.find(
+      (s) => s.customerId === customerId && s.storyId === storyId,
+    );
+    if (matched) {
+      setFocusedStory(matched);
+    } else {
+      setFocusedStory(null);
+      setShowStaleStoryHash(true);
+    }
+    setTab("stories");
+  }, [pivotOrigin, initialFocus, abortHashRestore, stories]);
+
   const onPivot = useCallback(
     (step: PivotStep) => {
       // In Tier 2 mode, clicking a server-filtered dimension issues a
       // fresh fetch alongside the breadcrumb update so the next render
       // can splice the expanded events into the panel. Tier 1 clicks
       // (and Tier 2 client-intersection dimensions) are local-only.
+      //
+      // Story-origin trails (#553) skip the Tier 2 dispatch entirely:
+      // Tier 2 fallback paths read from the asset's event set and have
+      // no plumbing for a Story-member corpus in this PR (per the PR's
+      // "Tier 2 scope" design decision). Clicks on Tier 2-only dims
+      // are filtered out at panel-section level below; this guard is
+      // a belt-and-braces for the trail-append path.
       if (
         scope === "tier2" &&
+        pivotOrigin.kind !== "story" &&
         step.kind === "dimension" &&
         isTier2ServerDimension(step.dimension)
       ) {
@@ -809,7 +961,7 @@ export function TriageBaselineContent({
       // longer appropriate.
       abortHashRestore();
     },
-    [abortHashRestore, effectiveSelection, scope, tier2, trail],
+    [abortHashRestore, effectiveSelection, pivotOrigin, scope, tier2, trail],
   );
 
   const onCrumb = useCallback(
@@ -900,6 +1052,113 @@ export function TriageBaselineContent({
     const parsed = parseTriagePivotHash(window.location.hash);
     if (parsed.mode !== null) {
       onScopeRestoredFromHash?.(parsed.mode === "tier2" ? "tier2" : "tier1");
+    }
+    if (parsed.storyOriginStaleHash) {
+      setFallbackNotice("stale-hash");
+    }
+    // Story-origin hash restore (#553). Mounts the Pivot tab onto the
+    // Story corpus by fetching the Story's member set before painting
+    // the breadcrumb. The asset-rooted restore path below is skipped
+    // when a Story origin is present so the analyst does not see an
+    // asset-rooted state flash before the Story origin lands (a
+    // momentary loading state is acceptable per #553 acceptance).
+    if (parsed.story !== null) {
+      const origin = parsed.story;
+      // Seed the visible state synchronously: Pivot tab, Story
+      // origin, dimension steps as decoded. The dimension steps are
+      // surfaced optimistically — `fetchStoryDetail` may discover the
+      // value is absent from the loaded member set (stale link). The
+      // pivot panel renders an empty section list until the member
+      // set lands (the index is empty without `storyMemberEvents`),
+      // which is the acceptable "loading/empty state during client
+      // restore" #553 calls for — no asset-corpus surfaces leak.
+      setPivotOrigin({
+        kind: "story",
+        customerId: origin.customerId,
+        storyId: origin.storyId,
+      });
+      const restoredSteps: PivotStep[] = parsed.steps.map((step) => ({
+        kind: "dimension" as const,
+        dimension: step.dimension,
+        value: { key: step.valueKey, label: step.valueKey },
+      }));
+      setTrail(restoredSteps);
+      setTab("pivot");
+      void fetchStoryDetail(origin.customerId, origin.storyId, 0, period)
+        .then((detail) => {
+          if (detail === null) {
+            // Story is gone (out of scope, deleted, period drift).
+            // Revert to asset-rooted shape and surface the stale-hash
+            // notice the same way the asset path does.
+            setPivotOrigin({ kind: "asset" });
+            setStoryMemberEvents([]);
+            setTrail(
+              initialFocus
+                ? [
+                    {
+                      kind: "asset",
+                      customerId: initialFocus.customerId,
+                      address: initialFocus.address,
+                    },
+                  ]
+                : [],
+            );
+            setTab("asset-list");
+            setFallbackNotice("stale-hash");
+            return;
+          }
+          const events = storyMembersToScoredEvents(
+            detail.members,
+            origin.customerId,
+          );
+          // Validate decoded dimension steps against the loaded
+          // member set — a step whose value is absent from any member
+          // is genuinely stale (the URL points at a value that no
+          // longer matches the Story corpus). Revert to the Story
+          // origin root in that case so the breadcrumb does not
+          // claim a pivot the corpus cannot back.
+          let stepsAreLive = true;
+          for (const step of restoredSteps) {
+            if (step.kind !== "dimension") continue;
+            let dim: ReturnType<typeof getPivotDimension>;
+            try {
+              dim = getPivotDimension(step.dimension);
+            } catch {
+              stepsAreLive = false;
+              break;
+            }
+            const found = events.some((ev) =>
+              dim.extract(ev).some((v) => v.key === step.value.key),
+            );
+            if (!found) {
+              stepsAreLive = false;
+              break;
+            }
+          }
+          setStoryMemberEvents(events);
+          if (!stepsAreLive) {
+            setTrail([]);
+            setFallbackNotice("stale-hash");
+          }
+        })
+        .catch(() => {
+          setPivotOrigin({ kind: "asset" });
+          setStoryMemberEvents([]);
+          setTrail(
+            initialFocus
+              ? [
+                  {
+                    kind: "asset",
+                    customerId: initialFocus.customerId,
+                    address: initialFocus.address,
+                  },
+                ]
+              : [],
+          );
+          setTab("asset-list");
+          setFallbackNotice("stale-hash");
+        });
+      return;
     }
     // The parser drops malformed / out-of-whitelist `triage.pivot.step`
     // segments silently, but counts them so the restore path can
@@ -1303,15 +1562,30 @@ export function TriageBaselineContent({
   // route the next reload back into the Pivot tab via the restore
   // effect). The asset crumb itself is left to the trail; only the
   // dimension-step persistence is gated.
+  //
+  // The Story-origin marker (#553) is persisted on a separate axis:
+  // it survives the Pivot→Stories→Pivot tab swap, so when the trail
+  // is hidden (asset-list tab) the dimension steps are stripped but
+  // the `triage.pivot.story` marker stays. The Stories tab itself
+  // clears its `triage.story` focus on swap; the two keys are
+  // independent by design.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const persistedTrail =
       tab === "pivot"
         ? trail
         : trail.filter((step) => step.kind !== "dimension");
+    const storyOrigin =
+      pivotOrigin.kind === "story"
+        ? {
+            customerId: pivotOrigin.customerId,
+            storyId: pivotOrigin.storyId,
+          }
+        : null;
     const hashState = pivotHashFromTrail(
       persistedTrail,
       scopeToHashMode(scope),
+      storyOrigin,
     );
     const next = replaceTriagePivotHash(window.location.hash, hashState);
     const target = next.length > 0 ? `#${next}` : "";
@@ -1320,7 +1594,7 @@ export function TriageBaselineContent({
     // history entry — the breadcrumb already supports backtrack.
     const url = `${window.location.pathname}${window.location.search}${target}`;
     window.history.replaceState(null, "", url);
-  }, [trail, scope, tab]);
+  }, [trail, scope, tab, pivotOrigin]);
 
   return (
     <div className="space-y-6">
@@ -1411,6 +1685,7 @@ export function TriageBaselineContent({
             fetchStoryDetail(customerId, storyId, storedMemberCount, period)
           }
           refreshStories={(options) => refreshTriageStories(period, options)}
+          onPivotFromStory={onPivotFromStory}
           labels={labels.stories}
         />
       ) : null}
@@ -1446,12 +1721,13 @@ export function TriageBaselineContent({
       ) : null}
       {tab === "pivot" ? (
         <div className="space-y-3">
-          {trail.length > 0 ? (
+          {trail.length > 0 || pivotOrigin.kind === "story" ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
               <TriagePivotBreadcrumb
                 trail={trail}
+                origin={pivotOrigin}
                 onSelect={(idx) => {
-                  if (idx === 0) {
+                  if (idx === 0 && pivotOrigin.kind === "asset") {
                     setTrail((current) => clearPivotTrail(current));
                     setFallbackNotice(null);
                     abortHashRestore();
@@ -1464,6 +1740,7 @@ export function TriageBaselineContent({
                     onCrumb(idx);
                   }
                 }}
+                onSelectStoryOrigin={onSelectStoryOrigin}
                 labels={labels.pivotBreadcrumb}
               />
               {hasPivotedAwayFromAsset(trail) && focusEvents.length > 0 ? (

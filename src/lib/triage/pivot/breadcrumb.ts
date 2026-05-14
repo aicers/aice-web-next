@@ -29,6 +29,21 @@ export type PivotStep =
     };
 
 /**
+ * Trail origin discriminator (#553). The original Phase 1 model
+ * assumed every trail is rooted at an asset; the Pivot-from-Story
+ * drill-in adds a Story-rooted shape where the trail carries no asset
+ * crumb and the pivot panel's corpus is the Story's member set.
+ *
+ * Stored as a sibling state on the Triage view rather than mixed into
+ * {@link PivotStep} so the existing trail walker (clearPivotTrail,
+ * resolveStepFocusEvents, hash serializer) keeps its `asset | dimension`
+ * narrowing without a new variant.
+ */
+export type PivotOrigin =
+  | { kind: "asset" }
+  | { kind: "story"; customerId: number; storyId: string };
+
+/**
  * Append a new pivot step to the trail. If the new step matches the
  * tail (same `kind` + identifier) it is ignored — clicking the same
  * pivot twice should not double the breadcrumb.

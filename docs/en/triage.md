@@ -760,6 +760,43 @@ saved member count, and the analyst-provided title (or `null`
 when blank). The UI redirects to the Stories tab and focuses the
 new row.
 
+### Pivot from a Story
+
+Each row in the Story detail member table carries inline **Pivot**
+buttons in a trailing actions column. Each button advertises one
+pivot dimension that the underlying member event actually carries
+(host, port, source / destination IP, URI pattern, DNS query, or
+sensor); the button is hidden for any dimension whose extractor
+finds no value on that row, so the affordance is always backed by
+a value the index can group on.
+
+Clicking a button switches into the Pivot peer view with the trail
+seeded by the chosen dimension. The view differs from the
+asset-rooted Pivot in three ways:
+
+- The breadcrumb reads **`Story #<customerId>/<storyId> > <pivot
+  dim>`**. Clicking the Story segment returns to the Story
+  detail panel.
+- The Pivot panel and the dimension-focus detail card read from
+  the **Story's member set** as their corpus rather than the
+  period-wide events. The left-hand asset list keeps showing the
+  period-wide asset rows so the analyst keeps situational
+  context.
+- The trail has **no asset crumb**. The Story origin acts as the
+  root.
+
+Tier 2 (server-filtered) dimensions are not surfaced from a
+Story origin in this release — Pivot-from-Story operates on the
+Tier 1 client-side index over the Story's member events. Tier 2
+plumbing for the Story-member corpus is a follow-up.
+
+`baseline_score` is `null` for members whose `event_time` falls
+outside the menu period (the period-scoped LEFT JOIN behaviour
+documented in [#547](https://github.com/aicers/aice-web-next/pull/547)).
+Null-scored members still participate in Tier 1 grouping — the
+adapter maps null to score `0` so the row sorts to the bottom of
+its (dimension, value) bucket rather than being dropped.
+
 ### URL hash routing
 
 The Stories tab participates in the same URL-hash routing as
@@ -773,6 +810,19 @@ A `triage.story=<id>` segment that omits the `customerId/`
 prefix is treated as stale because `event_group.id` is per
 tenant: the UI falls back to the Stories list root with a
 "Stale Story link — open from the list" toast.
+
+The Pivot-from-Story state uses a **separate**
+`triage.pivot.story=<customerId>/<storyId>` marker. This key
+lives in the `triage.pivot.*` namespace so it survives a
+Stories↔Pivot tab swap — the Stories-tab focus key
+(`triage.story`) clears on swap by design, but the pivot origin
+must persist. A URL carrying
+`triage.tab=pivot&triage.pivot.story=<id>&triage.pivot.step=<dim>:<value>`
+reloads into the Pivot tab with the Story origin in the
+breadcrumb and the dimension step applied; a momentary
+"loading" empty panel appears while the Story's member set
+fetches, but no asset-rooted breadcrumb or asset-corpus pivot
+panel is ever rendered during restore.
 
 ### Permission
 

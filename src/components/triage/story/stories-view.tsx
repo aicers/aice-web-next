@@ -22,6 +22,9 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import type { TriagePeriod } from "@/lib/triage";
+import type { PivotDimensionId, PivotValue } from "@/lib/triage/pivot";
+import { getPivotDimension } from "@/lib/triage/pivot";
+import { storyMemberToScoredEvent } from "@/lib/triage/story/pivot-adapter";
 import type {
   StoriesSortOrder,
   TriageStory,
@@ -106,6 +109,23 @@ export interface TriageStoryDetailLabels {
   /** Surfaced while the full member list is being fetched. */
   loading: string;
   close: string;
+  /**
+   * Pivot-from-Story affordances (#553). Required only when the
+   * Stories view receives an `onPivotFromStory` callback — the
+   * actions column collapses out without these labels.
+   */
+  pivotActionsColumn?: string;
+  /**
+   * Template for the per-button accessible label: `{dimension}`
+   * (localized dimension name) and `{value}` (the value text).
+   */
+  pivotActionTemplate?: string;
+  /**
+   * Map of dimension id → localized name. Same shape as the Pivot
+   * panel's `labels.dimensions` so the breadcrumb and the row actions
+   * stay in sync.
+   */
+  pivotDimensions?: Record<PivotDimensionId, string>;
 }
 
 interface TriageStoriesViewProps {
@@ -141,6 +161,20 @@ interface TriageStoriesViewProps {
    * the prop list (useful in unit tests).
    */
   refreshStories?: StoriesRefresh;
+  /**
+   * Pivot-from-Story (#553) handler. Fired when the analyst clicks a
+   * pivot dimension button on a Story member event row in the detail
+   * panel. The view passes the focused Story (so the caller can seed
+   * the Pivot-origin marker) along with the full member-detail list
+   * (so the caller can build the pivot index over the Story's events
+   * as documented in #553 §"Pivot corpus shape from a Story").
+   */
+  onPivotFromStory?: (args: {
+    story: TriageStory;
+    members: readonly TriageStoryMemberDetail[];
+    dimension: PivotDimensionId;
+    value: PivotValue;
+  }) => void;
   labels: TriageStoriesViewLabels;
 }
 
@@ -153,6 +187,7 @@ export function TriageStoriesView({
   period,
   loadDetail,
   refreshStories,
+  onPivotFromStory,
   labels,
 }: TriageStoriesViewProps) {
   const [sortOrder, setSortOrder] =
@@ -367,6 +402,17 @@ export function TriageStoriesView({
           period={period}
           loadDetail={loadDetail}
           onClose={() => onFocus(null)}
+          onPivot={
+            onPivotFromStory
+              ? ({ dimension, value, members }) =>
+                  onPivotFromStory({
+                    story: focused,
+                    members,
+                    dimension,
+                    value,
+                  })
+              : undefined
+          }
           labels={labels.detail}
           cardLabels={labels.card}
         />
@@ -380,6 +426,19 @@ interface StoryDetailProps {
   period: TriagePeriod | undefined;
   loadDetail: StoryDetailLoader | undefined;
   onClose: () => void;
+  /**
+   * Pivot-from-Story (#553) callback. When defined the member table
+   * renders a trailing actions column with per-row pivot dimension
+   * buttons; clicking a button fires this with the chosen dimension,
+   * value, and the full loaded member-detail list (so the consumer
+   * can seed the pivot index over the Story's members rather than
+   * fetch them again).
+   */
+  onPivot?: (args: {
+    dimension: PivotDimensionId;
+    value: PivotValue;
+    members: readonly TriageStoryMemberDetail[];
+  }) => void;
   labels: TriageStoryDetailLabels;
   /**
    * Card labels are reused for the title (auto-generated from
@@ -414,11 +473,30 @@ interface DetailState {
 
 const MEMBER_COUNT_FORMAT = new Intl.NumberFormat();
 
+/**
+ * Pivot dimensions surfaced on Story member rows (#553). Restricted
+ * to dimensions whose extractor reads only fields actually present on
+ * the Story member detail shape (`event_group_member ⨝
+ * baseline_triaged_event` per #547) — the remaining dimensions live
+ * under the Pivot panel's per-section rows where they apply
+ * naturally to the full event corpus rather than to single rows.
+ */
+const STORY_MEMBER_ROW_PIVOT_DIMENSIONS: readonly PivotDimensionId[] = [
+  "externalIp",
+  "internalIp",
+  "port",
+  "host",
+  "uriPattern",
+  "dnsQuery",
+  "sameSensor",
+];
+
 function TriageStoryDetail({
   story,
   period,
   loadDetail,
   onClose,
+  onPivot,
   labels,
   cardLabels,
 }: StoryDetailProps) {
@@ -545,6 +623,12 @@ function TriageStoryDetail({
           origAddr: null,
           respAddr: null,
         }));
+  const pivotActionsEnabled =
+    onPivot !== undefined &&
+    labels.pivotActionsColumn !== undefined &&
+    labels.pivotActionTemplate !== undefined &&
+    labels.pivotDimensions !== undefined &&
+    detail.status === "ready";
   const tableLabels: TriageEventTableLabels = {
     timeColumn: labels.timeColumn,
     kindColumn: labels.kindColumn,
@@ -552,6 +636,20 @@ function TriageStoryDetail({
     scoreColumn: labels.scoreColumn,
     origAddrColumn: labels.origAddrColumn,
     respAddrColumn: labels.respAddrColumn,
+    actionsColumn: pivotActionsEnabled ? labels.pivotActionsColumn : undefined,
+  };
+
+  const memberByKey = useMemo(() => {
+    const map = new Map<string, TriageStoryMemberDetail>();
+    if (detail.status === "ready") {
+      for (const m of detail.members) map.set(m.eventKey, m);
+    }
+    return map;
+  }, [detail]);
+
+  const handleRowPivot = (dimension: PivotDimensionId, value: PivotValue) => {
+    if (!onPivot || detail.status !== "ready") return;
+    onPivot({ dimension, value, members: detail.members });
   };
 
   return (
@@ -628,8 +726,101 @@ function TriageStoryDetail({
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">{labels.emptyMembers}</p>
       ) : (
-        <TriageEventTable rows={rows} labels={tableLabels} />
+        <TriageEventTable
+          rows={rows}
+          labels={tableLabels}
+          renderRowActions={
+            pivotActionsEnabled
+              ? (row) => {
+                  const member = memberByKey.get(row.key);
+                  if (!member) return null;
+                  return (
+                    <StoryMemberPivotActions
+                      member={member}
+                      customerId={story.customerId}
+                      onPivot={handleRowPivot}
+                      template={labels.pivotActionTemplate as string}
+                      dimensionLabels={
+                        labels.pivotDimensions as Record<
+                          PivotDimensionId,
+                          string
+                        >
+                      }
+                    />
+                  );
+                }
+              : undefined
+          }
+        />
       )}
     </section>
+  );
+}
+
+interface StoryMemberPivotActionsProps {
+  member: TriageStoryMemberDetail;
+  customerId: number;
+  onPivot: (dimension: PivotDimensionId, value: PivotValue) => void;
+  template: string;
+  dimensionLabels: Record<PivotDimensionId, string>;
+}
+
+function StoryMemberPivotActions({
+  member,
+  customerId,
+  onPivot,
+  template,
+  dimensionLabels,
+}: StoryMemberPivotActionsProps) {
+  // Reuse the dimension registry's per-event extractor against an
+  // adapted member event so the row surface only shows pivots whose
+  // value actually exists on this row (e.g. a DNS member has no
+  // `host`, an HTTP member has no `dnsQuery`). Keeping the extraction
+  // logic in one place (the dimension registry) means a future
+  // dimension addition does not need a parallel implementation here.
+  const synthetic = useMemo(
+    () => storyMemberToScoredEvent(member, customerId),
+    [member, customerId],
+  );
+  const buttons = useMemo(() => {
+    const out: Array<{
+      dimension: PivotDimensionId;
+      value: PivotValue;
+    }> = [];
+    const seen = new Set<string>();
+    for (const id of STORY_MEMBER_ROW_PIVOT_DIMENSIONS) {
+      const dim = getPivotDimension(id);
+      for (const value of dim.extract(synthetic)) {
+        const dedupeKey = `${id} ${value.key}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        out.push({ dimension: id, value });
+      }
+    }
+    return out;
+  }, [synthetic]);
+  if (buttons.length === 0) return null;
+  return (
+    <div
+      className="flex flex-wrap justify-end gap-1"
+      data-testid="triage-story-member-pivot-actions"
+    >
+      {buttons.map(({ dimension, value }) => (
+        <button
+          key={`${dimension}:${value.key}`}
+          type="button"
+          data-testid="triage-story-member-pivot-action"
+          data-dimension={dimension}
+          data-value-key={value.key}
+          onClick={() => onPivot(dimension, value)}
+          aria-label={template
+            .replace("{dimension}", dimensionLabels[dimension])
+            .replace("{value}", value.label)}
+          className="max-w-[20ch] truncate rounded border border-border/60 px-2 py-0.5 text-xs text-foreground hover:bg-accent"
+        >
+          {dimensionLabels[dimension]}: {value.label}
+        </button>
+      ))}
+    </div>
   );
 }
