@@ -635,8 +635,11 @@ describe("runExecutor — post-DB fan-out (#550, parallel-after-DB)", () => {
    * Recognised SQL patterns:
    *   - `SELECT … FROM apply_attempts WHERE attempt_id = $1`
    *   - tryClaim's `UPDATE … SET status='executing', executing_lock=$1, …`
-   *   - fan-out's `UPDATE … SET executing_lock = NULL, claim_started_at = NULL, planned_dispatches = $2 …`
-   *     (the post-DB handoff)
+   *   - fan-out's `UPDATE … SET executing_lock = NULL, claim_started_at = NULL,
+   *     planned_dispatches = (SELECT jsonb_agg(CASE WHEN d->>'state' = 'in_flight'
+   *     THEN jsonb_set(d, '{claimStartedAt}', to_jsonb(NOW())) ELSE d END) FROM
+   *     jsonb_array_elements($2::jsonb) AS d) …` (the post-DB handoff —
+   *     stamps `claimStartedAt` from the DB clock).
    *   - commitOneDispatchResult's `UPDATE … jsonb_path_exists … @.dispatchId == $id && @.lockToken == $tok`
    *   - finaliseRowFromPostDb's `UPDATE … SET status = 'failed_retryable' …` or
    *     `UPDATE … SET status = $2, expires_at = …`
@@ -676,16 +679,26 @@ describe("runExecutor — post-DB fan-out (#550, parallel-after-DB)", () => {
           return { rows: [{ attempt_id: row.attempt_id }], rowCount: 1 };
         }
         if (
-          /UPDATE apply_attempts\s+SET executing_lock = NULL,\s+claim_started_at = NULL,\s+planned_dispatches = \$2::jsonb\s+WHERE attempt_id = \$1\s+AND executing_lock = \$3/i.test(
+          /UPDATE apply_attempts\s+SET executing_lock = NULL,\s+claim_started_at = NULL,\s+planned_dispatches = \(\s*SELECT jsonb_agg\(\s*CASE\s+WHEN d->>'state' = 'in_flight'\s+THEN jsonb_set\(d, '\{claimStartedAt\}', to_jsonb\(NOW\(\)\)\)\s+ELSE d\s+END\s*\)\s+FROM jsonb_array_elements\(\$2::jsonb\) AS d\s*\)\s+WHERE attempt_id = \$1\s+AND executing_lock = \$3/i.test(
             sql,
           )
         ) {
-          // commitDbSuccessAndFanOut (no row-status change)
+          // commitDbSuccessAndFanOut (no row-status change). The
+          // production SQL stamps `claimStartedAt` from PG `NOW()` for
+          // every `in_flight` entry — mirror that here so the mocked
+          // row carries the same shape.
+          const stamped = (
+            JSON.parse(params[1] as string) as Record<string, unknown>[]
+          ).map((d) =>
+            d.state === "in_flight"
+              ? { ...d, claimStartedAt: new Date().toISOString() }
+              : d,
+          );
           row = {
             ...row,
             executing_lock: null,
             claim_started_at: null,
-            planned_dispatches: JSON.parse(params[1] as string),
+            planned_dispatches: stamped,
           };
           return { rows: [{ attempt_id: row.attempt_id }], rowCount: 1 };
         }
