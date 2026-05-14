@@ -25,7 +25,12 @@ function statusConnection(
 }
 
 describe("buildNodeRows", () => {
-  it("marks rows with no draft as non-pending and surfaces no draft cells", () => {
+  it("marks steady-state rows (draft == config) as non-pending and surfaces no draft cells", () => {
+    // Comparison-based detection (#333 Decision 9, #551): a row with
+    // every agent at `draft == config` and every external at
+    // `draft == endpoint.config` reads as not-pending. The agent
+    // mirrors its applied config in `draft`, and the external is
+    // `draft: null` against an absent snapshot entry (also steady).
     const rows = buildNodeRows(
       nodeConnection([
         {
@@ -46,7 +51,7 @@ describe("buildNodeRows", () => {
                 kind: "SENSOR",
                 status: "ENABLED",
                 config: "[s]",
-                draft: null,
+                draft: "[s]",
               },
             ],
             externalServices: [
@@ -75,6 +80,47 @@ describe("buildNodeRows", () => {
     expect(rows[0].serviceCells.dataStore).toEqual({
       state: "configured-here",
       hasDraft: false,
+    });
+  });
+
+  it("marks an agent delete intent (config: Some, draft: null) as pending (#551)", () => {
+    // Reviewer Round 5 (#551): the list row aggregate must use the
+    // comparison helper, not the legacy `draft !== null` predicate.
+    // An agent with non-empty `config` and `draft: null` is delete
+    // intent — it is pending and the service cell must surface the
+    // pending dot. The applied-manual sentinel (`config: ""`,
+    // `draft: null`) is covered by a separate test below and stays
+    // not pending.
+    const rows = buildNodeRows(
+      nodeConnection([
+        {
+          node: {
+            id: "agent-delete-intent",
+            name: "n",
+            nameDraft: null,
+            profile: { customerId: "1", description: "", hostname: "n.lan" },
+            profileDraft: null,
+            agents: [
+              {
+                node: 1,
+                key: "n-sensor",
+                kind: "SENSOR",
+                status: "ENABLED",
+                config: "[s]",
+                draft: null,
+              },
+            ],
+            externalServices: [],
+          },
+        },
+      ]),
+      statusConnection([]),
+    );
+
+    expect(rows[0].hasPending).toBe(true);
+    expect(rows[0].serviceCells.sensor).toEqual({
+      state: "configured-here-pending",
+      hasDraft: true,
     });
   });
 
@@ -316,6 +362,85 @@ describe("buildNodeRows", () => {
     expect(rows[1].manager).toBeNull();
     expect(rows[1].ping).toBeNull();
     expect(rows[1].hasStatus).toBe(false);
+  });
+
+  it("marks delete-intent unavailable external as pending and renders the unknown cell (#551)", () => {
+    // Issue #551: list-row aggregate must match `nodePendingState`
+    // semantics. A delete-intent external (`draft === null`) with an
+    // unavailable page-load snapshot is a real pending manager-DB
+    // change that stays applyable even when the external is down.
+    // Counting only the `"pending"` state would drop this case and
+    // let the list and detail aggregates disagree for the same node.
+    const rows = buildNodeRows(
+      nodeConnection([
+        {
+          node: {
+            id: "delete-intent-unavailable",
+            name: "n",
+            nameDraft: null,
+            profile: { customerId: "1", description: "", hostname: "n.lan" },
+            profileDraft: null,
+            agents: [],
+            externalServices: [
+              {
+                node: 1,
+                key: "n-store",
+                kind: "DATA_STORE",
+                status: "ENABLED",
+                draft: null,
+              },
+            ],
+          },
+        },
+      ]),
+      statusConnection([]),
+      { DATA_STORE: "unavailable" },
+    );
+
+    expect(rows[0].hasPending).toBe(true);
+    expect(rows[0].serviceCells.dataStore).toEqual({
+      state: "configured-here-unknown",
+      hasDraft: false,
+    });
+  });
+
+  it("marks non-delete unavailable external as pending and renders the unknown cell (#551)", () => {
+    // Apply-blocking unknown: `nodePendingState` returns `"unknown"`
+    // for this combination so the per-node Apply button is disabled
+    // with the unknown tooltip. The list row must still surface a
+    // pending signal so the row badge / pending filter / pending
+    // summary count behave consistently with the detail page.
+    const rows = buildNodeRows(
+      nodeConnection([
+        {
+          node: {
+            id: "non-delete-unavailable",
+            name: "n",
+            nameDraft: null,
+            profile: { customerId: "1", description: "", hostname: "n.lan" },
+            profileDraft: null,
+            agents: [],
+            externalServices: [
+              {
+                node: 1,
+                key: "n-store",
+                kind: "DATA_STORE",
+                status: "ENABLED",
+                draft: "[store] retention = '7d'",
+              },
+            ],
+          },
+        },
+      ]),
+      statusConnection([]),
+      { DATA_STORE: "unavailable" },
+    );
+
+    expect(rows[0].hasPending).toBe(true);
+    expect(rows[0].serviceCells.dataStore).toEqual({
+      state: "configured-here-unknown",
+      hasDraft: false,
+    });
   });
 
   it("marks hasStatus true even when ping is null (dead node)", () => {

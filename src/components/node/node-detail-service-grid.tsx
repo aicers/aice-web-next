@@ -13,6 +13,13 @@ import { useServiceStatus } from "@/hooks/use-service-status";
 import { Link } from "@/i18n/navigation";
 import { diffServiceConfig } from "@/lib/node/diff";
 import {
+  agentPendingState,
+  type ExternalConfigSnapshot,
+  externalServicePendingState,
+  snapshotApplied,
+  snapshotIsUnavailable,
+} from "@/lib/node/pending-state";
+import {
   AGENT_KIND_TO_SERVICE,
   type ServiceKind,
 } from "@/lib/node/service-status";
@@ -37,13 +44,11 @@ interface NodeDetailServiceGridProps {
   /** Full SSR `nodeStatusList` payload to seed the polling buffer. */
   initialEdges: NodeStatus[];
   /**
-   * Applied external-service TOML config keyed by external kind. Empty
-   * string means the probe failed (unreachable); missing key means the
-   * node does not host that external.
+   * Page-load endpoint snapshot for the node's externals (#551).
+   * Drives the Applied tab, the Diff steady-state computation, and the
+   * per-card pending / unknown indicators.
    */
-  appliedExternalConfigs: Record<ExternalServiceKind, string | null>;
-  /** External kinds whose applied-config fetch reported unreachable. */
-  unreachableExternals: ReadonlySet<ExternalServiceKind>;
+  externalConfigSnapshot: ExternalConfigSnapshot;
 }
 
 const AGENT_KIND_ORDER: AgentKind[] = [
@@ -86,8 +91,7 @@ export function NodeDetailServiceGrid({
   initialNodeStatus,
   initialCapturedAt,
   initialEdges,
-  appliedExternalConfigs,
-  unreachableExternals,
+  externalConfigSnapshot,
 }: NodeDetailServiceGridProps) {
   const t = useTranslations("nodes.detail.services");
 
@@ -191,8 +195,15 @@ export function NodeDetailServiceGrid({
           const serviceKey: ServiceKind =
             kind === "DATA_STORE" ? "dataStore" : "tiContainer";
           const entry = result.entries[serviceKey];
-          const applied = appliedExternalConfigs[kind] ?? null;
-          const unreachable = unreachableExternals.has(kind);
+          const applied = snapshotApplied(externalConfigSnapshot, kind);
+          const unreachable = snapshotIsUnavailable(
+            externalConfigSnapshot,
+            kind,
+          );
+          const pendingState = externalServicePendingState(
+            ext,
+            externalConfigSnapshot,
+          );
           return (
             <ExternalServiceCard
               key={kind}
@@ -202,6 +213,7 @@ export function NodeDetailServiceGrid({
               serviceKey={serviceKey}
               applied={applied}
               unreachable={unreachable}
+              pendingState={pendingState}
               statusBadge={
                 <ServiceStatusBadge
                   status={entry.status}
@@ -284,7 +296,7 @@ function AgentServiceCard({
 }: AgentServiceCardProps) {
   const tColumns = useTranslations("nodes.status.serviceColumns");
   const tServices = useTranslations("nodes.detail.services");
-  const pending = agent.draft !== null;
+  const pending = agentPendingState(agent) === "pending";
   return (
     <article
       className="flex flex-col gap-2 rounded-lg border bg-card p-4"
@@ -324,6 +336,7 @@ interface ExternalServiceCardProps {
   serviceKey: ServiceKind;
   applied: string | null;
   unreachable: boolean;
+  pendingState: "pending" | "not-pending" | "unknown";
   statusBadge: React.ReactNode;
   canEdit: boolean;
 }
@@ -334,12 +347,14 @@ function ExternalServiceCard({
   serviceKey,
   applied,
   unreachable,
+  pendingState,
   statusBadge,
   canEdit,
 }: ExternalServiceCardProps) {
   const tColumns = useTranslations("nodes.status.serviceColumns");
   const tServices = useTranslations("nodes.detail.services");
-  const pending = service.draft !== null;
+  const pending = pendingState === "pending";
+  const unknown = pendingState === "unknown";
   return (
     <article
       className="flex flex-col gap-2 rounded-lg border bg-card p-4"
@@ -355,6 +370,16 @@ function ExternalServiceCard({
               data-testid={`node-detail-service-${serviceKey}-pending`}
             >
               {tServices("pendingBadge")}
+            </Badge>
+          )}
+          {unknown && (
+            <Badge
+              variant="outline"
+              className="border-slate-300 bg-slate-50 text-slate-700"
+              data-testid={`node-detail-service-${serviceKey}-unknown`}
+              title={tServices("pendingUnknownTooltip")}
+            >
+              {tServices("pendingUnknown")}
             </Badge>
           )}
           {statusBadge}
@@ -555,13 +580,21 @@ function DiffTab({
       </p>
     );
   }
-  // "No pending changes" is a draft-presence question, not a structural
-  // diff question: a service with no `draft` carries no operator intent
-  // to change anything, even if its applied config is non-empty. Without
-  // this gate, `diffServiceConfig(applied, null)` would surface every
-  // applied key as "applied → unset", which contradicts the issue's
-  // empty-state contract.
-  const entries = draft === null ? [] : diffServiceConfig(applied, draft);
+  // Comparison-based render (#551 / Decision 9):
+  //   - draft === null && applied === null → no intent → "no diff".
+  //   - draft === null && applied !== null → delete intent → render
+  //     every applied field as removed so the operator sees what the
+  //     apply will tear down.
+  //   - draft !== null → structural diff. Steady state
+  //     (`diffServiceConfig` empty) renders as "no diff" without
+  //     suppressing the table for change intent.
+  const isDeleteIntent = draft === null && applied !== null;
+  const entries =
+    draft === null
+      ? isDeleteIntent
+        ? diffServiceConfig(applied, "")
+        : []
+      : diffServiceConfig(applied, draft);
   if (entries.length === 0) {
     return (
       <div
@@ -574,34 +607,44 @@ function DiffTab({
     );
   }
   return (
-    <table
-      className="w-full text-left text-xs"
-      data-testid={`node-detail-service-${serviceKey}-diff`}
-    >
-      <thead className="text-muted-foreground">
-        <tr>
-          <th className="px-2 py-1">{t("diffColumns.field")}</th>
-          <th className="px-2 py-1">{t("diffColumns.applied")}</th>
-          <th className="px-2 py-1">{t("diffColumns.draft")}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {entries.map((entry) => (
-          <tr
-            key={entry.fieldPath}
-            className="border-t"
-            data-testid={`node-detail-service-${serviceKey}-diff-row-${entry.fieldPath}`}
-          >
-            <td className="px-2 py-1 font-mono">{entry.fieldPath}</td>
-            <td className="px-2 py-1 font-mono">
-              {entry.applied ?? t("diffUnset")}
-            </td>
-            <td className="px-2 py-1 font-mono">
-              {entry.draft ?? t("diffUnset")}
-            </td>
+    <div className="space-y-2">
+      {isDeleteIntent && (
+        <p
+          className="text-amber-700 text-xs font-medium"
+          data-testid={`node-detail-service-${serviceKey}-diff-delete`}
+        >
+          {t("diffDeleteIntent")}
+        </p>
+      )}
+      <table
+        className="w-full text-left text-xs"
+        data-testid={`node-detail-service-${serviceKey}-diff`}
+      >
+        <thead className="text-muted-foreground">
+          <tr>
+            <th className="px-2 py-1">{t("diffColumns.field")}</th>
+            <th className="px-2 py-1">{t("diffColumns.applied")}</th>
+            <th className="px-2 py-1">{t("diffColumns.draft")}</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr
+              key={entry.fieldPath}
+              className="border-t"
+              data-testid={`node-detail-service-${serviceKey}-diff-row-${entry.fieldPath}`}
+            >
+              <td className="px-2 py-1 font-mono">{entry.fieldPath}</td>
+              <td className="px-2 py-1 font-mono">
+                {entry.applied ?? t("diffUnset")}
+              </td>
+              <td className="px-2 py-1 font-mono">
+                {entry.draft ?? t("diffUnset")}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

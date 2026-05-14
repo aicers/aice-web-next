@@ -29,15 +29,27 @@ side-by-side.
 
 ### Pending changes
 
-Rows with a draft that differs from the applied state render with:
+Pending state is comparison-based: a row, service, or external is
+pending iff the saved draft differs from the applied state — for
+agents, `agent.draft != agent.config`; for externals, the manager-side
+`draft` is compared structurally to the external endpoint's live
+`config` fetched at page load. A draft that round-trips the applied
+value reads as steady state and renders no pending indicator.
+
+Rows whose comparison flags any drift render with:
 
 - A **Pending** badge on the left edge of the row.
 - Two-line cells for any of `name`, `customer`, `description`, or
   `hostname` whose draft value differs from the applied value: the
   applied value appears struck through, with the draft value shown
   below.
-- A small amber dot beside any service status icon whose service has a
-  pending draft.
+- A small amber dot beside any service status icon whose service is
+  pending.
+- A small slate **unknown** dot beside an external-service status icon
+  when the page-load read of Giganto / Tivan failed for that kind. The
+  pending state cannot be answered against an unreachable endpoint, so
+  the row shows the unknown indicator instead of silently rendering as
+  "no pending changes".
 
 The summary chip above the table — "N nodes with pending changes" —
 filters the table to changed rows when active.
@@ -717,10 +729,14 @@ polling loop as the Status tab. The sparklines carry one SSR-seeded
 sample on first paint so the chart does not render an empty axis on
 cold loads, and the polling buffer takes over from the next client
 tick onward. A **Pending changes** badge appears whenever any
-node-level draft (name / metadata / agent / external service) is
-non-null; the dashboard's controls (`Edit`, `Restart`, `Shutdown`,
-`Apply All`, `Delete`) are individually gated on the relevant
-write / delete permissions.
+node-level draft differs from its applied state (name / profile /
+agent / external service, comparison-based). When the only pending
+signal is an external whose page-load endpoint read failed, the
+dashboard renders a **Pending state unknown** badge instead and
+disables the **Apply All** button with a tooltip explaining the
+state — Apply must wait until the external responds. The dashboard's
+controls (`Edit`, `Restart`, `Shutdown`, `Apply All`, `Delete`) are
+individually gated on the relevant write / delete permissions.
 
 ### Service cards and three-tab panel
 
@@ -735,8 +751,14 @@ card carries:
 
 - A status badge (`On` / `Off` / `Idle`) driven by the same shared
   polling buffer as the Status tab.
-- A **Pending changes** badge (amber) whenever the service has a
-  non-null draft on the canonical node payload.
+- A **Pending changes** badge (amber) whenever the comparison rule
+  flags the service: agents compare `draft` against `config`;
+  externals compare the manager-side `draft` against the endpoint's
+  live `config` from the page-load snapshot.
+- A **Pending state unknown** badge (slate) on an external card when
+  the page-load endpoint read failed for that kind. The applied tab
+  cannot be rendered in that case, and the per-card pending state
+  cannot be answered.
 - A three-tab panel: **Applied** (the live config the service is
   running with), **Draft** (any pending operator-authored changes),
   and **Diff** (a per-field diff between Applied and Draft).
@@ -744,13 +766,23 @@ card carries:
   that deep-links into the create/edit dialog with the relevant
   service section auto-expanded.
 
-The Diff tab renders the documented copy `"No pending changes for
-this service."` when the service's draft is null. When the external
-service (Data Store / TI Container) is unreachable, the Applied tab
-renders the unavailable copy and the Diff tab renders `"Diff cannot
-be computed while the service is unreachable."` — the Draft tab
-continues to render normally because the draft is held on the manager
-side, not on the external endpoint.
+The Diff tab is rendered cell-by-cell from the comparison rule:
+
+- **Steady state** (`draft == config` for agents, `manager.draft ==
+  endpoint.config` for externals) renders the documented copy
+  `"No pending changes for this service."`.
+- **Change intent** (`draft` is non-null and structurally differs)
+  renders the per-field Applied / Draft diff table.
+- **Delete intent** (`draft = null` while applied is non-null) renders
+  the delete marker `"This service is marked for removal on the next
+  Apply."` above the diff table — the operator sees exactly which
+  applied fields the Apply will tear down.
+
+When the external service (Data Store / TI Container) is unreachable,
+the Applied tab renders the unavailable copy and the Diff tab renders
+`"Diff cannot be computed while the service is unreachable."` — the
+Draft tab continues to render normally because the draft is held on
+the manager side, not on the external endpoint.
 
 ### Apply preview from the detail page
 

@@ -33,6 +33,7 @@ import {
 
 const mockGraphqlRequest = vi.hoisted(() => vi.fn());
 const mockGetCurrentSession = vi.hoisted(() => vi.fn());
+const mockBuildExternalConfigSnapshot = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/graphql/client", () => ({
   graphqlRequest: mockGraphqlRequest,
@@ -40,6 +41,20 @@ vi.mock("@/lib/graphql/client", () => ({
 
 vi.mock("@/lib/auth/session", () => ({
   getCurrentSession: mockGetCurrentSession,
+}));
+
+// Comparison-based plan-build (#551 / Decision 9) reads each
+// non-delete-intent external's endpoint `config` to decide whether to
+// emit the external dispatch. The integration suite intentionally
+// only mocks the manager GraphQL transport — Giganto / Tivan would
+// not be reachable here, so we mock the snapshot builder to emulate
+// the change-intent path (applied side absent ⇒ emit dispatch). The
+// other DB-backed write paths still hit the real Postgres.
+vi.mock("@/lib/node/external-config-snapshot", () => ({
+  buildExternalConfigSnapshot: vi.fn(),
+  buildExternalConfigSnapshotForApply: mockBuildExternalConfigSnapshot,
+  externalKindsOnNode: vi.fn(),
+  externalKindsOnNodes: vi.fn(),
 }));
 
 const DATABASE_URL =
@@ -81,6 +96,12 @@ beforeEach(() => {
   mockGraphqlRequest.mockReset();
   mockGetCurrentSession.mockReset();
   mockGetCurrentSession.mockResolvedValue(makeSession());
+  mockBuildExternalConfigSnapshot.mockReset();
+  // Default: empty snapshot — externals on non-delete-intent rows
+  // hit the change-intent branch of the plan builder and get a
+  // dispatch row each. Individual tests override to exercise the
+  // steady-state / unavailable paths.
+  mockBuildExternalConfigSnapshot.mockResolvedValue({});
 });
 
 function makeSession(): AuthSession {

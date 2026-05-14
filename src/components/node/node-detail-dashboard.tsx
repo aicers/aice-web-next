@@ -26,6 +26,10 @@ import {
   useNodeStatusPolling,
 } from "@/hooks/use-node-status-polling";
 import { useRouter } from "@/i18n/navigation";
+import {
+  type ExternalConfigSnapshot,
+  nodePendingState,
+} from "@/lib/node/pending-state";
 import type { Node as ManagerNode, NodeStatus } from "@/lib/node/types";
 import {
   type ApplyPreviewActions,
@@ -56,6 +60,13 @@ interface NodeDetailDashboardProps {
    */
   lastAppliedAt: string | null;
   /**
+   * Page-load endpoint snapshot threading the comparison-based pending
+   * detection rule (#551). The client never reads external endpoints
+   * directly — it consults this snapshot for steady-state / change /
+   * unknown calls on each external service.
+   */
+  externalConfigSnapshot: ExternalConfigSnapshot;
+  /**
    * Server actions powering the Apply preview modal. Threaded as a
    * prop so the page (a server component) can wire production
    * `"use server"` actions, while tests can pass mocks without
@@ -65,12 +76,11 @@ interface NodeDetailDashboardProps {
   applyActions: ApplyPreviewActions;
 }
 
-function hasPendingChanges(node: ManagerNode): boolean {
-  if (node.nameDraft !== null) return true;
-  if (node.profileDraft !== null) return true;
-  if (node.agents.some((a) => a.draft !== null)) return true;
-  if (node.externalServices.some((s) => s.draft !== null)) return true;
-  return false;
+export function hasPendingChanges(
+  node: ManagerNode,
+  externalConfigSnapshot: ExternalConfigSnapshot,
+): boolean {
+  return nodePendingState(node, externalConfigSnapshot) === "pending";
 }
 
 export function NodeDetailDashboard({
@@ -84,6 +94,7 @@ export function NodeDetailDashboard({
   initialCapturedAt,
   initialEdges,
   lastAppliedAt,
+  externalConfigSnapshot,
   applyActions,
 }: NodeDetailDashboardProps) {
   const tMeta = useTranslations("nodes.detail.metadata");
@@ -265,7 +276,9 @@ export function NodeDetailDashboard({
     return <ManagerUnavailablePanel />;
   }
 
-  const pending = hasPendingChanges(node);
+  const pendingState = nodePendingState(node, externalConfigSnapshot);
+  const pending = pendingState === "pending";
+  const pendingUnknown = pendingState === "unknown";
   const ping = live?.ping ?? null;
   const alive = ping !== null;
   // Walk back from the most recent buffered sample to find the last
@@ -317,6 +330,15 @@ export function NodeDetailDashboard({
               >
                 {tMeta("pendingChanges")}
               </Badge>
+            ) : pendingUnknown ? (
+              <Badge
+                variant="outline"
+                className="border-slate-300 bg-slate-50 text-slate-700"
+                data-testid="node-detail-pending-unknown-badge"
+                title={tMeta("pendingUnknownTooltip")}
+              >
+                {tMeta("pendingUnknown")}
+              </Badge>
             ) : (
               <span
                 className="text-muted-foreground text-xs"
@@ -367,6 +389,10 @@ export function NodeDetailDashboard({
             <Button
               size="sm"
               onClick={() => setApplyOpen(true)}
+              disabled={pendingUnknown}
+              title={
+                pendingUnknown ? tMeta("pendingUnknownTooltip") : undefined
+              }
               data-testid="node-detail-apply-all"
             >
               {tControls("applyAll")}

@@ -1,3 +1,8 @@
+import {
+  agentPendingState,
+  type ExternalConfigSnapshot,
+  externalServicePendingState,
+} from "@/lib/node/pending-state";
 import type {
   AgentKind,
   ExternalServiceKind,
@@ -9,6 +14,7 @@ export type ServiceCellState =
   | "absent"
   | "configured-here"
   | "configured-here-pending"
+  | "configured-here-unknown"
   | "manual";
 
 export interface ServiceCell {
@@ -98,6 +104,7 @@ function profilesDiffer(
 export function buildNodeRows(
   nodeConn: NodeConnection,
   statusConn: NodeStatusConnection,
+  externalConfigSnapshot: ExternalConfigSnapshot = {},
 ): NodeRow[] {
   const statusById = new Map(
     statusConn.edges.map((edge) => [edge.node.id, edge.node]),
@@ -109,7 +116,12 @@ export function buildNodeRows(
     for (const agent of node.agents) {
       const column = AGENT_TO_COLUMN[agent.kind];
       if (!column) continue;
-      const hasDraft = agent.draft !== null && agent.draft !== agent.config;
+      // Comparison model (#333 Decision 9, threaded by #551). Delegate
+      // to the shared `agentPendingState` helper so the list row, the
+      // detail page, and `nodePendingState` cannot disagree — most
+      // notably for delete intent (`draft = null`, `config = Some(...)`)
+      // and the applied-manual sentinel (`config = ""`, `draft = null`).
+      const hasDraft = agentPendingState(agent) === "pending";
       // `decisions/node-field-catalog.md` §60-63: Configure Manually mode
       // for Piglet / Hog / Crusher is encoded as `draft = Some("")` and,
       // after apply, `config = ""`. Reading the *effective* state (draft
@@ -132,8 +144,17 @@ export function buildNodeRows(
     for (const ext of node.externalServices) {
       const column = EXTERNAL_TO_COLUMN[ext.kind];
       if (!column) continue;
-      const hasDraft = ext.draft !== null;
-      const state = hasDraft ? "configured-here-pending" : "configured-here";
+      const pendingState = externalServicePendingState(
+        ext,
+        externalConfigSnapshot,
+      );
+      const hasDraft = pendingState === "pending";
+      const state: ServiceCellState =
+        pendingState === "pending"
+          ? "configured-here-pending"
+          : pendingState === "unknown"
+            ? "configured-here-unknown"
+            : "configured-here";
       cells[column] = { state, hasDraft };
     }
 
@@ -141,17 +162,26 @@ export function buildNodeRows(
       node.nameDraft !== null && node.nameDraft !== node.name;
     const profileDraftDiffers = profilesDiffer(node.profile, node.profileDraft);
     const anyAgentDraft = node.agents.some(
-      (agent) => agent.draft !== null && agent.draft !== agent.config,
+      (agent) => agentPendingState(agent) === "pending",
     );
-    const anyExternalDraft = node.externalServices.some(
-      (ext) => ext.draft !== null,
+    // Match `nodePendingState` semantics: an external whose page-load
+    // snapshot is `"unavailable"` contributes to the row-level pending
+    // signal regardless of draft intent. For non-delete intent it is
+    // an Apply-blocking unknown; for delete intent it is a real pending
+    // manager-DB change that stays applyable even with the external
+    // down. Counting only `"pending"` would drop the delete-intent case
+    // and let the list / detail aggregates disagree for the same node.
+    const anyExternalPending = node.externalServices.some(
+      (ext) =>
+        externalServicePendingState(ext, externalConfigSnapshot) !==
+        "not-pending",
     );
 
     const hasPending =
       nameDraftDiffers ||
       profileDraftDiffers ||
       anyAgentDraft ||
-      anyExternalDraft;
+      anyExternalPending;
 
     const status = statusById.get(node.id);
     const hasStatus = status !== undefined;

@@ -928,17 +928,16 @@ describe("saveDraft — stale-conflict replay", () => {
     );
   });
 
-  it("collapses a user agent draft that matches the fresh applied config to a no-op on the replay path", async () => {
-    // Round 19 reviewer's defense-in-depth case: the user's draft
+  it("persists draft = applied baseline on replay when the user's draft equals the fresh applied config (steady state, not delete intent)", async () => {
+    // Round 8 reviewer's #551-consistency case: the user's draft
     // happens to equal the canonical applied config (e.g. a Keep-editing
     // reconcile where a concurrent writer applied the same change).
-    // Before this fix, `mergeAgentEntry` only compared `user.draft`
-    // against `fresh.draft` and forwarded the user's string verbatim,
-    // so the manager would persist a phantom pending draft that
-    // re-states the applied config. The merge now collapses `user.draft
-    // === fresh.config` (with `fresh.draft === null`) to `null`, which
-    // — combined with `isNoOpAgainstFresh` — short-circuits the replay
-    // mutation entirely.
+    // Under the #551 comparison rule, a node with `{config: APPLIED,
+    // draft: null}` is delete intent — `agentPendingState` classifies
+    // it as pending-delete and the next Apply would `MANAGER_DB`-remove
+    // the agent. To leave the node in steady state, the replay must
+    // forward `draft = APPLIED` so the persisted shape is `{config:
+    // APPLIED, draft: APPLIED}` (not pending).
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
 
@@ -975,32 +974,50 @@ describe("saveDraft — stale-conflict replay", () => {
     mockGraphqlRequest.mockRejectedValueOnce(staleErr);
     // 3: replay re-fetch — concurrent writer applied the user's intent,
     //    so fresh has `draft: null, config: APPLIED`.
+    const freshAgents = [
+      {
+        kind: "SENSOR",
+        key: "s1",
+        status: "ENABLED",
+        config: APPLIED,
+        draft: null,
+      },
+    ];
     mockGraphqlRequest.mockResolvedValueOnce(
-      canonicalNodePayload("n-5", "5", {
-        agents: [
-          {
-            kind: "SENSOR",
-            key: "s1",
-            status: "ENABLED",
-            config: APPLIED,
-            draft: null,
-          },
-        ],
-      }),
+      canonicalNodePayload("n-5", "5", { agents: freshAgents }),
     );
+    // 4: canonical-fetch on the replay updateNodeDraft.
+    mockGraphqlRequest.mockResolvedValueOnce(
+      canonicalNodePayload("n-5", "5", { agents: freshAgents }),
+    );
+    // 5: replay mutation success.
+    mockGraphqlRequest.mockResolvedValueOnce({ updateNodeDraft: "n-5" });
 
     const { saveDraft } = await import("@/lib/node/draft");
     const result = await saveDraft(makeSession(), "n-5", oldNode, newDraft);
 
-    // No replay mutation is dispatched — the rebased draft normalises to
-    // a no-op against fresh, so saveDraft short-circuits.
+    // The replay mutation runs: rebased draft has `draft = APPLIED`,
+    // fresh has `draft = null`, so the merge is not a no-op.
     const mutationCalls = mockGraphqlRequest.mock.calls.filter(
       (c) => c[1] && "old" in (c[1] as Record<string, unknown>),
     );
-    expect(mutationCalls).toHaveLength(1); // only the first (stale) call
-    expect(result).toMatchObject({ id: "n-5", persisted: false });
-    // No service.draft_save audit either — nothing was written.
-    expect(mockAuditRecord).not.toHaveBeenCalled();
+    expect(mutationCalls).toHaveLength(2);
+    const replayVars = mutationCalls[1][1] as { new: NodeDraftInput };
+    const sentSensor = replayVars.new.agents?.find((a) => a.key === "s1");
+    // The replay sends `draft = APPLIED` (steady state), not `null`
+    // (delete intent under the #551 comparison rule).
+    expect(sentSensor?.draft).toBe(APPLIED);
+    expect(result).toMatchObject({ id: "n-5", persisted: true });
+
+    // Audit fires once for SENSOR (draft transitioned from null to
+    // APPLIED on the fresh baseline — a real draft_save).
+    expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "service.draft_save",
+        targetId: "n-5:SENSOR",
+      }),
+    );
   });
 
   it("does not retry a non-stale GraphQL error (e.g. validation) — propagates the original error and emits no audit", async () => {

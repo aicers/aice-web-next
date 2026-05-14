@@ -7,6 +7,7 @@ const mockResolveEffectiveCustomerIds = vi.hoisted(() => vi.fn());
 const mockGraphqlRequest = vi.hoisted(() => vi.fn());
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockGetCurrentSession = vi.hoisted(() => vi.fn());
+const mockBuildExternalConfigSnapshot = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/permissions", () => ({
   hasPermission: mockHasPermission,
@@ -27,6 +28,13 @@ vi.mock("@/lib/graphql/client", () => ({
 vi.mock("@/lib/db/client", () => ({
   query: mockQuery,
   withTransaction: vi.fn(),
+}));
+
+vi.mock("@/lib/node/external-config-snapshot", () => ({
+  buildExternalConfigSnapshot: vi.fn(),
+  buildExternalConfigSnapshotForApply: mockBuildExternalConfigSnapshot,
+  externalKindsOnNode: vi.fn(),
+  externalKindsOnNodes: vi.fn(),
 }));
 
 /**
@@ -84,7 +92,14 @@ beforeEach(() => {
   mockGraphqlRequest.mockReset();
   mockQuery.mockReset();
   mockGetCurrentSession.mockReset();
+  mockGetCurrentSession.mockReset();
   mockGetCurrentSession.mockResolvedValue(makeSession());
+  mockBuildExternalConfigSnapshot.mockReset();
+  // Default: every external read succeeded with "unavailable"-shaped
+  // miss (no entry), so the comparison-based plan builder treats the
+  // applied side as absent and emits the dispatch (change intent).
+  // Tests asserting the steady-state / unavailable paths override.
+  mockBuildExternalConfigSnapshot.mockResolvedValue({});
 });
 
 describe("createApplyAttempt — happy path", () => {
@@ -167,6 +182,56 @@ describe("createApplyAttempt — happy path", () => {
     expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
   });
 
+  it("plans no TI_CONTAINER dispatch when the draft matches the projected snapshot (#551 Round 2)", async () => {
+    // Regression for #551 Round 2: the Tivan snapshot projection must
+    // emit every field serialiseTiContainer writes (including the
+    // TIVAN_HARDCODED paths) so the comparison-based plan builder
+    // recognises steady state and skips the redundant external dispatch.
+    const { serialiseTiContainer, TIVAN_HARDCODED } = await import(
+      "@/lib/node/services/ti-container"
+    );
+    const { tivanConfigToToml } = await import(
+      "@/lib/node/applied-config-toml"
+    );
+    const tiDraft = serialiseTiContainer({ webIp: "10.0.0.2", webPort: 8444 });
+    mockBuildExternalConfigSnapshot.mockResolvedValue({
+      TI_CONTAINER: tivanConfigToToml({
+        graphqlSrvAddr: "10.0.0.2:8444",
+        translateMitre: TIVAN_HARDCODED.translateMitre,
+        excelData: TIVAN_HARDCODED.excelData,
+        originMitre: TIVAN_HARDCODED.originMitre,
+      }),
+    });
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        externalServices: [
+          {
+            kind: "TI_CONTAINER",
+            key: "k1",
+            status: "ENABLED",
+            draft: tiDraft,
+          },
+        ],
+      }),
+    );
+    mockQuery.mockResolvedValue({
+      rows: [{ created_at: new Date(), expires_at: new Date() }],
+      rowCount: 1,
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const result = await createApplyAttempt({ nodeId: "node-1" });
+
+    expect(result.plannedDispatches).toHaveLength(2);
+    expect(result.plannedDispatches[0].kind).toBe("MANAGER_DB");
+    expect(result.plannedDispatches[1].kind).toBe("MANAGER_NOTIFY");
+    expect(
+      result.plannedDispatches.some((d) => d.kind === "TI_CONTAINER"),
+    ).toBe(false);
+  });
+
   it("excludes external services with no draft from the plan", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
@@ -218,6 +283,53 @@ describe("createApplyAttempt — permission boundary", () => {
     );
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("plans normally when the caller lacks services:read but holds nodes:write + services:write (#551 Round 6)", async () => {
+    // Regression for #551 Round 6: createApplyAttempt's documented gate
+    // is `nodes:write + services:write` (decisions/node-permissions.md).
+    // The request-time plan-build endpoint read must not silently widen
+    // that to also require `services:read` — a write-only custom role
+    // would otherwise lose the ability to apply change-intent externals
+    // while still being able to apply delete-intent externals (no read).
+    mockHasPermission.mockImplementation(
+      async (_roles, perm) =>
+        perm === "nodes:write" || perm === "services:write",
+    );
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockBuildExternalConfigSnapshot.mockResolvedValue({
+      // Change-intent: applied side present but unequal to the draft.
+      DATA_STORE: 'applied = "old"',
+    });
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        externalServices: [
+          {
+            kind: "DATA_STORE",
+            key: "k1",
+            status: "ENABLED",
+            draft: 'applied = "new"',
+          },
+        ],
+      }),
+    );
+    mockQuery.mockResolvedValue({
+      rows: [{ created_at: new Date(), expires_at: new Date() }],
+      rowCount: 1,
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const result = await createApplyAttempt({ nodeId: "node-1" });
+
+    expect(result.plannedDispatches).toHaveLength(3);
+    expect(result.plannedDispatches[0].kind).toBe("MANAGER_DB");
+    expect(result.plannedDispatches[1].kind).toBe("MANAGER_NOTIFY");
+    expect(result.plannedDispatches[2].kind).toBe("DATA_STORE");
+    // The plan-build read must not have re-run a `services:read` gate.
+    const checkedPerms = mockHasPermission.mock.calls.map(
+      (call: unknown[]) => call[1] as string,
+    );
+    expect(checkedPerms).not.toContain("services:read");
   });
 
   it("rejects when customer scope excludes the node (BFF defense-in-depth: upstream returned the out-of-scope payload)", async () => {
@@ -359,6 +471,109 @@ describe("createApplyAttempt — permission boundary", () => {
     expect(mockHasPermission).not.toHaveBeenCalled();
     expect(mockGraphqlRequest).not.toHaveBeenCalled();
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe("createApplyAttempt — Decision 9 comparison-based dispatch planning", () => {
+  it("omits the external dispatch when manager.draft structurally equals endpoint.config (steady state)", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        externalServices: [
+          {
+            kind: "DATA_STORE",
+            key: "k1",
+            status: "ENABLED",
+            draft: 'ingest_srv_addr = "x"\nretention = "1d"\n',
+          },
+        ],
+      }),
+    );
+    mockBuildExternalConfigSnapshot.mockResolvedValue({
+      // Same content, different key order — structural equality
+      // must collapse it to steady state.
+      DATA_STORE: 'retention = "1d"\ningest_srv_addr = "x"\n',
+    });
+    mockQuery.mockResolvedValue({
+      rows: [{ created_at: new Date(), expires_at: new Date() }],
+      rowCount: 1,
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const result = await createApplyAttempt({ nodeId: "node-1" });
+
+    // Only MANAGER_DB + MANAGER_NOTIFY — no external dispatch.
+    expect(result.plannedDispatches.map((d) => d.kind)).toEqual([
+      "MANAGER_DB",
+      "MANAGER_NOTIFY",
+    ]);
+  });
+
+  it("rejects with ExternalServiceUnavailableError when a non-delete-intent endpoint read fails", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        externalServices: [
+          {
+            kind: "DATA_STORE",
+            key: "k1",
+            status: "ENABLED",
+            draft: 'ingest_srv_addr = "x"\n',
+          },
+        ],
+      }),
+    );
+    mockBuildExternalConfigSnapshot.mockResolvedValue({
+      DATA_STORE: "unavailable",
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const { ExternalServiceUnavailableError } = await import(
+      "@/lib/node/errors"
+    );
+    await expect(
+      createApplyAttempt({ nodeId: "node-1" }),
+    ).rejects.toBeInstanceOf(ExternalServiceUnavailableError);
+    // No row was persisted.
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("does not read endpoint config for delete-intent externals (draft = null)", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        externalServices: [
+          {
+            kind: "DATA_STORE",
+            key: "k1",
+            status: "ENABLED",
+            draft: null,
+          },
+        ],
+      }),
+    );
+    mockQuery.mockResolvedValue({
+      rows: [{ created_at: new Date(), expires_at: new Date() }],
+      rowCount: 1,
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const result = await createApplyAttempt({ nodeId: "node-1" });
+
+    // Plan has only manager-side dispatches; no external dispatch is
+    // emitted for the delete-intent row (MANAGER_DB removes it).
+    expect(result.plannedDispatches.map((d) => d.kind)).toEqual([
+      "MANAGER_DB",
+      "MANAGER_NOTIFY",
+    ]);
+    // Crucially, the endpoint snapshot was NOT consulted — the kind
+    // set passed in is empty, because the only external is delete
+    // intent. This keeps the apply succeeding even when the
+    // unreachable endpoint would otherwise block it.
+    expect(mockBuildExternalConfigSnapshot).toHaveBeenCalledTimes(0);
   });
 });
 

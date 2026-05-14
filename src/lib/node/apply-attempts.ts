@@ -42,6 +42,7 @@ import {
   getAttemptTtlMs,
   type PlannedDispatch,
 } from "./apply-attempt-types";
+import { diffServiceConfig } from "./diff";
 import {
   assertNodeInScope,
   buildDispatchContext,
@@ -52,7 +53,17 @@ import {
   withManagerErrorMapping,
   withNodeNotFoundMapping,
 } from "./error-mapping";
-import { NodeNotFoundError, NodePermissionError } from "./errors";
+import {
+  ExternalServiceUnavailableError,
+  NodeNotFoundError,
+  NodePermissionError,
+} from "./errors";
+import { buildExternalConfigSnapshotForApply } from "./external-config-snapshot";
+import {
+  type ExternalConfigSnapshot,
+  snapshotApplied,
+  snapshotIsUnavailable,
+} from "./pending-state";
 import { NODE_DETAIL_QUERY } from "./queries";
 import type { ExternalServiceKind, Node, NodeDetailResult } from "./types";
 
@@ -126,8 +137,38 @@ export async function createApplyAttempt(
   // Step 5: defense-in-depth scope check.
   enforceNodeScope(ctx, node);
 
-  // Step 6: build plan.
-  const plannedDispatches = buildPlannedDispatches(node);
+  // Step 6: build plan. The plan-build endpoint snapshot is keyed off
+  // non-delete-intent externals only — delete intent (`draft = null`)
+  // is handled by the MANAGER_DB stage alone, so the unreachable-
+  // endpoint case must not block a delete-intent apply. The kinds set
+  // therefore strictly tracks the kinds whose plan-build outcome
+  // requires the endpoint config.
+  //
+  // The snapshot read goes through `buildExternalConfigSnapshotForApply`
+  // rather than the public `buildExternalConfigSnapshot`: the bulk-apply
+  // gate is `nodes:write + services:write` (above) and the page-load
+  // helper would silently widen that to also require `services:read`
+  // via the public `getGigantoConfig` / `getTivanConfig` getters. The
+  // request-time read still surfaces real endpoint unavailability as
+  // `ExternalServiceUnavailableError` without persisting an attempt.
+  const kindsRequiringEndpointRead = collectKindsRequiringEndpointRead(node);
+  const endpointSnapshot =
+    kindsRequiringEndpointRead.length > 0
+      ? await buildExternalConfigSnapshotForApply(
+          ctx,
+          kindsRequiringEndpointRead,
+          signal,
+        )
+      : ({} as ExternalConfigSnapshot);
+  for (const kind of kindsRequiringEndpointRead) {
+    if (snapshotIsUnavailable(endpointSnapshot, kind)) {
+      throw new ExternalServiceUnavailableError(
+        kind,
+        `External service ${kind} is unreachable; cannot determine pending state for apply plan.`,
+      );
+    }
+  }
+  const plannedDispatches = buildPlannedDispatches(node, endpointSnapshot);
 
   // Step 7: fingerprint + persist.
   const snapshot = projectNodeSnapshot(node);
@@ -299,34 +340,36 @@ function enforceNodeScope(ctx: DispatchContext, node: Node): void {
 }
 
 /**
- * Build the planned dispatches from the canonical Node payload.
+ * Build the planned dispatches from the canonical Node payload and the
+ * page-load endpoint snapshot (#333 Decision 9, threaded by #551).
  *
- * Plan shape (Phase Node-12, #333):
+ * Plan shape:
  *   - One `MANAGER_DB` dispatch: invokes `applyNodeDraft` — atomic DB
  *     promotion of every pending draft on the node. No frozen `new`
  *     (re-derived per attempt at step 5d from the manager-DB draft
  *     state).
  *   - One `MANAGER_NOTIFY` dispatch: invokes `applyAgentConfig` after
- *     the DB stage succeeds. Notifies every agent whose post-promotion
- *     `config` is `Some(non-empty)`.
- *   - One external dispatch per `externalServices[]` entry whose
- *     `draft` is non-null AND non-delete (per Decision 9: delete intent
- *     `draft = null` is handled by `applyNodeDraft` alone — no external
- *     `updateConfig` dispatch is emitted because the row is removed).
- *     Each external dispatch carries the frozen `new` (the draft string
- *     at plan-build time).
+ *     the DB stage succeeds.
+ *   - One external dispatch per `externalServices[]` entry that
+ *     satisfies the comparison-based change-intent rule: `draft` is
+ *     non-null AND structurally differs from the endpoint's current
+ *     `config`. Delete intent (`draft = null`) is handled by the
+ *     MANAGER_DB stage alone; steady state (`draft == endpoint.config`)
+ *     emits no dispatch. Each emitted dispatch carries the frozen
+ *     `new` — captured here and used verbatim on every retry.
  *
  * Both manager-side dispatches are always emitted even if no node-level
  * draft is pending — they are the promotion + notify steps that clear
  * drafts in review-web's DB and re-pull configs on agents.
  *
- * NOTE on Decision 9 comparison-based pending: the page-load external
- * snapshot threading is deferred; this builder still emits an external
- * dispatch whenever `draft !== null` (legacy intent-based check), which
- * remains correct for all non-null drafts (change intent). Delete intent
- * (`draft = null`) is correctly skipped here.
+ * Endpoint reads for non-delete-intent externals already happened in
+ * `createApplyAttempt`; an unavailable read short-circuited there with
+ * `ExternalServiceUnavailableError` and never reaches this builder.
  */
-function buildPlannedDispatches(node: Node): PlannedDispatch[] {
+function buildPlannedDispatches(
+  node: Node,
+  endpointSnapshot: ExternalConfigSnapshot,
+): PlannedDispatch[] {
   const dispatches: PlannedDispatch[] = [];
   dispatches.push({
     dispatchId: randomUUID(),
@@ -347,18 +390,40 @@ function buildPlannedDispatches(node: Node): PlannedDispatch[] {
     // `applyNodeDraft` stage removes the row from the node, so no
     // external `updateConfig` dispatch is needed.
     if (service.draft === null) continue;
+    const applied = snapshotApplied(endpointSnapshot, service.kind);
+    if (
+      applied !== null &&
+      diffServiceConfig(applied, service.draft).length === 0
+    ) {
+      // Steady state: draft matches endpoint config — nothing to push.
+      continue;
+    }
     dispatches.push({
       dispatchId: randomUUID(),
       kind: service.kind as ExternalServiceKind,
       state: "queued",
       attemptCount: 0,
       lastError: null,
-      // Frozen `new` per the durability contract — captured at plan-
-      // build time and used verbatim on every external retry.
       new: service.draft,
     });
   }
   return dispatches;
+}
+
+/**
+ * Distinct external-service kinds on the node whose plan-build outcome
+ * depends on the endpoint's current `config`. Delete-intent externals
+ * (`draft = null`) are excluded — the MANAGER_DB stage removes them
+ * without consulting the endpoint, so a strict read would block a
+ * valid delete when the endpoint is already down.
+ */
+function collectKindsRequiringEndpointRead(node: Node): ExternalServiceKind[] {
+  const seen = new Set<ExternalServiceKind>();
+  for (const service of node.externalServices) {
+    if (service.draft === null) continue;
+    seen.add(service.kind);
+  }
+  return Array.from(seen);
 }
 
 /**
