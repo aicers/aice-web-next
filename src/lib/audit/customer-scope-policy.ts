@@ -141,6 +141,10 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   // exclusion lives in exactly one tenant DB.
   "triage_exclusion.global_recover": "customer-agnostic",
   "triage_exclusion.customer_recover": "customer-scoped",
+  // Triage baseline force-rebuild (#473). The rebuild operates on
+  // exactly one customer-tenant DB per call; the route's required
+  // `customerId` argument is the audit row's `customerId`.
+  "triage_baseline.rebuild": "customer-scoped",
 };
 
 /**

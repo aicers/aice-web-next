@@ -116,6 +116,13 @@ export default defineConfig({
             // the default 10 rows, and only surface it once the user
             // clicks Show more.
             "src/__tests__/components/triage/related-events-panel.test.tsx",
+            // Issue #473 (Reviewer Round 7): real-render coverage for
+            // the admin-only `TriageRebuildButton` — the single-
+            // customer scope gate, the confirm modal estimate/warning
+            // rendering, the in-flight `onSubmittingChange` signal,
+            // and the distinct `RebuildBusy` / `RebuildTimeout` /
+            // `RebuildIncomplete` toast branching.
+            "src/__tests__/components/triage/rebuild-button.test.tsx",
             // Issue #453 (Reviewer Round 6): hook-layer regression
             // coverage for the Tier 2 modal queue and the cache LRU
             // recency contract. Uses `renderHook` so it must run
@@ -166,6 +173,7 @@ export default defineConfig({
             "src/__tests__/components/triage/baseline-content.test.tsx",
             "src/__tests__/components/triage/related-events-panel.test.tsx",
             "src/__tests__/components/triage/story/stories-view.test.tsx",
+            "src/__tests__/components/triage/rebuild-button.test.tsx",
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
           ],
         },

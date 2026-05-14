@@ -57,6 +57,27 @@ export const TRIAGE_ASSET_PAGE_SIZE = 100;
 export const OBSERVED_EVENT_META_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
+ * Upstream detector store (`review-web`) retention horizon, in
+ * milliseconds. Read by the rebuild estimate endpoint (#473) to
+ * warn the operator when `to` is older than what the detector store
+ * can still serve — the rebuild proceeds, but the result may have
+ * fewer rows than what is currently on the corpus.
+ *
+ * Default (30 days) tracks the operationally agreed value with the
+ * `review-web` team. The `REVIEW_DETECTOR_RETENTION_MS` env var
+ * overrides for e2e tests / non-default deployments, mirroring the
+ * `AIMER_SIGNING_KEY_PREV_RETENTION_MS` override pattern.
+ */
+export function reviewDetectorRetentionMs(): number {
+  const raw = process.env.REVIEW_DETECTOR_RETENTION_MS;
+  if (raw && raw.length > 0) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return 30 * 24 * 60 * 60 * 1000;
+}
+
+/**
  * Concurrency budget for the per-customer fanout. Matches the
  * dispatcher pattern from #487 — small enough that a multi-tenant
  * page does not stampede the connection pool, large enough that the

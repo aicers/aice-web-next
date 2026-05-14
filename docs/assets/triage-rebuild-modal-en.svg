@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 540" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Triage force-rebuild confirm modal (wireframe)</title>
+  <desc id="desc">Wireframe of the admin-only "Rebuild this period" confirm modal. The modal shows the resolved single customer, the period under analysis, a one-paragraph description of the operation, the row-count estimate read from /api/triage/baseline/rebuild/estimate, a detector-retention warning when the period predates upstream retention, a tab-close caution, and Cancel / Confirm buttons.</desc>
+
+  <style>
+    .scrim { fill: #18181b; fill-opacity: 0.55; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; rx: 8; ry: 8; }
+    .panel-header { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 16px; fill: #18181b; font-weight: 700; }
+    .text-label { font-size: 11px; fill: #71717a; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .text-body { font-size: 12px; fill: #27272a; }
+    .text-mono { font-size: 12px; fill: #18181b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .text-muted { font-size: 11px; fill: #71717a; }
+    .text-warning { font-size: 12px; fill: #92400e; }
+    .text-stat { font-size: 22px; fill: #18181b; font-weight: 700; }
+    .warning-panel { fill: #fffbeb; stroke: #fde68a; stroke-width: 1; rx: 4; ry: 4; }
+    .row-divider { stroke: #e5e7eb; stroke-width: 1; }
+    .button-secondary { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .button-secondary-text { fill: #18181b; font-size: 12px; font-weight: 500; }
+    .button-primary { fill: #b91c1c; stroke: none; rx: 4; ry: 4; }
+    .button-primary-text { fill: #ffffff; font-size: 12px; font-weight: 500; }
+  </style>
+
+  <!-- scrim -->
+  <rect class="scrim" width="720" height="540"/>
+
+  <!-- modal -->
+  <g transform="translate(80, 60)">
+    <rect class="panel" width="560" height="420"/>
+    <rect class="panel-header" width="560" height="40"/>
+    <text class="text-title" x="20" y="26">Rebuild baseline corpus for this period</text>
+
+    <!-- customer + period -->
+    <g transform="translate(20, 60)">
+      <text class="text-label" y="0">Customer</text>
+      <text class="text-mono" y="20">Acme Corp (id 42)</text>
+      <text class="text-label" x="260" y="0">Period</text>
+      <text class="text-mono" x="260" y="20">2026-05-13T00:00Z → 2026-05-14T00:00Z</text>
+    </g>
+
+    <line class="row-divider" x1="20" y1="100" x2="540" y2="100"/>
+
+    <!-- what this does -->
+    <g transform="translate(20, 120)">
+      <text class="text-label" y="0">What this does</text>
+      <text class="text-body" y="20">Re-fetches events for this period from the detector store</text>
+      <text class="text-body" y="36">and rebuilds the baseline corpus. Existing rows in this</text>
+      <text class="text-body" y="52">period are deleted and replaced. The cadence watermark</text>
+      <text class="text-body" y="68">is not affected.</text>
+    </g>
+
+    <line class="row-divider" x1="20" y1="208" x2="540" y2="208"/>
+
+    <!-- estimate -->
+    <g transform="translate(20, 228)">
+      <text class="text-label" y="0">Estimated impact</text>
+      <text class="text-stat" y="28">12,438</text>
+      <text class="text-muted" x="100" y="28">rows currently in the period (estimate)</text>
+    </g>
+
+    <!-- detector-retention warning -->
+    <g transform="translate(20, 282)">
+      <rect class="warning-panel" width="520" height="48"/>
+      <text class="text-warning" x="12" y="20">This period may predate the detector store's retention.</text>
+      <text class="text-warning" x="12" y="38">The rebuild may produce fewer rows than currently shown.</text>
+    </g>
+
+    <!-- tab-close note -->
+    <text class="text-muted" x="20" y="350">Keep this tab open until the rebuild finishes. If you close it</text>
+    <text class="text-muted" x="20" y="364">before completion, check the audit log to confirm the outcome.</text>
+
+    <!-- buttons -->
+    <g transform="translate(280, 376)">
+      <rect class="button-secondary" width="100" height="32"/>
+      <text class="button-secondary-text" x="38" y="20">Cancel</text>
+      <rect class="button-primary" x="120" y="0" width="140" height="32"/>
+      <text class="button-primary-text" x="148" y="20">Rebuild period</text>
+    </g>
+  </g>
+</svg>
