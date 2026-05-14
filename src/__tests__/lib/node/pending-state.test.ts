@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
+import { tivanConfigToToml } from "@/lib/node/applied-config-toml";
 import {
   agentPendingState,
   type ExternalConfigSnapshot,
   externalServicePendingState,
   nodePendingState,
 } from "@/lib/node/pending-state";
+import {
+  serialiseTiContainer,
+  TIVAN_HARDCODED,
+} from "@/lib/node/services/ti-container";
 
 describe("agentPendingState — Decision 9 comparison rule", () => {
   it("flags change intent: draft != config (both non-null)", () => {
@@ -86,6 +91,26 @@ describe("externalServicePendingState — Decision 9 comparison rule", () => {
   it("returns not-pending when both manager.draft and snapshot are absent", () => {
     expect(
       externalServicePendingState({ kind: "DATA_STORE", draft: null }, {}),
+    ).toBe("not-pending");
+  });
+
+  it("reads a serialiseTiContainer(...) draft as steady state against a matching TivanConfig snapshot", () => {
+    // Regression for #551 Round 2: tivanConfigToToml must project every
+    // field serialiseTiContainer emits (including the three
+    // TIVAN_HARDCODED paths). Omitting them would leave a phantom
+    // three-field diff between the draft and the projected snapshot,
+    // breaking the post-apply steady-state contract.
+    const draft = serialiseTiContainer({ webIp: "10.0.0.2", webPort: 8444 });
+    const snapshot: ExternalConfigSnapshot = {
+      TI_CONTAINER: tivanConfigToToml({
+        graphqlSrvAddr: "10.0.0.2:8444",
+        translateMitre: TIVAN_HARDCODED.translateMitre,
+        excelData: TIVAN_HARDCODED.excelData,
+        originMitre: TIVAN_HARDCODED.originMitre,
+      }),
+    };
+    expect(
+      externalServicePendingState({ kind: "TI_CONTAINER", draft }, snapshot),
     ).toBe("not-pending");
   });
 });

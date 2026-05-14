@@ -181,6 +181,56 @@ describe("createApplyAttempt — happy path", () => {
     expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
   });
 
+  it("plans no TI_CONTAINER dispatch when the draft matches the projected snapshot (#551 Round 2)", async () => {
+    // Regression for #551 Round 2: the Tivan snapshot projection must
+    // emit every field serialiseTiContainer writes (including the
+    // TIVAN_HARDCODED paths) so the comparison-based plan builder
+    // recognises steady state and skips the redundant external dispatch.
+    const { serialiseTiContainer, TIVAN_HARDCODED } = await import(
+      "@/lib/node/services/ti-container"
+    );
+    const { tivanConfigToToml } = await import(
+      "@/lib/node/applied-config-toml"
+    );
+    const tiDraft = serialiseTiContainer({ webIp: "10.0.0.2", webPort: 8444 });
+    mockBuildExternalConfigSnapshot.mockResolvedValue({
+      TI_CONTAINER: tivanConfigToToml({
+        graphqlSrvAddr: "10.0.0.2:8444",
+        translateMitre: TIVAN_HARDCODED.translateMitre,
+        excelData: TIVAN_HARDCODED.excelData,
+        originMitre: TIVAN_HARDCODED.originMitre,
+      }),
+    });
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValue(
+      nodePayload({
+        externalServices: [
+          {
+            kind: "TI_CONTAINER",
+            key: "k1",
+            status: "ENABLED",
+            draft: tiDraft,
+          },
+        ],
+      }),
+    );
+    mockQuery.mockResolvedValue({
+      rows: [{ created_at: new Date(), expires_at: new Date() }],
+      rowCount: 1,
+    });
+
+    const { createApplyAttempt } = await import("@/lib/node/apply-attempts");
+    const result = await createApplyAttempt({ nodeId: "node-1" });
+
+    expect(result.plannedDispatches).toHaveLength(2);
+    expect(result.plannedDispatches[0].kind).toBe("MANAGER_DB");
+    expect(result.plannedDispatches[1].kind).toBe("MANAGER_NOTIFY");
+    expect(
+      result.plannedDispatches.some((d) => d.kind === "TI_CONTAINER"),
+    ).toBe(false);
+  });
+
   it("excludes external services with no draft from the plan", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);

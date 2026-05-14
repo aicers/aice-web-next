@@ -50,12 +50,29 @@ export function gigantoConfigToToml(config: GigantoConfig): string {
 
 /**
  * Project a structured `TivanConfig` into the flat TOML the TI
- * Container form's `deserialise` consumes. Only `graphql_srv_addr` is
- * read by the deserialiser today; the other fields are hard-coded by
- * the TOML emitter, so we project just the address here to avoid
- * inventing TOML keys the form never reads.
+ * Container form `deserialise` consumes — and, by reuse, the form
+ * `serialise` emits. The deserialiser only reads `graphql_srv_addr`,
+ * but the serialiser also writes `translate_mitre`, `excel_data`, and
+ * `origin_mitre` (the `TIVAN_HARDCODED` paths in
+ * `src/lib/node/services/ti-container.ts`).
+ *
+ * The comparison-based pending check (#551, Decision 9) computes the
+ * diff between the draft and the projected snapshot. Omitting the
+ * three hard-coded keys here would make every TI Container draft show
+ * a three-field diff against an otherwise-matching endpoint, breaking
+ * the post-apply steady-state contract and forcing
+ * `buildPlannedDispatches` to plan a redundant `TI_CONTAINER`
+ * dispatch. Emitting them keeps the projection lossless w.r.t. the
+ * draft writer. Nullable endpoint fields (`excelData`, `originMitre`)
+ * skip per `toToml`'s `null`-→-absent rule, so a genuine endpoint-side
+ * absence still surfaces as a real diff.
  */
 export function tivanConfigToToml(config: TivanConfig): string {
-  const entries: TomlEntries = [["graphql_srv_addr", config.graphqlSrvAddr]];
+  const entries: TomlEntries = [
+    ["graphql_srv_addr", config.graphqlSrvAddr],
+    ["translate_mitre", config.translateMitre],
+    ["excel_data", config.excelData],
+    ["origin_mitre", config.originMitre],
+  ];
   return toToml(entries);
 }

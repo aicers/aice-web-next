@@ -71,7 +71,26 @@ describe("gigantoConfigToToml", () => {
 });
 
 describe("tivanConfigToToml", () => {
-  it("projects graphql_srv_addr (the only field the TI Container deserialiser reads)", () => {
+  it("projects every field the TI Container serialiser emits so the snapshot can compare equal to a draft", () => {
+    const config: TivanConfig = {
+      graphqlSrvAddr: "10.0.0.2:8444",
+      translateMitre: "/opt/clumit/share/ti_container/translation_mitre.json",
+      excelData: "/opt/clumit/share/ti_container/data.xlsx",
+      originMitre: "/opt/clumit/share/ti_container/data.json",
+    };
+    const toml = tivanConfigToToml(config);
+    const parsed = fromToml(toml);
+    expect(parsed.graphql_srv_addr).toBe("10.0.0.2:8444");
+    expect(parsed.translate_mitre).toBe(
+      "/opt/clumit/share/ti_container/translation_mitre.json",
+    );
+    expect(parsed.excel_data).toBe("/opt/clumit/share/ti_container/data.xlsx");
+    expect(parsed.origin_mitre).toBe(
+      "/opt/clumit/share/ti_container/data.json",
+    );
+  });
+
+  it("omits nullable endpoint fields so a genuine endpoint-side absence still reads as a diff", () => {
     const config: TivanConfig = {
       graphqlSrvAddr: "10.0.0.2:8444",
       translateMitre: "/opt/clumit/share/ti_container/translation_mitre.json",
@@ -81,5 +100,10 @@ describe("tivanConfigToToml", () => {
     const toml = tivanConfigToToml(config);
     const parsed = fromToml(toml);
     expect(parsed.graphql_srv_addr).toBe("10.0.0.2:8444");
+    expect(parsed.translate_mitre).toBe(
+      "/opt/clumit/share/ti_container/translation_mitre.json",
+    );
+    expect(Object.hasOwn(parsed, "excel_data")).toBe(false);
+    expect(Object.hasOwn(parsed, "origin_mitre")).toBe(false);
   });
 });
