@@ -522,6 +522,251 @@ describe("fetchTier2DimensionWithSession", () => {
     expect(variables.after).toBe("cursor-from-peek");
   });
 
+  // ── Story-member corpus (#561) ─────────────────────────────
+
+  function makeMemberPage(opts: {
+    eventIds: string[];
+    hasNextPage: boolean;
+    endCursor?: string | null;
+    totalCount?: string;
+  }) {
+    return {
+      eventList: {
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: opts.hasNextPage,
+          startCursor: opts.eventIds.length > 0 ? "start" : null,
+          endCursor: opts.hasNextPage ? (opts.endCursor ?? "next") : null,
+        },
+        totalCount: opts.totalCount ?? String(opts.eventIds.length),
+        edges: opts.eventIds.map((id) => ({ cursor: `c-${id}` })),
+        nodes: opts.eventIds.map((id) => ({
+          __typename: "NetworkThreat",
+          id,
+          time: "2026-05-09T12:00:00.000Z",
+          sensor: "sensor-a",
+          category: "COMMAND_AND_CONTROL",
+          level: "MEDIUM",
+          origAddr: "10.0.0.1",
+        })),
+      },
+    };
+  }
+
+  it.each([
+    { size: 1, label: "single-member" },
+    { size: 25, label: "mid-range" },
+    { size: 50, label: "STORY_MEMBER_CAP boundary" },
+  ])("intersects REview's eventList against the Story member set ($label, size=$size)", async ({
+    size,
+  }) => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    // Member ids the Story carries — the resolver returns only the
+    // events whose REview `Event.id` is in this set.
+    const memberIds = Array.from({ length: size }, (_, i) => `evt-m-${i}`);
+    // REview's universe for `kinds=NetworkThreat` includes the member
+    // events plus a handful of unrelated rows. The intersection drops
+    // the unrelated ones; `totalCount` reflects the cohort, not the
+    // universe.
+    mockGraphqlRequest.mockResolvedValueOnce(
+      makeMemberPage({
+        eventIds: [...memberIds, "noise-1", "noise-2", "noise-3"],
+        hasNextPage: false,
+        totalCount: "9999",
+      }),
+    );
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["System Administrator"] }),
+      {
+        ...PERIOD,
+        dimension: "kinds",
+        valueKey: "NetworkThreat",
+        customerId: 1,
+        corpusSeed: {
+          kind: "storyMembers",
+          customerId: 1,
+          storyId: "123",
+          eventKeys: memberIds,
+        },
+      },
+    );
+
+    // Universe-wide totalCount is overridden by the cohort count.
+    expect(result.totalCount).toBe(String(size));
+    expect(result.events).toHaveLength(size);
+    expect(result.events.map((e) => e.id).sort()).toEqual(
+      [...memberIds].sort(),
+    );
+    // Member-keyed walks fit in a single result by construction;
+    // the modal-gated continuation path is unreachable.
+    expect(result.hasMore).toBe(false);
+    expect(result.endCursor).toBeNull();
+    expect(result.truncated).toBe(false);
+  });
+
+  it("walks multiple REview pages until every member event-key is observed", async () => {
+    // Two member events sit on different REview pages. A naive
+    // post-filter on a single first-page eventList walk would miss
+    // the late member; the cohort resolver must keep walking until
+    // every member is accounted for (or REview reports no further
+    // pages).
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    mockGraphqlRequest
+      .mockResolvedValueOnce(
+        makeMemberPage({
+          eventIds: ["evt-m-0", "noise-a", "noise-b"],
+          hasNextPage: true,
+          endCursor: "page-1",
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeMemberPage({
+          eventIds: ["noise-c", "evt-m-1"],
+          hasNextPage: false,
+        }),
+      );
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["System Administrator"] }),
+      {
+        ...PERIOD,
+        dimension: "kinds",
+        valueKey: "NetworkThreat",
+        customerId: 1,
+        corpusSeed: {
+          kind: "storyMembers",
+          customerId: 1,
+          storyId: "999",
+          eventKeys: ["evt-m-0", "evt-m-1"],
+        },
+      },
+    );
+
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+    expect(result.events.map((e) => e.id).sort()).toEqual([
+      "evt-m-0",
+      "evt-m-1",
+    ]);
+    expect(result.totalCount).toBe("2");
+  });
+
+  it("returns an empty cohort result without round-tripping when the seed is empty", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["System Administrator"] }),
+      {
+        ...PERIOD,
+        dimension: "kinds",
+        valueKey: "NetworkThreat",
+        customerId: 1,
+        corpusSeed: {
+          kind: "storyMembers",
+          customerId: 1,
+          storyId: "abc",
+          eventKeys: [],
+        },
+      },
+    );
+
+    expect(result.events).toEqual([]);
+    expect(result.totalCount).toBe("0");
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("flags `truncated=true` and omits unobserved members when the walk-cap fires before every member is seen", async () => {
+    // Per #561 the cohort walk has a defensive ceiling
+    // (TIER2_STORY_CORPUS_WALK_CAP = 50,000 universe rows) so a
+    // misbehaving backend can't wedge the fetch in an unbounded
+    // loop. If a member event sits on a REview page beyond the
+    // ceiling, it is absent from the returned `events` and the
+    // result carries `truncated=true` so the UI layer can surface
+    // the partial result. This test pins that semantics so a
+    // future refactor can't silently regress it (e.g. by widening
+    // the cap without flipping the truncation flag, or by walking
+    // forever).
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    // Every page is 100 nodes whose ids never match the cohort
+    // member, with hasNextPage=true so the walk would continue
+    // forever absent the cap. 500 pages × 100 nodes = 50,000 scanned
+    // rows, which hits the walk-cap on the 501st iteration's check.
+    let pageCounter = 0;
+    mockGraphqlRequest.mockImplementation(async () => {
+      const offset = pageCounter * 100;
+      pageCounter += 1;
+      return {
+        eventList: {
+          pageInfo: {
+            hasPreviousPage: false,
+            hasNextPage: true,
+            startCursor: "start",
+            endCursor: `cursor-${pageCounter}`,
+          },
+          totalCount: "9999999",
+          edges: Array.from({ length: 100 }, (_, i) => ({
+            cursor: `c-${offset + i}`,
+          })),
+          nodes: Array.from({ length: 100 }, (_, i) => ({
+            __typename: "NetworkThreat",
+            id: `noise-${offset + i}`,
+            time: "2026-05-09T12:00:00.000Z",
+            sensor: "sensor-a",
+            category: "COMMAND_AND_CONTROL",
+            level: "MEDIUM",
+            origAddr: "10.0.0.1",
+          })),
+        },
+      };
+    });
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["System Administrator"] }),
+      {
+        ...PERIOD,
+        dimension: "kinds",
+        valueKey: "NetworkThreat",
+        customerId: 1,
+        corpusSeed: {
+          kind: "storyMembers",
+          customerId: 1,
+          storyId: "deep",
+          // Single member that the universe walk never surfaces —
+          // it would live past the 50,000-row scan ceiling.
+          eventKeys: ["evt-far-away"],
+        },
+      },
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.events).toEqual([]);
+    expect(result.totalCount).toBe("0");
+    // The walk stops at the cap rather than running unbounded —
+    // 500 universe pages × 100 nodes = 50,000 scanned rows.
+    expect(mockGraphqlRequest.mock.calls.length).toBeLessThanOrEqual(501);
+    expect(mockGraphqlRequest.mock.calls.length).toBeGreaterThanOrEqual(500);
+  });
+
   it("propagates a lookup transport error rather than surfacing it as a sensorFallback", async () => {
     // Per #502: "If the lookup itself fails (e.g., transport error),
     // surface the standard error banner rather than the stale-hash

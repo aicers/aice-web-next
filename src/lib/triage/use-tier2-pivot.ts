@@ -4,15 +4,35 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 import { stringNumberGreaterThan } from "./string-number";
 import {
+  ASSET_CORPUS_SEED_KEY,
   TIER2_PER_DIMENSION_CAP,
   Tier2Cache,
   type Tier2EvictionEvent,
   tier2DedupeKey,
 } from "./tier2-cache";
 import { fetchTier2Dimension } from "./tier2-fetch";
-import type { Tier2SensorFallbackKind } from "./tier2-fetch-impl";
+import type {
+  Tier2CorpusSeed,
+  Tier2SensorFallbackKind,
+  Tier2StoryMembersSeed,
+} from "./tier2-fetch-impl";
 import { isTier2ServerDimension, type Tier2Dimension } from "./tier2-filter";
 import type { TriageEvent } from "./types";
+
+export type { Tier2CorpusSeed, Tier2StoryMembersSeed };
+
+/**
+ * Encode a {@link Tier2CorpusSeed} into the stable identity segment
+ * the cache key and the hook's in-memory state map both consume. Two
+ * corpus seeds that collapse to the same key return the same cached
+ * result; two seeds that disagree on identity stay isolated. The
+ * default sentinel ({@link ASSET_CORPUS_SEED_KEY}) covers the asset-
+ * corpus path so the pre-#561 key shape is preserved exactly.
+ */
+export function corpusSeedKeyFor(seed: Tier2CorpusSeed | undefined): string {
+  if (!seed) return ASSET_CORPUS_SEED_KEY;
+  return `story:${seed.customerId}/${seed.storyId}`;
+}
 
 /**
  * Threshold at which the pre-fetch confirmation modal asks the
@@ -53,6 +73,8 @@ export interface Tier2PendingProjection {
    * rotates between peek and confirm (#502).
    */
   customerId: number;
+  /** Corpus seed (#561) the projection was peeked against, if any. */
+  corpusSeed: Tier2CorpusSeed | undefined;
   /** REview's `totalCount` when projection is known, else null. */
   totalCount: string | null;
   /**
@@ -76,6 +98,8 @@ export interface Tier2FetchError {
    * dimension value would dismiss each other's error (#502).
    */
   customerId: number;
+  /** Corpus-seed marker (#561) the failing fetch was issued against. */
+  corpusSeedKey: string;
   message: string;
 }
 
@@ -84,6 +108,8 @@ export interface Tier2FetchInFlight {
   valueKey: string;
   /** Asset-root `customerId` the fetch was issued for. */
   customerId: number;
+  /** Corpus-seed marker (#561) the in-flight fetch was issued against. */
+  corpusSeedKey: string;
 }
 
 /**
@@ -119,11 +145,17 @@ export interface UseTier2Pivot {
    * fetched for — required so a lookup against the wrong tenant
    * cannot return a sensor-pivot result that was resolved for a
    * different `(name, customerId)` tuple (#502).
+   *
+   * `corpusSeed` (#561) namespaces Story-corpus and asset-corpus
+   * results away from each other. Defaults to `undefined` for the
+   * asset-rooted path; pass the same seed used at `startFetch` time
+   * so the lookup hits its own entry.
    */
   getCached: (
     dimension: Tier2Dimension,
     valueKey: string,
     customerId: number,
+    corpusSeed?: Tier2CorpusSeed,
   ) => Tier2DimensionState | null;
   /**
    * Trigger a Tier 2 fetch for a dimension click. If the projection
@@ -136,11 +168,15 @@ export interface UseTier2Pivot {
    * unique across tenants) to a unique `(name, customerId)` tuple
    * before resolution. Required on every call regardless of
    * dimension so callers cannot forget to thread the asset context.
+   *
+   * `corpusSeed` (#561) lifts the Tier 2 fetch onto a curated event
+   * cohort instead of the period-wide asset corpus when present.
    */
   startFetch: (
     dimension: Tier2Dimension,
     valueKey: string,
     customerId: number,
+    corpusSeed?: Tier2CorpusSeed,
   ) => void;
   /** Resume a fetch the operator confirmed through the modal. */
   confirmFetch: () => void;
@@ -168,12 +204,14 @@ export interface UseTier2Pivot {
    * Dismiss a surfaced fetch error and clear its dimension state.
    * `customerId` must be the same asset-root tenant the failed fetch
    * was issued under so two tenants pivoting the same value cannot
-   * dismiss each other's error (#502).
+   * dismiss each other's error (#502). `corpusSeed` (#561) namespaces
+   * Story-corpus errors away from asset-corpus errors.
    */
   acknowledgeError: (
     dimension: Tier2Dimension,
     valueKey: string,
     customerId: number,
+    corpusSeed?: Tier2CorpusSeed,
   ) => void;
   /** Dimensions currently fetching — drives the progress indicator. */
   inFlight: Tier2FetchInFlight[];
@@ -228,6 +266,13 @@ interface PeekStash {
    * if the focus rotates between peek and confirm.
    */
   customerId: number;
+  /**
+   * Corpus seed (#561) captured at peek time. Continued walks replay
+   * the seed so a same-Story modal Confirm continues to bind the
+   * cohort the peek was issued against, not the live origin at
+   * confirm time.
+   */
+  corpusSeed: Tier2CorpusSeed | undefined;
   /**
    * REview `nodeId` the peek resolved `(name, customerId)` to. Only
    * populated for the `sameSensor` dimension; the continuation passes
@@ -323,19 +368,19 @@ export function useTier2Pivot(
   // in-memory state entry so re-pivoting after eviction triggers a
   // refetch instead of returning the strongly-referenced events that
   // the cache has already discarded — that would violate both the
-  // memory-cap invariant and the stated eviction behavior. Since the
-  // hook's in-memory key includes the asset-root `customerId` (#502)
-  // and the cache eviction event only carries `(dimensionId,
-  // valueKey)`, the listener walks every in-memory state entry whose
-  // dim/value matches and drops them all — any matching entry was
-  // necessarily backed by the now-evicted cache row (one in-memory
-  // entry per cache row by construction).
+  // memory-cap invariant and the stated eviction behavior. The hook's
+  // in-memory key includes the asset-root `customerId` (#502) and the
+  // corpus-seed marker (#561), so the eviction event carries both
+  // fields and the listener drops the exact matching entry — without
+  // the corpus-seed component, an asset-corpus eviction would also
+  // nuke a sibling Story-corpus row that shares `(dimension, valueKey,
+  // customerId)`.
   useEffect(() => {
     const cache = cacheRef.current;
     if (!cache) return;
     cache.setEvictionListener((event) => {
       stateMapRef.current.delete(
-        `${event.dimensionId}|${event.valueKey}|${event.customerId}`,
+        `${event.dimensionId}|${event.valueKey}|${event.customerId}|${event.corpusSeedKey}`,
       );
       setEvictions((prev) => [...prev, event]);
       bump();
@@ -370,31 +415,50 @@ export function useTier2Pivot(
     bump();
   }, [args.periodStartIso, args.periodEndIso, args.customerScope, bump]);
 
-  // Per #502: the in-memory state key now includes the asset-root
+  // Per #502 / #561: the in-memory state key includes the asset-root
   // `customerId` so two tenants pivoting the same dimension value
   // (e.g. `sameSensor=edge-01` resolving to different REview nodeIds
-  // under each tenant) keep isolated entries. The cache key carries
-  // the same field, so a hit at the cache layer also keys on tenant.
+  // under each tenant) keep isolated entries, and a corpus-seed marker
+  // so a Story-corpus and an asset-corpus result for the same
+  // `(dimension, valueKey, customerId)` tuple stay isolated. The cache
+  // key carries the same fields so a hit at the cache layer keys on
+  // both tenant and corpus seed.
   const stateKey = useCallback(
-    (dimension: Tier2Dimension, valueKey: string, customerId: number) =>
-      `${dimension}|${valueKey}|${customerId}`,
+    (
+      dimension: Tier2Dimension,
+      valueKey: string,
+      customerId: number,
+      corpusSeed: Tier2CorpusSeed | undefined,
+    ) =>
+      `${dimension}|${valueKey}|${customerId}|${corpusSeedKeyFor(corpusSeed)}`,
     [],
   );
 
   const cacheKeyFor = useCallback(
-    (dimension: Tier2Dimension, valueKey: string, customerId: number) => ({
+    (
+      dimension: Tier2Dimension,
+      valueKey: string,
+      customerId: number,
+      corpusSeed: Tier2CorpusSeed | undefined,
+    ) => ({
       periodStartIso: args.periodStartIso,
       periodEndIso: args.periodEndIso,
       dimensionId: dimension,
       valueKey,
       customerScope: args.customerScope,
       customerId,
+      corpusSeedKey: corpusSeedKeyFor(corpusSeed),
     }),
     [args.periodStartIso, args.periodEndIso, args.customerScope],
   );
 
   const getCached = useCallback(
-    (dimension: Tier2Dimension, valueKey: string, customerId: number) => {
+    (
+      dimension: Tier2Dimension,
+      valueKey: string,
+      customerId: number,
+      corpusSeed?: Tier2CorpusSeed,
+    ) => {
       const cache = cacheRef.current;
       if (!cache) return null;
       // Touch the cache first so the LRU layer tracks hook-level reads.
@@ -402,9 +466,11 @@ export function useTier2Pivot(
       // never refresh A's recency, and a subsequent over-cap insert
       // could evict A even though it was just used. The hit value is
       // also reused below for the cache-only branch.
-      const hit = cache.get(cacheKeyFor(dimension, valueKey, customerId));
+      const hit = cache.get(
+        cacheKeyFor(dimension, valueKey, customerId, corpusSeed),
+      );
       const inMemory = stateMapRef.current.get(
-        stateKey(dimension, valueKey, customerId),
+        stateKey(dimension, valueKey, customerId, corpusSeed),
       );
       if (inMemory) return inMemory;
       if (!hit) return null;
@@ -438,13 +504,14 @@ export function useTier2Pivot(
       dimension: Tier2Dimension,
       valueKey: string,
       customerId: number,
+      corpusSeed: Tier2CorpusSeed | undefined,
       result: {
         events: TriageEvent[];
         totalCount: string | null;
         truncated: boolean;
       },
     ) => {
-      const key = stateKey(dimension, valueKey, customerId);
+      const key = stateKey(dimension, valueKey, customerId, corpusSeed);
       // When the cache rejects an oversized result (returns false) the
       // 100 MB hard cap would be violated by also keeping the events in
       // `stateMapRef`. Drop the loading entry instead so the operator
@@ -455,10 +522,13 @@ export function useTier2Pivot(
       // layer to enforce the cap and the assertion is only meaningful on
       // the client where the eviction listener fires.
       const accepted =
-        cacheRef.current?.set(cacheKeyFor(dimension, valueKey, customerId), {
-          events: result.events,
-          totalCount: result.totalCount,
-        }) ?? true;
+        cacheRef.current?.set(
+          cacheKeyFor(dimension, valueKey, customerId, corpusSeed),
+          {
+            events: result.events,
+            totalCount: result.totalCount,
+          },
+        ) ?? true;
       if (!accepted) {
         stateMapRef.current.delete(key);
         bump();
@@ -481,12 +551,15 @@ export function useTier2Pivot(
       dimension: Tier2Dimension,
       valueKey: string,
       customerId: number,
+      corpusSeed: Tier2CorpusSeed | undefined,
       fallback: { kind: Tier2SensorFallbackKind; sensorName: string },
     ) => {
       // Drop any loading entry — the parent reverts the trail to the
       // asset root and the panel must not show a permanent spinner
       // for a name that no longer resolves.
-      stateMapRef.current.delete(stateKey(dimension, valueKey, customerId));
+      stateMapRef.current.delete(
+        stateKey(dimension, valueKey, customerId, corpusSeed),
+      );
       setSensorFallbacks((prev) => [
         ...prev,
         {
@@ -502,7 +575,12 @@ export function useTier2Pivot(
 
   const continueFromStash = useCallback(
     async (stash: PeekStash, capturedGen: number, capturedToken: number) => {
-      const key = stateKey(stash.dimension, stash.valueKey, stash.customerId);
+      const key = stateKey(
+        stash.dimension,
+        stash.valueKey,
+        stash.customerId,
+        stash.corpusSeed,
+      );
       try {
         // Resume from the peek's cursor so the first page (already in
         // `stash.events`) is not refetched. Pass `alreadyFetched` so
@@ -524,6 +602,12 @@ export function useTier2Pivot(
           ...(stash.resolvedSensorId !== null && {
             resolvedSensorId: stash.resolvedSensorId,
           }),
+          // Replay the peek's corpus seed so the modal-gated Confirm
+          // continues to bind the cohort the peek was issued against
+          // (#561). Asset-rooted peeks keep the seed undefined.
+          ...(stash.corpusSeed !== undefined && {
+            corpusSeed: stash.corpusSeed,
+          }),
         });
         if (capturedGen !== generationRef.current) return;
         if (capturedToken !== trailTokenRef.current) return;
@@ -532,6 +616,7 @@ export function useTier2Pivot(
             stash.dimension,
             stash.valueKey,
             stash.customerId,
+            stash.corpusSeed,
             {
               kind: rest.sensorFallback.kind,
               sensorName: rest.sensorFallback.sensorName,
@@ -545,11 +630,17 @@ export function useTier2Pivot(
         // wrong) the merge still respects the cap.
         const capped = merged.slice(0, TIER2_PER_DIMENSION_CAP);
         const truncated = rest.truncated || merged.length > capped.length;
-        writeReady(stash.dimension, stash.valueKey, stash.customerId, {
-          events: capped,
-          totalCount: stash.totalCount ?? rest.totalCount,
-          truncated,
-        });
+        writeReady(
+          stash.dimension,
+          stash.valueKey,
+          stash.customerId,
+          stash.corpusSeed,
+          {
+            events: capped,
+            totalCount: stash.totalCount ?? rest.totalCount,
+            truncated,
+          },
+        );
       } catch (err) {
         if (capturedGen !== generationRef.current) return;
         if (capturedToken !== trailTokenRef.current) return;
@@ -567,10 +658,15 @@ export function useTier2Pivot(
   );
 
   const startFetch = useCallback(
-    (dimension: Tier2Dimension, valueKey: string, customerId: number) => {
+    (
+      dimension: Tier2Dimension,
+      valueKey: string,
+      customerId: number,
+      corpusSeed?: Tier2CorpusSeed,
+    ) => {
       if (!args.enabled) return;
       if (!isTier2ServerDimension(dimension)) return;
-      const existing = getCached(dimension, valueKey, customerId);
+      const existing = getCached(dimension, valueKey, customerId, corpusSeed);
       // Skip when the result is already cached *or* a peek/fetch is
       // already in flight for this key. Without the `loading` guard,
       // double-clicking a dimension would issue duplicate first-page
@@ -582,7 +678,7 @@ export function useTier2Pivot(
       ) {
         return;
       }
-      const key = stateKey(dimension, valueKey, customerId);
+      const key = stateKey(dimension, valueKey, customerId, corpusSeed);
       const capturedGen = generationRef.current;
       const capturedToken = trailTokenRef.current;
       stateMapRef.current.set(key, {
@@ -605,6 +701,7 @@ export function useTier2Pivot(
             valueKey,
             customerId,
             firstPageOnly: true,
+            ...(corpusSeed !== undefined && { corpusSeed }),
           });
         } catch (err) {
           inFlightPeeksRef.current.delete(key);
@@ -617,7 +714,7 @@ export function useTier2Pivot(
         if (capturedGen !== generationRef.current) return;
         if (capturedToken !== trailTokenRef.current) return;
         if (peek.sensorFallback) {
-          surfaceSensorFallback(dimension, valueKey, customerId, {
+          surfaceSensorFallback(dimension, valueKey, customerId, corpusSeed, {
             kind: peek.sensorFallback.kind,
             sensorName: peek.sensorFallback.sensorName,
           });
@@ -626,7 +723,7 @@ export function useTier2Pivot(
         // Single-page fits the whole result: skip the modal and the
         // continuation round-trip.
         if (!peek.hasMore) {
-          writeReady(dimension, valueKey, customerId, {
+          writeReady(dimension, valueKey, customerId, corpusSeed, {
             events: peek.events,
             totalCount: peek.totalCount,
             truncated: peek.truncated,
@@ -656,6 +753,7 @@ export function useTier2Pivot(
             dimension,
             valueKey,
             customerId,
+            corpusSeed,
             resolvedSensorId: peek.resolvedSensorId ?? null,
             events: peek.events,
             totalCount: peek.totalCount,
@@ -676,6 +774,7 @@ export function useTier2Pivot(
               dimension,
               valueKey,
               customerId,
+              corpusSeed,
               totalCount: peek.totalCount,
               approximateMinimum,
             },
@@ -689,6 +788,7 @@ export function useTier2Pivot(
             dimension,
             valueKey,
             customerId,
+            corpusSeed,
             resolvedSensorId: peek.resolvedSensorId ?? null,
             events: peek.events,
             totalCount: peek.totalCount,
@@ -726,7 +826,12 @@ export function useTier2Pivot(
     if (pendingQueue.length === 0) return;
     const head = pendingQueue[0];
     setPendingQueue(pendingQueue.slice(1));
-    const key = stateKey(head.dimension, head.valueKey, head.customerId);
+    const key = stateKey(
+      head.dimension,
+      head.valueKey,
+      head.customerId,
+      head.corpusSeed,
+    );
     const stash = peekStashesRef.current.get(key);
     peekStashesRef.current.delete(key);
     if (!stash) return;
@@ -737,7 +842,12 @@ export function useTier2Pivot(
     if (pendingQueue.length === 0) return;
     const head = pendingQueue[0];
     setPendingQueue(pendingQueue.slice(1));
-    const key = stateKey(head.dimension, head.valueKey, head.customerId);
+    const key = stateKey(
+      head.dimension,
+      head.valueKey,
+      head.customerId,
+      head.corpusSeed,
+    );
     peekStashesRef.current.delete(key);
     // Drop the loading entry so the panel does not show a permanent
     // spinner on a cancelled pivot.
@@ -788,7 +898,12 @@ export function useTier2Pivot(
     setPendingQueue((prev) => {
       if (prev.length === 0) return prev;
       for (const p of prev) {
-        const key = stateKey(p.dimension, p.valueKey, p.customerId);
+        const key = stateKey(
+          p.dimension,
+          p.valueKey,
+          p.customerId,
+          p.corpusSeed,
+        );
         peekStashesRef.current.delete(key);
         stateMapRef.current.delete(key);
       }
@@ -825,8 +940,15 @@ export function useTier2Pivot(
   );
 
   const acknowledgeError = useCallback(
-    (dimension: Tier2Dimension, valueKey: string, customerId: number) => {
-      stateMapRef.current.delete(stateKey(dimension, valueKey, customerId));
+    (
+      dimension: Tier2Dimension,
+      valueKey: string,
+      customerId: number,
+      corpusSeed?: Tier2CorpusSeed,
+    ) => {
+      stateMapRef.current.delete(
+        stateKey(dimension, valueKey, customerId, corpusSeed),
+      );
       bump();
     },
     [bump, stateKey],
@@ -848,6 +970,7 @@ export function useTier2Pivot(
         dimension: parsed.dimension,
         valueKey: parsed.valueKey,
         customerId: parsed.customerId,
+        corpusSeedKey: parsed.corpusSeedKey,
         message: state.error ?? "",
       });
     }
@@ -865,6 +988,7 @@ export function useTier2Pivot(
         dimension: parsed.dimension,
         valueKey: parsed.valueKey,
         customerId: parsed.customerId,
+        corpusSeedKey: parsed.corpusSeedKey,
       });
     }
     return list;
@@ -900,25 +1024,33 @@ export function useTier2Pivot(
   };
 }
 
-// State map keys are encoded as `${dimension}|${valueKey}|${customerId}`.
-// The customerId is the trailing numeric segment; valueKey can in
-// principle carry a `|` (e.g. an unusual sensor name), so peel the
-// customerId off the right with `lastIndexOf` before extracting the
-// dimension separator at the front.
+// State map keys are encoded as
+// `${dimension}|${valueKey}|${customerId}|${corpusSeedKey}`. The
+// trailing `corpusSeedKey` (#561) and `customerId` (#502) are peeled
+// off the right with `lastIndexOf`; `valueKey` can in principle carry
+// a `|` (e.g. an unusual sensor name), so it occupies whatever lies
+// between the leading `dimension` separator and those two trailing
+// segments.
 function parseStateKey(key: string): {
   dimension: Tier2Dimension;
   valueKey: string;
   customerId: number;
+  corpusSeedKey: string;
 } | null {
   const lastSep = key.lastIndexOf("|");
   if (lastSep <= 0) return null;
-  const firstSep = key.indexOf("|");
-  if (firstSep <= 0 || firstSep >= lastSep) return null;
-  const customerId = Number(key.slice(lastSep + 1));
+  const corpusSeedKey = key.slice(lastSep + 1);
+  if (corpusSeedKey.length === 0) return null;
+  const customerSep = key.lastIndexOf("|", lastSep - 1);
+  if (customerSep <= 0) return null;
+  const customerId = Number(key.slice(customerSep + 1, lastSep));
   if (!Number.isFinite(customerId)) return null;
+  const firstSep = key.indexOf("|");
+  if (firstSep <= 0 || firstSep >= customerSep) return null;
   return {
     dimension: key.slice(0, firstSep) as Tier2Dimension,
-    valueKey: key.slice(firstSep + 1, lastSep),
+    valueKey: key.slice(firstSep + 1, customerSep),
     customerId,
+    corpusSeedKey,
   };
 }

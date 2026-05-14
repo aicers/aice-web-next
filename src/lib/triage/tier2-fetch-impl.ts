@@ -19,6 +19,33 @@ import type { TriageEvent, TriageEventListResult } from "./types";
 
 export { TIER2_PER_DIMENSION_CAP };
 
+/**
+ * Curated event cohort that bounds a Tier 2 fetch when present (#561).
+ * Discriminator stays open so a future `{ kind: "savedSearch", ... }`
+ * (or similar) can land without changing every dispatch site.
+ */
+export type Tier2CorpusSeed = Tier2StoryMembersSeed;
+
+export interface Tier2StoryMembersSeed {
+  kind: "storyMembers";
+  /**
+   * Stable composite identity of the source Story. Folded into the
+   * Tier 2 cache key so a same-Story re-pivot reuses cached results
+   * while two distinct Stories (or Story → Asset list) stay isolated.
+   * The actual {@link eventKeys} list is intentionally NOT in the
+   * cache key — Story membership is stable per session by the {@link
+   * STORY_MEMBER_CAP} cohort, so `(customerId, storyId)` is enough
+   * identity and the encoding stays bounded (#561).
+   */
+  customerId: number;
+  storyId: string;
+  /**
+   * Member event-key set the resolver intersects against. Capped at
+   * {@link STORY_MEMBER_CAP} = 50 by #489's correlator contract.
+   */
+  eventKeys: readonly string[];
+}
+
 export interface Tier2FetchInput {
   periodStartIso: string;
   periodEndIso: string;
@@ -34,6 +61,22 @@ export interface Tier2FetchInput {
    * context.
    */
   customerId: number;
+  /**
+   * Per-#561, optionally lifts the Tier 2 fetch onto a curated event
+   * cohort instead of the period-wide asset corpus. When present,
+   * dispatch routes through the member-keyed resolver
+   * ({@link paginateTier2OverMemberCorpus}) so pagination and the
+   * returned `totalCount` are computed against the cohort, not the
+   * universe.
+   *
+   * Wire-shape choice (#561 design decision (a) — inline event-key
+   * list): the member set caps at {@link STORY_MEMBER_CAP} = 50 per
+   * #489, which keeps the payload small enough to inline without
+   * adding an `event_group_member` join on the hot Tier 2 path. The
+   * alternative `(customerId, storyId)` reference shape would buy
+   * nothing at this cap and only matters if the cap is raised.
+   */
+  corpusSeed?: Tier2CorpusSeed;
   /**
    * When true, paginate only a single first page so the caller can
    * peek `totalCount` (and the first-page event count) before
@@ -239,6 +282,28 @@ export async function fetchTier2DimensionWithSession(
     return { ...EMPTY_SENSOR_RESULT };
   }
   try {
+    // Story-member cohort branch (#561). The cohort is event-key-keyed
+    // from the start: pagination walks REview's `eventList` with the
+    // dimension filter and intersects each page with the member set,
+    // so the returned `totalCount` is the count of matched member
+    // events (not REview's universe count) and a member that sits on
+    // a later page is not silently dropped by the per-dimension cap.
+    // `firstPageOnly` / `afterCursor` / `alreadyFetched` do not apply
+    // here — the cohort is bounded at `STORY_MEMBER_CAP` = 50 by
+    // construction (#489), so the result fits in a single fetch and
+    // the modal-gated continuation path is not reachable.
+    if (input.corpusSeed) {
+      const result = await paginateTier2OverMemberCorpus(
+        filter,
+        ctx.role,
+        jwtCustomerIds,
+        input.corpusSeed,
+        signal,
+      );
+      return resolvedSensorId !== undefined
+        ? { ...result, resolvedSensorId }
+        : result;
+    }
     const result = await paginateTier2(
       filter,
       ctx.role,
@@ -277,6 +342,106 @@ export async function fetchTier2DimensionWithSession(
     }
     throw err;
   }
+}
+
+/**
+ * Member-corpus walk ceiling (#561). Applied only to the Story-member
+ * resolver path. The walk runs until either (a) every member event-key
+ * has been observed on a page, (b) REview reports no further pages,
+ * or (c) this many universe rows have been scanned. The ceiling is
+ * intentionally generous (a 10x multiplier on the per-dimension cap)
+ * because the cohort is small (≤ {@link STORY_MEMBER_CAP} = 50) and
+ * the walk has to reach far enough into REview's universe to surface
+ * the rare member that sits on a later page.
+ */
+const TIER2_STORY_CORPUS_WALK_CAP = TIER2_PER_DIMENSION_CAP * 10;
+
+/**
+ * Member-keyed Tier 2 resolver (#561). This is the "separate event-
+ * key-keyed resolver/query" the issue asks for — it is NOT a wrapper
+ * around `eventList`'s pagination contract: pagination and
+ * `totalCount` are computed against the member cohort, so the result
+ * shape is the cohort's universe, not REview's. The implementation
+ * happens to use REview's `eventList(filter)` to source candidate
+ * rows because `event_key IN (…)` is not yet a supported filter on
+ * `EventListFilterInput` (a future review-side schema change would
+ * let this path swap the universe walk for an additive filter; see
+ * the issue's "Out of scope" — the consolidation is filed as a
+ * separate concern).
+ *
+ * Walk semantics:
+ *   - Iterate REview's `eventList(filter)` page by page; each page is
+ *     intersected against the member event-key set.
+ *   - Stop when every member is accounted for, when REview reports no
+ *     further pages, or when {@link TIER2_STORY_CORPUS_WALK_CAP}
+ *     universe rows have been scanned.
+ *   - `totalCount` = matched member count (cohort universe).
+ *   - `truncated` = walk-cap hit AND not every member observed (the
+ *     unobserved members may still satisfy the filter on later pages
+ *     we could not reach).
+ *   - `hasMore` / `endCursor` are reported as `false` / `null` — the
+ *     cohort fits in a single result so the modal-gated continuation
+ *     path (`firstPageOnly` / `afterCursor`) is not reachable here.
+ */
+async function paginateTier2OverMemberCorpus(
+  filter: EventListFilterInput,
+  role: string,
+  jwtCustomerIds: number[] | undefined,
+  corpusSeed: Tier2CorpusSeed,
+  signal: AbortSignal | undefined,
+): Promise<Tier2FetchResult> {
+  const memberKeys = new Set<string>(corpusSeed.eventKeys);
+  if (memberKeys.size === 0) {
+    return {
+      events: [],
+      totalCount: "0",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    };
+  }
+  const matched = new Map<string, TriageEvent>();
+  const observed = new Set<string>();
+  let cursor: string | null = null;
+  let scanned = 0;
+  let truncated = false;
+  // Bound the loop independently of `hasNextPage` so a misbehaving
+  // backend cannot wedge the fetch in an infinite walk.
+  const maxPages =
+    Math.ceil(TIER2_STORY_CORPUS_WALK_CAP / REVIEW_MAX_PAGE_SIZE) + 1;
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const data: TriageEventListResult = await withReviewErrorMapping(
+      graphqlRequest<TriageEventListResult, Tier2EventListVariables>(
+        TRIAGE_EVENT_LIST_QUERY,
+        { filter, first: REVIEW_MAX_PAGE_SIZE, after: cursor },
+        { role, customerIds: jwtCustomerIds },
+        signal,
+      ),
+    );
+    const page = data.eventList;
+    for (const node of page.nodes) {
+      if (memberKeys.has(node.id)) {
+        observed.add(node.id);
+        if (!matched.has(node.id)) matched.set(node.id, node);
+      }
+    }
+    scanned += page.nodes.length;
+    if (observed.size >= memberKeys.size) break;
+    if (!page.pageInfo.hasNextPage || !page.pageInfo.endCursor) break;
+    if (scanned >= TIER2_STORY_CORPUS_WALK_CAP) {
+      truncated = true;
+      break;
+    }
+    cursor = page.pageInfo.endCursor;
+  }
+  const events = [...matched.values()];
+  return {
+    events,
+    totalCount: String(events.length),
+    truncated,
+    hasMore: false,
+    endCursor: null,
+  };
 }
 
 async function paginateTier2(

@@ -612,22 +612,22 @@ describe("TriageBaselineContent — Story-origin hash-restore cancellation (#553
   });
 });
 
-describe("TriageBaselineContent — Story-origin suppresses Tier 2 affordances (#553 Round 2)", () => {
+describe("TriageBaselineContent — Story-origin lifts Tier 2 onto member corpus (#561)", () => {
   afterEach(() => {
     storyActionsMocks.fetchStoryDetail.mockReset();
     storyActionsMocks.refreshTriageStories.mockReset();
     storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
   });
 
-  it("hides the Tier 2 Learning method + Keywords sections on the pivot panel when the trail is rooted at a Story", async () => {
-    // Reviewer Round 2 Item 1: on a Story-origin trail, `onPivot`
-    // already skips the Tier 2 fetch for server-filtered dimensions
-    // (no asset crumb to scope `sameSensor` etc.), but the panel still
-    // rendered the static Tier 2 sections (Learning method, Keywords)
-    // whenever `scope === "tier2"`. Clicking those affordances queued a
-    // breadcrumb step with no backing fetch — contradicting the PR's
-    // Tier 1-only contract for Story origin. The fix gates the static
-    // sections on `pivotOrigin.kind !== "story"`.
+  it("renders the Tier 2 Learning method + Keywords sections on a Story-origin pivot panel", async () => {
+    // Per #561 (supersedes the #559 Round 2 Item 1 suppression): the
+    // static Tier 2 sections (Learning method, Keywords) now render
+    // under a Story-origin trail because the dispatch is bounded by
+    // the Story corpus seed. Clicking them issues a Tier 2 fetch
+    // through the member-keyed resolver against the Story's member
+    // event-key set, not the asset's period-wide events. This test
+    // pins the panel-level reachability — the resolver-side cohort
+    // walk is covered in the tier2-fetch impl tests.
     const story = makeStory();
     const member = makeStoryMember();
     storyActionsMocks.fetchStoryDetail.mockResolvedValue({
@@ -716,11 +716,12 @@ describe("TriageBaselineContent — Story-origin suppresses Tier 2 affordances (
       fireEvent.click(pivotButton as HTMLElement);
     });
 
-    // Story-origin trail is active on the Pivot peer view. The Tier 2
-    // static sections must be suppressed: clicking them would otherwise
-    // queue a no-op step with no backing fetch.
-    expect(screen.queryByText("Dim:learningMethods")).toBeNull();
-    expect(screen.queryByLabelText("Keyword")).toBeNull();
+    // Story-origin trail is active on the Pivot peer view. Per #561
+    // the Tier 2 static sections REMAIN visible — clicking them now
+    // dispatches against the Story member corpus via the member-keyed
+    // resolver, so the affordances are no longer no-ops.
+    expect(screen.getByText("Dim:learningMethods")).toBeTruthy();
+    expect(screen.getByLabelText("Keyword")).toBeTruthy();
   });
 });
 

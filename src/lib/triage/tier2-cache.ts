@@ -7,9 +7,9 @@
  * event count, so a cache of 5,000 small DNS queries and a cache of
  * 5,000 fat HTTP rows account for very different memory footprints.
  *
- * Cache key (per #453 acceptance, extended per #502):
+ * Cache key (per #453 acceptance, extended per #502 and #561):
  *
- *     `${periodStart}|${periodEnd}|${dimensionId}|${valueKey}|${customerScope}|${customerId}`
+ *     `${periodStart}|${periodEnd}|${dimensionId}|${valueKey}|${customerScope}|${customerId}|${corpusSeed}`
  *
  * The customer scope keeps cross-tenant entries from colliding when
  * the menu is opened against a different customer in the same
@@ -19,6 +19,16 @@
  * a `sameSensor` name like `edge-01` can map to a different REview
  * `nodeId` under each tenant — without `customerId` in the key, two
  * tenants pivoting `sameSensor=edge-01` would cross-contaminate).
+ * The trailing `corpusSeed` segment (#561) namespaces results from
+ * the Story-member resolver away from asset-rooted results — an
+ * asset-rooted Tier 2 fetch for `kinds=BlocklistDns` reads the
+ * period-wide universe, while a Story-rooted fetch keys on the
+ * Story's ≤50 member event-keys and may legitimately return a
+ * different (smaller, intersected) row set under the same dimension/
+ * value tuple. The default sentinel `"asset"` keeps the asset path's
+ * key shape backwards-compatible; Story-origin entries encode as
+ * `"story:<customerId>/<storyId>"` so a same-session swap back to
+ * the same Story origin re-uses the cache rather than re-fetching.
  * The format is opaque to the cache — the caller decides how to
  * encode the scope.
  */
@@ -50,7 +60,29 @@ export interface Tier2CacheKey {
    * depends on the asset's tenant (`sameSensor` — see #502).
    */
   customerId: number;
+  /**
+   * Corpus-seed marker identifying which event cohort the Tier 2
+   * fetch was issued against (#561). Defaults to {@link
+   * ASSET_CORPUS_SEED_KEY} for the period-wide asset corpus; Story-
+   * origin fetches encode `"story:<customerId>/<storyId>"` so a
+   * same-Story re-pivot reuses the cache while a Story → Asset list
+   * swap (or two distinct Stories) keeps their entries isolated. The
+   * inline member event-key list itself is not folded into the key:
+   * Story membership is stable per-session by the {@link
+   * STORY_MEMBER_CAP} cohort, so the `(customerId, storyId)` pair is
+   * sufficient identity and the encoding stays bounded.
+   */
+  corpusSeedKey?: string;
 }
+
+/**
+ * Default {@link Tier2CacheKey.corpusSeedKey} sentinel — denotes a
+ * fetch issued over the period-wide asset corpus (the pre-#561 shape).
+ * Stored explicitly so a Story-origin entry's key
+ * (`story:<customerId>/<storyId>`) can never collide with the asset
+ * path's encoding.
+ */
+export const ASSET_CORPUS_SEED_KEY = "asset";
 
 export interface Tier2CacheEntry {
   events: TriageEvent[];
@@ -75,6 +107,8 @@ interface InternalEntry extends Tier2CacheEntry {
   dimensionId: string;
   valueKey: string;
   customerId: number;
+  /** Corpus-seed marker (#561). Defaults to {@link ASSET_CORPUS_SEED_KEY}. */
+  corpusSeedKey: string;
 }
 
 /**
@@ -87,6 +121,14 @@ export interface Tier2EvictionEvent {
   valueKey: string;
   /** Asset-root `customerId` the evicted entry was fetched for. */
   customerId: number;
+  /**
+   * Corpus-seed marker the evicted entry belonged to (#561). The hook
+   * keys its in-memory state on the same identity tuple so the
+   * eviction listener can drop the right entry without nuking a
+   * sibling Story-corpus / asset-corpus row that happens to share
+   * `(dimension, valueKey, customerId)`.
+   */
+  corpusSeedKey: string;
 }
 
 export type Tier2EvictionListener = (event: Tier2EvictionEvent) => void;
@@ -99,6 +141,7 @@ export function encodeTier2CacheKey(key: Tier2CacheKey): string {
     key.valueKey,
     key.customerScope,
     String(key.customerId),
+    key.corpusSeedKey ?? ASSET_CORPUS_SEED_KEY,
   ].join("|");
 }
 
@@ -179,6 +222,7 @@ export class Tier2Cache {
         dimensionId: key.dimensionId,
         valueKey: key.valueKey,
         customerId: key.customerId,
+        corpusSeedKey: key.corpusSeedKey ?? ASSET_CORPUS_SEED_KEY,
       });
       return false;
     }
@@ -196,6 +240,7 @@ export class Tier2Cache {
       dimensionId: key.dimensionId,
       valueKey: key.valueKey,
       customerId: key.customerId,
+      corpusSeedKey: key.corpusSeedKey ?? ASSET_CORPUS_SEED_KEY,
     };
     this.entries.set(cacheKey, entry);
     this.byteUsage += byteSize;
@@ -242,6 +287,7 @@ export class Tier2Cache {
         dimensionId: entry.dimensionId,
         valueKey: entry.valueKey,
         customerId: entry.customerId,
+        corpusSeedKey: entry.corpusSeedKey,
       });
     }
   }

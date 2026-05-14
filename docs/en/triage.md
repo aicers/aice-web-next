@@ -785,10 +785,51 @@ asset-rooted Pivot in three ways:
 - The trail has **no asset crumb**. The Story origin acts as the
   root.
 
-Tier 2 (server-filtered) dimensions are not surfaced from a
-Story origin in this release — Pivot-from-Story operates on the
-Tier 1 client-side index over the Story's member events. Tier 2
-plumbing for the Story-member corpus is a follow-up.
+#### Tier 2 over a Story
+
+Tier 2 (server-filtered) dimensions are reachable from a
+Pivot-from-Story state and resolve against the Story's member
+event-key set rather than the asset's period-wide events. The
+following Tier 2 sections appear under a Story-origin trail when
+the scope toggle is set to **Tier 2**:
+
+- `kinds`, `categories`
+- `externalIp`, `internalIp`
+- `sameSensor`
+- The static-options sections **Learning method** and
+  **Keywords**
+
+Each click bounds the Tier 2 fetch to the ≤50 member events the
+Story carries. The cohort's `totalCount` reflects the matched
+member count, not REview's universe count, and the per-dimension
+truncation cap does not apply at the cohort universe level.
+
+The `policyOnly` Tier 2 dimensions — `country`, `levels`, and
+the per-protocol identifier rows (`sshClient`, `userAgent`,
+`dnsAnswer`, `ftpCommand`, `ldapOpcode`, `mqttSubscribe`,
+`clusterId`, …) — stay hidden under both asset and Story origin.
+Their backing fields are absent from `baseline_triaged_event`
+and from the Story member-detail row, so opening them would
+require precursor data plumbing that is tracked as a separate
+follow-up.
+
+The **weak-signal classifier** that the Tier 2 panel surfaces
+under asset origin is intentionally suppressed for Story origin.
+Over a ≤50-event curated Story member set the classifier's
+"weak signal beyond Tier 1" framing loses its statistical
+footing — every member arrives via the correlator's curation
+rather than from a period-wide universe — so the affordance
+would highlight rows whose label no longer carries the same
+meaning. Re-enabling is deferred to a separate UX decision.
+
+Same-Story re-pivots reuse the cached Tier 2 result: the cache
+key adds a `(customerId, storyId)` namespace segment alongside
+the existing period / dimension / value / scope segments, so a
+Story → Asset list → back-to-same-Story sequence does not
+re-issue the fetch. Two distinct Stories under the same tenant
+keep their entries isolated for the same reason.
+
+[screenshot pending follow-up]
 
 The Pivot panel's "truncated" hint reports the period-wide
 5,000-event asset corpus cap. Because the Story-origin Pivot
