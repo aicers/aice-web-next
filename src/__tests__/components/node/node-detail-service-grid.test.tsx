@@ -127,8 +127,7 @@ function renderGrid(
         initialNodeStatus={null}
         initialCapturedAt={null}
         initialEdges={[]}
-        appliedExternalConfigs={{ DATA_STORE: null, TI_CONTAINER: null }}
-        unreachableExternals={new Set()}
+        externalConfigSnapshot={{}}
         {...props}
       />
     </NextIntlClientProvider>,
@@ -241,24 +240,49 @@ describe("NodeDetailServiceGrid — agent service tabs", () => {
     ).toBeTruthy();
   });
 
-  it("hides the pending badge when no draft is present on the agent", () => {
-    const node = makeNode({ agents: [SENSOR_AGENT_NO_DRAFT] });
+  it("hides the pending badge for an agent at steady state (draft == config)", () => {
+    // Comparison-based pending detection (#551): no diff vs applied
+    // config => not pending. Round-tripped draft (drafts that equal the
+    // applied config because the operator has not edited the field
+    // since the last apply) is steady state.
+    const STEADY_AGENT: Agent = { ...SENSOR_AGENT, draft: SENSOR_AGENT.config };
+    const node = makeNode({ agents: [STEADY_AGENT] });
     renderGrid({ node });
     expect(
       screen.queryByTestId("node-detail-service-sensor-pending"),
     ).toBeNull();
   });
 
-  it("renders the diff empty-state with the documented copy when no draft", async () => {
+  it("shows the pending badge on delete intent (draft = null, config = Some)", () => {
+    // Per #333 Decision 9, an agent whose applied config exists but
+    // whose draft is null is queued for removal — that's pending,
+    // not steady state.
+    const node = makeNode({ agents: [SENSOR_AGENT_NO_DRAFT] });
+    renderGrid({ node });
+    expect(
+      screen.getByTestId("node-detail-service-sensor-pending"),
+    ).toBeTruthy();
+  });
+
+  it("renders the diff delete-marker when the agent has applied config but draft is null", async () => {
     const node = makeNode({ agents: [SEMI_SUPERVISED_AGENT] });
     renderGrid({ node });
     const user = userEvent.setup();
     await user.click(
       screen.getByTestId("node-detail-service-semiSupervised-tab-diff"),
     );
-    const empty = screen.getByTestId(
-      "node-detail-service-semiSupervised-diff-empty",
-    );
+    expect(
+      screen.getByTestId("node-detail-service-semiSupervised-diff-delete"),
+    ).toBeTruthy();
+  });
+
+  it("renders the diff empty-state when the agent has no applied config and no draft", async () => {
+    const NEW_AGENT: Agent = { ...SENSOR_AGENT, config: null, draft: null };
+    const node = makeNode({ agents: [NEW_AGENT] });
+    renderGrid({ node });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("node-detail-service-sensor-tab-diff"));
+    const empty = screen.getByTestId("node-detail-service-sensor-diff-empty");
     expect(empty.textContent).toContain("No pending changes for this service.");
   });
 
@@ -397,7 +421,7 @@ describe("NodeDetailServiceGrid — external service unreachable copy", () => {
     const node = makeNode({ externalServices: [DATA_STORE_SERVICE] });
     renderGrid({
       node,
-      unreachableExternals: new Set(["DATA_STORE"]),
+      externalConfigSnapshot: { DATA_STORE: "unavailable" },
     });
     const applied = screen.getByTestId(
       "node-detail-service-dataStore-applied-unreachable",
@@ -411,7 +435,7 @@ describe("NodeDetailServiceGrid — external service unreachable copy", () => {
     const node = makeNode({ externalServices: [DATA_STORE_SERVICE] });
     renderGrid({
       node,
-      unreachableExternals: new Set(["DATA_STORE"]),
+      externalConfigSnapshot: { DATA_STORE: "unavailable" },
     });
     const user = userEvent.setup();
     await user.click(
@@ -429,7 +453,7 @@ describe("NodeDetailServiceGrid — external service unreachable copy", () => {
     const node = makeNode({ externalServices: [DATA_STORE_SERVICE] });
     renderGrid({
       node,
-      unreachableExternals: new Set(["DATA_STORE"]),
+      externalConfigSnapshot: { DATA_STORE: "unavailable" },
     });
     const user = userEvent.setup();
     await user.click(
@@ -443,9 +467,8 @@ describe("NodeDetailServiceGrid — external service unreachable copy", () => {
     const node = makeNode({ externalServices: [DATA_STORE_SERVICE_NO_DRAFT] });
     renderGrid({
       node,
-      appliedExternalConfigs: {
+      externalConfigSnapshot: {
         DATA_STORE: 'ingest_srv_addr = "10.0.0.1:38370"\n',
-        TI_CONTAINER: null,
       },
     });
     const applied = screen.getByTestId("node-detail-service-dataStore-applied");

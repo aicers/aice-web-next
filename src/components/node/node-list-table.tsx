@@ -1012,6 +1012,7 @@ function ServiceCellRenderer({ cell }: { cell: ServiceCell }) {
   }
 
   const isPending = cell.state === "configured-here-pending";
+  const isUnknown = cell.state === "configured-here-unknown";
 
   return (
     <Tooltip>
@@ -1027,12 +1028,22 @@ function ServiceCellRenderer({ cell }: { cell: ServiceCell }) {
               aria-label={t("pendingBadge")}
             />
           )}
+          {isUnknown && (
+            <span
+              className="h-2 w-2 rounded-full bg-slate-400"
+              data-testid="nodes-service-unknown-dot"
+              role="img"
+              aria-label={t("pendingUnknown")}
+            />
+          )}
         </span>
       </TooltipTrigger>
       <TooltipContent>
         {isPending
           ? `${t("configuredHere")} · ${t("pendingBadge")}`
-          : t("configuredHere")}
+          : isUnknown
+            ? `${t("configuredHere")} · ${t("pendingUnknown")}`
+            : t("configuredHere")}
       </TooltipContent>
     </Tooltip>
   );

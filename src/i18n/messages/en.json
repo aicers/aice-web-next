@@ -341,6 +341,7 @@
       "deleteConfirm": "Delete",
       "deleteError": "Some nodes could not be deleted.",
       "pendingBadge": "Pending",
+      "pendingUnknown": "Unknown",
       "appliedLabel": "Applied",
       "pendingFilterChip": "Pending",
       "aliveFilterChip": "Alive",
@@ -444,7 +445,9 @@
         "noHostname": "—",
         "noCustomer": "—",
         "pendingChanges": "Pending changes",
-        "noPendingChanges": "No pending changes"
+        "noPendingChanges": "No pending changes",
+        "pendingUnknown": "Pending state unknown",
+        "pendingUnknownTooltip": "One or more external services are unreachable; pending state cannot be determined and Apply is disabled until the service responds."
       },
       "ping": {
         "alive": "Alive",
@@ -490,6 +493,8 @@
         "managerNotRunning": "Not running",
         "unsupervisedNote": "This service has no UI-editable config.",
         "pendingBadge": "Pending",
+        "pendingUnknown": "Unknown",
+        "pendingUnknownTooltip": "The external service is unreachable; pending state cannot be determined.",
         "tabs": {
           "applied": "Applied",
           "draft": "Draft",
@@ -499,6 +504,7 @@
         "draftEmpty": "No pending draft for this service.",
         "editService": "Edit this service",
         "diffEmpty": "No pending changes for this service.",
+        "diffDeleteIntent": "This service is marked for removal on the next Apply.",
         "diffColumns": {
           "field": "Field",
           "applied": "Applied",

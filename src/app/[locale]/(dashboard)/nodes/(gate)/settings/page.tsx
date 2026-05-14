@@ -19,6 +19,11 @@ import {
   NodePermissionError,
 } from "@/lib/node/errors";
 import {
+  buildExternalConfigSnapshot,
+  externalKindsOnNodes,
+} from "@/lib/node/external-config-snapshot";
+import type { ExternalConfigSnapshot } from "@/lib/node/pending-state";
+import {
   collectSensorNodes,
   type SensorNodeOption,
 } from "@/lib/node/sensor-list";
@@ -105,7 +110,17 @@ export default async function NodesSettingsPage({
       listAllNodes(session),
       listAllNodeStatuses(session),
     ]);
-    rows = buildNodeRows(nodeConn, statusConn);
+    const visibleNodes = nodeConn.edges.map((edge) => edge.node);
+    // External endpoint snapshot for comparison-based pending detection
+    // on the list page (#551). One read per distinct external kind in
+    // play across the rendered rows — Giganto / Tivan are deployment-
+    // global, so the list page never fans out per-row.
+    const listSnapshot: ExternalConfigSnapshot =
+      await buildExternalConfigSnapshot(
+        session,
+        externalKindsOnNodes(visibleNodes),
+      );
+    rows = buildNodeRows(nodeConn, statusConn, listSnapshot);
     // Hog (Semi-supervised Engine) requires the current sensor pool to
     // render its `active_sensors` checklist correctly. Derive the pool
     // from the same `nodeList` walk we already did above instead of
@@ -113,7 +128,7 @@ export default async function NodesSettingsPage({
     // query, and the dialog's deserialise/serialise rules need set
     // equality against this pool to keep the all-checked → None
     // wire encoding stable across save/reopen.
-    sensorOptions = collectSensorNodes(nodeConn.edges.map((e) => e.node));
+    sensorOptions = collectSensorNodes(visibleNodes);
   } catch (err) {
     // Only the explicit `ManagerUnavailableError` (raised by
     // `withManagerErrorMapping` when the underlying transport / DNS /

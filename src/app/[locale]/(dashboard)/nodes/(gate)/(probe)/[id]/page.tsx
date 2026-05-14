@@ -8,30 +8,22 @@ import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getCurrentSession } from "@/lib/auth/session";
 import { query } from "@/lib/db/client";
-import {
-  gigantoConfigToToml,
-  tivanConfigToToml,
-} from "@/lib/node/applied-config-toml";
 import { confirmApplyAttempt, retryDispatch } from "@/lib/node/apply-actions";
 import { createApplyAttempt } from "@/lib/node/apply-attempts";
 import { getLastAppliedAt } from "@/lib/node/apply-history";
 import {
-  ExternalServiceUnavailableError,
   ManagerUnavailableError,
   NodeNotFoundError,
   NodePermissionError,
 } from "@/lib/node/errors";
 import {
-  getGigantoConfig,
-  getNode,
-  getTivanConfig,
-} from "@/lib/node/server-actions";
+  buildExternalConfigSnapshot,
+  externalKindsOnNode,
+} from "@/lib/node/external-config-snapshot";
+import type { ExternalConfigSnapshot } from "@/lib/node/pending-state";
+import { getNode } from "@/lib/node/server-actions";
 import { getNodeStatusList } from "@/lib/node/status";
-import type {
-  ExternalServiceKind,
-  Node as ManagerNode,
-  NodeStatus,
-} from "@/lib/node/types";
+import type { Node as ManagerNode, NodeStatus } from "@/lib/node/types";
 import {
   ReviewForbiddenError,
   ReviewInvalidArgumentError,
@@ -163,48 +155,17 @@ export default async function NodeDetailPage({
 
   const customers = await loadCustomerOptions(session.accountId, accessAll);
 
-  // Applied external configs for any external service the node hosts.
-  // Transient unavailability of Giganto / Tivan falls through to the
-  // unreachable copy on Applied / Diff tabs; the Draft tab keeps
-  // rendering normally regardless.
-  const appliedExternalConfigs: Record<ExternalServiceKind, string | null> = {
-    DATA_STORE: null,
-    TI_CONTAINER: null,
-  };
-  const unreachableExternals = new Set<ExternalServiceKind>();
-  const externalFetches: Promise<void>[] = [];
-  for (const ext of node.externalServices) {
-    if (ext.kind === "DATA_STORE") {
-      externalFetches.push(
-        getGigantoConfig(session)
-          .then((config) => {
-            appliedExternalConfigs.DATA_STORE = gigantoConfigToToml(config);
-          })
-          .catch((err) => {
-            if (err instanceof ExternalServiceUnavailableError) {
-              unreachableExternals.add("DATA_STORE");
-              return;
-            }
-            throw err;
-          }),
-      );
-    } else if (ext.kind === "TI_CONTAINER") {
-      externalFetches.push(
-        getTivanConfig(session)
-          .then((config) => {
-            appliedExternalConfigs.TI_CONTAINER = tivanConfigToToml(config);
-          })
-          .catch((err) => {
-            if (err instanceof ExternalServiceUnavailableError) {
-              unreachableExternals.add("TI_CONTAINER");
-              return;
-            }
-            throw err;
-          }),
-      );
-    }
-  }
-  if (externalFetches.length > 0) await Promise.all(externalFetches);
+  // Page-load endpoint snapshot for the node's externals — drives
+  // comparison-based pending detection in the dashboard / service grid
+  // and feeds the Applied / Diff tabs (#551). Transient unavailability
+  // of Giganto / Tivan is recorded as `"unavailable"` in the snapshot;
+  // the client surfaces it as the unknown / offline state.
+  //
+  // This snapshot is a UI artifact: `createApplyAttempt` performs its
+  // own request-time endpoint read at the moment of Apply and is not
+  // bound by what we capture here.
+  const externalConfigSnapshot: ExternalConfigSnapshot =
+    await buildExternalConfigSnapshot(session, externalKindsOnNode(node));
 
   // SSR-seed the polling buffer for cold loads of `/nodes/[id]`.
   // The polling driver intentionally defers its first client tick until
@@ -288,6 +249,7 @@ export default async function NodeDetailPage({
         initialCapturedAt={initialCapturedAt}
         initialEdges={initialEdges}
         lastAppliedAt={lastAppliedAt}
+        externalConfigSnapshot={externalConfigSnapshot}
         applyActions={{
           createApplyAttempt,
           confirmApplyAttempt,
@@ -302,8 +264,7 @@ export default async function NodeDetailPage({
           initialNodeStatus={initialNodeStatus}
           initialCapturedAt={initialCapturedAt}
           initialEdges={initialEdges}
-          appliedExternalConfigs={appliedExternalConfigs}
-          unreachableExternals={unreachableExternals}
+          externalConfigSnapshot={externalConfigSnapshot}
         />
       )}
     </div>

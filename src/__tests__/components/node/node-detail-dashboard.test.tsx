@@ -73,6 +73,7 @@ function renderDashboard(
         initialCapturedAt={null}
         initialEdges={[]}
         lastAppliedAt={null}
+        externalConfigSnapshot={{}}
         applyActions={NOOP_APPLY_ACTIONS}
         {...props}
       />
@@ -121,6 +122,69 @@ describe("NodeDetailDashboard — sections", () => {
     renderDashboard();
     expect(screen.getByTestId("node-detail-no-pending")).toBeTruthy();
     expect(screen.queryByTestId("node-detail-pending-badge")).toBeNull();
+  });
+
+  it("renders the unknown-state badge and disables Apply when an external is unavailable (#551)", () => {
+    const node = makeNode({
+      externalServices: [
+        {
+          node: 1,
+          key: "k1",
+          kind: "DATA_STORE",
+          status: "ENABLED",
+          draft: 'ingest_srv_addr = "x"\n',
+        },
+      ],
+    });
+    renderDashboard({
+      node,
+      externalConfigSnapshot: { DATA_STORE: "unavailable" },
+    });
+    expect(
+      screen.getByTestId("node-detail-pending-unknown-badge"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("node-detail-pending-badge")).toBeNull();
+    const applyButton = screen.getByTestId("node-detail-apply-all");
+    expect((applyButton as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("treats a steady-state external (draft structurally equals applied) as not pending", () => {
+    const node = makeNode({
+      externalServices: [
+        {
+          node: 1,
+          key: "k1",
+          kind: "DATA_STORE",
+          status: "ENABLED",
+          draft: 'ingest_srv_addr = "x"\n',
+        },
+      ],
+    });
+    renderDashboard({
+      node,
+      externalConfigSnapshot: { DATA_STORE: 'ingest_srv_addr = "x"\n' },
+    });
+    expect(screen.getByTestId("node-detail-no-pending")).toBeTruthy();
+    expect(screen.queryByTestId("node-detail-pending-badge")).toBeNull();
+  });
+
+  it("treats an external with manager.draft != endpoint.config as pending", () => {
+    const node = makeNode({
+      externalServices: [
+        {
+          node: 1,
+          key: "k1",
+          kind: "DATA_STORE",
+          status: "ENABLED",
+          draft: 'ingest_srv_addr = "new"\n',
+        },
+      ],
+    });
+    renderDashboard({
+      node,
+      externalConfigSnapshot: { DATA_STORE: 'ingest_srv_addr = "old"\n' },
+    });
+    expect(screen.getByTestId("node-detail-pending-badge")).toBeTruthy();
   });
 
   it("uses ping=null (initialNodeStatus.ping=null) to render the dead badge", () => {
@@ -442,6 +506,7 @@ describe("NodeDetailDashboard — SSR sparkline seed", () => {
           initialCapturedAt="2026-04-29T08:00:00.000Z"
           initialEdges={[status]}
           lastAppliedAt={null}
+          externalConfigSnapshot={{}}
           applyActions={NOOP_APPLY_ACTIONS}
         />
       </NextIntlClientProvider>,

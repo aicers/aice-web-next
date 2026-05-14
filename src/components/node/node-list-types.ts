@@ -1,3 +1,7 @@
+import {
+  type ExternalConfigSnapshot,
+  externalServicePendingState,
+} from "@/lib/node/pending-state";
 import type {
   AgentKind,
   ExternalServiceKind,
@@ -9,6 +13,7 @@ export type ServiceCellState =
   | "absent"
   | "configured-here"
   | "configured-here-pending"
+  | "configured-here-unknown"
   | "manual";
 
 export interface ServiceCell {
@@ -98,6 +103,7 @@ function profilesDiffer(
 export function buildNodeRows(
   nodeConn: NodeConnection,
   statusConn: NodeStatusConnection,
+  externalConfigSnapshot: ExternalConfigSnapshot = {},
 ): NodeRow[] {
   const statusById = new Map(
     statusConn.edges.map((edge) => [edge.node.id, edge.node]),
@@ -132,8 +138,17 @@ export function buildNodeRows(
     for (const ext of node.externalServices) {
       const column = EXTERNAL_TO_COLUMN[ext.kind];
       if (!column) continue;
-      const hasDraft = ext.draft !== null;
-      const state = hasDraft ? "configured-here-pending" : "configured-here";
+      const pendingState = externalServicePendingState(
+        ext,
+        externalConfigSnapshot,
+      );
+      const hasDraft = pendingState === "pending";
+      const state: ServiceCellState =
+        pendingState === "pending"
+          ? "configured-here-pending"
+          : pendingState === "unknown"
+            ? "configured-here-unknown"
+            : "configured-here";
       cells[column] = { state, hasDraft };
     }
 
@@ -143,15 +158,16 @@ export function buildNodeRows(
     const anyAgentDraft = node.agents.some(
       (agent) => agent.draft !== null && agent.draft !== agent.config,
     );
-    const anyExternalDraft = node.externalServices.some(
-      (ext) => ext.draft !== null,
+    const anyExternalPending = node.externalServices.some(
+      (ext) =>
+        externalServicePendingState(ext, externalConfigSnapshot) === "pending",
     );
 
     const hasPending =
       nameDraftDiffers ||
       profileDraftDiffers ||
       anyAgentDraft ||
-      anyExternalDraft;
+      anyExternalPending;
 
     const status = statusById.get(node.id);
     const hasStatus = status !== undefined;
