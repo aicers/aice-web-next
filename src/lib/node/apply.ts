@@ -277,11 +277,12 @@ async function assertCanonicalNodeInScope(
   signal?: AbortSignal,
 ): Promise<void> {
   // Globally-scoped callers (`customers:access-all`) bypass the
-  // canonical-node preflight: the upstream `applyNode` mutation
-  // already performs the authoritative scope check, and the preflight
-  // would otherwise reject a customerless node before it reached the
-  // upstream. Keyed off `hasGlobalScope` so a multi-role account or a
-  // custom role with `customers:access-all` is treated correctly.
+  // canonical-node preflight: the upstream manager pair
+  // (`applyNodeDraft` + `applyAgentConfig`) already performs the
+  // authoritative scope check, and the preflight would otherwise
+  // reject a customerless node before it reached the upstream. Keyed
+  // off `hasGlobalScope` so a multi-role account or a custom role with
+  // `customers:access-all` is treated correctly.
   if (ctx.hasGlobalScope) return;
   const node = await fetchCanonicalNode(ctx, id, signal);
   enforceNodeScope(ctx, node);

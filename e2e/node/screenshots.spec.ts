@@ -906,9 +906,13 @@ test.describe
      * above. Captures the modal while `confirmApplyAttempt` is in
      * flight (the executing phase shows the manager row in
      * `in_flight` and the action button in the "Applying…" disabled
-     * state). We force a slow response with `page.route` on the
-     * server-action URL so the executing phase is observable for
-     * long enough to screenshot.
+     * state). The modal flips to `kind: "executing"` synchronously
+     * the moment Apply is clicked, so the screenshot is taken on that
+     * synchronous flip while the Applying… button is visible — no
+     * server-side slowdown is needed. Both manager-pair success stubs
+     * (`applyNodeDraft` + `applyAgentConfig`) are registered so the
+     * BFF's follow-on dispatches resolve cleanly without racing the
+     * mock server for an unmatched operation.
      */
     test("EN apply preview — mid-execution", async ({
       page,

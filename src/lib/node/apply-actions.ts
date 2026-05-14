@@ -183,15 +183,15 @@ async function rebuildAndAssertNodeScope(
 }
 
 /**
- * Confirm an apply attempt, dispatching the upstream `applyNode`
- * mutation followed by any external `updateConfig` calls required by
- * pending drafts. The state-machine claims an `executing_lock`, runs
- * the just-before-dispatch sequence (5a–5d) for the manager step,
- * and advances each external dispatch under the same lock. On
- * success the row is committed to `succeeded` and a single
- * `node.apply` audit row is emitted; on a transient external
- * failure the row is left in `failed_retryable` so the caller can
- * drive `retryDispatch` from the same `attemptId`.
+ * Confirm an apply attempt, dispatching the manager pair
+ * (`applyNodeDraft` then `applyAgentConfig`) followed by any external
+ * `updateConfig` calls required by pending drafts. The state-machine
+ * claims an `executing_lock`, runs the just-before-dispatch sequence
+ * (5a–5d) for the manager step, and advances each external dispatch
+ * under the same lock. On success the row is committed to `succeeded`
+ * and a single `node.apply` audit row is emitted; on a transient
+ * external failure the row is left in `failed_retryable` so the caller
+ * can drive `retryDispatch` from the same `attemptId`.
  */
 export async function confirmApplyAttempt(
   args: { attemptId: string; expectedDraftFingerprint?: string },
