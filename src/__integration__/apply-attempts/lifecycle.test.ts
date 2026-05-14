@@ -251,8 +251,8 @@ describe("Lifecycle — sequential advance happy path", () => {
   });
 });
 
-describe("Lifecycle — stop on first failure", () => {
-  it("forcing external1 to fail leaves external2 as queued, row → failed_retryable", async () => {
+describe("Lifecycle — post-DB dispatches are independent (#333, Decision 3 / Acceptance #2)", () => {
+  it("forcing external1 to fail does NOT block external2 — external2 is still attempted and succeeds, row → failed_retryable", async () => {
     const node = snapshot();
     const fp = computeDraftFingerprint(node);
     const ext1Id = randomUUID();
@@ -298,8 +298,13 @@ describe("Lifecycle — stop on first failure", () => {
     expect(result.executingLock).toBeNull();
     expect(result.plannedDispatches[0].state).toBe("succeeded");
     expect(result.plannedDispatches[1].state).toBe("failed_retryable");
-    expect(result.plannedDispatches[2].state).toBe("queued");
-    expect(recorder.externalCalls).toHaveLength(1);
+    // Phase Node-12 (#333): post-DB dispatches are independent. A
+    // failing external no longer blocks the others — external2 is
+    // advanced and run under the same claim, succeeds, and the row's
+    // aggregate status becomes `failed_retryable` because at least
+    // one dispatch is still retryable.
+    expect(result.plannedDispatches[2].state).toBe("succeeded");
+    expect(recorder.externalCalls).toHaveLength(2);
   });
 });
 
@@ -348,8 +353,8 @@ describe("Lifecycle — failed_retryable preserves expires_at", () => {
   });
 });
 
-describe("Lifecycle — APPLY_DISPATCH_MAX_ATTEMPTS cap cascades to failed_terminal", () => {
-  it("cap reached cascades remaining queued to failed_terminal, expires_at rewritten to retention", async () => {
+describe("Lifecycle — APPLY_DISPATCH_MAX_ATTEMPTS cap on a post-DB external (#333: no cross-dispatch cascade)", () => {
+  it("cap reached on one external lands it in failed_terminal but does NOT cascade unrelated queued externals — they are advanced and run, and the row settles failed_terminal with expires_at rewritten to retention", async () => {
     const node = snapshot();
     const fp = computeDraftFingerprint(node);
     const ext1Id = randomUUID();
@@ -398,8 +403,13 @@ describe("Lifecycle — APPLY_DISPATCH_MAX_ATTEMPTS cap cascades to failed_termi
     });
     expect(result.status).toBe("failed_terminal");
     expect(result.plannedDispatches[1].state).toBe("failed_terminal");
-    // Cascading to the remaining queued.
-    expect(result.plannedDispatches[2].state).toBe("failed_terminal");
+    // Phase Node-12 (#333): the cross-dispatch cascade on cap is
+    // gone for post-DB stages — external2 is advanced and run, and
+    // (with no `failExternal` for it) succeeds with its own observed
+    // outcome. The row still settles `failed_terminal` because
+    // external1 is structurally non-retryable and no retryable
+    // dispatch remains.
+    expect(result.plannedDispatches[2].state).toBe("succeeded");
     // expires_at rewritten well past the original.
     expect(result.expiresAt.getTime()).toBeGreaterThan(
       originalExpiresAt.getTime() + 60 * 60 * 1000,

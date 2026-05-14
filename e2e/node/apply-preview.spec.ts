@@ -336,7 +336,7 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
     ).toHaveCount(0);
   });
 
-  test("multi-service retry path: manager succeeds → giganto fails retryable → retry resumes tivan", async ({
+  test("multi-service retry path: manager succeeds → giganto fails retryable → tivan still runs in parallel (#333) → retry giganto", async ({
     page,
     workerUsername,
     workerPassword,
@@ -425,7 +425,12 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
     await expect(gigantoRow).toHaveAttribute("data-state", "failed_retryable", {
       timeout: 30_000,
     });
-    await expect(tivanRow).toHaveAttribute("data-state", "queued", {
+    // Phase Node-12 (#333) makes post-DB dispatches independent: a
+    // failing external no longer blocks the others, so tivan is
+    // attempted in parallel with giganto and (per its stubbed
+    // success) settles `succeeded` before the operator retries
+    // giganto.
+    await expect(tivanRow).toHaveAttribute("data-state", "succeeded", {
       timeout: 30_000,
     });
 
