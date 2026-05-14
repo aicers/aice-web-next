@@ -9,7 +9,7 @@
  * fallback, and Security Monitor read-only gating.
  *
  * The mock-server's `nodeDetail.alpha.json` fixture is the seed: node
- * id `11`, one SENSOR agent (`config: "<toml>"`, `draft: null`), one
+ * id `11`, one SENSOR agent in steady state (`draft == config`), one
  * DATA_STORE external (`draft: null`), and `customerId: "1"`. The
  * combined `(gate)/layout.tsx` requires `nodes:read + services:read`
  * before the page renders, so worker accounts are linked to a customer
@@ -185,7 +185,7 @@ test.describe("Node detail page", () => {
     ).toBeVisible();
   });
 
-  test("Diff tab on a service with no draft renders the empty-diff copy", async ({
+  test("Diff tab on a service in steady state renders the empty-diff copy", async ({
     page,
     workerUsername,
     workerPassword,
@@ -196,7 +196,8 @@ test.describe("Node detail page", () => {
       timeout: 30_000,
     });
 
-    // Sensor agent has `draft: null` in the seed fixture, so its Diff
+    // Sensor agent has `draft == config` in the seed fixture (steady
+    // state under the #551 comparison-based pending model), so its Diff
     // tab must surface the documented "No pending changes for this
     // service." copy under the empty-diff testid.
     const sensorCard = page.getByTestId("node-detail-service-card-sensor");
