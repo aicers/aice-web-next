@@ -9,6 +9,12 @@ const mockWithTransaction = vi.hoisted(() =>
       fn((globalThis as Record<string, unknown>).__client__),
   ),
 );
+const mockQueryAudit = vi.hoisted(() =>
+  vi.fn(async (_sql: string, _params?: unknown[]) => ({
+    rows: [] as unknown[],
+    rowCount: 0,
+  })),
+);
 
 vi.mock("@/lib/db/client", () => ({
   withTransaction: mockWithTransaction,
@@ -18,10 +24,15 @@ vi.mock("@/lib/audit/logger", () => ({
   auditLog: { record: mockAuditLogRecord },
 }));
 
+vi.mock("@/lib/audit/client", () => ({
+  queryAudit: mockQueryAudit,
+}));
+
 import {
   applyRecover,
   emitRecoverAudit,
   insertCustomerDrainFailureSentinel,
+  listAuditOnlyCustomerDrainFailures,
   resetAllGlobalFailedJobs,
   resetCustomerDrainSentinel,
   resetGlobalFanoutJob,
@@ -159,6 +170,8 @@ describe("applyRecover", () => {
       async <T>(fn: (c: unknown) => Promise<T>) =>
         fn((globalThis as Record<string, unknown>).__client__),
     );
+    mockQueryAudit.mockReset();
+    mockQueryAudit.mockResolvedValue({ rows: [], rowCount: 0 });
   });
 
   it("dispatches kind='global' to the single-row global reset", async () => {
@@ -205,10 +218,97 @@ describe("applyRecover", () => {
     });
 
     expect(outcome).toEqual({ reset: 1, kind: "customer" });
+    // Reset path matched; audit-row fallback was NOT consulted.
+    expect(mockQueryAudit).not.toHaveBeenCalled();
     const { sql, params } = client.queries[0];
     expect(sql).toContain("WHERE customer_only_exclusion_id = $1");
     expect(sql).toContain("AND customer_id = $2");
     expect(params).toEqual(["exc-1", 42]);
+  });
+
+  it("backfills a pending sentinel from the audit log when no failed queue row matches (kind='customer')", async () => {
+    // Round-2 review: when the failed ADD path's sentinel insert was
+    // swallowed (auth_db blip), recovery would otherwise 404. The
+    // audit-row fallback finds the `drainStatus='failed'` audit row
+    // and INSERTs a fresh pending sentinel so the fanout worker re-
+    // runs the customer DELETE planner.
+    const client = makeClient({ affected: 0 });
+    (globalThis as Record<string, unknown>).__client__ = client;
+    mockQueryAudit.mockResolvedValueOnce({
+      rows: [{ "?column?": 1 }],
+      rowCount: 1,
+    });
+
+    const outcome = await applyRecover({
+      kind: "customer",
+      exclusionId: "exc-orphan",
+      customerId: 42,
+    });
+
+    expect(outcome).toEqual({ reset: 1, kind: "customer" });
+    // First query is the UPDATE reset (rowCount 0); second is the
+    // backfill INSERT with status='pending'.
+    expect(client.queries).toHaveLength(2);
+    expect(client.queries[0].sql).toContain(
+      "UPDATE triage_exclusion_fanout_job",
+    );
+    const backfill = client.queries[1];
+    expect(backfill.sql).toContain("INSERT INTO triage_exclusion_fanout_job");
+    expect(backfill.sql).toContain("'pending'");
+    expect(backfill.sql).toContain(
+      "ON CONFLICT (customer_only_exclusion_id, customer_id)",
+    );
+    expect(backfill.params).toEqual(["exc-orphan", 42]);
+    // Audit lookup was scoped to this exclusion + customer.
+    expect(mockQueryAudit).toHaveBeenCalledTimes(1);
+    const [auditSql, auditParams] = mockQueryAudit.mock.calls[0];
+    expect(auditSql).toContain("triage_exclusion.customer_add");
+    expect(auditSql).toContain("drainStatus");
+    expect(auditSql).toContain("triage_exclusion.customer_recover");
+    expect(auditParams).toEqual([42, "exc-orphan"]);
+  });
+
+  it("returns reset=0 for kind='customer' when neither a failed queue row nor a drain-failure audit row exists", async () => {
+    const client = makeClient({ affected: 0 });
+    (globalThis as Record<string, unknown>).__client__ = client;
+    mockQueryAudit.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const outcome = await applyRecover({
+      kind: "customer",
+      exclusionId: "exc-missing",
+      customerId: 42,
+    });
+
+    expect(outcome).toEqual({ reset: 0, kind: "customer" });
+    // Only the reset attempt ran; no backfill INSERT.
+    expect(client.queries).toHaveLength(1);
+    expect(client.queries[0].sql).toContain(
+      "UPDATE triage_exclusion_fanout_job",
+    );
+  });
+});
+
+describe("listAuditOnlyCustomerDrainFailures", () => {
+  beforeEach(() => {
+    mockQueryAudit.mockReset();
+  });
+
+  it("returns audit-only target_ids whose drain failure has not been recovered", async () => {
+    mockQueryAudit.mockResolvedValueOnce({
+      rows: [{ target_id: "exc-1" }, { target_id: "exc-2" }],
+      rowCount: 2,
+    });
+
+    const ids = await listAuditOnlyCustomerDrainFailures(42);
+
+    expect(ids).toEqual(["exc-1", "exc-2"]);
+    const [sql, params] = mockQueryAudit.mock.calls[0];
+    expect(sql).toContain("triage_exclusion.customer_add");
+    expect(sql).toContain("drainStatus");
+    // Excludes rows that have a later customer_recover audit entry.
+    expect(sql).toContain("triage_exclusion.customer_recover");
+    expect(sql).toContain("r.timestamp > a.timestamp");
+    expect(params).toEqual([42]);
   });
 });
 

@@ -448,11 +448,19 @@ Each ADD and REMOVE emits an audit row:
 - `triage_exclusion.global_recover` / `.customer_recover` —
   emitted when an operator resets a `failed` cleanup row from the
   exclusion list's **Re-trigger cleanup** menu item (or from the
-  internal recovery route). The menu item appears only on rows
-  whose past-corpus cleanup is stuck; clicking it transitions the
-  queue row back to `pending` so the fanout worker picks it up on
-  the next tick. `global_recover` is customer-agnostic;
-  `customer_recover` carries `customer_id`.
+  internal recovery route). The menu item appears on rows whose
+  past-corpus cleanup is stuck — either a `failed` sentinel in the
+  `auth_db` fanout queue, or (for customer-scoped exclusions) a
+  `triage_exclusion.customer_add` audit row recording
+  `details.drainStatus = 'failed'` that has not yet been recovered.
+  This audit-row fallback covers the rare case where the failed ADD
+  path's sentinel insert itself failed (auth_db blip) so the queue
+  has no row: clicking **Re-trigger cleanup** backfills a fresh
+  `pending` sentinel from the audit record. Otherwise the click
+  transitions the existing queue row back to `pending`. Either way
+  the fanout worker picks it up on the next tick.
+  `global_recover` is customer-agnostic; `customer_recover` carries
+  `customer_id`.
 
 ### Background retention
 

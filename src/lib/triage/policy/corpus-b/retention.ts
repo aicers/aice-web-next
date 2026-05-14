@@ -327,7 +327,7 @@ async function pruneReadyWithProtection(
             `SELECT id FROM policy_triage_run
               WHERE status = 'ready'
                 AND created_at < NOW() - ($1 || ' days')::INTERVAL
-                AND id <> ALL($2::uuid[])
+                AND id <> ALL($2::bigint[])
               LIMIT ${batchSize}`,
             [String(retentionDays), protectedArr],
           );
@@ -342,7 +342,7 @@ async function pruneReadyWithProtection(
     }
     if (toDelete.length > 0) {
       const result = await pool.query(
-        `DELETE FROM policy_triage_run WHERE id = ANY($1::uuid[])`,
+        `DELETE FROM policy_triage_run WHERE id = ANY($1::bigint[])`,
         [toDelete],
       );
       total += result.rowCount ?? 0;

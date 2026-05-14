@@ -15,6 +15,7 @@ interface WithAuthOptions {
 
 const mockHasPermission = vi.hoisted(() => vi.fn());
 const mockQuery = vi.hoisted(() => vi.fn());
+const mockAuditOnly = vi.hoisted(() => vi.fn());
 
 let currentSession: AuthSession;
 
@@ -44,6 +45,12 @@ vi.mock("@/lib/db/client", () => ({
   query: vi.fn((...args: unknown[]) => mockQuery(...args)),
 }));
 
+vi.mock("@/lib/triage/exclusion/recovery", () => ({
+  listAuditOnlyCustomerDrainFailures: vi.fn((...args: unknown[]) =>
+    mockAuditOnly(...args),
+  ),
+}));
+
 const now = Math.floor(Date.now() / 1000);
 const adminSession: AuthSession = {
   accountId: "admin-1",
@@ -71,6 +78,7 @@ describe("GET /api/triage/exclusions/cleanup-status", () => {
     currentSession = adminSession;
     mockHasPermission.mockReset().mockResolvedValue(true);
     mockQuery.mockReset();
+    mockAuditOnly.mockReset().mockResolvedValue([]);
   });
 
   it("returns 400 when customer_id is missing", async () => {
@@ -138,5 +146,34 @@ describe("GET /api/triage/exclusions/cleanup-status", () => {
     expect(sql).toContain("customer_only_exclusion_id IS NOT NULL");
     expect(sql).toContain("status = 'failed'");
     expect(params).toEqual([42]);
+    // The audit-only fallback was consulted for this customer.
+    expect(mockAuditOnly).toHaveBeenCalledWith(42);
+  });
+
+  it("unions audit-only drain failures with the queue rows so audit-only failures surface", async () => {
+    // Round-2 review: an `auth_db` blip during the failed ADD path can
+    // leave a `drainStatus='failed'` audit row with no matching sentinel
+    // (the sentinel-insert error is swallowed so the primary drain
+    // error is what the dialog surfaces). The audit-only fallback must
+    // still surface that exclusion as recoverable.
+    mockHasPermission.mockResolvedValue(true);
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ customer_only_exclusion_id: "queue-1" }],
+      rowCount: 1,
+    });
+    mockAuditOnly.mockResolvedValueOnce(["audit-only-1", "queue-1"]);
+
+    const { GET } = await import(
+      "@/app/api/triage/exclusions/cleanup-status/route"
+    );
+    const req = new NextRequest(
+      "http://localhost:3000/api/triage/exclusions/cleanup-status?customer_id=42",
+    );
+    const res = await GET(req, makeContext());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Union with dedupe — queue-1 appears in both sources but only once.
+    expect(new Set(body.failed)).toEqual(new Set(["queue-1", "audit-only-1"]));
+    expect(body.failed).toHaveLength(2);
   });
 });

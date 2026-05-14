@@ -2,6 +2,7 @@ import "server-only";
 
 import type pg from "pg";
 
+import { queryAudit } from "@/lib/audit/client";
 import { auditLog } from "@/lib/audit/logger";
 import { withTransaction } from "@/lib/db/client";
 
@@ -158,6 +159,119 @@ export async function insertCustomerDrainFailureSentinel(
 }
 
 /**
+ * Insert a *backfill* sentinel as `pending` so a fresh fanout sweep
+ * re-runs the customer DELETE planner.
+ *
+ * Distinct from `insertCustomerDrainFailureSentinel` (which seeds the
+ * row in the exhausted `failed` state for the admin UI's "Re-trigger
+ * cleanup" affordance). Backfill is the audit-row-fallback path used
+ * when the cleanup-status / recover flow finds a drain-failure audit
+ * row but no matching queue row — for example, after the swallowed
+ * `insertCustomerDrainFailureSentinel` failure path in
+ * `POST /api/triage/exclusions`. The fanout worker picks the row up
+ * via `FOR UPDATE SKIP LOCKED` on the next sweep just like any other
+ * pending row.
+ *
+ * The ON CONFLICT branch keeps the helper idempotent against a race
+ * where the sentinel was inserted between the audit lookup and this
+ * statement; the upsert resets `status='pending', attempt_count=0` so
+ * the result is the same whether or not a prior row existed.
+ */
+async function backfillCustomerSentinel(
+  client: pg.PoolClient,
+  customerExclusionId: string,
+  customerId: number,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO triage_exclusion_fanout_job (
+        global_exclusion_id,
+        customer_only_exclusion_id,
+        customer_id,
+        status,
+        attempt_count,
+        next_attempt_at,
+        claimed_at,
+        last_error
+     ) VALUES (NULL, $1, $2, 'pending', 0, NOW(), NULL, NULL)
+     ON CONFLICT (customer_only_exclusion_id, customer_id)
+       WHERE customer_only_exclusion_id IS NOT NULL
+       DO UPDATE SET
+         status = 'pending',
+         attempt_count = 0,
+         next_attempt_at = NOW(),
+         claimed_at = NULL,
+         last_error = NULL,
+         updated_at = NOW()`,
+    [customerExclusionId, customerId],
+  );
+}
+
+/**
+ * Return the set of customer exclusion ids that have a
+ * `triage_exclusion.customer_add` audit row recording
+ * `drainStatus='failed'` and no later `triage_exclusion.customer_recover`
+ * audit row for the same target — i.e. drain failures that have not yet
+ * been recovered.
+ *
+ * Used by the customer cleanup-status route as a fallback so audit-only
+ * drain failures (those that landed in the audit log but whose sentinel
+ * insertion was swallowed in `POST /api/triage/exclusions`) still
+ * surface the "Re-trigger cleanup" affordance. Without this fallback an
+ * `auth_db unreachable` blip during the failed ADD path would render
+ * the exclusion permanently unrecoverable from the UI.
+ */
+export async function listAuditOnlyCustomerDrainFailures(
+  customerId: number,
+): Promise<string[]> {
+  const { rows } = await queryAudit<{ target_id: string }>(
+    `SELECT DISTINCT a.target_id
+       FROM audit_logs a
+      WHERE a.action = 'triage_exclusion.customer_add'
+        AND a.customer_id = $1
+        AND a.target_id IS NOT NULL
+        AND a.details ->> 'drainStatus' = 'failed'
+        AND NOT EXISTS (
+          SELECT 1 FROM audit_logs r
+           WHERE r.action = 'triage_exclusion.customer_recover'
+             AND r.customer_id = $1
+             AND r.target_id = a.target_id
+             AND r.timestamp > a.timestamp
+        )`,
+    [customerId],
+  );
+  return rows.map((r) => r.target_id);
+}
+
+/**
+ * Probe the audit log for a single customer drain-failure that has not
+ * been recovered. Returns true if such an audit row exists. Used by the
+ * recover path to decide whether to backfill a sentinel when no failed
+ * queue row matched the recover request.
+ */
+async function customerDrainFailureAuditExists(
+  customerExclusionId: string,
+  customerId: number,
+): Promise<boolean> {
+  const { rows } = await queryAudit(
+    `SELECT 1 FROM audit_logs a
+      WHERE a.action = 'triage_exclusion.customer_add'
+        AND a.customer_id = $1
+        AND a.target_id = $2
+        AND a.details ->> 'drainStatus' = 'failed'
+        AND NOT EXISTS (
+          SELECT 1 FROM audit_logs r
+           WHERE r.action = 'triage_exclusion.customer_recover'
+             AND r.customer_id = $1
+             AND r.target_id = a.target_id
+             AND r.timestamp > a.timestamp
+        )
+      LIMIT 1`,
+    [customerId, customerExclusionId],
+  );
+  return rows.length > 0;
+}
+
+/**
  * Discriminated request shape for the internal recovery route. Each
  * variant carries the discriminator that targets a single failed row
  * (or the per-global sweep). The route validates the variant before
@@ -183,6 +297,37 @@ export interface RecoverOutcome {
 export async function applyRecover(
   request: RecoverRequest,
 ): Promise<RecoverOutcome> {
+  if (request.kind === "customer") {
+    // Try the in-place reset first — by far the common case, where the
+    // drain-failure path successfully wrote a `failed` sentinel.
+    const reset = await withTransaction((client) =>
+      resetCustomerDrainSentinel(
+        client,
+        request.exclusionId,
+        request.customerId,
+      ),
+    );
+    if (reset > 0) return { reset, kind: request.kind };
+
+    // Audit-row fallback: the sentinel insert in the failed ADD path is
+    // best-effort (a queue-write failure cannot mask the primary drain
+    // error in the 500 response), so a transient auth_db blip can leave
+    // a drain-failure audit row with no matching queue row. Consult the
+    // audit log; if such a row exists, backfill a fresh pending sentinel
+    // so the fanout worker re-runs the customer DELETE planner. Without
+    // this fallback the exclusion would be permanently unrecoverable
+    // from the UI.
+    const auditExists = await customerDrainFailureAuditExists(
+      request.exclusionId,
+      request.customerId,
+    );
+    if (!auditExists) return { reset: 0, kind: request.kind };
+    await withTransaction((client) =>
+      backfillCustomerSentinel(client, request.exclusionId, request.customerId),
+    );
+    return { reset: 1, kind: request.kind };
+  }
+
   return withTransaction(async (client) => {
     let reset = 0;
     if (request.kind === "global") {
@@ -191,14 +336,8 @@ export async function applyRecover(
         request.exclusionId,
         request.customerId,
       );
-    } else if (request.kind === "global_all_failed") {
-      reset = await resetAllGlobalFailedJobs(client, request.exclusionId);
     } else {
-      reset = await resetCustomerDrainSentinel(
-        client,
-        request.exclusionId,
-        request.customerId,
-      );
+      reset = await resetAllGlobalFailedJobs(client, request.exclusionId);
     }
     return { reset, kind: request.kind };
   });

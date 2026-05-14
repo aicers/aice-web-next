@@ -5,14 +5,29 @@ import { type NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth/guard";
 import { hasPermission } from "@/lib/auth/permissions";
 import { query } from "@/lib/db/client";
+import { listAuditOnlyCustomerDrainFailures } from "@/lib/triage/exclusion/recovery";
 
 /**
  * GET /api/triage/exclusions/cleanup-status?customer_id=<id>
  *
  * Returns the list of customer-scoped triage exclusion ids whose
- * retroactive cleanup has a `failed` sentinel in the auth_db fanout
- * queue. The admin UI uses this to surface a "Re-trigger cleanup"
- * affordance only for the rows that actually need it (vs every row).
+ * retroactive cleanup is in a recoverable failed state. The admin UI
+ * uses this to surface a "Re-trigger cleanup" affordance only for the
+ * rows that actually need it (vs every row).
+ *
+ * Two sources are unioned:
+ *
+ *   1. `failed` sentinel rows in the auth_db fanout queue — the normal
+ *      drain-failure path enqueues these via
+ *      `insertCustomerDrainFailureSentinel`.
+ *   2. Audit-only drain failures — `triage_exclusion.customer_add`
+ *      audit rows with `details.drainStatus='failed'` and no later
+ *      `triage_exclusion.customer_recover` audit row. This is the
+ *      fallback for the case where the failed ADD path's sentinel
+ *      insert itself failed (auth_db blip) and the failure was
+ *      swallowed so the primary drain error remained visible in the
+ *      500 response. Without this fallback the exclusion would be
+ *      permanently unrecoverable from the UI.
  *
  * Gated on `triage:read` plus the caller's effective customer scope —
  * same predicate as `GET /api/triage/exclusions`. The failed-row list
@@ -46,9 +61,11 @@ export const GET = withAuth(
           AND status = 'failed'`,
       [customerId],
     );
-    return NextResponse.json({
-      failed: rows.map((r) => r.customer_only_exclusion_id),
-    });
+    const auditOnly = await listAuditOnlyCustomerDrainFailures(customerId);
+    const failed = new Set<string>();
+    for (const r of rows) failed.add(r.customer_only_exclusion_id);
+    for (const id of auditOnly) failed.add(id);
+    return NextResponse.json({ failed: Array.from(failed) });
   },
   { requiredPermissions: ["triage:read"] },
 );

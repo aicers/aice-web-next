@@ -44,7 +44,10 @@ function makePool(behavior: PoolBehavior = {}) {
   // protection hook short-circuiting the DELETE when every row is
   // protected. To keep the test mocks readable we mirror that shape:
   // each `readyRows[i]` entry produces a SELECT returning `i` synthetic
-  // ids, and the matching DELETE returns the same count.
+  // ids, and the matching DELETE returns the same count. Ids are
+  // numeric strings to match `policy_triage_run.id` (BIGSERIAL → pg
+  // surfaces bigint as string by default), so the `bigint[]` cast in
+  // retention.ts is type-correct against the same shape.
   let readyDeletePending = 0;
   const pool = {
     query: vi.fn(async (sql: string, params?: unknown[]) => {
@@ -65,7 +68,7 @@ function makePool(behavior: PoolBehavior = {}) {
         const n = readyQueue.shift() ?? 0;
         readyDeletePending = n;
         const rows = Array.from({ length: n }, (_, i) => ({
-          id: `ready-${i}`,
+          id: String(i + 1),
         }));
         return { rows, rowCount: n };
       }
@@ -212,19 +215,20 @@ describe("runPolicyRetentionForCustomer", () => {
   });
 
   it("respects the Phase 2 protection hook on the ready path so protected runs are not pruned", async () => {
-    // Three candidate ready rows: `ready-0` is protected (e.g. has a
-    // SendBatch in flight), `ready-1` and `ready-2` are eligible. The
-    // helper SELECTs candidates, calls the hook per row, then issues
-    // one DELETE keyed by the surviving ids.
-    const protectedId = "ready-0";
+    // Three candidate ready rows: id "1" is protected (e.g. has a
+    // SendBatch in flight), "2" and "3" are eligible. The helper
+    // SELECTs candidates, calls the hook per row, then issues one
+    // DELETE keyed by the surviving ids. Ids are numeric strings to
+    // match `policy_triage_run.id` (BIGSERIAL).
+    const protectedId = "1";
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes("SELECT id FROM") && sql.includes("'ready'")) {
           // First call returns three candidates; second call (after
-          // protectedIds excludes ready-0) returns nothing → loop exits.
+          // protectedIds excludes "1") returns nothing → loop exits.
           if ((params as unknown[]).length === 1) {
             return {
-              rows: [{ id: "ready-0" }, { id: "ready-1" }, { id: "ready-2" }],
+              rows: [{ id: "1" }, { id: "2" }, { id: "3" }],
               rowCount: 3,
             };
           }
@@ -234,7 +238,8 @@ describe("runPolicyRetentionForCustomer", () => {
           sql.includes("DELETE FROM policy_triage_run") &&
           sql.includes("id = ANY")
         ) {
-          // The DELETE must skip the protected id.
+          // The DELETE must skip the protected id and be cast to bigint[].
+          expect(sql).toContain("$1::bigint[]");
           const ids = (params as [string[]])[0];
           return { rows: [], rowCount: ids.length };
         }
@@ -255,7 +260,7 @@ describe("runPolicyRetentionForCustomer", () => {
     };
     try {
       const counts = await runPolicyRetentionForCustomer(1);
-      expect(hookCalls).toEqual(["ready-0", "ready-1", "ready-2"]);
+      expect(hookCalls).toEqual(["1", "2", "3"]);
       // Only the two unprotected rows were deleted.
       expect(counts.readyPruned).toBe(2);
       // The DELETE call carried the unprotected ids only.
@@ -263,7 +268,7 @@ describe("runPolicyRetentionForCustomer", () => {
         const sql = c[0] as string;
         return sql.includes("DELETE FROM") && sql.includes("id = ANY");
       });
-      expect(deleteCall?.[1]).toEqual([["ready-1", "ready-2"]]);
+      expect(deleteCall?.[1]).toEqual([["2", "3"]]);
     } finally {
       (
         await import("@/lib/triage/policy/corpus-b/retention")
@@ -275,7 +280,7 @@ describe("runPolicyRetentionForCustomer", () => {
     // First batch returns batchSize (= 2) rows, one protected. The
     // helper deletes the unprotected row, then issues another SELECT
     // because the first batch was full — that SELECT must exclude the
-    // protected id via `id <> ALL(...)` so the loop terminates.
+    // protected id via `id <> ALL($2::bigint[])` so the loop terminates.
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes("SELECT id FROM") && sql.includes("'ready'")) {
@@ -283,17 +288,21 @@ describe("runPolicyRetentionForCustomer", () => {
           if (args.length === 1) {
             // First call: full batch.
             return {
-              rows: [{ id: "ready-A" }, { id: "ready-B" }],
+              rows: [{ id: "10" }, { id: "11" }],
               rowCount: 2,
             };
           }
           // Second call: protectedIds excluded; nothing else matches.
+          // The id-exclusion cast must be bigint[] to match the
+          // BIGSERIAL primary key of policy_triage_run.
+          expect(sql).toContain("$2::bigint[]");
           return { rows: [], rowCount: 0 };
         }
         if (
           sql.includes("DELETE FROM policy_triage_run") &&
           sql.includes("id = ANY")
         ) {
+          expect(sql).toContain("$1::bigint[]");
           const ids = (params as [string[]])[0];
           return { rows: [], rowCount: ids.length };
         }
@@ -307,11 +316,12 @@ describe("runPolicyRetentionForCustomer", () => {
     )._protectionExtensionHook.current;
     (
       await import("@/lib/triage/policy/corpus-b/retention")
-    )._protectionExtensionHook.current = async (id: string) => id === "ready-A";
+    )._protectionExtensionHook.current = async (id: string) => id === "10";
     try {
       const counts = await runPolicyRetentionForCustomer(1, { batchSize: 2 });
       expect(counts.readyPruned).toBe(1);
-      // The second SELECT carried the protected id in its NOT-IN list.
+      // The second SELECT carried the protected id in its NOT-IN list,
+      // typed as bigint[] to match policy_triage_run.id.
       const followup = pool.query.mock.calls.find((c) => {
         const sql = c[0] as string;
         return (
@@ -320,10 +330,9 @@ describe("runPolicyRetentionForCustomer", () => {
           sql.includes("id <> ALL")
         );
       });
-      expect(followup?.[1]).toEqual([
-        String(READY_RETENTION_DAYS),
-        ["ready-A"],
-      ]);
+      expect(followup?.[1]).toEqual([String(READY_RETENTION_DAYS), ["10"]]);
+      const followupSql = followup?.[0] as string;
+      expect(followupSql).toContain("$2::bigint[]");
     } finally {
       (
         await import("@/lib/triage/policy/corpus-b/retention")
