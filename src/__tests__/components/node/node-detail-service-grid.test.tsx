@@ -253,6 +253,24 @@ describe("NodeDetailServiceGrid — agent service tabs", () => {
     ).toBeNull();
   });
 
+  it('hides the pending badge for an agent applied as Manually (config = "", draft = null) (#551 Round 4)', () => {
+    // `decisions/node-field-catalog.md` §60-63: `config: ""`, `draft: null`
+    // is the wire shape for an agent applied in manual mode with no
+    // pending intent. agentPendingState must agree with the list-row
+    // classifier so the service card does not flash a phantom Pending
+    // badge for a steady-state manual agent.
+    const APPLIED_MANUAL_AGENT: Agent = {
+      ...SENSOR_AGENT,
+      config: "",
+      draft: null,
+    };
+    const node = makeNode({ agents: [APPLIED_MANUAL_AGENT] });
+    renderGrid({ node });
+    expect(
+      screen.queryByTestId("node-detail-service-sensor-pending"),
+    ).toBeNull();
+  });
+
   it("shows the pending badge on delete intent (draft = null, config = Some)", () => {
     // Per #333 Decision 9, an agent whose applied config exists but
     // whose draft is null is queued for removal — that's pending,

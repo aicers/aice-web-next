@@ -34,6 +34,22 @@ describe("agentPendingState — Decision 9 comparison rule", () => {
       "not-pending",
     );
   });
+
+  it('returns not-pending for applied Configure Manually (config = "", draft = null) (#551 Round 4)', () => {
+    // `decisions/node-field-catalog.md` §60-63: `config: ""`, `draft: null`
+    // is the wire shape for an agent applied in manual mode with no
+    // pending intent. The list-row classifier (`node-list-types.ts`)
+    // already treats this as not pending — the comparison helper must
+    // agree so the detail dashboard / service-grid badges don't disagree
+    // with the list page and invite a no-op Apply.
+    expect(agentPendingState({ config: "", draft: null })).toBe("not-pending");
+  });
+
+  it('still flags a real Configure Manually change (config = non-empty, draft = "") as pending', () => {
+    // Intent to switch an applied non-manual agent to manual mode: the
+    // sentinel guard must not over-fire and swallow this genuine change.
+    expect(agentPendingState({ config: "foo", draft: "" })).toBe("pending");
+  });
 });
 
 describe("externalServicePendingState — Decision 9 comparison rule", () => {
@@ -190,6 +206,38 @@ describe("nodePendingState — aggregate", () => {
           externalServices: [{ kind: "DATA_STORE", draft: null }],
         },
         { DATA_STORE: "unavailable" },
+      ),
+    ).toBe("pending");
+  });
+
+  it('returns not-pending when the only agent is applied as Manually (config = "", draft = null) (#551 Round 4)', () => {
+    // Aggregate must mirror the list-row signal for applied Configure
+    // Manually agents — otherwise the detail-page Pending badge fires
+    // for a node that has nothing to apply.
+    expect(
+      nodePendingState(
+        {
+          ...baseNode,
+          agents: [{ config: "", draft: null }],
+        },
+        {},
+      ),
+    ).toBe("not-pending");
+  });
+
+  it("returns pending when a real Configure Manually change coexists with applied-manual agents (#551 Round 4)", () => {
+    // Pins that the applied-manual sentinel does not mask other agents'
+    // pending state.
+    expect(
+      nodePendingState(
+        {
+          ...baseNode,
+          agents: [
+            { config: "", draft: null },
+            { config: "foo", draft: "" },
+          ],
+        },
+        {},
       ),
     ).toBe("pending");
   });

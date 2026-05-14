@@ -63,11 +63,21 @@ export function snapshotIsUnavailable(
  * — both sides are manager-canonical, so a draft that round-trips the
  * applied value reads as steady state without going through the TOML
  * parser.
+ *
+ * Applied Configure Manually sentinel: `config = ""`, `draft = null` is
+ * the wire shape for an agent that has been applied in manual mode with
+ * no pending intent (see `decisions/node-field-catalog.md` §60-63 and
+ * `node-list-types.ts`'s effective-state classifier). A plain
+ * `draft !== config` comparison would mark `null !== ""` as pending and
+ * make the detail dashboard / service-card badges disagree with the
+ * list-row classifier — and invite a no-op Apply flow against a node
+ * that has nothing to apply. Treat this shape as steady state.
  */
 export function agentPendingState(agent: {
   config: string | null;
   draft: string | null;
 }): "pending" | "not-pending" {
+  if (agent.config === "" && agent.draft === null) return "not-pending";
   return agent.draft === agent.config ? "not-pending" : "pending";
 }
 

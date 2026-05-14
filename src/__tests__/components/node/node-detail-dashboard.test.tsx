@@ -124,6 +124,27 @@ describe("NodeDetailDashboard — sections", () => {
     expect(screen.queryByTestId("node-detail-pending-badge")).toBeNull();
   });
 
+  it('shows the no-pending-changes label for a node whose only agent is applied as Manually (config = "", draft = null) (#551 Round 4)', () => {
+    // `decisions/node-field-catalog.md` §60-63 wire shape for applied
+    // Configure Manually. Detail aggregate must match the list-row
+    // signal so we do not invite a no-op Apply on a steady-state node.
+    const node = makeNode({
+      agents: [
+        {
+          node: 1,
+          key: "alpha-sensor",
+          kind: "SENSOR",
+          status: "ENABLED",
+          config: "",
+          draft: null,
+        },
+      ],
+    });
+    renderDashboard({ node });
+    expect(screen.getByTestId("node-detail-no-pending")).toBeTruthy();
+    expect(screen.queryByTestId("node-detail-pending-badge")).toBeNull();
+  });
+
   it("renders the unknown-state badge and disables Apply when an external is unavailable (#551)", () => {
     const node = makeNode({
       externalServices: [
