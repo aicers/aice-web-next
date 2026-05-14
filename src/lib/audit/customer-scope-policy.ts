@@ -126,6 +126,16 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   "triage_exclusion.customer_add": "customer-scoped",
   "triage_exclusion.customer_remove": "customer-scoped",
   "triage_exclusion.fanout_failed": "customer-scoped",
+  // 1B-7 recovery surface. `global_recover` pairs with
+  // `global_add`/`global_remove` as customer-agnostic so the audit
+  // viewer surfaces it once per operator action rather than once per
+  // customer; the per-customer re-run rows come from the fanout
+  // worker's own `triage_exclusion.customer_add` emissions on retry.
+  // `customer_recover` carries `customer_id` exactly like
+  // `customer_add`/`customer_remove` because a customer-scoped
+  // exclusion lives in exactly one tenant DB.
+  "triage_exclusion.global_recover": "customer-agnostic",
+  "triage_exclusion.customer_recover": "customer-scoped",
 };
 
 /**

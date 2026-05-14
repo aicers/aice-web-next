@@ -155,6 +155,17 @@ type TriagePolicyAction =
  *   - `triage_exclusion.fanout_failed` — customer-scoped. Emitted by
  *     the internal fanout worker when a per-customer job exceeds the
  *     retry budget.
+ *   - `triage_exclusion.global_recover` — customer-agnostic. Emitted
+ *     by the 1B-7 recovery surface when an operator (or the internal
+ *     token route) resets a failed global-fanout queue row. The
+ *     customer dimension is intentionally absent so the historical
+ *     pairing with the original `triage_exclusion.global_add` row
+ *     stays clean; the per-customer success rows come from the
+ *     fanout worker's `triage_exclusion.customer_add` emissions on
+ *     re-run.
+ *   - `triage_exclusion.customer_recover` — customer-scoped. Emitted
+ *     by the recovery surface when an operator resets a customer-
+ *     scoped drain-failure sentinel for a single tenant exclusion.
  *
  * The split honors `customer-scope-policy.ts`'s discipline of "one
  * scope per AuditAction"; there is no `mixed` classification and the
@@ -167,7 +178,9 @@ type TriageExclusionAction =
   | "triage_exclusion.global_remove"
   | "triage_exclusion.customer_add"
   | "triage_exclusion.customer_remove"
-  | "triage_exclusion.fanout_failed";
+  | "triage_exclusion.fanout_failed"
+  | "triage_exclusion.global_recover"
+  | "triage_exclusion.customer_recover";
 
 /** All audit event actions. */
 export type AuditAction =
@@ -267,6 +280,8 @@ export const AUDIT_ACTIONS = [
   "triage_exclusion.customer_add",
   "triage_exclusion.customer_remove",
   "triage_exclusion.fanout_failed",
+  "triage_exclusion.global_recover",
+  "triage_exclusion.customer_recover",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */

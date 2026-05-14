@@ -65,12 +65,13 @@ export function backoffMs(attemptCount: number): number {
 
 interface ClaimedJob {
   id: string;
-  globalExclusionId: string;
+  globalExclusionId: string | null;
+  customerOnlyExclusionId: string | null;
   customerId: number;
   attemptCount: number;
 }
 
-interface GlobalExclusionData {
+interface ExclusionData {
   id: string;
   kind: "ipAddress" | "hostname" | "uri" | "domain";
   value: string;
@@ -104,11 +105,13 @@ async function claimPendingJobs(
 ): Promise<ClaimedJob[]> {
   const { rows } = await client.query<{
     id: string;
-    global_exclusion_id: string;
+    global_exclusion_id: string | null;
+    customer_only_exclusion_id: string | null;
     customer_id: number;
     attempt_count: number;
   }>(
-    `SELECT id, global_exclusion_id, customer_id, attempt_count
+    `SELECT id, global_exclusion_id, customer_only_exclusion_id,
+            customer_id, attempt_count
        FROM triage_exclusion_fanout_job
       WHERE status = 'pending' AND next_attempt_at <= NOW()
       ORDER BY next_attempt_at
@@ -128,7 +131,11 @@ async function claimPendingJobs(
   );
   return rows.map((r) => ({
     id: r.id,
-    globalExclusionId: r.global_exclusion_id,
+    // Normalise undefined → null so the scope discriminator in
+    // `processJob` (which compares against `null`) reads correctly
+    // even when a test mock returns rows without the new column.
+    globalExclusionId: r.global_exclusion_id ?? null,
+    customerOnlyExclusionId: r.customer_only_exclusion_id ?? null,
     customerId: r.customer_id,
     attemptCount: r.attempt_count,
   }));
@@ -137,7 +144,7 @@ async function claimPendingJobs(
 async function loadGlobalExclusion(
   client: pg.PoolClient,
   id: string,
-): Promise<GlobalExclusionData | null> {
+): Promise<ExclusionData | null> {
   const { rows } = await client.query<{
     id: string;
     kind: string;
@@ -153,7 +160,7 @@ async function loadGlobalExclusion(
   const r = rows[0];
   return {
     id: r.id,
-    kind: r.kind as GlobalExclusionData["kind"],
+    kind: r.kind as ExclusionData["kind"],
     value: r.value,
     domainSuffix: r.domain_suffix,
   };
@@ -174,6 +181,49 @@ async function globalExclusionExists(
   id: string,
 ): Promise<boolean> {
   const row = await loadGlobalExclusion(client, id);
+  return row !== null;
+}
+
+/**
+ * Load a customer-scoped triage exclusion from the tenant DB. Returns
+ * `null` if the row was deleted between the queue insert (or recovery
+ * reset) and the worker claim — `customer_only_exclusion_id` has no FK
+ * because cross-DB FKs are not supported, so this branch is the
+ * application-level existence check. The fanout worker maps a `null`
+ * to a no-op completion: retroactive cleanup is moot once the exclusion
+ * has been removed, mirroring the FK CASCADE semantic on the global
+ * side.
+ */
+async function loadCustomerExclusion(
+  client: pg.PoolClient,
+  id: string,
+): Promise<ExclusionData | null> {
+  const { rows } = await client.query<{
+    id: string;
+    kind: string;
+    value: string;
+    domain_suffix: string | null;
+  }>(
+    `SELECT id, kind, value, domain_suffix
+       FROM triage_exclusion
+      WHERE id = $1`,
+    [id],
+  );
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  return {
+    id: r.id,
+    kind: r.kind as ExclusionData["kind"],
+    value: r.value,
+    domainSuffix: r.domain_suffix,
+  };
+}
+
+async function customerExclusionExists(
+  client: pg.PoolClient,
+  id: string,
+): Promise<boolean> {
+  const row = await loadCustomerExclusion(client, id);
   return row !== null;
 }
 
@@ -233,30 +283,69 @@ interface JobOutcome {
   outcome: "completed" | "retried" | "failed";
   error?: string;
   /**
-   * The global exclusion row, if it was loaded successfully. Threaded
-   * out so the caller can include `kind` / `value` / `id` in the
+   * The exclusion row, if it was loaded successfully. Threaded out so
+   * the caller can include `kind` / `value` / `id` in the
    * `triage_exclusion.fanout_failed` audit row when the job exhausts
-   * its retry budget.
+   * its retry budget. The `scope` lets the audit row distinguish a
+   * global-fanout failure from a customer-only drain re-run failure.
    */
-  global?: GlobalExclusionData;
+  exclusion?: ExclusionData;
+  scope?: "global" | "customer_only";
 }
 
 async function processJob(job: ClaimedJob): Promise<JobOutcome> {
-  let global: GlobalExclusionData | null;
+  // The CHECK constraint on `triage_exclusion_fanout_job` enforces
+  // exactly one of `global_exclusion_id` / `customer_only_exclusion_id`
+  // is populated. Capture the populated id once so downstream branches
+  // can use the narrowed `string` value without re-asserting non-null.
+  const globalExclusionId = job.globalExclusionId;
+  const customerOnlyExclusionId = job.customerOnlyExclusionId;
+  const scope: "global" | "customer_only" =
+    globalExclusionId !== null ? "global" : "customer_only";
+
+  let exclusion: ExclusionData | null;
+  let tenantPool: pg.Pool | null = null;
   try {
-    global = await withTransaction((c) =>
-      loadGlobalExclusion(c, job.globalExclusionId),
-    );
+    if (globalExclusionId !== null) {
+      // The global row lives in auth_db, so the existence probe avoids
+      // touching the tenant pool entirely until we know there is work
+      // to do. Matches the existing 1B-2 contract that a missing
+      // global row is a completed no-op without per-customer connection.
+      exclusion = await withTransaction((c) =>
+        loadGlobalExclusion(c, globalExclusionId),
+      );
+    } else if (customerOnlyExclusionId !== null) {
+      // Customer-only path needs the tenant pool to probe existence.
+      tenantPool = await getCustomerPool(job.customerId);
+      const tenantClient = await tenantPool.connect();
+      try {
+        exclusion = await loadCustomerExclusion(
+          tenantClient,
+          customerOnlyExclusionId,
+        );
+      } finally {
+        tenantClient.release();
+      }
+    } else {
+      // Defensive: the CHECK constraint guarantees one id is set, but
+      // if a future migration or test stub violates the invariant,
+      // surface the row as a no-op completion instead of looping.
+      exclusion = null;
+    }
   } catch (err) {
     return {
       outcome: "retried",
       error: err instanceof Error ? err.message : String(err),
     };
   }
-  if (!global) {
-    // The global row was deleted before fanout ran; the cascade has
-    // already removed pending jobs for this id, but this row was
-    // already claimed. Mark it completed (nothing to do).
+  if (!exclusion) {
+    // The exclusion row was deleted before fanout ran. For the global
+    // path the FK cascade has already removed pending queue rows; for
+    // the customer-only path there is no FK (cross-DB), so the
+    // application enforces the same semantic explicitly: mark the job
+    // `completed` as a no-op rather than incrementing `attempt_count`
+    // and looping back through backoff. Either way, retroactive
+    // cleanup is moot once the exclusion has been removed.
     await withTransaction((c) => finalizeCompleted(c, job.id));
     return { outcome: "completed" };
   }
@@ -266,7 +355,7 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
   // the per-customer fanout runs. Subsequent batches drain in fresh
   // transactions per #457 so corpus DELETEs do not hold the cadence
   // lock for long stretches.
-  const tenantPool = await getCustomerPool(job.customerId);
+  if (tenantPool === null) tenantPool = await getCustomerPool(job.customerId);
   const tenantClient = await tenantPool.connect();
   let firstBatchCounts: DeletedCounts;
   let pending: Awaited<
@@ -275,25 +364,21 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
   try {
     await tenantClient.query("BEGIN");
     await acquireCustomerCadenceLock(tenantClient, job.customerId);
-    // Re-check the global row after acquiring the cadence lock. The
-    // operator may have deleted it between the initial load and now;
-    // the FK cascade has already removed our job row, but `processJob`
-    // still holds the in-memory `global` value and would otherwise
-    // permanently drop corpus rows for an exclusion that is no longer
-    // in the active set. (Spec: cascade rationale — cleanup is moot
-    // once the active set no longer contains the row.)
-    const stillExists = await withTransaction((c) =>
-      globalExclusionExists(c, job.globalExclusionId),
-    );
+    // Re-check the exclusion row after acquiring the cadence lock. For
+    // the global path the operator may have deleted it (FK cascade
+    // already removed our job row but `processJob` still holds the
+    // in-memory `exclusion` value); for the customer-only path the
+    // application existence check stands in for the missing FK.
+    const stillExists = await stillExistsCheck(scope, job, tenantClient);
     if (!stillExists) {
       await tenantClient.query("ROLLBACK");
       tenantClient.release();
       return { outcome: "completed" };
     }
     const firstBatch = await executeFirstRetroactiveDeleteBatch(tenantClient, {
-      kind: global.kind,
-      value: global.value,
-      domainSuffix: global.domainSuffix,
+      kind: exclusion.kind,
+      value: exclusion.value,
+      domainSuffix: exclusion.domainSuffix,
     });
     firstBatchCounts = firstBatch.counts;
     pending = firstBatch.pending;
@@ -304,7 +389,8 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
     return {
       outcome: "retried",
       error: err instanceof Error ? err.message : String(err),
-      global,
+      exclusion,
+      scope,
     };
   }
   tenantClient.release();
@@ -329,24 +415,22 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
         },
         pending,
         {
-          // Re-check before each batch: if the global row was deleted
-          // mid-drain the cascade has already removed our job row, so
-          // stop emitting tenant DELETEs.
-          shouldContinue: () =>
-            withTransaction((c) =>
-              globalExclusionExists(c, job.globalExclusionId),
-            ),
+          shouldContinue: async () => {
+            const drainClient = await tenantPool.connect();
+            try {
+              return await stillExistsCheck(scope, job, drainClient);
+            } finally {
+              drainClient.release();
+            }
+          },
         },
       );
     } catch (err) {
-      // Drain failure: the global INSERT and first batch are durable
-      // in `auth_db` / tenant DB respectively; the row is already in
-      // the active set. Re-queue the job so the next sweep picks up
-      // the remaining batches with backoff.
       return {
         outcome: "retried",
         error: err instanceof Error ? err.message : String(err),
-        global,
+        exclusion,
+        scope,
       };
     }
   }
@@ -366,23 +450,65 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
 
   await withTransaction((c) => finalizeCompleted(c, job.id));
 
+  // Emit a `customer_add` audit row on every successful per-customer
+  // run (global-fanout or customer-only recovery) so the customer
+  // operator sees the corpus pruning in their audit-log view. The
+  // `origin` detail distinguishes a fanout vs a recovery re-run from
+  // the original synchronous customer-scoped ADD.
   await auditLog.record({
     actor: "system",
     action: "triage_exclusion.customer_add",
     target: "triage_exclusion",
-    targetId: global.id,
+    targetId: exclusion.id,
     customerId: job.customerId,
     details: {
-      id: global.id,
-      kind: global.kind,
-      value: global.value,
-      origin: "global_fanout",
-      globalExclusionId: global.id,
+      id: exclusion.id,
+      kind: exclusion.kind,
+      value: exclusion.value,
+      origin: scope === "global" ? "global_fanout" : "customer_recover",
+      globalExclusionId: job.globalExclusionId,
+      customerOnlyExclusionId: job.customerOnlyExclusionId,
       deletedCorpusRows: counts,
     },
   });
 
   return { outcome: "completed" };
+}
+
+async function loadExclusionForAuditFallback(
+  job: ClaimedJob,
+): Promise<ExclusionData | null> {
+  if (job.globalExclusionId !== null) {
+    const id = job.globalExclusionId;
+    return withTransaction((c) => loadGlobalExclusion(c, id));
+  }
+  if (job.customerOnlyExclusionId !== null) {
+    const id = job.customerOnlyExclusionId;
+    const pool = await getCustomerPool(job.customerId);
+    const client = await pool.connect();
+    try {
+      return await loadCustomerExclusion(client, id);
+    } finally {
+      client.release();
+    }
+  }
+  return null;
+}
+
+async function stillExistsCheck(
+  scope: "global" | "customer_only",
+  job: ClaimedJob,
+  tenantClient: pg.PoolClient,
+): Promise<boolean> {
+  if (scope === "global" && job.globalExclusionId !== null) {
+    const id = job.globalExclusionId;
+    return withTransaction((c) => globalExclusionExists(c, id));
+  }
+  if (job.customerOnlyExclusionId !== null) {
+    return customerExclusionExists(tenantClient, job.customerOnlyExclusionId);
+  }
+  // No id populated — treat as gone so the caller halts cleanly.
+  return false;
 }
 
 /**
@@ -423,27 +549,29 @@ export async function runFanoutSweep(
         await withTransaction((c) => finalizeFailed(c, job.id, errorMessage));
         // Spec requires `id`, `kind`, `value` on every audit row in the
         // `triage_exclusion.*` family. If `processJob` could not load
-        // the global row (e.g. an auth-DB error before the lookup
+        // the exclusion row (e.g. an auth-DB error before the lookup
         // returned), those fields are unknown — emit them as the job's
-        // `globalExclusionId` and a `null` placeholder rather than
-        // omitting the keys, so downstream audit-log consumers see a
-        // consistent shape.
-        const globalRow =
-          result.global ??
-          (await withTransaction((c) =>
-            loadGlobalExclusion(c, job.globalExclusionId),
-          ).catch(() => null));
+        // targeted id and a `null` placeholder rather than omitting
+        // the keys, so downstream audit-log consumers see a consistent
+        // shape. The targeted id is whichever scope column is
+        // populated; the CHECK constraint guarantees exactly one is.
+        const exclusionRow =
+          result.exclusion ??
+          (await loadExclusionForAuditFallback(job).catch(() => null));
+        const targetedId =
+          job.globalExclusionId ?? job.customerOnlyExclusionId ?? null;
         await auditLog.record({
           actor: "system",
           action: "triage_exclusion.fanout_failed",
           target: "triage_exclusion",
-          targetId: job.globalExclusionId,
+          targetId: targetedId ?? undefined,
           customerId: job.customerId,
           details: {
-            id: job.globalExclusionId,
-            kind: globalRow?.kind ?? null,
-            value: globalRow?.value ?? null,
+            id: targetedId,
+            kind: exclusionRow?.kind ?? null,
+            value: exclusionRow?.value ?? null,
             globalExclusionId: job.globalExclusionId,
+            customerOnlyExclusionId: job.customerOnlyExclusionId,
             attemptCount: job.attemptCount + 1,
             lastError: errorMessage,
           },

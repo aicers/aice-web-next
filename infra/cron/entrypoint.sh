@@ -26,6 +26,16 @@ ENV_ALLOWLIST=(
     # 2700s default, recreating the transport-failure / no-body mode
     # the structured `skipped-timeout` row exists to prevent.
     TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS
+    # 1B-7 cleanup tokens. Each retention / recovery surface uses its
+    # own internal-token env var so a leaked secret cannot pivot
+    # between surfaces.
+    TRIAGE_BASELINE_RETENTION_INTERNAL_TOKEN
+    TRIAGE_POLICY_RETENTION_INTERNAL_TOKEN
+    TRIAGE_EXCLUSION_FANOUT_TOKEN
+    # Recover is operator-tooling, not scheduled; the token is passed
+    # through so an operator running `curl` from `docker exec cron sh`
+    # picks up the same configured secret without re-exporting it.
+    TRIAGE_EXCLUSION_RECOVERY_INTERNAL_TOKEN
 )
 
 : > "$ENV_FILE"

@@ -2210,6 +2210,8 @@
     "domainPreviewFullRegex": "Full-regex-only — applies to future pipeline passes only. Past corpus rows are unchanged.",
     "deleteConfirm": "Delete this exclusion? Future pipeline passes only — past corpus rows are unchanged.",
     "deniedGlobal": "You do not have permission to manage global exclusions.",
-    "deniedCustomer": "You do not have permission to manage customer exclusions."
+    "deniedCustomer": "You do not have permission to manage customer exclusions.",
+    "retriggerCleanup": "Re-trigger cleanup",
+    "retriggerCleanupConfirm": "Re-run retroactive cleanup for this exclusion? Past corpus rows that match this rule will be removed in the background."
   }
 }

@@ -1,0 +1,75 @@
+import "server-only";
+
+import { type NextRequest, NextResponse } from "next/server";
+
+import { withAuth } from "@/lib/auth/guard";
+import { hasPermission } from "@/lib/auth/permissions";
+import { query } from "@/lib/db/client";
+
+/**
+ * GET /api/triage/exclusions/cleanup-status?customer_id=<id>
+ *
+ * Returns the list of customer-scoped triage exclusion ids whose
+ * retroactive cleanup has a `failed` sentinel in the auth_db fanout
+ * queue. The admin UI uses this to surface a "Re-trigger cleanup"
+ * affordance only for the rows that actually need it (vs every row).
+ *
+ * Gated on `triage:read` plus the caller's effective customer scope —
+ * same predicate as `GET /api/triage/exclusions`. The failed-row list
+ * itself is per-customer, so a caller whose scope excludes
+ * `customer_id` cannot enumerate sentinels for that tenant.
+ */
+export const GET = withAuth(
+  async (request, _context, session) => {
+    const customerId = parseCustomerId(request);
+    if (customerId === null) {
+      return NextResponse.json(
+        { error: "Missing or invalid customer_id" },
+        { status: 400 },
+      );
+    }
+    if (
+      !(await callerCanAccessCustomer(
+        session.accountId,
+        session.roles,
+        customerId,
+      ))
+    ) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const { rows } = await query<{ customer_only_exclusion_id: string }>(
+      `SELECT customer_only_exclusion_id
+         FROM triage_exclusion_fanout_job
+        WHERE customer_id = $1
+          AND customer_only_exclusion_id IS NOT NULL
+          AND status = 'failed'`,
+      [customerId],
+    );
+    return NextResponse.json({
+      failed: rows.map((r) => r.customer_only_exclusion_id),
+    });
+  },
+  { requiredPermissions: ["triage:read"] },
+);
+
+function parseCustomerId(request: NextRequest): number | null {
+  const raw = request.nextUrl.searchParams.get("customer_id");
+  if (raw === null) return null;
+  const id = Number(raw);
+  if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) return null;
+  return id;
+}
+
+async function callerCanAccessCustomer(
+  accountId: string,
+  roles: string[],
+  customerId: number,
+): Promise<boolean> {
+  if (await hasPermission(roles, "customers:access-all")) return true;
+  const { rows } = await query<{ customer_id: number }>(
+    "SELECT customer_id FROM account_customer WHERE account_id = $1 AND customer_id = $2",
+    [accountId, customerId],
+  );
+  return rows.length > 0;
+}

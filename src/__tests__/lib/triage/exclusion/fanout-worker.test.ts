@@ -740,3 +740,87 @@ describe("runFanoutSweep — global deleted between initial load and tenant DELE
     expect(withTxCallCount).toBeGreaterThan(0);
   });
 });
+
+describe("runFanoutSweep — customer-only sentinel branch (#461 / 1B-7)", () => {
+  it("treats a missing tenant triage_exclusion row as a completed no-op (no FK cascade on cross-DB pointers)", async () => {
+    // Customer-scoped recovery resets a sentinel to pending, but the
+    // tenant exclusion was deleted between reset and claim. The worker
+    // must mirror the global FK-CASCADE semantic explicitly: mark the
+    // job `completed` rather than increment attempt_count and loop
+    // through backoff.
+    const auth = {
+      query: vi.fn(async (sql: string, _params?: unknown[]) => {
+        if (
+          sql.includes("UPDATE triage_exclusion_fanout_job") &&
+          sql.includes("milliseconds")
+        ) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+          return {
+            rows: [
+              {
+                id: "job-cust-orphan",
+                global_exclusion_id: null,
+                customer_only_exclusion_id: "exc-gone",
+                customer_id: 42,
+                attempt_count: 0,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (
+          sql.includes("UPDATE triage_exclusion_fanout_job") &&
+          sql.includes("status = 'running'")
+        ) {
+          return { rows: [], rowCount: 1 };
+        }
+        if (
+          sql.includes("UPDATE triage_exclusion_fanout_job") &&
+          sql.includes("status = 'completed'")
+        ) {
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    // Tenant pool returns an empty triage_exclusion lookup: the row is
+    // gone.
+    const tenantClient = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes("FROM triage_exclusion")) {
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    const tenantPool = { connect: vi.fn(async () => tenantClient) };
+    mockGetCustomerPool.mockResolvedValue(tenantPool);
+    mockWithTransaction.mockImplementation(
+      async (fn: (c: unknown) => Promise<unknown>) => fn(auth),
+    );
+
+    const result = await runFanoutSweep({ batchSize: 5 });
+
+    expect(result).toMatchObject({
+      claimed: 1,
+      completed: 1,
+      retried: 0,
+      failed: 0,
+    });
+    // Tenant pool was consulted exactly to read triage_exclusion;
+    // because the row was missing, no BEGIN / DELETE was issued — the
+    // worker short-circuits before the cadence-locked first batch.
+    const tenantSqls = tenantClient.query.mock.calls.map((c) => c[0]);
+    expect(tenantSqls.some((s) => s.includes("FROM triage_exclusion"))).toBe(
+      true,
+    );
+    expect(tenantSqls.some((s) => s.startsWith("DELETE"))).toBe(false);
+    expect(tenantSqls).not.toContain("BEGIN");
+    // No audit emission — there was no retroactive cleanup to attribute.
+    expect(mockAuditLogRecord).not.toHaveBeenCalled();
+  });
+});
