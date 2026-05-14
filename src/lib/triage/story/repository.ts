@@ -20,6 +20,13 @@ import "server-only";
 import type pg from "pg";
 import type { ThreatCategory } from "@/lib/detection";
 import { CRITICAL_CATEGORIES } from "@/lib/triage/baseline/categories";
+import type { TriagePeriod } from "../period";
+import {
+  buildSelectStoriesForPeriodSql,
+  SELECT_BASELINE_EVENTS_BY_KEY_SQL,
+  SELECT_STORY_MEMBERS_DETAIL_SQL,
+  SELECT_STORY_TOP_MEMBERS_SQL,
+} from "./read-path-sql.mjs";
 import type { CandidateEvent, StoryDraft, StorySummaryPayload } from "./rules";
 import {
   applyMemberCap,
@@ -27,6 +34,14 @@ import {
   CRITICAL_SELECTOR_SET,
   STORY_VERSION,
 } from "./rules";
+import type {
+  StoriesSortOrder,
+  StoryKind,
+  StoryRuleId,
+  TriageStory,
+  TriageStoryMemberDetail,
+  TriageStoryMemberPreview,
+} from "./types";
 
 export interface ReadCandidatesArgs {
   client: pg.PoolClient;
@@ -314,6 +329,16 @@ export interface InsertCuratedStoryArgs {
    * model (count of admitted members).
    */
   score?: number | null;
+  /**
+   * Optional analyst-provided title (#490). Stored under
+   * `summary_payload.manualTitle` (an optional, additive key in
+   * RFC §7) when present; absent otherwise — the renderer falls
+   * back to the auto-generated `<asset> · <duration> · <cats>`
+   * title. Trimmed and capped at 200 chars by the server action
+   * before reaching this layer; the repository accepts the value
+   * verbatim.
+   */
+  manualTitle?: string | null;
 }
 
 export interface InsertCuratedStoryResult {
@@ -345,7 +370,11 @@ export async function insertCuratedStory(
   args: InsertCuratedStoryArgs,
 ): Promise<InsertCuratedStoryResult> {
   const members = applyMemberCap(args.members);
-  const summary = buildSummaryPayload(members);
+  const baseSummary = buildSummaryPayload(members);
+  const summary: StorySummaryPayload & { manualTitle?: string } =
+    args.manualTitle && args.manualTitle.length > 0
+      ? { ...baseSummary, manualTitle: args.manualTitle }
+      : baseSummary;
   const score = args.score ?? members.length;
   const insertGroup = await client.query<{ id: string }>(
     `INSERT INTO event_group (
@@ -436,4 +465,236 @@ export async function readStoryWatermark(
       WHERE id = true`,
   );
   return result.rows[0]?.story_finalized_through ?? null;
+}
+
+// ── Stories tab read path (#490) ─────────────────────────────────
+
+interface StoryListRow {
+  id: string;
+  kind: StoryKind;
+  correlation_rule_id: StoryRuleId | null;
+  story_version: string;
+  time_window_start: Date;
+  time_window_end: Date;
+  primary_asset: string | null;
+  score: number | null;
+  summary_payload: StorySummaryPayload;
+  created_at: Date;
+  last_sent_at: Date | null;
+  send_count: number;
+}
+
+interface TopMemberRow {
+  event_group_id: string;
+  event_key: string;
+  event_time: Date;
+  kind: string;
+  category: ThreatCategory | string | null;
+  raw_score: number;
+}
+
+interface StoryMemberDetailRow {
+  event_key: string;
+  event_time: Date;
+  kind: string;
+  sensor: string;
+  orig_addr: string | null;
+  resp_addr: string | null;
+  orig_port: number | null;
+  resp_port: number | null;
+  host: string | null;
+  dns_query: string | null;
+  uri: string | null;
+  category: ThreatCategory | string | null;
+  /** `null` for out-of-period members (still in corpus A, but their
+   *  `event_time` falls outside the menu period so the read-time
+   *  `cume_dist()` cohort doesn't cover them). */
+  baseline_score: number | null;
+}
+
+export interface ListStoriesOptions {
+  /** SQL-side ORDER BY axis. Defaults to `"time-window-end"`. */
+  sortOrder?: StoriesSortOrder;
+  /** When true, push the `last_sent_at IS NULL` partial-index filter
+   *  into the SQL WHERE clause so the toggle operates against the
+   *  full period rather than the post-LIMIT first page. */
+  unsentOnly?: boolean;
+}
+
+/**
+ * List Stories whose `time_window` overlaps the menu's selected
+ * period. Result rows include the top-3 member preview joined in a
+ * single round-trip-per-tenant — see {@link selectStoryTopMembers}
+ * for the CTE.
+ *
+ * Callers run this once per tenant in scope and merge results client-
+ * side on `(time_window_end DESC, score DESC, customerId, storyId)`
+ * for the default sort, or on
+ * `(score DESC NULLS LAST, time_window_end DESC, customerId, storyId)`
+ * for the score sort. {@link ListStoriesOptions} pushes the sort and
+ * the unsent filter into SQL so the truncation cap doesn't silently
+ * scope sort/filter to a stale first page.
+ */
+export async function listStoriesForPeriod(
+  pool: pg.Pool,
+  customerId: number,
+  customerName: string,
+  period: TriagePeriod,
+  pageSize: number,
+  options?: ListStoriesOptions,
+  signal?: AbortSignal,
+): Promise<TriageStory[]> {
+  signal?.throwIfAborted();
+  const sql = buildSelectStoriesForPeriodSql({
+    sortOrder: options?.sortOrder ?? "time-window-end",
+    unsentOnly: Boolean(options?.unsentOnly),
+  });
+  const { rows } = await pool.query<StoryListRow>(sql, [
+    period.startIso,
+    period.endIso,
+    pageSize,
+  ]);
+  if (rows.length === 0) return [];
+
+  const previewByStoryId = await selectStoryTopMembers(
+    pool,
+    rows.map((r) => r.id),
+    signal,
+  );
+
+  return rows.map((row) => ({
+    customerId,
+    customerName,
+    storyId: row.id,
+    kind: row.kind,
+    ruleId: row.correlation_rule_id,
+    storyVersion: row.story_version,
+    timeWindowStartIso: row.time_window_start.toISOString(),
+    timeWindowEndIso: row.time_window_end.toISOString(),
+    primaryAsset: row.primary_asset,
+    score: row.score === null ? null : Number(row.score),
+    summary: row.summary_payload,
+    createdAtIso: row.created_at.toISOString(),
+    lastSentAtIso: row.last_sent_at?.toISOString() ?? null,
+    sendCount: Number(row.send_count ?? 0),
+    topMembers: previewByStoryId.get(row.id) ?? [],
+  }));
+}
+
+async function selectStoryTopMembers(
+  pool: pg.Pool,
+  storyIds: ReadonlyArray<string>,
+  signal: AbortSignal | undefined,
+): Promise<Map<string, TriageStoryMemberPreview[]>> {
+  signal?.throwIfAborted();
+  if (storyIds.length === 0) return new Map();
+  const { rows } = await pool.query<TopMemberRow>(
+    SELECT_STORY_TOP_MEMBERS_SQL,
+    [storyIds],
+  );
+  const out = new Map<string, TriageStoryMemberPreview[]>();
+  for (const r of rows) {
+    const list = out.get(r.event_group_id);
+    const preview: TriageStoryMemberPreview = {
+      eventKey: r.event_key,
+      eventTimeIso: r.event_time.toISOString(),
+      kind: r.kind,
+      category: r.category,
+      rawScore: Number(r.raw_score),
+    };
+    if (list === undefined) out.set(r.event_group_id, [preview]);
+    else list.push(preview);
+  }
+  return out;
+}
+
+export interface StoryMemberDetailResult {
+  /** Joined member rows ordered newest-first. */
+  members: TriageStoryMemberDetail[];
+  /** True when at least one member was aged out of corpus A and is
+   *  silently absent from {@link members}. */
+  hasDanglingMembers: boolean;
+  /** `summary_payload.memberCount` from the stored row — the
+   *  authoritative count for the card / detail header.  */
+  storedMemberCount: number;
+}
+
+/**
+ * Read the member table for one Story's detail panel, joining
+ * `event_group_member` to `baseline_triaged_event` with read-time
+ * `baseline_score`. The caller passes the stored
+ * `summary_payload.memberCount` so the detail panel can render the
+ * "X of Y events shown — D aged past corpus A retention" notice.
+ */
+export async function readStoryMemberDetail(
+  pool: pg.Pool,
+  storyId: string,
+  storedMemberCount: number,
+  period: TriagePeriod,
+  signal?: AbortSignal,
+): Promise<StoryMemberDetailResult> {
+  signal?.throwIfAborted();
+  const { rows } = await pool.query<StoryMemberDetailRow>(
+    SELECT_STORY_MEMBERS_DETAIL_SQL,
+    [storyId, period.startIso, period.endIso],
+  );
+  const members: TriageStoryMemberDetail[] = rows.map((r) => ({
+    eventKey: r.event_key,
+    eventTimeIso: r.event_time.toISOString(),
+    kind: r.kind,
+    sensor: r.sensor,
+    origAddr: r.orig_addr,
+    respAddr: r.resp_addr,
+    origPort: r.orig_port,
+    respPort: r.resp_port,
+    host: r.host,
+    dnsQuery: r.dns_query,
+    uri: r.uri,
+    category: r.category,
+    baselineScore: r.baseline_score === null ? null : Number(r.baseline_score),
+  }));
+  return {
+    members,
+    hasDanglingMembers: members.length < storedMemberCount,
+    storedMemberCount,
+  };
+}
+
+/**
+ * Look up the slim {@link CandidateEvent} shape for an explicit set of
+ * `event_key` values inside the resolved customer's tenant DB. Used by
+ * the curated-save server action to validate member existence and
+ * compute the `summary_payload`.
+ *
+ * Returns the rows that resolved — the caller diffs against the
+ * requested set so a missing key produces `MEMBER_NOT_FOUND`. The
+ * cross-tenant case is implicit: this query runs against one tenant
+ * pool, so a key that lives in a different tenant simply does not
+ * resolve here.
+ */
+export async function readBaselineEventsByKey(
+  pool: pg.Pool,
+  eventKeys: ReadonlyArray<string>,
+  signal?: AbortSignal,
+): Promise<CandidateEvent[]> {
+  signal?.throwIfAborted();
+  if (eventKeys.length === 0) return [];
+  const { rows } = await pool.query<{
+    event_key: string;
+    event_time: Date;
+    kind: string;
+    orig_addr: string | null;
+    category: ThreatCategory | string | null;
+    selector_tags: string[] | null;
+    raw_score: number;
+  }>(SELECT_BASELINE_EVENTS_BY_KEY_SQL, [eventKeys]);
+  return rows.map((row) => ({
+    eventKey: row.event_key,
+    eventTime: row.event_time,
+    kind: row.kind,
+    origAddr: row.orig_addr,
+    category: row.category,
+    selectorTags: row.selector_tags ?? [],
+    rawScore: Number(row.raw_score),
+  }));
 }

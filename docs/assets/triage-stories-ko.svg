@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Triage 메뉴의 스토리 탭 (와이어프레임)</title>
+  <desc id="desc">기준(Baseline) 모드의 스토리 탭 와이어프레임입니다. 탭 스트립에는 자산 목록, 스토리, 피벗의 세 가지 동등한 보기가 있으며, 스토리 화면에는 제목, 규칙 배지, 점수, 구성원 수, 시간 창, 상위 3개 미리보기, 열기 및 aimer-web 전송 액션을 표시하는 스토리 카드가 나열됩니다. aimer-web 전송 버튼은 본 이슈에서 비활성 상태로 표시되며 #493에서 연결됩니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 16px; fill: #18181b; font-weight: 700; }
+    .text-section { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-card-title { font-size: 13px; fill: #18181b; font-weight: 700; }
+    .text-meta { font-size: 11px; fill: #52525b; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .text-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #18181b; }
+    .tab-active { fill: #18181b; }
+    .tab-inactive { fill: #71717a; }
+    .tab-underline { stroke: #18181b; stroke-width: 2; }
+    .badge { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 3; ry: 3; }
+    .badge-text { fill: #18181b; font-size: 10px; font-weight: 600; }
+    .btn-primary { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-primary-text { fill: #18181b; font-size: 11px; font-weight: 600; }
+    .btn-disabled { fill: #fafafa; stroke: #e5e7eb; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-disabled-text { fill: #a1a1aa; font-size: 11px; font-weight: 600; }
+    .row-divider { stroke: #f4f4f5; stroke-width: 1; }
+  </style>
+
+  <rect class="bg" width="720" height="460"/>
+
+  <!-- 탭 스트립 -->
+  <text x="24" y="32" class="tab-inactive" font-size="13">자산 목록</text>
+  <text x="110" y="32" class="tab-active" font-size="13" font-weight="700">스토리</text>
+  <line x1="100" y1="42" x2="160" y2="42" class="tab-underline"/>
+  <text x="180" y="32" class="tab-inactive" font-size="13">피벗</text>
+  <line x1="24" y1="48" x2="696" y2="48" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- 헤더 -->
+  <text x="24" y="76" class="text-title">스토리</text>
+  <text x="560" y="76" class="text-meta">정렬: 최근순 ▾</text>
+
+  <!-- 스토리 카드 1 (자동 상관관계) -->
+  <rect class="panel" x="24" y="92" width="672" height="148" rx="6" ry="6"/>
+  <text x="40" y="116" class="text-card-title">192.168.1.20 · 12분 · COMMAND_AND_CONTROL, EXFILTRATION, IMPACT</text>
+  <rect class="badge" x="500" y="102" width="32" height="18"/>
+  <text x="508" y="115" class="badge-text">R1</text>
+  <text x="544" y="116" class="text-meta">점수 4.25</text>
+  <text x="620" y="116" class="text-meta">12 이벤트</text>
+  <text x="40" y="136" class="text-muted">2026-05-09 12:00 ~ 12:12</text>
+  <text x="40" y="158" class="text-section">주요 이벤트</text>
+  <line x1="40" y1="166" x2="680" y2="166" class="row-divider"/>
+  <text x="40" y="184" class="text-mono">2026-05-09 12:11:42</text>
+  <text x="200" y="184" class="text-meta">HttpThreat</text>
+  <text x="320" y="184" class="text-muted">IMPACT</text>
+  <line x1="40" y1="192" x2="680" y2="192" class="row-divider"/>
+  <text x="40" y="208" class="text-mono">2026-05-09 12:09:18</text>
+  <text x="200" y="208" class="text-meta">DnsCovertChannel</text>
+  <text x="320" y="208" class="text-muted">EXFILTRATION</text>
+  <rect class="btn-primary" x="540" y="200" width="56" height="24"/>
+  <text x="552" y="216" class="btn-primary-text">열기</text>
+  <rect class="btn-disabled" x="604" y="200" width="76" height="24"/>
+  <text x="612" y="216" class="btn-disabled-text">aimer-web 전송</text>
+
+  <!-- 스토리 카드 2 (분석가 저장, 전송 표시) -->
+  <rect class="panel" x="24" y="252" width="672" height="148" rx="6" ry="6"/>
+  <text x="40" y="276" class="text-card-title">10.0.0.5 · 5분 · IMPACT, EXFILTRATION</text>
+  <rect class="badge" x="480" y="262" width="74" height="18"/>
+  <text x="488" y="275" class="badge-text">analyst-curated</text>
+  <text x="566" y="276" class="text-meta">점수 3.00</text>
+  <text x="640" y="276" class="text-meta">3 이벤트</text>
+  <text x="40" y="296" class="text-muted">2026-05-09 13:20 ~ 13:25 · aimer-web 전송됨 · 7분 전</text>
+  <text x="40" y="318" class="text-section">주요 이벤트</text>
+  <line x1="40" y1="326" x2="680" y2="326" class="row-divider"/>
+  <text x="40" y="344" class="text-mono">2026-05-09 13:24:00</text>
+  <text x="200" y="344" class="text-meta">HttpThreat</text>
+  <text x="320" y="344" class="text-muted">IMPACT</text>
+  <line x1="40" y1="352" x2="680" y2="352" class="row-divider"/>
+  <text x="40" y="368" class="text-mono">2026-05-09 13:22:15</text>
+  <text x="200" y="368" class="text-meta">DnsCovertChannel</text>
+  <text x="320" y="368" class="text-muted">EXFILTRATION</text>
+  <rect class="btn-primary" x="540" y="360" width="56" height="24"/>
+  <text x="552" y="376" class="btn-primary-text">열기</text>
+  <rect class="btn-disabled" x="604" y="360" width="76" height="24"/>
+  <text x="612" y="376" class="btn-disabled-text">aimer-web 전송</text>
+
+  <!-- 안내 -->
+  <text x="24" y="436" class="text-muted">aimer-web 전송 버튼은 본 이슈에서는 비활성 모양만 도입되며, 실제 동작은 #493에서 연결됩니다.</text>
+</svg>

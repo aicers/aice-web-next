@@ -19,6 +19,7 @@ import {
   type TriageLoadResult,
   type TriagePeriod,
 } from "@/lib/triage";
+import type { TriageStory } from "@/lib/triage/story/types";
 
 import {
   TriageBaselineContent,
@@ -87,6 +88,14 @@ interface TriageShellProps {
    * potentially-stale state.
    */
   customerScope?: string;
+  /**
+   * Server-loaded Stories slice for the menu's selected period. Empty
+   * array when the loader errored — the Stories tab simply renders
+   * "no stories" rather than blocking the rest of the menu.
+   */
+  initialStories?: ReadonlyArray<TriageStory>;
+  /** True whenever any per-tenant Stories page hit the page cap. */
+  initialStoriesTruncated?: boolean;
   labels: TriageShellLabels;
 }
 
@@ -97,6 +106,8 @@ export function TriageShell({
   initialState,
   initialClamped,
   customerScope,
+  initialStories = [],
+  initialStoriesTruncated = false,
   labels,
 }: TriageShellProps) {
   const router = useRouter();
@@ -243,6 +254,9 @@ export function TriageShell({
             onPivotTrailChange={(hasPivots) => {
               hasPivotsRef.current = hasPivots;
             }}
+            mode={mode}
+            stories={initialStories}
+            storiesTruncated={initialStoriesTruncated}
             labels={labels.baseline}
           />
         ) : null

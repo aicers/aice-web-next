@@ -141,6 +141,21 @@ type TriagePolicyAction =
   | "triage.policy.delete";
 
 /**
+ * Triage Story actions (#490).
+ *
+ * Curated Story rows live in the per-customer tenant DB (`event_group`
+ * with `kind = 'analyst_curated'`); the saved row is intrinsically
+ * scoped to one customer, so the audit emitter populates `customerId`
+ * from the action's validated input. Auto-correlated Stories produced
+ * by cadence are NOT audited per-Story (cadence-level audit covers
+ * the run); only the analyst-curated path emits.
+ *
+ * `triage.story.send` (the LLM submission audit) is owned by #493
+ * and added alongside that issue's emitter to avoid dead-code drift.
+ */
+type TriageStoryAction = "triage.story.create";
+
+/**
  * Triage exclusion CRUD actions (#457).
  *
  * Two scopes:
@@ -198,6 +213,7 @@ export type AuditAction =
   | AimerIntegrationSettingAction
   | AimerContextTokenAction
   | TriagePolicyAction
+  | TriageStoryAction
   | TriageExclusionAction;
 
 /** Target entity types for audit events. */
@@ -211,6 +227,7 @@ export type AuditTargetType =
   | "node"
   | "service"
   | "triage_policy"
+  | "triage_story"
   | "triage_exclusion";
 
 /** Canonical runtime list of supported audit actions. */
@@ -275,6 +292,7 @@ export const AUDIT_ACTIONS = [
   "triage.policy.create",
   "triage.policy.update",
   "triage.policy.delete",
+  "triage.story.create",
   "triage_exclusion.global_add",
   "triage_exclusion.global_remove",
   "triage_exclusion.customer_add",
@@ -295,5 +313,6 @@ export const AUDIT_TARGET_TYPES = [
   "node",
   "service",
   "triage_policy",
+  "triage_story",
   "triage_exclusion",
 ] as const satisfies readonly AuditTargetType[];

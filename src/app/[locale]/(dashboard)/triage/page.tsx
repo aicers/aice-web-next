@@ -20,6 +20,8 @@ import {
 } from "@/lib/triage";
 import { PIVOT_DIMENSIONS, type PivotDimensionId } from "@/lib/triage/pivot";
 import { loadTriagePeriod } from "@/lib/triage/server-actions";
+import { loadStoriesForPeriod } from "@/lib/triage/story/actions";
+import type { TriageStory } from "@/lib/triage/story/types";
 
 interface TriagePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -62,9 +64,26 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
   const { period, clamped } = parseTriagePeriod(rawStart, rawEnd);
 
   let initialState: TriageShellState;
+  let stories: TriageStory[] = [];
+  let storiesTruncated = false;
   try {
     const result = await loadTriagePeriod(session, period);
     initialState = { status: "ok", result };
+    // Stories load runs in parallel with the rest of the page only
+    // when the asset-list read succeeded; if `triage:read` was denied
+    // there is no point fanning out a second query.
+    try {
+      const s = await loadStoriesForPeriod(session, period);
+      stories = s.stories;
+      storiesTruncated = s.truncated;
+    } catch {
+      // Stories failure must not block the rest of the menu — the tab
+      // simply renders empty if the read path errors. This keeps the
+      // ship deployable when the Story schema migration has not yet
+      // landed on a particular tenant.
+      stories = [];
+      storiesTruncated = false;
+    }
   } catch (err) {
     // An unrecognised review GraphQL error is surfaced as the generic
     // banner rather than re-thrown — Triage is read-only and the
@@ -265,6 +284,104 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
       },
       staleHashFallback: t("staleHashFallback"),
       sensorScopeForbiddenFallback: t("sensorScopeForbiddenFallback"),
+      tabStrip: {
+        legend: t("tabStrip.legend"),
+        assetList: t("tabStrip.assetList"),
+        stories: t("tabStrip.stories"),
+        pivot: t("tabStrip.pivot"),
+      },
+      stories: {
+        heading: t("stories.heading"),
+        empty: t("stories.empty"),
+        truncatedTemplate: t.raw("stories.truncatedTemplate") as string,
+        emptyUnsentOnly: t("stories.emptyUnsentOnly"),
+        showOnlyUnsentLabel: t("stories.showOnlyUnsentLabel"),
+        sortLabel: t("stories.sortLabel"),
+        sortByTimeWindowEnd: t("stories.sortByTimeWindowEnd"),
+        sortByScore: t("stories.sortByScore"),
+        staleHashFallback: t("stories.staleHashFallback"),
+        card: {
+          ruleBadgeAuto: t("stories.card.ruleBadgeAuto"),
+          ruleBadgeAnalyst: t("stories.card.ruleBadgeAnalyst"),
+          scoreLabel: t("stories.card.scoreLabel"),
+          memberCountTemplate: t.raw(
+            "stories.card.memberCountTemplate",
+          ) as string,
+          open: t("stories.card.open"),
+          sendToAimerWeb: t("stories.card.sendToAimerWeb"),
+          sendToAimerWebTooltip: t("stories.card.sendToAimerWebTooltip"),
+          sentIndicatorTemplate: t.raw(
+            "stories.card.sentIndicatorTemplate",
+          ) as string,
+          sentMultiTemplate: t.raw("stories.card.sentMultiTemplate") as string,
+          timeColumn: t("stories.card.timeColumn"),
+          kindColumn: t("stories.card.kindColumn"),
+          categoryColumn: t("stories.card.categoryColumn"),
+          topMembersHeading: t("stories.card.topMembersHeading"),
+          relative: {
+            justNow: t("stories.card.relative.justNow"),
+            secondsTemplate: t.raw(
+              "stories.card.relative.secondsTemplate",
+            ) as string,
+            minutesTemplate: t.raw(
+              "stories.card.relative.minutesTemplate",
+            ) as string,
+            hoursTemplate: t.raw(
+              "stories.card.relative.hoursTemplate",
+            ) as string,
+            daysTemplate: t.raw("stories.card.relative.daysTemplate") as string,
+          },
+          duration: {
+            lessThanMinute: t("stories.card.duration.lessThanMinute"),
+            minutesTemplate: t.raw(
+              "stories.card.duration.minutesTemplate",
+            ) as string,
+            hoursTemplate: t.raw(
+              "stories.card.duration.hoursTemplate",
+            ) as string,
+            hoursMinutesTemplate: t.raw(
+              "stories.card.duration.hoursMinutesTemplate",
+            ) as string,
+          },
+        },
+        detail: {
+          heading: t("stories.detail.heading"),
+          emptySelection: t("stories.detail.emptySelection"),
+          emptyMembers: t("stories.detail.emptyMembers"),
+          customerLabel: t("stories.detail.customerLabel"),
+          scoreLabel: t("stories.detail.scoreLabel"),
+          ruleLabel: t("stories.detail.ruleLabel"),
+          danglingNoticeTemplate: t.raw(
+            "stories.detail.danglingNoticeTemplate",
+          ) as string,
+          timeColumn: t("stories.detail.timeColumn"),
+          kindColumn: t("stories.detail.kindColumn"),
+          categoryColumn: t("stories.detail.categoryColumn"),
+          origAddrColumn: t("stories.detail.origAddrColumn"),
+          respAddrColumn: t("stories.detail.respAddrColumn"),
+          scoreColumn: t("stories.detail.scoreColumn"),
+          loading: t("stories.detail.loading"),
+          close: t("stories.detail.close"),
+        },
+      },
+      saveAsStory: {
+        button: t("saveAsStory.button"),
+        disabledMultiCustomer: t("saveAsStory.disabledMultiCustomer"),
+        modalTitle: t("saveAsStory.modalTitle"),
+        titleLabel: t("saveAsStory.titleLabel"),
+        titlePlaceholder: t("saveAsStory.titlePlaceholder"),
+        membersHeading: t("saveAsStory.membersHeading"),
+        confirm: t("saveAsStory.confirm"),
+        cancel: t("saveAsStory.cancel"),
+        successToast: t("saveAsStory.successToast"),
+        errorOverCap: t("saveAsStory.errorOverCap"),
+        errorEmpty: t("saveAsStory.errorEmpty"),
+        errorMemberNotFound: t("saveAsStory.errorMemberNotFound"),
+        errorAssetMismatch: t("saveAsStory.errorAssetMismatch"),
+        errorCustomerOutOfScope: t("saveAsStory.errorCustomerOutOfScope"),
+        errorMultiCustomer: t("saveAsStory.errorMultiCustomer"),
+        errorGeneric: t("saveAsStory.errorGeneric"),
+      },
     },
     periodChangeConfirm: {
       title: t("periodChangeConfirm.title"),
@@ -282,6 +399,8 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         initialState={initialState}
         initialClamped={clamped}
         customerScope={cacheKeyForCustomerScope(scope)}
+        initialStories={stories}
+        initialStoriesTruncated={storiesTruncated}
         labels={labels}
       />
     </>

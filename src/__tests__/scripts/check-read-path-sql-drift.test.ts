@@ -71,6 +71,19 @@ describe("check-read-path-sql-drift guard", () => {
     expect(violations).toEqual([]);
   });
 
+  it("does not flag the sibling Story shared module", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/read-path-sql.mjs",
+        source: `export const X = \`WITH scored AS (
+          SELECT cume_dist() OVER (PARTITION BY kind, baseline_version ORDER BY raw_score) AS s FROM baseline_triaged_event
+        )\`;`,
+      },
+    ]);
+
+    expect(violations).toEqual([]);
+  });
+
   it("does not flag test files (legitimate fixture SQL)", () => {
     const violations = run([
       {

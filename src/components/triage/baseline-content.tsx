@@ -7,8 +7,13 @@
  * only with a one-line edit.
  */
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
+import {
+  fetchStoryDetail,
+  refreshTriageStories,
+  submitSaveAnalystCuratedStory,
+} from "@/app/[locale]/(dashboard)/triage/story-actions";
 import type {
   ScoredTriageEvent,
   TriageAsset,
@@ -30,6 +35,7 @@ import {
   resolveStepFocusEvents,
 } from "@/lib/triage/pivot";
 import { baselineScore } from "@/lib/triage/scoring";
+import type { TriageStory } from "@/lib/triage/story/types";
 import { tier2DedupeKey } from "@/lib/triage/tier2-cache";
 import {
   isTier2ServerDimension,
@@ -37,21 +43,24 @@ import {
 } from "@/lib/triage/tier2-filter";
 import {
   parseTriagePivotHash,
+  parseTriageStoriesHash,
   pivotHashFromTrail,
   replaceTriagePivotHash,
+  replaceTriageStoriesHash,
   type TriagePivotMode,
+  type TriageStoryHashFocus,
 } from "@/lib/triage/url-hash";
 import {
   TIER2_PREFETCH_MODAL_THRESHOLD,
   useTier2Pivot,
 } from "@/lib/triage/use-tier2-pivot";
-
 import {
   type TriageAssetDetailLabels,
   TriageAssetDetailView,
 } from "./asset-detail";
 import { type TriageAssetListLabels, TriageAssetListView } from "./asset-list";
 import { type TriageFunnelLabels, TriageFunnelView } from "./funnel";
+import type { TriageMode } from "./mode-toggle";
 import {
   TriagePivotBreadcrumb,
   type TriagePivotBreadcrumbLabels,
@@ -61,6 +70,20 @@ import {
   type TriagePivotPanelLabels,
 } from "./pivot/related-events-panel";
 import type { TriagePivotScope } from "./scope-toggle";
+import {
+  type TriageSaveAsStoryLabels,
+  TriageSaveAsStoryModal,
+} from "./story/save-as-story-modal";
+import {
+  TriageStoriesView,
+  type TriageStoriesViewLabels,
+} from "./story/stories-view";
+import {
+  type TriageTabId,
+  TriageTabStrip,
+  type TriageTabStripLabels,
+  tabsForMode,
+} from "./tab-strip";
 import {
   Tier2ErrorNotice,
   type Tier2ErrorNoticeLabels,
@@ -99,6 +122,9 @@ export interface TriageBaselineLabels {
    * accessible in your scope" apart from "this URL is stale".
    */
   sensorScopeForbiddenFallback: string;
+  tabStrip: TriageTabStripLabels;
+  stories: TriageStoriesViewLabels;
+  saveAsStory: TriageSaveAsStoryLabels;
 }
 
 interface TriageBaselineContentProps {
@@ -133,6 +159,16 @@ interface TriageBaselineContentProps {
    * state, so a period change that wipes them needs explicit consent.
    */
   onPivotTrailChange?: (hasDimensionSteps: boolean) => void;
+  /**
+   * Current mode-toggle value. Stories tab is only rendered in
+   * `"baseline"` (corpus A); `"policies"` mode hides the tab entirely
+   * — see `tabsForMode` in `./tab-strip.tsx`.
+   */
+  mode: TriageMode;
+  /** Server-loaded Stories slice for the current period. */
+  stories?: ReadonlyArray<TriageStory>;
+  /** True when any per-tenant Stories page hit the cap. */
+  storiesTruncated?: boolean;
   labels: TriageBaselineLabels;
 }
 
@@ -151,8 +187,12 @@ export function TriageBaselineContent({
   scope,
   onScopeRestoredFromHash,
   onPivotTrailChange,
+  mode,
+  stories = [],
+  storiesTruncated = false,
   labels,
 }: TriageBaselineContentProps) {
+  const router = useRouter();
   const tier2 = useTier2Pivot({
     periodStartIso: period.startIso,
     periodEndIso: period.endIso,
@@ -186,6 +226,34 @@ export function TriageBaselineContent({
   // so a stale typed value cannot be revived without the operator
   // re-typing it.
   const [recentKeywords, setRecentKeywords] = useState<readonly string[]>([]);
+  // Active peer view inside Baseline mode (#490). Defaults to
+  // `asset-list`; URL hash restore happens client-side in an effect
+  // below. The Stories tab is hidden in `policies` mode — the tab
+  // strip itself omits the entry, so flipping mode while on Stories
+  // coerces the selection back to `asset-list` via the effect.
+  const [tab, setTab] = useState<TriageTabId>("asset-list");
+  const [focusedStory, setFocusedStory] = useState<TriageStory | null>(null);
+  // When the post-save flow seeds `focusedStory` with a synthetic
+  // placeholder, the placeholder is by construction absent from the
+  // current `stories` prop until `router.refresh()` returns the new
+  // slice. The reconciliation effect below clears focus on a list/
+  // period rotation that does not contain the focused Story; this
+  // ref holds the `stories` reference at placeholder-creation time so
+  // that initial reconciliation pass (still on the pre-refresh prop)
+  // is skipped. The ref is consumed (set back to `null`) on the first
+  // rotation past that reference — if the real row still is not in
+  // the new prop slice, focus is cleared like any other stale focus.
+  const placeholderRotationGateRef = useRef<ReadonlyArray<TriageStory> | null>(
+    null,
+  );
+  const [showStaleStoryHash, setShowStaleStoryHash] = useState<boolean>(false);
+  // Pivot focus events used to seed the "Save as Story" modal.
+  const [saveAsStoryOpen, setSaveAsStoryOpen] = useState<boolean>(false);
+  // Success toast for the curated-Story save flow. Reset whenever
+  // the analyst dismisses the toast, switches tabs away from
+  // Stories, or after a short timeout — the toast is purely
+  // confirmational, not a persistent status banner.
+  const [savedToastVisible, setSavedToastVisible] = useState<boolean>(false);
 
   const selectedAsset = useMemo(() => {
     if (!selected) return null;
@@ -255,6 +323,120 @@ export function TriageBaselineContent({
   useEffect(() => {
     onPivotTrailChange?.(hasPivotedAwayFromAsset(trail));
   }, [trail, onPivotTrailChange]);
+
+  // Auto-dismiss the "Story saved" toast a few seconds after it
+  // surfaces. The toast itself is also clickable (routes the
+  // analyst to the Stories tab) so a longer timeout would feel
+  // stale once the operator has acted; 6 seconds matches the rest
+  // of the Triage menu's transient banners.
+  useEffect(() => {
+    if (!savedToastVisible) return;
+    const handle = window.setTimeout(() => setSavedToastVisible(false), 6000);
+    return () => window.clearTimeout(handle);
+  }, [savedToastVisible]);
+
+  // Restore the Stories tab + focused-story URL hash on mount (client-
+  // only — Server Components cannot read `location.hash`). A bare
+  // `triage.story=<id>` (no `customerId/` prefix) flips the stale-hash
+  // toast in the Stories view. A `triage.story=...` value with an id
+  // that does not match any loaded Story silently degrades to the
+  // Stories list root, same as the asset hash treatment in #518.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const parsed = parseTriageStoriesHash(window.location.hash);
+    if (parsed.tab !== null) setTab(parsed.tab);
+    if (parsed.storyStaleHash) setShowStaleStoryHash(true);
+    if (parsed.story && parsed.story.customerId !== null) {
+      const focus = parsed.story as TriageStoryHashFocus & {
+        customerId: number;
+      };
+      const found = stories.find(
+        (s) => s.customerId === focus.customerId && s.storyId === focus.storyId,
+      );
+      if (found) {
+        setFocusedStory(found);
+      } else {
+        setShowStaleStoryHash(true);
+      }
+    }
+  }, []);
+
+  // Mode-toggle effect: hide the Stories tab when the mode flips to
+  // `policies` so a user who lands on Stories then switches modes
+  // does not stare at a hidden tab's content.
+  useEffect(() => {
+    const allowed = tabsForMode(mode);
+    if (!allowed.includes(tab)) {
+      setTab("asset-list");
+    }
+  }, [mode, tab]);
+
+  // Reconcile the focused Story against the freshly-loaded list. Two
+  // jobs:
+  //   1. Post-save flow seeds `focusedStory` with a synthetic
+  //      placeholder; when the real row arrives in `stories`, promote
+  //      it so the detail panel renders the authoritative
+  //      `summary_payload` / top members instead of the empty
+  //      synthetic.
+  //   2. List/period rotation can drop the focused Story (a period
+  //      change to a window the Story no longer overlaps, a mode
+  //      flip, a filter change). Without reconciliation the tab keeps
+  //      rendering the old detail panel and the hash sync keeps
+  //      serializing its `(customerId, storyId)`, so the visible
+  //      state disagrees with the period-scoped list contract. Clear
+  //      focus when no match exists.
+  //
+  // The placeholder case is special: the synthetic row is absent from
+  // `stories` by construction until `router.refresh()` returns the new
+  // slice, and reconciling immediately would clear the freshly-set
+  // focus. `placeholderRotationGateRef` holds the `stories` reference
+  // at placeholder-creation time; we skip the clear path while we are
+  // still seeing that same reference, and consume the gate on the
+  // first rotation past it.
+  useEffect(() => {
+    if (focusedStory === null) return;
+    const real = stories.find(
+      (s) =>
+        s.customerId === focusedStory.customerId &&
+        s.storyId === focusedStory.storyId,
+    );
+    if (real) {
+      if (real !== focusedStory) setFocusedStory(real);
+      placeholderRotationGateRef.current = null;
+      return;
+    }
+    if (placeholderRotationGateRef.current === stories) {
+      // Still on the pre-refresh prop the placeholder was created
+      // against. Hold focus and wait for the next rotation.
+      return;
+    }
+    placeholderRotationGateRef.current = null;
+    setFocusedStory(null);
+  }, [stories, focusedStory]);
+
+  // URL hash sync for Stories tab + focused story. Foreign keys
+  // (`triage.pivot.*`, `triage.strictness.*`) are preserved.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tabValue = tab === "asset-list" ? null : tab;
+    const focus =
+      focusedStory === null
+        ? null
+        : {
+            customerId: focusedStory.customerId,
+            storyId: focusedStory.storyId,
+          };
+    const next = replaceTriageStoriesHash(window.location.hash, {
+      tab: tabValue,
+      story: focus,
+      storyStaleHash: false,
+    });
+    const target = next.length > 0 ? `#${next}` : "";
+    if (target === window.location.hash) return;
+    const url = `${window.location.pathname}${window.location.search}${target}`;
+    window.history.replaceState(null, "", url);
+  }, [tab, focusedStory]);
 
   const activeStep = trail.length > 0 ? trail[trail.length - 1] : null;
 
@@ -358,6 +540,16 @@ export function TriageBaselineContent({
     return resolveStepFocusEvents(activeStep, expandedEvents, pivotIndex);
   }, [activeStep, expandedEvents, pivotIndex, tier2, trail]);
 
+  // The "Save as Story" button (#490) is enabled only when every
+  // focused event belongs to one customer — a curated Story is single-
+  // tenant by #489 contract. The server enforces this too, but client
+  // gating keeps the affordance honest in multi-customer scope.
+  const saveAsStoryEnabled = useMemo(() => {
+    if (focusEvents.length === 0) return false;
+    const first = focusEvents[0].customerId;
+    return focusEvents.every((e) => e.customerId === first);
+  }, [focusEvents]);
+
   // When the active step is a dimension pivot, the issue says the
   // new "asset" view is the set of events sharing that value — not
   // the original asset. Synthesize a TriageAsset-shaped object from
@@ -443,7 +635,15 @@ export function TriageBaselineContent({
     tier2,
   ]);
 
-  const detailAsset = pivotFocusAsset ?? effectiveAsset;
+  // Pivot focus is a Pivot-tab concept: it only re-skins the right-hand
+  // detail panel into the synthetic dimension-focus card. On the Asset
+  // list tab the panel must reflect the user's selected asset row
+  // instead — otherwise switching to Asset list leaves the panel
+  // labeled as a pivot focus the user can't see breadcrumbs for. The
+  // trail itself is preserved across tab toggles so switching back to
+  // Pivot restores the prior drill-in.
+  const detailAsset =
+    tab === "pivot" ? (pivotFocusAsset ?? effectiveAsset) : effectiveAsset;
 
   const allSections = useMemo(
     () => buildPivotPanel(pivotIndex, focusEvents, { mode: "baseline" }),
@@ -871,6 +1071,14 @@ export function TriageBaselineContent({
     }
     setSelected(restoredAsset);
     setTrail(restoredTrail);
+    // A URL hash that carries at least one dimension pivot beyond the
+    // asset crumb is a pivoted state — route the operator onto the
+    // Pivot peer view so the restored breadcrumb + related-events
+    // panel are actually visible. A pure asset hash leaves the
+    // default Asset list tab in place.
+    if (restoredTrail.some((step) => step.kind === "dimension")) {
+      setTab("pivot");
+    }
     if (refetchQueue.length > 0) {
       pendingHashFetchesRef.current = refetchQueue;
     }
@@ -1088,10 +1296,23 @@ export function TriageBaselineContent({
 
   // ── URL hash sync (write-side) ──
   // Persist the breadcrumb + scope into the URL hash whenever they
-  // change. Foreign hash keys (#471 strictness) are preserved.
+  // change. Foreign hash keys (#471 strictness) are preserved. Pivot
+  // dimension steps are only persisted while the Pivot tab is active —
+  // an analyst who pivots, then switches to Asset list, must not have
+  // the now-hidden trail rewritten into the URL (which would forcibly
+  // route the next reload back into the Pivot tab via the restore
+  // effect). The asset crumb itself is left to the trail; only the
+  // dimension-step persistence is gated.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const hashState = pivotHashFromTrail(trail, scopeToHashMode(scope));
+    const persistedTrail =
+      tab === "pivot"
+        ? trail
+        : trail.filter((step) => step.kind !== "dimension");
+    const hashState = pivotHashFromTrail(
+      persistedTrail,
+      scopeToHashMode(scope),
+    );
     const next = replaceTriagePivotHash(window.location.hash, hashState);
     const target = next.length > 0 ? `#${next}` : "";
     if (target === window.location.hash) return;
@@ -1099,7 +1320,7 @@ export function TriageBaselineContent({
     // history entry — the breadcrumb already supports backtrack.
     const url = `${window.location.pathname}${window.location.search}${target}`;
     window.history.replaceState(null, "", url);
-  }, [trail, scope]);
+  }, [trail, scope, tab]);
 
   return (
     <div className="space-y-6">
@@ -1142,41 +1363,128 @@ export function TriageBaselineContent({
         onCancel={tier2.cancelFetch}
         labels={labels.tier2Modal}
       />
-      <TriageFunnelView funnel={result.funnel} labels={labels.funnel} />
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        <TriageAssetListView
-          assets={result.assets}
-          selected={effectiveSelection}
-          observedDenominatorTruncated={result.observedDenominatorTruncated}
-          onSelect={onSelectAsset}
-          labels={labels.assetList}
-        />
-        <TriageAssetDetailView
-          asset={detailAsset}
-          isPivotFocus={pivotFocusAsset !== null}
-          labels={labels.assetDetail}
-        />
-      </div>
-      {trail.length > 0 ? (
-        <div className="space-y-3">
-          <TriagePivotBreadcrumb
-            trail={trail}
-            onSelect={(idx) => {
-              if (idx === 0) {
-                setTrail((current) => clearPivotTrail(current));
-                setFallbackNotice(null);
-                abortHashRestore();
-                // The asset-root crumb click clears every pivot from the
-                // trail — any modal-gated Tier 2 projection queued for
-                // one of those pivots would otherwise outlive its trail
-                // (#502 Round 8).
-                abortPendingTier2Projections();
-              } else {
-                onCrumb(idx);
-              }
+      <TriageTabStrip
+        tab={tab}
+        mode={mode}
+        onChange={(next) => {
+          setTab(next);
+          // Switching away from Stories clears the focused story so
+          // the URL hash does not retain a focus the user did not ask
+          // for after a tab toggle.
+          if (next !== "stories") {
+            setFocusedStory(null);
+            setShowStaleStoryHash(false);
+          }
+        }}
+        labels={labels.tabStrip}
+      />
+      {savedToastVisible ? (
+        <p
+          role="status"
+          data-testid="triage-save-as-story-toast"
+          className="rounded-md border border-emerald-300/60 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-500/40 dark:bg-emerald-950/40 dark:text-emerald-200"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setTab("stories");
+              setSavedToastVisible(false);
             }}
-            labels={labels.pivotBreadcrumb}
+            className="underline underline-offset-2"
+          >
+            {labels.saveAsStory.successToast}
+          </button>
+        </p>
+      ) : null}
+      {tab === "stories" ? (
+        <TriageStoriesView
+          stories={stories}
+          truncated={storiesTruncated}
+          focused={focusedStory}
+          onFocus={(s) => {
+            setFocusedStory(s);
+            if (s === null) setShowStaleStoryHash(false);
+          }}
+          showStaleHashWarning={showStaleStoryHash}
+          period={period}
+          loadDetail={async ({ customerId, storyId, storedMemberCount }) =>
+            fetchStoryDetail(customerId, storyId, storedMemberCount, period)
+          }
+          refreshStories={(options) => refreshTriageStories(period, options)}
+          labels={labels.stories}
+        />
+      ) : null}
+      {tab !== "stories" ? (
+        <TriageFunnelView funnel={result.funnel} labels={labels.funnel} />
+      ) : null}
+      {tab !== "stories" ? (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+          {/*
+           * Asset list + detail are shown on BOTH peer views: on the
+           * Asset list tab they are the whole surface; on the Pivot tab
+           * they stay visible so the analyst can switch to a different
+           * asset mid-drill (the Tier 2 abandonment paths in
+           * #502 / #use-tier2-pivot rely on the asset list buttons
+           * remaining clickable while a pivot is in flight). Asset list
+           * and Pivot are still distinct: the Pivot tab is what adds
+           * the breadcrumb + related-events panel + Save-as-Story
+           * affordance below.
+           */}
+          <TriageAssetListView
+            assets={result.assets}
+            selected={effectiveSelection}
+            observedDenominatorTruncated={result.observedDenominatorTruncated}
+            onSelect={onSelectAsset}
+            labels={labels.assetList}
           />
+          <TriageAssetDetailView
+            asset={detailAsset}
+            isPivotFocus={tab === "pivot" && pivotFocusAsset !== null}
+            labels={labels.assetDetail}
+          />
+        </div>
+      ) : null}
+      {tab === "pivot" ? (
+        <div className="space-y-3">
+          {trail.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <TriagePivotBreadcrumb
+                trail={trail}
+                onSelect={(idx) => {
+                  if (idx === 0) {
+                    setTrail((current) => clearPivotTrail(current));
+                    setFallbackNotice(null);
+                    abortHashRestore();
+                    // The asset-root crumb click clears every pivot
+                    // from the trail — any modal-gated Tier 2
+                    // projection queued for one of those pivots would
+                    // otherwise outlive its trail (#502 Round 8).
+                    abortPendingTier2Projections();
+                  } else {
+                    onCrumb(idx);
+                  }
+                }}
+                labels={labels.pivotBreadcrumb}
+              />
+              {hasPivotedAwayFromAsset(trail) && focusEvents.length > 0 ? (
+                <button
+                  type="button"
+                  data-testid="triage-save-as-story-button"
+                  data-action="save-as-story"
+                  disabled={!saveAsStoryEnabled}
+                  title={
+                    saveAsStoryEnabled
+                      ? undefined
+                      : labels.saveAsStory.disabledMultiCustomer
+                  }
+                  onClick={() => setSaveAsStoryOpen(true)}
+                  className="rounded-sm border border-border bg-background px-3 py-1 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground"
+                >
+                  {labels.saveAsStory.button}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <TriagePivotPanel
             sections={sections}
             truncated={panelTruncated}
@@ -1195,6 +1503,61 @@ export function TriageBaselineContent({
           />
         </div>
       ) : null}
+      <TriageSaveAsStoryModal
+        open={saveAsStoryOpen}
+        onOpenChange={setSaveAsStoryOpen}
+        focusEvents={focusEvents}
+        period={period}
+        onSaved={({ customerId, storyId }) => {
+          setSaveAsStoryOpen(false);
+          setSavedToastVisible(true);
+          // Route the operator to the Stories tab with the newly-saved
+          // Story focused. The synthetic story below is a transient
+          // placeholder so the detail panel has something to render
+          // until the Server Component re-runs `loadStoriesForPeriod`
+          // and the real row arrives in `stories`; the reconciliation
+          // effect above swaps the placeholder for the loaded row.
+          // `router.refresh()` is what actually triggers the re-fetch
+          // — without it the new Story would never appear in the list.
+          setTab("stories");
+          // Mark the current `stories` reference as the placeholder's
+          // pre-refresh prop. The reconciliation effect will skip
+          // clearing focus while it still sees this same reference,
+          // then consume the gate on the first rotation past it (the
+          // server refresh below). Without this gate, the effect runs
+          // synchronously with the pre-refresh prop, finds no match
+          // for the synthetic id, and clears focus before the new row
+          // even arrives.
+          placeholderRotationGateRef.current = stories;
+          setFocusedStory({
+            customerId,
+            customerName: String(customerId),
+            storyId,
+            kind: "analyst_curated",
+            ruleId: null,
+            storyVersion: "v1",
+            timeWindowStartIso: period.startIso,
+            timeWindowEndIso: period.endIso,
+            primaryAsset: null,
+            score: null,
+            summary: {
+              kindHistogram: {},
+              categoryHistogram: {},
+              memberCount: focusEvents.length,
+              durationMs: 0,
+              distinctAssetCount: 0,
+              topRawScore: 0,
+            },
+            createdAtIso: new Date().toISOString(),
+            lastSentAtIso: null,
+            sendCount: 0,
+            topMembers: [],
+          });
+          router.refresh();
+        }}
+        submit={(input) => submitSaveAnalystCuratedStory(input, period)}
+        labels={labels.saveAsStory}
+      />
     </div>
   );
 }

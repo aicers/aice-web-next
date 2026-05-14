@@ -258,6 +258,84 @@ const LABELS: TriageShellLabels = {
     staleHashFallback: "Stale hash — showing asset root",
     sensorScopeForbiddenFallback:
       "Sensor no longer accessible — showing asset root",
+    tabStrip: {
+      legend: "Triage views",
+      assetList: "Asset list",
+      stories: "Stories",
+      pivot: "Pivot",
+    },
+    stories: {
+      heading: "Stories",
+      empty: "No stories",
+      truncatedTemplate: "Truncated",
+      emptyUnsentOnly: "No unsent",
+      showOnlyUnsentLabel: "Unsent only",
+      sortLabel: "Sort",
+      sortByTimeWindowEnd: "Recent",
+      sortByScore: "Score",
+      staleHashFallback: "Stale story",
+      card: {
+        ruleBadgeAuto: "auto",
+        ruleBadgeAnalyst: "analyst",
+        scoreLabel: "Score",
+        memberCountTemplate: "{count} events",
+        open: "Open",
+        sendToAimerWeb: "Send",
+        sendToAimerWebTooltip: "not yet",
+        sentIndicatorTemplate: "Sent {relative}",
+        sentMultiTemplate: "{count}×",
+        timeColumn: "Time",
+        kindColumn: "Kind",
+        categoryColumn: "Category",
+        topMembersHeading: "Top",
+        relative: {
+          justNow: "just now",
+          secondsTemplate: "{n}s ago",
+          minutesTemplate: "{n} min ago",
+          hoursTemplate: "{n} h ago",
+          daysTemplate: "{n} d ago",
+        },
+        duration: {
+          lessThanMinute: "< 1 min",
+          minutesTemplate: "{n} min",
+          hoursTemplate: "{n} h",
+          hoursMinutesTemplate: "{h} h {m} min",
+        },
+      },
+      detail: {
+        heading: "Detail",
+        emptySelection: "Pick",
+        emptyMembers: "Empty",
+        customerLabel: "Customer",
+        scoreLabel: "Score",
+        ruleLabel: "Rule",
+        danglingNoticeTemplate: "{shown}/{stored} (aged {aged})",
+        timeColumn: "Time",
+        kindColumn: "Kind",
+        categoryColumn: "Category",
+        scoreColumn: "Score",
+        loading: "Loading",
+        close: "Close",
+      },
+    },
+    saveAsStory: {
+      button: "Save as Story",
+      disabledMultiCustomer: "narrow first",
+      modalTitle: "Save",
+      titleLabel: "Title",
+      titlePlaceholder: "placeholder",
+      membersHeading: "Members",
+      confirm: "Confirm",
+      cancel: "Cancel",
+      successToast: "Saved",
+      errorOverCap: "over",
+      errorEmpty: "empty",
+      errorMemberNotFound: "missing",
+      errorAssetMismatch: "mismatch",
+      errorCustomerOutOfScope: "scope",
+      errorMultiCustomer: "multi",
+      errorGeneric: "generic",
+    },
   },
   periodChangeConfirm: {
     title: "Discard pivot trail?",
@@ -327,6 +405,10 @@ function renderShell() {
 }
 
 function pivotByHost() {
+  // The pivot panel is on the Pivot tab (Round 4 split — Asset list
+  // and Pivot are now distinct peer views). Switch to the Pivot tab
+  // before clicking the dimension button.
+  fireEvent.click(screen.getByTestId("triage-tab-pivot"));
   // The JA3 row in the related-events panel renders a pivot button
   // labelled by `pivotActionTemplate`. Click it to add a dimension
   // crumb to the trail.
@@ -483,6 +565,10 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
   }
 
   function pivotByExternalIp() {
+    // The pivot panel is on the Pivot tab (Round 4 split — Asset
+    // list and Pivot are now distinct peer views). Switch tabs
+    // before clicking the dimension button.
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
     const pivotButton = screen.getByRole("button", {
       name: "Pivot to Dim:externalIp: 203.0.113.1",
     });
@@ -1578,6 +1664,9 @@ describe("TriageShell — Tier 2 only Learning method static section (#498)", ()
   function selectTier2Scope() {
     const scopeTab = screen.getByRole("tab", { name: "All detection events" });
     fireEvent.click(scopeTab);
+    // Round 4 split: the pivot panel (and its static Tier 2 sections)
+    // lives on the Pivot peer tab, not on Asset list.
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
   }
 
   function renderShellWithSingleAsset() {
@@ -1770,6 +1859,9 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
   function selectTier2Scope() {
     const scopeTab = screen.getByRole("tab", { name: "All detection events" });
     fireEvent.click(scopeTab);
+    // Round 4 split: the pivot panel (and its keywords section) lives
+    // on the Pivot peer tab, not on Asset list.
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
   }
 
   function renderShellWithSingleAsset() {

@@ -283,6 +283,7 @@
       "triage_policy_create": "Triage policy create",
       "triage_policy_update": "Triage policy update",
       "triage_policy_delete": "Triage policy delete",
+      "triage_story_create": "Triage story save",
       "triage_exclusion_global_add": "Triage exclusion add (global)",
       "triage_exclusion_global_remove": "Triage exclusion remove (global)",
       "triage_exclusion_customer_add": "Triage exclusion add (customer)",
@@ -299,6 +300,7 @@
       "node": "Node",
       "service": "Service",
       "triage_policy": "Triage Policy",
+      "triage_story": "Story",
       "triage_exclusion": "Triage Exclusion"
     }
   },
@@ -2127,7 +2129,87 @@
       }
     },
     "staleHashFallback": "Pivot trail in the URL no longer matches the loaded period — showing the asset root.",
-    "sensorScopeForbiddenFallback": "Sensor pivot is no longer accessible in your customer scope — showing the asset root."
+    "sensorScopeForbiddenFallback": "Sensor pivot is no longer accessible in your customer scope — showing the asset root.",
+    "tabStrip": {
+      "legend": "Triage views",
+      "assetList": "Asset list",
+      "stories": "Stories",
+      "pivot": "Pivot"
+    },
+    "stories": {
+      "heading": "Stories",
+      "empty": "No Stories in this period.",
+      "truncatedTemplate": "Some Stories were not loaded — narrow the period to see the rest.",
+      "emptyUnsentOnly": "No unsent Stories in this period.",
+      "showOnlyUnsentLabel": "Show only unsent",
+      "sortLabel": "Sort",
+      "sortByTimeWindowEnd": "Most recent",
+      "sortByScore": "Highest score",
+      "staleHashFallback": "Stale Story link — open from the list.",
+      "card": {
+        "ruleBadgeAuto": "auto",
+        "ruleBadgeAnalyst": "analyst-curated",
+        "scoreLabel": "Score",
+        "memberCountTemplate": "{count} events",
+        "open": "Open",
+        "sendToAimerWeb": "Send to aimer-web",
+        "sendToAimerWebTooltip": "LLM analysis not yet available — see #493.",
+        "sentIndicatorTemplate": "Sent to aimer-web · {relative}",
+        "sentMultiTemplate": "{count}×",
+        "timeColumn": "Time",
+        "kindColumn": "Kind",
+        "categoryColumn": "Category",
+        "topMembersHeading": "Top events",
+        "relative": {
+          "justNow": "just now",
+          "secondsTemplate": "{n}s ago",
+          "minutesTemplate": "{n} min ago",
+          "hoursTemplate": "{n} h ago",
+          "daysTemplate": "{n} d ago"
+        },
+        "duration": {
+          "lessThanMinute": "< 1 min",
+          "minutesTemplate": "{n} min",
+          "hoursTemplate": "{n} h",
+          "hoursMinutesTemplate": "{h} h {m} min"
+        }
+      },
+      "detail": {
+        "heading": "Story detail",
+        "emptySelection": "Select a Story to see its events.",
+        "emptyMembers": "No members in this Story.",
+        "customerLabel": "Customer",
+        "scoreLabel": "Score",
+        "ruleLabel": "Rule",
+        "danglingNoticeTemplate": "{shown} of {stored} events shown — {aged} aged past corpus A retention.",
+        "timeColumn": "Time",
+        "kindColumn": "Kind",
+        "categoryColumn": "Category",
+        "origAddrColumn": "Source",
+        "respAddrColumn": "Destination",
+        "scoreColumn": "Score",
+        "loading": "Loading members…",
+        "close": "Close"
+      }
+    },
+    "saveAsStory": {
+      "button": "Save as Story",
+      "disabledMultiCustomer": "A curated Story must come from a single customer's events — narrow the pivot focus to one customer first.",
+      "modalTitle": "Save current pivot as a Story",
+      "titleLabel": "Title (optional)",
+      "titlePlaceholder": "e.g. Lateral movement on 192.168.1.20",
+      "membersHeading": "Members included in this Story",
+      "confirm": "Save",
+      "cancel": "Cancel",
+      "successToast": "Story saved.",
+      "errorOverCap": "Too many events — a Story can contain at most 50 members.",
+      "errorEmpty": "Select at least one event to save as a Story.",
+      "errorMemberNotFound": "Some selected events are no longer available — refresh and try again.",
+      "errorAssetMismatch": "Selected events have no shared originator address.",
+      "errorCustomerOutOfScope": "You do not have access to this customer.",
+      "errorMultiCustomer": "Selected events span multiple customers — narrow to one first.",
+      "errorGeneric": "Could not save the Story. Try again."
+    }
   },
   "changePassword": {
     "heading": "Change Password",
