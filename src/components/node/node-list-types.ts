@@ -1,4 +1,5 @@
 import {
+  agentPendingState,
   type ExternalConfigSnapshot,
   externalServicePendingState,
 } from "@/lib/node/pending-state";
@@ -115,7 +116,12 @@ export function buildNodeRows(
     for (const agent of node.agents) {
       const column = AGENT_TO_COLUMN[agent.kind];
       if (!column) continue;
-      const hasDraft = agent.draft !== null && agent.draft !== agent.config;
+      // Comparison model (#333 Decision 9, threaded by #551). Delegate
+      // to the shared `agentPendingState` helper so the list row, the
+      // detail page, and `nodePendingState` cannot disagree — most
+      // notably for delete intent (`draft = null`, `config = Some(...)`)
+      // and the applied-manual sentinel (`config = ""`, `draft = null`).
+      const hasDraft = agentPendingState(agent) === "pending";
       // `decisions/node-field-catalog.md` §60-63: Configure Manually mode
       // for Piglet / Hog / Crusher is encoded as `draft = Some("")` and,
       // after apply, `config = ""`. Reading the *effective* state (draft
@@ -156,7 +162,7 @@ export function buildNodeRows(
       node.nameDraft !== null && node.nameDraft !== node.name;
     const profileDraftDiffers = profilesDiffer(node.profile, node.profileDraft);
     const anyAgentDraft = node.agents.some(
-      (agent) => agent.draft !== null && agent.draft !== agent.config,
+      (agent) => agentPendingState(agent) === "pending",
     );
     // Match `nodePendingState` semantics: an external whose page-load
     // snapshot is `"unavailable"` contributes to the row-level pending
