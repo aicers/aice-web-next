@@ -16,16 +16,7 @@ built-in roles Security Monitor, Tenant Administrator, and System
 Administrator receive this permission by default. Custom roles
 that grant `triage:read` also qualify.
 
-![Triage page (wireframe)](../assets/triage-overview-en.svg)
-
-> **Note:** The figure above is a wireframe stand-in. Live PNG
-> captures are produced from a staging tenant once the local-REview
-> procedure documented in the [Authoring guide](../AUTHORING.md)
-> has a representative Phase 1.B corpus loaded; screenshot rollout
-> for both the overview and the pivot panel is tracked under
-> [issue #455](https://github.com/aicers/aice-web-next/issues/455)
-> and is folded into the read-path measurement gate (see the
-> "Read-path measurement" section in PR #525).
+![Triage page](../assets/triage-overview-en.png)
 
 ## Layout
 
@@ -493,16 +484,7 @@ loaded corpus by pivot dimension so the operator can see what else
 the focused asset has in common with the rest of the slice — without
 issuing any additional network requests.
 
-![Pivot panel (wireframe)](../assets/triage-pivot-en.svg)
-
-> **Note:** The figure above is a wireframe stand-in. Live PNG
-> captures are produced from a staging tenant once the local-REview
-> procedure documented in the [Authoring guide](../AUTHORING.md) has
-> a representative Phase 1.B corpus loaded; screenshot rollout is
-> tracked under
-> [issue #455](https://github.com/aicers/aice-web-next/issues/455)
-> and is folded into the read-path measurement gate (see the
-> "Read-path measurement" section in PR #525).
+![Pivot panel](../assets/triage-pivot-en.png)
 
 ### Pivot dimensions
 
@@ -650,14 +632,7 @@ dimensions:
   corpus carries the field. Clicking a row issues a Tier 2 fetch
   filtered by `EventListFilterInput.learningMethods`.
 
-  ![Learning method static section (wireframe)](../assets/triage-learning-methods-en.svg)
-
-  > **Note:** The figure above is a wireframe stand-in. It ships
-  > before the live REview screenshot environment is wired up for
-  > Triage; the wireframe will be replaced with a real PNG capture
-  > as part of the EN/KR Triage manual screenshot pass tracked by
-  > [issue #455](https://github.com/aicers/aice-web-next/issues/455),
-  > alongside the other Phase 1.A Triage wireframes.
+  ![Learning method static section](../assets/triage-learning-methods-en.png)
 
   - **Unsupervised** — events flagged by REview's unsupervised
     detection models. Pivoting here surfaces every Tier 2 event in
@@ -673,14 +648,7 @@ dimensions:
   rather than a fixed list of clickable rows. The section renders a
   single text input plus a **Search** button.
 
-  ![Keywords free-form input section (wireframe)](../assets/triage-keywords-en.svg)
-
-  > **Note:** The figure above is a wireframe stand-in. It ships
-  > before the live REview screenshot environment is wired up for
-  > Triage; the wireframe will be replaced with a real PNG capture
-  > as part of the EN/KR Triage manual screenshot pass tracked by
-  > [issue #455](https://github.com/aicers/aice-web-next/issues/455),
-  > alongside the other Phase 1.A Triage wireframes.
+  ![Keywords free-form input section](../assets/triage-keywords-en.png)
 
   - **Submit is explicit.** Typing alone does not trigger a fetch.
     Pressing **Enter** or clicking **Search** dispatches a Tier 2
