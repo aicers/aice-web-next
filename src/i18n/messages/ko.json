@@ -288,7 +288,10 @@
       "triage_exclusion_global_remove": "Triage 제외 삭제 (전역)",
       "triage_exclusion_customer_add": "Triage 제외 추가 (고객)",
       "triage_exclusion_customer_remove": "Triage 제외 삭제 (고객)",
-      "triage_exclusion_fanout_failed": "Triage 제외 팬아웃 실패"
+      "triage_exclusion_fanout_failed": "Triage 제외 팬아웃 실패",
+      "triage_exclusion_global_recover": "Triage 제외 복구 (전역)",
+      "triage_exclusion_customer_recover": "Triage 제외 복구 (고객)",
+      "triage_baseline_rebuild": "Triage 기준선 재구축"
     },
     "targetTypes": {
       "account": "계정",

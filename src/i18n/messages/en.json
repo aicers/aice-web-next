@@ -288,7 +288,10 @@
       "triage_exclusion_global_remove": "Triage exclusion remove (global)",
       "triage_exclusion_customer_add": "Triage exclusion add (customer)",
       "triage_exclusion_customer_remove": "Triage exclusion remove (customer)",
-      "triage_exclusion_fanout_failed": "Triage exclusion fanout failed"
+      "triage_exclusion_fanout_failed": "Triage exclusion fanout failed",
+      "triage_exclusion_global_recover": "Triage exclusion recover (global)",
+      "triage_exclusion_customer_recover": "Triage exclusion recover (customer)",
+      "triage_baseline_rebuild": "Triage baseline rebuild"
     },
     "targetTypes": {
       "account": "Account",
