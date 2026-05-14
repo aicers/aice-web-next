@@ -394,8 +394,8 @@ describe("retry safety — old fresh, new frozen", () => {
   });
 });
 
-describe("partial failure + retry recovery — sequential-advance contract", () => {
-  it("Giganto fails once, retry succeeds, Tivan advances under the resume rule, row settles to succeeded", async () => {
+describe("partial failure + retry recovery — post-DB dispatch independence (#333)", () => {
+  it("Giganto fails once but Tivan still runs in parallel; retry of Giganto succeeds, row settles to succeeded with one node.apply audit", async () => {
     const node = snapshot({
       externalServices: [
         {
@@ -464,13 +464,22 @@ describe("partial failure + retry recovery — sequential-advance contract", () 
     );
     const first = await confirmApplyAttempt({ attemptId });
     expect(first.status).toBe("failed_retryable");
-    // Tivan must NOT have run yet — sequential-advance stops on the
-    // first failure.
-    expect(mockTivanClient).not.toHaveBeenCalled();
+    // Phase Node-12 (#333) makes post-DB dispatches independent: a
+    // failing external no longer blocks the others, so Tivan is
+    // dispatched in parallel with Giganto and (per its success
+    // stub) settles `succeeded` on the first confirm. The row's
+    // aggregate status is still `failed_retryable` because Giganto
+    // remains retryable.
+    const tivanUpdateCallsFirst = mockTivanClient.mock.calls.filter(
+      (c) => c[1] !== undefined,
+    );
+    expect(tivanUpdateCallsFirst).toHaveLength(1);
 
     const retried = await retryDispatch({ attemptId, dispatchId: dsId });
     expect(retried.status).toBe("succeeded");
-    // Tivan ran once after the resumed Giganto succeeded.
+    // Tivan ran exactly once across both calls — the retry only
+    // resumes Giganto; it does not re-dispatch the externals that
+    // already succeeded.
     const tivanUpdateCalls = mockTivanClient.mock.calls.filter(
       (c) => c[1] !== undefined,
     );
