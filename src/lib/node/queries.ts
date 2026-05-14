@@ -87,7 +87,6 @@ export const UPDATE_NODE_DRAFT_MUTATION = loadDocument(
   "update-node-draft.graphql",
 );
 export const REMOVE_NODES_MUTATION = loadDocument("remove-nodes.graphql");
-export const APPLY_NODE_MUTATION = loadDocument("apply-node.graphql");
 export const APPLY_NODE_DRAFT_MUTATION = loadDocument(
   "apply-node-draft.graphql",
 );

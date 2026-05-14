@@ -1004,7 +1004,7 @@ describe("tenant scope boundary", () => {
         externalServices: [],
       },
     });
-    // Second call: applyNode mutation result.
+    // Second call: applyNodeDraft mutation result.
     mockGraphqlRequest.mockResolvedValueOnce({ applyNodeDraft: { id: "n-5" } });
 
     const { _internal_applyNodeDraftViaManager } = await import(

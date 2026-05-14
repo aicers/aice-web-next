@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -151,5 +151,79 @@ describe("apply-attempts public surface", () => {
     // `_internal_applyAgentConfigViaManager`. The user-facing entry is
     // now the `confirmApplyAttempt` lifecycle path.
     expect(exportedFunctions).not.toContain("applyNode");
+  });
+
+  /**
+   * Static-analysis acceptance for #552 (legacy `applyNode` mutation
+   * removal). The four targeted patterns below catch a future commit
+   * that reintroduces any part of the legacy GraphQL surface under
+   * `src/`. A broad `\bapplyNode\b` scan is deliberately avoided —
+   * it would false-positive on `applyNodeDraft`, channel names like
+   * `manager-applyNode`, fixture-manifest entries, and prose comments
+   * mentioning the old name in a historical context.
+   */
+  describe("legacy applyNode surface removed (#552)", () => {
+    const SRC_ROOT = resolve(ROOT, "src");
+    const SCANNABLE_EXTENSIONS = new Set([
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".graphql",
+      ".json",
+    ]);
+    // This test file legitimately mentions every banned pattern as
+    // string / regex literals, so it must be excluded from its own
+    // scan — otherwise the assertions would self-trigger.
+    const SELF_PATH = resolve(
+      __dirname,
+      "apply-attempts-public-surface.test.ts",
+    );
+
+    function collectSourceFiles(dir: string, acc: string[] = []): string[] {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        const stat = statSync(full);
+        if (stat.isDirectory()) {
+          collectSourceFiles(full, acc);
+          continue;
+        }
+        if (full === SELF_PATH) continue;
+        const dot = entry.lastIndexOf(".");
+        if (dot === -1) continue;
+        if (SCANNABLE_EXTENSIONS.has(entry.slice(dot))) acc.push(full);
+      }
+      return acc;
+    }
+
+    function findMatches(pattern: RegExp): string[] {
+      const hits: string[] = [];
+      for (const file of collectSourceFiles(SRC_ROOT)) {
+        const source = readFileSync(file, "utf8");
+        const lines = source.split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+          if (pattern.test(lines[i])) {
+            hits.push(`${file}:${i + 1}: ${lines[i].trim()}`);
+          }
+        }
+      }
+      return hits;
+    }
+
+    it("no production references to APPLY_NODE_MUTATION", () => {
+      expect(findMatches(/\bAPPLY_NODE_MUTATION\b/)).toEqual([]);
+    });
+
+    it("no references to the queries/apply-node.graphql document path", () => {
+      expect(findMatches(/queries\/apply-node\.graphql/)).toEqual([]);
+    });
+
+    it("no `mutation ApplyNode` operation declarations (ApplyNodeDraft / ApplyAgentConfig are fine)", () => {
+      expect(findMatches(/^[\t ]*mutation[\t ]+ApplyNode\b/)).toEqual([]);
+    });
+
+    it("no references to the ApplyNodeResult type (ApplyNodeDraftResult is fine)", () => {
+      expect(findMatches(/\bApplyNodeResult\b/)).toEqual([]);
+    });
   });
 });

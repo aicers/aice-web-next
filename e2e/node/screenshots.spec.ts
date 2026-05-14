@@ -568,8 +568,9 @@ test.describe
      *
      * Each capture navigates to the canonical seed (`alpha-node`,
      * id `11`) so the asset is stable across runs. The mock manager
-     * answers `node`, `nodeStatusList`, and `applyNode` via the
-     * fixtures registered in the surrounding `beforeEach`.
+     * answers `node`, `nodeStatusList`, and the manager-apply pair
+     * (`applyNodeDraft` + `applyAgentConfig`) via the fixtures
+     * registered in the surrounding `beforeEach`.
      */
     async function navigateToDetail(
       page: Page,
@@ -668,10 +669,11 @@ test.describe
      * wireframes shipped by PR #372 as a pre-mount stand-in). The
      * modal is reached through the detail page's Apply All button.
      *
-     *   - Planned state: stub `applyNode` to succeed (never invoked
-     *     before the screenshot, which is taken on the planned list).
-     *   - Retryable state: stub `applyNode` with errors; click Apply;
-     *     wait for the row's `data-state` to settle on
+     *   - Planned state: stub `applyNodeDraft` to succeed (never
+     *     invoked before the screenshot, which is taken on the
+     *     planned list).
+     *   - Retryable state: stub `applyNodeDraft` with errors; click
+     *     Apply; wait for the row's `data-state` to settle on
      *     `failed_retryable`; capture.
      *   - Terminal state: same, but force the dispatch through
      *     APPLY_DISPATCH_MAX_ATTEMPTS+ retries by stubbing repeated
@@ -714,8 +716,11 @@ test.describe
         response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
       });
       await stubSession.registerStub({
-        operation: "applyNode",
-        response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+        operation: "applyNodeDraft",
+        response: {
+          kind: "fixture",
+          fixture: "node/applyNodeDraft.success.json",
+        },
       });
       await signInAndWait(page, workerUsername, workerPassword);
       await navigateToDetail(page, "en");
@@ -733,8 +738,11 @@ test.describe
         response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
       });
       await stubSession.registerStub({
-        operation: "applyNode",
-        response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+        operation: "applyNodeDraft",
+        response: {
+          kind: "fixture",
+          fixture: "node/applyNodeDraft.success.json",
+        },
       });
       await signInAndWaitKo(page, workerUsername, workerPassword);
       await navigateToDetail(page, "ko");
@@ -752,7 +760,7 @@ test.describe
         response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
       });
       await stubSession.registerStub({
-        operation: "applyNode",
+        operation: "applyNodeDraft",
         response: {
           kind: "errors",
           errors: [{ message: "transient manager dispatch failure" }],
@@ -781,7 +789,7 @@ test.describe
         response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
       });
       await stubSession.registerStub({
-        operation: "applyNode",
+        operation: "applyNodeDraft",
         response: {
           kind: "errors",
           errors: [{ message: "transient manager dispatch failure" }],
@@ -810,7 +818,7 @@ test.describe
         response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
       });
       await stubSession.registerStub({
-        operation: "applyNode",
+        operation: "applyNodeDraft",
         response: {
           kind: "errors",
           errors: [{ message: "manager dispatch failure" }],
@@ -859,7 +867,7 @@ test.describe
         response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
       });
       await stubSession.registerStub({
-        operation: "applyNode",
+        operation: "applyNodeDraft",
         response: {
           kind: "errors",
           errors: [{ message: "manager dispatch failure" }],
@@ -911,26 +919,21 @@ test.describe
         operation: "node",
         response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
       });
-      // Don't register an applyNode stub: the mock server's `no stub
-      // registered` error keeps the modal in the executing phase
-      // longest while the BFF retries / waits, but it would also flip
-      // the row to failed_retryable on the first response. Instead,
-      // delay the upstream by intercepting the BFF's outgoing
-      // server-action POST in the browser. This works for the
-      // mid-execution capture only because the modal projects the
-      // executing state synchronously when Apply is clicked.
+      // Stub `applyNodeDraft` to succeed so the modal projects the
+      // executing state cleanly. The modal flips to `kind: "executing"`
+      // synchronously the moment Apply is clicked, so the capture lands
+      // on the Applying… button before the BFF resolves.
       await stubSession.registerStub({
-        operation: "applyNode",
-        response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+        operation: "applyNodeDraft",
+        response: {
+          kind: "fixture",
+          fixture: "node/applyNodeDraft.success.json",
+        },
       });
       await signInAndWait(page, workerUsername, workerPassword);
       await navigateToDetail(page, "en");
       await openApplyModal(page);
       await page.getByTestId("apply-preview-apply").click();
-      // The modal projects `kind: "executing"` synchronously the
-      // moment Apply is clicked — capture immediately so the
-      // screenshot lands on the executing-phase Applying… button
-      // before the BFF resolves.
       await expect(page.getByTestId("apply-preview-applying")).toBeVisible({
         timeout: 5_000,
       });
@@ -947,8 +950,11 @@ test.describe
         response: { kind: "fixture", fixture: "node/nodeDetail.alpha.json" },
       });
       await stubSession.registerStub({
-        operation: "applyNode",
-        response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+        operation: "applyNodeDraft",
+        response: {
+          kind: "fixture",
+          fixture: "node/applyNodeDraft.success.json",
+        },
       });
       await signInAndWaitKo(page, workerUsername, workerPassword);
       await navigateToDetail(page, "ko");

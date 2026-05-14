@@ -240,10 +240,6 @@ export interface RemoveNodesResult {
   removeNodes: string[];
 }
 
-export interface ApplyNodeResult {
-  applyNode: string;
-}
-
 export interface ApplyNodeDraftResult {
   applyNodeDraft: { id: string };
 }
