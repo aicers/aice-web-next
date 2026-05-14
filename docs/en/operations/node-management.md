@@ -345,12 +345,19 @@ confirmation:
    apply-build time and never re-read.
 
 The dispatches run sequentially in plan order: manager DB first,
-then manager notify, then each external. A failure at any step
-stops the fan-out — the next dispatch only runs after the previous
-one succeeds. The two manager-side dispatches are independently
-observable and retryable: an operator-driven retry of the notify
-dispatch on a row whose DB stage has already succeeded does not
-re-run the DB mutation.
+then manager notify, then each external. The manager DB stage
+gates everything that follows — if it fails, no notify or external
+dispatch is attempted. **After the DB stage succeeds, the
+remaining dispatches are independent**: a notify failure does not
+block the externals, and a single external's failure does not
+block the others. Each post-DB dispatch records its own state and
+the executor advances to the next queued dispatch under the same
+claim. The row's aggregate status reflects the per-dispatch
+outcomes once every dispatch has been attempted. The two
+manager-side dispatches are independently observable and
+retryable: an operator-driven retry of the notify dispatch on a
+row whose DB stage has already succeeded does not re-run the DB
+mutation.
 
 ### Permissions and tenant scope
 
