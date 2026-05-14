@@ -371,8 +371,15 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
     // application existence check stands in for the missing FK.
     const stillExists = await stillExistsCheck(scope, job, tenantClient);
     if (!stillExists) {
+      // Mirror the pre-lock missing-row branch: release the tenant
+      // transaction first, then finalize the auth-db queue row.
+      // Returning "completed" without flipping the row leaves it
+      // `running`, the stuck-job sweep flips it back to `pending`,
+      // and the worker loops indefinitely on the same no-op — which
+      // also keeps the "Re-trigger cleanup" indicator stuck on.
       await tenantClient.query("ROLLBACK");
       tenantClient.release();
+      await withTransaction((c) => finalizeCompleted(c, job.id));
       return { outcome: "completed" };
     }
     const firstBatch = await executeFirstRetroactiveDeleteBatch(tenantClient, {

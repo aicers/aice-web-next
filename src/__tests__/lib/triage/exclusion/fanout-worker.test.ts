@@ -736,7 +736,17 @@ describe("runFanoutSweep — global deleted between initial load and tenant DELE
     expect(tenantSqls.some((s) => s.startsWith("DELETE"))).toBe(false);
     // No customer_add audit row — there was no work to attribute.
     expect(mockAuditLogRecord).not.toHaveBeenCalled();
-    // Sanity: the job row finalized as completed (no-op).
+    // The job row MUST be finalized as `completed`. Without this the
+    // row stays `running`, the stuck-job sweep flips it back to
+    // `pending`, and the worker loops on the same no-op forever
+    // (and the "Re-trigger cleanup" indicator never clears).
+    const finalizeCompletedCalls = auth.query.mock.calls.filter(
+      (call: [string, unknown[]?]) =>
+        call[0].includes("UPDATE triage_exclusion_fanout_job") &&
+        call[0].includes("status = 'completed'"),
+    );
+    expect(finalizeCompletedCalls).toHaveLength(1);
+    expect(finalizeCompletedCalls[0][1]).toEqual(["job-race"]);
     expect(withTxCallCount).toBeGreaterThan(0);
   });
 });
