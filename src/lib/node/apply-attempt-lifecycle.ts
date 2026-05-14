@@ -37,9 +37,15 @@ import "server-only";
  *      the lock).
  *   6. Sequential advance: on success commit the current dispatch and
  *      advance the next `queued` to `in_flight` in the same UPDATE.
- *      On failure stop and leave subsequent `queued` untouched
- *      (or, on cap / abandonment, cascade remaining `queued` to
- *      `failed_terminal`).
+ *      On failure: a `MANAGER_DB` failure stops the row (queued
+ *      remain queued on retryable, or cascade to `failed_terminal` on
+ *      cap / structurally non-retryable). Phase Node-12 (#333,
+ *      Decision 3 / Acceptance #2): a post-DB failure (notify or
+ *      external) commits the dispatch's own state but does NOT block
+ *      the others — the executor advances to the next queued dispatch
+ *      and runs it under the same claim. The row's aggregate status
+ *      is committed only after every queued dispatch has been
+ *      attempted, per `computeFinalRowStatus`.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -66,6 +72,7 @@ import {
   ApplyAttemptTerminalError,
   DispatchNotFoundError,
   DispatchNotRetryableError,
+  DispatchTerminalFailureError,
   StalePlanError,
 } from "./errors";
 
@@ -170,32 +177,43 @@ function cmp(a: string, b: string): number {
 }
 
 /**
- * Build a `NodeInput`-shaped payload from the freshly-read manager-DB
- * draft state (step 5d). Promotes drafts to applied: every draft
- * field becomes the new applied field, drafts cleared.
+ * Build a `NodeInput`-shaped payload from the canonical manager-DB
+ * read (step 5d) for the upstream `applyNodeDraft` mutation.
+ *
+ * Per Decision 4 of #333 (Phase Node-12), this builder passes
+ * `agents[i].draft` and `externalServices[i].draft` to upstream
+ * **verbatim, including `null`**. No synthesis, no rewrite, no
+ * null-rejection — `draft = null` is operator delete-intent, which
+ * upstream `update_db` honours by removing the row from the node.
+ *
+ * This builder MUST NOT be confused with the v1
+ * `buildNodeInputFromDraft` (which forced `draft = null` on every row
+ * and would unconditionally delete every agent / external from the
+ * node — see Decision 8 / acceptance test). The legacy builder is
+ * removed in this phase.
  *
  * Typed as `unknown` on the dispatcher boundary so this module does
  * not have to import the full NodeInput graph; the production
- * dispatcher (#361) casts back to the canonical `NodeInput`.
+ * dispatcher casts back to the canonical `NodeInput`.
  */
-export function buildNodeInputFromDraft(node: NodeDraftSnapshot): unknown {
+export function buildNodeInputForApplyDraft(node: NodeDraftSnapshot): unknown {
   return {
     name: node.nameDraft ?? node.name,
-    nameDraft: null,
+    nameDraft: node.nameDraft,
     profile: node.profileDraft ?? node.profile,
-    profileDraft: null,
+    profileDraft: node.profileDraft,
     agents: node.agents.map((a) => ({
       kind: a.kind,
       key: a.key,
       status: a.status,
-      config: a.draft ?? a.config,
-      draft: null,
+      config: a.config,
+      draft: a.draft,
     })),
     externalServices: node.externalServices.map((s) => ({
       kind: s.kind,
       key: s.key,
       status: s.status,
-      draft: null,
+      draft: s.draft,
     })),
   };
 }
@@ -731,22 +749,60 @@ async function runExecutor(
     }
 
     const reachedCap = dispatch.attemptCount >= getDispatchMaxAttempts();
-    const newState: DispatchState = reachedCap
-      ? "failed_terminal"
-      : "failed_retryable";
-    const updated = await commitDispatchFailure(
+    // Phase Node-12 (#333): a dispatcher may surface
+    // `DispatchTerminalFailureError` to signal a structurally non-
+    // retryable failure (e.g. `applyAgentConfig` rejecting an empty
+    // hostname). Land in `failed_terminal` immediately so the operator
+    // is not forced to burn `APPLY_DISPATCH_MAX_ATTEMPTS` slots before
+    // settling.
+    const terminalNow = dispatchError instanceof DispatchTerminalFailureError;
+    const newState: DispatchState =
+      reachedCap || terminalNow ? "failed_terminal" : "failed_retryable";
+    const errorMessage = dispatchError?.message ?? "Unknown dispatch error";
+
+    // Phase Node-12 (#333) — Decision 3 / Acceptance #2:
+    //   MANAGER_DB gates every other dispatch on the row, so a DB
+    //   failure stops the row immediately. The remaining queued
+    //   dispatches stay queued on retryable so a retry of the DB
+    //   dispatch can advance them, or are cascaded to `failed_terminal`
+    //   when the DB failure itself is terminal.
+    //
+    //   For any post-DB dispatch (MANAGER_NOTIFY / external), a
+    //   failure must NOT block or terminalise unrelated dispatches.
+    //   The dispatch's own state records the failure; the executor
+    //   then advances to the next queued dispatch and runs it under
+    //   the same claim. Only after every queued dispatch has been
+    //   attempted is the row's aggregate status committed.
+    if (dispatch.kind === "MANAGER_DB") {
+      const updated = await commitDispatchFailure(
+        row,
+        correlationId,
+        inFlightIdx,
+        newState,
+        errorMessage,
+      );
+      if (!updated) {
+        throw new ApplyAttemptBusyError(
+          `Executor for attempt ${row.attemptId} lost its claim.`,
+        );
+      }
+      return updated;
+    }
+
+    const advanced = await commitDispatchFailureAndAdvance(
       row,
       correlationId,
       inFlightIdx,
       newState,
-      dispatchError?.message ?? "Unknown dispatch error",
+      errorMessage,
     );
-    if (!updated) {
+    if (!advanced) {
       throw new ApplyAttemptBusyError(
         `Executor for attempt ${row.attemptId} lost its claim.`,
       );
     }
-    return updated;
+    row = advanced.row;
+    if (advanced.completed) return row;
   }
   throw new Error("Executor loop exceeded its iteration cap.");
 }
@@ -761,7 +817,7 @@ async function runOneDispatch(
   dispatcher: ApplyDispatcher,
   draftReader: ManagerDraftReader,
 ): Promise<void> {
-  if (dispatch.kind === "MANAGER") {
+  if (dispatch.kind === "MANAGER_DB") {
     // 5a: read manager node fresh.
     const nodeNow = await draftReader.readNodeDraft(row.nodeId);
     // 5b: recompute fingerprint.
@@ -772,12 +828,26 @@ async function runOneDispatch(
         `Draft fingerprint drifted for attempt ${row.attemptId}.`,
       );
     }
-    // 5d: dispatch.
-    const nodeInput = buildNodeInputFromDraft(nodeNow);
-    await dispatcher.manager({
+    // 5d: dispatch the DB-write stage. Per Decision 4 (#333), the
+    // builder passes `draft` fields verbatim — delete intent
+    // (`draft = null`) is preserved and upstream removes the row.
+    const nodeInput = buildNodeInputForApplyDraft(nodeNow);
+    await dispatcher.managerDb({
       attemptId: row.attemptId,
       nodeId: row.nodeId,
       nodeInput,
+    });
+    return;
+  }
+  if (dispatch.kind === "MANAGER_NOTIFY") {
+    // No fingerprint guard on the notify stage: by the time we get
+    // here the DB stage has already succeeded and the manager DB is
+    // authoritative. Per Decision 5, `agentKeys: null` notifies every
+    // agent.
+    await dispatcher.managerNotify({
+      attemptId: row.attemptId,
+      nodeId: row.nodeId,
+      agentKeys: null,
     });
     return;
   }
@@ -823,9 +893,47 @@ async function writeStaleAndClear(
 }
 
 /**
+ * Compute the aggregate row status from a fully-settled dispatch list
+ * (no `queued` / `in_flight` rows remaining). Phase Node-12 (#333)
+ * Acceptance #2:
+ *
+ *   - All dispatches `succeeded` ⇒ row `succeeded`.
+ *   - At least one `failed_terminal` (with no retryable left) ⇒ row
+ *     `failed_terminal`. The terminal-blocking dispatch cannot be
+ *     advanced without operator intervention on the underlying cause
+ *     (e.g. fixing an empty hostname), so a fresh attempt is required.
+ *   - At least one `failed_retryable` (regardless of whether terminal
+ *     dispatches also exist) ⇒ row `failed_retryable`. Retry-as-far-as-
+ *     possible: the operator can still retry the retryable dispatches
+ *     individually on the same attempt. Once those dispatches settle
+ *     (no retryable remaining), the row falls through to the terminal
+ *     rule above on the final commit.
+ */
+function computeFinalRowStatus(
+  dispatches: PlannedDispatch[],
+): "succeeded" | "failed_retryable" | "failed_terminal" {
+  let hasRetryable = false;
+  let hasTerminal = false;
+  for (const d of dispatches) {
+    if (d.state === "failed_retryable") hasRetryable = true;
+    else if (d.state === "failed_terminal") hasTerminal = true;
+  }
+  if (hasRetryable) return "failed_retryable";
+  if (hasTerminal) return "failed_terminal";
+  return "succeeded";
+}
+
+/**
  * Guarded UPDATE: commit the current dispatch as succeeded, promote
  * the next queued dispatch (if any) to in_flight, or finalise the row
- * to succeeded.
+ * to its aggregate status (`succeeded` / `failed_retryable` /
+ * `failed_terminal` per `computeFinalRowStatus`).
+ *
+ * Phase Node-12 (#333): the row no longer hard-codes `succeeded` on
+ * the last dispatch — the row's terminal state mirrors whatever
+ * settled state the dispatch list as a whole reflects, so a successful
+ * retry of one dispatch on a row that still holds another failed
+ * dispatch correctly preserves the failed-row status.
  */
 async function commitDispatchSuccessAndAdvance(
   row: ApplyAttemptRow,
@@ -859,26 +967,153 @@ async function commitDispatchSuccessAndAdvance(
 
   return await withTransaction(async (client) => {
     if (completed) {
+      const finalStatus = computeFinalRowStatus(newDispatches);
       const retentionMs = getAttemptRetentionMs();
-      const result = await client.query(
-        `
+      // `failed_retryable` preserves the original `expires_at`
+      // (umbrella: original deadline survives a soft fail). Terminal
+      // states (`succeeded` / `failed_terminal`) rewrite to retention.
+      const sql =
+        finalStatus === "failed_retryable"
+          ? `
         UPDATE apply_attempts
-        SET status = 'succeeded',
+        SET status = 'failed_retryable',
+            executing_lock = NULL,
+            claim_started_at = NULL,
+            planned_dispatches = $2::jsonb
+        WHERE attempt_id = $1
+          AND executing_lock = $3
+        RETURNING attempt_id
+        `
+          : `
+        UPDATE apply_attempts
+        SET status = $4,
             executing_lock = NULL,
             claim_started_at = NULL,
             expires_at = NOW() + ($2 || ' milliseconds')::interval,
             planned_dispatches = $3::jsonb
         WHERE attempt_id = $1
-          AND executing_lock = $4
+          AND executing_lock = $5
         RETURNING attempt_id
-        `,
-        [
-          row.attemptId,
-          String(retentionMs),
-          JSON.stringify(newDispatches),
-          correlationId,
-        ],
-      );
+        `;
+      const params =
+        finalStatus === "failed_retryable"
+          ? [row.attemptId, JSON.stringify(newDispatches), correlationId]
+          : [
+              row.attemptId,
+              String(retentionMs),
+              JSON.stringify(newDispatches),
+              finalStatus,
+              correlationId,
+            ];
+      const result = await client.query(sql, params);
+      if (result.rowCount !== 1) return null;
+      const refreshed = await readApplyAttempt(row.attemptId, client);
+      if (!refreshed) return null;
+      return { row: refreshed, completed: true };
+    }
+    const result = await client.query(
+      `
+      UPDATE apply_attempts
+      SET planned_dispatches = $2::jsonb
+      WHERE attempt_id = $1
+        AND executing_lock = $3
+      RETURNING attempt_id
+      `,
+      [row.attemptId, JSON.stringify(newDispatches), correlationId],
+    );
+    if (result.rowCount !== 1) return null;
+    const refreshed = await readApplyAttempt(row.attemptId, client);
+    if (!refreshed) return null;
+    return { row: refreshed, completed: false };
+  });
+}
+
+/**
+ * Guarded UPDATE: record a per-dispatch failure on a post-`MANAGER_DB`
+ * dispatch and advance to the next `queued` dispatch (if any) under
+ * the same claim. Phase Node-12 (#333) Decision 3 / Acceptance #2:
+ *
+ *   After `MANAGER_DB` succeeds, a notify or external failure must not
+ *   block or terminalise unrelated dispatches. This helper marks the
+ *   failing dispatch with its own state / `lastError`, promotes the
+ *   next queued dispatch to `in_flight` so the executor loop runs it,
+ *   and only writes the row's aggregate status when every queued
+ *   dispatch has been attempted.
+ *
+ * Returns `null` on a guarded-UPDATE miss (lost claim). Returns
+ * `{ row, completed: false }` when another dispatch was promoted, or
+ * `{ row, completed: true }` when the row has been finalised.
+ */
+async function commitDispatchFailureAndAdvance(
+  row: ApplyAttemptRow,
+  correlationId: string,
+  inFlightIdx: number,
+  newDispatchState: DispatchState,
+  errorMessage: string,
+): Promise<{ row: ApplyAttemptRow; completed: boolean } | null> {
+  const newDispatches = row.plannedDispatches.map((d, i) => {
+    if (i === inFlightIdx) {
+      return { ...d, state: newDispatchState, lastError: errorMessage };
+    }
+    return d;
+  });
+  let nextIdx = -1;
+  for (let i = 0; i < newDispatches.length; i += 1) {
+    if (newDispatches[i].state === "queued") {
+      nextIdx = i;
+      break;
+    }
+  }
+  let completed = false;
+  if (nextIdx !== -1) {
+    newDispatches[nextIdx] = {
+      ...newDispatches[nextIdx],
+      state: "in_flight" as DispatchState,
+      attemptCount: newDispatches[nextIdx].attemptCount + 1,
+      lastError: null,
+    };
+  } else {
+    completed = true;
+  }
+
+  return await withTransaction(async (client) => {
+    if (completed) {
+      const finalStatus = computeFinalRowStatus(newDispatches);
+      const retentionMs = getAttemptRetentionMs();
+      const sql =
+        finalStatus === "failed_retryable"
+          ? `
+        UPDATE apply_attempts
+        SET status = 'failed_retryable',
+            executing_lock = NULL,
+            claim_started_at = NULL,
+            planned_dispatches = $2::jsonb
+        WHERE attempt_id = $1
+          AND executing_lock = $3
+        RETURNING attempt_id
+        `
+          : `
+        UPDATE apply_attempts
+        SET status = $4,
+            executing_lock = NULL,
+            claim_started_at = NULL,
+            expires_at = NOW() + ($2 || ' milliseconds')::interval,
+            planned_dispatches = $3::jsonb
+        WHERE attempt_id = $1
+          AND executing_lock = $5
+        RETURNING attempt_id
+        `;
+      const params =
+        finalStatus === "failed_retryable"
+          ? [row.attemptId, JSON.stringify(newDispatches), correlationId]
+          : [
+              row.attemptId,
+              String(retentionMs),
+              JSON.stringify(newDispatches),
+              finalStatus,
+              correlationId,
+            ];
+      const result = await client.query(sql, params);
       if (result.rowCount !== 1) return null;
       const refreshed = await readApplyAttempt(row.attemptId, client);
       if (!refreshed) return null;

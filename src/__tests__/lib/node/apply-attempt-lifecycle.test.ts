@@ -48,7 +48,7 @@ function persistedRow(
     planned_dispatches: [
       {
         dispatchId: "dd111111-1111-1111-1111-111111111111",
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -85,7 +85,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const dispatcher = {
-      manager: vi.fn(),
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
       external: vi.fn(),
     };
     const draftReader = { readNodeDraft: vi.fn() };
@@ -103,7 +104,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     // No executor and no claim transaction.
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockWithTransaction).not.toHaveBeenCalled();
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
     expect(dispatcher.external).not.toHaveBeenCalled();
     expect(draftReader.readNodeDraft).not.toHaveBeenCalled();
   });
@@ -126,7 +128,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
     const dispatcher = {
-      manager: vi.fn(),
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
       external: vi.fn(),
     };
     const draftReader = { readNodeDraft: vi.fn() };
@@ -145,7 +148,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     // dispatcher call; no draft reader call.
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockWithTransaction).not.toHaveBeenCalled();
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
     expect(dispatcher.external).not.toHaveBeenCalled();
     expect(draftReader.readNodeDraft).not.toHaveBeenCalled();
   });
@@ -177,7 +181,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
     const dispatcher = {
-      manager: vi.fn(),
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
       external: vi.fn(),
     };
     const draftReader = { readNodeDraft: vi.fn() };
@@ -194,7 +199,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     ).rejects.toThrow(/expired/);
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockWithTransaction).not.toHaveBeenCalled();
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
     expect(dispatcher.external).not.toHaveBeenCalled();
     expect(draftReader.readNodeDraft).not.toHaveBeenCalled();
   });
@@ -215,7 +221,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const dispatcher = {
-      manager: vi.fn(),
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
       external: vi.fn(),
     };
     const draftReader = { readNodeDraft: vi.fn() };
@@ -233,7 +240,8 @@ describe("_internal_confirmApplyAttempt — failed_retryable is idempotent", () 
     // the failed_retryable branch.
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockWithTransaction).not.toHaveBeenCalled();
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
   });
 });
 
@@ -265,7 +273,11 @@ describe("_internal_confirmApplyAttempt — step 3 fingerprint hint", () => {
     await _internal_confirmApplyAttempt({
       session: makeSession(),
       attemptId: ATTEMPT_ID,
-      dispatcher: { manager: vi.fn(), external: vi.fn() },
+      dispatcher: {
+        managerDb: vi.fn(),
+        managerNotify: vi.fn(),
+        external: vi.fn(),
+      },
       draftReader: { readNodeDraft: vi.fn() },
       // Hint that does not match the all-zeros persisted fingerprint.
       expectedDraftFingerprint: "deadbeef",
@@ -300,7 +312,11 @@ describe("_internal_confirmApplyAttempt — step 3 fingerprint hint", () => {
     await _internal_confirmApplyAttempt({
       session: makeSession(),
       attemptId: ATTEMPT_ID,
-      dispatcher: { manager: vi.fn(), external: vi.fn() },
+      dispatcher: {
+        managerDb: vi.fn(),
+        managerNotify: vi.fn(),
+        external: vi.fn(),
+      },
       draftReader: { readNodeDraft: vi.fn() },
       expectedDraftFingerprint: expectedHex,
     });
@@ -347,7 +363,11 @@ describe("Atomic claim SQL — predicates", () => {
       session: makeSession(),
       attemptId: ATTEMPT_ID,
       dispatchId: RETRY_DISPATCH_ID,
-      dispatcher: { manager: vi.fn(), external: vi.fn() },
+      dispatcher: {
+        managerDb: vi.fn(),
+        managerNotify: vi.fn(),
+        external: vi.fn(),
+      },
       draftReader: { readNodeDraft: vi.fn() },
     });
 
@@ -396,7 +416,11 @@ describe("Atomic claim SQL — predicates", () => {
       _internal_confirmApplyAttempt({
         session: makeSession(),
         attemptId: ATTEMPT_ID,
-        dispatcher: { manager: vi.fn(), external: vi.fn() },
+        dispatcher: {
+          managerDb: vi.fn(),
+          managerNotify: vi.fn(),
+          external: vi.fn(),
+        },
         draftReader: { readNodeDraft: vi.fn() },
       }),
     ).rejects.toThrow();
@@ -450,7 +474,11 @@ describe("resolveLostClaim — SQL-authoritative expiry", () => {
       _internal_confirmApplyAttempt({
         session: makeSession(),
         attemptId: ATTEMPT_ID,
-        dispatcher: { manager: vi.fn(), external: vi.fn() },
+        dispatcher: {
+          managerDb: vi.fn(),
+          managerNotify: vi.fn(),
+          external: vi.fn(),
+        },
         draftReader: { readNodeDraft: vi.fn() },
       }),
     ).rejects.toThrow(/expired/);
@@ -475,7 +503,7 @@ describe("writeStaleAndClear — loser-write rejection", () => {
           planned_dispatches: [
             {
               dispatchId: "dd111111-1111-1111-1111-111111111111",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "queued",
               attemptCount: 0,
               lastError: null,
@@ -505,7 +533,7 @@ describe("writeStaleAndClear — loser-write rejection", () => {
                 planned_dispatches: [
                   {
                     dispatchId: "dd111111-1111-1111-1111-111111111111",
-                    kind: "MANAGER",
+                    kind: "MANAGER_DB",
                     state: "queued",
                     attemptCount: 0,
                     lastError: null,
@@ -525,7 +553,7 @@ describe("writeStaleAndClear — loser-write rejection", () => {
                 planned_dispatches: [
                   {
                     dispatchId: "dd111111-1111-1111-1111-111111111111",
-                    kind: "MANAGER",
+                    kind: "MANAGER_DB",
                     state: "in_flight",
                     attemptCount: 1,
                     lastError: null,
@@ -555,7 +583,11 @@ describe("writeStaleAndClear — loser-write rejection", () => {
     const { _internal_confirmApplyAttempt } = await import(
       "@/lib/node/apply-attempt-lifecycle"
     );
-    const dispatcher = { manager: vi.fn(), external: vi.fn() };
+    const dispatcher = {
+      managerDb: vi.fn(),
+      managerNotify: vi.fn(),
+      external: vi.fn(),
+    };
     await expect(
       _internal_confirmApplyAttempt({
         session: makeSession(),
@@ -569,6 +601,486 @@ describe("writeStaleAndClear — loser-write rejection", () => {
       }),
     ).rejects.toThrow(/lost its claim/);
     // Manager dispatcher never invoked — drift caught at 5b before 5d.
-    expect(dispatcher.manager).not.toHaveBeenCalled();
+    expect(dispatcher.managerDb).not.toHaveBeenCalled();
+    expect(dispatcher.managerNotify).not.toHaveBeenCalled();
+  });
+});
+
+describe("runExecutor — post-DB failures advance to remaining dispatches (#333, Decision 3 / Acceptance #2)", () => {
+  // Build a Node snapshot whose computed fingerprint we can pin into
+  // the persisted row so step 5b matches and the executor proceeds
+  // through MANAGER_DB → MANAGER_NOTIFY → external. These tests use a
+  // minimal empty Node so the fingerprint is stable across them.
+  const NODE_SNAPSHOT = {
+    id: "node-1",
+    name: "n",
+    nameDraft: null,
+    profile: null,
+    profileDraft: null,
+    agents: [],
+    externalServices: [],
+  };
+  const MANAGER_DB_DISPATCH_ID = "d0000001-0000-0000-0000-000000000001";
+  const MANAGER_NOTIFY_DISPATCH_ID = "d0000002-0000-0000-0000-000000000002";
+  const DATA_STORE_DISPATCH_ID = "d0000003-0000-0000-0000-000000000003";
+  const TI_CONTAINER_DISPATCH_ID = "d0000004-0000-0000-0000-000000000004";
+
+  async function planThreeDispatches() {
+    const { computeDraftFingerprint } = await import(
+      "@/lib/node/apply-attempt-lifecycle"
+    );
+    const fp = computeDraftFingerprint(NODE_SNAPSHOT).bytes;
+    return {
+      fp,
+      plan: [
+        {
+          dispatchId: MANAGER_DB_DISPATCH_ID,
+          kind: "MANAGER_DB",
+          state: "queued",
+          attemptCount: 0,
+          lastError: null,
+        },
+        {
+          dispatchId: MANAGER_NOTIFY_DISPATCH_ID,
+          kind: "MANAGER_NOTIFY",
+          state: "queued",
+          attemptCount: 0,
+          lastError: null,
+        },
+        {
+          dispatchId: DATA_STORE_DISPATCH_ID,
+          kind: "DATA_STORE",
+          state: "queued",
+          attemptCount: 0,
+          lastError: null,
+          new: "{ds}",
+        },
+      ] as const,
+    };
+  }
+
+  it("retryable notify failure does not block the external dispatch — external is still attempted; row settles failed_retryable", async () => {
+    const { fp, plan } = await planThreeDispatches();
+
+    // Step-1 read: pending row with the three-dispatch plan.
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        persistedRow({
+          status: "pending",
+          draft_fingerprint: fp,
+          planned_dispatches: plan,
+        }),
+      ],
+      rowCount: 1,
+    });
+
+    const txQueries: Array<{ rows: unknown[]; rowCount: number }> = [];
+    const txQuery = vi.fn(
+      async () => txQueries.shift() ?? { rows: [], rowCount: 0 },
+    );
+
+    let txCallIdx = 0;
+    mockWithTransaction.mockImplementation(
+      async (fn: (c: unknown) => Promise<unknown>) => {
+        txCallIdx += 1;
+        if (txCallIdx === 1) {
+          // tryClaim: SELECT + UPDATE (claim 1 row) + final SELECT
+          // (returns MANAGER_DB in_flight, others queued).
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "pending",
+                draft_fingerprint: fp,
+                planned_dispatches: plan,
+              }),
+            ],
+            rowCount: 1,
+          });
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "executing",
+                draft_fingerprint: fp,
+                executing_lock: "lock-1",
+                planned_dispatches: [
+                  { ...plan[0], state: "in_flight", attemptCount: 1 },
+                  plan[1],
+                  plan[2],
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        } else if (txCallIdx === 2) {
+          // commitDispatchSuccessAndAdvance after MANAGER_DB success:
+          // UPDATE planned_dispatches + readApplyAttempt SELECT.
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "executing",
+                draft_fingerprint: fp,
+                executing_lock: "lock-1",
+                planned_dispatches: [
+                  { ...plan[0], state: "succeeded", attemptCount: 1 },
+                  { ...plan[1], state: "in_flight", attemptCount: 1 },
+                  plan[2],
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        } else if (txCallIdx === 3) {
+          // commitDispatchFailureAndAdvance after MANAGER_NOTIFY failure
+          // (the new behaviour): the executor records notify
+          // failed_retryable but advances DATA_STORE to in_flight under
+          // the same claim — externals must NOT be blocked by notify.
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "executing",
+                draft_fingerprint: fp,
+                executing_lock: "lock-1",
+                planned_dispatches: [
+                  { ...plan[0], state: "succeeded", attemptCount: 1 },
+                  {
+                    ...plan[1],
+                    state: "failed_retryable",
+                    attemptCount: 1,
+                    lastError: "notify boom",
+                  },
+                  { ...plan[2], state: "in_flight", attemptCount: 1 },
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        } else if (txCallIdx === 4) {
+          // commitDispatchSuccessAndAdvance after DATA_STORE success:
+          // no queued left → finalise row to failed_retryable (notify
+          // is still failed_retryable on the row).
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "failed_retryable",
+                draft_fingerprint: fp,
+                planned_dispatches: [
+                  { ...plan[0], state: "succeeded", attemptCount: 1 },
+                  {
+                    ...plan[1],
+                    state: "failed_retryable",
+                    attemptCount: 1,
+                    lastError: "notify boom",
+                  },
+                  { ...plan[2], state: "succeeded", attemptCount: 1 },
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        }
+        return fn({ query: txQuery });
+      },
+    );
+
+    const dispatcher = {
+      managerDb: vi.fn().mockResolvedValue(undefined),
+      managerNotify: vi.fn().mockRejectedValue(new Error("notify boom")),
+      external: vi.fn().mockResolvedValue(undefined),
+    };
+    const { _internal_confirmApplyAttempt } = await import(
+      "@/lib/node/apply-attempt-lifecycle"
+    );
+    const result = await _internal_confirmApplyAttempt({
+      session: makeSession(),
+      attemptId: ATTEMPT_ID,
+      dispatcher,
+      draftReader: {
+        async readNodeDraft() {
+          return NODE_SNAPSHOT;
+        },
+      },
+    });
+
+    expect(dispatcher.managerDb).toHaveBeenCalledTimes(1);
+    expect(dispatcher.managerNotify).toHaveBeenCalledTimes(1);
+    // Acceptance #2: the external dispatch is attempted even though
+    // notify failed retryably — the post-DB stages are independent.
+    expect(dispatcher.external).toHaveBeenCalledTimes(1);
+
+    expect(result.status).toBe("failed_retryable");
+    expect(result.plannedDispatches[0].state).toBe("succeeded");
+    expect(result.plannedDispatches[1].state).toBe("failed_retryable");
+    expect(result.plannedDispatches[2].state).toBe("succeeded");
+
+    // Finalising UPDATE (tx 4): writes failed_retryable status,
+    // preserves expires_at (no retention rewrite). This guards
+    // against a regression to the prior "force status='succeeded' on
+    // last commit" path.
+    const updateCalls: string[] = [];
+    for (const call of txQuery.mock.calls) {
+      const sql = (call as unknown[])[0];
+      if (typeof sql === "string" && sql.includes("UPDATE apply_attempts")) {
+        updateCalls.push(sql);
+      }
+    }
+    const finalUpdateSql = updateCalls[updateCalls.length - 1];
+    expect(finalUpdateSql).toMatch(/SET status = 'failed_retryable'/);
+    expect(finalUpdateSql).not.toMatch(/SET status = 'succeeded'/);
+  });
+
+  it("terminal notify failure (e.g. hostname-empty) does not cascade unrelated externals as if their own dispatch failed — externals still run and keep their observed state", async () => {
+    const { fp, plan } = await planThreeDispatches();
+    // Two-external plan to exercise per-dispatch state isolation
+    // across multiple unrelated externals.
+    const planWithTwoExternals = [
+      plan[0],
+      plan[1],
+      plan[2],
+      {
+        dispatchId: TI_CONTAINER_DISPATCH_ID,
+        kind: "TI_CONTAINER",
+        state: "queued",
+        attemptCount: 0,
+        lastError: null,
+        new: "{ti}",
+      },
+    ];
+
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        persistedRow({
+          status: "pending",
+          draft_fingerprint: fp,
+          planned_dispatches: planWithTwoExternals,
+        }),
+      ],
+      rowCount: 1,
+    });
+
+    const txQueries: Array<{ rows: unknown[]; rowCount: number }> = [];
+    const txQuery = vi.fn(
+      async () => txQueries.shift() ?? { rows: [], rowCount: 0 },
+    );
+
+    let txCallIdx = 0;
+    mockWithTransaction.mockImplementation(
+      async (fn: (c: unknown) => Promise<unknown>) => {
+        txCallIdx += 1;
+        if (txCallIdx === 1) {
+          // tryClaim
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "pending",
+                draft_fingerprint: fp,
+                planned_dispatches: planWithTwoExternals,
+              }),
+            ],
+            rowCount: 1,
+          });
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "executing",
+                draft_fingerprint: fp,
+                executing_lock: "lock-1",
+                planned_dispatches: [
+                  {
+                    ...planWithTwoExternals[0],
+                    state: "in_flight",
+                    attemptCount: 1,
+                  },
+                  planWithTwoExternals[1],
+                  planWithTwoExternals[2],
+                  planWithTwoExternals[3],
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        } else if (txCallIdx === 2) {
+          // After MANAGER_DB success → advance MANAGER_NOTIFY
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "executing",
+                draft_fingerprint: fp,
+                executing_lock: "lock-1",
+                planned_dispatches: [
+                  {
+                    ...planWithTwoExternals[0],
+                    state: "succeeded",
+                    attemptCount: 1,
+                  },
+                  {
+                    ...planWithTwoExternals[1],
+                    state: "in_flight",
+                    attemptCount: 1,
+                  },
+                  planWithTwoExternals[2],
+                  planWithTwoExternals[3],
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        } else if (txCallIdx === 3) {
+          // After MANAGER_NOTIFY terminal failure (hostname-empty):
+          // dispatch lands in failed_terminal but DATA_STORE is
+          // advanced to in_flight — externals are not cascaded as
+          // failed_terminal.
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "executing",
+                draft_fingerprint: fp,
+                executing_lock: "lock-1",
+                planned_dispatches: [
+                  {
+                    ...planWithTwoExternals[0],
+                    state: "succeeded",
+                    attemptCount: 1,
+                  },
+                  {
+                    ...planWithTwoExternals[1],
+                    state: "failed_terminal",
+                    attemptCount: 1,
+                    lastError: "hostname empty",
+                  },
+                  {
+                    ...planWithTwoExternals[2],
+                    state: "in_flight",
+                    attemptCount: 1,
+                  },
+                  planWithTwoExternals[3],
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        } else if (txCallIdx === 4) {
+          // After DATA_STORE success → TI_CONTAINER in_flight.
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "executing",
+                draft_fingerprint: fp,
+                executing_lock: "lock-1",
+                planned_dispatches: [
+                  {
+                    ...planWithTwoExternals[0],
+                    state: "succeeded",
+                    attemptCount: 1,
+                  },
+                  {
+                    ...planWithTwoExternals[1],
+                    state: "failed_terminal",
+                    attemptCount: 1,
+                    lastError: "hostname empty",
+                  },
+                  {
+                    ...planWithTwoExternals[2],
+                    state: "succeeded",
+                    attemptCount: 1,
+                  },
+                  {
+                    ...planWithTwoExternals[3],
+                    state: "in_flight",
+                    attemptCount: 1,
+                  },
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        } else if (txCallIdx === 5) {
+          // After TI_CONTAINER success → no queued left, row finalises
+          // as failed_terminal (notify is terminal, no retryable left).
+          txQueries.push({ rows: [], rowCount: 1 });
+          txQueries.push({
+            rows: [
+              persistedRow({
+                status: "failed_terminal",
+                draft_fingerprint: fp,
+                planned_dispatches: [
+                  {
+                    ...planWithTwoExternals[0],
+                    state: "succeeded",
+                    attemptCount: 1,
+                  },
+                  {
+                    ...planWithTwoExternals[1],
+                    state: "failed_terminal",
+                    attemptCount: 1,
+                    lastError: "hostname empty",
+                  },
+                  {
+                    ...planWithTwoExternals[2],
+                    state: "succeeded",
+                    attemptCount: 1,
+                  },
+                  {
+                    ...planWithTwoExternals[3],
+                    state: "succeeded",
+                    attemptCount: 1,
+                  },
+                ],
+              }),
+            ],
+            rowCount: 1,
+          });
+        }
+        return fn({ query: txQuery });
+      },
+    );
+
+    const { DispatchTerminalFailureError } = await import("@/lib/node/errors");
+    const dispatcher = {
+      managerDb: vi.fn().mockResolvedValue(undefined),
+      managerNotify: vi
+        .fn()
+        .mockRejectedValue(new DispatchTerminalFailureError("hostname empty")),
+      external: vi.fn().mockResolvedValue(undefined),
+    };
+    const { _internal_confirmApplyAttempt } = await import(
+      "@/lib/node/apply-attempt-lifecycle"
+    );
+    const result = await _internal_confirmApplyAttempt({
+      session: makeSession(),
+      attemptId: ATTEMPT_ID,
+      dispatcher,
+      draftReader: {
+        async readNodeDraft() {
+          return NODE_SNAPSHOT;
+        },
+      },
+    });
+
+    expect(dispatcher.managerDb).toHaveBeenCalledTimes(1);
+    expect(dispatcher.managerNotify).toHaveBeenCalledTimes(1);
+    // Both externals were actually attempted — the prior cascade-on-
+    // terminal behaviour would have marked them failed_terminal with
+    // the notify error without dispatching, which is exactly the
+    // regression Reviewer Round 1 flagged.
+    expect(dispatcher.external).toHaveBeenCalledTimes(2);
+
+    expect(result.status).toBe("failed_terminal");
+    expect(result.plannedDispatches[0].state).toBe("succeeded");
+    expect(result.plannedDispatches[1].state).toBe("failed_terminal");
+    expect(result.plannedDispatches[1].lastError).toBe("hostname empty");
+    expect(result.plannedDispatches[2].state).toBe("succeeded");
+    expect(result.plannedDispatches[3].state).toBe("succeeded");
+    // Externals carry their own (success) lastError, not notify's
+    // terminal error.
+    expect(result.plannedDispatches[2].lastError).toBe(null);
+    expect(result.plannedDispatches[3].lastError).toBe(null);
   });
 });

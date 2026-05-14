@@ -202,34 +202,51 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
     workerUsername,
     workerPassword,
   }) => {
-    // Manager dispatch succeeds on the very first call.
+    // Manager dispatches succeed on the very first call. Phase Node-12
+    // (#333) splits the manager stage into `MANAGER_DB` (atomic
+    // `applyNodeDraft` write) and `MANAGER_NOTIFY` (`applyAgentConfig`
+    // agent notify), so both mutations need stubs.
     await stubSession.registerStub({
-      operation: "applyNode",
-      response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+      operation: "applyNodeDraft",
+      response: {
+        kind: "fixture",
+        fixture: "node/applyNodeDraft.success.json",
+      },
+    });
+    await stubSession.registerStub({
+      operation: "applyAgentConfig",
+      response: {
+        kind: "fixture",
+        fixture: "node/applyAgentConfig.success.json",
+      },
     });
 
     await signInAndWait(page, workerUsername, workerPassword);
     await navigateToDetail(page, NODE_ID);
     await openApplyPreviewModal(page);
 
-    // Planned dispatches: one MANAGER row (alpha-node has no external
-    // drafts in the seed fixture).
+    // Planned dispatches: two manager rows (`MANAGER_DB` +
+    // `MANAGER_NOTIFY`). Alpha-node has no external drafts in the seed
+    // fixture, so no external dispatches are planned.
     await expect(page.getByTestId("apply-preview-body")).toBeVisible();
     const dispatches = page.locator(
       'li[data-testid^="apply-preview-dispatch-"]',
     );
-    await expect(dispatches).toHaveCount(1);
+    await expect(dispatches).toHaveCount(2);
 
-    // Click Apply → confirm runs the manager dispatch via mock applyNode.
+    // Click Apply → confirm runs the manager DB and notify dispatches
+    // via the mock applyNodeDraft + applyAgentConfig mutations.
     await page.getByTestId("apply-preview-apply").click();
 
     // Modal eventually transitions to the executed → succeeded heading.
-    // Use the dispatch row's data-state attribute as a deterministic
-    // signal: `confirmApplyAttempt` returns the row with the manager
-    // dispatch in `succeeded` state, which the modal projects onto the
-    // body.
-    const managerRow = dispatches.first();
-    await expect(managerRow).toHaveAttribute("data-state", "succeeded", {
+    // Both manager rows must reach `succeeded` — the lifecycle's
+    // sequential-advance contract guarantees notify only runs after DB
+    // succeeds, and `confirmApplyAttempt` only returns once every
+    // queued dispatch has settled.
+    await expect(dispatches.nth(0)).toHaveAttribute("data-state", "succeeded", {
+      timeout: 30_000,
+    });
+    await expect(dispatches.nth(1)).toHaveAttribute("data-state", "succeeded", {
       timeout: 30_000,
     });
     // No Retry button is rendered when every dispatch settled
@@ -244,14 +261,23 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
     workerUsername,
     workerPassword,
   }) => {
-    // First confirm: applyNode returns GraphQL errors. The lifecycle's
-    // runOneDispatch catches the error and marks the dispatch
-    // failed_retryable (cap not yet reached).
+    // First confirm: applyNodeDraft returns GraphQL errors. The
+    // lifecycle's runOneDispatch catches the error and marks the
+    // `MANAGER_DB` dispatch `failed_retryable` (cap not yet reached);
+    // the `MANAGER_NOTIFY` dispatch stays queued because sequential
+    // advance stops on failure.
     await stubSession.registerStub({
-      operation: "applyNode",
+      operation: "applyNodeDraft",
       response: {
         kind: "errors",
         errors: [{ message: "transient manager dispatch failure" }],
+      },
+    });
+    await stubSession.registerStub({
+      operation: "applyAgentConfig",
+      response: {
+        kind: "fixture",
+        fixture: "node/applyAgentConfig.success.json",
       },
     });
 
@@ -263,39 +289,54 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
     const dispatches = page.locator(
       'li[data-testid^="apply-preview-dispatch-"]',
     );
-    await expect(dispatches).toHaveCount(1);
+    await expect(dispatches).toHaveCount(2);
 
-    // Confirm: drives the row into failed_retryable via the errors stub.
+    // Confirm: drives the manager-DB row into failed_retryable via the
+    // errors stub.
     await page.getByTestId("apply-preview-apply").click();
-    const row = dispatches.first();
-    await expect(row).toHaveAttribute("data-state", "failed_retryable", {
-      timeout: 30_000,
-    });
+    const managerDbRow = dispatches.nth(0);
+    const managerNotifyRow = dispatches.nth(1);
+    await expect(managerDbRow).toHaveAttribute(
+      "data-state",
+      "failed_retryable",
+      { timeout: 30_000 },
+    );
+    // The notify row never ran — sequential advance stops on first
+    // failure.
+    await expect(managerNotifyRow).toHaveAttribute("data-state", "queued");
 
-    // Retry button is visible on the failed_retryable row.
+    // Retry button is visible only on the failed_retryable row.
     const retryButton = page.locator('[data-testid^="apply-preview-retry-"]');
     await expect(retryButton).toHaveCount(1);
 
-    // Re-stub applyNode to succeed for the retry call. Specificity-first
-    // resolution treats a later catch-all as last-registered-wins, so
-    // this overrides the failure stub for subsequent calls.
+    // Re-stub applyNodeDraft to succeed for the retry call. Specificity-
+    // first resolution treats a later catch-all as last-registered-wins,
+    // so this overrides the failure stub for subsequent calls.
     await stubSession.registerStub({
-      operation: "applyNode",
-      response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+      operation: "applyNodeDraft",
+      response: {
+        kind: "fixture",
+        fixture: "node/applyNodeDraft.success.json",
+      },
     });
 
     await retryButton.click();
-    await expect(row).toHaveAttribute("data-state", "succeeded", {
+    // Both manager rows settle to `succeeded` once the retried DB write
+    // clears: sequential advance promotes the notify row.
+    await expect(managerDbRow).toHaveAttribute("data-state", "succeeded", {
       timeout: 30_000,
     });
-    // Retry button is no longer rendered once the row has settled
+    await expect(managerNotifyRow).toHaveAttribute("data-state", "succeeded", {
+      timeout: 30_000,
+    });
+    // Retry button is no longer rendered once every row has settled
     // successfully.
     await expect(
       page.locator('[data-testid^="apply-preview-retry-"]'),
     ).toHaveCount(0);
   });
 
-  test("multi-service retry path: manager succeeds → giganto fails retryable → retry resumes tivan", async ({
+  test("multi-service retry path: manager succeeds → giganto fails retryable → tivan still runs in parallel (#333) → retry giganto", async ({
     page,
     workerUsername,
     workerPassword,
@@ -309,8 +350,18 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
       },
     });
     await stubSession.registerStub({
-      operation: "applyNode",
-      response: { kind: "fixture", fixture: "node/applyNode.success.json" },
+      operation: "applyNodeDraft",
+      response: {
+        kind: "fixture",
+        fixture: "node/applyNodeDraft.success.json",
+      },
+    });
+    await stubSession.registerStub({
+      operation: "applyAgentConfig",
+      response: {
+        kind: "fixture",
+        fixture: "node/applyAgentConfig.success.json",
+      },
     });
 
     await gigantoSession.registerStub({
@@ -353,21 +404,33 @@ test.describe("Node detail apply preview save→preview→confirm→retry", () =
     const dispatches = page.locator(
       'li[data-testid^="apply-preview-dispatch-"]',
     );
-    await expect(dispatches).toHaveCount(3);
+    // Phase Node-12 (#333) split the v1 single `MANAGER` dispatch into
+    // `MANAGER_DB` + `MANAGER_NOTIFY`, so the plan now carries four
+    // rows (DB, notify, Giganto, Tivan) instead of three.
+    await expect(dispatches).toHaveCount(4);
 
-    const managerRow = dispatches.nth(0);
-    const gigantoRow = dispatches.nth(1);
-    const tivanRow = dispatches.nth(2);
+    const managerDbRow = dispatches.nth(0);
+    const managerNotifyRow = dispatches.nth(1);
+    const gigantoRow = dispatches.nth(2);
+    const tivanRow = dispatches.nth(3);
 
     await page.getByTestId("apply-preview-apply").click();
 
-    await expect(managerRow).toHaveAttribute("data-state", "succeeded", {
+    await expect(managerDbRow).toHaveAttribute("data-state", "succeeded", {
+      timeout: 30_000,
+    });
+    await expect(managerNotifyRow).toHaveAttribute("data-state", "succeeded", {
       timeout: 30_000,
     });
     await expect(gigantoRow).toHaveAttribute("data-state", "failed_retryable", {
       timeout: 30_000,
     });
-    await expect(tivanRow).toHaveAttribute("data-state", "queued", {
+    // Phase Node-12 (#333) makes post-DB dispatches independent: a
+    // failing external no longer blocks the others, so tivan is
+    // attempted in parallel with giganto and (per its stubbed
+    // success) settles `succeeded` before the operator retries
+    // giganto.
+    await expect(tivanRow).toHaveAttribute("data-state", "succeeded", {
       timeout: 30_000,
     });
 

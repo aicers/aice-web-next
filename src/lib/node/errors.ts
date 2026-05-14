@@ -150,3 +150,41 @@ export class DispatchNotRetryableError extends Error {
     this.name = "DispatchNotRetryableError";
   }
 }
+
+/**
+ * Thrown by a dispatcher to signal that the failure is structurally
+ * non-retryable and the lifecycle should land the dispatch in
+ * `failed_terminal` immediately, regardless of `APPLY_DISPATCH_MAX_ATTEMPTS`.
+ *
+ * Example: `applyAgentConfig` returns an error when the targeted node's
+ * `hostname` is empty (Phase Node-12, #333) — no retry will succeed
+ * until the operator edits the node's profile, so consuming retry slots
+ * first wastes operator time and obscures the underlying cause.
+ */
+export class DispatchTerminalFailureError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "DispatchTerminalFailureError";
+  }
+}
+
+/**
+ * Thrown by `applyAgentConfig` dispatchers when one or more agents in
+ * the result's `attempts[]` reported `succeeded: false`. The
+ * `failedAgentKeys` array carries the bare agent keys whose notify
+ * failed, so the lifecycle can record them in `lastError`.
+ *
+ * This failure is retryable: agent-side notify is idempotent per the
+ * upstream contract, so a retry re-calls `applyAgentConfig` and the
+ * already-succeeded agents are re-notified harmlessly.
+ */
+export class AgentNotifyPartialFailureError extends Error {
+  readonly failedAgentKeys: string[];
+  constructor(failedAgentKeys: string[]) {
+    super(
+      `applyAgentConfig reported failures for ${failedAgentKeys.length} agent(s): ${failedAgentKeys.join(", ")}`,
+    );
+    this.name = "AgentNotifyPartialFailureError";
+    this.failedAgentKeys = failedAgentKeys;
+  }
+}

@@ -88,6 +88,12 @@ export const UPDATE_NODE_DRAFT_MUTATION = loadDocument(
 );
 export const REMOVE_NODES_MUTATION = loadDocument("remove-nodes.graphql");
 export const APPLY_NODE_MUTATION = loadDocument("apply-node.graphql");
+export const APPLY_NODE_DRAFT_MUTATION = loadDocument(
+  "apply-node-draft.graphql",
+);
+export const APPLY_AGENT_CONFIG_MUTATION = loadDocument(
+  "apply-agent-config.graphql",
+);
 export const NODE_REBOOT_MUTATION = loadDocument("node-reboot.graphql");
 export const NODE_SHUTDOWN_MUTATION = loadDocument("node-shutdown.graphql");
 

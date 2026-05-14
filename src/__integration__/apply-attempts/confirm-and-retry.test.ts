@@ -180,6 +180,7 @@ async function insertAttempt(
 interface OutboundEvent {
   channel:
     | "manager-applyNode"
+    | "manager-applyAgentConfig"
     | "manager-readNode"
     | "giganto-config"
     | "giganto-update";
@@ -190,15 +191,22 @@ function recordOutbound(
   events: OutboundEvent[],
   snap: NodeDraftSnapshot,
 ): void {
-  // The first manager call inside the executor is step 5a's
-  // canonical-node read (NODE_DETAIL_QUERY). The second is the
-  // applyNode mutation. We distinguish them by inspecting whether
-  // the variables contain a `node` key.
+  // The mock distinguishes between three manager-side GraphQL calls:
+  // canonical-node reads (NODE_DETAIL_QUERY, identified by a plain
+  // `{ id }` variables shape), the `applyNodeDraft` mutation (`{ id,
+  // node }`), and the `applyAgentConfig` mutation (`{ nodeId,
+  // agentKeys }`). The `manager-applyNode` channel name is preserved
+  // for the DB-promotion mutation so existing test assertions on
+  // step-5d ordering continue to apply.
   mockGraphqlRequest.mockImplementation(async (_doc, vars) => {
     const v = (vars ?? {}) as Record<string, unknown>;
     if ("node" in v) {
       events.push({ channel: "manager-applyNode" });
-      return { applyNode: "node-1" };
+      return { applyNodeDraft: { id: "node-1" } };
+    }
+    if ("agentKeys" in v) {
+      events.push({ channel: "manager-applyAgentConfig" });
+      return { applyAgentConfig: { attempts: [], skipped: [] } };
     }
     events.push({ channel: "manager-readNode" });
     return nodePayload(snap);
@@ -251,7 +259,7 @@ describe("confirmApplyAttempt — apply fan-out order", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -295,7 +303,7 @@ describe("retry safety — old fresh, new frozen", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -386,8 +394,8 @@ describe("retry safety — old fresh, new frozen", () => {
   });
 });
 
-describe("partial failure + retry recovery — sequential-advance contract", () => {
-  it("Giganto fails once, retry succeeds, Tivan advances under the resume rule, row settles to succeeded", async () => {
+describe("partial failure + retry recovery — post-DB dispatch independence (#333)", () => {
+  it("Giganto fails once but Tivan still runs in parallel; retry of Giganto succeeds, row settles to succeeded with one node.apply audit", async () => {
     const node = snapshot({
       externalServices: [
         {
@@ -410,7 +418,7 @@ describe("partial failure + retry recovery — sequential-advance contract", () 
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -456,13 +464,22 @@ describe("partial failure + retry recovery — sequential-advance contract", () 
     );
     const first = await confirmApplyAttempt({ attemptId });
     expect(first.status).toBe("failed_retryable");
-    // Tivan must NOT have run yet — sequential-advance stops on the
-    // first failure.
-    expect(mockTivanClient).not.toHaveBeenCalled();
+    // Phase Node-12 (#333) makes post-DB dispatches independent: a
+    // failing external no longer blocks the others, so Tivan is
+    // dispatched in parallel with Giganto and (per its success
+    // stub) settles `succeeded` on the first confirm. The row's
+    // aggregate status is still `failed_retryable` because Giganto
+    // remains retryable.
+    const tivanUpdateCallsFirst = mockTivanClient.mock.calls.filter(
+      (c) => c[1] !== undefined,
+    );
+    expect(tivanUpdateCallsFirst).toHaveLength(1);
 
     const retried = await retryDispatch({ attemptId, dispatchId: dsId });
     expect(retried.status).toBe("succeeded");
-    // Tivan ran once after the resumed Giganto succeeded.
+    // Tivan ran exactly once across both calls — the retry only
+    // resumes Giganto; it does not re-dispatch the externals that
+    // already succeeded.
     const tivanUpdateCalls = mockTivanClient.mock.calls.filter(
       (c) => c[1] !== undefined,
     );
@@ -490,7 +507,7 @@ describe("stale-plan abort — pre-claim path", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -546,7 +563,7 @@ describe("node.apply audit — persisted once-only emission", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -652,7 +669,7 @@ describe("wrapper-level node-scope recheck — round 2 acceptance", () => {
       const dispatches: PlannedDispatch[] = [
         {
           dispatchId: randomUUID(),
-          kind: "MANAGER",
+          kind: "MANAGER_DB",
           state: "succeeded",
           attemptCount: 1,
           lastError: null,
@@ -698,7 +715,11 @@ describe("wrapper-level node-scope recheck — round 2 acceptance", () => {
         const v = (vars ?? {}) as Record<string, unknown>;
         if ("node" in v) {
           events.push({ channel: "manager-applyNode" });
-          return { applyNode: "node-1" };
+          return { applyNodeDraft: { id: "node-1" } };
+        }
+        if ("agentKeys" in v) {
+          events.push({ channel: "manager-applyAgentConfig" });
+          return { applyAgentConfig: { attempts: [], skipped: [] } };
         }
         events.push({ channel: "manager-readNode" });
         return nodePayload(node);
@@ -747,7 +768,7 @@ describe("audit-emission recovery — round 2 acceptance", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -816,7 +837,7 @@ describe("single-actor ApplyAttempt", () => {
     const dispatches: PlannedDispatch[] = [
       {
         dispatchId: randomUUID(),
-        kind: "MANAGER",
+        kind: "MANAGER_DB",
         state: "queued",
         attemptCount: 0,
         lastError: null,
@@ -909,7 +930,7 @@ describe("single-actor ApplyAttempt", () => {
       const dispatches: PlannedDispatch[] = [
         {
           dispatchId: mgrId,
-          kind: "MANAGER",
+          kind: "MANAGER_DB",
           state: "succeeded",
           attemptCount: 1,
           lastError: null,
@@ -1045,7 +1066,7 @@ describe("single-actor ApplyAttempt", () => {
       const dispatches: PlannedDispatch[] = [
         {
           dispatchId: randomUUID(),
-          kind: "MANAGER",
+          kind: "MANAGER_DB",
           state: "succeeded",
           attemptCount: 1,
           lastError: null,

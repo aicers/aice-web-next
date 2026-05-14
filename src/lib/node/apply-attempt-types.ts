@@ -36,9 +36,16 @@ export type DispatchState =
  * dispatches each carrying a frozen `new` payload (the durability
  * contract from the umbrella).
  */
+/**
+ * Manager-side planned dispatches. The upstream v1 `applyNode` mutation
+ * was split into `applyNodeDraft` (DB write) + `applyAgentConfig` (notify)
+ * in review-web 0.33.0 (Phase Node-12, #333). The BFF mirrors that split
+ * with two dispatch kinds so each stage can fail and retry independently
+ * within the same `ApplyAttempt` row.
+ */
 export interface ManagerPlannedDispatch {
   dispatchId: string;
-  kind: "MANAGER";
+  kind: "MANAGER_DB" | "MANAGER_NOTIFY";
   state: DispatchState;
   attemptCount: number;
   lastError: string | null;
@@ -151,12 +158,21 @@ export interface ApplyAttemptClientRow {
  */
 export interface ApplyDispatcher {
   /**
-   * Dispatch the manager `applyNode` mutation. Receives the freshly-
-   * built `NodeInput` derived from the manager-DB state read at step
-   * 5a — NOT a frozen plan-time payload. Throws on failure (the error
-   * message is recorded as `lastError`).
+   * Dispatch the manager `applyNodeDraft` mutation (DB write only).
+   * Receives the freshly-built `NodeInput` derived from the manager-DB
+   * state read at step 5a — NOT a frozen plan-time payload. Throws on
+   * failure (the error message is recorded as `lastError`).
    */
-  manager(input: ManagerDispatchInput): Promise<void>;
+  managerDb(input: ManagerDbDispatchInput): Promise<void>;
+
+  /**
+   * Dispatch the manager `applyAgentConfig` mutation (agent notify
+   * only). Runs after `managerDb` succeeds. Throws on failure; if any
+   * `attempts[i].succeeded` is `false` the implementation surfaces a
+   * dedicated error type so the lifecycle can record the failed agent
+   * keys.
+   */
+  managerNotify(input: ManagerNotifyDispatchInput): Promise<void>;
 
   /**
    * Dispatch the per-service `updateConfig` mutation against the given
@@ -169,7 +185,7 @@ export interface ApplyDispatcher {
   ): Promise<void>;
 }
 
-export interface ManagerDispatchInput {
+export interface ManagerDbDispatchInput {
   attemptId: string;
   nodeId: string;
   /**
@@ -180,6 +196,25 @@ export interface ManagerDispatchInput {
    */
   nodeInput: unknown;
 }
+
+export interface ManagerNotifyDispatchInput {
+  attemptId: string;
+  nodeId: string;
+  /**
+   * Scoping for the notify call. `null` notifies every agent on the
+   * node (per Decision 5 in #333 — v1 bulk apply targets everyone).
+   * Per-agent scoping is the lever a future per-agent UX would pull.
+   */
+  agentKeys: string[] | null;
+}
+
+/**
+ * @deprecated Retained as an alias for source-compat with code paths that
+ * have not yet migrated off the v1 single-stage manager dispatcher.
+ * New code should use `ManagerDbDispatchInput` or
+ * `ManagerNotifyDispatchInput` directly.
+ */
+export type ManagerDispatchInput = ManagerDbDispatchInput;
 
 export interface ExternalDispatchInput {
   attemptId: string;

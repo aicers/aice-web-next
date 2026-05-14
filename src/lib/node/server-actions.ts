@@ -646,12 +646,15 @@ export async function removeNodes(
 
 /**
  * The previous `applyNode(session, id, node, signal?)` wrapper has
- * been relocated to `src/lib/node/apply.ts` and renamed to
- * `_internal_applyNodeViaManager` (#361 / Phase Node-9c). The
- * user-facing entry point for applying a node's pending drafts is
- * now `confirmApplyAttempt` from `apply-actions.ts`, which routes
- * through the `ApplyAttempt` lifecycle. The renamed helper is the
- * only sanctioned caller of the upstream `applyNode` mutation.
+ * been relocated to `src/lib/node/apply.ts` and split into
+ * `_internal_applyNodeDraftViaManager` (DB write) and
+ * `_internal_applyAgentConfigViaManager` (agent notify) — Phase
+ * Node-12 (#333) replaces the single v1 `applyNode` call with the
+ * upstream-split pair. The user-facing entry point for applying a
+ * node's pending drafts remains `confirmApplyAttempt` from
+ * `apply-actions.ts`, which routes through the `ApplyAttempt`
+ * lifecycle. The split helpers are the only sanctioned callers of
+ * the upstream `applyNodeDraft` and `applyAgentConfig` mutations.
  */
 
 interface NodeRebootVariables extends Record<string, unknown> {

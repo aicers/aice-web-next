@@ -189,7 +189,7 @@ describe("recoverPendingNodeApplyAudits", () => {
           planned_dispatches: [
             {
               dispatchId: "d-mgr",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "succeeded",
               attemptCount: 1,
               lastError: null,
@@ -246,7 +246,7 @@ describe("recoverPendingNodeApplyAudits", () => {
           planned_dispatches: [
             {
               dispatchId: "d-mgr",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "succeeded",
               attemptCount: 1,
               lastError: null,
@@ -286,7 +286,7 @@ describe("recoverPendingNodeApplyAudits", () => {
           planned_dispatches: [
             {
               dispatchId: "d-mgr",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "succeeded",
               attemptCount: 1,
               lastError: null,
@@ -329,7 +329,7 @@ describe("recoverPendingNodeApplyAudits", () => {
           planned_dispatches: [
             {
               dispatchId: "d-mgr",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "succeeded",
               attemptCount: 1,
               lastError: null,
@@ -377,7 +377,7 @@ describe("recoverPendingNodeApplyAudits", () => {
           planned_dispatches: [
             {
               dispatchId: "d-mgr",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "succeeded",
               attemptCount: 1,
               lastError: null,
@@ -428,7 +428,7 @@ describe("recoverPendingNodeApplyAudits", () => {
           planned_dispatches: [
             {
               dispatchId: "d-mgr",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "succeeded",
               attemptCount: 1,
               lastError: null,
@@ -517,7 +517,7 @@ describe("recoverPendingNodeApplyAudits", () => {
           planned_dispatches: [
             {
               dispatchId: "d-mgr",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "succeeded",
               attemptCount: 1,
               lastError: null,
@@ -575,7 +575,7 @@ describe("recoverPendingNodeApplyAudits", () => {
           planned_dispatches: [
             {
               dispatchId: "d-mgr",
-              kind: "MANAGER",
+              kind: "MANAGER_DB",
               state: "succeeded",
               attemptCount: 1,
               lastError: null,

@@ -16,7 +16,7 @@ import "server-only";
  *
  * Production-safety boundary:
  *
- *   - `_internal_applyNodeViaManager` is the renamed `applyNode`
+ *   - `_internal_applyNodeDraftViaManager` is the renamed `applyNode`
  *     wrapper relocated from `server-actions.ts`. It is no longer a
  *     `"use server"` action and is **not** intended to be reachable
  *     from the modal Apply button. The only sanctioned caller is
@@ -49,7 +49,8 @@ import type {
 import type {
   ApplyDispatcher,
   ExternalDispatchInput,
-  ManagerDispatchInput,
+  ManagerDbDispatchInput,
+  ManagerNotifyDispatchInput,
 } from "./apply-attempt-types";
 import {
   assertNodeInScope,
@@ -62,9 +63,15 @@ import {
   withManagerErrorMapping,
   withNodeNotFoundMapping,
 } from "./error-mapping";
-import { NodeNotFoundError, NodePermissionError } from "./errors";
 import {
-  APPLY_NODE_MUTATION,
+  AgentNotifyPartialFailureError,
+  DispatchTerminalFailureError,
+  NodeNotFoundError,
+  NodePermissionError,
+} from "./errors";
+import {
+  APPLY_AGENT_CONFIG_MUTATION,
+  APPLY_NODE_DRAFT_MUTATION,
   GIGANTO_CONFIG_QUERY,
   GIGANTO_UPDATE_CONFIG_MUTATION,
   NODE_DETAIL_QUERY,
@@ -72,7 +79,8 @@ import {
   TIVAN_UPDATE_CONFIG_MUTATION,
 } from "./queries";
 import type {
-  ApplyNodeResult,
+  ApplyAgentConfigResult,
+  ApplyNodeDraftResult,
   GigantoConfig,
   GigantoConfigResult,
   GigantoUpdateConfigResult,
@@ -84,9 +92,14 @@ import type {
   TivanUpdateConfigResult,
 } from "./types";
 
-interface ApplyNodeVariables extends Record<string, unknown> {
+interface ApplyNodeDraftVariables extends Record<string, unknown> {
   id: string;
   node: NodeInput;
+}
+
+interface ApplyAgentConfigVariables extends Record<string, unknown> {
+  nodeId: string;
+  agentKeys: string[] | null;
 }
 
 interface UpdateConfigVariables extends Record<string, unknown> {
@@ -95,19 +108,45 @@ interface UpdateConfigVariables extends Record<string, unknown> {
 }
 
 /**
- * Direct manager-side promotion of a node's drafts via the upstream
- * `applyNode` mutation. Renamed from the previous `applyNode` server
- * action (#308) because the user-facing bulk-apply path lands here
- * with #361 — leaving a `"use server"` `applyNode(...)` callable would
- * let a future contributor accidentally bind the modal Apply button
- * to a path that bypasses the `ApplyAttempt` lifecycle (no preview,
- * no fingerprint guard, no per-external follow-up).
- *
- * Only the production `ApplyDispatcher.manager()` below should call
- * this helper. See the deny-list entry in the static-analysis
- * acceptance test (`apply-attempts-public-surface.test.ts`).
+ * Substring fingerprints of the upstream `applyAgentConfig` error
+ * returned when the targeted node carries an empty `hostname`. The
+ * upstream resolver rejects the call in that case without ever sending
+ * agent notifications — retrying without operator intervention will
+ * fail identically — so we map it to `DispatchTerminalFailureError`
+ * (Decision 7, #333) so the lifecycle lands the dispatch in
+ * `failed_terminal` immediately.
  */
-export async function _internal_applyNodeViaManager(
+const HOSTNAME_EMPTY_FINGERPRINTS = [
+  "hostname is empty",
+  "hostname cannot be empty",
+  "empty hostname",
+];
+
+function isHostnameEmptyError(err: unknown): boolean {
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : String(err ?? "");
+  const lowered = message.toLowerCase();
+  return HOSTNAME_EMPTY_FINGERPRINTS.some((needle) => lowered.includes(needle));
+}
+
+/**
+ * Direct manager-side DB promotion of a node's drafts via the upstream
+ * `applyNodeDraft` mutation (Phase Node-12, #333). The mutation
+ * promotes name / profile / agents / external-services drafts to
+ * applied state atomically and removes any row whose draft is `null`
+ * (operator delete intent — see Decision 4). It does NOT notify
+ * agents — that is a follow-up call to
+ * `_internal_applyAgentConfigViaManager`.
+ *
+ * Only `ProductionApplyDispatcher.managerDb()` below should call this
+ * helper. See the deny-list entry in the static-analysis acceptance
+ * test (`apply-attempts-public-surface.test.ts`).
+ */
+export async function _internal_applyNodeDraftViaManager(
   session: AuthSession,
   id: string,
   node: NodeInput,
@@ -139,14 +178,75 @@ export async function _internal_applyNodeViaManager(
     assertNodeInScope(ctx, Number(draftCustomer));
   }
   const data = await withManagerErrorMapping(
-    graphqlRequest<ApplyNodeResult, ApplyNodeVariables>(
-      APPLY_NODE_MUTATION,
+    graphqlRequest<ApplyNodeDraftResult, ApplyNodeDraftVariables>(
+      APPLY_NODE_DRAFT_MUTATION,
       { id, node },
       { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
       signal,
     ),
   );
-  return data.applyNode;
+  return data.applyNodeDraft.id;
+}
+
+/**
+ * Direct manager-side agent-notify call via the upstream
+ * `applyAgentConfig` mutation (Phase Node-12, #333). Notifies every
+ * agent on the node whose post-promotion DB `config` is
+ * `Some(non-empty)`. The mutation performs no DB writes — the DB
+ * promotion is the prior `applyNodeDraft` step.
+ *
+ * `agentKeys === null` notifies every agent on the node (Decision 5,
+ * v1 bulk apply targets everyone). A non-null array scopes the notify
+ * set to the named agents.
+ *
+ * Per-agent failure handling (Decision 6): if any
+ * `attempts[i].succeeded` is `false`, this helper throws
+ * `AgentNotifyPartialFailureError` carrying the failed agent keys so
+ * the lifecycle can land the dispatch in `failed_retryable` with a
+ * descriptive `lastError`. Retry re-calls `applyAgentConfig`; the
+ * already-succeeded agents are re-notified idempotently per the
+ * upstream contract.
+ *
+ * Hostname-empty handling (Decision 7): upstream rejects the call
+ * with a "hostname is empty" error when the node's `profile.hostname`
+ * is empty. This helper maps that case to
+ * `DispatchTerminalFailureError` so the lifecycle lands the dispatch
+ * in `failed_terminal` immediately (no retry will succeed until the
+ * operator edits the node's profile).
+ */
+export async function _internal_applyAgentConfigViaManager(
+  session: AuthSession,
+  nodeId: string,
+  agentKeys: string[] | null,
+  signal?: AbortSignal,
+): Promise<void> {
+  const ctx = await buildDispatchContext(session);
+  await assertCanonicalNodeInScope(ctx, nodeId, signal);
+  let data: ApplyAgentConfigResult;
+  try {
+    data = await withManagerErrorMapping(
+      graphqlRequest<ApplyAgentConfigResult, ApplyAgentConfigVariables>(
+        APPLY_AGENT_CONFIG_MUTATION,
+        { nodeId, agentKeys },
+        { role: ctx.role, customerIds: jwtCustomerIdsFor(ctx) },
+        signal,
+      ),
+    );
+  } catch (err) {
+    if (isHostnameEmptyError(err)) {
+      throw new DispatchTerminalFailureError(
+        `applyAgentConfig rejected: node ${nodeId} has an empty hostname.`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+  const failed = data.applyAgentConfig.attempts
+    .filter((a) => !a.succeeded)
+    .map((a) => a.agentKey);
+  if (failed.length > 0) {
+    throw new AgentNotifyPartialFailureError(failed);
+  }
 }
 
 async function fetchCanonicalNode(
@@ -197,7 +297,7 @@ async function assertCanonicalNodeInScope(
  *
  * Why this is needed at the wrapper layer rather than the dispatcher:
  *
- *   - The manager dispatcher (`_internal_applyNodeViaManager`) does
+ *   - The manager dispatcher (`_internal_applyNodeDraftViaManager`) does
  *     a canonical-node scope check, but external dispatches go
  *     straight from `runOneDispatch()` through to
  *     `dispatcher.external()`, which talks to the deployment-global
@@ -338,10 +438,19 @@ function projectNodeSnapshot(node: ManagerNode): NodeDraftSnapshot {
 }
 
 /**
- * Production `ApplyDispatcher` factory.
+ * Production `ApplyDispatcher` factory (Phase Node-12, #333).
  *
- *   - `manager()` invokes the upstream `applyNode(id, NodeInput)`
- *     mutation via `_internal_applyNodeViaManager`.
+ *   - `managerDb()` invokes the upstream `applyNodeDraft(id, NodeInput)`
+ *     mutation via `_internal_applyNodeDraftViaManager`. The
+ *     `NodeInput` passed in carries each agent / external service's
+ *     `draft` field verbatim from the canonical-node read (Decision 4),
+ *     including `null` (operator delete intent).
+ *   - `managerNotify()` invokes the upstream
+ *     `applyAgentConfig(nodeId, agentKeys)` mutation via
+ *     `_internal_applyAgentConfigViaManager`. The lifecycle passes
+ *     `agentKeys = null` (Decision 5) to notify every agent. Errors
+ *     are mapped to `AgentNotifyPartialFailureError` (per-agent
+ *     failures) or `DispatchTerminalFailureError` (hostname-empty).
  *   - `external()` reads the live `config` from the target external
  *     service (Giganto for `DATA_STORE`, Tivan for `TI_CONTAINER`),
  *     forwards it verbatim as `old` to the upstream `updateConfig`
@@ -363,12 +472,20 @@ export function buildProductionApplyDispatcher(
   signal?: AbortSignal,
 ): ApplyDispatcher {
   return {
-    async manager(input: ManagerDispatchInput): Promise<void> {
+    async managerDb(input: ManagerDbDispatchInput): Promise<void> {
       const nodeInput = input.nodeInput as NodeInput;
-      await _internal_applyNodeViaManager(
+      await _internal_applyNodeDraftViaManager(
         session,
         input.nodeId,
         nodeInput,
+        signal,
+      );
+    },
+    async managerNotify(input: ManagerNotifyDispatchInput): Promise<void> {
+      await _internal_applyAgentConfigViaManager(
+        session,
+        input.nodeId,
+        input.agentKeys,
         signal,
       );
     },

@@ -102,8 +102,15 @@ function makeRow(
     draftFingerprint: Buffer.alloc(32),
     plannedDispatches: [
       {
-        dispatchId: "d-mgr",
-        kind: "MANAGER",
+        dispatchId: "d-mgr-db",
+        kind: "MANAGER_DB",
+        state: "succeeded",
+        attemptCount: 1,
+        lastError: null,
+      },
+      {
+        dispatchId: "d-mgr-notify",
+        kind: "MANAGER_NOTIFY",
         state: "succeeded",
         attemptCount: 1,
         lastError: null,
@@ -256,14 +263,14 @@ describe("permission and scope rechecks at every call", () => {
 });
 
 describe("real dispatcher binding (counts outbound GraphQL via recorder)", () => {
-  it("confirmApplyAttempt invokes the real GraphQL dispatcher: applyNode + per-external updateConfig", async () => {
+  it("confirmApplyAttempt invokes the real GraphQL dispatcher: applyNodeDraft + applyAgentConfig + per-external updateConfig", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
     mockInternalConfirm.mockImplementation(async (args) => {
       // Drive the dispatcher and reader the wrapper supplied. The
       // recorder below counts the outbound GraphQL calls those
       // bindings emit.
-      await args.dispatcher.manager({
+      await args.dispatcher.managerDb({
         attemptId: "att-1",
         nodeId: "node-1",
         nodeInput: {
@@ -275,6 +282,11 @@ describe("real dispatcher binding (counts outbound GraphQL via recorder)", () =>
           externalServices: [],
         },
       });
+      await args.dispatcher.managerNotify({
+        attemptId: "att-1",
+        nodeId: "node-1",
+        agentKeys: null,
+      });
       await args.dispatcher.external("DATA_STORE", {
         attemptId: "att-1",
         dispatchId: "d-ds",
@@ -283,9 +295,12 @@ describe("real dispatcher binding (counts outbound GraphQL via recorder)", () =>
       });
       return makeRow("succeeded");
     });
-    // First manager graphqlRequest = canonical-node preflight (applyNode helper),
-    // second = applyNode mutation. Set both up.
-    mockGraphqlRequest.mockResolvedValueOnce({
+    // Globally-scoped caller (hasGlobalScope=true via mockHasPermission
+    // returning true for every permission): wrapper preflight reads
+    // the canonical node once for existence, then the split helpers
+    // skip their own preflight and dispatch the mutations directly.
+    // Three outbound graphql calls expected.
+    const nodeResponse = {
       node: {
         id: "node-1",
         name: "n",
@@ -295,8 +310,13 @@ describe("real dispatcher binding (counts outbound GraphQL via recorder)", () =>
         agents: [],
         externalServices: [],
       },
-    });
-    mockGraphqlRequest.mockResolvedValueOnce({ applyNode: "node-1" });
+    };
+    mockGraphqlRequest
+      .mockResolvedValueOnce(nodeResponse)
+      .mockResolvedValueOnce({ applyNodeDraft: { id: "node-1" } })
+      .mockResolvedValueOnce({
+        applyAgentConfig: { attempts: [], skipped: [] },
+      });
     // External: a config read followed by an updateConfig mutation.
     mockGigantoClient.mockResolvedValueOnce({
       config: {
@@ -319,13 +339,19 @@ describe("real dispatcher binding (counts outbound GraphQL via recorder)", () =>
     const result = await confirmApplyAttempt({ attemptId: "att-1" });
     expect(result.status).toBe("succeeded");
 
-    const managerCalls = mockGraphqlRequest.mock.calls.filter((c) => {
+    const managerDbCalls = mockGraphqlRequest.mock.calls.filter((c) => {
       const v = c[1] as Record<string, unknown> | undefined;
       return v !== undefined && "node" in v;
     });
-    expect(managerCalls).toHaveLength(1);
-    // applyNode mutation arguments
-    expect((managerCalls[0][1] as { id: string }).id).toBe("node-1");
+    expect(managerDbCalls).toHaveLength(1);
+    // applyNodeDraft mutation arguments
+    expect((managerDbCalls[0][1] as { id: string }).id).toBe("node-1");
+    const notifyCalls = mockGraphqlRequest.mock.calls.filter((c) => {
+      const v = c[1] as Record<string, unknown> | undefined;
+      return v !== undefined && "nodeId" in v && "agentKeys" in v;
+    });
+    expect(notifyCalls).toHaveLength(1);
+    expect((notifyCalls[0][1] as { nodeId: string }).nodeId).toBe("node-1");
 
     // gigantoClient called twice: config read (no variables) +
     // updateConfig mutation (`old`/`new`).
@@ -803,7 +829,7 @@ describe("manager dispatcher — globally-scoped privileged path", () => {
       // recheck reads the canonical node but skips scope enforcement
       // for global callers, and the per-input guard inside the
       // manager helper similarly bypasses scope.
-      await args.dispatcher.manager({
+      await args.dispatcher.managerDb({
         attemptId: "att-1",
         nodeId: "node-1",
         nodeInput: {
@@ -818,8 +844,8 @@ describe("manager dispatcher — globally-scoped privileged path", () => {
       return makeRow("succeeded");
     });
     // Two outbound graphql calls: the wrapper-level existence
-    // recheck (round 7) reads the canonical node first, then the
-    // applyNode mutation runs. The customerless-node case still
+    // recheck reads the canonical node first, then the
+    // applyNodeDraft mutation runs. The customerless-node case still
     // succeeds because the wrapper now only enforces *existence*
     // for global callers, not customer scope.
     mockGraphqlRequest
@@ -834,15 +860,11 @@ describe("manager dispatcher — globally-scoped privileged path", () => {
           externalServices: [],
         },
       })
-      .mockResolvedValueOnce({ applyNode: "node-1" });
+      .mockResolvedValueOnce({ applyNodeDraft: { id: "node-1" } });
 
     const { confirmApplyAttempt } = await import("@/lib/node/apply-actions");
     const result = await confirmApplyAttempt({ attemptId: "att-1" });
     expect(result.status).toBe("succeeded");
-    // Two outbound graphql calls now: wrapper-level existence read,
-    // then applyNode. The customerless-node case is preserved because
-    // the wrapper skips scope enforcement (not the read) for global
-    // callers.
     expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
     const existenceVars = mockGraphqlRequest.mock.calls[0][1] as
       | Record<string, unknown>

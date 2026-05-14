@@ -182,16 +182,26 @@ describe("createApplyAttempt — DB-backed insert + read-back", () => {
     expect(row.draft_fingerprint.length).toBe(32);
     expect(row.draft_fingerprint.toString("hex")).toBe(result.draftFingerprint);
 
-    // Per-dispatch JSON shape: 1 manager (no `new`) + 2 external (frozen
-    // `new`). The no-draft external service is excluded.
-    expect(row.planned_dispatches).toHaveLength(3);
-    const [manager, ext1, ext2] = row.planned_dispatches;
+    // Per-dispatch JSON shape: 2 manager rows (DB + notify, neither
+    // carries `new`) + 2 external (frozen `new`). The no-draft external
+    // service is excluded. Phase Node-12 (#333) split the v1 single
+    // `MANAGER` dispatch into `MANAGER_DB` (atomic `applyNodeDraft`
+    // write) and `MANAGER_NOTIFY` (`applyAgentConfig` agent notify) so
+    // each stage is independently observable and retryable.
+    expect(row.planned_dispatches).toHaveLength(4);
+    const [managerDb, managerNotify, ext1, ext2] = row.planned_dispatches;
 
-    expect(manager.kind).toBe("MANAGER");
-    expect(manager.state).toBe("queued");
-    expect(manager.attemptCount).toBe(0);
-    expect(manager.lastError).toBeNull();
-    expect("new" in manager).toBe(false);
+    expect(managerDb.kind).toBe("MANAGER_DB");
+    expect(managerDb.state).toBe("queued");
+    expect(managerDb.attemptCount).toBe(0);
+    expect(managerDb.lastError).toBeNull();
+    expect("new" in managerDb).toBe(false);
+
+    expect(managerNotify.kind).toBe("MANAGER_NOTIFY");
+    expect(managerNotify.state).toBe("queued");
+    expect(managerNotify.attemptCount).toBe(0);
+    expect(managerNotify.lastError).toBeNull();
+    expect("new" in managerNotify).toBe(false);
 
     expect(ext1.kind).toBe("DATA_STORE");
     expect(ext1.state).toBe("queued");

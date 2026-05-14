@@ -124,22 +124,28 @@ describe("createApplyAttempt — happy path", () => {
     expect(result.draftFingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(result.expiresAt).toBe(expiresAt.toISOString());
 
-    // Plan shape: 1 manager + 2 external; manager has no `new`.
-    expect(result.plannedDispatches).toHaveLength(3);
-    const manager = result.plannedDispatches[0];
-    expect(manager.kind).toBe("MANAGER");
-    expect("new" in manager).toBe(false);
-    expect(manager.state).toBe("queued");
-    expect(manager.attemptCount).toBe(0);
+    // Plan shape: MANAGER_DB + MANAGER_NOTIFY + 2 external; manager
+    // rows have no `new` (Phase Node-12, #333).
+    expect(result.plannedDispatches).toHaveLength(4);
+    const managerDb = result.plannedDispatches[0];
+    expect(managerDb.kind).toBe("MANAGER_DB");
+    expect("new" in managerDb).toBe(false);
+    expect(managerDb.state).toBe("queued");
+    expect(managerDb.attemptCount).toBe(0);
 
-    const ext1 = result.plannedDispatches[1];
+    const managerNotify = result.plannedDispatches[1];
+    expect(managerNotify.kind).toBe("MANAGER_NOTIFY");
+    expect("new" in managerNotify).toBe(false);
+    expect(managerNotify.state).toBe("queued");
+
+    const ext1 = result.plannedDispatches[2];
     expect(ext1.kind).toBe("DATA_STORE");
     expect("new" in ext1).toBe(true);
     if (ext1.kind === "DATA_STORE" || ext1.kind === "TI_CONTAINER") {
       expect(ext1.new).toBe("{cfg:1}");
     }
 
-    const ext2 = result.plannedDispatches[2];
+    const ext2 = result.plannedDispatches[3];
     expect(ext2.kind).toBe("TI_CONTAINER");
     if (ext2.kind === "DATA_STORE" || ext2.kind === "TI_CONTAINER") {
       expect(ext2.new).toBe("{cfg:2}");
@@ -182,9 +188,10 @@ describe("createApplyAttempt — happy path", () => {
       nodeId: "node-1",
     });
 
-    expect(result.plannedDispatches).toHaveLength(2);
-    expect(result.plannedDispatches[0].kind).toBe("MANAGER");
-    expect(result.plannedDispatches[1].kind).toBe("TI_CONTAINER");
+    expect(result.plannedDispatches).toHaveLength(3);
+    expect(result.plannedDispatches[0].kind).toBe("MANAGER_DB");
+    expect(result.plannedDispatches[1].kind).toBe("MANAGER_NOTIFY");
+    expect(result.plannedDispatches[2].kind).toBe("TI_CONTAINER");
   });
 });
 

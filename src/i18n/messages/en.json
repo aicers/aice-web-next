@@ -532,7 +532,8 @@
       "plannedHeading": "Planned dispatches",
       "executingHeading": "Dispatches in progress",
       "dispatchKind": {
-        "MANAGER": "Manager (applyNode)",
+        "MANAGER_DB": "Manager DB (applyNodeDraft)",
+        "MANAGER_NOTIFY": "Manager notify (applyAgentConfig)",
         "DATA_STORE": "Data Store (updateConfig)",
         "TI_CONTAINER": "TI Container (updateConfig)"
       },

@@ -301,30 +301,51 @@ function enforceNodeScope(ctx: DispatchContext, node: Node): void {
 /**
  * Build the planned dispatches from the canonical Node payload.
  *
- * Plan shape (umbrella JSON contract):
- *   - One `MANAGER` dispatch: no frozen `new` (re-derived per attempt
- *     at step 5d from the manager-DB draft state).
+ * Plan shape (Phase Node-12, #333):
+ *   - One `MANAGER_DB` dispatch: invokes `applyNodeDraft` — atomic DB
+ *     promotion of every pending draft on the node. No frozen `new`
+ *     (re-derived per attempt at step 5d from the manager-DB draft
+ *     state).
+ *   - One `MANAGER_NOTIFY` dispatch: invokes `applyAgentConfig` after
+ *     the DB stage succeeds. Notifies every agent whose post-promotion
+ *     `config` is `Some(non-empty)`.
  *   - One external dispatch per `externalServices[]` entry whose
- *     `draft` is non-null (i.e. has a pending change). Each external
- *     dispatch carries the frozen `new` (the draft string at plan-
- *     build time).
+ *     `draft` is non-null AND non-delete (per Decision 9: delete intent
+ *     `draft = null` is handled by `applyNodeDraft` alone — no external
+ *     `updateConfig` dispatch is emitted because the row is removed).
+ *     Each external dispatch carries the frozen `new` (the draft string
+ *     at plan-build time).
  *
- * Manager dispatch is always emitted even if no node-level draft is
- * pending — `applyNode` is the umbrella's promotion step that clears
- * agent / external drafts in review-web's DB. External dispatches
- * follow up with the per-service mutation only when the service has
- * a pending draft; an external service with no draft is skipped.
+ * Both manager-side dispatches are always emitted even if no node-level
+ * draft is pending — they are the promotion + notify steps that clear
+ * drafts in review-web's DB and re-pull configs on agents.
+ *
+ * NOTE on Decision 9 comparison-based pending: the page-load external
+ * snapshot threading is deferred; this builder still emits an external
+ * dispatch whenever `draft !== null` (legacy intent-based check), which
+ * remains correct for all non-null drafts (change intent). Delete intent
+ * (`draft = null`) is correctly skipped here.
  */
 function buildPlannedDispatches(node: Node): PlannedDispatch[] {
   const dispatches: PlannedDispatch[] = [];
   dispatches.push({
     dispatchId: randomUUID(),
-    kind: "MANAGER",
+    kind: "MANAGER_DB",
+    state: "queued",
+    attemptCount: 0,
+    lastError: null,
+  });
+  dispatches.push({
+    dispatchId: randomUUID(),
+    kind: "MANAGER_NOTIFY",
     state: "queued",
     attemptCount: 0,
     lastError: null,
   });
   for (const service of node.externalServices) {
+    // `draft = null` is delete intent (Decision 4 / #333) — the
+    // `applyNodeDraft` stage removes the row from the node, so no
+    // external `updateConfig` dispatch is needed.
     if (service.draft === null) continue;
     dispatches.push({
       dispatchId: randomUUID(),

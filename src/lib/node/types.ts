@@ -244,6 +244,32 @@ export interface ApplyNodeResult {
   applyNode: string;
 }
 
+export interface ApplyNodeDraftResult {
+  applyNodeDraft: { id: string };
+}
+
+export type AgentNotifySkipReason = "NOT_CONFIGURED" | "DIRECT_SETUP";
+
+export interface AgentNotifyAttempt {
+  agentKey: string;
+  succeeded: boolean;
+  error: string | null;
+}
+
+export interface SkippedAgent {
+  agentKey: string;
+  reason: AgentNotifySkipReason;
+}
+
+export interface ApplyAgentConfigOutput {
+  attempts: AgentNotifyAttempt[];
+  skipped: SkippedAgent[];
+}
+
+export interface ApplyAgentConfigResult {
+  applyAgentConfig: ApplyAgentConfigOutput;
+}
+
 export interface NodeRebootResult {
   nodeReboot: string;
 }

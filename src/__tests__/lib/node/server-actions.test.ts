@@ -917,10 +917,12 @@ describe("tenant scope boundary", () => {
       },
     });
 
-    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
+    const { _internal_applyNodeDraftViaManager } = await import(
+      "@/lib/node/apply"
+    );
     const { NodePermissionError } = await import("@/lib/node/server-actions");
     await expect(
-      _internal_applyNodeViaManager(makeSession(), "n-7", {
+      _internal_applyNodeDraftViaManager(makeSession(), "n-7", {
         name: "x",
         nameDraft: null,
         // Forged: claims customer 5 to bypass payload-based scope check.
@@ -1003,17 +1005,23 @@ describe("tenant scope boundary", () => {
       },
     });
     // Second call: applyNode mutation result.
-    mockGraphqlRequest.mockResolvedValueOnce({ applyNode: "n-5" });
+    mockGraphqlRequest.mockResolvedValueOnce({ applyNodeDraft: { id: "n-5" } });
 
-    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
-    const result = await _internal_applyNodeViaManager(makeSession(), "n-5", {
-      name: "x",
-      nameDraft: null,
-      profile: { customerId: "5", description: "", hostname: "h" },
-      profileDraft: null,
-      agents: [],
-      externalServices: [],
-    });
+    const { _internal_applyNodeDraftViaManager } = await import(
+      "@/lib/node/apply"
+    );
+    const result = await _internal_applyNodeDraftViaManager(
+      makeSession(),
+      "n-5",
+      {
+        name: "x",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    );
     expect(result).toBe("n-5");
     expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
   });
@@ -1021,10 +1029,12 @@ describe("tenant scope boundary", () => {
   it("System Administrator skips the canonical-node fetch on apply (no extra round trip)", async () => {
     mockHasPermission.mockResolvedValue(true);
     mockResolveEffectiveCustomerIds.mockResolvedValue([]);
-    mockGraphqlRequest.mockResolvedValueOnce({ applyNode: "n-1" });
+    mockGraphqlRequest.mockResolvedValueOnce({ applyNodeDraft: { id: "n-1" } });
 
-    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
-    const result = await _internal_applyNodeViaManager(
+    const { _internal_applyNodeDraftViaManager } = await import(
+      "@/lib/node/apply"
+    );
+    const result = await _internal_applyNodeDraftViaManager(
       makeSession({ roles: ["System Administrator"] }),
       "n-1",
       {
@@ -1137,10 +1147,12 @@ describe("tenant scope boundary", () => {
       },
     });
 
-    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
+    const { _internal_applyNodeDraftViaManager } = await import(
+      "@/lib/node/apply"
+    );
     const { NodePermissionError } = await import("@/lib/node/server-actions");
     await expect(
-      _internal_applyNodeViaManager(makeSession(), "n-5", {
+      _internal_applyNodeDraftViaManager(makeSession(), "n-5", {
         name: "x",
         nameDraft: null,
         profile: null,
@@ -1153,6 +1165,154 @@ describe("tenant scope boundary", () => {
       (c) => c[1] && "node" in (c[1] as Record<string, unknown>),
     );
     expect(mutationCalls).toHaveLength(0);
+  });
+});
+
+// ── applyAgentConfig (notify) — Phase Node-12 (#333) ───────────────
+
+describe("_internal_applyAgentConfigViaManager — notify dispatch", () => {
+  function inScopeCanonicalNode(): Record<string, unknown> {
+    return {
+      node: {
+        id: "n-5",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "5", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    };
+  }
+
+  it("returns normally when every agent's attempts[i].succeeded is true", async () => {
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    // Canonical-node preflight + applyAgentConfig mutation.
+    mockGraphqlRequest.mockResolvedValueOnce(inScopeCanonicalNode());
+    mockGraphqlRequest.mockResolvedValueOnce({
+      applyAgentConfig: {
+        attempts: [
+          { agentKey: "a1", succeeded: true, error: null },
+          { agentKey: "a2", succeeded: true, error: null },
+        ],
+        skipped: [],
+      },
+    });
+
+    const { _internal_applyAgentConfigViaManager } = await import(
+      "@/lib/node/apply"
+    );
+    await _internal_applyAgentConfigViaManager(makeSession(), "n-5", null);
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+    const notifyCall = mockGraphqlRequest.mock.calls[1];
+    expect(notifyCall[1]).toEqual({ nodeId: "n-5", agentKeys: null });
+  });
+
+  it("throws AgentNotifyPartialFailureError carrying the failed agent keys when any attempts[i].succeeded is false", async () => {
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValueOnce(inScopeCanonicalNode());
+    mockGraphqlRequest.mockResolvedValueOnce({
+      applyAgentConfig: {
+        attempts: [
+          { agentKey: "a1", succeeded: true, error: null },
+          { agentKey: "a2", succeeded: false, error: "agent offline" },
+          { agentKey: "a3", succeeded: false, error: "agent rejected" },
+        ],
+        skipped: [],
+      },
+    });
+
+    const { _internal_applyAgentConfigViaManager } = await import(
+      "@/lib/node/apply"
+    );
+    const { AgentNotifyPartialFailureError } = await import(
+      "@/lib/node/errors"
+    );
+    const settled = await _internal_applyAgentConfigViaManager(
+      makeSession(),
+      "n-5",
+      null,
+    ).catch((err: unknown) => err);
+    expect(settled).toBeInstanceOf(AgentNotifyPartialFailureError);
+    expect(
+      (settled as InstanceType<typeof AgentNotifyPartialFailureError>)
+        .failedAgentKeys,
+    ).toEqual(["a2", "a3"]);
+  });
+
+  it("maps a hostname-empty upstream error to DispatchTerminalFailureError so the lifecycle lands the dispatch in failed_terminal immediately (Decision 7)", async () => {
+    // Upstream rejects `applyAgentConfig` when `profile.hostname` is
+    // empty before sending any notifications. Retries cannot succeed
+    // until the operator fixes the profile, so the dispatcher must
+    // signal a structurally non-retryable failure (not a generic
+    // throw, which would burn APPLY_DISPATCH_MAX_ATTEMPTS retry
+    // slots first).
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValueOnce(inScopeCanonicalNode());
+    mockGraphqlRequest.mockRejectedValueOnce(
+      new Error("hostname is empty for node n-5"),
+    );
+
+    const { _internal_applyAgentConfigViaManager } = await import(
+      "@/lib/node/apply"
+    );
+    const { DispatchTerminalFailureError } = await import("@/lib/node/errors");
+    const settled = await _internal_applyAgentConfigViaManager(
+      makeSession(),
+      "n-5",
+      null,
+    ).catch((err: unknown) => err);
+    expect(settled).toBeInstanceOf(DispatchTerminalFailureError);
+  });
+
+  it("does NOT remap non-hostname-empty upstream errors to DispatchTerminalFailureError (defensive — keeps the retryable path open)", async () => {
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValueOnce(inScopeCanonicalNode());
+    mockGraphqlRequest.mockRejectedValueOnce(
+      new Error("transient upstream timeout"),
+    );
+
+    const { _internal_applyAgentConfigViaManager } = await import(
+      "@/lib/node/apply"
+    );
+    const { DispatchTerminalFailureError } = await import("@/lib/node/errors");
+    const settled = await _internal_applyAgentConfigViaManager(
+      makeSession(),
+      "n-5",
+      null,
+    ).catch((err: unknown) => err);
+    expect(settled).toBeInstanceOf(Error);
+    expect(settled).not.toBeInstanceOf(DispatchTerminalFailureError);
+  });
+
+  it("rejects a tenant admin scoped to customer 5 from notifying agents on a node owned by customer 7 (canonical-node preflight)", async () => {
+    mockHasPermission.mockImplementation(tenantScopedHasPermission);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([5]);
+    mockGraphqlRequest.mockResolvedValueOnce({
+      node: {
+        id: "n-7",
+        name: "n",
+        nameDraft: null,
+        profile: { customerId: "7", description: "", hostname: "h" },
+        profileDraft: null,
+        agents: [],
+        externalServices: [],
+      },
+    });
+
+    const { _internal_applyAgentConfigViaManager } = await import(
+      "@/lib/node/apply"
+    );
+    const { NodePermissionError } = await import("@/lib/node/errors");
+    await expect(
+      _internal_applyAgentConfigViaManager(makeSession(), "n-7", null),
+    ).rejects.toBeInstanceOf(NodePermissionError);
+    // applyAgentConfig mutation MUST NOT reach the wire.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1440,10 +1600,12 @@ describe("graceful-degradation error mapping", () => {
     });
     mockGraphqlRequest.mockRejectedValue(notFound);
 
-    const { _internal_applyNodeViaManager } = await import("@/lib/node/apply");
+    const { _internal_applyNodeDraftViaManager } = await import(
+      "@/lib/node/apply"
+    );
     const { NodeNotFoundError } = await import("@/lib/node/server-actions");
     await expect(
-      _internal_applyNodeViaManager(makeSession(), "n-missing", {
+      _internal_applyNodeDraftViaManager(makeSession(), "n-missing", {
         name: "x",
         nameDraft: null,
         profile: { customerId: "5", description: "", hostname: "h" },
