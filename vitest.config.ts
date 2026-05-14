@@ -133,6 +133,12 @@ export default defineConfig({
             // detail-panel notice — real-DOM coverage for the v1 card
             // and detail panel.
             "src/__tests__/components/triage/story/stories-view.test.tsx",
+            // Issue #554: shared event-row module reused by the Asset
+            // detail panel and the Story detail member table. Renders
+            // a real `<table>` so the cell-layout / optional-column /
+            // protectedByStory-slot contracts can be asserted against
+            // the DOM.
+            "src/__tests__/components/triage/event-row/triage-event-table.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -174,6 +180,7 @@ export default defineConfig({
             "src/__tests__/components/triage/related-events-panel.test.tsx",
             "src/__tests__/components/triage/story/stories-view.test.tsx",
             "src/__tests__/components/triage/rebuild-button.test.tsx",
+            "src/__tests__/components/triage/event-row/triage-event-table.test.tsx",
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
           ],
         },

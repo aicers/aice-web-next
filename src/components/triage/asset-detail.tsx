@@ -4,6 +4,12 @@ import { useTimezone } from "@/components/providers/timezone-provider";
 import { formatDateTime } from "@/lib/format-date";
 import type { TriageAsset } from "@/lib/triage";
 
+import {
+  type TriageEventRow,
+  TriageEventTable,
+  type TriageEventTableLabels,
+} from "./event-row/triage-event-table";
+
 export interface TriageAssetDetailLabels {
   title: string;
   /**
@@ -55,6 +61,21 @@ export function TriageAssetDetailView({
 }: TriageAssetDetailViewProps) {
   const timezone = useTimezone();
   const headerTitle = isPivotFocus ? labels.pivotFocusTitle : labels.title;
+  const tableLabels: TriageEventTableLabels = {
+    timeColumn: labels.timeColumn,
+    kindColumn: labels.kindColumn,
+    categoryColumn: labels.categoryColumn,
+    scoreColumn: labels.scoreColumn,
+  };
+  const rows: ReadonlyArray<TriageEventRow> = asset
+    ? asset.events.map((event) => ({
+        key: event.rowKey ?? `${event.time}-${event.__typename}`,
+        time: formatDateTime(event.time, timezone),
+        kind: event.__typename,
+        category: event.category ?? null,
+        baselineScore: event.score,
+      }))
+    : [];
 
   if (!asset) {
     return (
@@ -110,46 +131,10 @@ export function TriageAssetDetailView({
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {labels.eventsHeading}
         </h3>
-        {asset.events.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">{labels.emptyEvents}</p>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-              <tr className="border-b">
-                <th scope="col" className="py-2 pr-2 text-left font-medium">
-                  {labels.timeColumn}
-                </th>
-                <th scope="col" className="py-2 pr-2 text-left font-medium">
-                  {labels.kindColumn}
-                </th>
-                <th scope="col" className="py-2 pr-2 text-left font-medium">
-                  {labels.categoryColumn}
-                </th>
-                <th scope="col" className="py-2 text-right font-medium">
-                  {labels.scoreColumn}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {asset.events.map((event) => (
-                <tr
-                  key={event.rowKey ?? `${event.time}-${event.__typename}`}
-                  className="border-b last:border-0"
-                >
-                  <td className="py-1.5 pr-2 font-mono text-xs">
-                    {formatDateTime(event.time, timezone)}
-                  </td>
-                  <td className="py-1.5 pr-2">{event.__typename}</td>
-                  <td className="py-1.5 pr-2 text-muted-foreground">
-                    {event.category ?? "—"}
-                  </td>
-                  <td className="py-1.5 text-right font-mono">
-                    {SCORE_FORMAT.format(event.score)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <TriageEventTable rows={rows} labels={tableLabels} />
         )}
       </div>
     </section>

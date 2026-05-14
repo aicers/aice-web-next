@@ -28,6 +28,11 @@ import type {
   TriageStoryMemberDetail,
 } from "@/lib/triage/story/types";
 
+import {
+  type TriageEventRow,
+  TriageEventTable,
+  type TriageEventTableLabels,
+} from "../event-row/triage-event-table";
 import { TriageStoryCard, type TriageStoryCardLabels } from "./story-card";
 import { renderStoryTitle } from "./story-title";
 
@@ -509,30 +514,45 @@ function TriageStoryDetail({
   const danglingDelta = showDangling ? Math.max(stored - shown, 0) : 0;
 
   // Choose the rendered row source — the full join when available,
-  // the list-time top-3 preview otherwise. Both shapes carry the
-  // four columns the v1 detail table renders; the full join also
-  // carries source/destination address that the optional columns
-  // surface when their labels are provided.
-  const rows: ReadonlyArray<MemberRow> =
+  // the list-time top-3 preview otherwise. Both shapes feed the
+  // shared {@link TriageEventTable} (#554) via a normalized
+  // {@link TriageEventRow}; the full join carries source/destination
+  // address so the optional columns surface when their labels are
+  // provided.
+  //
+  // The `time` field is the raw ISO literal — the Story panel
+  // continues to render `event_time_iso` verbatim per #547. The
+  // asset surface formats with `formatDateTime` instead. Time
+  // formatting stays on the caller side so this issue's extraction
+  // does not change either surface's rendered output.
+  const rows: ReadonlyArray<TriageEventRow> =
     detail.status === "ready"
       ? detail.members.map((m) => ({
-          eventKey: m.eventKey,
-          eventTimeIso: m.eventTimeIso,
+          key: m.eventKey,
+          time: m.eventTimeIso,
           kind: m.kind,
           category: m.category,
-          score: m.baselineScore,
+          baselineScore: m.baselineScore,
           origAddr: m.origAddr,
           respAddr: m.respAddr,
         }))
       : story.topMembers.map((m) => ({
-          eventKey: m.eventKey,
-          eventTimeIso: m.eventTimeIso,
+          key: m.eventKey,
+          time: m.eventTimeIso,
           kind: m.kind,
           category: m.category,
-          score: m.rawScore,
+          baselineScore: m.rawScore,
           origAddr: null,
           respAddr: null,
         }));
+  const tableLabels: TriageEventTableLabels = {
+    timeColumn: labels.timeColumn,
+    kindColumn: labels.kindColumn,
+    categoryColumn: labels.categoryColumn,
+    scoreColumn: labels.scoreColumn,
+    origAddrColumn: labels.origAddrColumn,
+    respAddrColumn: labels.respAddrColumn,
+  };
 
   return (
     <section
@@ -608,74 +628,8 @@ function TriageStoryDetail({
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">{labels.emptyMembers}</p>
       ) : (
-        <table className="w-full text-sm">
-          <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-            <tr className="border-b">
-              <th scope="col" className="py-2 pr-2 text-left font-medium">
-                {labels.timeColumn}
-              </th>
-              <th scope="col" className="py-2 pr-2 text-left font-medium">
-                {labels.kindColumn}
-              </th>
-              <th scope="col" className="py-2 pr-2 text-left font-medium">
-                {labels.categoryColumn}
-              </th>
-              {labels.origAddrColumn ? (
-                <th scope="col" className="py-2 pr-2 text-left font-medium">
-                  {labels.origAddrColumn}
-                </th>
-              ) : null}
-              {labels.respAddrColumn ? (
-                <th scope="col" className="py-2 pr-2 text-left font-medium">
-                  {labels.respAddrColumn}
-                </th>
-              ) : null}
-              <th scope="col" className="py-2 text-right font-medium">
-                {labels.scoreColumn}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((m) => (
-              <tr key={m.eventKey} className="border-b last:border-0">
-                <td className="py-1.5 pr-2 font-mono text-xs">
-                  {m.eventTimeIso}
-                </td>
-                <td className="py-1.5 pr-2">{m.kind}</td>
-                <td className="py-1.5 pr-2 text-muted-foreground">
-                  {m.category ?? "—"}
-                </td>
-                {labels.origAddrColumn ? (
-                  <td className="py-1.5 pr-2 font-mono text-xs text-muted-foreground">
-                    {m.origAddr ?? "—"}
-                  </td>
-                ) : null}
-                {labels.respAddrColumn ? (
-                  <td className="py-1.5 pr-2 font-mono text-xs text-muted-foreground">
-                    {m.respAddr ?? "—"}
-                  </td>
-                ) : null}
-                <td className="py-1.5 text-right font-mono">
-                  {m.score === null ? "—" : SCORE_FORMAT.format(m.score)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <TriageEventTable rows={rows} labels={tableLabels} />
       )}
     </section>
   );
-}
-
-interface MemberRow {
-  eventKey: string;
-  eventTimeIso: string;
-  kind: string;
-  category: string | null;
-  /** `null` for members whose `event_time` falls outside the menu
-   *  period — the read-time `cume_dist()` cohort doesn't cover them
-   *  and the UI renders `—` rather than a misleading score. */
-  score: number | null;
-  origAddr: string | null;
-  respAddr: string | null;
 }
