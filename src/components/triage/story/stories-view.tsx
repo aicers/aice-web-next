@@ -5,9 +5,11 @@
  *
  * Renders a server-supplied list of {@link TriageStory} rows as cards,
  * with an optional focused-Story detail panel beneath. The detail
- * panel reuses the member-table layout from the asset-detail
- * component family — but Stories never share `TriageAsset` shape, so
- * the table is owned here.
+ * panel's member table is rendered by the shared
+ * `TriageEventTable` in `src/components/triage/event-row/triage-event-table.tsx`
+ * (extracted in #554); this file only normalizes Story member rows
+ * into the shared `TriageEventRow` view-model and supplies the
+ * Story-only `origAddr` / `respAddr` column labels.
  *
  * The Send-to-aimer-web button on each card is the inert
  * `disabled=true` shape #490 ships; #493 takes over the click
