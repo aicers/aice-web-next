@@ -115,7 +115,25 @@ function makeClient(): ClientHandles {
       };
     }
     if (sql.includes("FROM baseline_triaged_event")) {
-      return { rows: candidates, rowCount: candidates.length };
+      // Honor the SQL's event_time upper bound so a test can
+      // simulate the rebuild's `endExclusive` candidate-scan
+      // contract: when the SQL uses `event_time <` (rebuild) the
+      // mock filters out events at-or-after the upper bound; when
+      // it uses `event_time <=` (cadence) it includes them.
+      const upperParam = sql.includes("event_time >= $1")
+        ? params?.[1]
+        : params?.[0];
+      const upperIsExclusive = sql.includes("event_time < $");
+      const upper = upperParam instanceof Date ? upperParam : null;
+      const filtered =
+        upper === null
+          ? candidates
+          : candidates.filter((c) =>
+              upperIsExclusive
+                ? c.event_time.getTime() < upper.getTime()
+                : c.event_time.getTime() <= upper.getTime(),
+            );
+      return { rows: filtered, rowCount: filtered.length };
     }
     if (sql.includes("INSERT INTO event_group ")) {
       if (nextInsertFailure !== null) {
@@ -433,6 +451,86 @@ describe("runStoryRebuild — window contract", () => {
     expect(h.insertedRows).toHaveLength(1);
     // The INSERT corresponds to asset 10.0.0.2.
     expect(h.insertedRows[0].params).toContain("10.0.0.2");
+  });
+});
+
+describe("runStoryRebuild — member-scan upper bound is exclusive at `to`", () => {
+  it("excludes events at exactly `to` so an in-window cluster is not absorbed into a draft ending at `to`", async () => {
+    // Regression for the half-open contract: with an inclusive
+    // upper bound, R3 same-asset events at `to-60m`, `to-30m`,
+    // `to-1m`, `to` cluster into one draft ending at `to`. The
+    // finalize predicate `endMs < to` then drops it, and the
+    // pre-rebuild Story whose `time_window_end == to-1m` (already
+    // DELETEd by the rebuild) is never reinserted — a silently-
+    // lost Story inside the requested window. With the exclusive
+    // upper bound, the event at `to` stays out of the candidate
+    // set; the remaining three events form a cluster ending at
+    // `to-1m`, which the finalize predicate accepts.
+    const h = makeClient();
+    const toMs = new Date(TO).getTime();
+    const at = (offsetMs: number) => new Date(toMs - offsetMs);
+    h.setCandidates([
+      {
+        event_key: "k1",
+        event_time: at(60 * 60_000),
+        kind: "HttpThreat",
+        orig_addr: "10.0.0.5",
+        category: "IMPACT",
+        selector_tags: ["S2-severe"],
+        raw_score: 1.5,
+      },
+      {
+        event_key: "k2",
+        event_time: at(30 * 60_000),
+        kind: "HttpThreat",
+        orig_addr: "10.0.0.5",
+        category: "IMPACT",
+        selector_tags: ["S2-severe"],
+        raw_score: 1.5,
+      },
+      {
+        event_key: "k3",
+        event_time: at(60_000),
+        kind: "HttpThreat",
+        orig_addr: "10.0.0.5",
+        category: "IMPACT",
+        selector_tags: ["S2-severe"],
+        raw_score: 1.5,
+      },
+      {
+        event_key: "k4",
+        event_time: at(0), // exactly `to`
+        kind: "HttpThreat",
+        orig_addr: "10.0.0.5",
+        category: "IMPACT",
+        selector_tags: ["S2-severe"],
+        raw_score: 1.5,
+      },
+    ]);
+    wireCustomerPool(h.client);
+    const result = await runStoryRebuild({
+      customerId: 7,
+      fromIso: FROM,
+      toIso: TO,
+    });
+    expect(result.insertedAutoStories).toBe(1);
+    expect(h.insertedRows).toHaveLength(1);
+    // The candidate-scan SQL uses the exclusive operator.
+    const scanQueries = h.queries.filter((q) =>
+      q.sql.includes("FROM baseline_triaged_event"),
+    );
+    expect(scanQueries.length).toBeGreaterThan(0);
+    for (const q of scanQueries) {
+      expect(q.sql).toMatch(/event_time < \$/);
+      expect(q.sql).not.toMatch(/event_time <= \$/);
+    }
+    // The INSERTed draft's `time_window_end` is `to - 1min`, not
+    // `to` — proving the event at exactly `to` did not extend the
+    // cluster.
+    const params = h.insertedRows[0].params;
+    const ends = params.filter((p): p is Date => p instanceof Date);
+    expect(ends.some((d) => d.getTime() === toMs - 60_000)).toBe(true);
+    expect(ends.some((d) => d.getTime() === toMs)).toBe(false);
   });
 });
 

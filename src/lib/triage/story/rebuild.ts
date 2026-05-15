@@ -306,8 +306,14 @@ async function runRebuildTransaction(
 
     // (4 + 5) Re-run the correlator with a β-aware insert that
     // copies submission tracking from the snapshot when the natural
-    // key matches. Member-scan reaches back to
-    // `from − MAX_RULE_WINDOW_MS` per the issue's window contract.
+    // key matches. Member-scan covers `[from − MAX_RULE_WINDOW_MS,
+    // to)` — note the half-open upper bound. Without `endExclusive`,
+    // an event at exactly `to` could pull earlier events into a
+    // cluster whose `time_window_end == to`; the rebuild's
+    // `[from, to)` finalization predicate would then drop that
+    // draft, and the pre-rebuild Story that ended just inside `to`
+    // (already DELETEd) would not be reinserted — a silently-lost
+    // Story inside the requested window.
     let betaCarriedOver = 0;
     const insertDraft: StoryInsertFn = async (
       txClient,
@@ -328,6 +334,7 @@ async function runRebuildTransaction(
         client,
         memberScanStart,
         memberScanEnd: to,
+        endExclusive: true,
         finalize: (end) => {
           const ms = end.getTime();
           return ms >= fromMs && ms < toMs;

@@ -110,8 +110,20 @@ export interface RunStoryCorrelationForWindowArgs {
    * up earlier members.
    */
   memberScanStart: Date | null;
-  /** Inclusive upper bound on `event_time` for the member scan. */
+  /** Upper bound on `event_time` for the member scan. Inclusive
+   *  unless {@link endExclusive} is set. */
   memberScanEnd: Date;
+  /**
+   * When true, the member-scan upper bound is `event_time <
+   * memberScanEnd` instead of `<=`. Cadence leaves this unset
+   * (drafts ending at `newHorizon` are eligible this tick); rebuild
+   * sets it so events at exactly `to` do not enter the candidate
+   * set — otherwise such an event can extend an otherwise-eligible
+   * cluster's `time_window_end` to `to`, which the half-open
+   * `[from, to)` finalization predicate then drops, silently losing
+   * a Story that the pre-rebuild DELETE just removed.
+   */
+  endExclusive?: boolean;
   /**
    * Predicate over a draft's `time_window_end` indicating whether
    * it should be finalized in this call. Cadence passes
@@ -150,6 +162,7 @@ export async function runStoryCorrelationForWindow(
     client,
     memberScanStart,
     memberScanEnd,
+    endExclusive,
     finalize,
     insertDraft,
     signal,
@@ -165,9 +178,10 @@ export async function runStoryCorrelationForWindow(
   // `selector_tags && ...`), phase 2 reads per-asset rows via
   // `orig_addr = ANY($::inet[])`. Final sliding-window clustering
   // stays in the rule layer.
+  const readArgs = { client, memberScanStart, memberScanEnd, endExclusive };
   const [r1Candidates, r3Candidates] = await Promise.all([
-    readR1Candidates({ client, memberScanStart, memberScanEnd }),
-    readR3Candidates({ client, memberScanStart, memberScanEnd }),
+    readR1Candidates(readArgs),
+    readR3Candidates(readArgs),
   ]);
 
   const drafts: StoryDraft[] = [

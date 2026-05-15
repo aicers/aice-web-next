@@ -18,7 +18,7 @@ or the current rule code.
 Two operational situations require a Story rebuild:
 
 1. **After a baseline rebuild on the same window.** The baseline
-   rebuild (`POST /api/internal/triage/baseline/rebuild`) explicitly
+   rebuild (`POST /api/triage/baseline/rebuild`) explicitly
    disables the Story correlator on its rebuild path — cadence owns
    the Story finalization watermark, and reinvoking the correlator
    from inside a window-scoped baseline rebuild would mix two
@@ -151,16 +151,21 @@ carry-over by construction.
 The two routes are deliberately decoupled — the Story rebuild does
 not chain automatically off the baseline rebuild. After an operator
 rebuilds baseline for a window via
-`POST /api/internal/triage/baseline/rebuild`, follow up with a
+`POST /api/triage/baseline/rebuild`, follow up with a
 Story rebuild on the same `[from, to)` to keep `event_group`
 consistent with the new corpus A.
 
 Recommended runbook order:
 
-1. POST `/api/internal/triage/baseline/rebuild` with the desired
-   window. Wait for the response (`status: 'ok'`) or a typed error.
-2. POST `/api/internal/triage/story/rebuild` with the same
-   `customer_id` / `from` / `to`. Wait for a 200 response.
+1. POST `/api/triage/baseline/rebuild` (session-authenticated,
+   `SystemAdministrator` role, body uses camelCase `customerId` /
+   `from` / `to`) with the desired window. Wait for the HTTP 200
+   response carrying `deletedTriagedRows` /
+   `insertedTriagedRows` / `durationMs` (or a typed `code` error).
+2. POST `/api/internal/triage/story/rebuild` (internal-token route,
+   body uses snake_case `customer_id`) with the same `customer_id`
+   matching step 1's `customerId`, and the same `from` / `to`. Wait
+   for a 200 response.
 
 Both routes contend on the same advisory key, so the second call
 either completes cleanly (when the first has released) or returns

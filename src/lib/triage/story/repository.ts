@@ -56,8 +56,22 @@ export interface ReadCandidatesArgs {
    * range degenerates to `(-∞, new_horizon]`.
    */
   memberScanStart: Date | null;
-  /** Inclusive upper bound on `event_time` for the member scan. */
+  /**
+   * Upper bound on `event_time` for the member scan. Inclusive by
+   * default — cadence calls with `newHorizon` and accepts drafts
+   * whose `time_window_end == newHorizon`. The rebuild path passes
+   * {@link endExclusive} `= true` so events at exactly `to` are kept
+   * out of the candidate set; otherwise such an event can extend an
+   * otherwise-eligible cluster's end to `to`, which the rebuild's
+   * `[from, to)` finalization predicate then drops.
+   */
   memberScanEnd: Date;
+  /**
+   * When true, use `event_time < memberScanEnd` instead of
+   * `event_time <= memberScanEnd`. Defaults to false to preserve the
+   * cadence call site's inclusive semantics.
+   */
+  endExclusive?: boolean;
 }
 
 interface CandidateRow {
@@ -110,8 +124,9 @@ function rowToCandidate(row: CandidateRow): CandidateEvent {
 export async function readR1Candidates(
   args: ReadCandidatesArgs,
 ): Promise<CandidateEvent[]> {
-  const { client, memberScanStart, memberScanEnd } = args;
+  const { client, memberScanStart, memberScanEnd, endExclusive } = args;
   const categories = Array.from(CRITICAL_CATEGORIES) as ThreatCategory[];
+  const endOp = endExclusive ? "<" : "<=";
   const baseSelect = `SELECT event_key::text   AS event_key,
                               event_time,
                               kind,
@@ -123,12 +138,12 @@ export async function readR1Candidates(
   const sql =
     memberScanStart === null
       ? `${baseSelect}
-          WHERE event_time <= $1
+          WHERE event_time ${endOp} $1
             AND orig_addr IS NOT NULL
             AND category = ANY($2::text[])`
       : `${baseSelect}
           WHERE event_time >= $1
-            AND event_time <= $2
+            AND event_time ${endOp} $2
             AND orig_addr IS NOT NULL
             AND category = ANY($3::text[])`;
   const params =
@@ -185,14 +200,15 @@ export async function readR1Candidates(
 export async function readR3Candidates(
   args: ReadCandidatesArgs,
 ): Promise<CandidateEvent[]> {
-  const { client, memberScanStart, memberScanEnd } = args;
+  const { client, memberScanStart, memberScanEnd, endExclusive } = args;
   const selectors = Array.from(CRITICAL_SELECTOR_SET);
+  const endOp = endExclusive ? "<" : "<=";
 
   const phase1Sql =
     memberScanStart === null
       ? `SELECT host(orig_addr) AS orig_addr
            FROM baseline_triaged_event
-          WHERE event_time <= $1
+          WHERE event_time ${endOp} $1
             AND orig_addr IS NOT NULL
             AND selector_tags && $2::text[]
           GROUP BY orig_addr
@@ -200,7 +216,7 @@ export async function readR3Candidates(
       : `SELECT host(orig_addr) AS orig_addr
            FROM baseline_triaged_event
           WHERE event_time >= $1
-            AND event_time <= $2
+            AND event_time ${endOp} $2
             AND orig_addr IS NOT NULL
             AND selector_tags && $3::text[]
           GROUP BY orig_addr
@@ -234,12 +250,12 @@ export async function readR3Candidates(
   const phase2Sql =
     memberScanStart === null
       ? `${baseSelect}
-          WHERE event_time <= $1
+          WHERE event_time ${endOp} $1
             AND orig_addr = ANY($2::inet[])
             AND selector_tags && $3::text[]`
       : `${baseSelect}
           WHERE event_time >= $1
-            AND event_time <= $2
+            AND event_time ${endOp} $2
             AND orig_addr = ANY($3::inet[])
             AND selector_tags && $4::text[]`;
   const phase2Params =
