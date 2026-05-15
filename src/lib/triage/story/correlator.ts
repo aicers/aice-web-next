@@ -47,6 +47,7 @@ import "server-only";
 import type pg from "pg";
 import {
   advanceStoryWatermark,
+  type InsertAutoStoryResult,
   insertAutoStory,
   readR1Candidates,
   readR3Candidates,
@@ -86,8 +87,117 @@ export interface StepFResult {
 }
 
 /**
+ * Pluggable insert path used by {@link runStoryCorrelationForWindow}.
+ * The cadence call site uses the default ({@link insertAutoStory})
+ * which writes β columns at their DEFAULT (NULL / 0 / NULL); the
+ * rebuild path (#565) swaps in a β-aware variant that joins the new
+ * row against the pre-rebuild snapshot on the natural key and copies
+ * `last_sent_at` / `send_count` / `last_sent_by` when matched.
+ */
+export type StoryInsertFn = (
+  client: pg.PoolClient,
+  draft: StoryDraft,
+) => Promise<InsertAutoStoryResult>;
+
+export interface RunStoryCorrelationForWindowArgs {
+  client: pg.PoolClient;
+  /**
+   * Inclusive lower bound on `event_time` for the member scan, or
+   * `null` for no lower bound. Cadence passes
+   * `previous_watermark − MAX_RULE_WINDOW_MS` (or `null` on the first
+   * tick); the rebuild path passes `from − MAX_RULE_WINDOW_MS` so
+   * cross-window clusters whose end falls just past `from` can pick
+   * up earlier members.
+   */
+  memberScanStart: Date | null;
+  /** Inclusive upper bound on `event_time` for the member scan. */
+  memberScanEnd: Date;
+  /**
+   * Predicate over a draft's `time_window_end` indicating whether
+   * it should be finalized in this call. Cadence passes
+   * `endMs > previousWatermark && endMs <= newHorizon` (open-closed
+   * `(prev, horizon]`); rebuild passes
+   * `endMs >= from && endMs < to` (half-open `[from, to)`).
+   */
+  finalize: (timeWindowEnd: Date) => boolean;
+  /**
+   * Optional override for the per-draft insert. Defaults to
+   * {@link insertAutoStory}.
+   */
+  insertDraft?: StoryInsertFn;
+  signal?: AbortSignal;
+}
+
+export interface StoryCorrelationResult {
+  /** Number of `event_group` rows inserted by this call. */
+  storiesInserted: number;
+}
+
+/**
+ * Pure "candidate scan + detect + insert" core extracted from
+ * {@link runStepF}. Does NOT read or advance
+ * `baseline_corpus_state.story_finalized_through` — the watermark is
+ * cadence's concern. Re-usable from the rebuild path (#565), which
+ * supplies its own `[from, to)` finalization predicate, its own
+ * `memberScanStart = from − MAX_RULE_WINDOW_MS`, and a β-aware
+ * `insertDraft` that copies submission tracking from the matching
+ * pre-rebuild row when the natural key matches.
+ */
+export async function runStoryCorrelationForWindow(
+  args: RunStoryCorrelationForWindowArgs,
+): Promise<StoryCorrelationResult> {
+  const {
+    client,
+    memberScanStart,
+    memberScanEnd,
+    finalize,
+    insertDraft,
+    signal,
+  } = args;
+  if (signal?.aborted) {
+    throw new Error("Story correlator aborted before evaluation");
+  }
+
+  // Per-rule SQL push-down (Story RFC §3, §5). R1 reads its
+  // candidate set with `category = ANY(...)` as a single SELECT.
+  // R3 is two-phase: phase 1 pre-aggregates candidate assets
+  // (`GROUP BY orig_addr HAVING COUNT(*) >= 3` over
+  // `selector_tags && ...`), phase 2 reads per-asset rows via
+  // `orig_addr = ANY($::inet[])`. Final sliding-window clustering
+  // stays in the rule layer.
+  const [r1Candidates, r3Candidates] = await Promise.all([
+    readR1Candidates({ client, memberScanStart, memberScanEnd }),
+    readR3Candidates({ client, memberScanStart, memberScanEnd }),
+  ]);
+
+  const drafts: StoryDraft[] = [
+    ...detectR1(r1Candidates),
+    ...detectR3(r3Candidates),
+  ];
+
+  const insertFn = insertDraft ?? insertAutoStory;
+  let storiesInserted = 0;
+  for (const draft of drafts) {
+    if (signal?.aborted) {
+      throw new Error("Story correlator aborted between drafts");
+    }
+    if (!finalize(draft.timeWindowEnd)) continue;
+    const result = await insertFn(client, draft);
+    if (result.groupId !== null) storiesInserted += 1;
+  }
+
+  return { storiesInserted };
+}
+
+/**
  * Run step (f) for the page. Writes happen in the caller's open
  * transaction, so a thrown error rolls the entire page back.
+ *
+ * Thin wrapper around {@link runStoryCorrelationForWindow}: reads the
+ * previous watermark, derives the finalization range
+ * `(prev, page_max − slop]` and member-scan range
+ * `[prev − MAX_RULE_WINDOW_MS, page_max − slop]`, runs the core, and
+ * advances the watermark.
  */
 export async function runStepF(args: RunStepFArgs): Promise<StepFResult> {
   const { client, pageEventTimeRange, signal } = args;
@@ -133,24 +243,6 @@ export async function runStepF(args: RunStepFArgs): Promise<StepFResult> {
       ? null
       : new Date(previousWatermark.getTime() - MAX_RULE_WINDOW_MS);
 
-  // Per-rule SQL push-down (Story RFC §3, §5). R1 reads its
-  // candidate set with `category = ANY(...)` as a single SELECT.
-  // R3 is two-phase: phase 1 pre-aggregates candidate assets
-  // (`GROUP BY orig_addr HAVING COUNT(*) >= 3` over
-  // `selector_tags && ...`), phase 2 reads per-asset rows via
-  // `orig_addr = ANY($::inet[])` — the per-asset shape the issue's
-  // measurement gate validates against the `orig_addr` GiST index.
-  // Final sliding-window clustering stays in the rule layer.
-  const [r1Candidates, r3Candidates] = await Promise.all([
-    readR1Candidates({ client, memberScanStart, memberScanEnd: newHorizon }),
-    readR3Candidates({ client, memberScanStart, memberScanEnd: newHorizon }),
-  ]);
-
-  const drafts: StoryDraft[] = [
-    ...detectR1(r1Candidates),
-    ...detectR3(r3Candidates),
-  ];
-
   // Finalization-candidate filter: only drafts whose
   // `time_window_end` falls strictly past the previous watermark
   // and at-or-before `new_horizon` are finalized this tick. Drafts
@@ -159,15 +251,16 @@ export async function runStepF(args: RunStepFArgs): Promise<StepFResult> {
   const newHorizonMs = newHorizon.getTime();
   const previousMs =
     previousWatermark === null ? -Infinity : previousWatermark.getTime();
-
-  let storiesInserted = 0;
-  for (const draft of drafts) {
-    const endMs = draft.timeWindowEnd.getTime();
-    if (endMs <= previousMs) continue; // already finalized on a prior tick
-    if (endMs > newHorizonMs) continue; // in slop window; defer to next tick
-    const result = await insertAutoStory(client, draft);
-    if (result.groupId !== null) storiesInserted += 1;
-  }
+  const { storiesInserted } = await runStoryCorrelationForWindow({
+    client,
+    memberScanStart,
+    memberScanEnd: newHorizon,
+    finalize: (end) => {
+      const endMs = end.getTime();
+      return endMs > previousMs && endMs <= newHorizonMs;
+    },
+    signal,
+  });
 
   await advanceStoryWatermark(client, newHorizon);
 

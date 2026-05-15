@@ -257,6 +257,23 @@ export interface InsertAutoStoryResult {
 }
 
 /**
+ * β-style submission tracking carried over from a pre-rebuild auto
+ * Story whose natural key matches the new draft (#565). The cadence
+ * path leaves this `undefined` so the columns take their DEFAULT
+ * (NULL / 0 / NULL); the rebuild service joins the new drafts against
+ * the pre-rebuild snapshot on
+ * `(correlation_rule_id, primary_asset, time_window_start, time_window_end)`
+ * and copies the matching row's values so the operator's
+ * "already-analyzed" awareness persists across a rules-changed
+ * recompute.
+ */
+export interface AutoStoryBetaCarryOver {
+  lastSentAt: Date | null;
+  sendCount: number;
+  lastSentBy: string | null;
+}
+
+/**
  * INSERT one auto-correlated `event_group` row plus its members in
  * the caller's open transaction. Returns the new group id, or
  * `null` when the partial unique index suppressed the INSERT — the
@@ -266,32 +283,68 @@ export interface InsertAutoStoryResult {
  * `event_group_member`. The composite PK `(event_group_id, event_key)`
  * makes the path idempotent under retry against a successfully-
  * INSERTed parent.
+ *
+ * The optional `carryOver` argument is consumed by the rebuild path
+ * (#565). When provided, the β columns
+ * (`last_sent_at` / `send_count` / `last_sent_by`) are written from
+ * the carry-over values instead of the column DEFAULTs, so a rebuilt
+ * Story that matches a pre-rebuild row on the natural key inherits
+ * the operator's submission tracking.
  */
 export async function insertAutoStory(
   client: pg.PoolClient,
   draft: StoryDraft,
+  carryOver?: AutoStoryBetaCarryOver,
 ): Promise<InsertAutoStoryResult> {
-  const insertGroup = await client.query<{ id: string }>(
-    `INSERT INTO event_group (
-        kind, correlation_rule_id, story_version,
-        time_window_start, time_window_end,
-        primary_asset, score, summary_payload
-      )
-      VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb)
-      ON CONFLICT (correlation_rule_id, primary_asset, time_window_start, time_window_end)
-        WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
-        DO NOTHING
-      RETURNING id::text AS id`,
-    [
-      draft.ruleId,
-      STORY_VERSION,
-      draft.timeWindowStart,
-      draft.timeWindowEnd,
-      draft.primaryAsset,
-      draft.score,
-      JSON.stringify(draft.summary satisfies StorySummaryPayload),
-    ],
-  );
+  const insertGroup =
+    carryOver === undefined
+      ? await client.query<{ id: string }>(
+          `INSERT INTO event_group (
+              kind, correlation_rule_id, story_version,
+              time_window_start, time_window_end,
+              primary_asset, score, summary_payload
+            )
+            VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb)
+            ON CONFLICT (correlation_rule_id, primary_asset, time_window_start, time_window_end)
+              WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
+              DO NOTHING
+            RETURNING id::text AS id`,
+          [
+            draft.ruleId,
+            STORY_VERSION,
+            draft.timeWindowStart,
+            draft.timeWindowEnd,
+            draft.primaryAsset,
+            draft.score,
+            JSON.stringify(draft.summary satisfies StorySummaryPayload),
+          ],
+        )
+      : await client.query<{ id: string }>(
+          `INSERT INTO event_group (
+              kind, correlation_rule_id, story_version,
+              time_window_start, time_window_end,
+              primary_asset, score, summary_payload,
+              last_sent_at, send_count, last_sent_by
+            )
+            VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb,
+                    $8, $9, $10::uuid)
+            ON CONFLICT (correlation_rule_id, primary_asset, time_window_start, time_window_end)
+              WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
+              DO NOTHING
+            RETURNING id::text AS id`,
+          [
+            draft.ruleId,
+            STORY_VERSION,
+            draft.timeWindowStart,
+            draft.timeWindowEnd,
+            draft.primaryAsset,
+            draft.score,
+            JSON.stringify(draft.summary satisfies StorySummaryPayload),
+            carryOver.lastSentAt,
+            carryOver.sendCount,
+            carryOver.lastSentBy,
+          ],
+        );
   if (insertGroup.rows.length === 0) {
     return { groupId: null };
   }
