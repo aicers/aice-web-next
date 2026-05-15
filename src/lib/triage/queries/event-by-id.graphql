@@ -1,0 +1,15 @@
+# requires: event-fields.graphql
+# Single-event fetch by opaque REview `Event.id` (added in #561). The
+# Story-member Tier 2 resolver issues this query once per member key in
+# parallel (the cohort caps at STORY_MEMBER_CAP = 50, #489) so the Tier
+# 2 predicate can be evaluated in-app against the member payloads
+# without walking REview's universe-wide `eventList(filter)` stream.
+#
+# Returns `null` when the id does not resolve under the caller's
+# customer / sensor scope; the resolver treats that as "member dropped
+# from the cohort" rather than as an error.
+query TriageEventById($id: ID!) {
+  event(id: $id) {
+    ...TriageEventFields
+  }
+}

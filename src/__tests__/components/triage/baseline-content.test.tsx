@@ -612,22 +612,22 @@ describe("TriageBaselineContent — Story-origin hash-restore cancellation (#553
   });
 });
 
-describe("TriageBaselineContent — Story-origin suppresses Tier 2 affordances (#553 Round 2)", () => {
+describe("TriageBaselineContent — Story-origin lifts Tier 2 onto member corpus (#561)", () => {
   afterEach(() => {
     storyActionsMocks.fetchStoryDetail.mockReset();
     storyActionsMocks.refreshTriageStories.mockReset();
     storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
   });
 
-  it("hides the Tier 2 Learning method + Keywords sections on the pivot panel when the trail is rooted at a Story", async () => {
-    // Reviewer Round 2 Item 1: on a Story-origin trail, `onPivot`
-    // already skips the Tier 2 fetch for server-filtered dimensions
-    // (no asset crumb to scope `sameSensor` etc.), but the panel still
-    // rendered the static Tier 2 sections (Learning method, Keywords)
-    // whenever `scope === "tier2"`. Clicking those affordances queued a
-    // breadcrumb step with no backing fetch — contradicting the PR's
-    // Tier 1-only contract for Story origin. The fix gates the static
-    // sections on `pivotOrigin.kind !== "story"`.
+  it("renders the Tier 2 Learning method + Keywords sections on a Story-origin pivot panel", async () => {
+    // Per #561 (supersedes the #559 Round 2 Item 1 suppression): the
+    // static Tier 2 sections (Learning method, Keywords) now render
+    // under a Story-origin trail because the dispatch is bounded by
+    // the Story corpus seed. Clicking them issues a Tier 2 fetch
+    // through the member-keyed resolver against the Story's member
+    // event-key set, not the asset's period-wide events. This test
+    // pins the panel-level reachability — the resolver-side cohort
+    // walk is covered in the tier2-fetch impl tests.
     const story = makeStory();
     const member = makeStoryMember();
     storyActionsMocks.fetchStoryDetail.mockResolvedValue({
@@ -716,11 +716,114 @@ describe("TriageBaselineContent — Story-origin suppresses Tier 2 affordances (
       fireEvent.click(pivotButton as HTMLElement);
     });
 
-    // Story-origin trail is active on the Pivot peer view. The Tier 2
-    // static sections must be suppressed: clicking them would otherwise
-    // queue a no-op step with no backing fetch.
-    expect(screen.queryByText("Dim:learningMethods")).toBeNull();
-    expect(screen.queryByLabelText("Keyword")).toBeNull();
+    // Story-origin trail is active on the Pivot peer view. Per #561
+    // the Tier 2 static sections REMAIN visible — clicking them now
+    // dispatches against the Story member corpus via the member-keyed
+    // resolver, so the affordances are no longer no-ops.
+    expect(screen.getByText("Dim:learningMethods")).toBeTruthy();
+    expect(screen.getByLabelText("Keyword")).toBeTruthy();
+  });
+});
+
+describe("TriageBaselineContent — Story-origin Tier 2 hash restore (#561)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+    window.location.hash = "";
+  });
+
+  it("restores a Story-origin trail with a static Tier 2 step (`learningMethods`) without clearing the trail", async () => {
+    // Per #561 the static Tier 2 sections (Learning method, Keywords)
+    // are reachable from a Pivot-from-Story state. A URL captured
+    // after clicking one of those sections must restore — not be
+    // rejected as stale just because the static dim has no
+    // `PivotDimension` extractor (the previous Story-restore branch
+    // called `getPivotDimension` unconditionally and cleared the trail
+    // on the throw). The restore validation now mirrors the asset
+    // path: static / Tier 2-only / server-filtered dims skip the
+    // corpus-presence check in Tier 2 mode and rely on the queued
+    // cohort fetch to populate.
+    //
+    // Render with `scope="tier1"` to keep the queued cohort fetch
+    // un-drained — the parent owns the scope flip via
+    // `onScopeRestoredFromHash` and there is no real fetch path in
+    // jsdom. The validation contract under test fires synchronously
+    // before any drain, so the stale-hash absence + the surviving
+    // crumb pin the behavior regardless of dispatch.
+    window.location.hash =
+      "#triage.tab=pivot&triage.pivot.story=9/42" +
+      "&triage.pivot.mode=tier2" +
+      "&triage.pivot.step=learningMethods:UNSUPERVISED";
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [makeStoryMember()],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[makeStory()]}
+          labels={LABELS}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Trail validation succeeded: the static Tier 2 step is NOT
+    // treated as stale. (Pre-#561 the trail was cleared and the
+    // stale-hash toast surfaced because `getPivotDimension` threw on
+    // the static id.) The breadcrumb still carries the restored
+    // crumb's value, and the stale-hash toast is absent.
+    expect(screen.queryByText(LABELS.staleHashFallback)).toBeNull();
+    expect(screen.getByText(/UNSUPERVISED/)).toBeTruthy();
+  });
+
+  it("clears the trail and surfaces the stale-hash notice when a Tier 1 step value is absent from the Story member set", async () => {
+    // The other half of the validation contract: a step that is NOT
+    // server-filtered / Tier 2-only must still be present in the
+    // cohort. A `host` value the cohort cannot back is genuinely
+    // stale, same as the pre-#561 behavior — the restore now uses
+    // the asset-path validation pattern uniformly so this case keeps
+    // its expected behavior.
+    window.location.hash =
+      "#triage.tab=pivot&triage.pivot.story=9/42" +
+      "&triage.pivot.step=host:nope.example";
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [makeStoryMember({ host: "story-host.example" })],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[makeStory()]}
+          labels={LABELS}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Crumb:host: nope.example")).toBeNull();
+    expect(screen.getByText(LABELS.staleHashFallback)).toBeTruthy();
   });
 });
 

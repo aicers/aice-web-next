@@ -522,6 +522,283 @@ describe("fetchTier2DimensionWithSession", () => {
     expect(variables.after).toBe("cursor-from-peek");
   });
 
+  // ── Story-member corpus (#561) ─────────────────────────────
+
+  /**
+   * Stub `event(id:)` resolver: returns the same per-member payload
+   * shape the cohort resolver expects, customised by id so the in-app
+   * Tier 2 predicate ({@link tier2MatchesEvent}) can match or reject
+   * each member individually.
+   */
+  function mockEventByIdResponses(
+    payloads: Record<string, Record<string, unknown> | null>,
+  ) {
+    mockGraphqlRequest.mockImplementation(async (_doc, vars) => {
+      const id = (vars as { id: string }).id;
+      const payload = id in payloads ? payloads[id] : null;
+      return { event: payload };
+    });
+  }
+
+  function makeMemberPayload(
+    id: string,
+    overrides: Partial<{
+      typename: string;
+      sensor: string;
+      origAddr: string | null;
+      respAddr: string | null;
+      origCountry: string | null;
+      respCountry: string | null;
+      level: string | null;
+      category: string | null;
+      learningMethod: string | null;
+      host: string | null;
+    }> = {},
+  ) {
+    return {
+      __typename: overrides.typename ?? "NetworkThreat",
+      id,
+      time: "2026-05-09T12:00:00.000Z",
+      sensor: overrides.sensor ?? "sensor-a",
+      category: overrides.category ?? "COMMAND_AND_CONTROL",
+      level: overrides.level ?? "MEDIUM",
+      origAddr: overrides.origAddr ?? "10.0.0.1",
+      respAddr: overrides.respAddr ?? "203.0.113.5",
+      origCountry: overrides.origCountry ?? null,
+      respCountry: overrides.respCountry ?? null,
+      learningMethod: overrides.learningMethod ?? null,
+      host: overrides.host ?? null,
+    };
+  }
+
+  it.each([
+    { size: 1, label: "single-member" },
+    { size: 25, label: "mid-range" },
+    { size: 50, label: "STORY_MEMBER_CAP boundary" },
+  ])("fetches each member by id and applies the Tier 2 predicate in-app ($label, size=$size)", async ({
+    size,
+  }) => {
+    // Per #561: the cohort resolver fetches each member event by id in
+    // parallel via `event(id:)` and applies the Tier 2 predicate
+    // in-app, instead of walking REview's universe-wide
+    // `eventList(filter)` stream and intersecting against the member
+    // set. The previous walk-based design dropped matching members
+    // sitting past a defensive walk-cap and flagged `truncated=true`
+    // wrongly when partial-match pivots ran the walk to the universe
+    // page tail. The per-id design pins the cohort universe to the
+    // member list by construction so neither failure mode is
+    // reachable.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const memberIds = Array.from({ length: size }, (_, i) => `evt-m-${i}`);
+    const payloads = Object.fromEntries(
+      memberIds.map((id) => [id, makeMemberPayload(id)]),
+    );
+    mockEventByIdResponses(payloads);
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["System Administrator"] }),
+      {
+        ...PERIOD,
+        dimension: "kinds",
+        valueKey: "NetworkThreat",
+        customerId: 1,
+        corpusSeed: {
+          kind: "storyMembers",
+          customerId: 1,
+          storyId: "123",
+          eventKeys: memberIds,
+        },
+      },
+    );
+
+    // One `event(id:)` call per member — pagination is the cohort by
+    // construction.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(size);
+    // `totalCount` is the matched cohort count, not REview's universe.
+    expect(result.totalCount).toBe(String(size));
+    expect(result.events).toHaveLength(size);
+    expect(result.events.map((e) => e.id).sort()).toEqual(
+      [...memberIds].sort(),
+    );
+    expect(result.hasMore).toBe(false);
+    expect(result.endCursor).toBeNull();
+    expect(result.truncated).toBe(false);
+  });
+
+  it("filters out cohort members that do not satisfy the Tier 2 predicate", async () => {
+    // The reviewer-flagged failure mode: clicking `externalIp=1.2.3.4`
+    // on a Story-origin trail typically matches only a subset of the
+    // ≤50 members. The previous walk-based resolver kept scanning
+    // REview's universe until every member key appeared (often never
+    // — non-matching members did not satisfy the dimension filter), so
+    // it ran to the walk-cap and either dropped matching members past
+    // the cap or wrongly flagged `truncated=true`. The per-id design
+    // applies the predicate locally to each member: matching members
+    // are returned; non-matching members are simply absent from the
+    // result, no walk needed.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const memberIds = Array.from({ length: 10 }, (_, i) => `evt-m-${i}`);
+    // Only members 0, 3, 7 carry origAddr=1.2.3.4 (an external
+    // address). The remaining members carry a different external
+    // address.
+    mockEventByIdResponses(
+      Object.fromEntries(
+        memberIds.map((id, i) => [
+          id,
+          makeMemberPayload(id, {
+            origAddr: i === 0 || i === 3 || i === 7 ? "1.2.3.4" : "5.6.7.8",
+            respAddr: null,
+          }),
+        ]),
+      ),
+    );
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["System Administrator"] }),
+      {
+        ...PERIOD,
+        dimension: "externalIp",
+        valueKey: "1.2.3.4",
+        customerId: 1,
+        corpusSeed: {
+          kind: "storyMembers",
+          customerId: 1,
+          storyId: "filter",
+          eventKeys: memberIds,
+        },
+      },
+    );
+
+    expect(result.events.map((e) => e.id).sort()).toEqual([
+      "evt-m-0",
+      "evt-m-3",
+      "evt-m-7",
+    ]);
+    expect(result.totalCount).toBe("3");
+    expect(result.truncated).toBe(false);
+  });
+
+  it("drops cohort members whose `event(id:)` resolves to null without erroring", async () => {
+    // A member that resolves to `null` is one that fell out of the
+    // caller's customer / sensor scope between the Story member-list
+    // capture and the Tier 2 click (or was deleted upstream). The
+    // resolver treats it as "member dropped from the cohort" and the
+    // cohort universe shrinks accordingly — no error surfaces.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    mockEventByIdResponses({
+      "evt-live-0": makeMemberPayload("evt-live-0"),
+      "evt-dropped-1": null,
+      "evt-live-2": makeMemberPayload("evt-live-2"),
+    });
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["System Administrator"] }),
+      {
+        ...PERIOD,
+        dimension: "kinds",
+        valueKey: "NetworkThreat",
+        customerId: 1,
+        corpusSeed: {
+          kind: "storyMembers",
+          customerId: 1,
+          storyId: "rotated",
+          eventKeys: ["evt-live-0", "evt-dropped-1", "evt-live-2"],
+        },
+      },
+    );
+
+    expect(result.events.map((e) => e.id).sort()).toEqual([
+      "evt-live-0",
+      "evt-live-2",
+    ]);
+    expect(result.totalCount).toBe("2");
+  });
+
+  it("returns an empty cohort result without round-tripping when the seed is empty", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["System Administrator"] }),
+      {
+        ...PERIOD,
+        dimension: "kinds",
+        valueKey: "NetworkThreat",
+        customerId: 1,
+        corpusSeed: {
+          kind: "storyMembers",
+          customerId: 1,
+          storyId: "abc",
+          eventKeys: [],
+        },
+      },
+    );
+
+    expect(result.events).toEqual([]);
+    expect(result.totalCount).toBe("0");
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("matches `sameSensor` against the per-member sensor name without listSensors() resolution", async () => {
+    // Per the cohort branch in `fetchTier2DimensionWithSession`: the
+    // resolver skips the `(name, customerId)` → `nodeId` lookup that
+    // the asset path uses — the predicate compares the clicked sensor
+    // *name* against each fetched member's `sensor` field directly,
+    // so an unresolvable name does not surface a sensorFallback (and
+    // does not need the lookup endpoint to be available).
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    mockEventByIdResponses({
+      "m-0": makeMemberPayload("m-0", { sensor: "edge-01" }),
+      "m-1": makeMemberPayload("m-1", { sensor: "edge-02" }),
+      "m-2": makeMemberPayload("m-2", { sensor: "edge-01" }),
+    });
+
+    const { fetchTier2DimensionWithSession } = await import(
+      "@/lib/triage/tier2-fetch-impl"
+    );
+
+    const result = await fetchTier2DimensionWithSession(
+      makeSession({ roles: ["System Administrator"] }),
+      {
+        ...PERIOD,
+        dimension: "sameSensor",
+        valueKey: "edge-01",
+        customerId: 1,
+        corpusSeed: {
+          kind: "storyMembers",
+          customerId: 1,
+          storyId: "sensors",
+          eventKeys: ["m-0", "m-1", "m-2"],
+        },
+      },
+    );
+
+    expect(result.events.map((e) => e.id).sort()).toEqual(["m-0", "m-2"]);
+    expect(result.sensorFallback).toBeUndefined();
+    // No listSensors() round-trip — only the three per-id event fetches.
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(3);
+  });
+
   it("propagates a lookup transport error rather than surfacing it as a sensorFallback", async () => {
     // Per #502: "If the lookup itself fails (e.g., transport error),
     // surface the standard error banner rather than the stale-hash

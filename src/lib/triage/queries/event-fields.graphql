@@ -1,0 +1,1112 @@
+# Single source for the per-subtype Event selection used by both the
+# Triage `eventList` query (`event-list.graphql`) and the per-id event
+# fetch added by #561 (`event-by-id.graphql`). The two operations
+# compose this fragment via `# requires:` headers so a field added
+# here flows to both call sites without a hand-edit.
+#
+# The selection includes the minimum the baseline scoring rule and the
+# asset list need (interface fields plus `origAddr` and HttpThreat
+# `clusterId`) and the pivot-dimension fields enumerated in #476 §1 so
+# #452 / #453 can do client-side pivot without re-fetching:
+#   - Network fields (`respAddr`, `origPort`, `respPort`,
+#     `origCountry`, `respCountry`, `origNetwork`, `respNetwork`) on
+#     every subtype that exposes them.
+#   - HTTP-shaped fields (`host`, `uri`, `userAgent`) on the four
+#     HTTP-shaped subtypes.
+#   - DNS-shaped fields (`query`, `answer`) on the four DNS-shaped
+#     subtypes (BlocklistMalformedDns is omitted — it carries only
+#     question/answer counts, no payload).
+#   - TLS-shaped fields (`ja3`, `ja3S`, `serverName`, `serial`,
+#     `subjectCommonName`) on the two TLS-shaped subtypes.
+#   - Per-protocol identifier fields (#503).
+#   - `learningMethod` is picked on every subtype that carries it, so
+#     #561's per-id member fetch can evaluate the Tier 2
+#     `learningMethods` predicate in-app against the cohort without
+#     walking REview's universe-wide `eventList(filter)` stream.
+#
+# `origNetwork` / `respNetwork` select the membership shape
+# (`HostNetworkGroup`) needed by the customer-network classifier so
+# the client side can answer "is this address inside the customer's
+# defined network?" without an extra round-trip.
+fragment TriageEventFields on Event {
+  __typename
+  id
+  time
+  sensor
+  category
+  level
+  ... on BlocklistBootp {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistConn {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistDceRpc {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistDhcp {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistDns {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    query
+    answer
+  }
+  ... on BlocklistFtp {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    ftpCommands: commands {
+      command
+    }
+  }
+  ... on BlocklistHttp {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    host
+    uri
+    userAgent
+    learningMethod
+  }
+  ... on BlocklistKerberos {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistLdap {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    ldapOpcode: opcode
+    ldapObject: object
+    ldapArgument: argument
+  }
+  ... on BlocklistMalformedDns {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistMqtt {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    mqttSubscribe: subscribe
+  }
+  ... on BlocklistNfs {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistNtlm {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistRadius {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistRdp {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistSmb {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    smbPath: path
+    smbService: service
+    smbFileName: fileName
+  }
+  ... on BlocklistSmtp {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on BlocklistSsh {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    sshClient: client
+    sshServer: server
+    sshHassh: hassh
+    sshHasshServer: hasshServer
+  }
+  ... on BlocklistTls {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    ja3
+    ja3S
+    serverName
+    serial
+    subjectCommonName
+  }
+  ... on CryptocurrencyMiningPool {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    query
+    answer
+  }
+  ... on DnsCovertChannel {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    query
+    answer
+    learningMethod
+  }
+  ... on DomainGenerationAlgorithm {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    host
+    uri
+    userAgent
+    learningMethod
+  }
+  ... on FtpBruteForce {
+    origAddr
+    respAddr
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on FtpPlainText {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    ftpCommands: commands {
+      command
+    }
+  }
+  ... on HttpThreat {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    clusterId
+    host
+    uri
+    userAgent
+  }
+  ... on LdapBruteForce {
+    origAddr
+    respAddr
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on LdapPlainText {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    ldapOpcode: opcode
+    ldapObject: object
+    ldapArgument: argument
+  }
+  ... on LockyRansomware {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    query
+    answer
+  }
+  ... on MultiHostPortScan {
+    origAddr
+    respPort
+    origCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on NetworkThreat {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    learningMethod
+  }
+  ... on NonBrowser {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    host
+    uri
+    userAgent
+    learningMethod
+  }
+  ... on PortScan {
+    origAddr
+    respAddr
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on RdpBruteForce {
+    origAddr
+    origCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+  }
+  ... on RepeatedHttpSessions {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    learningMethod
+  }
+  ... on SuspiciousTlsTraffic {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    ja3
+    ja3S
+    serverName
+    serial
+    subjectCommonName
+  }
+  ... on TorConnection {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    learningMethod
+  }
+  ... on TorConnectionConn {
+    origAddr
+    respAddr
+    origPort
+    respPort
+    origCountry
+    respCountry
+    origNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    respNetwork {
+      networks {
+        hosts
+        networks
+        ranges {
+          start
+          end
+        }
+      }
+    }
+    learningMethod
+  }
+}

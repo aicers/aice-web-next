@@ -56,6 +56,7 @@ import {
   type TriagePivotMode,
   type TriageStoryHashFocus,
 } from "@/lib/triage/url-hash";
+import type { Tier2CorpusSeed } from "@/lib/triage/use-tier2-pivot";
 import {
   TIER2_PREFETCH_MODAL_THRESHOLD,
   useTier2Pivot,
@@ -489,6 +490,24 @@ export function TriageBaselineContent({
 
   const activeStep = trail.length > 0 ? trail[trail.length - 1] : null;
 
+  // Per-#561, the Story-origin Tier 2 path lifts onto the Story-member
+  // corpus. Build the seed once per `(origin, storyMemberEvents)`
+  // rotation so every {@link tier2.startFetch} / {@link tier2.getCached}
+  // call uses the same identity (the seed's `(customerId, storyId)`
+  // pair keys the Tier 2 cache so a same-Story re-pivot reuses cached
+  // results). The inline `eventKeys` list is bounded at
+  // `STORY_MEMBER_CAP = 50` (#489) — the wire-shape (a) decision in
+  // the PR description.
+  const tier2CorpusSeed = useMemo<Tier2CorpusSeed | undefined>(() => {
+    if (pivotOrigin.kind !== "story") return undefined;
+    return {
+      kind: "storyMembers",
+      customerId: pivotOrigin.customerId,
+      storyId: pivotOrigin.storyId,
+      eventKeys: storyMemberEvents.map((ev) => ev.id),
+    };
+  }, [pivotOrigin, storyMemberEvents]);
+
   // In Tier 2 mode, splice every cached Tier 2 fetch result that
   // appears anywhere on the trail into the corpus. Restricting the
   // splice to the active step would lose Tier 2 events as soon as
@@ -497,26 +516,38 @@ export function TriageBaselineContent({
   // should compute against the corpus *and* prior Tier 2 fetch
   // results). The dedupe set keeps a single event from being
   // counted twice when several trail steps share rows.
+  //
+  // Story-origin trails (#561) splice from the Story-member corpus
+  // instead of the asset's period-wide corpus; the lookup carries
+  // the same {@link tier2CorpusSeed} so the cache namespace matches.
   const expandedTier2Events: ScoredTriageEvent[] = useMemo(() => {
     if (scope !== "tier2") return [];
+    const baseEvents =
+      pivotOrigin.kind === "story" ? storyMemberEvents : result.events;
     const corpusKeys = new Set<string>();
-    for (const ev of result.events) corpusKeys.add(tier2DedupeKey(ev));
+    for (const ev of baseEvents) corpusKeys.add(tier2DedupeKey(ev));
     const seen = new Set<string>();
     const out: ScoredTriageEvent[] = [];
     // The asset crumb's `customerId` keys the Tier 2 cache lookup
     // (#502 — without it, two tenants pivoting the same value would
-    // cross-contaminate). The crumb is always the trail head in
-    // Baseline mode; fall back to 0 only for the defensive empty-
-    // trail case so the lookup stays a no-op cache miss.
-    const assetCrumbCustomerId =
-      trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
+    // cross-contaminate). For Story-origin trails (#561) there is no
+    // asset crumb; the Story origin's `customerId` plays the same
+    // role so the spliced Tier 2 events can still be attributed to
+    // the right tenant.
+    const tenantCustomerId =
+      pivotOrigin.kind === "story"
+        ? pivotOrigin.customerId
+        : trail.length > 0 && trail[0].kind === "asset"
+          ? trail[0].customerId
+          : 0;
     for (const step of trail) {
       if (step.kind !== "dimension") continue;
       if (!isTier2ServerDimension(step.dimension)) continue;
       const cached = tier2.getCached(
         step.dimension,
         step.value.key,
-        assetCrumbCustomerId,
+        tenantCustomerId,
+        tier2CorpusSeed,
       );
       if (!cached || cached.events.length === 0) continue;
       for (const ev of cached.events) {
@@ -525,28 +556,40 @@ export function TriageBaselineContent({
         seen.add(key);
         // Tier 2 fetch results are flat `TriageEvent[]` from the
         // Policy fetch service and do not carry a per-tenant marker.
-        // Attribute the spliced events to the trail's asset crumb so
-        // the pivot index's `(customerId, origAddr)` filter for the
+        // Attribute the spliced events to the trail's asset crumb (or
+        // the Story origin's customer for Story-origin trails) so the
+        // pivot index's `(customerId, origAddr)` filter for the
         // asset step still resolves.
         out.push({
           ...ev,
           score: baselineScore(ev),
-          customerId: assetCrumbCustomerId,
+          customerId: tenantCustomerId,
         });
       }
     }
     return out;
-  }, [scope, trail, tier2, result.events]);
+  }, [
+    scope,
+    trail,
+    tier2,
+    result.events,
+    pivotOrigin,
+    storyMemberEvents,
+    tier2CorpusSeed,
+  ]);
 
   const expandedEvents: readonly ScoredTriageEvent[] = useMemo(() => {
     // Story-origin trails (#553) replace the corpus entirely — the
     // pivot panel and the related-events surface read from the
     // Story's member set, not the period-wide events. Asset list
     // stays period-wide (see "Data-source scope" PR decision), so the
-    // swap is local to this memo. Tier 2 expansion is not surfaced
-    // for Story origin (Tier 2 fallback is asset-rooted in this PR;
-    // see PR description), so the splice is unnecessary here.
-    if (pivotOrigin.kind === "story") return storyMemberEvents;
+    // swap is local to this memo. Tier 2 server-filter expansion now
+    // resolves against the Story member seed (#561), so its events
+    // are spliced in alongside the corpus when present.
+    if (pivotOrigin.kind === "story") {
+      if (expandedTier2Events.length === 0) return storyMemberEvents;
+      return [...storyMemberEvents, ...expandedTier2Events];
+    }
     if (expandedTier2Events.length === 0) return result.events;
     return [...result.events, ...expandedTier2Events];
   }, [pivotOrigin, storyMemberEvents, result.events, expandedTier2Events]);
@@ -579,23 +622,39 @@ export function TriageBaselineContent({
       // to the trail's asset crumb so the synthesized pivot-focus row
       // can still identify the customer (see `expandedTier2Events`).
       // The same crumb keys the Tier 2 lookup so cross-tenant cache
-      // entries cannot collide (#502).
-      const assetCrumbCustomerId =
-        trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
+      // entries cannot collide (#502). Story-origin trails (#561) key
+      // on the Story origin's customerId instead since there is no
+      // asset crumb, and pass the Story corpus seed so the lookup
+      // hits the Story-keyed cache slot.
+      const tenantCustomerId =
+        pivotOrigin.kind === "story"
+          ? pivotOrigin.customerId
+          : trail.length > 0 && trail[0].kind === "asset"
+            ? trail[0].customerId
+            : 0;
       const cached = tier2.getCached(
         activeStep.dimension,
         activeStep.value.key,
-        assetCrumbCustomerId,
+        tenantCustomerId,
+        tier2CorpusSeed,
       );
       if (!cached) return [];
       return cached.events.map((ev) => ({
         ...ev,
         score: baselineScore(ev),
-        customerId: assetCrumbCustomerId,
+        customerId: tenantCustomerId,
       }));
     }
     return resolveStepFocusEvents(activeStep, expandedEvents, pivotIndex);
-  }, [activeStep, expandedEvents, pivotIndex, tier2, trail]);
+  }, [
+    activeStep,
+    expandedEvents,
+    pivotIndex,
+    tier2,
+    trail,
+    pivotOrigin,
+    tier2CorpusSeed,
+  ]);
 
   // The "Save as Story" button (#490) is enabled only when every
   // focused event belongs to one customer — a curated Story is single-
@@ -626,14 +685,19 @@ export function TriageBaselineContent({
   // the safer fallback is the asset card.
   const pivotFocusAsset: TriageAsset | null = useMemo(() => {
     if (!activeStep || activeStep.kind !== "dimension") return null;
-    const assetCrumbCustomerId =
-      trail.length > 0 && trail[0].kind === "asset" ? trail[0].customerId : 0;
+    const tenantCustomerId =
+      pivotOrigin.kind === "story"
+        ? pivotOrigin.customerId
+        : trail.length > 0 && trail[0].kind === "asset"
+          ? trail[0].customerId
+          : 0;
     const isReadyStaticTier2 =
       isStaticTier2Dimension(activeStep.dimension) &&
       tier2.getCached(
         activeStep.dimension,
         activeStep.value.key,
-        assetCrumbCustomerId,
+        tenantCustomerId,
+        tier2CorpusSeed,
       )?.status === "ready";
     if (focusEvents.length === 0 && !isReadyStaticTier2) return null;
     const dimensionLabel = labels.pivotPanel.dimensions[activeStep.dimension];
@@ -726,6 +790,7 @@ export function TriageBaselineContent({
     pivotOrigin,
     focusedStory,
     stories,
+    tier2CorpusSeed,
   ]);
 
   // Pivot focus is a Pivot-tab concept: it only re-skins the right-hand
@@ -761,6 +826,16 @@ export function TriageBaselineContent({
   // live in Tier 2 mode (the panel click resolves the sensor name to
   // REview's opaque `nodeId` against the shared lookup before
   // issuing the fetch), so no Tier 2 suppression is needed.
+  //
+  // Story-origin trails (#561) keep the Tier 2 sections — the new
+  // member-keyed resolver (`paginateTier2OverMemberCorpus`) bounds
+  // the fetch to the Story's member event-key set so the dispatch is
+  // meaningful over a Story corpus, not the asset's period-wide
+  // events. The `policyOnly` Tier 2 dimensions (`country`, `levels`,
+  // and the per-protocol identifiers) stay hidden via the existing
+  // Baseline-mode `dimension.policyOnly !== true` gate in
+  // `pivotIndexFor` / `buildPivotPanel`; this section only filters
+  // `tier2Only` for the Tier-1 view.
   const sections = useMemo(() => {
     const dimById = new Map<string, ReturnType<typeof getPivotDimension>>();
     const isTier2Only = (dim: string): boolean => {
@@ -777,13 +852,11 @@ export function TriageBaselineContent({
       }
       return known.tier2Only === true;
     };
-    if (scope !== "tier2" || pivotOrigin.kind === "story") {
-      // Story-origin trails (#553) render Tier 1 panels only — Tier 2
-      // suppression matches the "Tier 2 scope" PR design decision.
+    if (scope !== "tier2") {
       return allSections.filter((s) => !isTier2Only(s.dimension));
     }
     return allSections;
-  }, [allSections, scope, pivotOrigin]);
+  }, [allSections, scope]);
 
   // Surface truncation from both the Tier 1 loader (5,000-event corpus
   // cap, applied to the period) and any Tier 2 dimension fetch on the
@@ -797,11 +870,14 @@ export function TriageBaselineContent({
   // dimension like JA3, even though the JA3 panel is computed from
   // that same partial 5,000-row country result.
   const panelTruncated = useMemo(() => {
-    // Story-origin trails (#553) read from the complete Story member
-    // set, not the period-wide asset corpus, so the period-level
-    // truncation flag does not apply. Tier 2 expansion is already
-    // suppressed for Story origin (see {@link expandedEvents}), so the
-    // Tier 2 cached-truncation walk is also unreachable here.
+    // Story-origin trails (#553 / #561) read from the complete Story
+    // member set (≤ STORY_MEMBER_CAP = 50), not the period-wide asset
+    // corpus, so the period-level truncation flag does not apply and
+    // the Tier 2 cohort fits in a single fetch by construction (the
+    // Story-corpus resolver does not surface a `truncated=true` for
+    // the cohort universe — see `paginateTier2OverMemberCorpus`). The
+    // truncation hint is therefore suppressed for Story origin per
+    // #559 / #561 acceptance.
     if (pivotOrigin.kind === "story") return false;
     if (result.truncated) return true;
     if (scope !== "tier2") return false;
@@ -988,29 +1064,36 @@ export function TriageBaselineContent({
       // can splice the expanded events into the panel. Tier 1 clicks
       // (and Tier 2 client-intersection dimensions) are local-only.
       //
-      // Story-origin trails (#553) skip the Tier 2 dispatch entirely:
-      // Tier 2 fallback paths read from the asset's event set and have
-      // no plumbing for a Story-member corpus in this PR (per the PR's
-      // "Tier 2 scope" design decision). Clicks on Tier 2-only dims
-      // are filtered out at panel-section level below; this guard is
-      // a belt-and-braces for the trail-append path.
+      // Story-origin trails (#561) dispatch the same Tier 2 fetch but
+      // pass the Story corpus seed so the resolver bounds the fetch
+      // to the Story's member event-key set rather than the asset's
+      // period-wide events. The seed-driven cache slot keys on
+      // `(customerId, storyId)` so a same-Story re-pivot reuses the
+      // result; the asset-corpus and Story-corpus paths share neither
+      // their cache entries nor their event splices.
       if (
         scope === "tier2" &&
-        pivotOrigin.kind !== "story" &&
         step.kind === "dimension" &&
         isTier2ServerDimension(step.dimension)
       ) {
-        // Tier 2 fetches need the asset crumb's `customerId` so the
-        // `sameSensor` resolution path can disambiguate sensor names
-        // (not unique across tenants) under the asset's customer
-        // scope. The asset crumb is always the trail head when a
-        // Tier 2 server-filtered dimension is clicked; absent that,
-        // the trail's `effectiveSelection` carries the same value.
+        // Tier 2 fetches need a `customerId` so the `sameSensor`
+        // resolution path can disambiguate sensor names (not unique
+        // across tenants). For asset-rooted trails the crumb head
+        // carries it; for Story-origin trails (#561) the Story
+        // origin's `customerId` plays the same role. `effectiveSelection`
+        // is the Tier 1 fallback when the trail has not been seeded.
         const customerId =
-          trail.length > 0 && trail[0].kind === "asset"
-            ? trail[0].customerId
-            : (effectiveSelection?.customerId ?? 0);
-        tier2.startFetch(step.dimension, step.value.key, customerId);
+          pivotOrigin.kind === "story"
+            ? pivotOrigin.customerId
+            : trail.length > 0 && trail[0].kind === "asset"
+              ? trail[0].customerId
+              : (effectiveSelection?.customerId ?? 0);
+        tier2.startFetch(
+          step.dimension,
+          step.value.key,
+          customerId,
+          tier2CorpusSeed,
+        );
       }
       setTrail((current) => appendPivotStep(current, step));
       // A subsequent pivot describes a new trail; any leftover
@@ -1025,7 +1108,15 @@ export function TriageBaselineContent({
       // longer appropriate.
       abortHashRestore();
     },
-    [abortHashRestore, effectiveSelection, pivotOrigin, scope, tier2, trail],
+    [
+      abortHashRestore,
+      effectiveSelection,
+      pivotOrigin,
+      scope,
+      tier2,
+      tier2CorpusSeed,
+      trail,
+    ],
   );
 
   const onCrumb = useCallback(
@@ -1090,11 +1181,24 @@ export function TriageBaselineContent({
       dimension: Tier2Dimension;
       valueKey: string;
       /**
-       * Asset-root `customerId` captured at hash-restore time so the
+       * Tenant `customerId` captured at hash-restore time so the
        * Tier 2 fetch's `sameSensor` resolution path keys on the
-       * restored asset's tenant, not the live selection at drain time.
+       * restored origin's tenant, not the live selection at drain
+       * time. For asset-rooted restores this is the asset crumb's
+       * customer; for Story-origin restores (#561) it is the Story
+       * origin's customer (no asset crumb).
        */
       customerId: number;
+      /**
+       * Story-corpus seed (#561) captured at hash-restore time when
+       * the restored origin is a Story. Threaded into
+       * `tier2.startFetch` / `tier2.getCached` at drain time so the
+       * Tier 2 dispatch routes through the member-keyed resolver and
+       * the result lands in the Story-namespaced cache slot.
+       * `undefined` for asset-rooted restores so the existing asset
+       * dispatch path is preserved.
+       */
+      corpusSeed?: Tier2CorpusSeed;
     }>
   >([]);
   // Client-intersection steps decoded from a Tier 2 hash whose value
@@ -1218,33 +1322,84 @@ export function TriageBaselineContent({
             origin.customerId,
           );
           // Validate decoded dimension steps against the loaded
-          // member set — a step whose value is absent from any member
-          // is genuinely stale (the URL points at a value that no
-          // longer matches the Story corpus). Revert to the Story
-          // origin root in that case so the breadcrumb does not
-          // claim a pivot the corpus cannot back.
+          // member set. The validation rules mirror the asset-restore
+          // path so Tier 2-only and server-filtered steps are not
+          // rejected just because the value is absent from the Tier 1
+          // corpus — they will be populated by the queued cohort
+          // fetch once `scope === "tier2"` is committed.
+          //   - Static Tier 2 dims (`learningMethods`, `keywords`,
+          //     #498 / #499) have no `PivotDimension` extractor; in
+          //     Tier 2 mode they skip the corpus presence check and
+          //     rely on the queued cohort fetch.
+          //   - Tier 2-only / server-filtered dims in Tier 2 mode
+          //     skip the corpus check and queue a refetch keyed on
+          //     the Story corpus seed.
+          //   - Other dims must be present in the Story member set —
+          //     a value absent from the cohort is genuinely stale,
+          //     same as a non-existent value on an asset corpus.
+          const inTier2Mode = parsed.mode === "tier2";
+          const cohortSeed: Tier2CorpusSeed = {
+            kind: "storyMembers",
+            customerId: origin.customerId,
+            storyId: origin.storyId,
+            eventKeys: events.map((ev) => ev.id),
+          };
+          const refetchQueue: Array<{
+            dimension: Tier2Dimension;
+            valueKey: string;
+            customerId: number;
+            corpusSeed: Tier2CorpusSeed;
+          }> = [];
           let stepsAreLive = true;
           for (const step of restoredSteps) {
             if (step.kind !== "dimension") continue;
-            let dim: ReturnType<typeof getPivotDimension>;
-            try {
-              dim = getPivotDimension(step.dimension);
-            } catch {
-              stepsAreLive = false;
-              break;
+            const isStaticDim = isStaticTier2Dimension(step.dimension);
+            let dim: ReturnType<typeof getPivotDimension> | null = null;
+            if (!isStaticDim) {
+              try {
+                dim = getPivotDimension(step.dimension);
+              } catch {
+                stepsAreLive = false;
+                break;
+              }
             }
-            const found = events.some((ev) =>
-              dim.extract(ev).some((v) => v.key === step.value.key),
-            );
+            const isTier2Only = isStaticDim || dim?.tier2Only === true;
+            const isServerDim = isTier2ServerDimension(step.dimension);
+            let found = false;
+            if (dim) {
+              found = events.some((ev) =>
+                (dim as ReturnType<typeof getPivotDimension>)
+                  .extract(ev)
+                  .some((v) => v.key === step.value.key),
+              );
+            }
             if (!found) {
-              stepsAreLive = false;
-              break;
+              if (inTier2Mode && (isServerDim || isTier2Only)) {
+                // Server-filtered / Tier-2-only step in Tier 2 — the
+                // queued cohort fetch will populate the result; do
+                // not require corpus presence.
+              } else {
+                stepsAreLive = false;
+                break;
+              }
+            }
+            if (inTier2Mode && isTier2ServerDimension(step.dimension)) {
+              refetchQueue.push({
+                dimension: step.dimension,
+                valueKey: step.value.key,
+                customerId: origin.customerId,
+                corpusSeed: cohortSeed,
+              });
             }
           }
           setStoryMemberEvents(events);
           if (!stepsAreLive) {
             setTrail([]);
             setFallbackNotice("stale-hash");
+            return;
+          }
+          if (refetchQueue.length > 0) {
+            pendingHashFetchesRef.current = refetchQueue;
           }
         })
         .catch(() => {
@@ -1473,6 +1628,7 @@ export function TriageBaselineContent({
     dimension: Tier2Dimension;
     valueKey: string;
     customerId: number;
+    corpusSeed?: Tier2CorpusSeed;
   } | null>(null);
   // `tier2.inFlight` and `tier2.errors` are listed as deps so the
   // effect re-runs when the currently-draining fetch resolves
@@ -1490,6 +1646,7 @@ export function TriageBaselineContent({
         draining.current.dimension,
         draining.current.valueKey,
         draining.current.customerId,
+        draining.current.corpusSeed,
       );
       // Still loading (or modal-gated through `pending`, handled
       // above): wait for the next render.
@@ -1539,7 +1696,12 @@ export function TriageBaselineContent({
     const next = pendingHashFetchesRef.current.shift();
     if (!next) return;
     draining.current = next;
-    tier2.startFetch(next.dimension, next.valueKey, next.customerId);
+    tier2.startFetch(
+      next.dimension,
+      next.valueKey,
+      next.customerId,
+      next.corpusSeed,
+    );
   }, [scope, tier2, tier2.pending, tier2.inFlight, tier2.errors]);
 
   // Validate deferred client-intersection steps once the Tier 2 fetch
@@ -1877,14 +2039,19 @@ export function TriageBaselineContent({
             </div>
           ) : null}
           {/*
-           * Tier 2 affordances (server-filtered Learning method,
-           * Keywords, weak-signal classifier) are asset-rooted: their
-           * fallback fetches read from the asset's event set and have
-           * no plumbing for a Story-member corpus in this PR (per the
-           * "Tier 2 scope" decision in #553). When the origin is a
-           * Story we suppress those sections entirely — the click
-           * targets would otherwise append a breadcrumb step with no
-           * backing fetch, contradicting the Tier 1-only contract.
+           * Tier 2 affordances now resolve over the Story-member
+           * corpus when the origin is a Story (#561) — the static-
+           * options Learning method and Keywords sections dispatch
+           * the same Tier 2 fetch path with the Story corpus seed,
+           * so the panel surfaces them under both origin kinds.
+           *
+           * The weak-signal classifier remains suppressed for Story
+           * origin per the #561 design decision: the classifier's
+           * "weak signal beyond Tier 1" framing reads from the
+           * period-wide asset corpus, and over a ≤50-event curated
+           * Story member set the framing loses its statistical
+           * footing. Re-enabling is deferred to a separate UX
+           * decision per the issue's recommended stance.
            */}
           <TriagePivotPanel
             sections={sections}
@@ -1897,12 +2064,8 @@ export function TriageBaselineContent({
                 ? (event) => !tier2.isInTier1Corpus(event)
                 : undefined
             }
-            showLearningMethodSection={
-              scope === "tier2" && pivotOrigin.kind !== "story"
-            }
-            showKeywordsSection={
-              scope === "tier2" && pivotOrigin.kind !== "story"
-            }
+            showLearningMethodSection={scope === "tier2"}
+            showKeywordsSection={scope === "tier2"}
             recentKeywords={recentKeywords}
             onSubmitKeyword={onSubmitKeyword}
           />

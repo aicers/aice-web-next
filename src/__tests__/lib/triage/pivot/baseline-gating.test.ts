@@ -102,4 +102,32 @@ describe("Baseline-mode pivot gating", () => {
       expect(ids).not.toContain(d);
     }
   });
+
+  it("Story-origin Tier 2 (#561) keeps the policyOnly gate — `country`, `levels`, and per-protocol identifiers stay hidden", () => {
+    // Per #561 acceptance: lifting Tier 2 onto a Story-member corpus
+    // touches the cache key + dispatch path, NOT the
+    // `dimension.policyOnly !== true` gate. The gate is the single
+    // mechanism keeping `country` / `levels` (no backing values on
+    // `baseline_triaged_event`) and the per-protocol identifier
+    // dimensions (`sshClient`, `userAgent`, `dnsAnswer`,
+    // `ftpCommand`, `ldapOpcode`, `mqttSubscribe`, `clusterId`, etc.)
+    // hidden under Story origin — same as under asset origin. The
+    // panel forces `mode: "baseline"` for Story-origin trails so
+    // this test pins that the panel built over a Story member set
+    // surfaces no policyOnly sections.
+    const storyMembers: ScoredTriageEvent[] = [policyEvent(), policyEvent()];
+    const index = buildPivotIndex(storyMembers, "baseline");
+    const sections = buildPivotPanel(index, [storyMembers[0]], {
+      mode: "baseline",
+      excludeFocusEvents: false,
+    });
+    const sectionIds = sections.map((s) => s.dimension);
+    for (const dim of POLICY_ONLY_DIMS) {
+      expect(sectionIds).not.toContain(dim);
+    }
+    // Sanity: at least one Tier 2 server-filtered, baseline-reachable
+    // dimension is reachable so the suppression assertion above is
+    // not vacuously true on an empty section list.
+    expect(sections.length).toBeGreaterThan(0);
+  });
 });

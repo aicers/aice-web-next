@@ -12,12 +12,43 @@ import {
   buildDispatchContext,
   jwtCustomerIdsForTriage,
 } from "./dispatch-context";
-import { TRIAGE_EVENT_LIST_QUERY } from "./queries";
+import { TRIAGE_EVENT_BY_ID_QUERY, TRIAGE_EVENT_LIST_QUERY } from "./queries";
 import { TIER2_PER_DIMENSION_CAP } from "./tier2-cache";
-import { buildTier2Filter, type Tier2Dimension } from "./tier2-filter";
+import {
+  buildTier2Filter,
+  type Tier2Dimension,
+  tier2MatchesEvent,
+} from "./tier2-filter";
 import type { TriageEvent, TriageEventListResult } from "./types";
 
 export { TIER2_PER_DIMENSION_CAP };
+
+/**
+ * Curated event cohort that bounds a Tier 2 fetch when present (#561).
+ * Discriminator stays open so a future `{ kind: "savedSearch", ... }`
+ * (or similar) can land without changing every dispatch site.
+ */
+export type Tier2CorpusSeed = Tier2StoryMembersSeed;
+
+export interface Tier2StoryMembersSeed {
+  kind: "storyMembers";
+  /**
+   * Stable composite identity of the source Story. Folded into the
+   * Tier 2 cache key so a same-Story re-pivot reuses cached results
+   * while two distinct Stories (or Story → Asset list) stay isolated.
+   * The actual {@link eventKeys} list is intentionally NOT in the
+   * cache key — Story membership is stable per session by the {@link
+   * STORY_MEMBER_CAP} cohort, so `(customerId, storyId)` is enough
+   * identity and the encoding stays bounded (#561).
+   */
+  customerId: number;
+  storyId: string;
+  /**
+   * Member event-key set the resolver intersects against. Capped at
+   * {@link STORY_MEMBER_CAP} = 50 by #489's correlator contract.
+   */
+  eventKeys: readonly string[];
+}
 
 export interface Tier2FetchInput {
   periodStartIso: string;
@@ -34,6 +65,23 @@ export interface Tier2FetchInput {
    * context.
    */
   customerId: number;
+  /**
+   * Per-#561, optionally lifts the Tier 2 fetch onto a curated event
+   * cohort instead of the period-wide asset corpus. When present,
+   * dispatch routes through the member-keyed resolver
+   * ({@link fetchTier2OverMemberCorpus}) — each member is fetched by
+   * id in parallel and the Tier 2 predicate is applied in-app — so
+   * pagination and the returned `totalCount` are computed against the
+   * cohort, not REview's universe.
+   *
+   * Wire-shape choice (#561 design decision (a) — inline event-key
+   * list): the member set caps at {@link STORY_MEMBER_CAP} = 50 per
+   * #489, which keeps the payload small enough to inline without
+   * adding an `event_group_member` join on the hot Tier 2 path. The
+   * alternative `(customerId, storyId)` reference shape would buy
+   * nothing at this cap and only matters if the cap is raised.
+   */
+  corpusSeed?: Tier2CorpusSeed;
   /**
    * When true, paginate only a single first page so the caller can
    * peek `totalCount` (and the first-page event count) before
@@ -170,9 +218,17 @@ export async function fetchTier2DimensionWithSession(
   // a name that does not resolve within the asset's customer scope
   // surfaces a non-blocking sensorFallback that the hook layer maps
   // to the asset-root toast.
+  //
+  // Story-corpus branch (#561) skips the resolution: the new
+  // member-keyed resolver compares the clicked sensor name against
+  // each fetched member event's `sensor` field directly (no
+  // `eventList(filter: { sensors: [...] })` round-trip), so the
+  // opaque `nodeId` is not needed and the lookup would just add an
+  // unnecessary round-trip plus widen the failure surface for the
+  // cohort path.
   let resolvedValueKey = input.valueKey;
   let resolvedSensorId: string | undefined;
-  if (input.dimension === "sameSensor") {
+  if (input.dimension === "sameSensor" && !input.corpusSeed) {
     if (input.resolvedSensorId !== undefined) {
       // Continuation path: reuse the peek's resolved id so the
       // `afterCursor` replay stays bound to the exact `nodeId` the
@@ -239,6 +295,30 @@ export async function fetchTier2DimensionWithSession(
     return { ...EMPTY_SENSOR_RESULT };
   }
   try {
+    // Story-member cohort branch (#561). The cohort is event-key-keyed
+    // from the start: each member is fetched by id in parallel and the
+    // Tier 2 predicate is evaluated in-app against the cohort, so the
+    // returned `totalCount` is the count of matched member events
+    // (cohort universe), pagination is bounded by the cohort by
+    // construction, and a partial-match dimension click never falls
+    // back to walking REview's universe-wide `eventList(filter)`
+    // stream. `firstPageOnly` / `afterCursor` / `alreadyFetched` do
+    // not apply — the cohort caps at `STORY_MEMBER_CAP` = 50 (#489)
+    // and the result fits in a single fetch by construction. Note we
+    // pass the original `input.valueKey` (not `resolvedValueKey`):
+    // for `sameSensor` the cohort branch matches on the literal
+    // sensor *name* carried in each member event's `sensor` field,
+    // not on REview's opaque `nodeId`.
+    if (input.corpusSeed) {
+      return await fetchTier2OverMemberCorpus(
+        input.dimension,
+        input.valueKey,
+        ctx.role,
+        jwtCustomerIds,
+        input.corpusSeed,
+        signal,
+      );
+    }
     const result = await paginateTier2(
       filter,
       ctx.role,
@@ -277,6 +357,97 @@ export async function fetchTier2DimensionWithSession(
     }
     throw err;
   }
+}
+
+/**
+ * Member-keyed Tier 2 resolver (#561). The "separate event-key-keyed
+ * resolver/query" the issue asks for — keyed on the cohort from the
+ * start, NOT a wrapper around `eventList`'s pagination contract.
+ *
+ * Strategy:
+ *   - Fetch each member event by id in parallel via `event(id:)`. The
+ *     cohort caps at {@link STORY_MEMBER_CAP} = 50 (#489), so the
+ *     fan-out is bounded.
+ *   - Apply the Tier 2 predicate ({@link tier2MatchesEvent}) in-app
+ *     against each fetched member. The predicate mirrors REview's
+ *     server-side `EventListFilterInput` semantics for every Tier 2
+ *     dimension this issue lifts onto the cohort.
+ *   - Drop members that resolve to `null` (out of caller scope, sensor
+ *     scope rotated, or deleted between Story member-list capture and
+ *     the Tier 2 click). The cohort still reports the matched count
+ *     correctly — a missing member just is not in the universe.
+ *
+ * Why per-id rather than walking `eventList(filter)`: the previous
+ * implementation walked REview's universe-wide stream and stopped only
+ * when every member key appeared in the filtered output, which (a) is
+ * unreachable for high-cardinality / partially-matching pivots —
+ * `externalIp=1.2.3.4` typically only matches a few members, so the
+ * walk runs to the universe page tail or the defensive walk-cap;
+ * (b) silently dropped matching members that sat past the walk-cap;
+ * (c) flagged `truncated=true` even when every matching member had
+ * already been collected, just because some non-matching members
+ * never appeared. Per-id fetch + local predicate sidesteps every one
+ * of those failure modes — pagination is the cohort by construction.
+ *
+ * The cross-repo alternative — an additive `event_key IN (…)` filter
+ * on review's `EventListFilterInput` — stays out of scope per the
+ * issue. A future consolidation issue may swap this resolver for that
+ * path if the upstream filter lands.
+ */
+async function fetchTier2OverMemberCorpus(
+  dimension: Tier2Dimension,
+  valueKey: string,
+  role: string,
+  jwtCustomerIds: number[] | undefined,
+  corpusSeed: Tier2CorpusSeed,
+  signal: AbortSignal | undefined,
+): Promise<Tier2FetchResult> {
+  const memberKeys = corpusSeed.eventKeys;
+  if (memberKeys.length === 0) {
+    return {
+      events: [],
+      totalCount: "0",
+      truncated: false,
+      hasMore: false,
+      endCursor: null,
+    };
+  }
+  const fetched = await Promise.all(
+    memberKeys.map((id) =>
+      withReviewErrorMapping(
+        graphqlRequest<Tier2EventByIdResult, Tier2EventByIdVariables>(
+          TRIAGE_EVENT_BY_ID_QUERY,
+          { id },
+          { role, customerIds: jwtCustomerIds },
+          signal,
+        ),
+      ).then((data) => data.event),
+    ),
+  );
+  const matched: TriageEvent[] = [];
+  const seen = new Set<string>();
+  for (const event of fetched) {
+    if (event === null || event === undefined) continue;
+    if (seen.has(event.id)) continue;
+    if (!tier2MatchesEvent(event, dimension, valueKey)) continue;
+    seen.add(event.id);
+    matched.push(event);
+  }
+  return {
+    events: matched,
+    totalCount: String(matched.length),
+    truncated: false,
+    hasMore: false,
+    endCursor: null,
+  };
+}
+
+interface Tier2EventByIdResult {
+  event: TriageEvent | null;
+}
+
+interface Tier2EventByIdVariables extends Record<string, unknown> {
+  id: string;
 }
 
 async function paginateTier2(

@@ -65,6 +65,50 @@ describe("encodeTier2CacheKey", () => {
     });
     expect(a).not.toBe(b);
   });
+
+  it("includes the corpusSeed marker so Story-corpus and asset-corpus entries don't collide (#561)", () => {
+    // Per #561 the Tier 2 cache namespaces results by the corpus seed
+    // they were fetched against. A `kinds=BlocklistDns` result over
+    // the asset's period-wide corpus is a different universe from a
+    // `kinds=BlocklistDns` result over a Story's ≤50-member cohort —
+    // the keys must differ so a Story-origin pivot can't accidentally
+    // hit the asset path's slot (or vice versa). The default `"asset"`
+    // sentinel keeps the pre-#561 key shape backwards-compatible.
+    const asset = encodeTier2CacheKey({
+      ...KEY_BASE,
+      dimensionId: "kinds",
+      valueKey: "BlocklistDns",
+      customerId: 42,
+    });
+    const story = encodeTier2CacheKey({
+      ...KEY_BASE,
+      dimensionId: "kinds",
+      valueKey: "BlocklistDns",
+      customerId: 42,
+      corpusSeedKey: "story:42/123",
+    });
+    expect(asset).not.toBe(story);
+    // Two distinct Stories under the same tenant also don't collide.
+    const otherStory = encodeTier2CacheKey({
+      ...KEY_BASE,
+      dimensionId: "kinds",
+      valueKey: "BlocklistDns",
+      customerId: 42,
+      corpusSeedKey: "story:42/456",
+    });
+    expect(story).not.toBe(otherStory);
+    // The asset-corpus default ('"asset"') matches the explicit
+    // sentinel form so callers and the cache stay in agreement.
+    expect(
+      encodeTier2CacheKey({
+        ...KEY_BASE,
+        dimensionId: "kinds",
+        valueKey: "BlocklistDns",
+        customerId: 42,
+        corpusSeedKey: "asset",
+      }),
+    ).toBe(asset);
+  });
 });
 
 describe("Tier2Cache", () => {

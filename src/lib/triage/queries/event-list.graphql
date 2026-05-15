@@ -1,0 +1,22 @@
+# requires: event-fields.graphql
+query TriageEventList(
+  $filter: EventListFilterInput!
+  $first: Int
+  $after: String
+) {
+  eventList(filter: $filter, first: $first, after: $after) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    totalCount
+    edges {
+      cursor
+    }
+    nodes {
+      ...TriageEventFields
+    }
+  }
+}

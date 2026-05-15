@@ -93,6 +93,15 @@ export interface TriageEvent {
   serverName?: string | null;
   serial?: string | null;
   subjectCommonName?: string | null;
+  /**
+   * `LearningMethod` enum value (`SUPERVISED` / `UNSUPERVISED`) when
+   * the subtype carries it. Used by the Tier 2 `learningMethods`
+   * predicate that the Story-member resolver evaluates in-app — see
+   * `tier2MatchesEvent` and {@link TRIAGE_EVENT_BY_ID_QUERY}. Subtypes
+   * without this field (e.g. portscan / brute-force without learning
+   * provenance) leave it `null` / `undefined`.
+   */
+  learningMethod?: string | null;
   // SSH (BlocklistSsh only). Per-protocol identifier pivots (#503).
   /** SSH client version string (e.g. `SSH-2.0-OpenSSH_8.4`). */
   sshClient?: string | null;

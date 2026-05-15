@@ -628,3 +628,83 @@ describe("useTier2Pivot — sameSensor fallback surfaces through the hook (#502)
     expect(result.current.sensorFallbacks).toEqual([]);
   });
 });
+
+describe("useTier2Pivot — Story corpusSeed namespaces cache entries (#561)", () => {
+  it("keeps the asset-corpus and Story-corpus results isolated and reuses the same-Story slot on a re-pivot", async () => {
+    // Per #561: a Tier 2 dimension click under a Story origin keys
+    // its cache slot on the corpus seed (`(customerId, storyId)`),
+    // distinct from the asset-corpus path's `"asset"` sentinel. A
+    // Story → Asset list → back-to-Story sequence on the same
+    // `(dimension, valueKey)` MUST hit the same Story-corpus slot
+    // and skip a fresh round-trip — this is the cache-key extension
+    // acceptance test in the issue.
+    let callCount = 0;
+    fetchTier2DimensionMock.mockImplementation(
+      async (input: {
+        valueKey: string;
+        corpusSeed?: { kind: string; storyId: string };
+      }) => {
+        callCount += 1;
+        return {
+          events: [
+            makeEvent(input.corpusSeed ? Number(input.corpusSeed.storyId) : 0),
+          ],
+          totalCount: "1",
+          endCursor: null,
+          hasMore: false,
+          truncated: false,
+        };
+      },
+    );
+
+    const { result } = renderHook(() => useTier2Pivot(HOOK_ARGS_BASE));
+    const dim: Tier2Dimension = "kinds";
+    const seed = {
+      kind: "storyMembers" as const,
+      customerId: 1,
+      storyId: "777",
+      eventKeys: ["m-0", "m-1"],
+    };
+
+    // Story-origin pivot — first fetch.
+    await act(async () => {
+      result.current.startFetch(dim, "BlocklistDns", 1, seed);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(callCount).toBe(1);
+    expect(result.current.getCached(dim, "BlocklistDns", 1, seed)?.status).toBe(
+      "ready",
+    );
+    // The asset-corpus slot for the same `(dim, valueKey, customerId)`
+    // is a cache miss — distinct namespace.
+    expect(result.current.getCached(dim, "BlocklistDns", 1)).toBeNull();
+
+    // Switch to asset list (same `(dim, valueKey)` with no seed) and
+    // pivot — this issues its own fetch and stores under the asset
+    // path's slot, not the Story slot.
+    await act(async () => {
+      result.current.startFetch(dim, "BlocklistDns", 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(callCount).toBe(2);
+    const assetEntry = result.current.getCached(dim, "BlocklistDns", 1);
+    const storyEntry = result.current.getCached(dim, "BlocklistDns", 1, seed);
+    expect(assetEntry?.status).toBe("ready");
+    expect(storyEntry?.status).toBe("ready");
+    // Each slot retains its own events; no cross-namespace leak.
+    expect(assetEntry?.events[0].id).not.toBe(storyEntry?.events[0].id);
+
+    // Back to the same Story origin — the second `startFetch` with the
+    // same seed must hit the cached entry and NOT issue a third
+    // round-trip. (The hook's `startFetch` short-circuits when the
+    // cached entry is `ready`.)
+    await act(async () => {
+      result.current.startFetch(dim, "BlocklistDns", 1, seed);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(callCount).toBe(2);
+  });
+});

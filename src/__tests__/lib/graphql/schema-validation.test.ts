@@ -193,7 +193,10 @@ function findSourceFiles(root: string): string[] {
  * or runtime-assembled strings into a query, which is not what these
  * loaders do.
  */
-const STATIC_QUERY_LOADERS = new Set<string>(["src/lib/node/queries.ts"]);
+const STATIC_QUERY_LOADERS = new Set<string>([
+  "src/lib/node/queries.ts",
+  "src/lib/triage/queries.ts",
+]);
 
 interface StaticDoc {
   text: string;

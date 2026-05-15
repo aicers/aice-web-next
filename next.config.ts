@@ -6,11 +6,15 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   // The Node management dispatch layer reads its GraphQL operations
   // from `src/lib/node/queries/**/*.graphql` at module init via
-  // `process.cwd()`. The trace-include keeps those files in the
+  // `process.cwd()`; Triage does the same from
+  // `src/lib/triage/queries/**/*.graphql` (#561's `event-fields`
+  // fragment is shared between the period-walk query and the per-id
+  // member fetch). The trace-include keeps those files in the
   // standalone output so the runtime path resolves correctly.
   outputFileTracingIncludes: {
     "/api/nodes/**/*": ["./src/lib/node/queries/**/*"],
     "/[locale]/(dashboard)/nodes/**/*": ["./src/lib/node/queries/**/*"],
+    "/[locale]/(dashboard)/triage/**/*": ["./src/lib/triage/queries/**/*"],
   },
   // Backstop against future NFT regressions broadening route
   // traces to the project root. Only excludes operator-side files
