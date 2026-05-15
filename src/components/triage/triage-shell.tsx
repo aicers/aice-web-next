@@ -281,6 +281,21 @@ export function TriageShell({
     if (next !== DEFAULT_STRICTNESS_STOP_ID) {
       params.set("strictness", next);
     }
+    // Strictness is a corpus rotation: the loaded asset list and the
+    // per-asset detail events both reflect the selected stop, so any
+    // existing breadcrumb, pivot trail, Story-origin events, recent
+    // keywords, and queued hash-restore work were keyed against the
+    // pre-rotation corpus and would otherwise present a stale drill-in
+    // (selected asset / pivoted dimension filtered out, but trail /
+    // active step / Tier 2 queue still describing the old asset
+    // against the freshly filtered events). Bump the same signal that
+    // period changes use so baseline-content's reset effect re-roots
+    // selection and clears pivot / Story-origin state. Clear
+    // `hasPivotsRef` to match — after rotation there is no pivot
+    // trail, so a subsequent period change should not surface the
+    // pivot-loss confirmation modal.
+    setResetSignal((s) => s + 1);
+    hasPivotsRef.current = false;
     // Include the rebuilt hash in the router.replace URL so the App
     // Router does not drop it. router.replace with a search-only URL
     // calls history.replaceState with a URL that has no fragment,

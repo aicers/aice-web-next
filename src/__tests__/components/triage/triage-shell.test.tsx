@@ -84,6 +84,18 @@ beforeEach(() => {
   // (see baseline-content.tsx). Clear between tests so a previous
   // case's pivot trail doesn't leak into the next render.
   if (typeof window !== "undefined") window.location.hash = "";
+  // The strictness slider persists its position in localStorage and
+  // the shell's mount-only hydration effect calls `commitStrictness`
+  // when the stored stop disagrees with the server-rendered
+  // `initialStrictness`. Since `commitStrictness` now bumps the same
+  // reset signal that period changes do (#471 Round 5 — strictness is
+  // a corpus rotation, so the breadcrumb / pivot trail / Story-origin
+  // events must be cleared with it), a leaked value from a prior
+  // case's render would otherwise blow away a fresh test's hash-
+  // restoration setup before the test's assertions run. Clear it for
+  // every case in this file.
+  if (typeof window !== "undefined")
+    window.localStorage.removeItem("triage.strictness.stop");
   // `mockReset` (not `mockClear`) is required because individual tests
   // queue `mockResolvedValueOnce` responses, and a test that fails
   // before consuming its queued response would otherwise leak it into
@@ -608,6 +620,63 @@ describe("TriageShell — strictness slider wiring (#471)", () => {
     renderShellForStrictness();
     fireEvent.click(screen.getByRole("radio", { name: "Top 20%" }));
     expect(window.localStorage.getItem("triage.strictness.stop")).toBe("top20");
+  });
+
+  it("treats a strictness commit as a corpus rotation: clears the active pivot trail so the breadcrumb does not describe a stale drill-in (#471 Round 5)", () => {
+    // Mirrors `renderShell` (two assets sharing a `host`) so the pivot
+    // panel surfaces an actionable dimension button. The default
+    // initialStrictness is `top50` to match other tests in this file.
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "deadbeef.example",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.1",
+        host: "deadbeef.example",
+        time: "2026-05-08T12:30:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        initialStrictness={"top50"}
+        labels={LABELS}
+      />,
+    );
+    // Pivot into the host dimension so the breadcrumb has a dimension
+    // step (the same setup `pivotByHost` uses for the period-change
+    // confirmation tests above).
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:host: deadbeef.example",
+      }),
+    );
+    expect(
+      screen
+        .getByText("Crumb:host: deadbeef.example")
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    // Commit a new strictness stop. Unlike a period change, the
+    // strictness slider does NOT surface the pivot-loss confirmation
+    // modal — strictness is committed unconditionally and the pivot
+    // trail is rotated away with the corpus.
+    fireEvent.click(screen.getByRole("radio", { name: "Top 5%" }));
+    expect(
+      screen.queryByRole("alertdialog", { name: "Discard pivot trail?" }),
+    ).toBeNull();
+    // After the commit, the breadcrumb crumb for the host dimension
+    // step is gone — `resetSignal` bumped, `baseline-content` reset
+    // the trail, and the only surviving crumb (if any) is the asset
+    // root.
+    expect(screen.queryByText("Crumb:host: deadbeef.example")).toBeNull();
   });
 });
 
