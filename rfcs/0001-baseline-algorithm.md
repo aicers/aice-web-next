@@ -1,13 +1,13 @@
 # RFC 0001: Baseline algorithm
 
-- Status: **Draft**
+- Status: **Accepted**
 - Authors: @sehkone
 - Tracks: [#462](https://github.com/aicers/aice-web-next/issues/462)
 - Related: [#456](https://github.com/aicers/aice-web-next/issues/456), [#458](https://github.com/aicers/aice-web-next/issues/458), [#471](https://github.com/aicers/aice-web-next/issues/471), [#481](https://github.com/aicers/aice-web-next/issues/481), [#485](https://github.com/aicers/aice-web-next/issues/485)
 
 ## Summary
 
-Baseline scores every detection event that survives Stage 1 exclusions, so the Triage menu can show only the events most worth a human's attention. This RFC fixes the algorithm's shape: hard-exclude `BlockList*` events, group the remainder by threat kind, rank within each kind, and merge across kinds with adaptive per-kind quotas. Confidence is treated as a within-kind quantity only; cross-kind comparison is never performed. Time, accumulated history, and per-kind volume × signal-richness feedback together produce the adaptiveness #462 promises. User-engagement feedback is delegated to #485.
+Baseline scores every detection event that survives Stage 1 exclusions, so the Triage menu can show only the events most worth a human's attention. This RFC fixes the algorithm's shape: hard-exclude `Blocklist*` events, group the remainder by threat kind, rank within each kind, and merge across kinds with adaptive per-kind quotas. Confidence is treated as a within-kind quantity only; cross-kind comparison is never performed. Time, accumulated history, and per-kind volume × signal-richness feedback together produce the adaptiveness #462 promises. User-engagement feedback is delegated to #485.
 
 ## Motivation
 
@@ -29,7 +29,7 @@ The pipeline splits cleanly across two execution times: per-event scoring runs i
 ```
 At cadence INSERT (per event, against observed_event_meta history):
    │
-   ├─ (1) hard-exclude BlockList*                       ── dropped before any scoring
+   ├─ (1) hard-exclude Blocklist*                       ── dropped before any scoring
    │
    ├─ (2) determine kind                                ── implicit; just a column on the event
    │
@@ -71,11 +71,11 @@ At menu read (per active window, no per-event recomputation):
 
 Step (3) — including window-level selectors S1/S3/S4 — runs inside the cadence pipeline (#481) by `GROUP BY` against `observed_event_meta` at INSERT time; the resulting `raw_score` (the weighted sum) and `selector_tags` are persisted on `baseline_triaged_event` and not updated within their `baseline_version`. `baseline_score` is **not** persisted at INSERT — it is the read-time `CUME_DIST()` window function defined in §3. See §8 for the full timing contract and §11 for the read-path performance contract. Steps (4)–(6) read only `baseline_triaged_event` — `baseline_score` is derived from `raw_score` in a CTE/window pass, slot-allocation aggregates use `selector_tags` array length as the signal-richness proxy (§4), so no raw confidence column is needed at read time and no second-table join. `observed_event_meta` is consulted only at cadence INSERT (step 3), never at menu read.
 
-## §1. Hard exclusion: `BlockList*`
+## §1. Hard exclusion: `Blocklist*`
 
-`BlockList*` events are themselves a triage output (the user has already chosen to block these by some upstream rule); they are not events worth re-surfacing in the Triage menu. They are dropped at the very front of the pipeline before any scoring.
+`Blocklist*` events are themselves a triage output (the user has already chosen to block these by some upstream rule); they are not events worth re-surfacing in the Triage menu. They are dropped at the very front of the pipeline before any scoring.
 
-**Decision: prefix-match rule, not an explicit list.** Any kind whose name starts with `BlockList` is excluded. New `BlockList*` kinds added later are picked up automatically without an RFC update. The exclusion is implemented as a `WHERE kind NOT LIKE 'BlockList%'` clause on the cadence-side INSERT and (defensively) on the menu SELECT.
+**Decision: prefix-match rule, not an explicit list.** Any kind whose name starts with `Blocklist` is excluded. New `Blocklist*` kinds added later are picked up automatically without an RFC update. The exclusion is implemented as a `WHERE kind NOT LIKE 'Blocklist%'` clause on the cadence-side INSERT and (defensively) on the menu SELECT. The prefix is the Pascal-case typename literally emitted by the REview GraphQL schema (`BlocklistBootp`, `BlocklistConn`, …); the predicate and the schema must stay in lock-step.
 
 ## §2. Kind-first grouping
 
@@ -238,7 +238,7 @@ slot_share(b) = base_share
 where:
 
 - `base_share` is a small constant given to every bucket (newly-observed buckets included). Acts as a discoverability floor: a bucket that has never been seen still gets a non-zero share when it first appears.
-- `normalized_volume(b, window) ∈ [0, 1]`: that bucket's event count over the active window in `baseline_triaged_event`, divided by the maximum across all buckets in the same window. Computed `GROUP BY slot_bucket` so the labeled-HttpThreat and unlabeled-HttpThreat buckets compete with each other on equal footing. Bounded so a flood from one bucket cannot drive others to zero. Source is `baseline_triaged_event` (not `observed_event_meta`) so the count is over the post-`BlockList*` set — the same denominator that slot allocation distributes among.
+- `normalized_volume(b, window) ∈ [0, 1]`: that bucket's event count over the active window in `baseline_triaged_event`, divided by the maximum across all buckets in the same window. Computed `GROUP BY slot_bucket` so the labeled-HttpThreat and unlabeled-HttpThreat buckets compete with each other on equal footing. Bounded so a flood from one bucket cannot drive others to zero. Source is `baseline_triaged_event` (not `observed_event_meta`) so the count is over the post-`Blocklist*` set — the same denominator that slot allocation distributes among.
 - `normalized_top_confidence(b, window) ∈ [0, 1]`: a measure of how *signal-rich* the bucket's events are this window. Concretely, `avg(coalesce(cardinality(selector_tags), 0)) / MAX_TAGS` over `baseline_triaged_event` rows whose `slot_bucket` equals `b` in the active window, where `MAX_TAGS` is the total number of distinct selector tags the cadence pipeline can emit (§9). The `coalesce` guards both NULL `selector_tags` columns and PostgreSQL's quirk that `array_length('{}', 1)` returns `NULL` rather than `0`; without it, zero-tag rows would silently drop from `avg` and groups whose rows are all empty/NULL would produce a NULL slot share. A bucket whose events frequently fire multiple selectors (S1-high + S3-recurring + S4-correlated, etc.) scores higher than one whose events typically fire only a single selector. Computed entirely from `selector_tags` — no raw confidence column is read, so the within-kind-only rule for confidence (§ "Pipeline" intro) is respected: signal-richness is measured from the algorithm's own selector firings, not from upstream confidence values.
 - `favored_bonus(b) = β` if `b ∈ FAVORED_BUCKETS`, else 0. Constant, never decays.
 
@@ -401,7 +401,7 @@ Slot-allocation aggregates (`normalized_volume`, `normalized_top_confidence`, §
 
 ### Statistics source
 
-The cadence-time GROUP BYs for S1/S3/S4 use `observed_event_meta` (#456) on the customer's tenant DB. NOT `baseline_triaged_event` — that would create a circular selection bias. The slot-allocation aggregates (§4) read `baseline_triaged_event` directly, where post-`BlockList*` filtering already matches the slot-allocation denominator. `review` is never asked to compute aggregates from either path; its RocksDB key layout is not optimized for arbitrary-dimension grouping.
+The cadence-time GROUP BYs for S1/S3/S4 use `observed_event_meta` (#456) on the customer's tenant DB. NOT `baseline_triaged_event` — that would create a circular selection bias. The slot-allocation aggregates (§4) read `baseline_triaged_event` directly, where post-`Blocklist*` filtering already matches the slot-allocation denominator. `review` is never asked to compute aggregates from either path; its RocksDB key layout is not optimized for arbitrary-dimension grouping.
 
 ### Cold-start
 

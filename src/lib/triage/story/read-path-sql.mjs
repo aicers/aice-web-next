@@ -156,7 +156,7 @@ export const SELECT_STORY_MEMBERS_DETAIL_SQL = `WITH scored AS (
          FROM baseline_triaged_event
         WHERE event_time >= $2
           AND event_time <  $3
-          AND kind NOT LIKE 'BlockList%'
+          AND kind NOT LIKE 'Blocklist%'
      )
      SELECT b.event_key::text                  AS event_key,
             b.event_time,

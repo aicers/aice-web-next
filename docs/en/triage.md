@@ -326,9 +326,9 @@ once written it is immutable within its `baseline_version` so a
 later peer event does not retroactively re-rank an already-stored
 row.
 
-The cadence drops `BlockList*` events at the very front of the
+The cadence drops `Blocklist*` events at the very front of the
 pipeline before any scoring runs (RFC §1), and the menu read keeps a
-defensive `WHERE kind NOT LIKE 'BlockList%'` filter so a regression
+defensive `WHERE kind NOT LIKE 'Blocklist%'` filter so a regression
 on the cadence side cannot leak those rows back into the menu.
 
 ### Read-time: `baseline_score` from `cume_dist()`
@@ -477,7 +477,7 @@ contribute to any asset row.
 The asset list is **derived from the §4 `final_menu_rows`** — the
 same set the [Baseline scoring algorithm](#baseline-scoring-algorithm)
 composes for the pivot corpus. Each tenant's slice runs one
-`cume_dist()` pass over the post-`BlockList*` window and applies the
+`cume_dist()` pass over the post-`Blocklist*` window and applies the
 §4 slot-bucket / largest-remainder / quota composition (and the §6
 `MIN_NONZERO_FLOOR` fallback when assembly is below the floor) to
 produce per-tenant `final_menu_rows`. Multi-customer scopes issue

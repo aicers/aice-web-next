@@ -91,12 +91,12 @@ describe("read-path-sql shared module", () => {
       expect(SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL).toMatch(partitionRe);
     });
 
-    it("menu cohort excludes BlockList* kinds defensively", () => {
+    it("menu cohort excludes Blocklist* kinds defensively", () => {
       expect(SELECT_MENU_COHORT_SQL).toMatch(
-        /kind\s+NOT\s+LIKE\s+'BlockList%'/,
+        /kind\s+NOT\s+LIKE\s+'Blocklist%'/,
       );
       expect(SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL).toMatch(
-        /kind\s+NOT\s+LIKE\s+'BlockList%'/,
+        /kind\s+NOT\s+LIKE\s+'Blocklist%'/,
       );
     });
   });
