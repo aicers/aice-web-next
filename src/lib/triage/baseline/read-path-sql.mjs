@@ -76,7 +76,7 @@ export const SELECT_MENU_COHORT_SQL = `WITH scored AS (
          FROM baseline_triaged_event
         WHERE event_time >= $1
           AND event_time <  $2
-          AND kind NOT LIKE 'BlockList%'
+          AND kind NOT LIKE 'Blocklist%'
      ),
      ranked AS (
        SELECT *,
@@ -158,7 +158,7 @@ export const PER_ASSET_OBSERVED_COUNTS_SQL = `SELECT o.orig_addr::text AS addres
 
 /**
  * Batched per-asset detail SELECT — `cume_dist()` over the post-
- * `BlockList*` cohort, then keep the newest
+ * `Blocklist*` cohort, then keep the newest
  * `TRIAGE_ASSET_DETAIL_LIMIT` rows for each address.
  *
  * Parameters:
@@ -187,7 +187,7 @@ export const SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL = `WITH scored AS (
          FROM baseline_triaged_event
         WHERE event_time >= $1
           AND event_time <  $2
-          AND kind NOT LIKE 'BlockList%'
+          AND kind NOT LIKE 'Blocklist%'
      ),
      filtered AS (
        SELECT *,

@@ -161,17 +161,17 @@ describe("assembleMenu", () => {
     expect(result.rows[0].eventKey).toBe("4");
   });
 
-  it("defensively excludes BlockList* via the cohort caller — algorithm receives only post-exclusion rows", () => {
+  it("defensively excludes Blocklist* via the cohort caller — algorithm receives only post-exclusion rows", () => {
     // The algorithm itself never inspects `kind` to drop
-    // BlockList*; it trusts the caller (SQL `WHERE kind NOT LIKE
-    // 'BlockList%'`). A row passed in named `BlockListBlocked`
+    // Blocklist*; it trusts the caller (SQL `WHERE kind NOT LIKE
+    // 'Blocklist%'`). A row passed in named `BlocklistBlocked`
     // would survive — the regression guard is that the SQL never
     // delivers one, not that the algorithm filters them out.
     // Verify the algorithm is bucket-agnostic to the kind string by
     // observing it does not throw or special-case the name.
     const row = makeRow({
       eventKey: "1",
-      kind: "BlockListBlocked",
+      kind: "BlocklistBlocked",
       baselineScore: 1.0,
     });
     expect(() => assembleMenu([row], 0)).not.toThrow();

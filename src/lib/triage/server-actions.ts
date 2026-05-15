@@ -107,7 +107,7 @@ interface BaselineEventRow {
  * `bucket_tag_sum`) and the cohort total (`cohort_count`) that the
  * algorithm needs to compute `normalized_volume`,
  * `normalized_top_confidence`, and `default_N` against the **full**
- * post-`BlockList*` cohort. The columns are constant across all rows
+ * post-`Blocklist*` cohort. The columns are constant across all rows
  * sharing a `(kind, is_unlabeled)` partition / the entire result set
  * respectively — surfaced per row so a single SQL response is
  * sufficient.
@@ -199,7 +199,7 @@ function rowToEvent(row: BaselineEventRow): TriageEvent {
 
 /**
  * Run one tenant's slice of the Triage menu read. A single
- * `selectMenuCohort` call delivers the post-`BlockList*` cohort with
+ * `selectMenuCohort` call delivers the post-`Blocklist*` cohort with
  * §3 `baseline_score` and §4 per-bucket aggregates attached; the
  * algorithm composes `final_menu_rows`, which the slice exposes as
  * `events`. Per-asset enrichment (observed counts, detail-panel rows)
@@ -369,7 +369,7 @@ interface MenuCohort {
  * Read the §4 menu cohort in a single SQL pass.
  *
  * The `scored` CTE computes the §3 read-time `baseline_score` over
- * the full post-`BlockList*` window. The `ranked` CTE attaches three
+ * the full post-`Blocklist*` window. The `ranked` CTE attaches three
  * window aggregates over that cohort:
  *
  *   * `bucket_count` and `bucket_tag_sum` per `(kind, is_unlabeled)`
@@ -390,10 +390,10 @@ interface MenuCohort {
  * `take up to quota[b]` step never starves on a bucket the cohort
  * still has.
  *
- * Defensive `kind NOT LIKE 'BlockList%'` per RFC §1: cadence already
+ * Defensive `kind NOT LIKE 'Blocklist%'` per RFC §1: cadence already
  * excludes these on the cadence-side INSERT (PR 2 / #513), but the
  * menu read keeps the guard so a regression on the cadence side
- * cannot leak BlockList* rows into either the asset list or the
+ * cannot leak Blocklist* rows into either the asset list or the
  * pivot corpus.
  */
 async function selectMenuCohort(
@@ -556,7 +556,7 @@ function aggregateAssetsFromCappedEvents(
 
 /**
  * Batched per-asset detail SELECT. Runs a single `cume_dist()` pass
- * over the post-`BlockList*` cohort and then keeps the newest
+ * over the post-`Blocklist*` cohort and then keeps the newest
  * {@link TRIAGE_ASSET_DETAIL_LIMIT} rows for each requested address.
  * Replaces the prior per-address fanout where `selectAssetDetailEvents`
  * recomputed the full-cohort `cume_dist()` once per asset row.

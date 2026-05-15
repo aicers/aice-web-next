@@ -106,8 +106,7 @@ const CADENCE_ROLE = "System Administrator";
  * Hard-exclusion prefix (RFC §1). Any event whose `__typename` starts
  * with this prefix is dropped before both corpus INSERTs. Matches the
  * `BlocklistBootp`, `BlocklistConn`, … typenames the REview schema
- * declares (the RFC text "BlockList*" is informal; the schema's
- * Pascal-case `Blocklist*` is what cadence actually sees on the wire).
+ * declares.
  */
 const BLOCKLIST_KIND_PREFIX = "Blocklist";
 
