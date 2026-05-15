@@ -447,19 +447,37 @@ describe.skipIf(!EXECUTION_DEPS_AVAILABLE)(
     });
 
     it("derives --max-time from TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS when CRON_CADENCE_MAX_TIME_S is unset", () => {
-      // 5 400 000ms = 90min → 5400s. Operator-tunable knob shared
-      // with `next-app`; the wrapper must keep its network ceiling
-      // in sync so the structured `timeout` / `skipped-timeout` rows
+      // 600 000ms = 10min → 600s. Operator-tunable knob shared with
+      // `next-app`; the wrapper must keep its network ceiling in
+      // sync so the structured `timeout` / `skipped-timeout` rows
       // reach the cron MAILTO surface instead of being swallowed by
-      // a transport failure.
+      // a transport failure. Stays under the 840s ceiling so the
+      // derivation result is what reaches curl unchanged.
       const r = runWrapper({
         httpCode: "200",
         body: JSON.stringify({ overall: "ok", perCustomer: [] }),
         maxTimeS: null,
-        dispatchTotalTimeoutMs: "5400000",
+        dispatchTotalTimeoutMs: "600000",
       });
       expect(r.status).toBe(0);
-      expect(r.curlMaxTime).toBe("5400");
+      expect(r.curlMaxTime).toBe("600");
+    });
+
+    it("clamps derived --max-time to 840s when TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS exceeds the 15-minute cron-interval-safe ceiling", () => {
+      // 2 700 000ms = 45min would otherwise derive 2700s, four times
+      // the 900s cron interval. A stale `…=2700000` left over from
+      // the old hourly cadence must NOT silently re-introduce
+      // overlap: the wrapper clamps to 840s (matching the
+      // dispatcher's own ceiling) and warns on stderr.
+      const r = runWrapper({
+        httpCode: "200",
+        body: JSON.stringify({ overall: "ok", perCustomer: [] }),
+        maxTimeS: null,
+        dispatchTotalTimeoutMs: "2700000",
+      });
+      expect(r.status).toBe(0);
+      expect(r.curlMaxTime).toBe("840");
+      expect(r.stderr).toMatch(/clamping --max-time to 840s/);
     });
 
     it("rounds derived --max-time UP so wrapper never undercuts the app deadline", () => {

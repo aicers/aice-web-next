@@ -65,10 +65,15 @@ URL="${BASE_URL}/api/internal/triage/baseline/dispatch"
 #      into `/etc/cron.env`. Converted ms → s and rounded UP so the
 #      wrapper never undercuts the app deadline. A floor of 1s
 #      guarantees a positive value even if an operator misconfigures
-#      the knob (e.g. sets it below 500ms).
+#      the knob (e.g. sets it below 500ms). Capped at 840s so a stale
+#      `…=2700000` left over from the old hourly cadence cannot
+#      silently push the wrapper past the 15-minute cron interval
+#      (900s) and overlap the next tick — the dispatcher applies the
+#      same clamp app-side.
 #   3. 840s default — matches the dispatcher's own default total
 #      timeout (14 minutes).
 CONNECT_TIMEOUT_S="${CRON_CADENCE_CONNECT_TIMEOUT_S:-10}"
+MAX_TIME_CEILING_S=840
 if [ -n "${CRON_CADENCE_MAX_TIME_S:-}" ]; then
     MAX_TIME_S="$CRON_CADENCE_MAX_TIME_S"
 elif [ -n "${TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS:-}" ]; then
@@ -78,8 +83,16 @@ elif [ -n "${TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS:-}" ]; then
     if [ "$MAX_TIME_S" -lt 1 ]; then
         MAX_TIME_S=1
     fi
+    if [ "$MAX_TIME_S" -gt "$MAX_TIME_CEILING_S" ]; then
+        printf '[%s] cron-cadence: WARN TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS=%s exceeds cron-interval-safe ceiling %ss; clamping --max-time to %ss\n' \
+            "$(date -Iseconds)" \
+            "$TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS" \
+            "$MAX_TIME_CEILING_S" \
+            "$MAX_TIME_CEILING_S" >&2
+        MAX_TIME_S="$MAX_TIME_CEILING_S"
+    fi
 else
-    MAX_TIME_S=840
+    MAX_TIME_S="$MAX_TIME_CEILING_S"
 fi
 
 mkdir -p "$LOG_DIR"
