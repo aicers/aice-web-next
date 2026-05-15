@@ -725,6 +725,108 @@ describe("TriageBaselineContent — Story-origin lifts Tier 2 onto member corpus
   });
 });
 
+describe("TriageBaselineContent — Story-origin Tier 2 hash restore (#561)", () => {
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+    window.location.hash = "";
+  });
+
+  it("restores a Story-origin trail with a static Tier 2 step (`learningMethods`) without clearing the trail", async () => {
+    // Per #561 the static Tier 2 sections (Learning method, Keywords)
+    // are reachable from a Pivot-from-Story state. A URL captured
+    // after clicking one of those sections must restore — not be
+    // rejected as stale just because the static dim has no
+    // `PivotDimension` extractor (the previous Story-restore branch
+    // called `getPivotDimension` unconditionally and cleared the trail
+    // on the throw). The restore validation now mirrors the asset
+    // path: static / Tier 2-only / server-filtered dims skip the
+    // corpus-presence check in Tier 2 mode and rely on the queued
+    // cohort fetch to populate.
+    //
+    // Render with `scope="tier1"` to keep the queued cohort fetch
+    // un-drained — the parent owns the scope flip via
+    // `onScopeRestoredFromHash` and there is no real fetch path in
+    // jsdom. The validation contract under test fires synchronously
+    // before any drain, so the stale-hash absence + the surviving
+    // crumb pin the behavior regardless of dispatch.
+    window.location.hash =
+      "#triage.tab=pivot&triage.pivot.story=9/42" +
+      "&triage.pivot.mode=tier2" +
+      "&triage.pivot.step=learningMethods:UNSUPERVISED";
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [makeStoryMember()],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[makeStory()]}
+          labels={LABELS}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Trail validation succeeded: the static Tier 2 step is NOT
+    // treated as stale. (Pre-#561 the trail was cleared and the
+    // stale-hash toast surfaced because `getPivotDimension` threw on
+    // the static id.) The breadcrumb still carries the restored
+    // crumb's value, and the stale-hash toast is absent.
+    expect(screen.queryByText(LABELS.staleHashFallback)).toBeNull();
+    expect(screen.getByText(/UNSUPERVISED/)).toBeTruthy();
+  });
+
+  it("clears the trail and surfaces the stale-hash notice when a Tier 1 step value is absent from the Story member set", async () => {
+    // The other half of the validation contract: a step that is NOT
+    // server-filtered / Tier 2-only must still be present in the
+    // cohort. A `host` value the cohort cannot back is genuinely
+    // stale, same as the pre-#561 behavior — the restore now uses
+    // the asset-path validation pattern uniformly so this case keeps
+    // its expected behavior.
+    window.location.hash =
+      "#triage.tab=pivot&triage.pivot.story=9/42" +
+      "&triage.pivot.step=host:nope.example";
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [makeStoryMember({ host: "story-host.example" })],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[makeStory()]}
+          labels={LABELS}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Crumb:host: nope.example")).toBeNull();
+    expect(screen.getByText(LABELS.staleHashFallback)).toBeTruthy();
+  });
+});
+
 describe("TriageBaselineContent — Story-origin restore respects triage.tab=stories (#553 Round 2)", () => {
   afterEach(() => {
     storyActionsMocks.fetchStoryDetail.mockReset();

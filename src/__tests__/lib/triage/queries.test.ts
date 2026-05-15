@@ -37,13 +37,37 @@ function findEventListSelectionSet(doc: DocumentNode): SelectionSetNode {
             inner.name.value === "nodes" &&
             inner.selectionSet
           ) {
-            return inner.selectionSet;
+            // The `nodes` selection now references the shared
+            // `TriageEventFields` fragment composed in by
+            // `src/lib/triage/queries.ts` rather than inlining the
+            // per-subtype shapes (see #561 — same fragment is reused
+            // by `event(id:)`). Follow the spread so the per-subtype
+            // assertions below keep walking the same surface.
+            return resolveFragmentSpread(doc, inner.selectionSet);
           }
         }
       }
     }
   }
   throw new Error("eventList.nodes selection set not found");
+}
+
+function resolveFragmentSpread(
+  doc: DocumentNode,
+  selectionSet: SelectionSetNode,
+): SelectionSetNode {
+  for (const sel of selectionSet.selections) {
+    if (sel.kind !== Kind.FRAGMENT_SPREAD) continue;
+    for (const def of doc.definitions) {
+      if (
+        def.kind === Kind.FRAGMENT_DEFINITION &&
+        def.name.value === sel.name.value
+      ) {
+        return def.selectionSet;
+      }
+    }
+  }
+  return selectionSet;
 }
 
 function inlineFragmentFor(

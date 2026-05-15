@@ -1181,11 +1181,24 @@ export function TriageBaselineContent({
       dimension: Tier2Dimension;
       valueKey: string;
       /**
-       * Asset-root `customerId` captured at hash-restore time so the
+       * Tenant `customerId` captured at hash-restore time so the
        * Tier 2 fetch's `sameSensor` resolution path keys on the
-       * restored asset's tenant, not the live selection at drain time.
+       * restored origin's tenant, not the live selection at drain
+       * time. For asset-rooted restores this is the asset crumb's
+       * customer; for Story-origin restores (#561) it is the Story
+       * origin's customer (no asset crumb).
        */
       customerId: number;
+      /**
+       * Story-corpus seed (#561) captured at hash-restore time when
+       * the restored origin is a Story. Threaded into
+       * `tier2.startFetch` / `tier2.getCached` at drain time so the
+       * Tier 2 dispatch routes through the member-keyed resolver and
+       * the result lands in the Story-namespaced cache slot.
+       * `undefined` for asset-rooted restores so the existing asset
+       * dispatch path is preserved.
+       */
+      corpusSeed?: Tier2CorpusSeed;
     }>
   >([]);
   // Client-intersection steps decoded from a Tier 2 hash whose value
@@ -1309,33 +1322,84 @@ export function TriageBaselineContent({
             origin.customerId,
           );
           // Validate decoded dimension steps against the loaded
-          // member set — a step whose value is absent from any member
-          // is genuinely stale (the URL points at a value that no
-          // longer matches the Story corpus). Revert to the Story
-          // origin root in that case so the breadcrumb does not
-          // claim a pivot the corpus cannot back.
+          // member set. The validation rules mirror the asset-restore
+          // path so Tier 2-only and server-filtered steps are not
+          // rejected just because the value is absent from the Tier 1
+          // corpus — they will be populated by the queued cohort
+          // fetch once `scope === "tier2"` is committed.
+          //   - Static Tier 2 dims (`learningMethods`, `keywords`,
+          //     #498 / #499) have no `PivotDimension` extractor; in
+          //     Tier 2 mode they skip the corpus presence check and
+          //     rely on the queued cohort fetch.
+          //   - Tier 2-only / server-filtered dims in Tier 2 mode
+          //     skip the corpus check and queue a refetch keyed on
+          //     the Story corpus seed.
+          //   - Other dims must be present in the Story member set —
+          //     a value absent from the cohort is genuinely stale,
+          //     same as a non-existent value on an asset corpus.
+          const inTier2Mode = parsed.mode === "tier2";
+          const cohortSeed: Tier2CorpusSeed = {
+            kind: "storyMembers",
+            customerId: origin.customerId,
+            storyId: origin.storyId,
+            eventKeys: events.map((ev) => ev.id),
+          };
+          const refetchQueue: Array<{
+            dimension: Tier2Dimension;
+            valueKey: string;
+            customerId: number;
+            corpusSeed: Tier2CorpusSeed;
+          }> = [];
           let stepsAreLive = true;
           for (const step of restoredSteps) {
             if (step.kind !== "dimension") continue;
-            let dim: ReturnType<typeof getPivotDimension>;
-            try {
-              dim = getPivotDimension(step.dimension);
-            } catch {
-              stepsAreLive = false;
-              break;
+            const isStaticDim = isStaticTier2Dimension(step.dimension);
+            let dim: ReturnType<typeof getPivotDimension> | null = null;
+            if (!isStaticDim) {
+              try {
+                dim = getPivotDimension(step.dimension);
+              } catch {
+                stepsAreLive = false;
+                break;
+              }
             }
-            const found = events.some((ev) =>
-              dim.extract(ev).some((v) => v.key === step.value.key),
-            );
+            const isTier2Only = isStaticDim || dim?.tier2Only === true;
+            const isServerDim = isTier2ServerDimension(step.dimension);
+            let found = false;
+            if (dim) {
+              found = events.some((ev) =>
+                (dim as ReturnType<typeof getPivotDimension>)
+                  .extract(ev)
+                  .some((v) => v.key === step.value.key),
+              );
+            }
             if (!found) {
-              stepsAreLive = false;
-              break;
+              if (inTier2Mode && (isServerDim || isTier2Only)) {
+                // Server-filtered / Tier-2-only step in Tier 2 — the
+                // queued cohort fetch will populate the result; do
+                // not require corpus presence.
+              } else {
+                stepsAreLive = false;
+                break;
+              }
+            }
+            if (inTier2Mode && isTier2ServerDimension(step.dimension)) {
+              refetchQueue.push({
+                dimension: step.dimension,
+                valueKey: step.value.key,
+                customerId: origin.customerId,
+                corpusSeed: cohortSeed,
+              });
             }
           }
           setStoryMemberEvents(events);
           if (!stepsAreLive) {
             setTrail([]);
             setFallbackNotice("stale-hash");
+            return;
+          }
+          if (refetchQueue.length > 0) {
+            pendingHashFetchesRef.current = refetchQueue;
           }
         })
         .catch(() => {
@@ -1564,6 +1628,7 @@ export function TriageBaselineContent({
     dimension: Tier2Dimension;
     valueKey: string;
     customerId: number;
+    corpusSeed?: Tier2CorpusSeed;
   } | null>(null);
   // `tier2.inFlight` and `tier2.errors` are listed as deps so the
   // effect re-runs when the currently-draining fetch resolves
@@ -1581,6 +1646,7 @@ export function TriageBaselineContent({
         draining.current.dimension,
         draining.current.valueKey,
         draining.current.customerId,
+        draining.current.corpusSeed,
       );
       // Still loading (or modal-gated through `pending`, handled
       // above): wait for the next render.
@@ -1630,7 +1696,12 @@ export function TriageBaselineContent({
     const next = pendingHashFetchesRef.current.shift();
     if (!next) return;
     draining.current = next;
-    tier2.startFetch(next.dimension, next.valueKey, next.customerId);
+    tier2.startFetch(
+      next.dimension,
+      next.valueKey,
+      next.customerId,
+      next.corpusSeed,
+    );
   }, [scope, tier2, tier2.pending, tier2.inFlight, tier2.errors]);
 
   // Validate deferred client-intersection steps once the Tier 2 fetch

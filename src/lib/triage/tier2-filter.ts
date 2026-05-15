@@ -29,8 +29,11 @@ import type {
   EventListFilterInput,
   HostNetworkGroupInput,
 } from "@/lib/detection";
+import { THREAT_CATEGORY_VALUE_BY_KEY } from "@/lib/detection/filter-options";
 
+import { classifyTriageEndpoint } from "./classify";
 import type { PivotDimensionId } from "./pivot/dimensions";
+import type { TriageEvent } from "./types";
 
 /**
  * Pivot dimensions that map to a Tier 2 server-side filter. Anything
@@ -148,3 +151,141 @@ export function buildTier2Filter(
       return { ...base, sensors: [valueKey] };
   }
 }
+
+/**
+ * Per-event Tier 2 predicate (#561). Returns `true` when `event` would
+ * be matched by the {@link buildTier2Filter} `(dimension, valueKey)`
+ * pair under REview's server-side semantics.
+ *
+ * The Story-member resolver fetches each member event by id and
+ * applies this predicate in-app rather than walking REview's universe-
+ * wide `eventList(filter)` stream — that walk would only stop after
+ * every member appeared in the filtered stream, which for high-
+ * cardinality / partially-matching pivots either runs to the universe
+ * page tail (slow + risks dropping members past the walk-cap) or
+ * truncates wrongly when unrelated members never satisfy the filter.
+ *
+ * Matching rules mirror the {@link buildTier2Filter} encoding:
+ *
+ *   - `kinds` — `event.__typename === valueKey` (the server filter
+ *     accepts the typename spelling per the `kinds` dimension docs).
+ *   - `categories` — `THREAT_CATEGORY_VALUE_BY_KEY[event.category]`
+ *     equals the parsed integer `valueKey` (symmetric to the filter
+ *     building, which packs the ordinal as `categories: [n]`).
+ *   - `levels` — `event.level === valueKey` (the schema enum literal).
+ *   - `learningMethods` — `event.learningMethod === valueKey`. Subtypes
+ *     without the field are dropped.
+ *   - `keywords` — case-insensitive substring match across operator-
+ *     meaningful textual fields (host, uri, query, answer, sensor,
+ *     subtype-specific identifiers). Best-effort approximation of
+ *     REview's keyword filter, which the issue's "Out of scope" notes
+ *     would be replaced cleanly by an upstream `event_key IN (…)`
+ *     filter on `EventListFilterInput`. Documented inline so a future
+ *     consolidation issue can swap this branch out.
+ *   - `country` — case-insensitive match on `origCountry` or
+ *     `respCountry`.
+ *   - `externalIp` / `internalIp` — classify each side via
+ *     {@link classifyTriageEndpoint}; match when the side's address
+ *     equals `valueKey` and the side falls on the requested half of
+ *     the perimeter classification.
+ *   - `sameSensor` — `event.sensor === valueKey`. The cohort branch
+ *     skips the `listSensors()` name → `nodeId` resolution
+ *     (`fetchTier2DimensionWithSession` documents the bypass), so this
+ *     predicate matches the literal sensor *name* on the event payload.
+ */
+export function tier2MatchesEvent(
+  event: TriageEvent,
+  dimension: Tier2Dimension,
+  valueKey: string,
+): boolean {
+  switch (dimension) {
+    case "kinds":
+      return event.__typename === valueKey;
+    case "categories": {
+      const cat = event.category;
+      if (cat === null || cat === undefined) return false;
+      const ordinal = THREAT_CATEGORY_VALUE_BY_KEY[cat];
+      if (ordinal === undefined) return false;
+      return String(ordinal) === valueKey;
+    }
+    case "levels":
+      return typeof event.level === "string" && event.level === valueKey;
+    case "learningMethods":
+      return (
+        typeof event.learningMethod === "string" &&
+        event.learningMethod === valueKey
+      );
+    case "keywords": {
+      const needle = valueKey.toLowerCase();
+      if (needle.length === 0) return false;
+      return KEYWORD_HAYSTACK_FIELDS.some((pick) => {
+        const raw = pick(event);
+        if (typeof raw === "string") {
+          return raw.toLowerCase().includes(needle);
+        }
+        if (Array.isArray(raw)) {
+          return raw.some(
+            (entry) =>
+              typeof entry === "string" && entry.toLowerCase().includes(needle),
+          );
+        }
+        return false;
+      });
+    }
+    case "country": {
+      const target = valueKey.toUpperCase();
+      const orig = event.origCountry?.toUpperCase() ?? null;
+      const resp = event.respCountry?.toUpperCase() ?? null;
+      return orig === target || resp === target;
+    }
+    case "externalIp":
+    case "internalIp": {
+      const wantInternal = dimension === "internalIp";
+      for (const side of ["orig", "resp"] as const) {
+        const addr =
+          side === "orig" ? (event.origAddr ?? null) : (event.respAddr ?? null);
+        if (typeof addr !== "string" || addr.length === 0) continue;
+        if (addr !== valueKey) continue;
+        const klass = classifyTriageEndpoint(event, side);
+        if (klass === "unknown") continue;
+        if ((klass === "internal") === wantInternal) return true;
+      }
+      return false;
+    }
+    case "sameSensor":
+      return event.sensor === valueKey;
+  }
+}
+
+/**
+ * Textual fields the `keywords` predicate scans. Picked to mirror the
+ * operator-meaningful content REview's keyword filter typically
+ * matches against — content payload (host / uri / query / answer /
+ * subtype-specific identifiers), the sensor name, and the event
+ * typename. The list is intentionally narrow: matching against every
+ * scalar would surface false positives on stable identifiers (event
+ * id, cluster id) that are not part of the operator's mental model.
+ */
+const KEYWORD_HAYSTACK_FIELDS: ReadonlyArray<
+  (event: TriageEvent) => string | readonly string[] | null | undefined
+> = [
+  (e) => e.__typename,
+  (e) => e.sensor,
+  (e) => e.host,
+  (e) => e.uri,
+  (e) => e.userAgent,
+  (e) => e.query,
+  (e) => e.answer,
+  (e) => e.serverName,
+  (e) => e.subjectCommonName,
+  (e) => e.sshClient,
+  (e) => e.sshServer,
+  (e) => e.smbPath,
+  (e) => e.smbService,
+  (e) => e.smbFileName,
+  (e) => e.ftpCommands?.map((c) => c.command),
+  (e) => e.ldapOpcode,
+  (e) => e.ldapObject,
+  (e) => e.ldapArgument,
+  (e) => e.mqttSubscribe,
+];
