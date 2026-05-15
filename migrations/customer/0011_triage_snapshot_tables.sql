@@ -44,7 +44,20 @@ CREATE TABLE IF NOT EXISTS exclusion_snapshot (
     -- moves between scopes does not bump the fingerprint and the
     -- original label is preserved.
     snapshot JSONB NOT NULL,
-    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Tombstone for the two-phase retention sweep. Set by the
+    -- snapshot retention job the first sweep that observes
+    -- zero references; cleared again if a later corpus row revives
+    -- the fingerprint (a stable exclusion set can re-mint the same
+    -- fingerprint long after an earlier reference aged out). The
+    -- snapshot is deletable only after `unreferenced_since` is older
+    -- than the 30-day grace period AND the reference probe still
+    -- returns zero. `captured_at` is unsuitable for this gate because
+    -- it is fixed at first observation: a long-lived fingerprint
+    -- whose references churn at year-old offsets would otherwise be
+    -- pruned immediately on the first sweep after its last reference
+    -- aged out, with no post-expiration grace at all. See #472.
+    unreferenced_since TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS policy_snapshot (
@@ -66,7 +79,9 @@ CREATE TABLE IF NOT EXISTS policy_snapshot (
     -- already records when the audit substrate first observed this
     -- fingerprint.
     snapshot JSONB NOT NULL,
-    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- See `exclusion_snapshot.unreferenced_since` for rationale.
+    unreferenced_since TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS baseline_version_snapshot (

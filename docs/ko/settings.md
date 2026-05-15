@@ -469,9 +469,14 @@ cron 컨테이너는 코퍼스, 팬아웃 큐, 감사용 스냅샷 테이블이
   04:15, 코퍼스 A 스윕 1시간 뒤) — 어떤
   `baseline_triaged_event`나 `policy_triage_run` 행도 더 이상
   참조하지 않는 `exclusion_snapshot` 및 `policy_snapshot` 행을
-  가장 긴 코퍼스 보존 윈도 + 30일 유예 기간을 지난 뒤 정리합니다.
-  `baseline_version_snapshot`은 영구 보존되며 스윕 대상이 아닙니다.
-  토큰: `TRIAGE_SNAPSHOT_RETENTION_INTERNAL_TOKEN`.
+  정리하되, 30일 유예는 `captured_at`이 아니라 해당 핑거프린트가
+  처음 "참조 없음"으로 관측된 시점(`unreferenced_since` 무덤 표시)
+  부터 계산합니다. 스윕은 테이블마다 3단계로 동작합니다 — 새로
+  고아가 된 행에 무덤 표시를 찍고, 이후 코퍼스 행이 같은
+  핑거프린트를 다시 참조하면 표시를 해제하며, 유예 기간을 넘긴
+  채 여전히 표시된 행만 삭제합니다. `baseline_version_snapshot`은
+  영구 보존되며 스윕 대상이 아닙니다. 토큰:
+  `TRIAGE_SNAPSHOT_RETENTION_INTERNAL_TOKEN`.
 - **제외 팬아웃** (`run-triage-exclusion-fanout.sh`, 매분) —
   `triage_exclusion_fanout_job` 큐를 비웁니다. 분 단위 케이던스는
   워커의 1차 백오프(1분)와 맞춰져 있어 일시적인 테넌트 DB 장애가

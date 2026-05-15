@@ -10,8 +10,6 @@
 export { currentBaselineParameters } from "./baseline-parameters";
 export {
   DEFAULT_DELETE_BATCH_SIZE as SNAPSHOT_DEFAULT_DELETE_BATCH_SIZE,
-  EXCLUSION_SNAPSHOT_MAX_REFERENCE_WINDOW_DAYS,
-  POLICY_SNAPSHOT_MAX_REFERENCE_WINDOW_DAYS,
   runSnapshotRetentionDispatch,
   runSnapshotRetentionForCustomer,
   SNAPSHOT_GRACE_DAYS,

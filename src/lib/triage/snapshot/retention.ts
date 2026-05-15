@@ -24,20 +24,36 @@ import "server-only";
  * couple it to the other corpus's lifecycle in ways the existing
  * code does not handle.
  *
- * Policy details:
+ * Two-phase mark/delete (per #472 review feedback):
  *
- *   - `exclusion_snapshot` / `policy_snapshot`: delete rows whose
- *     `captured_at` is older than `(corpus retention window + grace)`
- *     AND whose fingerprint is not referenced by any current corpus
- *     row. The corpus A baseline window is 180 days; the corpus B
- *     ready window is 30 days; the grace period adds 30 days on top
- *     of the longer window. The reference probe is the load-bearing
- *     check — the time gate is just an optimization that skips the
- *     probe for snapshots too recent to possibly be unreferenced.
- *   - `baseline_version_snapshot`: retained forever (small, valuable,
- *     no realistic growth concern). The sweep simply skips this
- *     table. A future tombstone column can flip this if a version
- *     ever needs to be purged.
+ *   `captured_at` is fixed at first observation. Basing the grace
+ *   cutoff on `captured_at` would prune a long-lived fingerprint as
+ *   soon as its last reference aged out, with no post-expiration
+ *   grace at all (example: fingerprint captured on day 0, last
+ *   corpus row written day 170 and aged out day 350 — `captured_at`
+ *   is already 350 days old, well past any captured-at-based
+ *   cutoff). To honor the issue's "30 days past the latest
+ *   referencing row's expiration" rule we use a tombstone column
+ *   `unreferenced_since` and a two-phase sweep per table:
+ *
+ *     Phase 1 (mark)   — UPDATE: stamp `unreferenced_since = NOW()`
+ *                        on rows whose reference probe returned zero
+ *                        and that aren't already tombstoned.
+ *     Phase 2 (revive) — UPDATE: clear `unreferenced_since` on
+ *                        rows whose reference probe now returns
+ *                        non-zero. A revival is possible because
+ *                        identical condition sets re-mint the same
+ *                        fingerprint, so a stable exclusion set
+ *                        whose last reference aged out can later
+ *                        regain references when cadence resumes.
+ *     Phase 3 (delete) — DELETE rows where `unreferenced_since` is
+ *                        older than the 30-day grace AND the
+ *                        reference probe still returns zero.
+ *
+ *   `baseline_version_snapshot` is retained forever (small,
+ *   valuable, no realistic growth concern). The sweep simply skips
+ *   this table. A future tombstone column can flip this if a version
+ *   ever needs to be purged.
  *
  * Each tenant DB sweeps independently; orchestration mirrors the
  * existing per-corpus dispatch jobs.
@@ -51,20 +67,18 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 export const DEFAULT_DELETE_BATCH_SIZE = 10_000;
 
 /**
- * Snapshots are guaranteed unreferenced only after the longest
- * corpus retention window has elapsed. We compute the grace cutoff
- * relative to `captured_at` rather than the latest referencing row's
- * time because the snapshot writer stamps `captured_at` once at the
- * first observation; using it for the time gate keeps the predicate
- * a simple range filter while the reference probe handles the
- * correctness guarantee.
+ * Grace period applied *after* the snapshot's last reference is
+ * observed to have disappeared (tracked via `unreferenced_since`),
+ * NOT after `captured_at`. See the file header for rationale.
  */
 export const SNAPSHOT_GRACE_DAYS = 30;
-export const EXCLUSION_SNAPSHOT_MAX_REFERENCE_WINDOW_DAYS = 180; // matches baseline corpus A retention
-export const POLICY_SNAPSHOT_MAX_REFERENCE_WINDOW_DAYS = 30; // matches corpus B ready retention
 
 export interface SnapshotRetentionCounts {
+  exclusionSnapshotsTombstoned: number;
+  exclusionSnapshotsRevived: number;
   exclusionSnapshotsPruned: number;
+  policySnapshotsTombstoned: number;
+  policySnapshotsRevived: number;
   policySnapshotsPruned: number;
 }
 
@@ -82,31 +96,73 @@ export interface SnapshotRetentionResult {
 
 function emptyCounts(): SnapshotRetentionCounts {
   return {
+    exclusionSnapshotsTombstoned: 0,
+    exclusionSnapshotsRevived: 0,
     exclusionSnapshotsPruned: 0,
+    policySnapshotsTombstoned: 0,
+    policySnapshotsRevived: 0,
     policySnapshotsPruned: 0,
   };
 }
 
+interface SweepCounts {
+  tombstoned: number;
+  revived: number;
+  pruned: number;
+}
+
 /**
- * Delete `exclusion_snapshot` rows older than the configured grace
- * cutoff whose fingerprint is referenced by neither corpus's table.
- * The double NOT EXISTS guarantees we never prune a snapshot a live
- * corpus row would join against — the corpus's own retention sweep
- * is the upstream gate that releases references.
+ * Two-phase mark/revive/delete sweep on `exclusion_snapshot`. The
+ * reference probe joins against both corpus tables because either may
+ * reference `exclusions_fp` / `exclusions_fingerprint`.
  */
-async function pruneExclusionSnapshots(
+async function sweepExclusionSnapshots(
   pool: pg.Pool,
-  graceCutoffDays: number,
+  graceDays: number,
   batchSize: number,
-): Promise<number> {
-  let total = 0;
+): Promise<SweepCounts> {
+  const counts: SweepCounts = { tombstoned: 0, revived: 0, pruned: 0 };
+
+  const markResult = await pool.query(
+    `UPDATE exclusion_snapshot
+        SET unreferenced_since = NOW()
+      WHERE unreferenced_since IS NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM baseline_triaged_event b
+             WHERE b.exclusions_fp = exclusion_snapshot.fingerprint
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM policy_triage_run r
+             WHERE r.exclusions_fingerprint = exclusion_snapshot.fingerprint
+        )`,
+  );
+  counts.tombstoned = markResult.rowCount ?? 0;
+
+  const reviveResult = await pool.query(
+    `UPDATE exclusion_snapshot
+        SET unreferenced_since = NULL
+      WHERE unreferenced_since IS NOT NULL
+        AND (
+            EXISTS (
+                SELECT 1 FROM baseline_triaged_event b
+                 WHERE b.exclusions_fp = exclusion_snapshot.fingerprint
+            )
+            OR EXISTS (
+                SELECT 1 FROM policy_triage_run r
+                 WHERE r.exclusions_fingerprint = exclusion_snapshot.fingerprint
+            )
+        )`,
+  );
+  counts.revived = reviveResult.rowCount ?? 0;
+
   while (true) {
-    const result = await pool.query(
+    const deleteResult = await pool.query(
       `DELETE FROM exclusion_snapshot
         WHERE fingerprint IN (
           SELECT s.fingerprint
             FROM exclusion_snapshot s
-           WHERE s.captured_at < NOW() - ($1 || ' days')::INTERVAL
+           WHERE s.unreferenced_since IS NOT NULL
+             AND s.unreferenced_since < NOW() - ($1 || ' days')::INTERVAL
              AND NOT EXISTS (
                  SELECT 1 FROM baseline_triaged_event b
                   WHERE b.exclusions_fp = s.fingerprint
@@ -117,47 +173,70 @@ async function pruneExclusionSnapshots(
              )
            LIMIT ${batchSize}
         )`,
-      [String(graceCutoffDays)],
+      [String(graceDays)],
     );
-    const n = result.rowCount ?? 0;
-    total += n;
+    const n = deleteResult.rowCount ?? 0;
+    counts.pruned += n;
     if (n < batchSize) break;
   }
-  return total;
+  return counts;
 }
 
 /**
- * Delete `policy_snapshot` rows older than the configured grace cutoff
- * whose fingerprint is referenced by no `policy_triage_run` row. The
- * corpus A table never references `policy_snapshot`, so the probe is
- * single-sided.
+ * Two-phase mark/revive/delete sweep on `policy_snapshot`. The
+ * reference probe is single-sided — only `policy_triage_run`
+ * references `policies_fingerprint`.
  */
-async function prunePolicySnapshots(
+async function sweepPolicySnapshots(
   pool: pg.Pool,
-  graceCutoffDays: number,
+  graceDays: number,
   batchSize: number,
-): Promise<number> {
-  let total = 0;
+): Promise<SweepCounts> {
+  const counts: SweepCounts = { tombstoned: 0, revived: 0, pruned: 0 };
+
+  const markResult = await pool.query(
+    `UPDATE policy_snapshot
+        SET unreferenced_since = NOW()
+      WHERE unreferenced_since IS NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM policy_triage_run r
+             WHERE r.policies_fingerprint = policy_snapshot.fingerprint
+        )`,
+  );
+  counts.tombstoned = markResult.rowCount ?? 0;
+
+  const reviveResult = await pool.query(
+    `UPDATE policy_snapshot
+        SET unreferenced_since = NULL
+      WHERE unreferenced_since IS NOT NULL
+        AND EXISTS (
+            SELECT 1 FROM policy_triage_run r
+             WHERE r.policies_fingerprint = policy_snapshot.fingerprint
+        )`,
+  );
+  counts.revived = reviveResult.rowCount ?? 0;
+
   while (true) {
-    const result = await pool.query(
+    const deleteResult = await pool.query(
       `DELETE FROM policy_snapshot
         WHERE fingerprint IN (
           SELECT s.fingerprint
             FROM policy_snapshot s
-           WHERE s.captured_at < NOW() - ($1 || ' days')::INTERVAL
+           WHERE s.unreferenced_since IS NOT NULL
+             AND s.unreferenced_since < NOW() - ($1 || ' days')::INTERVAL
              AND NOT EXISTS (
                  SELECT 1 FROM policy_triage_run r
                   WHERE r.policies_fingerprint = s.fingerprint
              )
            LIMIT ${batchSize}
         )`,
-      [String(graceCutoffDays)],
+      [String(graceDays)],
     );
-    const n = result.rowCount ?? 0;
-    total += n;
+    const n = deleteResult.rowCount ?? 0;
+    counts.pruned += n;
     if (n < batchSize) break;
   }
-  return total;
+  return counts;
 }
 
 export async function runSnapshotRetentionForCustomer(
@@ -168,23 +247,24 @@ export async function runSnapshotRetentionForCustomer(
   const pool = await getCustomerPool(customerId);
   const counts = emptyCounts();
 
-  // The exclusion grace cutoff is the corpus A retention window
-  // (180d) + grace; the corpus B `ready` window (30d) is strictly
-  // shorter so the same cutoff covers references from both corpora.
-  // Snapshots referenced from a still-living `baseline_triaged_event`
-  // row would survive the time gate trivially because that row's own
-  // event_time is < cutoff days old, but the NOT EXISTS probe is the
-  // load-bearing guard either way.
-  counts.exclusionSnapshotsPruned = await pruneExclusionSnapshots(
+  const exclusionSweep = await sweepExclusionSnapshots(
     pool,
-    EXCLUSION_SNAPSHOT_MAX_REFERENCE_WINDOW_DAYS + SNAPSHOT_GRACE_DAYS,
+    SNAPSHOT_GRACE_DAYS,
     batchSize,
   );
-  counts.policySnapshotsPruned = await prunePolicySnapshots(
+  counts.exclusionSnapshotsTombstoned = exclusionSweep.tombstoned;
+  counts.exclusionSnapshotsRevived = exclusionSweep.revived;
+  counts.exclusionSnapshotsPruned = exclusionSweep.pruned;
+
+  const policySweep = await sweepPolicySnapshots(
     pool,
-    POLICY_SNAPSHOT_MAX_REFERENCE_WINDOW_DAYS + SNAPSHOT_GRACE_DAYS,
+    SNAPSHOT_GRACE_DAYS,
     batchSize,
   );
+  counts.policySnapshotsTombstoned = policySweep.tombstoned;
+  counts.policySnapshotsRevived = policySweep.revived;
+  counts.policySnapshotsPruned = policySweep.pruned;
+
   // `baseline_version_snapshot` is intentionally retained forever.
 
   return counts;

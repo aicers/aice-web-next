@@ -14,14 +14,22 @@ import {
  * snapshot retention cadence. Enumerates active customers and runs
  * the snapshot cleanup sweep against each tenant DB:
  *
- *   - `exclusion_snapshot` rows past the grace cutoff (corpus A
- *     retention + 30d) AND unreferenced by `baseline_triaged_event`
- *     or `policy_triage_run` are deleted.
- *   - `policy_snapshot` rows past the grace cutoff (corpus B ready
- *     retention + 30d) AND unreferenced by `policy_triage_run` are
- *     deleted.
+ *   - `exclusion_snapshot` rows whose `unreferenced_since` tombstone
+ *     is older than the 30-day grace AND remain unreferenced by both
+ *     `baseline_triaged_event` and `policy_triage_run` are deleted.
+ *   - `policy_snapshot` rows whose `unreferenced_since` tombstone is
+ *     older than the grace AND remain unreferenced by
+ *     `policy_triage_run` are deleted.
  *   - `baseline_version_snapshot` is retained forever (small,
  *     valuable, no realistic growth concern) — the sweep skips it.
+ *
+ * The sweep is two-phase per table: a first pass stamps
+ * `unreferenced_since = NOW()` on newly orphaned rows, a second pass
+ * clears the tombstone on rows whose references reappear (a stable
+ * exclusion set can re-mint the same fingerprint after its last
+ * reference aged out), and only rows still tombstoned past the grace
+ * window are deleted. The tombstone is required because
+ * `captured_at` is fixed at first observation — see #472.
  *
  * Per-customer failures are reflected in the `perCustomer[]` entry;
  * the dispatcher itself only throws when active-customer enumeration

@@ -483,10 +483,15 @@ bound:
   daily at 04:15 UTC, one hour after the corpus A sweep) — prunes
   `exclusion_snapshot` and `policy_snapshot` rows whose
   fingerprints are no longer referenced by any
-  `baseline_triaged_event` or `policy_triage_run` row, after a
-  30-day grace period past the longest corpus retention window.
-  `baseline_version_snapshot` is retained forever and is skipped.
-  Token: `TRIAGE_SNAPSHOT_RETENTION_INTERNAL_TOKEN`.
+  `baseline_triaged_event` or `policy_triage_run` row, with a
+  30-day grace counted from when the fingerprint was first
+  observed as unreferenced (tracked via the `unreferenced_since`
+  tombstone, not from `captured_at`). The sweep runs three phases
+  per table — tombstone newly orphaned rows, clear the tombstone
+  if a later corpus row revives the fingerprint, then delete rows
+  still tombstoned past the grace. `baseline_version_snapshot` is
+  retained forever and is skipped. Token:
+  `TRIAGE_SNAPSHOT_RETENTION_INTERNAL_TOKEN`.
 - **Exclusion fanout** (`run-triage-exclusion-fanout.sh`, every
   minute) — drains the `triage_exclusion_fanout_job` queue. The
   minute cadence matches the worker's first-tier backoff (1 min)
