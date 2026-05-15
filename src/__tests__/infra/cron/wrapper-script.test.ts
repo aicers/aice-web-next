@@ -91,8 +91,8 @@ describe("infra/cron/crontab — static contract", () => {
     }
   });
 
-  it("fires at the top of each hour", () => {
-    expect(crontab).toMatch(/^0 \* \* \* \*/m);
+  it("fires every 15 minutes", () => {
+    expect(crontab).toMatch(/^\*\/15 \* \* \* \*/m);
   });
 });
 
@@ -140,7 +140,7 @@ interface RunOptions {
    *     branches stay fast.
    *   - null: do NOT set CRON_CADENCE_MAX_TIME_S, exercising the
    *     production fallback (TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS
-   *     → 2700s default).
+   *     → 840s default).
    *   - string: explicit override.
    */
   maxTimeS?: string | null;
@@ -475,14 +475,14 @@ describe.skipIf(!EXECUTION_DEPS_AVAILABLE)(
       expect(r.curlMaxTime).toBe("2");
     });
 
-    it("falls back to 2700s default when neither override nor dispatcher knob is set", () => {
+    it("falls back to 840s default when neither override nor dispatcher knob is set", () => {
       const r = runWrapper({
         httpCode: "200",
         body: JSON.stringify({ overall: "ok", perCustomer: [] }),
         maxTimeS: null,
       });
       expect(r.status).toBe(0);
-      expect(r.curlMaxTime).toBe("2700");
+      expect(r.curlMaxTime).toBe("840");
     });
 
     it("CRON_CADENCE_MAX_TIME_S override wins over TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS", () => {
@@ -522,7 +522,7 @@ describe("infra/cron/entrypoint.sh — static contract", () => {
   it("allowlists TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS so the wrapper can derive --max-time", () => {
     // Round 2 review fix: without this passthrough, an operator
     // raising the dispatcher total timeout via .env would still be
-    // killed by the wrapper's 2700s default, recreating the
+    // killed by the wrapper's 840s default, recreating the
     // transport-failure / no-body mode the structured
     // `skipped-timeout` row exists to prevent.
     expect(entrypoint).toMatch(/TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS/);

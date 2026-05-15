@@ -114,7 +114,7 @@ The runner recognises one specific recovery shape:
 
 ## Dispatcher route — `POST /api/internal/triage/baseline/dispatch`
 
-The hourly fan-out lives behind a sibling route the in-repo `cron`
+The 15-minute fan-out lives behind a sibling route the in-repo `cron`
 service hits exactly once per tick. The dispatcher enumerates active
 customers (`SELECT id FROM customers WHERE status = 'active'`) and
 runs one cadence pass per customer with bounded concurrency and a
@@ -155,7 +155,7 @@ Response:
 | `skipped` | cadence runner | Advisory lock held by a concurrent run, or no new pages — normal "nothing to do". |
 | `failed` | cadence runner | Cadence transaction rolled back; `error` populated. |
 | `timeout` | dispatcher | Per-customer call exceeded its effective timeout — the lesser of `TRIAGE_BASELINE_DISPATCH_PER_CUSTOMER_TIMEOUT_MS` (default 15 min) and the remaining total-dispatcher budget. The dispatcher cancelled the runner via `AbortSignal`; the in-flight page rolled back. The total budget bound also applies to already-running customers when the dispatcher's overall deadline elapses, so the dispatcher always returns within `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`. |
-| `skipped-timeout` | dispatcher | Total dispatcher timeout (`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, default 45 min) reached before this customer was attempted; the next hourly tick picks them up. |
+| `skipped-timeout` | dispatcher | Total dispatcher timeout (`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, default 14 min) reached before this customer was attempted; the next 15-minute tick picks them up. |
 
 `overall` is derived deterministically:
 
@@ -176,7 +176,7 @@ dispatcher reports `partial` and continues.
 see `infra/cron/crontab` for the entry and
 `infra/cron/run-triage-baseline-dispatch.sh` for the wrapper script.
 A `docker compose --profile prod up -d` boot is sufficient to start
-the hourly cadence; no external scheduler config is required.
+the 15-minute cadence; no external scheduler config is required.
 
 The cron service depends on `next-app` becoming healthy (the
 `/api/health` readiness gate) before firing its first tick, so a
@@ -189,11 +189,12 @@ surfaces.
 
 Operators running outside the bundled compose may use the same
 dispatcher route from any external scheduler. Recommended cadence is
-**once per hour** (the dispatcher fans out per-customer internally):
+**every 15 minutes** (the dispatcher fans out per-customer
+internally):
 
 ```bash
 curl -sS -o /tmp/dispatch.json -w '%{http_code}\n' \
-  --connect-timeout 10 --max-time 2700 \
+  --connect-timeout 10 --max-time 840 \
   -X POST \
   -H "Authorization: Bearer $TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -202,15 +203,16 @@ curl -sS -o /tmp/dispatch.json -w '%{http_code}\n' \
 ```
 
 Keep `--max-time` at-or-above the dispatcher total timeout
-(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, default 2700000ms =
-2700s), so the application-level timeout — which produces the
-structured `timeout` / `skipped-timeout` rows — wins over the
-network-level timeout (which surfaces as a transport failure with
-no body). The bundled cron wrapper derives `--max-time` from
-`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS` automatically, so the
-two values stay in sync as long as both are set in the same `.env`.
-External schedulers must update their cap manually whenever the
-dispatcher knob is retuned.
+(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, default 840000ms =
+840s) and strictly below the 15-minute (900s) cron interval, so the
+application-level timeout — which produces the structured `timeout`
+/ `skipped-timeout` rows — wins over the network-level timeout
+(which surfaces as a transport failure with no body) and successive
+ticks cannot overlap. The bundled cron wrapper derives `--max-time`
+from `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS` automatically, so
+the two values stay in sync as long as both are set in the same
+`.env`. External schedulers must update their cap manually whenever
+the dispatcher knob is retuned.
 
 Per-customer manual runs still go through the cadence route:
 
@@ -259,8 +261,8 @@ keying surfaces:
    which surfaces in `docker compose logs cron`.
 3. `baseline_corpus_state.last_run_status` per customer captures
    the most recent terminal status; a sweep that finds any row
-   with `last_run_status = 'failed'` older than 1 hour is a
-   confirmed problem.
+   with `last_run_status = 'failed'` older than 30 minutes (two
+   full 15-minute cadence ticks) is a confirmed problem.
 
 The wrapper script intentionally exits 0 on `overall: 'partial'` so
 cron's MAILTO does not double-page — alerting on the structured log

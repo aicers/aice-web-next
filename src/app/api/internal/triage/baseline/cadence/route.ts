@@ -13,8 +13,10 @@ import { CustomerNotFoundError } from "@/lib/triage/policy/customer-db";
  * POST /api/internal/triage/baseline/cadence
  *
  * Internal-token-guarded entrypoint the deployment scheduler uses to
- * drive one hourly cadence pass per customer (1B-1 / discussion #447
- * §3.4). Body shape:
+ * drive a single cadence pass for one customer (1B-1 / discussion
+ * #447 §3.4). The scheduled fan-out runs every 15 minutes via
+ * `/dispatch`; this route remains available for manual
+ * single-customer runs. Body shape:
  *
  *     { "customer_id": <number> }
  *

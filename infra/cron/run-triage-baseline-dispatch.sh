@@ -2,7 +2,8 @@
 #
 # Triage baseline dispatch wrapper (#487 §3).
 #
-# Hourly invoked by `/etc/crontabs/root` inside the cron container.
+# Invoked every 15 minutes by `/etc/crontabs/root` inside the cron
+# container.
 # Owns:
 #   - sourcing /etc/cron.env (set by entrypoint.sh, since busybox
 #     crond does NOT propagate container env into jobs)
@@ -18,8 +19,8 @@
 # Exit code policy:
 #   - exit 0 on HTTP 200 (regardless of `overall`) and on HTTP 4xx/5xx
 #     with a parseable body — the structured body is the recovery
-#     surface; the next hourly tick re-runs and confirms whether the
-#     issue persists. cron's MAILTO would otherwise double-page.
+#     surface; the next 15-minute tick re-runs and confirms whether
+#     the issue persists. cron's MAILTO would otherwise double-page.
 #   - exit non-zero on transport failure (DNS, connection refused,
 #     TLS, --max-time reached), on HTTP 401/403 (auth misconfig must
 #     surface to ops), and on configuration errors (missing token /
@@ -49,12 +50,12 @@ BASE_URL="${NEXT_APP_BASE_URL:-http://next-app:3000}"
 URL="${BASE_URL}/api/internal/triage/baseline/dispatch"
 
 # `--max-time` is a hard wall-clock cap including connect + transfer.
-# Keep it equal to the dispatcher's total timeout (45 minutes = 2700s
+# Keep it equal to the dispatcher's total timeout (14 minutes = 840s
 # default) so the application-level timeout — which produces
 # structured `skipped-timeout` rows for unattempted customers — wins
 # over the network-level timeout (which would surface as a transport
-# failure with no body). The hourly cron interval (3600s) is the
-# absolute ceiling.
+# failure with no body). The 15-minute cron interval (900s) is the
+# absolute ceiling — successive ticks must not overlap.
 #
 # Resolution order (highest precedence first):
 #   1. CRON_CADENCE_MAX_TIME_S — test override only, lets the wrapper
@@ -65,8 +66,8 @@ URL="${BASE_URL}/api/internal/triage/baseline/dispatch"
 #      wrapper never undercuts the app deadline. A floor of 1s
 #      guarantees a positive value even if an operator misconfigures
 #      the knob (e.g. sets it below 500ms).
-#   3. 2700s default — matches the dispatcher's own default total
-#      timeout (45 minutes).
+#   3. 840s default — matches the dispatcher's own default total
+#      timeout (14 minutes).
 CONNECT_TIMEOUT_S="${CRON_CADENCE_CONNECT_TIMEOUT_S:-10}"
 if [ -n "${CRON_CADENCE_MAX_TIME_S:-}" ]; then
     MAX_TIME_S="$CRON_CADENCE_MAX_TIME_S"
@@ -78,7 +79,7 @@ elif [ -n "${TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS:-}" ]; then
         MAX_TIME_S=1
     fi
 else
-    MAX_TIME_S=2700
+    MAX_TIME_S=840
 fi
 
 mkdir -p "$LOG_DIR"

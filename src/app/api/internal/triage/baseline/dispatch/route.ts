@@ -9,10 +9,10 @@ import { createCadencePager } from "@/lib/triage/baseline/pager";
 /**
  * POST /api/internal/triage/baseline/dispatch
  *
- * Internal-token-guarded fan-out the in-repo `cron` service hits once
- * per hour. Enumerates active customers and runs one cadence pass per
- * customer with bounded concurrency + per-customer timeout. The
- * per-customer route (`/cadence`) stays unchanged — operators can
+ * Internal-token-guarded fan-out the in-repo `cron` service hits
+ * every 15 minutes. Enumerates active customers and runs one cadence
+ * pass per customer with bounded concurrency + per-customer timeout.
+ * The per-customer route (`/cadence`) stays unchanged — operators can
  * still POST `{customer_id: N}` for a single-customer manual run.
  *
  * Token: shares
