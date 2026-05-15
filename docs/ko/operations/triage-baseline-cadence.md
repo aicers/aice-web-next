@@ -115,12 +115,12 @@ pg_try_advisory_xact_lock(hashtext('triage_baseline_cadence:' || customer_id))
 
 ## 디스패처 라우트 — `POST /api/internal/triage/baseline/dispatch`
 
-시간당 팬아웃은 시간당 한 번씩 in-repo `cron` 서비스가 호출하는
-형제 라우트가 처리합니다. 디스패처는 활성 고객을 열거하고
-(`SELECT id FROM customers WHERE status = 'active'`), 고객당 한 번의
-케이던스 패스를 제한된 동시성과 고객별 타임아웃으로 실행합니다.
-고객별 라우트는 변경되지 않으며, 운영자는 단일 고객 수동 실행을
-위해 여전히 `{customer_id: N}`을 POST할 수 있습니다.
+15분 주기 팬아웃은 in-repo `cron` 서비스가 매 틱마다 정확히
+한 번 호출하는 형제 라우트가 처리합니다. 디스패처는 활성 고객을
+열거하고(`SELECT id FROM customers WHERE status = 'active'`),
+고객당 한 번의 케이던스 패스를 제한된 동시성과 고객별 타임아웃으로
+실행합니다. 고객별 라우트는 변경되지 않으며, 운영자는 단일 고객
+수동 실행을 위해 여전히 `{customer_id: N}`을 POST할 수 있습니다.
 
 ```text
 POST /api/internal/triage/baseline/dispatch
@@ -155,7 +155,7 @@ Content-Type: application/json
 | `skipped` | 케이던스 러너 | 동시 실행이 어드바이저리 락을 보유 중이거나 신규 페이지가 없음. 정상적인 "할 일 없음" 상태. |
 | `failed` | 케이던스 러너 | 케이던스 트랜잭션이 롤백됨. `error` 필드 채워짐. |
 | `timeout` | 디스패처 | 고객별 호출이 유효 타임아웃을 초과 — `TRIAGE_BASELINE_DISPATCH_PER_CUSTOMER_TIMEOUT_MS`(기본 15분)와 남은 디스패처 전체 예산 중 더 작은 값. 디스패처가 `AbortSignal`로 러너를 취소했고, 진행 중이던 페이지가 롤백됨. 이 전체 예산 한도는 디스패처 전체 데드라인이 만료될 때 이미 실행 중인 고객에도 적용되어, 디스패처는 항상 `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS` 내에 반환됨. |
-| `skipped-timeout` | 디스패처 | 디스패처 전체 타임아웃(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, 기본 45분) 도달 전에 이 고객은 시도되지 않음. 다음 시간당 틱이 처리. |
+| `skipped-timeout` | 디스패처 | 디스패처 전체 타임아웃(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, 기본 14분) 도달 전에 이 고객은 시도되지 않음. 다음 15분 틱이 처리. |
 
 `overall`은 결정적으로 도출됩니다.
 
@@ -174,7 +174,7 @@ Content-Type: application/json
 **`docker-compose.yml`의 `cron` 서비스가 이미 이 작업을 수행합니다** —
 크론 라인은 `infra/cron/crontab`, 래퍼 스크립트는
 `infra/cron/run-triage-baseline-dispatch.sh`를 참고하세요.
-`docker compose --profile prod up -d`로 부팅하면 시간당 케이던스가
+`docker compose --profile prod up -d`로 부팅하면 15분 주기 케이던스가
 시작되며, 별도의 외부 스케줄러 설정은 필요 없습니다.
 
 cron 서비스는 `next-app`의 `/api/health` 준비 상태 게이트가
@@ -186,11 +186,11 @@ cron 서비스는 `next-app`의 `/api/health` 준비 상태 게이트가
 
 번들된 compose 외부에서 운영하는 경우 어떤 외부 스케줄러에서든
 같은 디스패처 라우트를 사용할 수 있습니다. 권장 주기는
-**시간당 1회**입니다(디스패처가 내부적으로 고객별로 팬아웃).
+**15분마다 1회**입니다(디스패처가 내부적으로 고객별로 팬아웃).
 
 ```bash
 curl -sS -o /tmp/dispatch.json -w '%{http_code}\n' \
-  --connect-timeout 10 --max-time 2700 \
+  --connect-timeout 10 --max-time 840 \
   -X POST \
   -H "Authorization: Bearer $TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -199,11 +199,12 @@ curl -sS -o /tmp/dispatch.json -w '%{http_code}\n' \
 ```
 
 `--max-time`은 디스패처 전체 타임아웃
-(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, 기본 2700000ms =
-2700s) 이상으로 유지하십시오. 그래야 구조화된 `timeout` /
-`skipped-timeout` 행을 만드는 애플리케이션 레벨 타임아웃이,
-본문 없는 전송 실패로 표면화되는 네트워크 레벨 타임아웃을
-앞섭니다. 번들된 cron 래퍼는 `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`
+(`TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`, 기본 840000ms =
+840s) 이상이면서 15분(900s) 크론 주기보다 작게 유지하십시오.
+그래야 구조화된 `timeout` / `skipped-timeout` 행을 만드는
+애플리케이션 레벨 타임아웃이 본문 없는 전송 실패로 표면화되는
+네트워크 레벨 타임아웃을 앞서고, 연속된 틱이 겹치지 않습니다.
+번들된 cron 래퍼는 `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS`
 값에서 `--max-time`을 자동으로 도출하므로 두 값이 같은 `.env`에
 설정된 한 자동으로 동기화됩니다. 외부 스케줄러를 사용하는 경우
 디스패처 노브를 재조정할 때 캡 값을 직접 갱신해야 합니다.
@@ -251,8 +252,8 @@ curl -fsS -X POST \
    `overall != 'ok'`일 때 stderr로 사람이 읽을 수 있는 경고를
    재출력하며, 이는 `docker compose logs cron`에 표시됩니다.
 3. 고객별 `baseline_corpus_state.last_run_status`가 가장 최근 종료
-   상태를 기록합니다. 1시간 이상 지난 `last_run_status = 'failed'`
-   행이 있으면 확정된 문제입니다.
+   상태를 기록합니다. 30분(15분 주기 두 틱) 이상 지난
+   `last_run_status = 'failed'` 행이 있으면 확정된 문제입니다.
 
 래퍼 스크립트는 `overall: 'partial'`에서 의도적으로 0으로 종료하므로
 cron의 MAILTO가 중복 호출되지 않습니다. 복구 경로는 구조화된 로그

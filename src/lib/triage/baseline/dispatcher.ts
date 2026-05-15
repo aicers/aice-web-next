@@ -3,7 +3,7 @@ import "server-only";
 /**
  * Triage baseline cadence dispatcher (#487).
  *
- * Hourly fan-out path that the in-repo `cron` service hits exactly
+ * 15-minute fan-out path that the in-repo `cron` service hits exactly
  * once per tick: enumerate active customers, run one cadence pass per
  * customer with bounded concurrency + per-customer timeout, aggregate
  * the per-customer outcomes into a structured response. The
@@ -33,8 +33,8 @@ import "server-only";
  *     whole HTTP exchange (which would discard the structured
  *     response body).
  *   - `skipped-timeout`: the dispatcher's overall timeout fired
- *     before this customer was even attempted. The next hourly tick
- *     picks them up via the existing watermark.
+ *     before this customer was even attempted. The next 15-minute
+ *     tick picks them up via the existing watermark.
  *
  * ## `overall` derivation
  *
@@ -100,11 +100,16 @@ export interface DispatcherOptions {
   perCustomerTimeoutMs?: number;
   /**
    * Total dispatcher timeout in milliseconds. Defaults to
-   * `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS` or 45 minutes. When the
-   * deadline passes, customers that have not yet started are reported
-   * as `skipped-timeout`. The cron wrapper's `--max-time` should be
-   * kept equal to this value so the application-level timeout wins
-   * over the network-level timeout.
+   * `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS` or 14 minutes — kept
+   * strictly under the 15-minute cron interval so a slow tick cannot
+   * overlap the next one. Any resolved value larger than
+   * `MAX_TOTAL_TIMEOUT_MS` (14 minutes) is clamped down with a warn
+   * log; the cron interval is a hard upper bound and operators must
+   * not be able to silently re-introduce overlap via a stale env
+   * override. When the deadline passes, customers that have not yet
+   * started are reported as `skipped-timeout`. The cron wrapper's
+   * `--max-time` should be kept equal to this value so the
+   * application-level timeout wins over the network-level timeout.
    */
   totalTimeoutMs?: number;
   /**
@@ -124,7 +129,13 @@ export interface DispatcherOptions {
 
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_PER_CUSTOMER_TIMEOUT_MS = 15 * 60 * 1000;
-const DEFAULT_TOTAL_TIMEOUT_MS = 45 * 60 * 1000;
+const DEFAULT_TOTAL_TIMEOUT_MS = 14 * 60 * 1000;
+// Hard ceiling for `totalTimeoutMs`. The cron tick fires every 15
+// minutes (900_000ms); a dispatcher run that exceeds that window can
+// overlap the next tick. We clamp at the default (14 minutes) so a
+// stale `TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS=2700000` left over
+// from the old hourly cadence cannot silently re-introduce overlap.
+const MAX_TOTAL_TIMEOUT_MS = 14 * 60 * 1000;
 
 function readPositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -300,12 +311,18 @@ export async function runTriageBaselineDispatch(
       "TRIAGE_BASELINE_DISPATCH_PER_CUSTOMER_TIMEOUT_MS",
       DEFAULT_PER_CUSTOMER_TIMEOUT_MS,
     );
-  const totalTimeoutMs =
+  const rawTotalTimeoutMs =
     options.totalTimeoutMs ??
     readPositiveIntEnv(
       "TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS",
       DEFAULT_TOTAL_TIMEOUT_MS,
     );
+  const totalTimeoutMs = Math.min(rawTotalTimeoutMs, MAX_TOTAL_TIMEOUT_MS);
+  if (totalTimeoutMs !== rawTotalTimeoutMs) {
+    console.warn(
+      `triage_baseline_dispatch: total timeout ${rawTotalTimeoutMs}ms exceeds the cron-interval-safe ceiling ${MAX_TOTAL_TIMEOUT_MS}ms; clamping to ${MAX_TOTAL_TIMEOUT_MS}ms so a slow tick cannot overlap the next one`,
+    );
+  }
   const now = options.now ?? (() => Date.now());
   const runCadence = options.runCadence ?? runTriageBaselineCadence;
   const listActiveCustomers =

@@ -1,9 +1,10 @@
 -- Triage baseline corpus A schema (1B-1 / discussion #447 §3.4).
 --
 -- Three tables in every customer-tenant DB. The cadence runner
--- (src/lib/triage/baseline/cadence.ts) fills them once per hour per
--- customer; the menu reads `baseline_triaged_event` (1B-3) and the
--- window-aggregate signals read `observed_event_meta` (1B-8). The
+-- (src/lib/triage/baseline/cadence.ts) fills them once every 15
+-- minutes per customer; the menu reads `baseline_triaged_event` (1B-3)
+-- and the window-aggregate signals read `observed_event_meta` (1B-8).
+-- The
 -- corpus is filled with the unbiased standard-filter survivor stream,
 -- with per-customer + global exclusions re-applied app-side at cadence
 -- time so cadence-time and retroactive-DELETE paths target the same

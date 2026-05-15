@@ -23,7 +23,7 @@ ENV_ALLOWLIST=(
     # `--max-time` from the same operator knob `next-app` honours.
     # Without this passthrough an operator raising the dispatcher
     # total timeout via `.env` would still be killed by the wrapper's
-    # 2700s default, recreating the transport-failure / no-body mode
+    # 840s default, recreating the transport-failure / no-body mode
     # the structured `skipped-timeout` row exists to prevent.
     TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS
     # 1B-7 cleanup tokens. Each retention / recovery surface uses its

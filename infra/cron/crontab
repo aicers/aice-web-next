@@ -9,8 +9,8 @@
 # date format (e.g. for log filenames) MUST do its own
 # `date +%Y%m%d-%H` *inside* the script, not in the crontab line.
 #
-# Triage baseline cadence — hourly per-customer fan-out
-0 * * * * /usr/local/bin/run-triage-baseline-dispatch.sh
+# Triage baseline cadence — 15-minute per-customer fan-out
+*/15 * * * * /usr/local/bin/run-triage-baseline-dispatch.sh
 
 # Triage exclusion fanout — minute-scale drain of the durable queue
 # (#457 ships the route, 1B-7 wires the cadence). Matches the worker's
@@ -18,10 +18,10 @@
 # retry tier fires on the next tick after a failure.
 * * * * * /usr/local/bin/run-triage-exclusion-fanout.sh
 
-# Corpus A retention — once daily at 03:15 UTC. Window chosen so the
-# nightly run does not contend with the hourly cadence tick at the top
-# of the hour, and so an operator inspecting log_dir in the morning
-# sees a recent run.
+# Corpus A retention — once daily at 03:15 UTC. Offset from the
+# :00/:15/:30/:45 cadence ticks so the nightly run does not contend
+# with a fan-out tick, and so an operator inspecting log_dir in the
+# morning sees a recent run.
 15 3 * * * /usr/local/bin/run-triage-baseline-retention.sh
 
 # Corpus B retention + zombie reaper — every 6 hours. More frequent

@@ -1,8 +1,8 @@
 # In-repo cron service (#487).
 #
-# A small Alpine image that owns hourly internal-API triggers (the
+# A small Alpine image that owns scheduled internal-API triggers (the
 # Triage baseline dispatcher today; cleanup / retention endpoints
-# later). Every hourly tick is a one-liner in `crontab` invoking a
+# later). Every cron tick is a one-liner in `crontab` invoking a
 # wrapper script under `/usr/local/bin/`. The wrapper does the actual
 # curl + JSON-body capture + structured logging.
 #

@@ -75,12 +75,12 @@ services:
     depends_on:
       - next-app
 
-  # In-repo cron service (#487). Hosts every internal-API hourly
+  # In-repo cron service (#487). Hosts every internal-API recurring
   # trigger for this deployment — currently the Triage baseline
-  # dispatcher, with future cleanup / retention endpoints adding their
-  # own crontab entries. Single service shared across triggers so the
-  # readiness gate / env-passthrough plumbing lives in exactly one
-  # place.
+  # dispatcher (every 15 minutes), with future cleanup / retention
+  # endpoints adding their own crontab entries. Single service shared
+  # across triggers so the readiness gate / env-passthrough plumbing
+  # lives in exactly one place.
   cron:
     build:
       context: ./infra/cron

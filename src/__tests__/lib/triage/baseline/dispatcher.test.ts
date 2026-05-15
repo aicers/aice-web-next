@@ -592,6 +592,71 @@ describe("runTriageBaselineDispatch — structured log line", () => {
   });
 });
 
+describe("runTriageBaselineDispatch — total-timeout clamp", () => {
+  it("clamps a totalTimeoutMs above 14 minutes to the cron-interval-safe ceiling and warns", async () => {
+    // A stale `…=2700000` left over from the old hourly cadence would
+    // re-introduce overlap under `*/15 * * * *`. The dispatcher caps
+    // the resolved total timeout at 14min (840_000ms) and emits a
+    // warn so the override is visible in cron logs.
+    const { runTriageBaselineDispatch } = await import(
+      "@/lib/triage/baseline/dispatcher"
+    );
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const runCadence = vi.fn(async (customerId: number) => ({
+        customerId,
+        status: "ok" as const,
+        observedInserted: 0,
+        baselineInserted: 0,
+        lastEventCursor: null,
+      }));
+      await runTriageBaselineDispatch({
+        pager: FAKE_PAGER,
+        listActiveCustomers: async () => [1],
+        runCadence,
+        totalTimeoutMs: 2_700_000,
+      });
+      expect(warnSpy).toHaveBeenCalled();
+      const warned = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(warned).toMatch(/2700000ms exceeds/);
+      expect(warned).toMatch(/clamping to 840000ms/);
+    } finally {
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  it("does not warn when the resolved total timeout is at or below the ceiling", async () => {
+    process.env.TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS = "600000";
+    const { runTriageBaselineDispatch } = await import(
+      "@/lib/triage/baseline/dispatcher"
+    );
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const runCadence = vi.fn(async (customerId: number) => ({
+        customerId,
+        status: "ok" as const,
+        observedInserted: 0,
+        baselineInserted: 0,
+        lastEventCursor: null,
+      }));
+      await runTriageBaselineDispatch({
+        pager: FAKE_PAGER,
+        listActiveCustomers: async () => [1],
+        runCadence,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+});
+
 describe("runTriageBaselineDispatch — active-customer enumeration", () => {
   it("only enumerates active customers (verified via the listActiveCustomers contract)", async () => {
     const { runTriageBaselineDispatch } = await import(

@@ -4,9 +4,12 @@ import "server-only";
  * Triage baseline cadence runner (1B-1 / discussion #447 §3.4).
  *
  * Drives one ingestion pass for a single customer-tenant DB. The
- * deployment scheduler hits the internal route
- * (`POST /api/internal/triage/baseline/cadence`) once per hour per
- * customer; the route handler defers to {@link runTriageBaselineCadence}.
+ * in-repo cron service hits the dispatcher route
+ * (`POST /api/internal/triage/baseline/dispatch`) every 15 minutes
+ * and fans out one pass per active customer; the per-customer route
+ * (`POST /api/internal/triage/baseline/cadence`) remains available
+ * for manual single-customer runs. Both code paths defer to
+ * {@link runTriageBaselineCadence}.
  *
  * ## Concurrency
  *
