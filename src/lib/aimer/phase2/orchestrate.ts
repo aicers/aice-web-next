@@ -82,8 +82,12 @@ export interface BuildPhase2PushInput {
    * Inner payload matching the schema registered for `schemaVersion`.
    * The helper resolves the customer's `external_key` and threads it
    * into both the context token's `customer_ids` and the payload's
-   * `external_key` field before validation — any caller-supplied value
-   * for that key is overwritten so the two surfaces cannot disagree.
+   * `external_key` field before validation. For the schemas that also
+   * carry `source_aice_id` (`baseline`, `story`, `policy_run`), the
+   * helper overwrites that field with the configured `setup.aiceId`
+   * for the same reason. Any caller-supplied values for those keys
+   * are overwritten so the wire-level surfaces cannot disagree with
+   * the context token / envelope claims.
    */
   payload: unknown;
 }
@@ -126,15 +130,25 @@ export async function buildPhase2Push(
   // ── Resolve customer external_key (cross-DB) ─────────────────
   const externalKey = await resolveExternalKey(customerId);
 
-  // ── Validate payload (with resolved external_key threaded in) ─
+  // ── Validate payload (with resolved identifiers threaded in) ──
   //
-  // The helper overwrites any caller-supplied `external_key` on the
-  // payload so the wire-level value cannot disagree with the context
-  // token's `customer_ids`. Per-push customer scope (RFC 0002 §6.1)
-  // requires the two to match; aimer-web rejects mismatches with a
-  // `payload_customer_not_authorized` 403, so resolving early is the
-  // friendlier failure surface.
-  const augmentedPayload = injectExternalKey(payload, externalKey);
+  // The helper overwrites any caller-supplied `external_key` and
+  // `source_aice_id` on the payload so the wire-level values cannot
+  // disagree with the context token's `customer_ids` and the envelope's
+  // `aice_id`. Per-push customer scope (RFC 0002 §6.1) requires the
+  // first to match; aimer-web rejects mismatches with a
+  // `payload_customer_not_authorized` 403. Source-of-truth aice_id
+  // alignment is enforced symmetrically — aimer-web rejects
+  // envelope/payload mismatches with `envelope_payload_aice_id_mismatch`,
+  // so a stale or wrong caller-supplied `source_aice_id` would burn the
+  // `jti` at the receiver. Resolving both early is the friendlier
+  // failure surface.
+  const augmentedPayload = augmentPayload(
+    schemaVersion,
+    payload,
+    externalKey,
+    setup.aiceId,
+  );
   const validatedPayload = validatePhase2Payload(
     schemaVersion,
     augmentedPayload,
@@ -208,7 +222,30 @@ async function resolveExternalKey(customerId: number): Promise<string> {
   return externalKey;
 }
 
-function injectExternalKey(payload: unknown, externalKey: string): unknown {
+/**
+ * Overwrite caller-supplied identifiers on the payload so they cannot
+ * disagree with the context-token / envelope claims:
+ *
+ * - `external_key` is set on every Phase 2 schema (root level).
+ * - `source_aice_id` is set only on the schemas that carry it
+ *   (`baseline`, `story`, `policy_run`). The withdraw schema does not
+ *   carry `source_aice_id`; the refresh-window / backfill schemas use
+ *   strict object validation, so injecting an unknown key would cause
+ *   the payload to be rejected.
+ *
+ * The helper deliberately overwrites rather than validates-then-rejects:
+ * the caller surfaces these values from configured setup, not from
+ * client input, so a mismatch is a programming bug we'd rather correct
+ * silently than fail noisily — and the equivalent receiver-side errors
+ * (`payload_customer_not_authorized`,
+ * `envelope_payload_aice_id_mismatch`) burn the `jti` for nothing.
+ */
+function augmentPayload(
+  schemaVersion: Phase2SchemaVersion,
+  payload: unknown,
+  externalKey: string,
+  aiceId: string,
+): unknown {
   if (
     payload === null ||
     typeof payload !== "object" ||
@@ -218,7 +255,17 @@ function injectExternalKey(payload: unknown, externalKey: string): unknown {
     // not-an-object and emit a meaningful error.
     return payload;
   }
-  return { ...(payload as Record<string, unknown>), external_key: externalKey };
+  const base = payload as Record<string, unknown>;
+  switch (schemaVersion) {
+    case "phase2.baseline.v1":
+    case "phase2.story.v1":
+    case "phase2.policy_run.v1":
+      return { ...base, external_key: externalKey, source_aice_id: aiceId };
+    case "phase2.withdraw.v1":
+    case "phase2.refresh_window.v1":
+    case "phase2.backfill.v1":
+      return { ...base, external_key: externalKey };
+  }
 }
 
 /**

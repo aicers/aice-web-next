@@ -175,6 +175,21 @@ describe("buildPhase2Push (Phase 2 orchestration helper)", () => {
     expect(data.external_key).toBe("acmecorp.com");
   });
 
+  it("overwrites a caller-supplied payload.source_aice_id with setup.aiceId so it cannot disagree with the envelope", async () => {
+    // A stale or wrong `source_aice_id` would otherwise flow through
+    // schema validation (which only requires non-empty) and fail at
+    // aimer-web with `envelope_payload_aice_id_mismatch`, burning the
+    // freshly-minted jti. Mirror the `external_key` defence.
+    const result = await mod.buildPhase2Push({
+      schemaVersion: "phase2.baseline.v1",
+      customerId: 42,
+      accountId: "account-1",
+      payload: baselinePayload({ source_aice_id: "stale.example.com" }),
+    });
+    const data = JSON.parse(result.events_data) as { source_aice_id: string };
+    expect(data.source_aice_id).toBe("aice.example.com");
+  });
+
   // ── event_count computation per RFC 0002 §6.1 ────────────────
 
   it("event_count matches events.length for baseline.v1", async () => {
