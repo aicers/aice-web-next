@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockRunDispatch = vi.hoisted(() => vi.fn());
 const mockVerifyToken = vi.hoisted(() => vi.fn());
+const mockCreateCadencePager = vi.hoisted(() =>
+  vi.fn(() => ({ ingestPage: vi.fn() })),
+);
+const mockStorageResolver = vi.hoisted(() => ({
+  resolve: vi.fn(),
+}));
 
 vi.mock("@/lib/triage/baseline/cadence", () => ({
   verifyTriageBaselineCadenceToken: mockVerifyToken,
@@ -12,7 +18,14 @@ vi.mock("@/lib/triage/baseline/dispatcher", () => ({
 }));
 
 vi.mock("@/lib/triage/baseline/pager", () => ({
-  createCadencePager: () => ({ ingestPage: vi.fn() }),
+  // The route handler instantiates the production pager once per
+  // process; the mock observes the options so route tests can assert
+  // the storage-backed resolver was forwarded (#472 Round 2).
+  createCadencePager: mockCreateCadencePager,
+}));
+
+vi.mock("@/lib/triage/exclusion/active-set-storage", () => ({
+  STORAGE_EXCLUSION_SET_RESOLVER: mockStorageResolver,
 }));
 
 beforeEach(() => {
@@ -107,5 +120,26 @@ describe("POST /api/internal/triage/baseline/dispatch", () => {
     const body = await res.json();
     expect(body.overall).toBe("failed");
     expect(body.error).toBe("enumeration failed");
+  });
+
+  it("constructs the production pager with the storage-backed resolver (#472 Round 2)", async () => {
+    // Round-2 review: the dispatched (hourly cron) corpus A path must
+    // NOT default to EMPTY_EXCLUSION_SET_RESOLVER. Otherwise the
+    // scheduled run records an empty `exclusion_snapshot` and the
+    // resulting `baseline_triaged_event.exclusions_fp` references the
+    // empty set, breaking #472's audit invariant and admitting events
+    // that should have been excluded.
+    mockCreateCadencePager.mockClear();
+    mockVerifyToken.mockReturnValue(true);
+    mockRunDispatch.mockResolvedValue({ overall: "ok", perCustomer: [] });
+    // Reset module cache so the lazy `CACHED_PAGER` constructor fires.
+    vi.resetModules();
+    const { POST } = await import(
+      "@/app/api/internal/triage/baseline/dispatch/route"
+    );
+    await POST(makeRequest("Bearer right"));
+    expect(mockCreateCadencePager).toHaveBeenCalledWith(
+      expect.objectContaining({ resolver: mockStorageResolver }),
+    );
   });
 });

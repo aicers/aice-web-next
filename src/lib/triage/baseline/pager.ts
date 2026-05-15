@@ -74,6 +74,11 @@ import {
   type NormalizedEventColumns,
   normalizeEventColumns,
 } from "@/lib/triage/exclusion";
+import {
+  currentBaselineParameters,
+  recordBaselineVersionSnapshot,
+  recordExclusionSnapshot,
+} from "@/lib/triage/snapshot";
 import { runStepF } from "@/lib/triage/story/correlator";
 import type { TriageEvent } from "@/lib/triage/types";
 
@@ -281,6 +286,29 @@ export async function processFetchedPage(
       cols,
     });
   }
+
+  // (#472) Snapshot the active exclusion set and the live baseline
+  // tunables for `PHASE_1B_BASELINE_VERSION` before any
+  // `baseline_triaged_event` / `observed_event_meta` row in this page
+  // references them. Both writers UPSERT with `ON CONFLICT DO NOTHING`
+  // so concurrent cadence pages collapse to a single canonical row per
+  // fingerprint / version. The writes ride this page's transaction:
+  // if a later step rolls back, the snapshot rolls back too, which is
+  // fine because the same fingerprint will reappear on the next tick
+  // and the writer is idempotent. `snapshotRows` is absent when the
+  // resolver is the empty / test default; the payload then captures an
+  // empty union, which is the correct audit answer for "no exclusions
+  // active" — including for pre-#457 cadence runs.
+  await recordExclusionSnapshot(
+    client,
+    exclusionsFp,
+    active.snapshotRows ?? [],
+  );
+  await recordBaselineVersionSnapshot(
+    client,
+    PHASE_1B_BASELINE_VERSION,
+    currentBaselineParameters(),
+  );
 
   // (d2) Phase 1: stage every survivor into `observed_event_meta`.
   const observedResult = await insertObservedEventMetaBatch(client, survivors);

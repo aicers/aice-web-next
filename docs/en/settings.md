@@ -464,8 +464,9 @@ Each ADD and REMOVE emits an audit row:
 
 ### Background retention
 
-The cron container runs three retention sweeps so the corpus and
-the fanout queue do not grow without bound:
+The cron container runs four retention sweeps so the corpus, the
+fanout queue, and the audit-snapshot tables do not grow without
+bound:
 
 - **Baseline corpus** (`run-triage-baseline-retention.sh`, daily
   at 03:15 UTC) — prunes `baseline_triaged_event` older than 180
@@ -478,6 +479,19 @@ the fanout queue do not grow without bound:
   differential retention (ready 30d / superseded 7d / failed 1d)
   and prunes rows whose `owner_account_id` no longer resolves.
   `policy_triaged_event` rows cascade.
+- **Condition snapshots** (`run-triage-snapshot-retention.sh`,
+  daily at 04:15 UTC, one hour after the corpus A sweep) — prunes
+  `exclusion_snapshot` and `policy_snapshot` rows whose
+  fingerprints are no longer referenced by any
+  `baseline_triaged_event` or `policy_triage_run` row, with a
+  30-day grace counted from when the fingerprint was first
+  observed as unreferenced (tracked via the `unreferenced_since`
+  tombstone, not from `captured_at`). The sweep runs three phases
+  per table — tombstone newly orphaned rows, clear the tombstone
+  if a later corpus row revives the fingerprint, then delete rows
+  still tombstoned past the grace. `baseline_version_snapshot` is
+  retained forever and is skipped. Token:
+  `TRIAGE_SNAPSHOT_RETENTION_INTERNAL_TOKEN`.
 - **Exclusion fanout** (`run-triage-exclusion-fanout.sh`, every
   minute) — drains the `triage_exclusion_fanout_job` queue. The
   minute cadence matches the worker's first-tier backoff (1 min)
@@ -486,8 +500,8 @@ the fanout queue do not grow without bound:
 Each wrapper writes a timestamped JSON response to
 `/var/log/cron/` and re-emits an `overall != 'ok'` warning to
 stderr; alerting should key on the structured log lines tagged
-`cron-baseline-retention`, `cron-policy-retention`, and
-`cron-fanout`.
+`cron-baseline-retention`, `cron-policy-retention`,
+`cron-snapshot-retention`, and `cron-fanout`.
 
 ## Profile
 

@@ -41,6 +41,12 @@ import {
   STORAGE_EXCLUSION_SET_RESOLVER,
 } from "@/lib/triage/exclusion";
 import { InlinePolicyEncodingError } from "@/lib/triage/inline-policy";
+import {
+  currentBaselineParameters,
+  recordBaselineVersionSnapshot,
+  recordExclusionSnapshot,
+  recordPolicySnapshot,
+} from "@/lib/triage/snapshot";
 import type { TriageEvent } from "@/lib/triage/types";
 
 import { getCustomerPool } from "../customer-db";
@@ -226,6 +232,22 @@ export async function runCorpusBTriage(
     return { run: existing, insertedEventCount: 0, reusedCache: true };
   }
 
+  // (#472) Persist the three condition snapshots BEFORE the
+  // `policy_triage_run` row is inserted. The run row — not the
+  // per-event rows — is what carries the fingerprint columns, so
+  // bundling the snapshots with the later event-insert transaction
+  // would leave the run row transiently snapshot-less. All three
+  // writers are `ON CONFLICT DO NOTHING`, so the second writer is a
+  // no-op when the fingerprint is already known.
+  await persistRunSnapshots({
+    customerId: request.customerId,
+    policies: request.policies,
+    baselineVersion: request.baselineVersion,
+    active,
+    exclusionsFingerprint,
+    policiesFingerprint,
+  });
+
   // Claim the slot. The recompute path is the caller's responsibility:
   // if the caller already knows a `ready` row exists with a stale
   // fingerprint and the user clicked "Recompute", the caller invokes
@@ -278,6 +300,19 @@ export async function recomputeCorpusBRun(
   const policiesFingerprint = computePoliciesFingerprint(request.policies);
   const active = await exclusionResolver.resolve(request.customerId);
   const exclusionsFingerprint = computeExclusionsFingerprint(active.rules);
+
+  // (#472) Recompute path: same snapshot pre-write contract as the
+  // fresh-run path. The supersede + INSERT transaction in
+  // `recomputeRun` carries fingerprint columns on the new row, so the
+  // three snapshots must exist before that transaction commits.
+  await persistRunSnapshots({
+    customerId: request.customerId,
+    policies: request.policies,
+    baselineVersion: request.baselineVersion,
+    active,
+    exclusionsFingerprint,
+    policiesFingerprint,
+  });
 
   let run: PolicyTriageRunRow;
   try {
@@ -605,6 +640,38 @@ function cursorToEventKey(cursor: string): string {
     );
   }
   return cursor;
+}
+
+/**
+ * Persist the three condition snapshots (#472) for a corpus B run
+ * before the run row is INSERTed. The writers ride a fresh
+ * connection acquired from the customer pool because the run-row
+ * INSERT is itself a single-statement auto-commit (in the fresh path)
+ * or a multi-statement transaction (in the recompute path); either
+ * way the snapshots must be visible to subsequent JOINs against the
+ * eventual run row, and `ON CONFLICT DO NOTHING` makes the writes
+ * idempotent across the cadence runner's parallel pre-writes.
+ */
+async function persistRunSnapshots(args: {
+  customerId: number;
+  policies: ReadonlyArray<TriagePolicyRow>;
+  baselineVersion: string;
+  active: ActiveExclusionSet;
+  exclusionsFingerprint: string;
+  policiesFingerprint: string;
+}): Promise<void> {
+  const pool = await getCustomerPool(args.customerId);
+  await recordExclusionSnapshot(
+    pool,
+    args.exclusionsFingerprint,
+    args.active.snapshotRows ?? [],
+  );
+  await recordPolicySnapshot(pool, args.policiesFingerprint, args.policies);
+  await recordBaselineVersionSnapshot(
+    pool,
+    args.baselineVersion,
+    currentBaselineParameters(),
+  );
 }
 
 async function defaultFetchPage(

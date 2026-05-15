@@ -23,12 +23,14 @@ COPY crontab /etc/crontabs/root
 COPY run-triage-baseline-dispatch.sh /usr/local/bin/run-triage-baseline-dispatch.sh
 COPY run-triage-baseline-retention.sh /usr/local/bin/run-triage-baseline-retention.sh
 COPY run-triage-policy-retention.sh /usr/local/bin/run-triage-policy-retention.sh
+COPY run-triage-snapshot-retention.sh /usr/local/bin/run-triage-snapshot-retention.sh
 COPY run-triage-exclusion-fanout.sh /usr/local/bin/run-triage-exclusion-fanout.sh
 
 RUN chmod +x /usr/local/bin/entrypoint.sh \
         /usr/local/bin/run-triage-baseline-dispatch.sh \
         /usr/local/bin/run-triage-baseline-retention.sh \
         /usr/local/bin/run-triage-policy-retention.sh \
+        /usr/local/bin/run-triage-snapshot-retention.sh \
         /usr/local/bin/run-triage-exclusion-fanout.sh
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
