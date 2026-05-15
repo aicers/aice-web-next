@@ -137,12 +137,15 @@ describe("assembleMenu", () => {
     expect(result.fallbackInvoked).toBe(false);
   });
 
-  it("MIN_NONZERO_FLOOR fallback returns top-N globally when a strict cutoff drives assembled_count below the floor", () => {
+  it("MIN_NONZERO_FLOOR fallback honors the strictness cutoff and returns empty when no row survives", () => {
     // Five rows in one bucket, all with `baseline_score = 0.5`.
-    // A cutoff of 0.9 admits zero rows in the assembly pass; the
-    // floor must surface the top-MIN_NONZERO_FLOOR rows globally
-    // by `baseline_score DESC` regardless of bucket / quota / cutoff
-    // (RFC §6).
+    // A cutoff of 0.9 (slider stop "Top 10%") admits zero rows in
+    // the assembly pass. The fallback must NOT dip below the user's
+    // cutoff — surfacing a 0.5-scored row at a strict stop would
+    // contradict the RFC §1 stop contract
+    // (`baseline_score >= cutoff`) and the "Incident response, only
+    // the strongest signals" use case. The contract is: when nothing
+    // qualifies, render an empty menu rather than a sub-cutoff row.
     const rows: MenuRow[] = [];
     for (let i = 0; i < 5; i++) {
       rows.push(
@@ -155,10 +158,37 @@ describe("assembleMenu", () => {
       );
     }
     const result = assembleMenu(rows, 0.9);
-    expect(result.fallbackInvoked).toBe(true);
-    expect(result.rows).toHaveLength(FINAL_COUNT.MIN_NONZERO_FLOOR);
-    // Top by tie-breaker: equal score → newest event_time first.
-    expect(result.rows[0].eventKey).toBe("4");
+    expect(result.fallbackInvoked).toBe(false);
+    expect(result.rows).toHaveLength(0);
+    expect(result.assembledCount).toBe(0);
+  });
+
+  it("MIN_NONZERO_FLOOR fallback never returns a row below the cutoff even when some rows survive", () => {
+    // Mixed bucket: one row above the cutoff (0.96) and many below.
+    // The above-cutoff row dominates assembly under normal quotas,
+    // but this test exercises the invariant that whatever path the
+    // fallback would take, every returned row obeys
+    // `baseline_score >= cutoff` (RFC §1 stop contract).
+    const rows: MenuRow[] = [
+      makeRow({
+        eventKey: "hi",
+        kind: "DnsCovertChannel",
+        baselineScore: 0.96,
+      }),
+    ];
+    for (let i = 0; i < 4; i++) {
+      rows.push(
+        makeRow({
+          eventKey: `${i}`,
+          kind: "DnsCovertChannel",
+          baselineScore: 0.1,
+        }),
+      );
+    }
+    const result = assembleMenu(rows, 0.95);
+    for (const row of result.rows) {
+      expect(row.baselineScore).toBeGreaterThanOrEqual(0.95);
+    }
   });
 
   it("defensively excludes Blocklist* via the cohort caller — algorithm receives only post-exclusion rows", () => {

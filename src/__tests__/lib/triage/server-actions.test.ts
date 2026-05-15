@@ -612,10 +612,13 @@ describe("loadTriagePeriod (SQL data source)", () => {
       detailRowsByAddress: { "10.0.0.1": [] },
       observedPerAsset: [{ address: "10.0.0.1", detected_count: "1" }],
     });
-    // Customer 2: one LOW-score row from a NEWER time. Under the old
-    // time-only sort it would land ahead of the customer-1 row, so
-    // under a tight cap it would survive while the high-score row was
-    // evicted. The fix puts the high-score row first regardless of age.
+    // Customer 2: one LOWER-score row from a NEWER time. Under the
+    // old time-only sort it would land ahead of the customer-1 row,
+    // so under a tight cap it would survive while the high-score row
+    // was evicted. The fix puts the high-score row first regardless
+    // of age. Both scores stay above the default strictness cutoff
+    // (`top50` → 0.50) so the slider's per-tenant filter does not
+    // mask the cross-tenant merge ordering this test exercises.
     const newTs = new Date("2026-05-09T11:30:00.000Z");
     const customer2 = makeMockPool({
       customerId: 2,
@@ -623,7 +626,7 @@ describe("loadTriagePeriod (SQL data source)", () => {
         buildCohortRow({
           eventKey: "c2-low",
           address: "10.0.0.2",
-          baselineScore: 0.01,
+          baselineScore: 0.55,
           eventTime: newTs,
           bucketCount: 1,
           cohortCount: 1,
@@ -648,7 +651,7 @@ describe("loadTriagePeriod (SQL data source)", () => {
     });
     expect(result.events[1]).toMatchObject({
       customerId: 2,
-      score: 0.01,
+      score: 0.55,
       time: newTs.toISOString(),
     });
   });

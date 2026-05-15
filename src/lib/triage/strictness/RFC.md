@@ -10,16 +10,19 @@ The Triage menu's volume is determined by the baseline algorithm
 (#462) and the data; this RFC adds a discrete, user-facing strictness
 slider so an analyst can dial that volume up or down at read time
 without changing exclusions, policies, or the cadence threshold. The
-slider is a read-time SQL predicate against the `cume_dist`-projected
-`baseline_score` in the existing menu cohort SELECT; there is no
-re-ingest, no `review` round-trip, and no corpus mutation.
+slider is a read-time predicate against the `cume_dist`-projected
+`baseline_score`, applied inside `composeMenu` (NOT in the SQL `ranked`
+CTE) so the full-cohort bucket aggregates that drive quota allocation
+are preserved (see §6). There is no re-ingest, no `review` round-trip,
+no corpus mutation, and the shared `SELECT_MENU_COHORT_SQL` bind shape
+is unchanged.
 
 This is the **foundation slice** of #471 — it lands the stop set, the
-SQL cutoff, the server-action plumbing, and the slider UI with
-persistence. Story-protected event force-union (branch B), the
-multi-tenant dual-cap merge, the protected-event row marker, and the
-EN/KR manual page are split into follow-up issues so this PR remains
-reviewable.
+algorithm-level cutoff threading, the server-action plumbing, and the
+slider UI with persistence. Story-protected event force-union (branch
+B), the multi-tenant dual-cap merge, the protected-event row marker,
+and the EN/KR manual page are split into follow-up issues so this PR
+remains reviewable.
 
 ## 1. Stop count and labels
 
@@ -106,9 +109,17 @@ contradicts option (a)'s "cutoff on top of unchanged quota" semantics.
 The quota is unchanged from its #462 / `FINAL_COUNT` curve value.
 
 This matches the "narrow the result set" intent for the strict end of
-the slider, where most analyst time is spent. The "loose end widens
-past the quota" intent (option (b)) is documented in #471 but is
-deferred to a follow-up because it requires:
+the slider, where most analyst time is spent. The
+`MIN_NONZERO_FLOOR` fallback in `composeMenu` also respects the
+cutoff: when `assembled_count` falls below the floor, the fallback
+returns the top-N rows by tie-breaker **from the cutoff-surviving
+set only** (`compose.mjs:196-216`). If no row survives the cutoff,
+the fallback returns empty rather than dipping below the user's stop —
+otherwise a strict stop could still surface a sub-cutoff row and
+violate the §1 stop contract.
+
+The "loose end widens past the quota" intent (option (b)) is
+documented in #471 but is deferred to a follow-up because it requires:
 
 - a per-stop `defaultN` multiplier table reviewed by UX, and
 - a "no quota" code path at the "All" stop that interacts with the
@@ -174,9 +185,9 @@ real-data `EXPLAIN ANALYZE` output.
 `STORY_PROTECTED_HARD_CAP` constant, and the per-tenant defense-in-
 depth `LIMIT` ship in a follow-up issue together with the protected-
 event row marker and the truncation-counter UX copy. The follow-up
-inherits the read-path SQL shape this PR introduces (cutoff parameter
-in the `ranked` CTE) and adds branch B as a parallel SELECT — no
-schema change.
+inherits the read-path shape this PR introduces — the cutoff is
+threaded into `composeMenu` (not the SQL `ranked` CTE, per §6) and
+branch B is added as a parallel SELECT — no schema change.
 
 In this foundation slice, the slider behaves as the "score-only"
 filter: a low-score Story member at the strict end is hidden until the
