@@ -50,10 +50,16 @@ export const TRIAGE_ASSET_DETAIL_LIMIT = 50;
  *   $1 :: timestamptz       — period start (inclusive)
  *   $2 :: timestamptz       — period end (exclusive)
  *   $3 :: int               — per-bucket row cap (`MENU_CANDIDATES_PER_BUCKET`)
- *   $4 :: double precision  — strictness slider cutoff (#471). Rows
- *                              pass when `baseline_score >= $4`.
- *                              `0` matches the pre-slider behavior
- *                              (no additional cutoff).
+ *
+ * The strictness slider cutoff (#471) is **not** applied at the SQL
+ * level — `composeMenu` (RFC §6 option (a), "cutoff on top of
+ * unchanged quota") owns the filter so the full-cohort
+ * `bucket_count` / `bucket_tag_sum` / `cohort_count` aggregates that
+ * drive quota allocation are not narrowed by the slider. Filtering in
+ * the `ranked` CTE here would drop buckets whose rows all sit below
+ * the cutoff and silently redistribute their quota to surviving
+ * buckets, contradicting the working choice in
+ * `src/lib/triage/strictness/RFC.md` §6.
  */
 export const SELECT_MENU_COHORT_SQL = `WITH scored AS (
        SELECT event_key,
@@ -116,7 +122,6 @@ export const SELECT_MENU_COHORT_SQL = `WITH scored AS (
             cohort_count::text                    AS cohort_count
        FROM ranked
       WHERE bucket_rn <= $3
-        AND baseline_score >= $4
       ORDER BY baseline_score DESC, event_time DESC, event_key DESC`;
 
 /**
@@ -242,7 +247,6 @@ export const MEASURED_QUERIES = [
       ctx.periodStartIso,
       ctx.periodEndIso,
       MENU_CANDIDATES_PER_BUCKET,
-      ctx.menuCutoff ?? 0,
     ],
   },
   {

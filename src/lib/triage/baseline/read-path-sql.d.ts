@@ -34,9 +34,12 @@ export interface HarnessContext {
    */
   addresses: ReadonlyArray<string>;
   /**
-   * Strictness slider cutoff fed to the menu cohort SELECT (#471).
-   * Optional so existing harness callers default to the pre-slider
-   * behavior (`0`, no additional cutoff above the cadence threshold).
+   * Strictness slider cutoff (#471). Optional; defaults to `0` (no
+   * additional cutoff above the cadence threshold). The cutoff is
+   * **not** threaded into the menu cohort SELECT — it is applied in
+   * `composeMenu` (RFC §6 option (a)). Retained on the context so the
+   * harness's address sampler can replay the production `composeMenu`
+   * call with the same cutoff via `addressesFromCohortRows`.
    */
   menuCutoff?: number;
 }

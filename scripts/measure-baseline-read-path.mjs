@@ -349,11 +349,14 @@ export async function runColdPhase({
  *   1. Run the shared `SELECT_MENU_COHORT_SQL` (same byte-for-byte
  *      string production uses).
  *   2. Feed the rows into `addressesFromCohortRows` from the shared
- *      `compose.mjs` module, which runs `composeMenu` with cutoff = 0
- *      (the production default — slider owned by #471) and then
+ *      `compose.mjs` module, which runs `composeMenu` and then
  *      replays `uniqueAddresses(events)` over the resulting menu
  *      rows. Same composition code as `composeMenuFromCohort` in
- *      `server-actions.ts`.
+ *      `server-actions.ts`. `menuCutoff` is passed through to
+ *      `composeMenu`'s row filter (RFC §6 option (a)); it is NOT a
+ *      SQL bind because production keeps the cutoff at the
+ *      composition step to preserve the full-cohort bucket aggregates
+ *      that drive quota allocation.
  *
  * This gives the planner the exact `ANY($3::inet[])` cardinality and
  * address distribution production sees after §4 per-bucket quota and
@@ -381,9 +384,8 @@ export async function sampleAddresses(
     periodStartIso,
     periodEndIso,
     MENU_CANDIDATES_PER_BUCKET,
-    menuCutoff,
   ]);
-  return addressesFromCohortRows(rows);
+  return addressesFromCohortRows(rows, { cutoff: menuCutoff });
 }
 
 /**

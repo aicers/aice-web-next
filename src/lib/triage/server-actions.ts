@@ -225,11 +225,13 @@ async function loadCustomerSlice(
 
   // 1. §4/§6 menu cohort — one SQL pass returns the post-exclusion
   //    cohort aggregates plus per-bucket top-K candidate rows. The
-  //    `menuCutoff` parameter applies the strictness slider's cutoff
-  //    (#471) inside the SQL `ranked` CTE; `composeMenuFromCohort`
-  //    re-applies the same cutoff in the algorithm for defense in
-  //    depth.
-  const cohort = await selectMenuCohort(pool, period, menuCutoff, signal);
+  //    strictness slider's cutoff (#471) is NOT applied at the SQL
+  //    level — `composeMenu` owns the filter (RFC §6 option (a),
+  //    "cutoff on top of unchanged quota") so the full-cohort bucket
+  //    aggregates that drive quota allocation are not narrowed by the
+  //    slider. Filtering in SQL would drop buckets whose rows all sit
+  //    below the cutoff and silently redistribute their quota.
+  const cohort = await selectMenuCohort(pool, period, signal);
   signal?.throwIfAborted();
 
   const menuResult = composeMenuFromCohort(cohort, menuCutoff);
@@ -402,7 +404,6 @@ interface MenuCohort {
 async function selectMenuCohort(
   pool: pg.Pool,
   period: TriagePeriod,
-  menuCutoff: number,
   signal: AbortSignal | undefined,
 ): Promise<MenuCohort> {
   signal?.throwIfAborted();
@@ -410,7 +411,6 @@ async function selectMenuCohort(
     period.startIso,
     period.endIso,
     MENU_CANDIDATES_PER_BUCKET,
-    menuCutoff,
   ]);
   return buildCohort(rows);
 }
@@ -442,10 +442,10 @@ function buildCohort(rows: ReadonlyArray<MenuCohortDbRow>): MenuCohort {
  * Run the §4/§6 composition over the SQL-delivered cohort aggregates
  * and per-bucket candidates. `menuCutoff` carries the strictness
  * slider's cutoff (#471); the "All" stop passes `0` (no additional
- * cutoff above the cadence threshold). The SQL already filters by
- * the same cutoff inside its `ranked` CTE; passing it again here is
- * defense in depth — if the SQL ever stops filtering, the algorithm
- * still honors the slider.
+ * cutoff above the cadence threshold). The cutoff is applied here in
+ * the algorithm (not in the read-path SQL) so the full-cohort bucket
+ * aggregates that drive `composeMenu`'s quota allocation are
+ * preserved — RFC §6 option (a), "cutoff on top of unchanged quota".
  */
 function composeMenuFromCohort(cohort: MenuCohort, menuCutoff: number) {
   const candidates: MenuRow[] = cohort.candidates.map((r) => ({

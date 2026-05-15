@@ -61,15 +61,19 @@ describe("read-path-sql shared module", () => {
         ctx.periodStartIso,
         ctx.periodEndIso,
         MENU_CANDIDATES_PER_BUCKET,
-        0,
       ]);
+      // The strictness slider's cutoff is NOT a SQL bind — production
+      // keeps the cutoff at the `composeMenu` step (RFC §6 option (a))
+      // so the full-cohort bucket aggregates that drive quota
+      // allocation are not narrowed by the slider. The harness
+      // context's `menuCutoff` is consumed by `sampleAddresses` when
+      // it replays `composeMenu`, not by this query's `buildParams`.
       expect(
         lookup("selectMenuCohort").buildParams({ ...ctx, menuCutoff: 0.95 }),
       ).toEqual([
         ctx.periodStartIso,
         ctx.periodEndIso,
         MENU_CANDIDATES_PER_BUCKET,
-        0.95,
       ]);
       expect(lookup("countObserved").buildParams(ctx)).toEqual([
         ctx.observedFromIso,
@@ -109,8 +113,8 @@ describe("read-path-sql shared module", () => {
       );
     });
 
-    it("menu cohort applies the strictness slider cutoff ($4) as a final WHERE", () => {
-      expect(SELECT_MENU_COHORT_SQL).toMatch(/baseline_score\s*>=\s*\$4/);
+    it("does NOT apply the strictness slider cutoff at the SQL level so the full-cohort bucket aggregates that drive quota allocation are preserved (RFC §6 option (a))", () => {
+      expect(SELECT_MENU_COHORT_SQL).not.toMatch(/baseline_score\s*>=\s*\$/);
     });
   });
 });

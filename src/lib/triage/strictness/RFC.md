@@ -95,10 +95,15 @@ events shows the funnel and the slider with zero counts, no error.
 
 **Working choice for the foundation slice: option (a) — slider as an
 additional filter ON TOP of quota.** The slider cutoff is applied
-inside the `ranked` CTE of `SELECT_MENU_COHORT_SQL` (after the
-per-bucket candidate cap but before `composeMenu`'s quota), so a
-stricter slider narrows the candidates. The quota is unchanged from
-its #462 / `FINAL_COUNT` curve value.
+inside `composeMenu`'s per-row filter (`compose.mjs:158`), AFTER
+`buildCohort` has reconstructed the full-cohort bucket aggregates from
+the SQL `bucket_count` / `bucket_tag_sum` / `cohort_count` columns.
+This ordering is load-bearing: applying the cutoff at the SQL level
+would drop buckets whose rows all sit below the cutoff from the row
+set `buildCohort` sees, silently shrinking the aggregate list and
+redistributing the missing bucket's quota to surviving buckets. That
+contradicts option (a)'s "cutoff on top of unchanged quota" semantics.
+The quota is unchanged from its #462 / `FINAL_COUNT` curve value.
 
 This matches the "narrow the result set" intent for the strict end of
 the slider, where most analyst time is spent. The "loose end widens
@@ -188,14 +193,22 @@ ships branch B and the protected-event marker.
 
 ## 10. Funnel preview
 
-In the foundation slice, the funnel renders the `triaged` count from
-the existing `COUNT_TRIAGED_SQL` aggregate (unaffected by the slider —
-it is the per-window corpus row count, not the displayed-set count).
-The "shown" count is the size of the assembled menu rows after
-`composeMenu` + the cross-tenant `TRIAGE_HARD_EVENT_CAP`. The funnel
-labels do not currently distinguish "eligible by cutoff" vs "shown
-after quota"; that distinction lands in the follow-up alongside the
-`eligible_top_n` SQL column and the per-stop hint preview.
+**Deferred for the foundation slice.** The issue body specifies that
+"slider position changes update the funnel counter ('Triaged /
+shown') and the asset list immediately". In this PR, slider movement
+updates the **asset list** (and the `events` pivot corpus) but does
+NOT update the funnel's `triaged` number: the funnel still renders
+`COUNT_TRIAGED_SQL`, the per-window corpus row count, which is
+independent of the slider.
+
+The full `shown_top_n` definition the issue calls for requires the
+two-branch merge (`composeMenu` + branch B union, deduplicated,
+post-cross-tenant cap) and the relabel/rescope of the funnel's
+pass-through ratio — both land in the follow-up that ships branch B,
+the `eligible_top_n` SQL column, and the per-stop hint preview. The
+foundation slice ships the slider's read-path plumbing without
+touching the funnel so the funnel work is reviewed alongside branch B
+and the protected-event row marker.
 
 ## Out of scope
 

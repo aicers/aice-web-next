@@ -97,7 +97,7 @@ describe("measure-baseline-read-path — sampleAddresses", () => {
     return pool;
   }
 
-  it("issues the shared SELECT_MENU_COHORT_SQL with (start, end, MENU_CANDIDATES_PER_BUCKET, cutoff=0) params by default", async () => {
+  it("issues the shared SELECT_MENU_COHORT_SQL with (start, end, MENU_CANDIDATES_PER_BUCKET) params — the strictness cutoff is applied in composeMenu, not in SQL", async () => {
     const pool = makePool([]);
     await sampleAddresses(
       pool,
@@ -109,11 +109,10 @@ describe("measure-baseline-read-path — sampleAddresses", () => {
       "2026-04-12T00:00:00.000Z",
       "2026-05-12T00:00:00.000Z",
       500,
-      0,
     ]);
   });
 
-  it("threads an explicit menuCutoff through as the $4 bind for the strictness slider", async () => {
+  it("does NOT add a 4th SQL bind when an explicit menuCutoff is passed — the cutoff threads into composeMenu via addressesFromCohortRows so the full-cohort bucket aggregates are preserved", async () => {
     const pool = makePool([]);
     await sampleAddresses(
       pool,
@@ -125,8 +124,37 @@ describe("measure-baseline-read-path — sampleAddresses", () => {
       "2026-04-12T00:00:00.000Z",
       "2026-05-12T00:00:00.000Z",
       500,
-      0.5,
     ]);
+  });
+
+  it("applies an explicit menuCutoff at the composeMenu step so a high cutoff narrows the returned addresses", async () => {
+    // Two rows in the favored unlabeled-HttpThreat bucket, one with
+    // baseline_score above the cutoff and one below. The high-cutoff
+    // sample should keep only the surviving address.
+    const rows = [
+      makeCohortRow({
+        event_key: "1",
+        orig_addr: "10.0.0.1",
+        baseline_score: 0.99,
+        cohort_count: "2",
+        bucket_count: "2",
+      }),
+      makeCohortRow({
+        event_key: "2",
+        orig_addr: "10.0.0.2",
+        baseline_score: 0.3,
+        cohort_count: "2",
+        bucket_count: "2",
+      }),
+    ];
+    const pool = makePool(rows);
+    const addresses = await sampleAddresses(
+      pool,
+      "2026-04-12T00:00:00.000Z",
+      "2026-05-12T00:00:00.000Z",
+      0.95,
+    );
+    expect(addresses).toEqual(["10.0.0.1"]);
   });
 
   it("returns the addresses produced by composeMenu over the cohort rows (not a SQL-only superset)", async () => {
