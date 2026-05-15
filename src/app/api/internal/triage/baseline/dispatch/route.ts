@@ -37,8 +37,8 @@ let CACHED_PAGER: ReturnType<typeof createCadencePager> | null = null;
 
 function getProductionPager() {
   if (CACHED_PAGER === null) {
-    // Wire the storage-backed resolver so the hourly dispatched cadence
-    // pass sees newly-created exclusions (#457) and snapshots the actual
+    // Wire the storage-backed resolver so the dispatched cadence pass
+    // sees newly-created exclusions (#457) and snapshots the actual
     // `global ∪ customer` set (#472). Defaulting to
     // `EMPTY_EXCLUSION_SET_RESOLVER` would silently admit events that
     // should be excluded and persist an empty `exclusion_snapshot` row
