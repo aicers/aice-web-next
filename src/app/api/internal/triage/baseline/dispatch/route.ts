@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { verifyTriageBaselineCadenceToken } from "@/lib/triage/baseline/cadence";
 import { runTriageBaselineDispatch } from "@/lib/triage/baseline/dispatcher";
 import { createCadencePager } from "@/lib/triage/baseline/pager";
+import { STORAGE_EXCLUSION_SET_RESOLVER } from "@/lib/triage/exclusion/active-set-storage";
 
 /**
  * POST /api/internal/triage/baseline/dispatch
@@ -36,7 +37,15 @@ let CACHED_PAGER: ReturnType<typeof createCadencePager> | null = null;
 
 function getProductionPager() {
   if (CACHED_PAGER === null) {
-    CACHED_PAGER = createCadencePager();
+    // Wire the storage-backed resolver so the hourly dispatched cadence
+    // pass sees newly-created exclusions (#457) and snapshots the actual
+    // `global ∪ customer` set (#472). Defaulting to
+    // `EMPTY_EXCLUSION_SET_RESOLVER` would silently admit events that
+    // should be excluded and persist an empty `exclusion_snapshot` row
+    // for the empty-set fingerprint, breaking #472's audit invariant.
+    CACHED_PAGER = createCadencePager({
+      resolver: STORAGE_EXCLUSION_SET_RESOLVER,
+    });
   }
   return CACHED_PAGER;
 }
