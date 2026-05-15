@@ -30,3 +30,11 @@
 # fingerprint; waiting a full day would leave a crashed runner's slot
 # occupied for too long.
 30 */6 * * * /usr/local/bin/run-triage-policy-retention.sh
+
+# Triage condition-snapshot retention (#472) — once daily at 04:15 UTC,
+# one hour after the corpus A sweep. The snapshot sweep prunes rows
+# whose fingerprints are no longer referenced by either corpus, so the
+# upstream corpus retention pass must complete first to release the
+# references it controls. baseline_version_snapshot is retained
+# forever and is skipped by this sweep.
+15 4 * * * /usr/local/bin/run-triage-snapshot-retention.sh

@@ -434,9 +434,19 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
 
     expect(result.observedInserted).toBe(0);
     expect(result.baselineInserted).toBe(0);
-    expect(client.queries.some((q) => q.sql.startsWith("INSERT INTO"))).toBe(
-      false,
-    );
+    // No corpus row INSERTs. The two condition-snapshot INSERTs (#472
+    // — `exclusion_snapshot` and `baseline_version_snapshot`) ride
+    // every page transaction unconditionally because their `ON
+    // CONFLICT DO NOTHING` writes make even an all-excluded page
+    // contribute its fingerprint-to-payload mapping if it has not yet
+    // been recorded.
+    expect(
+      client.queries.some(
+        (q) =>
+          q.sql.includes("INSERT INTO baseline_triaged_event") ||
+          q.sql.includes("INSERT INTO observed_event_meta"),
+      ),
+    ).toBe(false);
     // No batched SELECT either — empty survivors short-circuits Phase 2.
     expect(client.queries.some((q) => q.sql.includes("cume_dist()"))).toBe(
       false,
@@ -591,9 +601,18 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
       hasNextPage: false,
       exclusionsFp: EMPTY_EXCLUSIONS_FINGERPRINT,
     });
-    expect(client.queries.some((q) => q.sql.startsWith("INSERT INTO"))).toBe(
-      false,
-    );
+    // No corpus row INSERTs on an empty page. The two snapshot INSERTs
+    // (#472 — `exclusion_snapshot` and `baseline_version_snapshot`)
+    // ride every page transaction unconditionally and are idempotent
+    // via `ON CONFLICT DO NOTHING`, so they are NOT asserted absent
+    // here.
+    expect(
+      client.queries.some(
+        (q) =>
+          q.sql.includes("INSERT INTO baseline_triaged_event") ||
+          q.sql.includes("INSERT INTO observed_event_meta"),
+      ),
+    ).toBe(false);
     expect(client.queries.some((q) => q.sql.includes("cume_dist()"))).toBe(
       false,
     );

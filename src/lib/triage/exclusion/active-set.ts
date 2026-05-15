@@ -20,7 +20,11 @@
  *     once aicers/review-web#842 lands the production pager.
  */
 
-import type { ActiveExclusionSet, ExclusionRule } from "./types";
+import type {
+  ActiveExclusionSet,
+  ExclusionRule,
+  StoredExclusionSnapshotInput,
+} from "./types";
 
 export interface ActiveExclusionSetResolver {
   /**
@@ -60,6 +64,7 @@ export const EMPTY_EXCLUSION_SET_RESOLVER: ActiveExclusionSetResolver = {
  */
 export function compileStoredRowsToActiveSet(
   rows: readonly {
+    scope?: "global" | "customer";
     kind: "ipAddress" | "hostname" | "uri" | "domain";
     value: string;
   }[],
@@ -73,12 +78,25 @@ export function compileStoredRowsToActiveSet(
   // freshness signal mid-tick when ops moves a customer-only exclusion
   // to global. Spec acceptance criterion: "downstream matching
   // de-duplicates" (issue #457).
+  //
+  // The same dedup pass co-emits `snapshotRows` (#472): one entry per
+  // unique `(kind, value)` annotated with the scope that appeared
+  // first in the input. Callers feed rows in a deterministic order
+  // (global-then-customer) so the recorded `scope_first_observed`
+  // label is stable across cadence ticks even when the matcher would
+  // be indifferent to a flip.
   const seen = new Set<string>();
   const rules: ExclusionRule[] = [];
+  const snapshotRows: StoredExclusionSnapshotInput[] = [];
+  let anyScopePresent = false;
   for (const row of rows) {
     const key = `${row.kind}\x1f${row.value}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    if (row.scope !== undefined) {
+      anyScopePresent = true;
+      snapshotRows.push({ scope: row.scope, kind: row.kind, value: row.value });
+    }
     switch (row.kind) {
       case "ipAddress": {
         rules.push({
@@ -99,6 +117,13 @@ export function compileStoredRowsToActiveSet(
         break;
       }
     }
+  }
+  // Only attach `snapshotRows` when at least one input carried a scope
+  // label; callers that pass plain `{ kind, value }` (legacy tests,
+  // future inline-policy seam) opt out cleanly and the corpus runner
+  // falls back to an empty payload.
+  if (anyScopePresent) {
+    return { rules, snapshotRows };
   }
   return { rules };
 }

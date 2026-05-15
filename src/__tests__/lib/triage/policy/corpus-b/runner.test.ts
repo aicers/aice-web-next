@@ -35,14 +35,24 @@ interface FakePoolClient {
 }
 
 function buildFakePool(): {
-  pool: { connect: () => Promise<FakePoolClient> };
+  pool: {
+    connect: () => Promise<FakePoolClient>;
+    query: ReturnType<typeof vi.fn>;
+  };
   client: FakePoolClient;
 } {
   const client: FakePoolClient = {
     query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
     release: () => undefined,
   };
-  const pool = { connect: async () => client };
+  // #472: the corpus B runner records condition snapshots through the
+  // pool (not the client) before claiming the run slot, so the fake
+  // pool needs a `query` method even for tests that never hand events
+  // to the page loop.
+  const pool = {
+    connect: async () => client,
+    query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+  };
   return { pool, client };
 }
 

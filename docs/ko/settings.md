@@ -451,8 +451,8 @@ NTLM 이벤트는 `host`, `dns_query`, `uri`가 NULL이므로 소급
 
 ### 백그라운드 보존
 
-cron 컨테이너는 코퍼스와 팬아웃 큐가 무한정 커지지 않도록 세
-개의 보존 스윕을 실행합니다:
+cron 컨테이너는 코퍼스, 팬아웃 큐, 감사용 스냅샷 테이블이
+무한정 커지지 않도록 네 개의 보존 스윕을 실행합니다:
 
 - **기준 코퍼스** (`run-triage-baseline-retention.sh`, 매일 UTC
   03:15) — 180일을 초과한 `baseline_triaged_event`와 30일을
@@ -465,6 +465,13 @@ cron 컨테이너는 코퍼스와 팬아웃 큐가 무한정 커지지 않도록
   차등 보존(ready 30일 / superseded 7일 / failed 1일)을 적용한
   뒤, `owner_account_id`가 더 이상 해석되지 않는 행을
   정리합니다. `policy_triaged_event` 행은 함께 캐스케이드됩니다.
+- **조건 스냅샷** (`run-triage-snapshot-retention.sh`, 매일 UTC
+  04:15, 코퍼스 A 스윕 1시간 뒤) — 어떤
+  `baseline_triaged_event`나 `policy_triage_run` 행도 더 이상
+  참조하지 않는 `exclusion_snapshot` 및 `policy_snapshot` 행을
+  가장 긴 코퍼스 보존 윈도 + 30일 유예 기간을 지난 뒤 정리합니다.
+  `baseline_version_snapshot`은 영구 보존되며 스윕 대상이 아닙니다.
+  토큰: `TRIAGE_SNAPSHOT_RETENTION_INTERNAL_TOKEN`.
 - **제외 팬아웃** (`run-triage-exclusion-fanout.sh`, 매분) —
   `triage_exclusion_fanout_job` 큐를 비웁니다. 분 단위 케이던스는
   워커의 1차 백오프(1분)와 맞춰져 있어 일시적인 테넌트 DB 장애가
@@ -473,8 +480,8 @@ cron 컨테이너는 코퍼스와 팬아웃 큐가 무한정 커지지 않도록
 각 래퍼는 타임스탬프가 찍힌 JSON 응답을 `/var/log/cron/`에
 기록하고 `overall != 'ok'` 경고를 stderr로 다시 내보냅니다.
 알림은 `cron-baseline-retention`, `cron-policy-retention`,
-`cron-fanout`으로 태깅된 구조화 로그 라인을 키로 사용해야
-합니다.
+`cron-snapshot-retention`, `cron-fanout`으로 태깅된 구조화 로그
+라인을 키로 사용해야 합니다.
 
 ## 프로필
 

@@ -46,9 +46,37 @@ export interface ExclusionRule {
  * real global / customer-scoped storage, the same shape carries the
  * union of (global, customer-scoped) rules without changing the
  * helper's surface.
+ *
+ * `snapshotRows` is the audit-grade payload (#472): one entry per
+ * stored exclusion row that contributed to `rules`, annotated with
+ * the `scope_first_observed` label so the corpus runner can emit an
+ * `exclusion_snapshot` payload alongside the fingerprint. The
+ * fingerprint itself does NOT hash this field — it stays a function
+ * of the matcher-equivalent `(kind, value)` content per
+ * `computeExclusionsFingerprint`, so a rule that later flips between
+ * `global` and `customer` scope does not bump the fingerprint
+ * (matches `compileStoredRowsToActiveSet`'s cross-scope dedup, per
+ * #457).
+ *
+ * Resolvers that do not know about stored rows (the empty default,
+ * tests) leave `snapshotRows` undefined; the corpus runner falls back
+ * to an empty payload so the snapshot column stays NOT NULL.
  */
 export interface ActiveExclusionSet {
   rules: ExclusionRule[];
+  snapshotRows?: readonly StoredExclusionSnapshotInput[];
+}
+
+/**
+ * Upstream `{ scope, kind, value }` row shape used by the audit
+ * snapshot writer (#472). The matcher does not consume this — the
+ * shared helper produces `rules` and `snapshotRows` from the same
+ * stored input so the two cannot drift.
+ */
+export interface StoredExclusionSnapshotInput {
+  scope: "global" | "customer";
+  kind: "ipAddress" | "hostname" | "uri" | "domain";
+  value: string;
 }
 
 /**
