@@ -116,7 +116,9 @@ describe("runApplyAttemptCleanup", () => {
     // the audit recovery sits between them and runs OUTSIDE both
     // transactions because it touches the audit DB.
     const txn1Queries: Array<{ rowCount: number }> = [
-      { rowCount: 1 }, // recoverStaleLocks
+      { rowCount: 1 }, // recoverStaleLocks (row-level)
+      { rowCount: 0 }, // recoverStalePerDispatchClaims (#550)
+      { rowCount: 0 }, // finaliseAbandonedPostDbRows (#550)
       { rowCount: 2 }, // terminaliseExpired - pending
       { rowCount: 3 }, // terminaliseExpired - failed_retryable
     ];
@@ -156,10 +158,12 @@ describe("runApplyAttemptCleanup", () => {
       purged: 4,
       auditsRecovered: 0,
     });
-    // Row-state txn (3 queries), then audit-recovery SELECT, then
-    // purge txn (1 query). Two distinct transactions are opened — the
-    // round-6 split — so audit recovery can land before purge.
-    expect(txn1Client.query).toHaveBeenCalledTimes(3);
+    // Row-state txn (5 queries: row-level recovery + per-dispatch
+    // recovery + abandoned-post-DB finalisation + 2 expiry sweeps),
+    // then audit-recovery SELECT, then purge txn (1 query). Two
+    // distinct transactions — the round-6 split — so audit recovery
+    // can land before purge.
+    expect(txn1Client.query).toHaveBeenCalledTimes(5);
     expect(txn2Client.query).toHaveBeenCalledTimes(1);
     expect(mockWithTransaction).toHaveBeenCalledTimes(2);
     expect(mockAuditRecord).not.toHaveBeenCalled();

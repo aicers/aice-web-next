@@ -49,6 +49,19 @@ export interface ManagerPlannedDispatch {
   state: DispatchState;
   attemptCount: number;
   lastError: string | null;
+  /**
+   * Per-dispatch lock token for the post-DB fan-out phase (#550).
+   * Present only while the dispatch is `in_flight` under the
+   * claim-per-dispatch model; cleared when the dispatch finalises.
+   * Row-level claims (DB stage, retries) never set this.
+   */
+  lockToken?: string;
+  /**
+   * Per-dispatch claim start time (ISO-8601), paired with `lockToken`
+   * for stale-claim recovery during the post-DB phase. Cleared when
+   * the dispatch finalises.
+   */
+  claimStartedAt?: string;
 }
 
 export interface ExternalPlannedDispatch {
@@ -70,6 +83,14 @@ export interface ExternalPlannedDispatch {
    * `old` for the manager-side conflict check.
    */
   old?: string;
+  /**
+   * Per-dispatch lock token for the post-DB fan-out phase (#550).
+   * Present only while the dispatch is `in_flight` under the
+   * claim-per-dispatch model; cleared when the dispatch finalises.
+   */
+  lockToken?: string;
+  /** Per-dispatch claim start time (ISO-8601). See `lockToken`. */
+  claimStartedAt?: string;
 }
 
 export type PlannedDispatch = ManagerPlannedDispatch | ExternalPlannedDispatch;

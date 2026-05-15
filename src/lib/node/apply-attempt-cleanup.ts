@@ -253,11 +253,14 @@ async function recoverStaleLocks(client: pg.PoolClient): Promise<number> {
             CASE
               WHEN d->>'state' IN ('in_flight', 'queued', 'failed_retryable')
                 THEN jsonb_set(
-                       jsonb_set(d, '{state}', to_jsonb('failed_terminal'::text)),
+                       jsonb_set(
+                         (d - 'lockToken') - 'claimStartedAt',
+                         '{state}', to_jsonb('failed_terminal'::text)
+                       ),
                        '{lastError}',
                        to_jsonb(COALESCE(d->>'lastError', $1::text))
                      )
-              ELSE d
+              ELSE (d - 'lockToken') - 'claimStartedAt'
             END
           )
           FROM jsonb_array_elements(planned_dispatches) AS d
@@ -274,6 +277,123 @@ async function recoverStaleLocks(client: pg.PoolClient): Promise<number> {
     String(retentionMs),
     String(staleMs),
   ]);
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Per-dispatch stale-claim recovery (#550, post-DB fan-out phase).
+ *
+ * After the DB stage succeeds, the row-level `executing_lock` is
+ * cleared and each remaining post-DB dispatch holds its own
+ * `lockToken` / `claimStartedAt` inside its `planned_dispatches` JSON
+ * entry. The row sits in `status = 'executing'` with `executing_lock
+ * IS NULL` until every post-DB dispatch finalises and the executor
+ * commits the aggregate.
+ *
+ * This sweep flips any `in_flight` per-dispatch claim aged past
+ * `APPLY_EXECUTING_STALE_MS` to `failed_terminal`, leaves unrelated
+ * dispatches on the same row untouched, and strips the per-dispatch
+ * claim markers from the recovered entry. Sibling dispatches that are
+ * still progressing on their own (younger) claims keep their tokens
+ * and final state intact — that is the acceptance-tested concurrent
+ * claim isolation guarantee.
+ *
+ * Returns rows whose `planned_dispatches` was modified by this pass.
+ */
+async function recoverStalePerDispatchClaims(
+  client: pg.PoolClient,
+): Promise<number> {
+  const staleMs = getExecutingStaleMs();
+
+  const sql = `
+    UPDATE apply_attempts
+    SET planned_dispatches = (
+      SELECT jsonb_agg(
+        CASE
+          WHEN d->>'state' = 'in_flight'
+               AND d ? 'claimStartedAt'
+               AND NOW() - (d->>'claimStartedAt')::timestamptz > ($2 || ' milliseconds')::interval
+            THEN jsonb_set(
+                   jsonb_set(
+                     (d - 'lockToken') - 'claimStartedAt',
+                     '{state}', to_jsonb('failed_terminal'::text)
+                   ),
+                   '{lastError}',
+                   to_jsonb(COALESCE(d->>'lastError', $1::text))
+                 )
+          ELSE d
+        END
+      )
+      FROM jsonb_array_elements(planned_dispatches) AS d
+    )
+    WHERE status = 'executing'
+      AND executing_lock IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(planned_dispatches) AS d
+        WHERE d->>'state' = 'in_flight'
+          AND d ? 'claimStartedAt'
+          AND NOW() - (d->>'claimStartedAt')::timestamptz > ($2 || ' milliseconds')::interval
+      )
+  `;
+  const result = await client.query(sql, [
+    ABANDONMENT_LAST_ERROR,
+    String(staleMs),
+  ]);
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Aggregate-finalisation sweep for the post-DB phase (#550).
+ *
+ * A row whose post-DB dispatches have all finalised should land at the
+ * aggregate row status computed from the per-dispatch states. The
+ * executor itself drives this commit when its in-flight code path
+ * returns; this sweep covers the recovery case where the executor
+ * crashed mid-flight and `recoverStalePerDispatchClaims` flipped its
+ * abandoned dispatches to `failed_terminal`, leaving the row with no
+ * `in_flight` entries but still in `status = 'executing'`.
+ *
+ * Guarded `status = 'executing' AND executing_lock IS NULL AND no
+ * in_flight dispatch remains`. `failed_retryable` aggregates preserve
+ * `expires_at`; terminal aggregates rewrite to retention.
+ */
+async function finaliseAbandonedPostDbRows(
+  client: pg.PoolClient,
+): Promise<number> {
+  const retentionMs = getAttemptRetentionMs();
+  const sql = `
+    UPDATE apply_attempts
+    SET status = (
+          CASE
+            WHEN EXISTS (
+              SELECT 1 FROM jsonb_array_elements(planned_dispatches) AS d
+              WHERE d->>'state' = 'failed_retryable'
+            ) THEN 'failed_retryable'
+            WHEN EXISTS (
+              SELECT 1 FROM jsonb_array_elements(planned_dispatches) AS d
+              WHERE d->>'state' = 'failed_terminal'
+            ) THEN 'failed_terminal'
+            ELSE 'succeeded'
+          END
+        ),
+        expires_at = (
+          CASE
+            WHEN EXISTS (
+              SELECT 1 FROM jsonb_array_elements(planned_dispatches) AS d
+              WHERE d->>'state' = 'failed_retryable'
+            ) THEN expires_at
+            ELSE NOW() + ($1 || ' milliseconds')::interval
+          END
+        )
+    WHERE status = 'executing'
+      AND executing_lock IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM jsonb_array_elements(planned_dispatches) AS d
+        WHERE d->>'state' = 'in_flight'
+      )
+  `;
+  const result = await client.query(sql, [String(retentionMs)]);
   return result.rowCount ?? 0;
 }
 
@@ -410,9 +530,17 @@ async function purgeRetained(client: pg.PoolClient): Promise<number> {
  */
 export async function runApplyAttemptCleanup(): Promise<ApplyAttemptCleanupResult> {
   const { recovered, expired } = await withTransaction(async (client) => {
-    const recovered = await recoverStaleLocks(client);
+    const rowRecovered = await recoverStaleLocks(client);
+    // Per-dispatch stale claims (#550). Runs in the same transaction
+    // as the row-level recovery so a recovered row's aggregate
+    // finalisation lands atomically with the recovery itself.
+    const perDispatchRecovered = await recoverStalePerDispatchClaims(client);
+    const aggregateFinalised = await finaliseAbandonedPostDbRows(client);
     const expired = await terminaliseExpired(client);
-    return { recovered, expired };
+    return {
+      recovered: rowRecovered + perDispatchRecovered + aggregateFinalised,
+      expired,
+    };
   });
   // Round-6 ordering: audit recovery BEFORE purge. Combined with
   // `purgeRetained`'s `succeeded_audit_completed_at` exemption, this

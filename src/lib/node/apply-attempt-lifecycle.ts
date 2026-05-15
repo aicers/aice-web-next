@@ -684,9 +684,28 @@ async function resolveLostClaim(attemptId: string): Promise<ApplyAttemptRow> {
 }
 
 /**
- * Post-claim executor loop. Drives the `in_flight` dispatch (the one
- * we just promoted) and every subsequent `queued` dispatch under the
- * same `executing_lock`.
+ * Post-claim executor.
+ *
+ * The DB stage (`MANAGER_DB`) runs under the row-level `executing_lock`
+ * the claim just acquired. On DB success, the executor performs a
+ * single atomic handoff that releases the row-level lock and promotes
+ * every remaining `queued` dispatch to `in_flight` with its own
+ * freshly-issued `lockToken` / `claimStartedAt` inside the
+ * `planned_dispatches` JSON entry (#550). Post-DB dispatches then run
+ * concurrently with `Promise.allSettled`-style coordination: each
+ * dispatch's success or failure is committed by `commitOneDispatchResult`
+ * under its own per-dispatch lock — no sibling state is read or
+ * written. Once every post-DB dispatch has finalised, the row's
+ * aggregate status is committed by `finaliseRowFromPostDb` under a
+ * `status = 'executing'` guard so two concurrent finalisers cannot
+ * race.
+ *
+ * Retry paths (single failed_retryable dispatch promoted to in_flight)
+ * keep the row-level lock semantics: the claim acquired by `tryClaim`
+ * stays held until the single dispatch commits via the existing
+ * `commitDispatchSuccessAndAdvance` / `commitDispatchFailureAndAdvance`
+ * helpers, which finalise the row's aggregate status once no queued
+ * dispatch remains. A retry never fans out, never advances siblings.
  */
 async function runExecutor(
   claimedRow: ApplyAttemptRow,
@@ -694,118 +713,240 @@ async function runExecutor(
   dispatcher: ApplyDispatcher,
   draftReader: ManagerDraftReader,
 ): Promise<ApplyAttemptRow> {
-  let row = claimedRow;
-  // Loop guard — the worst case is one iteration per dispatch.
-  const maxIterations = row.plannedDispatches.length + 2;
-  for (let iter = 0; iter < maxIterations; iter += 1) {
-    const inFlightIdx = row.plannedDispatches.findIndex(
-      (d) => d.state === "in_flight",
+  const row = claimedRow;
+  const inFlightIdx = row.plannedDispatches.findIndex(
+    (d) => d.state === "in_flight",
+  );
+  if (inFlightIdx === -1) {
+    return await finaliseRow(row, correlationId, "succeeded");
+  }
+  const dispatch = row.plannedDispatches[inFlightIdx];
+
+  if (dispatch.kind === "MANAGER_DB") {
+    return await runDbStageThenFanOut(
+      row,
+      inFlightIdx,
+      correlationId,
+      dispatcher,
+      draftReader,
     );
-    if (inFlightIdx === -1) {
-      // No in-flight dispatch — every dispatch is finalised. Commit
-      // row → succeeded under our correlation_id.
-      return await finaliseRow(row, correlationId, "succeeded");
-    }
-    const dispatch = row.plannedDispatches[inFlightIdx];
+  }
 
-    let dispatchSucceeded = false;
-    let dispatchError: Error | null = null;
-    try {
-      await runOneDispatch(row, dispatch, dispatcher, draftReader);
-      dispatchSucceeded = true;
-    } catch (err) {
-      if (err instanceof StalePlanError) {
-        const wrote = await writeStaleAndClear(row, correlationId);
-        if (!wrote) {
-          // The recovery sweep cleared our `executing_lock` between
-          // 5b's drift detection and the guarded UPDATE. The
-          // persisted row reflects whatever the winner wrote
-          // (typically `failed_terminal` from recovery), not `stale`.
-          // Per the umbrella's loser-write rule, surface a lost-claim
-          // signal instead of falsely reporting `StalePlanError`.
-          throw new ApplyAttemptBusyError(
-            `Executor for attempt ${row.attemptId} lost its claim.`,
-          );
-        }
-        throw err;
-      }
-      dispatchError = err instanceof Error ? err : new Error(String(err));
-    }
+  // Retry path — a single post-DB dispatch was promoted by tryClaim.
+  // Use the existing row-level commit helpers; they finalise the row
+  // when no queued dispatch remains (which is the retry-shape
+  // invariant: every other dispatch is already terminalised).
+  return await runSingleRetryDispatch(
+    row,
+    inFlightIdx,
+    correlationId,
+    dispatcher,
+    draftReader,
+  );
+}
 
-    if (dispatchSucceeded) {
-      const next = await commitDispatchSuccessAndAdvance(
-        row,
-        correlationId,
-        inFlightIdx,
-      );
-      if (!next) {
+async function runDbStageThenFanOut(
+  row: ApplyAttemptRow,
+  dbIdx: number,
+  correlationId: string,
+  dispatcher: ApplyDispatcher,
+  draftReader: ManagerDraftReader,
+): Promise<ApplyAttemptRow> {
+  const dispatch = row.plannedDispatches[dbIdx];
+
+  let dispatchError: Error | null = null;
+  try {
+    await runOneDispatch(row, dispatch, dispatcher, draftReader);
+  } catch (err) {
+    if (err instanceof StalePlanError) {
+      const wrote = await writeStaleAndClear(row, correlationId);
+      if (!wrote) {
         throw new ApplyAttemptBusyError(
           `Executor for attempt ${row.attemptId} lost its claim.`,
         );
       }
-      row = next.row;
-      if (next.completed) return row;
-      continue;
+      throw err;
     }
+    dispatchError = err instanceof Error ? err : new Error(String(err));
+  }
 
+  if (dispatchError) {
     const reachedCap = dispatch.attemptCount >= getDispatchMaxAttempts();
-    // Phase Node-12 (#333): a dispatcher may surface
-    // `DispatchTerminalFailureError` to signal a structurally non-
-    // retryable failure (e.g. `applyAgentConfig` rejecting an empty
-    // hostname). Land in `failed_terminal` immediately so the operator
-    // is not forced to burn `APPLY_DISPATCH_MAX_ATTEMPTS` slots before
-    // settling.
     const terminalNow = dispatchError instanceof DispatchTerminalFailureError;
     const newState: DispatchState =
       reachedCap || terminalNow ? "failed_terminal" : "failed_retryable";
-    const errorMessage = dispatchError?.message ?? "Unknown dispatch error";
-
-    // Phase Node-12 (#333) — Decision 3 / Acceptance #2:
-    //   MANAGER_DB gates every other dispatch on the row, so a DB
-    //   failure stops the row immediately. The remaining queued
-    //   dispatches stay queued on retryable so a retry of the DB
-    //   dispatch can advance them, or are cascaded to `failed_terminal`
-    //   when the DB failure itself is terminal.
-    //
-    //   For any post-DB dispatch (MANAGER_NOTIFY / external), a
-    //   failure must NOT block or terminalise unrelated dispatches.
-    //   The dispatch's own state records the failure; the executor
-    //   then advances to the next queued dispatch and runs it under
-    //   the same claim. Only after every queued dispatch has been
-    //   attempted is the row's aggregate status committed.
-    if (dispatch.kind === "MANAGER_DB") {
-      const updated = await commitDispatchFailure(
-        row,
-        correlationId,
-        inFlightIdx,
-        newState,
-        errorMessage,
+    const updated = await commitDispatchFailure(
+      row,
+      correlationId,
+      dbIdx,
+      newState,
+      dispatchError.message,
+    );
+    if (!updated) {
+      throw new ApplyAttemptBusyError(
+        `Executor for attempt ${row.attemptId} lost its claim.`,
       );
-      if (!updated) {
+    }
+    return updated;
+  }
+
+  // DB succeeded — handoff to per-dispatch claims and run post-DB
+  // dispatches in parallel.
+  const handoff = await commitDbSuccessAndFanOut(row, correlationId, dbIdx);
+  if (!handoff) {
+    throw new ApplyAttemptBusyError(
+      `Executor for attempt ${row.attemptId} lost its claim.`,
+    );
+  }
+  if (handoff.completed) return handoff.row;
+
+  return await runPostDbDispatchesInParallel(
+    handoff.row,
+    handoff.perDispatchClaims,
+    dispatcher,
+  );
+}
+
+async function runSingleRetryDispatch(
+  row: ApplyAttemptRow,
+  inFlightIdx: number,
+  correlationId: string,
+  dispatcher: ApplyDispatcher,
+  draftReader: ManagerDraftReader,
+): Promise<ApplyAttemptRow> {
+  const dispatch = row.plannedDispatches[inFlightIdx];
+
+  let dispatchSucceeded = false;
+  let dispatchError: Error | null = null;
+  try {
+    await runOneDispatch(row, dispatch, dispatcher, draftReader);
+    dispatchSucceeded = true;
+  } catch (err) {
+    if (err instanceof StalePlanError) {
+      const wrote = await writeStaleAndClear(row, correlationId);
+      if (!wrote) {
         throw new ApplyAttemptBusyError(
           `Executor for attempt ${row.attemptId} lost its claim.`,
         );
       }
-      return updated;
+      throw err;
     }
+    dispatchError = err instanceof Error ? err : new Error(String(err));
+  }
 
-    const advanced = await commitDispatchFailureAndAdvance(
+  if (dispatchSucceeded) {
+    const next = await commitDispatchSuccessAndAdvance(
+      row,
+      correlationId,
+      inFlightIdx,
+    );
+    if (!next) {
+      throw new ApplyAttemptBusyError(
+        `Executor for attempt ${row.attemptId} lost its claim.`,
+      );
+    }
+    return next.row;
+  }
+
+  const reachedCap = dispatch.attemptCount >= getDispatchMaxAttempts();
+  const terminalNow = dispatchError instanceof DispatchTerminalFailureError;
+  const newState: DispatchState =
+    reachedCap || terminalNow ? "failed_terminal" : "failed_retryable";
+  const errorMessage = dispatchError?.message ?? "Unknown dispatch error";
+
+  if (dispatch.kind === "MANAGER_DB") {
+    const updated = await commitDispatchFailure(
       row,
       correlationId,
       inFlightIdx,
       newState,
       errorMessage,
     );
-    if (!advanced) {
+    if (!updated) {
       throw new ApplyAttemptBusyError(
         `Executor for attempt ${row.attemptId} lost its claim.`,
       );
     }
-    row = advanced.row;
-    if (advanced.completed) return row;
+    return updated;
   }
-  throw new Error("Executor loop exceeded its iteration cap.");
+
+  const advanced = await commitDispatchFailureAndAdvance(
+    row,
+    correlationId,
+    inFlightIdx,
+    newState,
+    errorMessage,
+  );
+  if (!advanced) {
+    throw new ApplyAttemptBusyError(
+      `Executor for attempt ${row.attemptId} lost its claim.`,
+    );
+  }
+  return advanced.row;
 }
+
+async function runPostDbDispatchesInParallel(
+  row: ApplyAttemptRow,
+  perDispatchClaims: Map<string, string>,
+  dispatcher: ApplyDispatcher,
+): Promise<ApplyAttemptRow> {
+  const inFlight = row.plannedDispatches.filter((d) => d.state === "in_flight");
+
+  await Promise.allSettled(
+    inFlight.map(async (dispatch) => {
+      const lockToken = perDispatchClaims.get(dispatch.dispatchId);
+      if (!lockToken) {
+        // Should be unreachable — fan-out builds the map alongside the
+        // JSON update — but guard defensively so a missing token does
+        // not silently leave the dispatch in_flight forever.
+        return;
+      }
+      let error: Error | null = null;
+      try {
+        await runOneDispatch(row, dispatch, dispatcher, NULL_DRAFT_READER);
+      } catch (err) {
+        error = err instanceof Error ? err : new Error(String(err));
+      }
+      if (!error) {
+        await commitOneDispatchResult({
+          attemptId: row.attemptId,
+          dispatchId: dispatch.dispatchId,
+          lockToken,
+          newState: "succeeded",
+          lastError: null,
+        });
+        return;
+      }
+      const reachedCap = dispatch.attemptCount >= getDispatchMaxAttempts();
+      const terminalNow = error instanceof DispatchTerminalFailureError;
+      const newState: DispatchState =
+        reachedCap || terminalNow ? "failed_terminal" : "failed_retryable";
+      await commitOneDispatchResult({
+        attemptId: row.attemptId,
+        dispatchId: dispatch.dispatchId,
+        lockToken,
+        newState,
+        lastError: error.message,
+      });
+    }),
+  );
+
+  return await finaliseRowFromPostDb(row.attemptId);
+}
+
+/**
+ * `runOneDispatch` only consults the draft reader on the MANAGER_DB
+ * stage. Post-DB dispatches never call it — this sentinel makes the
+ * intent explicit and trips a clean error if a future code path
+ * accidentally tries to read the draft from the post-DB phase.
+ */
+const NULL_DRAFT_READER: ManagerDraftReader = {
+  async readNodeDraft() {
+    throw new Error(
+      "Internal: post-DB dispatch must not invoke the draft reader.",
+    );
+  },
+};
 
 /**
  * Run a single dispatch through the dispatcher interface. For the
@@ -921,6 +1062,319 @@ function computeFinalRowStatus(
   if (hasRetryable) return "failed_retryable";
   if (hasTerminal) return "failed_terminal";
   return "succeeded";
+}
+
+/**
+ * Atomic DB-success handoff (#550).
+ *
+ * Performs a single guarded UPDATE that:
+ *   - marks the `MANAGER_DB` dispatch `succeeded`;
+ *   - clears the row-level `executing_lock` / `claim_started_at`;
+ *   - promotes every remaining `queued` dispatch to `in_flight`,
+ *     attaching a freshly-issued `lockToken` and a `claimStartedAt`
+ *     stamped from PostgreSQL `NOW()` to its `planned_dispatches`
+ *     JSON entry;
+ *   - leaves `status = 'executing'` so a concurrent claim cannot
+ *     race the post-DB phase (claim predicates require `pending` or
+ *     `failed_retryable`).
+ *
+ * `claimStartedAt` is generated by the database (`to_jsonb(NOW())`)
+ * rather than the BFF host clock so stale-claim recovery — which
+ * compares against `NOW()` in the same database — is single-clock and
+ * cannot be tripped by host/DB clock skew (matches the existing
+ * row-level `claim_started_at = NOW()` pattern).
+ *
+ * Cross-transaction observers therefore see exactly one of two
+ * committed states: pre-handoff (row-level claim, no per-dispatch
+ * claims) or post-handoff (per-dispatch claims, no row-level claim) —
+ * never both, never neither. The handoff is itself idempotent under
+ * the `executing_lock = $correlationId` guard: a recovery sweep that
+ * cleared the lock between our DB success and the UPDATE matches 0
+ * rows, and the caller surfaces a lost-claim error.
+ *
+ * Returns the refreshed row plus a `dispatchId → lockToken` map the
+ * caller uses to drive each post-DB dispatch under its own claim.
+ * `completed: true` short-circuits a DB-only plan to `succeeded`.
+ */
+async function commitDbSuccessAndFanOut(
+  row: ApplyAttemptRow,
+  correlationId: string,
+  dbIdx: number,
+): Promise<{
+  row: ApplyAttemptRow;
+  perDispatchClaims: Map<string, string>;
+  completed: boolean;
+} | null> {
+  const perDispatchClaims = new Map<string, string>();
+  const newDispatches = row.plannedDispatches.map((d, i) => {
+    if (i === dbIdx) {
+      return { ...d, state: "succeeded" as DispatchState, lastError: null };
+    }
+    if (d.state === "queued") {
+      const lockToken = randomUUID();
+      perDispatchClaims.set(d.dispatchId, lockToken);
+      // `claimStartedAt` is intentionally omitted here — the SQL
+      // UPDATE below stamps it from `NOW()` so the per-dispatch
+      // claim timestamp shares a clock with the recovery sweep.
+      return {
+        ...d,
+        state: "in_flight" as DispatchState,
+        attemptCount: d.attemptCount + 1,
+        lastError: null,
+        lockToken,
+      };
+    }
+    return d;
+  });
+
+  const completed = perDispatchClaims.size === 0;
+
+  return await withTransaction(async (client) => {
+    if (completed) {
+      // DB-only plan — finalise to `succeeded` and clear the row lock
+      // in the same UPDATE (mirrors the terminal-state path used
+      // elsewhere in this module). No per-dispatch claims to stamp.
+      const retentionMs = getAttemptRetentionMs();
+      const result = await client.query(
+        `
+        UPDATE apply_attempts
+        SET status = 'succeeded',
+            executing_lock = NULL,
+            claim_started_at = NULL,
+            expires_at = NOW() + ($2 || ' milliseconds')::interval,
+            planned_dispatches = $3::jsonb
+        WHERE attempt_id = $1
+          AND executing_lock = $4
+        RETURNING attempt_id
+        `,
+        [
+          row.attemptId,
+          String(retentionMs),
+          JSON.stringify(newDispatches),
+          correlationId,
+        ],
+      );
+      if (result.rowCount !== 1) return null;
+      const refreshed = await readApplyAttempt(row.attemptId, client);
+      if (!refreshed) return null;
+      return { row: refreshed, perDispatchClaims, completed: true };
+    }
+
+    // Handoff: clear row-level lock, install per-dispatch locks.
+    // `status` stays `executing` — see the helper-level comment for
+    // why the two-state observability invariant holds. Each
+    // `in_flight` entry gets `claimStartedAt = NOW()` injected here
+    // so the stamp is from the same clock cleanup compares against.
+    const result = await client.query(
+      `
+      UPDATE apply_attempts
+      SET executing_lock = NULL,
+          claim_started_at = NULL,
+          planned_dispatches = (
+            SELECT jsonb_agg(
+              CASE
+                WHEN d->>'state' = 'in_flight'
+                THEN jsonb_set(d, '{claimStartedAt}', to_jsonb(NOW()))
+                ELSE d
+              END
+            )
+            FROM jsonb_array_elements($2::jsonb) AS d
+          )
+      WHERE attempt_id = $1
+        AND executing_lock = $3
+      RETURNING attempt_id
+      `,
+      [row.attemptId, JSON.stringify(newDispatches), correlationId],
+    );
+    if (result.rowCount !== 1) return null;
+    const refreshed = await readApplyAttempt(row.attemptId, client);
+    if (!refreshed) return null;
+    return { row: refreshed, perDispatchClaims, completed: false };
+  });
+}
+
+/**
+ * Per-dispatch commit helper (#550).
+ *
+ * Updates exactly one `planned_dispatches[dispatchId]` entry under its
+ * own per-dispatch `lockToken`. The SQL predicate uses
+ * `jsonb_path_exists` so an entry whose lock token has been cleared by
+ * stale-dispatch recovery cannot be overwritten by a late-completing
+ * executor — the WHERE matches 0 rows and the caller treats the result
+ * as lost-claim (silent: the dispatch's persisted state already
+ * reflects the recovery write).
+ *
+ * Strips `lockToken` / `claimStartedAt` from the matched entry on the
+ * same UPDATE so a finalised dispatch never carries a stale claim into
+ * the post-DB row.
+ *
+ * Does NOT promote any sibling dispatch and does NOT touch the row's
+ * `status`. The row's aggregate status is the job of
+ * `finaliseRowFromPostDb`, run once every post-DB dispatch has
+ * settled.
+ */
+async function commitOneDispatchResult(args: {
+  attemptId: string;
+  dispatchId: string;
+  lockToken: string;
+  newState: DispatchState;
+  lastError: string | null;
+}): Promise<boolean> {
+  const { attemptId, dispatchId, lockToken, newState, lastError } = args;
+  return await withTransaction(async (client) => {
+    const result = await client.query(
+      `
+      UPDATE apply_attempts
+      SET planned_dispatches = (
+        SELECT jsonb_agg(
+          CASE
+            WHEN d->>'dispatchId' = $2
+                 AND d->>'lockToken' = $3
+            THEN jsonb_set(
+                   jsonb_set(
+                     (d - 'lockToken') - 'claimStartedAt',
+                     '{state}', to_jsonb($4::text)
+                   ),
+                   '{lastError}',
+                   CASE
+                     WHEN $5::text IS NULL THEN 'null'::jsonb
+                     ELSE to_jsonb($5::text)
+                   END
+                 )
+            ELSE d
+          END
+        )
+        FROM jsonb_array_elements(planned_dispatches) AS d
+      )
+      WHERE attempt_id = $1
+        AND jsonb_path_exists(
+              planned_dispatches,
+              '$[*] ? (@.dispatchId == $id && @.lockToken == $tok)',
+              jsonb_build_object('id', $2::text, 'tok', $3::text)
+            )
+      RETURNING attempt_id
+      `,
+      [attemptId, dispatchId, lockToken, newState, lastError],
+    );
+    return (result.rowCount ?? 0) === 1;
+  });
+}
+
+/**
+ * Row-aggregate commit after the post-DB fan-out (#550).
+ *
+ * Re-reads the row, computes the aggregate via `computeFinalRowStatus`,
+ * and writes the row-level status under a `status = 'executing'`
+ * guard. Two concurrent finalisers (e.g. an in-flight executor and a
+ * cleanup pass that recovered a stale per-dispatch claim) cannot both
+ * commit — the second writer sees a non-`executing` row and the
+ * UPDATE matches 0 rows.
+ *
+ * Idempotent in the lost-race case: the caller returns the row as
+ * observed instead of throwing, because the per-dispatch state and
+ * the aggregate status persisted by the winning writer are the
+ * intended outcome regardless of which path finalised first.
+ *
+ * Also strips any residual `lockToken` / `claimStartedAt` markers
+ * (defensive — `commitOneDispatchResult` removes them on its UPDATE
+ * already; a row that observes them here would only do so via a
+ * non-shipping code path, e.g. a stale-dispatch recovery that did not
+ * strip the marker).
+ */
+async function finaliseRowFromPostDb(
+  attemptId: string,
+): Promise<ApplyAttemptRow> {
+  const current = await readApplyAttempt(attemptId);
+  if (!current) {
+    throw new ApplyAttemptNotFoundError(
+      `Apply attempt ${attemptId} was not found.`,
+    );
+  }
+  // If any dispatch is still in_flight (e.g. a commitOneDispatchResult
+  // lost its claim) leave the row in `executing` — recovery picks it
+  // up via per-dispatch stale recovery, then re-runs the aggregate
+  // commit. Return whatever is persisted now so the caller sees a
+  // consistent snapshot.
+  const stillInFlight = current.plannedDispatches.some(
+    (d) => d.state === "in_flight",
+  );
+  if (stillInFlight || current.status !== "executing") {
+    return current;
+  }
+
+  const finalStatus = computeFinalRowStatus(current.plannedDispatches);
+  const retentionMs = getAttemptRetentionMs();
+  const cleanedDispatches = current.plannedDispatches.map(stripDispatchClaim);
+
+  return await withTransaction(async (client) => {
+    if (finalStatus === "failed_retryable") {
+      // Preserve `expires_at` on a soft fail (umbrella rule).
+      const result = await client.query(
+        `
+        UPDATE apply_attempts
+        SET status = 'failed_retryable',
+            planned_dispatches = $2::jsonb
+        WHERE attempt_id = $1
+          AND status = 'executing'
+          AND executing_lock IS NULL
+        RETURNING attempt_id
+        `,
+        [attemptId, JSON.stringify(cleanedDispatches)],
+      );
+      if (result.rowCount !== 1) {
+        const refreshed = await readApplyAttempt(attemptId, client);
+        if (!refreshed) {
+          throw new ApplyAttemptNotFoundError(
+            `Apply attempt ${attemptId} disappeared during finalisation.`,
+          );
+        }
+        return refreshed;
+      }
+    } else {
+      const result = await client.query(
+        `
+        UPDATE apply_attempts
+        SET status = $2,
+            expires_at = NOW() + ($3 || ' milliseconds')::interval,
+            planned_dispatches = $4::jsonb
+        WHERE attempt_id = $1
+          AND status = 'executing'
+          AND executing_lock IS NULL
+        RETURNING attempt_id
+        `,
+        [
+          attemptId,
+          finalStatus,
+          String(retentionMs),
+          JSON.stringify(cleanedDispatches),
+        ],
+      );
+      if (result.rowCount !== 1) {
+        const refreshed = await readApplyAttempt(attemptId, client);
+        if (!refreshed) {
+          throw new ApplyAttemptNotFoundError(
+            `Apply attempt ${attemptId} disappeared during finalisation.`,
+          );
+        }
+        return refreshed;
+      }
+    }
+    const refreshed = await readApplyAttempt(attemptId, client);
+    if (!refreshed) {
+      throw new ApplyAttemptNotFoundError(
+        `Apply attempt ${attemptId} disappeared during finalisation.`,
+      );
+    }
+    return refreshed;
+  });
+}
+
+function stripDispatchClaim(d: PlannedDispatch): PlannedDispatch {
+  if (d.lockToken === undefined && d.claimStartedAt === undefined) return d;
+  const copy: PlannedDispatch = { ...d };
+  delete (copy as { lockToken?: string }).lockToken;
+  delete (copy as { claimStartedAt?: string }).claimStartedAt;
+  return copy;
 }
 
 /**

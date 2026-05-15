@@ -356,20 +356,20 @@ confirmation:
    retries); `new` is the frozen draft string captured at
    apply-build time and never re-read.
 
-The dispatches run sequentially in plan order: manager DB first,
-then manager notify, then each external. The manager DB stage
-gates everything that follows — if it fails, no notify or external
-dispatch is attempted. **After the DB stage succeeds, the
-remaining dispatches are independent**: a notify failure does not
-block the externals, and a single external's failure does not
-block the others. Each post-DB dispatch records its own state and
-the executor advances to the next queued dispatch under the same
-claim. The row's aggregate status reflects the per-dispatch
-outcomes once every dispatch has been attempted. The two
-manager-side dispatches are independently observable and
-retryable: an operator-driven retry of the notify dispatch on a
-row whose DB stage has already succeeded does not re-run the DB
-mutation.
+The DB stage runs first and gates everything that follows — if it
+fails, no notify or external dispatch is attempted. **On DB
+success, the notify dispatch and every external `updateConfig`
+dispatch run in parallel.** Each post-DB dispatch holds its own
+per-dispatch claim and commits its own state independently: a
+notify failure does not delay the externals, a single external's
+failure does not delay the others, and a slow dispatch does not
+block faster siblings from completing. The row's aggregate status
+(`succeeded` / `failed_retryable` / `failed_terminal`) is committed
+only after every post-DB dispatch has finalised, computed from the
+per-dispatch outcomes. The two manager-side dispatches are
+independently observable and retryable: an operator-driven retry
+of the notify dispatch on a row whose DB stage has already
+succeeded does not re-run the DB mutation.
 
 ### Permissions and tenant scope
 
@@ -642,31 +642,38 @@ changes" message and disables Apply.
 
 ### Per-dispatch status (during and after execution)
 
-Clicking **Apply** calls `confirmApplyAttempt({ attemptId })`. While
-the call is in flight the modal:
+Clicking **Apply** calls `confirmApplyAttempt({ attemptId })`. The
+BFF call is one-shot — it does not stream per-dispatch progress
+back to the client. While the call is in flight the modal:
 
 - Ignores Escape and outside-clicks — the underlying BFF call cannot
   be cancelled, so dismissing the UI mid-flight would orphan the row
   in `executing`.
-- Promotes only the **first** still-`queued` row to **In flight**,
-  mirroring the BFF's sequential-advance rule (`advanceForClaim` in
-  `apply-attempt-lifecycle.ts`). Later rows stay **Queued** until the
-  executor commits the running row and advances the next one.
-  Marking every row in flight would imply parallel execution the
-  state machine does not perform.
+- Optimistically projects the first queued row (the **Manager DB**
+  dispatch) to **In flight** to signal that the apply is running.
+  Later rows stay **Queued** in the modal view while the call is
+  pending; the modal cannot mirror the BFF's DB-success handoff or
+  the parallel post-DB fan-out because that transition is not
+  streamed.
 - Shows the **Applying…** label on the action button.
 
+Once `confirmApplyAttempt` resolves, the modal renders the final
+per-dispatch states returned by the BFF — every post-DB dispatch
+will already be settled at that point (`succeeded`,
+`failed_retryable`, or `failed_terminal`) because the executor
+runs the post-DB fan-out to completion before returning. Operators
+see the final per-row outcome; intermediate "DB succeeded, post-DB
+running" states are not visible in the modal.
+
 Each row renders one of five states. **Queued** is shown before the
-user clicks Apply (the planned-list view), on later dispatches while
-the leading row is still in flight, and on dispatches after a settled
-`failed_retryable` row — under the sequential-advance rule from #359
-a failure halts the sequence with subsequent dispatches still
-`queued`, awaiting resume on a successful retry.
+user clicks Apply (the planned-list view) and, in the modal's
+optimistic projection, on every non-DB row while
+`confirmApplyAttempt` is still pending.
 
 | State | Meaning |
 | :-- | :-- |
-| **Queued** | Not yet started — shown on the planned list before Apply, on later dispatches while an earlier row is in flight, and on dispatches after a `failed_retryable` row that have not been advanced by the resume rule yet. |
-| **In flight** | Dispatch is running. While `confirmApplyAttempt` is pending the modal projects this state on the first still-`queued` row; while `retryDispatch` is pending it projects this state on the retried row only. |
+| **Queued** | Not yet started — shown on the planned list before Apply and on non-DB rows while `confirmApplyAttempt` is pending. |
+| **In flight** | Dispatch is running. While `confirmApplyAttempt` is pending the modal projects this state on the **Manager DB** row only (the BFF's DB-success / parallel post-DB transition is not streamed back to the client). While `retryDispatch` is pending it projects this state on the retried row only. |
 | **Succeeded** | Dispatch returned successfully. |
 | **Failed (retryable)** | Soft failure; the row offers a **Retry** button. |
 | **Failed (terminal)** | Cap exhausted, abandoned, or stale-lock recovery cascade — no Retry. |
@@ -686,12 +693,13 @@ A failed dispatch presents one of two recovery paths:
 - **Retry** — visible only when the dispatch is in
   `failed_retryable`. Clicking the row's Retry button calls
   `retryDispatch({ attemptId, dispatchId })` against the same
-  `attemptId`. The state-machine guarantees at most one
-  `failed_retryable` per attempt at any time (sequential advance with
-  stop-on-first-failure), so the modal never renders more than one
-  Retry button on the same plan. On retry success the resume rule in
-  `_internal_retryDispatch` advances the next `queued` dispatch
-  automatically — no second click is needed.
+  `attemptId`. Because the post-DB fan-out runs every notify and
+  external dispatch in parallel under its own claim, a single attempt
+  can settle with more than one `failed_retryable` dispatch on the
+  same row; the modal renders an independent Retry button per failed
+  row. A retry re-runs **only** the targeted dispatch — sibling
+  states (including other `failed_retryable` rows) are preserved
+  exactly as observed.
 - **Rebuild** — required when the row settles to `failed_terminal`,
   the plan has gone `stale` / `expired`, or the modal could not even
   fetch a plan. Rebuild discards the current `attemptId` and re-runs

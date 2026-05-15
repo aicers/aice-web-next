@@ -606,11 +606,11 @@ describe("writeStaleAndClear — loser-write rejection", () => {
   });
 });
 
-describe("runExecutor — post-DB failures advance to remaining dispatches (#333, Decision 3 / Acceptance #2)", () => {
+describe("runExecutor — post-DB fan-out (#550, parallel-after-DB)", () => {
   // Build a Node snapshot whose computed fingerprint we can pin into
   // the persisted row so step 5b matches and the executor proceeds
-  // through MANAGER_DB → MANAGER_NOTIFY → external. These tests use a
-  // minimal empty Node so the fingerprint is stable across them.
+  // through MANAGER_DB → post-DB fan-out. These tests use a minimal
+  // empty Node so the fingerprint is stable across them.
   const NODE_SNAPSHOT = {
     id: "node-1",
     name: "n",
@@ -624,6 +624,142 @@ describe("runExecutor — post-DB failures advance to remaining dispatches (#333
   const MANAGER_NOTIFY_DISPATCH_ID = "d0000002-0000-0000-0000-000000000002";
   const DATA_STORE_DISPATCH_ID = "d0000003-0000-0000-0000-000000000003";
   const TI_CONTAINER_DISPATCH_ID = "d0000004-0000-0000-0000-000000000004";
+
+  /**
+   * Stateful in-memory mock of `apply_attempts`. Routes top-level
+   * `query` calls and `withTransaction(client.query)` calls to the
+   * same logical row, so the post-DB fan-out's parallel
+   * commitOneDispatchResult / finaliseRowFromPostDb path can read
+   * back its own writes in any order.
+   *
+   * Recognised SQL patterns:
+   *   - `SELECT … FROM apply_attempts WHERE attempt_id = $1`
+   *   - tryClaim's `UPDATE … SET status='executing', executing_lock=$1, …`
+   *   - fan-out's `UPDATE … SET executing_lock = NULL, claim_started_at = NULL,
+   *     planned_dispatches = (SELECT jsonb_agg(CASE WHEN d->>'state' = 'in_flight'
+   *     THEN jsonb_set(d, '{claimStartedAt}', to_jsonb(NOW())) ELSE d END) FROM
+   *     jsonb_array_elements($2::jsonb) AS d) …` (the post-DB handoff —
+   *     stamps `claimStartedAt` from the DB clock).
+   *   - commitOneDispatchResult's `UPDATE … jsonb_path_exists … @.dispatchId == $id && @.lockToken == $tok`
+   *   - finaliseRowFromPostDb's `UPDATE … SET status = 'failed_retryable' …` or
+   *     `UPDATE … SET status = $2, expires_at = …`
+   *   - terminal/finalising paths from the DB-failure branch and
+   *     writeStaleAndClear (returned as no-ops here — these tests
+   *     never reach those branches).
+   */
+  function makeStatefulRow(initial: Record<string, unknown>): {
+    state: () => Record<string, unknown>;
+    query: (
+      sql: string,
+      params?: unknown[],
+    ) => {
+      rows: Record<string, unknown>[];
+      rowCount: number;
+    };
+  } {
+    let row: Record<string, unknown> = { ...initial };
+    function planned(): Record<string, unknown>[] {
+      return row.planned_dispatches as Record<string, unknown>[];
+    }
+    return {
+      state: () => row,
+      query: (sql, params = []) => {
+        if (/^\s*SELECT[\s\S]+FROM apply_attempts/i.test(sql)) {
+          return { rows: [{ ...row }], rowCount: 1 };
+        }
+        if (/UPDATE apply_attempts\s+SET status = 'executing'/i.test(sql)) {
+          // tryClaim
+          row = {
+            ...row,
+            status: "executing",
+            executing_lock: params[0] as string,
+            claim_started_at: new Date(),
+            planned_dispatches: JSON.parse(params[1] as string),
+          };
+          return { rows: [{ attempt_id: row.attempt_id }], rowCount: 1 };
+        }
+        if (
+          /UPDATE apply_attempts\s+SET executing_lock = NULL,\s+claim_started_at = NULL,\s+planned_dispatches = \(\s*SELECT jsonb_agg\(\s*CASE\s+WHEN d->>'state' = 'in_flight'\s+THEN jsonb_set\(d, '\{claimStartedAt\}', to_jsonb\(NOW\(\)\)\)\s+ELSE d\s+END\s*\)\s+FROM jsonb_array_elements\(\$2::jsonb\) AS d\s*\)\s+WHERE attempt_id = \$1\s+AND executing_lock = \$3/i.test(
+            sql,
+          )
+        ) {
+          // commitDbSuccessAndFanOut (no row-status change). The
+          // production SQL stamps `claimStartedAt` from PG `NOW()` for
+          // every `in_flight` entry — mirror that here so the mocked
+          // row carries the same shape.
+          const stamped = (
+            JSON.parse(params[1] as string) as Record<string, unknown>[]
+          ).map((d) =>
+            d.state === "in_flight"
+              ? { ...d, claimStartedAt: new Date().toISOString() }
+              : d,
+          );
+          row = {
+            ...row,
+            executing_lock: null,
+            claim_started_at: null,
+            planned_dispatches: stamped,
+          };
+          return { rows: [{ attempt_id: row.attempt_id }], rowCount: 1 };
+        }
+        if (/jsonb_path_exists\([\s\S]+@\.lockToken == \$tok/i.test(sql)) {
+          // commitOneDispatchResult — match by dispatchId + lockToken
+          const dispatchId = params[1] as string;
+          const lockToken = params[2] as string;
+          const newState = params[3] as string;
+          const lastError = (params[4] as string | null) ?? null;
+          const updated = planned().map((d) => {
+            const cur = d as Record<string, unknown>;
+            if (cur.dispatchId === dispatchId && cur.lockToken === lockToken) {
+              const { lockToken: _t, claimStartedAt: _c, ...rest } = cur;
+              return { ...rest, state: newState, lastError };
+            }
+            return d;
+          });
+          const changed = updated.some(
+            (d, i) => JSON.stringify(d) !== JSON.stringify(planned()[i]),
+          );
+          if (!changed) return { rows: [], rowCount: 0 };
+          row = { ...row, planned_dispatches: updated };
+          return { rows: [{ attempt_id: row.attempt_id }], rowCount: 1 };
+        }
+        if (
+          /UPDATE apply_attempts\s+SET status = 'failed_retryable',\s+planned_dispatches = \$2::jsonb\s+WHERE attempt_id = \$1\s+AND status = 'executing'\s+AND executing_lock IS NULL/i.test(
+            sql,
+          )
+        ) {
+          // finaliseRowFromPostDb — failed_retryable branch
+          if (row.status !== "executing" || row.executing_lock !== null)
+            return { rows: [], rowCount: 0 };
+          row = {
+            ...row,
+            status: "failed_retryable",
+            planned_dispatches: JSON.parse(params[1] as string),
+          };
+          return { rows: [{ attempt_id: row.attempt_id }], rowCount: 1 };
+        }
+        if (
+          /UPDATE apply_attempts\s+SET status = \$2,\s+expires_at = NOW\(\) \+ \(\$3 \|\| ' milliseconds'\)::interval,\s+planned_dispatches = \$4::jsonb\s+WHERE attempt_id = \$1\s+AND status = 'executing'\s+AND executing_lock IS NULL/i.test(
+            sql,
+          )
+        ) {
+          // finaliseRowFromPostDb — terminal branch
+          if (row.status !== "executing" || row.executing_lock !== null)
+            return { rows: [], rowCount: 0 };
+          row = {
+            ...row,
+            status: params[1] as string,
+            expires_at: new Date(Date.now() + 60_000),
+            planned_dispatches: JSON.parse(params[3] as string),
+          };
+          return { rows: [{ attempt_id: row.attempt_id }], rowCount: 1 };
+        }
+        // Unknown SQL — surface as 0 rows so the executor can route
+        // through its lost-claim path if it expected a write.
+        return { rows: [], rowCount: 0 };
+      },
+    };
+  }
 
   async function planThreeDispatches() {
     const { computeDraftFingerprint } = await import(
@@ -659,130 +795,25 @@ describe("runExecutor — post-DB failures advance to remaining dispatches (#333
     };
   }
 
-  it("retryable notify failure does not block the external dispatch — external is still attempted; row settles failed_retryable", async () => {
+  it("retryable notify failure runs in parallel with external dispatch and does not block it — row settles failed_retryable", async () => {
     const { fp, plan } = await planThreeDispatches();
-
-    // Step-1 read: pending row with the three-dispatch plan.
-    mockQuery.mockResolvedValueOnce({
-      rows: [
-        persistedRow({
-          status: "pending",
-          draft_fingerprint: fp,
-          planned_dispatches: plan,
-        }),
-      ],
-      rowCount: 1,
-    });
-
-    const txQueries: Array<{ rows: unknown[]; rowCount: number }> = [];
-    const txQuery = vi.fn(
-      async () => txQueries.shift() ?? { rows: [], rowCount: 0 },
+    const stateful = makeStatefulRow(
+      persistedRow({
+        status: "pending",
+        draft_fingerprint: fp,
+        planned_dispatches: plan,
+      }),
     );
 
-    let txCallIdx = 0;
+    mockQuery.mockImplementation(async (sql: string, params?: unknown[]) =>
+      stateful.query(sql, params),
+    );
     mockWithTransaction.mockImplementation(
       async (fn: (c: unknown) => Promise<unknown>) => {
-        txCallIdx += 1;
-        if (txCallIdx === 1) {
-          // tryClaim: SELECT + UPDATE (claim 1 row) + final SELECT
-          // (returns MANAGER_DB in_flight, others queued).
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "pending",
-                draft_fingerprint: fp,
-                planned_dispatches: plan,
-              }),
-            ],
-            rowCount: 1,
-          });
-          txQueries.push({ rows: [], rowCount: 1 });
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "executing",
-                draft_fingerprint: fp,
-                executing_lock: "lock-1",
-                planned_dispatches: [
-                  { ...plan[0], state: "in_flight", attemptCount: 1 },
-                  plan[1],
-                  plan[2],
-                ],
-              }),
-            ],
-            rowCount: 1,
-          });
-        } else if (txCallIdx === 2) {
-          // commitDispatchSuccessAndAdvance after MANAGER_DB success:
-          // UPDATE planned_dispatches + readApplyAttempt SELECT.
-          txQueries.push({ rows: [], rowCount: 1 });
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "executing",
-                draft_fingerprint: fp,
-                executing_lock: "lock-1",
-                planned_dispatches: [
-                  { ...plan[0], state: "succeeded", attemptCount: 1 },
-                  { ...plan[1], state: "in_flight", attemptCount: 1 },
-                  plan[2],
-                ],
-              }),
-            ],
-            rowCount: 1,
-          });
-        } else if (txCallIdx === 3) {
-          // commitDispatchFailureAndAdvance after MANAGER_NOTIFY failure
-          // (the new behaviour): the executor records notify
-          // failed_retryable but advances DATA_STORE to in_flight under
-          // the same claim — externals must NOT be blocked by notify.
-          txQueries.push({ rows: [], rowCount: 1 });
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "executing",
-                draft_fingerprint: fp,
-                executing_lock: "lock-1",
-                planned_dispatches: [
-                  { ...plan[0], state: "succeeded", attemptCount: 1 },
-                  {
-                    ...plan[1],
-                    state: "failed_retryable",
-                    attemptCount: 1,
-                    lastError: "notify boom",
-                  },
-                  { ...plan[2], state: "in_flight", attemptCount: 1 },
-                ],
-              }),
-            ],
-            rowCount: 1,
-          });
-        } else if (txCallIdx === 4) {
-          // commitDispatchSuccessAndAdvance after DATA_STORE success:
-          // no queued left → finalise row to failed_retryable (notify
-          // is still failed_retryable on the row).
-          txQueries.push({ rows: [], rowCount: 1 });
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "failed_retryable",
-                draft_fingerprint: fp,
-                planned_dispatches: [
-                  { ...plan[0], state: "succeeded", attemptCount: 1 },
-                  {
-                    ...plan[1],
-                    state: "failed_retryable",
-                    attemptCount: 1,
-                    lastError: "notify boom",
-                  },
-                  { ...plan[2], state: "succeeded", attemptCount: 1 },
-                ],
-              }),
-            ],
-            rowCount: 1,
-          });
-        }
-        return fn({ query: txQuery });
+        return fn({
+          query: async (sql: string, params?: unknown[]) =>
+            stateful.query(sql, params),
+        });
       },
     );
 
@@ -807,32 +838,21 @@ describe("runExecutor — post-DB failures advance to remaining dispatches (#333
 
     expect(dispatcher.managerDb).toHaveBeenCalledTimes(1);
     expect(dispatcher.managerNotify).toHaveBeenCalledTimes(1);
-    // Acceptance #2: the external dispatch is attempted even though
-    // notify failed retryably — the post-DB stages are independent.
     expect(dispatcher.external).toHaveBeenCalledTimes(1);
 
     expect(result.status).toBe("failed_retryable");
     expect(result.plannedDispatches[0].state).toBe("succeeded");
     expect(result.plannedDispatches[1].state).toBe("failed_retryable");
     expect(result.plannedDispatches[2].state).toBe("succeeded");
-
-    // Finalising UPDATE (tx 4): writes failed_retryable status,
-    // preserves expires_at (no retention rewrite). This guards
-    // against a regression to the prior "force status='succeeded' on
-    // last commit" path.
-    const updateCalls: string[] = [];
-    for (const call of txQuery.mock.calls) {
-      const sql = (call as unknown[])[0];
-      if (typeof sql === "string" && sql.includes("UPDATE apply_attempts")) {
-        updateCalls.push(sql);
-      }
+    // Per-dispatch claim markers are stripped on finalisation — they
+    // must not leak into the persisted row's terminal state.
+    for (const d of result.plannedDispatches) {
+      expect((d as { lockToken?: string }).lockToken).toBeUndefined();
+      expect((d as { claimStartedAt?: string }).claimStartedAt).toBeUndefined();
     }
-    const finalUpdateSql = updateCalls[updateCalls.length - 1];
-    expect(finalUpdateSql).toMatch(/SET status = 'failed_retryable'/);
-    expect(finalUpdateSql).not.toMatch(/SET status = 'succeeded'/);
   });
 
-  it("terminal notify failure (e.g. hostname-empty) does not cascade unrelated externals as if their own dispatch failed — externals still run and keep their observed state", async () => {
+  it("terminal notify failure (e.g. hostname-empty) does not cascade unrelated externals — externals still run in parallel and keep their observed state", async () => {
     const { fp, plan } = await planThreeDispatches();
     // Two-external plan to exercise per-dispatch state isolation
     // across multiple unrelated externals.
@@ -850,195 +870,23 @@ describe("runExecutor — post-DB failures advance to remaining dispatches (#333
       },
     ];
 
-    mockQuery.mockResolvedValueOnce({
-      rows: [
-        persistedRow({
-          status: "pending",
-          draft_fingerprint: fp,
-          planned_dispatches: planWithTwoExternals,
-        }),
-      ],
-      rowCount: 1,
-    });
-
-    const txQueries: Array<{ rows: unknown[]; rowCount: number }> = [];
-    const txQuery = vi.fn(
-      async () => txQueries.shift() ?? { rows: [], rowCount: 0 },
+    const stateful = makeStatefulRow(
+      persistedRow({
+        status: "pending",
+        draft_fingerprint: fp,
+        planned_dispatches: planWithTwoExternals,
+      }),
     );
 
-    let txCallIdx = 0;
+    mockQuery.mockImplementation(async (sql: string, params?: unknown[]) =>
+      stateful.query(sql, params),
+    );
     mockWithTransaction.mockImplementation(
       async (fn: (c: unknown) => Promise<unknown>) => {
-        txCallIdx += 1;
-        if (txCallIdx === 1) {
-          // tryClaim
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "pending",
-                draft_fingerprint: fp,
-                planned_dispatches: planWithTwoExternals,
-              }),
-            ],
-            rowCount: 1,
-          });
-          txQueries.push({ rows: [], rowCount: 1 });
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "executing",
-                draft_fingerprint: fp,
-                executing_lock: "lock-1",
-                planned_dispatches: [
-                  {
-                    ...planWithTwoExternals[0],
-                    state: "in_flight",
-                    attemptCount: 1,
-                  },
-                  planWithTwoExternals[1],
-                  planWithTwoExternals[2],
-                  planWithTwoExternals[3],
-                ],
-              }),
-            ],
-            rowCount: 1,
-          });
-        } else if (txCallIdx === 2) {
-          // After MANAGER_DB success → advance MANAGER_NOTIFY
-          txQueries.push({ rows: [], rowCount: 1 });
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "executing",
-                draft_fingerprint: fp,
-                executing_lock: "lock-1",
-                planned_dispatches: [
-                  {
-                    ...planWithTwoExternals[0],
-                    state: "succeeded",
-                    attemptCount: 1,
-                  },
-                  {
-                    ...planWithTwoExternals[1],
-                    state: "in_flight",
-                    attemptCount: 1,
-                  },
-                  planWithTwoExternals[2],
-                  planWithTwoExternals[3],
-                ],
-              }),
-            ],
-            rowCount: 1,
-          });
-        } else if (txCallIdx === 3) {
-          // After MANAGER_NOTIFY terminal failure (hostname-empty):
-          // dispatch lands in failed_terminal but DATA_STORE is
-          // advanced to in_flight — externals are not cascaded as
-          // failed_terminal.
-          txQueries.push({ rows: [], rowCount: 1 });
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "executing",
-                draft_fingerprint: fp,
-                executing_lock: "lock-1",
-                planned_dispatches: [
-                  {
-                    ...planWithTwoExternals[0],
-                    state: "succeeded",
-                    attemptCount: 1,
-                  },
-                  {
-                    ...planWithTwoExternals[1],
-                    state: "failed_terminal",
-                    attemptCount: 1,
-                    lastError: "hostname empty",
-                  },
-                  {
-                    ...planWithTwoExternals[2],
-                    state: "in_flight",
-                    attemptCount: 1,
-                  },
-                  planWithTwoExternals[3],
-                ],
-              }),
-            ],
-            rowCount: 1,
-          });
-        } else if (txCallIdx === 4) {
-          // After DATA_STORE success → TI_CONTAINER in_flight.
-          txQueries.push({ rows: [], rowCount: 1 });
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "executing",
-                draft_fingerprint: fp,
-                executing_lock: "lock-1",
-                planned_dispatches: [
-                  {
-                    ...planWithTwoExternals[0],
-                    state: "succeeded",
-                    attemptCount: 1,
-                  },
-                  {
-                    ...planWithTwoExternals[1],
-                    state: "failed_terminal",
-                    attemptCount: 1,
-                    lastError: "hostname empty",
-                  },
-                  {
-                    ...planWithTwoExternals[2],
-                    state: "succeeded",
-                    attemptCount: 1,
-                  },
-                  {
-                    ...planWithTwoExternals[3],
-                    state: "in_flight",
-                    attemptCount: 1,
-                  },
-                ],
-              }),
-            ],
-            rowCount: 1,
-          });
-        } else if (txCallIdx === 5) {
-          // After TI_CONTAINER success → no queued left, row finalises
-          // as failed_terminal (notify is terminal, no retryable left).
-          txQueries.push({ rows: [], rowCount: 1 });
-          txQueries.push({
-            rows: [
-              persistedRow({
-                status: "failed_terminal",
-                draft_fingerprint: fp,
-                planned_dispatches: [
-                  {
-                    ...planWithTwoExternals[0],
-                    state: "succeeded",
-                    attemptCount: 1,
-                  },
-                  {
-                    ...planWithTwoExternals[1],
-                    state: "failed_terminal",
-                    attemptCount: 1,
-                    lastError: "hostname empty",
-                  },
-                  {
-                    ...planWithTwoExternals[2],
-                    state: "succeeded",
-                    attemptCount: 1,
-                  },
-                  {
-                    ...planWithTwoExternals[3],
-                    state: "succeeded",
-                    attemptCount: 1,
-                  },
-                ],
-              }),
-            ],
-            rowCount: 1,
-          });
-        }
-        return fn({ query: txQuery });
+        return fn({
+          query: async (sql: string, params?: unknown[]) =>
+            stateful.query(sql, params),
+        });
       },
     );
 
@@ -1066,10 +914,6 @@ describe("runExecutor — post-DB failures advance to remaining dispatches (#333
 
     expect(dispatcher.managerDb).toHaveBeenCalledTimes(1);
     expect(dispatcher.managerNotify).toHaveBeenCalledTimes(1);
-    // Both externals were actually attempted — the prior cascade-on-
-    // terminal behaviour would have marked them failed_terminal with
-    // the notify error without dispatching, which is exactly the
-    // regression Reviewer Round 1 flagged.
     expect(dispatcher.external).toHaveBeenCalledTimes(2);
 
     expect(result.status).toBe("failed_terminal");
