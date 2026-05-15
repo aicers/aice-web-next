@@ -371,11 +371,17 @@ export async function runColdPhase({
  * `selectAssetDetailEventsBatch` an `ANY($3::inet[])` array larger
  * than 100, and the harness must reproduce that.
  */
-export async function sampleAddresses(pool, periodStartIso, periodEndIso) {
+export async function sampleAddresses(
+  pool,
+  periodStartIso,
+  periodEndIso,
+  menuCutoff = 0,
+) {
   const { rows } = await pool.query(SELECT_MENU_COHORT_SQL, [
     periodStartIso,
     periodEndIso,
     MENU_CANDIDATES_PER_BUCKET,
+    menuCutoff,
   ]);
   return addressesFromCohortRows(rows);
 }

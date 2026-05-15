@@ -606,8 +606,10 @@ const STRICTNESS_STOP_KEY = "triage.strictness.stop";
  * Parse the strictness slider stop id out of a hash string (#471).
  * Returns `null` when the key is absent so the caller can apply its
  * own precedence (`?strictness=` query param > hash > localStorage >
- * default). Unknown stop ids parse as `null` rather than mapping to
- * the default — the caller's precedence chain decides the fallback.
+ * default). When the key is present, the raw (decoded) value is
+ * returned even for unknown ids — the caller's precedence chain
+ * decides the fallback rather than this parser collapsing unknowns
+ * to `null`.
  */
 export function parseTriageStrictnessHash(hash: string): string | null {
   if (!hash) return null;

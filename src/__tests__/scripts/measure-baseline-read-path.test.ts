@@ -97,7 +97,7 @@ describe("measure-baseline-read-path — sampleAddresses", () => {
     return pool;
   }
 
-  it("issues the shared SELECT_MENU_COHORT_SQL with (start, end, MENU_CANDIDATES_PER_BUCKET) params", async () => {
+  it("issues the shared SELECT_MENU_COHORT_SQL with (start, end, MENU_CANDIDATES_PER_BUCKET, cutoff=0) params by default", async () => {
     const pool = makePool([]);
     await sampleAddresses(
       pool,
@@ -109,6 +109,23 @@ describe("measure-baseline-read-path — sampleAddresses", () => {
       "2026-04-12T00:00:00.000Z",
       "2026-05-12T00:00:00.000Z",
       500,
+      0,
+    ]);
+  });
+
+  it("threads an explicit menuCutoff through as the $4 bind for the strictness slider", async () => {
+    const pool = makePool([]);
+    await sampleAddresses(
+      pool,
+      "2026-04-12T00:00:00.000Z",
+      "2026-05-12T00:00:00.000Z",
+      0.5,
+    );
+    expect(pool.capturedParams).toEqual([
+      "2026-04-12T00:00:00.000Z",
+      "2026-05-12T00:00:00.000Z",
+      500,
+      0.5,
     ]);
   });
 
