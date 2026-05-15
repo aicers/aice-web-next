@@ -33,6 +33,12 @@ export interface HarnessContext {
    * actually produces, not synthesized — see harness header.
    */
   addresses: ReadonlyArray<string>;
+  /**
+   * Strictness slider cutoff fed to the menu cohort SELECT (#471).
+   * Optional so existing harness callers default to the pre-slider
+   * behavior (`0`, no additional cutoff above the cadence threshold).
+   */
+  menuCutoff?: number;
 }
 
 export interface MeasuredQuery {

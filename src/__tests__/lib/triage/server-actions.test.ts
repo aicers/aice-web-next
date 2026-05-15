@@ -974,9 +974,14 @@ describe("loadTriagePeriod (SQL data source)", () => {
     });
     mockGetCustomerPool.mockResolvedValue(pool);
     const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    // Load with the "All" strictness stop so the 0.05-score row is
+    // not filtered by the slider cutoff (#471). This test pre-dates
+    // the slider and exercises the algorithm-level menu composition
+    // when no user-side cutoff applies.
     const result = await loadTriagePeriod(
       makeSession({ roles: ["System Administrator"] }),
       PERIOD,
+      { strictness: "all" },
     );
     expect(result.assets.map((a) => a.address)).toEqual([
       "10.0.0.1",

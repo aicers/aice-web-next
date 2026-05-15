@@ -1,0 +1,81 @@
+/**
+ * Strictness slider stops (issue #471).
+ *
+ * The slider lets an analyst dial the volume of Triage menu results up
+ * or down at read time. Stops correspond to fixed cutoffs against the
+ * read-time `baseline_score = cume_dist()` projection in
+ * {@link SELECT_MENU_COHORT_SQL} — the cutoff for "Top X%" is
+ * `1 - X/100` by identity.
+ *
+ * See `RFC.md` in this directory for the rationale (stop count, labels,
+ * default position, "All" semantics, hash/query-param contract).
+ *
+ * This module is plain TypeScript (no `server-only`); both the client
+ * slider component and the server-side menu loader import it so the
+ * stop set is the single source of truth.
+ */
+
+export type StrictnessStopId = "top5" | "top20" | "top50" | "top80" | "all";
+
+export interface StrictnessStop {
+  /** Stable URL/query/localStorage token. */
+  id: StrictnessStopId;
+  /** Hint key for the slider UI translation lookup. */
+  labelKey: "top5" | "top20" | "top50" | "top80" | "all";
+  /**
+   * Cutoff applied against `baseline_score = cume_dist()` in
+   * {@link SELECT_MENU_COHORT_SQL}. A row passes when
+   * `baseline_score >= cutoff`. "All" uses `0` (no additional cutoff)
+   * — the cadence threshold owned by #456 is still in effect.
+   */
+  cutoff: number;
+}
+
+/**
+ * Ordered loose → strict. UI renders the slider with this orientation
+ * so the "tighten the result set" intent maps to "move the thumb to
+ * the right". The default stop is the middle stop (`top50`) so a
+ * first-time analyst sees a moderate volume of results.
+ */
+export const STRICTNESS_STOPS: readonly StrictnessStop[] = [
+  { id: "all", labelKey: "all", cutoff: 0 },
+  { id: "top80", labelKey: "top80", cutoff: 0.2 },
+  { id: "top50", labelKey: "top50", cutoff: 0.5 },
+  { id: "top20", labelKey: "top20", cutoff: 0.8 },
+  { id: "top5", labelKey: "top5", cutoff: 0.95 },
+] as const;
+
+export const DEFAULT_STRICTNESS_STOP_ID: StrictnessStopId = "top50";
+
+const STOPS_BY_ID = new Map<StrictnessStopId, StrictnessStop>(
+  STRICTNESS_STOPS.map((s) => [s.id, s]),
+);
+
+/**
+ * Parse an arbitrary string (URL query / hash / localStorage) into a
+ * known stop id. Unknown values map to the default — the slider must
+ * never error out on stale persisted state, and `loadTriagePeriod`
+ * must always be callable with a valid stop.
+ */
+export function parseStrictnessStopId(
+  raw: string | null | undefined,
+): StrictnessStopId {
+  if (raw === null || raw === undefined) return DEFAULT_STRICTNESS_STOP_ID;
+  if (STOPS_BY_ID.has(raw as StrictnessStopId)) {
+    return raw as StrictnessStopId;
+  }
+  return DEFAULT_STRICTNESS_STOP_ID;
+}
+
+/** Resolve a stop record by id. Unknown ids fall back to the default. */
+export function getStrictnessStop(id: StrictnessStopId): StrictnessStop {
+  return (
+    STOPS_BY_ID.get(id) ??
+    (STOPS_BY_ID.get(DEFAULT_STRICTNESS_STOP_ID) as StrictnessStop)
+  );
+}
+
+/** Convenience: cutoff value for a stop id. */
+export function cutoffForStop(id: StrictnessStopId): number {
+  return getStrictnessStop(id).cutoff;
+}

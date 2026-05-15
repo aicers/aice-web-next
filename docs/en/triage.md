@@ -25,9 +25,12 @@ The page has five regions:
 1. **Header** — title, a one-line description of the menu, and a
    **freshness badge** showing how recently the per-tenant baseline
    corpus was last ingested (see [Freshness header](#freshness-header)).
-2. **Period picker and mode toggle** — controls for the period
-   under analysis and the scoring mode (only **Baseline** is
-   wired today).
+2. **Period picker, mode toggle, scope toggle, and strictness
+   slider** — controls for the period under analysis, the scoring
+   mode (only **Baseline** is wired today), the Tier 1 / Tier 2
+   pivot scope, and the read-time **strictness** cutoff that dials
+   the menu volume up or down (see
+   [Strictness slider](#strictness-slider)).
 3. **Funnel** — three numbers for the loaded slice: how many
    events were detected (from `observed_event_meta`), how many
    passed the baseline rule (from `baseline_triaged_event`), and
@@ -282,6 +285,75 @@ Two modes are visible:
   until the policy feature ships. Hovering it reveals a tooltip
   saying **"Available once Triage policies ship."**
 
+## Strictness slider
+
+A discrete five-stop slider next to the mode toggle controls how
+wide a net the menu casts. Each stop is a fixed cutoff against
+the read-time `baseline_score` percentile (see
+[Read-time: `baseline_score` from `cume_dist()`](#read-time-baseline_score-from-cume_dist)).
+The slider is read-time only — moving it does not re-ingest, does
+not refetch from the detector store, and does not mutate the
+corpus. The same baseline algorithm, the same exclusions, and the
+same policies stay in effect; only the user-side cutoff changes.
+
+| Stop        | Cutoff (`baseline_score >=`) | Intent                            |
+|-------------|------------------------------|-----------------------------------|
+| **All**     | 0 (no user cutoff)           | "Show me as wide a net as the corpus allows." |
+| **Top 80%** | 0.20                         | Loose — wide context.             |
+| **Top 50%** | 0.50                         | Default — middle of the dial.     |
+| **Top 20%** | 0.80                         | Narrow — fewer, stronger signals. |
+| **Top 5%**  | 0.95                         | Strict — only the top of each kind's cohort. |
+
+The default stop is **Top 50%** on a first-time load. The "All"
+stop carries a tooltip explaining that it is not a literal corpus
+dump: the cadence-threshold floor still bounds what enters the
+corpus, and the menu's per-bucket candidate cap (currently 500
+per `(kind, is_unlabeled)` partition) still applies.
+
+### Persistence and shared URLs
+
+The slider position is persisted across reloads with the
+following precedence on first render:
+
+1. `?strictness=<stop>` query parameter (server-readable, primary).
+2. `#triage.strictness.stop=<stop>` URL hash fragment (preserved
+   for hash-link compatibility — the client reconciles after
+   hydration and pushes the value into the query param if the
+   hash overrides what the server loaded).
+3. `localStorage` (sticky per browser).
+4. The default stop (`Top 50%`).
+
+Moving the slider writes to all three. A reload of a shared URL
+carrying the strictness hash key restores the same stop and
+re-issues the menu read so the funnel counts and asset list
+match. Stop ids that no longer correspond to a known stop
+(stale persisted values, hand-edited URLs) fall back to the
+default rather than erroring.
+
+### Scope (foundation slice)
+
+This release ships the slider for **Baseline mode (corpus A)**
+only. The "With my policies" tab is disabled in the mode toggle
+above, so the slider drives the Baseline menu exclusively. A
+follow-up adds the corpus B equivalent once that mode lands.
+
+A second follow-up enables the **score-OR-Story** semantics
+described in the issue: today the slider is a pure score filter,
+so a Story member whose `baseline_score` falls below the chosen
+cutoff is hidden alongside any other low-score event. The
+follow-up will keep Story-protected events visible regardless of
+the slider position and add a small chain-link marker on those
+rows.
+
+> **Screenshot debt.** The slider chip row is rendered against
+> client-side state only (no live REview required), but a real
+> capture is folded into the next Triage manual-screenshot
+> refresh alongside `triage-overview-{en,ko}.png` so the slider
+> and the surrounding toolbar appear in the same image. See
+> the strictness slider RFC (`src/lib/triage/strictness/RFC.md`)
+> for the rationale behind the stop set and the persistence
+> precedence.
+
 ## Baseline scoring algorithm
 
 Phase 1.B replaces the Phase 1.A whitelist + cluster-bonus formula
@@ -396,12 +468,16 @@ per RFC §4:
   beats a balanced empty menu when the slider can't fill any
   bucket's quota.
 
-The strictness slider that drives the cutoff is owned by a
-separate change ([#471](https://github.com/aicers/aice-web-next/issues/471));
-until it ships, the menu runs with no additional cutoff above the
-cohort, so the visible rows are determined entirely by `default_N`
-quota distribution and — when activity is too thin — the
-`MIN_NONZERO_FLOOR` fallback.
+The strictness slider drives the cutoff
+([#471](https://github.com/aicers/aice-web-next/issues/471)). Stop
+positions map to a cutoff against the read-time `cume_dist()`
+projection by identity: "Top X%" applies `baseline_score >= 1 - X/100`,
+and the "All" stop applies `0` (no additional user-side cutoff —
+the cadence-threshold floor still bounds the corpus). The
+foundation slice keeps `composeMenu`'s per-bucket quota on top of
+the cutoff; Story-protected force-union is deferred to a follow-up.
+See `src/lib/triage/strictness/RFC.md` for the stop set and the
+hash/query-param persistence contract.
 
 ### `baseline_version` semantics
 
@@ -850,8 +926,9 @@ The Stories tab participates in the same URL-hash routing as
 the rest of the Triage menu. The active tab is encoded under
 `triage.tab=stories` and the focused Story under
 `triage.story=<customerId>/<storyId>`. Existing
-`triage.pivot.*` and `triage.strictness.*` keys (the latter
-landing alongside #471) are preserved across writes.
+`triage.pivot.*` and `triage.strictness.*` keys are preserved
+across writes (the latter holds the strictness slider stop id;
+see [#471](https://github.com/aicers/aice-web-next/issues/471)).
 
 A `triage.story=<id>` segment that omits the `customerId/`
 prefix is treated as stale because `event_group.id` is per
@@ -1249,9 +1326,9 @@ value is still missing once those fetches resolve, so a shared URL
 remains reload-stable even when the descendant value lives only in
 the ancestor's fetched result.
 
-The hash is namespaced under `triage.pivot.*` so it can coexist
-with future Triage hash extensions (e.g. strictness controls under
-`triage.strictness.*`) without collision.
+The hash is namespaced under `triage.pivot.*` so it coexists
+with other Triage hash extensions (e.g. the strictness slider
+under `triage.strictness.*`) without collision.
 
 ## Limitations
 

@@ -61,6 +61,15 @@ describe("read-path-sql shared module", () => {
         ctx.periodStartIso,
         ctx.periodEndIso,
         MENU_CANDIDATES_PER_BUCKET,
+        0,
+      ]);
+      expect(
+        lookup("selectMenuCohort").buildParams({ ...ctx, menuCutoff: 0.95 }),
+      ).toEqual([
+        ctx.periodStartIso,
+        ctx.periodEndIso,
+        MENU_CANDIDATES_PER_BUCKET,
+        0.95,
       ]);
       expect(lookup("countObserved").buildParams(ctx)).toEqual([
         ctx.observedFromIso,
@@ -98,6 +107,10 @@ describe("read-path-sql shared module", () => {
       expect(SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL).toMatch(
         /kind\s+NOT\s+LIKE\s+'Blocklist%'/,
       );
+    });
+
+    it("menu cohort applies the strictness slider cutoff ($4) as a final WHERE", () => {
+      expect(SELECT_MENU_COHORT_SQL).toMatch(/baseline_score\s*>=\s*\$4/);
     });
   });
 });

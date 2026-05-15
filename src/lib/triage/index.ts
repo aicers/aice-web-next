@@ -23,6 +23,15 @@ export {
   TRIAGE_BASELINE_WHITELIST,
 } from "./scoring";
 export {
+  cutoffForStop,
+  DEFAULT_STRICTNESS_STOP_ID,
+  getStrictnessStop,
+  parseStrictnessStopId,
+  STRICTNESS_STOPS,
+  type StrictnessStop,
+  type StrictnessStopId,
+} from "./strictness/stops";
+export {
   compareStringNumber,
   parseStringNumber,
   stringNumberGreaterThan,

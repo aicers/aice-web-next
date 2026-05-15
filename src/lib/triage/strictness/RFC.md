@@ -1,0 +1,208 @@
+# Strictness Slider RFC
+
+- Status: **Draft (foundation slice)**
+- Tracks: [#471](https://github.com/aicers/aice-web-next/issues/471)
+- Related RFCs: [RFC 0001 — Baseline algorithm](../../../../rfcs/0001-baseline-algorithm.md)
+
+## Summary
+
+The Triage menu's volume is determined by the baseline algorithm
+(#462) and the data; this RFC adds a discrete, user-facing strictness
+slider so an analyst can dial that volume up or down at read time
+without changing exclusions, policies, or the cadence threshold. The
+slider is a read-time SQL predicate against the `cume_dist`-projected
+`baseline_score` in the existing menu cohort SELECT; there is no
+re-ingest, no `review` round-trip, and no corpus mutation.
+
+This is the **foundation slice** of #471 — it lands the stop set, the
+SQL cutoff, the server-action plumbing, and the slider UI with
+persistence. Story-protected event force-union (branch B), the
+multi-tenant dual-cap merge, the protected-event row marker, and the
+EN/KR manual page are split into follow-up issues so this PR remains
+reviewable.
+
+## 1. Stop count and labels
+
+Five discrete stops, ordered loose → strict in the UI:
+
+| id      | Label    | Cutoff (`baseline_score >=`) |
+| ------- | -------- | ---------------------------- |
+| `all`   | All      | 0                            |
+| `top80` | Top 80%  | 0.20                         |
+| `top50` | Top 50%  | 0.50                         |
+| `top20` | Top 20%  | 0.80                         |
+| `top5`  | Top 5%   | 0.95                         |
+
+Five stops were chosen over three or seven because:
+
+- Three stops conflate "narrow" with "very narrow", which is the
+  expensive end of the dial — analysts need finer resolution there.
+- Seven stops introduces choice paralysis and visual cramping in the
+  slider chip row. Five fits in the asset list header without
+  wrapping at the common viewport widths.
+- The percentile labels read consistently in both EN and KR
+  (`Top 5% / 상위 5%`, etc.).
+
+## 2. Percentile values per stop
+
+Cutoffs follow from the `cume_dist()` identity: stop label "Top X%"
+maps to cutoff `1 - X/100`. The stop spacing is geometric on the
+strict end (`5% → 20%`) and linear on the loose end (`50% → 80%`)
+because the strict end is where one extra row of context matters most
+to the analyst, while the loose end is dominated by the per-bucket
+quota anyway (see §6).
+
+## 3. Default stop position
+
+`top50` — the middle stop. This is the recommended starting point for
+a first-time analyst:
+
+- "Top 50%" reads as a reasonable mental model ("show me the half of
+  the corpus that ranks highest"), without committing the analyst to
+  an aggressive cutoff before they have context for the window.
+- Same volume order-of-magnitude as the production default
+  (`DEFAULT_MENU_CUTOFF = 0` with the existing per-bucket quota), so
+  existing analysts will not see a step change in the rendered set
+  size on first deploy.
+
+The default lives in `stops.ts` as `DEFAULT_STRICTNESS_STOP_ID`.
+
+## 4. "All" stop semantics
+
+"All" means **no additional user-side cutoff**. The cadence threshold
+floor (#456) is still in effect, and the menu SELECT retains the
+per-bucket candidate cap from `read-path-sql.mjs`
+(`bucket_rn <= MENU_CANDIDATES_PER_BUCKET`, currently 500). The
+per-bucket `composeMenu` quota also still applies in this foundation
+slice; lifting the quota at "All" is part of the follow-up that ships
+the `defaultN` multiplier table (see §6).
+
+The slider's hover tooltip must surface this so analysts understand
+"All" is not a literal corpus dump.
+
+## 5. Empty-window behavior contract
+
+A zero-row window must render the funnel and the slider with all
+counts at `0`, with no error. The bare aggregate without `GROUP BY`
+in PostgreSQL always emits one row even on empty input, so the
+read-time `cume_dist()` CTE collapses to zero rows and every
+downstream count is `0` by construction.
+
+Acceptance fixture: opening the menu on a window with no triaged
+events shows the funnel and the slider with zero counts, no error.
+
+## 6. Slider × `composeMenu` quota interaction
+
+**Working choice for the foundation slice: option (a) — slider as an
+additional filter ON TOP of quota.** The slider cutoff is applied
+inside the `ranked` CTE of `SELECT_MENU_COHORT_SQL` (after the
+per-bucket candidate cap but before `composeMenu`'s quota), so a
+stricter slider narrows the candidates. The quota is unchanged from
+its #462 / `FINAL_COUNT` curve value.
+
+This matches the "narrow the result set" intent for the strict end of
+the slider, where most analyst time is spent. The "loose end widens
+past the quota" intent (option (b)) is documented in #471 but is
+deferred to a follow-up because it requires:
+
+- a per-stop `defaultN` multiplier table reviewed by UX, and
+- a "no quota" code path at the "All" stop that interacts with the
+  `MIN_NONZERO_FLOOR` fallback in `composeMenu`.
+
+Both of those land in the follow-up issue that ships branch B
+(Story-protected force-union) so the protection contract and the
+quota lift are reviewed together.
+
+## 7. URL hash × SSR strategy
+
+**Working choice: option (b) — replicate in query param.** Slider
+position lives in both `?strictness=<id>` (server-readable, primary on
+first render) and `#triage.strictness.stop=<id>` (preserved for
+hash-link compatibility). On first SSR render, the page reads
+`?strictness=` and threads the cutoff into `loadTriagePeriod`. The
+client slider reconciles the URL hash after hydration; the URL hash is
+the secondary source of truth for share links.
+
+Precedence on first render:
+`?strictness=` > `#triage.strictness.stop=` > `localStorage` > default.
+
+Slider movement writes to:
+
+- `?strictness=` via `router.replace` (replaces the history entry,
+  triggers a server re-fetch).
+- `#triage.strictness.stop=` in lock-step (preserves the hash key
+  alongside pivot/story keys).
+- `localStorage` (sticky per user account; cleared on no-strict-link
+  navigation by the analyst rather than automatically).
+
+Per-customer or per-user-account preference storage is out of scope.
+
+## 7a. Degenerate index (`baseline_triaged_event_event_time_score_idx`)
+
+The composite index added in
+`migrations/customer/0003_baseline_corpus_a.sql:62-63`
+(`event_time DESC, baseline_score DESC`) does NOT serve the slider:
+`baseline_score` is NULL on every Phase 1.B row (computed at read
+time via `cume_dist()` over `raw_score`), so the second column
+collapses and the index degenerates to an `event_time` btree the
+existing `baseline_triaged_event_event_time_idx` already covers.
+
+Resolution is **deferred** alongside the measurement gate
+(#471 Performance §2 / §5). The follow-up that ships branch B
+runs `EXPLAIN ANALYZE` on a production-scale corpus and picks one
+of:
+
+- drop `baseline_triaged_event_event_time_score_idx` (no observed
+  benefit over the existing `event_time` index), or
+- rebuild it as `(event_time DESC, raw_score DESC)` if the
+  planner can use the `raw_score` co-locality to skip-sort within
+  the kind partitions.
+
+This PR updates the migration comment so it no longer falsely
+names the slider as the index's consumer, but does not change the
+index itself — that requires a schema migration reviewed against
+real-data `EXPLAIN ANALYZE` output.
+
+## 8. Story-protected hard caps
+
+**Deferred.** The branch B force-union, the
+`STORY_PROTECTED_HARD_CAP` constant, and the per-tenant defense-in-
+depth `LIMIT` ship in a follow-up issue together with the protected-
+event row marker and the truncation-counter UX copy. The follow-up
+inherits the read-path SQL shape this PR introduces (cutoff parameter
+in the `ranked` CTE) and adds branch B as a parallel SELECT — no
+schema change.
+
+In this foundation slice, the slider behaves as the "score-only"
+filter: a low-score Story member at the strict end is hidden until the
+follow-up lands. The acceptance fixtures in #471 that depend on
+branch B (the 0.30 Story member at Top 5%) will fail in this slice by
+design and pass after the follow-up.
+
+## 9. UX review sign-off
+
+UX review is **pending** for the foundation slice. The slider's
+discrete five-stop layout, label copy in EN/KR, and the funnel
+preview behavior (see §10) need a UX walkthrough before the follow-up
+ships branch B and the protected-event marker.
+
+## 10. Funnel preview
+
+In the foundation slice, the funnel renders the `triaged` count from
+the existing `COUNT_TRIAGED_SQL` aggregate (unaffected by the slider —
+it is the per-window corpus row count, not the displayed-set count).
+The "shown" count is the size of the assembled menu rows after
+`composeMenu` + the cross-tenant `TRIAGE_HARD_EVENT_CAP`. The funnel
+labels do not currently distinguish "eligible by cutoff" vs "shown
+after quota"; that distinction lands in the follow-up alongside the
+`eligible_top_n` SQL column and the per-stop hint preview.
+
+## Out of scope
+
+- Corpus B ("With my policies") slider activation — separate follow-up
+  per the issue body.
+- Per-selector weights (S1–S4 toggles).
+- Per-asset Top-N slider.
+- Asymmetric thresholds for asset-score vs event-score.
+- Phase 2 push payload integration (the slider is read-time UI; the
+  push is opportunistic and cursor-based per RFC 0002).

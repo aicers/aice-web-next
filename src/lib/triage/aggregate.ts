@@ -8,6 +8,7 @@
  */
 
 import { baselineScore } from "./scoring";
+import { DEFAULT_STRICTNESS_STOP_ID } from "./strictness/stops";
 import type {
   ScoredTriageEvent,
   TriageAsset,
@@ -206,5 +207,6 @@ export function aggregateTriageEvents(
     events: scoredEvents,
     observedDenominatorTruncated: false,
     freshness: EMPTY_FRESHNESS,
+    strictness: DEFAULT_STRICTNESS_STOP_ID,
   };
 }

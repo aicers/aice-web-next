@@ -56,9 +56,18 @@ CREATE INDEX IF NOT EXISTS baseline_triaged_event_event_time_idx
     ON baseline_triaged_event (event_time DESC);
 CREATE INDEX IF NOT EXISTS baseline_triaged_event_sensor_event_time_idx
     ON baseline_triaged_event (sensor, event_time DESC);
--- Composite index for the menu's typical filter pattern: time window +
--- score threshold. Used by 1B-3 (Baseline mode SELECT) and the future
--- strictness slider in #471.
+-- Composite index originally intended to serve the menu's "time window +
+-- score threshold" filter pattern. In practice `baseline_score` is NULL
+-- on every Phase 1.B row (the column is read-time-only — see
+-- `src/lib/triage/baseline/pager.ts` and §3 of the Baseline RFC), so the
+-- second column is all-NULL and the index degenerates to an `event_time`
+-- btree that the existing `baseline_triaged_event_event_time_idx` already
+-- covers. The #471 strictness slider does NOT use it: its cutoff
+-- compares against the SELECT-time `cume_dist()` projection over
+-- `raw_score`, not the stored column. Kept here until the strictness
+-- slider's follow-up runs the measurement gate (issue #471 Performance
+-- §2 / §5) and decides whether to drop this index or rebuild it as
+-- `(event_time DESC, raw_score DESC)`.
 CREATE INDEX IF NOT EXISTS baseline_triaged_event_event_time_score_idx
     ON baseline_triaged_event (event_time DESC, baseline_score DESC);
 CREATE INDEX IF NOT EXISTS baseline_triaged_event_host_idx

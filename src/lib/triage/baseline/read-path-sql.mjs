@@ -47,9 +47,13 @@ export const TRIAGE_ASSET_DETAIL_LIMIT = 50;
  * `server-actions.ts` for the full RFC §3 / §4 derivation.
  *
  * Parameters:
- *   $1 :: timestamptz — period start (inclusive)
- *   $2 :: timestamptz — period end (exclusive)
- *   $3 :: int         — per-bucket row cap (`MENU_CANDIDATES_PER_BUCKET`)
+ *   $1 :: timestamptz       — period start (inclusive)
+ *   $2 :: timestamptz       — period end (exclusive)
+ *   $3 :: int               — per-bucket row cap (`MENU_CANDIDATES_PER_BUCKET`)
+ *   $4 :: double precision  — strictness slider cutoff (#471). Rows
+ *                              pass when `baseline_score >= $4`.
+ *                              `0` matches the pre-slider behavior
+ *                              (no additional cutoff).
  */
 export const SELECT_MENU_COHORT_SQL = `WITH scored AS (
        SELECT event_key,
@@ -112,6 +116,7 @@ export const SELECT_MENU_COHORT_SQL = `WITH scored AS (
             cohort_count::text                    AS cohort_count
        FROM ranked
       WHERE bucket_rn <= $3
+        AND baseline_score >= $4
       ORDER BY baseline_score DESC, event_time DESC, event_key DESC`;
 
 /**
@@ -237,6 +242,7 @@ export const MEASURED_QUERIES = [
       ctx.periodStartIso,
       ctx.periodEndIso,
       MENU_CANDIDATES_PER_BUCKET,
+      ctx.menuCutoff ?? 0,
     ],
   },
   {
