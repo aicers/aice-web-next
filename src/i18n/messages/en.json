@@ -2142,7 +2142,7 @@
     "strictnessSlider": {
       "legend": "Strictness",
       "hint": "Read-time cutoff over the kind-normalized baseline percentile. Loose shows a wider net; strict only the strongest signals.",
-      "allStopHint": "No user-side cutoff. The cadence-threshold floor still bounds the corpus; \"All\" is not a literal dump.",
+      "allStopHint": "No user-side cutoff. The cadence-threshold floor, the per-bucket SQL candidate cap, and the menu's per-bucket quota still bound the result; \"All\" is not a literal corpus dump.",
       "stops": {
         "all": "All",
         "top80": "Top 80%",

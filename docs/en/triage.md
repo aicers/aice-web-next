@@ -406,11 +406,16 @@ The strictness slider drives the cutoff
 ([#471](https://github.com/aicers/aice-web-next/issues/471)). Stop
 positions map to a cutoff against the read-time `cume_dist()`
 projection by identity: "Top X%" applies `baseline_score >= 1 - X/100`,
-and the "All" stop applies `0` (no additional user-side cutoff —
-the cadence-threshold floor still bounds the corpus). The
-foundation slice keeps `composeMenu`'s per-bucket quota on top of
-the cutoff; Story-protected force-union is deferred to a follow-up.
-See `src/lib/triage/strictness/RFC.md` for the stop set and the
+and the "All" stop applies `0` (no additional user-side cutoff — at
+the "All" stop the cadence-threshold floor, the per-bucket SQL
+candidate cap, and the per-bucket `composeMenu` quota still bound the
+result). The foundation slice keeps `composeMenu`'s per-bucket quota
+on top of the cutoff; Story-protected force-union is deferred to a
+follow-up. The asset-detail panel also obeys the selected stop — its
+SELECT applies the cutoff inside the `filtered` CTE, before the
+per-address newest-N `ROW_NUMBER()`, so an asset surfaced at a strict
+stop does not show sub-cutoff events in its detail rows. See
+`src/lib/triage/strictness/RFC.md` for the stop set and the
 hash/query-param persistence contract.
 
 ### `baseline_version` semantics

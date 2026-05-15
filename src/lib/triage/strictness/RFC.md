@@ -80,8 +80,14 @@ per-bucket `composeMenu` quota also still applies in this foundation
 slice; lifting the quota at "All" is part of the follow-up that ships
 the `defaultN` multiplier table (see §6).
 
-The slider's hover tooltip must surface this so analysts understand
-"All" is not a literal corpus dump.
+The slider's hover tooltip must surface ALL THREE of these bounds (the
+cadence-threshold floor, the per-bucket SQL candidate cap, and the
+`composeMenu` quota), not only the cadence floor. With option (a)
+("cutoff on top of unchanged quota") the per-bucket quota still caps
+the rendered set at "All", and naming only the cadence floor would
+leave the analyst expecting a wider result than the menu can produce
+in this slice. EN/KR copy lives at
+`src/i18n/messages/{en,ko}.json::strictnessSlider.allStopHint`.
 
 ## 5. Empty-window behavior contract
 

@@ -39,7 +39,10 @@ export interface HarnessContext {
    * **not** threaded into the menu cohort SELECT — it is applied in
    * `composeMenu` (RFC §6 option (a)). Retained on the context so the
    * harness's address sampler can replay the production `composeMenu`
-   * call with the same cutoff via `addressesFromCohortRows`.
+   * call with the same cutoff via `addressesFromCohortRows`, and so
+   * `selectAssetDetailEventsBatch` (which DOES apply the cutoff in
+   * SQL, since the detail-row path has no bucket aggregates to
+   * preserve) sees the same value.
    */
   menuCutoff?: number;
 }

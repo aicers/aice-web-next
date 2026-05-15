@@ -277,7 +277,7 @@ async function loadCustomerSlice(
         addresses,
         signal,
       ),
-      selectAssetDetailEventsBatch(pool, period, addresses, signal),
+      selectAssetDetailEventsBatch(pool, period, addresses, menuCutoff, signal),
     ]);
 
   const observedByAddress = new Map<string, number>();
@@ -572,18 +572,35 @@ function aggregateAssetsFromCappedEvents(
  * detail-panel score for any row equals the score it would carry in
  * the menu — the address filter is applied *after* the window
  * function, not inside the partition.
+ *
+ * `menuCutoff` is the strictness slider's cutoff (#471). It is applied
+ * inside the SQL `filtered` CTE **before** the per-address
+ * `ROW_NUMBER()` so that newer sub-cutoff rows cannot push qualifying
+ * older rows out of the newest-`TRIAGE_ASSET_DETAIL_LIMIT` window for
+ * an address. This is the right place for the cutoff on the detail
+ * path (unlike the menu cohort path, RFC §6) because the detail rows
+ * have no bucket aggregates to preserve — the analyst contract is
+ * simply "every row shown obeys the selected stop's `baseline_score >=
+ * cutoff`".
  */
 async function selectAssetDetailEventsBatch(
   pool: pg.Pool,
   period: TriagePeriod,
   addresses: ReadonlyArray<string>,
+  menuCutoff: number,
   signal: AbortSignal | undefined,
 ): Promise<Map<string, BaselineEventRow[]>> {
   signal?.throwIfAborted();
   if (addresses.length === 0) return new Map();
   const { rows } = await pool.query<BaselineEventRow>(
     SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL,
-    [period.startIso, period.endIso, [...addresses], TRIAGE_ASSET_DETAIL_LIMIT],
+    [
+      period.startIso,
+      period.endIso,
+      [...addresses],
+      TRIAGE_ASSET_DETAIL_LIMIT,
+      menuCutoff,
+    ],
   );
   const grouped = new Map<string, BaselineEventRow[]>();
   for (const row of rows) {

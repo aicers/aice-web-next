@@ -379,12 +379,16 @@ cume_dist() OVER (
 ([#471](https://github.com/aicers/aice-web-next/issues/471)). 정지
 위치는 항등식에 의해 읽기 시점 `cume_dist()` 투영에 대한
 컷오프로 매핑됩니다: "상위 X%"는 `baseline_score >= 1 - X/100`을,
-"전체" 정지는 `0`(사용자 컷오프 없음 — 케이던스 임계값 하한은
-여전히 코퍼스를 제한)을 적용합니다. 토대 분량 구현은 컷오프
-위에 `composeMenu`의 버킷별 할당량을 유지하며, 스토리 보호
-강제 합집합은 후속 작업으로 미룹니다. 정지 집합과 해시/쿼리
-파라미터 영속화 계약은 `src/lib/triage/strictness/RFC.md`를
-참고하세요.
+"전체" 정지는 `0`(사용자 컷오프 없음 — "전체" 정지에서도 케이던스
+임계값 하한, 버킷별 SQL 후보 상한, 그리고 버킷별 `composeMenu`
+할당량이 여전히 결과를 제한합니다)을 적용합니다. 토대 분량
+구현은 컷오프 위에 `composeMenu`의 버킷별 할당량을 유지하며,
+스토리 보호 강제 합집합은 후속 작업으로 미룹니다. 자산 상세
+패널 역시 선택된 정지를 따릅니다 — 해당 SELECT는 `filtered` CTE
+안에서, 자산별 최신 N개 `ROW_NUMBER()` 부여 전에 컷오프를
+적용하므로 엄격한 정지에서 노출된 자산이 컷오프 미달 이벤트를
+상세 행에 노출하지 않습니다. 정지 집합과 해시/쿼리 파라미터
+영속화 계약은 `src/lib/triage/strictness/RFC.md`를 참고하세요.
 
 ### `baseline_version` 의미 { #baseline-version-의미 }
 

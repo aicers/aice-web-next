@@ -23,7 +23,13 @@ export interface TriageStrictnessSliderLabels {
   /** Hover tooltip / aria-description for the slider as a whole. */
   hint: string;
   stops: Record<StrictnessStopId, string>;
-  /** "All" stop tooltip explaining cadence-threshold floor. */
+  /**
+   * "All" stop tooltip. Names the caps that still apply at the "All"
+   * stop in this foundation slice (RFC §4): the cadence-threshold
+   * floor, the per-bucket SQL candidate cap, and the menu's per-bucket
+   * `composeMenu` quota. Lifting the quota at "All" rides along with
+   * option (b) in the follow-up that ships branch B.
+   */
   allStopHint: string;
 }
 
