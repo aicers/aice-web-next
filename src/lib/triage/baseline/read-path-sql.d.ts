@@ -33,6 +33,18 @@ export interface HarnessContext {
    * actually produces, not synthesized — see harness header.
    */
   addresses: ReadonlyArray<string>;
+  /**
+   * Strictness slider cutoff (#471). Optional; defaults to `0` (no
+   * additional cutoff above the cadence threshold). The cutoff is
+   * **not** threaded into the menu cohort SELECT — it is applied in
+   * `composeMenu` (RFC §6 option (a)). Retained on the context so the
+   * harness's address sampler can replay the production `composeMenu`
+   * call with the same cutoff via `addressesFromCohortRows`, and so
+   * `selectAssetDetailEventsBatch` (which DOES apply the cutoff in
+   * SQL, since the detail-row path has no bucket aggregates to
+   * preserve) sees the same value.
+   */
+  menuCutoff?: number;
 }
 
 export interface MeasuredQuery {

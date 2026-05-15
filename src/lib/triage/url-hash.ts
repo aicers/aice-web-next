@@ -599,3 +599,62 @@ export function replaceTriagePivotHash(
   const merged = [...foreign, ours].filter((s) => s.length > 0).join("&");
   return merged;
 }
+
+const STRICTNESS_STOP_KEY = "triage.strictness.stop";
+
+/**
+ * Parse the strictness slider stop id out of a hash string (#471).
+ * Returns `null` when the key is absent so the caller can apply its
+ * own precedence (`?strictness=` query param > hash > localStorage >
+ * default). When the key is present, the raw (decoded) value is
+ * returned even for unknown ids — the caller's precedence chain
+ * decides the fallback rather than this parser collapsing unknowns
+ * to `null`.
+ */
+export function parseTriageStrictnessHash(hash: string): string | null {
+  if (!hash) return null;
+  const trimmed = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (trimmed.length === 0) return null;
+  for (const segment of trimmed.split("&")) {
+    if (segment.length === 0) continue;
+    const eq = segment.indexOf("=");
+    if (eq <= 0) continue;
+    const key = segment.slice(0, eq);
+    if (key !== STRICTNESS_STOP_KEY) continue;
+    try {
+      return decodeURIComponent(segment.slice(eq + 1));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Update only the `triage.strictness.stop` key inside a hash string,
+ * preserving every other segment (`triage.pivot.*`, `triage.tab`,
+ * `triage.story`). `stopId = null` clears the key entirely so a
+ * default-stop reload does not write a redundant segment back into
+ * the URL.
+ */
+export function replaceTriageStrictnessHash(
+  existingHash: string,
+  stopId: string | null,
+): string {
+  const trimmed = existingHash.startsWith("#")
+    ? existingHash.slice(1)
+    : existingHash;
+  const foreign: string[] = [];
+  for (const segment of trimmed.split("&")) {
+    if (segment.length === 0) continue;
+    const eq = segment.indexOf("=");
+    const key = eq > 0 ? segment.slice(0, eq) : segment;
+    if (key === STRICTNESS_STOP_KEY) continue;
+    foreign.push(segment);
+  }
+  const entries =
+    stopId === null
+      ? foreign
+      : [...foreign, `${STRICTNESS_STOP_KEY}=${encodeURIComponent(stopId)}`];
+  return entries.filter((s) => s.length > 0).join("&");
+}

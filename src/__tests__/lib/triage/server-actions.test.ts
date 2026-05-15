@@ -612,10 +612,13 @@ describe("loadTriagePeriod (SQL data source)", () => {
       detailRowsByAddress: { "10.0.0.1": [] },
       observedPerAsset: [{ address: "10.0.0.1", detected_count: "1" }],
     });
-    // Customer 2: one LOW-score row from a NEWER time. Under the old
-    // time-only sort it would land ahead of the customer-1 row, so
-    // under a tight cap it would survive while the high-score row was
-    // evicted. The fix puts the high-score row first regardless of age.
+    // Customer 2: one LOWER-score row from a NEWER time. Under the
+    // old time-only sort it would land ahead of the customer-1 row,
+    // so under a tight cap it would survive while the high-score row
+    // was evicted. The fix puts the high-score row first regardless
+    // of age. Both scores stay above the default strictness cutoff
+    // (`top50` → 0.50) so the slider's per-tenant filter does not
+    // mask the cross-tenant merge ordering this test exercises.
     const newTs = new Date("2026-05-09T11:30:00.000Z");
     const customer2 = makeMockPool({
       customerId: 2,
@@ -623,7 +626,7 @@ describe("loadTriagePeriod (SQL data source)", () => {
         buildCohortRow({
           eventKey: "c2-low",
           address: "10.0.0.2",
-          baselineScore: 0.01,
+          baselineScore: 0.55,
           eventTime: newTs,
           bucketCount: 1,
           cohortCount: 1,
@@ -648,7 +651,7 @@ describe("loadTriagePeriod (SQL data source)", () => {
     });
     expect(result.events[1]).toMatchObject({
       customerId: 2,
-      score: 0.01,
+      score: 0.55,
       time: newTs.toISOString(),
     });
   });
@@ -931,6 +934,59 @@ describe("loadTriagePeriod (SQL data source)", () => {
     expect(detailQueries[0].params?.[2]).toEqual(
       expect.arrayContaining(["10.0.0.1", "10.0.0.10"]),
     );
+    // Strictness slider cutoff (#471 Round 4): the asset-detail SQL
+    // receives the cutoff as its 5th bind. Default load uses the
+    // `top50` stop (`cutoff = 0.5`).
+    expect(detailQueries[0].params?.[4]).toBe(0.5);
+  });
+
+  it("threads the selected strictness cutoff into the asset-detail SQL as its 5th bind (#471 Round 4)", async () => {
+    // Regression for Round 4 Item 1: the asset-detail panel used to
+    // ignore the slider and fetch the full post-Blocklist cohort for
+    // each address, allowing a strict-stop asset to show sub-cutoff
+    // detail rows. The cutoff now lives in the SQL `filtered` CTE so
+    // every detail row obeys `baseline_score >= cutoff`.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const { pool, queries } = makeMockPool({
+      customerId: 1,
+      cohortRows: [
+        buildCohortRow({
+          eventKey: "1",
+          address: "10.0.0.1",
+          baselineScore: 0.99,
+          bucketCount: 1,
+          cohortCount: 1,
+          eventTime: new Date("2026-05-09T11:30:00.000Z"),
+        }),
+      ],
+      detailRowsByAddress: {
+        "10.0.0.1": [{ event_key: "1", baseline_score: 0.99 }],
+      },
+      observedTotal: 1,
+      triagedTotal: 1,
+    });
+    mockGetCustomerPool.mockResolvedValue(pool);
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      { strictness: "top5" },
+    );
+    const detailQueries = queries.filter(
+      (q) =>
+        q.sql.includes("cume_dist()") &&
+        q.sql.includes("PARTITION BY orig_addr"),
+    );
+    expect(detailQueries).toHaveLength(1);
+    // `top5` → `baseline_score >= 0.95` cutoff.
+    expect(detailQueries[0].params?.[4]).toBe(0.95);
+    // The SQL applies the cutoff inside the `filtered` CTE, before
+    // the per-address ROW_NUMBER() partition — verified at the SQL
+    // level in `read-path-sql.test.ts`. Here we only assert the bind
+    // shape so a runtime regression would also trip a focused mock
+    // assertion.
+    expect(detailQueries[0].sql).toMatch(/baseline_score\s*>=\s*\$5/);
   });
 
   it("derives the asset list from the §4 final_menu_rows (rows outside the menu do not rank)", async () => {
@@ -974,9 +1030,14 @@ describe("loadTriagePeriod (SQL data source)", () => {
     });
     mockGetCustomerPool.mockResolvedValue(pool);
     const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    // Load with the "All" strictness stop so the 0.05-score row is
+    // not filtered by the slider cutoff (#471). This test pre-dates
+    // the slider and exercises the algorithm-level menu composition
+    // when no user-side cutoff applies.
     const result = await loadTriagePeriod(
       makeSession({ roles: ["System Administrator"] }),
       PERIOD,
+      { strictness: "all" },
     );
     expect(result.assets.map((a) => a.address)).toEqual([
       "10.0.0.1",

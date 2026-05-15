@@ -14,6 +14,7 @@ import {
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import { ReviewForbiddenError } from "@/lib/review/errors";
 import {
+  parseStrictnessStopId,
   parseTriagePeriod,
   TRIAGE_HARD_EVENT_CAP,
   TriageForbiddenError,
@@ -63,12 +64,15 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
   const rawStart = typeof rawParams.start === "string" ? rawParams.start : null;
   const rawEnd = typeof rawParams.end === "string" ? rawParams.end : null;
   const { period, clamped } = parseTriagePeriod(rawStart, rawEnd);
+  const rawStrictness =
+    typeof rawParams.strictness === "string" ? rawParams.strictness : null;
+  const strictness = parseStrictnessStopId(rawStrictness);
 
   let initialState: TriageShellState;
   let stories: TriageStory[] = [];
   let storiesTruncated = false;
   try {
-    const result = await loadTriagePeriod(session, period);
+    const result = await loadTriagePeriod(session, period, { strictness });
     initialState = { status: "ok", result };
     // Stories load runs in parallel with the rest of the page only
     // when the asset-list read succeeded; if `triage:read` was denied
@@ -152,6 +156,18 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
       tier2: t("scopeToggle.tier2"),
       tier1Hint: t("scopeToggle.tier1Hint"),
       tier2Hint: t("scopeToggle.tier2Hint"),
+    },
+    strictnessSlider: {
+      legend: t("strictnessSlider.legend"),
+      hint: t("strictnessSlider.hint"),
+      allStopHint: t("strictnessSlider.allStopHint"),
+      stops: {
+        all: t("strictnessSlider.stops.all"),
+        top80: t("strictnessSlider.stops.top80"),
+        top50: t("strictnessSlider.stops.top50"),
+        top20: t("strictnessSlider.stops.top20"),
+        top5: t("strictnessSlider.stops.top5"),
+      },
     },
     baseline: {
       funnel: {
@@ -450,6 +466,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         initialPeriod={period}
         initialState={initialState}
         initialClamped={clamped}
+        initialStrictness={strictness}
         customerScope={cacheKeyForCustomerScope(scope)}
         initialStories={stories}
         initialStoriesTruncated={storiesTruncated}

@@ -26,6 +26,7 @@ export function sampleAddresses(
   pool: SampleAddressesPool,
   periodStartIso: string,
   periodEndIso: string,
+  menuCutoff?: number,
 ): Promise<string[]>;
 
 export interface SpawnSyncResultLike {

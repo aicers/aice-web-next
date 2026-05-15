@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   parseTriagePivotHash,
   parseTriageStoriesHash,
+  parseTriageStrictnessHash,
   pivotHashFromTrail,
   replaceTriagePivotHash,
   replaceTriageStoriesHash,
+  replaceTriageStrictnessHash,
   serializeTriagePivotHash,
   serializeTriageStoriesHash,
 } from "@/lib/triage/url-hash";
@@ -534,5 +536,67 @@ describe("replaceTriageStoriesHash", () => {
     expect(next).toContain("triage.story=42%2F7");
     expect(next).not.toContain("triage.tab=pivot");
     expect(next).not.toContain("triage.story=99%2F1");
+  });
+});
+
+describe("parseTriageStrictnessHash", () => {
+  it("returns null for empty hash", () => {
+    expect(parseTriageStrictnessHash("")).toBeNull();
+    expect(parseTriageStrictnessHash("#")).toBeNull();
+  });
+
+  it("returns the stop id when present", () => {
+    expect(parseTriageStrictnessHash("#triage.strictness.stop=top5")).toBe(
+      "top5",
+    );
+    expect(
+      parseTriageStrictnessHash(
+        "#triage.pivot.asset=1%2F10.0.0.1&triage.strictness.stop=top20",
+      ),
+    ).toBe("top20");
+  });
+
+  it("returns the raw value even for unknown ids — caller decides fallback", () => {
+    expect(
+      parseTriageStrictnessHash("#triage.strictness.stop=somethingNew"),
+    ).toBe("somethingNew");
+  });
+
+  it("returns null when the strictness key is absent", () => {
+    expect(parseTriageStrictnessHash("#triage.pivot.asset=1%2F10.0.0.1")).toBe(
+      null,
+    );
+  });
+});
+
+describe("replaceTriageStrictnessHash", () => {
+  it("inserts the strictness key while preserving foreign keys", () => {
+    const next = replaceTriageStrictnessHash(
+      "#triage.pivot.asset=1%2F10.0.0.1&triage.tab=pivot",
+      "top5",
+    );
+    expect(next).toContain("triage.pivot.asset=1%2F10.0.0.1");
+    expect(next).toContain("triage.tab=pivot");
+    expect(next).toContain("triage.strictness.stop=top5");
+  });
+
+  it("replaces an existing strictness key, not duplicates it", () => {
+    const next = replaceTriageStrictnessHash(
+      "#triage.strictness.stop=top80&triage.tab=stories",
+      "top5",
+    );
+    const occurrences = next.split("triage.strictness.stop=").length - 1;
+    expect(occurrences).toBe(1);
+    expect(next).toContain("triage.strictness.stop=top5");
+    expect(next).toContain("triage.tab=stories");
+  });
+
+  it("clears the strictness key when stopId is null", () => {
+    const next = replaceTriageStrictnessHash(
+      "#triage.strictness.stop=top5&triage.tab=stories",
+      null,
+    );
+    expect(next).not.toContain("triage.strictness.stop");
+    expect(next).toBe("triage.tab=stories");
   });
 });

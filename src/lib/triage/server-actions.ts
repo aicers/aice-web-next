@@ -27,6 +27,11 @@ import { buildDispatchContext } from "./dispatch-context";
 import type { TriagePeriod } from "./period";
 import { getCustomerPool } from "./policy/customer-db";
 import {
+  cutoffForStop,
+  DEFAULT_STRICTNESS_STOP_ID,
+  type StrictnessStopId,
+} from "./strictness/stops";
+import {
   type ScoredTriageEvent,
   TRIAGE_HARD_EVENT_CAP,
   type TriageAsset,
@@ -122,13 +127,6 @@ interface MenuCohortDbRow extends BaselineEventRow {
   cohort_count: string;
 }
 
-/**
- * Read-time CUME_DIST contract from RFC §3 — production callers pass
- * no additional cutoff (slider owned by #471). Tests inject a strict
- * cutoff to drive the §6 `MIN_NONZERO_FLOOR` fallback.
- */
-const DEFAULT_MENU_CUTOFF = 0;
-
 interface ObservedCountRow {
   address: string;
   detected_count: string;
@@ -216,6 +214,7 @@ async function loadCustomerSlice(
   period: TriagePeriod,
   observedFromIso: string,
   observedDenominatorTruncated: boolean,
+  menuCutoff: number,
   signal: AbortSignal | undefined,
 ): Promise<CustomerSlice> {
   signal?.throwIfAborted();
@@ -225,11 +224,17 @@ async function loadCustomerSlice(
   signal?.throwIfAborted();
 
   // 1. §4/§6 menu cohort — one SQL pass returns the post-exclusion
-  //    cohort aggregates plus per-bucket top-K candidate rows.
+  //    cohort aggregates plus per-bucket top-K candidate rows. The
+  //    strictness slider's cutoff (#471) is NOT applied at the SQL
+  //    level — `composeMenu` owns the filter (RFC §6 option (a),
+  //    "cutoff on top of unchanged quota") so the full-cohort bucket
+  //    aggregates that drive quota allocation are not narrowed by the
+  //    slider. Filtering in SQL would drop buckets whose rows all sit
+  //    below the cutoff and silently redistribute their quota.
   const cohort = await selectMenuCohort(pool, period, signal);
   signal?.throwIfAborted();
 
-  const menuResult = composeMenuFromCohort(cohort);
+  const menuResult = composeMenuFromCohort(cohort, menuCutoff);
   const menuRows = menuResult.rows;
   const dbRowByKey = new Map(cohort.candidates.map((r) => [r.event_key, r]));
 
@@ -272,7 +277,7 @@ async function loadCustomerSlice(
         addresses,
         signal,
       ),
-      selectAssetDetailEventsBatch(pool, period, addresses, signal),
+      selectAssetDetailEventsBatch(pool, period, addresses, menuCutoff, signal),
     ]);
 
   const observedByAddress = new Map<string, number>();
@@ -435,12 +440,14 @@ function buildCohort(rows: ReadonlyArray<MenuCohortDbRow>): MenuCohort {
 
 /**
  * Run the §4/§6 composition over the SQL-delivered cohort aggregates
- * and per-bucket candidates. Production callers pass the
- * {@link DEFAULT_MENU_CUTOFF} (no additional cutoff above the
- * cohort) because the slider that owns the cutoff dial is in #471;
- * output is determined entirely by quota + fallback alone.
+ * and per-bucket candidates. `menuCutoff` carries the strictness
+ * slider's cutoff (#471); the "All" stop passes `0` (no additional
+ * cutoff above the cadence threshold). The cutoff is applied here in
+ * the algorithm (not in the read-path SQL) so the full-cohort bucket
+ * aggregates that drive `composeMenu`'s quota allocation are
+ * preserved — RFC §6 option (a), "cutoff on top of unchanged quota".
  */
-function composeMenuFromCohort(cohort: MenuCohort) {
+function composeMenuFromCohort(cohort: MenuCohort, menuCutoff: number) {
   const candidates: MenuRow[] = cohort.candidates.map((r) => ({
     eventKey: r.event_key,
     eventTime: r.event_time,
@@ -454,7 +461,7 @@ function composeMenuFromCohort(cohort: MenuCohort) {
     postExclusionCount: cohort.postExclusionCount,
     bucketAggregates: cohort.bucketAggregates,
     candidates,
-    cutoff: DEFAULT_MENU_CUTOFF,
+    cutoff: menuCutoff,
   });
 }
 
@@ -565,18 +572,35 @@ function aggregateAssetsFromCappedEvents(
  * detail-panel score for any row equals the score it would carry in
  * the menu — the address filter is applied *after* the window
  * function, not inside the partition.
+ *
+ * `menuCutoff` is the strictness slider's cutoff (#471). It is applied
+ * inside the SQL `filtered` CTE **before** the per-address
+ * `ROW_NUMBER()` so that newer sub-cutoff rows cannot push qualifying
+ * older rows out of the newest-`TRIAGE_ASSET_DETAIL_LIMIT` window for
+ * an address. This is the right place for the cutoff on the detail
+ * path (unlike the menu cohort path, RFC §6) because the detail rows
+ * have no bucket aggregates to preserve — the analyst contract is
+ * simply "every row shown obeys the selected stop's `baseline_score >=
+ * cutoff`".
  */
 async function selectAssetDetailEventsBatch(
   pool: pg.Pool,
   period: TriagePeriod,
   addresses: ReadonlyArray<string>,
+  menuCutoff: number,
   signal: AbortSignal | undefined,
 ): Promise<Map<string, BaselineEventRow[]>> {
   signal?.throwIfAborted();
   if (addresses.length === 0) return new Map();
   const { rows } = await pool.query<BaselineEventRow>(
     SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL,
-    [period.startIso, period.endIso, [...addresses], TRIAGE_ASSET_DETAIL_LIMIT],
+    [
+      period.startIso,
+      period.endIso,
+      [...addresses],
+      TRIAGE_ASSET_DETAIL_LIMIT,
+      menuCutoff,
+    ],
   );
   const grouped = new Map<string, BaselineEventRow[]>();
   for (const row of rows) {
@@ -714,8 +738,11 @@ async function pMapBatched<T, R>(
 export async function loadTriagePeriod(
   session: AuthSession,
   period: TriagePeriod,
-  signal?: AbortSignal,
+  options: { strictness?: StrictnessStopId; signal?: AbortSignal } = {},
 ): Promise<TriageLoadResult> {
+  const { signal } = options;
+  const strictness = options.strictness ?? DEFAULT_STRICTNESS_STOP_ID;
+  const menuCutoff = cutoffForStop(strictness);
   const ctx = await buildDispatchContext(session);
   const customerIds = ctx.customerIds;
 
@@ -736,7 +763,7 @@ export async function loadTriagePeriod(
     // Admin scope with no registered customers — there is nothing to
     // query. Return an empty result rather than spinning up a no-op
     // promise chain.
-    return emptyResult(observedDenominatorTruncated);
+    return emptyResult(observedDenominatorTruncated, strictness);
   }
 
   const namesById = await loadCustomerNames(customerIds);
@@ -747,6 +774,7 @@ export async function loadTriagePeriod(
       period,
       observedFromIso,
       observedDenominatorTruncated,
+      menuCutoff,
       signal,
     ),
   );
@@ -797,6 +825,7 @@ export async function loadTriagePeriod(
     events,
     observedDenominatorTruncated,
     freshness,
+    strictness,
   };
 }
 
@@ -816,7 +845,10 @@ async function loadCustomerNames(
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
-function emptyResult(observedDenominatorTruncated: boolean): TriageLoadResult {
+function emptyResult(
+  observedDenominatorTruncated: boolean,
+  strictness: StrictnessStopId,
+): TriageLoadResult {
   return {
     funnel: { detected: 0, triaged: 0, passThroughRate: 0 },
     assets: [],
@@ -825,6 +857,7 @@ function emptyResult(observedDenominatorTruncated: boolean): TriageLoadResult {
     events: [],
     observedDenominatorTruncated,
     freshness: { worst: null, customers: [] },
+    strictness,
   };
 }
 

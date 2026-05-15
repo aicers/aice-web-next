@@ -306,6 +306,7 @@ function makeMultiCustomerResult(): TriageLoadResult {
     events: [...assetAEvents, ...assetBEvents],
     observedDenominatorTruncated: false,
     freshness: { worst: null, customers: [] },
+    strictness: "top50",
   };
 }
 

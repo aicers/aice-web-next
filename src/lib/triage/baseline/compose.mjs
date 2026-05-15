@@ -193,11 +193,26 @@ export function composeMenu(input) {
       defaultN,
     };
   }
-  const all = [...candidates];
-  all.sort(tieBreakerCompare);
-  const floor = Math.min(FINAL_COUNT.MIN_NONZERO_FLOOR, all.length);
+  // The fallback must respect the slider cutoff — a strict stop
+  // promises "no row below `baseline_score >= cutoff`", and surfacing
+  // a sub-cutoff row at e.g. `top5` would contradict the RFC §1 stop
+  // contract and the "incident response, only the strongest signals"
+  // use case. When every row sits below the cutoff, the fallback
+  // returns empty rather than dipping under the user's selection.
+  const surviving = candidates.filter((row) => row.baselineScore >= cutoff);
+  if (surviving.length === 0) {
+    return {
+      rows: [],
+      quotas,
+      assembledCount: 0,
+      fallbackInvoked: false,
+      defaultN,
+    };
+  }
+  surviving.sort(tieBreakerCompare);
+  const floor = Math.min(FINAL_COUNT.MIN_NONZERO_FLOOR, surviving.length);
   return {
-    rows: all.slice(0, floor),
+    rows: surviving.slice(0, floor),
     quotas,
     assembledCount,
     fallbackInvoked: true,

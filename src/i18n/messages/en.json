@@ -2139,6 +2139,18 @@
       "tier1Hint": "Pivot only over events that already passed the baseline rule (the loaded corpus).",
       "tier2Hint": "Server-filtered dimensions trigger a fresh fetch on click. Larger projections will ask for confirmation."
     },
+    "strictnessSlider": {
+      "legend": "Strictness",
+      "hint": "Read-time cutoff over the kind-normalized baseline percentile. Loose shows a wider net; strict only the strongest signals.",
+      "allStopHint": "No user-side cutoff. The cadence-threshold floor, the per-bucket SQL candidate cap, and the menu's per-bucket quota still bound the result; \"All\" is not a literal corpus dump.",
+      "stops": {
+        "all": "All",
+        "top80": "Top 80%",
+        "top50": "Top 50%",
+        "top20": "Top 20%",
+        "top5": "Top 5%"
+      }
+    },
     "tier2": {
       "weakBadge": "weak",
       "weakBadgeHint": "Found by Tier 2 fetch and not present in the loaded corpus.",

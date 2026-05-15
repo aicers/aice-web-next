@@ -25,9 +25,15 @@ The page has five regions:
 1. **Header** — title, a one-line description of the menu, and a
    **freshness badge** showing how recently the per-tenant baseline
    corpus was last ingested (see [Freshness header](#freshness-header)).
-2. **Period picker and mode toggle** — controls for the period
-   under analysis and the scoring mode (only **Baseline** is
-   wired today).
+2. **Period picker, mode toggle, scope toggle, and strictness
+   slider** — controls for the period under analysis, the scoring
+   mode (only **Baseline** is wired today), the Tier 1 / Tier 2
+   pivot scope, and the read-time **strictness** cutoff that dials
+   the menu volume up or down. The slider's UI documentation lands
+   alongside the live-capture refresh in a follow-up; the read-time
+   semantics are described under
+   [Baseline scoring algorithm](#baseline-scoring-algorithm) and
+   the stop set is recorded in `src/lib/triage/strictness/RFC.md`.
 3. **Funnel** — three numbers for the loaded slice: how many
    events were detected (from `observed_event_meta`), how many
    passed the baseline rule (from `baseline_triaged_event`), and
@@ -396,12 +402,21 @@ per RFC §4:
   beats a balanced empty menu when the slider can't fill any
   bucket's quota.
 
-The strictness slider that drives the cutoff is owned by a
-separate change ([#471](https://github.com/aicers/aice-web-next/issues/471));
-until it ships, the menu runs with no additional cutoff above the
-cohort, so the visible rows are determined entirely by `default_N`
-quota distribution and — when activity is too thin — the
-`MIN_NONZERO_FLOOR` fallback.
+The strictness slider drives the cutoff
+([#471](https://github.com/aicers/aice-web-next/issues/471)). Stop
+positions map to a cutoff against the read-time `cume_dist()`
+projection by identity: "Top X%" applies `baseline_score >= 1 - X/100`,
+and the "All" stop applies `0` (no additional user-side cutoff — at
+the "All" stop the cadence-threshold floor, the per-bucket SQL
+candidate cap, and the per-bucket `composeMenu` quota still bound the
+result). The foundation slice keeps `composeMenu`'s per-bucket quota
+on top of the cutoff; Story-protected force-union is deferred to a
+follow-up. The asset-detail panel also obeys the selected stop — its
+SELECT applies the cutoff inside the `filtered` CTE, before the
+per-address newest-N `ROW_NUMBER()`, so an asset surfaced at a strict
+stop does not show sub-cutoff events in its detail rows. See
+`src/lib/triage/strictness/RFC.md` for the stop set and the
+hash/query-param persistence contract.
 
 ### `baseline_version` semantics
 
@@ -850,8 +865,9 @@ The Stories tab participates in the same URL-hash routing as
 the rest of the Triage menu. The active tab is encoded under
 `triage.tab=stories` and the focused Story under
 `triage.story=<customerId>/<storyId>`. Existing
-`triage.pivot.*` and `triage.strictness.*` keys (the latter
-landing alongside #471) are preserved across writes.
+`triage.pivot.*` and `triage.strictness.*` keys are preserved
+across writes (the latter holds the strictness slider stop id;
+see [#471](https://github.com/aicers/aice-web-next/issues/471)).
 
 A `triage.story=<id>` segment that omits the `customerId/`
 prefix is treated as stale because `event_group.id` is per
@@ -1249,9 +1265,9 @@ value is still missing once those fetches resolve, so a shared URL
 remains reload-stable even when the descendant value lives only in
 the ancestor's fetched result.
 
-The hash is namespaced under `triage.pivot.*` so it can coexist
-with future Triage hash extensions (e.g. strictness controls under
-`triage.strictness.*`) without collision.
+The hash is namespaced under `triage.pivot.*` so it coexists
+with other Triage hash extensions (e.g. the strictness slider
+under `triage.strictness.*`) without collision.
 
 ## Limitations
 

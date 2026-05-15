@@ -84,6 +84,18 @@ beforeEach(() => {
   // (see baseline-content.tsx). Clear between tests so a previous
   // case's pivot trail doesn't leak into the next render.
   if (typeof window !== "undefined") window.location.hash = "";
+  // The strictness slider persists its position in localStorage and
+  // the shell's mount-only hydration effect calls `commitStrictness`
+  // when the stored stop disagrees with the server-rendered
+  // `initialStrictness`. Since `commitStrictness` now bumps the same
+  // reset signal that period changes do (#471 Round 5 — strictness is
+  // a corpus rotation, so the breadcrumb / pivot trail / Story-origin
+  // events must be cleared with it), a leaked value from a prior
+  // case's render would otherwise blow away a fresh test's hash-
+  // restoration setup before the test's assertions run. Clear it for
+  // every case in this file.
+  if (typeof window !== "undefined")
+    window.localStorage.removeItem("triage.strictness.stop");
   // `mockReset` (not `mockClear`) is required because individual tests
   // queue `mockResolvedValueOnce` responses, and a test that fails
   // before consuming its queued response would otherwise leak it into
@@ -149,6 +161,18 @@ const LABELS: TriageShellLabels = {
     tier2: "All detection events",
     tier1Hint: "Tier 1",
     tier2Hint: "Tier 2",
+  },
+  strictnessSlider: {
+    legend: "Strictness",
+    hint: "Read-time cutoff hint",
+    allStopHint: "All-stop tooltip",
+    stops: {
+      all: "All",
+      top80: "Top 80%",
+      top50: "Top 50%",
+      top20: "Top 20%",
+      top5: "Top 5%",
+    },
   },
   baseline: {
     funnel: {
@@ -399,6 +423,7 @@ function renderShell() {
       initialPeriod={PERIOD}
       initialState={{ status: "ok", result }}
       initialClamped={false}
+      initialStrictness={"top50"}
       labels={LABELS}
     />,
   );
@@ -529,6 +554,132 @@ describe("TriageShell — period-change confirmation", () => {
   });
 });
 
+describe("TriageShell — strictness slider wiring (#471)", () => {
+  beforeEach(() => {
+    // Hydration precedence walks localStorage when neither query
+    // param nor hash supplies a stop. A residual value from a prior
+    // case would fire a second router.replace before this test's
+    // click and break the call-count assertions.
+    window.localStorage.removeItem("triage.strictness.stop");
+  });
+
+  function renderShellForStrictness(
+    initialStrictness: "all" | "top50" = "top50",
+  ) {
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    return render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        initialStrictness={initialStrictness}
+        labels={LABELS}
+      />,
+    );
+  }
+
+  it("commitStrictness triggers router.replace with the new ?strictness= and rebuilt hash", () => {
+    renderShellForStrictness();
+    // Establish a pre-existing foreign hash segment so we can verify
+    // the slider's commit path does not stomp it.
+    window.location.hash = "#triage.tab=stories";
+    fireEvent.click(screen.getByRole("radio", { name: "Top 5%" }));
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    const url = replaceMock.mock.calls[0][0] as string;
+    expect(url).toContain("strictness=top5");
+    expect(url).toContain("start=");
+    expect(url).toContain("end=");
+    // Hash must be carried through the same router.replace argument
+    // so the App Router does not strip it via its own
+    // history.replaceState. Both the new strictness key and the
+    // pre-existing foreign key must survive.
+    expect(url).toContain("#");
+    expect(url).toContain("triage.strictness.stop=top5");
+    expect(url).toContain("triage.tab=stories");
+  });
+
+  it("omits the strictness query param when the selected stop is the default", () => {
+    renderShellForStrictness("all");
+    fireEvent.click(screen.getByRole("radio", { name: "Top 50%" }));
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    const url = replaceMock.mock.calls[0][0] as string;
+    expect(url).not.toContain("strictness=");
+    // Default stop clears the hash key as well, so a default-stop
+    // reload does not write a redundant segment.
+    expect(url).not.toContain("triage.strictness.stop=");
+  });
+
+  it("persists the chosen stop in localStorage on click", () => {
+    renderShellForStrictness();
+    fireEvent.click(screen.getByRole("radio", { name: "Top 20%" }));
+    expect(window.localStorage.getItem("triage.strictness.stop")).toBe("top20");
+  });
+
+  it("treats a strictness commit as a corpus rotation: clears the active pivot trail so the breadcrumb does not describe a stale drill-in (#471 Round 5)", () => {
+    // Mirrors `renderShell` (two assets sharing a `host`) so the pivot
+    // panel surfaces an actionable dimension button. The default
+    // initialStrictness is `top50` to match other tests in this file.
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        host: "deadbeef.example",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+      ev({
+        origAddr: "10.0.0.2",
+        respAddr: "203.0.113.1",
+        host: "deadbeef.example",
+        time: "2026-05-08T12:30:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        initialStrictness={"top50"}
+        labels={LABELS}
+      />,
+    );
+    // Pivot into the host dimension so the breadcrumb has a dimension
+    // step (the same setup `pivotByHost` uses for the period-change
+    // confirmation tests above).
+    fireEvent.click(screen.getByTestId("triage-tab-pivot"));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Pivot to Dim:host: deadbeef.example",
+      }),
+    );
+    expect(
+      screen
+        .getByText("Crumb:host: deadbeef.example")
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    // Commit a new strictness stop. Unlike a period change, the
+    // strictness slider does NOT surface the pivot-loss confirmation
+    // modal — strictness is committed unconditionally and the pivot
+    // trail is rotated away with the corpus.
+    fireEvent.click(screen.getByRole("radio", { name: "Top 5%" }));
+    expect(
+      screen.queryByRole("alertdialog", { name: "Discard pivot trail?" }),
+    ).toBeNull();
+    // After the commit, the breadcrumb crumb for the host dimension
+    // step is gone — `resetSignal` bumped, `baseline-content` reset
+    // the trail, and the only surviving crumb (if any) is the asset
+    // root.
+    expect(screen.queryByText("Crumb:host: deadbeef.example")).toBeNull();
+  });
+});
+
 describe("TriageShell — legacy URL hash fallback", () => {
   it("falls back to the asset root with a stale-hash toast for a legacy single-component asset hash", async () => {
     // Legacy hashes from before the composite `(customerId, address)`
@@ -550,6 +701,7 @@ describe("TriageShell — legacy URL hash fallback", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -608,6 +760,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -939,6 +1092,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1029,6 +1183,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1091,6 +1246,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1160,6 +1316,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1214,6 +1371,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1273,6 +1431,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1323,6 +1482,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1387,6 +1547,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1458,6 +1619,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1530,6 +1692,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1622,6 +1785,7 @@ describe("TriageShell — Tier 2 pivot wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1688,6 +1852,7 @@ describe("TriageShell — Tier 2 only Learning method static section (#498)", ()
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1779,6 +1944,7 @@ describe("TriageShell — Tier 2 only Learning method static section (#498)", ()
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1843,6 +2009,7 @@ describe("TriageShell — Tier 2 only Learning method static section (#498)", ()
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -1878,6 +2045,7 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -2077,6 +2245,7 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={LABELS}
       />,
     );
@@ -2141,6 +2310,7 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         customerScope="scope-a"
         labels={LABELS}
       />,
@@ -2160,6 +2330,7 @@ describe("TriageShell — Tier 2 only Keywords free-form section (#499)", () => 
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         customerScope="scope-b"
         labels={LABELS}
       />,
@@ -2220,6 +2391,7 @@ describe("TriageShell — admin rebuild wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={labelsWithRebuild()}
         rebuild={opts.rebuild}
       />,
@@ -2233,6 +2405,7 @@ describe("TriageShell — admin rebuild wiring", () => {
         initialPeriod={PERIOD}
         initialState={{ status: "ok", result }}
         initialClamped={false}
+        initialStrictness={"top50"}
         labels={labelsWithRebuild()}
         // `rebuild` intentionally omitted — non-admin pages must NOT
         // surface the affordance even if the labels prop is provided.

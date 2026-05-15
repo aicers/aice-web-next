@@ -1,4 +1,5 @@
 import type { ThreatCategory, ThreatLevel } from "@/lib/detection";
+import type { StrictnessStopId } from "./strictness/stops";
 
 /**
  * Hard cap on the number of events the Triage page loads for one
@@ -288,6 +289,14 @@ export interface TriageLoadResult {
    * affected customer ids.
    */
   freshness: TriageFreshness;
+  /**
+   * Strictness slider stop the result was loaded with (#471). Echoed
+   * back from {@link loadTriagePeriod}'s `strictness` option so the
+   * client slider can reconcile its UI state with what the server
+   * actually produced — important when an unknown `?strictness=` URL
+   * value is mapped to the default.
+   */
+  strictness: StrictnessStopId;
 }
 
 /**

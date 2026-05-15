@@ -15,11 +15,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  DEFAULT_STRICTNESS_STOP_ID,
+  parseStrictnessStopId,
+  type StrictnessStopId,
   TRIAGE_HARD_EVENT_CAP,
   type TriageLoadResult,
   type TriagePeriod,
 } from "@/lib/triage";
 import type { TriageStory } from "@/lib/triage/story/types";
+import {
+  parseTriageStrictnessHash,
+  replaceTriageStrictnessHash,
+} from "@/lib/triage/url-hash";
 
 import {
   TriageBaselineContent,
@@ -47,6 +54,12 @@ import {
   TriagePivotScopeToggle,
   type TriagePivotScopeToggleLabels,
 } from "./scope-toggle";
+import {
+  TriageStrictnessSlider,
+  type TriageStrictnessSliderLabels,
+} from "./strictness-slider";
+
+const STRICTNESS_STORAGE_KEY = "triage.strictness.stop";
 
 export interface TriageShellLabels {
   title: string;
@@ -54,6 +67,7 @@ export interface TriageShellLabels {
   periodPicker: TriagePeriodPickerLabels;
   modeToggle: TriageModeToggleLabels;
   scopeToggle: TriagePivotScopeToggleLabels;
+  strictnessSlider: TriageStrictnessSliderLabels;
   errorBanner: string;
   forbiddenBanner: string;
   forbiddenScopeBanner: string;
@@ -93,6 +107,13 @@ interface TriageShellProps {
   initialState: TriageShellState;
   initialClamped: boolean;
   /**
+   * Strictness slider stop the page was loaded with (#471). The
+   * server resolves the `?strictness=` query param into a known stop
+   * id (`parseStrictnessStopId`) so the client receives a value it
+   * can render without further validation.
+   */
+  initialStrictness: StrictnessStopId;
+  /**
    * Stable identifier for the customer scope; gates Tier 2 cache reuse
    * across tenant switches in the same browser session. Computed
    * server-side in the page so the client never derives it from
@@ -127,6 +148,7 @@ export function TriageShell({
   initialPeriod,
   initialState,
   initialClamped,
+  initialStrictness,
   customerScope,
   initialStories = [],
   initialStoriesTruncated = false,
@@ -135,6 +157,8 @@ export function TriageShell({
 }: TriageShellProps) {
   const router = useRouter();
   const [period, setPeriod] = useState<TriagePeriod>(initialPeriod);
+  const [strictness, setStrictness] =
+    useState<StrictnessStopId>(initialStrictness);
   const [pending, startTransition] = useTransition();
   const [mode, setMode] = useState<TriageMode>("baseline");
   // Tier 1 / Tier 2 pivot scope. Default Tier 1 on every fresh menu
@@ -176,16 +200,108 @@ export function TriageShell({
   useEffect(() => {
     setPeriod(initialPeriod);
   }, [initialPeriod]);
+  useEffect(() => {
+    setStrictness(initialStrictness);
+  }, [initialStrictness]);
+
+  // First-paint hydration: precedence-resolve the strictness slider
+  // (#471 RFC §7). The server already applied `?strictness=` (primary),
+  // so the client only reconciles the hash and localStorage. If a
+  // share-link hash overrides the query param, push the override into
+  // `?strictness=` and trigger a re-fetch so the funnel / asset list
+  // match the shared link.
+  //
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only — depending on initialStrictness / commitStrictness would re-trigger after the slider itself caused a re-render.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hashStrictness = parseTriageStrictnessHash(window.location.hash);
+    const queryStrictness = new URLSearchParams(window.location.search).get(
+      "strictness",
+    );
+    if (queryStrictness !== null) {
+      // Server-side already loaded with this value; nothing to
+      // reconcile beyond mirroring to localStorage so a fresh tab
+      // without the query param remembers the last position.
+      try {
+        window.localStorage.setItem(STRICTNESS_STORAGE_KEY, queryStrictness);
+      } catch {
+        /* localStorage may be unavailable (private mode); silent. */
+      }
+      return;
+    }
+    let next: StrictnessStopId | null = null;
+    if (hashStrictness !== null) {
+      next = parseStrictnessStopId(hashStrictness);
+    } else {
+      try {
+        const stored = window.localStorage.getItem(STRICTNESS_STORAGE_KEY);
+        if (stored !== null) next = parseStrictnessStopId(stored);
+      } catch {
+        /* silent */
+      }
+    }
+    if (next !== null && next !== initialStrictness) {
+      commitStrictness(next);
+    }
+  }, []);
 
   function commitPeriod(next: TriagePeriod) {
     setPeriod(next);
     const params = new URLSearchParams();
     params.set("start", next.startIso);
     params.set("end", next.endIso);
+    if (strictness !== DEFAULT_STRICTNESS_STOP_ID) {
+      params.set("strictness", strictness);
+    }
     setResetSignal((s) => s + 1);
     hasPivotsRef.current = false;
     startTransition(() => {
       router.replace(`?${params.toString()}`, { scroll: false });
+    });
+  }
+
+  function commitStrictness(next: StrictnessStopId) {
+    setStrictness(next);
+    let hashSuffix = "";
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(STRICTNESS_STORAGE_KEY, next);
+        const newHash = replaceTriageStrictnessHash(
+          window.location.hash,
+          next === DEFAULT_STRICTNESS_STOP_ID ? null : next,
+        );
+        hashSuffix = newHash.length > 0 ? `#${newHash}` : "";
+      }
+    } catch {
+      /* silent */
+    }
+    const params = new URLSearchParams();
+    params.set("start", period.startIso);
+    params.set("end", period.endIso);
+    if (next !== DEFAULT_STRICTNESS_STOP_ID) {
+      params.set("strictness", next);
+    }
+    // Strictness is a corpus rotation: the loaded asset list and the
+    // per-asset detail events both reflect the selected stop, so any
+    // existing breadcrumb, pivot trail, Story-origin events, recent
+    // keywords, and queued hash-restore work were keyed against the
+    // pre-rotation corpus and would otherwise present a stale drill-in
+    // (selected asset / pivoted dimension filtered out, but trail /
+    // active step / Tier 2 queue still describing the old asset
+    // against the freshly filtered events). Bump the same signal that
+    // period changes use so baseline-content's reset effect re-roots
+    // selection and clears pivot / Story-origin state. Clear
+    // `hasPivotsRef` to match — after rotation there is no pivot
+    // trail, so a subsequent period change should not surface the
+    // pivot-loss confirmation modal.
+    setResetSignal((s) => s + 1);
+    hasPivotsRef.current = false;
+    // Include the rebuilt hash in the router.replace URL so the App
+    // Router does not drop it. router.replace with a search-only URL
+    // calls history.replaceState with a URL that has no fragment,
+    // which would strip the hash a separate replaceState wrote first.
+    startTransition(() => {
+      router.replace(`?${params.toString()}${hashSuffix}`, { scroll: false });
     });
   }
 
@@ -269,6 +385,12 @@ export function TriageShell({
           scope={scope}
           onChange={setScope}
           labels={labels.scopeToggle}
+        />
+        <TriageStrictnessSlider
+          stop={strictness}
+          onChange={commitStrictness}
+          pending={pending}
+          labels={labels.strictnessSlider}
         />
       </div>
       {initialClamped ? (

@@ -47,9 +47,19 @@ export const TRIAGE_ASSET_DETAIL_LIMIT = 50;
  * `server-actions.ts` for the full RFC §3 / §4 derivation.
  *
  * Parameters:
- *   $1 :: timestamptz — period start (inclusive)
- *   $2 :: timestamptz — period end (exclusive)
- *   $3 :: int         — per-bucket row cap (`MENU_CANDIDATES_PER_BUCKET`)
+ *   $1 :: timestamptz       — period start (inclusive)
+ *   $2 :: timestamptz       — period end (exclusive)
+ *   $3 :: int               — per-bucket row cap (`MENU_CANDIDATES_PER_BUCKET`)
+ *
+ * The strictness slider cutoff (#471) is **not** applied at the SQL
+ * level — `composeMenu` (RFC §6 option (a), "cutoff on top of
+ * unchanged quota") owns the filter so the full-cohort
+ * `bucket_count` / `bucket_tag_sum` / `cohort_count` aggregates that
+ * drive quota allocation are not narrowed by the slider. Filtering in
+ * the `ranked` CTE here would drop buckets whose rows all sit below
+ * the cutoff and silently redistribute their quota to surviving
+ * buckets, contradicting the working choice in
+ * `src/lib/triage/strictness/RFC.md` §6.
  */
 export const SELECT_MENU_COHORT_SQL = `WITH scored AS (
        SELECT event_key,
@@ -162,10 +172,19 @@ export const PER_ASSET_OBSERVED_COUNTS_SQL = `SELECT o.orig_addr::text AS addres
  * `TRIAGE_ASSET_DETAIL_LIMIT` rows for each address.
  *
  * Parameters:
- *   $1 :: timestamptz — period start (inclusive)
- *   $2 :: timestamptz — period end (exclusive)
- *   $3 :: inet[]      — addresses to filter on (pg accepts `string[]`)
- *   $4 :: int         — per-asset row cap (`TRIAGE_ASSET_DETAIL_LIMIT`)
+ *   $1 :: timestamptz       — period start (inclusive)
+ *   $2 :: timestamptz       — period end (exclusive)
+ *   $3 :: inet[]            — addresses to filter on (pg accepts `string[]`)
+ *   $4 :: int               — per-asset row cap (`TRIAGE_ASSET_DETAIL_LIMIT`)
+ *   $5 :: double precision  — strictness slider cutoff (#471). `0` means
+ *                             "All" / no user-side cutoff. Applied
+ *                             BEFORE the per-address `ROW_NUMBER()` so
+ *                             newer sub-cutoff rows cannot push
+ *                             qualifying older rows out of the newest-N
+ *                             window. Unlike the menu cohort SELECT, the
+ *                             detail path has no bucket aggregates to
+ *                             preserve, so the cutoff lives in SQL where
+ *                             the `ROW_NUMBER()` partition already does.
  */
 export const SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL = `WITH scored AS (
        SELECT event_key,
@@ -198,6 +217,7 @@ export const SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL = `WITH scored AS (
          FROM scored
         WHERE orig_addr IS NOT NULL
           AND orig_addr = ANY($3::inet[])
+          AND baseline_score >= $5
      )
      SELECT event_key::text                  AS event_key,
             event_time,
@@ -266,6 +286,7 @@ export const MEASURED_QUERIES = [
       ctx.periodEndIso,
       ctx.addresses,
       TRIAGE_ASSET_DETAIL_LIMIT,
+      ctx.menuCutoff ?? 0,
     ],
   },
 ];
