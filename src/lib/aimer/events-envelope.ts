@@ -4,7 +4,20 @@ import { createHash } from "node:crypto";
 
 import { importJWK, SignJWT } from "jose";
 
+import type { Phase2SchemaVersion } from "./phase2/schemas";
 import { loadActiveSigningKeyMaterial } from "./signing-key";
+
+/**
+ * `schema_version` claim accepted by {@link signEventsEnvelope}.
+ *
+ * - `"0.0-stub"` — the first-cycle Phase 1 stub envelope used by the
+ *   Send to Aimer button (#439 / #440).
+ * - {@link Phase2SchemaVersion} — RFC 0002 §6 Phase 2 wire schemas
+ *   (baseline / story / policy_run / withdraw / refresh_window /
+ *   backfill). Selected by the matching schema in the Phase 2 schema
+ *   registry before the orchestration helper signs.
+ */
+export type EventsEnvelopeSchemaVersion = "0.0-stub" | Phase2SchemaVersion;
 
 /**
  * Caller-supplied input for {@link signEventsEnvelope}.
@@ -17,7 +30,7 @@ export interface EventsEnvelopeInput {
   iss: string;
   aice_id: string;
   customer_ids: string[];
-  schema_version: string;
+  schema_version: EventsEnvelopeSchemaVersion;
   event_count: number;
   iat: number;
   exp: number;
