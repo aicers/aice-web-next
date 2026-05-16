@@ -8,18 +8,22 @@ import {
   runPhase2Backfill,
   verifyPhase2BackfillToken,
 } from "@/lib/aimer/phase2/backfill";
+import { BASELINE_TRIAGED_EVENT_RETENTION_DAYS } from "@/lib/triage/baseline/retention";
 import { CustomerNotFoundError } from "@/lib/triage/policy/customer-db";
 
 /**
- * Hard bound on how far back a backfill window may reach. The corpus
- * retention for `baseline_triaged_event` is 180 days (RFC 0001;
- * migrations/customer/0003_baseline_corpus_a.sql header), so a backfill
- * starting earlier would necessarily span gaps. 365 days is a
- * conservative ceiling that covers Story windows too and leaves room
- * for retention changes without rejecting realistic operator inputs.
- * If a deployment ever needs longer, this becomes a configurable env.
+ * Hard bound on how far back a backfill window may reach. Pinned to the
+ * `baseline_triaged_event` retention window (180 days; see
+ * `BASELINE_TRIAGED_EVENT_RETENTION_DAYS`) so a backfill cannot ask for
+ * a range whose source rows have already been swept. Stories are derived
+ * from baseline events and inherit the same effective horizon — an
+ * older Story window would either have no rows or rows whose underlying
+ * members are gone. If retention is ever raised, this constant follows
+ * automatically; if a deployment needs an independently longer bound,
+ * lift this to an env var.
  */
-const PHASE2_BACKFILL_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+const PHASE2_BACKFILL_MAX_AGE_MS =
+  BASELINE_TRIAGED_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 /**
  * Allow a small clock-skew slack on the future-rejection check so an
@@ -139,10 +143,10 @@ function parseBody(body: unknown): ParsedBody | string {
   // Reject windows outside the allowed bounds (#573 acceptance
   // criteria). A future `to` would enqueue an empty refresh that
   // tells aimer-web to clear that window — meaningless and
-  // potentially destructive. A `from` older than 365 days
-  // necessarily extends past the 180-day baseline corpus retention,
-  // and the resulting payload would be missing the older history we
-  // claim to send.
+  // potentially destructive. A `from` older than the baseline corpus
+  // retention horizon would yield an empty/partial replacement (the
+  // local rows have been swept), which silently mislabels the older
+  // window as "no events."
   const nowMs = Date.now();
   if (toDate.getTime() > nowMs + PHASE2_BACKFILL_FUTURE_SKEW_MS) {
     return "to must not extend into the future";

@@ -194,12 +194,14 @@ describe("POST /api/internal/aimer/phase2/backfill", () => {
     const { POST } = await import(
       "@/app/api/internal/aimer/phase2/backfill/route"
     );
-    // 400 days back — past the 365-day bound.
+    // Past the 180-day baseline retention bound. A `from` 200 days back
+    // is solidly outside the retained corpus, so the route must reject
+    // before calling into `runPhase2Backfill`.
     const ancientFrom = new Date(
-      Date.now() - 400 * 24 * 60 * 60 * 1000,
+      Date.now() - 200 * 24 * 60 * 60 * 1000,
     ).toISOString();
     const ancientTo = new Date(
-      Date.now() - 399 * 24 * 60 * 60 * 1000,
+      Date.now() - 199 * 24 * 60 * 60 * 1000,
     ).toISOString();
     const res = await POST(
       makeRequest("Bearer ok", {
@@ -211,6 +213,31 @@ describe("POST /api/internal/aimer/phase2/backfill", () => {
     );
     expect(res.status).toBe(400);
     expect(mockRunBackfill).not.toHaveBeenCalled();
+  });
+
+  it("accepts a from within the 180-day baseline retention bound", async () => {
+    mockVerifyToken.mockReturnValue(true);
+    mockRunBackfill.mockResolvedValue({ enqueuedNoticeIds: ["1"] });
+    const { POST } = await import(
+      "@/app/api/internal/aimer/phase2/backfill/route"
+    );
+    // Just inside the bound (179 days back) — must NOT be rejected.
+    const recentFrom = new Date(
+      Date.now() - 179 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const recentTo = new Date(
+      Date.now() - 178 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const res = await POST(
+      makeRequest("Bearer ok", {
+        customer_id: 1,
+        kind: "baseline_event",
+        from: recentFrom,
+        to: recentTo,
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockRunBackfill).toHaveBeenCalled();
   });
 
   it("returns 400 when the backfill spans multiple baseline_versions", async () => {

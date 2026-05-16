@@ -266,9 +266,17 @@ interface BatchReturnedRows {
  * same connection. Per acceptance criteria:
  *
  *   - `withdraw_baseline_event` → one notice per distinct
- *     `baseline_version`, payload `{ baseline_version, event_keys[] }`.
+ *     `baseline_version`, payload
+ *     `{ kind: "baseline_event", baseline_version, event_keys[] }`.
  *   - `withdraw_policy_event`   → one notice per distinct `run_id`,
- *     payload `{ run_id, event_keys[] }`.
+ *     payload `{ kind: "policy_event", run_id, event_keys[] }`.
+ *
+ * The payload is the wire-ready `withdrawals[]` item that the
+ * downstream drain copies verbatim into a `phase2.withdraw.v1`
+ * envelope (see `src/app/api/aimer/phase2/policy-event/next-batch`).
+ * Including the `kind` discriminator at enqueue time keeps producers
+ * and consumers decoupled — the drain does not need to know the
+ * `aimer_push_queue.kind` mapping to build the envelope.
  *
  * Enqueuing on the caller's `client` means a rollback of this drain
  * batch's transaction drops the enqueue with it — the per-batch
@@ -294,7 +302,11 @@ async function enqueueWithdrawForBatchRows(
       await enqueueNotice(
         customerId,
         "withdraw_baseline_event",
-        { baseline_version: version, event_keys: eventKeys },
+        {
+          kind: "baseline_event",
+          baseline_version: version,
+          event_keys: eventKeys,
+        },
         client,
       );
     }
@@ -311,7 +323,11 @@ async function enqueueWithdrawForBatchRows(
       await enqueueNotice(
         customerId,
         "withdraw_policy_event",
-        { run_id: runId, event_keys: eventKeys },
+        {
+          kind: "policy_event",
+          run_id: runId,
+          event_keys: eventKeys,
+        },
         client,
       );
     }

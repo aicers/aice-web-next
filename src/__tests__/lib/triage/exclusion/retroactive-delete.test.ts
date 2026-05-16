@@ -516,12 +516,55 @@ describe("retroactive-delete planner", () => {
         const v1Payload = enqueueNoticeSpy.mock.calls.find(
           (call) =>
             (call[2] as { baseline_version: string }).baseline_version === "v1",
-        )?.[2] as { event_keys: string[] };
+        )?.[2] as { kind: string; event_keys: string[] };
         expect(v1Payload.event_keys.sort()).toEqual(["100", "101"]);
-        // All enqueues use kind discriminator + same client.
+        // Payload carries the wire-ready `kind` discriminator so the
+        // drain can copy it verbatim into `phase2.withdraw.v1`
+        // withdrawals[]. All enqueues share the same client.
         for (const call of enqueueNoticeSpy.mock.calls) {
           expect(call[1]).toBe("withdraw_baseline_event");
+          expect((call[2] as { kind: string }).kind).toBe("baseline_event");
           expect(call[3]).toBe(client);
+        }
+      });
+
+      it("emits policy-event withdraw payloads with the wire-ready kind discriminator", async () => {
+        enqueueNoticeSpy.mockClear();
+        const client = makeClient((call) => {
+          if (call.sql.includes("to_regclass")) {
+            return { rows: [{ exists: true }], rowCount: 1 };
+          }
+          if (call.sql.includes("DELETE FROM policy_triaged_event")) {
+            return {
+              rows: [
+                { run_id: "run-1", event_key: "1000" },
+                { run_id: "run-1", event_key: "1001" },
+                { run_id: "run-2", event_key: "2000" },
+              ],
+              rowCount: 3,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        });
+
+        await executeFirstRetroactiveDeleteBatch(
+          client as unknown as Parameters<
+            typeof executeFirstRetroactiveDeleteBatch
+          >[0],
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          { batchSize: 50, customerId: 11 },
+        );
+
+        // Two queue rows, one per run_id, each carrying
+        // `kind: "policy_event"` so the wire-ready policy-event drain
+        // (#572) can map the queue payload directly into `withdrawals[]`
+        // without re-deriving the discriminator from `aimer_push_queue.kind`.
+        const policyCalls = enqueueNoticeSpy.mock.calls.filter(
+          (call) => call[1] === "withdraw_policy_event",
+        );
+        expect(policyCalls).toHaveLength(2);
+        for (const call of policyCalls) {
+          expect((call[2] as { kind: string }).kind).toBe("policy_event");
         }
       });
 

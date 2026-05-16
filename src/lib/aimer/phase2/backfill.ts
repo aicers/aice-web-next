@@ -28,6 +28,7 @@ import {
   logSubdivideWarnings,
 } from "@/lib/aimer/phase2/payload-builders";
 import { enqueueNotice } from "@/lib/aimer/phase2/state";
+import { PHASE_1B_BASELINE_VERSION } from "@/lib/triage/baseline/cadence";
 import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
 export type Phase2BackfillKind = "baseline_event" | "story";
@@ -117,9 +118,13 @@ export async function runPhase2Backfill(
       }
       const { payloads, warnings } = buildBaselineRefreshPayloads({
         window: { from: input.fromIso, to: input.toIso },
-        // Empty windows still emit one notice (`events[]` empty);
-        // `baseline_version` becomes a no-op marker in that case.
-        baselineVersion: baselineVersion ?? "",
+        // Empty windows still emit one notice (`events[]` empty); the
+        // signing schema requires a non-empty `baseline_version`, so
+        // fall back to the active version constant. Semantically this
+        // is "the current version says this historical window is
+        // empty," which is the right thing to tell aimer-web for a
+        // backfill range we have no rows for.
+        baselineVersion: baselineVersion ?? PHASE_1B_BASELINE_VERSION,
         events,
       });
       logSubdivideWarnings(

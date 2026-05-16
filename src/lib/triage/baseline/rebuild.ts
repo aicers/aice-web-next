@@ -36,6 +36,7 @@ import { STORAGE_EXCLUSION_SET_RESOLVER } from "@/lib/triage/exclusion/active-se
 import type { ActiveExclusionSet } from "@/lib/triage/exclusion/types";
 import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
+import { PHASE_1B_BASELINE_VERSION } from "./cadence";
 import {
   type CadenceConnectionResponse,
   fetchEventPage,
@@ -606,11 +607,13 @@ async function runRebuildTransaction(
  *
  * Empty windows emit one notice with an empty `events[]` array per
  * the sub-divider contract: aimer-web treats that as "replace the
- * window with nothing." Picking `baseline_version` from the freshly
- * INSERTed rows means we never have to thread the value through the
- * pager — and for an empty window the field becomes irrelevant (the
- * payload carries no events to attribute), so we fall back to the
- * empty string.
+ * window with nothing." The notice must still satisfy
+ * `phase2.refresh_window.v1` / `phase2.backfill.v1`, which require a
+ * non-empty `baseline_version`. Force Rebuild always writes
+ * {@link PHASE_1B_BASELINE_VERSION} to the new corpus, so when the
+ * rebuilt window happens to be empty we still attribute the notice to
+ * that version — semantically, "the rebuild's chosen version says this
+ * window is empty."
  */
 async function enqueueRefreshBaselineWindow(
   client: pg.PoolClient,
@@ -628,11 +631,10 @@ async function enqueueRefreshBaselineWindow(
   const { payloads, warnings } = buildBaselineRefreshPayloads({
     window: { from: input.fromIso, to: input.toIso },
     // `baseline_version` is absent only when the rebuild yielded zero
-    // rows (the parent window is "rebuilt empty"). The empty
-    // refresh notice's `events[]` is `[]` so the field is unused on
-    // the receiver side; pass an empty marker to keep the field
-    // string-typed without injecting a synthetic version.
-    baselineVersion: baselineVersion ?? "",
+    // rows; fall back to the rebuild's target version so the empty
+    // refresh notice still carries a non-empty discriminator the
+    // signing schema requires.
+    baselineVersion: baselineVersion ?? PHASE_1B_BASELINE_VERSION,
     events,
   });
   logSubdivideWarnings(input.customerId, "refresh_baseline_window", warnings);

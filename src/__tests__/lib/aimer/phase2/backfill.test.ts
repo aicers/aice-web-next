@@ -86,6 +86,43 @@ describe("runPhase2Backfill", () => {
     expect(result.enqueuedNoticeIds).toEqual(["42"]);
   });
 
+  it("falls back to PHASE_1B_BASELINE_VERSION on an empty baseline backfill window", async () => {
+    // Reviewer Round 2 P3: passing `baseline_version: ""` to the empty
+    // notice would fail `phase2.refresh_window.v1` / `phase2.backfill.v1`
+    // (nonEmptyString). The backfill path must seed the active version
+    // constant so the empty notice is still schema-valid.
+    loadBaselineRefreshRowsMock.mockResolvedValue({
+      events: [],
+      baselineVersion: null,
+      baselineVersions: [],
+    });
+    const { runPhase2Backfill } = await import("@/lib/aimer/phase2/backfill");
+    const { PHASE_1B_BASELINE_VERSION } = await import(
+      "@/lib/triage/baseline/cadence"
+    );
+
+    await runPhase2Backfill({
+      customerId: 7,
+      kind: "baseline_event",
+      fromIso: "2026-01-01T00:00:00Z",
+      toIso: "2026-01-02T00:00:00Z",
+    });
+
+    const inserts = fakeClientCalls.filter((c) =>
+      c.sql.includes("INSERT INTO aimer_push_queue"),
+    );
+    expect(inserts).toHaveLength(1);
+    // state.ts INSERTs `[kind, JSON.stringify(payload)]`, so the
+    // payload is the second positional param as a JSON string.
+    const payload = JSON.parse(inserts[0].params?.[1] as string) as {
+      baseline_version: string;
+      events: unknown[];
+    };
+    expect(payload.events).toEqual([]);
+    expect(payload.baseline_version).toBe(PHASE_1B_BASELINE_VERSION);
+    expect(payload.baseline_version.length).toBeGreaterThan(0);
+  });
+
   it("uses the story kind discriminator for story backfill", async () => {
     loadStoryRefreshRowsMock.mockResolvedValue([]);
     const { runPhase2Backfill } = await import("@/lib/aimer/phase2/backfill");
