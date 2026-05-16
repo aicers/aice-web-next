@@ -96,17 +96,26 @@ function requirePositiveInt(o: Record<string, unknown>, key: string): number {
 
 /**
  * Pull and validate the `pivotValueJoinId` / `pivotValue` pair from a
- * pivot-action payload. Enforces the documented contract:
+ * pivot-action payload. Enforces the documented contract in both
+ * directions:
  *
  *  1. Exactly one of the two fields must be present.
- *  2. `pivotValueJoinId` is only legal for dimensions on
- *     {@link ENGAGEMENT_JOIN_ID_DIMENSIONS} — every other dimension is
- *     considered raw-ish (IP, domain, JA3, SNI, country, free-text)
- *     and MUST route through HMAC via `pivotValue`. This guard is the
- *     server-side enforcement of #588's privacy acceptance: a bug or
+ *  2. Allowlisted natural-join dimensions
+ *     ({@link ENGAGEMENT_JOIN_ID_DIMENSIONS}) MUST use
+ *     `pivotValueJoinId`. Posting `{ dimension: "sameSensor",
+ *     pivotValue: "sensor-alpha" }` is rejected so a stale client
+ *     cannot accidentally HMAC a value that should have been stored as
+ *     the raw join id (which Phase 2 reads as a join key).
+ *  3. Every other (raw-ish: IP, domain, JA3, SNI, country, free-text)
+ *     dimension MUST route through HMAC via `pivotValue`. A bug or
  *     stale client posting `{ dimension: "sni", pivotValueJoinId:
- *     "Example.COM" }` is rejected at parse time rather than landing a
- *     raw value in `engagement_action.pivot_value_join_id`.
+ *     "Example.COM" }` is rejected so a raw value never lands in
+ *     `engagement_action.pivot_value_join_id`.
+ *
+ * Together these guards are the server-side enforcement of #588's
+ * privacy acceptance and Phase 2's join-key contract: every pivot row
+ * lands in exactly the column its dimension owns, regardless of
+ * client-side drift.
  */
 function parsePivotValueFields(
   payload: Record<string, unknown>,
@@ -122,12 +131,15 @@ function parsePivotValueFields(
       "Exactly one of pivotValueJoinId or pivotValue is required",
     );
   }
-  if (
-    pivotValueJoinId !== undefined &&
-    !ENGAGEMENT_JOIN_ID_DIMENSIONS.has(dimension)
-  ) {
+  const isJoinIdDimension = ENGAGEMENT_JOIN_ID_DIMENSIONS.has(dimension);
+  if (pivotValueJoinId !== undefined && !isJoinIdDimension) {
     throw new EngagementValidationError(
       `Dimension "${dimension}" is raw-ish; use pivotValue (HMAC path) instead of pivotValueJoinId`,
+    );
+  }
+  if (pivotValue !== undefined && isJoinIdDimension) {
+    throw new EngagementValidationError(
+      `Dimension "${dimension}" is a natural-join dimension; use pivotValueJoinId instead of pivotValue`,
     );
   }
   return { pivotValueJoinId, pivotValue };

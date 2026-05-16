@@ -238,6 +238,49 @@ describe("parseAction", () => {
     ).toThrow(/raw-ish/);
   });
 
+  // #588 R5 item 1: the inverse — a natural-join dimension MUST use
+  // `pivotValueJoinId`. A stale client posting `pivotValue` for an
+  // allowlisted dimension is rejected so the row is not silently
+  // HMAC'd and persisted as pivot_value_hmac (Phase 2 reads
+  // `pivot_value_join_id` for these dimensions and would lose the
+  // signal).
+  it("rejects a pivot_click that posts pivotValue for a natural-join dimension (sameSensor)", () => {
+    expect(() =>
+      parseAction({
+        kind: "action",
+        action: {
+          type: "pivot_click",
+          customerId: 7,
+          surface: "baseline",
+          eventKey: "evt-1",
+          kind: "HttpThreat",
+          baselineVersion: "phase1b-four-selector",
+          dimension: "sameSensor",
+          pivotValue: "sensor-alpha",
+        },
+      }),
+    ).toThrow(/natural-join/);
+  });
+
+  it("rejects a story_pivot_click that posts pivotValue for a natural-join dimension (kinds)", () => {
+    expect(() =>
+      parseAction({
+        kind: "action",
+        action: {
+          type: "story_pivot_click",
+          customerId: 7,
+          surface: "baseline",
+          eventKey: "evt-1",
+          kind: "HttpThreat",
+          baselineVersion: "phase1b-four-selector",
+          storyId: "story-1",
+          dimension: "kinds",
+          pivotValue: "HttpThreat",
+        },
+      }),
+    ).toThrow(/natural-join/);
+  });
+
   it("accepts a strictness_change", () => {
     const action = parseAction({
       kind: "action",

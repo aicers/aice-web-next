@@ -198,31 +198,93 @@ CREATE TABLE IF NOT EXISTS engagement_action (
     strictness_from     TEXT,
     strictness_to       TEXT,
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    -- Per-action shape contract. Enforces:
-    --   * Row-bound actions (pivot_click, story_pivot_click) carry
-    --     event_key + kind + baseline_version.
-    --   * Non-row-bound actions DO NOT carry event_key (which is the
-    --     defining row-bound input — kind / baseline_version may still
-    --     be NULL by design).
-    --   * Per-action fields are populated only for the owning type.
+    -- Per-action shape contract. Enforces, per action_type:
+    --   * Required fields are present.
+    --   * Fields owned by other action types are absent (NULL).
+    --   * For the two pivot row-bound types, exactly one of
+    --     `pivot_value_join_id` / `pivot_value_hmac` is populated —
+    --     the parser routes natural-join dimensions into
+    --     `pivot_value_join_id` and raw-ish dimensions through HMAC
+    --     into `pivot_value_hmac`, and the schema reproduces that
+    --     XOR so a buggy producer cannot land a half-populated pivot
+    --     row.
     --
-    -- The constraint deliberately does not assert that `dimension`
-    -- and `pivot_value_*` are non-null for pivot rows: a future
-    -- "missing-value" recovery row (we keep the engagement signal
-    -- even when the join key cannot be resolved) is preserved.
+    -- The tenant-side store is the durable contract Phase 2 reads
+    -- from. The HTTP parser and storage code shape rows correctly
+    -- today, but enforcing the shape at the schema makes the store
+    -- self-defending against future producers (e.g. a backfill, a
+    -- replay tool, a different surface that learns to write here).
     CONSTRAINT engagement_action_shape CHECK (
         CASE action_type
-            WHEN 'pivot_click' THEN event_key IS NOT NULL
-            WHEN 'story_pivot_click' THEN event_key IS NOT NULL
+            WHEN 'pivot_click' THEN
+                event_key IS NOT NULL
+                AND kind IS NOT NULL
+                AND baseline_version IS NOT NULL
+                AND dimension IS NOT NULL
+                AND (
+                    (pivot_value_join_id IS NOT NULL
+                        AND pivot_value_hmac IS NULL)
+                    OR (pivot_value_join_id IS NULL
+                        AND pivot_value_hmac IS NOT NULL)
+                )
+                AND asset_key_hmac IS NULL
+                AND story_id IS NULL
+                AND exclusion_id IS NULL
+                AND strictness_from IS NULL
+                AND strictness_to IS NULL
+            WHEN 'story_pivot_click' THEN
+                event_key IS NOT NULL
+                AND kind IS NOT NULL
+                AND baseline_version IS NOT NULL
+                AND dimension IS NOT NULL
                 AND story_id IS NOT NULL
-            WHEN 'asset_select' THEN event_key IS NULL
-                AND asset_key_hmac IS NOT NULL
-            WHEN 'exclusion_create' THEN event_key IS NULL
-                AND exclusion_id IS NOT NULL
-            WHEN 'strictness_change' THEN event_key IS NULL
-                AND strictness_from IS NOT NULL
+                AND (
+                    (pivot_value_join_id IS NOT NULL
+                        AND pivot_value_hmac IS NULL)
+                    OR (pivot_value_join_id IS NULL
+                        AND pivot_value_hmac IS NOT NULL)
+                )
+                AND asset_key_hmac IS NULL
+                AND exclusion_id IS NULL
+                AND strictness_from IS NULL
+                AND strictness_to IS NULL
+            WHEN 'asset_select' THEN
+                asset_key_hmac IS NOT NULL
+                AND event_key IS NULL
+                AND kind IS NULL
+                AND baseline_version IS NULL
+                AND dimension IS NULL
+                AND pivot_value_join_id IS NULL
+                AND pivot_value_hmac IS NULL
+                AND story_id IS NULL
+                AND exclusion_id IS NULL
+                AND strictness_from IS NULL
+                AND strictness_to IS NULL
+            WHEN 'exclusion_create' THEN
+                exclusion_id IS NOT NULL
+                AND event_key IS NULL
+                AND kind IS NULL
+                AND baseline_version IS NULL
+                AND asset_key_hmac IS NULL
+                AND dimension IS NULL
+                AND pivot_value_join_id IS NULL
+                AND pivot_value_hmac IS NULL
+                AND story_id IS NULL
+                AND strictness_from IS NULL
+                AND strictness_to IS NULL
+            WHEN 'strictness_change' THEN
+                strictness_from IS NOT NULL
                 AND strictness_to IS NOT NULL
-            ELSE TRUE
+                AND event_key IS NULL
+                AND kind IS NULL
+                AND baseline_version IS NULL
+                AND asset_key_hmac IS NULL
+                AND dimension IS NULL
+                AND pivot_value_join_id IS NULL
+                AND pivot_value_hmac IS NULL
+                AND story_id IS NULL
+                AND exclusion_id IS NULL
+            ELSE FALSE
         END
     )
 );
