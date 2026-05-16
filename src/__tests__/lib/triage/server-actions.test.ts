@@ -49,6 +49,7 @@ interface MenuCohortRow {
   selector_tags: string[] | null;
   baseline_score: number;
   is_unlabeled: boolean;
+  in_story: boolean;
   bucket_count: string;
   bucket_tag_sum: string;
   cohort_count: string;
@@ -66,6 +67,13 @@ function buildCohortRow(opts: {
   bucketCount: number;
   bucketTagSum?: number;
   cohortCount: number;
+  /**
+   * `EXISTS (SELECT 1 FROM event_group_member ...)` projected by the
+   * menu cohort SELECT (#596 Round 4 item 2). The merge layer reads
+   * this to count visible branch-A Story members and compute
+   * `storyProtectedDroppedCount` exactly. Defaults to `false`.
+   */
+  inStory?: boolean;
 }): MenuCohortRow {
   const selectorTags = opts.selectorTags ?? [];
   return {
@@ -88,6 +96,7 @@ function buildCohortRow(opts: {
     is_unlabeled:
       (opts.kind ?? "HttpThreat") === "HttpThreat" &&
       selectorTags.includes("unlabeled-cluster"),
+    in_story: opts.inStory ?? false,
     bucket_count: String(opts.bucketCount),
     bucket_tag_sum: String(opts.bucketTagSum ?? 0),
     cohort_count: String(opts.cohortCount),
@@ -110,10 +119,88 @@ interface DetailRow {
   baseline_score: number;
 }
 
+/** Row shape returned by `selectStoryProtectedCohort` (#471 §1). */
+interface ProtectedCohortRow {
+  event_key: string;
+  event_time: Date;
+  kind: string;
+  sensor: string;
+  orig_addr: string | null;
+  resp_addr: string | null;
+  orig_port: number | null;
+  resp_port: number | null;
+  host: string | null;
+  dns_query: string | null;
+  uri: string | null;
+  category: ThreatCategory | null;
+  baseline_version: string;
+  raw_score: number;
+  selector_tags: string[] | null;
+  baseline_score: number;
+  /** Unbounded `COUNT(*) OVER ()` carried per row (#471 §2). */
+  protected_total_in_window: string;
+}
+
+function buildProtectedRow(opts: {
+  eventKey: string;
+  address: string | null;
+  baselineScore: number;
+  eventTime?: Date;
+  kind?: string;
+  category?: ThreatCategory | null;
+}): ProtectedCohortRow {
+  // `protected_total_in_window` is stamped by `makeMockPool` (which
+  // knows the seed's row count and any explicit override) so test
+  // bodies do not have to keep the count in sync with the array
+  // length they pass in.
+  return {
+    event_key: opts.eventKey,
+    event_time: opts.eventTime ?? new Date("2026-05-09T11:30:00.000Z"),
+    kind: opts.kind ?? "HttpThreat",
+    sensor: "sensor-a",
+    orig_addr: opts.address,
+    resp_addr: null,
+    orig_port: null,
+    resp_port: null,
+    host: null,
+    dns_query: null,
+    uri: null,
+    category: opts.category ?? null,
+    baseline_version: "phase1b-four-selector",
+    raw_score: 0,
+    selector_tags: [],
+    baseline_score: opts.baselineScore,
+    protected_total_in_window: "0",
+  };
+}
+
+/** Row shape returned by `countEligibleByStop` (#471 §4). */
+interface EligibleByStopRow {
+  total_all: string;
+  eligible_top80: string;
+  eligible_top50: string;
+  eligible_top20: string;
+  eligible_top5: string;
+}
+
 interface CustomerSeed {
   customerId: number;
   /** Rows the `selectMenuCohort` SELECT returns. */
   cohortRows?: MenuCohortRow[];
+  /** Rows the `selectStoryProtectedCohort` SELECT (#471 §1) returns. */
+  protectedRows?: ProtectedCohortRow[];
+  /**
+   * Override the `protected_total_in_window` column the mock SQL
+   * stamps on every protected row (#471 §2). Defaults to
+   * `protectedRows.length` so the common no-overflow case needs no
+   * setup. A test exercising the single-tenant SQL `LIMIT` overflow
+   * sets this to a value strictly larger than `protectedRows.length`
+   * to simulate the LIMIT silently dropping rows the COUNT(*) OVER
+   * () still includes.
+   */
+  protectedTotalInWindowOverride?: number;
+  /** Response of `countEligibleByStop` (#471 §4). */
+  eligibleByStop?: Partial<EligibleByStopRow>;
   /** Per-address detail rows returned by the batched detail SELECT. */
   detailRowsByAddress?: Record<string, Partial<DetailRow>[]>;
   /** Per-address observed counts (response of `perAssetObservedCounts`). */
@@ -196,6 +283,62 @@ function makeMockPool(seed: CustomerSeed): {
             rows: rows as unknown as Record<string, unknown>[],
             rowCount: rows.length,
           };
+        }
+        if (
+          sql.includes("cume_dist()") &&
+          sql.includes("event_group_member") &&
+          sql.includes("LIMIT")
+        ) {
+          // Branch B (#471 §1) matcher runs BEFORE the eligible-by-stop
+          // matcher because the post-#596-Round-2 branch B SQL also
+          // carries a single `COUNT(*) FILTER (WHERE branch_b_unique)
+          // OVER ()` for the FILTERed window count — the
+          // eligible-by-stop SQL's bare `COUNT(*) FILTER` would
+          // otherwise match first and misroute branch B.
+          //
+          // (Inline branch B handler below; falls through here so
+          // both passes share the protectedRows / total override.)
+        } else if (
+          sql.includes("cume_dist()") &&
+          sql.includes("COUNT(*) FILTER")
+        ) {
+          // Per-stop eligible counts (#471 §4). Zero-fill any
+          // unspecified column so the production parser
+          // (`Number(r.total_all)` etc.) never sees `undefined`.
+          const e = seed.eligibleByStop ?? {};
+          const row: EligibleByStopRow = {
+            total_all: e.total_all ?? "0",
+            eligible_top80: e.eligible_top80 ?? "0",
+            eligible_top50: e.eligible_top50 ?? "0",
+            eligible_top20: e.eligible_top20 ?? "0",
+            eligible_top5: e.eligible_top5 ?? "0",
+          };
+          return {
+            rows: [row as unknown as Record<string, unknown>],
+            rowCount: 1,
+          };
+        }
+        if (
+          sql.includes("cume_dist()") &&
+          sql.includes("event_group_member") &&
+          sql.includes("LIMIT")
+        ) {
+          // Branch B (#471 §1) Story-protected force-union SELECT.
+          // Project a uniform `protected_total_in_window` across every
+          // row — production SQL computes `COUNT(*) OVER ()` over the
+          // pre-LIMIT in_story CTE, so all returned rows carry the
+          // same total. Default to the seeded row count (the no-SQL-
+          // cap case); a test that exercises the per-tenant LIMIT
+          // overflow passes `protectedTotalInWindowOverride` to seed
+          // a value larger than the row count.
+          const sourceRows = seed.protectedRows ?? [];
+          const total =
+            seed.protectedTotalInWindowOverride ?? sourceRows.length;
+          const rows = sourceRows.map((row) => ({
+            ...row,
+            protected_total_in_window: String(total),
+          })) as unknown as Record<string, unknown>[];
+          return { rows, rowCount: rows.length };
         }
         if (sql.includes("SELECT COUNT(*)::text")) {
           return {
@@ -1072,6 +1215,689 @@ describe("loadTriagePeriod (SQL data source)", () => {
     for (const { sql } of aggregates) {
       expect(sql).toMatch(/orig_addr IS NOT NULL/i);
     }
+  });
+
+  it("force-unions Story-protected branch B rows that branch A did not surface (#471 §1)", async () => {
+    // Branch A produces one row (10.0.0.1, score 0.99). Branch B
+    // produces two rows: one that overlaps with branch A (`event_key
+    // "1"` — branch A precedence, so its protectedByStory stays
+    // false) and one that does NOT (`event_key "p"` for asset
+    // 10.0.0.9, score 0.10). The Top 50% cutoff drops the second from
+    // branch A but the force-union keeps it, marked as branch B.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const { pool } = makeMockPool({
+      customerId: 1,
+      cohortRows: [
+        buildCohortRow({
+          eventKey: "1",
+          address: "10.0.0.1",
+          baselineScore: 0.99,
+          bucketCount: 1,
+          cohortCount: 1,
+        }),
+      ],
+      protectedRows: [
+        buildProtectedRow({
+          eventKey: "1",
+          address: "10.0.0.1",
+          baselineScore: 0.99,
+        }),
+        buildProtectedRow({
+          eventKey: "p",
+          address: "10.0.0.9",
+          baselineScore: 0.1,
+        }),
+      ],
+      detailRowsByAddress: {
+        "10.0.0.1": [{ event_key: "1", baseline_score: 0.99 }],
+        "10.0.0.9": [{ event_key: "p", baseline_score: 0.1 }],
+      },
+      observedPerAsset: [
+        { address: "10.0.0.1", detected_count: "1" },
+        { address: "10.0.0.9", detected_count: "1" },
+      ],
+      observedTotal: 2,
+      triagedTotal: 2,
+    });
+    mockGetCustomerPool.mockResolvedValue(pool);
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      { strictness: "top50" },
+    );
+
+    // Both events reach the screen: branch A's "1" and branch B's "p".
+    expect(result.events.map((e) => e.id).sort()).toEqual(["1", "p"]);
+    // Branch A precedence: the overlapping event_key "1" is NOT
+    // marked, but the branch-B-only "p" IS marked.
+    const byId = new Map(result.events.map((e) => [e.id, e]));
+    expect(byId.get("1")?.protectedByStory).toBeFalsy();
+    expect(byId.get("p")?.protectedByStory).toBe(true);
+    // Asset list aggregates both addresses; story-protected asset
+    // ranks below the high-score one.
+    expect(result.assets.map((a) => a.address)).toEqual([
+      "10.0.0.1",
+      "10.0.0.9",
+    ]);
+  });
+
+  it("trips the STORY_PROTECTED_HARD_CAP merge-layer cap when branch B exceeds 2000 across the scope (#471 §2)", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+    // 1500 protected rows per tenant — 3000 total, above the 2000
+    // merge-layer cap.
+    function manyProtected(prefix: string): ProtectedCohortRow[] {
+      const rows: ProtectedCohortRow[] = [];
+      for (let i = 0; i < 1500; i++) {
+        rows.push(
+          buildProtectedRow({
+            eventKey: `${prefix}-${i}`,
+            address: `10.0.${prefix === "a" ? 1 : 2}.${i % 250}`,
+            baselineScore: 0.1,
+            eventTime: new Date(Date.UTC(2026, 4, 9, 11, 30, 0) - i * 1000),
+          }),
+        );
+      }
+      return rows;
+    }
+    const { pool: pool1 } = makeMockPool({
+      customerId: 1,
+      cohortRows: [],
+      protectedRows: manyProtected("a"),
+      observedTotal: 0,
+      triagedTotal: 0,
+    });
+    const { pool: pool2 } = makeMockPool({
+      customerId: 2,
+      cohortRows: [],
+      protectedRows: manyProtected("b"),
+      observedTotal: 0,
+      triagedTotal: 0,
+    });
+    mockGetCustomerPool.mockImplementation(async (id: number) =>
+      id === 1 ? pool1 : pool2,
+    );
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const { STORY_PROTECTED_HARD_CAP } = await import("@/lib/triage");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      { strictness: "top5" },
+    );
+
+    expect(result.storyProtectedTruncated).toBe(true);
+    // 3000 fetched − 2000 cap = 1000 dropped.
+    expect(result.storyProtectedDroppedCount).toBe(
+      3000 - STORY_PROTECTED_HARD_CAP,
+    );
+    // The union events count matches the cap (branch A is empty).
+    expect(result.events).toHaveLength(STORY_PROTECTED_HARD_CAP);
+    // Funnel `shown` reflects the post-merge union, not the corpus
+    // floor — both branches were empty by `triaged`, but `shown` is
+    // the cap.
+    expect(result.funnel.shown).toBe(STORY_PROTECTED_HARD_CAP);
+  });
+
+  it("sums eligibleByStop across tenants for the slider preview chip (#471 §4)", async () => {
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+    const { pool: pool1 } = makeMockPool({
+      customerId: 1,
+      cohortRows: [],
+      eligibleByStop: {
+        total_all: "100",
+        eligible_top80: "80",
+        eligible_top50: "50",
+        eligible_top20: "20",
+        eligible_top5: "5",
+      },
+    });
+    const { pool: pool2 } = makeMockPool({
+      customerId: 2,
+      cohortRows: [],
+      eligibleByStop: {
+        total_all: "40",
+        eligible_top80: "30",
+        eligible_top50: "20",
+        eligible_top20: "10",
+        eligible_top5: "2",
+      },
+    });
+    mockGetCustomerPool.mockImplementation(async (id: number) =>
+      id === 1 ? pool1 : pool2,
+    );
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+    );
+    expect(result.eligibleByStop).toEqual({
+      all: 140,
+      top80: 110,
+      top50: 70,
+      top20: 30,
+      top5: 7,
+    });
+  });
+
+  it("funnel.shown moves with the slider while funnel.triaged stays slider-independent (#471 §4)", async () => {
+    // Three cohort rows at different scores; the cutoff toggles which
+    // rows survive `composeMenu`. `triaged` is the corpus-floor COUNT
+    // and must not move; `shown` is the post-merge union size and
+    // must move.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    function seed() {
+      return makeMockPool({
+        customerId: 1,
+        cohortRows: [
+          buildCohortRow({
+            eventKey: "1",
+            address: "10.0.0.1",
+            baselineScore: 0.99,
+            bucketCount: 3,
+            cohortCount: 3,
+          }),
+          buildCohortRow({
+            eventKey: "2",
+            address: "10.0.0.2",
+            baselineScore: 0.6,
+            bucketCount: 3,
+            cohortCount: 3,
+          }),
+          buildCohortRow({
+            eventKey: "3",
+            address: "10.0.0.3",
+            baselineScore: 0.1,
+            bucketCount: 3,
+            cohortCount: 3,
+          }),
+        ],
+        detailRowsByAddress: {
+          "10.0.0.1": [{ event_key: "1", baseline_score: 0.99 }],
+          "10.0.0.2": [{ event_key: "2", baseline_score: 0.6 }],
+          "10.0.0.3": [{ event_key: "3", baseline_score: 0.1 }],
+        },
+        observedPerAsset: [
+          { address: "10.0.0.1", detected_count: "1" },
+          { address: "10.0.0.2", detected_count: "1" },
+          { address: "10.0.0.3", detected_count: "1" },
+        ],
+        observedTotal: 100,
+        triagedTotal: 3,
+      });
+    }
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+
+    const all = await (async () => {
+      const { pool } = seed();
+      mockGetCustomerPool.mockResolvedValue(pool);
+      return loadTriagePeriod(
+        makeSession({ roles: ["System Administrator"] }),
+        PERIOD,
+        { strictness: "all" },
+      );
+    })();
+    const top5 = await (async () => {
+      const { pool } = seed();
+      mockGetCustomerPool.mockResolvedValue(pool);
+      return loadTriagePeriod(
+        makeSession({ roles: ["System Administrator"] }),
+        PERIOD,
+        { strictness: "top5" },
+      );
+    })();
+
+    // `triaged` is slider-independent.
+    expect(all.funnel.triaged).toBe(3);
+    expect(top5.funnel.triaged).toBe(3);
+    // `shown` moves: all three rows at "All", only the 0.99 row at
+    // Top 5%.
+    expect(all.funnel.shown).toBe(3);
+    expect(top5.funnel.shown).toBe(1);
+    // passThroughRate = shown / detected — also moves.
+    expect(all.funnel.passThroughRate).toBeCloseTo(3 / 100);
+    expect(top5.funnel.passThroughRate).toBeCloseTo(1 / 100);
+  });
+
+  it("does not mark branch B rows whose baseline_score >= cutoff (review-round-1 item 1)", async () => {
+    // A Story-protected row that branch A could not surface (because
+    // the per-bucket SQL candidate cap / quota dropped it) is still
+    // brought back by the branch B force-union — but it must NOT
+    // render the chain-link marker when its score is at or above the
+    // slider cutoff (#471 §3 condition (c) `baseline_score < cutoff`).
+    // The marker is for "kept BECAUSE OF Story membership", not for
+    // "kept via branch B".
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const { pool } = makeMockPool({
+      customerId: 1,
+      cohortRows: [],
+      protectedRows: [
+        buildProtectedRow({
+          eventKey: "high",
+          address: "10.0.0.1",
+          baselineScore: 0.97, // >= Top 5% cutoff (0.95)
+        }),
+        buildProtectedRow({
+          eventKey: "low",
+          address: "10.0.0.2",
+          baselineScore: 0.1,
+        }),
+      ],
+      observedTotal: 2,
+      triagedTotal: 2,
+    });
+    mockGetCustomerPool.mockResolvedValue(pool);
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      { strictness: "top5" },
+    );
+    const byId = new Map(result.events.map((e) => [e.id, e]));
+    // High-score branch B row reaches the screen via force-union but
+    // does NOT carry the marker — score 0.97 >= cutoff 0.95.
+    expect(byId.get("high")?.protectedByStory).toBe(false);
+    // Low-score branch B row is the one the rule was written for.
+    expect(byId.get("low")?.protectedByStory).toBe(true);
+  });
+
+  it("does not mark branch B rows at the 'All' stop (review-round-1 item 1)", async () => {
+    // At the "All" stop the cutoff is 0, condition (a) of the
+    // four-condition rule says the marker is never rendered. Branch B
+    // rows still reach the screen — they just stay unmarked.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const { pool } = makeMockPool({
+      customerId: 1,
+      cohortRows: [],
+      protectedRows: [
+        buildProtectedRow({
+          eventKey: "any",
+          address: "10.0.0.1",
+          baselineScore: 0.1,
+        }),
+      ],
+      observedTotal: 1,
+      triagedTotal: 1,
+    });
+    mockGetCustomerPool.mockResolvedValue(pool);
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      { strictness: "all" },
+    );
+    const branchBRow = result.events.find((e) => e.id === "any");
+    expect(branchBRow?.protectedByStory).toBe(false);
+  });
+
+  it("surfaces the truncation banner when a single tenant's branch B overflows the per-tenant LIMIT (review-round-1 item 3)", async () => {
+    // A single tenant whose protected-row count exceeds the
+    // per-tenant SQL `LIMIT` returns exactly `LIMIT` rows from the
+    // DB — `protected_total_in_window` (the `COUNT(*) OVER ()` pass
+    // computed before the LIMIT) is what proves the SQL silently
+    // dropped rows. Without this signal the merge layer would see
+    // `mergedProtected.length === STORY_PROTECTED_HARD_CAP` and never
+    // fire the banner.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const { STORY_PROTECTED_HARD_CAP } = await import("@/lib/triage");
+    // Seed exactly the per-tenant LIMIT worth of rows but stamp a
+    // higher `COUNT(*) OVER ()` so the test mirrors the production
+    // SQL truncating an overflow.
+    const rows: ProtectedCohortRow[] = [];
+    for (let i = 0; i < STORY_PROTECTED_HARD_CAP; i++) {
+      rows.push(
+        buildProtectedRow({
+          eventKey: `k-${i}`,
+          address: `10.0.0.${i % 250}`,
+          baselineScore: 0.1,
+          eventTime: new Date(Date.UTC(2026, 4, 9, 11, 30, 0) - i * 1000),
+        }),
+      );
+    }
+    const { pool } = makeMockPool({
+      customerId: 1,
+      cohortRows: [],
+      protectedRows: rows,
+      protectedTotalInWindowOverride: STORY_PROTECTED_HARD_CAP + 7,
+      observedTotal: 0,
+      triagedTotal: 0,
+    });
+    mockGetCustomerPool.mockResolvedValue(pool);
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      { strictness: "top5" },
+    );
+
+    expect(result.storyProtectedTruncated).toBe(true);
+    expect(result.storyProtectedDroppedCount).toBe(7);
+    // The visible events are still capped at the merge-layer ceiling.
+    expect(result.events).toHaveLength(STORY_PROTECTED_HARD_CAP);
+  });
+
+  it("trips the truncation banner when mergedProtected exceeds the merge cap (#596 Round 3 item 1, Round 4 item 2)", async () => {
+    // Reviewer's Round 3 scenario: branch B's force-union also
+    // rescues above-cutoff, in-cohort Story rows that branch A's
+    // `composeMenu` drops by per-bucket quota. Two tenants × 2000
+    // such Story rows each — branch A's `events` is empty in this
+    // fixture (`composeMenu` dropped all of them), so the merge
+    // layer sees 4000 branch B rows, slices to 2000, and must
+    // report 2000 dropped.
+    //
+    // Under Round 4 item 2's unfiltered window-count semantics,
+    // each tenant's `protected_total_in_window` is the full 2000
+    // (every in-window Story row pre-`LIMIT`); the merge layer's
+    // dropped count is `4000 − visibleStoryMembers (=2000) = 2000`.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1, 2]);
+    function quotaRescueRows(prefix: string): ProtectedCohortRow[] {
+      const rows: ProtectedCohortRow[] = [];
+      for (let i = 0; i < 2000; i++) {
+        rows.push(
+          buildProtectedRow({
+            eventKey: `${prefix}-${i}`,
+            address: `10.0.${prefix === "a" ? 1 : 2}.${i % 250}`,
+            // Above-cutoff scores — these are quota-rescue rows that
+            // branch A's SQL surfaced but `composeMenu` dropped.
+            baselineScore: 0.99,
+            eventTime: new Date(Date.UTC(2026, 4, 9, 11, 30, 0) - i * 1000),
+          }),
+        );
+      }
+      return rows;
+    }
+    const { pool: pool1 } = makeMockPool({
+      customerId: 1,
+      cohortRows: [],
+      protectedRows: quotaRescueRows("a"),
+      // Unfiltered window count — branch B SQL returned all 2000
+      // in-window Story rows for this tenant.
+      protectedTotalInWindowOverride: 2000,
+      observedTotal: 0,
+      triagedTotal: 0,
+    });
+    const { pool: pool2 } = makeMockPool({
+      customerId: 2,
+      cohortRows: [],
+      protectedRows: quotaRescueRows("b"),
+      protectedTotalInWindowOverride: 2000,
+      observedTotal: 0,
+      triagedTotal: 0,
+    });
+    mockGetCustomerPool.mockImplementation(async (id: number) =>
+      id === 1 ? pool1 : pool2,
+    );
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const { STORY_PROTECTED_HARD_CAP } = await import("@/lib/triage");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      { strictness: "top5" },
+    );
+
+    // 4000 returned − 2000 cap = 2000 dropped; the FILTERed window
+    // count sum is only 200, but the banner still fires because the
+    // merge slice is the binding constraint.
+    expect(result.storyProtectedTruncated).toBe(true);
+    expect(result.storyProtectedDroppedCount).toBe(
+      4000 - STORY_PROTECTED_HARD_CAP,
+    );
+    expect(result.events).toHaveLength(STORY_PROTECTED_HARD_CAP);
+  });
+
+  it("does NOT inflate storyProtectedDroppedCount when branch-A overlap is heavy and branch-B-unique rows fit under the cap (#596 Round 2 item 1, Round 4 item 2)", async () => {
+    // Scenario the reviewer flagged: a tenant has many in-story rows
+    // that branch A already surfaces (above-cutoff, inside the
+    // per-bucket cohort) plus one sub-cutoff Story member that only
+    // branch B can rescue. Production SQL projects an unfiltered
+    // `COUNT(*) OVER ()` of in-window Story members (#596 Round 4
+    // item 2) and the merge layer subtracts the visible Story count
+    // (identified via `MenuCohortDbRow.in_story` for branch A plus
+    // every branch B row) to compute the dropped count exactly — no
+    // over-attribution of branch-A-shown rows.
+    //
+    // Mimic that: seed branch A with the overlapping rows (each
+    // tagged `inStory: true` as the production menu cohort SQL
+    // would project), seed branch B with all 11 Story members (10
+    // overlap + 1 unique), and stamp `protected_total_in_window =
+    // 11` to match the unfiltered window count.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const overlapRows: MenuCohortRow[] = [];
+    const overlapProtected: ProtectedCohortRow[] = [];
+    const overlapDetail: Record<string, Array<Partial<DetailRow>>> = {};
+    const overlapObserved: Array<{ address: string; detected_count: string }> =
+      [];
+    for (let i = 0; i < 10; i++) {
+      const address = `10.0.0.${i}`;
+      overlapRows.push(
+        buildCohortRow({
+          eventKey: `overlap-${i}`,
+          address,
+          baselineScore: 0.99,
+          bucketCount: 10,
+          cohortCount: 11,
+          inStory: true,
+        }),
+      );
+      overlapProtected.push(
+        buildProtectedRow({
+          eventKey: `overlap-${i}`,
+          address,
+          baselineScore: 0.99,
+        }),
+      );
+      overlapDetail[address] = [
+        { event_key: `overlap-${i}`, baseline_score: 0.99 },
+      ];
+      overlapObserved.push({ address, detected_count: "1" });
+    }
+    overlapProtected.push(
+      buildProtectedRow({
+        eventKey: "unique-low",
+        address: "10.0.0.99",
+        baselineScore: 0.1,
+      }),
+    );
+    overlapDetail["10.0.0.99"] = [
+      { event_key: "unique-low", baseline_score: 0.1 },
+    ];
+    overlapObserved.push({ address: "10.0.0.99", detected_count: "1" });
+    const { pool } = makeMockPool({
+      customerId: 1,
+      cohortRows: overlapRows,
+      // Branch B SQL response: all 11 in-window Story members — the
+      // SQL has no LIMIT pressure here, so it returns every Story
+      // member regardless of branch-A overlap. The merge layer
+      // dedups against branch A precedence and counts visible Story
+      // members from the final union.
+      protectedRows: overlapProtected,
+      // Unfiltered COUNT(*) OVER () = 11 (every in-window Story
+      // member, regardless of whether branch A also surfaces it).
+      protectedTotalInWindowOverride: 11,
+      detailRowsByAddress: overlapDetail,
+      observedPerAsset: overlapObserved,
+      observedTotal: 11,
+      triagedTotal: 11,
+    });
+    mockGetCustomerPool.mockResolvedValue(pool);
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      { strictness: "top5" },
+    );
+
+    // No banner — all 11 Story members surfaced (10 via branch A,
+    // 1 via branch B's force-union).
+    expect(result.storyProtectedTruncated).toBe(false);
+    expect(result.storyProtectedDroppedCount).toBe(0);
+    // All 10 overlap rows reach the screen via branch A; the 1
+    // sub-cutoff unique row reaches via branch B's force-union.
+    const ids = result.events.map((e) => e.id).sort();
+    expect(ids).toContain("unique-low");
+    expect(ids.filter((id) => id.startsWith("overlap-"))).toHaveLength(10);
+    // Branch A precedence: the overlapping rows stay unmarked. The
+    // sub-cutoff unique row carries the marker.
+    const byId = new Map(result.events.map((e) => [e.id, e]));
+    expect(byId.get("unique-low")?.protectedByStory).toBe(true);
+    expect(byId.get("overlap-0")?.protectedByStory).toBeFalsy();
+  });
+
+  it("counts a single tenant's per-tenant SQL `LIMIT` overflow of quota-rescue rows in storyProtectedDroppedCount (#596 Round 4 item 2)", async () => {
+    // Reviewer's Round 4 scenario: 3000 in-window Story rows in a
+    // single tenant, all `branch_b_unique = false` (above cutoff,
+    // inside the per-bucket cohort — branch A's `composeMenu` is
+    // what would drop them by quota). Branch B's SQL returns 2000
+    // (its per-tenant LIMIT), the unfiltered window count is 3000,
+    // and branch A's `events` is empty in this fixture (composeMenu
+    // dropped every cohort row by quota). The banner must fire with
+    // an accurate "1000 dropped" count even though the FILTERed-to-
+    // `branch_b_unique` pre-count would be zero.
+    //
+    // The fixture skips a real composeMenu replay because the test
+    // mocks branch A's `events` directly via an empty cohort. The
+    // production path runs composeMenu and gets the same shape when
+    // every cohort row is dropped by per-bucket quota.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const { STORY_PROTECTED_HARD_CAP } = await import("@/lib/triage");
+    const quotaRescue: ProtectedCohortRow[] = [];
+    for (let i = 0; i < STORY_PROTECTED_HARD_CAP; i++) {
+      quotaRescue.push(
+        buildProtectedRow({
+          eventKey: `qr-${i}`,
+          address: `10.0.0.${i % 250}`,
+          // Above-cutoff scores — these are quota-rescue rows that
+          // branch A's SQL surfaced but `composeMenu` dropped.
+          baselineScore: 0.99,
+          eventTime: new Date(Date.UTC(2026, 4, 9, 11, 30, 0) - i * 1000),
+        }),
+      );
+    }
+    const { pool } = makeMockPool({
+      customerId: 1,
+      cohortRows: [],
+      protectedRows: quotaRescue,
+      // Unfiltered COUNT(*) OVER () = 3000 even though SQL returned
+      // 2000. The pre-LIMIT count is what proves rows were dropped.
+      protectedTotalInWindowOverride: 3000,
+      observedTotal: 0,
+      triagedTotal: 0,
+    });
+    mockGetCustomerPool.mockResolvedValue(pool);
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      { strictness: "top5" },
+    );
+
+    // 3000 in-window Story members, 2000 visible (the per-tenant
+    // LIMIT clipped branch B before the merge layer saw the rest).
+    expect(result.storyProtectedTruncated).toBe(true);
+    expect(result.storyProtectedDroppedCount).toBe(1000);
+    expect(result.events).toHaveLength(STORY_PROTECTED_HARD_CAP);
+  });
+
+  it("rescues a Story member when branch A's copy is dropped by the global scored cap (#596 Round 4 item 1)", async () => {
+    // Reviewer's Round 4 scenario: a Story member that branch A
+    // surfaces locally inside one tenant can still be dropped by the
+    // cross-tenant `TRIAGE_HARD_EVENT_CAP`. Pre-fix, the per-tenant
+    // dedup removed the branch B copy before the global scored cap
+    // fired, leaving the row with no rescue path. The fix moves
+    // dedup to the merge layer so branch B's copy carries the row
+    // when branch A's copy is dropped by the global cap.
+    //
+    // Single tenant with `TRIAGE_HARD_EVENT_CAP + 1` cohort rows;
+    // branch A's `events` exceeds the global cap by 1 row. The lowest-
+    // scored cohort row is also a Story member (replicated in
+    // branch B). After the scored cap drops it, the merge-layer
+    // union must still include it via branch B.
+    mockHasPermission.mockResolvedValue(true);
+    mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
+    const { TRIAGE_HARD_EVENT_CAP } = await import("@/lib/triage");
+    const cohortRows: MenuCohortRow[] = [];
+    const detailByAddress: Record<string, Array<Partial<DetailRow>>> = {};
+    const observed: Array<{ address: string; detected_count: string }> = [];
+    // Top scored rows fill the cap. The lowest-scored cohort row is
+    // also a Story member; branch A would emit it locally but the
+    // global scored cap will drop it because every higher-scored row
+    // beats it in `compareScoredEvents`.
+    const total = TRIAGE_HARD_EVENT_CAP + 1;
+    for (let i = 0; i < total; i++) {
+      const address = `10.0.${Math.floor(i / 250) + 1}.${i % 250}`;
+      // Decreasing score so position `total - 1` is the lowest.
+      const score = 0.99 - i * 1e-6;
+      const isStoryMember = i === total - 1;
+      cohortRows.push(
+        buildCohortRow({
+          eventKey: `k-${i}`,
+          address,
+          baselineScore: score,
+          bucketCount: total,
+          cohortCount: total,
+          inStory: isStoryMember,
+          eventTime: new Date(Date.UTC(2026, 4, 9, 11, 30, 0) - i * 1000),
+        }),
+      );
+      if (!detailByAddress[address]) detailByAddress[address] = [];
+      detailByAddress[address].push({
+        event_key: `k-${i}`,
+        baseline_score: score,
+      });
+      observed.push({ address, detected_count: "1" });
+    }
+    // Branch B's SQL would also return the Story member (low-scored
+    // row). With dedup moved to the merge layer, the branch B copy
+    // survives in `mergedProtected` even though branch A would shadow
+    // it inside the tenant.
+    const lastIndex = total - 1;
+    const lastAddress = `10.0.${Math.floor(lastIndex / 250) + 1}.${lastIndex % 250}`;
+    const protectedRows: ProtectedCohortRow[] = [
+      buildProtectedRow({
+        eventKey: `k-${lastIndex}`,
+        address: lastAddress,
+        baselineScore: 0.99 - lastIndex * 1e-6,
+      }),
+    ];
+    const { pool } = makeMockPool({
+      customerId: 1,
+      cohortRows,
+      protectedRows,
+      protectedTotalInWindowOverride: 1,
+      detailRowsByAddress: detailByAddress,
+      observedPerAsset: observed,
+      observedTotal: total,
+      triagedTotal: total,
+    });
+    mockGetCustomerPool.mockResolvedValue(pool);
+    const { loadTriagePeriod } = await import("@/lib/triage/server-actions");
+    const result = await loadTriagePeriod(
+      makeSession({ roles: ["System Administrator"] }),
+      PERIOD,
+      // "All" stop — composeMenu lifts quota so every cohort row
+      // makes it into branch A's `events`. The interesting bound here
+      // is the global scored cap.
+      { strictness: "all" },
+    );
+
+    // The lowest-scored cohort row is the Story member; the global
+    // scored cap drops it. Branch B's rescue copy keeps it visible.
+    const ids = new Set(result.events.map((e) => e.id));
+    expect(ids.has(`k-${lastIndex}`)).toBe(true);
+    // Truncation banner reflects the global scored cap firing, not a
+    // Story-member loss — the Story member is in the final events.
+    expect(result.truncated).toBe(true);
+    expect(result.storyProtectedTruncated).toBe(false);
+    expect(result.storyProtectedDroppedCount).toBe(0);
   });
 });
 

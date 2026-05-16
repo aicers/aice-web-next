@@ -30,6 +30,12 @@ import type {
   StoriesSortOrder,
   TriageStoryMemberDetail,
 } from "@/lib/triage/story/types";
+import {
+  cutoffForStop,
+  DEFAULT_STRICTNESS_STOP_ID,
+  parseStrictnessStopId,
+  type StrictnessStopId,
+} from "@/lib/triage/strictness/stops";
 
 /**
  * Refetch the Stories list for the current period with explicit sort
@@ -101,9 +107,21 @@ export async function fetchStoryDetail(
   storyId: string,
   storedMemberCount: number,
   period: TriagePeriod,
+  strictness:
+    | StrictnessStopId
+    | string
+    | null
+    | undefined = DEFAULT_STRICTNESS_STOP_ID,
 ): Promise<StoryDetailFetchResult | null> {
   const session = await getCurrentSession();
   if (!session) return null;
+  // `strictness` arrives from the client either as a known stop id or
+  // as a raw URL/hash string; normalize before resolving the cutoff so
+  // a stale persisted value never throws here.
+  const stop = parseStrictnessStopId(
+    typeof strictness === "string" ? strictness : null,
+  );
+  const cutoff = cutoffForStop(stop);
   try {
     return await loadStoryDetail(
       session,
@@ -111,6 +129,7 @@ export async function fetchStoryDetail(
       storyId,
       storedMemberCount,
       period,
+      cutoff,
     );
   } catch {
     return null;

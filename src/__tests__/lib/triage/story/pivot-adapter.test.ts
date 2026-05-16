@@ -21,6 +21,7 @@ function makeMember(
     uri: null,
     category: "EXFILTRATION",
     baselineScore: 0.42,
+    protectedByStory: false,
     ...overrides,
   };
 }
@@ -74,6 +75,43 @@ describe("storyMembersToScoredEvents (#553 adapter)", () => {
     // …and the score-desc sort places the non-null score first;
     // null-scored rows participate but rank at the bottom.
     expect(respPortBucket?.get("443")?.events[0].id).toBe("in-period");
+  });
+
+  it("preserves protectedByStory through the adapter so pivot-from-Story keeps the chain-link marker (#596 Round 2 item 2)", () => {
+    // Story detail already computes `protectedByStory` per the
+    // four-condition rule against the active slider cutoff. The pivot
+    // related-events panel renders the marker directly from
+    // `event.protectedByStory`, so dropping the flag here would
+    // silently un-mark a protected member the moment the analyst
+    // pivots from their Story.
+    const adapted = storyMembersToScoredEvents(
+      [
+        makeMember({
+          eventKey: "marked",
+          baselineScore: 0.3,
+          protectedByStory: true,
+        }),
+        makeMember({
+          eventKey: "unmarked",
+          baselineScore: 0.97,
+          protectedByStory: false,
+        }),
+        makeMember({
+          eventKey: "out-of-period",
+          baselineScore: null,
+          protectedByStory: false,
+        }),
+      ],
+      1,
+    );
+    const byId = new Map(adapted.map((e) => [e.id, e]));
+    expect(byId.get("marked")?.protectedByStory).toBe(true);
+    expect(byId.get("unmarked")?.protectedByStory).toBe(false);
+    // Out-of-period members carry baselineScore=null and Story detail
+    // sets protectedByStory=false (condition (b) fails). That decision
+    // must travel through the adapter — pivot must not re-introduce a
+    // marker on a null-scored row.
+    expect(byId.get("out-of-period")?.protectedByStory).toBe(false);
   });
 
   it("narrows unknown ThreatCategory strings to null (defensive)", () => {

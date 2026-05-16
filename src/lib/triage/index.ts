@@ -25,6 +25,7 @@ export {
 export {
   cutoffForStop,
   DEFAULT_STRICTNESS_STOP_ID,
+  defaultNMultiplierForStop,
   getStrictnessStop,
   parseStrictnessStopId,
   STRICTNESS_STOPS,
@@ -38,6 +39,7 @@ export {
 } from "./string-number";
 export {
   type ScoredTriageEvent,
+  STORY_PROTECTED_HARD_CAP,
   TRIAGE_HARD_EVENT_CAP,
   type TriageAsset,
   type TriageCustomerFreshness,

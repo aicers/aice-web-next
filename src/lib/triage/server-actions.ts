@@ -15,12 +15,15 @@ import {
   type MenuRow,
 } from "./baseline/menu";
 import {
+  COUNT_ELIGIBLE_BY_STOP_SQL,
   COUNT_OBSERVED_SQL,
   COUNT_TRIAGED_SQL,
   MENU_CANDIDATES_PER_BUCKET,
   PER_ASSET_OBSERVED_COUNTS_SQL,
   SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL,
   SELECT_MENU_COHORT_SQL,
+  SELECT_STORY_PROTECTED_COHORT_SQL,
+  STORY_PROTECTED_PER_TENANT_LIMIT,
   TRIAGE_ASSET_DETAIL_LIMIT,
 } from "./baseline/read-path-sql.mjs";
 import { buildDispatchContext } from "./dispatch-context";
@@ -29,10 +32,13 @@ import { getCustomerPool } from "./policy/customer-db";
 import {
   cutoffForStop,
   DEFAULT_STRICTNESS_STOP_ID,
+  defaultNMultiplierForStop,
+  STRICTNESS_STOPS,
   type StrictnessStopId,
 } from "./strictness/stops";
 import {
   type ScoredTriageEvent,
+  STORY_PROTECTED_HARD_CAP,
   TRIAGE_HARD_EVENT_CAP,
   type TriageAsset,
   type TriageCustomerFreshness,
@@ -106,6 +112,56 @@ interface BaselineEventRow {
   baseline_score: number | null;
 }
 
+interface BaselineEventDetailRow extends BaselineEventRow {
+  /**
+   * Per-row marker source (#471 §3). Projected by the asset-detail
+   * SQL as `(baseline_score < $5 AND in_story)` so the four-condition
+   * marker rule collapses to "row passes when this is `true` AND the
+   * slider is not at 'All'" — at "All" the cutoff is `0` and the
+   * expression is always `false` by construction, so the SQL itself
+   * enforces condition (a) of the rule.
+   */
+  protected_by_story: boolean;
+}
+
+interface ProtectedCohortDbRow extends BaselineEventRow {
+  baseline_version: string;
+  raw_score: number;
+  selector_tags: string[] | null;
+  /**
+   * `true` when this row is guaranteed not to be in branch A's SQL
+   * cohort or branch A's post-`composeMenu` set — i.e. its `bucket_rn`
+   * exceeds `MENU_CANDIDATES_PER_BUCKET` (so branch A's SQL drops it)
+   * or its `baseline_score` is below the slider cutoff (so
+   * `composeMenu`'s cutoff filter drops it). Sorted to the top of the
+   * SQL result so the per-tenant `LIMIT` cannot be consumed by
+   * branch-A overlap that JS dedup (now at the merge layer, #596
+   * Round 4 item 1) would otherwise shadow with branch A precedence.
+   */
+  branch_b_unique: boolean;
+  /**
+   * Unfiltered `COUNT(*) OVER ()` of in-window Story members in this
+   * tenant — computed before the SQL `LIMIT` slice (#471 §2, #596
+   * Round 4 item 2). Every returned row carries the same value. The
+   * merge layer subtracts the count of visible Story members in the
+   * final union (identified via `MenuCohortDbRow.in_story` for branch
+   * A rows plus every returned branch B row) to compute
+   * `storyProtectedDroppedCount`. Counting all in-window members is
+   * safe because the merge layer knows which of those members are
+   * actually visible via branch A — the Round 2 over-attribution
+   * concern is handled in JS rather than by pre-filtering the SQL.
+   */
+  protected_total_in_window: string;
+}
+
+interface EligibleByStopRow {
+  total_all: string;
+  eligible_top80: string;
+  eligible_top50: string;
+  eligible_top20: string;
+  eligible_top5: string;
+}
+
 /**
  * `selectMenuCohort` row shape. Carries the §3 read-time `baseline_score`
  * plus the per-bucket cohort aggregates (`bucket_count`,
@@ -122,6 +178,17 @@ interface MenuCohortDbRow extends BaselineEventRow {
   raw_score: number;
   selector_tags: string[] | null;
   is_unlabeled: boolean;
+  /**
+   * `EXISTS (SELECT 1 FROM event_group_member ...)` evaluated by
+   * {@link SELECT_MENU_COHORT_SQL} (#596 Round 4 item 2). Branch A's
+   * `composeMenu` output does not by itself reveal Story membership;
+   * surfacing the flag here lets the merge layer count visible Story
+   * members in the final union and subtract from
+   * `protectedTotalInWindow` for an exact `storyProtectedDroppedCount`
+   * without over-attributing branch-A-shown rows that branch B's per-
+   * tenant `LIMIT` happens to omit.
+   */
+  in_story: boolean;
   bucket_count: string;
   bucket_tag_sum: string;
   cohort_count: string;
@@ -152,6 +219,26 @@ interface AssetEnrichment {
   detailEvents: ScoredTriageEvent[];
 }
 
+type EligibleByStop = Partial<Record<StrictnessStopId, number>>;
+
+interface ProtectedCohortResult {
+  rows: ProtectedCohortDbRow[];
+  /**
+   * Unfiltered count of in-window Story members in this tenant
+   * (`COUNT(*) OVER ()` projected by `SELECT_STORY_PROTECTED_COHORT_SQL`
+   * before the `LIMIT` slice). The merge layer uses this as the true
+   * Story-member population per tenant and subtracts the visible Story
+   * member count (identified through both `MenuCohortDbRow.in_story`
+   * for branch A rows and every branch B row) to compute
+   * `storyProtectedDroppedCount`. Counting *all* in-window members
+   * here is safe because the merge layer knows which are actually
+   * visible via branch A — the Round 2 over-attribution risk is
+   * handled in JS rather than by FILTERing the SQL pre-count (#596
+   * Round 4 item 2).
+   */
+  totalInWindow: number;
+}
+
 interface CustomerSlice {
   customerId: number;
   customerName: string;
@@ -163,10 +250,56 @@ interface CustomerSlice {
    * returned pivot corpus are derived from the same row set.
    */
   events: ScoredTriageEvent[];
+  /**
+   * Branch B (#471 §1) — Story-protected rows that bypass both the
+   * SQL candidate cap and `composeMenu`'s per-bucket quota. Carried
+   * separately so the merge layer can apply its independent
+   * {@link STORY_PROTECTED_HARD_CAP} (#471 §2 "Multi-tenant merge
+   * stage — separate cap for protected rows"). Each row carries
+   * `protectedByStory` set per the §3 four-condition rule (#471 §3)
+   * so the per-event marker surfaces can render directly from the
+   * flag without re-deriving the rule.
+   *
+   * Includes branch-A overlap — dedup of branch B against branch A is
+   * decided in the merge layer after both caps fire, not per-tenant,
+   * because a Story member that branch A happens to surface inside
+   * one tenant can still be dropped by the cross-tenant
+   * `TRIAGE_HARD_EVENT_CAP`; removing the branch B copy before that
+   * cap would leave the row with no rescue path (#596 Round 4
+   * item 1).
+   */
+  protectedEvents: ScoredTriageEvent[];
+  /**
+   * Unfiltered count of in-window Story members in this tenant (per
+   * {@link ProtectedCohortResult.totalInWindow}). Summed across the
+   * customer scope by the merge layer; the merge layer subtracts the
+   * count of Story members visible in the final union (using
+   * {@link storyMemberKeysQualified}) to compute the authoritative
+   * `storyProtectedDroppedCount` — exact under the #596 Round 4 item
+   * 2 fix, no over-attribution of branch-A-shown rows.
+   */
+  protectedTotalInWindow: number;
+  /**
+   * Per-tenant set of `${customerId}/${event_key}` for events known
+   * to be Story members — every branch A event whose
+   * {@link MenuCohortDbRow.in_story} is `true` plus every branch B
+   * row returned by the SQL `LIMIT` window. The merge layer unions
+   * these across tenants and counts intersection with the final union
+   * `events` to determine `storyProtectedDroppedCount` exactly,
+   * without needing a separate `isStoryMember` field on every
+   * {@link ScoredTriageEvent} (#596 Round 4 item 2).
+   */
+  storyMemberKeysQualified: Set<string>;
   /** Per-asset enrichment keyed by `orig_addr` for this tenant. */
   enrichmentByAddress: Map<string, AssetEnrichment>;
   detected: number;
   triaged: number;
+  /**
+   * Per-stop `eligible_top_n` counts for this tenant (#471 §4). Summed
+   * across tenants in {@link loadTriagePeriod} so the slider chip's
+   * "≈ N" hint reflects the customer scope, not a single tenant.
+   */
+  eligibleByStop: EligibleByStop;
   freshness: TriageCustomerFreshness;
 }
 
@@ -214,39 +347,103 @@ async function loadCustomerSlice(
   period: TriagePeriod,
   observedFromIso: string,
   observedDenominatorTruncated: boolean,
-  menuCutoff: number,
+  strictness: StrictnessStopId,
   signal: AbortSignal | undefined,
 ): Promise<CustomerSlice> {
   signal?.throwIfAborted();
   const pool = await getCustomerPool(customerId);
+  const menuCutoff = cutoffForStop(strictness);
+  const defaultNMultiplier = defaultNMultiplierForStop(strictness);
 
   const freshness = await readFreshness(pool, customerId, signal);
   signal?.throwIfAborted();
 
-  // 1. §4/§6 menu cohort — one SQL pass returns the post-exclusion
-  //    cohort aggregates plus per-bucket top-K candidate rows. The
-  //    strictness slider's cutoff (#471) is NOT applied at the SQL
-  //    level — `composeMenu` owns the filter (RFC §6 option (a),
-  //    "cutoff on top of unchanged quota") so the full-cohort bucket
-  //    aggregates that drive quota allocation are not narrowed by the
-  //    slider. Filtering in SQL would drop buckets whose rows all sit
-  //    below the cutoff and silently redistribute their quota.
-  const cohort = await selectMenuCohort(pool, period, signal);
+  // §4/§6 menu cohort + branch B (#471 §1) + per-stop eligible
+  // counts (#471 §4) fan out in parallel — all three reads are
+  // independent and bounded. Branch B carries Story-protected rows
+  // that bypass both the SQL candidate cap and `composeMenu`'s
+  // per-bucket quota; the merge layer (`loadTriagePeriod`) applies
+  // a separate `STORY_PROTECTED_HARD_CAP` to the cross-tenant union.
+  const [cohort, protectedCohort, eligibleByStop] = await Promise.all([
+    selectMenuCohort(pool, period, signal),
+    selectStoryProtectedCohort(pool, period, menuCutoff, signal),
+    countEligibleByStop(pool, period, signal),
+  ]);
+  const protectedRows = protectedCohort.rows;
   signal?.throwIfAborted();
 
-  const menuResult = composeMenuFromCohort(cohort, menuCutoff);
+  const menuResult = composeMenuFromCohort(
+    cohort,
+    menuCutoff,
+    defaultNMultiplier,
+  );
   const menuRows = menuResult.rows;
   const dbRowByKey = new Map(cohort.candidates.map((r) => [r.event_key, r]));
 
   const events = menuRowsToScoredEvents(menuRows, dbRowByKey, customerId);
 
-  // Addresses we need per-asset enrichment for: every distinct
-  // `orig_addr` that contributed at least one row to this tenant's
-  // menu. The cap in `loadTriagePeriod` may drop some of those rows
-  // later, so we load enrichment for the wider set here — an asset
-  // whose menu rows are all evicted by the cap simply never gets
-  // joined back to its enrichment row.
-  const addresses = uniqueAddresses(events);
+  // Branch B rows are kept in full — dedup against branch A on
+  // `event_key` is decided in the merge layer (`loadTriagePeriod`)
+  // after both caps fire, not per-tenant. A Story member that branch
+  // A happens to surface inside one tenant can still be dropped by
+  // the cross-tenant `TRIAGE_HARD_EVENT_CAP`; removing the branch B
+  // copy here would leave the row with no rescue path (#596 Round 4
+  // item 1).
+  //
+  // The marker flag (`protectedByStory`) still collapses #471 §3's
+  // four-condition rule into a single boolean on every row so per-
+  // event surfaces (asset detail, pivot, Story detail) can render the
+  // chain-link directly without re-deriving the rule:
+  //
+  //   (a) slider != "all"         → `menuCutoff > 0`
+  //   (b) baseline_score non-NULL → branch B always projects it
+  //   (c) baseline_score < cutoff → `score < menuCutoff`
+  //   (d) protected_by_story=true → every branch B row is a Story member
+  //
+  // Branch-A overlap rows (above-cutoff Story members) carry
+  // `protectedByStory: false` by condition (c), so the pivot panel —
+  // which renders the marker directly from the flag — does not over-
+  // mark them when the merge-layer dedup picks the branch B copy
+  // because branch A's copy was dropped by the global scored cap.
+  const protectedEvents = protectedRows.map<ScoredTriageEvent>((dbRow) => {
+    const event = rowToEvent(dbRow);
+    const score = dbRow.baseline_score ?? 0;
+    return {
+      ...event,
+      score,
+      customerId,
+      protectedByStory:
+        dbRow.baseline_score !== null &&
+        menuCutoff > 0 &&
+        dbRow.baseline_score < menuCutoff,
+      rowKey: `${customerId}/${dbRow.event_key}`,
+    };
+  });
+
+  // Set of `${customerId}/${event_key}` known to be Story members.
+  // Every branch B row is a Story member by construction; branch A
+  // rows are Story members iff `MenuCohortDbRow.in_story` is `true`
+  // (#596 Round 4 item 2). The merge layer unions these across
+  // tenants and counts intersection with the final union to compute
+  // `storyProtectedDroppedCount` exactly.
+  const storyMemberKeysQualified = new Set<string>();
+  for (const e of events) {
+    const dbRow = dbRowByKey.get(e.id);
+    if (dbRow?.in_story === true) {
+      storyMemberKeysQualified.add(`${customerId}/${e.id}`);
+    }
+  }
+  for (const e of protectedEvents) {
+    storyMemberKeysQualified.add(`${customerId}/${e.id}`);
+  }
+
+  // Addresses for enrichment: every distinct `orig_addr` from both
+  // branches. A Story-protected asset that has no scored events would
+  // otherwise miss the per-asset observed COUNT + detail panel.
+  const addressesSet = new Set<string>();
+  for (const e of events) if (e.origAddr) addressesSet.add(e.origAddr);
+  for (const e of protectedEvents) if (e.origAddr) addressesSet.add(e.origAddr);
+  const addresses = Array.from(addressesSet);
 
   if (addresses.length === 0) {
     const [detected, triaged] = await Promise.all([
@@ -257,15 +454,19 @@ async function loadCustomerSlice(
       customerId,
       customerName,
       events,
+      protectedEvents,
+      protectedTotalInWindow: protectedCohort.totalInWindow,
+      storyMemberKeysQualified,
       enrichmentByAddress: new Map(),
       detected,
       triaged,
+      eligibleByStop,
       freshness,
     };
   }
 
-  // 3. Funnel + per-asset observed COUNT + per-asset detail events
-  //    fan out in parallel — the reads are independent and bounded.
+  // Funnel + per-asset observed COUNT + per-asset detail events fan
+  // out in parallel — the reads are independent and bounded.
   const [detected, triaged, observedCounts, detailRowsByAddress] =
     await Promise.all([
       countObserved(pool, observedFromIso, period.endIso, signal),
@@ -295,17 +496,13 @@ async function loadCustomerSlice(
         ...event,
         score,
         customerId,
+        protectedByStory: dbRow.protected_by_story === true,
         rowKey: `${customerId}/${address}#${eventIdx}`,
       };
       return scored;
     });
     const observed = observedByAddress.get(address);
     const detectedCount = observed ?? 0;
-    // The per-asset truncation predicate fires when the request-level
-    // truncation flag holds AND this asset has no in-retention
-    // observed row. Keeping the type as `number` (per the issue's
-    // explicit "no widening") means consumers can sort on it without
-    // a special-case path.
     const detectedCountUnavailable =
       observedDenominatorTruncated && observed === undefined;
     enrichmentByAddress.set(address, {
@@ -319,19 +516,66 @@ async function loadCustomerSlice(
     customerId,
     customerName,
     events,
+    protectedEvents,
+    protectedTotalInWindow: protectedCohort.totalInWindow,
+    storyMemberKeysQualified,
     enrichmentByAddress,
     detected,
     triaged,
+    eligibleByStop,
     freshness,
   };
 }
 
-function uniqueAddresses(events: ReadonlyArray<ScoredTriageEvent>): string[] {
-  const seen = new Set<string>();
-  for (const e of events) {
-    if (e.origAddr) seen.add(e.origAddr);
+async function selectStoryProtectedCohort(
+  pool: pg.Pool,
+  period: TriagePeriod,
+  menuCutoff: number,
+  signal: AbortSignal | undefined,
+): Promise<ProtectedCohortResult> {
+  signal?.throwIfAborted();
+  const { rows } = await pool.query<ProtectedCohortDbRow>(
+    SELECT_STORY_PROTECTED_COHORT_SQL,
+    [
+      period.startIso,
+      period.endIso,
+      STORY_PROTECTED_PER_TENANT_LIMIT,
+      MENU_CANDIDATES_PER_BUCKET,
+      menuCutoff,
+    ],
+  );
+  // `protected_total_in_window` is the unbounded COUNT(*) OVER ()
+  // projected by the SQL — identical across every returned row, so
+  // reading the first row is sufficient. An empty result is the only
+  // path that needs the explicit `0` fallback (the SQL never emits a
+  // bare aggregate row, so an empty in_story CTE simply returns zero
+  // rows here).
+  const totalInWindow =
+    rows.length === 0 ? 0 : Number(rows[0].protected_total_in_window);
+  return { rows, totalInWindow };
+}
+
+async function countEligibleByStop(
+  pool: pg.Pool,
+  period: TriagePeriod,
+  signal: AbortSignal | undefined,
+): Promise<EligibleByStop> {
+  signal?.throwIfAborted();
+  const { rows } = await pool.query<EligibleByStopRow>(
+    COUNT_ELIGIBLE_BY_STOP_SQL,
+    [period.startIso, period.endIso],
+  );
+  if (rows.length === 0) {
+    return { all: 0, top80: 0, top50: 0, top20: 0, top5: 0 };
   }
-  return Array.from(seen);
+  const r = rows[0];
+  return {
+    all: Number(r.total_all),
+    top80: Number(r.eligible_top80),
+    top50: Number(r.eligible_top50),
+    top20: Number(r.eligible_top20),
+    top5: Number(r.eligible_top5),
+  };
 }
 
 async function readFreshness(
@@ -447,7 +691,11 @@ function buildCohort(rows: ReadonlyArray<MenuCohortDbRow>): MenuCohort {
  * aggregates that drive `composeMenu`'s quota allocation are
  * preserved — RFC §6 option (a), "cutoff on top of unchanged quota".
  */
-function composeMenuFromCohort(cohort: MenuCohort, menuCutoff: number) {
+function composeMenuFromCohort(
+  cohort: MenuCohort,
+  menuCutoff: number,
+  defaultNMultiplier: number | null,
+) {
   const candidates: MenuRow[] = cohort.candidates.map((r) => ({
     eventKey: r.event_key,
     eventTime: r.event_time,
@@ -462,6 +710,7 @@ function composeMenuFromCohort(cohort: MenuCohort, menuCutoff: number) {
     bucketAggregates: cohort.bucketAggregates,
     candidates,
     cutoff: menuCutoff,
+    defaultNMultiplier,
   });
 }
 
@@ -589,10 +838,10 @@ async function selectAssetDetailEventsBatch(
   addresses: ReadonlyArray<string>,
   menuCutoff: number,
   signal: AbortSignal | undefined,
-): Promise<Map<string, BaselineEventRow[]>> {
+): Promise<Map<string, BaselineEventDetailRow[]>> {
   signal?.throwIfAborted();
   if (addresses.length === 0) return new Map();
-  const { rows } = await pool.query<BaselineEventRow>(
+  const { rows } = await pool.query<BaselineEventDetailRow>(
     SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL,
     [
       period.startIso,
@@ -602,7 +851,7 @@ async function selectAssetDetailEventsBatch(
       menuCutoff,
     ],
   );
-  const grouped = new Map<string, BaselineEventRow[]>();
+  const grouped = new Map<string, BaselineEventDetailRow[]>();
   for (const row of rows) {
     const address = row.orig_addr;
     if (address === null) continue;
@@ -742,7 +991,6 @@ export async function loadTriagePeriod(
 ): Promise<TriageLoadResult> {
   const { signal } = options;
   const strictness = options.strictness ?? DEFAULT_STRICTNESS_STOP_ID;
-  const menuCutoff = cutoffForStop(strictness);
   const ctx = await buildDispatchContext(session);
   const customerIds = ctx.customerIds;
 
@@ -774,59 +1022,167 @@ export async function loadTriagePeriod(
       period,
       observedFromIso,
       observedDenominatorTruncated,
-      menuCutoff,
+      strictness,
       signal,
     ),
   );
 
   const detected = slices.reduce((sum, s) => sum + s.detected, 0);
   const triaged = slices.reduce((sum, s) => sum + s.triaged, 0);
-  // Pivot index needs a flat scored events list across customers,
-  // built from the union of per-tenant §4 `final_menu_rows` so the
-  // pivot corpus matches the analyst's visible menu end-to-end. The
-  // cross-tenant cap is applied in §3 priority order
-  // (`baseline_score DESC, event_time DESC, event_key DESC`) so a
-  // multi-tenant scope with more than `TRIAGE_HARD_EVENT_CAP`
-  // composed rows drops the lowest-priority rows first. `id` mirrors
-  // `event_key` through `rowToEvent` (a NUMERIC(39,0) stringified via
-  // `::text`), so the numeric-string comparator from menu.ts is the
-  // correct DESC order — plain `localeCompare` would put "10" before
-  // "9" and pick the wrong row at the cap boundary.
-  const mergedEvents = slices.flatMap((s) => s.events);
-  mergedEvents.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    const t = b.time.localeCompare(a.time);
-    if (t !== 0) return t;
-    return compareEventKeyDesc(a.id, b.id);
+  // Branch A: merge per-tenant `final_menu_rows`, sort in §3 priority
+  // order, cap at `TRIAGE_HARD_EVENT_CAP` (#471 §2 — unchanged from
+  // the foundation slice).
+  const mergedScored = slices.flatMap((s) => s.events);
+  mergedScored.sort(compareScoredEvents);
+  const truncated = mergedScored.length > TRIAGE_HARD_EVENT_CAP;
+  const scoredCapped = truncated
+    ? mergedScored.slice(0, TRIAGE_HARD_EVENT_CAP)
+    : mergedScored;
+
+  // Branch B: merge per-tenant Story-protected rows, apply the
+  // independent merge-layer `STORY_PROTECTED_HARD_CAP` (#471 §2
+  // "Multi-tenant merge stage — separate cap for protected rows").
+  //
+  // Dedup of branch B against branch A is decided here, not per-
+  // tenant: a Story member that branch A happens to surface inside
+  // one tenant can still be dropped by the cross-tenant
+  // `TRIAGE_HARD_EVENT_CAP` above, and removing the branch B copy
+  // before that cap fires would leave the row with no rescue path
+  // (#596 Round 4 item 1). `mergedProtected` therefore carries every
+  // branch B row each tenant returned (including overlap with branch
+  // A); branch A precedence is applied below in the union loop only
+  // for rows that survived the scored cap.
+  //
+  // The protected cap drops branch B rows that the analyst can still
+  // see via branch A — so we sort `mergedProtected` to push rows that
+  // depend on branch B's rescue (those whose branch A copy did NOT
+  // survive `scoredCapped`) to the head before the cap slices the
+  // tail. This keeps the visible Story-member set maximal under the
+  // cap.
+  const scoredCappedKeys = new Set<string>();
+  for (const e of scoredCapped) {
+    scoredCappedKeys.add(`${e.customerId}/${e.id}`);
+  }
+  const mergedProtected = slices.flatMap((s) => s.protectedEvents);
+  mergedProtected.sort((a, b) => {
+    const aServedByA = scoredCappedKeys.has(`${a.customerId}/${a.id}`);
+    const bServedByA = scoredCappedKeys.has(`${b.customerId}/${b.id}`);
+    // Rows NOT in `scoredCapped` come first (branch B is their only
+    // path to the screen). Among rows in the same priority class the
+    // standard §3 tie-breaker decides.
+    if (aServedByA !== bServedByA) return aServedByA ? 1 : -1;
+    return compareScoredEvents(a, b);
   });
-  const truncated = mergedEvents.length > TRIAGE_HARD_EVENT_CAP;
-  const events = truncated
-    ? mergedEvents.slice(0, TRIAGE_HARD_EVENT_CAP)
-    : mergedEvents;
-  // Asset list derives from the **capped** events so the visible
-  // analyst list and the returned pivot corpus stay aligned even when
-  // the cross-tenant cap fires. An asset whose menu rows are all
-  // dropped by the cap does not appear; an asset whose menu rows are
-  // partially dropped has its `score` / `triagedCount` /
-  // `lastEventTimeIso` reflect only the surviving rows. Per-tenant
-  // enrichment (`customerName`, `detectedCount`,
-  // `detectedCountUnavailable`, detail-panel events) is joined back
-  // from the slice that produced each surviving row.
+  const protectedCapped =
+    mergedProtected.length > STORY_PROTECTED_HARD_CAP
+      ? mergedProtected.slice(0, STORY_PROTECTED_HARD_CAP)
+      : mergedProtected;
+
+  // Union deduplicated on `(customerId, event_key)`, branch A
+  // preferred per the protection contract (incidental Story
+  // membership does not get marked).
+  const eventsByKey = new Map<string, ScoredTriageEvent>();
+  for (const e of scoredCapped) eventsByKey.set(`${e.customerId}/${e.id}`, e);
+  for (const e of protectedCapped) {
+    const key = `${e.customerId}/${e.id}`;
+    if (!eventsByKey.has(key)) eventsByKey.set(key, e);
+  }
+  const events = Array.from(eventsByKey.values());
+  events.sort(compareScoredEvents);
+
+  // `storyProtectedDroppedCount`: count of in-window Story members
+  // that did NOT reach the final union. Computed exactly by
+  // (a) summing each tenant's unfiltered `COUNT(*) OVER ()` of
+  // in-window Story members (the SQL pre-`LIMIT` count) and
+  // (b) subtracting the count of Story members that appear in the
+  // final `events`. A row is a known Story member when its qualified
+  // key is in any slice's `storyMemberKeysQualified` set — that set
+  // includes every branch B row each tenant returned and every
+  // branch A row whose `MenuCohortDbRow.in_story` was `true` (#596
+  // Round 4 item 2). The subtraction handles all three loss
+  // scenarios without over-attribution: per-tenant SQL `LIMIT`
+  // truncation, cross-tenant `STORY_PROTECTED_HARD_CAP` overflow,
+  // and quota-rescue rows that branch A's `composeMenu` happened to
+  // drop while branch B's `LIMIT` also clipped the rescue copy.
+  const storyMembersKnown = new Set<string>();
+  for (const s of slices) {
+    for (const k of s.storyMemberKeysQualified) storyMembersKnown.add(k);
+  }
+  let visibleStoryMembers = 0;
+  for (const e of events) {
+    if (storyMembersKnown.has(`${e.customerId}/${e.id}`)) {
+      visibleStoryMembers += 1;
+    }
+  }
+  const protectedTotalInWindow = slices.reduce(
+    (sum, s) => sum + s.protectedTotalInWindow,
+    0,
+  );
+  const storyProtectedDroppedCount = Math.max(
+    0,
+    protectedTotalInWindow - visibleStoryMembers,
+  );
+  const storyProtectedTruncated = storyProtectedDroppedCount > 0;
+
+  // Asset list derives from the **post-merge union** events so the
+  // visible analyst list and the returned pivot corpus stay aligned
+  // even when either cap fires. An asset whose menu rows are all
+  // dropped by either cap does not appear.
   const assets = aggregateAssetsFromCappedEvents(events, slices);
+
+  const shown = events.length;
   const passThroughRate =
-    detected > 0 ? Math.min(1, Math.max(0, triaged / detected)) : 0;
+    detected > 0 ? Math.min(1, Math.max(0, shown / detected)) : 0;
   const freshness = buildFreshness(slices.map((s) => s.freshness));
 
+  // Sum eligible-by-stop counts across the customer scope. Per-stop
+  // hints in the slider chip use this; the count is summed (not
+  // unioned) because the eligible aggregate is per-tenant and rows
+  // from different tenants cannot collide on `event_key`.
+  const eligibleByStop = sumEligibleByStop(slices.map((s) => s.eligibleByStop));
+
   return {
-    funnel: { detected, triaged, passThroughRate },
+    funnel: { detected, triaged, shown, passThroughRate },
     assets,
     truncated,
+    storyProtectedTruncated,
+    storyProtectedDroppedCount,
+    eligibleByStop,
     loadedEventCount: events.length,
     events,
     observedDenominatorTruncated,
     freshness,
     strictness,
   };
+}
+
+function compareScoredEvents(
+  a: ScoredTriageEvent,
+  b: ScoredTriageEvent,
+): number {
+  if (b.score !== a.score) return b.score - a.score;
+  const t = b.time.localeCompare(a.time);
+  if (t !== 0) return t;
+  return compareEventKeyDesc(a.id, b.id);
+}
+
+function sumEligibleByStop(
+  perTenant: ReadonlyArray<EligibleByStop>,
+): EligibleByStop {
+  const out: EligibleByStop = {};
+  for (const stop of STRICTNESS_STOPS) {
+    let total = 0;
+    let seen = false;
+    for (const t of perTenant) {
+      const v = t[stop.id];
+      if (typeof v === "number") {
+        total += v;
+        seen = true;
+      }
+    }
+    if (seen) out[stop.id] = total;
+  }
+  return out;
 }
 
 /**
@@ -850,9 +1206,12 @@ function emptyResult(
   strictness: StrictnessStopId,
 ): TriageLoadResult {
   return {
-    funnel: { detected: 0, triaged: 0, passThroughRate: 0 },
+    funnel: { detected: 0, triaged: 0, shown: 0, passThroughRate: 0 },
     assets: [],
     truncated: false,
+    storyProtectedTruncated: false,
+    storyProtectedDroppedCount: 0,
+    eligibleByStop: {},
     loadedEventCount: 0,
     events: [],
     observedDenominatorTruncated,

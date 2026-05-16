@@ -3,7 +3,10 @@
 import { useTimezone } from "@/components/providers/timezone-provider";
 import { formatDateTime } from "@/lib/format-date";
 import type { TriageAsset } from "@/lib/triage";
-
+import {
+  type ProtectedByStoryMarkerLabels,
+  renderProtectedByStoryMarker,
+} from "./event-row/protected-by-story-marker";
 import {
   type TriageEventRow,
   TriageEventTable,
@@ -35,6 +38,11 @@ export interface TriageAssetDetailLabels {
   kindColumn: string;
   categoryColumn: string;
   scoreColumn: string;
+  /**
+   * Story-protected row marker copy (#471 §3). Parameterized by
+   * `{score}`; rendered as both `aria-label` and hover tooltip.
+   */
+  protectedByStoryMarker: ProtectedByStoryMarkerLabels;
 }
 
 interface TriageAssetDetailViewProps {
@@ -74,6 +82,8 @@ export function TriageAssetDetailView({
         kind: event.__typename,
         category: event.category ?? null,
         baselineScore: event.score,
+        protectedByStory:
+          event.protectedByStory === true ? { score: event.score } : undefined,
       }))
     : [];
 
@@ -134,7 +144,13 @@ export function TriageAssetDetailView({
         {rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">{labels.emptyEvents}</p>
         ) : (
-          <TriageEventTable rows={rows} labels={tableLabels} />
+          <TriageEventTable
+            rows={rows}
+            labels={tableLabels}
+            renderProtectedByStoryMarker={renderProtectedByStoryMarker(
+              labels.protectedByStoryMarker,
+            )}
+          />
         )}
       </div>
     </section>

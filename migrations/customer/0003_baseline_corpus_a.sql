@@ -64,10 +64,11 @@ CREATE INDEX IF NOT EXISTS baseline_triaged_event_sensor_event_time_idx
 -- btree that the existing `baseline_triaged_event_event_time_idx` already
 -- covers. The #471 strictness slider does NOT use it: its cutoff
 -- compares against the SELECT-time `cume_dist()` projection over
--- `raw_score`, not the stored column. Kept here until the strictness
--- slider's follow-up runs the measurement gate (issue #471 Performance
--- §2 / §5) and decides whether to drop this index or rebuild it as
--- `(event_time DESC, raw_score DESC)`.
+-- `raw_score`, not the stored column. Dropped in migration
+-- `0012_drop_degenerate_baseline_score_idx.sql`; kept here for
+-- historical context. Fresh deployments will still CREATE the index
+-- on this migration and the 0012 migration will DROP it immediately
+-- after — the temporary cost is acceptable on first-time setup.
 CREATE INDEX IF NOT EXISTS baseline_triaged_event_event_time_score_idx
     ON baseline_triaged_event (event_time DESC, baseline_score DESC);
 CREATE INDEX IF NOT EXISTS baseline_triaged_event_host_idx

@@ -1921,6 +1921,7 @@
     "forbiddenBanner": "트리아지 결과를 볼 권한이 없습니다.",
     "forbiddenScopeBanner": "할당된 고객이 없습니다. 관리자에게 문의하세요.",
     "truncatedBannerTemplate": "일부만 표시: 기간의 {loaded}건 표시 ({cap}건에서 잘림).",
+    "storyProtectedTruncatedBannerTemplate": "스토리 멤버 {dropped}건이 잘렸습니다 — 보호된 스토리 이벤트가 화면 표시 한도를 초과했습니다.",
     "clampedNotice": "기간을 180일 룩백 / 30일 기간 상한에 맞게 조정했습니다.",
     "observedDenominatorTruncatedNotice": "관측된 분모의 보존 기간이 선택한 기간보다 짧아 탐지 카운트는 최근 30일만 포함합니다.",
     "freshness": {
@@ -1958,8 +1959,11 @@
       "title": "퍼널",
       "detected": "탐지",
       "triaged": "트리아지",
+      "triagedHint": "케이던스 및 제외 규칙을 통과한 행. 슬라이더와 무관합니다.",
+      "shown": "표시",
+      "shownHint": "슬라이더의 할당량과 병합 캡을 거쳐 실제로 화면에 노출되는 행. 슬라이더에 따라 변합니다.",
       "passThrough": "통과율",
-      "passThroughHint": "트리아지 ÷ 탐지"
+      "passThroughHint": "표시 ÷ 탐지"
     },
     "assetList": {
       "title": "점수순 자산",
@@ -1984,7 +1988,8 @@
       "timeColumn": "시각",
       "kindColumn": "종류",
       "categoryColumn": "카테고리",
-      "scoreColumn": "점수"
+      "scoreColumn": "점수",
+      "protectedByStoryMarkerTemplate": "스토리 멤버십으로 유지된 이벤트 (점수: {score})"
     },
     "pivotPanel": {
       "title": "관련 이벤트",
@@ -2142,7 +2147,8 @@
     "strictnessSlider": {
       "legend": "엄격도",
       "hint": "종류 정규화된 베이스라인 백분위에 대한 읽기 시점 컷오프. 느슨하면 더 넓은 결과, 엄격하면 가장 강한 신호만 표시합니다.",
-      "allStopHint": "사용자 컷오프 없음. 케이던스 임계값 바닥선, 버킷별 SQL 후보 상한, 메뉴 버킷별 할당량이 여전히 결과를 제한하므로 \"전체\"가 코퍼스 전부를 뜻하지는 않습니다.",
+      "allStopHint": "사용자 컷오프 없음. 케이던스 임계값 바닥선과 버킷별 SQL 후보 상한이 여전히 결과를 제한하므로 \"전체\"가 코퍼스 전부를 뜻하지는 않습니다.",
+      "eligibleHintTemplate": "≈ {count}",
       "stops": {
         "all": "전체",
         "top80": "상위 80%",

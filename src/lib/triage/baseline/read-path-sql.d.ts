@@ -4,12 +4,15 @@
 
 export const MENU_CANDIDATES_PER_BUCKET: 500;
 export const TRIAGE_ASSET_DETAIL_LIMIT: 50;
+export const STORY_PROTECTED_PER_TENANT_LIMIT: 2_000;
 
 export const SELECT_MENU_COHORT_SQL: string;
 export const COUNT_OBSERVED_SQL: string;
 export const COUNT_TRIAGED_SQL: string;
 export const PER_ASSET_OBSERVED_COUNTS_SQL: string;
 export const SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL: string;
+export const SELECT_STORY_PROTECTED_COHORT_SQL: string;
+export const COUNT_ELIGIBLE_BY_STOP_SQL: string;
 
 /**
  * Per-window inputs the harness threads into every measured query. Each

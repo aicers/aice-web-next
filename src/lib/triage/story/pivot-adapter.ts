@@ -94,6 +94,14 @@ export function storyMemberToScoredEvent(
     // from the grouping pass. See module docstring for the #553 AC.
     score: member.baselineScore ?? 0,
     customerId,
+    // Carry the marker flag through to the pivot related-events panel
+    // (#471 §3 / #596 Round 2 item 2). Story detail already computes
+    // `member.protectedByStory` against the four-condition rule with
+    // the active slider cutoff; pivot-from-Story renders the marker
+    // directly from `event.protectedByStory`, so dropping it here
+    // would silently un-mark protected members the moment the analyst
+    // pivots from their Story.
+    protectedByStory: member.protectedByStory,
     rowKey: `${customerId}/${member.eventKey}`,
   };
 }

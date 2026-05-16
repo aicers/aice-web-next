@@ -139,6 +139,7 @@ const LABELS: TriageShellLabels = {
   forbiddenBanner: "forbidden",
   forbiddenScopeBanner: "forbidden-scope",
   truncatedBannerTemplate: "Showing {loaded} of {cap}",
+  storyProtectedTruncatedBannerTemplate: "{dropped} Story members truncated",
   clampedNotice: "clamped",
   periodPicker: {
     legend: "Period",
@@ -179,6 +180,9 @@ const LABELS: TriageShellLabels = {
       title: "Funnel",
       detected: "Detected",
       triaged: "Triaged",
+      triagedHint: "triaged hint",
+      shown: "Shown",
+      shownHint: "shown hint",
       passThrough: "Pass-through",
       passThroughHint: "hint",
     },
@@ -206,6 +210,9 @@ const LABELS: TriageShellLabels = {
       kindColumn: "Kind",
       categoryColumn: "Category",
       scoreColumn: "Score",
+      protectedByStoryMarker: {
+        template: "Kept because of Story membership (score: {score})",
+      },
     },
     pivotPanel: {
       title: "Related events",

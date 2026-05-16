@@ -5,6 +5,7 @@ import {
   insertCuratedStory,
   readR1Candidates,
   readR3Candidates,
+  readStoryMemberDetail,
 } from "@/lib/triage/story/repository";
 import type { CandidateEvent } from "@/lib/triage/story/rules";
 import { STORY_MEMBER_CAP } from "@/lib/triage/story/rules";
@@ -412,6 +413,132 @@ describe("insertAutoStory — β carry-over (rebuild path, #565)", () => {
     expect(ins?.params).toContain(lastSentAt);
     expect(ins?.params).toContain(3);
     expect(ins?.params).toContain(lastSentBy);
+  });
+});
+
+describe("readStoryMemberDetail — protectedByStory four-condition rule (#471 §3, review-round-1 item 2)", () => {
+  function makeReadDetailPool(rows: Array<Record<string, unknown>>): {
+    pool: unknown;
+    queries: Array<{ sql: string; params: unknown[] | undefined }>;
+  } {
+    const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      return { rows, rowCount: rows.length };
+    });
+    return { pool: { query }, queries };
+  }
+  const period = {
+    startIso: "2026-05-08T00:00:00.000Z",
+    endIso: "2026-05-09T00:00:00.000Z",
+  };
+
+  it("marks an in-period member whose score is below the cutoff, leaves the high-score member unmarked", async () => {
+    const { pool } = makeReadDetailPool([
+      {
+        event_key: "low",
+        event_time: new Date("2026-05-08T12:00:00.000Z"),
+        kind: "HttpThreat",
+        sensor: "sensor-a",
+        orig_addr: "10.0.0.1",
+        resp_addr: null,
+        orig_port: null,
+        resp_port: null,
+        host: null,
+        dns_query: null,
+        uri: null,
+        category: null,
+        baseline_score: 0.3,
+      },
+      {
+        event_key: "high",
+        event_time: new Date("2026-05-08T13:00:00.000Z"),
+        kind: "HttpThreat",
+        sensor: "sensor-a",
+        orig_addr: "10.0.0.2",
+        resp_addr: null,
+        orig_port: null,
+        resp_port: null,
+        host: null,
+        dns_query: null,
+        uri: null,
+        category: null,
+        baseline_score: 0.97,
+      },
+    ]);
+    const result = await readStoryMemberDetail(
+      // biome-ignore lint/suspicious/noExplicitAny: fake test pool
+      pool as any,
+      "story-1",
+      2,
+      period,
+      0.95, // Top 5% cutoff
+    );
+    const byKey = new Map(result.members.map((m) => [m.eventKey, m]));
+    // 0.30 in-period member at Top 5% renders with the marker.
+    expect(byKey.get("low")?.protectedByStory).toBe(true);
+    // 0.97 score sits at or above the cutoff — condition (c) fails.
+    expect(byKey.get("high")?.protectedByStory).toBe(false);
+  });
+
+  it("never marks an out-of-period member (baselineScore null violates condition (b))", async () => {
+    const { pool } = makeReadDetailPool([
+      {
+        event_key: "out",
+        event_time: new Date("2026-04-01T00:00:00.000Z"),
+        kind: "HttpThreat",
+        sensor: "sensor-a",
+        orig_addr: "10.0.0.1",
+        resp_addr: null,
+        orig_port: null,
+        resp_port: null,
+        host: null,
+        dns_query: null,
+        uri: null,
+        category: null,
+        baseline_score: null,
+      },
+    ]);
+    const result = await readStoryMemberDetail(
+      // biome-ignore lint/suspicious/noExplicitAny: fake test pool
+      pool as any,
+      "story-1",
+      1,
+      period,
+      0.95,
+    );
+    const [m] = result.members;
+    expect(m.baselineScore).toBeNull();
+    expect(m.protectedByStory).toBe(false);
+  });
+
+  it("never marks any member at the 'All' stop (cutoff 0 violates condition (a))", async () => {
+    const { pool } = makeReadDetailPool([
+      {
+        event_key: "low",
+        event_time: new Date("2026-05-08T12:00:00.000Z"),
+        kind: "HttpThreat",
+        sensor: "sensor-a",
+        orig_addr: "10.0.0.1",
+        resp_addr: null,
+        orig_port: null,
+        resp_port: null,
+        host: null,
+        dns_query: null,
+        uri: null,
+        category: null,
+        baseline_score: 0.1,
+      },
+    ]);
+    const result = await readStoryMemberDetail(
+      // biome-ignore lint/suspicious/noExplicitAny: fake test pool
+      pool as any,
+      "story-1",
+      1,
+      period,
+      0,
+    );
+    expect(result.members[0].protectedByStory).toBe(false);
   });
 });
 

@@ -72,6 +72,14 @@ export interface TriageShellLabels {
   forbiddenBanner: string;
   forbiddenScopeBanner: string;
   truncatedBannerTemplate: string;
+  /**
+   * Story-protected truncation counter (#471 §2). `{dropped}` is the
+   * number of Story-protected rows the merge layer dropped past the
+   * `STORY_PROTECTED_HARD_CAP`. Surfaces alongside the existing
+   * `TRIAGE_HARD_EVENT_CAP` truncation banner but is keyed on a
+   * separate cap and a separate counter.
+   */
+  storyProtectedTruncatedBannerTemplate: string;
   clampedNotice: string;
   /**
    * Funnel-level "Detected over last 30d" affordance (1B-3 / #458).
@@ -390,6 +398,11 @@ export function TriageShell({
           stop={strictness}
           onChange={commitStrictness}
           pending={pending}
+          eligibleByStop={
+            initialState.status === "ok"
+              ? initialState.result.eligibleByStop
+              : undefined
+          }
           labels={labels.strictnessSlider}
         />
       </div>
@@ -500,6 +513,21 @@ function BannerForState({
     banners.push(
       <p
         key="truncated"
+        role="status"
+        className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
+      >
+        {banner}
+      </p>,
+    );
+  }
+  if (state.result.storyProtectedTruncated) {
+    const banner = labels.storyProtectedTruncatedBannerTemplate.replace(
+      "{dropped}",
+      COUNT_FORMAT.format(state.result.storyProtectedDroppedCount),
+    );
+    banners.push(
+      <p
+        key="story-protected-truncated"
         role="status"
         className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
       >

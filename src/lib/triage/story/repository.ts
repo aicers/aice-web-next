@@ -694,12 +694,21 @@ export interface StoryMemberDetailResult {
  * `baseline_score`. The caller passes the stored
  * `summary_payload.memberCount` so the detail panel can render the
  * "X of Y events shown — D aged past corpus A retention" notice.
+ *
+ * `cutoff` is the strictness slider cutoff (#471 §3) applied to the
+ * read-time `baseline_score` to compute the per-row `protectedByStory`
+ * flag. Every row joined here is a Story member by construction
+ * (`event_group_member` is the join's left side), so the four-
+ * condition marker rule collapses to: cutoff > 0 AND baselineScore is
+ * non-NULL AND baselineScore < cutoff. Out-of-period members carry
+ * `baselineScore === null` and the marker stays silent on them.
  */
 export async function readStoryMemberDetail(
   pool: pg.Pool,
   storyId: string,
   storedMemberCount: number,
   period: TriagePeriod,
+  cutoff: number,
   signal?: AbortSignal,
 ): Promise<StoryMemberDetailResult> {
   signal?.throwIfAborted();
@@ -707,21 +716,27 @@ export async function readStoryMemberDetail(
     SELECT_STORY_MEMBERS_DETAIL_SQL,
     [storyId, period.startIso, period.endIso],
   );
-  const members: TriageStoryMemberDetail[] = rows.map((r) => ({
-    eventKey: r.event_key,
-    eventTimeIso: r.event_time.toISOString(),
-    kind: r.kind,
-    sensor: r.sensor,
-    origAddr: r.orig_addr,
-    respAddr: r.resp_addr,
-    origPort: r.orig_port,
-    respPort: r.resp_port,
-    host: r.host,
-    dnsQuery: r.dns_query,
-    uri: r.uri,
-    category: r.category,
-    baselineScore: r.baseline_score === null ? null : Number(r.baseline_score),
-  }));
+  const members: TriageStoryMemberDetail[] = rows.map((r) => {
+    const baselineScore =
+      r.baseline_score === null ? null : Number(r.baseline_score);
+    return {
+      eventKey: r.event_key,
+      eventTimeIso: r.event_time.toISOString(),
+      kind: r.kind,
+      sensor: r.sensor,
+      origAddr: r.orig_addr,
+      respAddr: r.resp_addr,
+      origPort: r.orig_port,
+      respPort: r.resp_port,
+      host: r.host,
+      dnsQuery: r.dns_query,
+      uri: r.uri,
+      category: r.category,
+      baselineScore,
+      protectedByStory:
+        baselineScore !== null && cutoff > 0 && baselineScore < cutoff,
+    };
+  });
   return {
     members,
     hasDanglingMembers: members.length < storedMemberCount,

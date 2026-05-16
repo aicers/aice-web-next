@@ -173,6 +173,14 @@ export async function loadStoriesForPeriod(
  * Read the detail-panel member table for a single Story. Validates
  * the caller's scope before touching the tenant pool — a Story id in
  * a customer outside scope returns `null`.
+ *
+ * `cutoff` is the strictness slider cutoff (#471 §3) used to compute
+ * each member's `protectedByStory` marker flag. The caller threads
+ * the value resolved by `cutoffForStop` for the active slider stop so
+ * Story-detail member rows honor the same four-condition marker rule
+ * as the asset-detail and pivot surfaces. Defaults to `0` (no
+ * cutoff / "All" stop) so existing callers that have not yet been
+ * updated keep their pre-slider behavior.
  */
 export async function loadStoryDetail(
   session: AuthSession,
@@ -180,6 +188,7 @@ export async function loadStoryDetail(
   storyId: string,
   storedMemberCount: number,
   period: TriagePeriod,
+  cutoff: number,
   signal?: AbortSignal,
 ): Promise<StoryMemberDetailResult | null> {
   const ctx = await buildDispatchContext(session);
@@ -190,6 +199,7 @@ export async function loadStoryDetail(
     storyId,
     storedMemberCount,
     period,
+    cutoff,
     signal,
   );
 }

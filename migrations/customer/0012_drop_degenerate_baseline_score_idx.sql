@@ -1,0 +1,22 @@
+-- Drop the degenerate composite index
+-- `baseline_triaged_event_event_time_score_idx` (#471 Performance §2 / §5).
+--
+-- The index was added in `0003_baseline_corpus_a.sql:71-72` with the
+-- shape `(event_time DESC, baseline_score DESC)` on the assumption
+-- that the strictness slider would filter on the stored column. In
+-- practice `baseline_score` is read-time-only — Phase 1.B never
+-- INSERTs a value (see `src/lib/triage/baseline/pager.ts:50` and the
+-- Baseline RFC §3), so the second column is all-NULL and the index
+-- degenerates to an `event_time` btree that
+-- `baseline_triaged_event_event_time_idx` already covers.
+--
+-- The #471 measurement gate considered rebuilding as
+-- `(event_time DESC, raw_score DESC)` to give the `cume_dist()` sort
+-- some skip-sort locality within the kind partitions. Since the
+-- production sort is partitioned by `(kind, baseline_version)` (not
+-- by `event_time`), the planner cannot use that locality without a
+-- separate `(kind, baseline_version, raw_score DESC)` index, which
+-- is out of scope for this migration. Dropping the degenerate index
+-- is the safer choice and removes the maintenance + write cost of an
+-- always-NULL column from every cadence INSERT.
+DROP INDEX IF EXISTS baseline_triaged_event_event_time_score_idx;

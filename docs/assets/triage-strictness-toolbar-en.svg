@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Triage toolbar with the strictness slider (wireframe)</title>
+  <desc id="desc">Wireframe of the Triage toolbar showing the Period picker, Mode toggle, Scope toggle, and the new Strictness slider. The slider is a radiogroup of five chips ordered loose to strict — All, Top 80%, Top 50% (selected default), Top 20%, Top 5% — each chip carries a pre-composeMenu eligible-count preview formatted as "approximately N".</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 13px; fill: #18181b; font-weight: 700; }
+    .text-legend { font-size: 10px; fill: #71717a; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+    .text-input { font-size: 12px; fill: #18181b; }
+    .text-chip-active { font-size: 11px; fill: #ffffff; font-weight: 700; }
+    .text-chip-inactive { font-size: 11px; fill: #52525b; font-weight: 500; }
+    .text-preview-active { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; fill: #ffffff; fill-opacity: 0.8; }
+    .text-preview-inactive { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; fill: #71717a; }
+    .text-hint { font-size: 10px; fill: #71717a; }
+    .chip-bar { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .chip-active { fill: #18181b; }
+    .input-box { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-primary { fill: #18181b; rx: 4; ry: 4; }
+    .btn-primary-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+  </style>
+
+  <rect class="bg" width="720" height="220"/>
+
+  <!-- Header -->
+  <text x="24" y="28" class="text-title">Triage</text>
+  <text x="24" y="46" class="text-hint">Period 2026-05-08 00:00 → 2026-05-09 00:00 · 1 customer · Last updated 6 min ago</text>
+
+  <!-- Period picker -->
+  <text x="24" y="78" class="text-legend">Period</text>
+  <rect class="input-box" x="24" y="86" width="148" height="28"/>
+  <text x="34" y="105" class="text-input">2026-05-08 00:00</text>
+  <rect class="input-box" x="180" y="86" width="148" height="28"/>
+  <text x="190" y="105" class="text-input">2026-05-09 00:00</text>
+  <rect class="btn-primary" x="336" y="86" width="62" height="28"/>
+  <text x="355" y="105" class="btn-primary-text">Apply</text>
+
+  <!-- Mode toggle -->
+  <text x="416" y="78" class="text-legend">Mode</text>
+  <rect class="chip-bar" x="416" y="86" width="132" height="28" rx="4" ry="4"/>
+  <rect class="chip-active" x="420" y="90" width="68" height="20" rx="3" ry="3"/>
+  <text x="430" y="104" class="text-chip-active">Baseline</text>
+  <text x="494" y="104" class="text-chip-inactive">Policies</text>
+
+  <!-- Scope toggle -->
+  <text x="556" y="78" class="text-legend">Scope</text>
+  <rect class="chip-bar" x="556" y="86" width="140" height="28" rx="4" ry="4"/>
+  <rect class="chip-active" x="560" y="90" width="78" height="20" rx="3" ry="3"/>
+  <text x="568" y="104" class="text-chip-active">Triaged only</text>
+  <text x="644" y="104" class="text-chip-inactive">All events</text>
+
+  <!-- Strictness slider -->
+  <text x="24" y="144" class="text-legend">Strictness</text>
+  <rect class="chip-bar" x="24" y="152" width="608" height="32" rx="4" ry="4"/>
+  <!-- Stop: All -->
+  <text x="40" y="172" class="text-chip-inactive">All</text>
+  <text x="60" y="172" class="text-preview-inactive">≈ 4,820</text>
+  <!-- Stop: Top 80% -->
+  <text x="128" y="172" class="text-chip-inactive">Top 80%</text>
+  <text x="174" y="172" class="text-preview-inactive">≈ 3,910</text>
+  <!-- Stop: Top 50% (active default) -->
+  <rect class="chip-active" x="242" y="156" width="142" height="24" rx="3" ry="3"/>
+  <text x="252" y="172" class="text-chip-active">Top 50%</text>
+  <text x="304" y="172" class="text-preview-active">≈ 2,408</text>
+  <!-- Stop: Top 20% -->
+  <text x="402" y="172" class="text-chip-inactive">Top 20%</text>
+  <text x="448" y="172" class="text-preview-inactive">≈ 968</text>
+  <!-- Stop: Top 5% -->
+  <text x="510" y="172" class="text-chip-inactive">Top 5%</text>
+  <text x="552" y="172" class="text-preview-inactive">≈ 241</text>
+
+  <!-- Hint -->
+  <text x="24" y="204" class="text-hint">Read-time cutoff over the kind-normalized baseline percentile. Loose shows a wider net; strict only the strongest signals.</text>
+</svg>

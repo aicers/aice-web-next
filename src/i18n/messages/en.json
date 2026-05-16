@@ -1921,6 +1921,7 @@
     "forbiddenBanner": "You are not authorized to view triage results.",
     "forbiddenScopeBanner": "You have no customers in scope. Contact an administrator.",
     "truncatedBannerTemplate": "Partial: showing {loaded} events of period (truncated at {cap}).",
+    "storyProtectedTruncatedBannerTemplate": "{dropped} Story members truncated — too many Story-protected events for the period to fit on screen.",
     "clampedNotice": "Period adjusted to fit the 180-day lookback / 30-day duration cap.",
     "observedDenominatorTruncatedNotice": "Detected counts cover only the last 30 days — the observed denominator's retention is shorter than the selected window.",
     "freshness": {
@@ -1958,8 +1959,11 @@
       "title": "Funnel",
       "detected": "Detected",
       "triaged": "Triaged",
+      "triagedHint": "Cadence + exclusion floor; independent of the slider.",
+      "shown": "Shown",
+      "shownHint": "Rows reaching the screen after the slider's quota and merge caps. Moves with the slider.",
       "passThrough": "Pass-through",
-      "passThroughHint": "Triaged ÷ Detected"
+      "passThroughHint": "Shown ÷ Detected"
     },
     "assetList": {
       "title": "Assets by score",
@@ -1984,7 +1988,8 @@
       "timeColumn": "Time",
       "kindColumn": "Kind",
       "categoryColumn": "Category",
-      "scoreColumn": "Score"
+      "scoreColumn": "Score",
+      "protectedByStoryMarkerTemplate": "Kept because of Story membership (score: {score})"
     },
     "pivotPanel": {
       "title": "Related events",
@@ -2142,7 +2147,8 @@
     "strictnessSlider": {
       "legend": "Strictness",
       "hint": "Read-time cutoff over the kind-normalized baseline percentile. Loose shows a wider net; strict only the strongest signals.",
-      "allStopHint": "No user-side cutoff. The cadence-threshold floor, the per-bucket SQL candidate cap, and the menu's per-bucket quota still bound the result; \"All\" is not a literal corpus dump.",
+      "allStopHint": "No user-side cutoff. The cadence-threshold floor and the per-bucket SQL candidate cap still bound the result; \"All\" is not a literal corpus dump.",
+      "eligibleHintTemplate": "≈ {count}",
       "stops": {
         "all": "All",
         "top80": "Top 80%",

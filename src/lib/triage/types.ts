@@ -13,6 +13,18 @@ import type { StrictnessStopId } from "./strictness/stops";
 export const TRIAGE_HARD_EVENT_CAP = 5_000;
 
 /**
+ * Hard cap on the number of Story-protected branch B events the
+ * Triage page loads for one period across the customer scope (#471
+ * "Multi-tenant merge stage — separate cap for protected rows"). The
+ * page surfaces a "N Story members truncated" counter when the cap is
+ * hit. Sized smaller than {@link TRIAGE_HARD_EVENT_CAP} because branch
+ * B is bounded only by Story membership in the window — a few
+ * pathologically large Stories should not blow past the screen's
+ * usable list size.
+ */
+export const STORY_PROTECTED_HARD_CAP = 2_000;
+
+/**
  * Membership shape of a customer-defined network. Mirrors REview's
  * `HostNetworkGroup` — exact hosts, CIDR networks, and inclusive IP
  * ranges. The triage classifier reads all three fields to decide
@@ -156,6 +168,16 @@ export interface TriageEvent {
 export interface ScoredTriageEvent extends TriageEvent {
   score: number;
   customerId: number;
+  /**
+   * `true` when the event was sourced via branch B (the Story-
+   * protected force-union, #471). Branch A rows carry `false` even
+   * when they happen to also be Story members — the score cleared the
+   * cutoff so the marker is silent on them (#471 "Row-level marker on
+   * protected events" four-condition rule). Defaults to `false` for
+   * legacy aggregation paths that do not run the branch B query
+   * (e.g. {@link aggregateTriageEvents}).
+   */
+  protectedByStory?: boolean;
 }
 
 /** Result of one `eventList` page in the triage query. */
@@ -251,11 +273,42 @@ export interface TriageAsset {
   events: ScoredTriageEvent[];
 }
 
-/** Funnel summary for the Triage page. */
+/**
+ * Funnel summary for the Triage page.
+ *
+ * The slider redefines `passThroughRate` from "rows surviving cadence"
+ * to "rows actually reaching the screen" (#471 §4). `triaged` stays as
+ * the slider-independent corpus floor (rows that survived cadence +
+ * exclusions in this window) and does not move with the slider;
+ * `shown` is the post-quota, post-merge-cap union size, computed in
+ * the application layer at merge time.
+ */
 export interface TriageFunnel {
+  /** Corpus-level COUNT from `observed_event_meta` — slider-independent. */
   detected: number;
+  /**
+   * Corpus-level COUNT from `baseline_triaged_event` — the cadence +
+   * exclusion floor of rows that survived ingest in this window.
+   * Slider-independent — moving the slider does NOT change this
+   * number. The funnel's authoritative displayed-set count lives on
+   * {@link shown} instead.
+   */
   triaged: number;
-  /** `triaged / detected` clamped to `[0, 1]`. NaN-safe. */
+  /**
+   * Authoritative displayed-set size after the two-branch merge
+   * (branch A through `composeMenu` + `TRIAGE_HARD_EVENT_CAP`; branch
+   * B through `STORY_PROTECTED_HARD_CAP`; union deduplicated, branch A
+   * preferred). Moves with the slider. Equal to {@link triaged} only
+   * when neither cap binds and the slider is at "All" (`composeMenu`
+   * quota lifted).
+   */
+  shown: number;
+  /**
+   * `shown / detected` clamped to `[0, 1]`. NaN-safe. Redefined by
+   * #471 §4 — was `triaged / detected` in the foundation slice. The
+   * analyst-visible "pass-through" is the rate of rows that actually
+   * reach the screen, not the rate that survives cadence.
+   */
   passThroughRate: number;
 }
 
@@ -264,6 +317,28 @@ export interface TriageLoadResult {
   assets: TriageAsset[];
   /** True when the loaded slice hit the 5,000-event cap. */
   truncated: boolean;
+  /**
+   * `true` when branch B (Story-protected force-union) saturated the
+   * `STORY_PROTECTED_HARD_CAP` merge-layer cap (#471 §2). Drives the
+   * "N Story members truncated" counter alongside the existing
+   * `truncated` banner. {@link storyProtectedCount} reports the
+   * dropped row count.
+   */
+  storyProtectedTruncated: boolean;
+  /**
+   * Number of Story-protected branch B rows dropped by the merge-
+   * layer `STORY_PROTECTED_HARD_CAP` (#471 §2). `0` when the cap did
+   * not bind. Surfaced verbatim in the truncated-counter UI copy.
+   */
+  storyProtectedDroppedCount: number;
+  /**
+   * Per-stop "≈ N" preview hints for the slider chip row (#471 §4).
+   * Computed cheaply pre-`composeMenu` via the SQL
+   * `COUNT(*) FILTER (WHERE baseline_score >= :cutoff OR in_story)`
+   * aggregate, summed across the customer scope. `null` when the
+   * caller's customer scope is empty.
+   */
+  eligibleByStop: Partial<Record<StrictnessStopId, number>>;
   /** Number of events actually loaded (≤ {@link TRIAGE_HARD_EVENT_CAP}). */
   loadedEventCount: number;
   /**

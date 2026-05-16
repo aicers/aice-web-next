@@ -1,6 +1,6 @@
 # Strictness Slider RFC
 
-- Status: **Draft (foundation slice)**
+- Status: **Draft (Baseline-A scope complete)**
 - Tracks: [#471](https://github.com/aicers/aice-web-next/issues/471)
 - Related RFCs: [RFC 0001 — Baseline algorithm](../../../../rfcs/0001-baseline-algorithm.md)
 
@@ -17,24 +17,29 @@ are preserved (see §6). There is no re-ingest, no `review` round-trip,
 no corpus mutation, and the shared `SELECT_MENU_COHORT_SQL` bind shape
 is unchanged.
 
-This is the **foundation slice** of #471 — it lands the stop set, the
-algorithm-level cutoff threading, the server-action plumbing, and the
-slider UI with persistence. Story-protected event force-union (branch
-B), the multi-tenant dual-cap merge, the protected-event row marker,
-and the EN/KR manual page are split into follow-up issues so this PR
-remains reviewable.
+This RFC covers the Baseline-A scope end-to-end. The foundation slice
+(#595) landed the stop set, the algorithm-level cutoff threading, the
+server-action plumbing, and the slider UI with persistence. This
+follow-up (#596) adds the Story-protected force-union (branch B), the
+multi-tenant dual-cap merge, the protected-event row marker, the
+funnel "Shown" segment with `passThroughRate` redefined to
+`shown / detected`, the per-stop `eligible_top_n` preview, option (b)
+for the slider × quota interaction (`defaultN` multiplier + "All"-stop
+quota lift), and the migration that drops the degenerate
+`baseline_triaged_event_event_time_score_idx`. Corpus B ("With my
+policies") slider activation is split to a separate follow-up.
 
 ## 1. Stop count and labels
 
 Five discrete stops, ordered loose → strict in the UI:
 
-| id      | Label    | Cutoff (`baseline_score >=`) |
-| ------- | -------- | ---------------------------- |
-| `all`   | All      | 0                            |
-| `top80` | Top 80%  | 0.20                         |
-| `top50` | Top 50%  | 0.50                         |
-| `top20` | Top 20%  | 0.80                         |
-| `top5`  | Top 5%   | 0.95                         |
+| id      | Label    | Cutoff (`baseline_score >=`) | `defaultN` multiplier |
+| ------- | -------- | ---------------------------- | --------------------- |
+| `all`   | All      | 0                            | quota lifted (`null`) |
+| `top80` | Top 80%  | 0.20                         | 2                     |
+| `top50` | Top 50%  | 0.50                         | 1                     |
+| `top20` | Top 20%  | 0.80                         | 0.5                   |
+| `top5`  | Top 5%   | 0.95                         | 0.25                  |
 
 Five stops were chosen over three or seven because:
 
@@ -76,17 +81,15 @@ The default lives in `stops.ts` as `DEFAULT_STRICTNESS_STOP_ID`.
 floor (#456) is still in effect, and the menu SELECT retains the
 per-bucket candidate cap from `read-path-sql.mjs`
 (`bucket_rn <= MENU_CANDIDATES_PER_BUCKET`, currently 500). The
-per-bucket `composeMenu` quota also still applies in this foundation
-slice; lifting the quota at "All" is part of the follow-up that ships
-the `defaultN` multiplier table (see §6).
+per-bucket `composeMenu` quota is **lifted** at "All" under option
+(b) (see §6) — the `defaultNMultiplier` is `null` so `composeMenu`
+returns every cutoff-surviving row, bounded only by the SQL candidate
+cap upstream and the cross-tenant `TRIAGE_HARD_EVENT_CAP` downstream.
 
-The slider's hover tooltip must surface ALL THREE of these bounds (the
-cadence-threshold floor, the per-bucket SQL candidate cap, and the
-`composeMenu` quota), not only the cadence floor. With option (a)
-("cutoff on top of unchanged quota") the per-bucket quota still caps
-the rendered set at "All", and naming only the cadence floor would
-leave the analyst expecting a wider result than the menu can produce
-in this slice. EN/KR copy lives at
+The slider's hover tooltip names only the two remaining bounds (the
+cadence-threshold floor and the per-bucket SQL candidate cap). The
+foundation-slice copy that also mentioned the `composeMenu` quota is
+intentionally removed alongside the quota lift. EN/KR copy lives at
 `src/i18n/messages/{en,ko}.json::strictnessSlider.allStopHint`.
 
 ## 5. Empty-window behavior contract
@@ -102,38 +105,44 @@ events shows the funnel and the slider with zero counts, no error.
 
 ## 6. Slider × `composeMenu` quota interaction
 
-**Working choice for the foundation slice: option (a) — slider as an
-additional filter ON TOP of quota.** The slider cutoff is applied
-inside `composeMenu`'s per-row filter (`compose.mjs:158`), AFTER
-`buildCohort` has reconstructed the full-cohort bucket aggregates from
-the SQL `bucket_count` / `bucket_tag_sum` / `cohort_count` columns.
-This ordering is load-bearing: applying the cutoff at the SQL level
-would drop buckets whose rows all sit below the cutoff from the row
-set `buildCohort` sees, silently shrinking the aggregate list and
-redistributing the missing bucket's quota to surviving buckets. That
-contradicts option (a)'s "cutoff on top of unchanged quota" semantics.
-The quota is unchanged from its #462 / `FINAL_COUNT` curve value.
+**Working choice: option (b) — `defaultN` multiplier + "All"-stop
+quota lift.** Each stop carries a multiplier that scales the per-bucket
+quota derived from #462's `FINAL_COUNT` curve. The "All" stop's
+multiplier is `null` — `composeMenu` skips per-bucket quota allocation
+entirely and returns every cutoff-surviving row from the assembled set.
 
-This matches the "narrow the result set" intent for the strict end of
-the slider, where most analyst time is spent. The
-`MIN_NONZERO_FLOOR` fallback in `composeMenu` also respects the
-cutoff: when `assembled_count` falls below the floor, the fallback
-returns the top-N rows by tie-breaker **from the cutoff-surviving
-set only** (`compose.mjs:196-216`). If no row survives the cutoff,
-the fallback returns empty rather than dipping below the user's stop —
-otherwise a strict stop could still surface a sub-cutoff row and
-violate the §1 stop contract.
+Concrete multiplier table per §1. Rationale:
 
-The "loose end widens past the quota" intent (option (b)) is
-documented in #471 but is deferred to a follow-up because it requires:
+- Loose stops (`top80`, `top50`) widen `defaultN` so "Top 80%"
+  actually expands the rendered set beyond the production default
+  (`top50`) and the loose end of the slider feels like a wider net.
+  A 2× multiplier on `top80` is the smallest value that visibly
+  separates it from the default; larger multipliers would push
+  cross-tenant volumes past the `TRIAGE_HARD_EVENT_CAP` cap on
+  realistic windows.
+- Strict stops (`top20`, `top5`) tighten `defaultN` so the analyst
+  who opted into a narrower percentile is not handed a longer list
+  than they asked for; the multiplier is the **same direction** as
+  the cutoff narrows the cohort.
+- `top50` keeps the original `defaultN` (multiplier = 1) so a fresh
+  install behaves identically to the production default.
 
-- a per-stop `defaultN` multiplier table reviewed by UX, and
-- a "no quota" code path at the "All" stop that interacts with the
-  `MIN_NONZERO_FLOOR` fallback in `composeMenu`.
+The cutoff is still applied **inside `composeMenu`** (not in the SQL
+`ranked` CTE) — applying it at the SQL level would drop buckets whose
+rows all sit below the cutoff from the row set `buildCohort` sees,
+silently shrinking the aggregate list and redistributing the missing
+bucket's quota to surviving buckets. The quota-allocation aggregates
+must be computed from the full cohort regardless of the cutoff.
 
-Both of those land in the follow-up issue that ships branch B
-(Story-protected force-union) so the protection contract and the
-quota lift are reviewed together.
+The `MIN_NONZERO_FLOOR` fallback in `composeMenu` respects the cutoff:
+when `assembled_count` falls below the floor, the fallback returns the
+top-N rows by tie-breaker **from the cutoff-surviving set only**. If
+no row survives the cutoff, the fallback returns empty rather than
+dipping below the user's stop — a strict stop must not surface a
+sub-cutoff row. At the "All" stop the fallback rarely fires (cutoff is
+`0` and the quota lift returns every assembled row), but the same
+empty-set guard applies when the entire post-`Blocklist*` cohort is
+empty.
 
 ## 7. URL hash × SSR strategy
 
@@ -169,63 +178,120 @@ time via `cume_dist()` over `raw_score`), so the second column
 collapses and the index degenerates to an `event_time` btree the
 existing `baseline_triaged_event_event_time_idx` already covers.
 
-Resolution is **deferred** alongside the measurement gate
-(#471 Performance §2 / §5). The follow-up that ships branch B
-runs `EXPLAIN ANALYZE` on a production-scale corpus and picks one
-of:
-
-- drop `baseline_triaged_event_event_time_score_idx` (no observed
-  benefit over the existing `event_time` index), or
-- rebuild it as `(event_time DESC, raw_score DESC)` if the
-  planner can use the `raw_score` co-locality to skip-sort within
-  the kind partitions.
-
-This PR updates the migration comment so it no longer falsely
-names the slider as the index's consumer, but does not change the
-index itself — that requires a schema migration reviewed against
-real-data `EXPLAIN ANALYZE` output.
+**Resolution: dropped** in
+`migrations/customer/0012_drop_degenerate_baseline_score_idx.sql`.
+The alternative — rebuilding as `(event_time DESC, raw_score DESC)`
+— would not serve the production sort either: the menu cohort SQL
+partitions `cume_dist()` by `(kind, baseline_version)`, not by
+`event_time`, so the planner cannot use `raw_score` co-locality
+without a separate `(kind, baseline_version, raw_score DESC)`
+index. Adding that index is out of scope here; the read-time sort
+is the dominant cost regardless and is unchanged by this RFC.
 
 ## 8. Story-protected hard caps
 
-**Deferred.** The branch B force-union, the
-`STORY_PROTECTED_HARD_CAP` constant, and the per-tenant defense-in-
-depth `LIMIT` ship in a follow-up issue together with the protected-
-event row marker and the truncation-counter UX copy. The follow-up
-inherits the read-path shape this PR introduces — the cutoff is
-threaded into `composeMenu` (not the SQL `ranked` CTE, per §6) and
-branch B is added as a parallel SELECT — no schema change.
+Branch B (the parallel `EXISTS(event_group_member)` SELECT) is the
+"score-OR-Story" carve-out per #471. It bypasses both the per-bucket
+SQL candidate cap and `composeMenu`'s per-bucket quota. The merge
+layer applies a separate cap so a single tenant cannot blow past the
+screen's usable list size.
 
-In this foundation slice, the slider behaves as the "score-only"
-filter: a low-score Story member at the strict end is hidden until the
-follow-up lands. The acceptance fixtures in #471 that depend on
-branch B (the 0.30 Story member at Top 5%) will fail in this slice by
-design and pass after the follow-up.
+- **`STORY_PROTECTED_HARD_CAP = 2000`** (merge-layer cap;
+  authoritative ceiling). Set smaller than `TRIAGE_HARD_EVENT_CAP`
+  because branch B is bounded only by Story membership in the
+  window — a few pathologically large Stories should not dominate
+  the rendered set.
+- **`STORY_PROTECTED_PER_TENANT_LIMIT = 2000`** (per-tenant
+  `LIMIT` on branch B SQL). Equal to the merge cap as
+  defense-in-depth — a single tenant cannot stream more rows into
+  the merge sort than the merge layer would keep.
+
+When branch B saturates the merge cap, the UI surfaces a separate
+"N Story members truncated" counter (EN/KR copy at
+`src/i18n/messages/{en,ko}.json::triage.storyProtectedTruncatedBannerTemplate`).
+The counter is keyed independently of the existing
+`TRIAGE_HARD_EVENT_CAP` truncation banner — the two caps fire on
+different conditions and the analyst needs to see both.
+
+Acceptance per #471: a Story with two members at `baseline_score
+= 0.95` / `0.30`, slider at "Top 5%" — both rows render (the 0.30 row
+via branch B), only the 0.30 row shows the marker.
 
 ## 9. UX review sign-off
 
-UX review is **pending** for the foundation slice. The slider's
-discrete five-stop layout, label copy in EN/KR, and the funnel
-preview behavior (see §10) need a UX walkthrough before the follow-up
-ships branch B and the protected-event marker.
+**Pending — staging-refresh blocker.** The walkthrough with UX /
+product covering the slider's five-stop layout (RFC §1), EN/KR
+labels, the new "Shown" funnel segment (§10), the chain-link
+protected marker (§3 of the issue, projected by the asset-detail
+SQL via `protected_by_story`), the "N Story members truncated"
+banner copy, and the "All" tooltip update (§4 — dropping the
+per-bucket quota line now that option (b) lifts the quota) has not
+yet taken place. The session needs the same Phase 1.B-seeded
+staging tenant called out in §8 (real PNG capture) and §11
+(representative measurement) so the reviewers see slider chrome,
+the chain-link marker, the per-stop "≈ N" hints, and the
+truncation banner against real data in a single session. Sign-off
+will be recorded in the follow-up PR that lands the real PNGs and
+the measurement numbers; the PR body that ships this RFC also
+calls the item out under "Not addressed".
 
-## 10. Funnel preview
+## 10. Funnel `shown` / `passThroughRate` redefinition
 
-**Deferred for the foundation slice.** The issue body specifies that
-"slider position changes update the funnel counter ('Triaged /
-shown') and the asset list immediately". In this PR, slider movement
-updates the **asset list** (and the `events` pivot corpus) but does
-NOT update the funnel's `triaged` number: the funnel still renders
-`COUNT_TRIAGED_SQL`, the per-window corpus row count, which is
-independent of the slider.
+The funnel evolves from `{detected, triaged, passThroughRate}` to
+`{detected, triaged, shown, passThroughRate}`:
 
-The full `shown_top_n` definition the issue calls for requires the
-two-branch merge (`composeMenu` + branch B union, deduplicated,
-post-cross-tenant cap) and the relabel/rescope of the funnel's
-pass-through ratio — both land in the follow-up that ships branch B,
-the `eligible_top_n` SQL column, and the per-stop hint preview. The
-foundation slice ships the slider's read-path plumbing without
-touching the funnel so the funnel work is reviewed alongside branch B
-and the protected-event row marker.
+- `triaged` stays as the slider-independent corpus floor (rows that
+  survived cadence + exclusions). It does **not** move with the
+  slider — analysts use it to answer "how many rows are even in the
+  corpus for this window".
+- `shown` is the new authoritative displayed-set count — the
+  post-quota, post-merge-cap union of branch A and branch B,
+  deduplicated. Moves with the slider.
+- `passThroughRate` is redefined to `shown / detected`. The
+  analyst-visible "pass-through" is the rate of rows that actually
+  reach the screen, not the rate that survives cadence.
+
+The redefinition is intentional and is called out in the PR
+description so consumers (TypeScript types, JSDoc, EN/KR copy,
+tests) are updated in the same change.
+
+### Per-stop hints
+
+The slider chip row surfaces the cheap `eligible_top_n` count per
+stop via `COUNT_ELIGIBLE_BY_STOP_SQL` (`COUNT(*) FILTER (WHERE
+baseline_score >= :cutoff OR in_story)`). Hints render as "≈ N"
+next to each stop label; the SQL is summed across the customer
+scope in `loadTriagePeriod`. The funnel "Shown" always shows the
+authoritative post-`composeMenu` number, not the cheaper eligible
+count — the two diverge whenever the per-bucket quota tightens
+branch A.
+
+## 11. Measurement gate
+
+`scripts/measure-baseline-read-path.mjs` is the harness for the
+combined `cume_dist() + FILTER`-counts query (`COUNT_ELIGIBLE_BY_STOP_SQL`)
+and the branch B SELECT. **Representative p50 / p95 latencies and
+`EXPLAIN ANALYZE` output are pending — staging-refresh blocker.**
+The harness is wired and accepts the cutoff bind, but the authoring
+worktree has no Phase 1.B-seeded customer-tenant DB with ≥30 days
+of cadence-filled rows. The numbers required by #471 Performance §5
+will be recorded in the follow-up PR that runs the harness against
+a refreshed staging tenant (the same window as the UX sign-off in
+§9 and the real PNG capture in §8). The structural expectation —
+the dominant cost is the `cume_dist()` partition sort node, the
+time-window index resolves the prefilter, and the merge layer's
+caps bound the SELECT result independent of corpus size — drives
+the design but is not a substitute for the measurement.
+
+The drop-or-rebuild decision for
+`baseline_triaged_event_event_time_score_idx` (§7a) is a
+**structural resolution**, not an outcome of the measurement gate:
+because `baseline_score` is uniformly NULL on Phase 1.B rows the
+index degenerates to an `event_time` btree already covered by
+`baseline_triaged_event_event_time_idx` regardless of plan choice.
+That conclusion holds without numbers; the measurement gate would
+only have been load-bearing on this decision if the rebuild option
+were on the table.
 
 ## Out of scope
 

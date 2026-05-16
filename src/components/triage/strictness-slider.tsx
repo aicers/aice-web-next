@@ -24,19 +24,34 @@ export interface TriageStrictnessSliderLabels {
   hint: string;
   stops: Record<StrictnessStopId, string>;
   /**
-   * "All" stop tooltip. Names the caps that still apply at the "All"
-   * stop in this foundation slice (RFC §4): the cadence-threshold
-   * floor, the per-bucket SQL candidate cap, and the menu's per-bucket
-   * `composeMenu` quota. Lifting the quota at "All" rides along with
-   * option (b) in the follow-up that ships branch B.
+   * "All" stop tooltip (#471 §5). With option (b), the per-bucket
+   * `composeMenu` quota is lifted at "All" so the tooltip names only
+   * the remaining bounds — the cadence-threshold floor and the
+   * per-bucket SQL candidate cap. The foundation-slice copy that
+   * mentioned the quota is intentionally dropped here.
    */
   allStopHint: string;
+  /**
+   * Per-stop "≈ N" preview template (#471 §4). Parameterized by
+   * `{count}` — the cheap, pre-`composeMenu` `eligible_top_n` count
+   * for the stop. Rendered next to each stop label when an
+   * eligibleByStop number is present.
+   */
+  eligibleHintTemplate?: string;
 }
+
+const COUNT_FORMAT = new Intl.NumberFormat();
 
 interface TriageStrictnessSliderProps {
   stop: StrictnessStopId;
   onChange: (next: StrictnessStopId) => void;
   pending?: boolean;
+  /**
+   * Pre-`composeMenu` `eligible_top_n` counts per stop (#471 §4),
+   * summed across the customer scope. Optional — when omitted, the
+   * slider chips render without the "≈ N" preview hint.
+   */
+  eligibleByStop?: Partial<Record<StrictnessStopId, number>>;
   labels: TriageStrictnessSliderLabels;
 }
 
@@ -44,8 +59,10 @@ export function TriageStrictnessSlider({
   stop,
   onChange,
   pending = false,
+  eligibleByStop,
   labels,
 }: TriageStrictnessSliderProps) {
+  const template = labels.eligibleHintTemplate;
   return (
     <fieldset
       className="flex flex-col gap-2"
@@ -59,7 +76,13 @@ export function TriageStrictnessSlider({
         {STRICTNESS_STOPS.map((s) => {
           const selected = s.id === stop;
           const label = labels.stops[s.id];
-          const title = s.id === "all" ? labels.allStopHint : undefined;
+          const count = eligibleByStop?.[s.id];
+          const preview =
+            template !== undefined && typeof count === "number"
+              ? template.replace("{count}", COUNT_FORMAT.format(count))
+              : null;
+          const title =
+            s.id === "all" ? labels.allStopHint : (preview ?? undefined);
           return (
             <label
               key={s.id}
@@ -83,6 +106,14 @@ export function TriageStrictnessSlider({
                 className="sr-only"
               />
               {label}
+              {preview ? (
+                <span
+                  data-testid={`triage-strictness-eligible-${s.id}`}
+                  className="ml-1.5 font-mono text-[10px] opacity-80"
+                >
+                  {preview}
+                </span>
+              ) : null}
             </label>
           );
         })}

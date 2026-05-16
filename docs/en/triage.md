@@ -29,15 +29,16 @@ The page has five regions:
    slider** — controls for the period under analysis, the scoring
    mode (only **Baseline** is wired today), the Tier 1 / Tier 2
    pivot scope, and the read-time **strictness** cutoff that dials
-   the menu volume up or down. The slider's UI documentation lands
-   alongside the live-capture refresh in a follow-up; the read-time
-   semantics are described under
-   [Baseline scoring algorithm](#baseline-scoring-algorithm) and
-   the stop set is recorded in `src/lib/triage/strictness/RFC.md`.
-3. **Funnel** — three numbers for the loaded slice: how many
-   events were detected (from `observed_event_meta`), how many
-   passed the baseline rule (from `baseline_triaged_event`), and
-   the ratio between them.
+   the menu volume up or down. See
+   [Strictness slider](#strictness-slider) for the full feature
+   page; the stop set is recorded in
+   `src/lib/triage/strictness/RFC.md`.
+3. **Funnel** — four numbers for the loaded slice: how many events
+   were **Detected** (from `observed_event_meta`), how many were
+   **Triaged** by cadence + exclusions (corpus floor, independent
+   of the slider), how many are actually **Shown** after the
+   slider's quota and merge caps, and the pass-through ratio
+   (`Shown ÷ Detected`).
 4. **Asset list and asset detail** — a two-column workspace.
    The list ranks source addresses by total score across the
    caller's customer scope (composite `(customerId, address)` key);
@@ -288,6 +289,112 @@ Two modes are visible:
   until the policy feature ships. Hovering it reveals a tooltip
   saying **"Available once Triage policies ship."**
 
+## Strictness slider
+
+![Triage toolbar with the strictness slider (wireframe)](../assets/triage-strictness-toolbar-en.svg)
+
+> **Wireframe stand-in.** The slider chrome and the `eligible_top_n`
+> preview counts depend on a Phase 1.B seeded customer-tenant DB with
+> enough cohort to populate the per-stop "≈ N" hints, which the
+> authoring worktree does not provide. The same staging tenant used to
+> refresh the rest of the Triage PNGs in #455 is the canonical capture
+> environment; the wireframe will be replaced with a real PNG capture
+> alongside that staging refresh.
+
+The strictness slider lets an analyst dial the volume of menu results
+up or down at read time without changing exclusions, policies, or the
+cadence threshold. The slider is a read-time predicate against the
+kind-normalized baseline percentile (`cume_dist()` over `raw_score`
+within each `(kind, baseline_version)` partition). No re-ingest, no
+detector round-trip; moving the slider only re-runs the menu's SELECT
+against the per-tenant baseline corpus.
+
+### Stops
+
+Five discrete stops, ordered loose → strict in the toolbar:
+
+| Stop      | Cutoff (`baseline_score >=`) | What it shows                                           |
+| --------- | ---------------------------- | ------------------------------------------------------- |
+| **All**   | 0                            | Every cutoff-surviving row; the per-bucket quota is lifted (the cadence floor and the SQL candidate cap still apply). |
+| **Top 80%** | 0.20                       | Wider net — `defaultN` doubled.                         |
+| **Top 50%** (default) | 0.50               | Production default.                                     |
+| **Top 20%** | 0.80                       | Tightened — `defaultN` halved.                          |
+| **Top 5%**  | 0.95                       | Strongest signals only — `defaultN` × 0.25.             |
+
+The slider chip row shows a cheap **"≈ N"** preview next to each stop
+— the eligible row count for that stop before the per-bucket quota is
+applied. The Funnel's **Shown** segment is the authoritative
+post-quota count (see [Funnel](#funnel)).
+
+### "All" stop semantics
+
+"All" means **no additional user-side cutoff**. Three caps still bound
+the rendered set:
+
+- The cadence-threshold floor on the ingest side.
+- The per-bucket SQL candidate cap (`MENU_CANDIDATES_PER_BUCKET`,
+  currently 500) inside the menu's `ranked` CTE.
+- The cross-tenant `TRIAGE_HARD_EVENT_CAP` (5,000) applied at merge
+  time.
+
+The per-bucket `composeMenu` quota is **not** a bound at "All" —
+under option (b) the multiplier is `null` so every cutoff-surviving
+row makes it into the assembled set. The tooltip on the "All" chip
+names only the two upstream bounds.
+
+### Story-protected events
+
+![Asset-detail event rows with the chain-link Story-protected marker (wireframe)](../assets/triage-strictness-marker-en.svg)
+
+Events that belong to any Story (`event_group_member`) are protected
+from the slider's cutoff via a parallel "branch B" SELECT that
+bypasses both the per-bucket SQL cap and the `composeMenu` quota.
+The protection contract is:
+
+> A row is shown when `baseline_score >= cutoff` **OR** the event is
+> a Story member.
+
+Branch B rows carry a per-row marker — a chain-link 🔗 glyph
+prepended to the leading cell of the event row. The marker renders
+under all four of these conditions, applied at the SQL level:
+
+1. The slider position is not "All".
+2. The row has a non-NULL read-time `baseline_score`.
+3. `baseline_score < slider_cutoff`.
+4. The row is a Story member.
+
+The marker is rendered on per-event surfaces only — the **asset
+detail** event rows, the **pivot related-events panel**, and the
+**Story detail** member rows. Asset aggregate rows in the asset list
+do not show the marker (the marker is per-event; an aggregate row
+hides individual scores).
+
+When the marker is hovered, a tooltip and `aria-label` read
+**"Kept because of Story membership (score: 0.30)"** with the row's
+read-time score. The branch B SELECT is bounded per tenant by
+`STORY_PROTECTED_PER_TENANT_LIMIT = 2000`; the cross-tenant merge is
+capped at `STORY_PROTECTED_HARD_CAP = 2000`. When that cap fires a
+separate **"N Story members truncated"** banner surfaces alongside
+the existing `TRIAGE_HARD_EVENT_CAP` truncation banner.
+
+### Persistence and shareable links
+
+Slider position is resolved on first render in this precedence:
+`?strictness=<id>` (server-readable, primary) → `#triage.strictness.stop=<id>`
+(preserved for hash-link compatibility) → `localStorage` → default
+(`top50`). Moving the slider writes the query param via
+`router.replace`, mirrors the hash, and updates `localStorage`.
+Reloading or sharing a `?strictness=top5` link restores Top 5% without
+flashing through the default.
+
+### Keyboard navigation
+
+The slider is rendered as a radiogroup of native
+`<input type="radio">` elements inside a `<fieldset>`. Tab focuses the
+group, arrow keys move between stops, and Space selects the focused
+stop. Screen readers announce the group as **"Strictness"** with the
+selected stop's label.
+
 ## Baseline scoring algorithm
 
 Phase 1.B replaces the Phase 1.A whitelist + cluster-bonus formula
@@ -398,23 +505,30 @@ per RFC §4:
   active window still has at least one post-exclusion row), the
   menu replaces the bucket-composed result with the top
   `MIN_NONZERO_FLOOR` rows globally by `baseline_score DESC`,
-  bypassing both quota and cutoff. A clearly-best non-empty menu
-  beats a balanced empty menu when the slider can't fill any
-  bucket's quota.
+  bypassing the per-bucket quota. The fallback still respects the
+  slider cutoff — a strict stop promises "no row below
+  `baseline_score >= cutoff`", and surfacing a sub-cutoff row at e.g.
+  Top 5% would contradict that promise — so when every row sits below
+  the cutoff the fallback returns empty rather than dipping under the
+  user's selection.
 
 The strictness slider drives the cutoff
 ([#471](https://github.com/aicers/aice-web-next/issues/471)). Stop
 positions map to a cutoff against the read-time `cume_dist()`
 projection by identity: "Top X%" applies `baseline_score >= 1 - X/100`,
 and the "All" stop applies `0` (no additional user-side cutoff — at
-the "All" stop the cadence-threshold floor, the per-bucket SQL
-candidate cap, and the per-bucket `composeMenu` quota still bound the
-result). The foundation slice keeps `composeMenu`'s per-bucket quota
-on top of the cutoff; Story-protected force-union is deferred to a
-follow-up. The asset-detail panel also obeys the selected stop — its
-SELECT applies the cutoff inside the `filtered` CTE, before the
-per-address newest-N `ROW_NUMBER()`, so an asset surfaced at a strict
-stop does not show sub-cutoff events in its detail rows. See
+the "All" stop the cadence-threshold floor and the per-bucket SQL
+candidate cap still bound the result, but the per-bucket `composeMenu`
+quota is lifted under RFC §6 option (b)). Each stop also carries a
+`defaultN` multiplier so a strict stop tightens the per-bucket quota
+and a loose stop widens it. Story-protected events are force-unioned
+into the assembled set via a parallel branch B SELECT (see
+[Story-protected events](#story-protected-events) for the contract).
+The asset-detail panel also obeys the selected stop — its SELECT
+applies the cutoff inside the `filtered` CTE, before the per-address
+newest-N `ROW_NUMBER()`, so an asset surfaced at a strict stop does
+not show sub-cutoff events in its detail rows (Story members survive
+via the `baseline_score >= cutoff OR in_story` predicate). See
 `src/lib/triage/strictness/RFC.md` for the stop set and the
 hash/query-param persistence contract.
 
@@ -459,8 +573,9 @@ switch:
 | Stat | Source | Meaning |
 |---|---|---|
 | **Detected** | `observed_event_meta` | Events surviving the cadence's exclusion re-application across the period (clamped lower bound: `max(:from, now() − 30d)` — see [Detected denominator and the 30-day retention floor](#detected-denominator-and-the-30-day-retention-floor)). |
-| **Triaged** | `baseline_triaged_event` | Events the baseline rule kept across the full period (180-day retention). |
-| **Pass-through** | derived | `Triaged ÷ Detected`, expressed as a percentage. |
+| **Triaged** | `baseline_triaged_event` | Events the baseline rule kept across the full period (180-day retention). Slider-independent — the count does not move when the strictness slider moves. |
+| **Shown** | merge layer | The post-quota, post-merge-cap union of branch A and branch B rows that actually reach the screen. Moves with the strictness slider. |
+| **Pass-through** | derived | `Shown ÷ Detected`, expressed as a percentage. Redefined by the strictness slider — was `Triaged ÷ Detected` in earlier slices. |
 
 The funnel is recomputed on every period change, customer change,
 or kind-filter change.

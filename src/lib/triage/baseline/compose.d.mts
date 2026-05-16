@@ -31,6 +31,13 @@ export interface ComposeMenuInput {
   bucketAggregates: ReadonlyArray<BucketAggregate>;
   candidates: ReadonlyArray<MenuRow>;
   cutoff: number;
+  /**
+   * #471 §5: scales `composeMenu`'s `defaultN`. `null` lifts the
+   * per-bucket quota entirely (the "All" stop). `undefined` falls
+   * back to a multiplier of 1 — legacy callers and tests that have
+   * not opted into option (b).
+   */
+  defaultNMultiplier?: number | null;
 }
 
 export interface AssembleResult {

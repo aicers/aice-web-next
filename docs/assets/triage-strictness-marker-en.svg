@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Asset-detail event rows with Story-protected chain-link marker (wireframe)</title>
+  <desc id="desc">Wireframe of the asset-detail panel under the Top 5% strictness stop. Three event rows are shown: the first row's score (0.97) clears the cutoff and renders without a marker, the second row's score (0.30) falls below the cutoff but the event is a Story member so the chain-link icon is prepended to the time cell, and the third row matches the same pattern. The chain-link glyph carries the aria-label "Kept because of Story membership (score: 0.30)".</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-section { font-size: 11px; fill: #71717a; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+    .text-address { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px; fill: #18181b; }
+    .text-meta { font-size: 11px; fill: #71717a; }
+    .text-stat-label { font-size: 10px; fill: #71717a; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+    .text-stat-value { font-size: 18px; fill: #18181b; font-weight: 700; }
+    .text-th { font-size: 10px; fill: #71717a; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+    .text-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #18181b; }
+    .text-mono-muted { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #52525b; }
+    .text-kind { font-size: 11px; fill: #18181b; }
+    .text-category-muted { font-size: 11px; fill: #71717a; }
+    .row-divider { stroke: #f4f4f5; stroke-width: 1; }
+    .stop-active { fill: #18181b; }
+    .chip-bar { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .marker { fill: #d97706; font-size: 13px; }
+    .tooltip-box { fill: #18181b; rx: 4; ry: 4; }
+    .tooltip-text { fill: #ffffff; font-size: 10px; }
+  </style>
+
+  <rect class="bg" width="720" height="360"/>
+
+  <!-- Strictness slider compact bar at the top to anchor the cutoff -->
+  <text x="24" y="24" class="text-section">Strictness</text>
+  <rect class="chip-bar" x="92" y="12" width="232" height="20" rx="4" ry="4"/>
+  <text x="100" y="26" class="text-mono-muted">All · 80% · 50% · 20% ·</text>
+  <rect class="stop-active" x="282" y="14" width="38" height="16" rx="3" ry="3"/>
+  <text x="290" y="26" fill="#ffffff" font-size="10" font-weight="700">Top 5%</text>
+  <text x="336" y="26" class="text-meta">(cutoff 0.95)</text>
+
+  <!-- Asset detail panel -->
+  <rect class="panel" x="24" y="48" width="672" height="296" rx="6" ry="6"/>
+
+  <!-- Header -->
+  <text x="40" y="74" class="text-section">Asset detail</text>
+  <text x="40" y="100" class="text-address">10.0.0.42</text>
+  <text x="40" y="118" class="text-meta">Customer: Default</text>
+
+  <!-- Stats -->
+  <text x="40" y="146" class="text-stat-label">Score</text>
+  <text x="40" y="168" class="text-stat-value">4.27</text>
+  <text x="180" y="146" class="text-stat-label">Triaged</text>
+  <text x="180" y="168" class="text-stat-value">3</text>
+  <text x="320" y="146" class="text-stat-label">Detected</text>
+  <text x="320" y="168" class="text-stat-value">28</text>
+
+  <!-- Events heading -->
+  <text x="40" y="200" class="text-section">Events</text>
+
+  <!-- Table header -->
+  <text x="40" y="220" class="text-th">Time</text>
+  <text x="220" y="220" class="text-th">Kind</text>
+  <text x="380" y="220" class="text-th">Category</text>
+  <text x="640" y="220" class="text-th" text-anchor="end">Score</text>
+  <line x1="40" y1="226" x2="680" y2="226" class="row-divider"/>
+
+  <!-- Row 1: above cutoff, no marker -->
+  <text x="40" y="246" class="text-mono">2026-05-09 11:58:02</text>
+  <text x="220" y="246" class="text-kind">DnsCovertChannel</text>
+  <text x="380" y="246" class="text-category-muted">EXFILTRATION</text>
+  <text x="640" y="246" class="text-mono" text-anchor="end">0.97</text>
+  <line x1="40" y1="254" x2="680" y2="254" class="row-divider"/>
+
+  <!-- Row 2: below cutoff, Story member — chain-link marker prepended -->
+  <text x="40" y="274" class="marker">🔗</text>
+  <text x="58" y="274" class="text-mono">2026-05-09 11:42:18</text>
+  <text x="220" y="274" class="text-kind">HttpThreat</text>
+  <text x="380" y="274" class="text-category-muted">IMPACT</text>
+  <text x="640" y="274" class="text-mono" text-anchor="end">0.30</text>
+  <line x1="40" y1="282" x2="680" y2="282" class="row-divider"/>
+
+  <!-- Row 3: below cutoff, Story member — chain-link marker prepended -->
+  <text x="40" y="302" class="marker">🔗</text>
+  <text x="58" y="302" class="text-mono">2026-05-09 11:31:55</text>
+  <text x="220" y="302" class="text-kind">LockyRansomware</text>
+  <text x="380" y="302" class="text-category-muted">IMPACT</text>
+  <text x="640" y="302" class="text-mono" text-anchor="end">0.42</text>
+
+  <!-- Hover tooltip indicator -->
+  <rect class="tooltip-box" x="58" y="312" width="248" height="22"/>
+  <text x="68" y="327" class="tooltip-text">Kept because of Story membership (score: 0.30)</text>
+</svg>

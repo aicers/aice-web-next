@@ -279,6 +279,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "IMPACT",
         baselineScore: 0.92,
+        protectedByStory: false,
       }),
     );
     const loadDetail = vi.fn(async () => ({
@@ -469,6 +470,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "IMPACT",
         baselineScore: 0.92,
+        protectedByStory: false,
       },
       {
         eventKey: "2",
@@ -484,6 +486,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "EXFILTRATION",
         baselineScore: 0.71,
+        protectedByStory: false,
       },
       {
         eventKey: "3",
@@ -499,6 +502,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "IMPACT",
         baselineScore: 0.65,
+        protectedByStory: false,
       },
     ];
     const loadDetail = vi.fn(async (args: unknown) => ({
@@ -967,6 +971,91 @@ describe("TriageStoryDetail — header identity", () => {
     // Rule badge ("R1" by default) and customer name remain.
     expect(detail.textContent).toContain("R1");
     expect(detail.textContent).toContain("Acme");
+  });
+
+  it("renders the chain-link marker on members whose protectedByStory flag is set (#471 §3, review-round-1 item 2)", async () => {
+    const story = makeStory({
+      summary: {
+        kindHistogram: { HttpThreat: 2 },
+        categoryHistogram: { IMPACT: 2 },
+        memberCount: 2,
+        durationMs: 0,
+        distinctAssetCount: 1,
+        topRawScore: 0.9,
+      },
+    });
+    const marked: TriageStoryMemberDetail = {
+      eventKey: "marked",
+      eventTimeIso: "2026-05-08T12:00:00.000Z",
+      kind: "HttpThreat",
+      sensor: "sensor-a",
+      origAddr: "10.0.0.1",
+      respAddr: null,
+      origPort: null,
+      respPort: null,
+      host: null,
+      dnsQuery: null,
+      uri: null,
+      category: "IMPACT",
+      baselineScore: 0.3,
+      protectedByStory: true,
+    };
+    const unmarked: TriageStoryMemberDetail = {
+      eventKey: "unmarked",
+      eventTimeIso: "2026-05-08T12:01:00.000Z",
+      kind: "HttpThreat",
+      sensor: "sensor-a",
+      origAddr: "10.0.0.2",
+      respAddr: null,
+      origPort: null,
+      respPort: null,
+      host: null,
+      dnsQuery: null,
+      uri: null,
+      category: "IMPACT",
+      baselineScore: 0.97,
+      protectedByStory: false,
+    };
+    const loadDetail = vi.fn(async () => ({
+      members: [marked, unmarked],
+      hasDanglingMembers: false,
+      storedMemberCount: 2,
+    }));
+    const period: TriagePeriod = {
+      startIso: "2026-05-08T00:00:00.000Z",
+      endIso: "2026-05-09T00:00:00.000Z",
+    };
+    const detailLabels: TriageStoriesViewLabels = {
+      ...LABELS,
+      detail: {
+        ...LABELS.detail,
+        protectedByStoryMarker: {
+          template: "Kept because of Story membership (score: {score})",
+        },
+      },
+    };
+    await act(async () => {
+      render(
+        <TriageStoriesView
+          stories={[story]}
+          truncated={false}
+          focused={story}
+          onFocus={() => {}}
+          period={period}
+          loadDetail={loadDetail}
+          labels={detailLabels}
+        />,
+      );
+    });
+    await waitFor(() => {
+      const markers = screen.getAllByTestId("triage-event-protected-marker");
+      // Exactly one row carries the marker — the 0.30 row that the
+      // four-condition rule keeps.
+      expect(markers).toHaveLength(1);
+      expect(markers[0].getAttribute("aria-label")).toBe(
+        "Kept because of Story membership (score: 0.3)",
+      );
+    });
   });
 
   it("uses the analyst-curated badge for curated stories", () => {
