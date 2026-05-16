@@ -41,6 +41,11 @@ const mockState = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/aimer/phase2/state", () => mockState);
 
+const mockGetSetup = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/aimer/setup-status", () => ({
+  getAimerIntegrationSetup: mockGetSetup,
+}));
+
 // ── Helpers ───────────────────────────────────────────────────
 
 const now = Math.floor(Date.now() / 1000);
@@ -104,6 +109,12 @@ describe("POST /api/aimer/phase2/policy-event/next-batch", () => {
     mockState.commitOnAck.mockReset().mockResolvedValue(undefined);
     mockState.recordOnFail.mockReset().mockResolvedValue(undefined);
     mockState.pruneExpiredInflight.mockReset().mockResolvedValue(0);
+
+    mockGetSetup.mockReset().mockResolvedValue({
+      aiceId: "aice.example.com",
+      bridgeUrl: "https://aimer.example.com",
+      hasActiveSigningKey: true,
+    });
   });
 
   // ── Body validation ─────────────────────────────────────────
@@ -205,6 +216,7 @@ describe("POST /api/aimer/phase2/policy-event/next-batch", () => {
       events_data: null,
       context_jti: null,
       aimer_endpoint_path: null,
+      aimer_endpoint_url: null,
       batch_jti: null,
       schema_version: null,
     });
@@ -279,7 +291,40 @@ describe("POST /api/aimer/phase2/policy-event/next-batch", () => {
     expect(body.context_jti).toBe("jti-new");
     expect(body.batch_jti).toBe("jti-new");
     expect(body.aimer_endpoint_path).toBe("/api/phase2/withdraw");
+    expect(body.aimer_endpoint_url).toBe(
+      "https://aimer.example.com/api/phase2/withdraw",
+    );
     expect(body.schema_version).toBe("phase2.withdraw.v1");
+  });
+
+  it("composes aimer_endpoint_url from bridgeUrl + path, handling trailing slash", async () => {
+    mockGetSetup.mockResolvedValue({
+      aiceId: "aice.example.com",
+      bridgeUrl: "https://aimer.example.com/",
+      hasActiveSigningKey: true,
+    });
+    mockState.claimPendingNotices.mockResolvedValue([
+      {
+        id: "1",
+        enqueued_at: new Date(),
+        kind: "withdraw_policy_event",
+        payload: { kind: "policy_event", run_id: "9", event_keys: ["100"] },
+        attempts: 0,
+        last_attempt_at: null,
+        last_error: null,
+        acked_at: null,
+        acked_context_jti: null,
+      },
+    ]);
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/policy-event/next-batch/route"
+    );
+    const res = await POST(makeRequest({ customerId: 42 }), ctx);
+    const body = await res.json();
+    expect(body.aimer_endpoint_url).toBe(
+      "https://aimer.example.com/api/phase2/withdraw",
+    );
+    expect(body.aimer_endpoint_url.endsWith("/api/phase2/withdraw")).toBe(true);
   });
 
   it("sets has_more=true when more rows remain past the batch limit", async () => {

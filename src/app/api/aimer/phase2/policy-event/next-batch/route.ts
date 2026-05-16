@@ -11,6 +11,7 @@ import {
   pruneExpiredInflight,
   recordOnFail,
 } from "@/lib/aimer/phase2/state";
+import { getAimerIntegrationSetup } from "@/lib/aimer/setup-status";
 import { resolveEffectiveCustomerIds } from "@/lib/auth/customer-scope";
 import { withAuth } from "@/lib/auth/guard";
 import { hasPermission } from "@/lib/auth/permissions";
@@ -64,6 +65,14 @@ interface SuccessBody {
   events_data: string | null;
   context_jti: string | null;
   aimer_endpoint_path: string | null;
+  /**
+   * Fully-composed `https://...` URL the browser POSTs to. Composed
+   * server-side from `setup.bridgeUrl + aimer_endpoint_path` so the
+   * browser does not need to read the bridge URL itself (which would
+   * violate the #440 minimum-disclosure rule). Null on empty / paused
+   * responses, mirroring `aimer_endpoint_path`.
+   */
+  aimer_endpoint_url: string | null;
   batch_jti: string | null;
   /**
    * Mirrors the envelope's `schema_version` claim per RFC 0002 §7
@@ -74,6 +83,7 @@ interface SuccessBody {
 }
 
 const POLICY_EVENT_SCHEMA_VERSION = "phase2.withdraw.v1" as const;
+const POLICY_EVENT_AIMER_PATH = "/api/phase2/withdraw" as const;
 
 const EMPTY_BODY: SuccessBody = {
   has_more: false,
@@ -82,9 +92,19 @@ const EMPTY_BODY: SuccessBody = {
   events_data: null,
   context_jti: null,
   aimer_endpoint_path: null,
+  aimer_endpoint_url: null,
   batch_jti: null,
   schema_version: null,
 };
+
+function composeAimerEndpointUrl(
+  bridgeUrl: string | null,
+  path: string,
+): string | null {
+  if (!bridgeUrl) return null;
+  const trimmed = bridgeUrl.replace(/\/+$/, "");
+  return `${trimmed}${path}`;
+}
 
 function jsonError(error: string, status: number): NextResponse {
   return NextResponse.json({ error }, { status });
@@ -193,13 +213,29 @@ export const POST = withAuth(
       queueRowIds: claimed.map((row: AimerPushQueueRow) => row.id),
     });
 
+    // ── Compose full aimer endpoint URL ──────────────────────
+    //
+    // The browser cannot read `setup.bridgeUrl` directly (the
+    // setup-status route honors #440 minimum-disclosure), so the
+    // server composes the fully-resolved URL the browser will POST
+    // to. The `buildPhase2Push` helper performs its own setup read
+    // internally; this is a second read for the bridge URL alone.
+    // The cost is negligible (a small system-settings query) and
+    // keeps the orchestration helper's signature unchanged.
+    const setup = await getAimerIntegrationSetup();
+    const aimerEndpointUrl = composeAimerEndpointUrl(
+      setup.bridgeUrl,
+      POLICY_EVENT_AIMER_PATH,
+    );
+
     const responseBody: SuccessBody = {
       has_more: hasMore,
       context_token: tokens.context_token,
       events_envelope: tokens.events_envelope,
       events_data: tokens.events_data,
       context_jti: tokens.context_jti,
-      aimer_endpoint_path: "/api/phase2/withdraw",
+      aimer_endpoint_path: POLICY_EVENT_AIMER_PATH,
+      aimer_endpoint_url: aimerEndpointUrl,
       // `batch_jti` is an alias for `context_jti` per RFC 0002 §7
       // "Browser-driven drain loop" — surfaced under both names so the
       // client helper can read either field.

@@ -149,6 +149,12 @@ export default defineConfig({
             // component reads `<label>.title` and the radios drive
             // `onChange` via fireEvent.
             "src/__tests__/components/triage/strictness-slider.test.tsx",
+            // Issue #582: Phase 2 browser-side transport / drain /
+            // periodic controller — `createPeriodicDrain` reads
+            // `document.visibilityState` and the multipart helper
+            // builds `FormData` with a `Blob` part. Easiest exercised
+            // under jsdom alongside the other client-side suites.
+            "src/__tests__/lib/aimer/phase2/transport-client.test.ts",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -194,6 +200,7 @@ export default defineConfig({
             "src/__tests__/components/triage/pivot/pivot-breadcrumb.test.tsx",
             "src/__tests__/components/triage/strictness-slider.test.tsx",
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
+            "src/__tests__/lib/aimer/phase2/transport-client.test.ts",
           ],
         },
       },
