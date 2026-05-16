@@ -160,7 +160,7 @@ describe("parseAction", () => {
     ).toThrow(/Exactly one of/);
   });
 
-  it("accepts a story_pivot_click", () => {
+  it("accepts a story_pivot_click with a join-id dimension", () => {
     const action = parseAction({
       kind: "action",
       action: {
@@ -171,11 +171,71 @@ describe("parseAction", () => {
         kind: "HttpThreat",
         baselineVersion: "phase1b-four-selector",
         storyId: "story-1",
-        dimension: "host",
-        pivotValueJoinId: "id-1",
+        dimension: "sameSensor",
+        pivotValueJoinId: "sensor-7",
       },
     });
     expect(action.type).toBe("story_pivot_click");
+  });
+
+  // #588 R3 item 1: raw-ish dimensions (sni / externalIp / …) MUST go
+  // through the HMAC path. A buggy or stale client posting a raw value
+  // as `pivotValueJoinId` must be rejected at the parser before it can
+  // land in `engagement_action.pivot_value_join_id` and bypass the
+  // pseudonymizer.
+  it("rejects a pivot_click that posts pivotValueJoinId for a raw-ish dimension (sni)", () => {
+    expect(() =>
+      parseAction({
+        kind: "action",
+        action: {
+          type: "pivot_click",
+          customerId: 7,
+          surface: "baseline",
+          eventKey: "evt-1",
+          kind: "HttpThreat",
+          baselineVersion: "phase1b-four-selector",
+          dimension: "sni",
+          pivotValueJoinId: "Example.COM",
+        },
+      }),
+    ).toThrow(/raw-ish/);
+  });
+
+  it("rejects a pivot_click that posts pivotValueJoinId for externalIp", () => {
+    expect(() =>
+      parseAction({
+        kind: "action",
+        action: {
+          type: "pivot_click",
+          customerId: 7,
+          surface: "baseline",
+          eventKey: "evt-1",
+          kind: "HttpThreat",
+          baselineVersion: "phase1b-four-selector",
+          dimension: "externalIp",
+          pivotValueJoinId: "010.000.000.001",
+        },
+      }),
+    ).toThrow(/raw-ish/);
+  });
+
+  it("rejects a story_pivot_click that posts pivotValueJoinId for a raw-ish dimension (host)", () => {
+    expect(() =>
+      parseAction({
+        kind: "action",
+        action: {
+          type: "story_pivot_click",
+          customerId: 7,
+          surface: "baseline",
+          eventKey: "evt-1",
+          kind: "HttpThreat",
+          baselineVersion: "phase1b-four-selector",
+          storyId: "story-1",
+          dimension: "host",
+          pivotValueJoinId: "example.com",
+        },
+      }),
+    ).toThrow(/raw-ish/);
   });
 
   it("accepts a strictness_change", () => {

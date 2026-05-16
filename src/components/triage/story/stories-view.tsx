@@ -186,6 +186,14 @@ interface TriageStoriesViewProps {
   onPivotFromStory?: (args: {
     story: TriageStory;
     members: readonly TriageStoryMemberDetail[];
+    /**
+     * The Story member whose pivot button was clicked. The Phase 1
+     * engagement-signal capture (#588) attributes `story_pivot_click`
+     * to this row's `eventKey` / `kind` / `baselineVersion` — using
+     * `members[0]` instead would mis-attribute the action to a
+     * different member than the analyst actually clicked.
+     */
+    member: TriageStoryMemberDetail;
     dimension: PivotDimensionId;
     value: PivotValue;
   }) => void;
@@ -418,10 +426,11 @@ export function TriageStoriesView({
           onClose={() => onFocus(null)}
           onPivot={
             onPivotFromStory
-              ? ({ dimension, value, members }) =>
+              ? ({ dimension, value, member, members }) =>
                   onPivotFromStory({
                     story: focused,
                     members,
+                    member,
                     dimension,
                     value,
                   })
@@ -451,6 +460,10 @@ interface StoryDetailProps {
   onPivot?: (args: {
     dimension: PivotDimensionId;
     value: PivotValue;
+    /** The clicked Story member; threaded so the Phase 1 engagement-
+     * signal capture can use that member's eventKey/kind/baselineVersion
+     * as the row-bound reference (#588). */
+    member: TriageStoryMemberDetail;
     members: readonly TriageStoryMemberDetail[];
   }) => void;
   labels: TriageStoryDetailLabels;
@@ -675,9 +688,13 @@ function TriageStoryDetail({
     return map;
   }, [detail]);
 
-  const handleRowPivot = (dimension: PivotDimensionId, value: PivotValue) => {
+  const handleRowPivot = (
+    dimension: PivotDimensionId,
+    value: PivotValue,
+    member: TriageStoryMemberDetail,
+  ) => {
     if (!onPivot || detail.status !== "ready") return;
-    onPivot({ dimension, value, members: detail.members });
+    onPivot({ dimension, value, member, members: detail.members });
   };
 
   return (
@@ -789,7 +806,11 @@ function TriageStoryDetail({
 interface StoryMemberPivotActionsProps {
   member: TriageStoryMemberDetail;
   customerId: number;
-  onPivot: (dimension: PivotDimensionId, value: PivotValue) => void;
+  onPivot: (
+    dimension: PivotDimensionId,
+    value: PivotValue,
+    member: TriageStoryMemberDetail,
+  ) => void;
   template: string;
   dimensionLabels: Record<PivotDimensionId, string>;
 }
@@ -841,7 +862,7 @@ function StoryMemberPivotActions({
           data-testid="triage-story-member-pivot-action"
           data-dimension={dimension}
           data-value-key={value.key}
-          onClick={() => onPivot(dimension, value)}
+          onClick={() => onPivot(dimension, value, member)}
           aria-label={template
             .replace("{dimension}", dimensionLabels[dimension])
             .replace("{value}", value.label)}

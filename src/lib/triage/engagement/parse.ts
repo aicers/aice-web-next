@@ -11,11 +11,12 @@
  */
 
 import { parseStrictnessStopId } from "../strictness/stops";
-import type {
-  EngagementAction,
-  EngagementImpression,
-  EngagementImpressionBatch,
-  EngagementShownBy,
+import {
+  ENGAGEMENT_JOIN_ID_DIMENSIONS,
+  type EngagementAction,
+  type EngagementImpression,
+  type EngagementImpressionBatch,
+  type EngagementShownBy,
 } from "./types";
 
 const UUID_RE =
@@ -91,6 +92,45 @@ function requirePositiveInt(o: Record<string, unknown>, key: string): number {
     throw new EngagementValidationError(`${key} must be > 0`);
   }
   return v;
+}
+
+/**
+ * Pull and validate the `pivotValueJoinId` / `pivotValue` pair from a
+ * pivot-action payload. Enforces the documented contract:
+ *
+ *  1. Exactly one of the two fields must be present.
+ *  2. `pivotValueJoinId` is only legal for dimensions on
+ *     {@link ENGAGEMENT_JOIN_ID_DIMENSIONS} — every other dimension is
+ *     considered raw-ish (IP, domain, JA3, SNI, country, free-text)
+ *     and MUST route through HMAC via `pivotValue`. This guard is the
+ *     server-side enforcement of #588's privacy acceptance: a bug or
+ *     stale client posting `{ dimension: "sni", pivotValueJoinId:
+ *     "Example.COM" }` is rejected at parse time rather than landing a
+ *     raw value in `engagement_action.pivot_value_join_id`.
+ */
+function parsePivotValueFields(
+  payload: Record<string, unknown>,
+  dimension: string,
+): { pivotValueJoinId: string | undefined; pivotValue: string | undefined } {
+  const pivotValueJoinId = optionalString(payload, "pivotValueJoinId");
+  const pivotValue = optionalString(payload, "pivotValue");
+  if (
+    (pivotValueJoinId === undefined && pivotValue === undefined) ||
+    (pivotValueJoinId !== undefined && pivotValue !== undefined)
+  ) {
+    throw new EngagementValidationError(
+      "Exactly one of pivotValueJoinId or pivotValue is required",
+    );
+  }
+  if (
+    pivotValueJoinId !== undefined &&
+    !ENGAGEMENT_JOIN_ID_DIMENSIONS.has(dimension)
+  ) {
+    throw new EngagementValidationError(
+      `Dimension "${dimension}" is raw-ish; use pivotValue (HMAC path) instead of pivotValueJoinId`,
+    );
+  }
+  return { pivotValueJoinId, pivotValue };
 }
 
 function parseImpression(o: unknown): EngagementImpression {
@@ -169,16 +209,11 @@ export function parseAction(raw: unknown): EngagementAction {
         assetAddress: requireString(payload, "assetAddress"),
       };
     case "pivot_click": {
-      const pivotValueJoinId = optionalString(payload, "pivotValueJoinId");
-      const pivotValue = optionalString(payload, "pivotValue");
-      if (
-        (pivotValueJoinId === undefined && pivotValue === undefined) ||
-        (pivotValueJoinId !== undefined && pivotValue !== undefined)
-      ) {
-        throw new EngagementValidationError(
-          "Exactly one of pivotValueJoinId or pivotValue is required",
-        );
-      }
+      const dimension = requireString(payload, "dimension");
+      const { pivotValueJoinId, pivotValue } = parsePivotValueFields(
+        payload,
+        dimension,
+      );
       return {
         type: "pivot_click",
         customerId,
@@ -186,22 +221,17 @@ export function parseAction(raw: unknown): EngagementAction {
         eventKey: requireString(payload, "eventKey"),
         kind: requireString(payload, "kind"),
         baselineVersion: requireString(payload, "baselineVersion"),
-        dimension: requireString(payload, "dimension"),
+        dimension,
         pivotValueJoinId,
         pivotValue,
       };
     }
     case "story_pivot_click": {
-      const pivotValueJoinId = optionalString(payload, "pivotValueJoinId");
-      const pivotValue = optionalString(payload, "pivotValue");
-      if (
-        (pivotValueJoinId === undefined && pivotValue === undefined) ||
-        (pivotValueJoinId !== undefined && pivotValue !== undefined)
-      ) {
-        throw new EngagementValidationError(
-          "Exactly one of pivotValueJoinId or pivotValue is required",
-        );
-      }
+      const dimension = requireString(payload, "dimension");
+      const { pivotValueJoinId, pivotValue } = parsePivotValueFields(
+        payload,
+        dimension,
+      );
       return {
         type: "story_pivot_click",
         customerId,
@@ -210,7 +240,7 @@ export function parseAction(raw: unknown): EngagementAction {
         kind: requireString(payload, "kind"),
         baselineVersion: requireString(payload, "baselineVersion"),
         storyId: requireString(payload, "storyId"),
-        dimension: requireString(payload, "dimension"),
+        dimension,
         pivotValueJoinId,
         pivotValue,
       };

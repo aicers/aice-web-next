@@ -207,7 +207,7 @@ describe("recordAction", () => {
       eventKey: "evt-1",
       kind: "HttpThreat",
       baselineVersion: "phase1b-four-selector",
-      dimension: "sensor",
+      dimension: "sameSensor",
       pivotValueJoinId: "sensor-7",
     });
 

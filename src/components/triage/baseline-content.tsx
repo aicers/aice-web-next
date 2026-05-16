@@ -1053,6 +1053,7 @@ export function TriageBaselineContent({
     (args: {
       story: TriageStory;
       members: readonly TriageStoryMemberDetail[];
+      member: TriageStoryMemberDetail;
       dimension: PivotDimensionId;
       value: PivotValue;
     }) => {
@@ -1061,26 +1062,23 @@ export function TriageBaselineContent({
         args.story.customerId,
       );
       // #588 story_pivot_click engagement-action capture. Fire-and-
-      // forget; failures never propagate. Uses the first Story member
-      // as the row-bound reference so the schema-level shape CHECK
-      // (event_key + story_id required) is satisfied.
-      const firstMember = events[0];
-      if (
-        firstMember !== undefined &&
-        firstMember.baselineVersion !== undefined
-      ) {
-        postEngagementAction({
-          type: "story_pivot_click",
-          customerId: args.story.customerId,
-          surface: ENGAGEMENT_SURFACE_BASELINE,
-          eventKey: firstMember.id,
-          kind: firstMember.__typename,
-          baselineVersion: firstMember.baselineVersion,
-          storyId: args.story.storyId,
-          dimension: args.dimension,
-          pivotValue: args.value.key,
-        });
-      }
+      // forget; failures never propagate. The row-bound reference is
+      // the *clicked* member's `eventKey` / `kind` / `baselineVersion`
+      // (#588 R3 item 2) — using `members[0]` instead would attribute
+      // the action to a different member than the analyst actually
+      // clicked (e.g. a DNS pivot logged against the first member's
+      // HttpThreat row).
+      postEngagementAction({
+        type: "story_pivot_click",
+        customerId: args.story.customerId,
+        surface: ENGAGEMENT_SURFACE_BASELINE,
+        eventKey: args.member.eventKey,
+        kind: args.member.kind,
+        baselineVersion: args.member.baselineVersion,
+        storyId: args.story.storyId,
+        dimension: args.dimension,
+        pivotValue: args.value.key,
+      });
       setStoryMemberEvents(events);
       setPivotOrigin({
         kind: "story",

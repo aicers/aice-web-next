@@ -33,6 +33,28 @@ export type EngagementActionType =
  */
 export type EngagementPivotDimension = string;
 
+/**
+ * Dimensions whose pivot value is a natural server-side join key — an
+ * opaque id, a small enum, or a numeric/structural identifier — that
+ * carries no raw user/network data and can therefore be persisted on
+ * `engagement_action.pivot_value_join_id` as-is. Every other dimension
+ * is "raw-ish" (IP, domain, JA3/SNI, free-text keyword, …) and MUST
+ * route through {@link hmacForDimension} on `pivot_value_hmac`. The
+ * parser uses this set to reject `{ dimension: "sni", pivotValueJoinId
+ * }` and friends so a buggy / stale client cannot land a raw value in
+ * the join-id column (#588 acceptance — raw pivot values never persist).
+ */
+export const ENGAGEMENT_JOIN_ID_DIMENSIONS: ReadonlySet<string> = new Set([
+  "port",
+  "sameSensor",
+  "clusterId",
+  "sameKindWithin15Min",
+  "kinds",
+  "categories",
+  "levels",
+  "learningMethods",
+]);
+
 export interface EngagementImpression {
   eventKey: string;
   kind: string;
