@@ -22,6 +22,7 @@ import type {
 } from "@/lib/triage";
 import {
   ENGAGEMENT_SURFACE_BASELINE,
+  pivotValuePayload,
   postEngagementAction,
   postImpressionBatch,
 } from "@/lib/triage/engagement";
@@ -1077,7 +1078,7 @@ export function TriageBaselineContent({
         baselineVersion: args.member.baselineVersion,
         storyId: args.story.storyId,
         dimension: args.dimension,
-        pivotValue: args.value.key,
+        ...pivotValuePayload(args.dimension, args.value.key),
       });
       setStoryMemberEvents(events);
       setPivotOrigin({
@@ -1160,6 +1161,10 @@ export function TriageBaselineContent({
           representative !== undefined &&
           representative.baselineVersion !== undefined
         ) {
+          const valuePayload = pivotValuePayload(
+            step.dimension,
+            step.value.key,
+          );
           if (pivotOrigin.kind === "story") {
             postEngagementAction({
               type: "story_pivot_click",
@@ -1170,7 +1175,7 @@ export function TriageBaselineContent({
               baselineVersion: representative.baselineVersion,
               storyId: pivotOrigin.storyId,
               dimension: step.dimension,
-              pivotValue: step.value.key,
+              ...valuePayload,
             });
           } else {
             postEngagementAction({
@@ -1181,7 +1186,7 @@ export function TriageBaselineContent({
               kind: representative.__typename,
               baselineVersion: representative.baselineVersion,
               dimension: step.dimension,
-              pivotValue: step.value.key,
+              ...valuePayload,
             });
           }
         }

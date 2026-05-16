@@ -12,7 +12,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
@@ -32,6 +32,24 @@ vi.mock("@/app/[locale]/(dashboard)/triage/story-actions", () => ({
   submitSaveAnalystCuratedStory:
     storyActionsMocks.submitSaveAnalystCuratedStory,
 }));
+
+// #588 R4: the client emit must choose `pivotValueJoinId` for natural-
+// join dimensions (sameSensor / learningMethods / port / …) and
+// `pivotValue` for raw-ish dimensions. Mock the engagement module so
+// the focused test below can observe the wire shape without standing
+// up a real fetch transport.
+const postEngagementActionMock = vi.hoisted(() => vi.fn());
+const postImpressionBatchMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/triage/engagement", async () => {
+  const types = await vi.importActual<
+    typeof import("@/lib/triage/engagement/types")
+  >("@/lib/triage/engagement/types");
+  return {
+    ...types,
+    postEngagementAction: postEngagementActionMock,
+    postImpressionBatch: postImpressionBatchMock,
+  };
+});
 
 import {
   TriageBaselineContent,
@@ -1179,5 +1197,151 @@ describe("TriageBaselineContent — Pivot panel truncation hint reflects active 
     // wide truncation hint must NOT render even though
     // `result.truncated === true`.
     expect(screen.queryByText(LABELS.pivotPanel.truncatedHint)).toBeNull();
+  });
+});
+
+// #588 R4: the client emit must choose `pivotValueJoinId` for natural-
+// join dimensions and `pivotValue` for raw-ish dimensions. Pre-fix,
+// every pivot click posted `pivotValue` unconditionally, so a
+// `sameSensor` click landed HMAC-only on the server even though the
+// issue calls for the natural id to go directly into
+// `engagement_action.pivot_value_join_id`.
+describe("TriageBaselineContent — pivot_value wire shape by dimension (#588 R4)", () => {
+  beforeEach(() => {
+    // Earlier describes in this file do not reset the engagement
+    // mocks, so prior `host` clicks would otherwise leak into the
+    // first `find(... === "story_pivot_click")` lookup below.
+    postEngagementActionMock.mockReset();
+    postImpressionBatchMock.mockReset();
+  });
+  afterEach(() => {
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.submitSaveAnalystCuratedStory.mockReset();
+    postEngagementActionMock.mockReset();
+    postImpressionBatchMock.mockReset();
+  });
+
+  it("a sameSensor pivot click posts pivotValueJoinId (not pivotValue)", async () => {
+    const story = makeStory();
+    const member = makeStoryMember({ sensor: "sensor-alpha" });
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[story]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let sensorButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      sensorButton =
+        buttons.find(
+          (b) => b.getAttribute("data-dimension") === "sameSensor",
+        ) ?? null;
+      expect(sensorButton).not.toBeNull();
+    });
+    if (!sensorButton) throw new Error("sameSensor button never rendered");
+    await act(async () => {
+      fireEvent.click(sensorButton as HTMLElement);
+    });
+
+    const calls = postEngagementActionMock.mock.calls;
+    const storyPivot = calls.find(
+      ([action]) => action?.type === "story_pivot_click",
+    );
+    expect(storyPivot).toBeDefined();
+    const payload = storyPivot?.[0];
+    expect(payload.dimension).toBe("sameSensor");
+    expect(payload.pivotValueJoinId).toBe("sensor-alpha");
+    expect(payload).not.toHaveProperty("pivotValue");
+  });
+
+  it("a host (raw-ish) pivot click posts pivotValue (not pivotValueJoinId)", async () => {
+    const story = makeStory();
+    const member = makeStoryMember({ host: "story-host.example" });
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue({
+      members: [member],
+      hasDanglingMembers: false,
+      storedMemberCount: 1,
+    });
+
+    await act(async () => {
+      render(
+        <TriageBaselineContent
+          result={makeMultiCustomerResult()}
+          resetSignal={0}
+          period={PERIOD}
+          scope="tier1"
+          mode="baseline"
+          stories={[story]}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("triage-tab-stories"));
+    await act(async () => {
+      fireEvent.click(screen.getByText(LABELS.stories.card.open));
+    });
+    await waitFor(() => {
+      expect(storyActionsMocks.fetchStoryDetail).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let hostButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      hostButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "host") ??
+        null;
+      expect(hostButton).not.toBeNull();
+    });
+    if (!hostButton) throw new Error("host button never rendered");
+    await act(async () => {
+      fireEvent.click(hostButton as HTMLElement);
+    });
+
+    const calls = postEngagementActionMock.mock.calls;
+    const storyPivot = calls.find(
+      ([action]) => action?.type === "story_pivot_click",
+    );
+    expect(storyPivot).toBeDefined();
+    const payload = storyPivot?.[0];
+    expect(payload.dimension).toBe("host");
+    expect(payload.pivotValue).toBe("story-host.example");
+    expect(payload).not.toHaveProperty("pivotValueJoinId");
   });
 });

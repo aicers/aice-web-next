@@ -15,6 +15,7 @@ export {
 export {
   ENGAGEMENT_ACTION_RETENTION_DAYS,
   ENGAGEMENT_IMPRESSION_RETENTION_DAYS,
+  ENGAGEMENT_JOIN_ID_DIMENSIONS,
   ENGAGEMENT_SURFACE_BASELINE,
   type EngagementAction,
   type EngagementActionType,
@@ -26,4 +27,5 @@ export {
   type EngagementShownBy,
   type EngagementStoryPivotClick,
   type EngagementStrictnessChange,
+  pivotValuePayload,
 } from "./types";

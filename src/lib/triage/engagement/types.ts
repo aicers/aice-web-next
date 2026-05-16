@@ -55,6 +55,25 @@ export const ENGAGEMENT_JOIN_ID_DIMENSIONS: ReadonlySet<string> = new Set([
   "learningMethods",
 ]);
 
+/**
+ * Pick the wire shape for the pivot value carried on a `pivot_click`
+ * or `story_pivot_click` engagement action. Allowlisted natural
+ * join-id dimensions (see {@link ENGAGEMENT_JOIN_ID_DIMENSIONS})
+ * write their value directly into `pivot_value_join_id`; every other
+ * dimension is raw-ish (IP, domain, JA3, SNI, free-text keyword, …)
+ * and routes through the server-side HMAC normalizer via `pivotValue`
+ * → `pivot_value_hmac`. Centralizing the split here keeps the three
+ * click-emit sites in the UI (#588 R4) from drifting.
+ */
+export function pivotValuePayload(
+  dimension: string,
+  valueKey: string,
+): { pivotValueJoinId: string } | { pivotValue: string } {
+  return ENGAGEMENT_JOIN_ID_DIMENSIONS.has(dimension)
+    ? { pivotValueJoinId: valueKey }
+    : { pivotValue: valueKey };
+}
+
 export interface EngagementImpression {
   eventKey: string;
   kind: string;
