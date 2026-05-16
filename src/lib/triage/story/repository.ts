@@ -56,8 +56,22 @@ export interface ReadCandidatesArgs {
    * range degenerates to `(-∞, new_horizon]`.
    */
   memberScanStart: Date | null;
-  /** Inclusive upper bound on `event_time` for the member scan. */
+  /**
+   * Upper bound on `event_time` for the member scan. Inclusive by
+   * default — cadence calls with `newHorizon` and accepts drafts
+   * whose `time_window_end == newHorizon`. The rebuild path passes
+   * {@link endExclusive} `= true` so events at exactly `to` are kept
+   * out of the candidate set; otherwise such an event can extend an
+   * otherwise-eligible cluster's end to `to`, which the rebuild's
+   * `[from, to)` finalization predicate then drops.
+   */
   memberScanEnd: Date;
+  /**
+   * When true, use `event_time < memberScanEnd` instead of
+   * `event_time <= memberScanEnd`. Defaults to false to preserve the
+   * cadence call site's inclusive semantics.
+   */
+  endExclusive?: boolean;
 }
 
 interface CandidateRow {
@@ -110,8 +124,9 @@ function rowToCandidate(row: CandidateRow): CandidateEvent {
 export async function readR1Candidates(
   args: ReadCandidatesArgs,
 ): Promise<CandidateEvent[]> {
-  const { client, memberScanStart, memberScanEnd } = args;
+  const { client, memberScanStart, memberScanEnd, endExclusive } = args;
   const categories = Array.from(CRITICAL_CATEGORIES) as ThreatCategory[];
+  const endOp = endExclusive ? "<" : "<=";
   const baseSelect = `SELECT event_key::text   AS event_key,
                               event_time,
                               kind,
@@ -123,12 +138,12 @@ export async function readR1Candidates(
   const sql =
     memberScanStart === null
       ? `${baseSelect}
-          WHERE event_time <= $1
+          WHERE event_time ${endOp} $1
             AND orig_addr IS NOT NULL
             AND category = ANY($2::text[])`
       : `${baseSelect}
           WHERE event_time >= $1
-            AND event_time <= $2
+            AND event_time ${endOp} $2
             AND orig_addr IS NOT NULL
             AND category = ANY($3::text[])`;
   const params =
@@ -185,14 +200,15 @@ export async function readR1Candidates(
 export async function readR3Candidates(
   args: ReadCandidatesArgs,
 ): Promise<CandidateEvent[]> {
-  const { client, memberScanStart, memberScanEnd } = args;
+  const { client, memberScanStart, memberScanEnd, endExclusive } = args;
   const selectors = Array.from(CRITICAL_SELECTOR_SET);
+  const endOp = endExclusive ? "<" : "<=";
 
   const phase1Sql =
     memberScanStart === null
       ? `SELECT host(orig_addr) AS orig_addr
            FROM baseline_triaged_event
-          WHERE event_time <= $1
+          WHERE event_time ${endOp} $1
             AND orig_addr IS NOT NULL
             AND selector_tags && $2::text[]
           GROUP BY orig_addr
@@ -200,7 +216,7 @@ export async function readR3Candidates(
       : `SELECT host(orig_addr) AS orig_addr
            FROM baseline_triaged_event
           WHERE event_time >= $1
-            AND event_time <= $2
+            AND event_time ${endOp} $2
             AND orig_addr IS NOT NULL
             AND selector_tags && $3::text[]
           GROUP BY orig_addr
@@ -234,12 +250,12 @@ export async function readR3Candidates(
   const phase2Sql =
     memberScanStart === null
       ? `${baseSelect}
-          WHERE event_time <= $1
+          WHERE event_time ${endOp} $1
             AND orig_addr = ANY($2::inet[])
             AND selector_tags && $3::text[]`
       : `${baseSelect}
           WHERE event_time >= $1
-            AND event_time <= $2
+            AND event_time ${endOp} $2
             AND orig_addr = ANY($3::inet[])
             AND selector_tags && $4::text[]`;
   const phase2Params =
@@ -257,6 +273,23 @@ export interface InsertAutoStoryResult {
 }
 
 /**
+ * β-style submission tracking carried over from a pre-rebuild auto
+ * Story whose natural key matches the new draft (#565). The cadence
+ * path leaves this `undefined` so the columns take their DEFAULT
+ * (NULL / 0 / NULL); the rebuild service joins the new drafts against
+ * the pre-rebuild snapshot on
+ * `(correlation_rule_id, primary_asset, time_window_start, time_window_end)`
+ * and copies the matching row's values so the operator's
+ * "already-analyzed" awareness persists across a rules-changed
+ * recompute.
+ */
+export interface AutoStoryBetaCarryOver {
+  lastSentAt: Date | null;
+  sendCount: number;
+  lastSentBy: string | null;
+}
+
+/**
  * INSERT one auto-correlated `event_group` row plus its members in
  * the caller's open transaction. Returns the new group id, or
  * `null` when the partial unique index suppressed the INSERT — the
@@ -266,32 +299,68 @@ export interface InsertAutoStoryResult {
  * `event_group_member`. The composite PK `(event_group_id, event_key)`
  * makes the path idempotent under retry against a successfully-
  * INSERTed parent.
+ *
+ * The optional `carryOver` argument is consumed by the rebuild path
+ * (#565). When provided, the β columns
+ * (`last_sent_at` / `send_count` / `last_sent_by`) are written from
+ * the carry-over values instead of the column DEFAULTs, so a rebuilt
+ * Story that matches a pre-rebuild row on the natural key inherits
+ * the operator's submission tracking.
  */
 export async function insertAutoStory(
   client: pg.PoolClient,
   draft: StoryDraft,
+  carryOver?: AutoStoryBetaCarryOver,
 ): Promise<InsertAutoStoryResult> {
-  const insertGroup = await client.query<{ id: string }>(
-    `INSERT INTO event_group (
-        kind, correlation_rule_id, story_version,
-        time_window_start, time_window_end,
-        primary_asset, score, summary_payload
-      )
-      VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb)
-      ON CONFLICT (correlation_rule_id, primary_asset, time_window_start, time_window_end)
-        WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
-        DO NOTHING
-      RETURNING id::text AS id`,
-    [
-      draft.ruleId,
-      STORY_VERSION,
-      draft.timeWindowStart,
-      draft.timeWindowEnd,
-      draft.primaryAsset,
-      draft.score,
-      JSON.stringify(draft.summary satisfies StorySummaryPayload),
-    ],
-  );
+  const insertGroup =
+    carryOver === undefined
+      ? await client.query<{ id: string }>(
+          `INSERT INTO event_group (
+              kind, correlation_rule_id, story_version,
+              time_window_start, time_window_end,
+              primary_asset, score, summary_payload
+            )
+            VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb)
+            ON CONFLICT (correlation_rule_id, primary_asset, time_window_start, time_window_end)
+              WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
+              DO NOTHING
+            RETURNING id::text AS id`,
+          [
+            draft.ruleId,
+            STORY_VERSION,
+            draft.timeWindowStart,
+            draft.timeWindowEnd,
+            draft.primaryAsset,
+            draft.score,
+            JSON.stringify(draft.summary satisfies StorySummaryPayload),
+          ],
+        )
+      : await client.query<{ id: string }>(
+          `INSERT INTO event_group (
+              kind, correlation_rule_id, story_version,
+              time_window_start, time_window_end,
+              primary_asset, score, summary_payload,
+              last_sent_at, send_count, last_sent_by
+            )
+            VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb,
+                    $8, $9, $10::uuid)
+            ON CONFLICT (correlation_rule_id, primary_asset, time_window_start, time_window_end)
+              WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
+              DO NOTHING
+            RETURNING id::text AS id`,
+          [
+            draft.ruleId,
+            STORY_VERSION,
+            draft.timeWindowStart,
+            draft.timeWindowEnd,
+            draft.primaryAsset,
+            draft.score,
+            JSON.stringify(draft.summary satisfies StorySummaryPayload),
+            carryOver.lastSentAt,
+            carryOver.sendCount,
+            carryOver.lastSentBy,
+          ],
+        );
   if (insertGroup.rows.length === 0) {
     return { groupId: null };
   }

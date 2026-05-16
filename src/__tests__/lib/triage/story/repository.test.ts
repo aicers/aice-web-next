@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CRITICAL_CATEGORIES } from "@/lib/triage/baseline/categories";
 import {
+  insertAutoStory,
   insertCuratedStory,
   readR1Candidates,
   readR3Candidates,
@@ -342,6 +343,75 @@ describe("readR3Candidates — two-phase per-asset access for measurement gate",
     expect(phase2.sql).toMatch(/orig_addr = ANY\(\$2::inet\[\]\)/);
     expect(phase2.sql).toMatch(/selector_tags && \$3::text\[\]/);
     expect(phase2.params).toHaveLength(3);
+  });
+});
+
+describe("insertAutoStory — β carry-over (rebuild path, #565)", () => {
+  function autoDraft() {
+    return {
+      ruleId: "R3" as const,
+      primaryAsset: "10.0.0.5",
+      timeWindowStart: new Date("2026-05-03T11:58:00Z"),
+      timeWindowEnd: new Date("2026-05-03T12:00:00Z"),
+      members: [
+        event({
+          eventKey: "1",
+          eventTime: "2026-05-03T11:58:00Z",
+          category: "IMPACT",
+          selectorTags: ["S2-severe"],
+        }),
+      ],
+      score: 1,
+      summary: {
+        kindHistogram: { HttpThreat: 1 },
+        categoryHistogram: { IMPACT: 1 },
+        memberCount: 1,
+        durationMs: 0,
+        distinctAssetCount: 1,
+        topRawScore: 0,
+      },
+    };
+  }
+
+  it("omits β columns when carryOver is undefined (cadence path)", async () => {
+    const h = makeClient();
+    await insertAutoStory(
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      h.client as any,
+      autoDraft(),
+    );
+    const ins = h.queries.find((q) =>
+      q.sql.includes("INSERT INTO event_group "),
+    );
+    expect(ins).toBeDefined();
+    // β columns are not in the INSERT column list when no carry-over.
+    expect(ins?.sql).not.toContain("last_sent_at");
+    expect(ins?.sql).not.toContain("send_count");
+    expect(ins?.sql).not.toContain("last_sent_by");
+    expect(ins?.sql).toContain("ON CONFLICT");
+  });
+
+  it("includes β columns and binds carry-over values when provided", async () => {
+    const h = makeClient();
+    const lastSentAt = new Date("2026-05-02T00:00:00Z");
+    const lastSentBy = "00000000-0000-0000-0000-000000000001";
+    await insertAutoStory(
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      h.client as any,
+      autoDraft(),
+      { lastSentAt, sendCount: 3, lastSentBy },
+    );
+    const ins = h.queries.find((q) =>
+      q.sql.includes("INSERT INTO event_group "),
+    );
+    expect(ins).toBeDefined();
+    expect(ins?.sql).toContain("last_sent_at");
+    expect(ins?.sql).toContain("send_count");
+    expect(ins?.sql).toContain("last_sent_by");
+    expect(ins?.sql).toContain("ON CONFLICT");
+    expect(ins?.params).toContain(lastSentAt);
+    expect(ins?.params).toContain(3);
+    expect(ins?.params).toContain(lastSentBy);
   });
 });
 

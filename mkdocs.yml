@@ -32,6 +32,7 @@ plugins:
                 - Node management: operations/node-management.md
                 - mTLS certificate rotation: operations/mtls-rotation.md
                 - Triage baseline cadence: operations/triage-baseline-cadence.md
+                - Triage Story rebuild: operations/triage-story-rebuild.md
             - Settings: settings.md
             - Customer Scope: customer-scope.md
         - locale: ko
@@ -47,6 +48,7 @@ plugins:
                 - Node management: operations/node-management.md
                 - mTLS certificate rotation: operations/mtls-rotation.md
                 - Triage baseline cadence: operations/triage-baseline-cadence.md
+                - Triage Story rebuild: operations/triage-story-rebuild.md
             - Settings: settings.md
             - Customer Scope: customer-scope.md
           nav_translations:
@@ -59,6 +61,7 @@ plugins:
             Node management: 노드 관리
             mTLS certificate rotation: mTLS 인증서 교체
             Triage baseline cadence: 트리아지 베이스라인 케이던스
+            Triage Story rebuild: 트리아지 Story 재빌드
             Settings: 설정
             Customer Scope: 고객사 범위
 
