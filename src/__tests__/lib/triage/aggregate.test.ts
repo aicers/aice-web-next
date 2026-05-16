@@ -23,6 +23,7 @@ describe("aggregateTriageEvents", () => {
     expect(result.funnel).toEqual({
       detected: 0,
       triaged: 0,
+      shown: 0,
       passThroughRate: 0,
     });
     expect(result.assets).toEqual([]);

@@ -122,6 +122,22 @@ export interface TriageStoryMemberDetail {
    *  `cume_dist()` cohort doesn't cover them, so a meaningful
    *  baseline_score is not defined. The UI renders `—`. */
   baselineScore: number | null;
+  /**
+   * Story-protected marker eligibility (#471 §3). `true` when the
+   * member would render the chain-link marker on the Story-detail
+   * member row, per the four-condition rule:
+   *   (a) slider != "all" (i.e. cutoff > 0)
+   *   (b) `baselineScore` is non-NULL
+   *   (c) `baselineScore < cutoff`
+   *   (d) the member is a Story member — always true here, since this
+   *       shape comes from `event_group_member ⨝ baseline_triaged_event`.
+   * Out-of-period members carry `baselineScore === null` and stay
+   * silent (condition (b) fails). The flag is computed against the
+   * strictness cutoff threaded through `loadStoryDetail` so the Story-
+   * detail surface honors the same rule the asset-detail and pivot
+   * surfaces do.
+   */
+  protectedByStory: boolean;
 }
 
 /**

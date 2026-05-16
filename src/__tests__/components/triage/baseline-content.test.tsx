@@ -59,6 +59,9 @@ const LABELS: TriageBaselineLabels = {
     title: "Funnel",
     detected: "Detected",
     triaged: "Triaged",
+    triagedHint: "triaged hint",
+    shown: "Shown",
+    shownHint: "shown hint",
     passThrough: "Pass-through",
     passThroughHint: "hint",
   },
@@ -86,6 +89,9 @@ const LABELS: TriageBaselineLabels = {
     kindColumn: "Kind",
     categoryColumn: "Category",
     scoreColumn: "Score",
+    protectedByStoryMarker: {
+      template: "Kept because of Story membership (score: {score})",
+    },
   },
   pivotPanel: {
     title: "Related events",
@@ -299,9 +305,12 @@ function makeMultiCustomerResult(): TriageLoadResult {
     events: assetBEvents,
   };
   return {
-    funnel: { detected: 4, triaged: 4, passThroughRate: 1 },
+    funnel: { detected: 4, triaged: 4, shown: 4, passThroughRate: 1 },
     assets: [assetA, assetB],
     truncated: false,
+    storyProtectedTruncated: false,
+    storyProtectedDroppedCount: 0,
+    eligibleByStop: {},
     loadedEventCount: 4,
     events: [...assetAEvents, ...assetBEvents],
     observedDenominatorTruncated: false,
@@ -461,6 +470,7 @@ function makeStoryMember(
     uri: null,
     category: "IMPACT",
     baselineScore: 0.91,
+    protectedByStory: false,
     ...overrides,
   };
 }

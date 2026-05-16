@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif, AppleSDGothicNeo, NotoSansKR" role="img" aria-labelledby="title desc">
+  <title id="title">엄격도 슬라이더가 포함된 트리아지 툴바 (와이어프레임)</title>
+  <desc id="desc">트리아지 툴바 와이어프레임. 기간 선택기, 모드 토글, 범위 토글, 그리고 새로 추가된 엄격도 슬라이더를 보여 줍니다. 슬라이더는 느슨함에서 엄격함 순서로 다섯 개의 칩(전체, 상위 80%, 상위 50% (기본 선택), 상위 20%, 상위 5%)으로 구성된 라디오그룹이며, 각 칩에는 composeMenu 적용 전 후보 수를 알리는 "약 N" 미리보기가 함께 표시됩니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-title { font-size: 13px; fill: #18181b; font-weight: 700; }
+    .text-legend { font-size: 10px; fill: #71717a; font-weight: 600; letter-spacing: 0.5px; }
+    .text-input { font-size: 12px; fill: #18181b; }
+    .text-chip-active { font-size: 11px; fill: #ffffff; font-weight: 700; }
+    .text-chip-inactive { font-size: 11px; fill: #52525b; font-weight: 500; }
+    .text-preview-active { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; fill: #ffffff; fill-opacity: 0.8; }
+    .text-preview-inactive { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; fill: #71717a; }
+    .text-hint { font-size: 10px; fill: #71717a; }
+    .chip-bar { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .chip-active { fill: #18181b; }
+    .input-box { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-primary { fill: #18181b; rx: 4; ry: 4; }
+    .btn-primary-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+  </style>
+
+  <rect class="bg" width="720" height="220"/>
+
+  <!-- Header -->
+  <text x="24" y="28" class="text-title">트리아지</text>
+  <text x="24" y="46" class="text-hint">기간 2026-05-08 00:00 → 2026-05-09 00:00 · 고객 1명 · 마지막 갱신 6분 전</text>
+
+  <!-- Period picker -->
+  <text x="24" y="78" class="text-legend">기간</text>
+  <rect class="input-box" x="24" y="86" width="148" height="28"/>
+  <text x="34" y="105" class="text-input">2026-05-08 00:00</text>
+  <rect class="input-box" x="180" y="86" width="148" height="28"/>
+  <text x="190" y="105" class="text-input">2026-05-09 00:00</text>
+  <rect class="btn-primary" x="336" y="86" width="62" height="28"/>
+  <text x="355" y="105" class="btn-primary-text">적용</text>
+
+  <!-- Mode toggle -->
+  <text x="416" y="78" class="text-legend">모드</text>
+  <rect class="chip-bar" x="416" y="86" width="132" height="28" rx="4" ry="4"/>
+  <rect class="chip-active" x="420" y="90" width="68" height="20" rx="3" ry="3"/>
+  <text x="430" y="104" class="text-chip-active">베이스라인</text>
+  <text x="494" y="104" class="text-chip-inactive">정책</text>
+
+  <!-- Scope toggle -->
+  <text x="556" y="78" class="text-legend">범위</text>
+  <rect class="chip-bar" x="556" y="86" width="140" height="28" rx="4" ry="4"/>
+  <rect class="chip-active" x="560" y="90" width="78" height="20" rx="3" ry="3"/>
+  <text x="568" y="104" class="text-chip-active">트리아지만</text>
+  <text x="644" y="104" class="text-chip-inactive">전체</text>
+
+  <!-- Strictness slider -->
+  <text x="24" y="144" class="text-legend">엄격도</text>
+  <rect class="chip-bar" x="24" y="152" width="608" height="32" rx="4" ry="4"/>
+  <text x="40" y="172" class="text-chip-inactive">전체</text>
+  <text x="78" y="172" class="text-preview-inactive">≈ 4,820</text>
+  <text x="146" y="172" class="text-chip-inactive">상위 80%</text>
+  <text x="200" y="172" class="text-preview-inactive">≈ 3,910</text>
+  <rect class="chip-active" x="262" y="156" width="148" height="24" rx="3" ry="3"/>
+  <text x="272" y="172" class="text-chip-active">상위 50%</text>
+  <text x="328" y="172" class="text-preview-active">≈ 2,408</text>
+  <text x="428" y="172" class="text-chip-inactive">상위 20%</text>
+  <text x="482" y="172" class="text-preview-inactive">≈ 968</text>
+  <text x="540" y="172" class="text-chip-inactive">상위 5%</text>
+  <text x="590" y="172" class="text-preview-inactive">≈ 241</text>
+
+  <!-- Hint -->
+  <text x="24" y="204" class="text-hint">종류별 정규화된 베이스라인 백분위에 대한 읽기 시점 컷오프. 느슨하면 더 넓게, 엄격하면 가장 강한 신호만 표시됩니다.</text>
+</svg>

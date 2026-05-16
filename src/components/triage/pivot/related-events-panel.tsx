@@ -34,6 +34,10 @@ import {
 import { cn } from "@/lib/utils";
 
 import {
+  type ProtectedByStoryMarkerLabels,
+  renderProtectedByStoryMarker,
+} from "../event-row/protected-by-story-marker";
+import {
   WEAK_SIGNAL_ROW_CLASS,
   WeakSignalBadge,
   type WeakSignalBadgeLabels,
@@ -62,6 +66,12 @@ export interface TriagePivotPanelLabels {
   kindColumn: string;
   scoreColumn: string;
   pivotColumn: string;
+  /**
+   * Story-protected row marker copy (#471 §3). Parameterized by
+   * `{score}`. The marker is rendered at the start of the leading
+   * cell when the row's `protectedByStory` flag is `true`.
+   */
+  protectedByStoryMarker?: ProtectedByStoryMarkerLabels;
   weakSignal?: WeakSignalBadgeLabels;
   /**
    * Per-value labels for the static Tier-2-only `learningMethods`
@@ -557,9 +567,16 @@ function PivotRow({
   weak: boolean;
 }) {
   const dim = labels.dimensions[dimension];
+  const marker =
+    event.protectedByStory === true && labels.protectedByStoryMarker
+      ? renderProtectedByStoryMarker(labels.protectedByStoryMarker)({
+          score: event.score,
+        })
+      : null;
   return (
     <tr className={cn("border-b last:border-0", weak && WEAK_SIGNAL_ROW_CLASS)}>
       <td className="py-1.5 pr-2 font-mono text-xs">
+        {marker}
         {formatDateTime(event.time, timezone)}
       </td>
       <td className="py-1.5 pr-2">

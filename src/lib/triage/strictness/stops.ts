@@ -29,6 +29,17 @@ export interface StrictnessStop {
    * — the cadence threshold owned by #456 is still in effect.
    */
   cutoff: number;
+  /**
+   * Multiplier applied to `composeMenu`'s `defaultN` (RFC §6 option
+   * (b), #471 §5). Tightens or widens the per-bucket quota that
+   * derives from #462's `FINAL_COUNT` curve. `null` lifts the quota
+   * entirely — used at the "All" stop so the menu's per-bucket cap
+   * is the SQL candidate cap, not `composeMenu` itself. Strict stops
+   * apply a smaller multiplier (the analyst opted into a narrower
+   * set); loose stops apply a larger multiplier so "Top 80%"
+   * actually widens beyond the production default.
+   */
+  defaultNMultiplier: number | null;
 }
 
 /**
@@ -38,11 +49,11 @@ export interface StrictnessStop {
  * first-time analyst sees a moderate volume of results.
  */
 export const STRICTNESS_STOPS: readonly StrictnessStop[] = [
-  { id: "all", labelKey: "all", cutoff: 0 },
-  { id: "top80", labelKey: "top80", cutoff: 0.2 },
-  { id: "top50", labelKey: "top50", cutoff: 0.5 },
-  { id: "top20", labelKey: "top20", cutoff: 0.8 },
-  { id: "top5", labelKey: "top5", cutoff: 0.95 },
+  { id: "all", labelKey: "all", cutoff: 0, defaultNMultiplier: null },
+  { id: "top80", labelKey: "top80", cutoff: 0.2, defaultNMultiplier: 2 },
+  { id: "top50", labelKey: "top50", cutoff: 0.5, defaultNMultiplier: 1 },
+  { id: "top20", labelKey: "top20", cutoff: 0.8, defaultNMultiplier: 0.5 },
+  { id: "top5", labelKey: "top5", cutoff: 0.95, defaultNMultiplier: 0.25 },
 ] as const;
 
 export const DEFAULT_STRICTNESS_STOP_ID: StrictnessStopId = "top50";
@@ -78,4 +89,12 @@ export function getStrictnessStop(id: StrictnessStopId): StrictnessStop {
 /** Convenience: cutoff value for a stop id. */
 export function cutoffForStop(id: StrictnessStopId): number {
   return getStrictnessStop(id).cutoff;
+}
+
+/**
+ * Convenience: `defaultN` multiplier for a stop id. `null` lifts the
+ * `composeMenu` quota entirely (the "All" stop, #471 §5).
+ */
+export function defaultNMultiplierForStop(id: StrictnessStopId): number | null {
+  return getStrictnessStop(id).defaultNMultiplier;
 }

@@ -125,6 +125,7 @@ export function aggregateTriageEvents(
   const funnel: TriageFunnel = {
     detected: events.length,
     triaged: 0,
+    shown: 0,
     passThroughRate: 0,
   };
   const byAddress = new Map<string, AssetAccumulator>();
@@ -164,10 +165,15 @@ export function aggregateTriageEvents(
     byAddress.set(address, acc);
   }
 
+  // Legacy in-memory aggregator has no slider / branch B / quota, so
+  // `shown` collapses to `triaged` here (every triaged event reaches
+  // the screen). Production reaches the funnel via `loadTriagePeriod`,
+  // which computes `shown` from the dual-cap merge instead.
+  funnel.shown = funnel.triaged;
   if (funnel.detected > 0) {
     funnel.passThroughRate = Math.min(
       1,
-      Math.max(0, funnel.triaged / funnel.detected),
+      Math.max(0, funnel.shown / funnel.detected),
     );
   }
 
@@ -203,6 +209,9 @@ export function aggregateTriageEvents(
     funnel,
     assets,
     truncated,
+    storyProtectedTruncated: false,
+    storyProtectedDroppedCount: 0,
+    eligibleByStop: {},
     loadedEventCount: events.length,
     events: scoredEvents,
     observedDenominatorTruncated: false,

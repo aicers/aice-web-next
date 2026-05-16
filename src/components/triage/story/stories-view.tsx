@@ -34,6 +34,10 @@ import type {
 } from "@/lib/triage/story/types";
 
 import {
+  type ProtectedByStoryMarkerLabels,
+  renderProtectedByStoryMarker,
+} from "../event-row/protected-by-story-marker";
+import {
   type TriageEventRow,
   TriageEventTable,
   type TriageEventTableLabels,
@@ -128,6 +132,14 @@ export interface TriageStoryDetailLabels {
    * stay in sync.
    */
   pivotDimensions?: Record<PivotDimensionId, string>;
+  /**
+   * Story-protected row marker copy (#471 §3). Parameterized by
+   * `{score}`. Rendered at the start of a member row's leading cell
+   * when the member carries `protectedByStory === true`. Optional —
+   * surfaces that have not yet wired the slider into the Story view
+   * leave it undefined and the marker collapses out.
+   */
+  protectedByStoryMarker?: ProtectedByStoryMarkerLabels;
 }
 
 interface TriageStoriesViewProps {
@@ -615,6 +627,14 @@ function TriageStoryDetail({
           baselineScore: m.baselineScore,
           origAddr: m.origAddr,
           respAddr: m.respAddr,
+          // Marker slot is populated only when the member's
+          // `protectedByStory` flag is set AND the surface supplied
+          // the localized template; either side missing leaves the
+          // leading cell unchanged.
+          protectedByStory:
+            m.protectedByStory && m.baselineScore !== null
+              ? { score: m.baselineScore }
+              : undefined,
         }))
       : story.topMembers.map((m) => ({
           key: m.eventKey,
@@ -625,6 +645,12 @@ function TriageStoryDetail({
           origAddr: null,
           respAddr: null,
         }));
+  // Marker renderer for the per-row leading cell. Only wired when the
+  // labels carry the template — surfaces that have not yet adopted
+  // the strictness slider in the Story view leave the marker absent.
+  const protectedByStoryRenderer = labels.protectedByStoryMarker
+    ? renderProtectedByStoryMarker(labels.protectedByStoryMarker)
+    : undefined;
   const pivotActionsEnabled =
     onPivot !== undefined &&
     labels.pivotActionsColumn !== undefined &&
@@ -731,6 +757,7 @@ function TriageStoryDetail({
         <TriageEventTable
           rows={rows}
           labels={tableLabels}
+          renderProtectedByStoryMarker={protectedByStoryRenderer}
           renderRowActions={
             pivotActionsEnabled
               ? (row) => {

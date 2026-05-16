@@ -149,9 +149,32 @@ function tieBreakerCompare(a, b) {
 }
 
 export function composeMenu(input) {
-  const { postExclusionCount, bucketAggregates, candidates, cutoff } = input;
-  const defaultN = computeDefaultN(postExclusionCount);
-  const quotas = computeBucketQuotas(bucketAggregates, defaultN);
+  const {
+    postExclusionCount,
+    bucketAggregates,
+    candidates,
+    cutoff,
+    defaultNMultiplier,
+  } = input;
+  // #471 §5 / RFC §6: option (b). The slider stop carries a
+  // multiplier that scales `defaultN` (or `null` to lift the
+  // per-bucket quota entirely at the "All" stop). `undefined` means
+  // legacy callers that have not opted into option (b) — they keep
+  // the foundation slice's behavior (multiplier = 1, no lift).
+  const liftQuota = defaultNMultiplier === null;
+  const scaledDefaultN = liftQuota
+    ? null
+    : Math.max(
+        0,
+        Math.round(
+          computeDefaultN(postExclusionCount) * (defaultNMultiplier ?? 1),
+        ),
+      );
+  const defaultN =
+    scaledDefaultN === null ? Number.POSITIVE_INFINITY : scaledDefaultN;
+  const quotas = liftQuota
+    ? new Map()
+    : computeBucketQuotas(bucketAggregates, scaledDefaultN);
 
   const byBucket = new Map();
   for (const row of candidates) {
@@ -163,12 +186,21 @@ export function composeMenu(input) {
   }
 
   const assembled = [];
-  for (const [k, list] of byBucket) {
-    const cap = quotas.get(k) ?? 0;
-    if (cap <= 0) continue;
-    list.sort(tieBreakerCompare);
-    for (let i = 0; i < cap && i < list.length; i++) {
-      assembled.push(list[i]);
+  if (liftQuota) {
+    // "All" stop — no per-bucket cap. Every cutoff-surviving row is
+    // assembled, bounded only by the SQL candidate cap and the
+    // merge-layer `TRIAGE_HARD_EVENT_CAP`.
+    for (const list of byBucket.values()) {
+      for (const row of list) assembled.push(row);
+    }
+  } else {
+    for (const [k, list] of byBucket) {
+      const cap = quotas.get(k) ?? 0;
+      if (cap <= 0) continue;
+      list.sort(tieBreakerCompare);
+      for (let i = 0; i < cap && i < list.length; i++) {
+        assembled.push(list[i]);
+      }
     }
   }
 

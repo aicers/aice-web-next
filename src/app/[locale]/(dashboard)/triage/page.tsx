@@ -115,6 +115,9 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
     forbiddenBanner: t("forbiddenBanner"),
     forbiddenScopeBanner: t("forbiddenScopeBanner"),
     truncatedBannerTemplate: t.raw("truncatedBannerTemplate") as string,
+    storyProtectedTruncatedBannerTemplate: t.raw(
+      "storyProtectedTruncatedBannerTemplate",
+    ) as string,
     clampedNotice: t("clampedNotice"),
     observedDenominatorTruncatedNotice: t("observedDenominatorTruncatedNotice"),
     freshness: {
@@ -161,6 +164,9 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
       legend: t("strictnessSlider.legend"),
       hint: t("strictnessSlider.hint"),
       allStopHint: t("strictnessSlider.allStopHint"),
+      eligibleHintTemplate: t.raw(
+        "strictnessSlider.eligibleHintTemplate",
+      ) as string,
       stops: {
         all: t("strictnessSlider.stops.all"),
         top80: t("strictnessSlider.stops.top80"),
@@ -174,6 +180,9 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         title: t("funnel.title"),
         detected: t("funnel.detected"),
         triaged: t("funnel.triaged"),
+        triagedHint: t("funnel.triagedHint"),
+        shown: t("funnel.shown"),
+        shownHint: t("funnel.shownHint"),
         passThrough: t("funnel.passThrough"),
         passThroughHint: t("funnel.passThroughHint"),
       },
@@ -201,6 +210,11 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         kindColumn: t("assetDetail.kindColumn"),
         categoryColumn: t("assetDetail.categoryColumn"),
         scoreColumn: t("assetDetail.scoreColumn"),
+        protectedByStoryMarker: {
+          template: t.raw(
+            "assetDetail.protectedByStoryMarkerTemplate",
+          ) as string,
+        },
       },
       pivotPanel: {
         title: t("pivotPanel.title"),
@@ -219,6 +233,11 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         kindColumn: t("pivotPanel.kindColumn"),
         scoreColumn: t("pivotPanel.scoreColumn"),
         pivotColumn: t("pivotPanel.pivotColumn"),
+        protectedByStoryMarker: {
+          template: t.raw(
+            "assetDetail.protectedByStoryMarkerTemplate",
+          ) as string,
+        },
         family: {
           network: t("pivotPanel.family.network"),
           application: t("pivotPanel.family.application"),
@@ -389,6 +408,15 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           pivotDimensions: pivotDimensionsMap((id) =>
             t(`pivotBreadcrumb.dimensions.${id}`),
           ),
+          // Reuses the asset-detail copy (#471 §3): the marker glyph
+          // and accessible label are identical across per-event
+          // surfaces — a single shared template keeps EN/KR parity
+          // automatic and avoids drift between surfaces.
+          protectedByStoryMarker: {
+            template: t.raw(
+              "assetDetail.protectedByStoryMarkerTemplate",
+            ) as string,
+          },
         },
       },
       saveAsStory: {

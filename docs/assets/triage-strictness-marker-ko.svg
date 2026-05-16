@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif, AppleSDGothicNeo, NotoSansKR" role="img" aria-labelledby="title desc">
+  <title id="title">스토리 보호 체인-링크 마커가 표시된 자산 상세 이벤트 행 (와이어프레임)</title>
+  <desc id="desc">상위 5% 엄격도 정지점에서 자산 상세 패널의 와이어프레임. 세 개의 이벤트 행이 표시됩니다. 첫 번째 행은 점수(0.97)가 컷오프를 통과해 마커가 없으며, 두 번째 행은 점수(0.30)가 컷오프 미만이지만 스토리 멤버이므로 시간 셀 앞에 체인-링크 아이콘이 표시되고, 세 번째 행도 동일한 패턴을 따릅니다. 체인-링크 글리프에는 "스토리 멤버십으로 유지된 이벤트 (점수: 0.30)"라는 aria-label이 부여됩니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-section { font-size: 11px; fill: #71717a; font-weight: 600; letter-spacing: 0.5px; }
+    .text-address { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px; fill: #18181b; }
+    .text-meta { font-size: 11px; fill: #71717a; }
+    .text-stat-label { font-size: 10px; fill: #71717a; font-weight: 600; letter-spacing: 0.5px; }
+    .text-stat-value { font-size: 18px; fill: #18181b; font-weight: 700; }
+    .text-th { font-size: 10px; fill: #71717a; font-weight: 600; letter-spacing: 0.5px; }
+    .text-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #18181b; }
+    .text-mono-muted { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #52525b; }
+    .text-kind { font-size: 11px; fill: #18181b; }
+    .text-category-muted { font-size: 11px; fill: #71717a; }
+    .row-divider { stroke: #f4f4f5; stroke-width: 1; }
+    .stop-active { fill: #18181b; }
+    .chip-bar { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .marker { fill: #d97706; font-size: 13px; }
+    .tooltip-box { fill: #18181b; rx: 4; ry: 4; }
+    .tooltip-text { fill: #ffffff; font-size: 10px; }
+  </style>
+
+  <rect class="bg" width="720" height="360"/>
+
+  <!-- Strictness slider compact bar -->
+  <text x="24" y="24" class="text-section">엄격도</text>
+  <rect class="chip-bar" x="76" y="12" width="248" height="20" rx="4" ry="4"/>
+  <text x="84" y="26" class="text-mono-muted">전체 · 80% · 50% · 20% ·</text>
+  <rect class="stop-active" x="280" y="14" width="42" height="16" rx="3" ry="3"/>
+  <text x="290" y="26" fill="#ffffff" font-size="10" font-weight="700">상위 5%</text>
+  <text x="336" y="26" class="text-meta">(컷오프 0.95)</text>
+
+  <!-- Asset detail panel -->
+  <rect class="panel" x="24" y="48" width="672" height="296" rx="6" ry="6"/>
+
+  <!-- Header -->
+  <text x="40" y="74" class="text-section">자산 상세</text>
+  <text x="40" y="100" class="text-address">10.0.0.42</text>
+  <text x="40" y="118" class="text-meta">고객: Default</text>
+
+  <!-- Stats -->
+  <text x="40" y="146" class="text-stat-label">점수</text>
+  <text x="40" y="168" class="text-stat-value">4.27</text>
+  <text x="180" y="146" class="text-stat-label">트리아지</text>
+  <text x="180" y="168" class="text-stat-value">3</text>
+  <text x="320" y="146" class="text-stat-label">탐지</text>
+  <text x="320" y="168" class="text-stat-value">28</text>
+
+  <!-- Events heading -->
+  <text x="40" y="200" class="text-section">이벤트</text>
+
+  <!-- Table header -->
+  <text x="40" y="220" class="text-th">시간</text>
+  <text x="220" y="220" class="text-th">종류</text>
+  <text x="380" y="220" class="text-th">카테고리</text>
+  <text x="640" y="220" class="text-th" text-anchor="end">점수</text>
+  <line x1="40" y1="226" x2="680" y2="226" class="row-divider"/>
+
+  <!-- Row 1: above cutoff, no marker -->
+  <text x="40" y="246" class="text-mono">2026-05-09 11:58:02</text>
+  <text x="220" y="246" class="text-kind">DnsCovertChannel</text>
+  <text x="380" y="246" class="text-category-muted">EXFILTRATION</text>
+  <text x="640" y="246" class="text-mono" text-anchor="end">0.97</text>
+  <line x1="40" y1="254" x2="680" y2="254" class="row-divider"/>
+
+  <!-- Row 2: below cutoff, Story member — chain-link marker -->
+  <text x="40" y="274" class="marker">🔗</text>
+  <text x="58" y="274" class="text-mono">2026-05-09 11:42:18</text>
+  <text x="220" y="274" class="text-kind">HttpThreat</text>
+  <text x="380" y="274" class="text-category-muted">IMPACT</text>
+  <text x="640" y="274" class="text-mono" text-anchor="end">0.30</text>
+  <line x1="40" y1="282" x2="680" y2="282" class="row-divider"/>
+
+  <!-- Row 3: below cutoff, Story member — chain-link marker -->
+  <text x="40" y="302" class="marker">🔗</text>
+  <text x="58" y="302" class="text-mono">2026-05-09 11:31:55</text>
+  <text x="220" y="302" class="text-kind">LockyRansomware</text>
+  <text x="380" y="302" class="text-category-muted">IMPACT</text>
+  <text x="640" y="302" class="text-mono" text-anchor="end">0.42</text>
+
+  <!-- Hover tooltip indicator -->
+  <rect class="tooltip-box" x="58" y="312" width="276" height="22"/>
+  <text x="68" y="327" class="tooltip-text">스토리 멤버십으로 유지된 이벤트 (점수: 0.30)</text>
+</svg>

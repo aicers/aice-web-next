@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  COUNT_ELIGIBLE_BY_STOP_SQL,
   MEASURED_QUERIES,
   MENU_CANDIDATES_PER_BUCKET,
   PER_ASSET_OBSERVED_COUNTS_SQL,
   SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL,
   SELECT_MENU_COHORT_SQL,
+  SELECT_STORY_PROTECTED_COHORT_SQL,
+  STORY_PROTECTED_PER_TENANT_LIMIT,
   TRIAGE_ASSET_DETAIL_LIMIT,
 } from "@/lib/triage/baseline/read-path-sql.mjs";
+import { STRICTNESS_STOPS } from "@/lib/triage/strictness/stops";
 
 describe("read-path-sql shared module", () => {
   describe("§5 orig_addr cast cleanup", () => {
@@ -32,7 +36,11 @@ describe("read-path-sql shared module", () => {
   });
 
   describe("query coverage", () => {
-    it("exposes the five measured queries in MEASURED_QUERIES", () => {
+    it("exposes the seven measured queries in MEASURED_QUERIES", () => {
+      // #471 adds two queries — `selectStoryProtectedCohort` (branch
+      // B force-union) and `countEligibleByStop` (per-stop preview
+      // hints). The harness measures all seven against the production
+      // SELECTs.
       const names = MEASURED_QUERIES.map((q) => q.name);
       expect(names).toEqual([
         "selectMenuCohort",
@@ -40,6 +48,8 @@ describe("read-path-sql shared module", () => {
         "countTriaged",
         "perAssetObservedCounts",
         "selectAssetDetailEventsBatch",
+        "selectStoryProtectedCohort",
+        "countEligibleByStop",
       ]);
     });
 
@@ -143,6 +153,109 @@ describe("read-path-sql shared module", () => {
       expect(SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL).toMatch(
         /baseline_score\s*>=\s*\$5/,
       );
+    });
+
+    it("threads the per-bucket cap and slider cutoff into the branch B SQL so per-tenant LIMIT is applied to branch-B-unique rows, not branch-A overlap (#596 Round 2 / Round 4)", () => {
+      // The two extra binds are how branch B predicts branch A's
+      // SQL/composeMenu coverage in-database — `bucket_rn > $4` flags
+      // rows branch A's SQL cohort cannot include, `baseline_score
+      // < $5` flags rows branch A's `composeMenu` cutoff filter cannot
+      // include. The ORDER BY pulls branch-B-unique rows to the head
+      // so the per-tenant LIMIT never strands a row that needed
+      // force-union. The truncation banner uses an unfiltered
+      // `COUNT(*) OVER ()` of in-window Story members (#596 Round 4
+      // item 2) — the merge layer subtracts the visible Story count
+      // (identified via the menu cohort's `in_story` projection) to
+      // avoid the Round 2 over-attribution risk in JS rather than in
+      // SQL.
+      expect(SELECT_STORY_PROTECTED_COHORT_SQL).toMatch(
+        /bucket_rn\s*>\s*\$4\s+OR\s+baseline_score\s*<\s*\$5/,
+      );
+      // The protected-total projection is an unfiltered COUNT(*) OVER ()
+      // — the Round 2 FILTER was removed in Round 4 because the merge
+      // layer can now identify branch-A-shown Story members via
+      // `MenuCohortDbRow.in_story` and compute the dropped count
+      // exactly without a SQL-side pre-filter.
+      expect(SELECT_STORY_PROTECTED_COHORT_SQL).toMatch(
+        /COUNT\(\*\)\s+OVER\s*\(\)\s+AS\s+protected_total_in_window/,
+      );
+      expect(SELECT_STORY_PROTECTED_COHORT_SQL).not.toMatch(
+        /COUNT\(\*\)\s+FILTER\s*\(WHERE\s+branch_b_unique\)/,
+      );
+      // The ORDER BY pulls branch-B-unique rows to the head of the
+      // result before falling back to the §3 priority sort, so a
+      // tenant whose branch-A overlap exceeds the per-tenant LIMIT
+      // still surfaces every unique row.
+      expect(SELECT_STORY_PROTECTED_COHORT_SQL).toMatch(
+        /ORDER BY\s+branch_b_unique\s+DESC,\s+baseline_score\s+DESC/,
+      );
+      // bucket_rn must use branch A's exact partition + ordering so
+      // the prediction is correct, not approximate.
+      expect(SELECT_STORY_PROTECTED_COHORT_SQL).toMatch(
+        /PARTITION BY kind,\s*is_unlabeled[\s\S]*?ORDER BY baseline_score DESC,\s*event_time DESC,\s*event_key DESC[\s\S]*?\)\s+AS bucket_rn/,
+      );
+    });
+
+    it("projects `in_story` on the menu cohort SELECT so branch A's Story membership is visible to the merge layer (#596 Round 4 item 2)", () => {
+      // Without this, the merge layer could not distinguish branch-A-
+      // shown Story members from branch-A-shown non-Story rows, and
+      // `storyProtectedDroppedCount` would either over-attribute
+      // (using the unfiltered SQL pre-count) or under-detect (using
+      // the FILTERed pre-count under SQL LIMIT pressure).
+      expect(SELECT_MENU_COHORT_SQL).toMatch(
+        /EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+event_group_member\s+m\s+WHERE\s+m\.event_key\s*=\s*baseline_triaged_event\.event_key\s*\)\s+AS\s+in_story/,
+      );
+      expect(SELECT_MENU_COHORT_SQL).toMatch(/in_story\s+AS\s+in_story/);
+    });
+
+    it("buildParams for selectStoryProtectedCohort threads MENU_CANDIDATES_PER_BUCKET and menuCutoff into the SQL binds (#596 Round 2 item 1)", () => {
+      const ctx = {
+        periodStartIso: "2026-04-12T00:00:00.000Z",
+        periodEndIso: "2026-05-12T00:00:00.000Z",
+        observedFromIso: "2026-04-12T00:00:00.000Z",
+        addresses: [],
+      };
+      const branchB = MEASURED_QUERIES.find(
+        (q) => q.name === "selectStoryProtectedCohort",
+      );
+      if (!branchB) throw new Error("selectStoryProtectedCohort not measured");
+      // Default cutoff `0` (no `menuCutoff` on context) ⇒ "All" stop;
+      // every in-story row is treated as branch-B-unique only when its
+      // `bucket_rn` exceeds the cap, which is the correct semantic at
+      // the "All" stop (composeMenu still lifts quota there).
+      expect(branchB.buildParams(ctx)).toEqual([
+        ctx.periodStartIso,
+        ctx.periodEndIso,
+        STORY_PROTECTED_PER_TENANT_LIMIT,
+        MENU_CANDIDATES_PER_BUCKET,
+        0,
+      ]);
+      // A non-zero cutoff (e.g. Top 5%) threads through so the SQL's
+      // `branch_b_unique` predicate picks up the sub-cutoff rows that
+      // branch A's `composeMenu` would have dropped.
+      expect(branchB.buildParams({ ...ctx, menuCutoff: 0.95 })).toEqual([
+        ctx.periodStartIso,
+        ctx.periodEndIso,
+        STORY_PROTECTED_PER_TENANT_LIMIT,
+        MENU_CANDIDATES_PER_BUCKET,
+        0.95,
+      ]);
+    });
+
+    it("eligible-by-stop SQL has one FILTER per non-'all' stop, and each filter cutoff matches that stop's `STRICTNESS_STOPS` cutoff (drift guard for #471 §4)", () => {
+      // The slider chip's "≈ N" preview hint is summed from the
+      // per-stop FILTER aggregates here. If a future stop change
+      // touched `STRICTNESS_STOPS` but missed the SQL (or vice versa),
+      // the preview would silently disagree with the loaded result.
+      const stops = STRICTNESS_STOPS.filter((s) => s.id !== "all");
+      const filterRe =
+        /COUNT\(\*\)\s+FILTER\s+\(WHERE\s+baseline_score\s*>=\s*([\d.]+)\s+OR\s+in_story\)/g;
+      const cutoffsInSql = Array.from(
+        COUNT_ELIGIBLE_BY_STOP_SQL.matchAll(filterRe),
+        (m) => Number(m[1]),
+      ).sort((a, b) => a - b);
+      const cutoffsInStops = stops.map((s) => s.cutoff).sort((a, b) => a - b);
+      expect(cutoffsInSql).toEqual(cutoffsInStops);
     });
 
     it("applies the asset-detail cutoff inside the `filtered` CTE — BEFORE the per-address `ROW_NUMBER()` — so newer sub-cutoff rows cannot push qualifying older rows out of the newest-N window", () => {

@@ -1287,7 +1287,13 @@ export function TriageBaselineContent({
       // race with a `setSelected` (asset list click) and later flip
       // `pivotOrigin` / `trail` / `tab` back to the restored state.
       const restoreToken = storyRestoreTokenRef.current;
-      void fetchStoryDetail(origin.customerId, origin.storyId, 0, period)
+      void fetchStoryDetail(
+        origin.customerId,
+        origin.storyId,
+        0,
+        period,
+        result.strictness,
+      )
         .then((detail) => {
           if (storyRestoreTokenRef.current !== restoreToken) return;
           if (detail === null) {
@@ -1958,7 +1964,13 @@ export function TriageBaselineContent({
           showStaleHashWarning={showStaleStoryHash}
           period={period}
           loadDetail={async ({ customerId, storyId, storedMemberCount }) =>
-            fetchStoryDetail(customerId, storyId, storedMemberCount, period)
+            fetchStoryDetail(
+              customerId,
+              storyId,
+              storedMemberCount,
+              period,
+              result.strictness,
+            )
           }
           refreshStories={(options) => refreshTriageStories(period, options)}
           onPivotFromStory={onPivotFromStory}

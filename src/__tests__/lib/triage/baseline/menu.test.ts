@@ -335,3 +335,135 @@ describe("assembleMenu", () => {
     expect(result.rows[1].eventKey).toBe("10");
   });
 });
+
+describe("composeMenu — defaultNMultiplier (#471 §5 / RFC §6 option (b))", () => {
+  // Build a small but non-trivial cohort so the multiplier is the
+  // visible knob. Two buckets, 20 rows each, all cutoff-passing.
+  function twoBucketCohort() {
+    const candidates: MenuRow[] = [];
+    for (let i = 0; i < 20; i++) {
+      candidates.push(
+        makeRow({
+          eventKey: `a-${i}`,
+          kind: "DnsCovertChannel",
+          baselineScore: 0.9 - i * 0.001,
+        }),
+      );
+      candidates.push(
+        makeRow({
+          eventKey: `b-${i}`,
+          kind: "LockyRansomware",
+          baselineScore: 0.9 - i * 0.001,
+        }),
+      );
+    }
+    const bucketAggregates: BucketAggregate[] = [
+      {
+        bucket: { kind: "DnsCovertChannel", isUnlabeled: false },
+        count: 20,
+        totalTagCardinality: 0,
+      },
+      {
+        bucket: { kind: "LockyRansomware", isUnlabeled: false },
+        count: 20,
+        totalTagCardinality: 0,
+      },
+    ];
+    return { candidates, bucketAggregates };
+  }
+
+  it("multiplier 1 (legacy / undefined) keeps the production defaultN", () => {
+    const { candidates, bucketAggregates } = twoBucketCohort();
+    const result = composeMenu({
+      postExclusionCount: 40,
+      bucketAggregates,
+      candidates,
+      cutoff: 0,
+    });
+    // computeDefaultN(40) ≈ LOWER_FLOOR + 30·log10(41) = 20 + 30·1.6128 ≈ 68
+    expect(result.defaultN).toBe(68);
+  });
+
+  it("multiplier 0.25 (Top 5%) tightens the per-bucket quota", () => {
+    const { candidates, bucketAggregates } = twoBucketCohort();
+    const tight = composeMenu({
+      postExclusionCount: 40,
+      bucketAggregates,
+      candidates,
+      cutoff: 0,
+      defaultNMultiplier: 0.25,
+    });
+    const baseline = composeMenu({
+      postExclusionCount: 40,
+      bucketAggregates,
+      candidates,
+      cutoff: 0,
+    });
+    expect(tight.defaultN).toBe(Math.round(baseline.defaultN * 0.25));
+    expect(tight.assembledCount).toBeLessThan(baseline.assembledCount);
+  });
+
+  it("multiplier 2 (Top 80%) widens the per-bucket quota beyond the production default", () => {
+    const { candidates, bucketAggregates } = twoBucketCohort();
+    const wide = composeMenu({
+      postExclusionCount: 40,
+      bucketAggregates,
+      candidates,
+      cutoff: 0,
+      defaultNMultiplier: 2,
+    });
+    const baseline = composeMenu({
+      postExclusionCount: 40,
+      bucketAggregates,
+      candidates,
+      cutoff: 0,
+    });
+    expect(wide.defaultN).toBe(Math.round(baseline.defaultN * 2));
+    expect(wide.assembledCount).toBeGreaterThanOrEqual(baseline.assembledCount);
+  });
+
+  it("multiplier null ('All') lifts the per-bucket quota entirely", () => {
+    const { candidates, bucketAggregates } = twoBucketCohort();
+    const lifted = composeMenu({
+      postExclusionCount: 40,
+      bucketAggregates,
+      candidates,
+      cutoff: 0,
+      defaultNMultiplier: null,
+    });
+    // No quota → every cutoff-passing row makes it through.
+    expect(lifted.rows).toHaveLength(40);
+    expect(lifted.quotas.size).toBe(0);
+    expect(lifted.assembledCount).toBe(40);
+    expect(lifted.fallbackInvoked).toBe(false);
+  });
+
+  it("multiplier null still respects the slider cutoff", () => {
+    const { candidates, bucketAggregates } = twoBucketCohort();
+    // Add five sub-cutoff rows. With `null` multiplier the quota is
+    // lifted, but rows below `cutoff` must still be dropped — "All"
+    // means "no additional quota", not "no cutoff".
+    candidates.push(
+      makeRow({
+        eventKey: "c-0",
+        kind: "DnsCovertChannel",
+        baselineScore: 0.1,
+      }),
+      makeRow({
+        eventKey: "c-1",
+        kind: "DnsCovertChannel",
+        baselineScore: 0.2,
+      }),
+    );
+    const result = composeMenu({
+      postExclusionCount: 42,
+      bucketAggregates,
+      candidates,
+      cutoff: 0.5,
+      defaultNMultiplier: null,
+    });
+    for (const row of result.rows) {
+      expect(row.baselineScore).toBeGreaterThanOrEqual(0.5);
+    }
+  });
+});
