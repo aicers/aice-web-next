@@ -33,6 +33,27 @@ vi.mock("@/lib/triage/story/correlator", () => ({
   runStepF: vi.fn().mockResolvedValue(undefined),
 }));
 
+// #573 wires `refresh_baseline_window` enqueue inside the rebuild
+// transaction. These tests assert rebuild semantics (DELETE/INSERT,
+// timing, lock release); mocking the Phase 2 helpers keeps them
+// focused on rebuild behavior without forcing every mock pg client
+// to answer queue / source-row SELECTs.
+vi.mock("@/lib/aimer/phase2/state", () => ({
+  enqueueNotice: vi.fn(async () => "fake-id"),
+}));
+vi.mock("@/lib/aimer/phase2/payload-builders", () => ({
+  loadBaselineRefreshRows: vi.fn(async () => ({
+    events: [],
+    baselineVersion: null,
+    baselineVersions: [],
+  })),
+  buildBaselineRefreshPayloads: vi.fn(() => ({
+    payloads: [],
+    warnings: [],
+  })),
+  logSubdivideWarnings: vi.fn(),
+}));
+
 vi.mock("@/lib/triage/baseline/selectors", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/triage/baseline/selectors")

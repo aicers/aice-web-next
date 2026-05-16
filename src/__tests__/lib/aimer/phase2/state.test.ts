@@ -234,6 +234,40 @@ describe("Phase 2 state helpers (state.ts)", () => {
     });
   });
 
+  it("enqueueNotice issues the INSERT on the supplied client so the row joins the caller's txn", async () => {
+    // Per #573 prerequisite: when `client` is provided the INSERT must
+    // run on that connection so a caller's COMMIT/ROLLBACK governs the
+    // queue row's durability. The test verifies the pool is NOT used.
+    const callerCalls: FakeQueryCall[] = [];
+    const callerClient = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        callerCalls.push({ sql, params });
+        return { rows: [{ id: "99" }], rowCount: 1 };
+      }),
+      release: vi.fn(),
+    };
+
+    const id = await state.enqueueNotice(
+      1,
+      "withdraw_baseline_event",
+      { baseline_version: "v1", event_keys: ["1", "2"] },
+      callerClient as unknown as Parameters<typeof state.enqueueNotice>[3],
+    );
+
+    expect(id).toBe("99");
+    expect(callerCalls).toHaveLength(1);
+    expect(callerCalls[0].sql).toContain("INSERT INTO aimer_push_queue");
+    expect(callerCalls[0].params?.[0]).toBe("withdraw_baseline_event");
+    expect(JSON.parse(callerCalls[0].params?.[1] as string)).toEqual({
+      baseline_version: "v1",
+      event_keys: ["1", "2"],
+    });
+    // Pool must not have been touched at all — proves the helper joined
+    // the caller's transaction rather than opening a fresh connection.
+    expect(fake.pool.connect).not.toHaveBeenCalled();
+    expect(fake.pool.query).not.toHaveBeenCalled();
+  });
+
   it("claimPendingNotices('baseline_event') filters by the baseline queue-kind set only", async () => {
     fake.setResponse(() => ({ rows: [], rowCount: 0 }));
     await state.claimPendingNotices(1, "baseline_event", { limit: 50 });

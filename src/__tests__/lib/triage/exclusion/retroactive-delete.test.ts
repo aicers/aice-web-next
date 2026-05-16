@@ -10,6 +10,23 @@ import {
   PER_CUSTOMER_ADVISORY_LOCK_NAMESPACE,
 } from "@/lib/triage/exclusion/retroactive-delete";
 
+// Spy on enqueueNotice so withdraw-emit assertions don't need a real
+// pool. `vi.hoisted` lets the factory-hoisted `vi.mock` see this
+// variable (otherwise the spy would not exist at mock-execution time).
+const enqueueNoticeSpy = vi.hoisted(() =>
+  vi.fn<
+    (
+      customerId: number,
+      kind: string,
+      payload: unknown,
+      client: unknown,
+    ) => Promise<string>
+  >(async () => "fake-id"),
+);
+vi.mock("@/lib/aimer/phase2/state", () => ({
+  enqueueNotice: enqueueNoticeSpy,
+}));
+
 const { buildStatementsForTable } = _testing;
 
 interface QueryCall {
@@ -424,6 +441,225 @@ describe("retroactive-delete planner", () => {
         );
 
         expect(pending).toEqual([]);
+      });
+    });
+
+    describe("#573 Trigger 1: withdraw notice emission", () => {
+      it("emits RETURNING clauses on baseline_triaged_event and policy_triaged_event but not observed_event_meta", () => {
+        const baseline = buildStatementsForTable(
+          "baseline_triaged_event",
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          50,
+        );
+        expect(baseline[0].sql).toContain(
+          "RETURNING baseline_version, event_key::text AS event_key",
+        );
+        expect(baseline[0].withdrawKind).toBe("withdraw_baseline_event");
+
+        const observed = buildStatementsForTable(
+          "observed_event_meta",
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          50,
+        );
+        expect(observed[0].sql).not.toContain("RETURNING");
+        expect(observed[0].withdrawKind).toBeNull();
+
+        const policy = buildStatementsForTable(
+          "policy_triaged_event",
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          50,
+        );
+        expect(policy[0].sql).toContain(
+          "RETURNING run_id::text AS run_id, event_key::text AS event_key",
+        );
+        expect(policy[0].withdrawKind).toBe("withdraw_policy_event");
+      });
+
+      it("coalesces baseline returned rows into one notice per baseline_version per drain txn", async () => {
+        enqueueNoticeSpy.mockClear();
+        const client = makeClient((call) => {
+          if (call.sql.includes("to_regclass")) {
+            return { rows: [{ exists: false }], rowCount: 1 };
+          }
+          if (call.sql.includes("DELETE FROM baseline_triaged_event")) {
+            // Three rows across two baseline_versions: coalescing
+            // should produce two distinct queue notices.
+            return {
+              rows: [
+                { baseline_version: "v1", event_key: "100" },
+                { baseline_version: "v1", event_key: "101" },
+                { baseline_version: "v2", event_key: "200" },
+              ],
+              rowCount: 3,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        });
+
+        await executeFirstRetroactiveDeleteBatch(
+          client as unknown as Parameters<
+            typeof executeFirstRetroactiveDeleteBatch
+          >[0],
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          { batchSize: 50, customerId: 7 },
+        );
+
+        // Two enqueue calls — one per baseline_version, never per row.
+        expect(enqueueNoticeSpy).toHaveBeenCalledTimes(2);
+        const versions = enqueueNoticeSpy.mock.calls
+          .map(
+            (call) =>
+              (call[2] as { baseline_version: string }).baseline_version,
+          )
+          .sort();
+        expect(versions).toEqual(["v1", "v2"]);
+        const v1Payload = enqueueNoticeSpy.mock.calls.find(
+          (call) =>
+            (call[2] as { baseline_version: string }).baseline_version === "v1",
+        )?.[2] as { kind: string; event_keys: string[] };
+        expect(v1Payload.event_keys.sort()).toEqual(["100", "101"]);
+        // Payload carries the wire-ready `kind` discriminator so the
+        // drain can copy it verbatim into `phase2.withdraw.v1`
+        // withdrawals[]. All enqueues share the same client.
+        for (const call of enqueueNoticeSpy.mock.calls) {
+          expect(call[1]).toBe("withdraw_baseline_event");
+          expect((call[2] as { kind: string }).kind).toBe("baseline_event");
+          expect(call[3]).toBe(client);
+        }
+      });
+
+      it("emits policy-event withdraw payloads with the wire-ready kind discriminator", async () => {
+        enqueueNoticeSpy.mockClear();
+        const client = makeClient((call) => {
+          if (call.sql.includes("to_regclass")) {
+            return { rows: [{ exists: true }], rowCount: 1 };
+          }
+          if (call.sql.includes("DELETE FROM policy_triaged_event")) {
+            return {
+              rows: [
+                { run_id: "run-1", event_key: "1000" },
+                { run_id: "run-1", event_key: "1001" },
+                { run_id: "run-2", event_key: "2000" },
+              ],
+              rowCount: 3,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        });
+
+        await executeFirstRetroactiveDeleteBatch(
+          client as unknown as Parameters<
+            typeof executeFirstRetroactiveDeleteBatch
+          >[0],
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          { batchSize: 50, customerId: 11 },
+        );
+
+        // Two queue rows, one per run_id, each carrying
+        // `kind: "policy_event"` so the wire-ready policy-event drain
+        // (#572) can map the queue payload directly into `withdrawals[]`
+        // without re-deriving the discriminator from `aimer_push_queue.kind`.
+        const policyCalls = enqueueNoticeSpy.mock.calls.filter(
+          (call) => call[1] === "withdraw_policy_event",
+        );
+        expect(policyCalls).toHaveLength(2);
+        for (const call of policyCalls) {
+          expect((call[2] as { kind: string }).kind).toBe("policy_event");
+        }
+      });
+
+      it("does NOT enqueue from observed_event_meta deletes", async () => {
+        enqueueNoticeSpy.mockClear();
+        const client = makeClient((call) => {
+          if (call.sql.includes("to_regclass")) {
+            return { rows: [{ exists: false }], rowCount: 1 };
+          }
+          // Even if a row were returned (it shouldn't, no RETURNING),
+          // the observed branch must not enqueue. Return rowCount only.
+          return { rows: [], rowCount: 5 };
+        });
+
+        await executeFirstRetroactiveDeleteBatch(
+          client as unknown as Parameters<
+            typeof executeFirstRetroactiveDeleteBatch
+          >[0],
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          { batchSize: 50, customerId: 7 },
+        );
+
+        // No baseline/policy rows produced → no enqueue should fire.
+        expect(enqueueNoticeSpy).not.toHaveBeenCalled();
+      });
+
+      it("skips enqueue entirely when customerId is omitted (back-compat)", async () => {
+        enqueueNoticeSpy.mockClear();
+        const client = makeClient((call) => {
+          if (call.sql.includes("to_regclass")) {
+            return { rows: [{ exists: false }], rowCount: 1 };
+          }
+          if (call.sql.includes("DELETE FROM baseline_triaged_event")) {
+            return {
+              rows: [{ baseline_version: "v1", event_key: "100" }],
+              rowCount: 1,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        });
+
+        await executeFirstRetroactiveDeleteBatch(
+          client as unknown as Parameters<
+            typeof executeFirstRetroactiveDeleteBatch
+          >[0],
+          { kind: "hostname", value: "example.com", domainSuffix: null },
+          { batchSize: 50 },
+        );
+
+        expect(enqueueNoticeSpy).not.toHaveBeenCalled();
+      });
+
+      it("drain transactions each emit their own withdraw notice (per-batch atomicity)", async () => {
+        enqueueNoticeSpy.mockClear();
+        const batchRows = [
+          [
+            { baseline_version: "v1", event_key: "1" },
+            { baseline_version: "v1", event_key: "2" },
+          ],
+          [{ baseline_version: "v1", event_key: "3" }],
+        ];
+
+        await drainRemainingRetroactiveDeletes(
+          async (fn) => {
+            const rows = batchRows.shift() ?? [];
+            const fakeClient = {
+              query: vi.fn(async () => ({
+                rows,
+                rowCount: rows.length,
+              })),
+            };
+            return fn(fakeClient as unknown as Parameters<typeof fn>[0]);
+          },
+          [
+            {
+              tableKey: "baselineTriagedEvent",
+              statements: [
+                {
+                  sql: "DELETE x",
+                  params: [],
+                  withdrawKind: "withdraw_baseline_event",
+                },
+              ],
+            },
+          ],
+          { batchSize: 2, customerId: 9 },
+        );
+
+        // First batch rowCount = 2 == batchSize → loop continues; second
+        // batch rowCount = 1 < batchSize → exits. So 2 batches, each
+        // emitting its own withdraw notice (one per drain txn).
+        expect(enqueueNoticeSpy).toHaveBeenCalledTimes(2);
+        for (const call of enqueueNoticeSpy.mock.calls) {
+          expect(call[1]).toBe("withdraw_baseline_event");
+        }
       });
     });
 

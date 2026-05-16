@@ -7,6 +7,23 @@ vi.mock("@/lib/triage/policy/customer-db", () => ({
   CustomerNotFoundError: class extends Error {},
 }));
 
+// #573 wires `refresh_story_window` enqueue inside the rebuild
+// transaction. These tests assert rebuild semantics (correlator,
+// β carry-over, watermark invariant); mocking the Phase 2 helpers
+// keeps them focused on rebuild behavior without forcing the mock
+// pg client to answer aimer_push_queue / event_group SELECTs.
+vi.mock("@/lib/aimer/phase2/state", () => ({
+  enqueueNotice: vi.fn(async () => "fake-id"),
+}));
+vi.mock("@/lib/aimer/phase2/payload-builders", () => ({
+  loadStoryRefreshRows: vi.fn(async () => []),
+  buildStoryRefreshPayloads: vi.fn(() => ({
+    payloads: [],
+    warnings: [],
+  })),
+  logSubdivideWarnings: vi.fn(),
+}));
+
 import {
   _testing as rebuildTesting,
   runStoryRebuild,

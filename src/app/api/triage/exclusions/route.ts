@@ -171,11 +171,15 @@ export const POST = withAuth(
         client,
       );
 
-      const firstBatch = await executeFirstRetroactiveDeleteBatch(client, {
-        kind: parsed.kind,
-        value: parsed.value,
-        domainSuffix: parsed.domainSuffix,
-      });
+      const firstBatch = await executeFirstRetroactiveDeleteBatch(
+        client,
+        {
+          kind: parsed.kind,
+          value: parsed.value,
+          domainSuffix: parsed.domainSuffix,
+        },
+        { customerId },
+      );
       firstBatchCounts = firstBatch.counts;
       pending = firstBatch.pending;
 
@@ -217,20 +221,24 @@ export const POST = withAuth(
     let drainError: unknown = null;
     if (pending.length > 0) {
       try {
-        drainCounts = await drainRemainingRetroactiveDeletes(async (fn) => {
-          const drainClient = await customerPool.connect();
-          try {
-            await drainClient.query("BEGIN");
-            const result = await fn(drainClient);
-            await drainClient.query("COMMIT");
-            return result;
-          } catch (err) {
-            await drainClient.query("ROLLBACK").catch(() => {});
-            throw err;
-          } finally {
-            drainClient.release();
-          }
-        }, pending);
+        drainCounts = await drainRemainingRetroactiveDeletes(
+          async (fn) => {
+            const drainClient = await customerPool.connect();
+            try {
+              await drainClient.query("BEGIN");
+              const result = await fn(drainClient);
+              await drainClient.query("COMMIT");
+              return result;
+            } catch (err) {
+              await drainClient.query("ROLLBACK").catch(() => {});
+              throw err;
+            } finally {
+              drainClient.release();
+            }
+          },
+          pending,
+          { customerId },
+        );
       } catch (err) {
         drainError = err;
       }

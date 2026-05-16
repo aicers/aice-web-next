@@ -382,11 +382,15 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
       await withTransaction((c) => finalizeCompleted(c, job.id));
       return { outcome: "completed" };
     }
-    const firstBatch = await executeFirstRetroactiveDeleteBatch(tenantClient, {
-      kind: exclusion.kind,
-      value: exclusion.value,
-      domainSuffix: exclusion.domainSuffix,
-    });
+    const firstBatch = await executeFirstRetroactiveDeleteBatch(
+      tenantClient,
+      {
+        kind: exclusion.kind,
+        value: exclusion.value,
+        domainSuffix: exclusion.domainSuffix,
+      },
+      { customerId: job.customerId },
+    );
     firstBatchCounts = firstBatch.counts;
     pending = firstBatch.pending;
     await tenantClient.query("COMMIT");
@@ -422,6 +426,7 @@ async function processJob(job: ClaimedJob): Promise<JobOutcome> {
         },
         pending,
         {
+          customerId: job.customerId,
           shouldContinue: async () => {
             const drainClient = await tenantPool.connect();
             try {

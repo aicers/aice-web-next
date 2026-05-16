@@ -25,11 +25,18 @@ import "server-only";
 
 import type pg from "pg";
 
+import {
+  buildBaselineRefreshPayloads,
+  loadBaselineRefreshRows,
+  logSubdivideWarnings,
+} from "@/lib/aimer/phase2/payload-builders";
+import { enqueueNotice } from "@/lib/aimer/phase2/state";
 import type { ActiveExclusionSetResolver } from "@/lib/triage/exclusion";
 import { STORAGE_EXCLUSION_SET_RESOLVER } from "@/lib/triage/exclusion/active-set-storage";
 import type { ActiveExclusionSet } from "@/lib/triage/exclusion/types";
 import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
+import { PHASE_1B_BASELINE_VERSION } from "./cadence";
 import {
   type CadenceConnectionResponse,
   fetchEventPage,
@@ -561,6 +568,17 @@ async function runRebuildTransaction(
             SET last_rebuild_at = NOW()`,
     );
 
+    // Per #573 Trigger 2: enqueue `refresh_baseline_window` notices
+    // **inside** the rebuild transaction so a crash between COMMIT
+    // and enqueue cannot leave the local rebuild durable but the
+    // refresh notice never emitted. The drain is not run until the
+    // next tab activation, by which point the rebuild is already
+    // durable — so "the new authoritative content must exist locally
+    // before aimer-web is told to replace" still holds. The payload
+    // is sub-divided into adjacent half-open sub-windows whose
+    // serialized JSON each fits PHASE2_REFRESH_PAYLOAD_MAX_BYTES.
+    await enqueueRefreshBaselineWindow(client, input, options.deadline);
+
     // Final deadline check before COMMIT — covers JS-side bookkeeping
     // between the last `runWithDeadline` and publishing the
     // transaction.
@@ -578,6 +596,58 @@ async function runRebuildTransaction(
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     throw err;
+  }
+}
+
+/**
+ * Read the freshly-INSERTed baseline rows back, build sub-divided
+ * `refresh_baseline_window` payloads, and enqueue them on the rebuild
+ * transaction's client so a rollback drops the notices with the
+ * DELETE/INSERT (#573 Trigger 2).
+ *
+ * Empty windows emit one notice with an empty `events[]` array per
+ * the sub-divider contract: aimer-web treats that as "replace the
+ * window with nothing." The notice must still satisfy
+ * `phase2.refresh_window.v1` / `phase2.backfill.v1`, which require a
+ * non-empty `baseline_version`. Force Rebuild always writes
+ * {@link PHASE_1B_BASELINE_VERSION} to the new corpus, so when the
+ * rebuilt window happens to be empty we still attribute the notice to
+ * that version — semantically, "the rebuild's chosen version says this
+ * window is empty."
+ */
+async function enqueueRefreshBaselineWindow(
+  client: pg.PoolClient,
+  input: RebuildInput,
+  deadline: number,
+): Promise<void> {
+  if (Date.now() > deadline) {
+    throw new RebuildTimeoutError();
+  }
+  await client.query(`SET LOCAL statement_timeout = ${deadline - Date.now()}`);
+  const { events, baselineVersion } = await loadBaselineRefreshRows(client, {
+    fromIso: input.fromIso,
+    toIso: input.toIso,
+  });
+  const { payloads, warnings } = buildBaselineRefreshPayloads({
+    window: { from: input.fromIso, to: input.toIso },
+    // `baseline_version` is absent only when the rebuild yielded zero
+    // rows; fall back to the rebuild's target version so the empty
+    // refresh notice still carries a non-empty discriminator the
+    // signing schema requires.
+    baselineVersion: baselineVersion ?? PHASE_1B_BASELINE_VERSION,
+    events,
+  });
+  logSubdivideWarnings(input.customerId, "refresh_baseline_window", warnings);
+  for (const payload of payloads) {
+    if (Date.now() > deadline) {
+      throw new RebuildTimeoutError();
+    }
+    await enqueueNotice(
+      input.customerId,
+      "refresh_baseline_window",
+      payload,
+      client,
+    );
   }
 }
 

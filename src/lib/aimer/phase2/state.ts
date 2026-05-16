@@ -325,14 +325,21 @@ export async function isOpportunisticEnabled(
 /**
  * Enqueue a withdraw / refresh / backfill notice. Returns the inserted
  * row id (as a string to avoid JS bigint truncation).
+ *
+ * When `client` is provided the INSERT runs on that connection and
+ * therefore joins the caller's open transaction — a rollback on the
+ * caller drops the enqueue as part of the same atomic unit. When
+ * `client` is omitted, the INSERT runs in its own implicit transaction
+ * on a freshly-resolved pool connection.
  */
 export async function enqueueNotice(
   customerId: number,
   kind: Phase2QueueKind,
   payload: unknown,
+  client?: pg.PoolClient,
 ): Promise<string> {
-  const pool = await getCustomerPool(customerId);
-  const { rows } = await pool.query<{ id: string }>(
+  const runner = client ?? (await getCustomerPool(customerId));
+  const { rows } = await runner.query<{ id: string }>(
     `INSERT INTO aimer_push_queue (kind, payload)
      VALUES ($1, $2::jsonb)
      RETURNING id::text AS id`,
