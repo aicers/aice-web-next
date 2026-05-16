@@ -139,13 +139,35 @@ describe("Phase 2 state helpers (state.ts)", () => {
     // than the new value.
     expect(call.sql).toContain("(l.last_pushed_event_time IS NULL");
     expect(call.sql).toContain(
-      "(l.last_pushed_event_time, l.last_pushed_event_key)",
+      "(l.last_pushed_event_time, l.last_pushed_event_key::numeric)",
     );
     expect(call.params).toEqual([
       "baseline_event",
       new Date("2026-05-10T12:00:00Z"),
       "200",
     ]);
+  });
+
+  it("advanceCursor compares event_key numerically (regression: '9' → '10' at same timestamp)", async () => {
+    // `aimer_push_state.last_pushed_event_key` is TEXT, but stores the
+    // decimal-string form of `NUMERIC(39, 0)` source-table event_keys.
+    // Text ordering would say `"9" > "10"` and refuse the advance,
+    // leaving the cursor stuck at `"9"` and re-sending the same row
+    // forever. The SQL must cast both sides to `NUMERIC` so the
+    // monotonic guard matches source-table ordering.
+    await state.advanceCursor(
+      1,
+      "baseline_event",
+      new Date("2026-05-10T12:00:00Z"),
+      "10",
+    );
+    const call = fake.calls[0];
+    expect(call.sql).toContain("l.last_pushed_event_key::numeric");
+    expect(call.sql).toContain("$3::numeric");
+    // The text-only comparison must NOT survive (regression guard).
+    expect(call.sql).not.toMatch(
+      /\(l\.last_pushed_event_time, l\.last_pushed_event_key\)\s*<\s*\(\$2::timestamptz, \$3\)/,
+    );
   });
 
   it("recordSyncError writes last_error without touching the cursor", async () => {
@@ -273,6 +295,21 @@ describe("Phase 2 state helpers (state.ts)", () => {
     expect(call.sql).toContain("last_error      = $2");
     expect(call.sql).toContain("last_attempt_at = NOW()");
     expect(call.params).toEqual([["5"], "boom"]);
+  });
+
+  it("recordNoticeError skips rows already acked by a concurrent duplicate drain (#570 'cleared on ack')", async () => {
+    // Regression for success-then-duplicate-failure ordering: the queue
+    // claim is intentionally non-exclusive, so two activations can
+    // include the same `aimer_push_queue.id` in different inflight
+    // rows. If one delivery succeeds first, `markAcked` sets
+    // `acked_at` and clears `last_error`. If the other duplicate
+    // delivery later reports failure, the failure UPDATE must NOT
+    // touch the now-acked row — otherwise the audit-retained row
+    // shows a stale failure on an ultimately-successful delivery,
+    // breaking the #570 "cleared on ack" observability contract.
+    await state.recordNoticeError(1, ["5"], "boom");
+    const call = fake.calls[0];
+    expect(call.sql).toContain("acked_at IS NULL");
   });
 
   // ── Inflight helpers ──────────────────────────────────────────

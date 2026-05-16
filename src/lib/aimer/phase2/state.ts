@@ -189,6 +189,13 @@ export async function getAimerPushState(
  * current value. Concurrent advancers are serialized via `FOR UPDATE`.
  *
  * Also bumps `last_synced_at = NOW()` and clears `last_error`.
+ *
+ * The `last_pushed_event_key` column is `TEXT` but holds the decimal
+ * string representation of `NUMERIC(39, 0)` row keys (the source-table
+ * `event_key` columns for both `baseline_triaged_event` and the story
+ * read path). The monotonic guard casts both sides to `NUMERIC` so that
+ * a same-timestamp advance from `"9"` to `"10"` is accepted — text
+ * ordering would say `"9" > "10"` and leave the cursor stuck.
  */
 export async function advanceCursor(
   customerId: number,
@@ -216,8 +223,8 @@ export async function advanceCursor(
        FROM locked l
       WHERE s.kind = $1
         AND (l.last_pushed_event_time IS NULL
-             OR (l.last_pushed_event_time, l.last_pushed_event_key)
-                  < ($2::timestamptz, $3))`,
+             OR (l.last_pushed_event_time, l.last_pushed_event_key::numeric)
+                  < ($2::timestamptz, $3::numeric))`,
     [kind, eventTime, eventKey],
   );
 }
@@ -414,6 +421,15 @@ export async function markAcked(
  * `last_error`, and stamps `last_attempt_at = NOW()`. Used by drain
  * routes when aimer-web returns a non-2xx for the batch these rows
  * carried.
+ *
+ * Skips rows where `acked_at IS NOT NULL` so a concurrent duplicate
+ * drain (the claim is intentionally non-exclusive — two activations
+ * may include the same queue row in different inflight rows) cannot
+ * resurrect `last_error` after a sibling delivery already succeeded
+ * and cleared it via {@link markAcked}. Without this guard a
+ * success-then-duplicate-failure ordering would leave an acked,
+ * audit-retained row showing a stale failure string and break the
+ * #570 "cleared on ack" observability contract.
  */
 export async function recordNoticeError(
   customerId: number,
@@ -428,7 +444,8 @@ export async function recordNoticeError(
         SET attempts        = attempts + 1,
             last_error      = $2,
             last_attempt_at = NOW()
-      WHERE id = ANY($1::bigint[])`,
+      WHERE id = ANY($1::bigint[])
+        AND acked_at IS NULL`,
     [rowIds, errorMessage],
   );
 }
