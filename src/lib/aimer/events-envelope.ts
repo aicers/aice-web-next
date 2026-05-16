@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import { importJWK, SignJWT } from "jose";
 
-import type { Phase2SchemaVersion } from "./phase2/schemas";
+import type { Phase2SchemaVersion } from "./phase2/wire-types";
 import { loadActiveSigningKeyMaterial } from "./signing-key";
 
 /**

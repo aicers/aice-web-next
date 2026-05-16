@@ -17,6 +17,10 @@
 
 import { z } from "zod";
 
+import { PHASE2_SCHEMA_VERSIONS, type Phase2SchemaVersion } from "./wire-types";
+
+export { PHASE2_SCHEMA_VERSIONS, type Phase2SchemaVersion };
+
 // ── Common primitives ──────────────────────────────────────────────
 
 const nonEmptyString = z.string().min(1);
@@ -190,21 +194,6 @@ export const refreshWindowV1Schema = z.union([
 export const backfillV1Schema = refreshWindowV1Schema;
 
 // ── Registry ───────────────────────────────────────────────────────
-
-/**
- * Phase 2 `schema_version` literals. Each value maps to one inner-payload
- * schema and (downstream) one aimer-web endpoint.
- */
-export const PHASE2_SCHEMA_VERSIONS = [
-  "phase2.baseline.v1",
-  "phase2.story.v1",
-  "phase2.policy_run.v1",
-  "phase2.withdraw.v1",
-  "phase2.refresh_window.v1",
-  "phase2.backfill.v1",
-] as const;
-
-export type Phase2SchemaVersion = (typeof PHASE2_SCHEMA_VERSIONS)[number];
 
 export const phase2SchemaVersionEnum = z.enum(PHASE2_SCHEMA_VERSIONS);
 

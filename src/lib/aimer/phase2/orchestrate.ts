@@ -25,7 +25,10 @@ import { signEventsEnvelope } from "@/lib/aimer/events-envelope";
 import { getAimerIntegrationSetup } from "@/lib/aimer/setup-status";
 import { query } from "@/lib/db/client";
 
-import { type Phase2SchemaVersion, validatePhase2Payload } from "./schemas";
+import { validatePhase2Payload } from "./schemas";
+import type { Phase2PushTokens, Phase2SchemaVersion } from "./wire-types";
+
+export type { Phase2PushTokens, Phase2SchemaVersion };
 
 // ── Reserved sentinels ─────────────────────────────────────────────
 
@@ -90,17 +93,6 @@ export interface BuildPhase2PushInput {
    * the context token / envelope claims.
    */
   payload: unknown;
-}
-
-export interface Phase2PushTokens {
-  /** ES256 JWS — the `context_token` multipart part. */
-  context_token: string;
-  /** ES256 JWS — the `events_envelope` multipart part. */
-  events_envelope: string;
-  /** Canonical UTF-8 bytes — the `events_data` multipart part, as a string. */
-  events_data: string;
-  /** `jti` minted for this push. Surfaced for callers that need to ack-track. */
-  context_jti: string;
 }
 
 /**
