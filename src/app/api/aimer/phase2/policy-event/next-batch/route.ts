@@ -138,13 +138,18 @@ export const POST = withAuth(
     }
 
     // ── Process prior batch outcome ──────────────────────────
+    //
+    // Scope the inflight lookup to `"policy_event"` so a `context_jti`
+    // minted by another drain (baseline/story) becomes a no-op here
+    // rather than advancing `aimer_push_state` or recording a sync
+    // error on a kind this queue-only route does not own.
     if (ackedJti) {
-      await commitOnAck(customerId, ackedJti);
+      await commitOnAck(customerId, ackedJti, "policy_event");
     } else if (failedJti) {
       const reason = isNonEmptyString(body.failure_reason)
         ? body.failure_reason
         : "policy_event_drain_failed";
-      await recordOnFail(customerId, failedJti, reason);
+      await recordOnFail(customerId, failedJti, reason, "policy_event");
     }
 
     // ── Opportunistic TTL prune ──────────────────────────────

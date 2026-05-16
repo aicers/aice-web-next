@@ -153,7 +153,15 @@ describe("POST /api/aimer/phase2/policy-event/next-batch", () => {
       makeRequest({ customerId: 42, acked_context_jti: "jti-prev" }),
       ctx,
     );
-    expect(mockState.commitOnAck).toHaveBeenCalledWith(42, "jti-prev");
+    // The route MUST scope the inflight lookup to its own kind
+    // ("policy_event") so a JTI minted by a baseline/story drain
+    // cannot accidentally advance `aimer_push_state` through this
+    // queue-only route.
+    expect(mockState.commitOnAck).toHaveBeenCalledWith(
+      42,
+      "jti-prev",
+      "policy_event",
+    );
     expect(mockState.recordOnFail).not.toHaveBeenCalled();
   });
 
@@ -169,10 +177,14 @@ describe("POST /api/aimer/phase2/policy-event/next-batch", () => {
       }),
       ctx,
     );
+    // Same kind-scoping requirement as ack: a failure report through
+    // this queue-only route must not write
+    // `aimer_push_state.last_error` for a streaming kind.
     expect(mockState.recordOnFail).toHaveBeenCalledWith(
       42,
       "jti-prev",
       "aimer 500",
+      "policy_event",
     );
     expect(mockState.commitOnAck).not.toHaveBeenCalled();
   });

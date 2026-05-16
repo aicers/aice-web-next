@@ -314,13 +314,18 @@ describe("Phase 2 state helpers (state.ts)", () => {
       }
       return { rows: [], rowCount: 0 };
     });
-    await state.commitOnAck(1, "jti-1");
+    await state.commitOnAck(1, "jti-1", "policy_event");
 
     const sqls = fake.calls.map((c) => c.sql);
     // BEGIN, SELECT FOR UPDATE, UPDATE queue, DELETE inflight, COMMIT.
     expect(sqls[0]).toBe("BEGIN");
     expect(sqls[1]).toContain("FROM aimer_push_inflight");
     expect(sqls[1]).toContain("FOR UPDATE");
+    // The lookup is scoped to the expected drain kind so a JTI minted
+    // by another drain (baseline/story) is a no-op rather than
+    // accidentally touching `aimer_push_state`.
+    expect(sqls[1]).toContain("kind = $2");
+    expect(fake.calls[1].params).toEqual(["jti-1", "policy_event"]);
     const updateQueue = sqls.find((s) => s.includes("UPDATE aimer_push_queue"));
     expect(updateQueue).toBeDefined();
     expect(sqls.some((s) => s.includes("UPDATE aimer_push_state"))).toBe(false);
@@ -328,6 +333,39 @@ describe("Phase 2 state helpers (state.ts)", () => {
       sqls.some((s) => s.startsWith("DELETE FROM aimer_push_inflight")),
     ).toBe(true);
     expect(sqls[sqls.length - 1]).toBe("COMMIT");
+  });
+
+  it("commitOnAck with a kind mismatch (cross-route JTI) is a no-op", async () => {
+    // Regression for cross-route JTI confusion: if a caller posts an
+    // `acked_context_jti` minted by the baseline drain to the
+    // policy-event route, the policy_event-scoped SELECT must find no
+    // row and the helper must not touch `aimer_push_state` even though
+    // a streaming inflight row physically exists in the table.
+    //
+    // We simulate the kind-scoped SELECT (which the helper passes the
+    // expected kind to) by only returning a row when the params include
+    // the matching kind.
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_inflight")) {
+        // No row because the policy_event-scoped lookup does not match
+        // the baseline_event row that exists in the table.
+        return { rows: [], rowCount: 0 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    await state.commitOnAck(1, "jti-from-baseline", "policy_event");
+    const sqls = fake.calls.map((c) => c.sql);
+    // The unknown-jti no-op shape: BEGIN, SELECT, COMMIT — nothing else.
+    expect(sqls).toEqual([
+      "BEGIN",
+      expect.stringContaining("FROM aimer_push_inflight"),
+      "COMMIT",
+    ]);
+    expect(sqls.some((s) => s.includes("UPDATE aimer_push_state"))).toBe(false);
+    expect(sqls.some((s) => s.includes("UPDATE aimer_push_queue"))).toBe(false);
+    expect(
+      sqls.some((s) => s.startsWith("DELETE FROM aimer_push_inflight")),
+    ).toBe(false);
   });
 
   it("commitOnAck for streaming kinds advances the cursor", async () => {
@@ -348,7 +386,7 @@ describe("Phase 2 state helpers (state.ts)", () => {
       }
       return { rows: [], rowCount: 0 };
     });
-    await state.commitOnAck(1, "jti-2");
+    await state.commitOnAck(1, "jti-2", "baseline_event");
 
     const sqls = fake.calls.map((c) => c.sql);
     expect(sqls.some((s) => s.includes("UPDATE aimer_push_state"))).toBe(true);
@@ -357,7 +395,7 @@ describe("Phase 2 state helpers (state.ts)", () => {
 
   it("commitOnAck on an unknown jti is a no-op", async () => {
     fake.setResponse(() => ({ rows: [], rowCount: 0 }));
-    await state.commitOnAck(1, "unknown-jti");
+    await state.commitOnAck(1, "unknown-jti", "policy_event");
     const sqls = fake.calls.map((c) => c.sql);
     // BEGIN, SELECT, COMMIT only.
     expect(sqls).toEqual([
@@ -385,7 +423,7 @@ describe("Phase 2 state helpers (state.ts)", () => {
       }
       return { rows: [], rowCount: 0 };
     });
-    await state.recordOnFail(1, "jti-3", "aimer 500");
+    await state.recordOnFail(1, "jti-3", "aimer 500", "policy_event");
 
     const sqls = fake.calls.map((c) => c.sql);
     // For policy_event the helper must NOT touch aimer_push_state.
@@ -396,6 +434,29 @@ describe("Phase 2 state helpers (state.ts)", () => {
     expect(
       sqls.some((s) => s.startsWith("DELETE FROM aimer_push_inflight")),
     ).toBe(true);
+    // The lookup is scoped to the expected drain kind.
+    expect(sqls[1]).toContain("kind = $2");
+    expect(fake.calls[1].params).toEqual(["jti-3", "policy_event"]);
+  });
+
+  it("recordOnFail with a kind mismatch (cross-route JTI) is a no-op", async () => {
+    // Regression for cross-route JTI confusion on the failure path:
+    // posting a `failed_context_jti` minted by a streaming drain to
+    // the policy-event route must not call `recordSyncError` on
+    // `aimer_push_state` for that streaming kind.
+    fake.setResponse(() => ({ rows: [], rowCount: 0 }));
+    await state.recordOnFail(1, "jti-from-story", "boom", "policy_event");
+    const sqls = fake.calls.map((c) => c.sql);
+    expect(sqls).toEqual([
+      "BEGIN",
+      expect.stringContaining("FROM aimer_push_inflight"),
+      "COMMIT",
+    ]);
+    expect(sqls.some((s) => s.includes("UPDATE aimer_push_state"))).toBe(false);
+    expect(sqls.some((s) => s.includes("UPDATE aimer_push_queue"))).toBe(false);
+    expect(
+      sqls.some((s) => s.startsWith("DELETE FROM aimer_push_inflight")),
+    ).toBe(false);
   });
 
   it("recordOnFail for streaming kind writes aimer_push_state.last_error", async () => {
@@ -416,7 +477,7 @@ describe("Phase 2 state helpers (state.ts)", () => {
       }
       return { rows: [], rowCount: 0 };
     });
-    await state.recordOnFail(1, "jti-4", "boom");
+    await state.recordOnFail(1, "jti-4", "boom", "story");
     const sqls = fake.calls.map((c) => c.sql);
     expect(sqls.some((s) => s.includes("UPDATE aimer_push_state"))).toBe(true);
   });

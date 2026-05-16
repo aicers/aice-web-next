@@ -486,6 +486,13 @@ interface InflightRow {
  * Commit-on-ack for a previously-minted batch. Unknown jtis are a
  * no-op (idempotent on duplicate / stale acks).
  *
+ * The `expectedKind` argument scopes the inflight-row lookup to the
+ * drain that owns the JTI. A queue-only `policy_event` drain passes
+ * `"policy_event"` so a `context_jti` minted by the streaming
+ * baseline/story drains becomes a no-op rather than accidentally
+ * advancing `aimer_push_state` from a cross-route caller. Drain routes
+ * pass their own kind for the same reason.
+ *
  *  - Streaming kinds: advance the cursor on `aimer_push_state`, mark
  *    the queue rows ack'd, delete the inflight row.
  *  - Queue-only kind (`policy_event`): mark queue rows ack'd, delete
@@ -494,6 +501,7 @@ interface InflightRow {
 export async function commitOnAck(
   customerId: number,
   contextJti: string,
+  expectedKind: Phase2InflightKind,
 ): Promise<void> {
   const pool = await getCustomerPool(customerId);
   const client = await pool.connect();
@@ -507,8 +515,9 @@ export async function commitOnAck(
               queue_row_ids::text[] AS queue_row_ids
          FROM aimer_push_inflight
         WHERE context_jti = $1
+          AND kind = $2
         FOR UPDATE`,
-      [contextJti],
+      [contextJti, expectedKind],
     );
     if (rows.length === 0) {
       await client.query("COMMIT");
@@ -561,6 +570,12 @@ export async function commitOnAck(
  * Record-on-fail for a previously-minted batch. Unknown jtis are a
  * no-op.
  *
+ * The `expectedKind` argument scopes the inflight-row lookup to the
+ * drain that owns the JTI, mirroring {@link commitOnAck}. A queue-only
+ * `policy_event` drain passing a streaming JTI is a no-op so a
+ * cross-route failure report cannot write `aimer_push_state.last_error`
+ * on a kind whose drain it does not own.
+ *
  *  - Streaming kinds: write `aimer_push_state.last_error` via
  *    {@link recordSyncError} (cursor is left at the prior value so the
  *    next activation re-sends the same slice).
@@ -572,6 +587,7 @@ export async function recordOnFail(
   customerId: number,
   contextJti: string,
   failureReason: string,
+  expectedKind: Phase2InflightKind,
 ): Promise<void> {
   const pool = await getCustomerPool(customerId);
   const client = await pool.connect();
@@ -585,8 +601,9 @@ export async function recordOnFail(
               queue_row_ids::text[] AS queue_row_ids
          FROM aimer_push_inflight
         WHERE context_jti = $1
+          AND kind = $2
         FOR UPDATE`,
-      [contextJti],
+      [contextJti, expectedKind],
     );
     if (rows.length === 0) {
       await client.query("COMMIT");
