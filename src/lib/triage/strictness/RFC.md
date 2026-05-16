@@ -179,7 +179,7 @@ collapses and the index degenerates to an `event_time` btree the
 existing `baseline_triaged_event_event_time_idx` already covers.
 
 **Resolution: dropped** in
-`migrations/customer/0012_drop_degenerate_baseline_score_idx.sql`.
+`migrations/customer/0013_drop_degenerate_baseline_score_idx.sql`.
 The alternative — rebuilding as `(event_time DESC, raw_score DESC)`
 — would not serve the production sort either: the menu cohort SQL
 partitions `cume_dist()` by `(kind, baseline_version)`, not by
