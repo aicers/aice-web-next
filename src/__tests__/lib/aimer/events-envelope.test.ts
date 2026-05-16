@@ -43,7 +43,7 @@ describe("aimer events-envelope signing", () => {
       iss: "aice.example.com",
       aice_id: "aice.example.com",
       customer_ids: ["acmecorp.com"],
-      schema_version: "0.0-stub",
+      schema_version: "0.0-stub" as const,
       event_count: 1,
       iat,
       exp: iat + 60,
