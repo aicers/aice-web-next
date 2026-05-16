@@ -42,6 +42,11 @@ import { timingSafeEqual } from "node:crypto";
 
 import type pg from "pg";
 
+import {
+  buildStoryRefreshPayloads,
+  loadStoryRefreshRows,
+} from "@/lib/aimer/phase2/payload-builders";
+import { enqueueNotice } from "@/lib/aimer/phase2/state";
 import { LOCK_NAMESPACE } from "@/lib/triage/baseline/cadence";
 import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
@@ -342,6 +347,29 @@ async function runRebuildTransaction(
         insertDraft,
         signal: input.signal,
       });
+
+    // Per #573 Trigger 2: enqueue `refresh_story_window` notices
+    // **inside** the rebuild transaction so a crash between COMMIT
+    // and enqueue cannot leave the local rebuild durable but the
+    // refresh notice never emitted. Auto-correlated only — curated
+    // stories were intentionally skipped by the DELETE/INSERT chain
+    // above and are not mirrored on aimer-web.
+    const stories = await loadStoryRefreshRows(client, {
+      fromIso: input.fromIso,
+      toIso: input.toIso,
+    });
+    const { payloads } = buildStoryRefreshPayloads({
+      window: { from: input.fromIso, to: input.toIso },
+      stories,
+    });
+    for (const payload of payloads) {
+      await enqueueNotice(
+        input.customerId,
+        "refresh_story_window",
+        payload,
+        client,
+      );
+    }
 
     await client.query("COMMIT");
     return {

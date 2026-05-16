@@ -25,6 +25,11 @@ import "server-only";
 
 import type pg from "pg";
 
+import {
+  buildBaselineRefreshPayloads,
+  loadBaselineRefreshRows,
+} from "@/lib/aimer/phase2/payload-builders";
+import { enqueueNotice } from "@/lib/aimer/phase2/state";
 import type { ActiveExclusionSetResolver } from "@/lib/triage/exclusion";
 import { STORAGE_EXCLUSION_SET_RESOLVER } from "@/lib/triage/exclusion/active-set-storage";
 import type { ActiveExclusionSet } from "@/lib/triage/exclusion/types";
@@ -561,6 +566,17 @@ async function runRebuildTransaction(
             SET last_rebuild_at = NOW()`,
     );
 
+    // Per #573 Trigger 2: enqueue `refresh_baseline_window` notices
+    // **inside** the rebuild transaction so a crash between COMMIT
+    // and enqueue cannot leave the local rebuild durable but the
+    // refresh notice never emitted. The drain is not run until the
+    // next tab activation, by which point the rebuild is already
+    // durable — so "the new authoritative content must exist locally
+    // before aimer-web is told to replace" still holds. The payload
+    // is sub-divided into adjacent half-open sub-windows whose
+    // serialized JSON each fits PHASE2_REFRESH_PAYLOAD_MAX_BYTES.
+    await enqueueRefreshBaselineWindow(client, input, options.deadline);
+
     // Final deadline check before COMMIT — covers JS-side bookkeeping
     // between the last `runWithDeadline` and publishing the
     // transaction.
@@ -578,6 +594,56 @@ async function runRebuildTransaction(
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     throw err;
+  }
+}
+
+/**
+ * Read the freshly-INSERTed baseline rows back, build sub-divided
+ * `refresh_baseline_window` payloads, and enqueue them on the rebuild
+ * transaction's client so a rollback drops the notices with the
+ * DELETE/INSERT (#573 Trigger 2).
+ *
+ * Empty windows emit one notice with an empty `events[]` array per
+ * the sub-divider contract: aimer-web treats that as "replace the
+ * window with nothing." Picking `baseline_version` from the freshly
+ * INSERTed rows means we never have to thread the value through the
+ * pager — and for an empty window the field becomes irrelevant (the
+ * payload carries no events to attribute), so we fall back to the
+ * empty string.
+ */
+async function enqueueRefreshBaselineWindow(
+  client: pg.PoolClient,
+  input: RebuildInput,
+  deadline: number,
+): Promise<void> {
+  if (Date.now() > deadline) {
+    throw new RebuildTimeoutError();
+  }
+  await client.query(`SET LOCAL statement_timeout = ${deadline - Date.now()}`);
+  const { events, baselineVersion } = await loadBaselineRefreshRows(client, {
+    fromIso: input.fromIso,
+    toIso: input.toIso,
+  });
+  const { payloads } = buildBaselineRefreshPayloads({
+    window: { from: input.fromIso, to: input.toIso },
+    // `baseline_version` is absent only when the rebuild yielded zero
+    // rows (the parent window is "rebuilt empty"). The empty
+    // refresh notice's `events[]` is `[]` so the field is unused on
+    // the receiver side; pass an empty marker to keep the field
+    // string-typed without injecting a synthetic version.
+    baselineVersion: baselineVersion ?? "",
+    events,
+  });
+  for (const payload of payloads) {
+    if (Date.now() > deadline) {
+      throw new RebuildTimeoutError();
+    }
+    await enqueueNotice(
+      input.customerId,
+      "refresh_baseline_window",
+      payload,
+      client,
+    );
   }
 }
 

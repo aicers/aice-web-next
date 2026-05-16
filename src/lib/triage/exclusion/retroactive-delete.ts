@@ -2,6 +2,7 @@ import "server-only";
 
 import type pg from "pg";
 
+import { enqueueNotice } from "@/lib/aimer/phase2/state";
 import { LOCK_NAMESPACE as CADENCE_LOCK_NAMESPACE } from "@/lib/triage/baseline/cadence";
 
 import type { StoredExclusionKind } from "./storage-input";
@@ -73,9 +74,35 @@ export interface DeletedCounts {
   policyTriagedEvent: number | null;
 }
 
+/**
+ * Phase 2 withdraw-notice discriminator carried per DELETE statement.
+ *
+ *   - `"withdraw_baseline_event"` — `baseline_triaged_event` rows are
+ *     mirrored on aimer-web; deletes produce a withdraw notice keyed
+ *     by `(baseline_version, [event_key, ...])` per #573.
+ *   - `"withdraw_policy_event"` — `policy_triaged_event` rows are
+ *     mirrored on aimer-web; deletes produce a withdraw notice keyed
+ *     by `(run_id, [event_key, ...])`.
+ *   - `null` — table is not mirrored on aimer-web
+ *     (`observed_event_meta`). Statement carries no `RETURNING` and
+ *     emits no withdraw notice.
+ */
+export type RetroactiveWithdrawKind =
+  | "withdraw_baseline_event"
+  | "withdraw_policy_event"
+  | null;
+
 interface DeleteStatement {
   sql: string;
   params: unknown[];
+  /**
+   * Phase 2 withdraw discriminator. When set to a non-null value the
+   * SQL carries a `RETURNING` clause whose columns are decoded by
+   * {@link enqueueWithdrawForBatchRows} into a queue notice on the
+   * same connection that ran the DELETE. Defaults to `null` (no
+   * enqueue) when omitted, matching `observed_event_meta` semantics.
+   */
+  withdrawKind?: RetroactiveWithdrawKind;
 }
 
 async function policyTriagedEventTableExists(
@@ -119,12 +146,29 @@ function buildStatementsForTable(
     throw new Error(`Invalid batchSize: ${batchSize}`);
   }
   const statements: DeleteStatement[] = [];
+  // Per #573: `baseline_triaged_event` and `policy_triaged_event` are
+  // mirrored on aimer-web and need a withdraw notice per drain txn;
+  // `observed_event_meta` is local event-observation metadata and has
+  // no `baseline_version` column, so its DELETE keeps `rowCount`-only
+  // tracking with no `RETURNING` and no enqueue.
+  let returningClause = "";
+  let withdrawKind: RetroactiveWithdrawKind = null;
+  if (table === "baseline_triaged_event") {
+    withdrawKind = "withdraw_baseline_event";
+    returningClause =
+      " RETURNING baseline_version, event_key::text AS event_key";
+  } else if (table === "policy_triaged_event") {
+    withdrawKind = "withdraw_policy_event";
+    returningClause =
+      " RETURNING run_id::text AS run_id, event_key::text AS event_key";
+  }
   const buildLimited = (
     predicate: string,
     params: unknown[],
   ): DeleteStatement => ({
-    sql: `DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE ${predicate} LIMIT ${batchSize})`,
+    sql: `DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE ${predicate} LIMIT ${batchSize})${returningClause}`,
     params,
+    withdrawKind,
   });
 
   switch (input.kind) {
@@ -210,11 +254,81 @@ function buildStatementsForTable(
   return statements;
 }
 
+interface BatchReturnedRows {
+  baseline_version?: string;
+  run_id?: string;
+  event_key: string;
+}
+
+/**
+ * Coalesce DELETE `RETURNING` rows produced inside one drain
+ * transaction into Phase 2 withdraw notices and enqueue them on the
+ * same connection. Per acceptance criteria:
+ *
+ *   - `withdraw_baseline_event` → one notice per distinct
+ *     `baseline_version`, payload `{ baseline_version, event_keys[] }`.
+ *   - `withdraw_policy_event`   → one notice per distinct `run_id`,
+ *     payload `{ run_id, event_keys[] }`.
+ *
+ * Enqueuing on the caller's `client` means a rollback of this drain
+ * batch's transaction drops the enqueue with it — the per-batch
+ * atomicity guarantee in #573 Trigger 1.
+ */
+async function enqueueWithdrawForBatchRows(
+  client: pg.PoolClient,
+  customerId: number,
+  withdrawKind: Exclude<RetroactiveWithdrawKind, null>,
+  returnedRows: readonly BatchReturnedRows[],
+): Promise<void> {
+  if (returnedRows.length === 0) return;
+  if (withdrawKind === "withdraw_baseline_event") {
+    const byVersion = new Map<string, string[]>();
+    for (const row of returnedRows) {
+      if (!row.baseline_version || !row.event_key) continue;
+      const list = byVersion.get(row.baseline_version);
+      if (list) list.push(row.event_key);
+      else byVersion.set(row.baseline_version, [row.event_key]);
+    }
+    for (const [version, eventKeys] of byVersion) {
+      if (eventKeys.length === 0) continue;
+      await enqueueNotice(
+        customerId,
+        "withdraw_baseline_event",
+        { baseline_version: version, event_keys: eventKeys },
+        client,
+      );
+    }
+  } else {
+    const byRun = new Map<string, string[]>();
+    for (const row of returnedRows) {
+      if (!row.run_id || !row.event_key) continue;
+      const list = byRun.get(row.run_id);
+      if (list) list.push(row.event_key);
+      else byRun.set(row.run_id, [row.event_key]);
+    }
+    for (const [runId, eventKeys] of byRun) {
+      if (eventKeys.length === 0) continue;
+      await enqueueNotice(
+        customerId,
+        "withdraw_policy_event",
+        { run_id: runId, event_keys: eventKeys },
+        client,
+      );
+    }
+  }
+}
+
 /**
  * Run the **first** batch of every DELETE statement against the
  * caller's already-open transaction. Records any statement whose first
  * batch was full (rowCount === batchSize) as `pending` so the drain
  * phase can finish it in fresh transactions.
+ *
+ * When `customerId` is provided, returned rows from withdraw-eligible
+ * predicates are coalesced and enqueued via {@link enqueueNotice} on
+ * the same client — so the withdraw notice shares the ADD's
+ * transaction and a rollback drops it with the INSERT (#573 Trigger 1
+ * "first batch in the ADD txn").
  *
  * Returns the rows deleted in this transaction plus the pending list.
  */
@@ -223,17 +337,42 @@ async function runFirstBatchPerStatement(
   table: string,
   input: PlanInput,
   batchSize: number,
+  customerId: number | undefined,
 ): Promise<{ deleted: number; pending: DeleteStatement[] }> {
   const statements = buildStatementsForTable(table, input, batchSize);
   let deleted = 0;
   const pending: DeleteStatement[] = [];
+  // Coalesce returned rows across every statement in this first batch
+  // so a single ADD transaction emits one queue row per
+  // (target_kind, baseline_version) / (target_kind, run_id), per #573.
+  const baselineRows: BatchReturnedRows[] = [];
+  const policyRows: BatchReturnedRows[] = [];
   for (const stmt of statements) {
-    const result = await client.query(stmt.sql, stmt.params);
+    const result = await client.query<BatchReturnedRows>(stmt.sql, stmt.params);
     const n = result.rowCount ?? 0;
     deleted += n;
+    if (stmt.withdrawKind === "withdraw_baseline_event") {
+      baselineRows.push(...result.rows);
+    } else if (stmt.withdrawKind === "withdraw_policy_event") {
+      policyRows.push(...result.rows);
+    }
     // A full batch means there may be more matching rows; mark for
     // drain. A partial batch means the predicate is exhausted.
     if (n >= batchSize) pending.push(stmt);
+  }
+  if (customerId !== undefined) {
+    await enqueueWithdrawForBatchRows(
+      client,
+      customerId,
+      "withdraw_baseline_event",
+      baselineRows,
+    );
+    await enqueueWithdrawForBatchRows(
+      client,
+      customerId,
+      "withdraw_policy_event",
+      policyRows,
+    );
   }
   return { deleted, pending };
 }
@@ -248,20 +387,46 @@ async function runFirstBatchPerStatement(
  * source `global_triage_exclusion` row still exists, since the active
  * set must be the source of truth for retroactive cleanup. Returning
  * `false` aborts the predicate early without deleting more rows.
+ *
+ * When `customerId` is provided, the rows returned by each batch are
+ * coalesced and enqueued via {@link enqueueNotice} on the **same
+ * connection** that just ran the DELETE — so a rollback of that
+ * batch's transaction drops the enqueue with it. Earlier batches'
+ * enqueues stay intact because each lives in its own transaction
+ * (#573 Trigger 1 "subsequent-batch enqueue inside each fresh drain
+ * txn").
  */
 async function drainPendingStatements(
   withTx: TxRunner,
   pending: DeleteStatement[],
   batchSize: number,
   shouldContinue?: () => Promise<boolean>,
+  customerId?: number,
 ): Promise<number> {
   let deleted = 0;
   for (const stmt of pending) {
     while (true) {
       if (shouldContinue && !(await shouldContinue())) return deleted;
       const n = await withTx(async (client) => {
-        const result = await client.query(stmt.sql, stmt.params);
-        return result.rowCount ?? 0;
+        const result = await client.query<BatchReturnedRows>(
+          stmt.sql,
+          stmt.params,
+        );
+        const rowCount = result.rowCount ?? 0;
+        const withdrawKind = stmt.withdrawKind ?? null;
+        if (
+          customerId !== undefined &&
+          withdrawKind !== null &&
+          result.rows.length > 0
+        ) {
+          await enqueueWithdrawForBatchRows(
+            client,
+            customerId,
+            withdrawKind,
+            result.rows,
+          );
+        }
+        return rowCount;
       });
       deleted += n;
       if (n < batchSize) break;
@@ -304,7 +469,7 @@ export type TxRunner = <T>(
 export async function executeFirstRetroactiveDeleteBatch(
   firstBatchClient: pg.PoolClient,
   input: PlanInput,
-  options: { batchSize?: number } = {},
+  options: { batchSize?: number; customerId?: number } = {},
 ): Promise<{ counts: DeletedCounts; pending: PendingDrain[] }> {
   const policyTableExists =
     await policyTriagedEventTableExists(firstBatchClient);
@@ -333,6 +498,7 @@ export async function executeFirstRetroactiveDeleteBatch(
       table,
       input,
       batchSize,
+      options.customerId,
     );
     if (key === "policyTriagedEvent") {
       counts.policyTriagedEvent = result.deleted;
@@ -361,6 +527,7 @@ export async function drainRemainingRetroactiveDeletes(
   options: {
     batchSize?: number;
     shouldContinue?: () => Promise<boolean>;
+    customerId?: number;
   } = {},
 ): Promise<DeletedCounts> {
   const batchSize = options.batchSize ?? DEFAULT_DELETE_BATCH_SIZE;
@@ -378,6 +545,7 @@ export async function drainRemainingRetroactiveDeletes(
       entry.statements,
       batchSize,
       options.shouldContinue,
+      options.customerId,
     );
     if (entry.tableKey === "policyTriagedEvent") {
       out.policyTriagedEvent = (out.policyTriagedEvent ?? 0) + drained;
@@ -401,12 +569,16 @@ export async function drainRemainingRetroactiveDeletes(
 export async function executeRetroactiveDelete(
   firstBatchClient: pg.PoolClient,
   input: PlanInput,
-  options: { batchSize?: number; drainTx?: TxRunner } = {},
+  options: {
+    batchSize?: number;
+    drainTx?: TxRunner;
+    customerId?: number;
+  } = {},
 ): Promise<DeletedCounts> {
   const { counts, pending } = await executeFirstRetroactiveDeleteBatch(
     firstBatchClient,
     input,
-    { batchSize: options.batchSize },
+    { batchSize: options.batchSize, customerId: options.customerId },
   );
   if (pending.length === 0) return counts;
   // No drainTx provided: drain through the same client (legacy
@@ -416,6 +588,7 @@ export async function executeRetroactiveDelete(
     options.drainTx ?? (async (fn) => fn(firstBatchClient));
   const drained = await drainRemainingRetroactiveDeletes(withTx, pending, {
     batchSize: options.batchSize,
+    customerId: options.customerId,
   });
   return {
     baselineTriagedEvent:
