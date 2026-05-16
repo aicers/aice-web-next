@@ -21,6 +21,7 @@ vi.mock("@/lib/aimer/phase2/payload-builders", () => ({
     payloads: [],
     warnings: [],
   })),
+  logSubdivideWarnings: vi.fn(),
 }));
 
 import {

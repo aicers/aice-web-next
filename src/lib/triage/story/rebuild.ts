@@ -45,6 +45,7 @@ import type pg from "pg";
 import {
   buildStoryRefreshPayloads,
   loadStoryRefreshRows,
+  logSubdivideWarnings,
 } from "@/lib/aimer/phase2/payload-builders";
 import { enqueueNotice } from "@/lib/aimer/phase2/state";
 import { LOCK_NAMESPACE } from "@/lib/triage/baseline/cadence";
@@ -358,10 +359,11 @@ async function runRebuildTransaction(
       fromIso: input.fromIso,
       toIso: input.toIso,
     });
-    const { payloads } = buildStoryRefreshPayloads({
+    const { payloads, warnings } = buildStoryRefreshPayloads({
       window: { from: input.fromIso, to: input.toIso },
       stories,
     });
+    logSubdivideWarnings(input.customerId, "refresh_story_window", warnings);
     for (const payload of payloads) {
       await enqueueNotice(
         input.customerId,

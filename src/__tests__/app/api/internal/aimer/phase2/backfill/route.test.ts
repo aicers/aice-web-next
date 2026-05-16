@@ -10,9 +10,19 @@ class MockCustomerNotFoundError extends Error {
   }
 }
 
+class MockPhase2BackfillMultiVersionError extends Error {
+  readonly baselineVersions: string[];
+  constructor(versions: string[]) {
+    super(`Backfill window spans ${versions.length} baseline_versions`);
+    this.name = "Phase2BackfillMultiVersionError";
+    this.baselineVersions = versions;
+  }
+}
+
 vi.mock("@/lib/aimer/phase2/backfill", () => ({
   runPhase2Backfill: mockRunBackfill,
   verifyPhase2BackfillToken: mockVerifyToken,
+  Phase2BackfillMultiVersionError: MockPhase2BackfillMultiVersionError,
 }));
 
 vi.mock("@/lib/triage/policy/customer-db", () => ({
@@ -159,6 +169,67 @@ describe("POST /api/internal/aimer/phase2/backfill", () => {
       }),
     );
     expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when the window extends into the future", async () => {
+    mockVerifyToken.mockReturnValue(true);
+    const { POST } = await import(
+      "@/app/api/internal/aimer/phase2/backfill/route"
+    );
+    const futureTo = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const res = await POST(
+      makeRequest("Bearer ok", {
+        customer_id: 1,
+        kind: "baseline_event",
+        from: FROM,
+        to: futureTo,
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockRunBackfill).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when from is older than the allowed retention bound", async () => {
+    mockVerifyToken.mockReturnValue(true);
+    const { POST } = await import(
+      "@/app/api/internal/aimer/phase2/backfill/route"
+    );
+    // 400 days back — past the 365-day bound.
+    const ancientFrom = new Date(
+      Date.now() - 400 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const ancientTo = new Date(
+      Date.now() - 399 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const res = await POST(
+      makeRequest("Bearer ok", {
+        customer_id: 1,
+        kind: "baseline_event",
+        from: ancientFrom,
+        to: ancientTo,
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockRunBackfill).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when the backfill spans multiple baseline_versions", async () => {
+    mockVerifyToken.mockReturnValue(true);
+    mockRunBackfill.mockRejectedValue(
+      new MockPhase2BackfillMultiVersionError(["v1", "v2"]),
+    );
+    const { POST } = await import(
+      "@/app/api/internal/aimer/phase2/backfill/route"
+    );
+    const res = await POST(
+      makeRequest("Bearer ok", {
+        customer_id: 7,
+        kind: "baseline_event",
+        from: FROM,
+        to: TO,
+      }),
+    );
+    expect(res.status).toBe(400);
   });
 
   it("returns 500 on unexpected errors", async () => {

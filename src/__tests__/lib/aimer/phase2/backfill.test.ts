@@ -61,6 +61,7 @@ describe("runPhase2Backfill", () => {
         },
       ],
       baselineVersion: "v1",
+      baselineVersions: ["v1"],
     });
     const { runPhase2Backfill } = await import("@/lib/aimer/phase2/backfill");
 
@@ -104,6 +105,46 @@ describe("runPhase2Backfill", () => {
     expect(result.enqueuedNoticeIds).toEqual(["42"]);
   });
 
+  it("rejects a baseline backfill whose window spans multiple baseline_versions", async () => {
+    loadBaselineRefreshRowsMock.mockResolvedValue({
+      events: [
+        {
+          event_key: "1",
+          event_time: "2026-01-01T00:00:00.000Z",
+          kind: "http",
+          baseline_version: "v1",
+        },
+        {
+          event_key: "2",
+          event_time: "2026-01-01T00:01:00.000Z",
+          kind: "http",
+          baseline_version: "v2",
+        },
+      ],
+      baselineVersion: "v1",
+      baselineVersions: ["v1", "v2"],
+    });
+    const { runPhase2Backfill, Phase2BackfillMultiVersionError } = await import(
+      "@/lib/aimer/phase2/backfill"
+    );
+    await expect(
+      runPhase2Backfill({
+        customerId: 7,
+        kind: "baseline_event",
+        fromIso: "2026-01-01T00:00:00Z",
+        toIso: "2026-01-02T00:00:00Z",
+      }),
+    ).rejects.toBeInstanceOf(Phase2BackfillMultiVersionError);
+    // No queue rows enqueued; the txn rolled back.
+    const inserts = fakeClientCalls.filter((c) =>
+      c.sql.includes("INSERT INTO aimer_push_queue"),
+    );
+    expect(inserts).toHaveLength(0);
+    const sqls = fakeClient.query.mock.calls.map((c) => c[0] as string);
+    expect(sqls).toContain("ROLLBACK");
+    expect(sqls).not.toContain("COMMIT");
+  });
+
   it("rolls back the transaction on DB error during enqueue", async () => {
     loadBaselineRefreshRowsMock.mockResolvedValue({
       events: [
@@ -114,6 +155,7 @@ describe("runPhase2Backfill", () => {
         },
       ],
       baselineVersion: "v1",
+      baselineVersions: ["v1"],
     });
     // Make the INSERT throw on the queue insert specifically.
     fakeClient.query.mockImplementation(async (sql: string) => {

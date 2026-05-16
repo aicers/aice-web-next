@@ -28,6 +28,7 @@ import type pg from "pg";
 import {
   buildBaselineRefreshPayloads,
   loadBaselineRefreshRows,
+  logSubdivideWarnings,
 } from "@/lib/aimer/phase2/payload-builders";
 import { enqueueNotice } from "@/lib/aimer/phase2/state";
 import type { ActiveExclusionSetResolver } from "@/lib/triage/exclusion";
@@ -624,7 +625,7 @@ async function enqueueRefreshBaselineWindow(
     fromIso: input.fromIso,
     toIso: input.toIso,
   });
-  const { payloads } = buildBaselineRefreshPayloads({
+  const { payloads, warnings } = buildBaselineRefreshPayloads({
     window: { from: input.fromIso, to: input.toIso },
     // `baseline_version` is absent only when the rebuild yielded zero
     // rows (the parent window is "rebuilt empty"). The empty
@@ -634,6 +635,7 @@ async function enqueueRefreshBaselineWindow(
     baselineVersion: baselineVersion ?? "",
     events,
   });
+  logSubdivideWarnings(input.customerId, "refresh_baseline_window", warnings);
   for (const payload of payloads) {
     if (Date.now() > deadline) {
       throw new RebuildTimeoutError();

@@ -166,6 +166,61 @@ describe("phase2 payload builders", () => {
       expect(warnings[0].sliceValue).toBe("2026-01-01T00:00:00.000Z");
       expect(warnings[0].rowCount).toBe(2);
     });
+
+    it("warns when an oversize same-slice group lands in the middle of a window", () => {
+      // Layout: small group A, then an oversize same-slice group B,
+      // then small group C. The accumulator first packs A, closes at
+      // B, then is forced to close B alone before reaching C. The
+      // close-and-restart path must surface the warning for B.
+      const events = [
+        makeBaselineEvent(1, "2026-01-01T00:00:00.000Z", 200),
+        makeBaselineEvent(2, "2026-01-01T00:01:00.000Z", 3000),
+        makeBaselineEvent(3, "2026-01-01T00:01:00.000Z", 3000),
+        makeBaselineEvent(4, "2026-01-01T00:02:00.000Z", 200),
+      ];
+      const { payloads, warnings } = buildBaselineRefreshPayloads({
+        window: {
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-01-01T01:00:00.000Z",
+        },
+        baselineVersion: "v1",
+        events,
+        maxBytes: 1500,
+      });
+      const oversizeWindow = payloads.find((p) =>
+        p.events.some((e) => e.event_time === "2026-01-01T00:01:00.000Z"),
+      );
+      expect(oversizeWindow?.events).toHaveLength(2);
+      const matchingWarning = warnings.find(
+        (w) => w.sliceValue === "2026-01-01T00:01:00.000Z",
+      );
+      expect(matchingWarning).toBeDefined();
+      expect(matchingWarning?.rowCount).toBe(2);
+    });
+
+    it("warns when an oversize same-slice group lands at the end of a window", () => {
+      // Small group at the start, then an oversize group as the final
+      // group. The final-close path must also surface the warning.
+      const events = [
+        makeBaselineEvent(1, "2026-01-01T00:00:00.000Z", 200),
+        makeBaselineEvent(2, "2026-01-01T00:01:00.000Z", 3000),
+        makeBaselineEvent(3, "2026-01-01T00:01:00.000Z", 3000),
+      ];
+      const { warnings } = buildBaselineRefreshPayloads({
+        window: {
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-01-01T01:00:00.000Z",
+        },
+        baselineVersion: "v1",
+        events,
+        maxBytes: 1500,
+      });
+      const matchingWarning = warnings.find(
+        (w) => w.sliceValue === "2026-01-01T00:01:00.000Z",
+      );
+      expect(matchingWarning).toBeDefined();
+      expect(matchingWarning?.rowCount).toBe(2);
+    });
   });
 
   describe("buildStoryRefreshPayloads", () => {

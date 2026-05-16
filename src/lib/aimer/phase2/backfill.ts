@@ -25,6 +25,7 @@ import {
   buildStoryRefreshPayloads,
   loadBaselineRefreshRows,
   loadStoryRefreshRows,
+  logSubdivideWarnings,
 } from "@/lib/aimer/phase2/payload-builders";
 import { enqueueNotice } from "@/lib/aimer/phase2/state";
 import { getCustomerPool } from "@/lib/triage/policy/customer-db";
@@ -40,6 +41,30 @@ export interface Phase2BackfillInput {
 
 export interface Phase2BackfillResult {
   enqueuedNoticeIds: string[];
+}
+
+/**
+ * Thrown when an admin backfill window spans more than one
+ * `baseline_version`. The refresh / backfill payload contract carries
+ * a single top-level `baseline_version`, so a mixed-version window
+ * cannot be faithfully represented as one notice. RFC 0001 allows
+ * older versions to remain in the 180-day corpus, so this is a real
+ * caller-supplied error (400) rather than an internal invariant
+ * violation. Route maps it to HTTP 400.
+ */
+export class Phase2BackfillMultiVersionError extends Error {
+  readonly baselineVersions: string[];
+
+  constructor(baselineVersions: string[]) {
+    super(
+      `Backfill window spans ${baselineVersions.length} baseline_versions ` +
+        `(${baselineVersions.join(", ")}); refresh / backfill payloads ` +
+        "carry a single top-level baseline_version. Narrow the window " +
+        "so all rows share one version.",
+    );
+    this.name = "Phase2BackfillMultiVersionError";
+    this.baselineVersions = baselineVersions;
+  }
 }
 
 /**
@@ -82,17 +107,26 @@ export async function runPhase2Backfill(
   try {
     await client.query("BEGIN");
     if (input.kind === "baseline_event") {
-      const { events, baselineVersion } = await loadBaselineRefreshRows(
-        client,
-        { fromIso: input.fromIso, toIso: input.toIso },
-      );
-      const { payloads } = buildBaselineRefreshPayloads({
+      const { events, baselineVersion, baselineVersions } =
+        await loadBaselineRefreshRows(client, {
+          fromIso: input.fromIso,
+          toIso: input.toIso,
+        });
+      if (baselineVersions.length > 1) {
+        throw new Phase2BackfillMultiVersionError(baselineVersions);
+      }
+      const { payloads, warnings } = buildBaselineRefreshPayloads({
         window: { from: input.fromIso, to: input.toIso },
         // Empty windows still emit one notice (`events[]` empty);
         // `baseline_version` becomes a no-op marker in that case.
         baselineVersion: baselineVersion ?? "",
         events,
       });
+      logSubdivideWarnings(
+        input.customerId,
+        "backfill_baseline_window",
+        warnings,
+      );
       for (const payload of payloads) {
         const id = await enqueueNotice(
           input.customerId,
@@ -107,10 +141,11 @@ export async function runPhase2Backfill(
         fromIso: input.fromIso,
         toIso: input.toIso,
       });
-      const { payloads } = buildStoryRefreshPayloads({
+      const { payloads, warnings } = buildStoryRefreshPayloads({
         window: { from: input.fromIso, to: input.toIso },
         stories,
       });
+      logSubdivideWarnings(input.customerId, "backfill_story_window", warnings);
       for (const payload of payloads) {
         const id = await enqueueNotice(
           input.customerId,

@@ -4,10 +4,29 @@ import { NextResponse } from "next/server";
 
 import {
   type Phase2BackfillKind,
+  Phase2BackfillMultiVersionError,
   runPhase2Backfill,
   verifyPhase2BackfillToken,
 } from "@/lib/aimer/phase2/backfill";
 import { CustomerNotFoundError } from "@/lib/triage/policy/customer-db";
+
+/**
+ * Hard bound on how far back a backfill window may reach. The corpus
+ * retention for `baseline_triaged_event` is 180 days (RFC 0001;
+ * migrations/customer/0003_baseline_corpus_a.sql header), so a backfill
+ * starting earlier would necessarily span gaps. 365 days is a
+ * conservative ceiling that covers Story windows too and leaves room
+ * for retention changes without rejecting realistic operator inputs.
+ * If a deployment ever needs longer, this becomes a configurable env.
+ */
+const PHASE2_BACKFILL_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+
+/**
+ * Allow a small clock-skew slack on the future-rejection check so an
+ * operator-supplied `to` of "right now" cannot be tripped by sub-second
+ * drift between the operator's clock and the server's.
+ */
+const PHASE2_BACKFILL_FUTURE_SKEW_MS = 60_000;
 
 /**
  * POST /api/internal/aimer/phase2/backfill
@@ -79,6 +98,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (err instanceof CustomerNotFoundError) {
       return NextResponse.json({ error: err.message }, { status: 404 });
     }
+    if (err instanceof Phase2BackfillMultiVersionError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
     const message = err instanceof Error ? err.message : "Backfill failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -113,6 +135,20 @@ function parseBody(body: unknown): ParsedBody | string {
   }
   if (fromDate.getTime() >= toDate.getTime()) {
     return "from must be strictly before to";
+  }
+  // Reject windows outside the allowed bounds (#573 acceptance
+  // criteria). A future `to` would enqueue an empty refresh that
+  // tells aimer-web to clear that window — meaningless and
+  // potentially destructive. A `from` older than 365 days
+  // necessarily extends past the 180-day baseline corpus retention,
+  // and the resulting payload would be missing the older history we
+  // claim to send.
+  const nowMs = Date.now();
+  if (toDate.getTime() > nowMs + PHASE2_BACKFILL_FUTURE_SKEW_MS) {
+    return "to must not extend into the future";
+  }
+  if (fromDate.getTime() < nowMs - PHASE2_BACKFILL_MAX_AGE_MS) {
+    return `from must not be older than ${PHASE2_BACKFILL_MAX_AGE_MS / (24 * 60 * 60 * 1000)} days`;
   }
   return {
     customerId: customerIdRaw,

@@ -45,11 +45,13 @@ vi.mock("@/lib/aimer/phase2/payload-builders", () => ({
   loadBaselineRefreshRows: vi.fn(async () => ({
     events: [],
     baselineVersion: null,
+    baselineVersions: [],
   })),
   buildBaselineRefreshPayloads: vi.fn(() => ({
     payloads: [],
     warnings: [],
   })),
+  logSubdivideWarnings: vi.fn(),
 }));
 
 vi.mock("@/lib/triage/baseline/selectors", async () => {

@@ -182,6 +182,29 @@ function subdivide<T, P>(
   const warnings: SubdivideWarning[] = [];
   let currentFrom = parent.from;
   let currentRows: T[] = [];
+  // Slice value of the single oversize group currently sitting in
+  // `currentRows`, if any. Populated when we restart the accumulator
+  // with a group that alone exceeds `maxBytes`, so the warning is
+  // attached to the eventual sub-window emission regardless of whether
+  // it closes mid-loop (middle of window) or at the final close (end
+  // of window).
+  let pendingOversizeSlice: string | null = null;
+  let pendingOversizeRowCount = 0;
+
+  function emitClosed(from: string, to: string, rowsForWindow: T[]): void {
+    const payload = buildPayload({ from, to }, rowsForWindow);
+    const bytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+    result.push({ from, to, payload, bytes });
+    if (pendingOversizeSlice !== null) {
+      warnings.push({
+        sliceValue: pendingOversizeSlice,
+        bytes,
+        rowCount: pendingOversizeRowCount,
+      });
+      pendingOversizeSlice = null;
+      pendingOversizeRowCount = 0;
+    }
+  }
 
   for (let i = 0; i < groups.length; i += 1) {
     const group = groups[i];
@@ -219,31 +242,28 @@ function subdivide<T, P>(
     }
 
     // Close current sub-window at this group's slice value, then
-    // start fresh with the group.
-    const closedWindow = { from: currentFrom, to: group.slice };
-    const closedPayload = buildPayload(closedWindow, currentRows);
-    result.push({
-      from: closedWindow.from,
-      to: closedWindow.to,
-      payload: closedPayload,
-      bytes: Buffer.byteLength(JSON.stringify(closedPayload), "utf8"),
-    });
+    // start fresh with the group. If the group alone exceeds budget,
+    // remember it so the warning fires when its sub-window emits.
+    emitClosed(currentFrom, group.slice, currentRows);
     currentFrom = group.slice;
     currentRows = group.rows.slice();
+    const standaloneBytes = Buffer.byteLength(
+      JSON.stringify(
+        buildPayload({ from: currentFrom, to: nextSlice }, currentRows),
+      ),
+      "utf8",
+    );
+    if (standaloneBytes > maxBytes) {
+      pendingOversizeSlice = group.slice;
+      pendingOversizeRowCount = group.rows.length;
+    }
   }
 
   // Close the final sub-window — even if `currentRows` is empty (which
   // happens when the last iteration just emitted an oversize-single
   // group). Skipping it would leave `to_{N-1} !== parent.to`.
   if (currentFrom !== parent.to || result.length === 0) {
-    const finalWindow = { from: currentFrom, to: parent.to };
-    const finalPayload = buildPayload(finalWindow, currentRows);
-    result.push({
-      from: finalWindow.from,
-      to: finalWindow.to,
-      payload: finalPayload,
-      bytes: Buffer.byteLength(JSON.stringify(finalPayload), "utf8"),
-    });
+    emitClosed(currentFrom, parent.to, currentRows);
   }
 
   return {
@@ -335,13 +355,19 @@ export function buildStoryRefreshPayloads(
  * window, sorted by `(event_time, event_key)` ascending so the
  * sub-divider sees same-time groups contiguously. The returned rows
  * are payload-shaped (decimal-string `event_key`, ISO `event_time`)
- * and carry the exclusion-matching columns aimer-web mirrors.
+ * and carry the exclusion-matching columns aimer-web mirrors, plus the
+ * Phase 1.B `raw_score` ranking field so refresh / backfill produce
+ * the same per-event shape as the streaming `phase2.baseline.v1`
+ * batches.
  *
- * Returns the resolved `baseline_version` separately because the
- * refresh / backfill payload requires it at the top level, and a
- * rebuilt window is guaranteed to be single-version (cadence stamps
- * one `baseline_version` per row at INSERT time, and the rebuild
- * writes the same value across the new corpus).
+ * Returns both the resolved single `baseline_version` (top-level for
+ * the payload — Force Rebuild is guaranteed single-version since the
+ * rebuild writes one version across the new corpus) and the set of
+ * distinct versions actually observed in the loaded rows so callers
+ * spanning historical windows (admin backfill) can reject mixed-version
+ * ranges. RFC 0001 explicitly allows older `baseline_version`s to
+ * remain in the 180-day corpus; a single top-level version cannot
+ * faithfully represent a mixed-version window.
  */
 export async function loadBaselineRefreshRows(
   client: pg.PoolClient,
@@ -349,6 +375,7 @@ export async function loadBaselineRefreshRows(
 ): Promise<{
   events: BaselineRefreshEvent[];
   baselineVersion: string | null;
+  baselineVersions: string[];
 }> {
   const { rows } = await client.query<{
     event_key: string;
@@ -366,6 +393,7 @@ export async function loadBaselineRefreshRows(
     category: string | null;
     baseline_version: string;
     exclusions_fp: string;
+    raw_score: number | null;
     selector_tags: string[] | null;
     payload_summary: unknown;
   }>(
@@ -385,6 +413,7 @@ export async function loadBaselineRefreshRows(
             category,
             baseline_version,
             exclusions_fp,
+            raw_score,
             selector_tags,
             payload_summary
        FROM baseline_triaged_event
@@ -409,14 +438,19 @@ export async function loadBaselineRefreshRows(
     category: row.category,
     baseline_version: row.baseline_version,
     exclusions_fp: row.exclusions_fp,
+    raw_score: row.raw_score,
     selector_tags: row.selector_tags,
     payload_summary: row.payload_summary,
   }));
 
+  const distinct = new Set<string>();
+  for (const row of rows) distinct.add(row.baseline_version);
+  const baselineVersions = Array.from(distinct);
   const baselineVersion = events[0]?.baseline_version as string | undefined;
   return {
     events,
     baselineVersion: baselineVersion ?? null,
+    baselineVersions,
   };
 }
 
@@ -524,6 +558,28 @@ export async function loadStoryRefreshRows(
     last_sent_by: r.last_sent_by,
     send_count: r.send_count,
   }));
+}
+
+/**
+ * Emit a structured `console.warn` for each subdivider warning so the
+ * operator gets visibility on oversize-same-slice groups that landed
+ * in their own sub-window. The acceptance criteria (#573) call for a
+ * warning identifying the timestamp and the group size whenever the
+ * atomicity rule forces a sub-window above the byte budget. Callers
+ * (force-rebuild + admin backfill) pass the customer / kind so the
+ * line is greppable.
+ */
+export function logSubdivideWarnings(
+  customerId: number,
+  kind: string,
+  warnings: readonly SubdivideWarning[],
+): void {
+  for (const w of warnings) {
+    console.warn(
+      `phase2_refresh_oversize_group: customer=${customerId} kind=${kind} ` +
+        `slice=${w.sliceValue} rows=${w.rowCount} bytes=${w.bytes}`,
+    );
+  }
 }
 
 export const _testing = {
