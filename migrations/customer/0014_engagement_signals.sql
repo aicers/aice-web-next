@@ -123,8 +123,14 @@ CREATE TABLE IF NOT EXISTS engagement_impression (
         CHECK (shown_by IN ('quota', 'fallback', 'story_protected')),
     -- Slider stop in effect for this menu load. Phase 2 reads slice
     -- impressions by `strictness_stop` to separate dial-up from
-    -- dial-down attention.
-    strictness_stop     TEXT         NOT NULL,
+    -- dial-down attention. The CHECK pins the allowed stop ids at the
+    -- schema level so a stale or buggy producer cannot land a
+    -- plausible-but-false stop in the analytics store (the HTTP
+    -- parser also rejects unknown stops, but the schema is the
+    -- durable contract Phase 2 reads — both layers enforce the same
+    -- set).
+    strictness_stop     TEXT         NOT NULL
+        CHECK (strictness_stop IN ('top5', 'top20', 'top50', 'top80', 'all')),
     -- Per-row tenant attribution. Redundant with the DB the row lives
     -- in but explicit for cross-row analytics and consistent with the
     -- existing snapshot tables.
@@ -194,9 +200,19 @@ CREATE TABLE IF NOT EXISTS engagement_action (
     -- this action created (the join key, not the predicate value).
     exclusion_id        TEXT,
     -- `strictness_change`. From/to stop name (string id from
-    -- `STRICTNESS_STOPS`).
-    strictness_from     TEXT,
-    strictness_to       TEXT,
+    -- `STRICTNESS_STOPS`). The CHECK pins the allowed ids at the
+    -- schema level (matching the engagement_impression.strictness_stop
+    -- CHECK) so a malformed producer cannot persist a
+    -- plausible-but-false stop. The constraint is permissive of NULL
+    -- because non-strictness_change action types leave both columns
+    -- NULL — the action-shape CHECK already enforces that they are
+    -- NOT NULL for `strictness_change` rows.
+    strictness_from     TEXT
+        CHECK (strictness_from IS NULL
+            OR strictness_from IN ('top5', 'top20', 'top50', 'top80', 'all')),
+    strictness_to       TEXT
+        CHECK (strictness_to IS NULL
+            OR strictness_to IN ('top5', 'top20', 'top50', 'top80', 'all')),
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     -- Per-action shape contract. Enforces, per action_type:
     --   * Required fields are present.

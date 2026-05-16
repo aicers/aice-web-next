@@ -10,7 +10,7 @@
  * Phase 2 cannot read.
  */
 
-import { parseStrictnessStopId } from "../strictness/stops";
+import { isStrictnessStopId, type StrictnessStopId } from "../strictness/stops";
 import {
   ENGAGEMENT_JOIN_ID_DIMENSIONS,
   type EngagementAction,
@@ -95,6 +95,28 @@ function requirePositiveInt(o: Record<string, unknown>, key: string): number {
 }
 
 /**
+ * Strict-stop validator for the engagement ingest boundary. Unlike
+ * `parseStrictnessStopId` (used for URL/hash/localStorage hydration,
+ * where stale values must coerce to the default to avoid breaking the
+ * UI), this rejects unknown values so a stale or malformed producer
+ * cannot persist a plausible-but-false stop into the analytics store.
+ * #588 requires `strictness_stop` / `strictness_from` / `strictness_to`
+ * to reflect the stop that was actually in effect.
+ */
+function requireStrictnessStopId(
+  o: Record<string, unknown>,
+  key: string,
+): StrictnessStopId {
+  const v = o[key];
+  if (!isStrictnessStopId(v)) {
+    throw new EngagementValidationError(
+      `Missing or invalid ${key} (expected a known strictness stop id)`,
+    );
+  }
+  return v;
+}
+
+/**
  * Pull and validate the `pivotValueJoinId` / `pivotValue` pair from a
  * pivot-action payload. Enforces the documented contract in both
  * directions:
@@ -172,9 +194,7 @@ export function parseImpressionBatch(raw: unknown): EngagementImpressionBatch {
   }
   const customerId = requirePositiveInt(raw, "customerId");
   const menuLoadId = requireUuid(raw, "menuLoadId");
-  const strictnessStop = parseStrictnessStopId(
-    typeof raw.strictnessStop === "string" ? raw.strictnessStop : null,
-  );
+  const strictnessStop = requireStrictnessStopId(raw, "strictnessStop");
   const surface = requireString(raw, "surface");
   const periodStartIso = requireIsoTs(raw, "periodStartIso");
   const periodEndIso = requireIsoTs(raw, "periodEndIso");
@@ -262,12 +282,8 @@ export function parseAction(raw: unknown): EngagementAction {
         type: "strictness_change",
         customerId,
         surface,
-        strictnessFrom: parseStrictnessStopId(
-          requireString(payload, "strictnessFrom"),
-        ),
-        strictnessTo: parseStrictnessStopId(
-          requireString(payload, "strictnessTo"),
-        ),
+        strictnessFrom: requireStrictnessStopId(payload, "strictnessFrom"),
+        strictnessTo: requireStrictnessStopId(payload, "strictnessTo"),
       };
     // `exclusion_create` is not accepted via the HTTP endpoint —
     // exclusions are server-side actions emitted directly by the

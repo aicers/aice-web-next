@@ -70,12 +70,25 @@ describe("parseImpressionBatch", () => {
     ).toThrow(/shownBy/);
   });
 
-  it("maps an unknown strictnessStop to the default", () => {
-    const batch = parseImpressionBatch({
-      ...baseBatch(),
-      strictnessStop: "nonsense",
-    });
-    expect(batch.strictnessStop).toBe("top50");
+  // #588 R6: the ingest boundary MUST NOT coerce an unknown stop to
+  // the default. URL/hash/localStorage hydration uses
+  // `parseStrictnessStopId` (which coerces so the slider survives
+  // stale state); the engagement store records the slider stop that
+  // was actually in effect, so a malformed producer must surface as a
+  // 400 instead of persisting a plausible-but-false `top50` row.
+  it("rejects an unknown strictnessStop", () => {
+    expect(() =>
+      parseImpressionBatch({
+        ...baseBatch(),
+        strictnessStop: "nonsense",
+      }),
+    ).toThrow(/strictnessStop/);
+  });
+
+  it("rejects a missing strictnessStop", () => {
+    const batch = baseBatch();
+    delete (batch as Partial<ReturnType<typeof baseBatch>>).strictnessStop;
+    expect(() => parseImpressionBatch(batch)).toThrow(/strictnessStop/);
   });
 
   it("rejects a batch over the per-call cap", () => {
@@ -279,6 +292,38 @@ describe("parseAction", () => {
         },
       }),
     ).toThrow(/natural-join/);
+  });
+
+  // #588 R6: strictness_change must reject unknown stop ids at the
+  // ingest boundary instead of coercing to the default.
+  it("rejects a strictness_change with an unknown strictnessTo", () => {
+    expect(() =>
+      parseAction({
+        kind: "action",
+        action: {
+          type: "strictness_change",
+          customerId: 7,
+          surface: "baseline",
+          strictnessFrom: "top50",
+          strictnessTo: "nonsense",
+        },
+      }),
+    ).toThrow(/strictnessTo/);
+  });
+
+  it("rejects a strictness_change with an unknown strictnessFrom", () => {
+    expect(() =>
+      parseAction({
+        kind: "action",
+        action: {
+          type: "strictness_change",
+          customerId: 7,
+          surface: "baseline",
+          strictnessFrom: "nonsense",
+          strictnessTo: "top20",
+        },
+      }),
+    ).toThrow(/strictnessFrom/);
   });
 
   it("accepts a strictness_change", () => {
