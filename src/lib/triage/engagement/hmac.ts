@@ -34,10 +34,22 @@ const HMAC_ALGORITHM = "sha256";
 const MIN_KEY_BYTES = 32;
 
 // Standard and URL-safe base64 alphabets, with optional `=` padding.
-// `Buffer.from(raw, "base64")` silently strips invalid characters, so
-// we validate the shape with a regex before decoding to reject typos
-// and accidental UTF-8 strings that happen to be long enough.
-const BASE64_PATTERN = /^[A-Za-z0-9+/_-]+={0,2}$/;
+// `Buffer.from(raw, "base64")` silently strips invalid characters and
+// accepts impossible unpadded lengths (e.g. 45-char strings whose
+// payload is 1 mod 4, which no real base64 encoder produces), so we
+// validate both the alphabet and the length shape before decoding.
+const BASE64_ALPHABET_PATTERN = /^[A-Za-z0-9+/_-]+={0,2}$/;
+
+function isValidBase64Shape(raw: string): boolean {
+  if (!BASE64_ALPHABET_PATTERN.test(raw)) return false;
+  // Padded form: alphabet regex constrains padding to at most two `=`
+  // anchored at the end, so the only remaining shape check is that
+  // the total length is a multiple of 4.
+  // Unpadded form: length mod 4 must be 0, 2, or 3 — a length of
+  // 1 mod 4 is never a valid base64 encoding of any byte sequence.
+  if (raw.endsWith("=")) return raw.length % 4 === 0;
+  return raw.length % 4 !== 1;
+}
 
 let cachedKey: Buffer | null = null;
 
@@ -49,7 +61,7 @@ function loadKey(): Buffer {
       "Missing environment variable: ENGAGEMENT_HMAC_KEY. Set it to base64 of ≥32 random bytes for engagement-signal pseudonymization.",
     );
   }
-  if (!BASE64_PATTERN.test(raw)) {
+  if (!isValidBase64Shape(raw)) {
     throw new Error(
       "ENGAGEMENT_HMAC_KEY is not valid base64. Set it to base64 of ≥32 random bytes (e.g. `openssl rand -base64 48`).",
     );

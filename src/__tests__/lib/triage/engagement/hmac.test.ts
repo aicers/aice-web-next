@@ -113,6 +113,25 @@ describe("engagement HMAC key validation", () => {
     expect(() => hmacIp("10.0.0.1")).toThrow(/not valid base64/);
   });
 
+  it("rejects a base64 key with an impossible unpadded length", () => {
+    // 45 chars of valid alphabet but `45 % 4 === 1`, which no real
+    // base64 encoder produces. `Buffer.from` happily decodes it to 33
+    // bytes — clearing the ≥32 floor — so without a syntax check a
+    // mangled secret silently sails through.
+    process.env.ENGAGEMENT_HMAC_KEY = "A".repeat(45);
+    _resetEngagementHmacKey();
+    expect(() => hmacIp("10.0.0.1")).toThrow(/not valid base64/);
+  });
+
+  it("rejects a padded base64 key whose length is not a multiple of 4", () => {
+    // Padding implies the encoder emitted a full 4-char quantum, so
+    // total length must be a multiple of 4. A trailing `=` on a
+    // length-43 string contradicts that and is a typo, not a key.
+    process.env.ENGAGEMENT_HMAC_KEY = `${"A".repeat(42)}=`;
+    _resetEngagementHmacKey();
+    expect(() => hmacIp("10.0.0.1")).toThrow(/not valid base64/);
+  });
+
   it("rejects a base64 key that decodes to <32 bytes", () => {
     // `openssl rand -base64 24` produces a 32-char base64 string that
     // decodes to only 24 random bytes — the issue called this out
