@@ -34,6 +34,9 @@ ENV_ALLOWLIST=(
     # #472 snapshot retention. Same per-surface isolation rationale as
     # the baseline / policy retention tokens above.
     TRIAGE_SNAPSHOT_RETENTION_INTERNAL_TOKEN
+    # #588 engagement-signal retention. Same per-surface isolation
+    # rationale as the other retention tokens above.
+    TRIAGE_ENGAGEMENT_RETENTION_INTERNAL_TOKEN
     TRIAGE_EXCLUSION_FANOUT_TOKEN
     # Recover is operator-tooling, not scheduled; the token is passed
     # through so an operator running `curl` from `docker exec cron sh`

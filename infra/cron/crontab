@@ -38,3 +38,11 @@
 # references it controls. baseline_version_snapshot is retained
 # forever and is skipped by this sweep.
 15 4 * * * /usr/local/bin/run-triage-snapshot-retention.sh
+
+# Triage engagement-signal retention (#588) — once daily at 05:15 UTC.
+# Offset another hour after the snapshot sweep so all four retention
+# jobs (baseline, policy, snapshot, engagement) write their logs in
+# the same morning window without overlapping. The sweep is `created_at`-
+# bounded and does not depend on the corpus / snapshot retention
+# passes — the ordering is purely about log clustering.
+15 5 * * * /usr/local/bin/run-triage-engagement-retention.sh

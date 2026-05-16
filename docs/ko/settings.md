@@ -477,6 +477,12 @@ cron 컨테이너는 코퍼스, 팬아웃 큐, 감사용 스냅샷 테이블이
   채 여전히 표시된 행만 삭제합니다. `baseline_version_snapshot`은
   영구 보존되며 스윕 대상이 아닙니다. 토큰:
   `TRIAGE_SNAPSHOT_RETENTION_INTERNAL_TOKEN`.
+- **참여 신호** (`run-triage-engagement-retention.sh`, 매일 UTC
+  05:15) — 90일 지난 `engagement_impression`과 180일 지난
+  `engagement_action` 행을 `DELETE` 문당 10,000행 단위로
+  정리합니다. 케이던스는 코퍼스/스냅샷 보존 패스와 독립적이며,
+  05:15 슬롯은 단지 아침 로그 윈도우를 모아두기 위한 것입니다.
+  토큰: `TRIAGE_ENGAGEMENT_RETENTION_INTERNAL_TOKEN`.
 - **제외 팬아웃** (`run-triage-exclusion-fanout.sh`, 매분) —
   `triage_exclusion_fanout_job` 큐를 비웁니다. 분 단위 케이던스는
   워커의 1차 백오프(1분)와 맞춰져 있어 일시적인 테넌트 DB 장애가
@@ -485,8 +491,8 @@ cron 컨테이너는 코퍼스, 팬아웃 큐, 감사용 스냅샷 테이블이
 각 래퍼는 타임스탬프가 찍힌 JSON 응답을 `/var/log/cron/`에
 기록하고 `overall != 'ok'` 경고를 stderr로 다시 내보냅니다.
 알림은 `cron-baseline-retention`, `cron-policy-retention`,
-`cron-snapshot-retention`, `cron-fanout`으로 태깅된 구조화 로그
-라인을 키로 사용해야 합니다.
+`cron-snapshot-retention`, `cron-engagement-retention`,
+`cron-fanout`으로 태깅된 구조화 로그 라인을 키로 사용해야 합니다.
 
 ## 프로필
 
