@@ -279,6 +279,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "IMPACT",
         baselineScore: 0.92,
+        baselineVersion: "v1",
         protectedByStory: false,
       }),
     );
@@ -470,6 +471,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "IMPACT",
         baselineScore: 0.92,
+        baselineVersion: "v1",
         protectedByStory: false,
       },
       {
@@ -486,6 +488,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "EXFILTRATION",
         baselineScore: 0.71,
+        baselineVersion: "v1",
         protectedByStory: false,
       },
       {
@@ -502,6 +505,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "IMPACT",
         baselineScore: 0.65,
+        baselineVersion: "v1",
         protectedByStory: false,
       },
     ];
@@ -998,6 +1002,7 @@ describe("TriageStoryDetail — header identity", () => {
       uri: null,
       category: "IMPACT",
       baselineScore: 0.3,
+      baselineVersion: "v1",
       protectedByStory: true,
     };
     const unmarked: TriageStoryMemberDetail = {
@@ -1014,6 +1019,7 @@ describe("TriageStoryDetail — header identity", () => {
       uri: null,
       category: "IMPACT",
       baselineScore: 0.97,
+      baselineVersion: "v1",
       protectedByStory: false,
     };
     const loadDetail = vi.fn(async () => ({
@@ -1056,6 +1062,120 @@ describe("TriageStoryDetail — header identity", () => {
         "Kept because of Story membership (score: 0.3)",
       );
     });
+  });
+
+  // #588 R3 item 2: `story_pivot_click` must be attributed to the
+  // member whose pivot button the analyst clicked — using `members[0]`
+  // would record a different member than the one actually clicked
+  // (e.g. a DNS member's pivot recorded against an HTTP first-member's
+  // row metadata). The fix threads the clicked `TriageStoryMemberDetail`
+  // through the callback.
+  it("threads the clicked member through onPivotFromStory (not members[0])", async () => {
+    const story = makeStory();
+    const members: TriageStoryMemberDetail[] = [
+      {
+        eventKey: "first-http-key",
+        eventTimeIso: "2026-05-09T12:10:00.000Z",
+        kind: "HttpThreat",
+        sensor: "sensor-a",
+        origAddr: "10.0.0.5",
+        respAddr: "8.8.8.8",
+        origPort: 12345,
+        respPort: 443,
+        host: "first.example.com",
+        dnsQuery: null,
+        uri: null,
+        category: "IMPACT",
+        baselineScore: 0.92,
+        baselineVersion: "phase1b-four-selector",
+        protectedByStory: false,
+      },
+      {
+        eventKey: "second-dns-key",
+        eventTimeIso: "2026-05-09T12:11:00.000Z",
+        kind: "DnsCovertChannel",
+        sensor: "sensor-a",
+        origAddr: "10.0.0.5",
+        respAddr: "9.9.9.9",
+        origPort: 33333,
+        respPort: 53,
+        host: null,
+        dnsQuery: "exfil.example.net",
+        uri: null,
+        category: "EXFILTRATION",
+        baselineScore: 0.81,
+        baselineVersion: "phase1b-four-selector",
+        protectedByStory: false,
+      },
+    ];
+    const loadDetail = vi.fn(async () => ({
+      members,
+      hasDanglingMembers: false,
+      storedMemberCount: 2,
+    }));
+    const onPivotFromStory = vi.fn();
+    const dimensions = {
+      externalIp: "External IP",
+      internalIp: "Internal IP",
+      port: "Port",
+      host: "Host",
+      uriPattern: "URI",
+      dnsQuery: "DNS query",
+      sameSensor: "Sensor",
+    } as unknown as Record<
+      import("@/lib/triage/pivot").PivotDimensionId,
+      string
+    >;
+    const labels: TriageStoriesViewLabels = {
+      ...LABELS,
+      detail: {
+        ...LABELS.detail,
+        pivotActionsColumn: "Pivot",
+        pivotActionTemplate: "Pivot {dimension}={value}",
+        pivotDimensions: dimensions,
+      },
+    };
+    const period: TriagePeriod = {
+      startIso: "2026-05-08T00:00:00.000Z",
+      endIso: "2026-05-09T00:00:00.000Z",
+    };
+    await act(async () => {
+      render(
+        <TriageStoriesView
+          stories={[story]}
+          truncated={false}
+          focused={story}
+          onFocus={() => {}}
+          period={period}
+          loadDetail={loadDetail}
+          onPivotFromStory={onPivotFromStory}
+          labels={labels}
+        />,
+      );
+    });
+    // The `dnsQuery` button only exists on the second (DNS) member —
+    // the first (HTTP) member has no dnsQuery — so clicking it
+    // unambiguously targets that row.
+    let dnsButton: HTMLElement | null = null;
+    await waitFor(() => {
+      const buttons = screen.queryAllByTestId(
+        "triage-story-member-pivot-action",
+      );
+      dnsButton =
+        buttons.find((b) => b.getAttribute("data-dimension") === "dnsQuery") ??
+        null;
+      expect(dnsButton).not.toBeNull();
+    });
+    if (!dnsButton) throw new Error("dnsQuery pivot button never rendered");
+    fireEvent.click(dnsButton as HTMLElement);
+    expect(onPivotFromStory).toHaveBeenCalledTimes(1);
+    const args = onPivotFromStory.mock.calls[0][0];
+    expect(args.member.eventKey).toBe("second-dns-key");
+    expect(args.member.kind).toBe("DnsCovertChannel");
+    expect(args.member.baselineVersion).toBe("phase1b-four-selector");
+    // members[0] is the HTTP row — the bug was attributing the click
+    // there. Guard against a regression.
+    expect(args.member.eventKey).not.toBe(args.members[0].eventKey);
   });
 
   it("uses the analyst-curated badge for curated stories", () => {

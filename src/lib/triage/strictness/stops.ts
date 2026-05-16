@@ -67,6 +67,13 @@ const STOPS_BY_ID = new Map<StrictnessStopId, StrictnessStop>(
  * known stop id. Unknown values map to the default — the slider must
  * never error out on stale persisted state, and `loadTriagePeriod`
  * must always be callable with a valid stop.
+ *
+ * This coercion is appropriate for hydration boundaries (URL/hash/
+ * localStorage) where stale state must not block the UI. It is NOT
+ * appropriate at strictly-validated boundaries (e.g. the engagement
+ * ingest endpoint) — use {@link isStrictnessStopId} there so a
+ * malformed producer is rejected instead of silently rewritten to the
+ * default.
  */
 export function parseStrictnessStopId(
   raw: string | null | undefined,
@@ -76,6 +83,17 @@ export function parseStrictnessStopId(
     return raw as StrictnessStopId;
   }
   return DEFAULT_STRICTNESS_STOP_ID;
+}
+
+/**
+ * Strict type guard: returns true only when `raw` is a known stop id.
+ * Unlike {@link parseStrictnessStopId}, this never coerces unknown
+ * values. Used at validated boundaries (engagement ingest) where a
+ * malformed value must surface as a 400, not as a silent fallback to
+ * the default stop.
+ */
+export function isStrictnessStopId(raw: unknown): raw is StrictnessStopId {
+  return typeof raw === "string" && STOPS_BY_ID.has(raw as StrictnessStopId);
 }
 
 /** Resolve a stop record by id. Unknown ids fall back to the default. */

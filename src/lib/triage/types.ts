@@ -178,6 +178,32 @@ export interface ScoredTriageEvent extends TriageEvent {
    * (e.g. {@link aggregateTriageEvents}).
    */
   protectedByStory?: boolean;
+  /**
+   * Engagement-impression metadata (#588). Populated by
+   * `loadTriagePeriod` for every row in the final post-merge union
+   * so the client can emit an impression batch that records each
+   * surfaced row's projection metadata without re-deriving it.
+   *
+   * Optional because legacy aggregation paths
+   * ({@link aggregateTriageEvents}) and snapshot tests that synthesize
+   * rows by hand do not populate them; consumers that don't need the
+   * fields can ignore them.
+   */
+  baselineVersion?: string;
+  /**
+   * `${kind}:${is_unlabeled}` slot bucket — the same key emitted by
+   * `bucketKey()` in `compose.mjs`.
+   */
+  slotBucket?: string;
+  /** 1-based position in the post-merge union. */
+  rank?: number;
+  /**
+   * Reason the row was surfaced. `quota` for branch-A composeMenu
+   * output, `fallback` for branch-A's MIN_NONZERO_FLOOR fallback
+   * path, `story_protected` for branch-B Story-protected force-union
+   * rows (#471 §1).
+   */
+  shownBy?: "quota" | "fallback" | "story_protected";
 }
 
 /** Result of one `eventList` page in the triage query. */
@@ -372,6 +398,16 @@ export interface TriageLoadResult {
    * value is mapped to the default.
    */
   strictness: StrictnessStopId;
+  /**
+   * Per-menu-load UUID generated server-side (#588). The client uses
+   * this as the schema-level idempotency key when posting the
+   * impression batch, so a stale replay (back/forward navigation,
+   * React strict-mode double mount) is a no-op at the database.
+   *
+   * Optional in the type for legacy emptyResult / aggregation-test
+   * paths that don't go through `loadTriagePeriod`.
+   */
+  menuLoadId?: string;
 }
 
 /**

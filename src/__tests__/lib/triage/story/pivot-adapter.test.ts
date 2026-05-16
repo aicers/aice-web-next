@@ -21,6 +21,7 @@ function makeMember(
     uri: null,
     category: "EXFILTRATION",
     baselineScore: 0.42,
+    baselineVersion: "v1",
     protectedByStory: false,
     ...overrides,
   };
@@ -112,6 +113,24 @@ describe("storyMembersToScoredEvents (#553 adapter)", () => {
     // must travel through the adapter — pivot must not re-introduce a
     // marker on a null-scored row.
     expect(byId.get("out-of-period")?.protectedByStory).toBe(false);
+  });
+
+  it("carries baselineVersion through so the Phase 1 engagement-action capture (#588) can satisfy the row-bound action shape CHECK", () => {
+    // Before #588 review-round-1 item 1, the adapter dropped
+    // baseline_version, leaving `event.baselineVersion === undefined`
+    // on every Story-member-derived row. The story_pivot_click capture
+    // guards on `baselineVersion !== undefined`, so the action was
+    // silently never emitted from Story-origin trails.
+    const [adapted] = storyMembersToScoredEvents(
+      [
+        makeMember({
+          eventKey: "abc",
+          baselineVersion: "phase1b-four-selector",
+        }),
+      ],
+      1,
+    );
+    expect(adapted.baselineVersion).toBe("phase1b-four-selector");
   });
 
   it("narrows unknown ThreatCategory strings to null (defensive)", () => {

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import type pg from "pg";
 
 import type { AuthSession } from "@/lib/auth/jwt";
@@ -122,6 +123,15 @@ interface BaselineEventDetailRow extends BaselineEventRow {
    * enforces condition (a) of the rule.
    */
   protected_by_story: boolean;
+  /**
+   * `baseline_version` carried through to the detail rows so the
+   * Phase 1 engagement-action capture (#588) can fire `pivot_click`
+   * on rows the analyst opens from the asset-detail panel — the
+   * panel-rooted pivot click uses `effectiveAsset.events[0]` as the
+   * row-bound reference and the action shape CHECK requires
+   * `baseline_version` for `pivot_click` rows.
+   */
+  baseline_version: string;
 }
 
 interface ProtectedCohortDbRow extends BaselineEventRow {
@@ -380,7 +390,19 @@ async function loadCustomerSlice(
   const menuRows = menuResult.rows;
   const dbRowByKey = new Map(cohort.candidates.map((r) => [r.event_key, r]));
 
-  const events = menuRowsToScoredEvents(menuRows, dbRowByKey, customerId);
+  // #588 impression-metadata threading. Every row carries its
+  // `(slot_bucket, baseline_version)` plus a `shown_by` source label
+  // so the client's impression batch records the exact projection
+  // reason for each surfaced row. `quota` covers the post-quota
+  // composeMenu output; `fallback` covers the MIN_NONZERO_FLOOR
+  // rescue path; branch B rows are tagged `story_protected` further
+  // down in this function.
+  const events = menuRowsToScoredEvents(
+    menuRows,
+    dbRowByKey,
+    customerId,
+    menuResult.fallbackInvoked ? "fallback" : "quota",
+  );
 
   // Branch B rows are kept in full — dedup against branch A on
   // `event_key` is decided in the merge layer (`loadTriagePeriod`)
@@ -417,6 +439,17 @@ async function loadCustomerSlice(
         menuCutoff > 0 &&
         dbRow.baseline_score < menuCutoff,
       rowKey: `${customerId}/${dbRow.event_key}`,
+      // #588 impression-metadata threading: branch B rows are
+      // surfaced via the Story-protected force-union, so the
+      // engagement `shown_by` label is always `story_protected`.
+      // `slot_bucket` mirrors the same `(kind, is_unlabeled)` key
+      // `composeMenu` would have used.
+      baselineVersion: dbRow.baseline_version,
+      slotBucket: `${dbRow.kind}:${
+        dbRow.kind === "HttpThreat" &&
+        (dbRow.selector_tags ?? []).includes("unlabeled-cluster")
+      }`,
+      shownBy: "story_protected" as const,
     };
   });
 
@@ -498,6 +531,11 @@ async function loadCustomerSlice(
         customerId,
         protectedByStory: dbRow.protected_by_story === true,
         rowKey: `${customerId}/${address}#${eventIdx}`,
+        // #588 baseline_version threaded so the engagement-action
+        // capture on `pivot_click` (which uses the detail panel's
+        // first row as the row-bound reference) can satisfy the
+        // schema-level `engagement_action_shape` CHECK.
+        baselineVersion: dbRow.baseline_version,
       };
       return scored;
     });
@@ -718,6 +756,7 @@ function menuRowsToScoredEvents(
   rows: ReadonlyArray<MenuRow>,
   dbRowByKey: ReadonlyMap<string, MenuCohortDbRow>,
   customerId: number,
+  shownBy: "quota" | "fallback",
 ): ScoredTriageEvent[] {
   return rows.map((row) => {
     const dbRow = dbRowByKey.get(row.eventKey);
@@ -733,6 +772,10 @@ function menuRowsToScoredEvents(
       score: row.baselineScore,
       customerId,
       rowKey: `${customerId}/${dbRow.event_key}`,
+      // #588 impression-metadata threading.
+      baselineVersion: dbRow.baseline_version,
+      slotBucket: `${dbRow.kind}:${dbRow.is_unlabeled}`,
+      shownBy,
     };
   });
 }
@@ -1087,8 +1130,17 @@ export async function loadTriagePeriod(
     const key = `${e.customerId}/${e.id}`;
     if (!eventsByKey.has(key)) eventsByKey.set(key, e);
   }
-  const events = Array.from(eventsByKey.values());
-  events.sort(compareScoredEvents);
+  const unrankedEvents = Array.from(eventsByKey.values());
+  unrankedEvents.sort(compareScoredEvents);
+  // #588 impression-metadata threading: assign each event its 1-based
+  // rank in the final merged union so the client's impression batch
+  // records the exact visible position. Rank is computed after the
+  // dedup + sort so it lines up with what the analyst sees, not with
+  // the per-tenant slice ordering.
+  const events: ScoredTriageEvent[] = unrankedEvents.map((e, idx) => ({
+    ...e,
+    rank: idx + 1,
+  }));
 
   // `storyProtectedDroppedCount`: count of in-window Story members
   // that did NOT reach the final union. Computed exactly by
@@ -1153,6 +1205,10 @@ export async function loadTriagePeriod(
     observedDenominatorTruncated,
     freshness,
     strictness,
+    // #588: per-menu-load UUID. The client posts this back as the
+    // schema-level idempotency key so a replay of the same load is a
+    // no-op at the database.
+    menuLoadId: randomUUID(),
   };
 }
 

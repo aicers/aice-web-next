@@ -22,6 +22,10 @@ import {
   type TriageLoadResult,
   type TriagePeriod,
 } from "@/lib/triage";
+import {
+  ENGAGEMENT_SURFACE_BASELINE,
+  postEngagementAction,
+} from "@/lib/triage/engagement";
 import type { TriageStory } from "@/lib/triage/story/types";
 import {
   parseTriageStrictnessHash,
@@ -249,7 +253,14 @@ export function TriageShell({
       }
     }
     if (next !== null && next !== initialStrictness) {
-      commitStrictness(next);
+      // Hydration restore (localStorage / share-link hash). The
+      // operator did not adjust the slider in this session, so we
+      // route through `commitStrictness` with `source: "hydration"`
+      // to update the URL + state without emitting a
+      // `strictness_change` engagement action — Phase 2 reads this
+      // action stream as analyst attention, and preference
+      // restores would inflate it.
+      commitStrictness(next, "hydration");
     }
   }, []);
 
@@ -268,7 +279,37 @@ export function TriageShell({
     });
   }
 
-  function commitStrictness(next: StrictnessStopId) {
+  function commitStrictness(
+    next: StrictnessStopId,
+    source: "slider" | "hydration" = "slider",
+  ) {
+    // #588 strictness_change engagement-action capture. Only the
+    // analyst-driven slider commit emits the action — mount-time
+    // hydration (localStorage / share-link hash reconciliation)
+    // also flows through this function to update the URL + state
+    // but must NOT inflate the action stream that Phase 2 reads
+    // as active engagement.
+    //
+    // Fire-and-forget per customer in the caller's scope so each
+    // tenant DB records its own row. The freshness list is the
+    // authoritative per-tenant scope summary — it covers exactly
+    // the customer ids `loadTriagePeriod` ran for, including
+    // admin scopes that enumerate every active customer.
+    if (
+      source === "slider" &&
+      next !== strictness &&
+      initialState.status === "ok"
+    ) {
+      for (const c of initialState.result.freshness.customers) {
+        postEngagementAction({
+          type: "strictness_change",
+          customerId: c.customerId,
+          surface: ENGAGEMENT_SURFACE_BASELINE,
+          strictnessFrom: strictness,
+          strictnessTo: next,
+        });
+      }
+    }
     setStrictness(next);
     let hashSuffix = "";
     try {

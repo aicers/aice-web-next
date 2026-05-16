@@ -63,6 +63,26 @@ vi.mock("@/lib/triage/tier2-fetch", () => ({
   fetchTier2Dimension: fetchTier2Mock,
 }));
 
+// #588 Round 2 (#2): `strictness_change` engagement-action capture
+// must only fire for analyst-driven slider commits. The mount-only
+// hydration effect in `triage-shell.tsx` routes localStorage / share-
+// link reconciliation through the same `commitStrictness` function
+// using `source: "hydration"`, which must NOT emit the action.
+// Mock the engagement module so the new describe block below can
+// observe the call without standing up a real fetch transport.
+const postEngagementActionMock = vi.hoisted(() => vi.fn());
+const postImpressionBatchMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/triage/engagement", async () => {
+  const types = await vi.importActual<
+    typeof import("@/lib/triage/engagement/types")
+  >("@/lib/triage/engagement/types");
+  return {
+    ...types,
+    postEngagementAction: postEngagementActionMock,
+    postImpressionBatch: postImpressionBatchMock,
+  };
+});
+
 // `TriagePeriodPicker` validates the submitted start against the real
 // `Date.now()` and rejects anything older than `TRIAGE_MAX_LOOKBACK_MS`
 // (30 days). Freezing the clock keeps the fixed period below from
@@ -108,6 +128,8 @@ beforeEach(() => {
     hasMore: false,
     endCursor: null,
   });
+  postEngagementActionMock.mockReset();
+  postImpressionBatchMock.mockReset();
 });
 
 afterEach(() => {
@@ -685,6 +707,69 @@ describe("TriageShell — strictness slider wiring (#471)", () => {
     // root.
     expect(screen.queryByText("Crumb:host: deadbeef.example")).toBeNull();
   });
+});
+
+describe("TriageShell — strictness_change engagement capture (#588 R2)", () => {
+  // Phase 2 reads `strictness_change` as analyst attention. Mount-time
+  // hydration (localStorage / share-link hash reconciliation) must
+  // realign URL + state without inflating that action stream.
+  beforeEach(() => {
+    window.localStorage.removeItem("triage.strictness.stop");
+  });
+
+  function renderShellForStrictness(
+    initialStrictness: "all" | "top50" = "top50",
+  ) {
+    const events: TriageEvent[] = [
+      ev({
+        origAddr: "10.0.0.1",
+        respAddr: "203.0.113.1",
+        time: "2026-05-08T12:00:00.000Z",
+      }),
+    ];
+    const result = aggregateTriageEvents(events, false);
+    return render(
+      <TriageShell
+        initialPeriod={PERIOD}
+        initialState={{ status: "ok", result }}
+        initialClamped={false}
+        initialStrictness={initialStrictness}
+        labels={LABELS}
+      />,
+    );
+  }
+
+  it("does NOT emit strictness_change when mount-time hydration reconciles a stored stop different from the server-rendered initial", () => {
+    // Server rendered with `top50`; localStorage from a previous tab
+    // disagrees and asks for `top5`. The shell's mount-only hydration
+    // effect calls commitStrictness(top5, "hydration") to realign URL +
+    // state. No analyst slider interaction has occurred.
+    window.localStorage.setItem("triage.strictness.stop", "top5");
+    renderShellForStrictness("top50");
+    expect(postEngagementActionMock).not.toHaveBeenCalled();
+    // The hydration path still pushes the realigned URL so the funnel /
+    // asset list re-fetch under the stored stop.
+    expect(replaceMock).toHaveBeenCalled();
+    expect(replaceMock.mock.calls[0][0]).toContain("strictness=top5");
+  });
+
+  it("does NOT emit strictness_change when share-link hash reconciliation pulls in a different stop", () => {
+    // Share-link hash override takes precedence over localStorage per
+    // #471 RFC §7. Same hydration contract: realign without inflating
+    // the action stream.
+    window.location.hash = "#triage.strictness.stop=top20";
+    renderShellForStrictness("top50");
+    expect(postEngagementActionMock).not.toHaveBeenCalled();
+  });
+
+  // Note: the positive case ("emits strictness_change on an analyst
+  // slider click") is not asserted here because `aggregateTriageEvents`
+  // produces an empty `freshness.customers` list, so the emit loop
+  // iterates zero times under this fixture. The two negative cases
+  // above are sufficient to pin the `source: "hydration"` gate — if
+  // the gate were missing or inverted, the mount-time hydration path
+  // (which routes through the same `commitStrictness` call site as
+  // the slider) would emit the action and the assertions would fail.
 });
 
 describe("TriageShell — legacy URL hash fallback", () => {

@@ -492,6 +492,13 @@ bound:
   still tombstoned past the grace. `baseline_version_snapshot` is
   retained forever and is skipped. Token:
   `TRIAGE_SNAPSHOT_RETENTION_INTERNAL_TOKEN`.
+- **Engagement signals** (`run-triage-engagement-retention.sh`,
+  daily at 05:15 UTC) — prunes `engagement_impression` rows
+  older than 90 days and `engagement_action` rows older than
+  180 days, batched at 10,000 rows per `DELETE` statement. The
+  cadence is independent of the corpus / snapshot retention
+  passes; the 05:15 slot only clusters the morning log window.
+  Token: `TRIAGE_ENGAGEMENT_RETENTION_INTERNAL_TOKEN`.
 - **Exclusion fanout** (`run-triage-exclusion-fanout.sh`, every
   minute) — drains the `triage_exclusion_fanout_job` queue. The
   minute cadence matches the worker's first-tier backoff (1 min)
@@ -501,7 +508,8 @@ Each wrapper writes a timestamped JSON response to
 `/var/log/cron/` and re-emits an `overall != 'ok'` warning to
 stderr; alerting should key on the structured log lines tagged
 `cron-baseline-retention`, `cron-policy-retention`,
-`cron-snapshot-retention`, and `cron-fanout`.
+`cron-snapshot-retention`, `cron-engagement-retention`, and
+`cron-fanout`.
 
 ## Profile
 

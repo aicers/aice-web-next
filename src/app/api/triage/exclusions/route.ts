@@ -8,6 +8,11 @@ import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import { hasPermission } from "@/lib/auth/permissions";
 import { query, withTransaction } from "@/lib/db/client";
+import {
+  ENGAGEMENT_SURFACE_BASELINE,
+  type EngagementAction,
+} from "@/lib/triage/engagement";
+import { ingestEngagementAction } from "@/lib/triage/engagement/ingest";
 import { insertCustomerDrainFailureSentinel } from "@/lib/triage/exclusion/recovery";
 import {
   acquireCustomerCadenceLock,
@@ -272,6 +277,32 @@ export const POST = withAuth(
           sentinelErr,
         );
       }
+    }
+
+    // #588 exclusion_create engagement-action capture. Normalized
+    // separately from the audit log: the audit row is short-lived
+    // operational data while the engagement row is long-lived
+    // analytics. Failures are swallowed — engagement signals must
+    // never block the exclusion write.
+    const engagementAction: EngagementAction = {
+      type: "exclusion_create",
+      customerId,
+      surface: ENGAGEMENT_SURFACE_BASELINE,
+      exclusionId: row.id,
+    };
+    try {
+      await ingestEngagementAction(session.accountId, engagementAction);
+    } catch (engagementErr) {
+      const message =
+        engagementErr instanceof Error
+          ? engagementErr.message
+          : String(engagementErr);
+      console.error(
+        "[engagement] exclusion_create capture failed customer=%d exclusion=%s err=%s",
+        customerId,
+        row.id,
+        message,
+      );
     }
 
     await auditLog.record({
