@@ -23,6 +23,8 @@ import "server-only";
 
 import type pg from "pg";
 
+import { EXTERNAL_KEY_MAX_LENGTH } from "@/lib/customers/external-key";
+
 /**
  * Maximum serialized size (UTF-8 bytes) for the inner payload of a
  * `phase2.refresh_window.v1` / `phase2.backfill.v1` queue entry.
@@ -35,17 +37,37 @@ import type pg from "pg";
 export const PHASE2_REFRESH_PAYLOAD_MAX_BYTES = 1 * 1024 * 1024;
 
 /**
- * Conservative byte reserve subtracted from the budget before
+ * Worst-case byte reserve subtracted from the budget before
  * sub-division so the post-augmentation payload (with the
  * `external_key` field that `buildPhase2Push` injects at signing
  * time — see `src/lib/aimer/phase2/orchestrate.ts:augmentPayload`)
  * still fits the stated cap. The drain measures the body it actually
  * signs, not the queued JSONB; without a reserve a payload that
  * fits locally can exceed the cap once `,"external_key":"…"` is
- * added. 256 bytes covers any reasonable customer external_key
- * (RFC 0002 §6 keeps it short) plus the surrounding JSON syntax.
+ * added.
+ *
+ * Derivation:
+ *
+ *   - `external_key` is validated to ≤ `EXTERNAL_KEY_MAX_LENGTH` JS
+ *     code units (UTF-16). Each code unit can contribute at most
+ *     {@link EXTERNAL_KEY_MAX_UTF8_BYTES_PER_CODE_UNIT} bytes to the
+ *     serialized JSON string: 3 bytes for a single BMP code point
+ *     (e.g. CJK ideograph encoded as UTF-8), which dominates the
+ *     2-byte cost of a JSON-escaped `"` or `\\`. Surrogate-pair code
+ *     points cost 2 bytes per code unit (4 bytes total for 2 units),
+ *     so the 3-byte BMP case is the strict upper bound.
+ *   - Plus the fixed JSON property overhead `,"external_key":""` so
+ *     the budget covers both the value and the syntax wrapping it.
+ *
+ * Computed (not hard-coded) so a future bump to `EXTERNAL_KEY_MAX_LENGTH`
+ * carries through without a silent under-reserve. With the current
+ * 256-character limit this evaluates to 786 bytes.
  */
-export const PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES = 256;
+const EXTERNAL_KEY_MAX_UTF8_BYTES_PER_CODE_UNIT = 3;
+const EXTERNAL_KEY_JSON_PROPERTY_OVERHEAD_BYTES = `,"external_key":""`.length;
+export const PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES =
+  EXTERNAL_KEY_MAX_LENGTH * EXTERNAL_KEY_MAX_UTF8_BYTES_PER_CODE_UNIT +
+  EXTERNAL_KEY_JSON_PROPERTY_OVERHEAD_BYTES;
 
 // ── Payload row shapes ─────────────────────────────────────────────
 

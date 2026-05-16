@@ -34,8 +34,13 @@ beforeEach(() => {
   mockVerifyToken.mockReset();
 });
 
-const FROM = "2026-05-01T00:00:00Z";
-const TO = "2026-05-08T00:00:00Z";
+// Relative to "now" rather than hard-coded calendar dates so the
+// success-path tests do not age out of the 180-day retention bound
+// the route enforces in `parseBody`. Using ~7 days back keeps the
+// window solidly inside the retention floor without bumping up against
+// the future-`to` rejection on the other side.
+const FROM = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+const TO = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString();
 
 function makeRequest(authHeader: string | undefined, body: unknown): Request {
   const headers = new Headers({ "content-type": "application/json" });

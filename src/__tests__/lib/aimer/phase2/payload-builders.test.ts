@@ -253,7 +253,7 @@ describe("phase2 payload builders", () => {
         stories,
         // Account for the external_key reserve so the test budget
         // stays meaningful.
-        maxBytes: 1500 + 256,
+        maxBytes: 1500 + PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
       });
       // Adjacency / boundary preserved.
       expect(payloads[0].window.from).toBe("2026-01-01T00:00:00.000Z");
@@ -318,8 +318,8 @@ describe("phase2 payload builders", () => {
         },
         baselineVersion: "v1",
         events,
-        // Effective budget after the 256-byte reserve is ~1700, too
-        // tight for two ~900-byte payloads in one window.
+        // Effective budget after the external_key reserve is ~1700,
+        // too tight for two ~900-byte payloads in one window.
         maxBytes: 1700 + PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
       });
       const roomy = buildBaselineRefreshPayloads({
@@ -335,6 +335,60 @@ describe("phase2 payload builders", () => {
       });
       expect(tight.payloads.length).toBeGreaterThanOrEqual(2);
       expect(roomy.payloads.length).toBe(1);
+    });
+
+    it("reserves enough headroom for a max-length multibyte external_key", () => {
+      // Simulate the worst-case `external_key`: 256 UTF-16 code units of
+      // a 3-byte UTF-8 BMP code point ("あ", U+3042). After JSON
+      // serialization this contributes 256 * 3 = 768 bytes of value
+      // plus the `,"external_key":""` syntax. The reserve must cover
+      // that entire augmentation, otherwise a payload packed up to
+      // `maxBytes - reserve` would exceed `maxBytes` once
+      // `orchestrate.augmentPayload` injects the field at signing time.
+      const worstCaseKey = "あ".repeat(256);
+      const augmentationBytes = Buffer.byteLength(
+        `,"external_key":${JSON.stringify(worstCaseKey)}`,
+        "utf8",
+      );
+      expect(PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES).toBeGreaterThanOrEqual(
+        augmentationBytes,
+      );
+
+      // End-to-end: a tight raw budget that the subdivider packs into
+      // one window. The augmented body MUST stay within the raw budget,
+      // proving the reserve absorbs the augmentation in practice.
+      const rawBudget =
+        Buffer.byteLength(
+          JSON.stringify({
+            window: {
+              kind: "baseline_event",
+              from: "2026-01-01T00:00:00.000Z",
+              to: "2026-01-01T01:00:00.000Z",
+            },
+            baseline_version: "v1",
+            events: [makeBaselineEvent(1, "2026-01-01T00:00:00.000Z")],
+          }),
+          "utf8",
+        ) + PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES;
+      const { payloads } = buildBaselineRefreshPayloads({
+        window: {
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-01-01T01:00:00.000Z",
+        },
+        baselineVersion: "v1",
+        events: [makeBaselineEvent(1, "2026-01-01T00:00:00.000Z")],
+        maxBytes: rawBudget,
+      });
+      expect(payloads).toHaveLength(1);
+      const augmented = {
+        ...payloads[0],
+        external_key: worstCaseKey,
+      };
+      const augmentedBytes = Buffer.byteLength(
+        JSON.stringify(augmented),
+        "utf8",
+      );
+      expect(augmentedBytes).toBeLessThanOrEqual(rawBudget);
     });
   });
 });
