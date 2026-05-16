@@ -252,6 +252,15 @@ describe("Phase 2 state helpers (state.ts)", () => {
     expect(call.params).toEqual([["5", "6"], "jti-1"]);
   });
 
+  it("markAcked clears any prior last_error so a later successful ack does not show a stale failure", async () => {
+    // Per #570 "success/failure observability": a successful ack on a
+    // queue notice must clear `last_error`, otherwise the 30-day audit
+    // surface keeps showing the failure string for a row that ultimately
+    // succeeded. This test pins the SQL to that contract.
+    await state.markAcked(1, ["5"], "jti-1");
+    expect(fake.calls[0].sql).toContain("last_error        = NULL");
+  });
+
   it("markAcked with empty rowIds is a no-op", async () => {
     await state.markAcked(1, [], "jti-1");
     expect(fake.calls.length).toBe(0);
@@ -424,15 +433,28 @@ describe("Phase 2 state helpers (state.ts)", () => {
 
   // ── Backlog estimation ──────────────────────────────────────
 
-  it("estimateBacklog('policy_event') returns pending count without bucket / lag", async () => {
+  it("estimateBacklog('policy_event') stays 'synced' for small pending queues (#570 threshold ≥10 → 'behind')", async () => {
     fake.setResponse(() => ({ rows: [{ count: "7" }], rowCount: 1 }));
     const est = await state.estimateBacklog(1, "policy_event");
     expect(est).toEqual({
-      bucket: "behind",
+      bucket: "synced",
       approximate_count: null,
       cursor_lag_seconds: null,
+      newest_unsent_event_time: null,
       pending_notice_count: 7,
     });
+  });
+
+  it("estimateBacklog('policy_event') escalates to 'behind' at ≥10 pending and 'way_behind' at ≥100", async () => {
+    fake.setResponse(() => ({ rows: [{ count: "12" }], rowCount: 1 }));
+    expect((await state.estimateBacklog(1, "policy_event")).bucket).toBe(
+      "behind",
+    );
+    fake.calls.length = 0;
+    fake.setResponse(() => ({ rows: [{ count: "150" }], rowCount: 1 }));
+    expect((await state.estimateBacklog(1, "policy_event")).bucket).toBe(
+      "way_behind",
+    );
   });
 
   it("estimateBacklog returns 'paused' when opportunistic_enabled is false", async () => {
@@ -463,8 +485,8 @@ describe("Phase 2 state helpers (state.ts)", () => {
     expect(est.bucket).toBe("paused");
   });
 
-  it("estimateBacklog returns 'way_behind' for very stale cursor", async () => {
-    const fourteenHoursAgo = new Date(Date.now() - 14 * 60 * 60 * 1000);
+  it("estimateBacklog returns 'way_behind' once cursor lag crosses the 1-hour threshold", async () => {
+    const seventyMinutesAgo = new Date(Date.now() - 70 * 60 * 1000);
     fake.setResponse((sql) => {
       if (sql.includes("FROM aimer_push_queue")) {
         return { rows: [{ count: "0" }], rowCount: 1 };
@@ -474,7 +496,7 @@ describe("Phase 2 state helpers (state.ts)", () => {
           rows: [
             {
               kind: "story",
-              last_pushed_event_time: fourteenHoursAgo,
+              last_pushed_event_time: seventyMinutesAgo,
               last_pushed_event_key: "1",
               last_synced_at: null,
               last_error: null,
@@ -490,6 +512,66 @@ describe("Phase 2 state helpers (state.ts)", () => {
     });
     const est = await state.estimateBacklog(1, "story");
     expect(est.bucket).toBe("way_behind");
+  });
+
+  it("estimateBacklog returns 'behind' between the 5-minute and 1-hour thresholds", async () => {
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_queue")) {
+        return { rows: [{ count: "0" }], rowCount: 1 };
+      }
+      if (sql.includes("FROM aimer_push_state")) {
+        return {
+          rows: [
+            {
+              kind: "story",
+              last_pushed_event_time: tenMinutesAgo,
+              last_pushed_event_key: "1",
+              last_synced_at: null,
+              last_error: null,
+              opportunistic_enabled: true,
+              paused_at: null,
+              paused_by: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const est = await state.estimateBacklog(1, "story");
+    expect(est.bucket).toBe("behind");
+  });
+
+  it("estimateBacklog stays 'synced' when a small pending count would have flipped the old per-row threshold", async () => {
+    // Old behavior: any positive pending_notice_count → behind. New
+    // #570 contract: <10 pending notices is still 'synced' as long as
+    // the cursor is fresh.
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_queue")) {
+        return { rows: [{ count: "3" }], rowCount: 1 };
+      }
+      if (sql.includes("FROM aimer_push_state")) {
+        return {
+          rows: [
+            {
+              kind: "story",
+              last_pushed_event_time: new Date(Date.now() - 60 * 1000),
+              last_pushed_event_key: "9",
+              last_synced_at: new Date(),
+              last_error: null,
+              opportunistic_enabled: true,
+              paused_at: null,
+              paused_by: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const est = await state.estimateBacklog(1, "story");
+    expect(est.bucket).toBe("synced");
   });
 
   it("estimateBacklog returns 'synced' for fresh cursor and empty queue", async () => {
@@ -518,6 +600,127 @@ describe("Phase 2 state helpers (state.ts)", () => {
     });
     const est = await state.estimateBacklog(1, "baseline_event");
     expect(est.bucket).toBe("synced");
+  });
+
+  it("estimateBacklog('baseline_event') runs a fast-path COUNT over baseline_triaged_event past the cursor", async () => {
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_queue")) {
+        return { rows: [{ count: "0" }], rowCount: 1 };
+      }
+      if (sql.includes("FROM aimer_push_state")) {
+        return {
+          rows: [
+            {
+              kind: "baseline_event",
+              last_pushed_event_time: new Date("2026-05-10T00:00:00Z"),
+              last_pushed_event_key: "100",
+              last_synced_at: new Date(),
+              last_error: null,
+              opportunistic_enabled: true,
+              paused_at: null,
+              paused_by: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM baseline_triaged_event")) {
+        return {
+          rows: [
+            {
+              count: "237",
+              newest_unsent_event_time: "2026-05-10T01:23:45Z",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const est = await state.estimateBacklog(1, "baseline_event");
+    expect(est.approximate_count).toBe(200); // rounded to nearest 100
+    expect(est.newest_unsent_event_time).toBe("2026-05-10T01:23:45Z");
+    const fastPath = fake.calls.find((c) =>
+      c.sql.includes("FROM baseline_triaged_event"),
+    );
+    expect(fastPath?.sql).toContain("(event_time, event_key)");
+    expect(fastPath?.sql).toContain("LIMIT $3");
+    expect(fastPath?.params?.[2]).toBe(state.BACKLOG_APPROXIMATE_COUNT_LIMIT);
+  });
+
+  it("estimateBacklog('baseline_event') saturates approximate_count at the LIMIT cap (≥1000 → 1000)", async () => {
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_queue")) {
+        return { rows: [{ count: "0" }], rowCount: 1 };
+      }
+      if (sql.includes("FROM aimer_push_state")) {
+        return {
+          rows: [
+            {
+              kind: "baseline_event",
+              last_pushed_event_time: new Date("2026-05-10T00:00:00Z"),
+              last_pushed_event_key: "100",
+              last_synced_at: new Date(),
+              last_error: null,
+              opportunistic_enabled: true,
+              paused_at: null,
+              paused_by: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM baseline_triaged_event")) {
+        return {
+          rows: [
+            {
+              count: String(state.BACKLOG_APPROXIMATE_COUNT_LIMIT),
+              newest_unsent_event_time: "2026-05-10T05:00:00Z",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const est = await state.estimateBacklog(1, "baseline_event");
+    expect(est.approximate_count).toBe(
+      state.BACKLOG_APPROXIMATE_COUNT_LIMIT - 1,
+    );
+    // Saturated source count escalates the bucket regardless of cursor lag.
+    expect(est.bucket).toBe("way_behind");
+  });
+
+  it("estimateBacklog('baseline_event') tolerates a missing source table by returning null counts", async () => {
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_queue")) {
+        return { rows: [{ count: "0" }], rowCount: 1 };
+      }
+      if (sql.includes("FROM aimer_push_state")) {
+        return {
+          rows: [
+            {
+              kind: "baseline_event",
+              last_pushed_event_time: new Date("2026-05-10T00:00:00Z"),
+              last_pushed_event_key: "100",
+              last_synced_at: new Date(),
+              last_error: null,
+              opportunistic_enabled: true,
+              paused_at: null,
+              paused_by: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM baseline_triaged_event")) {
+        throw new Error('relation "baseline_triaged_event" does not exist');
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const est = await state.estimateBacklog(1, "baseline_event");
+    expect(est.approximate_count).toBeNull();
+    expect(est.newest_unsent_event_time).toBeNull();
   });
 
   // ── Type sanity ──────────────────────────────────────────────

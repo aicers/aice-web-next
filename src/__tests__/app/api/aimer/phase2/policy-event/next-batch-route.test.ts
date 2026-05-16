@@ -194,6 +194,7 @@ describe("POST /api/aimer/phase2/policy-event/next-batch", () => {
       context_jti: null,
       aimer_endpoint_path: null,
       batch_jti: null,
+      schema_version: null,
     });
     expect(mockBuildPush).not.toHaveBeenCalled();
     expect(mockState.insertInflight).not.toHaveBeenCalled();
@@ -266,6 +267,7 @@ describe("POST /api/aimer/phase2/policy-event/next-batch", () => {
     expect(body.context_jti).toBe("jti-new");
     expect(body.batch_jti).toBe("jti-new");
     expect(body.aimer_endpoint_path).toBe("/api/phase2/withdraw");
+    expect(body.schema_version).toBe("phase2.withdraw.v1");
   });
 
   it("sets has_more=true when more rows remain past the batch limit", async () => {

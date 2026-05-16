@@ -65,7 +65,15 @@ interface SuccessBody {
   context_jti: string | null;
   aimer_endpoint_path: string | null;
   batch_jti: string | null;
+  /**
+   * Mirrors the envelope's `schema_version` claim per RFC 0002 §7
+   * "next-batch route contract". Null when no work / paused; otherwise
+   * the wire schema string the client logs alongside `batch_jti`.
+   */
+  schema_version: string | null;
 }
+
+const POLICY_EVENT_SCHEMA_VERSION = "phase2.withdraw.v1" as const;
 
 const EMPTY_BODY: SuccessBody = {
   has_more: false,
@@ -75,6 +83,7 @@ const EMPTY_BODY: SuccessBody = {
   context_jti: null,
   aimer_endpoint_path: null,
   batch_jti: null,
+  schema_version: null,
 };
 
 function jsonError(error: string, status: number): NextResponse {
@@ -161,7 +170,7 @@ export const POST = withAuth(
     // helper threads `external_key` from the customer record.
     const withdrawals = claimed.map((row) => row.payload);
     const tokens = await buildPhase2Push({
-      schemaVersion: "phase2.withdraw.v1",
+      schemaVersion: POLICY_EVENT_SCHEMA_VERSION,
       customerId,
       accountId: session.accountId,
       // `external_key` is overwritten by the orchestrator from the
@@ -190,6 +199,7 @@ export const POST = withAuth(
       // "Browser-driven drain loop" — surfaced under both names so the
       // client helper can read either field.
       batch_jti: tokens.context_jti,
+      schema_version: POLICY_EVENT_SCHEMA_VERSION,
     };
     return NextResponse.json(responseBody);
   },

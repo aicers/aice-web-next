@@ -85,13 +85,26 @@ export const PHASE2_QUEUE_KINDS_BY_DRAIN = {
 export const PHASE2_INFLIGHT_TTL_SECONDS = 120;
 
 /**
- * Threshold for the {@link estimateBacklog} bucket label
- * (RFC 0002 §7 "Backlog estimation"). The thresholds are intentionally
- * coarse — exact counts are expensive on large tables and not
- * actionable to operators.
+ * Thresholds for the {@link estimateBacklog} bucket label per #570
+ * "Backlog estimation". The thresholds are intentionally coarse —
+ * exact counts are expensive on large tables and not actionable to
+ * operators.
+ *
+ *   - synced     — `cursor_lag_seconds < 5 min` AND `pending_notice_count < 10`
+ *   - behind     — `cursor_lag_seconds < 1 hour` OR `pending_notice_count ≥ 10`
+ *   - way_behind — `cursor_lag_seconds ≥ 1 hour` OR `pending_notice_count ≥ 100`
  */
-const BACKLOG_BUCKET_BEHIND_SECONDS = 15 * 60; // 15 minutes
-const BACKLOG_BUCKET_WAY_BEHIND_SECONDS = 6 * 60 * 60; // 6 hours
+const BACKLOG_BUCKET_BEHIND_SECONDS = 5 * 60; // 5 minutes
+const BACKLOG_BUCKET_WAY_BEHIND_SECONDS = 60 * 60; // 1 hour
+const BACKLOG_PENDING_BEHIND_THRESHOLD = 10;
+const BACKLOG_PENDING_WAY_BEHIND_THRESHOLD = 100;
+
+/**
+ * Upper bound for the fast-path `approximate_count` query. Limiting at
+ * 1001 lets the helper distinguish "≥1000 unsent rows" from an exact
+ * smaller count while keeping the COUNT(*) cost bounded.
+ */
+export const BACKLOG_APPROXIMATE_COUNT_LIMIT = 1001;
 
 // ── Row shapes ─────────────────────────────────────────────────────
 
@@ -121,16 +134,23 @@ export interface AimerPushQueueRow {
 export interface BacklogEstimate {
   bucket: "synced" | "behind" | "way_behind" | "paused";
   /**
-   * Approximate row count behind the cursor, or `null` when even the
-   * coarse count is too expensive. The Settings indicator treats `null`
-   * as "no count, just bucket".
+   * Approximate row count behind the cursor (saturated at
+   * `BACKLOG_APPROXIMATE_COUNT_LIMIT - 1` — values at the cap mean
+   * "≥1000"), or `null` when no cursor / no source-table query for this
+   * kind. The Settings indicator treats `null` as "no count, just
+   * bucket".
    */
   approximate_count: number | null;
   /**
-   * Seconds between `last_pushed_event_time` and the latest row's
-   * `event_time`, or `null` when no cursor / no rows.
+   * Seconds between `last_pushed_event_time` and `NOW()`, or `null`
+   * when no cursor has been recorded.
    */
   cursor_lag_seconds: number | null;
+  /**
+   * `event_time` of the newest row past the cursor, or `null` when no
+   * source-table query for this kind / no unsent rows.
+   */
+  newest_unsent_event_time: string | null;
   /** Count of `aimer_push_queue` rows with `acked_at IS NULL`. */
   pending_notice_count: number;
 }
@@ -363,9 +383,12 @@ export async function claimPendingNotices(
 
 /**
  * Mark a set of queue rows as ack'd. Sets `acked_at = NOW()` and
- * `acked_context_jti = jti`. Idempotent: a row already ack'd is left
- * untouched (the original `acked_at` / `acked_context_jti` are
- * preserved so the first successful delivery is the canonical record).
+ * `acked_context_jti = jti`, and clears any stale `last_error` left by
+ * a prior failed attempt (per #570: a successful ack clears
+ * `last_error` so the 30-day audit / Settings status surface does not
+ * show an old failure on a row that ultimately succeeded). Idempotent:
+ * a row already ack'd is left untouched, preserving the canonical
+ * first-success record.
  */
 export async function markAcked(
   customerId: number,
@@ -378,7 +401,8 @@ export async function markAcked(
   await runner.query(
     `UPDATE aimer_push_queue
         SET acked_at          = NOW(),
-            acked_context_jti = $2
+            acked_context_jti = $2,
+            last_error        = NULL
       WHERE id = ANY($1::bigint[])
         AND acked_at IS NULL`,
     [rowIds, contextJti],
@@ -617,18 +641,20 @@ export async function pruneExpiredInflight(
 // ── Backlog estimation ─────────────────────────────────────────────
 
 /**
- * Coarse backlog estimate for the Settings indicator
- * (RFC 0002 §7 "Backlog estimation"). Bucket thresholds:
+ * Coarse backlog estimate for the Settings indicator per #570
+ * "Backlog estimation". Bucket thresholds:
  *
  *   - `paused`     — `opportunistic_enabled = FALSE`
- *   - `synced`     — cursor lag < 15 minutes AND no pending queue rows
- *   - `behind`     — cursor lag < 6 hours OR small pending queue
- *   - `way_behind` — cursor lag ≥ 6 hours OR large pending queue
+ *   - `synced`     — cursor lag `< 5 min` AND fewer than 10 pending notices
+ *   - `behind`     — cursor lag `< 1 hour` OR `≥ 10` pending notices
+ *   - `way_behind` — cursor lag `≥ 1 hour` OR `≥ 100` pending notices
  *
- * `approximate_count` is the count of rows behind the cursor; it is
- * `null` for the queue-only `policy_event` kind (no cursor) and may
- * be `null` for streaming kinds when the underlying source table
- * does not yet exist (early bring-up / no rows).
+ * `approximate_count` is a fast-path count of source rows past the
+ * cursor, capped at {@link BACKLOG_APPROXIMATE_COUNT_LIMIT} − 1 (values
+ * at the cap mean "≥1000"). Implemented for `baseline_event`
+ * (source: `baseline_triaged_event`); `story` keeps it `null` for now
+ * because the story drain route in #493 owns the source-table cursor
+ * mapping. `policy_event` is queue-only — no cursor, no source table.
  */
 export async function estimateBacklog(
   customerId: number,
@@ -647,11 +673,12 @@ export async function estimateBacklog(
 
   if (kind === "policy_event") {
     return {
-      // Queue-only: no cursor and no pause semantics. Display layer
-      // surfaces "pending notice count" instead of a bucket label.
-      bucket: pendingNoticeCount === 0 ? "synced" : "behind",
+      // Queue-only: no cursor, no pause, no source table. The bucket
+      // label reflects pending-notice depth alone.
+      bucket: bucketForPolicyEvent(pendingNoticeCount),
       approximate_count: null,
       cursor_lag_seconds: null,
+      newest_unsent_event_time: null,
       pending_notice_count: pendingNoticeCount,
     };
   }
@@ -662,21 +689,36 @@ export async function estimateBacklog(
       bucket: "paused",
       approximate_count: null,
       cursor_lag_seconds: null,
+      newest_unsent_event_time: null,
       pending_notice_count: pendingNoticeCount,
     };
   }
 
   const lagSeconds = computeCursorLag(state?.last_pushed_event_time ?? null);
-  const bucket = bucketForLag(lagSeconds, pendingNoticeCount);
+
+  let approximateCount: number | null = null;
+  let newestUnsentEventTime: string | null = null;
+  if (kind === "baseline_event") {
+    const fastPath = await fastPathBaselineBacklog(
+      pool,
+      state?.last_pushed_event_time ?? null,
+      state?.last_pushed_event_key ?? null,
+    );
+    approximateCount = fastPath.approximateCount;
+    newestUnsentEventTime = fastPath.newestUnsentEventTime;
+  }
+
+  const bucket = bucketForBacklog(
+    lagSeconds,
+    pendingNoticeCount,
+    approximateCount,
+  );
 
   return {
     bucket,
-    // Approximate count behind the cursor is computed by the streaming
-    // drain routes in #571 / #493 (each owns its source table). The
-    // Foundation helper exposes only the cursor lag + pending count;
-    // the bucket label is the operator-actionable signal per RFC 0002.
-    approximate_count: null,
+    approximate_count: approximateCount,
     cursor_lag_seconds: lagSeconds,
+    newest_unsent_event_time: newestUnsentEventTime,
     pending_notice_count: pendingNoticeCount,
   };
 }
@@ -688,20 +730,106 @@ function computeCursorLag(lastPushedEventTime: Date | null): number | null {
   return Math.max(0, Math.floor((now - cursorMs) / 1000));
 }
 
-function bucketForLag(
-  lagSeconds: number | null,
+function bucketForPolicyEvent(
   pendingNoticeCount: number,
 ): "synced" | "behind" | "way_behind" {
-  if (lagSeconds === null) {
-    // No cursor recorded yet — treat as "synced" for the bucket label
-    // unless there's a sizable queue backlog.
-    if (pendingNoticeCount > 100) return "way_behind";
-    if (pendingNoticeCount > 0) return "behind";
-    return "synced";
+  if (pendingNoticeCount >= BACKLOG_PENDING_WAY_BEHIND_THRESHOLD) {
+    return "way_behind";
   }
-  if (lagSeconds >= BACKLOG_BUCKET_WAY_BEHIND_SECONDS) return "way_behind";
-  if (lagSeconds >= BACKLOG_BUCKET_BEHIND_SECONDS || pendingNoticeCount > 0) {
-    return "behind";
-  }
+  if (pendingNoticeCount >= BACKLOG_PENDING_BEHIND_THRESHOLD) return "behind";
   return "synced";
+}
+
+function bucketForBacklog(
+  lagSeconds: number | null,
+  pendingNoticeCount: number,
+  approximateCount: number | null,
+): "synced" | "behind" | "way_behind" {
+  const lagWayBehind =
+    lagSeconds !== null && lagSeconds >= BACKLOG_BUCKET_WAY_BEHIND_SECONDS;
+  const pendingWayBehind =
+    pendingNoticeCount >= BACKLOG_PENDING_WAY_BEHIND_THRESHOLD;
+  // A saturated source-row count (≥ 1000 unsent rows) escalates to
+  // way_behind even when the cursor lag has not yet crossed the 1-hour
+  // line — large backlogs ship faster than wall-clock would suggest.
+  const sourceWayBehind =
+    approximateCount !== null &&
+    approximateCount >= BACKLOG_APPROXIMATE_COUNT_LIMIT - 1;
+  if (lagWayBehind || pendingWayBehind || sourceWayBehind) return "way_behind";
+
+  const lagBehind =
+    lagSeconds !== null && lagSeconds >= BACKLOG_BUCKET_BEHIND_SECONDS;
+  const pendingBehind = pendingNoticeCount >= BACKLOG_PENDING_BEHIND_THRESHOLD;
+  if (lagBehind || pendingBehind) return "behind";
+
+  return "synced";
+}
+
+/**
+ * Fast-path approximate-count + newest-unsent timestamp for the
+ * baseline drain, per #570 "Backlog estimation": LIMIT at
+ * {@link BACKLOG_APPROXIMATE_COUNT_LIMIT} so a saturated table answers
+ * in bounded work. When no cursor has been recorded yet the helper
+ * returns `(null, null)` so the bucket logic falls back to pure
+ * pending-notice depth.
+ */
+async function fastPathBaselineBacklog(
+  pool: pg.Pool,
+  cursorEventTime: Date | null,
+  cursorEventKey: string | null,
+): Promise<{
+  approximateCount: number | null;
+  newestUnsentEventTime: string | null;
+}> {
+  if (cursorEventTime === null || cursorEventKey === null) {
+    return { approximateCount: null, newestUnsentEventTime: null };
+  }
+  try {
+    const { rows } = await pool.query<{
+      count: string;
+      newest_unsent_event_time: string | null;
+    }>(
+      `WITH slice AS (
+         SELECT event_time
+           FROM baseline_triaged_event
+          WHERE (event_time, event_key) > ($1::timestamptz, $2::numeric)
+          ORDER BY event_time, event_key
+          LIMIT $3
+       )
+       SELECT COUNT(*)::text                          AS count,
+              MAX(event_time)::text                   AS newest_unsent_event_time
+         FROM slice`,
+      [cursorEventTime, cursorEventKey, BACKLOG_APPROXIMATE_COUNT_LIMIT],
+    );
+    const row = rows[0];
+    if (!row) {
+      return { approximateCount: 0, newestUnsentEventTime: null };
+    }
+    const raw = Number(row.count ?? "0");
+    return {
+      approximateCount: roundApproximate(raw),
+      newestUnsentEventTime: row.newest_unsent_event_time ?? null,
+    };
+  } catch {
+    // Fast path is best-effort. A missing table during early bring-up,
+    // or a planner timeout, should not break the bucket label that the
+    // Settings indicator depends on.
+    return { approximateCount: null, newestUnsentEventTime: null };
+  }
+}
+
+/**
+ * Coarse-round the approximate count per #570 "Backlog estimation"
+ * (rounded to nearest 100 / 1000 / 10000 depending on magnitude).
+ * Values at or above the LIMIT cap saturate at `LIMIT - 1` so the
+ * caller can treat the cap as "≥1000".
+ */
+function roundApproximate(raw: number): number {
+  if (raw <= 0) return 0;
+  if (raw >= BACKLOG_APPROXIMATE_COUNT_LIMIT) {
+    return BACKLOG_APPROXIMATE_COUNT_LIMIT - 1;
+  }
+  if (raw < 100) return Math.round(raw / 10) * 10;
+  if (raw < 1000) return Math.round(raw / 100) * 100;
+  return Math.round(raw / 1000) * 1000;
 }
