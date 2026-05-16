@@ -4,6 +4,7 @@ import {
   type BaselineRefreshEvent,
   buildBaselineRefreshPayloads,
   buildStoryRefreshPayloads,
+  PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
   PHASE2_REFRESH_PAYLOAD_MAX_BYTES,
   type StoryRefreshItem,
 } from "@/lib/aimer/phase2/payload-builders";
@@ -250,7 +251,9 @@ describe("phase2 payload builders", () => {
           to: "2026-01-01T01:00:00.000Z",
         },
         stories,
-        maxBytes: 1500,
+        // Account for the external_key reserve so the test budget
+        // stays meaningful.
+        maxBytes: 1500 + 256,
       });
       // Adjacency / boundary preserved.
       expect(payloads[0].window.from).toBe("2026-01-01T00:00:00.000Z");
@@ -259,13 +262,79 @@ describe("phase2 payload builders", () => {
       );
       // The two same-time stories land in one sub-window together.
       const groupSlice = payloads.find((p) =>
-        p.stories.some((s) => s.time_window_end === "2026-01-01T00:01:00.000Z"),
+        p.stories.some((s) => s.time_window.end === "2026-01-01T00:01:00.000Z"),
       );
       expect(groupSlice).toBeDefined();
       const sameEnd = groupSlice?.stories.filter(
-        (s) => s.time_window_end === "2026-01-01T00:01:00.000Z",
+        (s) => s.time_window.end === "2026-01-01T00:01:00.000Z",
       );
       expect(sameEnd).toHaveLength(2);
+    });
+
+    it("nests time_window and strips flat slicer-internal fields from wire payload", () => {
+      const { payloads } = buildStoryRefreshPayloads({
+        window: {
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-01-02T00:00:00.000Z",
+        },
+        stories: [makeStory(1, "2026-01-01T00:30:00.000Z")],
+      });
+      const story = payloads[0].stories[0];
+      expect(story.time_window).toEqual({
+        start: "2026-01-01T00:30:00.000Z",
+        end: "2026-01-01T00:30:00.000Z",
+      });
+      // Flat slicer-internal fields MUST NOT leak into the wire payload.
+      expect(
+        (story as Record<string, unknown>).time_window_end,
+      ).toBeUndefined();
+      expect(
+        (story as Record<string, unknown>).time_window_start,
+      ).toBeUndefined();
+    });
+  });
+
+  describe("external_key budget reserve", () => {
+    it("exposes the reserve so call sites can reason about effective budget", () => {
+      expect(PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES).toBeGreaterThan(0);
+      expect(PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES).toBeLessThan(
+        PHASE2_REFRESH_PAYLOAD_MAX_BYTES,
+      );
+    });
+
+    it("shrinks the effective baseline budget by the external_key reserve", () => {
+      // Two rows whose combined serialized payload sits between the
+      // raw budget and the post-reserve effective budget. Without the
+      // reserve subtraction both pack into one sub-window; with the
+      // reserve subtraction the subdivider must split.
+      const events = [
+        makeBaselineEvent(1, "2026-01-01T00:00:00.000Z", 800),
+        makeBaselineEvent(2, "2026-01-01T00:01:00.000Z", 800),
+      ];
+      const tight = buildBaselineRefreshPayloads({
+        window: {
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-01-01T01:00:00.000Z",
+        },
+        baselineVersion: "v1",
+        events,
+        // Effective budget after the 256-byte reserve is ~1700, too
+        // tight for two ~900-byte payloads in one window.
+        maxBytes: 1700 + PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
+      });
+      const roomy = buildBaselineRefreshPayloads({
+        window: {
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-01-01T01:00:00.000Z",
+        },
+        baselineVersion: "v1",
+        events,
+        // Generous: effective ~3700 is plenty for both rows in one
+        // window.
+        maxBytes: 3700 + PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
+      });
+      expect(tight.payloads.length).toBeGreaterThanOrEqual(2);
+      expect(roomy.payloads.length).toBe(1);
     });
   });
 });

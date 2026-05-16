@@ -34,6 +34,19 @@ import type pg from "pg";
  */
 export const PHASE2_REFRESH_PAYLOAD_MAX_BYTES = 1 * 1024 * 1024;
 
+/**
+ * Conservative byte reserve subtracted from the budget before
+ * sub-division so the post-augmentation payload (with the
+ * `external_key` field that `buildPhase2Push` injects at signing
+ * time — see `src/lib/aimer/phase2/orchestrate.ts:augmentPayload`)
+ * still fits the stated cap. The drain measures the body it actually
+ * signs, not the queued JSONB; without a reserve a payload that
+ * fits locally can exceed the cap once `,"external_key":"…"` is
+ * added. 256 bytes covers any reasonable customer external_key
+ * (RFC 0002 §6 keeps it short) plus the surrounding JSON syntax.
+ */
+export const PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES = 256;
+
 // ── Payload row shapes ─────────────────────────────────────────────
 
 /**
@@ -46,6 +59,21 @@ export const PHASE2_REFRESH_PAYLOAD_MAX_BYTES = 1 * 1024 * 1024;
  * baseline_version / etc.) that aimer-web mirrors alongside the
  * primary identity tuple. Passthrough at the schema level keeps
  * extra fields tolerable so the wire format can grow.
+ *
+ * **Scope note (push-time enrichment is layered on top, not here).**
+ * RFC 0002 §6 `phase2.baseline.v1` permits the optional push-time
+ * enrichment fields `raw_event`, `score_window_context`,
+ * `window_signals`, `asset_context`, and `scoring_weights_snapshot`.
+ * Those fields are derived at push time from sources outside the
+ * `baseline_triaged_event` corpus (review's RocksDB row store,
+ * window-aggregate signals, asset table, in-memory scoring weights)
+ * and are intentionally NOT populated here — this builder reads only
+ * from the local corpus. The streaming-kind drains in #571 (baseline)
+ * and #493 (story) layer enrichment on top of these shared row
+ * loaders before signing. The `baselineEvent` Zod schema is
+ * `passthrough()` precisely so the same shape is valid both with and
+ * without enrichment, and so refresh / backfill emit a schema-valid
+ * subset until #571 layers the optional enrichment back in.
  */
 export interface BaselineRefreshEvent {
   event_key: string;
@@ -55,21 +83,47 @@ export interface BaselineRefreshEvent {
 }
 
 /**
- * One entry in the `stories[]` array of a `phase2.refresh_window.v1` /
- * `phase2.backfill.v1` payload whose `window.kind === "story"`.
- *
- * Matches the schema's `storyItem` shape (decimal story_id,
- * non-empty story_version, kind, members) and additionally carries the
- * Story-row time fields (`time_window_start` / `time_window_end`) used
- * by the sub-divider to slice on the same column the streaming drain
- * advances its cursor on.
+ * In-memory Story row produced by {@link loadStoryRefreshRows}. The
+ * sub-divider slices on `time_window_end` so that field stays at the
+ * top level for grouping; the on-wire shape (nested `time_window`
+ * object, members carrying embedded `event` enrichment per RFC 0002
+ * §6 baseline-batch shape) is produced by {@link toWireStoryItem}
+ * before each sub-payload is serialized. Keeping the slicer's view
+ * and the wire view separate avoids leaking `time_window_start` /
+ * `time_window_end` into the outbound payload.
  */
 export interface StoryRefreshItem {
   story_id: string;
   story_version: string;
   kind: string;
-  members: Array<{ event_key: string; role: string; [extra: string]: unknown }>;
+  members: Array<{
+    event_key: string;
+    role: string;
+    event?: BaselineRefreshEvent;
+    [extra: string]: unknown;
+  }>;
+  time_window_start: string;
   time_window_end: string;
+  [extra: string]: unknown;
+}
+
+/**
+ * Wire-shape Story item embedded in `stories[]` of a
+ * `phase2.refresh_window.v1` / `phase2.backfill.v1` payload. Matches
+ * `storyItem` (RFC 0002 §6 / `phase2.story.v1` schema): nested
+ * `time_window: { start, end }` and member rows that may carry an
+ * embedded `event` object matching the baseline-event payload shape.
+ */
+export interface StoryWireItem {
+  story_id: string;
+  story_version: string;
+  kind: string;
+  time_window: { start: string; end: string };
+  members: Array<{
+    event_key: string;
+    role: string;
+    event?: BaselineRefreshEvent;
+  }>;
   [extra: string]: unknown;
 }
 
@@ -83,7 +137,7 @@ export interface BaselineRefreshSubPayload {
 
 export interface StoryRefreshSubPayload {
   window: { kind: "story"; from: string; to: string };
-  stories: StoryRefreshItem[];
+  stories: StoryWireItem[];
 }
 
 export interface SubdivideWarning {
@@ -296,7 +350,11 @@ export interface BuildBaselineRefreshInput {
 export function buildBaselineRefreshPayloads(
   input: BuildBaselineRefreshInput,
 ): SubdivideResult<BaselineRefreshSubPayload> {
-  const maxBytes = input.maxBytes ?? PHASE2_REFRESH_PAYLOAD_MAX_BYTES;
+  const rawBudget = input.maxBytes ?? PHASE2_REFRESH_PAYLOAD_MAX_BYTES;
+  const maxBytes = Math.max(
+    1,
+    rawBudget - PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
+  );
   return subdivide<BaselineRefreshEvent, BaselineRefreshSubPayload>(
     input.window,
     input.events,
@@ -331,7 +389,11 @@ export interface BuildStoryRefreshInput {
 export function buildStoryRefreshPayloads(
   input: BuildStoryRefreshInput,
 ): SubdivideResult<StoryRefreshSubPayload> {
-  const maxBytes = input.maxBytes ?? PHASE2_REFRESH_PAYLOAD_MAX_BYTES;
+  const rawBudget = input.maxBytes ?? PHASE2_REFRESH_PAYLOAD_MAX_BYTES;
+  const maxBytes = Math.max(
+    1,
+    rawBudget - PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
+  );
   return subdivide<StoryRefreshItem, StoryRefreshSubPayload>(
     input.window,
     input.stories,
@@ -342,10 +404,38 @@ export function buildStoryRefreshPayloads(
         from: subWindow.from,
         to: subWindow.to,
       },
-      stories: subRows,
+      stories: subRows.map(toWireStoryItem),
     }),
     maxBytes,
   );
+}
+
+/**
+ * Project a loader-shaped {@link StoryRefreshItem} into the on-wire
+ * `storyItem` shape RFC 0002 §6 specifies (nested `time_window`
+ * object; members keep optional `event` enrichment). Flat
+ * `time_window_start` / `time_window_end` fields are dropped so the
+ * outbound payload matches the schema's `storyItem` shape exactly
+ * and the receiver does not see slicer-internal columns.
+ */
+function toWireStoryItem(row: StoryRefreshItem): StoryWireItem {
+  const {
+    story_id,
+    story_version,
+    kind,
+    members,
+    time_window_start,
+    time_window_end,
+    ...rest
+  } = row;
+  return {
+    story_id,
+    story_version,
+    kind,
+    time_window: { start: time_window_start, end: time_window_end },
+    members,
+    ...rest,
+  };
 }
 
 // ── DB loaders (shared by rebuild + backfill route) ────────────────
@@ -483,8 +573,18 @@ interface StoryMemberRowSql {
  * are explicitly skipped per acceptance criteria.
  *
  * Each story carries its `members` array in payload shape
- * (decimal-string `event_key` + role) so the caller does not need a
- * second round-trip.
+ * (decimal-string `event_key`, role, and — when the underlying
+ * baseline row is still resident in the 180-day corpus — an embedded
+ * `event` object matching the baseline-event payload shape per RFC
+ * 0002 §6 `storyItem`). Members whose baseline row has been retention-
+ * swept fall back to the schema-minimal `{event_key, role}` pair, since
+ * `event_group_member` is intentionally not FK-linked to
+ * `baseline_triaged_event` (different retention windows; see
+ * `migrations/customer/0008_event_group_story.sql`). The flat
+ * `time_window_start` / `time_window_end` fields are kept on the
+ * in-memory shape so {@link buildStoryRefreshPayloads} can slice on
+ * `time_window_end`; the wire builder ({@link toWireStoryItem}) nests
+ * them into a `time_window: { start, end }` object before emission.
  */
 export async function loadStoryRefreshRows(
   client: pg.PoolClient,
@@ -529,17 +629,28 @@ export async function loadStoryRefreshRows(
       ORDER BY event_group_id, event_key`,
     [ids],
   );
+
+  const memberKeys = Array.from(new Set(memberRows.map((m) => m.event_key)));
+  const eventByKey = await loadBaselineEventsByKey(client, memberKeys);
+
   const membersByStory = new Map<
     string,
-    Array<{ event_key: string; role: string }>
+    Array<{
+      event_key: string;
+      role: string;
+      event?: BaselineRefreshEvent;
+    }>
   >();
   for (const m of memberRows) {
+    const event = eventByKey.get(m.event_key);
+    const memberItem = {
+      event_key: m.event_key,
+      role: m.role,
+      ...(event !== undefined ? { event } : {}),
+    };
     const arr = membersByStory.get(m.event_group_id);
-    if (arr) arr.push({ event_key: m.event_key, role: m.role });
-    else
-      membersByStory.set(m.event_group_id, [
-        { event_key: m.event_key, role: m.role },
-      ]);
+    if (arr) arr.push(memberItem);
+    else membersByStory.set(m.event_group_id, [memberItem]);
   }
 
   return storyRows.map((r) => ({
@@ -558,6 +669,89 @@ export async function loadStoryRefreshRows(
     last_sent_by: r.last_sent_by,
     send_count: r.send_count,
   }));
+}
+
+/**
+ * Look up baseline events for a set of `event_key`s, returning the
+ * payload-shaped row keyed by `event_key`. Used by
+ * {@link loadStoryRefreshRows} to embed member event details inline
+ * per RFC 0002 §6 `storyItem.members[].event`. Keys whose underlying
+ * row has been retention-swept (180-day corpus retention; see
+ * `migrations/customer/0008_event_group_story.sql`) are absent from
+ * the map; the caller treats absence as "schema-minimal member."
+ */
+async function loadBaselineEventsByKey(
+  client: pg.PoolClient,
+  eventKeys: readonly string[],
+): Promise<Map<string, BaselineRefreshEvent>> {
+  const map = new Map<string, BaselineRefreshEvent>();
+  if (eventKeys.length === 0) return map;
+  const { rows } = await client.query<{
+    event_key: string;
+    event_time: string;
+    kind: string;
+    sensor: string;
+    orig_addr: string | null;
+    orig_port: number | null;
+    resp_addr: string | null;
+    resp_port: number | null;
+    proto: number | null;
+    host: string | null;
+    dns_query: string | null;
+    uri: string | null;
+    category: string | null;
+    baseline_version: string;
+    exclusions_fp: string;
+    raw_score: number | null;
+    selector_tags: string[] | null;
+    payload_summary: unknown;
+  }>(
+    `SELECT event_key::text                  AS event_key,
+            to_char(event_time AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS event_time,
+            kind,
+            sensor,
+            host(orig_addr)::text            AS orig_addr,
+            orig_port,
+            host(resp_addr)::text            AS resp_addr,
+            resp_port,
+            proto,
+            host,
+            dns_query,
+            uri,
+            category,
+            baseline_version,
+            exclusions_fp,
+            raw_score,
+            selector_tags,
+            payload_summary
+       FROM baseline_triaged_event
+      WHERE event_key = ANY($1::numeric[])`,
+    [eventKeys],
+  );
+  for (const row of rows) {
+    map.set(row.event_key, {
+      event_key: row.event_key,
+      event_time: row.event_time,
+      kind: row.kind,
+      sensor: row.sensor,
+      orig_addr: row.orig_addr,
+      orig_port: row.orig_port,
+      resp_addr: row.resp_addr,
+      resp_port: row.resp_port,
+      proto: row.proto,
+      host: row.host,
+      dns_query: row.dns_query,
+      uri: row.uri,
+      category: row.category,
+      baseline_version: row.baseline_version,
+      exclusions_fp: row.exclusions_fp,
+      raw_score: row.raw_score,
+      selector_tags: row.selector_tags,
+      payload_summary: row.payload_summary,
+    });
+  }
+  return map;
 }
 
 /**
