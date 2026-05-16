@@ -307,6 +307,71 @@ describe("postPhase2Multipart", () => {
       contextJti: "jti-malformed",
     });
   });
+
+  it("throws schema when the ack context_jti does not match the originating push", async () => {
+    // The delayed-ack contract requires the receiver to echo the
+    // originating `context_jti` so the sender can ack-match the
+    // response to the local batch. A mismatched JTI must NOT be
+    // treated as a successful commit for the local rows.
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        withdrawn: 1,
+        not_found: 0,
+        received_at: "2026-05-16T00:00:00Z",
+        context_jti: "jti-someone-else",
+      }),
+    );
+    await expect(
+      postPhase2Multipart(
+        "https://aimer.example.com/api/phase2/withdraw",
+        tokens("jti-right"),
+        "phase2.withdraw.v1",
+      ),
+    ).rejects.toMatchObject({
+      kind: "schema",
+      contextJti: "jti-right",
+    });
+  });
+
+  it("throws schema when the ack context_jti is missing", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        withdrawn: 1,
+        not_found: 0,
+        received_at: "2026-05-16T00:00:00Z",
+      }),
+    );
+    await expect(
+      postPhase2Multipart(
+        "https://aimer.example.com/api/phase2/withdraw",
+        tokens("jti-x"),
+        "phase2.withdraw.v1",
+      ),
+    ).rejects.toMatchObject({
+      kind: "schema",
+      contextJti: "jti-x",
+    });
+  });
+
+  it("throws schema when the ack received_at is missing", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        withdrawn: 1,
+        not_found: 0,
+        context_jti: "jti-x",
+      }),
+    );
+    await expect(
+      postPhase2Multipart(
+        "https://aimer.example.com/api/phase2/withdraw",
+        tokens("jti-x"),
+        "phase2.withdraw.v1",
+      ),
+    ).rejects.toMatchObject({
+      kind: "schema",
+      contextJti: "jti-x",
+    });
+  });
 });
 
 // ── drainOpportunisticPushQueue ────────────────────────────────────
@@ -835,6 +900,57 @@ describe("createPeriodicDrain", () => {
 
     // After completion, the next interval fires the next drain.
     await vi.advanceTimersByTimeAsync(1_000);
+    await flushMicrotasks();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    ctrl.stop();
+  });
+
+  it("tick cadence is independent of drain completion: an overlapping drain does not postpone the next tick by a full extra interval", async () => {
+    // Regression: the timer must be armed alongside the immediate
+    // drain on start, and rearming must happen at tick time — not at
+    // drain completion. Otherwise, a drain that runs longer than
+    // intervalMs would push every subsequent tick out by the full
+    // extra interval after completion, defeating "fire every
+    // intervalMs" semantics. Single-flight is preserved: the in-flight
+    // tick is skipped, but cadence proceeds.
+    setVisibility("visible");
+    let resolveFirst: (v: Response) => void = () => {};
+    fetchSpy.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    fetchSpy.mockResolvedValue(
+      jsonResponse(makeNextBatch({ has_more: false })),
+    );
+
+    const ctrl = createPeriodicDrain("policy_event", 42, {
+      intervalMs: 1_000,
+    });
+    ctrl.start();
+    await flushMicrotasks();
+    // Immediate drain in flight at t=0.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Cadence tick at t=1000 — drain still in flight → single-flight skip.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushMicrotasks();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Resolve the blocked drain at t=1500 (between cadence ticks). The
+    // .finally must NOT reschedule from "now" — the next tick must
+    // remain anchored to the cadence (t=2000), not t=1500+1000.
+    await vi.advanceTimersByTimeAsync(500);
+    resolveFirst(jsonResponse(makeNextBatch({ has_more: false })));
+    await flushMicrotasks();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Advance the remaining 500ms to t=2000 → cadence tick fires →
+    // second drain runs. If cadence were anchored to completion, we
+    // would still be waiting until t=2500.
+    await vi.advanceTimersByTimeAsync(500);
     await flushMicrotasks();
     expect(fetchSpy).toHaveBeenCalledTimes(2);
 

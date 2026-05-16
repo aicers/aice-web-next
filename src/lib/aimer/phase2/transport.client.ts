@@ -117,11 +117,34 @@ function parsePushResult(
     });
   }
   const o = body as Record<string, unknown>;
-  const receivedAt = typeof o.received_at === "string" ? o.received_at : "";
-  const ackJti =
-    typeof o.context_jti === "string" && o.context_jti.length > 0
-      ? o.context_jti
-      : contextJti;
+  // Per RFC 0002 §6.x the receiver must echo `received_at` and the
+  // originating `context_jti`. The drain helper ack-matches on the
+  // echoed JTI to know which queue rows it just committed; a missing
+  // or mismatched value means the ack cannot be trusted to refer to
+  // *this* push, so we fail the schema rather than commit blindly.
+  if (typeof o.received_at !== "string" || o.received_at.length === 0) {
+    throw new Phase2PushError({
+      kind: "schema",
+      message: "aimer-web ack missing required field: received_at",
+      contextJti,
+    });
+  }
+  if (typeof o.context_jti !== "string" || o.context_jti.length === 0) {
+    throw new Phase2PushError({
+      kind: "schema",
+      message: "aimer-web ack missing required field: context_jti",
+      contextJti,
+    });
+  }
+  if (o.context_jti !== contextJti) {
+    throw new Phase2PushError({
+      kind: "schema",
+      message: `aimer-web ack context_jti (${o.context_jti}) does not match originating push (${contextJti})`,
+      contextJti,
+    });
+  }
+  const receivedAt = o.received_at;
+  const ackJti = o.context_jti;
 
   if (isInsertSchema(schemaVersion)) {
     if (
@@ -751,11 +774,15 @@ export interface CreatePeriodicDrainOptions {
 /**
  * Visibility-aware periodic wrapper around
  * {@link drainOpportunisticPushQueue}. Fires once on `start()` and
- * then every `intervalMs`. Pauses while the document is hidden
+ * arms a timer for every `intervalMs` thereafter; the timer cadence
+ * is independent of drain completion so that a slow drain does not
+ * postpone the next eligible tick by a full extra interval.
+ *
+ * Pauses while the document is hidden
  * (`document.visibilityState === 'hidden'`); resumes on visibility.
- * Single-flight: if a drain is in flight when the next interval
- * fires, the interval is skipped (the server's `has_more` flag will
- * pick it up on the next call).
+ * Single-flight: if a drain is in flight when the next cadence tick
+ * fires, that tick is skipped (no new drain is started), but the
+ * next cadence tick still fires `intervalMs` later.
  */
 export function createPeriodicDrain(
   kind: Phase2DrainKind,
@@ -781,7 +808,7 @@ export function createPeriodicDrain(
     }
   };
 
-  const schedule = () => {
+  const armTimer = () => {
     clearTimer();
     if (!running || isHidden()) return;
     timerId = setTimeout(onTick, intervalMs);
@@ -807,18 +834,18 @@ export function createPeriodicDrain(
       .finally(() => {
         inFlight = null;
         abortController = null;
-        schedule();
       });
     return inFlight;
   };
 
   const onTick = () => {
+    timerId = null;
     if (!running || isHidden()) return;
-    if (inFlight) {
-      // Single-flight: skip and reschedule.
-      schedule();
-      return;
-    }
+    // Rearm the cadence first so that a single-flight skip does not
+    // postpone the next tick by a full extra interval after the
+    // current drain finally completes.
+    armTimer();
+    if (inFlight) return;
     void runDrain();
   };
 
@@ -826,11 +853,12 @@ export function createPeriodicDrain(
     if (!running) return;
     if (isHidden()) {
       clearTimer();
-    } else if (!inFlight) {
-      void runDrain();
-    } else {
-      schedule();
+      return;
     }
+    if (!inFlight) {
+      void runDrain();
+    }
+    armTimer();
   };
 
   return {
@@ -842,6 +870,7 @@ export function createPeriodicDrain(
       }
       if (!isHidden()) {
         void runDrain();
+        armTimer();
       }
     },
     stop() {
