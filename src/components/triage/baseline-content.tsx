@@ -20,6 +20,11 @@ import type {
   TriageLoadResult,
   TriagePeriod,
 } from "@/lib/triage";
+import {
+  ENGAGEMENT_SURFACE_BASELINE,
+  postEngagementAction,
+  postImpressionBatch,
+} from "@/lib/triage/engagement";
 import { appendRecentKeyword } from "@/lib/triage/keywords";
 import {
   appendPivotStep,
@@ -373,6 +378,59 @@ export function TriageBaselineContent({
   useEffect(() => {
     onPivotTrailChange?.(hasPivotedAwayFromAsset(trail));
   }, [trail, onPivotTrailChange]);
+
+  // #588 impression-batch capture. Fired once per loaded menu — the
+  // server-generated `menuLoadId` is the schema-level idempotency
+  // key, so a React strict-mode double mount or a back-forward
+  // restore is a no-op at the database. Multi-customer scopes
+  // generate one batch per customer because the tables live in each
+  // tenant DB.
+  //
+  // biome-ignore lint/correctness/useExhaustiveDependencies: menuLoadId is the rotation trigger; events / strictness ride along with it
+  useEffect(() => {
+    if (result.menuLoadId === undefined) return;
+    if (result.events.length === 0) return;
+    const byCustomer = new Map<number, typeof result.events>();
+    for (const evt of result.events) {
+      if (
+        evt.baselineVersion === undefined ||
+        evt.slotBucket === undefined ||
+        evt.rank === undefined ||
+        evt.shownBy === undefined
+      ) {
+        // Defensive: rows without the impression metadata cannot be
+        // recorded. The server-side projection populates every row in
+        // `loadTriagePeriod`, so this branch is unreachable in
+        // production; emptyResult / aggregation-test paths fall here.
+        continue;
+      }
+      const list = byCustomer.get(evt.customerId);
+      if (list === undefined) byCustomer.set(evt.customerId, [evt]);
+      else list.push(evt);
+    }
+    for (const [customerId, evts] of byCustomer) {
+      postImpressionBatch({
+        menuLoadId: result.menuLoadId,
+        customerId,
+        surface: ENGAGEMENT_SURFACE_BASELINE,
+        strictnessStop: result.strictness,
+        periodStartIso: period.startIso,
+        periodEndIso: period.endIso,
+        impressions: evts.map((e) => ({
+          eventKey: e.id,
+          kind: e.__typename,
+          // biome-ignore lint/style/noNonNullAssertion: filtered above
+          slotBucket: e.slotBucket!,
+          // biome-ignore lint/style/noNonNullAssertion: filtered above
+          rank: e.rank!,
+          // biome-ignore lint/style/noNonNullAssertion: filtered above
+          baselineVersion: e.baselineVersion!,
+          // biome-ignore lint/style/noNonNullAssertion: filtered above
+          shownBy: e.shownBy!,
+        })),
+      });
+    }
+  }, [result.menuLoadId]);
 
   // Auto-dismiss the "Story saved" toast a few seconds after it
   // surfaces. The toast itself is also clickable (routes the
@@ -941,6 +999,14 @@ export function TriageBaselineContent({
 
   const onSelectAsset = useCallback(
     (focus: { customerId: number; address: string }) => {
+      // #588 asset_select engagement-action capture. Fire-and-forget;
+      // failures never propagate to the UI.
+      postEngagementAction({
+        type: "asset_select",
+        customerId: focus.customerId,
+        surface: ENGAGEMENT_SURFACE_BASELINE,
+        assetAddress: focus.address,
+      });
       setSelected(focus);
       // Selecting a new asset replaces the trail — selecting from the
       // asset list is a "fresh start", not a pivot. Story-origin trails
@@ -994,6 +1060,27 @@ export function TriageBaselineContent({
         args.members,
         args.story.customerId,
       );
+      // #588 story_pivot_click engagement-action capture. Fire-and-
+      // forget; failures never propagate. Uses the first Story member
+      // as the row-bound reference so the schema-level shape CHECK
+      // (event_key + story_id required) is satisfied.
+      const firstMember = events[0];
+      if (
+        firstMember !== undefined &&
+        firstMember.baselineVersion !== undefined
+      ) {
+        postEngagementAction({
+          type: "story_pivot_click",
+          customerId: args.story.customerId,
+          surface: ENGAGEMENT_SURFACE_BASELINE,
+          eventKey: firstMember.id,
+          kind: firstMember.__typename,
+          baselineVersion: firstMember.baselineVersion,
+          storyId: args.story.storyId,
+          dimension: args.dimension,
+          pivotValue: args.value.key,
+        });
+      }
       setStoryMemberEvents(events);
       setPivotOrigin({
         kind: "story",
@@ -1059,6 +1146,48 @@ export function TriageBaselineContent({
 
   const onPivot = useCallback(
     (step: PivotStep) => {
+      // #588 pivot_click / story_pivot_click engagement-action
+      // capture. The pivot click is a panel-level action against the
+      // currently-investigated asset (or Story); we use the asset
+      // detail panel's first event as the row-bound reference so the
+      // schema-level `engagement_action_shape` CHECK (which requires
+      // event_key for row-bound actions) is satisfied. Tier 2 fetch
+      // and breadcrumb append still run unconditionally below.
+      if (step.kind === "dimension") {
+        const representative =
+          pivotOrigin.kind === "story"
+            ? storyMemberEvents[0]
+            : effectiveAsset?.events[0];
+        if (
+          representative !== undefined &&
+          representative.baselineVersion !== undefined
+        ) {
+          if (pivotOrigin.kind === "story") {
+            postEngagementAction({
+              type: "story_pivot_click",
+              customerId: representative.customerId,
+              surface: ENGAGEMENT_SURFACE_BASELINE,
+              eventKey: representative.id,
+              kind: representative.__typename,
+              baselineVersion: representative.baselineVersion,
+              storyId: pivotOrigin.storyId,
+              dimension: step.dimension,
+              pivotValue: step.value.key,
+            });
+          } else {
+            postEngagementAction({
+              type: "pivot_click",
+              customerId: representative.customerId,
+              surface: ENGAGEMENT_SURFACE_BASELINE,
+              eventKey: representative.id,
+              kind: representative.__typename,
+              baselineVersion: representative.baselineVersion,
+              dimension: step.dimension,
+              pivotValue: step.value.key,
+            });
+          }
+        }
+      }
       // In Tier 2 mode, clicking a server-filtered dimension issues a
       // fresh fetch alongside the breadcrumb update so the next render
       // can splice the expanded events into the panel. Tier 1 clicks
@@ -1110,9 +1239,11 @@ export function TriageBaselineContent({
     },
     [
       abortHashRestore,
+      effectiveAsset,
       effectiveSelection,
       pivotOrigin,
       scope,
+      storyMemberEvents,
       tier2,
       tier2CorpusSeed,
       trail,
