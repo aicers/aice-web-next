@@ -122,6 +122,11 @@ export interface TriageStoryMemberDetail {
    *  `cume_dist()` cohort doesn't cover them, so a meaningful
    *  baseline_score is not defined. The UI renders `—`. */
   baselineScore: number | null;
+  /** `baseline_version` from `baseline_triaged_event`. Threaded
+   *  through to the pivot adapter so the Phase 1 engagement
+   *  capture (#588) can fire `story_pivot_click` rows — the action
+   *  shape CHECK requires `baseline_version` for row-bound actions. */
+  baselineVersion: string;
   /**
    * Story-protected marker eligibility (#471 §3). `true` when the
    * member would render the chain-link marker on the Story-detail

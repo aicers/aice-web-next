@@ -579,6 +579,11 @@ interface StoryMemberDetailRow {
    *  `event_time` falls outside the menu period so the read-time
    *  `cume_dist()` cohort doesn't cover them). */
   baseline_score: number | null;
+  /** Carried through to the Story-member pivot adapter so the
+   *  Phase 1 engagement-action capture (#588) can fire
+   *  `story_pivot_click` rows — the action shape CHECK requires
+   *  `baseline_version` for row-bound action rows. */
+  baseline_version: string;
 }
 
 export interface ListStoriesOptions {
@@ -733,6 +738,7 @@ export async function readStoryMemberDetail(
       uri: r.uri,
       category: r.category,
       baselineScore,
+      baselineVersion: r.baseline_version,
       protectedByStory:
         baselineScore !== null && cutoff > 0 && baselineScore < cutoff,
     };

@@ -228,13 +228,13 @@ describe("recordAction", () => {
       kind: "HttpThreat",
       baselineVersion: "phase1b-four-selector",
       storyId: "story-7",
-      dimension: "origAddr",
+      dimension: "externalIp",
       pivotValue: "10.0.0.1",
     });
 
     const params = pool.queries[0].params as unknown[];
     expect(params[0]).toBe("story_pivot_click");
-    expect(params[8]).toBe("origAddr"); // dimension
+    expect(params[8]).toBe("externalIp"); // dimension
     expect(params[10]).toMatch(/^[0-9a-f]{64}$/); // pivot_value_hmac
     expect(params[11]).toBe("story-7"); // story_id
   });
@@ -255,6 +255,77 @@ describe("recordAction", () => {
     expect(params[1]).toBeNull(); // event_key
     expect(params[2]).toBeNull(); // kind
     expect(params[12]).toBe("excl-99"); // exclusion_id
+  });
+
+  // Phase 2 joins/counts depend on equivalent pivot values producing the
+  // same HMAC. The dimension switch in `hmacForDimension` must be keyed
+  // to the actual `PivotDimensionId` strings the panel sends (#588 review
+  // round 1 item 3); a fall-through to `hmacNormalized(trim)` bypasses
+  // the IP/domain/fingerprint/country normalizers and fragments joins.
+  describe("hmacForDimension wiring (pivot-dimension normalization)", () => {
+    async function emitPivot(
+      dimension: string,
+      pivotValue: string,
+    ): Promise<string> {
+      const pool = makePool(1);
+      mockGetCustomerPool.mockResolvedValue(pool);
+      await recordAction("acct-hmac", {
+        type: "pivot_click",
+        customerId: 1,
+        surface: "baseline",
+        eventKey: "evt-1",
+        kind: "HttpThreat",
+        baselineVersion: "phase1b-four-selector",
+        dimension,
+        pivotValue,
+      });
+      return (pool.queries[0].params as unknown[])[10] as string;
+    }
+
+    it("externalIp / internalIp use the IP normalizer (leading-zero IPv4 → canonical)", async () => {
+      const canonical = await emitPivot("externalIp", "10.0.0.1");
+      // Leading-zero IPv4 form normalizes to the same HMAC.
+      const leadingZero = await emitPivot("externalIp", "010.000.000.001");
+      expect(leadingZero).toBe(canonical);
+      const internal = await emitPivot("internalIp", "010.000.000.001");
+      expect(internal).toBe(canonical);
+    });
+
+    it("registrableDomain / sni use the domain normalizer (punycode + lowercase + trailing-dot strip)", async () => {
+      const canonical = await emitPivot("registrableDomain", "example.com");
+      expect(await emitPivot("registrableDomain", "EXAMPLE.com.")).toBe(
+        canonical,
+      );
+      // sni rides the same normalizer so an SNI capture of the same
+      // host joins against the registrableDomain HMAC.
+      expect(await emitPivot("sni", "Example.COM")).toBe(canonical);
+    });
+
+    it("ja3 / ja3s use the fingerprint normalizer (lowercase hex)", async () => {
+      const canonical = await emitPivot(
+        "ja3",
+        "771,4865-4866-4867,0-23-65281,29-23-24,0",
+      );
+      const upper = await emitPivot(
+        "ja3",
+        "771,4865-4866-4867,0-23-65281,29-23-24,0".toUpperCase(),
+      );
+      expect(upper).toBe(canonical);
+      // ja3s — the registry uses lowercase id, not the old `ja3S`.
+      const ja3sCanonical = await emitPivot("ja3s", "abc123");
+      expect(await emitPivot("ja3s", "ABC123")).toBe(ja3sCanonical);
+    });
+
+    it("country uses the ISO-3166 alpha-2 uppercase normalizer", async () => {
+      const canonical = await emitPivot("country", "US");
+      expect(await emitPivot("country", "us")).toBe(canonical);
+    });
+
+    it("unknown dimensions fall through to the generic normalizer (trim only)", async () => {
+      const a = await emitPivot("brandNewDimensionId", "abc");
+      const b = await emitPivot("brandNewDimensionId", "  abc  ");
+      expect(a).toBe(b);
+    });
   });
 
   it("inserts a strictness_change with from/to stop names", async () => {

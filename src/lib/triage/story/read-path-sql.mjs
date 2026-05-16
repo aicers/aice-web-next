@@ -170,6 +170,7 @@ export const SELECT_STORY_MEMBERS_DETAIL_SQL = `WITH scored AS (
             b.dns_query,
             b.uri,
             b.category,
+            b.baseline_version,
             s.baseline_score::double precision AS baseline_score
        FROM event_group_member em
        JOIN baseline_triaged_event b USING (event_key)

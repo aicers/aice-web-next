@@ -123,6 +123,15 @@ interface BaselineEventDetailRow extends BaselineEventRow {
    * enforces condition (a) of the rule.
    */
   protected_by_story: boolean;
+  /**
+   * `baseline_version` carried through to the detail rows so the
+   * Phase 1 engagement-action capture (#588) can fire `pivot_click`
+   * on rows the analyst opens from the asset-detail panel — the
+   * panel-rooted pivot click uses `effectiveAsset.events[0]` as the
+   * row-bound reference and the action shape CHECK requires
+   * `baseline_version` for `pivot_click` rows.
+   */
+  baseline_version: string;
 }
 
 interface ProtectedCohortDbRow extends BaselineEventRow {
@@ -522,6 +531,11 @@ async function loadCustomerSlice(
         customerId,
         protectedByStory: dbRow.protected_by_story === true,
         rowKey: `${customerId}/${address}#${eventIdx}`,
+        // #588 baseline_version threaded so the engagement-action
+        // capture on `pivot_click` (which uses the detail panel's
+        // first row as the row-bound reference) can satisfy the
+        // schema-level `engagement_action_shape` CHECK.
+        baselineVersion: dbRow.baseline_version,
       };
       return scored;
     });

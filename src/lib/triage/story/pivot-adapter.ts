@@ -94,6 +94,13 @@ export function storyMemberToScoredEvent(
     // from the grouping pass. See module docstring for the #553 AC.
     score: member.baselineScore ?? 0,
     customerId,
+    // Carry baseline_version through so the Phase 1 engagement-
+    // action capture for `story_pivot_click` (#588) can satisfy the
+    // schema-level `engagement_action_shape` CHECK on row-bound
+    // actions. The pivot-from-Story handler reads `events[0]` as the
+    // row-bound reference; without this field the guard skips the
+    // emit silently.
+    baselineVersion: member.baselineVersion,
     // Carry the marker flag through to the pivot related-events panel
     // (#471 §3 / #596 Round 2 item 2). Story detail already computes
     // `member.protectedByStory` against the four-condition rule with

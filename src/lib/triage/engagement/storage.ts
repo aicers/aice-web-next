@@ -110,32 +110,40 @@ export async function recordAction(
 
 /**
  * Pick the right normalizer + HMAC for the pivot dimension. The
- * dimension labels mirror the Triage pivot index (`src/lib/triage/pivot`).
- * Unknown dimensions fall back to the generic path (trim only) — this
- * matches the "extensible taxonomy" intent without erroring out when
- * the pivot module adds a new dimension.
+ * dimension labels mirror the {@link PivotDimensionId} ids that the
+ * Triage pivot panel emits at click time (`src/lib/triage/pivot/dimensions.ts`).
+ * Keeping the switch keyed to those exact ids — rather than ad-hoc
+ * column names — is what makes the dimension-specific normalizers
+ * actually run: an IPv4 leading-zero form, an IPv6 non-canonical
+ * spelling, a punycode-vs-Unicode SNI, an uppercase JA3, etc. all
+ * collapse to the same HMAC join key. Falling back to
+ * {@link hmacNormalized} for an unknown id is intentional so a future
+ * pivot dimension (e.g. a new structured field) does not error out
+ * at write time, but the typed normalizers should cover every
+ * value-bearing dimension the panel actually fires.
  */
 function hmacForDimension(
   dimension: EngagementPivotDimension,
   rawValue: string,
 ): string {
   switch (dimension) {
-    case "origAddr":
-    case "respAddr":
+    case "externalIp":
+    case "internalIp":
+    case "dnsAnswer":
       return hmacIp(rawValue);
     case "host":
+    case "registrableDomain":
     case "dnsQuery":
-    case "serverName":
+    case "sni":
       return hmacDomain(rawValue);
     case "ja3":
-    case "ja3S":
+    case "ja3s":
     case "sshHassh":
     case "sshHasshServer":
     case "sshClient":
     case "sshServer":
       return hmacFingerprint(rawValue);
-    case "origCountry":
-    case "respCountry":
+    case "country":
       return hmacCountry(rawValue);
     default:
       return hmacNormalized(rawValue.trim());

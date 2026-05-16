@@ -470,6 +470,7 @@ function makeStoryMember(
     uri: null,
     category: "IMPACT",
     baselineScore: 0.91,
+    baselineVersion: "v1",
     protectedByStory: false,
     ...overrides,
   };

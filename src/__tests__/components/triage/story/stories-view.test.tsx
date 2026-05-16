@@ -279,6 +279,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "IMPACT",
         baselineScore: 0.92,
+        baselineVersion: "v1",
         protectedByStory: false,
       }),
     );
@@ -470,6 +471,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "IMPACT",
         baselineScore: 0.92,
+        baselineVersion: "v1",
         protectedByStory: false,
       },
       {
@@ -486,6 +488,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "EXFILTRATION",
         baselineScore: 0.71,
+        baselineVersion: "v1",
         protectedByStory: false,
       },
       {
@@ -502,6 +505,7 @@ describe("Story detail — dangling-member notice", () => {
         uri: null,
         category: "IMPACT",
         baselineScore: 0.65,
+        baselineVersion: "v1",
         protectedByStory: false,
       },
     ];
@@ -998,6 +1002,7 @@ describe("TriageStoryDetail — header identity", () => {
       uri: null,
       category: "IMPACT",
       baselineScore: 0.3,
+      baselineVersion: "v1",
       protectedByStory: true,
     };
     const unmarked: TriageStoryMemberDetail = {
@@ -1014,6 +1019,7 @@ describe("TriageStoryDetail — header identity", () => {
       uri: null,
       category: "IMPACT",
       baselineScore: 0.97,
+      baselineVersion: "v1",
       protectedByStory: false,
     };
     const loadDetail = vi.fn(async () => ({

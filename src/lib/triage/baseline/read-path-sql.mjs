@@ -230,6 +230,7 @@ export const SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL = `WITH scored AS (
               dns_query,
               uri,
               category,
+              baseline_version,
               cume_dist() OVER (
                 PARTITION BY kind, baseline_version
                 ORDER BY raw_score
@@ -267,6 +268,7 @@ export const SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL = `WITH scored AS (
             dns_query,
             uri,
             category,
+            baseline_version,
             baseline_score::double precision AS baseline_score,
             (baseline_score < $5 AND in_story) AS protected_by_story
        FROM filtered
