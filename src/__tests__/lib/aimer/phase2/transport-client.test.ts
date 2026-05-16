@@ -641,6 +641,61 @@ describe("drainOpportunisticPushQueue", () => {
     expect(result.stoppedReason).toBe("paused");
   });
 
+  it("stops with stoppedReason: 'max_batches' and commits the pending acked_context_jti before returning", async () => {
+    // Regression: hitting `maxBatchesPerActivation` after a successful
+    // batch with `has_more: true` must not orphan the previous batch's
+    // `acked_context_jti`. Without the commit, queue rows / cursor
+    // advancement stay inflight until server TTL prune.
+    const nextBatchBodies: Array<Record<string, unknown>> = [];
+    fetchSpy.mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = typeof url === "string" ? url : "";
+      if (u.endsWith("/api/aimer/phase2/policy-event/next-batch")) {
+        const body = JSON.parse((init?.body as string) ?? "{}");
+        nextBatchBodies.push(body);
+        if (!body.acked_context_jti && !body.failed_context_jti) {
+          return jsonResponse(
+            batchResponse({ jti: "jti-first", hasMore: true }),
+          );
+        }
+        // Commit ack after max-batches stop: server, not knowing the
+        // client is stopping, returns a fresh non-empty batch. The drain
+        // MUST NOT deliver it.
+        if (body.acked_context_jti === "jti-first") {
+          return jsonResponse(
+            batchResponse({ jti: "jti-fresh", hasMore: true }),
+          );
+        }
+        throw new Error(`unexpected next-batch body: ${init?.body as string}`);
+      }
+      if (u === "https://aimer.example.com/api/phase2/withdraw") {
+        return jsonResponse({
+          withdrawn: 3,
+          not_found: 0,
+          received_at: "t",
+          context_jti: "jti-first",
+        });
+      }
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    const result = await drainOpportunisticPushQueue("policy_event", 42, {
+      maxBatchesPerActivation: 1,
+    });
+
+    expect(result.stoppedReason).toBe("max_batches");
+    expect(result.batchesAttempted).toBe(1);
+    expect(result.batchesSucceeded).toBe(1);
+    expect(result.totalDelivered).toBe(3);
+    // The commit ack call was made (acked_context_jti=jti-first) and its
+    // response — a fresh non-empty batch — was discarded, not delivered.
+    expect(nextBatchBodies).toHaveLength(2);
+    expect(nextBatchBodies[1].acked_context_jti).toBe("jti-first");
+    const aimerCalls = fetchSpy.mock.calls.filter(
+      (c) => c[0] === "https://aimer.example.com/api/phase2/withdraw",
+    ).length;
+    expect(aimerCalls).toBe(1);
+  });
+
   it("honors a clean abort and does NOT thread failed_context_jti", async () => {
     const ac = new AbortController();
     const nextBatchBodies: unknown[] = [];
@@ -820,5 +875,36 @@ describe("createPeriodicDrain", () => {
     const result = await ctrl.forceNow();
     expect(result.stoppedReason).toBe("no_more");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("stop() aborts an in-flight forceNow() drain started without start()", async () => {
+    // Regression: `stop()` must abort an in-flight drain even when
+    // `start()` was never called — `forceNow()` is a supported entry
+    // point (Settings "Sync now"), and the controller contract says
+    // `stop()` aborts any in-flight drain.
+    setVisibility("visible");
+    let aborted = false;
+    fetchSpy.mockImplementationOnce(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          (init?.signal as AbortSignal).addEventListener("abort", () => {
+            aborted = true;
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+
+    const ctrl = createPeriodicDrain("policy_event", 42, {
+      intervalMs: 60_000,
+    });
+    // Kick off the drain without calling start().
+    const pending = ctrl.forceNow();
+    await flushMicrotasks();
+    expect(ctrl.isRunning()).toBe(false);
+
+    ctrl.stop();
+    await flushMicrotasks();
+    await pending;
+    expect(aborted).toBe(true);
   });
 });

@@ -557,7 +557,22 @@ export async function drainOpportunisticPushQueue(
   try {
     while (!signal.aborted) {
       if (batchIndex >= maxBatches) {
-        result.stoppedReason = "max_batches";
+        // Flush the previous batch's outcome to the server before
+        // returning. Otherwise a successful batch that pushed us up to
+        // `maxBatchesPerActivation` would never report `acked_context_jti`,
+        // leaving queue rows / cursor advancement inflight until TTL
+        // prune; symmetrically, an in-flight transient failure would
+        // never report `failed_context_jti`. The response body is
+        // discarded — the server may hand back a fresh batch since it
+        // does not know we are stopping, and we must not deliver it.
+        if (pendingAck && !signal.aborted) {
+          await sendFinalAck(pendingAck);
+          pendingAck = undefined;
+        } else if (pendingFailure && !signal.aborted) {
+          await sendCleanup(pendingFailure);
+          pendingFailure = undefined;
+        }
+        result.stoppedReason = signal.aborted ? "aborted" : "max_batches";
         break;
       }
 
@@ -830,7 +845,10 @@ export function createPeriodicDrain(
       }
     },
     stop() {
-      if (!running) return;
+      // Always abort an in-flight drain and clear the timer, even if
+      // `running` is false: `forceNow()` can start an in-flight drain
+      // without `start()`, and the controller contract says `stop()`
+      // aborts any in-flight drain.
       running = false;
       clearTimer();
       if (typeof document !== "undefined") {
