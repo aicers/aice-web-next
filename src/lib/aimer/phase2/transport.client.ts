@@ -215,79 +215,107 @@ export async function postPhase2Multipart(
     options.signal.addEventListener("abort", onCallerAbort, { once: true });
   }
 
-  let response: Response;
+  // The timeout and caller-abort wiring stays active until the response
+  // body has been fully consumed (or rejected). Browser `fetch`
+  // resolves as soon as headers arrive; the body promise is independent
+  // and would otherwise be unbounded by `timeoutMs` and unobservable to
+  // a caller abort.
   try {
-    response = await fetch(aimerEndpointUrl, {
-      method: "POST",
-      body: buildMultipartBody(tokens),
-      signal: timeoutController.signal,
-      // The aimer-web bridge is a different origin; the multipart
-      // request is preflight-safe (the only custom header is
-      // `Content-Type` set automatically by FormData) and aimer-web
-      // does not rely on cookies for auth.
-      credentials: "omit",
-      mode: "cors",
-    });
-  } catch (err) {
-    // Distinguish caller abort vs timeout vs network failure.
-    if (options.signal?.aborted) {
+    let response: Response;
+    try {
+      response = await fetch(aimerEndpointUrl, {
+        method: "POST",
+        body: buildMultipartBody(tokens),
+        signal: timeoutController.signal,
+        // The aimer-web bridge is a different origin; the multipart
+        // request is preflight-safe (the only custom header is
+        // `Content-Type` set automatically by FormData) and aimer-web
+        // does not rely on cookies for auth.
+        credentials: "omit",
+        mode: "cors",
+      });
+    } catch (err) {
+      // Distinguish caller abort vs timeout vs network failure.
+      if (options.signal?.aborted) {
+        throw new Phase2PushError({
+          kind: "aborted",
+          message: "push aborted by caller",
+          contextJti,
+          cause: err,
+        });
+      }
+      if (timeoutController.signal.aborted) {
+        throw new Phase2PushError({
+          kind: "timeout",
+          message: `push timed out after ${timeoutMs}ms`,
+          contextJti,
+          cause: err,
+        });
+      }
       throw new Phase2PushError({
-        kind: "aborted",
-        message: "push aborted by caller",
+        kind: "transport",
+        message:
+          err instanceof Error ? err.message : "network error during push",
         contextJti,
         cause: err,
       });
     }
-    if (timeoutController.signal.aborted) {
+
+    if (!response.ok) {
+      let bodyText = "";
+      try {
+        bodyText = await response.text();
+      } catch {
+        // Ignore — the status code is the primary signal. If the body
+        // read was aborted/timed out, the http error still represents
+        // the failure most usefully to the drain helper.
+      }
       throw new Phase2PushError({
-        kind: "timeout",
-        message: `push timed out after ${timeoutMs}ms`,
+        kind: "http",
+        message: `aimer-web responded ${response.status}`,
+        contextJti,
+        status: response.status,
+        body: bodyText,
+      });
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch (err) {
+      // Body read may fail because the timeout fired, the caller
+      // aborted after headers arrived, or the bytes are not valid JSON.
+      if (options.signal?.aborted) {
+        throw new Phase2PushError({
+          kind: "aborted",
+          message: "push aborted by caller during response body read",
+          contextJti,
+          cause: err,
+        });
+      }
+      if (timeoutController.signal.aborted) {
+        throw new Phase2PushError({
+          kind: "timeout",
+          message: `push timed out after ${timeoutMs}ms during response body read`,
+          contextJti,
+          cause: err,
+        });
+      }
+      throw new Phase2PushError({
+        kind: "schema",
+        message: "aimer-web response was not valid JSON",
         contextJti,
         cause: err,
       });
     }
-    throw new Phase2PushError({
-      kind: "transport",
-      message: err instanceof Error ? err.message : "network error during push",
-      contextJti,
-      cause: err,
-    });
+
+    return parsePushResult(schemaVersion, contextJti, parsed);
   } finally {
     clearTimeout(timeoutId);
     if (options.signal) {
       options.signal.removeEventListener("abort", onCallerAbort);
     }
   }
-
-  if (!response.ok) {
-    let bodyText = "";
-    try {
-      bodyText = await response.text();
-    } catch {
-      // Ignore — the status code is the primary signal.
-    }
-    throw new Phase2PushError({
-      kind: "http",
-      message: `aimer-web responded ${response.status}`,
-      contextJti,
-      status: response.status,
-      body: bodyText,
-    });
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = await response.json();
-  } catch (err) {
-    throw new Phase2PushError({
-      kind: "schema",
-      message: "aimer-web response was not valid JSON",
-      contextJti,
-      cause: err,
-    });
-  }
-
-  return parsePushResult(schemaVersion, contextJti, parsed);
 }
 
 // ── drainOpportunisticPushQueue ────────────────────────────────────
@@ -506,6 +534,26 @@ export async function drainOpportunisticPushQueue(
     }
   };
 
+  // Final `acked_context_jti` call after a success batch with
+  // `has_more: false`. The server commits queue rows + cursor
+  // advancement only when this ack arrives — without it, the un-acked
+  // rows stay inflight and re-surface after TTL, and the final
+  // streaming cursor slice never advances. The response body is
+  // intentionally discarded: the server may have claimed fresh rows in
+  // the meantime, but we are exiting the drain and must not deliver
+  // them on this activation.
+  const sendFinalAck = async (acked: string): Promise<void> => {
+    try {
+      await postNextBatch(
+        kind,
+        { customerId, acked_context_jti: acked },
+        signal,
+      );
+    } catch {
+      // swallow — inflight TTL handles cleanup if this call fails
+    }
+  };
+
   try {
     while (!signal.aborted) {
       if (batchIndex >= maxBatches) {
@@ -616,7 +664,11 @@ export async function drainOpportunisticPushQueue(
         pendingAck = tokens.context_jti;
         consecutiveFailures = 0;
         if (!response.has_more) {
-          result.stoppedReason = "exhausted";
+          if (!signal.aborted) {
+            await sendFinalAck(pendingAck);
+          }
+          pendingAck = undefined;
+          result.stoppedReason = signal.aborted ? "aborted" : "exhausted";
           break;
         }
         continue;

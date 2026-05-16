@@ -203,6 +203,97 @@ describe("postPhase2Multipart", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("propagates a caller abort that fires after headers but before body read completes", async () => {
+    // Browser `fetch` resolves once headers arrive; the body promise is
+    // independent. The helper must keep the caller-abort wiring active
+    // through the body read so a late abort is still observed.
+    fetchSpy.mockImplementation(
+      async (_url: string, init?: RequestInit): Promise<Response> => {
+        const requestSignal = init?.signal as AbortSignal;
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              const onAbort = () =>
+                reject(new DOMException("aborted", "AbortError"));
+              if (requestSignal.aborted) {
+                onAbort();
+              } else {
+                requestSignal.addEventListener("abort", onAbort, {
+                  once: true,
+                });
+              }
+            }),
+          text: () => Promise.resolve(""),
+        } as unknown as Response;
+      },
+    );
+
+    const ac = new AbortController();
+    const p = postPhase2Multipart(
+      "https://aimer.example.com/api/phase2/withdraw",
+      tokens("jti-late-abort"),
+      "phase2.withdraw.v1",
+      { signal: ac.signal, timeoutMs: 60_000 },
+    );
+    // Let fetch resolve so we are now waiting on response.json().
+    await Promise.resolve();
+    ac.abort();
+
+    await expect(p).rejects.toMatchObject({
+      kind: "aborted",
+      contextJti: "jti-late-abort",
+    });
+  });
+
+  it("throws timeout when the response body stalls past timeoutMs", async () => {
+    // The body promise here only rejects when the request signal aborts,
+    // mirroring how browsers tie stream reads to the request's signal.
+    // The helper's timeoutMs must continue to fence the body read.
+    fetchSpy.mockImplementation(
+      async (_url: string, init?: RequestInit): Promise<Response> => {
+        const requestSignal = init?.signal as AbortSignal;
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              requestSignal.addEventListener(
+                "abort",
+                () => reject(new DOMException("aborted", "AbortError")),
+                { once: true },
+              );
+            }),
+          text: () => Promise.resolve(""),
+        } as unknown as Response;
+      },
+    );
+
+    vi.useFakeTimers();
+    try {
+      const p = postPhase2Multipart(
+        "https://aimer.example.com/api/phase2/withdraw",
+        tokens("jti-slow-body"),
+        "phase2.withdraw.v1",
+        { timeoutMs: 250 },
+      );
+      // Attach the expectation up-front so the promise has a rejection
+      // handler before the timer fires (avoids an unhandled-rejection
+      // warning between rejection and the await below).
+      const expectation = expect(p).rejects.toMatchObject({
+        kind: "timeout",
+        contextJti: "jti-slow-body",
+      });
+      // Let the fetch microtask settle so we are now awaiting json().
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(300);
+      await expectation;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("throws a schema error on a malformed ack", async () => {
     fetchSpy.mockResolvedValue(jsonResponse({ foo: "bar" }));
     await expect(
@@ -236,13 +327,15 @@ describe("drainOpportunisticPushQueue", () => {
     // Sequence:
     // 1. next-batch → batch1 (has_more)
     // 2. POST aimer → ack { withdrawn: 2, not_found: 1 }
-    // 3. next-batch (acked) → batch2 (no more)
+    // 3. next-batch (acked=jti-1) → batch2 (no more)
     // 4. POST aimer → ack { withdrawn: 5, not_found: 0 }
-    // 5. next-batch (acked) → empty
+    // 5. next-batch (acked=jti-2) → empty   ← final commit ack
+    const nextBatchBodies: Array<Record<string, unknown>> = [];
     fetchSpy.mockImplementation(async (url: string, init?: RequestInit) => {
       const u = typeof url === "string" ? url : "";
       if (u.endsWith("/api/aimer/phase2/policy-event/next-batch")) {
         const body = JSON.parse((init?.body as string) ?? "{}");
+        nextBatchBodies.push(body);
         if (!body.acked_context_jti && !body.failed_context_jti) {
           return jsonResponse(batchResponse({ jti: "jti-1", hasMore: true }));
         }
@@ -292,6 +385,57 @@ describe("drainOpportunisticPushQueue", () => {
     expect(result.totalNoOp).toBe(1);
     expect(result.stoppedReason).toBe("exhausted");
     expect(progress).toEqual([2, 5]);
+
+    // The final batch (has_more: false) must still trigger a follow-up
+    // next-batch with acked_context_jti = last batch's jti — the server
+    // commits queue rows + the streaming cursor only on that ack.
+    expect(nextBatchBodies).toHaveLength(3);
+    expect(nextBatchBodies[2].acked_context_jti).toBe("jti-2");
+  });
+
+  it("sends the final acked_context_jti on a single-batch has_more=false drain", async () => {
+    // Regression test: when the very first next-batch returns
+    // has_more=false with work to do, the drain must still send a
+    // follow-up acked_context_jti call so the server commits queue
+    // rows / cursor advancement. Without it, the common one-batch
+    // case leaves rows inflight and re-delivers them after TTL.
+    const nextBatchBodies: Array<Record<string, unknown>> = [];
+    fetchSpy.mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = typeof url === "string" ? url : "";
+      if (u.endsWith("/api/aimer/phase2/policy-event/next-batch")) {
+        const body = JSON.parse((init?.body as string) ?? "{}");
+        nextBatchBodies.push(body);
+        if (!body.acked_context_jti && !body.failed_context_jti) {
+          return jsonResponse(
+            batchResponse({ jti: "jti-only", hasMore: false }),
+          );
+        }
+        if (body.acked_context_jti === "jti-only") {
+          return jsonResponse(makeNextBatch({ has_more: false }));
+        }
+        throw new Error(`unexpected next-batch body: ${init?.body as string}`);
+      }
+      if (u === "https://aimer.example.com/api/phase2/withdraw") {
+        return jsonResponse({
+          withdrawn: 4,
+          not_found: 0,
+          received_at: "t",
+          context_jti: "jti-only",
+        });
+      }
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    const result = await drainOpportunisticPushQueue("policy_event", 42, {
+      retriesPerBatch: 0,
+    });
+
+    expect(result.stoppedReason).toBe("exhausted");
+    expect(result.batchesSucceeded).toBe(1);
+    expect(result.totalDelivered).toBe(4);
+    // Two next-batch calls: initial fetch + final commit ack.
+    expect(nextBatchBodies).toHaveLength(2);
+    expect(nextBatchBodies[1].acked_context_jti).toBe("jti-only");
   });
 
   it("aggregates insert-shape acks correctly", async () => {
