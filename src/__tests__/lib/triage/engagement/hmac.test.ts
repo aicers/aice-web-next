@@ -105,10 +105,49 @@ describe("engagement HMAC key validation", () => {
     );
   });
 
-  it("rejects a too-short key", () => {
-    process.env.ENGAGEMENT_HMAC_KEY = "short";
+  it("rejects a non-base64 key (invalid alphabet)", () => {
+    // 64 chars but `!` is outside the base64 alphabet, so this is the
+    // arbitrary-UTF-8 string the previous guard let through.
+    process.env.ENGAGEMENT_HMAC_KEY = "!".repeat(64);
     _resetEngagementHmacKey();
-    expect(() => hmacIp("10.0.0.1")).toThrow(/too short/);
+    expect(() => hmacIp("10.0.0.1")).toThrow(/not valid base64/);
+  });
+
+  it("rejects a base64 key that decodes to <32 bytes", () => {
+    // `openssl rand -base64 24` produces a 32-char base64 string that
+    // decodes to only 24 random bytes — the issue called this out
+    // explicitly as the under-entropy footgun the previous guard
+    // accepted.
+    const twentyFourBytes = Buffer.alloc(24, 0x42).toString("base64");
+    expect(twentyFourBytes.length).toBe(32);
+    process.env.ENGAGEMENT_HMAC_KEY = twentyFourBytes;
+    _resetEngagementHmacKey();
+    expect(() => hmacIp("10.0.0.1")).toThrow(/24 bytes/);
+  });
+
+  it("accepts a standard base64 key of ≥32 bytes", () => {
+    const thirtyTwoBytes = Buffer.alloc(32, 0x7a).toString("base64");
+    process.env.ENGAGEMENT_HMAC_KEY = thirtyTwoBytes;
+    _resetEngagementHmacKey();
+    expect(() => hmacIp("10.0.0.1")).not.toThrow();
+  });
+
+  it("accepts a URL-safe base64 key of ≥32 bytes", () => {
+    // Buffer with bits that produce `+` and `/` characters in standard
+    // base64, then swapped to `-` / `_` for URL-safe form.
+    const raw = Buffer.from([
+      0xfb, 0xff, 0xbf, 0xfe, 0xff, 0xbf, 0xfe, 0xff, 0xbf, 0xfe, 0xff, 0xbf,
+      0xfe, 0xff, 0xbf, 0xfe, 0xff, 0xbf, 0xfe, 0xff, 0xbf, 0xfe, 0xff, 0xbf,
+      0xfe, 0xff, 0xbf, 0xfe, 0xff, 0xbf, 0xfe, 0xff, 0xbf, 0xfe, 0xff, 0xbf,
+    ]);
+    const urlSafe = raw
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    process.env.ENGAGEMENT_HMAC_KEY = urlSafe;
+    _resetEngagementHmacKey();
+    expect(() => hmacIp("10.0.0.1")).not.toThrow();
   });
 
   it("treats the cached key as load-once per process", () => {

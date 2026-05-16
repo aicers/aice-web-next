@@ -10,8 +10,11 @@ import { isIP } from "node:net";
  *   Read from `ENGAGEMENT_HMAC_KEY` at first use. Global (not per-
  *   tenant) because the engagement signals are long-lived analytics
  *   that may be aggregated across tenants in later phases. The value
- *   is treated as a UTF-8 string by `crypto.createHmac` — the
- *   recommended format is base64 of ≥32 random bytes.
+ *   MUST be base64 (standard or URL-safe) of ≥32 random bytes; the
+ *   helper decodes the env var and rejects invalid base64 or under-
+ *   entropy keys at runtime so a deploy with a typo or an
+ *   `openssl rand -base64 24` mistake fails fast instead of
+ *   pseudonymizing long-lived analytics rows with a weak secret.
  *
  * Normalization.
  *   Each dimension has a canonical form applied BEFORE the HMAC so
@@ -28,6 +31,13 @@ import { isIP } from "node:net";
  */
 
 const HMAC_ALGORITHM = "sha256";
+const MIN_KEY_BYTES = 32;
+
+// Standard and URL-safe base64 alphabets, with optional `=` padding.
+// `Buffer.from(raw, "base64")` silently strips invalid characters, so
+// we validate the shape with a regex before decoding to reject typos
+// and accidental UTF-8 strings that happen to be long enough.
+const BASE64_PATTERN = /^[A-Za-z0-9+/_-]+={0,2}$/;
 
 let cachedKey: Buffer | null = null;
 
@@ -39,12 +49,23 @@ function loadKey(): Buffer {
       "Missing environment variable: ENGAGEMENT_HMAC_KEY. Set it to base64 of ≥32 random bytes for engagement-signal pseudonymization.",
     );
   }
-  if (raw.length < 32) {
+  if (!BASE64_PATTERN.test(raw)) {
     throw new Error(
-      "ENGAGEMENT_HMAC_KEY is too short (need ≥32 chars / 24 bytes of entropy).",
+      "ENGAGEMENT_HMAC_KEY is not valid base64. Set it to base64 of ≥32 random bytes (e.g. `openssl rand -base64 48`).",
     );
   }
-  cachedKey = Buffer.from(raw, "utf8");
+  // Normalize URL-safe alphabet to standard so `Buffer.from` decodes
+  // both forms identically. Padding can be omitted for URL-safe; we
+  // leave that to `Buffer.from`'s base64 mode (it accepts unpadded
+  // input).
+  const standardized = raw.replace(/-/g, "+").replace(/_/g, "/");
+  const decoded = Buffer.from(standardized, "base64");
+  if (decoded.length < MIN_KEY_BYTES) {
+    throw new Error(
+      `ENGAGEMENT_HMAC_KEY decodes to only ${decoded.length} bytes; need ≥${MIN_KEY_BYTES} random bytes (e.g. \`openssl rand -base64 48\`).`,
+    );
+  }
+  cachedKey = decoded;
   return cachedKey;
 }
 

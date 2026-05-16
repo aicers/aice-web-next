@@ -29,7 +29,9 @@
 --   because the engagement store is analytics, and per-tenant keys
 --   would foreclose cross-tenant aggregate analysis Phase 2 may need.
 --   The value is base64 of ≥32 random bytes; the migration does not
---   enforce a length floor — the helper does at runtime.
+--   enforce the contract — the helper does at runtime, decoding the
+--   env var and rejecting invalid base64 or anything that decodes to
+--   under 32 random bytes.
 --
 --   Normalization.  Applied BEFORE HMAC by helper functions, never
 --   by the caller. Defined per dimension:
