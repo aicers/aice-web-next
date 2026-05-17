@@ -221,6 +221,22 @@ type TriageExclusionAction =
  */
 type TriageBaselineAction = "triage_baseline.rebuild";
 
+/**
+ * Triage policy-run manual Send-to-aimer action (#572).
+ *
+ * Emitted by the `policy-run/finalize` route after the full multi-batch
+ * Send has been acknowledged by aimer-web. The action is intrinsically
+ * customer-scoped — `policy_triage_run.id` is unique only within a
+ * customer DB, so the audit row carries `customerId` to make it
+ * surfaceable to the tenant operator in the audit-log viewer.
+ *
+ * Partial failures (any batch returns non-2xx, finalize never arrives,
+ * or terminal batch missing from `batch_acks`) do NOT emit — β tracking
+ * and audit are gated on the finalize call succeeding in the same
+ * transaction.
+ */
+type TriagePolicyRunAction = "triage.policy_run.send_to_aimer";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
@@ -239,7 +255,8 @@ export type AuditAction =
   | TriagePolicyAction
   | TriageStoryAction
   | TriageExclusionAction
-  | TriageBaselineAction;
+  | TriageBaselineAction
+  | TriagePolicyRunAction;
 
 /** Target entity types for audit events. */
 export type AuditTargetType =
@@ -253,7 +270,8 @@ export type AuditTargetType =
   | "service"
   | "triage_policy"
   | "triage_story"
-  | "triage_exclusion";
+  | "triage_exclusion"
+  | "triage_policy_run";
 
 /** Canonical runtime list of supported audit actions. */
 export const AUDIT_ACTIONS = [
@@ -326,6 +344,7 @@ export const AUDIT_ACTIONS = [
   "triage_exclusion.global_recover",
   "triage_exclusion.customer_recover",
   "triage_baseline.rebuild",
+  "triage.policy_run.send_to_aimer",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */
@@ -341,4 +360,5 @@ export const AUDIT_TARGET_TYPES = [
   "triage_policy",
   "triage_story",
   "triage_exclusion",
+  "triage_policy_run",
 ] as const satisfies readonly AuditTargetType[];

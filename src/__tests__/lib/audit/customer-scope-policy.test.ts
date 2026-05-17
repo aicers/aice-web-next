@@ -76,6 +76,7 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
       "triage_exclusion.fanout_failed",
       "triage_exclusion.customer_recover",
       "triage_baseline.rebuild",
+      "triage.policy_run.send_to_aimer",
     ];
     for (const action of expectedScoped) {
       expect(customerScopeForAction(action)).toBe("customer-scoped");
@@ -107,6 +108,7 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
       "triage_exclusion.fanout_failed",
       "triage_exclusion.customer_recover",
       "triage_baseline.rebuild",
+      "triage.policy_run.send_to_aimer",
     ]);
     for (const action of listAllAuditActions()) {
       if (!scopedActions.has(action)) {

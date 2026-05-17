@@ -291,7 +291,8 @@
       "triage_exclusion_fanout_failed": "Triage exclusion fanout failed",
       "triage_exclusion_global_recover": "Triage exclusion recover (global)",
       "triage_exclusion_customer_recover": "Triage exclusion recover (customer)",
-      "triage_baseline_rebuild": "Triage baseline rebuild"
+      "triage_baseline_rebuild": "Triage baseline rebuild",
+      "triage_policy_run_send_to_aimer": "Send policy run to aimer-web"
     },
     "targetTypes": {
       "account": "Account",
@@ -304,7 +305,8 @@
       "service": "Service",
       "triage_policy": "Triage Policy",
       "triage_story": "Story",
-      "triage_exclusion": "Triage Exclusion"
+      "triage_exclusion": "Triage Exclusion",
+      "triage_policy_run": "Triage Policy Run"
     }
   },
   "nodes": {

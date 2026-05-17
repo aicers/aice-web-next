@@ -145,6 +145,10 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   // exactly one customer-tenant DB per call; the route's required
   // `customerId` argument is the audit row's `customerId`.
   "triage_baseline.rebuild": "customer-scoped",
+  // Triage policy-run manual Send-to-aimer (#572). `policy_triage_run.id`
+  // is unique only inside a customer DB, so the audit row is intrinsically
+  // scoped to the customer the finalize route operated on.
+  "triage.policy_run.send_to_aimer": "customer-scoped",
 };
 
 /**
