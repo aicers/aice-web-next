@@ -26,6 +26,28 @@ export interface BucketAggregate {
   totalTagCardinality: number;
 }
 
+/**
+ * Per-bucket engagement aggregate carried into `composeMenu` per
+ * RFC 0003 §9.1. The menu loader executes the §7 aggregate SQL,
+ * applies §5.2 / §6 gates, and passes the resulting array. Absence
+ * (`bucketEngagement === undefined`) collapses the engagement term
+ * to zero — legacy callers, unit tests, and the kill-switch path.
+ */
+export interface BucketEngagement {
+  /** `${kind}:${is_unlabeled}` — same shape as {@link bucketKey}. */
+  bucketKey: string;
+  /** EWMA-weighted rate in [0, 1] over the active window (§5.3). */
+  engagementRate: number;
+  /**
+   * Raw `COUNT(*)` per the §5.2 `N_min` gate — NOT the EWMA-weighted
+   * denominator used in the rate. Below `perBucketMinImpressions`
+   * the engagement signal is suppressed for that bucket.
+   */
+  impressionCount: number;
+  /** 7 / 14 / 30 — for audit / debugging. */
+  windowDays: 7 | 14 | 30;
+}
+
 export interface ComposeMenuInput {
   postExclusionCount: number;
   bucketAggregates: ReadonlyArray<BucketAggregate>;
@@ -38,6 +60,19 @@ export interface ComposeMenuInput {
    * not opted into option (b).
    */
   defaultNMultiplier?: number | null;
+  /**
+   * RFC 0003 §9.1: per-bucket engagement aggregate. When absent the
+   * engagement term (§4 `γ · engagement_signal(b)`) is zero for
+   * every bucket — RFC 0001-equivalent.
+   */
+  bucketEngagement?: ReadonlyArray<BucketEngagement>;
+  /**
+   * RFC 0003 §8.1 — the `engagement_model_version` in effect at
+   * menu-load time. Threaded by the loader so the impression batch
+   * can stamp it on every row. Not consumed by `composeMenu`
+   * itself; carried for the caller's convenience.
+   */
+  engagementModelVersion?: string;
 }
 
 export interface AssembleResult {
@@ -80,6 +115,8 @@ export declare function computeDefaultN(postExclusionCount: number): number;
 export declare function computeBucketQuotas(
   aggregates: ReadonlyArray<BucketAggregate>,
   defaultN: number,
+  engagementSignalMap?: ReadonlyMap<string, number>,
+  gamma?: number,
 ): Map<string, number>;
 export declare function compareEventKeyDesc(a: string, b: string): number;
 export declare function composeMenu(input: ComposeMenuInput): AssembleResult;
@@ -106,9 +143,42 @@ export declare const _inlinedConstants: {
     MIN_NONZERO_FLOOR: number;
   };
   FAVORED_BUCKETS: ReadonlySet<string>;
+  ENGAGEMENT_TUNABLES: {
+    gamma: number;
+    perBucketMinImpressions: number;
+    ewmaHalfLifeWindowRatio: number;
+    explorationShare: number;
+    tenantColdStartMinImpressions: number;
+    includedShownBy: ReadonlyArray<string>;
+    engagedActions: ReadonlyArray<string>;
+    activeWindowsDays: ReadonlyArray<number>;
+    engagementModelVersion: string;
+  };
 };
 
 export declare const _testing: {
   tieBreakerCompare: (a: MenuRow, b: MenuRow) => number;
-  shareForBucket: (agg: BucketAggregate, maxCount: number) => number;
+  shareForBucket: (
+    agg: BucketAggregate,
+    maxCount: number,
+    engagementSignal: number,
+    gamma: number,
+  ) => number;
+  computeBucketQuotasWithExploration: (
+    aggregates: ReadonlyArray<BucketAggregate>,
+    defaultN: number,
+    engagementSignalMap: ReadonlyMap<string, number>,
+    gamma: number,
+    explorationShare: number,
+  ) => Map<string, number>;
+  buildEngagementSignalMap: (
+    bucketEngagement:
+      | ReadonlyArray<{
+          bucketKey: string;
+          engagementRate: number;
+          impressionCount: number;
+        }>
+      | undefined,
+    perBucketMinImpressions: number,
+  ) => Map<string, number>;
 };

@@ -130,11 +130,52 @@ describe("parseAction", () => {
         eventKey: "evt-1",
         kind: "HttpThreat",
         baselineVersion: "phase1b-four-selector",
+        menuLoadId: VALID_UUID,
         dimension: "host",
         pivotValue: "example.com",
       },
     });
     expect(action.type).toBe("pivot_click");
+  });
+
+  // #589 / RFC 0003 §2.2: row-bound actions must carry `menuLoadId`
+  // so the §7 aggregate's `(menu_load_id, event_key)` JOIN can
+  // recover the impression's authoritative `slot_bucket`.
+  it("rejects a pivot_click without menuLoadId", () => {
+    expect(() =>
+      parseAction({
+        kind: "action",
+        action: {
+          type: "pivot_click",
+          customerId: 7,
+          surface: "baseline",
+          eventKey: "evt-1",
+          kind: "HttpThreat",
+          baselineVersion: "phase1b-four-selector",
+          dimension: "host",
+          pivotValue: "example.com",
+        },
+      }),
+    ).toThrow(/menuLoadId/);
+  });
+
+  it("rejects a story_pivot_click without menuLoadId", () => {
+    expect(() =>
+      parseAction({
+        kind: "action",
+        action: {
+          type: "story_pivot_click",
+          customerId: 7,
+          surface: "baseline",
+          eventKey: "evt-1",
+          kind: "HttpThreat",
+          baselineVersion: "phase1b-four-selector",
+          storyId: "story-1",
+          dimension: "sameSensor",
+          pivotValueJoinId: "sensor-7",
+        },
+      }),
+    ).toThrow(/menuLoadId/);
   });
 
   it("rejects a pivot_click that omits both pivotValue and pivotValueJoinId", () => {
@@ -183,6 +224,7 @@ describe("parseAction", () => {
         eventKey: "evt-1",
         kind: "HttpThreat",
         baselineVersion: "phase1b-four-selector",
+        menuLoadId: VALID_UUID,
         storyId: "story-1",
         dimension: "sameSensor",
         pivotValueJoinId: "sensor-7",

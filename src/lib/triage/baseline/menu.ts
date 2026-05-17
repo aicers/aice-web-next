@@ -15,6 +15,7 @@
 export type {
   AssembleResult,
   BucketAggregate,
+  BucketEngagement,
   ComposeMenuInput,
   MenuRow,
   SlotBucket,

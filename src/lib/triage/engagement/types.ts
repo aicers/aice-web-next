@@ -125,6 +125,17 @@ export interface EngagementPivotClick {
   eventKey: string;
   kind: string;
   baselineVersion: string;
+  /**
+   * Phase 2 (#589 / RFC 0003 §2.2): pins the action to the menu
+   * load whose impression it engaged with. The pair
+   * `(menu_load_id, event_key)` is `engagement_impression`'s PK, so
+   * the §7 aggregate's numerator JOIN uses this column to recover
+   * the impression's `slot_bucket`. Required for any new row-bound
+   * action — the schema-level `engagement_action_shape` CHECK
+   * rejects writes without it (pre-expand legacy rows are
+   * grandfathered separately).
+   */
+  menuLoadId: string;
   dimension: EngagementPivotDimension;
   pivotValueJoinId?: string;
   pivotValue?: string;
@@ -137,6 +148,8 @@ export interface EngagementStoryPivotClick {
   eventKey: string;
   kind: string;
   baselineVersion: string;
+  /** See {@link EngagementPivotClick.menuLoadId}. */
+  menuLoadId: string;
   storyId: string;
   dimension: EngagementPivotDimension;
   pivotValueJoinId?: string;

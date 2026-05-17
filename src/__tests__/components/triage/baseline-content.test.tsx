@@ -334,6 +334,13 @@ function makeMultiCustomerResult(): TriageLoadResult {
     observedDenominatorTruncated: false,
     freshness: { worst: null, customers: [] },
     strictness: "top50",
+    // #589 / RFC 0003 §2.2: row-bound engagement actions
+    // (`pivot_click`, `story_pivot_click`) require `menuLoadId` so
+    // the §7 aggregate's `(menu_load_id, event_key)` JOIN can
+    // recover the impression's authoritative `slot_bucket`. The
+    // production loader always emits one; the test fixture mirrors
+    // that so pivot-click capture tests post their action.
+    menuLoadId: "00000000-0000-4000-8000-000000000001",
   };
 }
 

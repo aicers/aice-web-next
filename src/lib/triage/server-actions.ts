@@ -8,8 +8,10 @@ import { query as centralQuery } from "@/lib/db/client";
 import type { ThreatCategory } from "@/lib/detection";
 
 import { compareAssets } from "./aggregate";
+import { ENGAGEMENT_TUNABLES } from "./baseline/engagement-tunables";
 import {
   type BucketAggregate,
+  type BucketEngagement,
   bucketKey,
   compareEventKeyDesc,
   composeMenu,
@@ -28,6 +30,11 @@ import {
   TRIAGE_ASSET_DETAIL_LIMIT,
 } from "./baseline/read-path-sql.mjs";
 import { buildDispatchContext } from "./dispatch-context";
+import {
+  selectActiveWindowDays,
+  selectBucketEngagement,
+  tenantImpressionCount,
+} from "./engagement/aggregate";
 import type { TriagePeriod } from "./period";
 import { getCustomerPool } from "./policy/customer-db";
 import {
@@ -369,16 +376,22 @@ async function loadCustomerSlice(
   signal?.throwIfAborted();
 
   // §4/§6 menu cohort + branch B (#471 §1) + per-stop eligible
-  // counts (#471 §4) fan out in parallel — all three reads are
-  // independent and bounded. Branch B carries Story-protected rows
-  // that bypass both the SQL candidate cap and `composeMenu`'s
-  // per-bucket quota; the merge layer (`loadTriagePeriod`) applies
-  // a separate `STORY_PROTECTED_HARD_CAP` to the cross-tenant union.
-  const [cohort, protectedCohort, eligibleByStop] = await Promise.all([
-    selectMenuCohort(pool, period, signal),
-    selectStoryProtectedCohort(pool, period, menuCutoff, signal),
-    countEligibleByStop(pool, period, signal),
-  ]);
+  // counts (#471 §4) + Phase 2 engagement aggregate fan out in
+  // parallel — all reads are independent and bounded. Branch B
+  // carries Story-protected rows that bypass both the SQL candidate
+  // cap and `composeMenu`'s per-bucket quota; the merge layer
+  // (`loadTriagePeriod`) applies a separate `STORY_PROTECTED_HARD_CAP`
+  // to the cross-tenant union. The engagement aggregate is wired
+  // through for audit at the Phase 2a `γ = 0` first ship — the value
+  // is recorded but `composeMenu` multiplies it to zero per RFC §9.2
+  // (output stays byte-identical to RFC 0001).
+  const [cohort, protectedCohort, eligibleByStop, bucketEngagement] =
+    await Promise.all([
+      selectMenuCohort(pool, period, signal),
+      selectStoryProtectedCohort(pool, period, menuCutoff, signal),
+      countEligibleByStop(pool, period, signal),
+      loadBucketEngagementForLoader(pool, strictness, signal),
+    ]);
   const protectedRows = protectedCohort.rows;
   signal?.throwIfAborted();
 
@@ -386,6 +399,7 @@ async function loadCustomerSlice(
     cohort,
     menuCutoff,
     defaultNMultiplier,
+    bucketEngagement,
   );
   const menuRows = menuResult.rows;
   const dbRowByKey = new Map(cohort.candidates.map((r) => [r.event_key, r]));
@@ -721,6 +735,60 @@ function buildCohort(rows: ReadonlyArray<MenuCohortDbRow>): MenuCohort {
 }
 
 /**
+ * Phase 2 engagement aggregate read for the menu loader (RFC 0003
+ * §9.2). Skipped at the `"all"` stop (no quota allocation to weight)
+ * and gated on RFC §6's tenant cold-start floor.
+ *
+ * At Phase 2a's `γ = 0` first ship the result is recorded for audit
+ * but `composeMenu` multiplies it to zero, so any failure here cannot
+ * change menu output. The read is wrapped in a defensive try/catch so
+ * an issue on the audit substrate (e.g. a missing index, a corrupt
+ * snapshot row) never blocks a menu load — the menu degrades to RFC
+ * 0001-equivalent output, which is identical to the Phase 2a target.
+ */
+async function loadBucketEngagementForLoader(
+  pool: pg.Pool,
+  strictness: StrictnessStopId,
+  signal: AbortSignal | undefined,
+): Promise<BucketEngagement[] | undefined> {
+  if (strictness === "all") return undefined;
+  try {
+    const tenantCount = await tenantImpressionCount(pool, signal);
+    if (tenantCount < ENGAGEMENT_TUNABLES.tenantColdStartMinImpressions) {
+      return undefined;
+    }
+    // Window selection (RFC §3): longest active window with at
+    // least one tenant-wide engagement signal, where *active* means
+    // `now - engagement_capture_started_at ≥ W`. The fallback chain
+    // is `30d → 14d → 7d → cold-start`. A tenant that just crossed
+    // the §6 impression-count cold-start floor after a day of
+    // capture is still in window-cold-start for any W > 1d; using
+    // the 30d window here would silently lengthen the EWMA half-
+    // life to 15d when the tenant's actual capture age only
+    // supports a 3.5d half-life, and the snapshot's declared
+    // `selection_rule` would not match the implementation. With
+    // γ = 0 (Phase 2a) the choice does not affect menu output but
+    // the audit substrate and §11 calibration analysis still need
+    // the window to be the one the RFC describes.
+    const windowDays = await selectActiveWindowDays(pool, signal);
+    if (windowDays === undefined) return undefined;
+    return await selectBucketEngagement(
+      pool,
+      { windowDays, strictnessStop: strictness },
+      signal,
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") throw err;
+    console.warn(
+      `[triage] bucket engagement aggregate read failed; falling back to γ=0 (RFC 0001-equivalent): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return undefined;
+  }
+}
+
+/**
  * Run the §4/§6 composition over the SQL-delivered cohort aggregates
  * and per-bucket candidates. `menuCutoff` carries the strictness
  * slider's cutoff (#471); the "All" stop passes `0` (no additional
@@ -733,6 +801,7 @@ function composeMenuFromCohort(
   cohort: MenuCohort,
   menuCutoff: number,
   defaultNMultiplier: number | null,
+  bucketEngagement: ReadonlyArray<BucketEngagement> | undefined,
 ) {
   const candidates: MenuRow[] = cohort.candidates.map((r) => ({
     eventKey: r.event_key,
@@ -749,6 +818,7 @@ function composeMenuFromCohort(
     candidates,
     cutoff: menuCutoff,
     defaultNMultiplier,
+    bucketEngagement,
   });
 }
 
