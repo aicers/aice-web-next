@@ -23,6 +23,15 @@
  *
  *   - INSERT on observed_event_meta, baseline_triaged_event,
  *     event_group, event_group_member.
+ *   - INSERT on exclusion_snapshot and baseline_version_snapshot —
+ *     processFetchedPage unconditionally writes both snapshots
+ *     (`INSERT … ON CONFLICT DO NOTHING` keyed on fingerprint /
+ *     version) before any observed_event_meta / baseline_triaged_event
+ *     row in the page can reference them. The grants are required
+ *     even when the snapshot row for the current fingerprint /
+ *     version already exists, because the statement still has to be
+ *     syntactically authorised before ON CONFLICT DO NOTHING
+ *     short-circuits it.
  *   - INSERT on baseline_corpus_state — the runner always issues
  *     `INSERT INTO baseline_corpus_state (id) VALUES (true) ON CONFLICT
  *     (id) DO NOTHING` before the first fetch (mirroring cadence's
@@ -393,7 +402,7 @@ const RUNNER_OUTPUT_JSON = process.env.RUNNER_OUTPUT_JSON;
 
 describe("measure-step-f — end-to-end on a representative tenant", () => {
   it.skipIf(!RUNNER_TENANT)(
-    "walks the tenant, emits baseline + treated + advance samples per page, and leaves `observed_event_meta` / `baseline_triaged_event` / `event_group` / `event_group_member` / `baseline_corpus_state` byte-identical after the outer ROLLBACK",
+    "walks the tenant, emits baseline + treated + advance samples per page, and leaves `observed_event_meta` / `baseline_triaged_event` / `event_group` / `event_group_member` / `exclusion_snapshot` / `baseline_version_snapshot` / `baseline_corpus_state` byte-identical after the outer ROLLBACK",
     async () => {
       if (!RUNNER_TENANT) {
         throw new Error("unreachable: gated by skipIf");
@@ -479,6 +488,8 @@ interface StateSnapshot {
   baselineRowCount: number;
   eventGroupRowCount: number;
   eventGroupMemberRowCount: number;
+  exclusionSnapshotRowCount: number;
+  baselineVersionSnapshotRowCount: number;
   corpusStateRow: Record<string, unknown> | null;
 }
 
@@ -486,29 +497,45 @@ interface StateSnapshot {
  * Read the row-count + corpus-state snapshot the test plan compares
  * pre- and post-run. `baseline_corpus_state` is a single-row state
  * table, so row equality (not row-count parity) is the gate.
+ * `exclusion_snapshot` and `baseline_version_snapshot` are written
+ * unconditionally by `processFetchedPage` (ON CONFLICT DO NOTHING on
+ * fingerprint / version), so row-count parity is the right gate for
+ * verifying the outer ROLLBACK discarded any new fingerprint /
+ * version rows the run inserted.
  */
 async function readStateSnapshot(client: {
   query: (sql: string) => Promise<{ rows: Record<string, unknown>[] }>;
 }): Promise<StateSnapshot> {
-  const [observed, baseline, eventGroup, eventGroupMember, corpus] =
-    await Promise.all([
-      client.query(`SELECT COUNT(*)::bigint AS n FROM observed_event_meta`),
-      client.query(`SELECT COUNT(*)::bigint AS n FROM baseline_triaged_event`),
-      client.query(`SELECT COUNT(*)::bigint AS n FROM event_group`),
-      client.query(`SELECT COUNT(*)::bigint AS n FROM event_group_member`),
-      client.query(
-        `SELECT last_event_cursor, last_ingested_at, baseline_version,
+  const [
+    observed,
+    baseline,
+    eventGroup,
+    eventGroupMember,
+    exclusionSnap,
+    versionSnap,
+    corpus,
+  ] = await Promise.all([
+    client.query(`SELECT COUNT(*)::bigint AS n FROM observed_event_meta`),
+    client.query(`SELECT COUNT(*)::bigint AS n FROM baseline_triaged_event`),
+    client.query(`SELECT COUNT(*)::bigint AS n FROM event_group`),
+    client.query(`SELECT COUNT(*)::bigint AS n FROM event_group_member`),
+    client.query(`SELECT COUNT(*)::bigint AS n FROM exclusion_snapshot`),
+    client.query(`SELECT COUNT(*)::bigint AS n FROM baseline_version_snapshot`),
+    client.query(
+      `SELECT last_event_cursor, last_ingested_at, baseline_version,
                 exclusions_fp, last_run_status, last_error,
                 story_finalized_through, corpus_activated_at
            FROM baseline_corpus_state
           WHERE id = true`,
-      ),
-    ]);
+    ),
+  ]);
   return {
     observedRowCount: Number(observed.rows[0]?.n ?? 0),
     baselineRowCount: Number(baseline.rows[0]?.n ?? 0),
     eventGroupRowCount: Number(eventGroup.rows[0]?.n ?? 0),
     eventGroupMemberRowCount: Number(eventGroupMember.rows[0]?.n ?? 0),
+    exclusionSnapshotRowCount: Number(exclusionSnap.rows[0]?.n ?? 0),
+    baselineVersionSnapshotRowCount: Number(versionSnap.rows[0]?.n ?? 0),
     corpusStateRow: corpus.rows[0] ?? null,
   };
 }

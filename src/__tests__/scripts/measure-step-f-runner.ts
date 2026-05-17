@@ -19,6 +19,15 @@
  *
  *   - `INSERT` on `observed_event_meta`, `baseline_triaged_event`,
  *     `event_group`, `event_group_member`.
+ *   - `INSERT` on `exclusion_snapshot` and `baseline_version_snapshot`
+ *     — `processFetchedPage` unconditionally records both snapshots
+ *     (`INSERT … ON CONFLICT DO NOTHING` keyed on `fingerprint` and
+ *     `version` respectively) before any `observed_event_meta` /
+ *     `baseline_triaged_event` row in the page can reference them.
+ *     The grants are required even when the snapshot row for the
+ *     current fingerprint / version already exists, because the
+ *     statement still has to be syntactically authorised before
+ *     `ON CONFLICT DO NOTHING` short-circuits it.
  *   - `INSERT` on `baseline_corpus_state` — the runner always issues
  *     `INSERT INTO baseline_corpus_state (id) VALUES (true) ON CONFLICT
  *     (id) DO NOTHING` before the first fetch (mirroring cadence's
