@@ -41,6 +41,10 @@ vi.mock("@/lib/auth/ip", () => ({
 type Matcher = { match: RegExp; handler: (params?: unknown[]) => unknown };
 const matchers: Matcher[] = [];
 const queryCalls: Array<{ sql: string; params: unknown[] | undefined }> = [];
+// Shared with the default `SELECT EXISTS` matcher in `beforeEach`. A
+// test sets this to `true` when it wants the finalize TTL gate to
+// fire; the default `false` falls through to the normal path.
+let sendExpiredFlag = false;
 
 function whenSql(
   match: RegExp,
@@ -131,6 +135,7 @@ describe("POST /api/aimer/phase2/policy-run/finalize", () => {
     currentSession = makeSession();
     matchers.length = 0;
     queryCalls.length = 0;
+    sendExpiredFlag = false;
     mockHasPermission
       .mockReset()
       .mockImplementation(
@@ -138,6 +143,15 @@ describe("POST /api/aimer/phase2/policy-run/finalize", () => {
       );
     mockResolveScope.mockReset().mockResolvedValue([42]);
     mockAudit.mockReset().mockResolvedValue(undefined);
+    // Default: the whole-action TTL probe at the top of the finalize
+    // transaction reports "not expired" via `sendExpiredFlag`. Tests
+    // that exercise the TTL gate set the flag to true before invoking
+    // the route. Using a shared flag (rather than a second matcher)
+    // avoids ambiguity from the first-registered-matcher iteration
+    // order in the SQL mock.
+    whenSql(/SELECT EXISTS/, () => ({
+      rows: [{ expired: sendExpiredFlag }],
+    }));
   });
 
   it("rejects invalid customer_id", async () => {
@@ -653,5 +667,87 @@ describe("POST /api/aimer/phase2/policy-run/finalize", () => {
     );
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "not_found" });
+  });
+
+  it("returns 410 send_expired and writes no β / audit when an inflight row crossed the TTL even with no later build call", async () => {
+    // The build-envelope route prunes opportunistically, but a Send
+    // that was abandoned mid-flight may never see another build call.
+    // Finalize must enforce the same send-action-level TTL or β/audit
+    // could commit for a Send that crossed the 600s abandonment line.
+    sendExpiredFlag = true;
+    let deleteSeen = false;
+    whenSql(/DELETE FROM aimer_policy_run_send_inflight/, () => {
+      deleteSeen = true;
+      return { rows: [] };
+    });
+    // The inflight lookup, β update, and audit must never run.
+    whenSql(/SELECT context_jti/, () => {
+      throw new Error("inflight lookup must not run when Send has expired");
+    });
+    whenSql(/UPDATE policy_triage_run/, () => {
+      throw new Error("β update must not run when Send has expired");
+    });
+
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        batch_acks: [ack("jti-T")],
+      }),
+      ctx,
+    );
+
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({ error: "send_expired" });
+    expect(deleteSeen).toBe(true);
+    expect(mockAudit).not.toHaveBeenCalled();
+    // Sanity: the expiry query used the documented TTL constant
+    // (POLICY_RUN_SEND_INFLIGHT_TTL_SECONDS = 600).
+    const expiryCall = queryCalls.find((c) => /SELECT EXISTS/.test(c.sql));
+    expect(expiryCall).toBeDefined();
+    expect(expiryCall?.params?.[1]).toBe(600);
+  });
+
+  it("proceeds normally when no inflight row has crossed the TTL", async () => {
+    // Negative case for the TTL gate: when the EXISTS probe returns
+    // false, the route continues into set-equality and β commit. This
+    // guards against a regression that always returned 410.
+    sendExpiredFlag = false;
+    expectInflightLookup([
+      {
+        context_jti: "jti-T",
+        run_id: "1",
+        actor_account_id: ACTOR_ID,
+        batch_index: 0,
+        is_terminal: true,
+      },
+    ]);
+    whenSql(/FROM policy_triage_run/, () => ({
+      rows: [
+        {
+          status: "ready",
+          baseline_version: "1.B.0",
+          policies_fingerprint: "abc",
+          exclusions_fingerprint: "def",
+        },
+      ],
+    }));
+    whenSql(/UPDATE policy_triage_run/, () => ({ rows: [] }));
+    whenSql(/DELETE FROM aimer_policy_run_send_inflight/, () => ({ rows: [] }));
+
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        batch_acks: [ack("jti-T", 1, 0)],
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(mockAudit).toHaveBeenCalledTimes(1);
   });
 });

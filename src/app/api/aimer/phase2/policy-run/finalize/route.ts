@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
+import { POLICY_RUN_SEND_INFLIGHT_TTL_SECONDS } from "@/lib/aimer/phase2/policy-run-send";
 import { auditLog } from "@/lib/audit/logger";
 import { resolveEffectiveCustomerIds } from "@/lib/auth/customer-scope";
 import { withAuth } from "@/lib/auth/guard";
@@ -44,6 +45,18 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
  * once per Send action (regardless of batch count) and the audit row
  * is emitted with `batchCount`, `eventCount`, `totalAccepted`,
  * `totalDuplicatesSkipped` aggregated from `batch_acks`.
+ *
+ * Whole-action TTL enforcement: before loading inflight rows for
+ * validation, finalize checks whether any row of this `send_action_id`
+ * has aged past {@link POLICY_RUN_SEND_INFLIGHT_TTL_SECONDS}. If so,
+ * every row for the Send is deleted in the same transaction and the
+ * route returns `410 send_expired` with no β / audit write. This
+ * mirrors the build-envelope opportunistic prune so an abandoned Send
+ * cannot commit β just because no later build call happened to fire
+ * the prune first. Operates at `send_action_id` granularity to match
+ * `pruneExpiredPolicyRunSendInflight` — a partial inflight set could
+ * otherwise let finalize's set-equality check pass on what's currently
+ * in the table and commit β for an incomplete Send.
  *
  * Cross-DB consistency note: β / inflight live in the customer DB,
  * audit lives in `audit_db`. PostgreSQL does not support cross-DB
@@ -200,6 +213,36 @@ export const POST = withAuth(
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+
+      // ── Whole-action TTL enforcement ────────────────────────
+      //
+      // Mirror the build-envelope opportunistic whole-action prune so
+      // an abandoned Send cannot commit β / audit just because no
+      // later build call happened to fire the prune first. Operates
+      // at the same send_action_id granularity as
+      // pruneExpiredPolicyRunSendInflight — if any row of this Send
+      // has aged past the TTL, every row for the Send is removed and
+      // finalize returns 410 send_expired before set-equality runs.
+      const { rows: expiredRows } = await client.query<{
+        expired: boolean;
+      }>(
+        `SELECT EXISTS (
+           SELECT 1
+             FROM aimer_policy_run_send_inflight
+            WHERE send_action_id = $1::uuid
+              AND minted_at < NOW() - make_interval(secs => $2)
+         ) AS expired`,
+        [sendActionId, POLICY_RUN_SEND_INFLIGHT_TTL_SECONDS],
+      );
+      if (expiredRows[0]?.expired) {
+        await client.query(
+          `DELETE FROM aimer_policy_run_send_inflight
+             WHERE send_action_id = $1::uuid`,
+          [sendActionId],
+        );
+        await client.query("COMMIT");
+        return jsonError("send_expired", 410);
+      }
 
       // ── Look up inflight rows for this Send action (FOR UPDATE) ──
       const { rows: inflightRows } = await client.query<{
