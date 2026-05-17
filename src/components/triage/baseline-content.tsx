@@ -14,6 +14,10 @@ import {
   refreshTriageStories,
   submitSaveAnalystCuratedStory,
 } from "@/app/[locale]/(dashboard)/triage/story-actions";
+import {
+  createPeriodicDrain,
+  type PeriodicDrainController,
+} from "@/lib/aimer/phase2/transport.client";
 import type {
   ScoredTriageEvent,
   TriageAsset,
@@ -432,6 +436,69 @@ export function TriageBaselineContent({
       });
     }
   }, [result.menuLoadId]);
+
+  // #571 Phase 2 baseline-event periodic drain. One
+  // `createPeriodicDrain("baseline_event", customerId, …)` controller
+  // per in-scope customer — admin views may render rows from multiple
+  // customers in one Triage session and each `(customerId, kind)`
+  // owns its own `aimer_push_state` cursor / pause toggle / queue, so
+  // each needs an independent drain loop. The controllers fire once
+  // immediately on `start()` and every 5 min thereafter while the tab
+  // stays visible; visibility pause + single-flight + cleanup on
+  // unmount are handled inside the controller.
+  //
+  // Scope source is `result.freshness.customers` — the authoritative
+  // per-tenant scope summary that covers exactly the customer ids
+  // `loadTriagePeriod` ran for, including admin scopes that enumerate
+  // every active customer. Driving the drain off `result.events`
+  // instead would tie the trigger to row visibility, so a tenant with
+  // only queued refresh/withdraw/backfill notices (no visible rows in
+  // the current slice), or a tenant trimmed by the menu cap, would
+  // never get its drain started even though Phase 2 backlog is sitting
+  // in `aimer_push_queue` / `aimer_push_state`. `customerIdsKey` is a
+  // stable join of the sorted distinct customerIds, so the effect only
+  // re-runs when the in-scope set actually changes.
+  const customerIdsKey = useMemo(() => {
+    const seen = new Set<number>();
+    for (const c of result.freshness.customers) seen.add(c.customerId);
+    return Array.from(seen)
+      .sort((a, b) => a - b)
+      .join(",");
+  }, [result.freshness.customers]);
+  const drainControllersRef = useRef<Map<number, PeriodicDrainController>>(
+    new Map(),
+  );
+  useEffect(() => {
+    const desired = new Set<number>(
+      customerIdsKey === ""
+        ? []
+        : customerIdsKey.split(",").map((s) => Number(s)),
+    );
+    const controllers = drainControllersRef.current;
+    // Stop controllers for customers that left scope.
+    for (const [customerId, controller] of controllers) {
+      if (!desired.has(customerId)) {
+        controller.stop();
+        controllers.delete(customerId);
+      }
+    }
+    // Start controllers for customers that entered scope.
+    for (const customerId of desired) {
+      if (controllers.has(customerId)) continue;
+      const controller = createPeriodicDrain("baseline_event", customerId);
+      controller.start();
+      controllers.set(customerId, controller);
+    }
+  }, [customerIdsKey]);
+  // Stop every controller on unmount. Separate effect so the dependency-
+  // driven effect above can keep its controllers alive across re-runs.
+  useEffect(() => {
+    const controllers = drainControllersRef.current;
+    return () => {
+      for (const controller of controllers.values()) controller.stop();
+      controllers.clear();
+    };
+  }, []);
 
   // Auto-dismiss the "Story saved" toast a few seconds after it
   // surfaces. The toast itself is also clickable (routes the

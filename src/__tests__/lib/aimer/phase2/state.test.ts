@@ -358,13 +358,46 @@ describe("Phase 2 state helpers (state.ts)", () => {
     });
     const call = fake.calls[0];
     expect(call.sql).toContain("INSERT INTO aimer_push_inflight");
+    // 6th param is the JSONB-serialized pending_tail_notices array,
+    // defaulting to empty when the caller omits the field.
     expect(call.params).toEqual([
       "jti-1",
       "policy_event",
       null,
       null,
       ["10", "11"],
+      "[]",
     ]);
+  });
+
+  it("insertInflight serializes pending tail notices into the JSONB column", async () => {
+    // Drain routes that subdivide a queue payload at push time (e.g.
+    // refresh/backfill post-enrichment subdivision in the baseline-event
+    // drain) record the tail sub-payloads on the inflight row so they
+    // ride the head batch's ack/fail outcome. The column is JSONB so we
+    // serialize the array here.
+    await state.insertInflight(1, {
+      contextJti: "jti-1",
+      kind: "baseline_event",
+      cursorAdvanceToEventTime: null,
+      cursorAdvanceToEventKey: null,
+      queueRowIds: ["10"],
+      pendingTailNotices: [
+        {
+          kind: "refresh_baseline_window",
+          payload: { window: { from: "a", to: "b" } },
+        },
+      ],
+    });
+    const call = fake.calls[0];
+    expect(call.params?.[5]).toBe(
+      JSON.stringify([
+        {
+          kind: "refresh_baseline_window",
+          payload: { window: { from: "a", to: "b" } },
+        },
+      ]),
+    );
   });
 
   it("commitOnAck for policy_event marks queue rows ack'd and deletes the inflight", async () => {
@@ -437,6 +470,62 @@ describe("Phase 2 state helpers (state.ts)", () => {
     expect(
       sqls.some((s) => s.startsWith("DELETE FROM aimer_push_inflight")),
     ).toBe(false);
+  });
+
+  it("commitOnAck enqueues pending tail notices atomically with the ack", async () => {
+    // Drain routes that subdivide a payload at push time record the
+    // tail sub-payloads on the inflight row. Coupling the enqueue to
+    // ack means a failed POST drops the tail with `recordOnFail`'s
+    // inflight delete instead of leaving duplicates in the queue
+    // across retries.
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_inflight")) {
+        return {
+          rows: [
+            {
+              context_jti: "jti-tail",
+              kind: "baseline_event",
+              cursor_advance_to_event_time: null,
+              cursor_advance_to_event_key: null,
+              queue_row_ids: ["50"],
+              pending_tail_notices: [
+                {
+                  kind: "refresh_baseline_window",
+                  payload: { window: { from: "a", to: "b" }, events: [] },
+                },
+                {
+                  kind: "refresh_baseline_window",
+                  payload: { window: { from: "b", to: "c" }, events: [] },
+                },
+              ],
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.startsWith("INSERT INTO aimer_push_queue")) {
+        return { rows: [{ id: "999" }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    await state.commitOnAck(1, "jti-tail", "baseline_event");
+
+    const inserts = fake.calls.filter((c) =>
+      c.sql.startsWith("INSERT INTO aimer_push_queue"),
+    );
+    expect(inserts).toHaveLength(2);
+    // Each insert preserves the queue kind so refresh stays refresh.
+    expect(inserts[0].params?.[0]).toBe("refresh_baseline_window");
+    expect(inserts[1].params?.[0]).toBe("refresh_baseline_window");
+    // The inflight DELETE still runs after the tail INSERTs so the
+    // whole ack is one atomic unit.
+    const sqls = fake.calls.map((c) => c.sql);
+    const deleteIdx = sqls.findIndex((s) =>
+      s.startsWith("DELETE FROM aimer_push_inflight"),
+    );
+    const lastInsertIdx = sqls.lastIndexOf(inserts[1].sql);
+    expect(deleteIdx).toBeGreaterThan(lastInsertIdx);
   });
 
   it("commitOnAck for streaming kinds advances the cursor", async () => {

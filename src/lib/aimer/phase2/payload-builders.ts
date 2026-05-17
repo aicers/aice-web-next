@@ -22,7 +22,7 @@
 import "server-only";
 
 import type pg from "pg";
-
+import { AICE_ID_MAX_LENGTH } from "@/lib/aimer/settings";
 import { EXTERNAL_KEY_MAX_LENGTH } from "@/lib/customers/external-key";
 
 /**
@@ -68,6 +68,35 @@ const EXTERNAL_KEY_JSON_PROPERTY_OVERHEAD_BYTES = `,"external_key":""`.length;
 export const PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES =
   EXTERNAL_KEY_MAX_LENGTH * EXTERNAL_KEY_MAX_UTF8_BYTES_PER_CODE_UNIT +
   EXTERNAL_KEY_JSON_PROPERTY_OVERHEAD_BYTES;
+
+/**
+ * Reserve for the `source_aice_id` field that {@link
+ * augmentPayload} injects alongside `external_key` for the
+ * source-bearing schemas (`phase2.baseline.v1`, `phase2.story.v1`,
+ * `phase2.policy_run.v1`).
+ *
+ * `aice_id` is constrained to {@link AICE_ID_MAX_LENGTH} ASCII
+ * hostname characters by {@link validateAiceId}, so its UTF-8 byte
+ * cost is at most 1 byte per character — no multi-byte expansion to
+ * account for. The reserve adds the fixed JSON property overhead
+ * `,"source_aice_id":""` on top of the value-length budget.
+ */
+const SOURCE_AICE_ID_JSON_PROPERTY_OVERHEAD_BYTES = `,"source_aice_id":""`
+  .length;
+export const PHASE2_BASELINE_SOURCE_AICE_ID_RESERVE_BYTES =
+  AICE_ID_MAX_LENGTH + SOURCE_AICE_ID_JSON_PROPERTY_OVERHEAD_BYTES;
+
+/**
+ * Combined augment reserve for the `phase2.baseline.v1`,
+ * `phase2.story.v1`, and `phase2.policy_run.v1` schemas — those carry
+ * both `external_key` and `source_aice_id`. Refresh / backfill
+ * schemas (`phase2.refresh_window.v1`, `phase2.backfill.v1`,
+ * `phase2.withdraw.v1`) carry only `external_key`, so they keep
+ * using {@link PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES} on its own.
+ */
+export const PHASE2_BASELINE_AUGMENT_RESERVE_BYTES =
+  PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES +
+  PHASE2_BASELINE_SOURCE_AICE_ID_RESERVE_BYTES;
 
 // ── Payload row shapes ─────────────────────────────────────────────
 
