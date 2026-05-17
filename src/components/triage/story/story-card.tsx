@@ -3,16 +3,18 @@
 /**
  * Single Story card — title, rule badge, score, member count,
  * top-3 preview, β submission indicator, Open / Send-to-aimer-web
- * actions. Per #490 the Send-to-aimer-web button ships as an inert
- * shape (`disabled=true`, `aria-disabled="true"`, stable
- * `data-action="send-to-aimer-web"` hook) — the click handler and
- * disabled-state flip land in #493.
+ * actions. #493 wires the Send click through the three-call manual
+ * flow (`build-envelope` → aimer-web → `ack-manual`) and adds a
+ * kebab menu with "Send (force refresh)" guarded by a confirm
+ * dialog.
  *
  * Relative-time and auto-title duration text is rendered through the
  * locale-supplied `relative` / `duration` label objects so KO/EN
  * surfaces stay consistent (no hard-coded "min ago" / "min" in the
  * Korean UI).
  */
+
+import { useState } from "react";
 
 import type { TriageStory } from "@/lib/triage/story/types";
 import {
@@ -42,6 +44,14 @@ export interface TriageStoryCardLabels {
   open: string;
   sendToAimerWeb: string;
   sendToAimerWebTooltip: string;
+  /**
+   * Tooltip shown when {@link StoryCardProps.sendDisabled} is `true`
+   * (the Aimer integration is missing one of `aice_id`, the bridge
+   * URL, or an active signing key). Surfaced in place of
+   * {@link sendToAimerWebTooltip} so the operator can recognise the
+   * grey-out before clicking and getting a route error.
+   */
+  sendToAimerWebDisabledTooltip: string;
   /** Template for the β submission indicator. `{relative}` → e.g. "12 min ago". */
   sentIndicatorTemplate: string;
   /** Multi-send suffix. Template `{count}×` (e.g. `3×`). */
@@ -54,11 +64,43 @@ export interface TriageStoryCardLabels {
   relative: StoryRelativeTimeLabels;
   /** Locale-aware duration templates used by the auto-generated title. */
   duration: StoryDurationLabels;
+  /** Kebab-menu trigger label (e.g. "More send options"). */
+  sendMoreMenuLabel: string;
+  /** Force-refresh send menu item label. */
+  sendForceRefresh: string;
+  /** Confirmation dialog body shown before a force-refresh send. */
+  forceRefreshConfirmMessage: string;
+  /** Confirmation dialog primary button. */
+  forceRefreshConfirmButton: string;
+  /** Confirmation dialog cancel button. */
+  forceRefreshCancelButton: string;
+  /** Sending-in-flight button label. */
+  sendInFlight: string;
+  /** Toast text shown after a successful send. */
+  sendSuccessToast: string;
+  /** Prefix used for the error toast. The error reason is appended. */
+  sendErrorPrefix: string;
 }
 
 interface StoryCardProps {
   story: TriageStory;
   onOpen: (story: TriageStory) => void;
+  /**
+   * Manual Send handler (#493). When omitted (legacy / unit-test
+   * paths), the button stays disabled. Returns the post-commit β
+   * snapshot so the card can render `"Sent · just now · 3×"`
+   * immediately.
+   */
+  onSend?: (args: {
+    story: TriageStory;
+    forceRefresh: boolean;
+  }) => Promise<void>;
+  /**
+   * True when the analyst's integration setup is missing (no
+   * configured signing key / bridge URL / aice_id). The button
+   * stays disabled with an explanatory tooltip.
+   */
+  sendDisabled?: boolean;
   labels: TriageStoryCardLabels;
 }
 
@@ -68,7 +110,13 @@ const SCORE_FORMAT = new Intl.NumberFormat(undefined, {
 });
 const COUNT_FORMAT = new Intl.NumberFormat();
 
-export function TriageStoryCard({ story, onOpen, labels }: StoryCardProps) {
+export function TriageStoryCard({
+  story,
+  onOpen,
+  onSend,
+  sendDisabled,
+  labels,
+}: StoryCardProps) {
   const title = renderStoryTitle(
     story.primaryAsset,
     story.summary,
@@ -78,6 +126,22 @@ export function TriageStoryCard({ story, onOpen, labels }: StoryCardProps) {
     story.kind === "analyst_curated"
       ? labels.ruleBadgeAnalyst
       : (story.ruleId ?? labels.ruleBadgeAuto);
+  const [sendInFlight, setSendInFlight] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const handleSend = async (forceRefresh: boolean) => {
+    if (!onSend || sendInFlight) return;
+    setSendInFlight(true);
+    setMenuOpen(false);
+    try {
+      await onSend({ story, forceRefresh });
+    } finally {
+      setSendInFlight(false);
+      setConfirmOpen(false);
+    }
+  };
+  const sendButtonDisabled =
+    sendDisabled === true || onSend === undefined || sendInFlight;
   return (
     <article
       data-testid="triage-story-card"
@@ -170,21 +234,97 @@ export function TriageStoryCard({ story, onOpen, labels }: StoryCardProps) {
         >
           {labels.open}
         </button>
-        <button
-          type="button"
-          data-action="send-to-aimer-web"
-          data-testid="triage-story-send"
-          disabled={true}
-          aria-disabled="true"
-          title={labels.sendToAimerWebTooltip}
-          className="cursor-not-allowed rounded-sm border border-border bg-background px-3 py-1 text-sm text-muted-foreground"
-          onClick={() => {
-            /* no-op until #493 wires the click handler */
-          }}
-        >
-          {labels.sendToAimerWeb}
-        </button>
+        <div className="relative flex items-center">
+          <button
+            type="button"
+            data-action="send-to-aimer-web"
+            data-testid="triage-story-send"
+            disabled={sendButtonDisabled}
+            aria-disabled={sendButtonDisabled ? "true" : "false"}
+            title={
+              sendDisabled === true
+                ? labels.sendToAimerWebDisabledTooltip
+                : labels.sendToAimerWebTooltip
+            }
+            onClick={() => void handleSend(false)}
+            className={
+              sendButtonDisabled
+                ? "cursor-not-allowed rounded-l-sm border border-border bg-background px-3 py-1 text-sm text-muted-foreground"
+                : "rounded-l-sm border border-border bg-background px-3 py-1 text-sm hover:bg-muted"
+            }
+          >
+            {sendInFlight ? labels.sendInFlight : labels.sendToAimerWeb}
+          </button>
+          <button
+            type="button"
+            data-testid="triage-story-send-menu"
+            disabled={sendButtonDisabled}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen ? "true" : "false"}
+            aria-label={labels.sendMoreMenuLabel}
+            onClick={() => setMenuOpen((v) => !v)}
+            className={
+              sendButtonDisabled
+                ? "cursor-not-allowed rounded-r-sm border border-l-0 border-border bg-background px-2 py-1 text-sm text-muted-foreground"
+                : "rounded-r-sm border border-l-0 border-border bg-background px-2 py-1 text-sm hover:bg-muted"
+            }
+          >
+            ▾
+          </button>
+          {menuOpen ? (
+            <div
+              role="menu"
+              data-testid="triage-story-send-menu-popover"
+              className="absolute right-0 top-full z-10 mt-1 w-48 rounded-md border border-border bg-popover p-1 text-sm shadow-md"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="triage-story-send-force-refresh"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setConfirmOpen(true);
+                }}
+                className="block w-full rounded-sm px-2 py-1 text-left hover:bg-muted"
+              >
+                {labels.sendForceRefresh}
+              </button>
+            </div>
+          ) : null}
+        </div>
       </footer>
+      {confirmOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          data-testid="triage-story-send-force-confirm"
+          className="fixed inset-0 z-20 flex items-center justify-center bg-black/50"
+        >
+          <div className="w-full max-w-md rounded-md border bg-card p-4 shadow-lg">
+            <p className="mb-3 text-sm">{labels.forceRefreshConfirmMessage}</p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                className="rounded-sm border border-border bg-background px-3 py-1 text-sm hover:bg-muted"
+              >
+                {labels.forceRefreshCancelButton}
+              </button>
+              <button
+                type="button"
+                data-testid="triage-story-send-force-confirm-ok"
+                onClick={() => void handleSend(true)}
+                disabled={sendInFlight}
+                className="rounded-sm border border-border bg-primary px-3 py-1 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              >
+                {sendInFlight
+                  ? labels.sendInFlight
+                  : labels.forceRefreshConfirmButton}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <aside className="hidden">
         {/* Hidden references retained so card consumers can derive
             histogram-only chips in a follow-up without re-fetching. */}

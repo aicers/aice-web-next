@@ -150,10 +150,17 @@ type TriagePolicyAction =
  * by cadence are NOT audited per-Story (cadence-level audit covers
  * the run); only the analyst-curated path emits.
  *
- * `triage.story.send` (the LLM submission audit) is owned by #493
- * and added alongside that issue's emitter to avoid dead-code drift.
+ * `triage.story.send` is the LLM submission audit emitted by #493 —
+ * both the manual Send-to-aimer-web path (`trigger: "manual"`,
+ * actor = caller session) and the opportunistic drain
+ * (`trigger: "opportunistic"`, actor = `SYSTEM_ACTOR_ACCOUNT_ID`).
+ * Emitted per Story (not per envelope) so an opportunistic batch of
+ * N stories produces N audit rows. Queue notices (`withdraw_story`,
+ * `refresh_story_window`, `backfill_story_window`) do NOT emit this
+ * action — those are operational mutations and the mutation hooks
+ * issue (#573) owns their audit emissions.
  */
-type TriageStoryAction = "triage.story.create";
+type TriageStoryAction = "triage.story.create" | "triage.story.send";
 
 /**
  * Triage exclusion CRUD actions (#457).
@@ -336,6 +343,7 @@ export const AUDIT_ACTIONS = [
   "triage.policy.update",
   "triage.policy.delete",
   "triage.story.create",
+  "triage.story.send",
   "triage_exclusion.global_add",
   "triage_exclusion.global_remove",
   "triage_exclusion.customer_add",

@@ -26,6 +26,7 @@ COPY run-triage-policy-retention.sh /usr/local/bin/run-triage-policy-retention.s
 COPY run-triage-snapshot-retention.sh /usr/local/bin/run-triage-snapshot-retention.sh
 COPY run-triage-engagement-retention.sh /usr/local/bin/run-triage-engagement-retention.sh
 COPY run-triage-exclusion-fanout.sh /usr/local/bin/run-triage-exclusion-fanout.sh
+COPY run-aimer-phase2-manual-mint-retention.sh /usr/local/bin/run-aimer-phase2-manual-mint-retention.sh
 
 RUN chmod +x /usr/local/bin/entrypoint.sh \
         /usr/local/bin/run-triage-baseline-dispatch.sh \
@@ -33,6 +34,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
         /usr/local/bin/run-triage-policy-retention.sh \
         /usr/local/bin/run-triage-snapshot-retention.sh \
         /usr/local/bin/run-triage-engagement-retention.sh \
-        /usr/local/bin/run-triage-exclusion-fanout.sh
+        /usr/local/bin/run-triage-exclusion-fanout.sh \
+        /usr/local/bin/run-aimer-phase2-manual-mint-retention.sh
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]

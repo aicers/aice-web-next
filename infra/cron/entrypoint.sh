@@ -37,6 +37,10 @@ ENV_ALLOWLIST=(
     # #588 engagement-signal retention. Same per-surface isolation
     # rationale as the other retention tokens above.
     TRIAGE_ENGAGEMENT_RETENTION_INTERNAL_TOKEN
+    # #493 aimer Phase 2 manual-mint retention. Sweeps abandoned-send
+    # ledger rows older than 24h. Same per-surface isolation rationale
+    # as the other retention tokens above.
+    AIMER_PHASE2_MANUAL_MINT_RETENTION_INTERNAL_TOKEN
     TRIAGE_EXCLUSION_FANOUT_TOKEN
     # Recover is operator-tooling, not scheduled; the token is passed
     # through so an operator running `curl` from `docker exec cron sh`

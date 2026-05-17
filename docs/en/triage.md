@@ -831,6 +831,64 @@ Each Story renders as one card with:
   optional `<send_count>×` suffix. Re-clicking the send button
   is allowed; the indicator is awareness-only.
 
+### Send to aimer-web
+
+Each Story card carries a **Send to aimer-web** button and an
+adjacent kebab menu. Clicking the primary button sends the
+focused Story through the Phase 2 contract to aimer-web for
+LLM analysis. The flow makes three calls in sequence:
+
+1. The browser asks aice-web-next to mint a Phase 2 envelope
+   for the focused Story.
+2. The browser POSTs the multipart envelope (two ES256-signed
+   JWSes + the JSON payload) to the configured aimer-web bridge
+   URL.
+3. On 2xx from aimer-web, the browser asks aice-web-next to
+   commit the β-tracking update (`last_sent_at`, `last_sent_by`,
+   `send_count`) and emit a `triage.story.send` audit row.
+
+A "Sent to aimer-web" toast confirms success and the card
+re-renders its β indicator immediately, without a full menu
+refresh. Failed sends surface an error toast carrying the
+structured failure code; β columns are left untouched so the
+next click re-attempts cleanly (aimer-web de-duplicates on its
+side if the row eventually lands).
+
+The kebab menu next to the Send button offers **Send (force
+refresh)**. Selecting it prompts the analyst to confirm
+("Bypass aimer-web's cache and run the LLM fresh on this
+Story?") before sending; on confirm the same three-call flow
+runs with a `force_refresh: true` flag so aimer-web re-runs
+the LLM rather than serving its cached narrative. Force-refresh
+applies to manual Send only; the opportunistic background push
+never force-refreshes.
+
+The Send button is disabled when the Aimer integration is not
+configured (no active signing key, no `aice_id`, or no
+`aimer_web_bridge_url`). Configure the integration on the
+Settings → Aimer integration page first.
+
+### Opportunistic background push
+
+While the Stories tab is open and visible, aice-web-next
+automatically pushes any Stories that have not yet been sent
+since the per-customer cursor, plus any queued window-replace
+notices (refresh / backfill) and withdraw notices for stories.
+The drain ticks every five minutes per in-scope customer; it
+auto-pauses when the tab is hidden and resumes on
+`visibilitychange`. Each opportunistically pushed Story has its
+β indicator updated on the next menu refresh and produces a
+`triage.story.send` audit row attributed to the system actor
+(rendered as **System** in the audit-log viewer).
+
+Curated Stories (`kind = 'analyst_curated'`) are NEVER
+opportunistically pushed. Manual Send remains available for
+both kinds.
+
+The push respects a per-customer pause toggle owned by
+operators (Settings → Aimer integration); when paused, manual
+Send is unaffected.
+
 The card carries a stable HTML identity attribute
 `data-story-id="<customerId>/<storyId>"` so two tenants hosting
 the same per-DB `event_group.id` produce two distinguishable

@@ -469,7 +469,7 @@ export function buildStoryRefreshPayloads(
  * outbound payload matches the schema's `storyItem` shape exactly
  * and the receiver does not see slicer-internal columns.
  */
-function toWireStoryItem(row: StoryRefreshItem): StoryWireItem {
+export function toWireStoryItem(row: StoryRefreshItem): StoryWireItem {
   const {
     story_id,
     story_version,

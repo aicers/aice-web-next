@@ -26,6 +26,8 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
 // ── Re-exports ─────────────────────────────────────────────────────
 
+import { SYSTEM_ACTOR_ACCOUNT_ID } from "./orchestrate";
+
 export { SYSTEM_ACTOR_ACCOUNT_ID } from "./orchestrate";
 
 // ── Discriminator types ────────────────────────────────────────────
@@ -117,6 +119,23 @@ export interface AimerPushStateRow {
   opportunistic_enabled: boolean;
   paused_at: Date | null;
   paused_by: string | null;
+  /**
+   * Watermark stamped on the first `next-batch` activation (see
+   * `seedNullCursor` in the story drain). Anchors the "late-commit
+   * straggler" scan in `loadStoryStragglerSlice` so a freshly-seeded
+   * tenant does NOT back-flood the entire historical `event_group`
+   * corpus — only rows whose `created_at >= streaming_activated_at`
+   * are eligible for the behind-cursor scan. `NULL` for an unseeded
+   * row (no activation yet — skip the straggler scan).
+   *
+   * For the `baseline_event` streaming kind this column is populated
+   * (migration `0020_aimer_push_state_streaming_activated_at.sql`
+   * backfills from `last_pushed_event_time`) but the baseline drain
+   * has no equivalent late-commit race — baseline rows are keyed on
+   * sensor `event_time`, not on the row's PG insert timestamp — so
+   * the baseline drain ignores this column.
+   */
+  streaming_activated_at: Date | null;
 }
 
 export interface AimerPushQueueRow {
@@ -175,7 +194,8 @@ export async function getAimerPushState(
             last_error,
             opportunistic_enabled,
             paused_at,
-            paused_by
+            paused_by,
+            streaming_activated_at
        FROM aimer_push_state
       WHERE kind = $1`,
     [kind],
@@ -351,6 +371,19 @@ export async function enqueueNotice(
 interface ClaimPendingNoticesOptions {
   /** Max rows to return. */
   limit: number;
+  /**
+   * Restrict the claim to a specific subset of queue kinds. The subset
+   * MUST be contained in the drain's allowed set from
+   * {@link PHASE2_QUEUE_KINDS_BY_DRAIN} — any kind outside that set is
+   * rejected with a thrown `RangeError` so a baseline drain cannot
+   * accidentally claim a story notice via the filter (and vice versa).
+   *
+   * The story drain (#493) uses this to honor the "one queue kind per
+   * `next-batch` response" + `withdraw → refresh → backfill` priority
+   * order: it calls this helper once per kind, in that order, and
+   * stops at the first non-empty result.
+   */
+  kinds?: readonly Phase2QueueKind[];
 }
 
 /**
@@ -360,6 +393,13 @@ interface ClaimPendingNoticesOptions {
  * ({@link PHASE2_QUEUE_KINDS_BY_DRAIN}) so a baseline drain never picks
  * up a story / policy notice. Returns rows in `id` ascending order so
  * older notices drain first.
+ *
+ * Pass {@link ClaimPendingNoticesOptions.kinds} to narrow further to a
+ * specific subset (must be contained in the drain's allowed set). This
+ * is what lets the story drain enforce "one queue kind per response":
+ * the route calls this helper for each kind in
+ * `withdraw → refresh → backfill` priority order and stops at the
+ * first non-empty result.
  *
  * Claim is non-exclusive (no `FOR UPDATE SKIP LOCKED`): when two
  * concurrent browser tabs both activate, both will read the same
@@ -374,6 +414,17 @@ export async function claimPendingNotices(
   options: ClaimPendingNoticesOptions,
 ): Promise<AimerPushQueueRow[]> {
   const allowedKinds = PHASE2_QUEUE_KINDS_BY_DRAIN[drainKind];
+  let effectiveKinds: readonly Phase2QueueKind[] = allowedKinds;
+  if (options.kinds !== undefined) {
+    for (const k of options.kinds) {
+      if (!(allowedKinds as readonly Phase2QueueKind[]).includes(k)) {
+        throw new RangeError(
+          `claimPendingNotices: kind '${k}' is not owned by drain '${drainKind}'`,
+        );
+      }
+    }
+    effectiveKinds = options.kinds;
+  }
   const pool = await getCustomerPool(customerId);
   const { rows } = await pool.query<AimerPushQueueRow>(
     `SELECT id::text AS id,
@@ -390,7 +441,7 @@ export async function claimPendingNotices(
         AND kind = ANY($1::text[])
       ORDER BY id
       LIMIT $2`,
-    [allowedKinds as unknown as string[], options.limit],
+    [effectiveKinds as unknown as string[], options.limit],
   );
   return rows;
 }
@@ -472,6 +523,25 @@ export interface PendingTailNotice {
   payload: unknown;
 }
 
+/**
+ * Identity of one Story actually included in the signed envelope of a
+ * `story` streaming new-row batch. Persisted on the inflight row so
+ * ack-time β-bump + audit can address the exact delivered set rather
+ * than recomputing a live `(prev_cursor, new_cursor]` range — which is
+ * structurally racy when a Story is inserted into the cursor window
+ * between mint and ack.
+ *
+ * The story streaming cursor key is `(created_at, id)` (see
+ * `loadStoryStreamingSlice`), so a late-inserted Story does NOT slip
+ * behind the advanced cursor — it will be picked up by a subsequent
+ * drain. This `pushed_stories` set is the orthogonal guarantee that
+ * the β-bump + audit address only the rows that were actually signed.
+ */
+export interface PushedStoryIdentity {
+  storyId: string;
+  storyVersion: string;
+}
+
 export interface InsertInflightInput {
   contextJti: string;
   kind: Phase2InflightKind;
@@ -488,6 +558,13 @@ export interface InsertInflightInput {
    * in the queue. See {@link PendingTailNotice}.
    */
   pendingTailNotices?: readonly PendingTailNotice[];
+  /**
+   * Story rows actually included in this batch's signed envelope.
+   * Only populated for the `story` streaming new-row branch; left
+   * empty for queue-notice / baseline / policy inflight rows.
+   * See {@link PushedStoryIdentity}.
+   */
+  pushedStories?: readonly PushedStoryIdentity[];
 }
 
 /**
@@ -508,8 +585,9 @@ export async function insertInflight(
         cursor_advance_to_event_time,
         cursor_advance_to_event_key,
         queue_row_ids,
-        pending_tail_notices)
-     VALUES ($1, $2, $3, $4, $5::bigint[], $6::jsonb)`,
+        pending_tail_notices,
+        pushed_stories)
+     VALUES ($1, $2, $3, $4, $5::bigint[], $6::jsonb, $7::jsonb)`,
     [
       input.contextJti,
       input.kind,
@@ -517,6 +595,12 @@ export async function insertInflight(
       input.cursorAdvanceToEventKey ?? null,
       input.queueRowIds as unknown as string[],
       JSON.stringify(input.pendingTailNotices ?? []),
+      JSON.stringify(
+        (input.pushedStories ?? []).map((s) => ({
+          story_id: s.storyId,
+          story_version: s.storyVersion,
+        })),
+      ),
     ],
   );
 }
@@ -528,6 +612,31 @@ interface InflightRow {
   cursor_advance_to_event_key: string | null;
   queue_row_ids: string[];
   pending_tail_notices: PendingTailNotice[];
+  pushed_stories: Array<{ story_id: string; story_version: string }>;
+}
+
+/**
+ * Per-Story β-tracking row data returned by {@link commitOnAck} when
+ * the prior batch was a `story` streaming batch. The drain route uses
+ * this list to emit one `triage.story.send` audit row per Story
+ * **after** the tenant-DB commit succeeds — the audit DB lives in a
+ * separate database and cannot be co-committed with the tenant
+ * transaction, so audit emission is best-effort outside the
+ * transaction (#493 "Manual mint ledger" rationale).
+ */
+export interface CommitOnAckStoryBetaRow {
+  storyId: string;
+  storyVersion: string;
+}
+
+export interface CommitOnAckResult {
+  /**
+   * `event_group` rows whose β columns this commit bumped. Empty for
+   * baseline / policy / queue-notice acks. The caller is responsible
+   * for emitting one `triage.story.send` audit row per element with
+   * `trigger: "opportunistic"`, `actorAccountId: SYSTEM_ACTOR_ACCOUNT_ID`.
+   */
+  storyBetaRows: readonly CommitOnAckStoryBetaRow[];
 }
 
 /**
@@ -545,14 +654,51 @@ interface InflightRow {
  *    the queue rows ack'd, delete the inflight row.
  *  - Queue-only kind (`policy_event`): mark queue rows ack'd, delete
  *    the inflight row. No state update.
+ *
+ * When `expectedKind === "story"` AND the inflight row has
+ * `pushed_stories` populated (either a forward streaming batch or a
+ * late-commit straggler batch — not a queue notice), the same
+ * transaction also bumps `event_group.last_sent_at = NOW()`,
+ * `last_sent_by = SYSTEM_ACTOR_ACCOUNT_ID`, `send_count += 1` for the
+ * exact `event_group.id` set persisted on the inflight row's
+ * `pushed_stories` column (the rows actually included in the signed
+ * envelope at mint time). The β-bump is keyed off `pushed_stories`,
+ * NOT off cursor advance, so a straggler batch with
+ * `cursor_advance_to_* = NULL` still marks its delivered rows sent
+ * (otherwise the straggler scan would re-select them forever via the
+ * `last_sent_at IS NULL` filter).
+ *
+ * The β-update also carries `AND last_sent_at IS NULL` so a manual
+ * Send that landed BETWEEN this batch's mint and ack does not get
+ * overwritten by the system actor. The returned
+ * {@link CommitOnAckResult.storyBetaRows} reflects only the rows
+ * actually bumped (RETURNING-filtered); rows already marked sent
+ * (via {@link ackManualSend}) before the ack arrived are skipped on
+ * both β-bump and audit, preserving the analyst's `last_sent_by`
+ * attribution and avoiding a spurious opportunistic audit row.
+ *
+ * The returned {@link CommitOnAckResult.storyBetaRows} lets the
+ * caller emit one `triage.story.send` audit row per affected Story
+ * after this transaction commits — audit emission is best-effort
+ * outside the tenant transaction (#493).
+ *
+ * Using the persisted delivered set, instead of a live recomputation
+ * of `(prev_cursor, new_cursor]`, prevents a Story inserted between
+ * mint and ack from being β-bumped + audited without ever appearing
+ * in the pushed envelope. (The cursor key itself is `(created_at, id)`
+ * so the late insert is also guaranteed to be picked up by a
+ * subsequent drain — see `loadStoryStreamingSlice` for the cursor-key
+ * rationale; this β-bump set is the orthogonal guarantee that the
+ * already-delivered acknowledgement is correct.)
  */
 export async function commitOnAck(
   customerId: number,
   contextJti: string,
   expectedKind: Phase2InflightKind,
-): Promise<void> {
+): Promise<CommitOnAckResult> {
   const pool = await getCustomerPool(customerId);
   const client = await pool.connect();
+  let storyBetaRows: CommitOnAckStoryBetaRow[] = [];
   try {
     await client.query("BEGIN");
     const { rows } = await client.query<InflightRow>(
@@ -561,7 +707,8 @@ export async function commitOnAck(
               cursor_advance_to_event_time,
               cursor_advance_to_event_key,
               queue_row_ids::text[] AS queue_row_ids,
-              pending_tail_notices
+              pending_tail_notices,
+              pushed_stories
          FROM aimer_push_inflight
         WHERE context_jti = $1
           AND kind = $2
@@ -570,7 +717,7 @@ export async function commitOnAck(
     );
     if (rows.length === 0) {
       await client.query("COMMIT");
-      return;
+      return { storyBetaRows: [] };
     }
     const row = rows[0];
 
@@ -587,8 +734,10 @@ export async function commitOnAck(
           client,
         );
       } else {
-        // No cursor advance but the drain still wants to record
-        // liveness — bump last_synced_at without touching the cursor.
+        // No cursor advance (queue notices, or a straggler batch that
+        // sits AT OR BEHIND the cursor) — record liveness without
+        // touching the cursor. The Story β-bump below is independent
+        // of cursor advance and keys off `pushed_stories`.
         await client.query(
           `UPDATE aimer_push_state
               SET last_synced_at = NOW(),
@@ -596,6 +745,69 @@ export async function commitOnAck(
             WHERE kind = $1`,
           [row.kind],
         );
+      }
+
+      if (row.kind === "story") {
+        // β-bump + audit address the exact rows that were actually
+        // included in the signed envelope at mint time, sourced from
+        // the persisted `pushed_stories` column. This runs whenever
+        // `pushed_stories` is populated, INDEPENDENT of cursor
+        // advance:
+        //
+        //   - Forward streaming batch: cursor advances AND
+        //     `pushed_stories` is populated → β/audit the delivered
+        //     set, cursor moves forward.
+        //   - Late-commit straggler batch: cursor does NOT advance
+        //     (the rows sit AT OR BEHIND the cursor) but
+        //     `pushed_stories` IS populated → β/audit the delivered
+        //     set without moving the cursor, so the straggler-scan
+        //     `last_sent_at IS NULL` filter no longer re-selects
+        //     those rows on the next drain.
+        //   - Queue notice (refresh/backfill/withdraw): cursor does
+        //     NOT advance AND `pushed_stories` is empty → nothing to
+        //     β-bump (the originating mutation hook owns the audit).
+        //
+        // The streaming cursor key `(created_at, id)` (monotonic at
+        // insert) means a Story inserted between mint and ack does
+        // NOT slip behind the advanced cursor — the next drain picks
+        // it up via `loadStoryStreamingSlice` or
+        // `loadStoryStragglerSlice`. The `pushed_stories` set is the
+        // orthogonal guarantee that β/audit only address rows we
+        // actually delivered.
+        const pushedStories = row.pushed_stories ?? [];
+        if (pushedStories.length > 0) {
+          const pushedIds = pushedStories.map((s) => s.story_id);
+          // `AND last_sent_at IS NULL` guards against a manual Send
+          // that raced this inflight batch: an analyst can Send Story
+          // S after this opportunistic batch was minted but before its
+          // ack arrived. `ack-manual` will have stamped the analyst as
+          // `last_sent_by` with `send_count = 1`; without the filter,
+          // this update would overwrite that with the system actor,
+          // increment `send_count` again, and emit an opportunistic
+          // audit row for a Story that was already attributed to the
+          // analyst. RETURNING surfaces only the rows actually bumped
+          // so the audit emission below restricts itself to genuinely
+          // opportunistic deliveries.
+          const { rows: bumpedRows } = await client.query<{
+            id: string;
+          }>(
+            `UPDATE event_group
+                SET last_sent_at = NOW(),
+                    last_sent_by = $2::uuid,
+                    send_count   = send_count + 1
+              WHERE id = ANY($1::bigint[])
+                AND last_sent_at IS NULL
+            RETURNING id::text AS id`,
+            [pushedIds, SYSTEM_ACTOR_ACCOUNT_ID],
+          );
+          const bumpedIds = new Set(bumpedRows.map((r) => r.id));
+          storyBetaRows = pushedStories
+            .filter((s) => bumpedIds.has(s.story_id))
+            .map((s) => ({
+              storyId: s.story_id,
+              storyVersion: s.story_version,
+            }));
+        }
       }
     }
 
@@ -618,6 +830,7 @@ export async function commitOnAck(
     );
 
     await client.query("COMMIT");
+    return { storyBetaRows };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

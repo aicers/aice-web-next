@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">Triage 메뉴의 스토리 탭 (와이어프레임)</title>
-  <desc id="desc">기준(Baseline) 모드의 스토리 탭 와이어프레임입니다. 탭 스트립에는 자산 목록, 스토리, 피벗의 세 가지 동등한 보기가 있으며, 스토리 화면에는 제목, 규칙 배지, 점수, 구성원 수, 시간 창, 상위 3개 미리보기, 열기 및 aimer-web 전송 액션을 표시하는 스토리 카드가 나열됩니다. aimer-web 전송 버튼은 본 이슈에서 비활성 상태로 표시되며 #493에서 연결됩니다.</desc>
+  <desc id="desc">기준(Baseline) 모드의 스토리 탭 와이어프레임입니다. 탭 스트립에는 자산 목록, 스토리, 피벗의 세 가지 동등한 보기가 있으며, 스토리 화면에는 제목, 규칙 배지, 점수, 구성원 수, 시간 창, 상위 3개 미리보기, 열기 및 aimer-web 전송 액션을 표시하는 스토리 카드가 나열됩니다. aimer-web 전송 버튼은 #493에서 연결되며, Aimer 통합이 구성된 경우 활성 상태로 표시되고 옆의 케밥 토글로 "전송 (강제 새로고침)" 메뉴를 엽니다.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -55,8 +55,10 @@
   <text x="320" y="208" class="text-muted">EXFILTRATION</text>
   <rect class="btn-primary" x="540" y="200" width="56" height="24"/>
   <text x="552" y="216" class="btn-primary-text">열기</text>
-  <rect class="btn-disabled" x="604" y="200" width="76" height="24"/>
-  <text x="612" y="216" class="btn-disabled-text">aimer-web 전송</text>
+  <rect class="btn-primary" x="604" y="200" width="60" height="24"/>
+  <text x="608" y="216" class="btn-primary-text">전송</text>
+  <rect class="btn-primary" x="664" y="200" width="16" height="24"/>
+  <text x="667" y="216" class="btn-primary-text">▾</text>
 
   <!-- 스토리 카드 2 (분석가 저장, 전송 표시) -->
   <rect class="panel" x="24" y="252" width="672" height="148" rx="6" ry="6"/>
@@ -77,9 +79,11 @@
   <text x="320" y="368" class="text-muted">EXFILTRATION</text>
   <rect class="btn-primary" x="540" y="360" width="56" height="24"/>
   <text x="552" y="376" class="btn-primary-text">열기</text>
-  <rect class="btn-disabled" x="604" y="360" width="76" height="24"/>
-  <text x="612" y="376" class="btn-disabled-text">aimer-web 전송</text>
+  <rect class="btn-primary" x="604" y="360" width="60" height="24"/>
+  <text x="608" y="376" class="btn-primary-text">전송</text>
+  <rect class="btn-primary" x="664" y="360" width="16" height="24"/>
+  <text x="667" y="376" class="btn-primary-text">▾</text>
 
   <!-- 안내 -->
-  <text x="24" y="436" class="text-muted">aimer-web 전송 버튼은 본 이슈에서는 비활성 모양만 도입되며, 실제 동작은 #493에서 연결됩니다.</text>
+  <text x="24" y="436" class="text-muted">전송 버튼을 누르면 LLM 분석을 위해 스토리가 aimer-web으로 전송됩니다(#493). 케밥은 "전송 (강제 새로고침)"을 엽니다.</text>
 </svg>
