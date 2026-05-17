@@ -6,6 +6,7 @@ import {
   buildPhase2Push,
   SYSTEM_ACTOR_ACCOUNT_ID,
 } from "@/lib/aimer/phase2/orchestrate";
+import type { StoryWireItem } from "@/lib/aimer/phase2/payload-builders";
 import {
   type AimerPushQueueRow,
   claimPendingNotices,
@@ -17,7 +18,10 @@ import {
   pruneExpiredInflight,
   recordOnFail,
 } from "@/lib/aimer/phase2/state";
-import { loadStoryStreamingSlice } from "@/lib/aimer/phase2/story-push";
+import {
+  loadStoryStragglerSlice,
+  loadStoryStreamingSlice,
+} from "@/lib/aimer/phase2/story-push";
 import type { Phase2SchemaVersion } from "@/lib/aimer/phase2/wire-types";
 import { getAimerIntegrationSetup } from "@/lib/aimer/setup-status";
 import { auditLog } from "@/lib/audit/logger";
@@ -159,14 +163,23 @@ function isNonEmptyString(value: unknown): value is string {
  * Stories-tab first open. The `0` event_key sentinel is the lower-
  * bound `NUMERIC(39, 0)` value — the first real Story past `NOW()`
  * compares strictly greater regardless of its id.
+ *
+ * Also stamps `streaming_activated_at = NOW()` so the late-commit
+ * straggler scan in `loadStoryStragglerSlice` has a stable floor for
+ * the "no historical back-flood on first activation" guarantee. The
+ * column is updated atomically with the cursor seed (same UPDATE,
+ * same row, same `WHERE last_pushed_event_time IS NULL` predicate)
+ * so a stale state row cannot end up with a cursor set but no
+ * activation watermark.
  */
 async function seedNullCursor(customerId: number): Promise<void> {
   const pool = await getCustomerPool(customerId);
   await pool.query(
     `UPDATE aimer_push_state
-        SET last_pushed_event_time = NOW(),
-            last_pushed_event_key  = '0',
-            last_synced_at         = NOW()
+        SET last_pushed_event_time   = NOW(),
+            last_pushed_event_key    = '0',
+            last_synced_at           = NOW(),
+            streaming_activated_at   = NOW()
       WHERE kind = 'story'
         AND last_pushed_event_time IS NULL`,
   );
@@ -295,6 +308,47 @@ export const POST = withAuth(
       return NextResponse.json(EMPTY_BODY);
     }
 
+    // ── Late-commit straggler scan (round-5 follow-up) ───────
+    //
+    // Catches the race where a correlator transaction commits AFTER a
+    // previous drain advanced the cursor past its `created_at` (PG
+    // `now()` is transaction-start time, not commit time, so an
+    // `event_group` insert can persist a row whose `created_at` is
+    // BEHIND the just-advanced cursor and would otherwise be missed
+    // forever by the forward `(created_at, id) > cursor` slice).
+    //
+    // The scan is gated on `streaming_activated_at` so a freshly-
+    // seeded tenant does NOT back-flood the entire historical
+    // `event_group` corpus on first open. Rows older than activation
+    // are pre-existing history; the straggler scan ignores them.
+    if (state.streaming_activated_at !== null) {
+      const straggler = await loadStoryStragglerSlice({
+        customerId,
+        cursorEventTime: state.last_pushed_event_time,
+        cursorEventKey: state.last_pushed_event_key ?? "0",
+        activatedAt: state.streaming_activated_at,
+      });
+      if (straggler.stories.length > 0) {
+        return await emitStreamingBatch({
+          customerId,
+          session,
+          stories: straggler.stories,
+          // Stragglers sit AT OR BEHIND the cursor — emitting them
+          // must NOT advance the forward cursor (that would either
+          // be a no-op via `advanceCursor`'s monotonic guard or, in
+          // a degenerate case, double-deliver the next forward
+          // slice). β + audit on ack address the `pushed_stories`
+          // set persisted on the inflight row.
+          cursorAdvanceToEventTime: null,
+          cursorAdvanceToEventKey: null,
+          // Force has_more=true because there may be more
+          // stragglers (or new-row work) past this batch. The drain
+          // loop iterates until next-batch returns has_more=false.
+          hasMoreOverride: true,
+        });
+      }
+    }
+
     const slice = await loadStoryStreamingSlice({
       customerId,
       cursorEventTime: state.last_pushed_event_time,
@@ -305,66 +359,21 @@ export const POST = withAuth(
       return NextResponse.json(EMPTY_BODY);
     }
 
-    let tokens: Awaited<ReturnType<typeof buildPhase2Push>>;
-    try {
-      tokens = await buildPhase2Push({
-        schemaVersion: STORY_STREAMING_SCHEMA_VERSION,
-        customerId,
-        accountId: session.accountId,
-        payload: {
-          external_key: "_",
-          source_aice_id: "_",
-          stories: slice.stories,
-        },
-      });
-    } catch (err) {
-      if (
-        err !== null &&
-        typeof err === "object" &&
-        "code" in err &&
-        typeof (err as { code: unknown }).code === "string"
-      ) {
-        return jsonError((err as { code: string }).code, 409);
-      }
-      throw err;
-    }
-
-    await insertInflight(customerId, {
-      contextJti: tokens.context_jti,
-      kind: "story",
+    return await emitStreamingBatch({
+      customerId,
+      session,
+      stories: slice.stories,
+      // Forward slice: advance the cursor to the last delivered
+      // row's `(created_at, id)`. Combined with the persisted
+      // `pushed_stories` set, β/audit address the exact signed rows
+      // and any Story inserted with `created_at > slice.lastEventTime`
+      // is picked up by the next drain (forward case). Rows that
+      // commit late with `created_at <= cursor` are caught by the
+      // straggler scan above on a subsequent iteration.
       cursorAdvanceToEventTime: slice.lastEventTime,
       cursorAdvanceToEventKey: slice.lastEventKey,
-      queueRowIds: [],
-      // Pin the ack-time β-bump + audit to the exact rows actually
-      // signed into this envelope. The cursor key for `story` is
-      // `(created_at, id)` (monotonic at insert), so a Story inserted
-      // between mint and ack has `created_at > slice.lastEventTime`
-      // and will be picked up by the next drain rather than silently
-      // skipped. See `loadStoryStreamingSlice` for the full rationale.
-      pushedStories: slice.stories.map((s) => ({
-        storyId: s.story_id,
-        storyVersion: s.story_version,
-      })),
+      hasMoreOverride: slice.hasMore,
     });
-
-    const setup = await getAimerIntegrationSetup();
-    const aimerEndpointUrl = composeAimerEndpointUrl(
-      setup.bridgeUrl,
-      STORY_STREAMING_AIMER_PATH,
-    );
-
-    const responseBody: SuccessBody = {
-      has_more: slice.hasMore,
-      context_token: tokens.context_token,
-      events_envelope: tokens.events_envelope,
-      events_data: tokens.events_data,
-      context_jti: tokens.context_jti,
-      aimer_endpoint_path: STORY_STREAMING_AIMER_PATH,
-      aimer_endpoint_url: aimerEndpointUrl,
-      batch_jti: tokens.context_jti,
-      schema_version: STORY_STREAMING_SCHEMA_VERSION,
-    };
-    return NextResponse.json(responseBody);
   },
   {
     requiredPermissions: ["triage:read"],
@@ -455,6 +464,94 @@ async function emitQueueBatch(
     aimer_endpoint_url: aimerEndpointUrl,
     batch_jti: tokens.context_jti,
     schema_version: mapping.schemaVersion,
+  };
+  return NextResponse.json(responseBody);
+}
+
+interface EmitStreamingBatchInput {
+  customerId: number;
+  session: { accountId: string };
+  stories: readonly StoryWireItem[];
+  /**
+   * `(created_at, id)` to advance the cursor to on ack. `null` for the
+   * straggler branch — those rows sit AT OR BEHIND the cursor, so the
+   * cursor must NOT advance. β/audit on ack address the persisted
+   * `pushed_stories` set either way.
+   */
+  cursorAdvanceToEventTime: Date | null;
+  cursorAdvanceToEventKey: string | null;
+  /** Response `has_more` value. */
+  hasMoreOverride: boolean;
+}
+
+/**
+ * Shared envelope-build + inflight-insert + response builder for both
+ * streaming branches (forward `(created_at, id) > cursor` slice and
+ * the late-commit straggler scan). Centralizes the parts that must
+ * stay identical:
+ *
+ *   - the `phase2.story.v1` schema + endpoint mapping
+ *   - the `pushed_stories` projection that drives β/audit on ack
+ *   - the structured-error → 409 mapping from `buildPhase2Push`
+ *
+ * The cursor-advance fields differ per branch and are passed in by
+ * the caller.
+ */
+async function emitStreamingBatch(
+  input: EmitStreamingBatchInput,
+): Promise<NextResponse> {
+  let tokens: Awaited<ReturnType<typeof buildPhase2Push>>;
+  try {
+    tokens = await buildPhase2Push({
+      schemaVersion: STORY_STREAMING_SCHEMA_VERSION,
+      customerId: input.customerId,
+      accountId: input.session.accountId,
+      payload: {
+        external_key: "_",
+        source_aice_id: "_",
+        stories: input.stories,
+      },
+    });
+  } catch (err) {
+    if (
+      err !== null &&
+      typeof err === "object" &&
+      "code" in err &&
+      typeof (err as { code: unknown }).code === "string"
+    ) {
+      return jsonError((err as { code: string }).code, 409);
+    }
+    throw err;
+  }
+
+  await insertInflight(input.customerId, {
+    contextJti: tokens.context_jti,
+    kind: "story",
+    cursorAdvanceToEventTime: input.cursorAdvanceToEventTime,
+    cursorAdvanceToEventKey: input.cursorAdvanceToEventKey,
+    queueRowIds: [],
+    pushedStories: input.stories.map((s) => ({
+      storyId: s.story_id,
+      storyVersion: s.story_version,
+    })),
+  });
+
+  const setup = await getAimerIntegrationSetup();
+  const aimerEndpointUrl = composeAimerEndpointUrl(
+    setup.bridgeUrl,
+    STORY_STREAMING_AIMER_PATH,
+  );
+
+  const responseBody: SuccessBody = {
+    has_more: input.hasMoreOverride,
+    context_token: tokens.context_token,
+    events_envelope: tokens.events_envelope,
+    events_data: tokens.events_data,
+    context_jti: tokens.context_jti,
+    aimer_endpoint_path: STORY_STREAMING_AIMER_PATH,
+    aimer_endpoint_url: aimerEndpointUrl,
+    batch_jti: tokens.context_jti,
+    schema_version: STORY_STREAMING_SCHEMA_VERSION,
   };
   return NextResponse.json(responseBody);
 }

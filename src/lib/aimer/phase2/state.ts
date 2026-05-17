@@ -119,6 +119,23 @@ export interface AimerPushStateRow {
   opportunistic_enabled: boolean;
   paused_at: Date | null;
   paused_by: string | null;
+  /**
+   * Watermark stamped on the first `next-batch` activation (see
+   * `seedNullCursor` in the story drain). Anchors the "late-commit
+   * straggler" scan in `loadStoryStragglerSlice` so a freshly-seeded
+   * tenant does NOT back-flood the entire historical `event_group`
+   * corpus — only rows whose `created_at >= streaming_activated_at`
+   * are eligible for the behind-cursor scan. `NULL` for an unseeded
+   * row (no activation yet — skip the straggler scan).
+   *
+   * For the `baseline_event` streaming kind this column is populated
+   * (migration `0020_aimer_push_state_streaming_activated_at.sql`
+   * backfills from `last_pushed_event_time`) but the baseline drain
+   * has no equivalent late-commit race — baseline rows are keyed on
+   * sensor `event_time`, not on the row's PG insert timestamp — so
+   * the baseline drain ignores this column.
+   */
+  streaming_activated_at: Date | null;
 }
 
 export interface AimerPushQueueRow {
@@ -177,7 +194,8 @@ export async function getAimerPushState(
             last_error,
             opportunistic_enabled,
             paused_at,
-            paused_by
+            paused_by,
+            streaming_activated_at
        FROM aimer_push_state
       WHERE kind = $1`,
     [kind],

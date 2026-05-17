@@ -11,24 +11,60 @@
  * {@link toWireStoryItem} so opportunistic, refresh, and backfill
  * Stories all carry identical fields per RFC 0002 §6.
  *
- * Cursor key mapping: stories carry no `event_time` / `event_key`. For
- * the `story` streaming kind the `aimer_push_state.last_pushed_event_time`
- * column stores the Story's `created_at` and `last_pushed_event_key`
- * stores the stringified `event_group.id`. Using `created_at` (not
- * `time_window_end`) for the cursor is what makes the cursor immune to
- * the late-insert race: an `auto_correlated` row inserted into the
- * Story table after a slice was loaded — but with a `time_window_end`
- * that sorts inside the just-minted range — would otherwise live
- * permanently behind the advanced cursor, never delivered. `created_at`
- * defaults to `now()` on insert (see
- * `migrations/customer/0008_event_group_story.sql`), so any row not yet
- * visible at slice-time has a strictly greater `created_at` than the
- * cursor target and will be picked up by the next drain.
+ * ## Late-commit race: two-mechanism defense
+ *
+ * Stories carry no `event_time` / `event_key`. For the `story`
+ * streaming kind the `aimer_push_state.last_pushed_event_time` column
+ * stores the Story's `created_at` and `last_pushed_event_key` stores
+ * the stringified `event_group.id`. The cursor key is `(created_at,
+ * id)` (not `(time_window_end, id)`) — but `created_at` defaults to
+ * `now()` (= TRANSACTION-START time in PostgreSQL, not statement or
+ * commit time, see `migrations/customer/0008_event_group_story.sql`).
+ * A correlator transaction can therefore commit AFTER a drain advances
+ * the cursor while persisting a row whose `created_at` is BEHIND the
+ * just-advanced cursor; the cursor-ordered forward slice
+ * `(created_at, id) > $cursor` would never re-select that row.
+ *
+ * The drain closes the race with two cooperating mechanisms:
+ *
+ *   1. **Forward cursor on `(created_at, id)`**
+ *      ({@link loadStoryStreamingSlice}) — handles the common case
+ *      where the inserting transaction's `created_at` is strictly
+ *      greater than the previously-advanced cursor (i.e., the
+ *      inserting transaction either started after the previous slice
+ *      ran, OR its `created_at` was already past the cursor target
+ *      that previous slice advanced to). Combined with the persisted
+ *      `aimer_push_inflight.pushed_stories` set, β/audit only address
+ *      the exact rows actually signed into the envelope.
+ *
+ *   2. **Late-commit straggler scan**
+ *      ({@link loadStoryStragglerSlice}) — run by the drain BEFORE the
+ *      forward slice on every `next-batch` call. Selects unsent rows
+ *      that sit AT OR BEHIND the cursor
+ *      (`(created_at, id::numeric) <= cursor AND last_sent_at IS NULL`)
+ *      and that were created AT OR AFTER the activation watermark
+ *      (`created_at >= streaming_activated_at` from
+ *      `aimer_push_state`). Stragglers are delivered as a regular
+ *      Story batch with `cursorAdvanceTo* = NULL` on the inflight row
+ *      (β/audit address `pushed_stories`; the forward cursor stays
+ *      put). Once delivered they get `last_sent_at = NOW()` on ack and
+ *      drop out of the scan permanently.
+ *
+ * The `streaming_activated_at` watermark
+ * (`migrations/customer/0020_aimer_push_state_streaming_activated_at.sql`)
+ * is stamped at the same instant as the NULL-cursor seed in
+ * `seedNullCursor`. Rows whose `created_at` is older than activation
+ * are pre-existing history; they are NOT eligible for the straggler
+ * scan and the drain therefore does not back-flood aimer-web with the
+ * entire historical `event_group` corpus on a freshly-opened Stories
+ * tab. Rows created AFTER activation but committed late — the race
+ * target — are caught and delivered automatically.
  *
  * Curated stories (`event_group.kind = 'analyst_curated'`) are NEVER
- * opportunistically pushed; the loader filters to `auto_correlated`
- * only. Manual Send is single-Story and skips this loader, going
- * through {@link loadSingleStoryWireItem} instead.
+ * opportunistically pushed; both the streaming slice and the
+ * straggler scan filter to `auto_correlated` only. Manual Send is
+ * single-Story and skips both helpers, going through
+ * {@link loadSingleStoryWireItem} instead.
  */
 
 import "server-only";
@@ -442,6 +478,184 @@ async function loadBaselineEventsByKey(
     });
   }
   return map;
+}
+
+// ── Late-commit straggler scan (round-5 follow-up) ────────────────
+
+export interface LoadStoryStragglerSliceInput {
+  customerId: number;
+  /** Current cursor `created_at` from `aimer_push_state`. */
+  cursorEventTime: Date;
+  /** Current cursor stringified `event_group.id` from `aimer_push_state`. */
+  cursorEventKey: string;
+  /**
+   * Lower bound on `created_at` — typically the value of
+   * `aimer_push_state.streaming_activated_at`. Rows older than this
+   * are pre-activation history and are intentionally skipped so a
+   * freshly-seeded tenant does not back-flood aimer-web with the
+   * entire historical `event_group` corpus on first activation.
+   */
+  activatedAt: Date;
+  /**
+   * Maximum payload bytes (inner JSON, before envelope). Defaults to
+   * the shared `phase2.story.v1` cap, matching
+   * {@link loadStoryStreamingSlice}.
+   */
+  maxBytes?: number;
+  /** Max rows pulled from PG before the byte budget trims. */
+  rowLimit?: number;
+}
+
+export interface StoryStragglerSlice {
+  stories: StoryWireItem[];
+  /** True when at least one un-consumed straggler remains past this slice. */
+  hasMore: boolean;
+}
+
+/**
+ * Load the next slice of "straggler" Stories — auto-correlated rows
+ * whose insert transaction committed AFTER a previous drain advanced
+ * the cursor past their `created_at`. The drain delivers these
+ * WITHOUT advancing the forward cursor; β/audit on ack address the
+ * persisted `aimer_push_inflight.pushed_stories` set, and the rows
+ * drop out of the scan once `last_sent_at` is set.
+ *
+ * Eligibility:
+ *
+ *   - `kind = 'auto_correlated'` — curated stories never opportunistic-
+ *     push.
+ *   - `last_sent_at IS NULL` — already-delivered rows are excluded.
+ *     This is the predicate that lets the scan find a stable fix-
+ *     point: once a straggler is acked, it stops appearing.
+ *   - `created_at >= activatedAt` — pre-activation historical rows are
+ *     deliberately skipped per the "no back-flood on first
+ *     activation" requirement.
+ *   - `(created_at, id::numeric) <= cursor` — strictly at-or-behind
+ *     the forward cursor. Rows past the cursor are the forward slice's
+ *     job (`loadStoryStreamingSlice`); the straggler scan covers the
+ *     orthogonal "committed late, ended up behind cursor" case the
+ *     forward slice cannot recover on its own.
+ *
+ * Backed by partial index
+ * `event_group_auto_unsent_created_at_idx` (migration
+ * `0021_event_group_unsent_idx.sql`).
+ */
+export async function loadStoryStragglerSlice(
+  input: LoadStoryStragglerSliceInput,
+): Promise<StoryStragglerSlice> {
+  const pool = await getCustomerPool(input.customerId);
+  const client = await pool.connect();
+  try {
+    return await loadStragglerSlice(client, input);
+  } finally {
+    client.release();
+  }
+}
+
+async function loadStragglerSlice(
+  client: pg.PoolClient,
+  input: LoadStoryStragglerSliceInput,
+): Promise<StoryStragglerSlice> {
+  const rowLimit = Math.min(
+    Math.max(1, input.rowLimit ?? DEFAULT_ROW_LIMIT),
+    MAX_ROWS_PER_BATCH,
+  );
+
+  const { rows } = await client.query<StoryCursorRowSql>(
+    // Cursor on `(created_at, id) <= cursor` (note the inclusive
+    // inequality) AND `created_at >= activated_at` (open the floor at
+    // first activation, never below). `last_sent_at IS NULL` lines
+    // up with the partial-index predicate so the scan stays O(unsent
+    // rows in window) on tenants with deep auto-correlated history.
+    `SELECT id::text                                AS story_id,
+            story_version,
+            kind,
+            correlation_rule_id,
+            host(primary_asset)::text               AS primary_asset,
+            to_char(time_window_start AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS time_window_start,
+            to_char(time_window_end   AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS time_window_end,
+            score,
+            summary_payload,
+            to_char(created_at AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
+            created_at                               AS created_at_date,
+            CASE WHEN last_sent_at IS NULL THEN NULL
+                 ELSE to_char(last_sent_at AT TIME ZONE 'UTC',
+                              'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+            END                                      AS last_sent_at,
+            last_sent_by::text                       AS last_sent_by,
+            send_count
+       FROM event_group
+      WHERE kind = 'auto_correlated'
+        AND last_sent_at IS NULL
+        AND created_at >= $1::timestamptz
+        AND (created_at, id::numeric) <= ($2::timestamptz, $3::numeric)
+      ORDER BY created_at, id
+      LIMIT $4`,
+    [
+      input.activatedAt,
+      input.cursorEventTime,
+      input.cursorEventKey,
+      rowLimit + 1,
+    ],
+  );
+
+  const overflow = rows.length > rowLimit;
+  const considered = rows.slice(0, rowLimit);
+  if (considered.length === 0) {
+    return { stories: [], hasMore: false };
+  }
+
+  const ids = considered.map((r) => r.story_id);
+  const memberMap = await loadStoryMembers(client, ids);
+
+  const items: StoryRefreshItem[] = considered.map((r) => ({
+    story_id: r.story_id,
+    story_version: r.story_version,
+    kind: r.kind,
+    members: memberMap.get(r.story_id) ?? [],
+    correlation_rule_id: r.correlation_rule_id,
+    primary_asset: r.primary_asset,
+    time_window_start: r.time_window_start,
+    time_window_end: r.time_window_end,
+    score: r.score,
+    summary_payload: r.summary_payload,
+    created_at: r.created_at,
+    last_sent_at: r.last_sent_at,
+    last_sent_by: r.last_sent_by,
+    send_count: r.send_count,
+  }));
+
+  const rawBudget = input.maxBytes ?? PHASE2_REFRESH_PAYLOAD_MAX_BYTES;
+  const budget = Math.max(1, rawBudget - PHASE2_BASELINE_AUGMENT_RESERVE_BYTES);
+
+  const wire = items.map(toWireStoryItem);
+  const fitted: StoryWireItem[] = [];
+  let runningBytes = 0;
+  const wrapperBytes = Buffer.byteLength(
+    JSON.stringify({ external_key: "_", source_aice_id: "_", stories: [] }),
+    "utf8",
+  );
+  for (const item of wire) {
+    const candidate = JSON.stringify(item);
+    const addedBytes =
+      Buffer.byteLength(candidate, "utf8") + (fitted.length > 0 ? 1 : 0);
+    if (
+      fitted.length > 0 &&
+      runningBytes + addedBytes + wrapperBytes > budget
+    ) {
+      break;
+    }
+    fitted.push(item);
+    runningBytes += addedBytes;
+  }
+  if (fitted.length === 0) {
+    fitted.push(wire[0]);
+  }
+  const trimmed = fitted.length < wire.length;
+  return { stories: fitted, hasMore: overflow || trimmed };
 }
 
 /**

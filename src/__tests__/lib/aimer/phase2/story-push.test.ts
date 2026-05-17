@@ -87,6 +87,45 @@ describe("loadStoryStreamingSlice cursor SQL", () => {
     expect(sql).not.toMatch(/ORDER BY\s+time_window_end\b/);
   });
 
+  it("loadStoryStragglerSlice scans behind cursor with last_sent_at IS NULL gated on streaming_activated_at", async () => {
+    // Round-5 regression: PG `now()` is transaction-start time, so a
+    // correlator transaction that begins before the drain reads can
+    // commit a row whose `created_at` is BEHIND the just-advanced
+    // cursor. The straggler scan recovers those rows. It must:
+    //
+    //   - filter to `kind = 'auto_correlated'` (curated stays out)
+    //   - filter `last_sent_at IS NULL` (already-delivered rows excluded)
+    //   - lower-bound `created_at >= streaming_activated_at` (no
+    //     pre-activation back-flood)
+    //   - upper-bound `(created_at, id) <= cursor` (inclusive — the
+    //     forward slice owns rows strictly past the cursor)
+    //   - ORDER BY (created_at, id)
+    const activatedAt = new Date("2026-04-01T00:00:00Z");
+    await storyPush.loadStoryStragglerSlice({
+      customerId: 42,
+      cursorEventTime: new Date("2026-05-15T00:00:00Z"),
+      cursorEventKey: "5000",
+      activatedAt,
+    });
+    const scanCall = fake.calls.find(
+      (c) => typeof c.sql === "string" && c.sql.includes("FROM event_group"),
+    );
+    expect(scanCall).toBeDefined();
+    const sql = scanCall?.sql ?? "";
+    expect(sql).toContain("kind = 'auto_correlated'");
+    expect(sql).toContain("last_sent_at IS NULL");
+    expect(sql).toContain("created_at >= $1::timestamptz");
+    expect(sql).toContain(
+      "(created_at, id::numeric) <= ($2::timestamptz, $3::numeric)",
+    );
+    expect(sql).toContain("ORDER BY created_at, id");
+    // The first three params anchor activation + cursor; the 4th is
+    // the LIMIT.
+    expect(scanCall?.params?.[0]).toEqual(activatedAt);
+    expect(scanCall?.params?.[1]).toEqual(new Date("2026-05-15T00:00:00Z"));
+    expect(scanCall?.params?.[2]).toBe("5000");
+  });
+
   it("returns the last delivered Story's created_at as the cursor advance target", async () => {
     // The cursor target on ack is `(created_at, id)` of the last
     // delivered row, not `(time_window_end, id)`. Returning

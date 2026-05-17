@@ -44,8 +44,10 @@ const mockState = vi.hoisted(() => ({
 vi.mock("@/lib/aimer/phase2/state", () => mockState);
 
 const mockLoadSlice = vi.hoisted(() => vi.fn());
+const mockLoadStraggler = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/aimer/phase2/story-push", () => ({
   loadStoryStreamingSlice: mockLoadSlice,
+  loadStoryStragglerSlice: mockLoadStraggler,
 }));
 
 const mockGetSetup = vi.hoisted(() => vi.fn());
@@ -129,8 +131,12 @@ describe("POST /api/aimer/phase2/story/next-batch", () => {
       opportunistic_enabled: true,
       paused_at: null,
       paused_by: null,
+      streaming_activated_at: new Date("2025-12-31T00:00:00Z"),
     });
     mockLoadSlice.mockReset().mockResolvedValue(EMPTY_SLICE);
+    mockLoadStraggler
+      .mockReset()
+      .mockResolvedValue({ stories: [], hasMore: false });
     mockGetSetup.mockReset().mockResolvedValue({
       aiceId: "aice.example.com",
       bridgeUrl: "https://aimer.example.com",
@@ -205,6 +211,7 @@ describe("POST /api/aimer/phase2/story/next-batch", () => {
       opportunistic_enabled: true,
       paused_at: null,
       paused_by: null,
+      streaming_activated_at: null,
     });
     const poolMock = {
       query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
@@ -219,8 +226,15 @@ describe("POST /api/aimer/phase2/story/next-batch", () => {
     expect(body.context_jti).toBeNull();
     expect(poolMock.query).toHaveBeenCalled();
     const sqlArg = poolMock.query.mock.calls[0][0];
-    expect(sqlArg).toContain("SET last_pushed_event_time = NOW()");
+    expect(sqlArg).toContain("last_pushed_event_time   = NOW()");
+    // Round-5 regression: seed must also stamp the activation
+    // watermark so the straggler scan has a stable lower bound.
+    expect(sqlArg).toContain("streaming_activated_at   = NOW()");
     expect(mockBuildPush).not.toHaveBeenCalled();
+    // The straggler scan must NOT run on this iteration — the state
+    // row has no activation yet, so the route skips straight to the
+    // seed step.
+    expect(mockLoadStraggler).not.toHaveBeenCalled();
   });
 
   it("claims withdraw_story first, refresh second, backfill third", async () => {
@@ -335,6 +349,86 @@ describe("POST /api/aimer/phase2/story/next-batch", () => {
     // `slice.lastEventTime` is still selected by a subsequent drain
     // — see the SQL-level cursor test in story-push.test.ts.
     expect(arg.cursorAdvanceToEventKey).toBe("1002");
+  });
+
+  it("emits straggler batch BEFORE forward slice, with null cursor advance and pushedStories populated", async () => {
+    // Round-5 race fix: a row inserted by a long correlator
+    // transaction can commit with `created_at` BEHIND the cursor that
+    // a previous drain just advanced (PG `now()` is transaction-start
+    // time). The straggler scan recovers these rows, but it MUST NOT
+    // advance the forward cursor — only the persisted
+    // `pushed_stories` set drives β/audit on ack.
+    mockLoadStraggler.mockResolvedValueOnce({
+      stories: [
+        {
+          story_id: "777",
+          story_version: "v1",
+          kind: "auto_correlated",
+          time_window: { start: "a", end: "b" },
+          members: [],
+        },
+      ],
+      hasMore: false,
+    });
+    mockLoadSlice.mockResolvedValueOnce({
+      stories: [
+        {
+          story_id: "888",
+          story_version: "v1",
+          kind: "auto_correlated",
+          time_window: { start: "a", end: "b" },
+          members: [],
+        },
+      ],
+      lastEventTime: new Date("2026-03-01T00:00:00Z"),
+      lastEventKey: "888",
+      hasMore: false,
+    });
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/story/next-batch/route"
+    );
+    const res = await POST(makeRequest({ customerId: 42 }), ctx);
+    const body = await res.json();
+    expect(body.schema_version).toBe("phase2.story.v1");
+    // Forward-slice loader must NOT have been called this iteration —
+    // stragglers are drained first; the forward slice waits for the
+    // next iteration of the drain loop.
+    expect(mockLoadSlice).not.toHaveBeenCalled();
+    expect(body.has_more).toBe(true);
+    // inflight: null cursor advance + pushedStories pinned to the
+    // straggler set.
+    const insertArg = mockState.insertInflight.mock.calls[0][1];
+    expect(insertArg.cursorAdvanceToEventTime).toBeNull();
+    expect(insertArg.cursorAdvanceToEventKey).toBeNull();
+    expect(insertArg.pushedStories).toEqual([
+      { storyId: "777", storyVersion: "v1" },
+    ]);
+  });
+
+  it("skips the straggler scan when streaming_activated_at is NULL (pre-seed state)", async () => {
+    // Defense in depth: even if the route is somehow reached with a
+    // populated cursor but a NULL activation watermark (e.g., a
+    // migration race where the backfill didn't run), the straggler
+    // scan must not fire — without a lower bound it would scan the
+    // entire historical corpus and back-flood aimer-web.
+    mockState.getAimerPushState.mockResolvedValueOnce({
+      kind: "story",
+      last_pushed_event_time: new Date("2026-01-01T00:00:00Z"),
+      last_pushed_event_key: "0",
+      last_synced_at: null,
+      last_error: null,
+      opportunistic_enabled: true,
+      paused_at: null,
+      paused_by: null,
+      streaming_activated_at: null,
+    });
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/story/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+    expect(mockLoadStraggler).not.toHaveBeenCalled();
+    // Forward slice still runs.
+    expect(mockLoadSlice).toHaveBeenCalled();
   });
 
   it("emits one triage.story.send audit per Story acked on prior batch", async () => {

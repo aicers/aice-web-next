@@ -97,6 +97,7 @@ describe("Phase 2 state helpers (state.ts)", () => {
   // ── State helpers ─────────────────────────────────────────────
 
   it("getAimerPushState returns the row when present, null otherwise", async () => {
+    const activatedAt = new Date("2026-05-09T00:00:00Z");
     fake.setResponse((sql) => {
       if (sql.includes("FROM aimer_push_state")) {
         return {
@@ -110,6 +111,7 @@ describe("Phase 2 state helpers (state.ts)", () => {
               opportunistic_enabled: true,
               paused_at: null,
               paused_by: null,
+              streaming_activated_at: activatedAt,
             },
           ],
           rowCount: 1,
@@ -120,6 +122,14 @@ describe("Phase 2 state helpers (state.ts)", () => {
     const row = await state.getAimerPushState(1, "baseline_event");
     expect(row?.last_pushed_event_key).toBe("100");
     expect(row?.opportunistic_enabled).toBe(true);
+    expect(row?.streaming_activated_at).toEqual(activatedAt);
+    // Round-5 regression: the SELECT must include the new column so
+    // the story drain's straggler scan has its activation watermark.
+    const selectCall = fake.calls.find(
+      (c) =>
+        typeof c.sql === "string" && c.sql.includes("FROM aimer_push_state"),
+    );
+    expect(selectCall?.sql).toContain("streaming_activated_at");
 
     fake.setResponse(() => ({ rows: [], rowCount: 0 }));
     const none = await state.getAimerPushState(1, "story");
