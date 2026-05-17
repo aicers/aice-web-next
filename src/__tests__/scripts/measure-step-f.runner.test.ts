@@ -23,6 +23,11 @@
  *
  *   - INSERT on observed_event_meta, baseline_triaged_event,
  *     event_group, event_group_member.
+ *   - INSERT on baseline_corpus_state — the runner always issues
+ *     `INSERT INTO baseline_corpus_state (id) VALUES (true) ON CONFLICT
+ *     (id) DO NOTHING` before the first fetch (mirroring cadence's
+ *     first-page state setup), so the grant is required even on
+ *     tenants whose singleton row already exists.
  *   - UPDATE on baseline_corpus_state covering every column the runner
  *     writes inside the outer transaction:
  *       * story_finalized_through (advanced by step (f) inside
@@ -494,7 +499,7 @@ async function readStateSnapshot(client: {
       client.query(
         `SELECT last_event_cursor, last_ingested_at, baseline_version,
                 exclusions_fp, last_run_status, last_error,
-                story_finalized_through
+                story_finalized_through, corpus_activated_at
            FROM baseline_corpus_state
           WHERE id = true`,
       ),
