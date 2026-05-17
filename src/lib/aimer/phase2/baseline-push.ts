@@ -60,7 +60,7 @@ import type pg from "pg";
 import {
   type BaselineRefreshEvent,
   type BaselineRefreshSubPayload,
-  PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
+  PHASE2_BASELINE_AUGMENT_RESERVE_BYTES,
   PHASE2_REFRESH_PAYLOAD_MAX_BYTES,
 } from "@/lib/aimer/phase2/payload-builders";
 import { detectActiveWindows } from "@/lib/triage/baseline/selectors";
@@ -176,8 +176,10 @@ export interface LoadBaselineStreamingSliceInput {
   /**
    * Maximum payload bytes (inner JSON, before envelope). Defaults to
    * {@link PHASE2_REFRESH_PAYLOAD_MAX_BYTES} minus the
-   * {@link PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES} reserve so the
-   * post-augmentation payload still fits the shared cap.
+   * {@link PHASE2_BASELINE_AUGMENT_RESERVE_BYTES} reserve so the
+   * post-augmentation payload — including both `external_key` and
+   * `source_aice_id` that `augmentPayload` injects for
+   * `phase2.baseline.v1` — still fits the shared cap.
    */
   maxBytes?: number;
   /** Max rows pulled from PG before the byte budget trims. */
@@ -296,12 +298,14 @@ async function loadSlice(
   });
 
   // Trim by serialized byte budget. The drain loop will pick up the
-  // trimmed tail on the next iteration via the unchanged cursor.
+  // trimmed tail on the next iteration via the unchanged cursor. The
+  // reserve subtracts both `external_key` and `source_aice_id` since
+  // `augmentPayload` injects both fields onto `phase2.baseline.v1`
+  // payloads at signing time — measuring `{ baseline_version, events }`
+  // alone would under-count by up to ~1 KiB and allow the signed
+  // payload to exceed the shared cap.
   const rawBudget = input.maxBytes ?? PHASE2_REFRESH_PAYLOAD_MAX_BYTES;
-  const budget = Math.max(
-    1,
-    rawBudget - PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
-  );
+  const budget = Math.max(1, rawBudget - PHASE2_BASELINE_AUGMENT_RESERVE_BYTES);
   const fitted = trimToBudget(enriched, baselineVersion, budget);
 
   if (fitted.length === 0) {
@@ -967,9 +971,21 @@ function truncateAtVersionBoundary<T extends { baseline_version: string }>(
 
 /**
  * Trim a fully-enriched slice so the inner payload (events + top-level
- * `baseline_version` / future `external_key`) stays under `budget`
- * bytes. The drain loop will pick up the trimmed tail on the next
- * iteration via the unchanged cursor.
+ * `baseline_version`) stays under `budget` bytes. The drain loop will
+ * pick up the trimmed tail on the next iteration via the unchanged
+ * cursor.
+ *
+ * Uses `Buffer.byteLength` so the meter counts UTF-8 bytes — matching
+ * what `JSON.stringify`+HTTP would emit on the wire — instead of JS
+ * string `.length` (UTF-16 code units), which would under-count any
+ * non-ASCII content (CJK hostnames, IDN URIs, etc.) by up to 3× and
+ * let a payload that fits locally exceed the shared cap once signed.
+ * The shared refresh / backfill sub-divider in `payload-builders.ts`
+ * uses the same measurement.
+ *
+ * The caller passes a `budget` that already accounts for the
+ * `external_key` + `source_aice_id` reserve that `augmentPayload`
+ * adds at signing time (see {@link PHASE2_BASELINE_AUGMENT_RESERVE_BYTES}).
  */
 function trimToBudget(
   events: BaselineStreamingEvent[],
@@ -977,13 +993,13 @@ function trimToBudget(
   budget: number,
 ): BaselineStreamingEvent[] {
   const fitted: BaselineStreamingEvent[] = [];
-  const overhead = JSON.stringify({
-    baseline_version: baselineVersion,
-    events: [],
-  }).length;
+  const overhead = Buffer.byteLength(
+    JSON.stringify({ baseline_version: baselineVersion, events: [] }),
+    "utf8",
+  );
   let runningBytes = overhead;
   for (const event of events) {
-    const eventBytes = JSON.stringify(event).length + 1; // +1 for array comma
+    const eventBytes = Buffer.byteLength(JSON.stringify(event), "utf8") + 1; // +1 for array comma
     if (fitted.length > 0 && runningBytes + eventBytes > budget) break;
     fitted.push(event);
     runningBytes += eventBytes;

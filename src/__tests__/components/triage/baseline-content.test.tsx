@@ -33,6 +33,15 @@ vi.mock("@/app/[locale]/(dashboard)/triage/story-actions", () => ({
     storyActionsMocks.submitSaveAnalystCuratedStory,
 }));
 
+// #571 R4: the periodic-drain controller is mounted from baseline-
+// content; mock it so the focused scope test below can observe what
+// (kind, customerId) tuples the component spins up controllers for
+// without standing up a real fetch transport.
+const createPeriodicDrainMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/aimer/phase2/transport.client", () => ({
+  createPeriodicDrain: createPeriodicDrainMock,
+}));
+
 // #588 R4: the client emit must choose `pivotValueJoinId` for natural-
 // join dimensions (sameSensor / learningMethods / port / …) and
 // `pivotValue` for raw-ish dimensions. Mock the engagement module so
@@ -1343,5 +1352,112 @@ describe("TriageBaselineContent — pivot_value wire shape by dimension (#588 R4
     expect(payload.dimension).toBe("host");
     expect(payload.pivotValue).toBe("story-host.example");
     expect(payload).not.toHaveProperty("pivotValueJoinId");
+  });
+});
+
+describe("TriageBaselineContent — periodic drain scope source", () => {
+  beforeEach(() => {
+    createPeriodicDrainMock.mockReset();
+    createPeriodicDrainMock.mockImplementation(() => ({
+      start: vi.fn(),
+      stop: vi.fn(),
+    }));
+    storyActionsMocks.fetchStoryDetail.mockReset();
+    storyActionsMocks.refreshTriageStories.mockReset();
+    storyActionsMocks.fetchStoryDetail.mockResolvedValue(null);
+    storyActionsMocks.refreshTriageStories.mockResolvedValue([]);
+  });
+
+  function makeFreshness(customerIds: number[]) {
+    return {
+      worst: null,
+      customers: customerIds.map((customerId) => ({
+        customerId,
+        status: "ok" as const,
+        lastIngestedAtIso: "2026-05-08T00:00:00.000Z",
+        rowAbsent: false,
+        lastError: null,
+      })),
+    };
+  }
+
+  it("starts one drain controller per customer in result.freshness.customers (not per row in result.events)", () => {
+    // Round 4 Item 1: the drain scope must come from
+    // `result.freshness.customers` so admin views with queued
+    // backlog for a tenant that has no visible rows in the current
+    // slice still get a drain started. Anchoring scope to
+    // `result.events` would tie the trigger to row visibility and
+    // leave queue notices undrained.
+    const result: TriageLoadResult = {
+      funnel: { detected: 0, triaged: 0, shown: 0, passThroughRate: 0 },
+      assets: [],
+      truncated: false,
+      storyProtectedTruncated: false,
+      storyProtectedDroppedCount: 0,
+      eligibleByStop: {},
+      loadedEventCount: 1,
+      // Single row from customer 7 only — customer 9 has no visible
+      // rows but IS in scope (e.g. queue-only customer with pending
+      // refresh / backfill / withdraw notices).
+      events: [makeEvent(7, "x.example", "e1", 0)],
+      observedDenominatorTruncated: false,
+      freshness: makeFreshness([7, 9]),
+      strictness: "top50",
+    };
+
+    render(
+      <TriageBaselineContent
+        result={result}
+        resetSignal={0}
+        period={PERIOD}
+        scope="tier1"
+        mode="baseline"
+        labels={LABELS}
+      />,
+    );
+
+    const customerArgs = createPeriodicDrainMock.mock.calls
+      .map((call) => call[1] as number)
+      .sort((a, b) => a - b);
+    expect(customerArgs).toEqual([7, 9]);
+    for (const call of createPeriodicDrainMock.mock.calls) {
+      expect(call[0]).toBe("baseline_event");
+    }
+  });
+
+  it("does NOT start a drain for a customer whose events appear but who is not in freshness.customers", () => {
+    // Inverse of the above — `freshness.customers` is the source of
+    // truth. A stray event whose customer is not in the loaded scope
+    // (rare, but possible during scope flips) must not spin up an
+    // unrequested controller.
+    const result: TriageLoadResult = {
+      funnel: { detected: 0, triaged: 0, shown: 0, passThroughRate: 0 },
+      assets: [],
+      truncated: false,
+      storyProtectedTruncated: false,
+      storyProtectedDroppedCount: 0,
+      eligibleByStop: {},
+      loadedEventCount: 1,
+      events: [makeEvent(99, "x.example", "e1", 0)],
+      observedDenominatorTruncated: false,
+      freshness: makeFreshness([7]),
+      strictness: "top50",
+    };
+
+    render(
+      <TriageBaselineContent
+        result={result}
+        resetSignal={0}
+        period={PERIOD}
+        scope="tier1"
+        mode="baseline"
+        labels={LABELS}
+      />,
+    );
+
+    const customerArgs = createPeriodicDrainMock.mock.calls.map(
+      (call) => call[1] as number,
+    );
+    expect(customerArgs).toEqual([7]);
   });
 });

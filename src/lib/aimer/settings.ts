@@ -23,6 +23,14 @@ type StoredValue = { value: string | null };
  */
 const HOSTNAME_LABEL = /^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$/;
 
+/**
+ * Maximum hostname length accepted by {@link validateAiceId}. Exported
+ * so byte-budget reserves elsewhere (e.g. the Phase 2 payload-builder
+ * augment reserve) carry through automatically if this limit ever
+ * changes.
+ */
+export const AICE_ID_MAX_LENGTH = 253;
+
 export function validateAiceId(value: string): {
   valid: boolean;
   error?: string;
@@ -30,10 +38,10 @@ export function validateAiceId(value: string): {
   if (typeof value !== "string" || value.length === 0) {
     return { valid: false, error: "aice_id must be a non-empty string" };
   }
-  if (value.length > 253) {
+  if (value.length > AICE_ID_MAX_LENGTH) {
     return {
       valid: false,
-      error: "aice_id must be 253 characters or fewer",
+      error: `aice_id must be ${AICE_ID_MAX_LENGTH} characters or fewer`,
     };
   }
   const labels = value.split(".");

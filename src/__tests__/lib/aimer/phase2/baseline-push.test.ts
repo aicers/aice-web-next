@@ -70,6 +70,30 @@ describe("loadBaselineStreamingSlice trimToBudget", () => {
     const fitted = trimToBudget(events, "v1", oneEventBytes * 2 + 100);
     expect(fitted.length).toBe(2);
   });
+
+  it("measures UTF-8 byte length, not JS string code-units", () => {
+    // Round 4: the trimmer must use `Buffer.byteLength` so non-ASCII
+    // (CJK hostname, IDN URI, …) is counted at its true 3-byte UTF-8
+    // cost rather than 1 UTF-16 code unit. Otherwise a slice with
+    // non-ASCII bytes can pass the local trim and then exceed the
+    // shared cap once the signed body is serialized.
+    const ascii = makeEvent("1", 0);
+    ascii.host = "x".repeat(300);
+    const multibyte = makeEvent("2", 0);
+    multibyte.host = "한".repeat(300); // 300 code units, 900 UTF-8 bytes
+
+    const asciiBytes = Buffer.byteLength(JSON.stringify(ascii), "utf8");
+    const multibyteBytes = Buffer.byteLength(JSON.stringify(multibyte), "utf8");
+    // Set the budget so the ASCII event fits but the multibyte one
+    // would push the running total past the cap.
+    const budget = asciiBytes + 200;
+    const fittedAscii = trimToBudget([ascii, multibyte], "v1", budget);
+    expect(fittedAscii).toHaveLength(1);
+    expect(fittedAscii[0].event_key).toBe("1");
+    // Sanity: the multibyte event is materially larger by UTF-8, even
+    // though both have the same 300-character host string.
+    expect(multibyteBytes).toBeGreaterThan(asciiBytes + 500);
+  });
 });
 
 describe("truncateAtVersionBoundary", () => {

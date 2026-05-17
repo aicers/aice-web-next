@@ -447,16 +447,24 @@ export function TriageBaselineContent({
   // stays visible; visibility pause + single-flight + cleanup on
   // unmount are handled inside the controller.
   //
-  // `customerIdsKey` is a stable join of the sorted distinct
-  // customerIds, so the effect only re-runs when the in-scope set
-  // actually changes — not on every `result.events` reference churn.
+  // Scope source is `result.freshness.customers` — the authoritative
+  // per-tenant scope summary that covers exactly the customer ids
+  // `loadTriagePeriod` ran for, including admin scopes that enumerate
+  // every active customer. Driving the drain off `result.events`
+  // instead would tie the trigger to row visibility, so a tenant with
+  // only queued refresh/withdraw/backfill notices (no visible rows in
+  // the current slice), or a tenant trimmed by the menu cap, would
+  // never get its drain started even though Phase 2 backlog is sitting
+  // in `aimer_push_queue` / `aimer_push_state`. `customerIdsKey` is a
+  // stable join of the sorted distinct customerIds, so the effect only
+  // re-runs when the in-scope set actually changes.
   const customerIdsKey = useMemo(() => {
     const seen = new Set<number>();
-    for (const evt of result.events) seen.add(evt.customerId);
+    for (const c of result.freshness.customers) seen.add(c.customerId);
     return Array.from(seen)
       .sort((a, b) => a - b)
       .join(",");
-  }, [result.events]);
+  }, [result.freshness.customers]);
   const drainControllersRef = useRef<Map<number, PeriodicDrainController>>(
     new Map(),
   );
