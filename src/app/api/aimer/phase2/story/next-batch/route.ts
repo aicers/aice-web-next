@@ -336,11 +336,11 @@ export const POST = withAuth(
       cursorAdvanceToEventKey: slice.lastEventKey,
       queueRowIds: [],
       // Pin the ack-time β-bump + audit to the exact rows actually
-      // signed into this envelope. Without this, an `auto_correlated`
-      // row inserted between mint and ack whose `time_window_end`
-      // falls inside `(prev_cursor, new_cursor]` would be marked
-      // sent + audited without ever being delivered, and the cursor
-      // would advance past it.
+      // signed into this envelope. The cursor key for `story` is
+      // `(created_at, id)` (monotonic at insert), so a Story inserted
+      // between mint and ack has `created_at > slice.lastEventTime`
+      // and will be picked up by the next drain rather than silently
+      // skipped. See `loadStoryStreamingSlice` for the full rationale.
       pushedStories: slice.stories.map((s) => ({
         storyId: s.story_id,
         storyVersion: s.story_version,

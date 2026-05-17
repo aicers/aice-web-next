@@ -284,15 +284,18 @@ describe("POST /api/aimer/phase2/story/next-batch", () => {
     });
   });
 
-  it("persists the exact pushed Story id+version set on the inflight row so a late-inserted in-range Story is not β-bumped or audited", async () => {
-    // Regression for the round-3 race: at mint time the slice
-    // contains a specific set of Story rows. The ack path must
-    // address that exact set, not whatever currently matches
+  it("persists the exact pushed Story id+version set on the inflight row so a Story inserted between mint and ack is not β-bumped or audited", async () => {
+    // Round-3 / round-4 regression: at mint time the slice contains
+    // a specific set of Story rows. The ack path must address that
+    // exact set, not whatever currently matches
     // `(prev_cursor, new_cursor]`. If we only persisted the cursor
-    // target, an `auto_correlated` row inserted between mint and
-    // ack whose `time_window_end` fell inside the minted window
-    // would be β-bumped + audited without ever being delivered
-    // (Story ordering is event-window time, not creation time).
+    // target, a Story inserted between mint and ack would be
+    // β-bumped + audited without ever being delivered. Note that
+    // the round-4 cursor-key change to `(created_at, id)` also
+    // guarantees the late-insert is picked up by a subsequent
+    // drain (it has `created_at > slice.lastEventTime`); this test
+    // covers the orthogonal "β/audit only address delivered rows"
+    // guarantee.
     mockLoadSlice.mockResolvedValue({
       stories: [
         {
@@ -310,9 +313,9 @@ describe("POST /api/aimer/phase2/story/next-batch", () => {
           members: [],
         },
       ],
-      // Note: id "1001" is NOT in the slice even though it would
-      // sort between 1000 and 1002 — simulating the slice that was
-      // actually signed.
+      // Note: id "1001" is NOT in the slice even though it sorts by
+      // story_id between 1000 and 1002 — simulating the slice that
+      // was actually signed.
       lastEventTime: new Date("2026-01-02T00:00:00Z"),
       lastEventKey: "1002",
       hasMore: false,
@@ -326,8 +329,11 @@ describe("POST /api/aimer/phase2/story/next-batch", () => {
       { storyId: "1000", storyVersion: "v1" },
       { storyId: "1002", storyVersion: "v1" },
     ]);
-    // The cursor target still advances past the last delivered row
-    // so the drain does not re-send these on the next iteration.
+    // The cursor target advances to the last delivered row's
+    // `(created_at, id)` so the drain does not re-send these on the
+    // next iteration. A late-inserted Story with `created_at` >
+    // `slice.lastEventTime` is still selected by a subsequent drain
+    // — see the SQL-level cursor test in story-push.test.ts.
     expect(arg.cursorAdvanceToEventKey).toBe("1002");
   });
 

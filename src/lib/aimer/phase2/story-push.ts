@@ -11,10 +11,19 @@
  * {@link toWireStoryItem} so opportunistic, refresh, and backfill
  * Stories all carry identical fields per RFC 0002 §6.
  *
- * Cursor key mapping: stories carry no `event_time` / `event_key`. The
- * `aimer_push_state.last_pushed_event_time` column stores the Story's
- * `time_window_end` and `last_pushed_event_key` stores the stringified
- * `event_group.id` — the natural ordering key for Story rows.
+ * Cursor key mapping: stories carry no `event_time` / `event_key`. For
+ * the `story` streaming kind the `aimer_push_state.last_pushed_event_time`
+ * column stores the Story's `created_at` and `last_pushed_event_key`
+ * stores the stringified `event_group.id`. Using `created_at` (not
+ * `time_window_end`) for the cursor is what makes the cursor immune to
+ * the late-insert race: an `auto_correlated` row inserted into the
+ * Story table after a slice was loaded — but with a `time_window_end`
+ * that sorts inside the just-minted range — would otherwise live
+ * permanently behind the advanced cursor, never delivered. `created_at`
+ * defaults to `now()` on insert (see
+ * `migrations/customer/0008_event_group_story.sql`), so any row not yet
+ * visible at slice-time has a strictly greater `created_at` than the
+ * cursor target and will be picked up by the next drain.
  *
  * Curated stories (`event_group.kind = 'analyst_curated'`) are NEVER
  * opportunistically pushed; the loader filters to `auto_correlated`
@@ -52,8 +61,11 @@ const MAX_ROWS_PER_BATCH = 200;
 export interface StoryStreamingSlice {
   stories: StoryWireItem[];
   /**
-   * `time_window_end` of the last Story consumed — the cursor target
-   * stored in `aimer_push_state.last_pushed_event_time` on ack.
+   * `created_at` of the last Story consumed — the cursor target stored
+   * in `aimer_push_state.last_pushed_event_time` on ack. `created_at`
+   * (not `time_window_end`) is the cursor key for the `story` streaming
+   * kind so a Story inserted after slice-time cannot end up behind the
+   * advanced cursor (see the module comment above).
    */
   lastEventTime: Date | null;
   /**
@@ -68,7 +80,7 @@ export interface StoryStreamingSlice {
 
 export interface LoadStoryStreamingSliceInput {
   customerId: number;
-  /** Prior cursor `time_window_end` from `aimer_push_state`. */
+  /** Prior cursor `created_at` from `aimer_push_state`. */
   cursorEventTime: Date | null;
   /** Prior cursor stringified `event_group.id` from `aimer_push_state`. */
   cursorEventKey: string | null;
@@ -103,7 +115,7 @@ export async function hasStoryRowsPastCursor(input: {
   if (input.cursorEventTime !== null && input.cursorEventKey !== null) {
     params.push(input.cursorEventTime, input.cursorEventKey);
     cursorClause =
-      "AND (time_window_end, id::numeric) > ($1::timestamptz, $2::numeric)";
+      "AND (created_at, id::numeric) > ($1::timestamptz, $2::numeric)";
   }
   const { rows } = await pool.query(
     `SELECT 1
@@ -223,7 +235,7 @@ async function loadSlice(
   const lastConsidered = considered[lastIndex];
   return {
     stories: fitted,
-    lastEventTime: lastConsidered.time_window_end_date,
+    lastEventTime: lastConsidered.created_at_date,
     lastEventKey: lastConsidered.story_id,
     hasMore: overflow || trimmed,
   };
@@ -237,11 +249,11 @@ interface StoryCursorRowSql {
   primary_asset: string | null;
   time_window_start: string;
   time_window_end: string;
-  /** Native Date — used as the cursor target on ack. */
-  time_window_end_date: Date;
   score: number | null;
   summary_payload: unknown;
   created_at: string;
+  /** Native Date — used as the cursor target on ack. */
+  created_at_date: Date;
   last_sent_at: string | null;
   last_sent_by: string | null;
   send_count: number;
@@ -259,8 +271,12 @@ async function selectCursorSlice(
   let cursorClause = "";
   if (input.cursorEventTime !== null && input.cursorEventKey !== null) {
     params.push(input.cursorEventTime, input.cursorEventKey);
+    // Cursor on `(created_at, id)` — see the module comment for why
+    // this race-eliminates the "Story inserted between mint and ack"
+    // case. ORDER BY matches so the cursor advance is monotonic with
+    // the rows actually consumed in this slice.
     cursorClause =
-      "AND (time_window_end, id::numeric) > ($1::timestamptz, $2::numeric)";
+      "AND (created_at, id::numeric) > ($1::timestamptz, $2::numeric)";
   }
   params.push(input.limit);
   const limitParamIdx = params.length;
@@ -274,11 +290,11 @@ async function selectCursorSlice(
                     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS time_window_start,
             to_char(time_window_end   AT TIME ZONE 'UTC',
                     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS time_window_end,
-            time_window_end                          AS time_window_end_date,
             score,
             summary_payload,
             to_char(created_at AT TIME ZONE 'UTC',
                     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
+            created_at                               AS created_at_date,
             CASE WHEN last_sent_at IS NULL THEN NULL
                  ELSE to_char(last_sent_at AT TIME ZONE 'UTC',
                               'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
@@ -288,7 +304,7 @@ async function selectCursorSlice(
        FROM event_group
       WHERE kind = 'auto_correlated'
         ${cursorClause}
-      ORDER BY time_window_end, id
+      ORDER BY created_at, id
       LIMIT $${limitParamIdx}`,
     params,
   );

@@ -509,11 +509,15 @@ export interface PendingTailNotice {
  * Identity of one Story actually included in the signed envelope of a
  * `story` streaming new-row batch. Persisted on the inflight row so
  * ack-time β-bump + audit can address the exact delivered set rather
- * than recomputing the live `(prev_cursor, new_cursor]` range — which
- * is racy when an `auto_correlated` row is inserted into the cursor
- * window between mint and ack (Story rows are ordered by
- * `(time_window_end, id)`, i.e. event-window order, so a late insert
- * with an in-range `time_window_end` is realistic).
+ * than recomputing a live `(prev_cursor, new_cursor]` range — which is
+ * structurally racy when a Story is inserted into the cursor window
+ * between mint and ack.
+ *
+ * The story streaming cursor key is `(created_at, id)` (see
+ * `loadStoryStreamingSlice`), so a late-inserted Story does NOT slip
+ * behind the advanced cursor — it will be picked up by a subsequent
+ * drain. This `pushed_stories` set is the orthogonal guarantee that
+ * the β-bump + audit address only the rows that were actually signed.
  */
 export interface PushedStoryIdentity {
   storyId: string;
@@ -646,11 +650,13 @@ export interface CommitOnAckResult {
  * tenant transaction (#493).
  *
  * Using the persisted delivered set, instead of a live recomputation
- * of `(prev_cursor, new_cursor]`, prevents a late-inserted
- * `auto_correlated` row whose `time_window_end` falls inside the
- * minted range from being β-bumped + audited without ever appearing
- * in the pushed envelope (Story ordering is event-window order, not
- * creation order, so the race is realistic).
+ * of `(prev_cursor, new_cursor]`, prevents a Story inserted between
+ * mint and ack from being β-bumped + audited without ever appearing
+ * in the pushed envelope. (The cursor key itself is `(created_at, id)`
+ * so the late insert is also guaranteed to be picked up by a
+ * subsequent drain — see `loadStoryStreamingSlice` for the cursor-key
+ * rationale; this β-bump set is the orthogonal guarantee that the
+ * already-delivered acknowledgement is correct.)
  */
 export async function commitOnAck(
   customerId: number,
@@ -698,14 +704,13 @@ export async function commitOnAck(
         if (row.kind === "story") {
           // β-bump + audit address the exact rows that were actually
           // included in the signed envelope at mint time, sourced
-          // from the persisted `pushed_stories` column. Recomputing
-          // a live `(prev_cursor, new_cursor]` range here would
-          // mark/audit any `auto_correlated` row inserted between
-          // mint and ack whose `time_window_end` fell inside that
-          // range — and the cursor would then advance past it, so
-          // it would never actually be delivered. Story ordering is
-          // by event-window time, not creation time, so this race
-          // is realistic.
+          // from the persisted `pushed_stories` column. The
+          // streaming cursor key is `(created_at, id)` (monotonic at
+          // insert), so a Story inserted between mint and ack does
+          // NOT slip behind the advanced cursor — the next drain
+          // picks it up via `loadStoryStreamingSlice`. The
+          // `pushed_stories` set is the orthogonal guarantee that
+          // β/audit only address rows we actually delivered.
           const pushedStories = row.pushed_stories ?? [];
           if (pushedStories.length > 0) {
             const pushedIds = pushedStories.map((s) => s.story_id);
