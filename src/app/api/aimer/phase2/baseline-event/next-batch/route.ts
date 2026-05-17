@@ -4,21 +4,26 @@ import { NextResponse } from "next/server";
 
 import {
   enrichRefreshPayload,
+  hasStreamingRowsPastCursor,
   loadBaselineStreamingSlice,
 } from "@/lib/aimer/phase2/baseline-push";
 import { buildPhase2Push } from "@/lib/aimer/phase2/orchestrate";
 import {
   type BaselineRefreshSubPayload,
+  buildBaselineRefreshPayloads,
   PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
   PHASE2_REFRESH_PAYLOAD_MAX_BYTES,
 } from "@/lib/aimer/phase2/payload-builders";
 import {
   type AimerPushQueueRow,
+  type AimerPushStateRow,
   claimPendingNotices,
   commitOnAck,
+  enqueueNotice,
   getAimerPushState,
   insertInflight,
   isOpportunisticEnabled,
+  type Phase2QueueKind,
   pruneExpiredInflight,
   recordOnFail,
 } from "@/lib/aimer/phase2/state";
@@ -250,6 +255,13 @@ export const POST = withAuth(
     // whether additional notices remain past the prefix we aggregate
     // this call — the drain loop pulls the next batch on its next
     // iteration.
+    //
+    // The streaming-cursor state is read up-front so the queue branch
+    // can detect pending streaming work and surface `has_more=true`
+    // (without it, an activation that opens with a single queue
+    // notice would terminate after delivering it, leaving any rows
+    // behind the cursor for the next 5-minute tick).
+    const state = await getAimerPushState(customerId, "baseline_event");
     const noticeRows = await claimPendingNotices(customerId, "baseline_event", {
       limit: MAX_QUEUE_PEEK + 1,
     });
@@ -259,11 +271,11 @@ export const POST = withAuth(
         customerId,
         session,
         noticeRows,
+        state,
       });
     }
 
     // ── Streaming slice ──────────────────────────────────────
-    const state = await getAimerPushState(customerId, "baseline_event");
     const slice = await loadBaselineStreamingSlice({
       customerId,
       cursorEventTime: state?.last_pushed_event_time ?? null,
@@ -325,12 +337,13 @@ interface EmitQueueBatchInput {
   customerId: number;
   session: { accountId: string };
   noticeRows: AimerPushQueueRow[];
+  state: AimerPushStateRow | null;
 }
 
 async function emitQueueBatch(
   input: EmitQueueBatchInput,
 ): Promise<NextResponse> {
-  const { customerId, session, noticeRows } = input;
+  const { customerId, session, noticeRows, state } = input;
   const head = noticeRows[0];
   const queueKind = head.kind as keyof typeof QUEUE_KIND_MAPPING;
   const mapping = QUEUE_KIND_MAPPING[queueKind];
@@ -344,6 +357,11 @@ async function emitQueueBatch(
 
   let payload: unknown;
   const claimed: AimerPushQueueRow[] = [head];
+  // True when post-enrichment subdivision had to re-enqueue tail
+  // sub-payloads as new queue rows (refresh / backfill only). The
+  // drain must surface `has_more=true` so the next iteration drains
+  // them.
+  let tailEnqueued = false;
 
   if (queueKind === "withdraw_baseline_event") {
     // Multiple consecutive `withdraw_baseline_event` rows aggregate
@@ -378,7 +396,37 @@ async function emitQueueBatch(
     // design call). The orchestrator augments `external_key` at signing
     // time and is unchanged.
     const queued = head.payload as BaselineRefreshSubPayload;
-    payload = await enrichRefreshPayload(customerId, queued);
+    const enriched = await enrichRefreshPayload(customerId, queued);
+
+    // Enrichment can push a sub-window past the shared byte cap that
+    // the producer (#573) used at enqueue time, since the §6
+    // enrichment fields (`raw_event`, `score_window_context`,
+    // `window_signals`, `asset_context`, `scoring_weights_snapshot`)
+    // are added here. Re-run the same byte-budget subdivider over the
+    // enriched payload so each delivered sub-window still fits the
+    // cap; sub-payloads beyond the head are re-enqueued as fresh
+    // notices and the drain loop pulls them on subsequent iterations
+    // (adjacent half-open sub-windows preserve refresh-window
+    // atomicity per RFC 0002 §6).
+    const subdivided = buildBaselineRefreshPayloads({
+      window: { from: enriched.window.from, to: enriched.window.to },
+      baselineVersion: enriched.baseline_version,
+      events: enriched.events,
+    });
+    payload = subdivided.payloads[0];
+    if (subdivided.payloads.length > 1) {
+      // Preserve the original queue kind on the re-enqueued tail so
+      // `refresh_baseline_window` stays a refresh, `backfill_baseline_window`
+      // stays a backfill.
+      for (let i = 1; i < subdivided.payloads.length; i += 1) {
+        await enqueueNotice(
+          customerId,
+          queueKind as Phase2QueueKind,
+          subdivided.payloads[i],
+        );
+      }
+      tailEnqueued = true;
+    }
   }
 
   const tokens = await buildPhase2Push({
@@ -405,9 +453,21 @@ async function emitQueueBatch(
     mapping.aimerEndpointPath,
   );
 
-  // `has_more` is true when the queue holds rows past the ones we
-  // claimed this call. The drain loop will iterate to pull them.
-  const hasMore = noticeRows.length > claimed.length;
+  // `has_more` is true when any of:
+  //   - more queue rows remain past the prefix we aggregated this call
+  //   - enrichment-driven sub-division re-enqueued tail sub-payloads
+  //   - streaming-cursor rows are still pending past the current
+  //     cursor (so the drain loop continues into the
+  //     "queue notices first, new-row batches second" sequence within
+  //     the same activation rather than terminating here).
+  let hasMore = noticeRows.length > claimed.length || tailEnqueued;
+  if (!hasMore) {
+    hasMore = await hasStreamingRowsPastCursor({
+      customerId,
+      cursorEventTime: state?.last_pushed_event_time ?? null,
+      cursorEventKey: state?.last_pushed_event_key ?? null,
+    });
+  }
 
   const responseBody: SuccessBody = {
     has_more: hasMore,

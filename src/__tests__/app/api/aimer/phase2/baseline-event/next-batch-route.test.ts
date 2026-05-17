@@ -40,6 +40,7 @@ const mockState = vi.hoisted(() => ({
   pruneExpiredInflight: vi.fn(),
   getAimerPushState: vi.fn(),
   isOpportunisticEnabled: vi.fn(),
+  enqueueNotice: vi.fn(),
 }));
 vi.mock("@/lib/aimer/phase2/state", () => mockState);
 
@@ -50,9 +51,11 @@ vi.mock("@/lib/aimer/setup-status", () => ({
 
 const mockLoadSlice = vi.hoisted(() => vi.fn());
 const mockEnrichRefreshPayload = vi.hoisted(() => vi.fn());
+const mockHasStreamingRowsPastCursor = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/aimer/phase2/baseline-push", () => ({
   loadBaselineStreamingSlice: mockLoadSlice,
   enrichRefreshPayload: mockEnrichRefreshPayload,
+  hasStreamingRowsPastCursor: mockHasStreamingRowsPastCursor,
 }));
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -180,6 +183,7 @@ describe("POST /api/aimer/phase2/baseline-event/next-batch", () => {
       paused_by: null,
     });
     mockState.isOpportunisticEnabled.mockReset().mockResolvedValue(true);
+    mockState.enqueueNotice.mockReset().mockResolvedValue("999");
 
     mockGetSetup.mockReset().mockResolvedValue({
       aiceId: "aice.example.com",
@@ -193,6 +197,7 @@ describe("POST /api/aimer/phase2/baseline-event/next-batch", () => {
       .mockImplementation(
         async (_customerId: number, payload: unknown) => payload,
       );
+    mockHasStreamingRowsPastCursor.mockReset().mockResolvedValue(false);
   });
 
   // ── Body validation ─────────────────────────────────────────
@@ -523,6 +528,127 @@ describe("POST /api/aimer/phase2/baseline-event/next-batch", () => {
     expect(mockState.insertInflight.mock.calls[0][1].queueRowIds).toEqual([
       "1",
     ]);
+  });
+
+  it("sets has_more=true when a queue notice is followed by pending streaming rows", async () => {
+    // Single refresh notice + streaming work past the cursor: without
+    // the streaming-pending probe, the drain loop would terminate
+    // after the queue ack and leave the new rows for the next 5-minute
+    // tick (queue notices first, new-row batches second within the
+    // SAME activation).
+    mockState.claimPendingNotices.mockResolvedValue([
+      {
+        id: "11",
+        enqueued_at: new Date(),
+        kind: "refresh_baseline_window",
+        payload: {
+          window: {
+            kind: "baseline_event",
+            from: "2026-01-01T00:00:00.000Z",
+            to: "2026-02-01T00:00:00.000Z",
+          },
+          baseline_version: "phase1b-four-selector",
+          events: [],
+        },
+        attempts: 0,
+        last_attempt_at: null,
+        last_error: null,
+        acked_at: null,
+        acked_context_jti: null,
+      },
+    ]);
+    mockHasStreamingRowsPastCursor.mockResolvedValue(true);
+
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/baseline-event/next-batch/route"
+    );
+    const res = await POST(makeRequest({ customerId: 42 }), ctx);
+    const body = await res.json();
+    expect(body.has_more).toBe(true);
+    expect(mockHasStreamingRowsPastCursor).toHaveBeenCalledWith({
+      customerId: 42,
+      cursorEventTime: null,
+      cursorEventKey: null,
+    });
+  });
+
+  it("re-enqueues tail sub-payloads when enrichment pushes a refresh notice past the byte cap", async () => {
+    // Build an enriched payload whose serialized size exceeds the
+    // shared 1 MiB cap, simulating the case where the producer
+    // sub-divided the window to the corpus-only size at enqueue time
+    // but the §6 enrichment fields (raw_event etc.) added at drain
+    // time blow it past the budget.
+    const bigFiller = "x".repeat(400 * 1024); // ~400 KB per event
+    const queuedPayload = {
+      window: {
+        kind: "baseline_event",
+        from: "2026-01-01T00:00:00.000Z",
+        to: "2026-02-01T00:00:00.000Z",
+      },
+      baseline_version: "phase1b-four-selector",
+      events: [
+        {
+          event_key: "10",
+          event_time: "2026-01-01T00:00:00.000Z",
+          kind: "HttpThreat",
+        },
+        {
+          event_key: "20",
+          event_time: "2026-01-15T00:00:00.000Z",
+          kind: "HttpThreat",
+        },
+        {
+          event_key: "30",
+          event_time: "2026-01-25T00:00:00.000Z",
+          kind: "HttpThreat",
+        },
+      ],
+    };
+    const enrichedPayload = {
+      ...queuedPayload,
+      events: queuedPayload.events.map((ev) => ({
+        ...ev,
+        // Each enriched event ~400 KB so three events comfortably
+        // exceed the 1 MiB shared cap and force the subdivider to
+        // split into multiple sub-windows.
+        raw_event: { blob: bigFiller },
+      })),
+    };
+    mockEnrichRefreshPayload.mockResolvedValueOnce(enrichedPayload);
+    mockState.claimPendingNotices.mockResolvedValue([
+      {
+        id: "21",
+        enqueued_at: new Date(),
+        kind: "refresh_baseline_window",
+        payload: queuedPayload,
+        attempts: 0,
+        last_attempt_at: null,
+        last_error: null,
+        acked_at: null,
+        acked_context_jti: null,
+      },
+    ]);
+
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/baseline-event/next-batch/route"
+    );
+    const res = await POST(makeRequest({ customerId: 42 }), ctx);
+    const body = await res.json();
+
+    // The head sub-payload is what reaches the orchestrator — strictly
+    // fewer events than the enriched input, so the subdivider must
+    // have split it.
+    const sentEvents = mockBuildPush.mock.calls[0][0].payload.events;
+    expect(sentEvents.length).toBeLessThan(enrichedPayload.events.length);
+    // Tail sub-payloads are re-enqueued as fresh notices preserving
+    // the `refresh_baseline_window` kind, so the drain loop pulls
+    // them on subsequent iterations.
+    expect(mockState.enqueueNotice).toHaveBeenCalled();
+    for (const call of mockState.enqueueNotice.mock.calls) {
+      expect(call[0]).toBe(42);
+      expect(call[1]).toBe("refresh_baseline_window");
+    }
+    expect(body.has_more).toBe(true);
   });
 
   it("routes backfill_baseline_window to the backfill endpoint", async () => {

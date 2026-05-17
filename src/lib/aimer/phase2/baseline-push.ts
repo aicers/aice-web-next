@@ -204,6 +204,33 @@ export async function loadBaselineStreamingSlice(
   }
 }
 
+/**
+ * Cheap existence check: are there any `baseline_triaged_event` rows
+ * past the given cursor? Used by the queue-notice branch of the drain
+ * route to set `has_more=true` when streaming work remains behind a
+ * queue batch, so the "queue notices first, new-row batches second"
+ * sequence actually plays out within a single drain activation rather
+ * than terminating after the queue batch alone.
+ */
+export async function hasStreamingRowsPastCursor(input: {
+  customerId: number;
+  cursorEventTime: Date | null;
+  cursorEventKey: string | null;
+}): Promise<boolean> {
+  const pool = await getCustomerPool(input.customerId);
+  const params: unknown[] = [];
+  let where = "";
+  if (input.cursorEventTime !== null && input.cursorEventKey !== null) {
+    params.push(input.cursorEventTime, input.cursorEventKey);
+    where = "WHERE (event_time, event_key) > ($1::timestamptz, $2::numeric)";
+  }
+  const { rows } = await pool.query(
+    `SELECT 1 FROM baseline_triaged_event ${where} LIMIT 1`,
+    params,
+  );
+  return rows.length > 0;
+}
+
 async function loadSlice(
   client: pg.PoolClient,
   input: LoadBaselineStreamingSliceInput,
