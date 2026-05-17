@@ -46,28 +46,43 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
  * the beginning of the run (first batch must use `after_event_key:
  * null`); each subsequent batch must use the previous batch's
  * `last_event_key`. A buggy or tampered client cannot skip events by
- * supplying an arbitrary cursor and then declaring the Send finalized:
+ * supplying an arbitrary cursor and then declaring the Send finalized.
  *
- *   - First batch (no prior inflight rows for `send_action_id`):
- *     `after_event_key` must be null, else `409 cursor_chain_mismatch`.
- *   - Subsequent batch: `after_event_key` must equal the max-
- *     `batch_index` prior row's `last_event_key`, else
- *     `409 cursor_chain_mismatch`.
- *   - Build-after-terminal: once a row with `is_terminal = true` exists
- *     for this `send_action_id`, no further batches are accepted —
- *     `409 send_already_terminal`. Finalize is the next step.
- *   - Actor / run cross-check: the inflight rows of this Send action
- *     must all belong to the calling session and the supplied `run_id`,
- *     else `403 actor_mismatch`.
+ * Per-call check order (after loading prior inflight rows):
  *
- * Duplicate calls are still caught at two layers in the DB schema as a
- * belt-and-braces backstop for the chain validation above:
+ *   1. Actor / run cross-check — the inflight rows of this Send action
+ *      must all belong to the calling session and the supplied `run_id`,
+ *      else `403 actor_mismatch`.
+ *   2. Sequential-retry detection — if the incoming `after_event_key`
+ *      matches any prior row's `after_event_key` for this
+ *      `send_action_id` (including the null/null first-batch retry
+ *      case), the batch has already been minted. Return
+ *      `409 duplicate_batch_for_send_action` so the client can
+ *      distinguish "this batch was already minted" from a real
+ *      cursor-chain violation. Runs *before* the terminal and chain
+ *      checks so a duplicate retry of the terminal batch surfaces as
+ *      a duplicate rather than `send_already_terminal`.
+ *   3. Build-after-terminal — once a row with `is_terminal = true`
+ *      exists and the cursor does not match an existing batch, no
+ *      further batches are accepted: `409 send_already_terminal`.
+ *      Finalize is the next step.
+ *   4. Cursor-chain check:
+ *      - First batch (priors empty): `after_event_key` must be null,
+ *        else `409 cursor_chain_mismatch`.
+ *      - Subsequent batch: `after_event_key` must equal the
+ *        max-`batch_index` prior row's `last_event_key`, else
+ *        `409 cursor_chain_mismatch`.
  *
- *   - `UNIQUE (send_action_id, batch_index)` — racing concurrent calls
- *     that both pass the chain check at the same prior state.
+ * Duplicate calls are still caught at two DB-layer indexes as a
+ * belt-and-braces backstop for two race windows the chain + duplicate
+ * checks above cannot cover on their own:
+ *
+ *   - `UNIQUE (send_action_id, batch_index)` — two concurrent callers
+ *     both pass the chain check at the same prior state and race the
+ *     INSERT.
  *   - Partial unique indexes on `(send_action_id, after_event_key)` —
- *     a *sequential* retry of the same request body that races with
- *     the read-then-insert window of the chain check.
+ *     two concurrent callers retrying the same request body that
+ *     race the read-then-insert window of the duplicate check.
  *
  * Both raise SQLSTATE 23505, which this route translates to
  * `409 duplicate_batch_for_send_action`.
@@ -216,12 +231,14 @@ export const POST = withAuth(
         batch_index: number;
         is_terminal: boolean;
         last_event_key: string | null;
+        after_event_key: string | null;
         actor_account_id: string;
         run_id: string;
       }>(
         `SELECT batch_index,
                 is_terminal,
                 last_event_key::text   AS last_event_key,
+                after_event_key::text  AS after_event_key,
                 actor_account_id::text AS actor_account_id,
                 run_id::text           AS run_id
            FROM aimer_policy_run_send_inflight
@@ -251,6 +268,17 @@ export const POST = withAuth(
           owner.run_id !== runId
         ) {
           return jsonError("actor_mismatch", 403);
+        }
+        // Sequential-retry detection: if the incoming cursor matches
+        // an already-minted batch's `after_event_key`, the client is
+        // replaying a request whose response was lost. Surface as
+        // `duplicate_batch_for_send_action` so the client can
+        // distinguish a duplicate retry from a real chain violation
+        // (issue #572 contract). Runs before terminal and chain
+        // checks so a duplicate retry of the terminal batch surfaces
+        // as a duplicate rather than `send_already_terminal`.
+        if (priorRows.some((r) => r.after_event_key === afterEventKey)) {
+          return jsonError("duplicate_batch_for_send_action", 409);
         }
         // Build-after-terminal: once the terminal batch has been
         // minted, the next step is finalize, not another build.
