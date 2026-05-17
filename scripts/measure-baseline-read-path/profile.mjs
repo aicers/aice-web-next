@@ -125,9 +125,14 @@ export class ProfileAssertionError extends Error {
  * the gate cares about slop-replay).
  *
  * Backwards-compatible bare-number form: passing a bare `nowMs`
- * number (legacy callers) skips the Story-shape checks but still
- * runs the menu-shape ones. New callers should pass the structured
- * form so the gate-required checks fire.
+ * number (legacy callers) skips only the range-dependent
+ * slop-replay phase-1 candidate-count probe, because that probe
+ * needs a `memberScan` range the bare-number form does not carry.
+ * The `story_finalized_through IS NOT NULL` precondition still
+ * fires, since it is a tenant-level precondition (no range needed)
+ * and gate eligibility hinges on it. The menu-shape checks also
+ * still fire. New callers should pass the structured form so the
+ * range-dependent gate check fires too.
  *
  * @param {object} pool
  * @param {number | { nowMs?: number, memberScan?: { startIso: string | null, endIso: string } }} [opts]

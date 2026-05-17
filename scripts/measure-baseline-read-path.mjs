@@ -83,20 +83,38 @@
 // ------
 //
 // Default JSON to stdout. One top-level object with `meta` (run
-// config, resolved window, cold-reading label) and `samples` (one
-// row per query × sample × phase). `--output=tsv` emits a
-// tab-separated table with columns: query, phase, sample_index,
-// elapsed_ms, row_count. The structured-JSON shape is the canonical
-// form #528 consumes; TSV is a convenience for ad-hoc inspection.
+// config, resolved window, cold-reading label, `notMeasurable`
+// entries) and `samples` (one row per query × context × sample ×
+// phase). `--output=tsv` emits a tab-separated table with columns:
+// query, context, phase, sample_index, elapsed_ms, row_count. The
+// structured-JSON shape is the canonical form #528 consumes; TSV is
+// a convenience for ad-hoc inspection.
+//
+// `context` is the cadence-context discriminator added in #601: the
+// menu queries surface as `"default"`; R1 / R3 entries surface as
+// `"first-tick"` or `"slop-replay"`. The warm and cold loops iterate
+// `queries × contexts`, so the same query name appears under
+// multiple contexts within one run.
 //
 // Sample row (JSON):
-//   { "query": "selectMenuCohort", "phase": "warm",
-//     "sampleIndex": 0, "elapsedMs": 18.42, "rowCount": 1837 }
+//   { "query": "selectMenuCohort", "context": "default",
+//     "phase": "warm", "sampleIndex": 0, "elapsedMs": 18.42,
+//     "rowCount": 1837 }
 //
-// `EXPLAIN` plans live under `meta.explainByQuery`, keyed by query
-// name. The harness emits the raw multi-line plan text from the
+// `EXPLAIN` plans live under `meta.explainByQuery`, keyed by
+// `"<name>:<context>"` (e.g. `"readR3CandidatesPhase1:slop-replay"`)
+// so the same query name under different contexts gets distinct plan
+// entries. The harness emits the raw multi-line plan text from the
 // first warm-sample run's `EXPLAIN (ANALYZE, BUFFERS, VERBOSE)` so
 // #528's consumer can pretty-print or summarize as it sees fit.
+//
+// `meta.notMeasurable` (added in #601) is an array of
+// `{ query, context, reason }` entries for (query, context) pairs
+// the harness intentionally skipped — currently R3 phase-2 when its
+// phase-1 probe returned zero assets, and slop-replay-context
+// entries when `story_finalized_through IS NULL`. No `samples` row
+// is emitted for a skipped pair; #528 rejects any run whose
+// `meta.notMeasurable` is non-empty for a gate-required query.
 //
 // Profile assertion
 // -----------------
@@ -120,6 +138,15 @@
 //   * `baseline_corpus_state.last_run_status = 'ok'` AND
 //     `last_ingested_at < 2h ago` so steady-state plans are measured,
 //     not partial first-ingest.
+//   * `baseline_corpus_state.story_finalized_through IS NOT NULL`
+//     (#601) so the slop-replay measurement is actually exercised.
+//     Fresh tenants without a cadence tick are not gate-eligible.
+//   * R3 phase-1 over the slop-replay scan range returns ≥ 5
+//     candidate asset(s) (#601). The assertion runs the same
+//     phase-1 SQL the harness measures, so the count reflects the
+//     scan the gate will actually exercise — counting `event_group`
+//     rows globally would be a weak pass signal because it does not
+//     guarantee any R3 candidates exist in the slop-replay range.
 //
 // `--skip-profile-assert` exists as a developer escape hatch when
 // running the harness against synthetic fixtures during script
