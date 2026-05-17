@@ -459,6 +459,19 @@ export async function recordNoticeError(
 
 // ── Inflight helpers ───────────────────────────────────────────────
 
+/**
+ * Tail notice to enqueue on the next successful ack of this inflight
+ * batch. Used by drain routes that subdivide a queue payload at push
+ * time (e.g. the baseline-event refresh/backfill enrichment path when
+ * post-enrichment size exceeds the shared byte cap). Recording the
+ * tail here keeps it out of `aimer_push_queue` until ack-time, so a
+ * failed POST drops it cleanly with the inflight row.
+ */
+export interface PendingTailNotice {
+  kind: Phase2QueueKind;
+  payload: unknown;
+}
+
 export interface InsertInflightInput {
   contextJti: string;
   kind: Phase2InflightKind;
@@ -467,6 +480,14 @@ export interface InsertInflightInput {
   cursorAdvanceToEventKey?: string | null;
   /** Queue row ids included in this batch (may be empty for cursor-only batches). */
   queueRowIds: readonly string[];
+  /**
+   * Tail notices to enqueue ATOMICALLY with the head batch ack. Empty
+   * for batches that did not subdivide at push time. On `recordOnFail`
+   * these are dropped with the inflight row so the next retry of the
+   * head can redo the subdivision freshly without leaving duplicates
+   * in the queue. See {@link PendingTailNotice}.
+   */
+  pendingTailNotices?: readonly PendingTailNotice[];
 }
 
 /**
@@ -486,14 +507,16 @@ export async function insertInflight(
         kind,
         cursor_advance_to_event_time,
         cursor_advance_to_event_key,
-        queue_row_ids)
-     VALUES ($1, $2, $3, $4, $5::bigint[])`,
+        queue_row_ids,
+        pending_tail_notices)
+     VALUES ($1, $2, $3, $4, $5::bigint[], $6::jsonb)`,
     [
       input.contextJti,
       input.kind,
       input.cursorAdvanceToEventTime ?? null,
       input.cursorAdvanceToEventKey ?? null,
       input.queueRowIds as unknown as string[],
+      JSON.stringify(input.pendingTailNotices ?? []),
     ],
   );
 }
@@ -504,6 +527,7 @@ interface InflightRow {
   cursor_advance_to_event_time: Date | null;
   cursor_advance_to_event_key: string | null;
   queue_row_ids: string[];
+  pending_tail_notices: PendingTailNotice[];
 }
 
 /**
@@ -536,7 +560,8 @@ export async function commitOnAck(
               kind,
               cursor_advance_to_event_time,
               cursor_advance_to_event_key,
-              queue_row_ids::text[] AS queue_row_ids
+              queue_row_ids::text[] AS queue_row_ids,
+              pending_tail_notices
          FROM aimer_push_inflight
         WHERE context_jti = $1
           AND kind = $2
@@ -575,6 +600,17 @@ export async function commitOnAck(
     }
 
     await markAcked(customerId, row.queue_row_ids, contextJti, client);
+
+    // Enqueue any tail notices recorded with this inflight (e.g. the
+    // refresh/backfill sub-payloads produced by post-enrichment
+    // subdivision in the baseline-event drain). Coupling the enqueue
+    // to head-batch ack means a failed POST drops these tails with
+    // {@link recordOnFail} so the next retry can redo the subdivision
+    // freshly without leaving duplicates in the queue.
+    const tail = row.pending_tail_notices ?? [];
+    for (const notice of tail) {
+      await enqueueNotice(customerId, notice.kind, notice.payload, client);
+    }
 
     await client.query(
       "DELETE FROM aimer_push_inflight WHERE context_jti = $1",

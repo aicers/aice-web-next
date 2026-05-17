@@ -249,7 +249,7 @@ async function loadSlice(
   });
 
   const oversizeCheck = rows.slice(0, rowLimit);
-  const hasMore = rows.length > rowLimit;
+  let hasMore = rows.length > rowLimit;
 
   if (oversizeCheck.length === 0) {
     return {
@@ -261,7 +261,19 @@ async function loadSlice(
     };
   }
 
+  // Streaming batches advertise a single top-level `baseline_version`.
+  // Truncate the slice at the first version boundary so a slice that
+  // crosses a `baseline_version` bump (e.g. on initial catch-up from a
+  // NULL cursor sweeping the corpus across a version line) does not
+  // emit rows from a later version under the earlier version's natural
+  // key. The trailing rows are picked up on the next iteration once
+  // the cursor advances past the boundary.
   const baselineVersion = oversizeCheck[0].baseline_version;
+  const { rows: sameVersionRows, truncated: versionTruncated } =
+    truncateAtVersionBoundary(oversizeCheck, baselineVersion);
+  if (versionTruncated) {
+    hasMore = true;
+  }
 
   // Cohort window for streaming: the Triage menu's default rendering
   // window anchored at `now`. The issue explicitly directs picking
@@ -276,7 +288,7 @@ async function loadSlice(
   const cohortToIso = now.toISOString();
 
   const enriched = await enrichEvents(client, {
-    rows: oversizeCheck,
+    rows: sameVersionRows,
     cohortFromIso,
     cohortToIso,
     baselineVersion,
@@ -303,7 +315,7 @@ async function loadSlice(
 
   return {
     events: fitted,
-    lastEventTime: oversizeCheck[fitted.length - 1].event_time,
+    lastEventTime: sameVersionRows[fitted.length - 1].event_time,
     lastEventKey: last.event_key,
     hasMore: trimmed,
     baselineVersion,
@@ -930,6 +942,30 @@ function buildStreamingEvent(
 }
 
 /**
+ * Truncate the cursor slice at the first `baseline_version` boundary.
+ *
+ * Streaming batches advertise a single top-level `baseline_version`, so
+ * a slice that crosses a version line (e.g. initial catch-up from a
+ * NULL cursor sweeping 180-day corpus across a `baseline_version` bump,
+ * or any future bump behind an unadvanced cursor) must be split there.
+ * The rows past the boundary are deferred to the next iteration's slice
+ * once the cursor advances past the breakpoint.
+ *
+ * Returns `truncated: true` when at least one trailing row was dropped
+ * so the caller can force `hasMore=true` on the response.
+ */
+function truncateAtVersionBoundary<T extends { baseline_version: string }>(
+  rows: readonly T[],
+  baselineVersion: string,
+): { rows: T[]; truncated: boolean } {
+  const boundary = rows.findIndex(
+    (r) => r.baseline_version !== baselineVersion,
+  );
+  if (boundary === -1) return { rows: rows.slice(), truncated: false };
+  return { rows: rows.slice(0, boundary), truncated: true };
+}
+
+/**
  * Trim a fully-enriched slice so the inner payload (events + top-level
  * `baseline_version` / future `external_key`) stays under `budget`
  * bytes. The drain loop will pick up the trimmed tail on the next
@@ -1056,6 +1092,7 @@ async function enrichRefreshPayloadWithClient<
 
 export const _testing = {
   trimToBudget,
+  truncateAtVersionBoundary,
   SCORING_WEIGHTS_SNAPSHOT,
   enrichRefreshPayloadWithClient,
 };

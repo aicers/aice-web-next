@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { _testing } from "@/lib/aimer/phase2/baseline-push";
 
-const { trimToBudget, enrichRefreshPayloadWithClient } = _testing;
+const {
+  trimToBudget,
+  truncateAtVersionBoundary,
+  enrichRefreshPayloadWithClient,
+} = _testing;
 
 function makeEvent(eventKey: string, padding: number) {
   return {
@@ -65,6 +69,49 @@ describe("loadBaselineStreamingSlice trimToBudget", () => {
     const oneEventBytes = JSON.stringify(events[0]).length + 1;
     const fitted = trimToBudget(events, "v1", oneEventBytes * 2 + 100);
     expect(fitted.length).toBe(2);
+  });
+});
+
+describe("truncateAtVersionBoundary", () => {
+  // Round 3: streaming batches must advertise a single top-level
+  // `baseline_version`. The loader truncates the cursor slice at the
+  // first version boundary so a slice that crosses a `baseline_version`
+  // bump (initial catch-up from NULL cursor, or any future bump behind
+  // an unadvanced cursor) does not emit rows from a later version
+  // under the earlier version's natural key.
+  it("returns the full slice unchanged when every row shares the version", () => {
+    const rows = [
+      { baseline_version: "v1", event_key: "1" },
+      { baseline_version: "v1", event_key: "2" },
+      { baseline_version: "v1", event_key: "3" },
+    ];
+    const out = truncateAtVersionBoundary(rows, "v1");
+    expect(out.truncated).toBe(false);
+    expect(out.rows).toEqual(rows);
+  });
+
+  it("truncates at the first version boundary", () => {
+    const rows = [
+      { baseline_version: "v1", event_key: "1" },
+      { baseline_version: "v1", event_key: "2" },
+      { baseline_version: "v2", event_key: "3" },
+      { baseline_version: "v2", event_key: "4" },
+    ];
+    const out = truncateAtVersionBoundary(rows, "v1");
+    expect(out.truncated).toBe(true);
+    expect(out.rows.map((r) => r.event_key)).toEqual(["1", "2"]);
+  });
+
+  it("never returns zero rows when called with a non-empty slice", () => {
+    // The first row always matches the chosen `baselineVersion` (it's
+    // sourced from `rows[0]`), so the truncation never drops it.
+    const rows = [
+      { baseline_version: "v1", event_key: "1" },
+      { baseline_version: "v2", event_key: "2" },
+    ];
+    const out = truncateAtVersionBoundary(rows, "v1");
+    expect(out.rows).toHaveLength(1);
+    expect(out.truncated).toBe(true);
   });
 });
 

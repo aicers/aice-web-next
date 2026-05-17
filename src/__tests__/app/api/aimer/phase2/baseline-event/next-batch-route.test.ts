@@ -363,6 +363,7 @@ describe("POST /api/aimer/phase2/baseline-event/next-batch", () => {
       cursorAdvanceToEventTime: null,
       cursorAdvanceToEventKey: null,
       queueRowIds: ["5"],
+      pendingTailNotices: [],
     });
 
     // Streaming slice must NOT be queried — queue notices first.
@@ -640,15 +641,81 @@ describe("POST /api/aimer/phase2/baseline-event/next-batch", () => {
     // have split it.
     const sentEvents = mockBuildPush.mock.calls[0][0].payload.events;
     expect(sentEvents.length).toBeLessThan(enrichedPayload.events.length);
-    // Tail sub-payloads are re-enqueued as fresh notices preserving
-    // the `refresh_baseline_window` kind, so the drain loop pulls
-    // them on subsequent iterations.
-    expect(mockState.enqueueNotice).toHaveBeenCalled();
-    for (const call of mockState.enqueueNotice.mock.calls) {
-      expect(call[0]).toBe(42);
-      expect(call[1]).toBe("refresh_baseline_window");
+    // Tail sub-payloads are deferred onto the inflight row instead of
+    // being enqueued immediately. They will only land in
+    // `aimer_push_queue` when the head batch acks — so a failed POST
+    // drops them cleanly with the inflight delete in `recordOnFail`
+    // rather than leaving duplicates across retries.
+    expect(mockState.enqueueNotice).not.toHaveBeenCalled();
+    const inflightCall = mockState.insertInflight.mock.calls[0][1];
+    expect(inflightCall.pendingTailNotices.length).toBeGreaterThan(0);
+    for (const notice of inflightCall.pendingTailNotices) {
+      expect(notice.kind).toBe("refresh_baseline_window");
     }
     expect(body.has_more).toBe(true);
+  });
+
+  it("does not insert any tail rows directly into the queue during subdivision", async () => {
+    // Round 3 regression guard: ensure the route never calls
+    // `enqueueNotice` during a refresh subdivision. The previous
+    // implementation enqueued the tails immediately, which left
+    // duplicates in the queue when the head POST failed and the next
+    // retry re-ran the subdivision.
+    const bigFiller = "x".repeat(400 * 1024);
+    const queuedPayload = {
+      window: {
+        kind: "baseline_event",
+        from: "2026-01-01T00:00:00.000Z",
+        to: "2026-02-01T00:00:00.000Z",
+      },
+      baseline_version: "phase1b-four-selector",
+      events: [
+        {
+          event_key: "10",
+          event_time: "2026-01-01T00:00:00.000Z",
+          kind: "HttpThreat",
+        },
+        {
+          event_key: "20",
+          event_time: "2026-01-10T00:00:00.000Z",
+          kind: "HttpThreat",
+        },
+        {
+          event_key: "30",
+          event_time: "2026-01-20T00:00:00.000Z",
+          kind: "HttpThreat",
+        },
+      ],
+    };
+    const enrichedPayload = {
+      ...queuedPayload,
+      events: queuedPayload.events.map((ev) => ({
+        ...ev,
+        raw_event: { blob: bigFiller },
+      })),
+    };
+    mockEnrichRefreshPayload.mockResolvedValueOnce(enrichedPayload);
+    mockState.claimPendingNotices.mockResolvedValue([
+      {
+        id: "31",
+        enqueued_at: new Date(),
+        kind: "refresh_baseline_window",
+        payload: queuedPayload,
+        attempts: 0,
+        last_attempt_at: null,
+        last_error: null,
+        acked_at: null,
+        acked_context_jti: null,
+      },
+    ]);
+
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/baseline-event/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+
+    // No queue rows are inserted at push time.
+    expect(mockState.enqueueNotice).not.toHaveBeenCalled();
   });
 
   it("routes backfill_baseline_window to the backfill endpoint", async () => {

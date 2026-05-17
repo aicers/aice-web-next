@@ -19,10 +19,10 @@ import {
   type AimerPushStateRow,
   claimPendingNotices,
   commitOnAck,
-  enqueueNotice,
   getAimerPushState,
   insertInflight,
   isOpportunisticEnabled,
+  type PendingTailNotice,
   type Phase2QueueKind,
   pruneExpiredInflight,
   recordOnFail,
@@ -357,11 +357,14 @@ async function emitQueueBatch(
 
   let payload: unknown;
   const claimed: AimerPushQueueRow[] = [head];
-  // True when post-enrichment subdivision had to re-enqueue tail
-  // sub-payloads as new queue rows (refresh / backfill only). The
-  // drain must surface `has_more=true` so the next iteration drains
-  // them.
-  let tailEnqueued = false;
+  // Tail sub-payloads produced by post-enrichment subdivision (refresh
+  // / backfill only). These are recorded on the inflight row and
+  // enqueued atomically with the head batch's ack so a failed POST
+  // drops them cleanly with the inflight delete — preventing duplicate
+  // tail notices from accumulating across retries. The drain surfaces
+  // `has_more=true` whenever this list is non-empty so the next
+  // iteration picks the tails up after ack.
+  const pendingTailNotices: PendingTailNotice[] = [];
 
   if (queueKind === "withdraw_baseline_event") {
     // Multiple consecutive `withdraw_baseline_event` rows aggregate
@@ -415,17 +418,17 @@ async function emitQueueBatch(
     });
     payload = subdivided.payloads[0];
     if (subdivided.payloads.length > 1) {
-      // Preserve the original queue kind on the re-enqueued tail so
+      // Preserve the original queue kind on each tail so
       // `refresh_baseline_window` stays a refresh, `backfill_baseline_window`
-      // stays a backfill.
+      // stays a backfill. Defer the enqueue until head-batch ack so a
+      // failed POST does not orphan duplicate tail notices across
+      // retries — they ride the inflight row instead.
       for (let i = 1; i < subdivided.payloads.length; i += 1) {
-        await enqueueNotice(
-          customerId,
-          queueKind as Phase2QueueKind,
-          subdivided.payloads[i],
-        );
+        pendingTailNotices.push({
+          kind: queueKind as Phase2QueueKind,
+          payload: subdivided.payloads[i],
+        });
       }
-      tailEnqueued = true;
     }
   }
 
@@ -445,6 +448,7 @@ async function emitQueueBatch(
     cursorAdvanceToEventTime: null,
     cursorAdvanceToEventKey: null,
     queueRowIds: claimed.map((row) => row.id),
+    pendingTailNotices,
   });
 
   const setup = await getAimerIntegrationSetup();
@@ -455,12 +459,15 @@ async function emitQueueBatch(
 
   // `has_more` is true when any of:
   //   - more queue rows remain past the prefix we aggregated this call
-  //   - enrichment-driven sub-division re-enqueued tail sub-payloads
+  //   - enrichment-driven subdivision produced tail sub-payloads that
+  //     will be enqueued on ack of the head batch (next iteration
+  //     picks them up after ack)
   //   - streaming-cursor rows are still pending past the current
   //     cursor (so the drain loop continues into the
   //     "queue notices first, new-row batches second" sequence within
   //     the same activation rather than terminating here).
-  let hasMore = noticeRows.length > claimed.length || tailEnqueued;
+  let hasMore =
+    noticeRows.length > claimed.length || pendingTailNotices.length > 0;
   if (!hasMore) {
     hasMore = await hasStreamingRowsPastCursor({
       customerId,
