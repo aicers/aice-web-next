@@ -67,10 +67,10 @@ The unit of slot allocation throughout this RFC is the **slot bucket**, defined 
 
 ```
 slot_bucket = (kind, is_unlabeled)
-where is_unlabeled := (kind == 'HttpThreat' && 'unlabeled' ∈ selector_tags)
+where is_unlabeled := (kind == 'HttpThreat' && 'unlabeled-cluster' ∈ selector_tags)
 ```
 
-The bucket key produced by [`bucketKey()`](../src/lib/triage/baseline/compose.mjs#L66) is `"${kind}:${is_unlabeled}"` (e.g. `"HttpThreat:true"` for unlabeled-HttpThreat). [`FAVORED_BUCKETS`](../src/lib/triage/baseline/compose.mjs#L36) is the prior, *not* `FAVORED_KINDS` — `unlabeled-HttpThreat` is favored, plain `HttpThreat` is not.
+The literal tag is `'unlabeled-cluster'` (the `UNLABELED_TAG` constant — see [`slotBucket()`](../src/lib/triage/baseline/compose.mjs#L59)), not `'unlabeled'`. The bucket key produced by [`bucketKey()`](../src/lib/triage/baseline/compose.mjs#L66) is `"${kind}:${is_unlabeled}"` (e.g. `"HttpThreat:true"` for unlabeled-HttpThreat). [`FAVORED_BUCKETS`](../src/lib/triage/baseline/compose.mjs#L36) is the prior, *not* `FAVORED_KINDS` — `unlabeled-HttpThreat` is favored, plain `HttpThreat` is not.
 
 Where this RFC must distinguish a raw `kind` from a `slot_bucket` (e.g. when joining row-bound action rows that only carry `kind`), §2.4 specifies the reconstruction path. Elsewhere, "per-bucket" means strictly `slot_bucket`.
 
@@ -103,59 +103,154 @@ Applying both filters to #588's five action types:
 
 ### §2.2 Numerator semantics
 
-For each slot bucket `b` and time window `W`, the engagement numerator is:
+For each slot bucket `b` and time window `W`, the **raw** engagement count (used as input to the EWMA-weighted rate in §2.3 / §5.3, and exposed as `raw_engagement_count` for calibration audit) is:
 
 ```
-engagement_count(b, W) =
+raw_engagement_count(b, W) =
     count of distinct (menu_load_id, event_key) pairs in W such that:
-        - engagement_action.event_key ∈ engagement_impression.event_key
-            in the same (menu_load_id, event_key) row pair,
+        - an engagement_action row exists with the same
+            (menu_load_id, event_key) as an engagement_impression row,
         - action_type ∈ ENGAGED_ACTIONS,
         - the matched impression has slot_bucket = b,
         - the matched impression has shown_by ∈ INCLUDED_SHOWN_BY,
-        - period attribution rule (§2.3) holds.
+        - the matched impression has strictness_stop = the read's stop.
 ```
+
+The §5.3 EWMA weights each pair by `(1/2)^((now - impression.created_at) / half_life)` to produce `weighted_engagement_count(b, W)`, which is the actual rate numerator. §2.3 covers the parallel split on the denominator side; §7 is the canonical SQL.
 
 **Per-action weighting.** All actions in `ENGAGED_ACTIONS` count equally (weight = 1) for v1. Rationale: until the engagement-rate distribution is observed (calibration retune), introducing a per-action weight is premature optimization — the weight assignment is itself a parameter requiring empirical justification. The Phase 3 RFC (#590) re-examines per-action weighting as part of within-kind ranking.
 
 **Dedupe.** Engagement is counted once per `(menu_load_id, event_key)` pair, regardless of how many actions fire on the same impression. Multi-click within the same menu load reflects analyst exploration of one event, not multiple "useful" signals — collapsing to a single engagement matches the per-impression denominator unit and prevents a single noisy menu load from dominating an aggregate.
 
-**Decision: add `menu_load_id` to `engagement_action` via expand migration in #589.** This preserves the `(menu_load_id, event_key)` dedupe key shape that matches `engagement_impression`'s PK. Alternatives — hour-bucket dedupe `(event_key, account_id_hmac, date_trunc('hour', created_at))` or no dedupe — lose data on session-boundary replays or let noisy clicks dominate the rate. Migration ordering: #588's base schema lands first; #589's expand adds the column and threads it through `engagement_action`'s POST ingest path. Pre-existing action rows captured between #588's deploy and #589's expand get `NULL` for `menu_load_id` and are silently excluded from the §7 aggregate by the JOIN (no backfill — older action rows cannot be retroactively attributed to a specific menu load).
+**Decision: add `menu_load_id` to `engagement_action` via expand migration in #589.** This preserves the `(menu_load_id, event_key)` dedupe key shape that matches `engagement_impression`'s PK. Alternatives — hour-bucket dedupe `(event_key, account_id_hmac, date_trunc('hour', created_at))` or no dedupe — lose data on session-boundary replays or let noisy clicks dominate the rate. Migration ordering: #588's base schema lands first; #589's expand adds the column and threads it through `engagement_action`'s POST ingest path. Pre-existing action rows captured between #588's deploy and #589's expand get `NULL` for `menu_load_id` and are silently excluded from the §7 aggregate by the JOIN (no backfill of `menu_load_id` — older action rows cannot be retroactively attributed to a specific menu load; option (b) below backfills only the audit-only `legacy_pre_menu_load_id` flag, not `menu_load_id` itself).
 
-**Bucket attribution for row-bound actions.** `engagement_action.kind` is the raw `kind`, not the `slot_bucket`. To attribute a `pivot_click` on an `HttpThreat` event correctly to either `HttpThreat:false` or `HttpThreat:true` (unlabeled), the action row is **joined to its impression row on `event_key`** and the impression's `slot_bucket` is the authoritative source. The numerator query shape is therefore:
+The expand migration must also **extend `engagement_action_shape` CHECK** to make presence/absence of `menu_load_id` part of the per-`action_type` shape contract, matching #588's existing self-defending pattern for the other per-type columns. The contract:
+
+- Row-bound action types (`pivot_click`, `story_pivot_click`) require `menu_load_id IS NOT NULL` for any new row.
+- Non-row-bound types (`asset_select`, `exclusion_create`, `strictness_change`) require `menu_load_id IS NULL` (they were not produced from a single menu load).
+- The new-producer half of the constraint **must apply immediately on #589 deploy** — a relaxed CHECK that accepts NULL for new row-bound rows during the 180-day action retention horizon would leave the main failure mode (a buggy producer writing `pivot_click` with NULL `menu_load_id`) unguarded, silently dropping clicks from §7.
+- Pre-expand rows (captured between #588 deploy and #589 expand) must be explicitly grandfathered so the migration itself does not retroactively violate the constraint.
+
+Implementation options:
+
+- **(b) Flag column + cutover timestamp + strict CHECK** — **recommended**. Add `legacy_pre_menu_load_id BOOLEAN NOT NULL DEFAULT FALSE` alongside `menu_load_id`, and pin a literal `<phase2_expand_cutover>` timestamp into the CHECK so a producer cannot bypass `menu_load_id IS NOT NULL` simply by setting `legacy_pre_menu_load_id = TRUE`. The expand migration marks every pre-existing **row-bound action** with `legacy_pre_menu_load_id = TRUE`; non-row-bound pre-existing rows keep the default `FALSE` (the flag is conceptually local to row-bound types, see below). The CHECK becomes:
+
+    ```sql
+    -- `<phase2_expand_cutover>` is a literal timestamp captured at
+    -- migration write time (e.g. via psql `\set cutover :'now'`, or by
+    -- the migration generator substituting NOW() before EXECUTE). It
+    -- is the moment after which any row-bound action MUST carry
+    -- menu_load_id; the legacy flag alone cannot bypass.
+    ALTER TABLE engagement_action ADD COLUMN menu_load_id UUID;
+    ALTER TABLE engagement_action
+        ADD COLUMN legacy_pre_menu_load_id BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- Mark only pre-expand row-bound actions as legacy. Non-row-bound
+    -- types never had / never will have menu_load_id, so the flag is
+    -- meaningless for them and must stay FALSE so they continue to
+    -- satisfy the new CHECK below.
+    UPDATE engagement_action
+        SET legacy_pre_menu_load_id = TRUE
+        WHERE action_type IN ('pivot_click', 'story_pivot_click');
+
+    ALTER TABLE engagement_action DROP CONSTRAINT engagement_action_shape;
+    ALTER TABLE engagement_action ADD CONSTRAINT engagement_action_shape CHECK (
+        CASE action_type
+            WHEN 'pivot_click' THEN
+                event_key IS NOT NULL
+                AND (
+                    menu_load_id IS NOT NULL
+                    OR (legacy_pre_menu_load_id
+                        AND created_at < TIMESTAMPTZ '<phase2_expand_cutover>')
+                )
+                /* ... existing pivot_click clauses ... */
+            WHEN 'story_pivot_click' THEN
+                event_key IS NOT NULL
+                AND (
+                    menu_load_id IS NOT NULL
+                    OR (legacy_pre_menu_load_id
+                        AND created_at < TIMESTAMPTZ '<phase2_expand_cutover>')
+                )
+                /* ... existing story_pivot_click clauses ... */
+            WHEN 'asset_select'      THEN menu_load_id IS NULL
+                /* ... existing asset_select clauses ... */
+            WHEN 'exclusion_create'  THEN menu_load_id IS NULL
+                /* ... existing exclusion_create clauses ... */
+            WHEN 'strictness_change' THEN menu_load_id IS NULL
+                /* ... existing strictness_change clauses ... */
+            ELSE TRUE
+        END
+    );
+    ```
+
+    The flag clauses only appear under row-bound types — the flag is conceptually local to the new `menu_load_id` requirement, which only applies to those two types. Non-row-bound types' CHECK branches are unchanged from #588 except for the added `menu_load_id IS NULL` clause; they ignore the flag entirely.
+
+    **Why the cutover timestamp is part of the contract, not just the flag.** Without the `created_at < <cutover>` guard, a buggy or malicious producer could write a new `pivot_click` with `menu_load_id = NULL, legacy_pre_menu_load_id = TRUE` and the DB would silently accept it — recreating the exact silent-drop failure mode this whole constraint is designed to prevent. The cutover predicate makes the legacy branch reachable **only** by rows whose `created_at` predates the migration — which only pre-expand rows can have, because `engagement_action.created_at` has `DEFAULT NOW()` and the ingest path does not override it. The flag remains useful for self-documentation (`SELECT COUNT(*) WHERE legacy_pre_menu_load_id` is a readable audit query) and for the cleanup migration's predicate, but the timestamp is what makes the CHECK genuinely self-defending.
+
+    This enforces the new producer contract from the moment #589 deploys: a new `pivot_click` row that arrives without `menu_load_id` fails the CHECK at INSERT time regardless of what value the producer puts in `legacy_pre_menu_load_id`, surfacing the bug immediately instead of letting it disappear into §7's silent JOIN miss. A follow-up contract migration after the 180-day action retention horizon drops both `legacy_pre_menu_load_id` and the cutover predicate, leaving the simpler `menu_load_id IS NOT NULL` constraint as the final contract.
+
+- **(a) Two-step constraint upgrade without a flag** — **rejected**. Ships #589 with a CHECK that accepts NULL `menu_load_id` for row-bound actions until pre-expand rows age out (180 days). During that window, a buggy producer can write `pivot_click` rows with NULL `menu_load_id` and the database is silent; §7's JOIN then drops them. The whole point of #588's `engagement_action_shape` CHECK is self-defending the store against future producers — relaxing it for 180 days defeats that.
+
+- **(c) Backfill pre-expand row-bound actions to a sentinel `menu_load_id`** and apply the strict CHECK immediately. **Rejected** for the same reason §8.3 rejects backfilling `engagement_model_version`: the sentinel is not a real menu load, so the audit record is false.
+
+- **(d) Timestamp-only predicate (no flag column)** — drop `legacy_pre_menu_load_id` from (b) and use only `menu_load_id IS NOT NULL OR created_at < TIMESTAMPTZ '<phase2_expand_cutover>'` on row-bound branches. Functionally equivalent self-defending behavior — the cutover predicate is what does the enforcement work in (b) as well — but less self-documenting (a schema reader sees a bare timestamp instead of a named flag) and less queryable ("how many legacy rows remain" requires recalling the literal). Acceptable fallback if the storage cost of the flag column is somehow material (it is not, in practice).
+
+Recommend (b). The §7 aggregate's `EXISTS` form is unchanged — a row-bound action row with `menu_load_id IS NULL` (which the CHECK now restricts to `legacy_pre_menu_load_id = TRUE AND created_at < <cutover>` — i.e. only pre-expand legacy rows can exist in that shape) simply does not match any impression and is silently excluded from the aggregate, the documented and acceptable behavior for pre-expand legacy data.
+
+**Bucket attribution for row-bound actions.** `engagement_action.kind` is the raw `kind`, not the `slot_bucket`. To attribute a `pivot_click` on an `HttpThreat` event correctly to either `HttpThreat:false` or `HttpThreat:true` (unlabeled), the action row is **joined to its impression row on `(menu_load_id, event_key)`** — the same composite key that is `engagement_impression`'s PK — and the impression's `slot_bucket` is the authoritative source. The numerator query shape is therefore:
 
 ```sql
 SELECT
     i.slot_bucket,
-    COUNT(DISTINCT (i.menu_load_id, i.event_key)) AS engagement_count
+    COUNT(DISTINCT (i.menu_load_id, i.event_key)) AS raw_engagement_count
 FROM engagement_impression i
 JOIN engagement_action a
-    ON a.event_key = i.event_key                          -- row-bound action carries event_key
-   AND a.created_at >= i.created_at                       -- action followed surfacing
-   AND a.created_at  < i.created_at + INTERVAL '24 hours' -- bounded session window
+    ON a.menu_load_id = i.menu_load_id                    -- same menu load (impression PK)
+   AND a.event_key    = i.event_key                       -- same surfaced row
 WHERE i.created_at >= NOW() - INTERVAL '<window>'
-  AND a.action_type IN ('pivot_click' /*, 'story_pivot_click' per §10.1 */)
-  AND i.shown_by IN ('quota' /*, see §2.3 */)
+  AND a.action_type IN ('pivot_click', 'story_pivot_click')
+  AND i.shown_by IN ('quota')
 GROUP BY i.slot_bucket;
 ```
 
-The 24-hour session window bounds the join — an action that fires more than a day after the impression is not credibly attributable to that menu load. The session window itself is a parameter (default 24h, substrate-informed in §12).
+The `COUNT(DISTINCT (menu_load_id, event_key))` collapses the duplicates that the JOIN produces when a single impression has multiple matching action rows (e.g. both a `pivot_click` and a `story_pivot_click`, or two `pivot_click`s on different dimensions). The dedupe is essential to the "one engagement per impression" semantics in the bullet above; the §7 read-time aggregate uses the equivalent `EXISTS` form for the same reason.
 
-When the same `event_key` appears in multiple impression batches (the same event surfaced across menu loads), the action attaches to the **earliest impression preceding it** — `DISTINCT ON (a.id) ... ORDER BY i.created_at ASC` semantics. The intent is to count one engagement per click, not one per (click × impression).
+This query produces only the **raw** count. The rate computed at read time is `weighted_engagement_count / weighted_impression_count` per §2.3 — both EWMA-weighted via §5.3. See §7 for the canonical aggregate SQL.
+
+The `(menu_load_id, event_key)` composite is the canonical join. The same `event_key` appearing in multiple menu loads (the same event re-surfaced) gives one impression row per menu load, and a click attaches to exactly the menu load that produced it — no temporal session window or `DISTINCT ON` tiebreaker is needed. Pre-#589 action rows with `NULL menu_load_id` (captured between #588 deploy and #589's expand migration) fail this JOIN and are silently excluded from the aggregate.
+
+The `strictness_stop` filter (§2.3) applies on the impression side; because the action's matching impression is uniquely identified by `(menu_load_id, event_key)`, the impression's `strictness_stop` is also the authoritative stop for the action — no separate strictness column on the action is needed.
 
 ### §2.3 Denominator definition
 
-The denominator is the per-bucket **impression count** over the same window, filtered by the same `shown_by` and `strictness_stop` rules as the numerator:
+The denominator is the per-bucket **impression count** over the same window, filtered by the same `shown_by` and `strictness_stop` rules as the numerator. Two flavors of "count" are tracked, with different consumers:
+
+- **`raw_impression_count(b, W) = COUNT(*)`** — used by §5.2's `N_min` gate ("did we observe enough impressions to trust any rate at all?").
+- **`weighted_impression_count(b, W) = Σᵢ (1/2)^((now - created_atᵢ) / half_life)`** — used as the rate denominator (§5.3 EWMA), so recent observations weigh more.
 
 ```sql
-SELECT slot_bucket, COUNT(*) AS impression_count
-FROM engagement_impression
-WHERE created_at >= NOW() - INTERVAL '<window>'
-  AND shown_by IN (...)
-GROUP BY slot_bucket;
+SELECT slot_bucket,
+       COUNT(*)                                                  AS raw_impression_count,
+       SUM(EXP(-LN(2) * EXTRACT(EPOCH FROM (NOW() - created_at))
+                      / <half_life_seconds>))                    AS weighted_impression_count
+FROM   engagement_impression
+WHERE  created_at >= NOW() - INTERVAL '<window>'
+  AND  shown_by IN (...)
+GROUP  BY slot_bucket;
 ```
 
-`engagement_rate(b) = engagement_count(b) / impression_count(b)`, clipped to `[0, 1]`.
+The same split applies to the numerator (§2.2):
+- **`raw_engagement_count(b, W)`** — `COUNT(DISTINCT (menu_load_id, event_key))` matching the action filter.
+- **`weighted_engagement_count(b, W)`** — EWMA-weighted sum over the same distinct pairs.
+
+`engagement_rate(b)` is the **weighted ratio**:
+
+```
+engagement_rate(b) = weighted_engagement_count(b) / weighted_impression_count(b)
+                     clipped to [0, 1]
+```
+
+The raw counts are **not** used in the rate — using `raw_engagement / raw_impression` would discard the EWMA decay that §5.3 introduces specifically to prevent a multi-week-old burst from dominating the current rate. §7's read-time SQL is the canonical implementation; this section is the contract it implements.
 
 **Raw impressions vs eligible-but-not-surfaced.** v1 uses **raw impressions surfaced** (rows in `engagement_impression`) as the denominator. This matches #588's capture shape exactly — no additional instrumentation required — and matches the semantics of "for the buckets we actually showed, how often did analysts engage."
 
@@ -257,11 +352,11 @@ A bucket with too few impressions cannot supply a statistically meaningful engag
 
 ```
 γ_effective(b, W) =
-    0              if impression_count(b, W) < N_min
+    0              if raw_impression_count(b, W) < N_min
     γ              otherwise
 ```
 
-`N_min` is the per-bucket impression floor.
+`N_min` is the per-bucket impression floor. The gate is against **raw `COUNT(*)`** within the window, **not** the EWMA-weighted denominator used in the rate (§5.3) — a bucket with 200 raw impressions all 30+ days old would have a weighted denominator near zero but is not statistically thin in the way `N_min` is meant to detect. §7's aggregate SQL emits the raw count as `impression_count` for this gate, separately from the weighted sum used in the rate.
 
 **Initial value: `N_min = 100`.** Substrate-informed: from the test-clumit corpus (30d, 200k rows, 11 buckets — see §12), the lowest-volume bucket (`SuspiciousTlsTraffic`) reaches 100 impressions within ~12 hours of impression flow; the largest (`unlabeled-HttpThreat`) saturates within hours. Below 100 the per-bucket rate's standard error exceeds ~10%. Retune candidates (§11): 50 (more responsive, more noise) or 500 (slower to engage, more stable).
 
@@ -290,12 +385,16 @@ Rationale:
 A fixed fraction `ε ∈ [0, 1]` of `default_N` is reserved for buckets whose engagement signal is in the **bottom decile** of the active window:
 
 ```
-exploration_slots = round(ε · default_N)
+exploration_slots(γ, ε) =
+    0                            if γ = 0          # exploration gated on engagement being live
+    round(ε · default_N)         if γ > 0
 ```
 
-These slots are allocated to the lowest-engagement buckets in proportion to their `base_share`, before the engagement-driven allocation runs over the remaining `(1 - ε) · default_N`. The intent is to guarantee that buckets the engagement model deprioritizes still appear in the menu, so the model has fresh data to update against (and so an under-engaged bucket can recover if analyst preference shifts).
+When `γ > 0`, these slots are allocated to the lowest-engagement buckets in proportion to their `base_share`, before the engagement-driven allocation runs over the remaining `(1 - ε) · default_N`. The intent is to guarantee that buckets the engagement model deprioritizes still appear in the menu, so the model has fresh data to update against (and so an under-engaged bucket can recover if analyst preference shifts).
 
-**Initial value: `ε = 0.1`.** With 11 buckets in the test-clumit substrate (§12) and `default_N` typically in 10–30, `ε = 0.1` reserves ~1 slot per menu load for the lowest-decile bucket. Retune candidates (§11): 0.05 (less exploration, faster convergence) or 0.2 (more exploration, more stable distribution).
+When `γ = 0`, exploration is **also disabled**: there is no engagement signal to deprioritize against, so reserving "exploration" slots would only carve `default_N` for no reason. This gate makes the `γ = 0` first ship (§13 Phase 2a) **numerically identical** to RFC 0001 — `computeBucketQuotas` receives the full `default_N`, not `(1 - ε) · default_N`. The two parameters move together: lifting `γ` at calibration (Phase 2b) also activates `ε`, both via a `baseline_version` bump.
+
+**Initial value: `ε = 0.1`.** Inert until the calibration retune sets `γ > 0`. With 11 buckets in the test-clumit substrate (§12) and `default_N` typically in 10–30, `ε = 0.1` will reserve ~1 slot per menu load for the lowest-decile bucket once active. Retune candidates (§11): 0.05 (less exploration, faster convergence) or 0.2 (more exploration, more stable distribution).
 
 The exploration share is implemented in `composeMenu` as a pre-allocation step before `computeBucketQuotas` runs; see §9.
 
@@ -307,11 +406,11 @@ Distinct from §5.2's per-bucket cap. A tenant with **no engagement history at a
 
 ```
 γ_tenant(t) =
-    0   if total_impression_count(t, all buckets, 30d) < M_tenant
+    0   if raw_impression_count(t, all buckets, 30d) < M_tenant
     γ   otherwise
 ```
 
-The tenant runs on RFC 0001 alone until `M_tenant` impressions accumulate, then the engagement term activates. This avoids letting a tenant's first analyst's first hour of clicks lock in a degenerate distribution.
+The tenant runs on RFC 0001 alone until `M_tenant` impressions accumulate, then the engagement term activates. As in §5.2, the gate is against the **raw `COUNT(*)`** over the 30d window, not the EWMA-weighted denominator — a tenant with 1,000 raw impressions in week 1 then quiet for 3 weeks still satisfies cold-start exit. This avoids letting a tenant's first analyst's first hour of clicks lock in a degenerate distribution.
 
 **Initial value: `M_tenant = 1,000 impressions`.** test-clumit's `customer_customer_a_8983d4` would reach 1,000 impressions in well under a day at any plausible menu-load rate, so any first-week active tenant clears this. Retune candidates (§11): 100 (faster activation, less stable cold-start) or 10,000 (slower, more conservative).
 
@@ -337,31 +436,47 @@ WITH window_bounds AS (
     SELECT NOW() - $1::INTERVAL AS lo,
            NOW()                AS hi
 ), impressions AS (
+    -- Both raw count (for §5.2 N_min gate — "did we observe enough")
+    -- and EWMA-weighted sum (for the rate denominator — "weight recent
+    -- evidence more"). The two are NOT interchangeable: a bucket with
+    -- 200 raw impressions all 30+ days old can have weighted_imp ~50,
+    -- which would fail an N_min = 100 check despite passing the raw-
+    -- count contract in §5.2. Emit both and let downstream pick the
+    -- right one per its semantics.
     SELECT i.slot_bucket,
+           COUNT(*)                                                  AS raw_impression_count,
            SUM(EXP(-LN(2) * EXTRACT(EPOCH FROM (NOW() - i.created_at))
-                          / $2::DOUBLE PRECISION)) AS weighted_imp
+                          / $2::DOUBLE PRECISION))                   AS weighted_imp
     FROM   engagement_impression i, window_bounds w
     WHERE  i.created_at >= w.lo
       AND  i.shown_by   = 'quota'
       AND  i.strictness_stop = $3
     GROUP  BY i.slot_bucket
 ), engagements AS (
+    -- One weight per *distinct* (menu_load_id, event_key) — see §2.2's
+    -- dedupe rule. A JOIN to engagement_action would multiply weights
+    -- when an impression has multiple matching actions (pivot_click +
+    -- story_pivot_click on the same row, or two pivot_clicks on
+    -- different dimensions). EXISTS expresses "this impression had at
+    -- least one engagement" without multiplying.
     SELECT i.slot_bucket,
            SUM(EXP(-LN(2) * EXTRACT(EPOCH FROM (NOW() - i.created_at))
                           / $2::DOUBLE PRECISION)) AS weighted_eng
     FROM   engagement_impression i
-    JOIN   engagement_action a
-           ON a.event_key = i.event_key
-          AND a.created_at >= i.created_at
-          AND a.created_at  < i.created_at + INTERVAL '24 hours'
     WHERE  i.created_at >= (SELECT lo FROM window_bounds)
       AND  i.shown_by   = 'quota'
       AND  i.strictness_stop = $3
-      AND  a.action_type IN ('pivot_click' /*, 'story_pivot_click' */)
+      AND  EXISTS (
+            SELECT 1
+            FROM   engagement_action a
+            WHERE  a.menu_load_id = i.menu_load_id
+              AND  a.event_key    = i.event_key
+              AND  a.action_type IN ('pivot_click', 'story_pivot_click')
+          )
     GROUP  BY i.slot_bucket
 )
 SELECT  imp.slot_bucket,
-        imp.weighted_imp                                    AS impression_count,
+        imp.raw_impression_count                            AS impression_count,
         COALESCE(eng.weighted_eng, 0) / imp.weighted_imp    AS engagement_rate
 FROM    impressions imp
 LEFT JOIN engagements eng USING (slot_bucket);
@@ -399,7 +514,7 @@ CREATE TABLE engagement_model_snapshot (
 );
 ```
 
-`formula` payload captures every value the implementation reads from the engagement-model tunables module (the analog of #472's `baseline_version_snapshot.parameters` for baseline). Concretely: `γ`, `N_min`, half-life formula, `ε`, `INCLUDED_SHOWN_BY` set, `M_tenant`, `ENGAGED_ACTIONS` set, session-window hours.
+`formula` payload captures every value the implementation reads from the engagement-model tunables module (the analog of #472's `baseline_version_snapshot.parameters` for baseline). Concretely: `γ`, `N_min`, half-life formula, `ε`, `INCLUDED_SHOWN_BY` set, `M_tenant`, `ENGAGED_ACTIONS` set, active-windows list.
 
 `aggregate_sql_digest` captures the per-load aggregate query template so a future investigator can verify that the SQL behind a snapshot version was the SQL shipped with that version. The template — not a per-load filled query — is what changes when the formula changes.
 
@@ -417,29 +532,27 @@ Therefore:
 ```sql
 -- expand migration in the #589 implementation:
 ALTER TABLE engagement_impression
-    ADD COLUMN engagement_model_version TEXT;
-
-UPDATE engagement_impression
-    SET engagement_model_version = 'phase2-v1'
-    WHERE engagement_model_version IS NULL;
-
-ALTER TABLE engagement_impression
-    ALTER COLUMN engagement_model_version SET NOT NULL;
+    ADD COLUMN engagement_model_version TEXT;   -- NULLABLE, intentionally
 ```
 
-Lookups then resolve through `engagement_impression`:
+The column is **left nullable**. Rows captured by #588 between its deploy and #589's expand migration have no engagement model associated with their menu placement (Phase 2 was not active when they were surfaced); writing a sentinel like `'phase2-v1'` would falsify the audit record. `NULL` is the truth, and the lookup query handles it explicitly:
 
 ```sql
 SELECT s.formula, s.window_bounds, s.aggregate_sql_digest
 FROM   engagement_impression i
-JOIN   engagement_model_snapshot s ON s.version = i.engagement_model_version
+LEFT JOIN engagement_model_snapshot s ON s.version = i.engagement_model_version
 WHERE  i.menu_load_id = :menu_load_id
   AND  i.event_key    = :event_key;
 ```
 
-The `(menu_load_id, event_key)` PK on impressions gives O(1) lookup; one impression row per surfaced corpus row gives the per-row audit story.
+Result interpretation:
+- `engagement_model_version IS NULL` + `s.* IS NULL`: impression predates Phase 2; menu was RFC 0001-only. Audit caller surfaces "no engagement model active at menu-load time" — equivalent to #472's "snapshot predates audit support" semantics.
+- `engagement_model_version IS NOT NULL` + `s.* IS NOT NULL`: normal resolution.
+- `engagement_model_version IS NOT NULL` + `s.* IS NULL`: snapshot retention swept the row (see §8.4 audit-window bound).
 
-**Decision: add `engagement_model_version` to `engagement_impression` via expand migration in #589.** Cleaner than carrying the version externally (e.g. in an audit log row) since the column lives at the same grain as the audit substrate (one row per surfaced corpus row). Migration ordering: #588's base schema lands first, then #589's expand migration adds the column and backfills `'phase2-v1'` for any pre-existing rows.
+All rows written by #589 onward populate `engagement_model_version` from `ENGAGEMENT_TUNABLES.engagementModelVersion` in the same write path that fills `slot_bucket` and `baseline_version`. The `(menu_load_id, event_key)` PK on impressions gives O(1) lookup; one impression row per surfaced corpus row gives the per-row audit story.
+
+**Decision: add `engagement_model_version` to `engagement_impression` via expand migration in #589, kept NULLABLE.** Cleaner than carrying the version externally (e.g. in an audit log row) since the column lives at the same grain as the audit substrate (one row per surfaced corpus row). The nullable shape preserves audit integrity for impressions captured before Phase 2 was active — no false sentinel backfill.
 
 ### §8.4 Retention
 
@@ -448,10 +561,10 @@ The `(menu_load_id, event_key)` PK on impressions gives O(1) lookup; one impress
 The cleanup join target is `engagement_impression.engagement_model_version`; cleanup runs in the same internal cleanup sweep as #472's snapshot retention (the architecture pattern is reused, the predicate is new).
 
 **Audit window bound.** The §8.3 lookup is bounded by the shorter of:
-- **`engagement_impression` retention (90 days)** — set by #588's migration `0014_engagement_signals.sql`. After 90 days the impression row is gone, and with it the `engagement_model_version` reference for that menu placement.
+- **`engagement_impression` retention (90 days)** — set by #588's migration `0014_engagement_signals.sql`. After 90 days the impression row is deleted entirely (not just its version column).
 - **`baseline_triaged_event` retention** — set by the cadence layer (RFC 0001 §7; typically 30–45 days).
 
-Within those bounds the corpus row → impression → snapshot chain resolves; outside them, `engagement_impression.engagement_model_version IS NULL` (no row) is the expected lookup outcome and the audit caller surfaces "snapshot predates audit support" the same way #472's lookup does for pre-snapshot corpus rows. No extension of either retention is in scope.
+Outside those bounds the `SELECT ... FROM engagement_impression ... WHERE menu_load_id = ?` step returns zero rows; the audit caller surfaces "audit window exceeded" the same way #472's lookup does for pre-snapshot corpus rows. Within those bounds but before Phase 2 deploy, §8.3's `LEFT JOIN` returns a row with `engagement_model_version IS NULL` and surfaces "no engagement model active at menu-load time" (also defined in §8.3). The three lookup outcomes — resolved / pre-Phase-2 / retention-swept — are distinguishable, which is the audit contract. No extension of either retention is in scope.
 
 ---
 
@@ -463,8 +576,8 @@ Within those bounds the corpus row → impression → snapshot chain resolves; o
 // addition to composeMenu's existing input
 interface BucketEngagement {
   bucketKey: string;             // "${kind}:${is_unlabeled}"
-  engagementRate: number;        // [0, 1], after §5 guardrails
-  impressionCount: number;       // for §5.2 new-bucket cap inspection
+  engagementRate: number;        // [0, 1], EWMA-weighted (§5.3), after §5 guardrails
+  impressionCount: number;       // RAW count for §5.2 N_min gate — NOT the EWMA denominator
   windowDays: 7 | 14 | 30;       // for audit / debugging
 }
 
@@ -480,13 +593,14 @@ interface ComposeMenuInput {
 
 When `bucketEngagement === undefined`:
 - The `γ · engagement_signal(b)` term in §4 is **zero for every bucket**.
+- §5.4's exploration carve-out also does not run (gated on `γ > 0` per §5.4).
 - Behavior is exactly RFC 0001-equivalent.
 - This is the legacy / kill-switch / test-harness path.
 
 When `bucketEngagement !== undefined`:
 - Each entry sets the `engagement_signal(b)` for one bucket.
 - Buckets present in `candidates` but absent from `bucketEngagement` get `engagement_signal(b) = 0` (cold-start §6, or new-bucket cap §5.2).
-- §5.4's exploration-share pre-allocation runs.
+- §5.4's exploration-share pre-allocation runs **only if** the active `ENGAGEMENT_TUNABLES.gamma > 0`. With `γ = 0` (the first-ship default), the carve-out is skipped and `computeBucketQuotas` receives the full `default_N` — preserving the RFC 0001-equivalent invariant even when the loader passes a populated `bucketEngagement` array for audit purposes.
 
 ### §9.2 Caller responsibilities
 
@@ -505,18 +619,20 @@ A new module `src/lib/triage/baseline/engagement-tunables.ts` parallel to [`tuna
 
 ```typescript
 export const ENGAGEMENT_TUNABLES = {
-  gamma: 0,                                    // §4
-  perBucketMinImpressions: 100,                // §5.2 N_min
-  ewmaHalfLifeWindowRatio: 0.5,                // §5.3 (half-life = W * ratio)
-  explorationShare: 0.1,                       // §5.4 ε
-  tenantColdStartMinImpressions: 1000,         // §6 M_tenant
-  includedShownBy: ['quota'] as const,         // §2.3
-  engagedActions: ['pivot_click'] as const,    // §2.1 + §10.1
-  actionSessionWindowHours: 24,                // §2.2
-  activeWindowsDays: [7, 14, 30] as const,     // §3
-  engagementModelVersion: 'phase2-v1',         // §8.1
+  gamma: 0,                                                 // §4 (kill-switch off)
+  perBucketMinImpressions: 100,                             // §5.2 N_min
+  ewmaHalfLifeWindowRatio: 0.5,                             // §5.3 (half-life = W * ratio)
+  explorationShare: 0.1,                                    // §5.4 ε (inert while gamma = 0)
+  tenantColdStartMinImpressions: 1000,                      // §6 M_tenant
+  includedShownBy: ['quota'] as const,                      // §2.3
+  engagedActions: ['pivot_click', 'story_pivot_click']      // §2.1 + §10.1 decision (a)
+                  as const,
+  activeWindowsDays: [7, 14, 30] as const,                  // §3
+  engagementModelVersion: 'phase2-v1',                      // §8.1
 };
 ```
+
+(No `actionSessionWindowHours` — §2.2's `(menu_load_id, event_key)` JOIN pins the action to a single impression directly, with no temporal session window.)
 
 A drift test (mirroring [the existing `tunables.ts` drift test pattern](../src/lib/triage/baseline/compose.mjs#L50)) asserts that every key in `ENGAGEMENT_TUNABLES` matches the active `engagement_model_snapshot` row for the current `engagementModelVersion`.
 
@@ -609,11 +725,10 @@ All values below ship with #589's first commit. They are **conservative starting
 | `γ` (engagement weight)              | **0**             | Kill-switch off. Behavior is RFC 0001-equivalent.             |
 | `N_min` (per-bucket impression floor) | **100**          | test-clumit lowest-volume bucket reachable in 1–7 days.       |
 | EWMA half-life ratio                  | **0.5** of window | W/2 keeps effective sample size near half the window.        |
-| `ε` (exploration share)               | **0.1**           | ~1 slot per 10 in default_N for low-engagement buckets.       |
+| `ε` (exploration share)               | **0.1**           | ~1 slot per 10 in default_N for low-engagement buckets. **Inert while `γ = 0`** per §5.4 gate. |
 | `M_tenant` (tenant cold-start floor) | **1,000 impressions** | Any first-week active tenant clears this.                   |
 | `INCLUDED_SHOWN_BY`                   | `{'quota'}`       | Most conservative — excludes fallback / story_protected.      |
-| `ENGAGED_ACTIONS`                     | `{pivot_click, story_pivot_click}` | §2.1 + §10.1 recommendation.                |
-| `action_session_window_hours`         | **24**            | An action a day after the impression is not credibly causal.  |
+| `ENGAGED_ACTIONS`                     | `{pivot_click, story_pivot_click}` | §2.1 + §10.1 decision (a).                  |
 | Active windows                        | **7d / 14d / 30d** | Reused from RFC 0001 §7.                                     |
 | Active window selection               | longest-active-with-data | §3.                                                    |
 | `engagement_model_version`            | **`'phase2-v1'`** | §8.1.                                                         |
@@ -670,7 +785,7 @@ Substrate-informed observations that shaped the defaults:
    - `engagement_impression.engagement_model_version` expand migration per §8.3.
    - Drift test for `ENGAGEMENT_TUNABLES` vs the snapshot.
 3. `baseline_version` bump (e.g. `phase1b-four-selector` → `phase2-engagement-v1`).
-4. Ship. With `γ = 0` the per-bucket quotas are numerically identical to RFC 0001's output, modulo the exploration share's floor (§5.4 still applies at `ε = 0.1`).
+4. Ship. With `γ = 0` the per-bucket quotas are **numerically identical** to RFC 0001's output: §5.4's exploration carve-out is gated on `γ > 0` and does not run, `computeBucketQuotas` receives the full `default_N`, and the engagement term in §4 multiplies to zero. The implementation, snapshot, and audit substrate exist in production but the menu output does not change.
 
 ### Phase 2b — calibration retune (gated on §11 entry criteria)
 
