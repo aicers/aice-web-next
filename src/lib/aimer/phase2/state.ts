@@ -655,13 +655,18 @@ export interface CommitOnAckResult {
  *  - Queue-only kind (`policy_event`): mark queue rows ack'd, delete
  *    the inflight row. No state update.
  *
- * When `expectedKind === "story"` AND the inflight row carries a
- * cursor advance (new-row Story batch — not a queue notice), the same
+ * When `expectedKind === "story"` AND the inflight row has
+ * `pushed_stories` populated (either a forward streaming batch or a
+ * late-commit straggler batch — not a queue notice), the same
  * transaction also bumps `event_group.last_sent_at = NOW()`,
  * `last_sent_by = SYSTEM_ACTOR_ACCOUNT_ID`, `send_count += 1` for the
  * exact `event_group.id` set persisted on the inflight row's
  * `pushed_stories` column (the rows actually included in the signed
- * envelope at mint time). The returned
+ * envelope at mint time). The β-bump is keyed off `pushed_stories`,
+ * NOT off cursor advance, so a straggler batch with
+ * `cursor_advance_to_* = NULL` still marks its delivered rows sent
+ * (otherwise the straggler scan would re-select them forever via the
+ * `last_sent_at IS NULL` filter). The returned
  * {@link CommitOnAckResult.storyBetaRows} lets the caller emit one
  * `triage.story.send` audit row per affected Story after this
  * transaction commits — audit emission is best-effort outside the
@@ -718,37 +723,11 @@ export async function commitOnAck(
           row.cursor_advance_to_event_key,
           client,
         );
-
-        if (row.kind === "story") {
-          // β-bump + audit address the exact rows that were actually
-          // included in the signed envelope at mint time, sourced
-          // from the persisted `pushed_stories` column. The
-          // streaming cursor key is `(created_at, id)` (monotonic at
-          // insert), so a Story inserted between mint and ack does
-          // NOT slip behind the advanced cursor — the next drain
-          // picks it up via `loadStoryStreamingSlice`. The
-          // `pushed_stories` set is the orthogonal guarantee that
-          // β/audit only address rows we actually delivered.
-          const pushedStories = row.pushed_stories ?? [];
-          if (pushedStories.length > 0) {
-            const pushedIds = pushedStories.map((s) => s.story_id);
-            await client.query(
-              `UPDATE event_group
-                  SET last_sent_at = NOW(),
-                      last_sent_by = $2::uuid,
-                      send_count   = send_count + 1
-                WHERE id = ANY($1::bigint[])`,
-              [pushedIds, SYSTEM_ACTOR_ACCOUNT_ID],
-            );
-            storyBetaRows = pushedStories.map((s) => ({
-              storyId: s.story_id,
-              storyVersion: s.story_version,
-            }));
-          }
-        }
       } else {
-        // No cursor advance but the drain still wants to record
-        // liveness — bump last_synced_at without touching the cursor.
+        // No cursor advance (queue notices, or a straggler batch that
+        // sits AT OR BEHIND the cursor) — record liveness without
+        // touching the cursor. The Story β-bump below is independent
+        // of cursor advance and keys off `pushed_stories`.
         await client.query(
           `UPDATE aimer_push_state
               SET last_synced_at = NOW(),
@@ -756,6 +735,51 @@ export async function commitOnAck(
             WHERE kind = $1`,
           [row.kind],
         );
+      }
+
+      if (row.kind === "story") {
+        // β-bump + audit address the exact rows that were actually
+        // included in the signed envelope at mint time, sourced from
+        // the persisted `pushed_stories` column. This runs whenever
+        // `pushed_stories` is populated, INDEPENDENT of cursor
+        // advance:
+        //
+        //   - Forward streaming batch: cursor advances AND
+        //     `pushed_stories` is populated → β/audit the delivered
+        //     set, cursor moves forward.
+        //   - Late-commit straggler batch: cursor does NOT advance
+        //     (the rows sit AT OR BEHIND the cursor) but
+        //     `pushed_stories` IS populated → β/audit the delivered
+        //     set without moving the cursor, so the straggler-scan
+        //     `last_sent_at IS NULL` filter no longer re-selects
+        //     those rows on the next drain.
+        //   - Queue notice (refresh/backfill/withdraw): cursor does
+        //     NOT advance AND `pushed_stories` is empty → nothing to
+        //     β-bump (the originating mutation hook owns the audit).
+        //
+        // The streaming cursor key `(created_at, id)` (monotonic at
+        // insert) means a Story inserted between mint and ack does
+        // NOT slip behind the advanced cursor — the next drain picks
+        // it up via `loadStoryStreamingSlice` or
+        // `loadStoryStragglerSlice`. The `pushed_stories` set is the
+        // orthogonal guarantee that β/audit only address rows we
+        // actually delivered.
+        const pushedStories = row.pushed_stories ?? [];
+        if (pushedStories.length > 0) {
+          const pushedIds = pushedStories.map((s) => s.story_id);
+          await client.query(
+            `UPDATE event_group
+                SET last_sent_at = NOW(),
+                    last_sent_by = $2::uuid,
+                    send_count   = send_count + 1
+              WHERE id = ANY($1::bigint[])`,
+            [pushedIds, SYSTEM_ACTOR_ACCOUNT_ID],
+          );
+          storyBetaRows = pushedStories.map((s) => ({
+            storyId: s.story_id,
+            storyVersion: s.story_version,
+          }));
+        }
       }
     }
 

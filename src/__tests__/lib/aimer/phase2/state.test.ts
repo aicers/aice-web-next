@@ -657,6 +657,69 @@ describe("Phase 2 state helpers (state.ts)", () => {
     ).toBe(true);
   });
 
+  it("commitOnAck story straggler branch β-bumps pushed_stories WITHOUT advancing the cursor", async () => {
+    // Regression for the round-6 finding: the late-commit straggler
+    // scan emits a `story` inflight row whose
+    // `cursor_advance_to_event_time` / `cursor_advance_to_event_key`
+    // are NULL (because the rows sit AT OR BEHIND the cursor) but
+    // `pushed_stories` is populated. The ack path MUST mark those
+    // rows sent on `event_group.last_sent_at` and surface the β rows
+    // so per-Story audit emission happens. Previously the β-bump was
+    // nested inside the cursor-advance branch, so straggler rows
+    // were POSTed to aimer-web but never marked delivered — every
+    // subsequent next-batch call re-selected the same rows because
+    // `loadStoryStragglerSlice` filters on `last_sent_at IS NULL`.
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_inflight")) {
+        return {
+          rows: [
+            {
+              context_jti: "jti-straggler",
+              kind: "story",
+              cursor_advance_to_event_time: null,
+              cursor_advance_to_event_key: null,
+              queue_row_ids: [],
+              pending_tail_notices: [],
+              pushed_stories: [
+                { story_id: "900", story_version: "v1" },
+                { story_id: "901", story_version: "v1" },
+              ],
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const result = await state.commitOnAck(1, "jti-straggler", "story");
+
+    // β-bump targets the persisted straggler set.
+    expect(result.storyBetaRows).toEqual([
+      { storyId: "900", storyVersion: "v1" },
+      { storyId: "901", storyVersion: "v1" },
+    ]);
+    const updateBeta = fake.calls.find((c) =>
+      c.sql.includes("UPDATE event_group"),
+    );
+    expect(updateBeta).toBeDefined();
+    expect(updateBeta?.params?.[0]).toEqual(["900", "901"]);
+
+    // No forward cursor advance — straggler rows sit BEHIND the
+    // cursor, so the cursor must NOT move. The drain still records
+    // liveness via `last_synced_at`.
+    const stateUpdates = fake.calls.filter((c) =>
+      c.sql.includes("UPDATE aimer_push_state"),
+    );
+    expect(stateUpdates.length).toBeGreaterThan(0);
+    expect(
+      stateUpdates.every(
+        (c) =>
+          c.sql.includes("last_synced_at") &&
+          !c.sql.includes("last_pushed_event_time"),
+      ),
+    ).toBe(true);
+  });
+
   it("insertInflight persists pushed_stories as JSONB when provided", async () => {
     await state.insertInflight(1, {
       contextJti: "jti-insert",
