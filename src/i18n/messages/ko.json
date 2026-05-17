@@ -291,7 +291,8 @@
       "triage_exclusion_fanout_failed": "Triage 제외 팬아웃 실패",
       "triage_exclusion_global_recover": "Triage 제외 복구 (전역)",
       "triage_exclusion_customer_recover": "Triage 제외 복구 (고객)",
-      "triage_baseline_rebuild": "Triage 기준선 재구축"
+      "triage_baseline_rebuild": "Triage 기준선 재구축",
+      "triage_policy_run_send_to_aimer": "정책 실행을 aimer-web로 전송"
     },
     "targetTypes": {
       "account": "계정",
@@ -304,7 +305,8 @@
       "service": "서비스",
       "triage_policy": "Triage 정책",
       "triage_story": "스토리",
-      "triage_exclusion": "Triage 제외"
+      "triage_exclusion": "Triage 제외",
+      "triage_policy_run": "Triage 정책 실행"
     }
   },
   "nodes": {
