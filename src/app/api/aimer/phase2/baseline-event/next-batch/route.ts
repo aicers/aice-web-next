@@ -2,8 +2,16 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
-import { loadBaselineStreamingSlice } from "@/lib/aimer/phase2/baseline-push";
+import {
+  enrichRefreshPayload,
+  loadBaselineStreamingSlice,
+} from "@/lib/aimer/phase2/baseline-push";
 import { buildPhase2Push } from "@/lib/aimer/phase2/orchestrate";
+import {
+  type BaselineRefreshSubPayload,
+  PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
+  PHASE2_REFRESH_PAYLOAD_MAX_BYTES,
+} from "@/lib/aimer/phase2/payload-builders";
 import {
   type AimerPushQueueRow,
   claimPendingNotices,
@@ -85,10 +93,23 @@ const STREAMING_AIMER_PATH = "/api/phase2/baseline/batch" as const;
 
 /**
  * Upper bound on queue rows aggregated into one withdraw envelope per
- * call. Refresh / backfill are emitted singly so the limit only binds
- * on the withdraw path; the drain loop iterates past it.
+ * call. Refresh / backfill are emitted singly so the row limit only
+ * binds on the withdraw path; the drain loop iterates past it. Note
+ * that the byte budget {@link PHASE2_REFRESH_PAYLOAD_MAX_BYTES} also
+ * binds the withdraw aggregation — whichever cap trips first wins.
  */
 const MAX_QUEUE_PEEK = 100;
+
+/**
+ * Byte budget for withdraw aggregation. Matches the shared streaming /
+ * refresh cap so a row that fits a streaming batch also fits a withdraw
+ * envelope, with the same `external_key` reserve carved out so the
+ * signed body still fits the cap.
+ */
+const WITHDRAW_PAYLOAD_BYTE_BUDGET = Math.max(
+  1,
+  PHASE2_REFRESH_PAYLOAD_MAX_BYTES - PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
+);
 
 interface QueueKindMapping {
   schemaVersion: Phase2SchemaVersion;
@@ -131,6 +152,18 @@ const PAUSED_BODY: SuccessBody = {
   ...EMPTY_BODY,
   paused: true,
 };
+
+/**
+ * Serialized byte length of a candidate withdraw envelope. Counts the
+ * wrapping `{"external_key":"_","withdrawals":[...]}` JSON so the cap
+ * matches the body we eventually sign.
+ */
+function serializeWithdrawals(withdrawals: readonly unknown[]): number {
+  return Buffer.byteLength(
+    JSON.stringify({ external_key: "_", withdrawals }),
+    "utf8",
+  );
+}
 
 function composeAimerEndpointUrl(
   bridgeUrl: string | null,
@@ -318,20 +351,34 @@ async function emitQueueBatch(
     // policy-event pattern). Only the prefix of consecutive
     // withdraw rows is taken so a downstream refresh / backfill in
     // the same queue does not delay behind a withdraw aggregation.
+    //
+    // Aggregation stops when either the row count cap
+    // ({@link MAX_QUEUE_PEEK}) or the byte budget
+    // ({@link WITHDRAW_PAYLOAD_BYTE_BUDGET}, the shared streaming /
+    // refresh cap minus the external_key reserve) would be exceeded —
+    // whichever trips first. The drain loop pulls the unclaimed tail on
+    // its next iteration.
     const withdrawals: unknown[] = [head.payload];
     for (let i = 1; i < noticeRows.length; i += 1) {
       if (claimed.length >= MAX_QUEUE_PEEK) break;
       const row = noticeRows[i];
       if (row.kind !== "withdraw_baseline_event") break;
+      const candidate = withdrawals.concat([row.payload]);
+      if (serializeWithdrawals(candidate) > WITHDRAW_PAYLOAD_BYTE_BUDGET) break;
       withdrawals.push(row.payload);
       claimed.push(row);
     }
     payload = { external_key: "_", withdrawals };
   } else {
     // Refresh / backfill carry pre-built sub-window payloads from
-    // `payload-builders.ts`. Pass the JSONB body straight through —
-    // the orchestrator augments `external_key` at signing time.
-    payload = head.payload;
+    // `payload-builders.ts`. The mutation hook seeds a schema-valid
+    // subset (corpus columns only); enrich the inner `events[]` here
+    // with the §6 baseline-batch fields so the wire shape is symmetric
+    // with the streaming-kind batches (option (a) in the issue's open
+    // design call). The orchestrator augments `external_key` at signing
+    // time and is unchanged.
+    const queued = head.payload as BaselineRefreshSubPayload;
+    payload = await enrichRefreshPayload(customerId, queued);
   }
 
   const tokens = await buildPhase2Push({

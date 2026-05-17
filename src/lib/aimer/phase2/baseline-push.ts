@@ -3,29 +3,54 @@
  *
  * Used by `POST /api/aimer/phase2/baseline-event/next-batch` to assemble
  * the new-row batch payload that goes into a `phase2.baseline.v1`
- * envelope. Reads `baseline_triaged_event` past the cursor stored in
- * `aimer_push_state` and enriches each row with the RFC 0002 §6
- * baseline-batch fields that are NOT persisted on the corpus row:
+ * envelope, and to enrich queued `refresh_baseline_window` /
+ * `backfill_baseline_window` payloads with the same RFC 0002 §6 baseline-
+ * batch fields so the wire shape is symmetric across the streaming and
+ * replay paths (option (a) in the issue's open design call).
+ *
+ * Each baseline event is enriched with the §6 fields that are NOT
+ * persisted on the corpus row:
  *
  *   - `window_signals` — S1 / S3 / S4 + correlated event_keys at push
- *     time, computed by the same SQL the menu uses for window-level
- *     signals (RFC 0001 §8 against `observed_event_meta`).
+ *     time, computed against `observed_event_meta` using the same
+ *     multi-window (7d / 14d / 30d) FILTER aggregates the Triage menu
+ *     uses (`src/lib/triage/baseline/selectors.ts`), combined via
+ *     MAX across active windows per RFC 0001 §7.
  *   - `score_window_context` — `kind_cohort_window`, `kind_cohort_size`,
- *     `baseline_rank_snapshot` (`CUME_DIST()` over the same-kind /
- *     same-baseline_version slice at push time).
+ *     `baseline_rank_snapshot`. Cohort partition is
+ *     `(kind, baseline_version)` to match the menu cohort SQL
+ *     (`src/lib/triage/baseline/read-path-sql.mjs`); `kind_cohort_size`
+ *     is per-kind, not slice-wide.
  *   - `asset_context` — `primary_asset` + a small `peer_event_summary`
  *     condensing other baseline-passing events from the same asset in
  *     the same window.
  *   - `scoring_weights_snapshot` — the §9 selector weights / saturation
  *     caps / tag thresholds in effect at push time.
  *
- * Per-event budget for `asset_context.peer_event_summary` is held under
- * 2 KB by limiting `top_peer_kinds` to {@link PEER_KIND_TOP_LIMIT}.
+ * **Cohort window choice.** For streaming batches the cohort is the
+ * Triage menu's default rendering window: `[now − TRIAGE_DEFAULT_DURATION,
+ * now]`. The issue's payload-builder section explicitly directs picking
+ * "a sensible default that the menu rendering layer already uses" since
+ * there is no single user-selected period at push time. For
+ * refresh / backfill enrichment the cohort is the queue payload's own
+ * `window.from`..`window.to` — the specific historical window being
+ * replaced on aimer-web.
  *
  * The slice is limited per call by the shared
  * {@link PHASE2_REFRESH_PAYLOAD_MAX_BYTES} budget so a single round-trip
  * stays well below aimer-web's `BRIDGE_MAX_PAYLOAD_BYTES` ceiling — the
  * drain loop handles multi-batch progress on its own.
+ *
+ * **Scope of `raw_event` enrichment.** The on-wire `raw_event` is
+ * assembled from `baseline_triaged_event` — i.e., the local mirror's
+ * packet-bytes-excluded subset of the upstream REview row. Fields not
+ * persisted on the corpus (TLS ja3, HTTP user-agent, country codes,
+ * etc.) are not joined back in this issue; cross-system REview GraphQL
+ * enrichment at push time is a deliberate follow-up (RFC 0002 §11.5
+ * "implementation-time decision" band) since the corpus columns are
+ * what the menu surfaces today and aimer-web's `baseline_event`
+ * `payload` column is `jsonb` and accepts both the subset and the
+ * future superset without migration.
  */
 
 import "server-only";
@@ -34,16 +59,20 @@ import type pg from "pg";
 
 import {
   type BaselineRefreshEvent,
+  type BaselineRefreshSubPayload,
   PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
   PHASE2_REFRESH_PAYLOAD_MAX_BYTES,
 } from "@/lib/aimer/phase2/payload-builders";
+import { detectActiveWindows } from "@/lib/triage/baseline/selectors";
 import {
   SELECTOR_SATURATION,
   SELECTOR_TAGS,
   SELECTOR_WEIGHTS,
   STATISTICS_WINDOW_DAYS,
+  type StatisticsWindowDays,
   TAG_THRESHOLDS,
 } from "@/lib/triage/baseline/tunables";
+import { TRIAGE_DEFAULT_DURATION_MS } from "@/lib/triage/period";
 import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
 /**
@@ -130,7 +159,6 @@ interface BaselineCursorRowSql {
   exclusions_fp: string;
   raw_score: number | null;
   selector_tags: string[] | null;
-  payload_summary: unknown;
 }
 
 const SCORING_WEIGHTS_SNAPSHOT = Object.freeze({
@@ -154,6 +182,8 @@ export interface LoadBaselineStreamingSliceInput {
   maxBytes?: number;
   /** Max rows pulled from PG before the byte budget trims. */
   rowLimit?: number;
+  /** Override for tests; defaults to the wall-clock `now`. */
+  now?: Date;
 }
 
 /**
@@ -204,58 +234,27 @@ async function loadSlice(
     };
   }
 
-  // Window for `kind_cohort_window` + `baseline_rank_snapshot`. We use
-  // the slice's own [min(event_time), max(event_time)] span so the
-  // cohort the menu would render at push time is documented on the
-  // payload — the read-time strictness slider (#471) is intentionally
-  // NOT applied here per the issue's payload-builder section.
-  const minTime = oversizeCheck[0].event_time;
-  const maxTime = oversizeCheck[oversizeCheck.length - 1].event_time;
-  const cohortFromIso = minTime.toISOString();
-  const cohortToIso = maxTime.toISOString();
   const baselineVersion = oversizeCheck[0].baseline_version;
 
-  const rankByKey = await loadBaselineRankSnapshot(client, {
+  // Cohort window for streaming: the Triage menu's default rendering
+  // window anchored at `now`. The issue explicitly directs picking
+  // "a sensible default the menu rendering layer already uses" — the
+  // menu's default period (last 24 h) is what an analyst sees when
+  // they open the tab without changing the date picker, so the snapshot
+  // matches that read-time view. Refresh / backfill enrichment uses
+  // the queue payload's own window instead (see {@link enrichRefreshPayload}).
+  const now = input.now ?? new Date();
+  const cohortFrom = new Date(now.getTime() - TRIAGE_DEFAULT_DURATION_MS);
+  const cohortFromIso = cohortFrom.toISOString();
+  const cohortToIso = now.toISOString();
+
+  const enriched = await enrichEvents(client, {
+    rows: oversizeCheck,
     cohortFromIso,
     cohortToIso,
     baselineVersion,
-    eventKeys: oversizeCheck.map((r) => r.event_key),
+    now,
   });
-  const cohortSize = rankByKey.cohortSize;
-
-  const signalsByKey = await loadWindowSignals(
-    client,
-    oversizeCheck.map((r) => ({
-      event_key: r.event_key,
-      kind: r.kind,
-      orig_addr: r.orig_addr,
-      resp_addr: r.resp_addr,
-      category: r.category,
-    })),
-  );
-
-  const peerSummaryByAsset = await loadPeerEventSummaries(client, {
-    cohortFromIso,
-    cohortToIso,
-    assets: Array.from(
-      new Set(
-        oversizeCheck
-          .map((r) => r.orig_addr)
-          .filter((v): v is string => v !== null),
-      ),
-    ),
-  });
-
-  const enriched: BaselineStreamingEvent[] = oversizeCheck.map((row) =>
-    buildStreamingEvent(row, {
-      cohortFromIso,
-      cohortToIso,
-      cohortSize,
-      rankByKey: rankByKey.rankByKey,
-      signal: signalsByKey.get(row.event_key) ?? null,
-      peerSummary: peerSummaryByAsset.get(row.orig_addr ?? "") ?? null,
-    }),
-  );
 
   // Trim by serialized byte budget. The drain loop will pick up the
   // trimmed tail on the next iteration via the unchanged cursor.
@@ -319,8 +318,7 @@ async function selectCursorSlice(
             baseline_version,
             exclusions_fp,
             raw_score,
-            selector_tags,
-            payload_summary
+            selector_tags
        FROM baseline_triaged_event
        ${where}
        ORDER BY event_time, event_key
@@ -330,34 +328,49 @@ async function selectCursorSlice(
   return rows;
 }
 
+/**
+ * Per-kind cohort size + per-event `baseline_rank_snapshot` against the
+ * `(kind, baseline_version)` partition matching the menu cohort SQL in
+ * `src/lib/triage/baseline/read-path-sql.mjs`.
+ *
+ * `kind_cohort_size` is the count of rows in the cohort window sharing
+ * the event's `kind` (within the given `baseline_version`) — per-kind,
+ * not slice-wide, since the wire field is named `kind_cohort_size`.
+ */
 async function loadBaselineRankSnapshot(
   client: pg.PoolClient,
   input: {
     cohortFromIso: string;
     cohortToIso: string;
     baselineVersion: string;
-    eventKeys: readonly string[];
+    rows: ReadonlyArray<{ event_key: string; kind: string }>;
   },
-): Promise<{ rankByKey: Map<string, number>; cohortSize: number }> {
+): Promise<{
+  rankByKey: Map<string, number>;
+  cohortSizeByKind: Map<string, number>;
+}> {
   const rankByKey = new Map<string, number>();
-  if (input.eventKeys.length === 0) {
-    return { rankByKey, cohortSize: 0 };
+  const cohortSizeByKind = new Map<string, number>();
+  if (input.rows.length === 0) {
+    return { rankByKey, cohortSizeByKind };
   }
-  // `CUME_DIST() OVER (PARTITION BY kind ORDER BY raw_score)` over the
-  // same-kind / same-baseline_version slice within the cohort window
-  // matches the read-time strictness ranking (#471 §2). The strictness
-  // slider itself is a per-user display filter applied AFTER this
-  // ranking, so it has no presence in the payload (per the issue).
-  const { rows } = await client.query<{
+  // Mirrors `SELECT_MENU_COHORT_SQL` partition: `(kind, baseline_version)`
+  // ordered by `raw_score`. `event_time >= from AND event_time < to` is
+  // the same half-open shape the menu's period filter uses.
+  const eventKeys = input.rows.map((r) => r.event_key);
+  const { rows: rankRows } = await client.query<{
     event_key: string;
     rank: number;
   }>(
     `WITH cohort AS (
        SELECT event_key,
-              cume_dist() OVER (PARTITION BY kind ORDER BY raw_score) AS rank
+              cume_dist() OVER (
+                PARTITION BY kind, baseline_version
+                ORDER BY raw_score
+              ) AS rank
          FROM baseline_triaged_event
         WHERE event_time >= $1::timestamptz
-          AND event_time <= $2::timestamptz
+          AND event_time <  $2::timestamptz
           AND baseline_version = $3
      )
      SELECT event_key::text AS event_key,
@@ -368,22 +381,32 @@ async function loadBaselineRankSnapshot(
       input.cohortFromIso,
       input.cohortToIso,
       input.baselineVersion,
-      input.eventKeys as unknown as string[],
+      eventKeys as unknown as string[],
     ],
   );
-  for (const row of rows) {
+  for (const row of rankRows) {
     rankByKey.set(row.event_key, Number(row.rank));
   }
-  const { rows: sizeRows } = await client.query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count
+  // Per-kind cohort size — the COUNT(*) over the same partition shape.
+  const kinds = Array.from(new Set(input.rows.map((r) => r.kind)));
+  const { rows: sizeRows } = await client.query<{
+    kind: string;
+    count: string;
+  }>(
+    `SELECT kind,
+            COUNT(*)::text AS count
        FROM baseline_triaged_event
       WHERE event_time >= $1::timestamptz
-        AND event_time <= $2::timestamptz
-        AND baseline_version = $3`,
-    [input.cohortFromIso, input.cohortToIso, input.baselineVersion],
+        AND event_time <  $2::timestamptz
+        AND baseline_version = $3
+        AND kind = ANY($4::text[])
+      GROUP BY kind`,
+    [input.cohortFromIso, input.cohortToIso, input.baselineVersion, kinds],
   );
-  const cohortSize = Number(sizeRows[0]?.count ?? "0");
-  return { rankByKey, cohortSize };
+  for (const row of sizeRows) {
+    cohortSizeByKind.set(row.kind, Number(row.count));
+  }
+  return { rankByKey, cohortSizeByKind };
 }
 
 interface WindowSignalsRowKey {
@@ -401,11 +424,24 @@ interface WindowSignalsValue {
   s4_correlated_event_keys: string[];
 }
 
+type PerWindow<T> = Record<StatisticsWindowDays, T>;
+
 /**
  * Window-level signals (S1 / S3 / S4) computed at push time against
- * `observed_event_meta` per RFC 0001 §8. The same SQL shape the menu
- * uses for window-level signals — kept lean here because the streaming
- * slice is bounded to {@link MAX_ROWS_PER_BATCH} rows per call.
+ * `observed_event_meta` per RFC 0001 §8. Mirrors the menu's batched
+ * SELECT in `src/lib/triage/baseline/selectors.ts` so the pushed S1 /
+ * S3 / S4 values match the menu's read-time values for the same row:
+ *
+ *   - All three statistics windows (7d / 14d / 30d) are computed in
+ *     one SELECT via `FILTER` aggregates.
+ *   - Active windows (`detectActiveWindows`) gate which window
+ *     contributes; pre-activation windows zero out per RFC 0001 §7
+ *     cold-start.
+ *   - Per-selector value is the MAX across active windows — same shape
+ *     as `maxAcrossActive` in `selectors.ts`.
+ *   - `s4_correlated_event_keys` are unioned across active windows
+ *     (deduped, capped at {@link S4_EVENT_KEYS_LIMIT}) so the keys
+ *     reflect the same union the count summarizes.
  */
 async function loadWindowSignals(
   client: pg.PoolClient,
@@ -414,10 +450,8 @@ async function loadWindowSignals(
   const result = new Map<string, WindowSignalsValue>();
   if (rows.length === 0) return result;
 
-  // S1 — percentile rank of (kind, confidence) across the 30-day window
-  // around `now()`. The cohort window choice mirrors the cadence's
-  // longest statistics window (RFC 0001 §7) so push-time and read-time
-  // see the same denominator.
+  const activeWindows = await detectActiveWindows(client);
+
   const pageParams: unknown[] = [];
   const placeholderRows: string[] = [];
   for (const row of rows) {
@@ -429,9 +463,13 @@ async function loadWindowSignals(
   }
   const pageValues = placeholderRows.join(", ");
 
-  // S1 percentile, S3 repeat count, S4 distinct-category count + the
-  // correlated event_keys themselves (the §6 payload calls them out
-  // explicitly). Single SELECT against `observed_event_meta`.
+  // Same shape as `scoreSelectorsForPage` in
+  // `src/lib/triage/baseline/selectors.ts`: three ranked CTEs for S1 +
+  // s3_aggr / s4_aggr with per-window FILTER aggregates. The 30d corpus
+  // is grouped once per (kind, orig_addr [, resp_addr]) tuple and the
+  // per-window values are filtered out via FILTER aggregates so the
+  // planner picks a single shape regardless of which windows are
+  // active.
   const sql = `
     WITH page_rows AS (
       SELECT pr.event_key, pr.kind, pr.orig_addr, pr.resp_addr
@@ -440,7 +478,23 @@ async function loadWindowSignals(
     page_kinds AS (
       SELECT DISTINCT kind FROM page_rows
     ),
-    ranked AS (
+    ranked_7d AS (
+      SELECT event_key,
+             cume_dist() OVER (PARTITION BY kind ORDER BY confidence) AS r
+        FROM observed_event_meta
+       WHERE event_time >= now() - INTERVAL '7 days'
+         AND confidence IS NOT NULL
+         AND kind IN (SELECT kind FROM page_kinds)
+    ),
+    ranked_14d AS (
+      SELECT event_key,
+             cume_dist() OVER (PARTITION BY kind ORDER BY confidence) AS r
+        FROM observed_event_meta
+       WHERE event_time >= now() - INTERVAL '14 days'
+         AND confidence IS NOT NULL
+         AND kind IN (SELECT kind FROM page_kinds)
+    ),
+    ranked_30d AS (
       SELECT event_key,
              cume_dist() OVER (PARTITION BY kind ORDER BY confidence) AS r
         FROM observed_event_meta
@@ -450,7 +504,9 @@ async function loadWindowSignals(
     ),
     s3_aggr AS (
       SELECT o.kind, o.orig_addr, o.resp_addr,
-             COUNT(*) AS c
+             COUNT(*) FILTER (WHERE o.event_time >= now() - INTERVAL '7 days')  AS c_7d,
+             COUNT(*) FILTER (WHERE o.event_time >= now() - INTERVAL '14 days') AS c_14d,
+             COUNT(*) FILTER (WHERE o.event_time >= now() - INTERVAL '30 days') AS c_30d
         FROM observed_event_meta o
         JOIN (
           SELECT DISTINCT kind, orig_addr, resp_addr
@@ -465,9 +521,21 @@ async function loadWindowSignals(
     ),
     s4_aggr AS (
       SELECT o.kind, o.orig_addr,
-             COUNT(DISTINCT o.category) AS c,
-             array_agg(o.event_key::text ORDER BY o.event_time DESC)
-               FILTER (WHERE o.category IS NOT NULL) AS event_keys
+             COUNT(DISTINCT o.category) FILTER (WHERE o.event_time >= now() - INTERVAL '7 days')  AS c_7d,
+             COUNT(DISTINCT o.category) FILTER (WHERE o.event_time >= now() - INTERVAL '14 days') AS c_14d,
+             COUNT(DISTINCT o.category) FILTER (WHERE o.event_time >= now() - INTERVAL '30 days') AS c_30d,
+             COALESCE(array_agg(o.event_key::text ORDER BY o.event_time DESC)
+                        FILTER (WHERE o.event_time >= now() - INTERVAL '7 days'
+                                  AND o.category IS NOT NULL),
+                      ARRAY[]::text[]) AS keys_7d,
+             COALESCE(array_agg(o.event_key::text ORDER BY o.event_time DESC)
+                        FILTER (WHERE o.event_time >= now() - INTERVAL '14 days'
+                                  AND o.category IS NOT NULL),
+                      ARRAY[]::text[]) AS keys_14d,
+             COALESCE(array_agg(o.event_key::text ORDER BY o.event_time DESC)
+                        FILTER (WHERE o.event_time >= now() - INTERVAL '30 days'
+                                  AND o.category IS NOT NULL),
+                      ARRAY[]::text[]) AS keys_30d
         FROM observed_event_meta o
         JOIN (
           SELECT DISTINCT kind, orig_addr
@@ -480,12 +548,25 @@ async function loadWindowSignals(
        GROUP BY o.kind, o.orig_addr
     )
     SELECT pr.event_key::text                       AS event_key,
-           r.r::float8                              AS s1_rank,
-           COALESCE(s3a.c, 0)::bigint               AS s3_count,
-           COALESCE(s4a.c, 0)::bigint               AS s4_count,
-           COALESCE(s4a.event_keys, ARRAY[]::text[]) AS s4_event_keys
+           COALESCE(r7.r,  0)::float8               AS s1_7d,
+           COALESCE(r14.r, 0)::float8               AS s1_14d,
+           COALESCE(r30.r, 0)::float8               AS s1_30d,
+           (r7.r  IS NOT NULL)                      AS s1_7d_has,
+           (r14.r IS NOT NULL)                      AS s1_14d_has,
+           (r30.r IS NOT NULL)                      AS s1_30d_has,
+           COALESCE(s3a.c_7d,  0)::bigint           AS s3_7d,
+           COALESCE(s3a.c_14d, 0)::bigint           AS s3_14d,
+           COALESCE(s3a.c_30d, 0)::bigint           AS s3_30d,
+           COALESCE(s4a.c_7d,  0)::bigint           AS s4_7d,
+           COALESCE(s4a.c_14d, 0)::bigint           AS s4_14d,
+           COALESCE(s4a.c_30d, 0)::bigint           AS s4_30d,
+           COALESCE(s4a.keys_7d,  ARRAY[]::text[])  AS s4_keys_7d,
+           COALESCE(s4a.keys_14d, ARRAY[]::text[])  AS s4_keys_14d,
+           COALESCE(s4a.keys_30d, ARRAY[]::text[])  AS s4_keys_30d
       FROM page_rows pr
-      LEFT JOIN ranked r ON r.event_key = pr.event_key
+      LEFT JOIN ranked_7d  r7  ON r7.event_key  = pr.event_key
+      LEFT JOIN ranked_14d r14 ON r14.event_key = pr.event_key
+      LEFT JOIN ranked_30d r30 ON r30.event_key = pr.event_key
       LEFT JOIN s3_aggr s3a
              ON s3a.kind      = pr.kind
             AND s3a.orig_addr = pr.orig_addr
@@ -497,38 +578,110 @@ async function loadWindowSignals(
 
   type Row = {
     event_key: string;
-    s1_rank: number | null;
-    s3_count: string;
-    s4_count: string;
-    s4_event_keys: string[];
+    s1_7d: number;
+    s1_14d: number;
+    s1_30d: number;
+    s1_7d_has: boolean;
+    s1_14d_has: boolean;
+    s1_30d_has: boolean;
+    s3_7d: string;
+    s3_14d: string;
+    s3_30d: string;
+    s4_7d: string;
+    s4_14d: string;
+    s4_30d: string;
+    s4_keys_7d: string[];
+    s4_keys_14d: string[];
+    s4_keys_30d: string[];
   };
   const { rows: outRows } = await client.query<Row>(sql, pageParams);
   const categoryByKey = new Map(rows.map((r) => [r.event_key, r.category]));
   for (const row of outRows) {
-    const category = categoryByKey.get(row.event_key);
-    // S3 self-exclusion: the page row itself is included in the COUNT
-    // when its (orig_addr, resp_addr) are non-NULL. The s3_aggr join
-    // filters NULL-address keys, so NULL-address page rows already
-    // miss the join (COALESCE 0) and the subtraction would underflow
-    // — Math.max guards.
-    const s3 = Math.max(0, Number(row.s3_count) - 1);
-    // S4: subtract 1 only when the page row's `category` is non-NULL,
-    // matching `COUNT(DISTINCT category)`'s NULL-ignoring semantics.
-    const s4Subtract = category != null ? 1 : 0;
-    const s4 = Math.max(0, Number(row.s4_count) - s4Subtract);
-    // Filter the page row's own event_key out of the correlated set
-    // and cap the array for payload size.
-    const filteredKeys = row.s4_event_keys
-      .filter((k) => k !== row.event_key)
-      .slice(0, S4_EVENT_KEYS_LIMIT);
+    const category = categoryByKey.get(row.event_key) ?? null;
+    const s1: PerWindow<number | null> = {
+      7: row.s1_7d_has ? Number(row.s1_7d) : null,
+      14: row.s1_14d_has ? Number(row.s1_14d) : null,
+      30: row.s1_30d_has ? Number(row.s1_30d) : null,
+    };
+    // S3 self-exclusion: `COUNT(*)` counts the page row when its
+    // (orig_addr, resp_addr) is non-NULL; the s3_aggr join filters
+    // NULL-address keys so NULL-address page rows already miss the join
+    // (COALESCE 0). Math.max guards the underflow.
+    const s3: PerWindow<number> = {
+      7: Math.max(0, Number(row.s3_7d) - 1),
+      14: Math.max(0, Number(row.s3_14d) - 1),
+      30: Math.max(0, Number(row.s3_30d) - 1),
+    };
+    // S4 self-exclusion: `COUNT(DISTINCT category)` ignores NULL, so
+    // subtract only when the page row's `category` is non-NULL.
+    const s4Sub = category != null ? 1 : 0;
+    const s4: PerWindow<number> = {
+      7: Math.max(0, Number(row.s4_7d) - s4Sub),
+      14: Math.max(0, Number(row.s4_14d) - s4Sub),
+      30: Math.max(0, Number(row.s4_30d) - s4Sub),
+    };
+    const s4Keys: PerWindow<string[]> = {
+      7: row.s4_keys_7d,
+      14: row.s4_keys_14d,
+      30: row.s4_keys_30d,
+    };
+
+    const s1Max = maxAcrossActive(s1, activeWindows);
+    const s3Max = maxAcrossActive(s3, activeWindows);
+    const s4Max = maxAcrossActive(s4, activeWindows);
+
+    // Union the correlated keys across active windows (deduped, self
+    // excluded, capped). Empty when no window is active.
+    const seen = new Set<string>();
+    const unionedKeys: string[] = [];
+    for (const days of STATISTICS_WINDOW_DAYS) {
+      if (!activeWindows.has(days)) continue;
+      for (const key of s4Keys[days]) {
+        if (key === row.event_key) continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unionedKeys.push(key);
+        if (unionedKeys.length >= S4_EVENT_KEYS_LIMIT) break;
+      }
+      if (unionedKeys.length >= S4_EVENT_KEYS_LIMIT) break;
+    }
+
+    // S3 / S4 are counts — a cold-start tenant just hasn't seen peers
+    // yet, which is semantically zero. S1 stays nullable so the wire
+    // payload can distinguish "rank is zero" from "no statistics
+    // window is active yet."
     result.set(row.event_key, {
-      s1_percentile_rank: row.s1_rank === null ? null : Number(row.s1_rank),
-      s3_recurring_count: s3,
-      s4_correlated_count: s4,
-      s4_correlated_event_keys: filteredKeys,
+      s1_percentile_rank: s1Max,
+      s3_recurring_count: s3Max ?? 0,
+      s4_correlated_count: s4Max ?? 0,
+      s4_correlated_event_keys: unionedKeys,
     });
   }
   return result;
+}
+
+/**
+ * MAX across active statistics windows. Pre-activation windows
+ * contribute zero per RFC 0001 §7. `null` per-window values (e.g. S1
+ * has no rank because the page row's `confidence` is NULL) are treated
+ * as zero — same as the menu's `maxAcrossActive` in `selectors.ts`.
+ *
+ * Returns `null` only when no statistics window is active (cold-start
+ * tenants) so the wire payload distinguishes "value is zero" from
+ * "no window covers this row yet" in the S1 field.
+ */
+function maxAcrossActive(
+  per: PerWindow<number | null>,
+  active: ReadonlySet<StatisticsWindowDays>,
+): number | null {
+  if (active.size === 0) return null;
+  let m = 0;
+  for (const days of STATISTICS_WINDOW_DAYS) {
+    if (!active.has(days)) continue;
+    const v = per[days] ?? 0;
+    if (v > m) m = v;
+  }
+  return m;
 }
 
 interface PeerSummary {
@@ -563,7 +716,7 @@ async function loadPeerEventSummaries(
             COUNT(*)::text AS count
        FROM baseline_triaged_event
       WHERE event_time >= $1::timestamptz
-        AND event_time <= $2::timestamptz
+        AND event_time <  $2::timestamptz
         AND orig_addr IS NOT NULL
         AND host(orig_addr)::text = ANY($3::text[])
       GROUP BY orig_addr, kind
@@ -589,19 +742,106 @@ async function loadPeerEventSummaries(
   return map;
 }
 
+interface EventRowForEnrichment {
+  event_key: string;
+  event_time: Date | string;
+  event_time_iso: string;
+  kind: string;
+  sensor: string;
+  orig_addr: string | null;
+  orig_port: number | null;
+  resp_addr: string | null;
+  resp_port: number | null;
+  proto: number | null;
+  host: string | null;
+  dns_query: string | null;
+  uri: string | null;
+  category: string | null;
+  baseline_version: string;
+  exclusions_fp: string;
+  raw_score: number | null;
+  selector_tags: string[] | null;
+}
+
+interface EnrichEventsInput {
+  rows: ReadonlyArray<EventRowForEnrichment>;
+  cohortFromIso: string;
+  cohortToIso: string;
+  baselineVersion: string;
+  now?: Date;
+}
+
+/**
+ * Shared enrichment driver — fans out the score-window / window-signals
+ * / peer-summary loaders and assembles {@link BaselineStreamingEvent}
+ * rows. Used by both the streaming path and the refresh/backfill
+ * enrichment helper so the wire shape is symmetric across paths.
+ */
+async function enrichEvents(
+  client: pg.PoolClient,
+  input: EnrichEventsInput,
+): Promise<BaselineStreamingEvent[]> {
+  if (input.rows.length === 0) return [];
+
+  const [rankResult, signalsByKey, peerSummaryByAsset] = await Promise.all([
+    loadBaselineRankSnapshot(client, {
+      cohortFromIso: input.cohortFromIso,
+      cohortToIso: input.cohortToIso,
+      baselineVersion: input.baselineVersion,
+      rows: input.rows.map((r) => ({ event_key: r.event_key, kind: r.kind })),
+    }),
+    loadWindowSignals(
+      client,
+      input.rows.map((r) => ({
+        event_key: r.event_key,
+        kind: r.kind,
+        orig_addr: r.orig_addr,
+        resp_addr: r.resp_addr,
+        category: r.category,
+      })),
+    ),
+    loadPeerEventSummaries(client, {
+      cohortFromIso: input.cohortFromIso,
+      cohortToIso: input.cohortToIso,
+      assets: Array.from(
+        new Set(
+          input.rows
+            .map((r) => r.orig_addr)
+            .filter((v): v is string => v !== null),
+        ),
+      ),
+    }),
+  ]);
+
+  return input.rows.map((row) =>
+    buildStreamingEvent(row, {
+      cohortFromIso: input.cohortFromIso,
+      cohortToIso: input.cohortToIso,
+      cohortSizeByKind: rankResult.cohortSizeByKind,
+      rankByKey: rankResult.rankByKey,
+      signal: signalsByKey.get(row.event_key) ?? null,
+      peerSummary: peerSummaryByAsset.get(row.orig_addr ?? "") ?? null,
+    }),
+  );
+}
+
 interface EnrichmentInputs {
   cohortFromIso: string;
   cohortToIso: string;
-  cohortSize: number;
+  cohortSizeByKind: Map<string, number>;
   rankByKey: Map<string, number>;
   signal: WindowSignalsValue | null;
   peerSummary: PeerSummary | null;
 }
 
 function buildStreamingEvent(
-  row: BaselineCursorRowSql,
+  row: EventRowForEnrichment,
   enrich: EnrichmentInputs,
 ): BaselineStreamingEvent {
+  // `raw_event` mirrors the packet-bytes-excluded subset of the
+  // upstream REview row that lives on `baseline_triaged_event` — the
+  // same columns the Triage menu surfaces today. Future REview GraphQL
+  // enrichment is documented in the module header.
   const rawEvent: Record<string, unknown> = {
     event_key: row.event_key,
     event_time: row.event_time_iso,
@@ -616,7 +856,6 @@ function buildStreamingEvent(
     dns_query: row.dns_query,
     uri: row.uri,
     category: row.category,
-    payload_summary: row.payload_summary,
   };
   const signal = enrich.signal ?? {
     s1_percentile_rank: null,
@@ -642,14 +881,13 @@ function buildStreamingEvent(
     exclusions_fp: row.exclusions_fp,
     raw_score: row.raw_score,
     selector_tags: row.selector_tags,
-    payload_summary: row.payload_summary,
     raw_event: rawEvent,
     score_window_context: {
       kind_cohort_window: {
         from: enrich.cohortFromIso,
         to: enrich.cohortToIso,
       },
-      kind_cohort_size: enrich.cohortSize,
+      kind_cohort_size: enrich.cohortSizeByKind.get(row.kind) ?? 0,
       baseline_rank_snapshot: enrich.rankByKey.get(row.event_key) ?? null,
     },
     window_signals: signal,
@@ -676,9 +914,6 @@ function trimToBudget(
   budget: number,
 ): BaselineStreamingEvent[] {
   const fitted: BaselineStreamingEvent[] = [];
-  // Conservative fixed envelope estimate around the events array.
-  // `external_key` is injected by the orchestrator post-validation so
-  // we already reserved its bytes upstream; everything else is small.
   const overhead = JSON.stringify({
     baseline_version: baselineVersion,
     events: [],
@@ -693,7 +928,107 @@ function trimToBudget(
   return fitted;
 }
 
+// ── Refresh / backfill enrichment (option (a) parity) ────────────────
+
+/**
+ * Enrich a queued `refresh_baseline_window` / `backfill_baseline_window`
+ * payload so the wire shape is symmetric with the streaming-kind
+ * batches (option (a) in the issue's open design call). The queue
+ * payload is built by the mutation hook (#573 / PR 608) and carries the
+ * schema-minimal `BaselineRefreshSubPayload` shape; this helper adds
+ * the §6 baseline-batch fields (`window_signals`,
+ * `score_window_context`, `raw_event`, `asset_context`,
+ * `scoring_weights_snapshot`) at push time so aimer-web receives the
+ * same per-event shape regardless of streaming vs. replay path.
+ *
+ * Cohort window for the §6 fields is the queue payload's own
+ * `window.from`..`window.to` — the specific historical window being
+ * replaced. Window-signal SQL still uses the rolling 7d / 14d / 30d
+ * `observed_event_meta` windows anchored at `now()` since those
+ * aggregates are read-time and not stored on the corpus.
+ *
+ * The `events[]` array of the input payload may carry rows with already-
+ * present enrichment fields (e.g. produced by a prior reset that
+ * already ran through this helper); the row's existing fields are
+ * preserved if the loader returns no row for that event_key (already-
+ * retention-swept), and overwritten with the freshly-computed values
+ * otherwise. Schema passthrough on `baselineEvent` keeps both shapes
+ * valid on the wire (see `payload-builders.ts:85-98`).
+ */
+export async function enrichRefreshPayload<P extends BaselineRefreshSubPayload>(
+  customerId: number,
+  payload: P,
+): Promise<P> {
+  if (payload.events.length === 0) return payload;
+  const pool = await getCustomerPool(customerId);
+  const client = await pool.connect();
+  try {
+    return await enrichRefreshPayloadWithClient(client, payload);
+  } finally {
+    client.release();
+  }
+}
+
+async function enrichRefreshPayloadWithClient<
+  P extends BaselineRefreshSubPayload,
+>(client: pg.PoolClient, payload: P): Promise<P> {
+  if (payload.events.length === 0) return payload;
+  // Map the queue payload's row shape into the enrichment driver's
+  // shape. The queue payload uses ISO `event_time` strings (built by
+  // the mutation hook from `to_char` SQL); we pass the same value as
+  // both `event_time` and `event_time_iso` so `buildStreamingEvent`
+  // can copy it into `raw_event.event_time` without re-parsing.
+  const rows: EventRowForEnrichment[] = payload.events.map((e) => ({
+    event_key: e.event_key,
+    event_time: e.event_time,
+    event_time_iso: e.event_time,
+    kind: e.kind,
+    sensor: (e.sensor as string | undefined) ?? "",
+    orig_addr: (e.orig_addr as string | null | undefined) ?? null,
+    orig_port: (e.orig_port as number | null | undefined) ?? null,
+    resp_addr: (e.resp_addr as string | null | undefined) ?? null,
+    resp_port: (e.resp_port as number | null | undefined) ?? null,
+    proto: (e.proto as number | null | undefined) ?? null,
+    host: (e.host as string | null | undefined) ?? null,
+    dns_query: (e.dns_query as string | null | undefined) ?? null,
+    uri: (e.uri as string | null | undefined) ?? null,
+    category: (e.category as string | null | undefined) ?? null,
+    baseline_version:
+      (e.baseline_version as string | undefined) ?? payload.baseline_version,
+    exclusions_fp: (e.exclusions_fp as string | undefined) ?? "",
+    raw_score: (e.raw_score as number | null | undefined) ?? null,
+    selector_tags: (e.selector_tags as string[] | null | undefined) ?? null,
+  }));
+
+  const enriched = await enrichEvents(client, {
+    rows,
+    cohortFromIso: payload.window.from,
+    cohortToIso: payload.window.to,
+    baselineVersion: payload.baseline_version,
+  });
+
+  // Merge the enriched §6 fields back onto the queue payload's row,
+  // preserving any extra passthrough fields the mutation hook already
+  // wrote (the `baselineEvent` schema is `passthrough()`).
+  const enrichedByKey = new Map(enriched.map((e) => [e.event_key, e]));
+  const events = payload.events.map((original) => {
+    const extra = enrichedByKey.get(original.event_key);
+    if (!extra) return original;
+    return {
+      ...original,
+      raw_event: extra.raw_event,
+      score_window_context: extra.score_window_context,
+      window_signals: extra.window_signals,
+      asset_context: extra.asset_context,
+      scoring_weights_snapshot: extra.scoring_weights_snapshot,
+    };
+  });
+
+  return { ...payload, events } as P;
+}
+
 export const _testing = {
   trimToBudget,
   SCORING_WEIGHTS_SNAPSHOT,
+  enrichRefreshPayloadWithClient,
 };

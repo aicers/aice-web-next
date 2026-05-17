@@ -49,8 +49,10 @@ vi.mock("@/lib/aimer/setup-status", () => ({
 }));
 
 const mockLoadSlice = vi.hoisted(() => vi.fn());
+const mockEnrichRefreshPayload = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/aimer/phase2/baseline-push", () => ({
   loadBaselineStreamingSlice: mockLoadSlice,
+  enrichRefreshPayload: mockEnrichRefreshPayload,
 }));
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -186,6 +188,11 @@ describe("POST /api/aimer/phase2/baseline-event/next-batch", () => {
     });
 
     mockLoadSlice.mockReset().mockResolvedValue(EMPTY_SLICE);
+    mockEnrichRefreshPayload
+      .mockReset()
+      .mockImplementation(
+        async (_customerId: number, payload: unknown) => payload,
+      );
   });
 
   // ── Body validation ─────────────────────────────────────────
@@ -404,6 +411,117 @@ describe("POST /api/aimer/phase2/baseline-event/next-batch", () => {
     expect(mockState.insertInflight.mock.calls[0][1].queueRowIds).toEqual([
       "1",
       "2",
+    ]);
+  });
+
+  it("enriches refresh_baseline_window queue payload before signing", async () => {
+    const queuedPayload = {
+      window: {
+        kind: "baseline_event",
+        from: "2026-01-01T00:00:00.000Z",
+        to: "2026-02-01T00:00:00.000Z",
+      },
+      baseline_version: "phase1b-four-selector",
+      events: [
+        {
+          event_key: "10",
+          event_time: "2026-01-15T00:00:00.000Z",
+          kind: "HttpThreat",
+        },
+      ],
+    };
+    const enrichedPayload = {
+      ...queuedPayload,
+      events: [
+        {
+          ...queuedPayload.events[0],
+          raw_event: { foo: "bar" },
+          score_window_context: {
+            kind_cohort_window: {
+              from: queuedPayload.window.from,
+              to: queuedPayload.window.to,
+            },
+            kind_cohort_size: 5,
+            baseline_rank_snapshot: 0.7,
+          },
+          window_signals: {
+            s1_percentile_rank: 0.9,
+            s3_recurring_count: 1,
+            s4_correlated_count: 0,
+            s4_correlated_event_keys: [],
+          },
+          asset_context: {
+            primary_asset: null,
+            peer_event_summary: { total_peer_count: 0, top_peer_kinds: [] },
+          },
+          scoring_weights_snapshot: {},
+        },
+      ],
+    };
+    mockEnrichRefreshPayload.mockResolvedValueOnce(enrichedPayload);
+    mockState.claimPendingNotices.mockResolvedValue([
+      {
+        id: "7",
+        enqueued_at: new Date(),
+        kind: "refresh_baseline_window",
+        payload: queuedPayload,
+        attempts: 0,
+        last_attempt_at: null,
+        last_error: null,
+        acked_at: null,
+        acked_context_jti: null,
+      },
+    ]);
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/baseline-event/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+    expect(mockEnrichRefreshPayload).toHaveBeenCalledTimes(1);
+    expect(mockEnrichRefreshPayload).toHaveBeenCalledWith(42, queuedPayload);
+    // The enriched payload — not the raw queue row — is what gets
+    // handed to the orchestrator for envelope signing, so aimer-web
+    // sees the §6 fields on refresh / backfill batches too.
+    expect(mockBuildPush.mock.calls[0][0].payload).toEqual(enrichedPayload);
+  });
+
+  it("caps withdraw aggregation by serialized byte budget", async () => {
+    // Each withdraw payload is ~512 KB once the event_keys array is
+    // expanded, so two rows already exceed the 1 MiB shared cap minus
+    // the external_key reserve. The route must stop at the first row
+    // whose inclusion would push the envelope past the budget.
+    const big = "x".repeat(512 * 1024);
+    const heavyRow = (id: string) => ({
+      id,
+      enqueued_at: new Date(),
+      kind: "withdraw_baseline_event" as const,
+      payload: {
+        kind: "baseline_event",
+        baseline_version: "v1",
+        event_keys: [big],
+      },
+      attempts: 0,
+      last_attempt_at: null,
+      last_error: null,
+      acked_at: null,
+      acked_context_jti: null,
+    });
+    mockState.claimPendingNotices.mockResolvedValue([
+      heavyRow("1"),
+      heavyRow("2"),
+      heavyRow("3"),
+    ]);
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/baseline-event/next-batch/route"
+    );
+    const res = await POST(makeRequest({ customerId: 42 }), ctx);
+    const body = await res.json();
+    const args = mockBuildPush.mock.calls[0][0];
+    expect(args.payload.withdrawals).toHaveLength(1);
+    // Unclaimed tail must surface as `has_more` so the drain loop pulls
+    // the remaining rows on the next iteration.
+    expect(body.has_more).toBe(true);
+    expect(mockState.insertInflight.mock.calls[0][1].queueRowIds).toEqual([
+      "1",
     ]);
   });
 
