@@ -43,6 +43,24 @@ const FAVORED_BUCKETS = new Set([
   "SuspiciousTlsTraffic:false",
 ]);
 
+// Phase 2 / RFC 0003 §12 substrate-informed defaults. Mirrored in
+// `engagement-tunables.ts`; the drift test
+// `engagement-tunables-drift.test.ts` asserts the two copies stay in
+// sync. Inlined here for the same plain-Node constraint that drives
+// `tunables.ts` inlining above — `compose.mjs` is loaded from plain
+// Node by the measurement harness and cannot import a `.ts` module.
+const ENGAGEMENT_TUNABLES = {
+  gamma: 0,
+  perBucketMinImpressions: 100,
+  ewmaHalfLifeWindowRatio: 0.5,
+  explorationShare: 0.1,
+  tenantColdStartMinImpressions: 1000,
+  includedShownBy: ["quota"],
+  engagedActions: ["pivot_click", "story_pivot_click"],
+  activeWindowsDays: [7, 14, 30],
+  engagementModelVersion: "phase2-v1",
+};
+
 /** RFC §6 default cutoff used by production callers (`#471` owns the dial). */
 export const DEFAULT_MENU_CUTOFF = 0;
 
@@ -54,6 +72,7 @@ export const _inlinedConstants = {
   SLOT_ALLOCATION,
   FINAL_COUNT,
   FAVORED_BUCKETS,
+  ENGAGEMENT_TUNABLES,
 };
 
 export function slotBucket(kind, selectorTags) {
@@ -74,28 +93,79 @@ export function computeDefaultN(postExclusionCount) {
   return Math.round(n);
 }
 
-function shareForBucket(agg, maxCount) {
+function shareForBucket(agg, maxCount, engagementSignal, gamma) {
   const normalizedVolume = maxCount > 0 ? agg.count / maxCount : 0;
   const avgTagLen = agg.count > 0 ? agg.totalTagCardinality / agg.count : 0;
   const normalizedTopConfidence = MAX_TAGS > 0 ? avgTagLen / MAX_TAGS : 0;
   const favored = FAVORED_BUCKETS.has(bucketKey(agg.bucket))
     ? SLOT_ALLOCATION.beta
     : 0;
+  // RFC 0003 §4: engagement term added orthogonally. `engagementSignal`
+  // is the per-bucket exposure-normalized rate after §5 guardrails
+  // (already clipped to [0, 1]); `gamma` is the weight. With γ = 0
+  // (Phase 2a kill-switch) this term contributes zero for every
+  // bucket regardless of `engagementSignal` — byte-identical to RFC
+  // 0001.
+  const engagement = gamma > 0 ? gamma * engagementSignal : 0;
   return (
     SLOT_ALLOCATION.base_share +
     SLOT_ALLOCATION.alpha * normalizedVolume * normalizedTopConfidence +
-    favored
+    favored +
+    engagement
   );
 }
 
-export function computeBucketQuotas(aggregates, defaultN) {
+/**
+ * Build the per-bucket engagement signal map consumed by
+ * `shareForBucket`. Applies RFC 0003 §5.2's `N_min` gate (raw
+ * impression count below the threshold zeroes the engagement
+ * contribution for that bucket) and clips the rate to [0, 1] per §4.
+ * Buckets absent from the input map get `engagement_signal = 0` per
+ * §6 cold-start / §5.2 new-bucket cap semantics.
+ *
+ * @param {ReadonlyArray<{bucketKey: string, engagementRate: number,
+ *                       impressionCount: number}> | undefined}
+ *   bucketEngagement
+ * @param {number} perBucketMinImpressions
+ * @returns {Map<string, number>} bucket key → engagement signal in [0, 1]
+ */
+function buildEngagementSignalMap(bucketEngagement, perBucketMinImpressions) {
+  const out = new Map();
+  if (!bucketEngagement) return out;
+  for (const entry of bucketEngagement) {
+    if (entry.impressionCount < perBucketMinImpressions) {
+      // §5.2 new-bucket cap: too few impressions to trust the rate.
+      out.set(entry.bucketKey, 0);
+      continue;
+    }
+    let rate = entry.engagementRate;
+    if (!Number.isFinite(rate) || rate < 0) rate = 0;
+    if (rate > 1) rate = 1;
+    out.set(entry.bucketKey, rate);
+  }
+  return out;
+}
+
+export function computeBucketQuotas(
+  aggregates,
+  defaultN,
+  engagementSignalMap,
+  gamma,
+) {
   const quotas = new Map();
   if (aggregates.length === 0 || defaultN <= 0) return quotas;
 
+  const signalMap = engagementSignalMap ?? new Map();
+  const effectiveGamma = gamma ?? 0;
   const maxCount = aggregates.reduce((m, a) => Math.max(m, a.count), 0);
   const rawShares = aggregates.map((a) => ({
     bucket: a.bucket,
-    share: shareForBucket(a, maxCount),
+    share: shareForBucket(
+      a,
+      maxCount,
+      signalMap.get(bucketKey(a.bucket)) ?? 0,
+      effectiveGamma,
+    ),
   }));
   const shareSum = rawShares.reduce((s, r) => s + r.share, 0);
   if (shareSum <= 0) return quotas;
@@ -134,6 +204,92 @@ export function computeBucketQuotas(aggregates, defaultN) {
   return quotas;
 }
 
+/**
+ * RFC 0003 §5.4 exploration carve-out. When `gamma > 0`, reserve
+ * `round(ε · defaultN)` slots for the bottom-decile engagement
+ * buckets and let `computeBucketQuotas` allocate the remaining
+ * `(1 - ε) · defaultN` over every bucket. When `gamma === 0` (Phase
+ * 2a kill-switch), the carve-out is skipped entirely — the gate is
+ * explicit so the `γ = 0` first ship is byte-identical to RFC 0001:
+ * `computeBucketQuotas` receives the full `defaultN`, not
+ * `(1 - ε) · defaultN`.
+ *
+ * Once γ activates (Phase 2b), the carve-out distributes its slots
+ * across the lowest-engagement aggregates in proportion to their
+ * `base_share` so under-engaged buckets always retain a chance to
+ * accumulate fresh denominator evidence (the "exploration share"
+ * brake on bandit-style feedback loops, RFC §10.2).
+ */
+function computeBucketQuotasWithExploration(
+  aggregates,
+  defaultN,
+  engagementSignalMap,
+  gamma,
+  explorationShare,
+) {
+  if (
+    gamma <= 0 ||
+    explorationShare <= 0 ||
+    aggregates.length === 0 ||
+    defaultN <= 0
+  ) {
+    return computeBucketQuotas(
+      aggregates,
+      defaultN,
+      engagementSignalMap,
+      gamma,
+    );
+  }
+
+  const explorationSlots = Math.min(
+    defaultN,
+    Math.max(0, Math.round(explorationShare * defaultN)),
+  );
+  const remaining = defaultN - explorationSlots;
+
+  // Primary allocation runs over `(1 - ε) · defaultN`.
+  const quotas = computeBucketQuotas(
+    aggregates,
+    remaining,
+    engagementSignalMap,
+    gamma,
+  );
+  if (explorationSlots === 0) return quotas;
+
+  // Identify bottom-decile engagement buckets. With small bucket
+  // counts (the test-clumit substrate has 11), "decile" collapses to
+  // "lowest engagement", which is the intended floor — give the
+  // engagement model's deprioritized buckets a guaranteed chance to
+  // update their denominator.
+  const ranked = aggregates
+    .map((a) => ({
+      bucket: a.bucket,
+      signal: engagementSignalMap.get(bucketKey(a.bucket)) ?? 0,
+    }))
+    .sort((x, y) => x.signal - y.signal);
+  const decileSize = Math.max(1, Math.ceil(ranked.length / 10));
+  const eligible = ranked.slice(0, decileSize);
+  if (eligible.length === 0) return quotas;
+
+  // Distribute exploration slots evenly across the eligible bottom-
+  // decile buckets; any remainder lands on the first ones in `eligible`
+  // (which are already in ascending-signal order, so the deepest
+  // under-engaged buckets take the leftover first).
+  const per = Math.floor(explorationSlots / eligible.length);
+  let leftover = explorationSlots - per * eligible.length;
+  for (const entry of eligible) {
+    const k = bucketKey(entry.bucket);
+    let extra = per;
+    if (leftover > 0) {
+      extra += 1;
+      leftover -= 1;
+    }
+    if (extra === 0) continue;
+    quotas.set(k, (quotas.get(k) ?? 0) + extra);
+  }
+  return quotas;
+}
+
 export function compareEventKeyDesc(a, b) {
   if (a.length !== b.length) return b.length - a.length;
   if (a === b) return 0;
@@ -155,6 +311,7 @@ export function composeMenu(input) {
     candidates,
     cutoff,
     defaultNMultiplier,
+    bucketEngagement,
   } = input;
   // #471 §5 / RFC §6: option (b). The slider stop carries a
   // multiplier that scales `defaultN` (or `null` to lift the
@@ -172,9 +329,25 @@ export function composeMenu(input) {
       );
   const defaultN =
     scaledDefaultN === null ? Number.POSITIVE_INFINITY : scaledDefaultN;
+  // RFC 0003 §5.2 / §4: build the per-bucket engagement signal,
+  // applying the new-bucket cap (`N_min`) and clipping to [0, 1].
+  // Empty map when `bucketEngagement` is undefined (legacy callers,
+  // unit tests, kill-switch). The signal map is read by
+  // `shareForBucket` only when `gamma > 0`.
+  const engagementSignalMap = buildEngagementSignalMap(
+    bucketEngagement,
+    ENGAGEMENT_TUNABLES.perBucketMinImpressions,
+  );
+  const gamma = ENGAGEMENT_TUNABLES.gamma;
   const quotas = liftQuota
     ? new Map()
-    : computeBucketQuotas(bucketAggregates, scaledDefaultN);
+    : computeBucketQuotasWithExploration(
+        bucketAggregates,
+        scaledDefaultN,
+        engagementSignalMap,
+        gamma,
+        ENGAGEMENT_TUNABLES.explorationShare,
+      );
 
   const byBucket = new Map();
   for (const row of candidates) {
@@ -280,6 +453,8 @@ export function assembleMenu(rows, cutoff) {
 export const _testing = {
   tieBreakerCompare,
   shareForBucket,
+  computeBucketQuotasWithExploration,
+  buildEngagementSignalMap,
 };
 
 /**

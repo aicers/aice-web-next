@@ -1069,17 +1069,27 @@ export function TriageBaselineContent({
       // the action to a different member than the analyst actually
       // clicked (e.g. a DNS pivot logged against the first member's
       // HttpThreat row).
-      postEngagementAction({
-        type: "story_pivot_click",
-        customerId: args.story.customerId,
-        surface: ENGAGEMENT_SURFACE_BASELINE,
-        eventKey: args.member.eventKey,
-        kind: args.member.kind,
-        baselineVersion: args.member.baselineVersion,
-        storyId: args.story.storyId,
-        dimension: args.dimension,
-        ...pivotValuePayload(args.dimension, args.value.key),
-      });
+      //
+      // #589 / RFC 0003 §2.2 also threads `menuLoadId` so the §7
+      // aggregate's `(menu_load_id, event_key)` JOIN can recover the
+      // impression's authoritative `slot_bucket`. When the loader has
+      // not yet emitted a menu (no `menuLoadId` on the result), the
+      // action is dropped on the client rather than written without
+      // the column — the schema CHECK would reject the row.
+      if (result.menuLoadId !== undefined) {
+        postEngagementAction({
+          type: "story_pivot_click",
+          customerId: args.story.customerId,
+          surface: ENGAGEMENT_SURFACE_BASELINE,
+          eventKey: args.member.eventKey,
+          kind: args.member.kind,
+          baselineVersion: args.member.baselineVersion,
+          menuLoadId: result.menuLoadId,
+          storyId: args.story.storyId,
+          dimension: args.dimension,
+          ...pivotValuePayload(args.dimension, args.value.key),
+        });
+      }
       setStoryMemberEvents(events);
       setPivotOrigin({
         kind: "story",
@@ -1099,7 +1109,7 @@ export function TriageBaselineContent({
       abortHashRestore();
       abortPendingTier2Projections();
     },
-    [abortHashRestore, abortPendingTier2Projections],
+    [abortHashRestore, abortPendingTier2Projections, result.menuLoadId],
   );
 
   // Click handler for the Story-origin breadcrumb segment. Returns
@@ -1159,8 +1169,13 @@ export function TriageBaselineContent({
             : effectiveAsset?.events[0];
         if (
           representative !== undefined &&
-          representative.baselineVersion !== undefined
+          representative.baselineVersion !== undefined &&
+          result.menuLoadId !== undefined
         ) {
+          // #589 / RFC 0003 §2.2: `menuLoadId` is required on row-
+          // bound actions by the schema CHECK. Drop the action
+          // rather than write a NULL `menu_load_id` row if the
+          // loader has not yet emitted a menu.
           const valuePayload = pivotValuePayload(
             step.dimension,
             step.value.key,
@@ -1173,6 +1188,7 @@ export function TriageBaselineContent({
               eventKey: representative.id,
               kind: representative.__typename,
               baselineVersion: representative.baselineVersion,
+              menuLoadId: result.menuLoadId,
               storyId: pivotOrigin.storyId,
               dimension: step.dimension,
               ...valuePayload,
@@ -1185,6 +1201,7 @@ export function TriageBaselineContent({
               eventKey: representative.id,
               kind: representative.__typename,
               baselineVersion: representative.baselineVersion,
+              menuLoadId: result.menuLoadId,
               dimension: step.dimension,
               ...valuePayload,
             });
@@ -1245,6 +1262,7 @@ export function TriageBaselineContent({
       effectiveAsset,
       effectiveSelection,
       pivotOrigin,
+      result.menuLoadId,
       scope,
       storyMemberEvents,
       tier2,

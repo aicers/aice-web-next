@@ -29,6 +29,7 @@ vi.mock("@/lib/triage/policy/customer-db", () => ({
 }));
 
 import { _resetEngagementHmacKey } from "@/lib/triage/engagement/hmac";
+import { _resetEngagementSnapshotSeedCache } from "@/lib/triage/engagement/snapshot";
 import {
   recordAction,
   recordImpressions,
@@ -42,6 +43,7 @@ beforeAll(() => {
 afterEach(() => {
   process.env.ENGAGEMENT_HMAC_KEY = TEST_KEY;
   _resetEngagementHmacKey();
+  _resetEngagementSnapshotSeedCache();
   mockGetCustomerPool.mockReset();
 });
 
@@ -87,15 +89,24 @@ describe("recordImpressions", () => {
     });
 
     expect(result).toBe(2);
-    expect(pool.queries).toHaveLength(1);
-    const call = pool.queries[0];
+    // The first query is the per-pool snapshot upsert (RFC §8.2);
+    // the impression INSERT follows. Both fire on the same pool.
+    expect(pool.queries).toHaveLength(2);
+    const snapshotCall = pool.queries[0];
+    expect(snapshotCall.sql).toMatch(/INSERT INTO engagement_model_snapshot/);
+    expect(snapshotCall.sql).toMatch(/ON CONFLICT \(version\) DO NOTHING/);
+    expect(snapshotCall.params?.[0]).toBe("phase2-v1");
+
+    const call = pool.queries[1];
     expect(call.sql).toMatch(/INSERT INTO engagement_impression/);
+    expect(call.sql).toMatch(/engagement_model_version/);
     expect(call.sql).toMatch(
       /ON CONFLICT \(menu_load_id, event_key\) DO NOTHING/,
     );
-    // 7 shared + 2 rows * 6 per-row = 19 bound params.
-    expect(call.params).toHaveLength(19);
-    expect(call.params?.slice(0, 7)).toEqual([
+    // 8 shared + 2 rows * 6 per-row = 20 bound params (Phase 2
+    // adds engagement_model_version to the shared block).
+    expect(call.params).toHaveLength(20);
+    expect(call.params?.slice(0, 8)).toEqual([
       "00000000-0000-4000-8000-000000000001",
       "baseline",
       "2026-05-01T00:00:00Z",
@@ -103,8 +114,9 @@ describe("recordImpressions", () => {
       "top50",
       42,
       "acct-hmac",
+      "phase2-v1",
     ]);
-    expect(call.params?.slice(7, 13)).toEqual([
+    expect(call.params?.slice(8, 14)).toEqual([
       "evt-1",
       "HttpThreat",
       "HttpThreat:false",
@@ -112,7 +124,7 @@ describe("recordImpressions", () => {
       "phase1b-four-selector",
       "quota",
     ]);
-    expect(call.params?.slice(13, 19)).toEqual([
+    expect(call.params?.slice(14, 20)).toEqual([
       "evt-2",
       "DnsCovertChannel",
       "DnsCovertChannel:false",
@@ -120,6 +132,39 @@ describe("recordImpressions", () => {
       "phase1b-four-selector",
       "story_protected",
     ]);
+  });
+
+  it("skips the snapshot upsert on a second batch against the same pool", async () => {
+    const pool = makePool(1);
+    mockGetCustomerPool.mockResolvedValue(pool);
+    const batch = {
+      menuLoadId: "00000000-0000-4000-8000-000000000001",
+      customerId: 42,
+      surface: "baseline",
+      strictnessStop: "top50" as const,
+      periodStartIso: "2026-05-01T00:00:00Z",
+      periodEndIso: "2026-05-16T00:00:00Z",
+      impressions: [
+        {
+          eventKey: "evt-1",
+          kind: "HttpThreat",
+          slotBucket: "HttpThreat:false",
+          rank: 1,
+          baselineVersion: "phase1b-four-selector",
+          shownBy: "quota" as const,
+        },
+      ],
+    };
+    await recordImpressions("acct-hmac", batch);
+    await recordImpressions("acct-hmac", {
+      ...batch,
+      menuLoadId: "00000000-0000-4000-8000-000000000002",
+    });
+    // Two batches: snapshot upsert once, impression INSERT twice.
+    expect(pool.queries).toHaveLength(3);
+    expect(pool.queries[0].sql).toMatch(/engagement_model_snapshot/);
+    expect(pool.queries[1].sql).toMatch(/INSERT INTO engagement_impression/);
+    expect(pool.queries[2].sql).toMatch(/INSERT INTO engagement_impression/);
   });
 
   it("is a no-op on an empty batch (no pool acquisition)", async () => {
@@ -152,13 +197,18 @@ describe("recordAction", () => {
     expect(pool.queries).toHaveLength(1);
     const call = pool.queries[0];
     expect(call.sql).toMatch(/INSERT INTO engagement_action/);
-    expect(call.params).toHaveLength(15);
+    expect(call.sql).toMatch(/menu_load_id/);
+    // Phase 2 expands to 16 params (15 + menu_load_id).
+    expect(call.params).toHaveLength(16);
     const params = call.params as unknown[];
     expect(params[0]).toBe("asset_select");
     expect(params[1]).toBeNull(); // event_key
     expect(params[6]).toBe("baseline"); // surface
     const assetKeyHmac = params[7] as string;
     expect(assetKeyHmac).toMatch(/^[0-9a-f]{64}$/);
+    // Non-row-bound action — menu_load_id must be NULL per the
+    // schema-level CHECK.
+    expect(params[15]).toBeNull(); // menu_load_id
     // No raw asset address must appear in the bound params.
     for (const p of params) {
       expect(p).not.toBe("10.0.0.1");
@@ -176,6 +226,7 @@ describe("recordAction", () => {
       eventKey: "evt-1",
       kind: "HttpThreat",
       baselineVersion: "phase1b-four-selector",
+      menuLoadId: "00000000-0000-4000-8000-000000000002",
       dimension: "host",
       pivotValue: "Example.COM",
     });
@@ -189,6 +240,7 @@ describe("recordAction", () => {
     expect(params[9]).toBeNull(); // pivot_value_join_id
     const pivotHmac = params[10] as string;
     expect(pivotHmac).toMatch(/^[0-9a-f]{64}$/);
+    expect(params[15]).toBe("00000000-0000-4000-8000-000000000002"); // menu_load_id
     // No raw pivot value bound.
     for (const p of params) {
       expect(p).not.toBe("Example.COM");
@@ -207,6 +259,7 @@ describe("recordAction", () => {
       eventKey: "evt-1",
       kind: "HttpThreat",
       baselineVersion: "phase1b-four-selector",
+      menuLoadId: "00000000-0000-4000-8000-000000000003",
       dimension: "sameSensor",
       pivotValueJoinId: "sensor-7",
     });
@@ -214,6 +267,7 @@ describe("recordAction", () => {
     const params = pool.queries[0].params as unknown[];
     expect(params[9]).toBe("sensor-7"); // pivot_value_join_id
     expect(params[10]).toBeNull(); // pivot_value_hmac
+    expect(params[15]).toBe("00000000-0000-4000-8000-000000000003"); // menu_load_id
   });
 
   it("inserts a story_pivot_click with story_id + dimension + pivot HMAC", async () => {
@@ -227,6 +281,7 @@ describe("recordAction", () => {
       eventKey: "evt-1",
       kind: "HttpThreat",
       baselineVersion: "phase1b-four-selector",
+      menuLoadId: "00000000-0000-4000-8000-000000000004",
       storyId: "story-7",
       dimension: "externalIp",
       pivotValue: "10.0.0.1",
@@ -237,6 +292,7 @@ describe("recordAction", () => {
     expect(params[8]).toBe("externalIp"); // dimension
     expect(params[10]).toMatch(/^[0-9a-f]{64}$/); // pivot_value_hmac
     expect(params[11]).toBe("story-7"); // story_id
+    expect(params[15]).toBe("00000000-0000-4000-8000-000000000004"); // menu_load_id
   });
 
   it("inserts an exclusion_create with the exclusion id and no row-bound fields", async () => {
@@ -276,6 +332,7 @@ describe("recordAction", () => {
         eventKey: "evt-1",
         kind: "HttpThreat",
         baselineVersion: "phase1b-four-selector",
+        menuLoadId: "00000000-0000-4000-8000-000000000005",
         dimension,
         pivotValue,
       });

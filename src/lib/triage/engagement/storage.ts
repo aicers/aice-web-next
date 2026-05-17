@@ -2,6 +2,7 @@ import "server-only";
 
 import type pg from "pg";
 
+import { ENGAGEMENT_TUNABLES } from "../baseline/engagement-tunables";
 import { getCustomerPool } from "../policy/customer-db";
 import {
   hmacAssetKey,
@@ -11,6 +12,7 @@ import {
   hmacIp,
   hmacNormalized,
 } from "./hmac";
+import { ensureEngagementModelSnapshot } from "./snapshot";
 import type {
   EngagementAction,
   EngagementImpressionBatch,
@@ -36,6 +38,11 @@ export async function recordImpressions(
 ): Promise<number> {
   if (batch.impressions.length === 0) return 0;
   const pool = await getCustomerPool(batch.customerId);
+  // RFC 0003 §8.2: the snapshot row keyed on the active
+  // `engagement_model_version` must exist before any impression
+  // references it. The helper is idempotent (`ON CONFLICT DO NOTHING`)
+  // and per-pool cached so the cost is paid once per pool per process.
+  await ensureEngagementModelSnapshot(pool);
   return insertImpressions(pool, accountIdHmac, batch);
 }
 
@@ -44,11 +51,18 @@ async function insertImpressions(
   accountIdHmac: string,
   batch: EngagementImpressionBatch,
 ): Promise<number> {
-  // The shared columns (`menu_load_id`, `surface`, …) are bound once
-  // and reused by every row's placeholder tuple. Per-row columns
-  // (`event_key`, `kind`, `slot_bucket`, `rank`, `baseline_version`,
-  // `shown_by`) consume six placeholders each.
-  const SHARED_COUNT = 7;
+  // The shared columns (`menu_load_id`, `surface`,
+  // `engagement_model_version`, …) are bound once and reused by
+  // every row's placeholder tuple. Per-row columns (`event_key`,
+  // `kind`, `slot_bucket`, `rank`, `baseline_version`, `shown_by`)
+  // consume six placeholders each.
+  //
+  // RFC 0003 §8.3: `engagement_model_version` is resolved server-
+  // side from the tunables module rather than carried on the wire.
+  // The client is not authoritative for the model version that was
+  // in effect at projection time — keeping the resolution server-
+  // side means a stale client cannot falsify the audit record.
+  const SHARED_COUNT = 8;
   const PER_ROW = 6;
   const sharedValues: unknown[] = [
     batch.menuLoadId,
@@ -58,6 +72,7 @@ async function insertImpressions(
     batch.strictnessStop,
     batch.customerId,
     accountIdHmac,
+    ENGAGEMENT_TUNABLES.engagementModelVersion,
   ];
   const placeholders: string[] = [];
   const perRowValues: unknown[] = [];
@@ -65,7 +80,7 @@ async function insertImpressions(
     const row = batch.impressions[i];
     const base = SHARED_COUNT + i * PER_ROW;
     placeholders.push(
-      `($1, $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $2, $${base + 5}, $3, $4, $${base + 6}, $5, $6, $7)`,
+      `($1, $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $2, $${base + 5}, $3, $4, $${base + 6}, $5, $6, $7, $8)`,
     );
     perRowValues.push(
       row.eventKey,
@@ -89,7 +104,8 @@ async function insertImpressions(
         shown_by,
         strictness_stop,
         customer_id,
-        account_id_hmac
+        account_id_hmac,
+        engagement_model_version
     ) VALUES ${placeholders.join(", ")}
     ON CONFLICT (menu_load_id, event_key) DO NOTHING`;
   const result = await pool.query(sql, [...sharedValues, ...perRowValues]);
@@ -171,6 +187,11 @@ async function insertAction(
     exclusion_id: null as string | null,
     strictness_from: null as string | null,
     strictness_to: null as string | null,
+    // RFC 0003 §2.2: row-bound action types (`pivot_click`,
+    // `story_pivot_click`) carry `menu_load_id` so the §7 aggregate
+    // can JOIN back to the impression's `slot_bucket`. Non-row-bound
+    // types leave it NULL (the schema CHECK enforces this).
+    menu_load_id: null as string | null,
   };
   switch (action.type) {
     case "asset_select":
@@ -186,6 +207,7 @@ async function insertAction(
         action.pivotValue !== undefined
           ? hmacForDimension(action.dimension, action.pivotValue)
           : null;
+      cols.menu_load_id = action.menuLoadId;
       break;
     case "story_pivot_click":
       cols.event_key = action.eventKey;
@@ -198,6 +220,7 @@ async function insertAction(
           ? hmacForDimension(action.dimension, action.pivotValue)
           : null;
       cols.story_id = action.storyId;
+      cols.menu_load_id = action.menuLoadId;
       break;
     case "exclusion_create":
       cols.exclusion_id = action.exclusionId;
@@ -223,9 +246,10 @@ async function insertAction(
         story_id,
         exclusion_id,
         strictness_from,
-        strictness_to
+        strictness_to,
+        menu_load_id
      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
      )`,
     [
       cols.action_type,
@@ -243,6 +267,7 @@ async function insertAction(
       cols.exclusion_id,
       cols.strictness_from,
       cols.strictness_to,
+      cols.menu_load_id,
     ],
   );
 }

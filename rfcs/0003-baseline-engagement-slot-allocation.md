@@ -1,6 +1,6 @@
 # RFC 0003: Baseline engagement — Phase 2 slot allocation
 
-- Status: **Draft**
+- Status: **Accepted**
 - Authors: @sehkone
 - Tracks: [#593](https://github.com/aicers/aice-web-next/issues/593)
 - Implements via: [#589](https://github.com/aicers/aice-web-next/issues/589) (this RFC is the design; #589 is the implementation)
@@ -498,7 +498,7 @@ A string tag bumped whenever **any** of the following changes:
 - The active window selection rule (§3).
 - The aggregate SQL shape (§7) — i.e. the definition of `engagement_signal(b)`.
 
-The tag is independent of `baseline_version`. A `baseline_version` bump may or may not bump `engagement_model_version`; an `engagement_model_version` bump always bumps `baseline_version` (because the slot-share formula is part of the baseline algorithm contract).
+The tag is independent of `baseline_version`. A `baseline_version` bump may or may not bump `engagement_model_version`; an `engagement_model_version` bump bumps `baseline_version` **only when the engagement term is active (`γ > 0`)**. When `γ = 0`, an `engagement_model_version` bump is audit-only — the formula's engagement term multiplies to zero so the slot-share output is byte-identical to RFC 0001, and re-partitioning the read-time `cume_dist()` cohort (which is keyed on `(kind, baseline_version)` at [`read-path-sql.mjs:105-106`](../src/lib/triage/baseline/read-path-sql.mjs#L105-L106)) would gratuitously redraw score distributions at the deploy boundary without an accompanying behavior change. The first-ship of this RFC ships `engagement_model_version = phase2-v1` on impressions with **no** `baseline_version` bump for exactly this reason; the bump moves to Phase 2b alongside the calibrated `γ > 0` per §13.
 
 ### §8.2 `engagement_model_snapshot`
 
@@ -783,15 +783,16 @@ Substrate-informed observations that shaped the defaults:
    - `composeMenu` per §9.1, with `bucketEngagement` plumbed from the menu loader.
    - `engagement_model_snapshot` migration per §8.2.
    - `engagement_impression.engagement_model_version` expand migration per §8.3.
+   - `engagement_action.menu_load_id` expand migration per §2.2 (strict CHECK + `legacy_pre_menu_load_id` flag).
    - Drift test for `ENGAGEMENT_TUNABLES` vs the snapshot.
-3. `baseline_version` bump (e.g. `phase1b-four-selector` → `phase2-engagement-v1`).
+3. **No `baseline_version` bump.** Phase 2a stamps `engagement_model_version = 'phase2-v1'` on every impression for audit, but the existing baseline corpus `baseline_version` is preserved. Read-time `cume_dist()` cohorts (partitioned by `(kind, baseline_version)`) are therefore unchanged at the deploy boundary, so the byte-identical-to-RFC-0001 acceptance test holds end-to-end. The `baseline_version` bump moves to Phase 2b alongside the calibrated `γ > 0` that actually changes menu output.
 4. Ship. With `γ = 0` the per-bucket quotas are **numerically identical** to RFC 0001's output: §5.4's exploration carve-out is gated on `γ > 0` and does not run, `computeBucketQuotas` receives the full `default_N`, and the engagement term in §4 multiplies to zero. The implementation, snapshot, and audit substrate exist in production but the menu output does not change.
 
 ### Phase 2b — calibration retune (gated on §11 entry criteria)
 
 5. #588 has run in production for ≥ 14 days across ≥ 2 tenants. Observation artifacts (§11) produced.
 6. RFC 0003a amendment replaces §12's placeholders with calibrated values, primarily `γ`.
-7. New `engagement_model_version` (e.g. `phase2-engagement-v2`) shipped with `baseline_version` bump.
+7. New `engagement_model_version` (e.g. `phase2-engagement-v2`) shipped **with** a `baseline_version` bump. The bump lands here — not in Phase 2a — because this is the first ship where the engagement term is active (`γ > 0`) and menu output actually changes; re-partitioning `cume_dist()` at this boundary is intentional and aligned with the new model.
 
 ### Phase 3 (separate RFC, #590)
 
