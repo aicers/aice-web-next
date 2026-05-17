@@ -40,7 +40,10 @@
 
 import type pg from "pg";
 
-import { LOCK_NAMESPACE } from "@/lib/triage/baseline/cadence";
+import {
+  LOCK_NAMESPACE,
+  PHASE_1B_BASELINE_VERSION,
+} from "@/lib/triage/baseline/cadence";
 import {
   type CadenceConnectionResponse,
   type CadenceFetchPageArgs,
@@ -144,6 +147,89 @@ export async function tryAcquireAdvisoryLock(
   );
   const first = rows[0] as { acquired?: unknown } | undefined;
   return first?.acquired === true;
+}
+
+/**
+ * Subset of the cadence corpus-state row the runner needs to start
+ * the page walk from the same cursor production cadence would. Kept
+ * narrow on purpose — the runner only mirrors the columns that
+ * influence the next page's behaviour (cursor) or are write-discarded
+ * by the outer ROLLBACK and asserted on by the snapshot test.
+ */
+interface RunnerCorpusState {
+  last_event_cursor: string | null;
+}
+
+/**
+ * Mirror of cadence's `readOrInitCorpusState` so the runner picks up
+ * the tenant's current watermark instead of replaying the entire
+ * Review connection from the beginning. INSERTed inside the outer
+ * transaction; the final outer ROLLBACK undoes both the INSERT (if
+ * the singleton was absent) and the run-status UPDATEs below.
+ *
+ * Lives here, not as an import from `cadence.ts`, for the same reason
+ * `buildLockKeyParam` is mirrored: `cadence.ts` keeps these helpers
+ * private (or behind `_testing`) and the runner deliberately does not
+ * widen that surface.
+ */
+export async function readOrInitRunnerCorpusState(
+  client: pg.PoolClient,
+): Promise<RunnerCorpusState> {
+  await client.query(
+    `INSERT INTO baseline_corpus_state (id) VALUES (true) ON CONFLICT (id) DO NOTHING`,
+  );
+  const result = await client.query<RunnerCorpusState>(
+    `SELECT last_event_cursor
+       FROM baseline_corpus_state
+      WHERE id = true`,
+  );
+  if (result.rows.length === 0) {
+    throw new Error(
+      "measure-step-f: baseline_corpus_state singleton row is missing after INSERT — this should be unreachable.",
+    );
+  }
+  return result.rows[0];
+}
+
+/**
+ * Mirror of cadence's `markRunning` so the advance pass exercises the
+ * same UPDATE the operator's grants must cover. The write is discarded
+ * by the outer ROLLBACK.
+ */
+export async function markRunnerStateRunning(
+  client: pg.PoolClient,
+): Promise<void> {
+  await client.query(
+    `UPDATE baseline_corpus_state
+        SET last_run_status = 'running',
+            last_error = NULL
+      WHERE id = true`,
+  );
+}
+
+/**
+ * Mirror of cadence's `markOk` so subsequent pages in the same
+ * measurement see the same intra-tick `last_event_cursor` /
+ * `exclusions_fp` / `last_ingested_at` advance production would
+ * perform between page commits. Discarded by the outer ROLLBACK.
+ */
+export async function markRunnerStateOk(
+  client: pg.PoolClient,
+  endCursor: string | null,
+  exclusionsFp: string,
+): Promise<void> {
+  await client.query(
+    `UPDATE baseline_corpus_state
+        SET last_run_status = 'ok',
+            last_error = NULL,
+            last_ingested_at = NOW(),
+            corpus_activated_at = COALESCE(corpus_activated_at, NOW()),
+            last_event_cursor = COALESCE($1, last_event_cursor),
+            baseline_version = $2,
+            exclusions_fp = $3
+      WHERE id = true`,
+    [endCursor, PHASE_1B_BASELINE_VERSION, exclusionsFp],
+  );
 }
 
 /**
@@ -323,7 +409,17 @@ export async function runStepFMeasurement(
       throw new LockNotAcquiredError(customerId);
     }
 
-    let afterCursor: string | null = null;
+    // Mirror cadence's first-page state setup so the measurement
+    // starts from the tenant's current `last_event_cursor` (not the
+    // beginning of the Review connection) and the per-page advance
+    // exercises the same `baseline_corpus_state` UPDATEs production
+    // does. Both writes ride the outer transaction and are discarded
+    // by the final ROLLBACK; the snapshot assertion verifies the
+    // discard.
+    const initialState = await readOrInitRunnerCorpusState(client);
+    await markRunnerStateRunning(client);
+
+    let afterCursor: string | null = initialState.last_event_cursor;
     let pageIndex = 0;
     let hasNextPage = true;
 
@@ -393,12 +489,27 @@ export async function runStepFMeasurement(
       await client.query(`SAVEPOINT ${advanceSp}`);
       const advanceStart = now();
       let advanceResult: Awaited<ReturnType<typeof processFetchedPage>>;
+      let advanceElapsed: number;
       try {
         advanceResult = await processFetchedPage(client, customerId, fetched, {
           resolver,
           signal,
           runStoryCorrelator: true,
         });
+        advanceElapsed = now() - advanceStart;
+        // Mirror cadence's per-page `markOk` so the next page's
+        // `processFetchedPage` (and any future caller that reads the
+        // singleton mid-tick, e.g. step (f)'s watermark) observes the
+        // same intra-tick state production would. Runs inside the
+        // advance pass's savepoint so a failure rolls back to the
+        // page's starting state; on success it is RELEASEd along
+        // with the rest of the advance pass and ultimately discarded
+        // by the outer ROLLBACK.
+        await markRunnerStateOk(
+          client,
+          advanceResult.endCursor,
+          advanceResult.exclusionsFp,
+        );
       } catch (err) {
         await client
           .query(`ROLLBACK TO SAVEPOINT ${advanceSp}`)
@@ -406,7 +517,6 @@ export async function runStepFMeasurement(
         await client.query(`RELEASE SAVEPOINT ${advanceSp}`).catch(() => {});
         throw err;
       }
-      const advanceElapsed = now() - advanceStart;
       await client.query(`RELEASE SAVEPOINT ${advanceSp}`);
       sampleRows.push({
         pageIndex,

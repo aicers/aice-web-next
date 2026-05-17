@@ -45,6 +45,7 @@ import { EMPTY_EXCLUSION_SET_RESOLVER } from "@/lib/triage/exclusion";
 
 import {
   buildLockKeyParam,
+  type FetchEventPageFn,
   LockNotAcquiredError,
   type LockProbeClient,
   pairedDeltas,
@@ -54,6 +55,17 @@ import {
   summarizePageSamples,
   tryAcquireAdvisoryLock,
 } from "./measure-step-f-runner";
+
+type ScriptedClientOpts = {
+  lockAcquired: boolean;
+  /**
+   * Value the scripted `baseline_corpus_state` singleton returns for
+   * `last_event_cursor`. The runner uses this as the initial
+   * `afterCursor`, so the corresponding fetch assertion can probe
+   * whether the cursor flowed from the singleton.
+   */
+  lastEventCursor?: string | null;
+};
 
 describe("measure-step-f — buildLockKeyParam", () => {
   it("reproduces the cadence pager's LOCK_NAMESPACE + customerId key so hashtext() collapses to the same lock id", () => {
@@ -168,7 +180,7 @@ describe("measure-step-f — tryAcquireAdvisoryLock", () => {
  */
 type ScriptedResult = { rows: Record<string, unknown>[]; rowCount: number };
 
-function makeScriptedClient(opts: { lockAcquired: boolean }): {
+function makeScriptedClient(opts: ScriptedClientOpts): {
   client: {
     queries: string[];
     query: (sql: string, params?: unknown[]) => Promise<ScriptedResult>;
@@ -176,6 +188,7 @@ function makeScriptedClient(opts: { lockAcquired: boolean }): {
   };
 } {
   const queries: string[] = [];
+  const lastEventCursor = opts.lastEventCursor ?? null;
   const client = {
     queries,
     query: vi.fn(async (sql: string, _params?: unknown[]) => {
@@ -183,6 +196,18 @@ function makeScriptedClient(opts: { lockAcquired: boolean }): {
       if (sql.includes("pg_try_advisory_xact_lock")) {
         return {
           rows: [{ acquired: opts.lockAcquired }],
+          rowCount: 1,
+        };
+      }
+      // The runner mirrors cadence's `readOrInitCorpusState` after
+      // acquiring the lock — the SELECT must return the singleton or
+      // the runner throws "singleton row is missing after INSERT".
+      if (
+        sql.includes("FROM baseline_corpus_state") &&
+        sql.includes("last_event_cursor")
+      ) {
+        return {
+          rows: [{ last_event_cursor: lastEventCursor }],
           rowCount: 1,
         };
       }
@@ -269,9 +294,69 @@ describe("measure-step-f — runStepFMeasurement: empty first page short-circuit
     expect(fetchPage).toHaveBeenCalledTimes(1);
     // Outer transaction lifecycle: BEGIN happens before the lock probe,
     // ROLLBACK happens in the `finally` after the empty page short-
-    // circuits the loop.
+    // circuits the loop. Between them the runner must have mirrored
+    // cadence's first-page state setup (read/init the singleton +
+    // markRunning); the snapshot test then verifies those writes are
+    // discarded.
     expect(client.queries[0]).toBe("BEGIN");
     expect(client.queries[client.queries.length - 1]).toBe("ROLLBACK");
+    expect(
+      client.queries.some((sql) =>
+        sql.includes("INSERT INTO baseline_corpus_state"),
+      ),
+    ).toBe(true);
+    expect(
+      client.queries.some(
+        (sql) =>
+          sql.includes("FROM baseline_corpus_state") &&
+          sql.includes("last_event_cursor"),
+      ),
+    ).toBe(true);
+    expect(
+      client.queries.some(
+        (sql) =>
+          sql.includes("UPDATE baseline_corpus_state") &&
+          sql.includes("last_run_status = 'running'"),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("measure-step-f — runStepFMeasurement: initial cursor", () => {
+  it("threads `baseline_corpus_state.last_event_cursor` into the first fetch's `after`, not `null`, so the walk starts from the tenant's current watermark", async () => {
+    const TENANT_WATERMARK = "cursor-from-prior-tick";
+    const { client } = makeScriptedClient({
+      lockAcquired: true,
+      lastEventCursor: TENANT_WATERMARK,
+    });
+    const emptyResponse: CadenceConnectionResponse = {
+      eventListWithTriage: {
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: false,
+          startCursor: null,
+          endCursor: null,
+        },
+        edges: [],
+      },
+    };
+    const fetchPage: FetchEventPageFn = vi.fn(async () => emptyResponse);
+
+    await runStepFMeasurement({
+      client: client as unknown as pg.PoolClient,
+      customerId: 7,
+      resolver: EMPTY_EXCLUSION_SET_RESOLVER,
+      fetchPage,
+      pageSize: REVIEW_MAX_PAGE_SIZE,
+      samples: 1,
+    });
+
+    const mocked = vi.mocked(fetchPage);
+    expect(mocked).toHaveBeenCalledTimes(1);
+    const firstArgs = mocked.mock.calls[0];
+    expect(firstArgs).toBeDefined();
+    if (!firstArgs) return;
+    expect(firstArgs[0].variables.after).toBe(TENANT_WATERMARK);
   });
 });
 
