@@ -4,6 +4,7 @@ import {
   assertRepresentativeProfile,
   formatProfileAssertionFailure,
   PROFILE_PROBE_SQL,
+  PROFILE_SLOP_REPLAY_PHASE1_SQL,
   PROFILE_THRESHOLDS,
   ProfileAssertionError,
 } from "../../../scripts/measure-baseline-read-path/profile.mjs";
@@ -32,6 +33,11 @@ function makePool(responses: Map<string, StubResult>): {
 const NOW_MS = new Date("2026-05-12T12:00:00.000Z").getTime();
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
+
+const MEMBER_SCAN = {
+  startIso: new Date(NOW_MS - 2 * HOUR).toISOString(),
+  endIso: new Date(NOW_MS - 30 * 60 * 1000).toISOString(),
+} as const;
 
 function passingResponses(): Map<string, StubResult> {
   return new Map([
@@ -69,6 +75,36 @@ function passingResponses(): Map<string, StubResult> {
             last_ingested_at: new Date(NOW_MS - 30 * 60 * 1000).toISOString(),
             last_run_status: "ok",
           },
+        ],
+      },
+    ],
+    [
+      PROFILE_PROBE_SQL.storyFinalizedThrough,
+      {
+        rows: [
+          {
+            story_finalized_through: new Date(
+              NOW_MS - 30 * 60 * 1000,
+            ).toISOString(),
+          },
+        ],
+      },
+    ],
+    // R3 phase-1 over the slop-replay range — return 8 candidate
+    // assets so the default `minSlopReplayPhase1Candidates >= 5`
+    // threshold passes.
+    [
+      PROFILE_SLOP_REPLAY_PHASE1_SQL,
+      {
+        rows: [
+          { orig_addr: "10.0.0.1" },
+          { orig_addr: "10.0.0.2" },
+          { orig_addr: "10.0.0.3" },
+          { orig_addr: "10.0.0.4" },
+          { orig_addr: "10.0.0.5" },
+          { orig_addr: "10.0.0.6" },
+          { orig_addr: "10.0.0.7" },
+          { orig_addr: "10.0.0.8" },
         ],
       },
     ],
@@ -285,5 +321,85 @@ describe("PROFILE_THRESHOLDS", () => {
     expect(PROFILE_THRESHOLDS.minDistinctKindVersionPartitions).toBe(4);
     expect(PROFILE_THRESHOLDS.minDistinctOrigAddr).toBe(500);
     expect(PROFILE_THRESHOLDS.maxCorpusStalenessMs).toBe(2 * HOUR);
+    // Issue #601 — starting threshold for the slop-replay phase-1
+    // candidate count. Raisable based on what the gate measurement
+    // (#603) reports.
+    expect(PROFILE_THRESHOLDS.minSlopReplayPhase1Candidates).toBe(5);
+  });
+});
+
+describe("assertRepresentativeProfile — Story-shape checks (issue #601)", () => {
+  it("accepts the structured second argument with `nowMs` + `memberScan` and runs the slop-replay phase-1 count check", async () => {
+    const pool = makePool(passingResponses());
+    const results = await assertRepresentativeProfile(pool, {
+      nowMs: NOW_MS,
+      memberScan: MEMBER_SCAN,
+    });
+    expect(results.slopReplayPhase1Count).toBe(8);
+    expect(results.storyFinalizedThrough).not.toBeNull();
+  });
+
+  it("rejects a tenant whose `story_finalized_through` is NULL — the slop-replay path is not exercised", async () => {
+    const responses = passingResponses();
+    responses.set(PROFILE_PROBE_SQL.storyFinalizedThrough, {
+      rows: [{ story_finalized_through: null }],
+    });
+    const pool = makePool(responses);
+    try {
+      await assertRepresentativeProfile(pool, {
+        nowMs: NOW_MS,
+        memberScan: MEMBER_SCAN,
+      });
+      throw new Error("assertion should have thrown");
+    } catch (err) {
+      if (!(err instanceof ProfileAssertionError)) throw err;
+      expect(err.failures.map((f) => f.check)).toContain(
+        "storyFinalizedThrough",
+      );
+    }
+  });
+
+  it("rejects a tenant whose R3 phase-1 returns < threshold over the slop-replay scan range", async () => {
+    const responses = passingResponses();
+    responses.set(PROFILE_SLOP_REPLAY_PHASE1_SQL, {
+      rows: [{ orig_addr: "10.0.0.1" }, { orig_addr: "10.0.0.2" }],
+    });
+    const pool = makePool(responses);
+    try {
+      await assertRepresentativeProfile(pool, {
+        nowMs: NOW_MS,
+        memberScan: MEMBER_SCAN,
+      });
+      throw new Error("assertion should have thrown");
+    } catch (err) {
+      if (!(err instanceof ProfileAssertionError)) throw err;
+      expect(err.failures.map((f) => f.check)).toContain(
+        "slopReplayPhase1Count",
+      );
+    }
+  });
+
+  it("does NOT run the phase-1 count probe when `memberScan` is absent (legacy bare-number callers)", async () => {
+    const responses = passingResponses();
+    // Removing the phase-1 SQL response would throw on lookup if the
+    // assertion still tried to run it — bare-number form must skip
+    // the probe entirely.
+    responses.delete(PROFILE_SLOP_REPLAY_PHASE1_SQL);
+    const pool = makePool(responses);
+    await expect(
+      assertRepresentativeProfile(pool, NOW_MS),
+    ).resolves.toBeDefined();
+  });
+
+  it("still enforces the storyFinalizedThrough precondition even on the bare-number form (issue #601: cadence-side gate requirement)", async () => {
+    const responses = passingResponses();
+    responses.delete(PROFILE_SLOP_REPLAY_PHASE1_SQL);
+    responses.set(PROFILE_PROBE_SQL.storyFinalizedThrough, {
+      rows: [{ story_finalized_through: null }],
+    });
+    const pool = makePool(responses);
+    await expect(
+      assertRepresentativeProfile(pool, NOW_MS),
+    ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 });

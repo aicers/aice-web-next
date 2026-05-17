@@ -57,14 +57,18 @@ export interface ColdPhasePoolLike {
   end: () => Promise<void>;
 }
 
+export type MeasurementContext = "default" | "first-tick" | "slop-replay";
+
 export interface MeasuredQueryLike {
   name: string;
+  context: MeasurementContext;
   sql: string;
   buildParams: (ctx: unknown) => ReadonlyArray<unknown>;
 }
 
 export interface ColdSampleRow {
   query: string;
+  context: MeasurementContext;
   phase: "cold";
   sampleIndex: 0;
   elapsedMs: number;
@@ -81,3 +85,40 @@ export function runColdPhase(opts: {
     opts: { shell: true; stdio: "inherit" },
   ) => SpawnSyncResultLike;
 }): Promise<{ samples: ColdSampleRow[]; label: string }>;
+
+export interface NotMeasurableEntry {
+  query: string;
+  context: MeasurementContext;
+  reason: string;
+}
+
+export function formatQueryLabel(q: {
+  name: string;
+  context?: MeasurementContext;
+}): string;
+
+export function probeR3CandidateAssets(
+  pool: SampleAddressesPool,
+  ctx: {
+    memberScanStartIso: string | null;
+    memberScanEndIso: string;
+  },
+): Promise<{ firstTick: string[]; slopReplay: string[] }>;
+
+export function partitionMeasurableQueries(
+  queries: ReadonlyArray<MeasuredQueryLike>,
+  ctx: {
+    memberScanStartIso: string | null;
+    r3CandidateAssets?: {
+      firstTick: ReadonlyArray<string>;
+      slopReplay: ReadonlyArray<string>;
+    };
+  },
+): {
+  measurable: MeasuredQueryLike[];
+  notMeasurable: NotMeasurableEntry[];
+};
+
+export function readStoryFinalizedThroughMs(
+  pool: SampleAddressesPool,
+): Promise<number | null>;

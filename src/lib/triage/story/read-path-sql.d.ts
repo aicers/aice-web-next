@@ -11,3 +11,18 @@ export function buildSelectStoriesForPeriodSql(opts: {
   sortOrder: "time-window-end" | "score";
   unsentOnly: boolean;
 }): string;
+
+export function buildReadR1CandidatesSql(opts: {
+  memberScanStartIsNull: boolean;
+  endExclusive?: boolean;
+}): string;
+
+export function buildReadR3CandidatesPhase1Sql(opts: {
+  memberScanStartIsNull: boolean;
+  endExclusive?: boolean;
+}): string;
+
+export function buildReadR3CandidatesPhase2Sql(opts: {
+  memberScanStartIsNull: boolean;
+  endExclusive?: boolean;
+}): string;

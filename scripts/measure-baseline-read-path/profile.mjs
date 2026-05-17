@@ -12,6 +12,20 @@
 // one without the other is a single-file change. The harness header
 // references this module; keep them in sync if the threshold values
 // change.
+//
+// Story-shape checks (issue #601) live alongside the menu-shape ones
+// — the cadence's slop-replay measurement requires both
+// `story_finalized_through IS NOT NULL` and a non-trivial R3 phase-1
+// candidate count over the actual slop-replay scan range the harness
+// will probe. The assertion therefore takes a structured second
+// argument carrying `nowMs` plus the slop-replay member-scan range,
+// so it can run the same phase-1 SQL the harness measures and refuse
+// to certify a tenant that returns too few assets.
+
+import { CRITICAL_SELECTOR_SET } from "../../src/lib/triage/story/critical-sets.mjs";
+import { buildReadR3CandidatesPhase1Sql } from "../../src/lib/triage/story/read-path-sql.mjs";
+
+const CRITICAL_SELECTOR_ARRAY = Array.from(CRITICAL_SELECTOR_SET);
 
 export const PROFILE_THRESHOLDS = {
   baselineTriagedEventMinRows: 200_000,
@@ -29,6 +43,16 @@ export const PROFILE_THRESHOLDS = {
   // tell operators the same story: production-shaped ingest is
   // current.
   maxEventTimeStalenessMs: 2 * 60 * 60 * 1000,
+  // Issue #601 Story-shape additions. A non-NULL
+  // `story_finalized_through` proves the cadence has finalized at
+  // least one tick — without that, the slop-replay scan range is
+  // undefined and the gate's purpose is defeated. The phase-1
+  // candidate-asset floor is over the *slop-replay* scan range only;
+  // first-tick's `memberScanStart === null` scan covers the full
+  // table, so a high candidate count there is a weak pass signal.
+  // The starting threshold is conservative (≥ 5) and can be raised
+  // once the gate measurement reports concrete numbers.
+  minSlopReplayPhase1Candidates: 5,
 };
 
 /**
@@ -55,7 +79,22 @@ export const PROFILE_PROBE_SQL = {
   corpusState: `SELECT last_ingested_at, last_run_status
                   FROM baseline_corpus_state
                  WHERE id = true`,
+  storyFinalizedThrough: `SELECT story_finalized_through
+                            FROM baseline_corpus_state
+                           WHERE id = true`,
 };
+
+/**
+ * SQL the slop-replay candidate-asset count assertion runs. Shares
+ * the R3 phase-1 builder with both the cadence (`story/repository.ts`)
+ * and the harness (`MEASURED_QUERIES`) so any future change to the
+ * pre-aggregation shape lands in one place. The harness threads in
+ * `slopReplayPhase1Sql` as the `phase-1 over the slop-replay scan
+ * range` count rather than re-deriving it here.
+ */
+export const PROFILE_SLOP_REPLAY_PHASE1_SQL = buildReadR3CandidatesPhase1Sql({
+  memberScanStartIsNull: false,
+});
 
 export class ProfileAssertionError extends Error {
   /**
@@ -75,8 +114,26 @@ export class ProfileAssertionError extends Error {
  * `ProfileAssertionError` if any threshold is unmet. The function
  * returns the raw probe results on success so a caller can log them
  * alongside the run.
+ *
+ * Second argument is structured per issue #601: `nowMs` for time-
+ * based assertions, plus a `memberScan` range the slop-replay
+ * phase-1 candidate-asset count assertion needs. The harness passes
+ * the same range the cadence's `runStepF` would use, so the
+ * assertion measures the same scan that the gate's measurement will
+ * exercise — a count against the full table would be a weak pass
+ * signal (the first-tick scan covers the full table by construction;
+ * the gate cares about slop-replay).
+ *
+ * Backwards-compatible bare-number form: passing a bare `nowMs`
+ * number (legacy callers) skips the Story-shape checks but still
+ * runs the menu-shape ones. New callers should pass the structured
+ * form so the gate-required checks fire.
+ *
+ * @param {object} pool
+ * @param {number | { nowMs?: number, memberScan?: { startIso: string | null, endIso: string } }} [opts]
  */
-export async function assertRepresentativeProfile(pool, nowMs = Date.now()) {
+export async function assertRepresentativeProfile(pool, opts) {
+  const { nowMs, memberScan } = normalizeAssertOpts(opts);
   const failures = [];
   const results = {};
 
@@ -200,10 +257,84 @@ export async function assertRepresentativeProfile(pool, nowMs = Date.now()) {
     }
   }
 
+  // Story-shape additions (issue #601). Only the structured form
+  // carries a `memberScan` range — bare-number / undefined callers
+  // skip these. Note the `story_finalized_through` check fires even
+  // when `memberScan` is absent because it is a precondition on the
+  // tenant, not on the range.
+  const storyWatermark = await storyFinalizedThroughQuery(
+    pool,
+    PROFILE_PROBE_SQL.storyFinalizedThrough,
+  );
+  results.storyFinalizedThrough = storyWatermark;
+  if (storyWatermark === null || storyWatermark === undefined) {
+    failures.push({
+      check: "storyFinalizedThrough",
+      detail:
+        "baseline_corpus_state.story_finalized_through IS NULL; profile " +
+        "requires a finalized watermark so the slop-replay measurement " +
+        "is actually exercised (the gate's purpose). Fresh tenants " +
+        "without a cadence tick are not gate-eligible.",
+    });
+  }
+
+  if (memberScan !== null && memberScan !== undefined) {
+    if (memberScan.startIso === null) {
+      // The harness only invokes this branch when the watermark
+      // exists; if `storyFinalizedThrough` already failed above we
+      // skip the candidate-count probe to avoid a misleading second
+      // failure on the same root cause.
+    } else {
+      const phase1Count = await slopReplayPhase1CountQuery(
+        pool,
+        memberScan.startIso,
+        memberScan.endIso,
+      );
+      results.slopReplayPhase1Count = phase1Count;
+      if (phase1Count < PROFILE_THRESHOLDS.minSlopReplayPhase1Candidates) {
+        failures.push({
+          check: "slopReplayPhase1Count",
+          detail:
+            `R3 phase-1 over the slop-replay scan range returned ` +
+            `${phase1Count} candidate asset(s); profile requires ` +
+            `≥ ${PROFILE_THRESHOLDS.minSlopReplayPhase1Candidates} so ` +
+            "phase-2's per-asset GiST probe pattern is actually exercised. " +
+            "A tenant with zero or near-zero candidates in the slop-replay " +
+            "scan range produces a meaningless plan reading.",
+        });
+      }
+    }
+  }
+
   if (failures.length > 0) {
     throw new ProfileAssertionError(failures);
   }
   return results;
+}
+
+/**
+ * Normalize the backwards-compatible second argument to
+ * `assertRepresentativeProfile`. Accepts:
+ *
+ *   * `undefined` — uses `Date.now()`, no Story-shape checks.
+ *   * a bare `number` — legacy callers; treated as `{ nowMs }` with
+ *     no Story-shape checks beyond the `story_finalized_through`
+ *     precondition.
+ *   * a structured object `{ nowMs?, memberScan? }` — issue #601
+ *     callers; enables every Story-shape check the `memberScan`
+ *     range allows.
+ */
+function normalizeAssertOpts(opts) {
+  if (opts === undefined || opts === null) {
+    return { nowMs: Date.now(), memberScan: null };
+  }
+  if (typeof opts === "number") {
+    return { nowMs: opts, memberScan: null };
+  }
+  return {
+    nowMs: typeof opts.nowMs === "number" ? opts.nowMs : Date.now(),
+    memberScan: opts.memberScan ?? null,
+  };
 }
 
 async function scalarCount(pool, sql) {
@@ -283,6 +414,26 @@ async function corpusStateQuery(pool, sql) {
         ? null
         : new Date(rows[0].last_ingested_at).getTime(),
   };
+}
+
+async function storyFinalizedThroughQuery(pool, sql) {
+  const { rows } = await pool.query(sql);
+  if (rows.length === 0) return null;
+  const value = rows[0].story_finalized_through;
+  if (value === null || value === undefined) return null;
+  return new Date(value).toISOString();
+}
+
+async function slopReplayPhase1CountQuery(pool, startIso, endIso) {
+  const { rows } = await pool.query(PROFILE_SLOP_REPLAY_PHASE1_SQL, [
+    startIso,
+    endIso,
+    CRITICAL_SELECTOR_ARRAY,
+  ]);
+  // The phase-1 SELECT returns one row per candidate asset, deduped
+  // by the SQL `GROUP BY orig_addr`. Length of the row set is the
+  // candidate count — no extra `COUNT(*)` round trip needed.
+  return rows.length;
 }
 
 function formatMs(ms) {

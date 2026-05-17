@@ -28,7 +28,7 @@
 
 import type { ThreatCategory } from "@/lib/detection";
 import { CRITICAL_CATEGORIES } from "@/lib/triage/baseline/categories";
-import { SELECTOR_TAGS } from "@/lib/triage/baseline/tunables";
+import { CRITICAL_SELECTOR_SET as CRITICAL_SELECTOR_SET_RAW } from "@/lib/triage/story/critical-sets.mjs";
 
 /**
  * Story RFC version stamp. Mirrors `baseline_version` and follows the
@@ -84,11 +84,12 @@ export const R1_LAMBDA = 1.0;
  * "critical-class" rather than "frequency/correlation pattern". A
  * future RFC 0001 selector rename or addition triggers a Story RFC
  * review.
+ *
+ * Re-exported from `./critical-sets.mjs` so the cadence layer, the
+ * rule layer, and the measurement harness `.mjs` all read the same
+ * source of truth (issue #601).
  */
-export const CRITICAL_SELECTOR_SET: ReadonlySet<string> = new Set([
-  SELECTOR_TAGS.S2_SEVERE,
-  SELECTOR_TAGS.UNLABELED_CLUSTER,
-]);
+export const CRITICAL_SELECTOR_SET = CRITICAL_SELECTOR_SET_RAW;
 
 /**
  * Active rule IDs the v1 correlator emits. `'R2'` is intentionally

@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 import { SELECT_MENU_COHORT_SQL } from "@/lib/triage/baseline/read-path-sql";
 import {
   parseExplainAnalyze,
+  partitionMeasurableQueries,
+  probeR3CandidateAssets,
   redactDsn,
   resolveWindow,
   runColdCommand,
@@ -342,16 +344,19 @@ describe("measure-baseline-read-path — runColdPhase", () => {
   const measuredQueries = [
     {
       name: "q1",
+      context: "default" as const,
       sql: "SELECT 1",
       buildParams: () => [] as ReadonlyArray<unknown>,
     },
     {
       name: "q2",
+      context: "default" as const,
       sql: "SELECT 2",
       buildParams: () => [] as ReadonlyArray<unknown>,
     },
     {
       name: "q3",
+      context: "default" as const,
       sql: "SELECT 3",
       buildParams: () => [] as ReadonlyArray<unknown>,
     },
@@ -456,9 +461,248 @@ describe("measure-baseline-read-path — runColdPhase", () => {
     expect(pools).toHaveLength(2);
     expect(pools.every((p) => p.ended)).toBe(true);
     expect(result.samples).toEqual([]);
-    expect(result.label).toMatch(/failed on query 3\/3 \(q3\)/);
+    expect(result.label).toMatch(/failed on query 3\/3 \(q3:default\)/);
     expect(result.label).toMatch(
       /no cold-phase samples emitted \(cold state was not established for all measured queries\)/,
     );
+  });
+
+  it("labels cold samples with the entry's context — first-tick / slop-replay (issue #601)", async () => {
+    const idCounter = { next: 0 };
+    const result = await runColdPhase({
+      coldCommand: "drop-caches",
+      queries: [
+        {
+          name: "readR1Candidates",
+          context: "first-tick" as const,
+          sql: "SELECT 1",
+          buildParams: () => [] as ReadonlyArray<unknown>,
+        },
+        {
+          name: "readR1Candidates",
+          context: "slop-replay" as const,
+          sql: "SELECT 2",
+          buildParams: () => [] as ReadonlyArray<unknown>,
+        },
+      ],
+      ctx: {},
+      makePool: () => makeStubPool(idCounter),
+      spawn: () => ({ status: 0 }),
+    });
+    expect(result.samples).toHaveLength(2);
+    expect(result.samples.map((s) => s.context)).toEqual([
+      "first-tick",
+      "slop-replay",
+    ]);
+    expect(result.samples.every((s) => s.query === "readR1Candidates")).toBe(
+      true,
+    );
+  });
+
+  it("atomic-failure label names the failing (query, context) pair (issue #601)", async () => {
+    const idCounter = { next: 0 };
+    let spawnCalls = 0;
+    const result = await runColdPhase({
+      coldCommand: "drop-caches",
+      queries: [
+        {
+          name: "readR1Candidates",
+          context: "first-tick" as const,
+          sql: "SELECT 1",
+          buildParams: () => [] as ReadonlyArray<unknown>,
+        },
+        {
+          name: "readR1Candidates",
+          context: "slop-replay" as const,
+          sql: "SELECT 2",
+          buildParams: () => [] as ReadonlyArray<unknown>,
+        },
+      ],
+      ctx: {},
+      makePool: () => makeStubPool(idCounter),
+      spawn: () => {
+        spawnCalls += 1;
+        return { status: spawnCalls === 2 ? 4 : 0 };
+      },
+    });
+    expect(result.samples).toEqual([]);
+    expect(result.label).toMatch(
+      /failed on query 2\/2 \(readR1Candidates:slop-replay\)/,
+    );
+  });
+});
+
+describe("measure-baseline-read-path — probeR3CandidateAssets", () => {
+  function makePool(
+    firstTickRows: ReadonlyArray<Record<string, string | null>>,
+    slopReplayRows: ReadonlyArray<Record<string, string | null>>,
+  ) {
+    const calls: Array<{ sql: string; params: ReadonlyArray<unknown> }> = [];
+    const pool = {
+      calls,
+      async query(sql: string, params: ReadonlyArray<unknown>) {
+        calls.push({ sql, params });
+        // First call is first-tick (one-bound SQL); second call is
+        // slop-replay (two-bound SQL).
+        if (calls.length === 1) return { rows: firstTickRows };
+        return { rows: slopReplayRows };
+      },
+    };
+    return pool;
+  }
+
+  it("runs phase-1 once per context and returns deduped asset lists", async () => {
+    const pool = makePool(
+      [{ orig_addr: "10.0.0.1" }, { orig_addr: "10.0.0.2" }],
+      [
+        { orig_addr: "10.0.0.3" },
+        { orig_addr: "10.0.0.3" },
+        { orig_addr: "10.0.0.4" },
+      ],
+    );
+    const result = await probeR3CandidateAssets(pool, {
+      memberScanStartIso: "2026-05-11T23:00:00.000Z",
+      memberScanEndIso: "2026-05-12T00:00:00.000Z",
+    });
+    expect(pool.calls).toHaveLength(2);
+    expect(result.firstTick).toEqual(["10.0.0.1", "10.0.0.2"]);
+    // Dedup pass collapses the duplicate `10.0.0.3` so phase-2's
+    // `$N::inet[]` bind is well-formed.
+    expect(result.slopReplay).toEqual(["10.0.0.3", "10.0.0.4"]);
+  });
+
+  it("skips the slop-replay probe when memberScanStartIso is null (fresh tenant — no previous watermark)", async () => {
+    const pool = makePool([{ orig_addr: "10.0.0.1" }], []);
+    const result = await probeR3CandidateAssets(pool, {
+      memberScanStartIso: null,
+      memberScanEndIso: "2026-05-12T00:00:00.000Z",
+    });
+    expect(pool.calls).toHaveLength(1);
+    expect(result.firstTick).toEqual(["10.0.0.1"]);
+    expect(result.slopReplay).toEqual([]);
+  });
+
+  it("filters out null orig_addr rows so the phase-2 ANY bind never carries a NULL element", async () => {
+    const pool = makePool(
+      [{ orig_addr: null }, { orig_addr: "10.0.0.1" }, { orig_addr: null }],
+      [],
+    );
+    const result = await probeR3CandidateAssets(pool, {
+      memberScanStartIso: null,
+      memberScanEndIso: "2026-05-12T00:00:00.000Z",
+    });
+    expect(result.firstTick).toEqual(["10.0.0.1"]);
+  });
+});
+
+describe("measure-baseline-read-path — partitionMeasurableQueries", () => {
+  const phase2FirstTick = {
+    name: "readR3CandidatesPhase2",
+    context: "first-tick" as const,
+    sql: "SELECT 1",
+    buildParams: () => [] as ReadonlyArray<unknown>,
+  };
+  const phase2SlopReplay = {
+    name: "readR3CandidatesPhase2",
+    context: "slop-replay" as const,
+    sql: "SELECT 2",
+    buildParams: () => [] as ReadonlyArray<unknown>,
+  };
+  const r1FirstTick = {
+    name: "readR1Candidates",
+    context: "first-tick" as const,
+    sql: "SELECT 3",
+    buildParams: () => [] as ReadonlyArray<unknown>,
+  };
+  const r1SlopReplay = {
+    name: "readR1Candidates",
+    context: "slop-replay" as const,
+    sql: "SELECT 4",
+    buildParams: () => [] as ReadonlyArray<unknown>,
+  };
+  const menuDefault = {
+    name: "selectMenuCohort",
+    context: "default" as const,
+    sql: "SELECT 5",
+    buildParams: () => [] as ReadonlyArray<unknown>,
+  };
+
+  it("keeps every entry when both phase-1 asset lists are non-empty and the watermark exists", () => {
+    const { measurable, notMeasurable } = partitionMeasurableQueries(
+      [
+        menuDefault,
+        r1FirstTick,
+        r1SlopReplay,
+        phase2FirstTick,
+        phase2SlopReplay,
+      ],
+      {
+        memberScanStartIso: "2026-05-11T23:00:00.000Z",
+        r3CandidateAssets: {
+          firstTick: ["10.0.0.1"],
+          slopReplay: ["10.0.0.2"],
+        },
+      },
+    );
+    expect(measurable).toHaveLength(5);
+    expect(notMeasurable).toEqual([]);
+  });
+
+  it("records phase-2 entries with zero phase-1 assets as `notMeasurable` and omits them from `measurable`", () => {
+    const { measurable, notMeasurable } = partitionMeasurableQueries(
+      [phase2FirstTick, phase2SlopReplay],
+      {
+        memberScanStartIso: "2026-05-11T23:00:00.000Z",
+        r3CandidateAssets: {
+          firstTick: [],
+          slopReplay: ["10.0.0.2"],
+        },
+      },
+    );
+    expect(measurable).toEqual([phase2SlopReplay]);
+    expect(notMeasurable).toEqual([
+      {
+        query: "readR3CandidatesPhase2",
+        context: "first-tick",
+        reason: "phase-1 returned 0 assets",
+      },
+    ]);
+  });
+
+  it("records both phase-2 entries as notMeasurable when both asset lists are empty (small-fixture / fresh-corpus path)", () => {
+    const { measurable, notMeasurable } = partitionMeasurableQueries(
+      [phase2FirstTick, phase2SlopReplay],
+      {
+        memberScanStartIso: "2026-05-11T23:00:00.000Z",
+        r3CandidateAssets: { firstTick: [], slopReplay: [] },
+      },
+    );
+    expect(measurable).toEqual([]);
+    expect(notMeasurable.map((n) => `${n.query}:${n.context}`)).toEqual([
+      "readR3CandidatesPhase2:first-tick",
+      "readR3CandidatesPhase2:slop-replay",
+    ]);
+  });
+
+  it("skips every slop-replay entry when `story_finalized_through` is NULL (memberScanStartIso === null)", () => {
+    const { measurable, notMeasurable } = partitionMeasurableQueries(
+      [r1FirstTick, r1SlopReplay, phase2FirstTick, phase2SlopReplay],
+      {
+        memberScanStartIso: null,
+        r3CandidateAssets: { firstTick: ["10.0.0.1"], slopReplay: [] },
+      },
+    );
+    expect(measurable.map((q) => `${q.name}:${q.context}`)).toEqual([
+      "readR1Candidates:first-tick",
+      "readR3CandidatesPhase2:first-tick",
+    ]);
+    // r1SlopReplay and phase2SlopReplay both skipped, but the
+    // skip-reason for each MUST be the watermark precondition — not
+    // the phase-1 zero-asset reason — so the operator sees a single
+    // copy of the actionable root cause.
+    expect(notMeasurable.map((n) => n.reason)).toEqual([
+      expect.stringMatching(/story_finalized_through IS NULL/),
+      expect.stringMatching(/story_finalized_through IS NULL/),
+    ]);
   });
 });

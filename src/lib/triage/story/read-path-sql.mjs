@@ -198,3 +198,144 @@ export const SELECT_BASELINE_EVENTS_BY_KEY_SQL = `SELECT event_key::text        
             raw_score
        FROM baseline_triaged_event
       WHERE event_key = ANY($1::numeric[])`;
+
+// ── R1 / R3 cadence per-page SELECTs (issue #601) ─────────────────
+//
+// Extracted from `./repository.ts`'s `readR1Candidates` and
+// `readR3Candidates` so the measurement harness can register the same
+// SQL strings in `MEASURED_QUERIES` and the drift guard can prove no
+// inlined copy lives outside this module. `repository.ts` calls the
+// builders below and passes the result to `client.query` — runtime
+// behaviour is unchanged from the prior inline form.
+//
+// The builders are parameterized on two boolean shapes the cadence
+// already varies over:
+//
+//   * `memberScanStartIsNull` — first-tick (NULL watermark) collapses
+//     the WHERE clause to a single `event_time {<,<=} $1` bound. Slop
+//     replay binds both `event_time >= $1` and `event_time {<,<=} $2`.
+//   * `endExclusive`         — cadence call site is inclusive
+//     (`event_time <= memberScanEnd`); the rebuild path passes
+//     `endExclusive: true` to drop `event_time == memberScanEnd` rows
+//     so they cannot extend a cluster's end past the rebuild's
+//     half-open `[from, to)` finalization predicate.
+//
+// The harness only measures the `endExclusive: false` shape — cadence
+// is the gated path; the rebuild path's `<` form is structurally
+// identical to the planner and not separately gated.
+
+const R1_R3_CANDIDATE_SELECT = `SELECT event_key::text   AS event_key,
+                              event_time,
+                              kind,
+                              host(orig_addr)   AS orig_addr,
+                              category,
+                              selector_tags,
+                              raw_score
+                         FROM baseline_triaged_event`;
+
+/**
+ * R1's per-page candidate scan SQL — `category = ANY($::text[])` over
+ * the member-scan range, with `orig_addr IS NOT NULL` pushed into the
+ * predicate. See `./repository.ts:readR1Candidates` for the bind
+ * order; see Story RFC §3.R1 / §5 for the rationale.
+ *
+ * Parameters (slop-replay, both bounds):
+ *   $1 :: timestamptz — memberScanStart (inclusive lower bound)
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: text[]      — critical-category set (from `critical-sets.mjs`)
+ *
+ * Parameters (first-tick, no lower bound):
+ *   $1 :: timestamptz — memberScanEnd
+ *   $2 :: text[]      — critical-category set
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR1CandidatesSql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `${R1_R3_CANDIDATE_SELECT}
+          WHERE event_time ${endOp} $1
+            AND orig_addr IS NOT NULL
+            AND category = ANY($2::text[])`
+    : `${R1_R3_CANDIDATE_SELECT}
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr IS NOT NULL
+            AND category = ANY($3::text[])`;
+}
+
+/**
+ * R3's phase-1 candidate-asset pre-aggregation SQL —
+ * `GROUP BY orig_addr HAVING COUNT(*) >= 3` over the member-scan range
+ * filtered to rows whose `selector_tags` overlap the critical set. See
+ * `./repository.ts:readR3Candidates` and Story RFC §3.R3.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: text[]      — critical-selector set
+ *
+ * Parameters (first-tick):
+ *   $1 :: timestamptz — memberScanEnd
+ *   $2 :: text[]      — critical-selector set
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR3CandidatesPhase1Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `SELECT host(orig_addr) AS orig_addr
+           FROM baseline_triaged_event
+          WHERE event_time ${endOp} $1
+            AND orig_addr IS NOT NULL
+            AND selector_tags && $2::text[]
+          GROUP BY orig_addr
+         HAVING COUNT(*) >= 3`
+    : `SELECT host(orig_addr) AS orig_addr
+           FROM baseline_triaged_event
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr IS NOT NULL
+            AND selector_tags && $3::text[]
+          GROUP BY orig_addr
+         HAVING COUNT(*) >= 3`;
+}
+
+/**
+ * R3's phase-2 per-asset member scan SQL — the "R3 same-asset-1h"
+ * SELECT shape the issue gate names. The `orig_addr = ANY($::inet[])`
+ * predicate is what the planner uses to fan out into per-asset GiST
+ * index probes against `baseline_triaged_event_orig_addr_gist`.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: inet[]      — phase-1 candidate assets (deduped)
+ *   $4 :: text[]      — critical-selector set
+ *
+ * Parameters (first-tick):
+ *   $1 :: timestamptz — memberScanEnd
+ *   $2 :: inet[]      — phase-1 candidate assets (deduped)
+ *   $3 :: text[]      — critical-selector set
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR3CandidatesPhase2Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `${R1_R3_CANDIDATE_SELECT}
+          WHERE event_time ${endOp} $1
+            AND orig_addr = ANY($2::inet[])
+            AND selector_tags && $3::text[]`
+    : `${R1_R3_CANDIDATE_SELECT}
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr = ANY($3::inet[])
+            AND selector_tags && $4::text[]`;
+}

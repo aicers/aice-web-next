@@ -22,6 +22,9 @@ import type { ThreatCategory } from "@/lib/detection";
 import { CRITICAL_CATEGORIES } from "@/lib/triage/baseline/categories";
 import type { TriagePeriod } from "../period";
 import {
+  buildReadR1CandidatesSql,
+  buildReadR3CandidatesPhase1Sql,
+  buildReadR3CandidatesPhase2Sql,
   buildSelectStoriesForPeriodSql,
   SELECT_BASELINE_EVENTS_BY_KEY_SQL,
   SELECT_STORY_MEMBERS_DETAIL_SQL,
@@ -126,26 +129,10 @@ export async function readR1Candidates(
 ): Promise<CandidateEvent[]> {
   const { client, memberScanStart, memberScanEnd, endExclusive } = args;
   const categories = Array.from(CRITICAL_CATEGORIES) as ThreatCategory[];
-  const endOp = endExclusive ? "<" : "<=";
-  const baseSelect = `SELECT event_key::text   AS event_key,
-                              event_time,
-                              kind,
-                              host(orig_addr)   AS orig_addr,
-                              category,
-                              selector_tags,
-                              raw_score
-                         FROM baseline_triaged_event`;
-  const sql =
-    memberScanStart === null
-      ? `${baseSelect}
-          WHERE event_time ${endOp} $1
-            AND orig_addr IS NOT NULL
-            AND category = ANY($2::text[])`
-      : `${baseSelect}
-          WHERE event_time >= $1
-            AND event_time ${endOp} $2
-            AND orig_addr IS NOT NULL
-            AND category = ANY($3::text[])`;
+  const sql = buildReadR1CandidatesSql({
+    memberScanStartIsNull: memberScanStart === null,
+    endExclusive: Boolean(endExclusive),
+  });
   const params =
     memberScanStart === null
       ? [memberScanEnd, categories]
@@ -202,29 +189,16 @@ export async function readR3Candidates(
 ): Promise<CandidateEvent[]> {
   const { client, memberScanStart, memberScanEnd, endExclusive } = args;
   const selectors = Array.from(CRITICAL_SELECTOR_SET);
-  const endOp = endExclusive ? "<" : "<=";
+  const memberScanStartIsNull = memberScanStart === null;
+  const endExclusiveBool = Boolean(endExclusive);
 
-  const phase1Sql =
-    memberScanStart === null
-      ? `SELECT host(orig_addr) AS orig_addr
-           FROM baseline_triaged_event
-          WHERE event_time ${endOp} $1
-            AND orig_addr IS NOT NULL
-            AND selector_tags && $2::text[]
-          GROUP BY orig_addr
-         HAVING COUNT(*) >= 3`
-      : `SELECT host(orig_addr) AS orig_addr
-           FROM baseline_triaged_event
-          WHERE event_time >= $1
-            AND event_time ${endOp} $2
-            AND orig_addr IS NOT NULL
-            AND selector_tags && $3::text[]
-          GROUP BY orig_addr
-         HAVING COUNT(*) >= 3`;
-  const phase1Params =
-    memberScanStart === null
-      ? [memberScanEnd, selectors]
-      : [memberScanStart, memberScanEnd, selectors];
+  const phase1Sql = buildReadR3CandidatesPhase1Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase1Params = memberScanStartIsNull
+    ? [memberScanEnd, selectors]
+    : [memberScanStart, memberScanEnd, selectors];
   const phase1 = await client.query<{ orig_addr: string }>(
     phase1Sql,
     phase1Params,
@@ -239,29 +213,13 @@ export async function readR3Candidates(
   );
   if (assets.length === 0) return [];
 
-  const baseSelect = `SELECT event_key::text   AS event_key,
-                              event_time,
-                              kind,
-                              host(orig_addr)   AS orig_addr,
-                              category,
-                              selector_tags,
-                              raw_score
-                         FROM baseline_triaged_event`;
-  const phase2Sql =
-    memberScanStart === null
-      ? `${baseSelect}
-          WHERE event_time ${endOp} $1
-            AND orig_addr = ANY($2::inet[])
-            AND selector_tags && $3::text[]`
-      : `${baseSelect}
-          WHERE event_time >= $1
-            AND event_time ${endOp} $2
-            AND orig_addr = ANY($3::inet[])
-            AND selector_tags && $4::text[]`;
-  const phase2Params =
-    memberScanStart === null
-      ? [memberScanEnd, assets, selectors]
-      : [memberScanStart, memberScanEnd, assets, selectors];
+  const phase2Sql = buildReadR3CandidatesPhase2Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase2Params = memberScanStartIsNull
+    ? [memberScanEnd, assets, selectors]
+    : [memberScanStart, memberScanEnd, assets, selectors];
   const result = await client.query<CandidateRow>(phase2Sql, phase2Params);
   return result.rows.map(rowToCandidate);
 }
