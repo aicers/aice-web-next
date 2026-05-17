@@ -483,6 +483,15 @@ cron 컨테이너는 코퍼스, 팬아웃 큐, 감사용 스냅샷 테이블이
   정리합니다. 케이던스는 코퍼스/스냅샷 보존 패스와 독립적이며,
   05:15 슬롯은 단지 아침 로그 윈도우를 모아두기 위한 것입니다.
   토큰: `TRIAGE_ENGAGEMENT_RETENTION_INTERNAL_TOKEN`.
+- **Aimer Phase 2 수동 발급 원장**
+  (`run-aimer-phase2-manual-mint-retention.sh`, 매일 UTC 06:15) —
+  24시간이 지난 `aimer_phase2_manual_mint` 행(소비 여부 무관)을
+  정리합니다. 모든 수동 Send-to-aimer-web 호출은 원장 행을 하나
+  남기며, `ack-manual`에 도달하지 못한 중단된 전송이 누적되면
+  테이블이 무한히 커집니다. 24시간 보존 윈도우는 일회용 JTI TTL을
+  훨씬 초과하므로 뒤늦은 `ack-manual` 호출은 JTI 유효성 검사
+  단계에서 이미 거부됩니다. 토큰:
+  `AIMER_PHASE2_MANUAL_MINT_RETENTION_INTERNAL_TOKEN`.
 - **제외 팬아웃** (`run-triage-exclusion-fanout.sh`, 매분) —
   `triage_exclusion_fanout_job` 큐를 비웁니다. 분 단위 케이던스는
   워커의 1차 백오프(1분)와 맞춰져 있어 일시적인 테넌트 DB 장애가
@@ -492,7 +501,8 @@ cron 컨테이너는 코퍼스, 팬아웃 큐, 감사용 스냅샷 테이블이
 기록하고 `overall != 'ok'` 경고를 stderr로 다시 내보냅니다.
 알림은 `cron-baseline-retention`, `cron-policy-retention`,
 `cron-snapshot-retention`, `cron-engagement-retention`,
-`cron-fanout`으로 태깅된 구조화 로그 라인을 키로 사용해야 합니다.
+`cron-aimer-manual-mint-retention`, `cron-fanout`으로 태깅된
+구조화 로그 라인을 키로 사용해야 합니다.
 
 ## 프로필
 

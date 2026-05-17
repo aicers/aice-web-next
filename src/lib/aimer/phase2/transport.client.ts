@@ -21,6 +21,8 @@
  * Next.js build boundary cannot misfire on type-elision.
  */
 
+import { mutatingFetch } from "@/lib/csrf-client";
+
 import type {
   Phase2NextBatchResponse,
   Phase2PushTokens,
@@ -401,7 +403,10 @@ async function postNextBatch(
   signal: AbortSignal,
 ): Promise<Phase2NextBatchResponse> {
   const path = `/api/aimer/phase2/${KIND_TO_PATH[kind]}/next-batch`;
-  const res = await fetch(path, {
+  // `withAuth` rejects unsafe-method requests without the Double-Submit
+  // CSRF header (#493 review round 1). The periodic drain mounted on
+  // Stories tab activation would otherwise 403 before the route runs.
+  const res = await mutatingFetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

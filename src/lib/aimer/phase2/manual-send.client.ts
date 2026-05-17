@@ -16,6 +16,8 @@
  * toast with the structured code.
  */
 
+import { mutatingFetch } from "@/lib/csrf-client";
+
 import { type Phase2PushResult, postPhase2Multipart } from "./transport.client";
 
 export interface ManualSendArgs {
@@ -76,7 +78,12 @@ async function postJson(
   body: unknown,
   signal: AbortSignal | undefined,
 ): Promise<Response> {
-  return fetch(path, {
+  // `withAuth` rejects unsafe-method requests that are missing the
+  // Double-Submit CSRF header (#493 review round 1), so both local
+  // `withAuth` routes — build-envelope and ack-manual — must go through
+  // `mutatingFetch`. A bare `fetch()` would 403 before the route
+  // handler runs.
+  return mutatingFetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

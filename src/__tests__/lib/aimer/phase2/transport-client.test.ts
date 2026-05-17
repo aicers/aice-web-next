@@ -383,9 +383,34 @@ describe("drainOpportunisticPushQueue", () => {
   beforeEach(() => {
     fetchSpy.mockReset();
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    // biome-ignore lint/suspicious/noDocumentCookie: jsdom fixture, no Cookie Store API
+    document.cookie = "csrf=csrf-fixture-token; path=/";
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    // biome-ignore lint/suspicious/noDocumentCookie: jsdom fixture, no Cookie Store API
+    document.cookie = "csrf=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    // biome-ignore lint/suspicious/noDocumentCookie: jsdom fixture, no Cookie Store API
+    document.cookie =
+      "__Host-csrf=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
+
+  it("attaches the Double-Submit CSRF header on the local next-batch call", async () => {
+    // Regression guard (#493 review round 1): bare `fetch()` on the
+    // local `withAuth` route would 403 because the CSRF check runs
+    // before the handler. The drain path must go through
+    // `mutatingFetch`, which reads the cookie and attaches
+    // `x-csrf-token`.
+    fetchSpy.mockResolvedValue(
+      jsonResponse(makeNextBatch({ has_more: false })),
+    );
+
+    await drainOpportunisticPushQueue("story", 7, { retriesPerBatch: 0 });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    const headers = new Headers(init.headers);
+    expect(headers.get("x-csrf-token")).toBe("csrf-fixture-token");
   });
 
   it("drains multiple batches, threads acked_context_jti, and aggregates totals", async () => {

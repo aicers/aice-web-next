@@ -499,6 +499,16 @@ bound:
   cadence is independent of the corpus / snapshot retention
   passes; the 05:15 slot only clusters the morning log window.
   Token: `TRIAGE_ENGAGEMENT_RETENTION_INTERNAL_TOKEN`.
+- **Aimer Phase 2 manual-mint ledger**
+  (`run-aimer-phase2-manual-mint-retention.sh`, daily at 06:15
+  UTC) — prunes `aimer_phase2_manual_mint` rows older than 24
+  hours (consumed or not). Every manual Send-to-aimer-web mints
+  one ledger row; abandoned sends that never reach `ack-manual`
+  would otherwise grow the table without bound. The 24h window
+  is well outside the single-use JTI TTL, so any late
+  `ack-manual` would have already been rejected at the JTI
+  validity layer. Token:
+  `AIMER_PHASE2_MANUAL_MINT_RETENTION_INTERNAL_TOKEN`.
 - **Exclusion fanout** (`run-triage-exclusion-fanout.sh`, every
   minute) — drains the `triage_exclusion_fanout_job` queue. The
   minute cadence matches the worker's first-tier backoff (1 min)
@@ -508,8 +518,8 @@ Each wrapper writes a timestamped JSON response to
 `/var/log/cron/` and re-emits an `overall != 'ok'` warning to
 stderr; alerting should key on the structured log lines tagged
 `cron-baseline-retention`, `cron-policy-retention`,
-`cron-snapshot-retention`, `cron-engagement-retention`, and
-`cron-fanout`.
+`cron-snapshot-retention`, `cron-engagement-retention`,
+`cron-aimer-manual-mint-retention`, and `cron-fanout`.
 
 ## Profile
 

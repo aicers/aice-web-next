@@ -155,6 +155,10 @@ export default defineConfig({
             // builds `FormData` with a `Blob` part. Easiest exercised
             // under jsdom alongside the other client-side suites.
             "src/__tests__/lib/aimer/phase2/transport-client.test.ts",
+            // Issue #493: Phase 2 manual Send-to-aimer-web three-call
+            // flow — the CSRF-header regression guard reads
+            // `document.cookie` to seed the Double-Submit fixture.
+            "src/__tests__/lib/aimer/phase2/manual-send-client.test.ts",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -201,6 +205,7 @@ export default defineConfig({
             "src/__tests__/components/triage/strictness-slider.test.tsx",
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
             "src/__tests__/lib/aimer/phase2/transport-client.test.ts",
+            "src/__tests__/lib/aimer/phase2/manual-send-client.test.ts",
           ],
         },
       },

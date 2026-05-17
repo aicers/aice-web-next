@@ -26,6 +26,25 @@ import {
   manualSendToAimerWeb,
 } from "@/lib/aimer/phase2/manual-send.client";
 
+function setCsrfCookie(token: string): void {
+  // jsdom's `document.cookie` setter merges into the cookie jar.
+  // biome-ignore lint/suspicious/noDocumentCookie: jsdom fixture, no Cookie Store API
+  document.cookie = `csrf=${token}; path=/`;
+}
+
+function clearCsrfCookie(): void {
+  // biome-ignore lint/suspicious/noDocumentCookie: jsdom fixture, no Cookie Store API
+  document.cookie = "csrf=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  // biome-ignore lint/suspicious/noDocumentCookie: jsdom fixture, no Cookie Store API
+  document.cookie =
+    "__Host-csrf=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+}
+
+function csrfHeaderOf(init: RequestInit | undefined): string | null {
+  const headers = new Headers(init?.headers);
+  return headers.get("x-csrf-token");
+}
+
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -50,9 +69,11 @@ function envelopeBody(overrides: Record<string, unknown> = {}) {
 describe("manualSendToAimerWeb — happy path", () => {
   beforeEach(() => {
     postPhase2MultipartMock.mockReset();
+    setCsrfCookie("csrf-fixture-token");
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    clearCsrfCookie();
   });
 
   it("threads jti + duplicatesSkipped through build → aimer-web → ack", async () => {
@@ -112,6 +133,14 @@ describe("manualSendToAimerWeb — happy path", () => {
       forceRefresh: false,
       duplicatesSkipped: 0,
     });
+
+    // Both `withAuth`-guarded local routes must carry the Double-Submit
+    // CSRF header (#493 review round 1). Without it `withAuth` returns
+    // 403 before the route handler runs.
+    expect(csrfHeaderOf(buildArgs[1] as RequestInit)).toBe(
+      "csrf-fixture-token",
+    );
+    expect(csrfHeaderOf(ackArgs[1] as RequestInit)).toBe("csrf-fixture-token");
   });
 
   it("forwards forceRefresh=true through every leg", async () => {
@@ -153,9 +182,11 @@ describe("manualSendToAimerWeb — happy path", () => {
 describe("manualSendToAimerWeb — error stages", () => {
   beforeEach(() => {
     postPhase2MultipartMock.mockReset();
+    setCsrfCookie("csrf-fixture-token");
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    clearCsrfCookie();
   });
 
   it("throws stage=build_envelope on 4xx from build-envelope and surfaces the structured code", async () => {

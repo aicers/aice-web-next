@@ -46,3 +46,11 @@
 # bounded and does not depend on the corpus / snapshot retention
 # passes — the ordering is purely about log clustering.
 15 5 * * * /usr/local/bin/run-triage-engagement-retention.sh
+
+# Aimer Phase 2 manual-mint retention (#493) — once daily at 06:15 UTC.
+# Prunes `aimer_phase2_manual_mint` rows older than 24h (consumed or
+# not). Every manual Send-to-aimer-web mints one row, including
+# abandoned sends; without this sweep the table grows unbounded. The
+# 24h window is well outside the single-use JTI TTL, so any late
+# ack-manual would have already been rejected at the JTI layer.
+15 6 * * * /usr/local/bin/run-aimer-phase2-manual-mint-retention.sh
