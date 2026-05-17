@@ -338,7 +338,16 @@ export function composeMenu(input) {
     bucketEngagement,
     ENGAGEMENT_TUNABLES.perBucketMinImpressions,
   );
-  const gamma = ENGAGEMENT_TUNABLES.gamma;
+  // When `bucketEngagement` is `undefined` (legacy callers, unit
+  // tests, loader kill-switch / cold-start / `"all"` stop / aggregate
+  // read failure), the effective γ is forced to 0 even if the shipped
+  // tunable is non-zero. RFC §9 contract: omitting the aggregate must
+  // collapse behavior to RFC 0001-equivalent. Without this gate a
+  // future Phase 2b tunable (γ > 0) would let the §5.4 exploration
+  // carve-out activate over an all-zero signal map (every bucket in
+  // the bottom decile) and shift slots even though the caller
+  // explicitly opted out of the engagement input.
+  const gamma = bucketEngagement === undefined ? 0 : ENGAGEMENT_TUNABLES.gamma;
   const quotas = liftQuota
     ? new Map()
     : computeBucketQuotasWithExploration(

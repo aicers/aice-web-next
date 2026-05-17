@@ -113,6 +113,114 @@ export async function tenantImpressionCount(
 }
 
 /**
+ * Active-window selection per RFC §3. A window `W` is *active* iff
+ * the tenant has been capturing engagement impressions for at least
+ * `W` (`now - engagement_capture_started_at >= W`, where
+ * `engagement_capture_started_at` is the first `created_at` in
+ * `engagement_impression` for the tenant). Among active windows the
+ * **longest** one with at least one tenant-wide engagement signal is
+ * selected; the fallback chain is `30d → 14d → 7d → cold-start`.
+ *
+ * Without this selection the loader would always read the 30d window
+ * for a tenant that has just crossed the §6 cold-start threshold —
+ * the EWMA half-life would be 15d instead of the 3.5d that the
+ * tenant's actual capture age supports, and the snapshot's declared
+ * `selection_rule: "longest_window_with_min_impressions"` would be a
+ * lie. With γ = 0 (Phase 2a) menu output is unaffected, but the
+ * audit substrate and the §11 calibration analysis still need the
+ * window to be the one the RFC describes.
+ *
+ * Returns `undefined` when no window is active (cold-start by capture
+ * age — orthogonal to §6's impression-count cold-start).
+ */
+export async function selectActiveWindowDays(
+  pool: pg.Pool,
+  signal?: AbortSignal,
+): Promise<7 | 14 | 30 | undefined> {
+  signal?.throwIfAborted();
+  // One round trip: capture-age plus per-window impression / engaged
+  // counts, so the longest active window with ≥ 1 engaged signal can
+  // be picked without a follow-up query.
+  const includedShownBy =
+    ENGAGEMENT_TUNABLES.includedShownBy as unknown as string[];
+  const engagedActions =
+    ENGAGEMENT_TUNABLES.engagedActions as unknown as string[];
+  const result = await pool.query<{
+    capture_age_seconds: string | null;
+    engaged_7d: string;
+    engaged_14d: string;
+    engaged_30d: string;
+  }>(
+    `WITH base AS (
+       SELECT i.menu_load_id, i.event_key, i.created_at
+       FROM   engagement_impression i
+       WHERE  i.shown_by = ANY($1::TEXT[])
+     ), capture AS (
+       SELECT EXTRACT(EPOCH FROM (NOW() - MIN(created_at)))::TEXT
+                AS capture_age_seconds
+       FROM   base
+     )
+     SELECT  capture.capture_age_seconds,
+             COUNT(*) FILTER (
+               WHERE base.created_at >= NOW() - INTERVAL '7 days'
+                 AND EXISTS (
+                   SELECT 1 FROM engagement_action a
+                   WHERE  a.menu_load_id = base.menu_load_id
+                     AND  a.event_key   = base.event_key
+                     AND  a.action_type = ANY($2::TEXT[])
+                 )
+             )::TEXT AS engaged_7d,
+             COUNT(*) FILTER (
+               WHERE base.created_at >= NOW() - INTERVAL '14 days'
+                 AND EXISTS (
+                   SELECT 1 FROM engagement_action a
+                   WHERE  a.menu_load_id = base.menu_load_id
+                     AND  a.event_key   = base.event_key
+                     AND  a.action_type = ANY($2::TEXT[])
+                 )
+             )::TEXT AS engaged_14d,
+             COUNT(*) FILTER (
+               WHERE base.created_at >= NOW() - INTERVAL '30 days'
+                 AND EXISTS (
+                   SELECT 1 FROM engagement_action a
+                   WHERE  a.menu_load_id = base.menu_load_id
+                     AND  a.event_key   = base.event_key
+                     AND  a.action_type = ANY($2::TEXT[])
+                 )
+             )::TEXT AS engaged_30d
+     FROM    base, capture
+     GROUP   BY capture.capture_age_seconds`,
+    [includedShownBy, engagedActions],
+  );
+  signal?.throwIfAborted();
+  const row = result.rows[0];
+  if (row === undefined) return undefined;
+  const captureAgeSeconds = Number(row.capture_age_seconds ?? 0);
+  if (!Number.isFinite(captureAgeSeconds) || captureAgeSeconds <= 0) {
+    return undefined;
+  }
+  const captureAgeDays = captureAgeSeconds / 86400;
+  // Walk active windows in descending order. A window is *active*
+  // when capture age covers it; selected when it additionally has
+  // ≥ 1 engaged signal (RFC §3 "longest active window with data").
+  const candidates: ReadonlyArray<{
+    days: 7 | 14 | 30;
+    engagedCount: number;
+  }> = [
+    { days: 30, engagedCount: Number(row.engaged_30d) },
+    { days: 14, engagedCount: Number(row.engaged_14d) },
+    { days: 7, engagedCount: Number(row.engaged_7d) },
+  ];
+  for (const c of candidates) {
+    if (!ENGAGEMENT_TUNABLES.activeWindowsDays.includes(c.days)) continue;
+    if (captureAgeDays < c.days) continue;
+    if (c.engagedCount <= 0) continue;
+    return c.days;
+  }
+  return undefined;
+}
+
+/**
  * RFC §7 canonical aggregate. Read-time per menu load, one GROUP BY
  * per side. Emits raw `impression_count` (for §5.2 N_min) alongside
  * the EWMA-weighted ratio that is the actual rate.

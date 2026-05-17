@@ -17,8 +17,9 @@
  * "looks close" comparison.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { _inlinedConstants } from "@/lib/triage/baseline/compose.mjs";
 import { type ComposeMenuInput, composeMenu } from "@/lib/triage/baseline/menu";
 
 interface FixtureRow {
@@ -193,6 +194,67 @@ describe("composeMenu γ = 0 behavioral invariance (RFC 0003 §13 Phase 2a)", ()
     expect([...undergated.quotas.entries()].sort()).toEqual(
       [...without.quotas.entries()].sort(),
     );
+  });
+
+  // Regression guard for Phase 2b: when the caller omits the
+  // engagement aggregate, the §5.4 exploration carve-out MUST stay
+  // dormant even if the shipped γ tunable is > 0. Without the
+  // `bucketEngagement === undefined → effective γ = 0` gate in
+  // `composeMenu`, a future Phase 2b retune would shift slots
+  // toward the bottom-decile bucket on every legacy / kill-switch
+  // / cold-start call — exactly the contract RFC §9 forbids.
+  describe("bucketEngagement === undefined is a true kill-switch (γ > 0 path)", () => {
+    afterEach(() => {
+      _inlinedConstants.ENGAGEMENT_TUNABLES.gamma = 0;
+    });
+
+    it("undefined collapses to RFC 0001-equivalent even when the tunable γ > 0", () => {
+      const baseline = composeMenu(buildInput(undefined));
+      _inlinedConstants.ENGAGEMENT_TUNABLES.gamma = 0.2;
+      // With γ > 0 *and* undefined input, the kill-switch gate must
+      // hold and the output must match the γ = 0 baseline exactly.
+      const undefinedUnderHotGamma = composeMenu(buildInput(undefined));
+      expect(undefinedUnderHotGamma.assembledCount).toBe(
+        baseline.assembledCount,
+      );
+      expect(undefinedUnderHotGamma.fallbackInvoked).toBe(
+        baseline.fallbackInvoked,
+      );
+      expect([...undefinedUnderHotGamma.quotas.entries()].sort()).toEqual(
+        [...baseline.quotas.entries()].sort(),
+      );
+      expect(undefinedUnderHotGamma.rows.map((r) => r.eventKey)).toEqual(
+        baseline.rows.map((r) => r.eventKey),
+      );
+    });
+
+    it("populated input under γ > 0 differs from the undefined kill-switch path", () => {
+      // Sanity check that the γ > 0 mutation actually changes
+      // behavior when the loader DOES supply an aggregate — i.e.
+      // the previous case's invariance is not a tautology that
+      // would also hold for the populated path.
+      const baseline = composeMenu(buildInput(undefined));
+      _inlinedConstants.ENGAGEMENT_TUNABLES.gamma = 0.2;
+      const populated = composeMenu(
+        buildInput([
+          {
+            bucketKey: "TorConnection:false",
+            engagementRate: 0.0,
+            impressionCount: 5000,
+            windowDays: 14,
+          },
+          {
+            bucketKey: "HttpThreat:true",
+            engagementRate: 0.95,
+            impressionCount: 5000,
+            windowDays: 14,
+          },
+        ]),
+      );
+      const populatedQuotas = [...populated.quotas.entries()].sort();
+      const baselineQuotas = [...baseline.quotas.entries()].sort();
+      expect(populatedQuotas).not.toEqual(baselineQuotas);
+    });
   });
 
   it("exploration carve-out is gated on γ > 0 (no slot deduction at γ = 0)", () => {

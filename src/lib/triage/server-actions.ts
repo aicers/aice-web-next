@@ -31,6 +31,7 @@ import {
 } from "./baseline/read-path-sql.mjs";
 import { buildDispatchContext } from "./dispatch-context";
 import {
+  selectActiveWindowDays,
   selectBucketEngagement,
   tenantImpressionCount,
 } from "./engagement/aggregate";
@@ -756,16 +757,24 @@ async function loadBucketEngagementForLoader(
     if (tenantCount < ENGAGEMENT_TUNABLES.tenantColdStartMinImpressions) {
       return undefined;
     }
-    // Window selection: longest active window for Phase 2a. The per-
-    // window selection rule (RFC §3) can refine this post-calibration.
-    // With `γ = 0` the choice does not affect menu output.
-    const longest = Math.max(...ENGAGEMENT_TUNABLES.activeWindowsDays) as
-      | 7
-      | 14
-      | 30;
+    // Window selection (RFC §3): longest active window with at
+    // least one tenant-wide engagement signal, where *active* means
+    // `now - engagement_capture_started_at ≥ W`. The fallback chain
+    // is `30d → 14d → 7d → cold-start`. A tenant that just crossed
+    // the §6 impression-count cold-start floor after a day of
+    // capture is still in window-cold-start for any W > 1d; using
+    // the 30d window here would silently lengthen the EWMA half-
+    // life to 15d when the tenant's actual capture age only
+    // supports a 3.5d half-life, and the snapshot's declared
+    // `selection_rule` would not match the implementation. With
+    // γ = 0 (Phase 2a) the choice does not affect menu output but
+    // the audit substrate and §11 calibration analysis still need
+    // the window to be the one the RFC describes.
+    const windowDays = await selectActiveWindowDays(pool, signal);
+    if (windowDays === undefined) return undefined;
     return await selectBucketEngagement(
       pool,
-      { windowDays: longest, strictnessStop: strictness },
+      { windowDays, strictnessStop: strictness },
       signal,
     );
   } catch (err) {

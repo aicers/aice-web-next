@@ -8,17 +8,28 @@
  * future Phase 2b retune must update both copies, and this test will
  * fail loudly until they do.
  *
- * The "snapshot agreement" check in RFC §9.3 ("every key in
+ * The "snapshot agreement" check in RFC §9.3 — "every key in
  * `ENGAGEMENT_TUNABLES` matches the active `engagement_model_snapshot`
- * row") cannot be exercised in unit tests without a tenant DB — that
- * assertion runs in the integration test suite at deploy time. The
- * code-side half lives here.
+ * row" — is also exercised here: the `ensureEngagementModelSnapshot`
+ * upsert is invoked against a recording fake pool and its JSON
+ * `formula` / `window_bounds` payload plus its `aggregate_sql_digest`
+ * are asserted to match the inlined tunables and the canonical §7
+ * aggregate SQL. The integration test suite still proves the row
+ * actually lands in the DB at deploy time; this test pins the
+ * code-side payload so a payload drift fails on the unit harness,
+ * not in production.
  */
 
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { _inlinedConstants } from "@/lib/triage/baseline/compose.mjs";
 import { ENGAGEMENT_TUNABLES } from "@/lib/triage/baseline/engagement-tunables";
+import { ENGAGEMENT_AGGREGATE_SQL } from "@/lib/triage/engagement/aggregate";
+import {
+  _resetEngagementSnapshotSeedCache,
+  ensureEngagementModelSnapshot,
+} from "@/lib/triage/engagement/snapshot";
 
 describe("engagement-tunables drift guard", () => {
   it("scalar values match the inlined copy in compose.mjs", () => {
@@ -59,5 +70,61 @@ describe("engagement-tunables drift guard", () => {
     // engagement term is inert and menu output is byte-identical to
     // RFC 0001.
     expect(ENGAGEMENT_TUNABLES.gamma).toBe(0);
+  });
+});
+
+describe("engagement-tunables ↔ engagement_model_snapshot agreement", () => {
+  afterEach(() => {
+    _resetEngagementSnapshotSeedCache();
+  });
+
+  it("ensureEngagementModelSnapshot upsert payload matches the inlined tunables", async () => {
+    const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
+    const fakePool = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { rowCount: 1 };
+      }),
+    } as unknown as Parameters<typeof ensureEngagementModelSnapshot>[0];
+
+    await ensureEngagementModelSnapshot(fakePool);
+    expect(queries).toHaveLength(1);
+    const call = queries[0];
+    expect(call.sql).toMatch(/INSERT INTO engagement_model_snapshot/);
+    expect(call.sql).toMatch(/ON CONFLICT \(version\) DO NOTHING/);
+
+    const params = call.params as unknown[];
+    expect(params).toHaveLength(4);
+    expect(params[0]).toBe(ENGAGEMENT_TUNABLES.engagementModelVersion);
+
+    const formula = JSON.parse(params[1] as string) as Record<string, unknown>;
+    expect(formula).toEqual({
+      gamma: ENGAGEMENT_TUNABLES.gamma,
+      per_bucket_min_impressions: ENGAGEMENT_TUNABLES.perBucketMinImpressions,
+      ewma_half_life_window_ratio: ENGAGEMENT_TUNABLES.ewmaHalfLifeWindowRatio,
+      exploration_share: ENGAGEMENT_TUNABLES.explorationShare,
+      tenant_cold_start_min_impressions:
+        ENGAGEMENT_TUNABLES.tenantColdStartMinImpressions,
+      engaged_actions: [...ENGAGEMENT_TUNABLES.engagedActions],
+      included_shown_by: [...ENGAGEMENT_TUNABLES.includedShownBy],
+    });
+
+    const windowBounds = JSON.parse(params[2] as string) as Record<
+      string,
+      unknown
+    >;
+    expect(windowBounds).toEqual({
+      active_windows_days: [...ENGAGEMENT_TUNABLES.activeWindowsDays],
+      half_life_window_ratio: ENGAGEMENT_TUNABLES.ewmaHalfLifeWindowRatio,
+      selection_rule: "longest_window_with_min_impressions",
+    });
+
+    // Digest is SHA-256 over the canonical §7 aggregate SQL — it
+    // changes only when the aggregate shape changes, which is
+    // exactly when `engagement_model_version` must bump.
+    const expectedDigest = createHash("sha256")
+      .update(ENGAGEMENT_AGGREGATE_SQL)
+      .digest("hex");
+    expect(params[3]).toBe(expectedDigest);
   });
 });
