@@ -593,6 +593,14 @@ describe("Phase 2 state helpers (state.ts)", () => {
           rowCount: 1,
         };
       }
+      if (sql.includes("UPDATE event_group")) {
+        // No manual-Send race in this test — both ids are still unsent,
+        // RETURNING surfaces them all.
+        return {
+          rows: [{ id: "1000" }, { id: "1002" }],
+          rowCount: 2,
+        };
+      }
       return { rows: [], rowCount: 0 };
     });
     const result = await state.commitOnAck(1, "jti-story", "story");
@@ -603,12 +611,15 @@ describe("Phase 2 state helpers (state.ts)", () => {
       { storyId: "1002", storyVersion: "v1" },
     ]);
 
-    // The UPDATE event_group targets the persisted ids only.
+    // The UPDATE event_group targets the persisted ids only and gates
+    // on `last_sent_at IS NULL` so a racing manual Send wins.
     const updateBeta = fake.calls.find((c) =>
       c.sql.includes("UPDATE event_group"),
     );
     expect(updateBeta).toBeDefined();
     expect(updateBeta?.params?.[0]).toEqual(["1000", "1002"]);
+    expect(updateBeta?.sql).toContain("last_sent_at IS NULL");
+    expect(updateBeta?.sql).toContain("RETURNING");
 
     // The ack path must NOT issue a recomputed range SELECT from
     // event_group — that was the bug. The cursor advance still
@@ -689,6 +700,12 @@ describe("Phase 2 state helpers (state.ts)", () => {
           rowCount: 1,
         };
       }
+      if (sql.includes("UPDATE event_group")) {
+        return {
+          rows: [{ id: "900" }, { id: "901" }],
+          rowCount: 2,
+        };
+      }
       return { rows: [], rowCount: 0 };
     });
     const result = await state.commitOnAck(1, "jti-straggler", "story");
@@ -718,6 +735,69 @@ describe("Phase 2 state helpers (state.ts)", () => {
           !c.sql.includes("last_pushed_event_time"),
       ),
     ).toBe(true);
+  });
+
+  it("commitOnAck story branch skips β-bump + audit for rows a racing manual Send already marked sent", async () => {
+    // Regression for round-7 finding: an opportunistic batch is
+    // minted for Stories [2000, 2001, 2002]; before the ack arrives,
+    // an analyst manually Sends 2001. `ack-manual` stamps 2001 with
+    // the analyst's account id and `send_count = 1`. The opportunistic
+    // ack must NOT overwrite 2001 (preserving manual attribution) and
+    // must NOT emit a `triage.story.send` audit row for 2001 (the
+    // manual-send audit already covered it). The β-update is gated on
+    // `last_sent_at IS NULL`; only 2000 and 2002 are returned, so
+    // `storyBetaRows` excludes 2001 and the route's audit emission
+    // loop skips it.
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_inflight")) {
+        return {
+          rows: [
+            {
+              context_jti: "jti-race",
+              kind: "story",
+              cursor_advance_to_event_time: new Date("2026-01-03T00:00:00Z"),
+              cursor_advance_to_event_key: "2002",
+              queue_row_ids: [],
+              pending_tail_notices: [],
+              pushed_stories: [
+                { story_id: "2000", story_version: "v1" },
+                { story_id: "2001", story_version: "v1" },
+                { story_id: "2002", story_version: "v1" },
+              ],
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("UPDATE event_group")) {
+        // RETURNING omits 2001 — the manual Send already set its
+        // `last_sent_at` so the `AND last_sent_at IS NULL` predicate
+        // excluded it from this UPDATE.
+        return {
+          rows: [{ id: "2000" }, { id: "2002" }],
+          rowCount: 2,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const result = await state.commitOnAck(1, "jti-race", "story");
+
+    // Only the rows actually bumped surface — 2001 stays attributed
+    // to the analyst.
+    expect(result.storyBetaRows).toEqual([
+      { storyId: "2000", storyVersion: "v1" },
+      { storyId: "2002", storyVersion: "v1" },
+    ]);
+
+    // The UPDATE itself targets all three persisted ids but is gated
+    // by `last_sent_at IS NULL`; PG drops the racing row.
+    const updateBeta = fake.calls.find((c) =>
+      c.sql.includes("UPDATE event_group"),
+    );
+    expect(updateBeta).toBeDefined();
+    expect(updateBeta?.params?.[0]).toEqual(["2000", "2001", "2002"]);
+    expect(updateBeta?.sql).toContain("last_sent_at IS NULL");
+    expect(updateBeta?.sql).toContain("RETURNING");
   });
 
   it("insertInflight persists pushed_stories as JSONB when provided", async () => {

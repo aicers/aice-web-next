@@ -33,7 +33,13 @@
  *      greater than the previously-advanced cursor (i.e., the
  *      inserting transaction either started after the previous slice
  *      ran, OR its `created_at` was already past the cursor target
- *      that previous slice advanced to). Combined with the persisted
+ *      that previous slice advanced to). The slice also filters
+ *      `last_sent_at IS NULL` so a Story that was manually sent (by
+ *      an analyst Send button) before this drain ran is never
+ *      re-included in an opportunistic batch — without this filter,
+ *      the ack β-update would overwrite the analyst's `last_sent_by`
+ *      with the system actor and emit a spurious opportunistic audit
+ *      row. Combined with the persisted
  *      `aimer_push_inflight.pushed_stories` set, β/audit only address
  *      the exact rows actually signed into the envelope.
  *
@@ -157,6 +163,7 @@ export async function hasStoryRowsPastCursor(input: {
     `SELECT 1
        FROM event_group
       WHERE kind = 'auto_correlated'
+        AND last_sent_at IS NULL
         ${cursorClause}
       LIMIT 1`,
     params,
@@ -316,6 +323,14 @@ async function selectCursorSlice(
   }
   params.push(input.limit);
   const limitParamIdx = params.length;
+  // `last_sent_at IS NULL` excludes rows that were already delivered by
+  // a prior manual Send. Without this filter, an opportunistic batch
+  // minted between a manual Send's mint and ack — or against a Story
+  // an analyst sent before this drain ran — would re-include the row
+  // and the ack β-update (see {@link commitOnAck}) would overwrite the
+  // analyst's `last_sent_by` with the system actor. Lines up with the
+  // partial-index predicate
+  // (`event_group_auto_unsent_created_at_idx`, migration `0021`).
   const { rows } = await client.query<StoryCursorRowSql>(
     `SELECT id::text                                AS story_id,
             story_version,
@@ -339,6 +354,7 @@ async function selectCursorSlice(
             send_count
        FROM event_group
       WHERE kind = 'auto_correlated'
+        AND last_sent_at IS NULL
         ${cursorClause}
       ORDER BY created_at, id
       LIMIT $${limitParamIdx}`,

@@ -666,11 +666,21 @@ export interface CommitOnAckResult {
  * NOT off cursor advance, so a straggler batch with
  * `cursor_advance_to_* = NULL` still marks its delivered rows sent
  * (otherwise the straggler scan would re-select them forever via the
- * `last_sent_at IS NULL` filter). The returned
- * {@link CommitOnAckResult.storyBetaRows} lets the caller emit one
- * `triage.story.send` audit row per affected Story after this
- * transaction commits — audit emission is best-effort outside the
- * tenant transaction (#493).
+ * `last_sent_at IS NULL` filter).
+ *
+ * The β-update also carries `AND last_sent_at IS NULL` so a manual
+ * Send that landed BETWEEN this batch's mint and ack does not get
+ * overwritten by the system actor. The returned
+ * {@link CommitOnAckResult.storyBetaRows} reflects only the rows
+ * actually bumped (RETURNING-filtered); rows already marked sent
+ * (via {@link ackManualSend}) before the ack arrived are skipped on
+ * both β-bump and audit, preserving the analyst's `last_sent_by`
+ * attribution and avoiding a spurious opportunistic audit row.
+ *
+ * The returned {@link CommitOnAckResult.storyBetaRows} lets the
+ * caller emit one `triage.story.send` audit row per affected Story
+ * after this transaction commits — audit emission is best-effort
+ * outside the tenant transaction (#493).
  *
  * Using the persisted delivered set, instead of a live recomputation
  * of `(prev_cursor, new_cursor]`, prevents a Story inserted between
@@ -767,18 +777,36 @@ export async function commitOnAck(
         const pushedStories = row.pushed_stories ?? [];
         if (pushedStories.length > 0) {
           const pushedIds = pushedStories.map((s) => s.story_id);
-          await client.query(
+          // `AND last_sent_at IS NULL` guards against a manual Send
+          // that raced this inflight batch: an analyst can Send Story
+          // S after this opportunistic batch was minted but before its
+          // ack arrived. `ack-manual` will have stamped the analyst as
+          // `last_sent_by` with `send_count = 1`; without the filter,
+          // this update would overwrite that with the system actor,
+          // increment `send_count` again, and emit an opportunistic
+          // audit row for a Story that was already attributed to the
+          // analyst. RETURNING surfaces only the rows actually bumped
+          // so the audit emission below restricts itself to genuinely
+          // opportunistic deliveries.
+          const { rows: bumpedRows } = await client.query<{
+            id: string;
+          }>(
             `UPDATE event_group
                 SET last_sent_at = NOW(),
                     last_sent_by = $2::uuid,
                     send_count   = send_count + 1
-              WHERE id = ANY($1::bigint[])`,
+              WHERE id = ANY($1::bigint[])
+                AND last_sent_at IS NULL
+            RETURNING id::text AS id`,
             [pushedIds, SYSTEM_ACTOR_ACCOUNT_ID],
           );
-          storyBetaRows = pushedStories.map((s) => ({
-            storyId: s.story_id,
-            storyVersion: s.story_version,
-          }));
+          const bumpedIds = new Set(bumpedRows.map((r) => r.id));
+          storyBetaRows = pushedStories
+            .filter((s) => bumpedIds.has(s.story_id))
+            .map((s) => ({
+              storyId: s.story_id,
+              storyVersion: s.story_version,
+            }));
         }
       }
     }

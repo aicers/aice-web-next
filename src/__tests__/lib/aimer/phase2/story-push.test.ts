@@ -87,6 +87,27 @@ describe("loadStoryStreamingSlice cursor SQL", () => {
     expect(sql).not.toMatch(/ORDER BY\s+time_window_end\b/);
   });
 
+  it("loadStoryStreamingSlice forward slice filters last_sent_at IS NULL so manually-sent rows are not re-pushed opportunistically", async () => {
+    // Round-7 regression: without this filter, a Story that was
+    // manually Sent by an analyst (or that was minted by a prior
+    // opportunistic batch whose ack already committed) would be
+    // re-included in the next forward slice. The ack β-update would
+    // then overwrite the analyst's `last_sent_by` with the system
+    // actor and emit a spurious opportunistic audit row.
+    await storyPush.loadStoryStreamingSlice({
+      customerId: 42,
+      cursorEventTime: new Date("2026-01-01T00:00:00Z"),
+      cursorEventKey: "100",
+    });
+    const sliceCall = fake.calls.find((c) =>
+      c.sql.includes("FROM event_group"),
+    );
+    expect(sliceCall).toBeDefined();
+    const sql = sliceCall?.sql ?? "";
+    expect(sql).toContain("kind = 'auto_correlated'");
+    expect(sql).toContain("last_sent_at IS NULL");
+  });
+
   it("loadStoryStragglerSlice scans behind cursor with last_sent_at IS NULL gated on streaming_activated_at", async () => {
     // Round-5 regression: PG `now()` is transaction-start time, so a
     // correlator transaction that begins before the drain reads can
