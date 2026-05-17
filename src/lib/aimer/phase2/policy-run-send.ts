@@ -53,6 +53,21 @@ export interface InsertPolicyRunSendInflightInput {
   isTerminal: boolean;
   /** Exclusive upper bound (event_key) of this slice; null for empty terminal batch. */
   lastEventKey: string | null;
+  /**
+   * Exclusive lower bound (event_key) the build-envelope call was made
+   * with — i.e., the `after_event_key` cursor input. Null on the first
+   * batch of a Send.
+   *
+   * Persisted on the inflight row so the partial unique indexes on
+   * `(send_action_id, after_event_key)` catch a sequential retry of the
+   * same request body (same Send action, same cursor) and raise a
+   * unique-violation that the route translates to 409. Without this,
+   * the only duplicate defense is `(send_action_id, batch_index)`,
+   * which only catches racing concurrent calls — a sequential retry
+   * after the first call already committed would just be assigned the
+   * next batch_index and silently mint a duplicate slice.
+   */
+  afterEventKey: string | null;
 }
 
 /**
@@ -67,11 +82,18 @@ export const PG_UNIQUE_VIOLATION = "23505" as const;
 /**
  * Insert a freshly-minted inflight row.
  *
- * The `aimer_policy_run_send_inflight.UNIQUE (send_action_id, batch_index)`
- * constraint guarantees that a duplicate `build-envelope` call with the
- * same `{ send_action_id, after_event_key }` (e.g. browser retry between
- * minting and the multipart POST) cannot double-mint inflight rows. The
- * route translates the unique violation to `409 duplicate_batch_for_send_action`.
+ * Two layers of duplicate-mint defense at the DB level:
+ *
+ *   1. `UNIQUE (send_action_id, batch_index)` — catches racing
+ *      concurrent calls that both observe the same prior batch count.
+ *   2. Partial unique indexes on `(send_action_id, after_event_key)` —
+ *      catch a sequential retry of the same `{ send_action_id,
+ *      after_event_key }` request body (e.g., browser retry after the
+ *      first call already committed) which would otherwise rebuild the
+ *      same slice with a fresh JTI and a higher `batch_index`.
+ *
+ * Both raise SQLSTATE 23505, which the route translates to
+ * `409 duplicate_batch_for_send_action`.
  */
 export async function insertPolicyRunSendInflight(
   customerId: number,
@@ -87,8 +109,9 @@ export async function insertPolicyRunSendInflight(
         actor_account_id,
         batch_index,
         is_terminal,
-        last_event_key)
-     VALUES ($1, $2::uuid, $3::bigint, $4::uuid, $5, $6, $7)`,
+        last_event_key,
+        after_event_key)
+     VALUES ($1, $2::uuid, $3::bigint, $4::uuid, $5, $6, $7, $8)`,
     [
       input.contextJti,
       input.sendActionId,
@@ -97,6 +120,7 @@ export async function insertPolicyRunSendInflight(
       input.batchIndex,
       input.isTerminal,
       input.lastEventKey,
+      input.afterEventKey,
     ],
   );
 }

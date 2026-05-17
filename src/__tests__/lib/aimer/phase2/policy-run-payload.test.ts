@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPolicyRunSlice,
   loadPolicyRunForSend,
+  POLICY_RUN_SCAN_ROW_LIMIT,
   type PolicyRunWireBody,
   unwrapPolicyTriageSnapshot,
 } from "@/lib/aimer/phase2/policy-run-payload";
@@ -193,13 +194,55 @@ describe("buildPolicyRunSlice", () => {
     expect(slice.lastEventKey).toBe("1");
   });
 
-  it("passes the after_event_key cursor to the query", async () => {
+  it("passes the after_event_key cursor and scan row limit to the query", async () => {
     const seen: { sql: string; params: unknown[] }[] = [];
     const client = fakeClient(async (sql, params) => {
       seen.push({ sql, params });
       return { rows: [eventRow({ event_key: "5" })] };
     });
     await buildPolicyRunSlice(client as never, RUN_BODY, "4");
-    expect(seen[0].params).toEqual(["1234", "4"]);
+    // LIMIT $3::int = scanRowLimit + 1 (probe row).
+    expect(seen[0].params).toEqual([
+      "1234",
+      "4",
+      POLICY_RUN_SCAN_ROW_LIMIT + 1,
+    ]);
+    expect(seen[0].sql).toMatch(/LIMIT \$3::int/);
+  });
+
+  it("caps the candidate window at scanRowLimit and reports has_more from the probe row", async () => {
+    // Tiny row cap so we can prove the probe-row branch without faking
+    // a 2000-row corpus. Three rows returned (scanRowLimit=2 + 1 probe)
+    // → byte budget is generous so all 2 kept rows fit, probe row is
+    // dropped, has_more=true.
+    const rows = [
+      eventRow({ event_key: "1" }),
+      eventRow({ event_key: "2" }),
+      eventRow({ event_key: "3" }),
+    ];
+    const client = fakeClient(async () => ({ rows }));
+    const slice = await buildPolicyRunSlice(client as never, RUN_BODY, null, {
+      scanRowLimit: 2,
+    });
+    expect(slice.eventCount).toBe(2);
+    expect(slice.hasMore).toBe(true);
+    expect(slice.lastEventKey).toBe("2");
+  });
+
+  it("does not allocate or scan past scanRowLimit + 1 rows even on a huge corpus", async () => {
+    // Asserts the SQL was constructed with a LIMIT — the route relies
+    // on the DB enforcing the cap, not on the JS side trimming after a
+    // full scan. Without LIMIT, the prior implementation would have
+    // pulled the whole tail every batch.
+    const seen: { sql: string; params: unknown[] }[] = [];
+    const client = fakeClient(async (sql, params) => {
+      seen.push({ sql, params });
+      return { rows: [eventRow({ event_key: "9" })] };
+    });
+    await buildPolicyRunSlice(client as never, RUN_BODY, null, {
+      scanRowLimit: 5,
+    });
+    expect(seen[0].sql).toMatch(/LIMIT \$3::int/);
+    expect(seen[0].params).toEqual(["1234", null, 6]);
   });
 });

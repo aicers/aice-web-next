@@ -228,7 +228,9 @@ describe("POST /api/aimer/phase2/policy-run/build-envelope", () => {
     expect(body.aimer_endpoint_url).toBe(
       "https://aimer.example.com/api/phase2/policy-run",
     );
-    // Inflight insert tagged is_terminal: true on the empty terminal slice.
+    // Inflight insert tagged is_terminal: true on the empty terminal slice,
+    // and afterEventKey echoed for the cursor-identity partial unique
+    // index defense against sequential retries.
     expect(mockInsertInflight).toHaveBeenCalledWith(42, {
       contextJti: "jti-fresh",
       sendActionId: VALID_SEND_ACTION,
@@ -237,6 +239,7 @@ describe("POST /api/aimer/phase2/policy-run/build-envelope", () => {
       batchIndex: 0,
       isTerminal: true,
       lastEventKey: null,
+      afterEventKey: null,
     });
   });
 
@@ -265,12 +268,43 @@ describe("POST /api/aimer/phase2/policy-run/build-envelope", () => {
     expect(body.last_event_key_in_batch).toBe("5");
     expect(mockInsertInflight).toHaveBeenCalledWith(
       42,
-      expect.objectContaining({ isTerminal: false, lastEventKey: "5" }),
+      expect.objectContaining({
+        isTerminal: false,
+        lastEventKey: "5",
+        afterEventKey: null,
+      }),
     );
   });
 
   it("translates UNIQUE-violation on inflight insert to 409 duplicate_batch_for_send_action", async () => {
     const uniqueErr = Object.assign(new Error("dup"), { code: "23505" });
+    mockInsertInflight.mockRejectedValueOnce(uniqueErr);
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "duplicate_batch_for_send_action",
+    });
+  });
+
+  it("returns 409 on sequential retry of the same (send_action_id, after_event_key) — cursor-identity defense", async () => {
+    // Simulates the scenario the (send_action_id, batch_index) constraint
+    // alone cannot catch: the first call already committed (batch 0
+    // inserted), the browser re-sends the exact same request body
+    // (same send_action_id, same after_event_key=null), and the route
+    // would otherwise see count=1 → batch_index=1 → rebuild the same
+    // slice → insert a duplicate batch. The partial unique index on
+    // (send_action_id, after_event_key) WHERE after_event_key IS NULL
+    // raises 23505 from the second INSERT.
+    mockClientQuery.mockResolvedValueOnce({ rows: [{ count: "1" }] });
+    const uniqueErr = Object.assign(new Error("dup cursor"), { code: "23505" });
     mockInsertInflight.mockRejectedValueOnce(uniqueErr);
     const { POST } = await importRoute();
     const res = await POST(
@@ -346,7 +380,11 @@ describe("POST /api/aimer/phase2/policy-run/build-envelope", () => {
     expect(body.batch_index).toBe(2);
     expect(mockInsertInflight).toHaveBeenCalledWith(
       42,
-      expect.objectContaining({ batchIndex: 2, isTerminal: true }),
+      expect.objectContaining({
+        batchIndex: 2,
+        isTerminal: true,
+        afterEventKey: "6",
+      }),
     );
   });
 });

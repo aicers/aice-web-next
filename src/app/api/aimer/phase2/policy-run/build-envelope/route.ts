@@ -41,9 +41,17 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
  *      last_event_key, actor_account_id)`.
  *   6. Return the multipart components + full aimer endpoint URL.
  *
- * Duplicate calls with the same `(send_action_id, batch_index)` (e.g.,
- * a browser retry between mint and POST) hit the
- * `UNIQUE (send_action_id, batch_index)` constraint and return
+ * Duplicate calls are caught at two layers in the DB schema:
+ *
+ *   - `UNIQUE (send_action_id, batch_index)` — racing concurrent calls
+ *     that both observe the same prior batch count.
+ *   - Partial unique indexes on `(send_action_id, after_event_key)` —
+ *     a *sequential* retry of the same request body (e.g., browser
+ *     retry after the first call already committed) which would
+ *     otherwise be assigned the next `batch_index` and silently mint a
+ *     duplicate slice with a fresh JTI.
+ *
+ * Both raise SQLSTATE 23505, which this route translates to
  * `409 duplicate_batch_for_send_action`. The browser is expected to
  * resume from the prior response's `last_event_key_in_batch`.
  */
@@ -237,6 +245,7 @@ export const POST = withAuth(
         batchIndex,
         isTerminal: !slice.hasMore,
         lastEventKey: slice.lastEventKey,
+        afterEventKey,
       });
     } catch (err) {
       if (isPgUniqueViolation(err)) {

@@ -167,6 +167,62 @@ describe("POST /api/aimer/phase2/policy-run/finalize", () => {
     expect(await res.json()).toEqual({ error: "invalid_send_action_id" });
   });
 
+  it("rejects negative accepted in a batch_acks entry", async () => {
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        batch_acks: [ack("jti-1", -1, 0)],
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_batch_acks" });
+    // Validation fires before any DB work.
+    expect(queryCalls.length).toBe(0);
+  });
+
+  it("rejects negative duplicates_skipped in a batch_acks entry", async () => {
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        batch_acks: [ack("jti-1", 0, -7)],
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_batch_acks" });
+    expect(queryCalls.length).toBe(0);
+  });
+
+  it("rejects malformed received_at (not ISO 8601)", async () => {
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        batch_acks: [
+          {
+            context_jti: "jti-1",
+            received_at: "yesterday",
+            accepted: 1,
+            duplicates_skipped: 0,
+          },
+        ],
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_batch_acks" });
+    expect(queryCalls.length).toBe(0);
+  });
+
   it("rejects empty batch_acks", async () => {
     const { POST } = await importRoute();
     const res = await POST(
@@ -487,6 +543,65 @@ describe("POST /api/aimer/phase2/policy-run/finalize", () => {
     expect(auditEvent.details.totalAccepted).toBe(10);
     expect(auditEvent.details.totalDuplicatesSkipped).toBe(1);
     expect(auditEvent.details.sendActionId).toBe(VALID_SEND_ACTION);
+  });
+
+  it("returns 200 and keeps β committed when the audit-DB write fails", async () => {
+    // β/inflight live in customer DB; audit lives in audit_db. Cross-DB
+    // atomicity isn't possible, and we deliberately commit β first.
+    // An audit outage must not surface as a 500 to the operator — β
+    // already says the Send succeeded.
+    expectInflightLookup([
+      {
+        context_jti: "jti-T",
+        run_id: "1",
+        actor_account_id: ACTOR_ID,
+        batch_index: 0,
+        is_terminal: true,
+      },
+    ]);
+    whenSql(/FROM policy_triage_run/, () => ({
+      rows: [
+        {
+          status: "ready",
+          baseline_version: "1.B.0",
+          policies_fingerprint: "abc",
+          exclusions_fingerprint: "def",
+        },
+      ],
+    }));
+    let betaUpdateSeen = false;
+    whenSql(/UPDATE policy_triage_run/, () => {
+      betaUpdateSeen = true;
+      return { rows: [] };
+    });
+    whenSql(/DELETE FROM aimer_policy_run_send_inflight/, () => ({ rows: [] }));
+    mockAudit.mockRejectedValueOnce(new Error("audit_db unreachable"));
+    const consoleErrSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        batch_acks: [ack("jti-T", 1, 0)],
+      }),
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    // β commit happened before audit attempt.
+    expect(betaUpdateSeen).toBe(true);
+    expect(mockAudit).toHaveBeenCalledTimes(1);
+    // Failure is logged for operator observability.
+    expect(consoleErrSpy).toHaveBeenCalledTimes(1);
+    const logLine = consoleErrSpy.mock.calls[0][0] as string;
+    expect(logLine).toMatch(/audit write failed/);
+    consoleErrSpy.mockRestore();
   });
 
   it("rejects when run status flipped to 'failed' between Send and finalize", async () => {

@@ -15,8 +15,10 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
  * Per RFC 0002 §6 / sub-issue #572. Closes one Send action after the
  * browser has POSTed every batch to aimer-web. The browser supplies a
  * `batch_acks` array containing one entry per batch (the parsed
- * aimer-web ack body); the server validates and on success writes β
- * tracking + audit in **one** transaction.
+ * aimer-web ack body); the server validates, commits β tracking +
+ * inflight cleanup in the customer DB transaction, then writes the
+ * `triage.policy_run.send_to_aimer` audit row best-effort against
+ * `audit_db` (see the cross-DB consistency note below).
  *
  * Validation is set-equality, checked in this order so error responses
  * are unambiguous:
@@ -42,11 +44,30 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
  * once per Send action (regardless of batch count) and the audit row
  * is emitted with `batchCount`, `eventCount`, `totalAccepted`,
  * `totalDuplicatesSkipped` aggregated from `batch_acks`.
+ *
+ * Cross-DB consistency note: β / inflight live in the customer DB,
+ * audit lives in `audit_db`. PostgreSQL does not support cross-DB
+ * transactions and we deliberately do not run two-phase commit for an
+ * audit-quality observation. We commit the customer DB transaction
+ * first so the operator's β state is durable, then best-effort write
+ * the audit row outside the transaction. An audit write failure is
+ * logged but does NOT 500 the caller — β already reflects the
+ * successful Send, and a stale audit row is less harmful than telling
+ * the operator the Send failed when it succeeded. Operators monitor
+ * audit-write failures via the structured log line, not via the API
+ * response.
  */
 
 const UUID_V4_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_STRING_REGEX = /^\d+$/;
+
+// Strict-ish ISO 8601 / RFC 3339 timestamp shape. The browser ack
+// reporter is untrusted; this rejects blatantly malformed strings
+// before they land in audit `details.receivedAt` aggregates. Allows
+// optional fractional seconds and either `Z` or `±HH:MM` offset.
+const ISO_8601_REGEX =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 interface BatchAckInput {
   context_jti: string;
@@ -76,15 +97,30 @@ function parseBatchAcks(raw: unknown): BatchAckInput[] | null {
     if (typeof e.context_jti !== "string" || e.context_jti.length === 0) {
       return null;
     }
-    if (typeof e.received_at !== "string" || e.received_at.length === 0) {
+    // received_at must look like an ISO 8601 timestamp. The browser
+    // produced it from the aimer-web ack body; a malformed value here
+    // suggests a tampered or buggy client and shouldn't be persisted
+    // verbatim into audit `details`.
+    if (
+      typeof e.received_at !== "string" ||
+      !ISO_8601_REGEX.test(e.received_at)
+    ) {
       return null;
     }
-    if (typeof e.accepted !== "number" || !Number.isInteger(e.accepted)) {
+    // accepted / duplicates_skipped: non-negative integers. The client
+    // is untrusted — a negative value would corrupt the audit row's
+    // `eventCount` / `totalAccepted` / `totalDuplicatesSkipped` totals.
+    if (
+      typeof e.accepted !== "number" ||
+      !Number.isInteger(e.accepted) ||
+      e.accepted < 0
+    ) {
       return null;
     }
     if (
       typeof e.duplicates_skipped !== "number" ||
-      !Number.isInteger(e.duplicates_skipped)
+      !Number.isInteger(e.duplicates_skipped) ||
+      e.duplicates_skipped < 0
     ) {
       return null;
     }
@@ -298,32 +334,56 @@ export const POST = withAuth(
 
       // ── Audit (post-commit; β / inflight already durable) ────
       //
-      // The β columns and the audit row must agree on "this Send
-      // succeeded"; we commit β first so even a downstream audit
-      // outage cannot leave β unsaved with the operator believing
-      // the Send went through.
+      // β/inflight are in the customer DB; audit is in `audit_db`.
+      // Cross-DB transactions aren't supported by PostgreSQL, so we
+      // commit β first (the operator's source-of-truth) and write the
+      // audit row as best-effort observability. An audit-DB outage
+      // would otherwise leave β unsaved with the operator seeing a
+      // 500 even though the Send succeeded — that's worse than a
+      // stale audit row.
+      //
+      // Audit failures are logged structured and the response is still
+      // 200; operators monitor for the log line instead of the HTTP
+      // status. The β row's `send_count` increment is the operational
+      // record that the Send happened.
       const eventCount = totalAccepted + totalDuplicatesSkipped;
-      await auditLog.record({
-        actor: session.accountId,
-        action: "triage.policy_run.send_to_aimer",
-        target: "triage_policy_run",
-        targetId: runId,
-        ip: extractClientIp(request),
-        sid: session.sessionId,
-        customerId,
-        details: {
-          runId,
-          sendActionId,
-          policiesFingerprint: run.policies_fingerprint,
-          exclusionsFingerprint: run.exclusions_fingerprint,
-          baselineVersion: run.baseline_version,
-          eventCount,
-          batchCount,
-          totalAccepted,
-          totalDuplicatesSkipped,
-          result: "ok",
-        },
-      });
+      try {
+        await auditLog.record({
+          actor: session.accountId,
+          action: "triage.policy_run.send_to_aimer",
+          target: "triage_policy_run",
+          targetId: runId,
+          ip: extractClientIp(request),
+          sid: session.sessionId,
+          customerId,
+          details: {
+            runId,
+            sendActionId,
+            policiesFingerprint: run.policies_fingerprint,
+            exclusionsFingerprint: run.exclusions_fingerprint,
+            baselineVersion: run.baseline_version,
+            eventCount,
+            batchCount,
+            totalAccepted,
+            totalDuplicatesSkipped,
+            result: "ok",
+          },
+        });
+      } catch (auditErr) {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            msg: "policy_run.send_to_aimer audit write failed; β already committed",
+            customerId,
+            runId,
+            sendActionId,
+            batchCount,
+            eventCount,
+            error:
+              auditErr instanceof Error ? auditErr.message : String(auditErr),
+          }),
+        );
+      }
 
       return NextResponse.json({
         ok: true,

@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS aimer_policy_run_send_inflight (
     -- slice).
     last_event_key       NUMERIC(39, 0),
 
+    -- Exclusive lower bound (`event_key`) of the slice — the
+    -- `after_event_key` cursor the build-envelope call was made with.
+    -- Null on the first batch of a Send. Together with `send_action_id`
+    -- this is the cursor identity of the batch; the partial unique
+    -- indexes below catch a sequential retry of the same call (same
+    -- send action, same cursor) so the route returns 409 instead of
+    -- minting a duplicate batch with a fresh JTI.
+    after_event_key      NUMERIC(39, 0),
+
     minted_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Catch duplicate-mint bugs at the DB level: one batch_index per
@@ -92,3 +101,17 @@ CREATE INDEX IF NOT EXISTS idx_aimer_policy_run_send_inflight_run
     ON aimer_policy_run_send_inflight (run_id, send_action_id);
 CREATE INDEX IF NOT EXISTS idx_aimer_policy_run_send_inflight_ttl
     ON aimer_policy_run_send_inflight (minted_at);
+
+-- Cursor-identity uniqueness. Split into two partial indexes so the
+-- NULL-cursor first batch is also covered: PostgreSQL treats NULLs as
+-- distinct in a plain UNIQUE constraint, which would allow two "first
+-- batch" rows for the same send_action_id (the exact sequential-retry
+-- bug we want to catch). Both indexes raise the same SQLSTATE 23505,
+-- which the build-envelope route translates to
+-- `duplicate_batch_for_send_action`.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_aimer_policy_run_send_inflight_cursor_notnull
+    ON aimer_policy_run_send_inflight (send_action_id, after_event_key)
+    WHERE after_event_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_aimer_policy_run_send_inflight_cursor_null
+    ON aimer_policy_run_send_inflight (send_action_id)
+    WHERE after_event_key IS NULL;

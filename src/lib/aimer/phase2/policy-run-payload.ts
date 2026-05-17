@@ -38,6 +38,26 @@ import { PHASE2_REFRESH_PAYLOAD_MAX_BYTES } from "./payload-builders";
 export const POLICY_RUN_PAYLOAD_MAX_BYTES = PHASE2_REFRESH_PAYLOAD_MAX_BYTES;
 
 /**
+ * Per-batch row scan cap. The SQL slice loader pulls at most this many
+ * rows (plus one probe row) past the cursor and lets the byte-budget
+ * walk decide where to actually cut the batch. The cap exists for two
+ * reasons:
+ *
+ *   1. Memory: without it, a run with hundreds of thousands of events
+ *      would allocate and project the entire tail on *every* batch,
+ *      making a multi-batch Send O(n²) across batches and risking OOM
+ *      before the first bounded payload can be emitted.
+ *   2. Latency: bounded per-batch work so a single `build-envelope`
+ *      call cannot stall the request handler scanning a huge corpus.
+ *
+ * 2000 rows × ~1 KB average event JSON ≈ 2 MB scanned per call, which
+ * is comfortably above the 1 MB byte budget — the byte-budget walk will
+ * trim down further. Worst-case oversize-row rows still get admitted
+ * one-at-a-time by the atomicity-of-one rule.
+ */
+export const POLICY_RUN_SCAN_ROW_LIMIT = 2000;
+
+/**
  * Reserve subtracted from the budget before slicing to account for the
  * `external_key` + `source_aice_id` fields `buildPhase2Push` injects at
  * envelope time. Worst-case bytes: an external_key of 256 UTF-16 code
@@ -315,6 +335,8 @@ export interface PolicyRunSliceResult {
 interface BuildSliceOptions {
   /** Per-batch byte budget. Defaults to {@link POLICY_RUN_PAYLOAD_MAX_BYTES}. */
   maxBytes?: number;
+  /** Per-batch row scan cap. Defaults to {@link POLICY_RUN_SCAN_ROW_LIMIT}. */
+  scanRowLimit?: number;
 }
 
 /**
@@ -322,11 +344,20 @@ interface BuildSliceOptions {
  * tenant scope and ensured the run is eligible (`ready`/`superseded`).
  *
  * Algorithm: ascending `event_key` scan with strict cursor `event_key
- * > afterEventKey`. Probe-and-trim until the serialized payload fits
- * `maxBytes - AUGMENT_RESERVE_BYTES`. A single oversize row is admitted
- * as its own batch (the atomicity rule has no smaller unit; aimer-web's
- * own size budget would still reject it, but better to surface that on
- * the wire than crash here).
+ * > afterEventKey`, bounded at the SQL layer by `LIMIT scanRowLimit +
+ * 1`. The extra "probe" row is what `has_more` is determined from
+ * (presence of the probe row OR the byte budget cutting the slice
+ * short). The row cap keeps each `build-envelope` call O(scanRowLimit)
+ * — without it, a multi-batch Send across a hundreds-of-thousands-of-
+ * events run would be O(n²) across batches and could exhaust memory
+ * before emitting the first bounded payload.
+ *
+ * Once rows are loaded, each is serialized once and the byte budget is
+ * accumulated linearly — no repeated re-serialization of growing
+ * prefixes. A single oversize row is admitted as its own batch (the
+ * atomicity rule has no smaller unit; aimer-web's own size budget would
+ * still reject it, but better to surface that on the wire than crash
+ * here).
  *
  * Empty runs (no rows ever, or no rows past the cursor) produce a
  * payload with `events: []` and `lastEventKey: null`. The route writes
@@ -341,9 +372,14 @@ export async function buildPolicyRunSlice(
 ): Promise<PolicyRunSliceResult> {
   const maxBytes = options.maxBytes ?? POLICY_RUN_PAYLOAD_MAX_BYTES;
   const budget = Math.max(1, maxBytes - AUGMENT_RESERVE_BYTES);
+  const scanRowLimit = Math.max(
+    1,
+    options.scanRowLimit ?? POLICY_RUN_SCAN_ROW_LIMIT,
+  );
 
-  // Probe one row past the budget so `has_more` can distinguish "ended
-  // exactly on budget" from "more rows past the slice".
+  // LIMIT scanRowLimit + 1: the extra row is a probe so `has_more` can
+  // distinguish "fits exactly within the row cap" from "more rows past
+  // the slice". The probe row is dropped before projection.
   const { rows } = await client.query<PolicyEventSql>(
     `SELECT event_key::text                  AS event_key,
             to_char(event_time AT TIME ZONE 'UTC',
@@ -363,8 +399,9 @@ export async function buildPolicyRunSlice(
        FROM policy_triaged_event
       WHERE run_id = $1::bigint
         AND ($2::numeric IS NULL OR event_key > $2::numeric)
-      ORDER BY event_key ASC`,
-    [runBody.run_id, afterEventKey],
+      ORDER BY event_key ASC
+      LIMIT $3::int`,
+    [runBody.run_id, afterEventKey, scanRowLimit + 1],
   );
 
   if (rows.length === 0) {
@@ -380,34 +417,45 @@ export async function buildPolicyRunSlice(
     };
   }
 
-  // Project all rows, then trim by greedy serialized-byte probe.
-  const wireEvents = rows.map(rowToWireEvent);
+  const moreRowsExistPastScan = rows.length > scanRowLimit;
+  // Drop the probe row before projection so the candidate window is
+  // exactly `scanRowLimit` rows wide.
+  const candidateRows = moreRowsExistPastScan
+    ? rows.slice(0, scanRowLimit)
+    : rows;
 
-  // Walk forward keeping the largest k that fits.
+  // Serialize the empty-array payload once to anchor the running byte
+  // total, then add each event's serialized size + the JSON-array
+  // separator. Linear in candidate window size; no growing-prefix
+  // re-serialization.
+  const wireEvents = candidateRows.map(rowToWireEvent);
+  const framePayload: PolicyRunPayload = { run: runBody, events: [] };
+  const frameBytes = Buffer.byteLength(JSON.stringify(framePayload), "utf8");
+
+  let runningBytes = frameBytes;
   let included = 0;
-  for (let k = 1; k <= wireEvents.length; k += 1) {
-    const candidate: PolicyRunPayload = {
-      run: runBody,
-      events: wireEvents.slice(0, k),
-    };
-    const bytes = Buffer.byteLength(JSON.stringify(candidate), "utf8");
-    if (bytes <= budget || included === 0) {
-      // Atomicity-of-one: always admit the first row even if it alone
-      // exceeds the budget. aimer-web's own cap will reject the
-      // monster row with a clear error, which is better signal than
-      // an opaque sender-side empty batch.
-      included = k;
-      if (bytes > budget && k === 1) {
-        // First row already over budget — stop here, emit it alone.
-        break;
-      }
+  for (const ev of wireEvents) {
+    const eventBytes = Buffer.byteLength(JSON.stringify(ev), "utf8");
+    // Adding the event costs its serialized length + a comma when it is
+    // not the first array element.
+    const delta = eventBytes + (included > 0 ? 1 : 0);
+    if (runningBytes + delta <= budget) {
+      runningBytes += delta;
+      included += 1;
+    } else if (included === 0) {
+      // Atomicity-of-one: admit the first event even when oversize.
+      // aimer-web's own cap will reject it with a clear error.
+      included = 1;
+      break;
     } else {
       break;
     }
   }
 
   const sliced = wireEvents.slice(0, included);
-  const hasMore = included < wireEvents.length;
+  // hasMore is true when EITHER the byte budget cut the slice short
+  // OR the scan row cap was hit (the probe row was present).
+  const hasMore = included < wireEvents.length || moreRowsExistPastScan;
   const lastEventKey = sliced[sliced.length - 1].event_key;
 
   return {
