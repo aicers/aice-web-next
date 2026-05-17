@@ -21,7 +21,7 @@
  * expressed in `(kind, is_unlabeled)` `slot_bucket` form per §4.
  */
 
-import type { ThreatCategory } from "@/lib/detection";
+import { CRITICAL_CATEGORIES as CRITICAL_CATEGORIES_RAW } from "@/lib/triage/story/critical-sets.mjs";
 
 /**
  * Category membership for the S2 "severe" selector (RFC 0001 §3).
@@ -29,14 +29,13 @@ import type { ThreatCategory } from "@/lib/detection";
  * elevated (`PHASE_1A_WHITELIST_SCORE` in `src/lib/triage/scoring.ts`).
  * Phase 1.B promotes them from an additive bonus into the dedicated S2
  * binary selector.
+ *
+ * Re-exported from `story/critical-sets.mjs` so the cadence layer, the
+ * rule layer, and the harness `.mjs` all read the same source of truth
+ * (issue #601). The TS-side typing is preserved via the sibling `.d.ts`
+ * declaration.
  */
-export const CRITICAL_CATEGORIES: ReadonlySet<ThreatCategory> = new Set([
-  "COMMAND_AND_CONTROL",
-  "CREDENTIAL_ACCESS",
-  "EXFILTRATION",
-  "IMPACT",
-  "INITIAL_ACCESS",
-]);
+export const CRITICAL_CATEGORIES = CRITICAL_CATEGORIES_RAW;
 
 /**
  * Bucket-identifier membership for the §4 slot allocator's favored-kind

@@ -11,6 +11,15 @@ import {
   STORY_PROTECTED_PER_TENANT_LIMIT,
   TRIAGE_ASSET_DETAIL_LIMIT,
 } from "@/lib/triage/baseline/read-path-sql.mjs";
+import {
+  CRITICAL_CATEGORIES,
+  CRITICAL_SELECTOR_SET,
+} from "@/lib/triage/story/critical-sets.mjs";
+import {
+  buildReadR1CandidatesSql,
+  buildReadR3CandidatesPhase1Sql,
+  buildReadR3CandidatesPhase2Sql,
+} from "@/lib/triage/story/read-path-sql.mjs";
 import { STRICTNESS_STOPS } from "@/lib/triage/strictness/stops";
 
 describe("read-path-sql shared module", () => {
@@ -36,20 +45,28 @@ describe("read-path-sql shared module", () => {
   });
 
   describe("query coverage", () => {
-    it("exposes the seven measured queries in MEASURED_QUERIES", () => {
+    it("exposes the menu queries plus the R1 / R3 cadence entries as (name, context) pairs in MEASURED_QUERIES", () => {
       // #471 adds two queries — `selectStoryProtectedCohort` (branch
       // B force-union) and `countEligibleByStop` (per-stop preview
-      // hints). The harness measures all seven against the production
-      // SELECTs.
-      const names = MEASURED_QUERIES.map((q) => q.name);
-      expect(names).toEqual([
-        "selectMenuCohort",
-        "countObserved",
-        "countTriaged",
-        "perAssetObservedCounts",
-        "selectAssetDetailEventsBatch",
-        "selectStoryProtectedCohort",
-        "countEligibleByStop",
+      // hints). #601 adds R1 + R3 phase-1 + R3 phase-2 cadence
+      // entries, each in two contexts (first-tick / slop-replay), so
+      // the flat (query, context) list has seven menu entries plus
+      // six cadence entries.
+      const pairs = MEASURED_QUERIES.map((q) => `${q.name}:${q.context}`);
+      expect(pairs).toEqual([
+        "selectMenuCohort:default",
+        "countObserved:default",
+        "countTriaged:default",
+        "perAssetObservedCounts:default",
+        "selectAssetDetailEventsBatch:default",
+        "selectStoryProtectedCohort:default",
+        "countEligibleByStop:default",
+        "readR1Candidates:first-tick",
+        "readR1Candidates:slop-replay",
+        "readR3CandidatesPhase1:first-tick",
+        "readR3CandidatesPhase1:slop-replay",
+        "readR3CandidatesPhase2:first-tick",
+        "readR3CandidatesPhase2:slop-replay",
       ]);
     });
 
@@ -59,8 +76,19 @@ describe("read-path-sql shared module", () => {
         periodEndIso: "2026-05-12T00:00:00.000Z",
         observedFromIso: "2026-04-12T00:00:00.000Z",
         addresses: ["10.0.0.1", "10.0.0.2"],
+        memberScanStartIso: "2026-05-11T23:00:00.000Z",
+        memberScanEndIso: "2026-05-12T00:00:00.000Z",
       };
-      const byName = new Map(MEASURED_QUERIES.map((q) => [q.name, q]));
+      // Menu entries have unique names; cadence entries repeat names
+      // across contexts. The lookup helper restricts itself to the
+      // default-context (menu) entries to keep the existing
+      // assertions byName-stable.
+      const byName = new Map(
+        MEASURED_QUERIES.filter((q) => q.context === "default").map((q) => [
+          q.name,
+          q,
+        ]),
+      );
       const lookup = (name: string) => {
         const q = byName.get(name);
         if (q === undefined) throw new Error(`missing query: ${name}`);
@@ -214,6 +242,8 @@ describe("read-path-sql shared module", () => {
         periodEndIso: "2026-05-12T00:00:00.000Z",
         observedFromIso: "2026-04-12T00:00:00.000Z",
         addresses: [],
+        memberScanStartIso: null,
+        memberScanEndIso: "2026-05-12T00:00:00.000Z",
       };
       const branchB = MEASURED_QUERIES.find(
         (q) => q.name === "selectStoryProtectedCohort",
@@ -273,6 +303,127 @@ describe("read-path-sql shared module", () => {
       const filteredBody = filteredMatch?.[1] ?? "";
       expect(filteredBody).toMatch(/ROW_NUMBER\(\)/);
       expect(filteredBody).toMatch(/baseline_score\s*>=\s*\$5/);
+    });
+  });
+
+  describe("R1 / R3 cadence entries (issue #601)", () => {
+    const ctx = {
+      periodStartIso: "2026-04-12T00:00:00.000Z",
+      periodEndIso: "2026-05-12T00:00:00.000Z",
+      observedFromIso: "2026-04-12T00:00:00.000Z",
+      addresses: [],
+      memberScanStartIso: "2026-05-11T23:00:00.000Z",
+      memberScanEndIso: "2026-05-12T00:00:00.000Z",
+      r3CandidateAssets: {
+        firstTick: ["10.0.0.1", "10.0.0.2"],
+        slopReplay: ["10.0.0.3"],
+      },
+    };
+
+    const lookup = (name: string, context: "first-tick" | "slop-replay") => {
+      const q = MEASURED_QUERIES.find(
+        (e) => e.name === name && e.context === context,
+      );
+      if (q === undefined) {
+        throw new Error(`missing measured entry: ${name}:${context}`);
+      }
+      return q;
+    };
+
+    it("readR1Candidates SQL matches the cadence builder byte-for-byte", () => {
+      expect(lookup("readR1Candidates", "first-tick").sql).toBe(
+        buildReadR1CandidatesSql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR1Candidates", "slop-replay").sql).toBe(
+        buildReadR1CandidatesSql({ memberScanStartIsNull: false }),
+      );
+    });
+
+    it("readR3CandidatesPhase1 SQL matches the cadence builder byte-for-byte", () => {
+      expect(lookup("readR3CandidatesPhase1", "first-tick").sql).toBe(
+        buildReadR3CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR3CandidatesPhase1", "slop-replay").sql).toBe(
+        buildReadR3CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+      );
+    });
+
+    it("readR3CandidatesPhase2 SQL matches the cadence builder byte-for-byte", () => {
+      expect(lookup("readR3CandidatesPhase2", "first-tick").sql).toBe(
+        buildReadR3CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR3CandidatesPhase2", "slop-replay").sql).toBe(
+        buildReadR3CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+      );
+    });
+
+    it("first-tick buildParams omit the lower bound", () => {
+      const r1 = lookup("readR1Candidates", "first-tick").buildParams(ctx);
+      expect(r1).toEqual([
+        ctx.memberScanEndIso,
+        Array.from(CRITICAL_CATEGORIES),
+      ]);
+
+      const p1 = lookup("readR3CandidatesPhase1", "first-tick").buildParams(
+        ctx,
+      );
+      expect(p1).toEqual([
+        ctx.memberScanEndIso,
+        Array.from(CRITICAL_SELECTOR_SET),
+      ]);
+
+      const p2 = lookup("readR3CandidatesPhase2", "first-tick").buildParams(
+        ctx,
+      );
+      expect(p2).toEqual([
+        ctx.memberScanEndIso,
+        ctx.r3CandidateAssets.firstTick,
+        Array.from(CRITICAL_SELECTOR_SET),
+      ]);
+    });
+
+    it("slop-replay buildParams bind both bounds and use the slop-replay asset list", () => {
+      const r1 = lookup("readR1Candidates", "slop-replay").buildParams(ctx);
+      expect(r1).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        Array.from(CRITICAL_CATEGORIES),
+      ]);
+
+      const p1 = lookup("readR3CandidatesPhase1", "slop-replay").buildParams(
+        ctx,
+      );
+      expect(p1).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        Array.from(CRITICAL_SELECTOR_SET),
+      ]);
+
+      const p2 = lookup("readR3CandidatesPhase2", "slop-replay").buildParams(
+        ctx,
+      );
+      expect(p2).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        ctx.r3CandidateAssets.slopReplay,
+        Array.from(CRITICAL_SELECTOR_SET),
+      ]);
+    });
+
+    it("critical-category / critical-selector sets resolve identically to the cadence's source-of-truth `.mjs`", () => {
+      // Round-trip via buildParams ⇒ the embedded array is the same
+      // reference (or at least the same string content) the harness
+      // sees — guarantees the cadence-layer and harness-layer reads
+      // come from one source.
+      const r1Params = lookup("readR1Candidates", "first-tick").buildParams(
+        ctx,
+      ) as ReadonlyArray<unknown>;
+      expect(r1Params[1]).toEqual(Array.from(CRITICAL_CATEGORIES));
+      const p1Params = lookup(
+        "readR3CandidatesPhase1",
+        "first-tick",
+      ).buildParams(ctx) as ReadonlyArray<unknown>;
+      expect(p1Params[1]).toEqual(Array.from(CRITICAL_SELECTOR_SET));
     });
   });
 });

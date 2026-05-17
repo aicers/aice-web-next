@@ -134,4 +134,49 @@ const v = 1;`,
 
     expect(violations).toEqual([]);
   });
+
+  it("flags an inlined R1 cadence shape — `category = ANY(...)` co-occurring with `orig_addr IS NOT NULL` (issue #601)", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/repository.ts",
+        source: `await client.query(\`SELECT * FROM baseline_triaged_event WHERE event_time <= $1 AND orig_addr IS NOT NULL AND category = ANY($2::text[])\`);`,
+      },
+    ]);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].pattern).toMatch(/R1 cadence shape/);
+  });
+
+  it("flags an inlined R3 phase-1 cadence shape — `GROUP BY orig_addr ... HAVING COUNT(*) >= 3` (issue #601)", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/repository.ts",
+        source: `await client.query(\`SELECT host(orig_addr) FROM baseline_triaged_event WHERE selector_tags && $1::text[] GROUP BY orig_addr HAVING COUNT(*) >= 3\`);`,
+      },
+    ]);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].pattern).toMatch(/R3 phase-1 cadence shape/);
+  });
+
+  it("flags an inlined R3 phase-2 cadence shape — `orig_addr = ANY($N::inet[])` co-occurring with `selector_tags && $` (issue #601)", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/repository.ts",
+        source: `await client.query(\`SELECT * FROM baseline_triaged_event WHERE event_time <= $1 AND orig_addr = ANY($2::inet[]) AND selector_tags && $3::text[]\`);`,
+      },
+    ]);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].pattern).toMatch(/R3 phase-2 cadence shape/);
+  });
+
+  it("does not flag the sibling Story shared module when it carries the R1 / R3 / phase-2 patterns", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/read-path-sql.mjs",
+        source: `export const R1 = \`WHERE orig_addr IS NOT NULL AND category = ANY($1::text[])\`;
+export const R3P1 = \`GROUP BY orig_addr HAVING COUNT(*) >= 3\`;
+export const R3P2 = \`WHERE orig_addr = ANY($1::inet[]) AND selector_tags && $2::text[]\`;`,
+      },
+    ]);
+    expect(violations).toEqual([]);
+  });
 });

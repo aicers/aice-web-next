@@ -89,6 +89,36 @@ const PATTERNS = [
     label: "`orig_addr::text = ANY(` (pre-§5 cast regression)",
     test: (source) => /orig_addr::text\s*=\s*ANY\s*\(/i.test(source),
   },
+  // Issue #601: R1 / R3 cadence-side shapes. The Story cadence's R1 SQL
+  // is the only `category = ANY(...)` filter co-occurring with
+  // `orig_addr IS NOT NULL`; the R3 phase-1 SQL is the only
+  // `GROUP BY orig_addr HAVING COUNT(*) >= 3`; the R3 phase-2 SQL is
+  // the only `orig_addr = ANY($N::inet[])` co-occurring with
+  // `selector_tags && $`. An inlined copy of any of these would silently
+  // diverge from the harness's `MEASURED_QUERIES` entry the moment one
+  // side is edited.
+  {
+    label:
+      "`category = ANY(...)` co-occurring with `orig_addr IS NOT NULL` (R1 cadence shape)",
+    test: (source) =>
+      /\bcategory\s*=\s*ANY\s*\(/i.test(source) &&
+      /\borig_addr\s+IS\s+NOT\s+NULL\b/i.test(source),
+  },
+  {
+    label:
+      "`GROUP BY orig_addr ... HAVING COUNT(*) >= 3` (R3 phase-1 cadence shape)",
+    test: (source) =>
+      /\bGROUP\s+BY\s+orig_addr\b[\s\S]*?\bHAVING\s+COUNT\s*\(\s*\*\s*\)\s*>=\s*3\b/i.test(
+        source,
+      ),
+  },
+  {
+    label:
+      "`orig_addr = ANY(...::inet[])` co-occurring with `selector_tags && $` (R3 phase-2 cadence shape)",
+    test: (source) =>
+      /\borig_addr\s*=\s*ANY\s*\(\s*\$\d+::inet\[\]\s*\)/i.test(source) &&
+      /\bselector_tags\s*&&\s*\$\d+::text\[\]/i.test(source),
+  },
 ];
 
 const SOURCE_EXTS = new Set([

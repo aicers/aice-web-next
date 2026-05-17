@@ -83,20 +83,38 @@
 // ------
 //
 // Default JSON to stdout. One top-level object with `meta` (run
-// config, resolved window, cold-reading label) and `samples` (one
-// row per query × sample × phase). `--output=tsv` emits a
-// tab-separated table with columns: query, phase, sample_index,
-// elapsed_ms, row_count. The structured-JSON shape is the canonical
-// form #528 consumes; TSV is a convenience for ad-hoc inspection.
+// config, resolved window, cold-reading label, `notMeasurable`
+// entries) and `samples` (one row per query × context × sample ×
+// phase). `--output=tsv` emits a tab-separated table with columns:
+// query, context, phase, sample_index, elapsed_ms, row_count. The
+// structured-JSON shape is the canonical form #528 consumes; TSV is
+// a convenience for ad-hoc inspection.
+//
+// `context` is the cadence-context discriminator added in #601: the
+// menu queries surface as `"default"`; R1 / R3 entries surface as
+// `"first-tick"` or `"slop-replay"`. The warm and cold loops iterate
+// `queries × contexts`, so the same query name appears under
+// multiple contexts within one run.
 //
 // Sample row (JSON):
-//   { "query": "selectMenuCohort", "phase": "warm",
-//     "sampleIndex": 0, "elapsedMs": 18.42, "rowCount": 1837 }
+//   { "query": "selectMenuCohort", "context": "default",
+//     "phase": "warm", "sampleIndex": 0, "elapsedMs": 18.42,
+//     "rowCount": 1837 }
 //
-// `EXPLAIN` plans live under `meta.explainByQuery`, keyed by query
-// name. The harness emits the raw multi-line plan text from the
+// `EXPLAIN` plans live under `meta.explainByQuery`, keyed by
+// `"<name>:<context>"` (e.g. `"readR3CandidatesPhase1:slop-replay"`)
+// so the same query name under different contexts gets distinct plan
+// entries. The harness emits the raw multi-line plan text from the
 // first warm-sample run's `EXPLAIN (ANALYZE, BUFFERS, VERBOSE)` so
 // #528's consumer can pretty-print or summarize as it sees fit.
+//
+// `meta.notMeasurable` (added in #601) is an array of
+// `{ query, context, reason }` entries for (query, context) pairs
+// the harness intentionally skipped — currently R3 phase-2 when its
+// phase-1 probe returned zero assets, and slop-replay-context
+// entries when `story_finalized_through IS NULL`. No `samples` row
+// is emitted for a skipped pair; #528 rejects any run whose
+// `meta.notMeasurable` is non-empty for a gate-required query.
 //
 // Profile assertion
 // -----------------
@@ -120,6 +138,15 @@
 //   * `baseline_corpus_state.last_run_status = 'ok'` AND
 //     `last_ingested_at < 2h ago` so steady-state plans are measured,
 //     not partial first-ingest.
+//   * `baseline_corpus_state.story_finalized_through IS NOT NULL`
+//     (#601) so the slop-replay measurement is actually exercised.
+//     Fresh tenants without a cadence tick are not gate-eligible.
+//   * R3 phase-1 over the slop-replay scan range returns ≥ 5
+//     candidate asset(s) (#601). The assertion runs the same
+//     phase-1 SQL the harness measures, so the count reflects the
+//     scan the gate will actually exercise — counting `event_group`
+//     rows globally would be a weak pass signal because it does not
+//     guarantee any R3 candidates exist in the slop-replay range.
 //
 // `--skip-profile-assert` exists as a developer escape hatch when
 // running the harness against synthetic fixtures during script
@@ -135,11 +162,26 @@ import {
   MENU_CANDIDATES_PER_BUCKET,
   SELECT_MENU_COHORT_SQL,
 } from "../src/lib/triage/baseline/read-path-sql.mjs";
+import { CRITICAL_SELECTOR_SET } from "../src/lib/triage/story/critical-sets.mjs";
+import { buildReadR3CandidatesPhase1Sql } from "../src/lib/triage/story/read-path-sql.mjs";
 import {
   assertRepresentativeProfile,
   formatProfileAssertionFailure,
   ProfileAssertionError,
 } from "./measure-baseline-read-path/profile.mjs";
+
+// `MAX_RULE_WINDOW_MS` mirrors `src/lib/triage/story/rules.ts` —
+// inlined here for the plain-Node constraint. The slop-replay
+// measurement context binds `[story_finalized_through −
+// MAX_RULE_WINDOW_MS, new_horizon]` so the planner sees a
+// production-shape lookback range.
+const MAX_RULE_WINDOW_MS = 60 * 60 * 1000;
+// `SLOP_WINDOW_MS` mirrors `src/lib/triage/story/rules.ts`. Cadence
+// chooses `new_horizon = page_max_event_time − SLOP_WINDOW_MS`; the
+// harness picks `new_horizon = now − SLOP_WINDOW_MS` so the bind is a
+// representative cadence horizon, not an out-of-corpus future point.
+const SLOP_WINDOW_MS = 30 * 60 * 1000;
+const CRITICAL_SELECTOR_ARRAY = Array.from(CRITICAL_SELECTOR_SET);
 
 const DEFAULT_WARMUPS = 5;
 const DEFAULT_SAMPLES = 30;
@@ -318,7 +360,8 @@ export async function runColdPhase({
         samples: [],
         label:
           `cold reading: --cold-command=${JSON.stringify(coldCommand)} ` +
-          `failed on query ${i + 1}/${queries.length} (${query.name}); ` +
+          `failed on query ${i + 1}/${queries.length} ` +
+          `(${formatQueryLabel(query)}); ` +
           "no cold-phase samples emitted (cold state was not established " +
           "for all measured queries)",
       };
@@ -340,6 +383,16 @@ export async function runColdPhase({
     samples,
     label: lastLabel ?? runColdCommand(null, spawn).label,
   };
+}
+
+/**
+ * Render a measured-query entry as `"<name>:<context>"` for log /
+ * label use. The context suffix lets operators (and the cold-failure
+ * test) distinguish which (query, context) pair failed when the same
+ * query name is exercised under both first-tick and slop-replay.
+ */
+export function formatQueryLabel(query) {
+  return query.context ? `${query.name}:${query.context}` : query.name;
 }
 
 /**
@@ -455,6 +508,7 @@ async function measureQuery(client, query, ctx, warmups, samples) {
     if (verbose) verbosePlan = planText;
     queryRows.push({
       query: query.name,
+      context: query.context ?? "default",
       phase: "warm",
       sampleIndex: i,
       elapsedMs,
@@ -474,6 +528,7 @@ async function coldSampleQuery(client, query, ctx) {
   );
   return {
     query: query.name,
+    context: query.context ?? "default",
     phase: "cold",
     sampleIndex: 0,
     elapsedMs,
@@ -492,17 +547,139 @@ function emitTsv(meta, samples) {
       `# ${k}\t${typeof v === "object" ? JSON.stringify(v) : v}\n`,
     );
   }
-  process.stdout.write("query\tphase\tsample_index\telapsed_ms\trow_count\n");
+  // Sample-row schema gains `context` (issue #601): cadence entries
+  // emit `first-tick` / `slop-replay`, menu entries emit `default`.
+  process.stdout.write(
+    "query\tcontext\tphase\tsample_index\telapsed_ms\trow_count\n",
+  );
   for (const r of samples) {
     process.stdout.write(
-      `${r.query}\t${r.phase}\t${r.sampleIndex}\t${r.elapsedMs.toFixed(3)}\t${r.rowCount}\n`,
+      `${r.query}\t${r.context}\t${r.phase}\t${r.sampleIndex}\t${r.elapsedMs.toFixed(3)}\t${r.rowCount}\n`,
     );
   }
 }
 
+/**
+ * Run the R3 phase-1 SELECT once per measurement context against the
+ * supplied probe pool, dedupe each result, and return the two asset
+ * lists keyed by context. Phase-2's `$N::inet[]` parameter is
+ * derived from this output: phase-1 returns the set of `orig_addr`
+ * values that meet R3's `COUNT(*) >= 3` threshold, and phase-2 then
+ * fans out into per-asset GiST index probes against that set.
+ *
+ * The two lists are deliberately independent — phase-1's scan range
+ * differs between first-tick (`event_time <= memberScanEnd`) and
+ * slop-replay (`event_time >= memberScanStart AND <= memberScanEnd`),
+ * so the candidate-asset cardinality and identity can also differ.
+ *
+ * Returns `{firstTick, slopReplay}`, each a string[] of the deduped
+ * asset list. Either list may be empty; the caller emits a
+ * `meta.notMeasurable` entry per empty list and skips the matching
+ * phase-2 (query, context) measurement.
+ */
+export async function probeR3CandidateAssets(pool, ctx) {
+  const firstTick = await runPhase1Probe(pool, {
+    memberScanStartIsNull: true,
+    params: [ctx.memberScanEndIso, CRITICAL_SELECTOR_ARRAY],
+  });
+  const slopReplay =
+    ctx.memberScanStartIso === null
+      ? []
+      : await runPhase1Probe(pool, {
+          memberScanStartIsNull: false,
+          params: [
+            ctx.memberScanStartIso,
+            ctx.memberScanEndIso,
+            CRITICAL_SELECTOR_ARRAY,
+          ],
+        });
+  return { firstTick, slopReplay };
+}
+
+async function runPhase1Probe(pool, { memberScanStartIsNull, params }) {
+  const sql = buildReadR3CandidatesPhase1Sql({ memberScanStartIsNull });
+  const { rows } = await pool.query(sql, params);
+  return Array.from(
+    new Set(
+      rows
+        .map((r) => r.orig_addr)
+        .filter((a) => typeof a === "string" && a.length > 0),
+    ),
+  );
+}
+
+/**
+ * Read `baseline_corpus_state.story_finalized_through` from the probe
+ * pool, returning the value as ms since epoch or `null` when the
+ * cadence has never advanced the watermark. The slop-replay
+ * measurement context derives its `memberScanStart` from this value
+ * — a fresh tenant (`null`) is fine for the first-tick context but
+ * not for the gate-required slop-replay context, which the profile
+ * assertion enforces.
+ */
+export async function readStoryFinalizedThroughMs(pool) {
+  const { rows } = await pool.query(
+    `SELECT story_finalized_through FROM baseline_corpus_state WHERE id = true`,
+  );
+  if (rows.length === 0 || rows[0].story_finalized_through === null) {
+    return null;
+  }
+  return new Date(rows[0].story_finalized_through).getTime();
+}
+
+/**
+ * Partition the registered measured queries into a measurable subset
+ * and a `notMeasurable` list. The harness skips the not-measurable
+ * (query, context) pairs in both warm and cold phases and records
+ * them in `meta.notMeasurable` so #528 can detect the silent-skip
+ * regression.
+ *
+ * Phase-2 entries become not-measurable when the matching phase-1
+ * probe returned zero assets — the `ANY($::inet[])` bind would be
+ * empty and the plan would degenerate (no rows scanned, no useful
+ * timing). Per the contract locked in by issue #601, the harness
+ * does NOT emit `samples` rows for these; the absence is intentional
+ * and `meta.notMeasurable` is the load-bearing signal.
+ */
+export function partitionMeasurableQueries(queries, ctx) {
+  const measurable = [];
+  const notMeasurable = [];
+  for (const q of queries) {
+    // Slop-replay binds `$N = memberScanStartIso`. When the cadence
+    // has never advanced the watermark (`story_finalized_through IS
+    // NULL`), the bind is `null` and the SELECT degenerates — fail
+    // closed via `notMeasurable` so #528 sees the explicit skip.
+    if (q.context === "slop-replay" && ctx.memberScanStartIso === null) {
+      notMeasurable.push({
+        query: q.name,
+        context: q.context,
+        reason:
+          "baseline_corpus_state.story_finalized_through IS NULL " +
+          "(no previous watermark — slop-replay path not exercised)",
+      });
+      continue;
+    }
+    if (q.name === "readR3CandidatesPhase2") {
+      const key = q.context === "first-tick" ? "firstTick" : "slopReplay";
+      const assets = ctx.r3CandidateAssets?.[key] ?? [];
+      if (assets.length === 0) {
+        notMeasurable.push({
+          query: q.name,
+          context: q.context,
+          reason: "phase-1 returned 0 assets",
+        });
+        continue;
+      }
+    }
+    measurable.push(q);
+  }
+  return { measurable, notMeasurable };
+}
+
 async function main(argv) {
   const args = parseArgs(argv);
-  const { periodStartIso, periodEndIso } = resolveWindow(args.window);
+  const nowMs = Date.now();
+  const { periodStartIso, periodEndIso } = resolveWindow(args.window, nowMs);
   // `observedFromIso` matches the production formula in
   // `server-actions.ts`: `max(periodStart, now() - retention)`. The
   // retention floor is hard-coded to 30 days here to mirror the
@@ -511,22 +688,52 @@ async function main(argv) {
   const retentionMs = 30 * 24 * 60 * 60 * 1000;
   const observedFromMs = Math.max(
     Date.parse(periodStartIso),
-    Date.now() - retentionMs,
+    nowMs - retentionMs,
   );
   const observedFromIso = new Date(observedFromMs).toISOString();
 
-  // First connection: profile assertion + address sampling. We close
-  // this pool before invoking `--cold-command` so a destructive cold
-  // command (e.g. `systemctl restart postgresql`) cannot strand
-  // in-flight queries or leak a dead connection into the measurement
-  // pool below.
+  // `memberScanEnd` mirrors the cadence's `new_horizon = page_max −
+  // SLOP_WINDOW_MS` (Story RFC §3 / §4). The harness picks `now −
+  // SLOP_WINDOW_MS` so the bind is a representative cadence horizon
+  // — close to the corpus high-water mark the profile assertion
+  // already required is within 2 hours of now.
+  const memberScanEndMs = nowMs - SLOP_WINDOW_MS;
+  const memberScanEndIso = new Date(memberScanEndMs).toISOString();
+
+  // First connection: profile assertion + address sampling + Story
+  // cadence-shape probes. We close this pool before invoking
+  // `--cold-command` so a destructive cold command (e.g.
+  // `systemctl restart postgresql`) cannot strand in-flight queries
+  // or leak a dead connection into the measurement pool below.
   let addresses;
+  let storyFinalizedThroughMs = null;
+  let r3CandidateAssets = { firstTick: [], slopReplay: [] };
+  // `memberScanStartIso` mirrors the cadence's
+  // `previous_watermark − MAX_RULE_WINDOW_MS` (slop replay). Null
+  // when the tenant has never finalized a watermark — in that case
+  // only the first-tick context is measurable.
+  let memberScanStartIso = null;
   {
     const probePool = new pg.Pool({ connectionString: args.connectionString });
     try {
+      // Read the current Story watermark before the profile assertion
+      // so the assertion can be threaded the slop-replay scan range
+      // it needs to count phase-1 candidate assets.
+      storyFinalizedThroughMs = await readStoryFinalizedThroughMs(probePool);
+      if (storyFinalizedThroughMs !== null) {
+        memberScanStartIso = new Date(
+          storyFinalizedThroughMs - MAX_RULE_WINDOW_MS,
+        ).toISOString();
+      }
       if (!args.skipProfileAssert) {
         try {
-          await assertRepresentativeProfile(probePool);
+          await assertRepresentativeProfile(probePool, {
+            nowMs,
+            memberScan: {
+              startIso: memberScanStartIso,
+              endIso: memberScanEndIso,
+            },
+          });
         } catch (err) {
           if (err instanceof ProfileAssertionError) {
             process.stderr.write(formatProfileAssertionFailure(err));
@@ -550,6 +757,16 @@ async function main(argv) {
         periodStartIso,
         periodEndIso,
       );
+
+      // Phase-1 probe for both contexts. Phase-2's `$N::inet[]`
+      // parameter is the row set returned by phase-1 — not a value
+      // derivable from static context — so phase-2 cannot be a pure
+      // `buildParams(ctx)` entry without this prefetch. The result
+      // is deduped per `Set` semantics inside `runPhase1Probe`.
+      r3CandidateAssets = await probeR3CandidateAssets(probePool, {
+        memberScanStartIso,
+        memberScanEndIso,
+      });
     } finally {
       await probePool.end();
     }
@@ -560,7 +777,24 @@ async function main(argv) {
     periodEndIso,
     observedFromIso,
     addresses,
+    memberScanStartIso,
+    memberScanEndIso,
+    r3CandidateAssets,
   };
+
+  // Partition MEASURED_QUERIES by measurability against `ctx`. A
+  // phase-2 (query, context) whose phase-1 probe returned zero
+  // assets becomes a `notMeasurable` entry — no sample row, just a
+  // meta record per the issue #601 contract.
+  const { measurable, notMeasurable } = partitionMeasurableQueries(
+    MEASURED_QUERIES,
+    ctx,
+  );
+  for (const entry of notMeasurable) {
+    process.stderr.write(
+      `[measure-baseline-read-path] not measurable: ${entry.query}:${entry.context} — ${entry.reason}\n`,
+    );
+  }
 
   // Cold phase (AFTER the probe pool closes, BEFORE the measurement
   // pool opens). Re-runs `--cold-command` on a fresh `pg.Pool` for
@@ -571,7 +805,7 @@ async function main(argv) {
   // never a partial mix.
   const cold = await runColdPhase({
     coldCommand: args.coldCommand,
-    queries: MEASURED_QUERIES,
+    queries: measurable,
     ctx,
     makePool: () => new pg.Pool({ connectionString: args.connectionString }),
   });
@@ -585,8 +819,10 @@ async function main(argv) {
 
       // The queries share the connection and must run serially so
       // the planner cache state stays comparable across queries
-      // within a run.
-      for (const query of MEASURED_QUERIES) {
+      // within a run. `explainByQuery` is keyed by
+      // `"<name>:<context>"` because the same query name appears
+      // under multiple contexts (#601).
+      for (const query of measurable) {
         const { samples, verbosePlan } = await measureQuery(
           client,
           query,
@@ -595,7 +831,7 @@ async function main(argv) {
           args.samples,
         );
         allSamples.push(...samples);
-        explainByQuery[query.name] = verbosePlan;
+        explainByQuery[formatQueryLabel(query)] = verbosePlan;
       }
 
       const meta = {
@@ -604,11 +840,22 @@ async function main(argv) {
         periodStartIso,
         periodEndIso,
         observedFromIso,
+        memberScanStartIso,
+        memberScanEndIso,
+        storyFinalizedThroughIso:
+          storyFinalizedThroughMs === null
+            ? null
+            : new Date(storyFinalizedThroughMs).toISOString(),
+        r3CandidateAssetCounts: {
+          firstTick: r3CandidateAssets.firstTick.length,
+          slopReplay: r3CandidateAssets.slopReplay.length,
+        },
         warmups: args.warmups,
         samples: args.samples,
         coldReading: cold.label,
         addressSampleSize: addresses.length,
         menuCandidatesPerBucket: MENU_CANDIDATES_PER_BUCKET,
+        notMeasurable,
         explainByQuery,
       };
 

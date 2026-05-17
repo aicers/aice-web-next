@@ -450,15 +450,54 @@ export const COUNT_ELIGIBLE_BY_STOP_SQL = `WITH scored AS (
             COUNT(*) FILTER (WHERE baseline_score >= 0.95 OR in_story)::text AS eligible_top5
        FROM scored`;
 
+// ── R1 / R3 cadence-side measured-query registration (issue #601) ──
+//
+// The R1 / R3 SQL builders live in `../story/read-path-sql.mjs` next
+// to the cadence's production caller (`../story/repository.ts`). The
+// harness pulls them in here so adding a measurable query is a
+// one-line change against `MEASURED_QUERIES`. The `critical-sets.mjs`
+// import keeps the `$N::text[]` binds reading the same source of
+// truth the cadence and rule layers do — see the module's header for
+// the Node-safe boundary rationale.
+import {
+  CRITICAL_CATEGORIES,
+  CRITICAL_SELECTOR_SET,
+} from "../story/critical-sets.mjs";
+import {
+  buildReadR1CandidatesSql,
+  buildReadR3CandidatesPhase1Sql,
+  buildReadR3CandidatesPhase2Sql,
+} from "../story/read-path-sql.mjs";
+
+const CRITICAL_CATEGORIES_ARRAY = Array.from(CRITICAL_CATEGORIES);
+const CRITICAL_SELECTOR_ARRAY = Array.from(CRITICAL_SELECTOR_SET);
+
 /**
- * Ordered list of measured queries, keyed by the function name used in
- * `server-actions.ts`. Consumed by the harness so the harness's query
- * coverage stays in lock-step with this module — adding a sixth
- * measurable query is a one-line change in this array, not a forked
- * loop body.
+ * Ordered list of measured (query × context) entries. Each entry
+ * names the production function in `server-actions.ts` or the
+ * cadence's `story/repository.ts`, along with the harness context it
+ * exercises:
+ *
+ *   * `"default"` — the menu-tab read path. One entry per query.
+ *   * `"first-tick"` — Story cadence with `memberScanStart === null`.
+ *     The WHERE clause omits the lower-bound bind.
+ *   * `"slop-replay"` — Story cadence with both bounds bound to
+ *     `[previous_watermark − MAX_RULE_WINDOW_MS, new_horizon]`.
+ *
+ * The harness iterates this flat list — so adding a (query, context)
+ * pair is a one-line change here, not a forked loop body. The
+ * existing menu queries use the `"default"` sentinel literal so the
+ * TSV consumer never sees an absent context column.
+ *
+ * R3 phase-2 entries depend on the phase-1 probe step the harness
+ * runs before warm-up: `ctx.r3CandidateAssets.firstTick` /
+ * `.slopReplay` is the deduped asset list phase-1 returned for that
+ * context. An empty list means "not measurable" — the harness omits
+ * the sample rows AND records the skip in `meta.notMeasurable`.
  *
  * @type {ReadonlyArray<{
  *   name: string,
+ *   context: "default" | "first-tick" | "slop-replay",
  *   sql: string,
  *   buildParams: (ctx: import("./read-path-sql.js").HarnessContext) => unknown[]
  * }>}
@@ -466,6 +505,7 @@ export const COUNT_ELIGIBLE_BY_STOP_SQL = `WITH scored AS (
 export const MEASURED_QUERIES = [
   {
     name: "selectMenuCohort",
+    context: "default",
     sql: SELECT_MENU_COHORT_SQL,
     buildParams: (ctx) => [
       ctx.periodStartIso,
@@ -475,16 +515,19 @@ export const MEASURED_QUERIES = [
   },
   {
     name: "countObserved",
+    context: "default",
     sql: COUNT_OBSERVED_SQL,
     buildParams: (ctx) => [ctx.observedFromIso, ctx.periodEndIso],
   },
   {
     name: "countTriaged",
+    context: "default",
     sql: COUNT_TRIAGED_SQL,
     buildParams: (ctx) => [ctx.periodStartIso, ctx.periodEndIso],
   },
   {
     name: "perAssetObservedCounts",
+    context: "default",
     sql: PER_ASSET_OBSERVED_COUNTS_SQL,
     buildParams: (ctx) => [
       ctx.observedFromIso,
@@ -494,6 +537,7 @@ export const MEASURED_QUERIES = [
   },
   {
     name: "selectAssetDetailEventsBatch",
+    context: "default",
     sql: SELECT_ASSET_DETAIL_EVENTS_BATCH_SQL,
     buildParams: (ctx) => [
       ctx.periodStartIso,
@@ -505,6 +549,7 @@ export const MEASURED_QUERIES = [
   },
   {
     name: "selectStoryProtectedCohort",
+    context: "default",
     sql: SELECT_STORY_PROTECTED_COHORT_SQL,
     buildParams: (ctx) => [
       ctx.periodStartIso,
@@ -516,7 +561,61 @@ export const MEASURED_QUERIES = [
   },
   {
     name: "countEligibleByStop",
+    context: "default",
     sql: COUNT_ELIGIBLE_BY_STOP_SQL,
     buildParams: (ctx) => [ctx.periodStartIso, ctx.periodEndIso],
+  },
+  {
+    name: "readR1Candidates",
+    context: "first-tick",
+    sql: buildReadR1CandidatesSql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [ctx.memberScanEndIso, CRITICAL_CATEGORIES_ARRAY],
+  },
+  {
+    name: "readR1Candidates",
+    context: "slop-replay",
+    sql: buildReadR1CandidatesSql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      CRITICAL_CATEGORIES_ARRAY,
+    ],
+  },
+  {
+    name: "readR3CandidatesPhase1",
+    context: "first-tick",
+    sql: buildReadR3CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [ctx.memberScanEndIso, CRITICAL_SELECTOR_ARRAY],
+  },
+  {
+    name: "readR3CandidatesPhase1",
+    context: "slop-replay",
+    sql: buildReadR3CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      CRITICAL_SELECTOR_ARRAY,
+    ],
+  },
+  {
+    name: "readR3CandidatesPhase2",
+    context: "first-tick",
+    sql: buildReadR3CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [
+      ctx.memberScanEndIso,
+      ctx.r3CandidateAssets?.firstTick ?? [],
+      CRITICAL_SELECTOR_ARRAY,
+    ],
+  },
+  {
+    name: "readR3CandidatesPhase2",
+    context: "slop-replay",
+    sql: buildReadR3CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      ctx.r3CandidateAssets?.slopReplay ?? [],
+      CRITICAL_SELECTOR_ARRAY,
+    ],
   },
 ];
