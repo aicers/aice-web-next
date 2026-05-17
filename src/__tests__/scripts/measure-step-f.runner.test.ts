@@ -75,12 +75,15 @@ import { EMPTY_EXCLUSION_SET_RESOLVER } from "@/lib/triage/exclusion";
 
 import {
   buildLockKeyParam,
+  buildStepFSampleRow,
   type FetchEventPageFn,
   LockNotAcquiredError,
   type LockProbeClient,
   pairedDeltas,
   percentile,
   runStepFMeasurement,
+  STEP_F_SAMPLE_CONTEXT,
+  STEP_F_SAMPLE_QUERY,
   summarizeFullTick,
   summarizePageSamples,
   tryAcquireAdvisoryLock,
@@ -171,6 +174,75 @@ describe("measure-step-f — summarizePageSamples / summarizeFullTick", () => {
 
   it("returns null when no pages were measured", () => {
     expect(summarizeFullTick([])).toBeNull();
+  });
+});
+
+describe("measure-step-f — buildStepFSampleRow (canonical harness shape)", () => {
+  // #602 says raw sample rows must match the shape
+  // `scripts/measure-baseline-read-path.mjs` emits so any consumer that
+  // already ingests harness samples can treat this runner's output as
+  // the same `samples` array. The canonical keys are `query`,
+  // `context`, `phase`, `sampleIndex`, `elapsedMs`, `rowCount`.
+  it("emits all six canonical harness keys plus the page-specific fields used by #603", () => {
+    const row = buildStepFSampleRow({
+      phase: "baseline",
+      sampleIndex: 4,
+      elapsedMs: 1.5,
+      rowCount: 100,
+      pageIndex: 7,
+      observedInserted: 17,
+      baselineInserted: 13,
+    });
+    expect(Object.keys(row).sort()).toEqual(
+      [
+        "baselineInserted",
+        "context",
+        "elapsedMs",
+        "observedInserted",
+        "pageIndex",
+        "phase",
+        "query",
+        "rowCount",
+        "sampleIndex",
+      ].sort(),
+    );
+  });
+
+  it("populates `query` and `context` from the stable module-level constants on every phase", () => {
+    for (const phase of ["baseline", "treated", "advance"] as const) {
+      const row = buildStepFSampleRow({
+        phase,
+        sampleIndex: 0,
+        elapsedMs: 1,
+        rowCount: 1,
+        pageIndex: 0,
+        observedInserted: 0,
+        baselineInserted: 0,
+      });
+      expect(row.query).toBe(STEP_F_SAMPLE_QUERY);
+      expect(row.query).toBe("processFetchedPage");
+      expect(row.context).toBe(STEP_F_SAMPLE_CONTEXT);
+      expect(row.context).toBe("step-f-tick");
+    }
+  });
+
+  it("carries through the page-specific timing and counter fields verbatim", () => {
+    const row = buildStepFSampleRow({
+      phase: "treated",
+      sampleIndex: 11,
+      elapsedMs: 42.5,
+      rowCount: 73,
+      pageIndex: 3,
+      observedInserted: 9,
+      baselineInserted: 5,
+    });
+    expect(row.phase).toBe("treated");
+    expect(row.sampleIndex).toBe(11);
+    expect(row.elapsedMs).toBe(42.5);
+    expect(row.rowCount).toBe(73);
+    expect(row.pageIndex).toBe(3);
+    expect(row.observedInserted).toBe(9);
+    expect(row.baselineInserted).toBe(5);
   });
 });
 

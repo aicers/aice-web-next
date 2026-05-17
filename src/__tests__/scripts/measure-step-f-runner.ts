@@ -85,13 +85,69 @@ import type { ActiveExclusionSetResolver } from "@/lib/triage/exclusion";
 /** Sample-row labels emitted in the JSON output. */
 export type StepFSamplePhase = "baseline" | "treated" | "advance";
 
+/**
+ * Stable `query` value on every emitted raw sample row, matching the
+ * canonical harness sample shape from
+ * `scripts/measure-baseline-read-path.mjs`. The runner measures one
+ * thing — the per-page processing block — so the value never varies
+ * across rows; `phase` carries the toggle/advance discriminator.
+ */
+export const STEP_F_SAMPLE_QUERY = "processFetchedPage";
+
+/**
+ * Stable `context` value on every emitted raw sample row. The runner
+ * walks one full cadence tick per invocation; using a fixed
+ * cadence-context discriminator keeps the output parseable by any
+ * consumer that already accepts harness `samples` rows (#603).
+ */
+export const STEP_F_SAMPLE_CONTEXT = "step-f-tick";
+
+/**
+ * Raw sample row. Includes the canonical harness fields (`query`,
+ * `context`, `phase`, `sampleIndex`, `elapsedMs`, `rowCount`) so a
+ * consumer that already ingests `measure-baseline-read-path.mjs`
+ * samples can treat this output as the same shape, plus page-specific
+ * fields (`pageIndex`, `observedInserted`, `baselineInserted`) the
+ * #603 gate uses to attribute timing to a specific page.
+ */
 export interface StepFSampleRow {
-  pageIndex: number;
+  query: typeof STEP_F_SAMPLE_QUERY;
+  context: typeof STEP_F_SAMPLE_CONTEXT;
   phase: StepFSamplePhase;
   sampleIndex: number;
   elapsedMs: number;
+  rowCount: number;
+  pageIndex: number;
   observedInserted: number;
   baselineInserted: number;
+}
+
+/**
+ * Build a raw sample row with the canonical harness fields (`query`,
+ * `context`) populated from the module-level constants. Both the
+ * toggle-sample push site and the advance-pass push site go through
+ * this helper so the canonical fields cannot drift between them.
+ */
+export function buildStepFSampleRow(args: {
+  phase: StepFSamplePhase;
+  sampleIndex: number;
+  elapsedMs: number;
+  rowCount: number;
+  pageIndex: number;
+  observedInserted: number;
+  baselineInserted: number;
+}): StepFSampleRow {
+  return {
+    query: STEP_F_SAMPLE_QUERY,
+    context: STEP_F_SAMPLE_CONTEXT,
+    phase: args.phase,
+    sampleIndex: args.sampleIndex,
+    elapsedMs: args.elapsedMs,
+    rowCount: args.rowCount,
+    pageIndex: args.pageIndex,
+    observedInserted: args.observedInserted,
+    baselineInserted: args.baselineInserted,
+  };
 }
 
 export interface PerPageStats {
@@ -494,6 +550,7 @@ export async function runStepFMeasurement(
         pageIndex,
         phase: "baseline",
         customerId,
+        rowCount: edges.length,
       });
 
       const treatedMs = await sampleToggleFor({
@@ -509,6 +566,7 @@ export async function runStepFMeasurement(
         pageIndex,
         phase: "treated",
         customerId,
+        rowCount: edges.length,
       });
 
       // Advance pass — RELEASE (not ROLLBACK TO) so the next page sees
@@ -549,14 +607,17 @@ export async function runStepFMeasurement(
         throw err;
       }
       await client.query(`RELEASE SAVEPOINT ${advanceSp}`);
-      sampleRows.push({
-        pageIndex,
-        phase: "advance",
-        sampleIndex: 0,
-        elapsedMs: advanceElapsed,
-        observedInserted: advanceResult.observedInserted,
-        baselineInserted: advanceResult.baselineInserted,
-      });
+      sampleRows.push(
+        buildStepFSampleRow({
+          phase: "advance",
+          sampleIndex: 0,
+          elapsedMs: advanceElapsed,
+          rowCount: edges.length,
+          pageIndex,
+          observedInserted: advanceResult.observedInserted,
+          baselineInserted: advanceResult.baselineInserted,
+        }),
+      );
 
       perPage.push(
         summarizePageSamples(pageIndex, edges.length, baselineMs, treatedMs),
@@ -603,6 +664,7 @@ interface SampleToggleArgs {
   sampleRows: StepFSampleRow[];
   pageIndex: number;
   phase: StepFSamplePhase;
+  rowCount: number;
 }
 
 async function sampleToggleFor(args: SampleToggleArgs): Promise<number[]> {
@@ -619,6 +681,7 @@ async function sampleToggleFor(args: SampleToggleArgs): Promise<number[]> {
     sampleRows,
     pageIndex,
     phase,
+    rowCount,
   } = args;
   const elapsedMs: number[] = [];
   for (let j = 0; j < samples; j++) {
@@ -642,14 +705,17 @@ async function sampleToggleFor(args: SampleToggleArgs): Promise<number[]> {
     await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
     await client.query(`RELEASE SAVEPOINT ${sp}`);
     elapsedMs.push(elapsed);
-    sampleRows.push({
-      pageIndex,
-      phase,
-      sampleIndex: j,
-      elapsedMs: elapsed,
-      observedInserted: result.observedInserted,
-      baselineInserted: result.baselineInserted,
-    });
+    sampleRows.push(
+      buildStepFSampleRow({
+        phase,
+        sampleIndex: j,
+        elapsedMs: elapsed,
+        rowCount,
+        pageIndex,
+        observedInserted: result.observedInserted,
+        baselineInserted: result.baselineInserted,
+      }),
+    );
   }
   return elapsedMs;
 }
