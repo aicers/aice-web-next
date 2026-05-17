@@ -19,14 +19,31 @@
  *
  *   - `INSERT` on `observed_event_meta`, `baseline_triaged_event`,
  *     `event_group`, `event_group_member`.
- *   - `UPDATE` on `baseline_corpus_state` (`story_finalized_through`,
- *     `last_event_cursor`, run-status columns).
+ *   - `UPDATE` on `baseline_corpus_state` covering every column the
+ *     runner writes inside the outer transaction:
+ *       * `story_finalized_through` — advanced by step (f) inside
+ *         `processFetchedPage`.
+ *       * `last_event_cursor` — mirrored from cadence's per-page
+ *         `markOk` after the unrolled advance pass.
+ *       * `last_ingested_at` — set to `NOW()` by the `markOk` mirror.
+ *       * `corpus_activated_at` — `COALESCE`-set by the `markOk`
+ *         mirror on first activation.
+ *       * `baseline_version` — written to `PHASE_1B_BASELINE_VERSION`
+ *         by the `markOk` mirror.
+ *       * `exclusions_fp` — written to the active resolver's
+ *         fingerprint by the `markOk` mirror.
+ *       * `last_run_status` — `'running'` on entry, `'ok'` after each
+ *         advance pass.
+ *       * `last_error` — `NULL`-set by both the `markRunning` and
+ *         `markOk` mirrors.
  *   - A connection that opens its own transactions (no PgBouncer
  *     transaction-pool interposing on the rollback boundary).
  *
  * Rollback-per-sample still needs those grants — `SAVEPOINT … ROLLBACK
  * TO SAVEPOINT` requires the writes to be syntactically authorised
- * before they are discarded.
+ * before they are discarded. The final outer `ROLLBACK` then discards
+ * every `baseline_corpus_state` write listed above, so post-run state
+ * is byte-identical to pre-run state.
  *
  * Concurrency: the runner takes the same per-customer advisory lock
  * the cadence pager uses (`pg_try_advisory_xact_lock(hashtext(...))`

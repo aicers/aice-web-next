@@ -23,8 +23,24 @@
  *
  *   - INSERT on observed_event_meta, baseline_triaged_event,
  *     event_group, event_group_member.
- *   - UPDATE on baseline_corpus_state (story_finalized_through,
- *     last_event_cursor, run-status columns).
+ *   - UPDATE on baseline_corpus_state covering every column the runner
+ *     writes inside the outer transaction:
+ *       * story_finalized_through (advanced by step (f) inside
+ *         processFetchedPage)
+ *       * last_event_cursor (mirrored from cadence's per-page markOk
+ *         after the unrolled advance pass)
+ *       * last_ingested_at, corpus_activated_at (set by the markOk
+ *         mirror — NOW() and COALESCE(corpus_activated_at, NOW())
+ *         respectively)
+ *       * baseline_version, exclusions_fp (set by the markOk mirror
+ *         to PHASE_1B_BASELINE_VERSION and the active resolver's
+ *         fingerprint)
+ *       * last_run_status ('running' on entry, 'ok' after each
+ *         advance pass)
+ *       * last_error (NULL-set by both the markRunning and markOk
+ *         mirrors)
+ *     The final outer ROLLBACK discards every write above, so post-run
+ *     state is byte-identical to pre-run state.
  *   - The connection must open its own transactions — no PgBouncer
  *     transaction-pool interposing on the rollback boundary, otherwise
  *     the per-sample SAVEPOINT semantics break.
