@@ -149,6 +149,17 @@ interface TriageShellProps {
    */
   inScopeCustomerIds?: readonly number[];
   /**
+   * Server-resolved `{ configured }` flag from
+   * {@link getAimerIntegrationSetupStatus}. Threaded down to the
+   * Stories tab so the per-Story Send button can grey out (with an
+   * explanatory tooltip) until an administrator has filled in
+   * `aice_id`, the aimer-web bridge URL, and an active signing key.
+   * Without this gate the operator would only discover the missing
+   * configuration after clicking and hitting a `/build-envelope`
+   * route error.
+   */
+  aimerIntegrationConfigured?: boolean;
+  /**
    * Admin-only rebuild affordance (#473). When the caller is a
    * `SystemAdministrator`, the page passes the resolved single
    * customer (or `null` to render the disabled multi-scope tooltip)
@@ -173,6 +184,7 @@ export function TriageShell({
   initialStories = [],
   initialStoriesTruncated = false,
   inScopeCustomerIds = [],
+  aimerIntegrationConfigured = false,
   rebuild,
   labels,
 }: TriageShellProps) {
@@ -493,6 +505,7 @@ export function TriageShell({
               stories={initialStories}
               storiesTruncated={initialStoriesTruncated}
               inScopeCustomerIds={inScopeCustomerIds}
+              aimerIntegrationConfigured={aimerIntegrationConfigured}
               labels={labels.baseline}
             />
             {rebuildInProgress && labels.rebuild ? (

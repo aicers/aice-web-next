@@ -2203,6 +2203,7 @@
         "open": "Open",
         "sendToAimerWeb": "Send to aimer-web",
         "sendToAimerWebTooltip": "Send Story to aimer-web for LLM analysis",
+        "sendToAimerWebDisabledTooltip": "Aimer integration is not configured. Ask an administrator to set the aice_id, aimer-web bridge URL, and active signing key in Settings → Aimer integration.",
         "sentIndicatorTemplate": "Sent to aimer-web · {relative}",
         "sentMultiTemplate": "{count}×",
         "sendMoreMenuLabel": "More send options",

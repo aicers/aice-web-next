@@ -44,6 +44,14 @@ export interface TriageStoryCardLabels {
   open: string;
   sendToAimerWeb: string;
   sendToAimerWebTooltip: string;
+  /**
+   * Tooltip shown when {@link StoryCardProps.sendDisabled} is `true`
+   * (the Aimer integration is missing one of `aice_id`, the bridge
+   * URL, or an active signing key). Surfaced in place of
+   * {@link sendToAimerWebTooltip} so the operator can recognise the
+   * grey-out before clicking and getting a route error.
+   */
+  sendToAimerWebDisabledTooltip: string;
   /** Template for the β submission indicator. `{relative}` → e.g. "12 min ago". */
   sentIndicatorTemplate: string;
   /** Multi-send suffix. Template `{count}×` (e.g. `3×`). */
@@ -233,7 +241,11 @@ export function TriageStoryCard({
             data-testid="triage-story-send"
             disabled={sendButtonDisabled}
             aria-disabled={sendButtonDisabled ? "true" : "false"}
-            title={labels.sendToAimerWebTooltip}
+            title={
+              sendDisabled === true
+                ? labels.sendToAimerWebDisabledTooltip
+                : labels.sendToAimerWebTooltip
+            }
             onClick={() => void handleSend(false)}
             className={
               sendButtonDisabled

@@ -335,6 +335,7 @@ const LABELS: TriageShellLabels = {
         open: "Open",
         sendToAimerWeb: "Send",
         sendToAimerWebTooltip: "not yet",
+        sendToAimerWebDisabledTooltip: "integration not configured",
         sentIndicatorTemplate: "Sent {relative}",
         sentMultiTemplate: "{count}×",
         sendMoreMenuLabel: "More",

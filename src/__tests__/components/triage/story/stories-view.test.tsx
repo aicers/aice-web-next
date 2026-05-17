@@ -66,6 +66,7 @@ const LABELS: TriageStoriesViewLabels = {
     open: "Open",
     sendToAimerWeb: "Send to aimer-web",
     sendToAimerWebTooltip: "LLM analysis not yet available",
+    sendToAimerWebDisabledTooltip: "Aimer integration not configured",
     sentIndicatorTemplate: "Sent {relative}",
     sentMultiTemplate: "{count}×",
     sendMoreMenuLabel: "More send options",
@@ -252,11 +253,12 @@ describe("TriageStoriesView — empty / list / sort / unsent-only filter", () =>
  * regardless of environment. The disabled-state flip is owned by #493.
  */
 describe("Send-to-aimer-web button — wired in #493", () => {
-  it("renders enabled with the stable data-action hook and tooltip", () => {
+  it("renders enabled with the stable data-action hook and tooltip when the Aimer integration is configured", () => {
     render(
       <TriageStoriesView
         stories={[makeStory()]}
         truncated={false}
+        aimerIntegrationConfigured={true}
         focused={null}
         onFocus={() => {}}
         labels={LABELS}
@@ -267,6 +269,49 @@ describe("Send-to-aimer-web button — wired in #493", () => {
     expect(btn.getAttribute("aria-disabled")).toBe("false");
     expect(btn.getAttribute("data-action")).toBe("send-to-aimer-web");
     expect(btn.getAttribute("title")).toBe(LABELS.card.sendToAimerWebTooltip);
+  });
+
+  it("greys out the Send button + kebab menu and surfaces the disabled tooltip when the Aimer integration is not configured", () => {
+    render(
+      <TriageStoriesView
+        stories={[makeStory()]}
+        truncated={false}
+        // `aimerIntegrationConfigured` omitted — the default is
+        // `false`, matching what a fresh page render sees when the
+        // admin has not filled in the `aice_id` / bridge URL / signing
+        // key triple. The Send affordance must surface the
+        // explanatory tooltip rather than letting the user click and
+        // hit a route error.
+        focused={null}
+        onFocus={() => {}}
+        labels={LABELS}
+      />,
+    );
+    const btn = screen.getByTestId("triage-story-send");
+    expect(btn.hasAttribute("disabled")).toBe(true);
+    expect(btn.getAttribute("aria-disabled")).toBe("true");
+    expect(btn.getAttribute("title")).toBe(
+      LABELS.card.sendToAimerWebDisabledTooltip,
+    );
+    const menuTrigger = screen.getByTestId("triage-story-send-menu");
+    expect(menuTrigger.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("does not invoke manualSendToAimerWeb when the Send button is clicked while the integration is not configured", async () => {
+    manualSendToAimerWebMock.mockReset();
+    render(
+      <TriageStoriesView
+        stories={[makeStory()]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        labels={LABELS}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-story-send"));
+    });
+    expect(manualSendToAimerWebMock).not.toHaveBeenCalled();
   });
 });
 
@@ -304,6 +349,7 @@ describe("TriageStoriesView — manual Send wiring (#493)", () => {
       <TriageStoriesView
         stories={[story]}
         truncated={false}
+        aimerIntegrationConfigured={true}
         focused={null}
         onFocus={() => {}}
         labels={LABELS}
@@ -344,6 +390,7 @@ describe("TriageStoriesView — manual Send wiring (#493)", () => {
       <TriageStoriesView
         stories={[story]}
         truncated={false}
+        aimerIntegrationConfigured={true}
         focused={null}
         onFocus={() => {}}
         labels={LABELS}
@@ -375,6 +422,7 @@ describe("TriageStoriesView — manual Send wiring (#493)", () => {
       <TriageStoriesView
         stories={[story]}
         truncated={false}
+        aimerIntegrationConfigured={true}
         focused={null}
         onFocus={() => {}}
         labels={LABELS}

@@ -7,6 +7,7 @@ import {
   type TriageShellState,
 } from "@/components/triage/triage-shell";
 import { isSystemAdministrator } from "@/lib/aimer/role-guard";
+import { getAimerIntegrationSetupStatus } from "@/lib/aimer/setup-status";
 import {
   type EffectiveCustomerScope,
   getEffectiveCustomerScope,
@@ -67,6 +68,15 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
   const rawStrictness =
     typeof rawParams.strictness === "string" ? rawParams.strictness : null;
   const strictness = parseStrictnessStopId(rawStrictness);
+
+  // Minimum-disclosure Aimer setup probe (#493 review round 2). The
+  // Stories tab greys out per-Story Send when one of `aice_id`,
+  // `aimer_web_bridge_url`, or the active signing key is missing —
+  // without this gate the operator only finds out after clicking and
+  // hitting a `/build-envelope` route error. Only the boolean reaches
+  // the client tree; the underlying ids / URLs / key material never
+  // do.
+  const aimerSetupStatus = await getAimerIntegrationSetupStatus();
 
   let initialState: TriageShellState;
   let stories: TriageStory[] = [];
@@ -349,6 +359,9 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           open: t("stories.card.open"),
           sendToAimerWeb: t("stories.card.sendToAimerWeb"),
           sendToAimerWebTooltip: t("stories.card.sendToAimerWebTooltip"),
+          sendToAimerWebDisabledTooltip: t(
+            "stories.card.sendToAimerWebDisabledTooltip",
+          ),
           sendMoreMenuLabel: t("stories.card.sendMoreMenuLabel"),
           sendForceRefresh: t("stories.card.sendForceRefresh"),
           forceRefreshConfirmMessage: t(
@@ -511,6 +524,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         initialStories={stories}
         initialStoriesTruncated={storiesTruncated}
         inScopeCustomerIds={scope.customers.map((c) => c.id)}
+        aimerIntegrationConfigured={aimerSetupStatus.configured}
         rebuild={rebuildProps}
         labels={labels}
       />

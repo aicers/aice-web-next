@@ -205,6 +205,7 @@ const LABELS: TriageBaselineLabels = {
       open: "Open",
       sendToAimerWeb: "Send",
       sendToAimerWebTooltip: "not yet",
+      sendToAimerWebDisabledTooltip: "integration not configured",
       sentIndicatorTemplate: "Sent {relative}",
       sentMultiTemplate: "{count}×",
       sendMoreMenuLabel: "More",

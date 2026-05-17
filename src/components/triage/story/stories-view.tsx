@@ -164,6 +164,18 @@ interface TriageStoriesViewProps {
    */
   inScopeCustomerIds?: readonly number[];
   /**
+   * Server-resolved `{ configured }` flag from
+   * {@link getAimerIntegrationSetupStatus}. When `false`, every Story
+   * card's Send button (and the kebab "Send (force refresh)" menu)
+   * stays disabled with the explanatory tooltip — manual sends would
+   * otherwise reach the route only to fail at the mint step on a
+   * missing `aice_id`, bridge URL, or active signing key.
+   *
+   * Defaults to `false` so unit-test paths that omit the prop see the
+   * grey-out shape rather than a falsely-enabled button.
+   */
+  aimerIntegrationConfigured?: boolean;
+  /**
    * Focused story (controlled). The container surfaces the detail
    * panel for this row; `null` shows just the list.
    */
@@ -222,6 +234,7 @@ export function TriageStoriesView({
   stories,
   truncated,
   inScopeCustomerIds = [],
+  aimerIntegrationConfigured = false,
   focused,
   onFocus,
   showStaleHashWarning,
@@ -534,6 +547,7 @@ export function TriageStoriesView({
                 story={overrideStory(story)}
                 onOpen={(s) => onFocus(s)}
                 onSend={handleSend}
+                sendDisabled={!aimerIntegrationConfigured}
                 labels={labels.card}
               />
             </li>

@@ -193,6 +193,15 @@ interface TriageBaselineContentProps {
    * independent of which Stories happen to be currently visible.
    */
   inScopeCustomerIds?: readonly number[];
+  /**
+   * Server-resolved `{ configured }` flag from
+   * {@link getAimerIntegrationSetupStatus}. Threaded down to
+   * {@link TriageStoriesView} so the per-Story Send button stays
+   * disabled (with an explanatory tooltip) until an administrator
+   * has filled in `aice_id`, the aimer-web bridge URL, and an
+   * active signing key.
+   */
+  aimerIntegrationConfigured?: boolean;
   labels: TriageBaselineLabels;
 }
 
@@ -215,6 +224,7 @@ export function TriageBaselineContent({
   stories = [],
   storiesTruncated = false,
   inScopeCustomerIds = [],
+  aimerIntegrationConfigured = false,
   labels,
 }: TriageBaselineContentProps) {
   const router = useRouter();
@@ -2184,6 +2194,7 @@ export function TriageBaselineContent({
           stories={stories}
           truncated={storiesTruncated}
           inScopeCustomerIds={inScopeCustomerIds}
+          aimerIntegrationConfigured={aimerIntegrationConfigured}
           focused={focusedStory}
           onFocus={(s) => {
             setFocusedStory(s);
