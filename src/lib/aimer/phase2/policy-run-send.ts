@@ -126,11 +126,27 @@ export async function insertPolicyRunSendInflight(
 }
 
 /**
- * Opportunistic TTL prune of `aimer_policy_run_send_inflight` rows
- * whose `minted_at` is older than {@link POLICY_RUN_SEND_INFLIGHT_TTL_SECONDS}
- * ago. Called by each `build-envelope` invocation at the start so an
- * abandoned Send (browser closed, instance churn) does not block the
- * next operator's fresh `send_action_id`.
+ * Opportunistic TTL prune of `aimer_policy_run_send_inflight` rows for
+ * Send actions presumed stalled. Called by each `build-envelope`
+ * invocation at the start so an abandoned Send (browser closed,
+ * instance churn) does not block the next operator's fresh
+ * `send_action_id`.
+ *
+ * A Send is considered stalled — and all of its rows are removed — when
+ * any of its inflight rows is older than
+ * {@link POLICY_RUN_SEND_INFLIGHT_TTL_SECONDS} seconds. The prune
+ * therefore operates at the `send_action_id` granularity, not on
+ * individual rows: a multi-batch Send that briefly pauses and then
+ * resumes would otherwise see its earliest batch row aged out while
+ * later rows survive, leaving a partial inflight set behind. If the
+ * browser then reports only the surviving JTIs the `finalize` set-
+ * equality check would pass and β / audit would commit for an
+ * incomplete Send; conversely an honest browser reporting all JTIs
+ * would see its Send fail after every batch already posted to
+ * aimer-web. Both outcomes are silent corruption of the "all batches
+ * delivered" invariant, so the prune deletes the whole `send_action_id`
+ * once any one row crosses the TTL boundary — finalize then fails
+ * fast and the operator can re-click Send.
  *
  * Independent from {@link pruneExpiredInflight} in `./state` — different
  * table, different TTL.
@@ -142,7 +158,11 @@ export async function pruneExpiredPolicyRunSendInflight(
   const runner = client ?? (await getCustomerPool(customerId));
   const result = await runner.query(
     `DELETE FROM aimer_policy_run_send_inflight
-       WHERE minted_at < NOW() - make_interval(secs => $1)`,
+       WHERE send_action_id IN (
+         SELECT send_action_id
+           FROM aimer_policy_run_send_inflight
+          WHERE minted_at < NOW() - make_interval(secs => $1)
+       )`,
     [POLICY_RUN_SEND_INFLIGHT_TTL_SECONDS],
   );
   return result.rowCount ?? 0;
