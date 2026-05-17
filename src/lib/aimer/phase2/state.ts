@@ -505,6 +505,21 @@ export interface PendingTailNotice {
   payload: unknown;
 }
 
+/**
+ * Identity of one Story actually included in the signed envelope of a
+ * `story` streaming new-row batch. Persisted on the inflight row so
+ * ack-time β-bump + audit can address the exact delivered set rather
+ * than recomputing the live `(prev_cursor, new_cursor]` range — which
+ * is racy when an `auto_correlated` row is inserted into the cursor
+ * window between mint and ack (Story rows are ordered by
+ * `(time_window_end, id)`, i.e. event-window order, so a late insert
+ * with an in-range `time_window_end` is realistic).
+ */
+export interface PushedStoryIdentity {
+  storyId: string;
+  storyVersion: string;
+}
+
 export interface InsertInflightInput {
   contextJti: string;
   kind: Phase2InflightKind;
@@ -521,6 +536,13 @@ export interface InsertInflightInput {
    * in the queue. See {@link PendingTailNotice}.
    */
   pendingTailNotices?: readonly PendingTailNotice[];
+  /**
+   * Story rows actually included in this batch's signed envelope.
+   * Only populated for the `story` streaming new-row branch; left
+   * empty for queue-notice / baseline / policy inflight rows.
+   * See {@link PushedStoryIdentity}.
+   */
+  pushedStories?: readonly PushedStoryIdentity[];
 }
 
 /**
@@ -541,8 +563,9 @@ export async function insertInflight(
         cursor_advance_to_event_time,
         cursor_advance_to_event_key,
         queue_row_ids,
-        pending_tail_notices)
-     VALUES ($1, $2, $3, $4, $5::bigint[], $6::jsonb)`,
+        pending_tail_notices,
+        pushed_stories)
+     VALUES ($1, $2, $3, $4, $5::bigint[], $6::jsonb, $7::jsonb)`,
     [
       input.contextJti,
       input.kind,
@@ -550,6 +573,12 @@ export async function insertInflight(
       input.cursorAdvanceToEventKey ?? null,
       input.queueRowIds as unknown as string[],
       JSON.stringify(input.pendingTailNotices ?? []),
+      JSON.stringify(
+        (input.pushedStories ?? []).map((s) => ({
+          story_id: s.storyId,
+          story_version: s.storyVersion,
+        })),
+      ),
     ],
   );
 }
@@ -561,6 +590,7 @@ interface InflightRow {
   cursor_advance_to_event_key: string | null;
   queue_row_ids: string[];
   pending_tail_notices: PendingTailNotice[];
+  pushed_stories: Array<{ story_id: string; story_version: string }>;
 }
 
 /**
@@ -606,15 +636,21 @@ export interface CommitOnAckResult {
  * When `expectedKind === "story"` AND the inflight row carries a
  * cursor advance (new-row Story batch — not a queue notice), the same
  * transaction also bumps `event_group.last_sent_at = NOW()`,
- * `last_sent_by = SYSTEM_ACTOR_ACCOUNT_ID`, `send_count += 1` for
- * every `event_group.id` in the half-open range
- * `(prev_cursor, new_cursor]` (recomputed from
- * `aimer_push_state.last_pushed_event_*` read with `FOR UPDATE`
- * before {@link advanceCursor} runs). The returned
+ * `last_sent_by = SYSTEM_ACTOR_ACCOUNT_ID`, `send_count += 1` for the
+ * exact `event_group.id` set persisted on the inflight row's
+ * `pushed_stories` column (the rows actually included in the signed
+ * envelope at mint time). The returned
  * {@link CommitOnAckResult.storyBetaRows} lets the caller emit one
  * `triage.story.send` audit row per affected Story after this
  * transaction commits — audit emission is best-effort outside the
  * tenant transaction (#493).
+ *
+ * Using the persisted delivered set, instead of a live recomputation
+ * of `(prev_cursor, new_cursor]`, prevents a late-inserted
+ * `auto_correlated` row whose `time_window_end` falls inside the
+ * minted range from being β-bumped + audited without ever appearing
+ * in the pushed envelope (Story ordering is event-window order, not
+ * creation order, so the race is realistic).
  */
 export async function commitOnAck(
   customerId: number,
@@ -632,7 +668,8 @@ export async function commitOnAck(
               cursor_advance_to_event_time,
               cursor_advance_to_event_key,
               queue_row_ids::text[] AS queue_row_ids,
-              pending_tail_notices
+              pending_tail_notices,
+              pushed_stories
          FROM aimer_push_inflight
         WHERE context_jti = $1
           AND kind = $2
@@ -650,29 +687,6 @@ export async function commitOnAck(
         row.cursor_advance_to_event_time !== null &&
         row.cursor_advance_to_event_key !== null
       ) {
-        // For the story streaming branch the β-bump must atomically
-        // commit with the cursor advance, so read the prior cursor
-        // value inside this transaction *before* advancing. The same
-        // FOR UPDATE that {@link advanceCursor} performs internally
-        // would race here (we'd read the post-advance value), so do
-        // an explicit read first; advanceCursor then re-locks the row
-        // and applies the monotonic advance.
-        let prevCursorTime: Date | null = null;
-        let prevCursorKey: string | null = null;
-        if (row.kind === "story") {
-          const { rows: prev } = await client.query<{
-            last_pushed_event_time: Date | null;
-            last_pushed_event_key: string | null;
-          }>(
-            `SELECT last_pushed_event_time, last_pushed_event_key
-               FROM aimer_push_state
-              WHERE kind = 'story'
-              FOR UPDATE`,
-          );
-          prevCursorTime = prev[0]?.last_pushed_event_time ?? null;
-          prevCursorKey = prev[0]?.last_pushed_event_key ?? null;
-        }
-
         await advanceCursor(
           customerId,
           row.kind,
@@ -682,45 +696,30 @@ export async function commitOnAck(
         );
 
         if (row.kind === "story") {
-          // Recompute the `event_group.id` set in the half-open range
-          // (prev_cursor, new_cursor] so the β-bump and the audit
-          // emission share the same identity. NULL prev cursor means
-          // "first advance" — the range degenerates to
-          // `(time_window_end, id) <= (new_cursor)`. The cursor key
-          // is the stringified `id` (NUMERIC(39, 0)) per the story
-          // drain's mapping in #493.
-          const { rows: affected } = await client.query<{
-            id: string;
-            story_version: string;
-          }>(
-            `SELECT id::text          AS id,
-                    story_version
-               FROM event_group
-              WHERE kind = 'auto_correlated'
-                AND (time_window_end, id::numeric)
-                      <= ($1::timestamptz, $2::numeric)
-                AND ($3::timestamptz IS NULL
-                     OR (time_window_end, id::numeric)
-                          > ($3::timestamptz, $4::numeric))`,
-            [
-              row.cursor_advance_to_event_time,
-              row.cursor_advance_to_event_key,
-              prevCursorTime,
-              prevCursorKey,
-            ],
-          );
-          if (affected.length > 0) {
+          // β-bump + audit address the exact rows that were actually
+          // included in the signed envelope at mint time, sourced
+          // from the persisted `pushed_stories` column. Recomputing
+          // a live `(prev_cursor, new_cursor]` range here would
+          // mark/audit any `auto_correlated` row inserted between
+          // mint and ack whose `time_window_end` fell inside that
+          // range — and the cursor would then advance past it, so
+          // it would never actually be delivered. Story ordering is
+          // by event-window time, not creation time, so this race
+          // is realistic.
+          const pushedStories = row.pushed_stories ?? [];
+          if (pushedStories.length > 0) {
+            const pushedIds = pushedStories.map((s) => s.story_id);
             await client.query(
               `UPDATE event_group
                   SET last_sent_at = NOW(),
                       last_sent_by = $2::uuid,
                       send_count   = send_count + 1
                 WHERE id = ANY($1::bigint[])`,
-              [affected.map((r) => r.id), SYSTEM_ACTOR_ACCOUNT_ID],
+              [pushedIds, SYSTEM_ACTOR_ACCOUNT_ID],
             );
-            storyBetaRows = affected.map((r) => ({
-              storyId: r.id,
-              storyVersion: r.story_version,
+            storyBetaRows = pushedStories.map((s) => ({
+              storyId: s.story_id,
+              storyVersion: s.story_version,
             }));
           }
         }

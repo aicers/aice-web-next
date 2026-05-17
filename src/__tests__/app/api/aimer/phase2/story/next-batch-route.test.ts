@@ -280,7 +280,55 @@ describe("POST /api/aimer/phase2/story/next-batch", () => {
       cursorAdvanceToEventTime: new Date("2026-01-02T00:00:00Z"),
       cursorAdvanceToEventKey: "1001",
       queueRowIds: [],
+      pushedStories: [{ storyId: "1001", storyVersion: "v1" }],
     });
+  });
+
+  it("persists the exact pushed Story id+version set on the inflight row so a late-inserted in-range Story is not β-bumped or audited", async () => {
+    // Regression for the round-3 race: at mint time the slice
+    // contains a specific set of Story rows. The ack path must
+    // address that exact set, not whatever currently matches
+    // `(prev_cursor, new_cursor]`. If we only persisted the cursor
+    // target, an `auto_correlated` row inserted between mint and
+    // ack whose `time_window_end` fell inside the minted window
+    // would be β-bumped + audited without ever being delivered
+    // (Story ordering is event-window time, not creation time).
+    mockLoadSlice.mockResolvedValue({
+      stories: [
+        {
+          story_id: "1000",
+          story_version: "v1",
+          kind: "auto_correlated",
+          time_window: { start: "a", end: "b" },
+          members: [],
+        },
+        {
+          story_id: "1002",
+          story_version: "v1",
+          kind: "auto_correlated",
+          time_window: { start: "a", end: "c" },
+          members: [],
+        },
+      ],
+      // Note: id "1001" is NOT in the slice even though it would
+      // sort between 1000 and 1002 — simulating the slice that was
+      // actually signed.
+      lastEventTime: new Date("2026-01-02T00:00:00Z"),
+      lastEventKey: "1002",
+      hasMore: false,
+    });
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/story/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+    const arg = mockState.insertInflight.mock.calls[0][1];
+    expect(arg.pushedStories).toEqual([
+      { storyId: "1000", storyVersion: "v1" },
+      { storyId: "1002", storyVersion: "v1" },
+    ]);
+    // The cursor target still advances past the last delivered row
+    // so the drain does not re-send these on the next iteration.
+    expect(arg.cursorAdvanceToEventKey).toBe("1002");
   });
 
   it("emits one triage.story.send audit per Story acked on prior batch", async () => {

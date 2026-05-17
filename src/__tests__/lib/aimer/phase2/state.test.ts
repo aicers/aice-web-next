@@ -359,13 +359,15 @@ describe("Phase 2 state helpers (state.ts)", () => {
     const call = fake.calls[0];
     expect(call.sql).toContain("INSERT INTO aimer_push_inflight");
     // 6th param is the JSONB-serialized pending_tail_notices array,
-    // defaulting to empty when the caller omits the field.
+    // 7th param is the JSONB-serialized pushed_stories array — both
+    // default to "[]" when the caller omits them.
     expect(call.params).toEqual([
       "jti-1",
       "policy_event",
       null,
       null,
       ["10", "11"],
+      "[]",
       "[]",
     ]);
   });
@@ -551,6 +553,138 @@ describe("Phase 2 state helpers (state.ts)", () => {
     const sqls = fake.calls.map((c) => c.sql);
     expect(sqls.some((s) => s.includes("UPDATE aimer_push_state"))).toBe(true);
     expect(sqls.some((s) => s.includes("FOR UPDATE"))).toBe(true);
+  });
+
+  it("commitOnAck story branch β-bumps + audits the persisted pushed_stories set, not a live cursor-range recomputation", async () => {
+    // Regression for the round-3 race: an `auto_correlated` row
+    // inserted between mint and ack whose `time_window_end` falls
+    // inside the minted (prev_cursor, new_cursor] window must not
+    // be marked sent or audited just because it happens to sit in
+    // the range now. The ack path uses the persisted pushed_stories
+    // set (the rows that were actually in the signed envelope),
+    // not the live range.
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_inflight")) {
+        return {
+          rows: [
+            {
+              context_jti: "jti-story",
+              kind: "story",
+              cursor_advance_to_event_time: new Date("2026-01-02T00:00:00Z"),
+              cursor_advance_to_event_key: "1002",
+              queue_row_ids: [],
+              pending_tail_notices: [],
+              pushed_stories: [
+                { story_id: "1000", story_version: "v1" },
+                { story_id: "1002", story_version: "v1" },
+              ],
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const result = await state.commitOnAck(1, "jti-story", "story");
+
+    // Returned β rows match the persisted set exactly — no id 1001.
+    expect(result.storyBetaRows).toEqual([
+      { storyId: "1000", storyVersion: "v1" },
+      { storyId: "1002", storyVersion: "v1" },
+    ]);
+
+    // The UPDATE event_group targets the persisted ids only.
+    const updateBeta = fake.calls.find((c) =>
+      c.sql.includes("UPDATE event_group"),
+    );
+    expect(updateBeta).toBeDefined();
+    expect(updateBeta?.params?.[0]).toEqual(["1000", "1002"]);
+
+    // The ack path must NOT issue a recomputed range SELECT from
+    // event_group — that was the bug. The cursor advance still
+    // runs, but no live-range membership query is performed.
+    const recomputeSelect = fake.calls.find(
+      (c) =>
+        c.sql.includes("FROM event_group") &&
+        c.sql.includes("kind = 'auto_correlated'") &&
+        c.sql.includes("time_window_end"),
+    );
+    expect(recomputeSelect).toBeUndefined();
+
+    // Cursor advance still happens via aimer_push_state UPDATE.
+    expect(
+      fake.calls.some((c) => c.sql.includes("UPDATE aimer_push_state")),
+    ).toBe(true);
+  });
+
+  it("commitOnAck story branch with an empty pushed_stories set bumps no β rows (cursor advance still runs)", async () => {
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_inflight")) {
+        return {
+          rows: [
+            {
+              context_jti: "jti-story-empty",
+              kind: "story",
+              cursor_advance_to_event_time: new Date("2026-01-02T00:00:00Z"),
+              cursor_advance_to_event_key: "1002",
+              queue_row_ids: [],
+              pending_tail_notices: [],
+              pushed_stories: [],
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const result = await state.commitOnAck(1, "jti-story-empty", "story");
+    expect(result.storyBetaRows).toEqual([]);
+    expect(fake.calls.some((c) => c.sql.includes("UPDATE event_group"))).toBe(
+      false,
+    );
+    expect(
+      fake.calls.some((c) => c.sql.includes("UPDATE aimer_push_state")),
+    ).toBe(true);
+  });
+
+  it("insertInflight persists pushed_stories as JSONB when provided", async () => {
+    await state.insertInflight(1, {
+      contextJti: "jti-insert",
+      kind: "story",
+      cursorAdvanceToEventTime: new Date("2026-01-02T00:00:00Z"),
+      cursorAdvanceToEventKey: "1002",
+      queueRowIds: [],
+      pushedStories: [
+        { storyId: "1000", storyVersion: "v1" },
+        { storyId: "1002", storyVersion: "v1" },
+      ],
+    });
+    const call = fake.calls.find((c) =>
+      c.sql.includes("INSERT INTO aimer_push_inflight"),
+    );
+    expect(call).toBeDefined();
+    expect(call?.sql).toContain("pushed_stories");
+    // 7th param is the JSONB-encoded pushed_stories payload.
+    expect(call?.params?.[6]).toBe(
+      JSON.stringify([
+        { story_id: "1000", story_version: "v1" },
+        { story_id: "1002", story_version: "v1" },
+      ]),
+    );
+  });
+
+  it("insertInflight defaults pushed_stories to '[]' when omitted", async () => {
+    await state.insertInflight(1, {
+      contextJti: "jti-no-stories",
+      kind: "baseline_event",
+      cursorAdvanceToEventTime: new Date("2026-01-02T00:00:00Z"),
+      cursorAdvanceToEventKey: "200",
+      queueRowIds: [],
+    });
+    const call = fake.calls.find((c) =>
+      c.sql.includes("INSERT INTO aimer_push_inflight"),
+    );
+    expect(call?.params?.[6]).toBe("[]");
   });
 
   it("commitOnAck on an unknown jti is a no-op", async () => {

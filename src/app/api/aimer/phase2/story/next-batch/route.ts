@@ -335,6 +335,16 @@ export const POST = withAuth(
       cursorAdvanceToEventTime: slice.lastEventTime,
       cursorAdvanceToEventKey: slice.lastEventKey,
       queueRowIds: [],
+      // Pin the ack-time β-bump + audit to the exact rows actually
+      // signed into this envelope. Without this, an `auto_correlated`
+      // row inserted between mint and ack whose `time_window_end`
+      // falls inside `(prev_cursor, new_cursor]` would be marked
+      // sent + audited without ever being delivered, and the cursor
+      // would advance past it.
+      pushedStories: slice.stories.map((s) => ({
+        storyId: s.story_id,
+        storyVersion: s.story_version,
+      })),
     });
 
     const setup = await getAimerIntegrationSetup();
