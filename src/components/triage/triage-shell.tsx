@@ -141,6 +141,14 @@ interface TriageShellProps {
   /** True whenever any per-tenant Stories page hit the page cap. */
   initialStoriesTruncated?: boolean;
   /**
+   * Authorization-derived list of `customers.id` the active session
+   * may see on the Stories tab (#493). Used to mount one
+   * `createPeriodicDrain("story", customerId, …)` controller per
+   * customer in scope, independent of which Stories happen to be
+   * visible after period overlap / sort filters.
+   */
+  inScopeCustomerIds?: readonly number[];
+  /**
    * Admin-only rebuild affordance (#473). When the caller is a
    * `SystemAdministrator`, the page passes the resolved single
    * customer (or `null` to render the disabled multi-scope tooltip)
@@ -164,6 +172,7 @@ export function TriageShell({
   customerScope,
   initialStories = [],
   initialStoriesTruncated = false,
+  inScopeCustomerIds = [],
   rebuild,
   labels,
 }: TriageShellProps) {
@@ -483,6 +492,7 @@ export function TriageShell({
               mode={mode}
               stories={initialStories}
               storiesTruncated={initialStoriesTruncated}
+              inScopeCustomerIds={inScopeCustomerIds}
               labels={labels.baseline}
             />
             {rebuildInProgress && labels.rebuild ? (

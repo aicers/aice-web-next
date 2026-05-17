@@ -349,6 +349,18 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
           open: t("stories.card.open"),
           sendToAimerWeb: t("stories.card.sendToAimerWeb"),
           sendToAimerWebTooltip: t("stories.card.sendToAimerWebTooltip"),
+          sendMoreMenuLabel: t("stories.card.sendMoreMenuLabel"),
+          sendForceRefresh: t("stories.card.sendForceRefresh"),
+          forceRefreshConfirmMessage: t(
+            "stories.card.forceRefreshConfirmMessage",
+          ),
+          forceRefreshConfirmButton: t(
+            "stories.card.forceRefreshConfirmButton",
+          ),
+          forceRefreshCancelButton: t("stories.card.forceRefreshCancelButton"),
+          sendInFlight: t("stories.card.sendInFlight"),
+          sendSuccessToast: t("stories.card.sendSuccessToast"),
+          sendErrorPrefix: t("stories.card.sendErrorPrefix"),
           sentIndicatorTemplate: t.raw(
             "stories.card.sentIndicatorTemplate",
           ) as string,
@@ -498,6 +510,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         customerScope={cacheKeyForCustomerScope(scope)}
         initialStories={stories}
         initialStoriesTruncated={storiesTruncated}
+        inScopeCustomerIds={scope.customers.map((c) => c.id)}
         rebuild={rebuildProps}
         labels={labels}
       />

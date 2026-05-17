@@ -186,6 +186,13 @@ interface TriageBaselineContentProps {
   stories?: ReadonlyArray<TriageStory>;
   /** True when any per-tenant Stories page hit the cap. */
   storiesTruncated?: boolean;
+  /**
+   * Authorization-derived in-scope customer ids (#493). Threaded down
+   * to {@link TriageStoriesView} so the Stories tab can mount one
+   * `createPeriodicDrain("story", customerId, …)` per customer
+   * independent of which Stories happen to be currently visible.
+   */
+  inScopeCustomerIds?: readonly number[];
   labels: TriageBaselineLabels;
 }
 
@@ -207,6 +214,7 @@ export function TriageBaselineContent({
   mode,
   stories = [],
   storiesTruncated = false,
+  inScopeCustomerIds = [],
   labels,
 }: TriageBaselineContentProps) {
   const router = useRouter();
@@ -2175,6 +2183,7 @@ export function TriageBaselineContent({
         <TriageStoriesView
           stories={stories}
           truncated={storiesTruncated}
+          inScopeCustomerIds={inScopeCustomerIds}
           focused={focusedStory}
           onFocus={(s) => {
             setFocusedStory(s);

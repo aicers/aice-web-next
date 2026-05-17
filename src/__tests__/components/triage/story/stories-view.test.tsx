@@ -5,7 +5,38 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const {
+  manualSendToAimerWebMock,
+  createPeriodicDrainMock,
+  ManualSendErrorStub,
+} = vi.hoisted(() => {
+  class ManualSendErrorStub extends Error {
+    readonly stage: string;
+    readonly code?: string;
+    constructor(args: { stage: string; code?: string; message: string }) {
+      super(args.message);
+      this.name = "ManualSendError";
+      this.stage = args.stage;
+      this.code = args.code;
+    }
+  }
+  return {
+    manualSendToAimerWebMock: vi.fn(),
+    createPeriodicDrainMock: vi.fn(),
+    ManualSendErrorStub,
+  };
+});
+
+vi.mock("@/lib/aimer/phase2/manual-send.client", () => ({
+  manualSendToAimerWeb: manualSendToAimerWebMock,
+  ManualSendError: ManualSendErrorStub,
+}));
+
+vi.mock("@/lib/aimer/phase2/transport.client", () => ({
+  createPeriodicDrain: createPeriodicDrainMock,
+}));
 
 import {
   TriageStoriesView,
@@ -37,6 +68,14 @@ const LABELS: TriageStoriesViewLabels = {
     sendToAimerWebTooltip: "LLM analysis not yet available",
     sentIndicatorTemplate: "Sent {relative}",
     sentMultiTemplate: "{count}×",
+    sendMoreMenuLabel: "More send options",
+    sendForceRefresh: "Send (force refresh)",
+    forceRefreshConfirmMessage: "Bypass cache?",
+    forceRefreshConfirmButton: "Send",
+    forceRefreshCancelButton: "Cancel",
+    sendInFlight: "Sending…",
+    sendSuccessToast: "Sent to aimer-web",
+    sendErrorPrefix: "Could not send to aimer-web:",
     timeColumn: "Time",
     kindColumn: "Kind",
     categoryColumn: "Category",
@@ -212,8 +251,8 @@ describe("TriageStoriesView — empty / list / sort / unsent-only filter", () =>
  * tooltip, and the stable `data-action="send-to-aimer-web"` hook
  * regardless of environment. The disabled-state flip is owned by #493.
  */
-describe("Send-to-aimer-web button — inert shape (#490 ships, #493 wires)", () => {
-  it("renders disabled with the stable data-action hook and tooltip", () => {
+describe("Send-to-aimer-web button — wired in #493", () => {
+  it("renders enabled with the stable data-action hook and tooltip", () => {
     render(
       <TriageStoriesView
         stories={[makeStory()]}
@@ -224,10 +263,192 @@ describe("Send-to-aimer-web button — inert shape (#490 ships, #493 wires)", ()
       />,
     );
     const btn = screen.getByTestId("triage-story-send");
-    expect(btn.hasAttribute("disabled")).toBe(true);
-    expect(btn.getAttribute("aria-disabled")).toBe("true");
+    expect(btn.hasAttribute("disabled")).toBe(false);
+    expect(btn.getAttribute("aria-disabled")).toBe("false");
     expect(btn.getAttribute("data-action")).toBe("send-to-aimer-web");
     expect(btn.getAttribute("title")).toBe(LABELS.card.sendToAimerWebTooltip);
+  });
+});
+
+/**
+ * Manual Send UX wiring (#493):
+ *  - Clicking Send routes to `manualSendToAimerWeb`, the success path
+ *    pops a toast and overrides the β indicator on the card.
+ *  - Errors surface the structured code via the error-toast path.
+ *  - Force-refresh requires confirming a dialog, then forwards
+ *    `forceRefresh: true`.
+ *  - Per-customer periodic drain controllers are mounted from
+ *    `inScopeCustomerIds` (NOT from `stories[]`) and stopped on
+ *    unmount.
+ */
+describe("TriageStoriesView — manual Send wiring (#493)", () => {
+  beforeEach(() => {
+    manualSendToAimerWebMock.mockReset();
+    createPeriodicDrainMock.mockReset().mockImplementation(() => ({
+      start: vi.fn(),
+      stop: vi.fn(),
+    }));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("on success: fires manualSendToAimerWeb, shows the success toast, overrides β on the card", async () => {
+    manualSendToAimerWebMock.mockResolvedValue({
+      lastSentAtIso: "2026-05-17T12:00:00.000Z",
+      sendCount: 4,
+      duplicatesSkipped: 0,
+    });
+    const story = makeStory({ lastSentAtIso: null, sendCount: 0 });
+    render(
+      <TriageStoriesView
+        stories={[story]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        labels={LABELS}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-story-send"));
+    });
+
+    expect(manualSendToAimerWebMock).toHaveBeenCalledWith({
+      customerId: 7,
+      storyId: "1",
+      forceRefresh: false,
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("triage-story-send-toast-success"),
+      ).toBeTruthy();
+    });
+    // β indicator should re-render against the override without a
+    // full menu refresh — `sentMultiTemplate` is appended once
+    // `sendCount > 1`.
+    const indicator = screen.getByTestId("triage-story-sent-indicator");
+    expect(indicator.textContent ?? "").toContain("4×");
+  });
+
+  it("on failure: shows the error toast carrying the structured code, β untouched", async () => {
+    manualSendToAimerWebMock.mockRejectedValue(
+      new ManualSendErrorStub({
+        stage: "ack_manual",
+        code: "replay_or_unknown_jti",
+        message: "boom",
+      }),
+    );
+    const story = makeStory({ lastSentAtIso: null, sendCount: 0 });
+    render(
+      <TriageStoriesView
+        stories={[story]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        labels={LABELS}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-story-send"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("triage-story-send-toast-error")).toBeTruthy();
+    });
+    const errorToast = screen.getByTestId("triage-story-send-toast-error");
+    expect(errorToast.textContent ?? "").toContain("replay_or_unknown_jti");
+    // β indicator never rendered because the original story had
+    // lastSentAtIso === null and no override committed on failure.
+    expect(screen.queryByTestId("triage-story-sent-indicator")).toBeNull();
+  });
+
+  it("force-refresh path: confirm dialog gates the send, then forwards forceRefresh=true", async () => {
+    manualSendToAimerWebMock.mockResolvedValue({
+      lastSentAtIso: "2026-05-17T12:00:00.000Z",
+      sendCount: 1,
+      duplicatesSkipped: 1,
+    });
+    const story = makeStory({ lastSentAtIso: null, sendCount: 0 });
+    render(
+      <TriageStoriesView
+        stories={[story]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        labels={LABELS}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("triage-story-send-menu"));
+    fireEvent.click(screen.getByTestId("triage-story-send-force-refresh"));
+
+    // The confirm dialog is required before manualSendToAimerWeb fires.
+    expect(manualSendToAimerWebMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("triage-story-send-force-confirm")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-story-send-force-confirm-ok"));
+    });
+
+    expect(manualSendToAimerWebMock).toHaveBeenCalledWith({
+      customerId: 7,
+      storyId: "1",
+      forceRefresh: true,
+    });
+  });
+
+  it("mounts one createPeriodicDrain per in-scope customer (NOT from stories[])", () => {
+    const a = makeStory({ customerId: 7, storyId: "1" });
+    const { unmount } = render(
+      <TriageStoriesView
+        stories={[a]}
+        truncated={false}
+        // A customer with NO visible stories must still get a drain
+        // controller so its withdraw/refresh/backfill queues are
+        // drained. The set is server-supplied, not derived from
+        // `stories[]`.
+        inScopeCustomerIds={[7, 9]}
+        focused={null}
+        onFocus={() => {}}
+        labels={LABELS}
+      />,
+    );
+
+    expect(createPeriodicDrainMock).toHaveBeenCalledTimes(2);
+    const customerIds = createPeriodicDrainMock.mock.calls
+      .map((c) => c[1] as number)
+      .sort((a, b) => a - b);
+    expect(customerIds).toEqual([7, 9]);
+    // All controllers must be `start()`ed.
+    for (const ret of createPeriodicDrainMock.mock.results) {
+      expect(
+        (ret.value as { start: ReturnType<typeof vi.fn> }).start,
+      ).toHaveBeenCalledTimes(1);
+    }
+
+    // Unmount stops every controller in the map.
+    const stops = createPeriodicDrainMock.mock.results.map(
+      (r) => (r.value as { stop: ReturnType<typeof vi.fn> }).stop,
+    );
+    unmount();
+    for (const stop of stops) {
+      expect(stop).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("does not mount any drain when inScopeCustomerIds is empty", () => {
+    render(
+      <TriageStoriesView
+        stories={[makeStory()]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        labels={LABELS}
+      />,
+    );
+    expect(createPeriodicDrainMock).not.toHaveBeenCalled();
   });
 });
 

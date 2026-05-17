@@ -23,6 +23,14 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
+import {
+  ManualSendError,
+  manualSendToAimerWeb,
+} from "@/lib/aimer/phase2/manual-send.client";
+import {
+  createPeriodicDrain,
+  type PeriodicDrainController,
+} from "@/lib/aimer/phase2/transport.client";
 import type { TriagePeriod } from "@/lib/triage";
 import type { PivotDimensionId, PivotValue } from "@/lib/triage/pivot";
 import { getPivotDimension } from "@/lib/triage/pivot";
@@ -146,6 +154,16 @@ interface TriageStoriesViewProps {
   stories: ReadonlyArray<TriageStory>;
   truncated: boolean;
   /**
+   * Authorization-derived in-scope customer ids (#493). One
+   * `createPeriodicDrain("story", customerId, …)` controller is
+   * mounted per customer in this list. The set MUST be derived
+   * server-side from `resolveEffectiveCustomerIds(...)` (not from
+   * `stories[]`) so a customer whose Stories are filtered out of
+   * the visible page still has its `withdraw_story` /
+   * `refresh_story_window` / `backfill_story_window` queue drained.
+   */
+  inScopeCustomerIds?: readonly number[];
+  /**
    * Focused story (controlled). The container surfaces the detail
    * panel for this row; `null` shows just the list.
    */
@@ -203,6 +221,7 @@ interface TriageStoriesViewProps {
 export function TriageStoriesView({
   stories,
   truncated,
+  inScopeCustomerIds = [],
   focused,
   onFocus,
   showStaleHashWarning,
@@ -316,6 +335,108 @@ export function TriageStoriesView({
   const effectiveStories = serverStories?.stories ?? stories;
   const effectiveTruncated = serverStories?.truncated ?? truncated;
 
+  // Local overrides for the β-tracking indicator (#493). A successful
+  // manual Send updates `lastSentAtIso` / `sendCount` on this map so
+  // the card re-renders immediately without waiting for the full
+  // menu refresh. Keyed by `"{customerId}/{storyId}"`.
+  const [betaOverrides, setBetaOverrides] = useState<
+    Record<string, { lastSentAtIso: string; sendCount: number }>
+  >({});
+  const overrideStory = (story: TriageStory): TriageStory => {
+    const key = `${story.customerId}/${story.storyId}`;
+    const override = betaOverrides[key];
+    if (!override) return story;
+    return {
+      ...story,
+      lastSentAtIso: override.lastSentAtIso,
+      sendCount: override.sendCount,
+    };
+  };
+
+  // Toast state for the "Sent to aimer-web" / error notifications.
+  const [toast, setToast] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  // Per-customer periodic drain mount (#493). One controller per
+  // customer in `inScopeCustomerIds` — independent of which stories
+  // are visible. The drain auto-pauses on `visibilitychange` →
+  // hidden via the Foundation controller.
+  //
+  // `inScopeCustomerIds` is sorted + serialized into a stable key
+  // first so the effect does not re-mount on array-reference
+  // rotation alone (the customer set rarely changes; the array
+  // reference does on every parent re-render). The customer list
+  // is reconstructed from the key inside the effect to keep React's
+  // dependency-array contract simple and avoid stale closures.
+  const inScopeKey = inScopeCustomerIds
+    .slice()
+    .sort((a, b) => a - b)
+    .join(",");
+  useEffect(() => {
+    if (inScopeKey === "") return;
+    const customerIds = inScopeKey
+      .split(",")
+      .map((s) => Number.parseInt(s, 10));
+    const controllers = new Map<number, PeriodicDrainController>();
+    for (const customerId of customerIds) {
+      const controller = createPeriodicDrain("story", customerId, {
+        intervalMs: 5 * 60 * 1000,
+      });
+      controllers.set(customerId, controller);
+      controller.start();
+    }
+    return () => {
+      for (const controller of controllers.values()) {
+        controller.stop();
+      }
+    };
+  }, [inScopeKey]);
+
+  const handleSend = async ({
+    story,
+    forceRefresh,
+  }: {
+    story: TriageStory;
+    forceRefresh: boolean;
+  }) => {
+    try {
+      const result = await manualSendToAimerWeb({
+        customerId: story.customerId,
+        storyId: story.storyId,
+        forceRefresh,
+      });
+      setBetaOverrides((prev) => ({
+        ...prev,
+        [`${story.customerId}/${story.storyId}`]: {
+          lastSentAtIso: result.lastSentAtIso,
+          sendCount: result.sendCount,
+        },
+      }));
+      setToast({
+        kind: "success",
+        message: labels.card.sendSuccessToast,
+      });
+    } catch (err) {
+      const reason =
+        err instanceof ManualSendError
+          ? (err.code ?? err.message)
+          : err instanceof Error
+            ? err.message
+            : "unknown";
+      setToast({
+        kind: "error",
+        message: `${labels.card.sendErrorPrefix} ${reason}`,
+      });
+    }
+  };
+
   // When the server-action seam is unavailable (unit-test path), fall
   // back to client-side filter/sort against the prop slice so the
   // component is still functional. This is the same behavior the
@@ -410,14 +531,32 @@ export function TriageStoriesView({
           {filtered.map((story) => (
             <li key={`${story.customerId}/${story.storyId}`}>
               <TriageStoryCard
-                story={story}
+                story={overrideStory(story)}
                 onOpen={(s) => onFocus(s)}
+                onSend={handleSend}
                 labels={labels.card}
               />
             </li>
           ))}
         </ul>
       )}
+      {toast ? (
+        <div
+          role="status"
+          data-testid={
+            toast.kind === "success"
+              ? "triage-story-send-toast-success"
+              : "triage-story-send-toast-error"
+          }
+          className={
+            toast.kind === "success"
+              ? "fixed bottom-4 right-4 z-30 rounded-md border border-emerald-300/60 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 shadow-md dark:border-emerald-500/40 dark:bg-emerald-950/60 dark:text-emerald-200"
+              : "fixed bottom-4 right-4 z-30 rounded-md border border-red-300/60 bg-red-50 px-3 py-2 text-sm text-red-900 shadow-md dark:border-red-500/40 dark:bg-red-950/60 dark:text-red-200"
+          }
+        >
+          {toast.message}
+        </div>
+      ) : null}
       {focused ? (
         <TriageStoryDetail
           story={focused}

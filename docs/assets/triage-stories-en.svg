@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">Stories tab in the Triage menu (wireframe)</title>
-  <desc id="desc">Wireframe of the Stories tab in Baseline mode. The tab strip shows Asset list, Stories, and Pivot peer views; the Stories pane shows a list of story cards with title, rule badge, score, member count, time window, top-3 preview, and Open / Send-to-aimer-web actions. The Send-to-aimer-web button is rendered disabled in this issue and will be wired by #493.</desc>
+  <desc id="desc">Wireframe of the Stories tab in Baseline mode. The tab strip shows Asset list, Stories, and Pivot peer views; the Stories pane shows a list of story cards with title, rule badge, score, member count, time window, top-3 preview, and Open / Send-to-aimer-web actions. The Send-to-aimer-web button is wired by #493 and renders enabled when the Aimer integration is configured; a kebab toggle next to it opens the "Send (force refresh)" menu.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -55,8 +55,10 @@
   <text x="320" y="208" class="text-muted">EXFILTRATION</text>
   <rect class="btn-primary" x="540" y="200" width="56" height="24"/>
   <text x="552" y="216" class="btn-primary-text">Open</text>
-  <rect class="btn-disabled" x="604" y="200" width="76" height="24"/>
-  <text x="612" y="216" class="btn-disabled-text">Send to aimer-web</text>
+  <rect class="btn-primary" x="604" y="200" width="60" height="24"/>
+  <text x="608" y="216" class="btn-primary-text">Send</text>
+  <rect class="btn-primary" x="664" y="200" width="16" height="24"/>
+  <text x="667" y="216" class="btn-primary-text">▾</text>
 
   <!-- Story card 2 (analyst-curated, sent indicator) -->
   <rect class="panel" x="24" y="252" width="672" height="148" rx="6" ry="6"/>
@@ -77,9 +79,11 @@
   <text x="320" y="368" class="text-muted">EXFILTRATION</text>
   <rect class="btn-primary" x="540" y="360" width="56" height="24"/>
   <text x="552" y="376" class="btn-primary-text">Open</text>
-  <rect class="btn-disabled" x="604" y="360" width="76" height="24"/>
-  <text x="612" y="376" class="btn-disabled-text">Send to aimer-web</text>
+  <rect class="btn-primary" x="604" y="360" width="60" height="24"/>
+  <text x="608" y="376" class="btn-primary-text">Send</text>
+  <rect class="btn-primary" x="664" y="360" width="16" height="24"/>
+  <text x="667" y="376" class="btn-primary-text">▾</text>
 
   <!-- Footer hint -->
-  <text x="24" y="436" class="text-muted">The Send-to-aimer-web button is the inert shape this issue ships; the click handler lands with #493.</text>
+  <text x="24" y="436" class="text-muted">Clicking Send pushes the Story to aimer-web for LLM analysis (#493); the kebab opens "Send (force refresh)".</text>
 </svg>

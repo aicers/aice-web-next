@@ -26,6 +26,8 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 
 // ── Re-exports ─────────────────────────────────────────────────────
 
+import { SYSTEM_ACTOR_ACCOUNT_ID } from "./orchestrate";
+
 export { SYSTEM_ACTOR_ACCOUNT_ID } from "./orchestrate";
 
 // ── Discriminator types ────────────────────────────────────────────
@@ -351,6 +353,19 @@ export async function enqueueNotice(
 interface ClaimPendingNoticesOptions {
   /** Max rows to return. */
   limit: number;
+  /**
+   * Restrict the claim to a specific subset of queue kinds. The subset
+   * MUST be contained in the drain's allowed set from
+   * {@link PHASE2_QUEUE_KINDS_BY_DRAIN} — any kind outside that set is
+   * rejected with a thrown `RangeError` so a baseline drain cannot
+   * accidentally claim a story notice via the filter (and vice versa).
+   *
+   * The story drain (#493) uses this to honor the "one queue kind per
+   * `next-batch` response" + `withdraw → refresh → backfill` priority
+   * order: it calls this helper once per kind, in that order, and
+   * stops at the first non-empty result.
+   */
+  kinds?: readonly Phase2QueueKind[];
 }
 
 /**
@@ -360,6 +375,13 @@ interface ClaimPendingNoticesOptions {
  * ({@link PHASE2_QUEUE_KINDS_BY_DRAIN}) so a baseline drain never picks
  * up a story / policy notice. Returns rows in `id` ascending order so
  * older notices drain first.
+ *
+ * Pass {@link ClaimPendingNoticesOptions.kinds} to narrow further to a
+ * specific subset (must be contained in the drain's allowed set). This
+ * is what lets the story drain enforce "one queue kind per response":
+ * the route calls this helper for each kind in
+ * `withdraw → refresh → backfill` priority order and stops at the
+ * first non-empty result.
  *
  * Claim is non-exclusive (no `FOR UPDATE SKIP LOCKED`): when two
  * concurrent browser tabs both activate, both will read the same
@@ -374,6 +396,17 @@ export async function claimPendingNotices(
   options: ClaimPendingNoticesOptions,
 ): Promise<AimerPushQueueRow[]> {
   const allowedKinds = PHASE2_QUEUE_KINDS_BY_DRAIN[drainKind];
+  let effectiveKinds: readonly Phase2QueueKind[] = allowedKinds;
+  if (options.kinds !== undefined) {
+    for (const k of options.kinds) {
+      if (!(allowedKinds as readonly Phase2QueueKind[]).includes(k)) {
+        throw new RangeError(
+          `claimPendingNotices: kind '${k}' is not owned by drain '${drainKind}'`,
+        );
+      }
+    }
+    effectiveKinds = options.kinds;
+  }
   const pool = await getCustomerPool(customerId);
   const { rows } = await pool.query<AimerPushQueueRow>(
     `SELECT id::text AS id,
@@ -390,7 +423,7 @@ export async function claimPendingNotices(
         AND kind = ANY($1::text[])
       ORDER BY id
       LIMIT $2`,
-    [allowedKinds as unknown as string[], options.limit],
+    [effectiveKinds as unknown as string[], options.limit],
   );
   return rows;
 }
@@ -531,6 +564,30 @@ interface InflightRow {
 }
 
 /**
+ * Per-Story β-tracking row data returned by {@link commitOnAck} when
+ * the prior batch was a `story` streaming batch. The drain route uses
+ * this list to emit one `triage.story.send` audit row per Story
+ * **after** the tenant-DB commit succeeds — the audit DB lives in a
+ * separate database and cannot be co-committed with the tenant
+ * transaction, so audit emission is best-effort outside the
+ * transaction (#493 "Manual mint ledger" rationale).
+ */
+export interface CommitOnAckStoryBetaRow {
+  storyId: string;
+  storyVersion: string;
+}
+
+export interface CommitOnAckResult {
+  /**
+   * `event_group` rows whose β columns this commit bumped. Empty for
+   * baseline / policy / queue-notice acks. The caller is responsible
+   * for emitting one `triage.story.send` audit row per element with
+   * `trigger: "opportunistic"`, `actorAccountId: SYSTEM_ACTOR_ACCOUNT_ID`.
+   */
+  storyBetaRows: readonly CommitOnAckStoryBetaRow[];
+}
+
+/**
  * Commit-on-ack for a previously-minted batch. Unknown jtis are a
  * no-op (idempotent on duplicate / stale acks).
  *
@@ -545,14 +602,28 @@ interface InflightRow {
  *    the queue rows ack'd, delete the inflight row.
  *  - Queue-only kind (`policy_event`): mark queue rows ack'd, delete
  *    the inflight row. No state update.
+ *
+ * When `expectedKind === "story"` AND the inflight row carries a
+ * cursor advance (new-row Story batch — not a queue notice), the same
+ * transaction also bumps `event_group.last_sent_at = NOW()`,
+ * `last_sent_by = SYSTEM_ACTOR_ACCOUNT_ID`, `send_count += 1` for
+ * every `event_group.id` in the half-open range
+ * `(prev_cursor, new_cursor]` (recomputed from
+ * `aimer_push_state.last_pushed_event_*` read with `FOR UPDATE`
+ * before {@link advanceCursor} runs). The returned
+ * {@link CommitOnAckResult.storyBetaRows} lets the caller emit one
+ * `triage.story.send` audit row per affected Story after this
+ * transaction commits — audit emission is best-effort outside the
+ * tenant transaction (#493).
  */
 export async function commitOnAck(
   customerId: number,
   contextJti: string,
   expectedKind: Phase2InflightKind,
-): Promise<void> {
+): Promise<CommitOnAckResult> {
   const pool = await getCustomerPool(customerId);
   const client = await pool.connect();
+  let storyBetaRows: CommitOnAckStoryBetaRow[] = [];
   try {
     await client.query("BEGIN");
     const { rows } = await client.query<InflightRow>(
@@ -570,7 +641,7 @@ export async function commitOnAck(
     );
     if (rows.length === 0) {
       await client.query("COMMIT");
-      return;
+      return { storyBetaRows: [] };
     }
     const row = rows[0];
 
@@ -579,6 +650,29 @@ export async function commitOnAck(
         row.cursor_advance_to_event_time !== null &&
         row.cursor_advance_to_event_key !== null
       ) {
+        // For the story streaming branch the β-bump must atomically
+        // commit with the cursor advance, so read the prior cursor
+        // value inside this transaction *before* advancing. The same
+        // FOR UPDATE that {@link advanceCursor} performs internally
+        // would race here (we'd read the post-advance value), so do
+        // an explicit read first; advanceCursor then re-locks the row
+        // and applies the monotonic advance.
+        let prevCursorTime: Date | null = null;
+        let prevCursorKey: string | null = null;
+        if (row.kind === "story") {
+          const { rows: prev } = await client.query<{
+            last_pushed_event_time: Date | null;
+            last_pushed_event_key: string | null;
+          }>(
+            `SELECT last_pushed_event_time, last_pushed_event_key
+               FROM aimer_push_state
+              WHERE kind = 'story'
+              FOR UPDATE`,
+          );
+          prevCursorTime = prev[0]?.last_pushed_event_time ?? null;
+          prevCursorKey = prev[0]?.last_pushed_event_key ?? null;
+        }
+
         await advanceCursor(
           customerId,
           row.kind,
@@ -586,6 +680,50 @@ export async function commitOnAck(
           row.cursor_advance_to_event_key,
           client,
         );
+
+        if (row.kind === "story") {
+          // Recompute the `event_group.id` set in the half-open range
+          // (prev_cursor, new_cursor] so the β-bump and the audit
+          // emission share the same identity. NULL prev cursor means
+          // "first advance" — the range degenerates to
+          // `(time_window_end, id) <= (new_cursor)`. The cursor key
+          // is the stringified `id` (NUMERIC(39, 0)) per the story
+          // drain's mapping in #493.
+          const { rows: affected } = await client.query<{
+            id: string;
+            story_version: string;
+          }>(
+            `SELECT id::text          AS id,
+                    story_version
+               FROM event_group
+              WHERE kind = 'auto_correlated'
+                AND (time_window_end, id::numeric)
+                      <= ($1::timestamptz, $2::numeric)
+                AND ($3::timestamptz IS NULL
+                     OR (time_window_end, id::numeric)
+                          > ($3::timestamptz, $4::numeric))`,
+            [
+              row.cursor_advance_to_event_time,
+              row.cursor_advance_to_event_key,
+              prevCursorTime,
+              prevCursorKey,
+            ],
+          );
+          if (affected.length > 0) {
+            await client.query(
+              `UPDATE event_group
+                  SET last_sent_at = NOW(),
+                      last_sent_by = $2::uuid,
+                      send_count   = send_count + 1
+                WHERE id = ANY($1::bigint[])`,
+              [affected.map((r) => r.id), SYSTEM_ACTOR_ACCOUNT_ID],
+            );
+            storyBetaRows = affected.map((r) => ({
+              storyId: r.id,
+              storyVersion: r.story_version,
+            }));
+          }
+        }
       } else {
         // No cursor advance but the drain still wants to record
         // liveness — bump last_synced_at without touching the cursor.
@@ -618,6 +756,7 @@ export async function commitOnAck(
     );
 
     await client.query("COMMIT");
+    return { storyBetaRows };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

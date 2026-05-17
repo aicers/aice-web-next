@@ -116,6 +116,12 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   // scoped to one customer; the action's input carries `customerId`
   // explicitly and the emitter populates it.
   "triage.story.create": "customer-scoped",
+  // Triage Story Send-to-aimer-web (#493). Each emission carries a
+  // single `customerId` (the focused Story's tenant for manual Send,
+  // the drain's `(customerId, kind = 'story')` cursor for
+  // opportunistic). One row per Story; mixed-customer batches are
+  // impossible because every drain is single-customer.
+  "triage.story.send": "customer-scoped",
   // Triage exclusion CRUD (#457). Global-scope rows live in
   // `auth_db.global_triage_exclusion` and apply to every active
   // customer; customer-scope rows live in the tenant DB and apply to
