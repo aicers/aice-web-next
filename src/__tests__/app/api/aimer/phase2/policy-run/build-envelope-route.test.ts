@@ -157,7 +157,8 @@ describe("POST /api/aimer/phase2/policy-run/build-envelope", () => {
       bridgeUrl: "https://aimer.example.com",
       hasActiveSigningKey: true,
     });
-    mockClientQuery.mockReset().mockResolvedValue({ rows: [{ count: "0" }] });
+    // Default: no prior inflight rows (fresh send_action_id).
+    mockClientQuery.mockReset().mockResolvedValue({ rows: [] });
   });
 
   it("rejects out-of-scope customer with 404", async () => {
@@ -294,16 +295,31 @@ describe("POST /api/aimer/phase2/policy-run/build-envelope", () => {
     });
   });
 
-  it("returns 409 on sequential retry of the same (send_action_id, after_event_key) — cursor-identity defense", async () => {
-    // Simulates the scenario the (send_action_id, batch_index) constraint
-    // alone cannot catch: the first call already committed (batch 0
-    // inserted), the browser re-sends the exact same request body
-    // (same send_action_id, same after_event_key=null), and the route
-    // would otherwise see count=1 → batch_index=1 → rebuild the same
-    // slice → insert a duplicate batch. The partial unique index on
-    // (send_action_id, after_event_key) WHERE after_event_key IS NULL
-    // raises 23505 from the second INSERT.
-    mockClientQuery.mockResolvedValueOnce({ rows: [{ count: "1" }] });
+  it("returns 409 on sequential retry that races the chain check — duplicate-index backstop", async () => {
+    // Edge case the chain-validation alone cannot catch on its own:
+    // two concurrent calls with identical {send_action_id,
+    // after_event_key} both see priorRows = [batch 0, last_event_key
+    // "5"] and both compute batch_index = 1, after_event_key = "5".
+    // Both pass the chain check; the partial unique index on
+    // (send_action_id, after_event_key) WHERE after_event_key IS NOT
+    // NULL raises 23505 from the second INSERT.
+    mockClientQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          batch_index: 0,
+          is_terminal: false,
+          last_event_key: "5",
+          actor_account_id: "11111111-1111-1111-1111-111111111111",
+          run_id: "1",
+        },
+      ],
+    });
+    mockBuildSlice.mockResolvedValueOnce({
+      payload: { run: RUN_BODY, events: [{ event_key: "9" }] },
+      lastEventKey: "9",
+      hasMore: false,
+      eventCount: 1,
+    });
     const uniqueErr = Object.assign(new Error("dup cursor"), { code: "23505" });
     mockInsertInflight.mockRejectedValueOnce(uniqueErr);
     const { POST } = await importRoute();
@@ -312,6 +328,7 @@ describe("POST /api/aimer/phase2/policy-run/build-envelope", () => {
         customer_id: 42,
         run_id: "1",
         send_action_id: VALID_SEND_ACTION,
+        after_event_key: "5",
       }),
       ctx,
     );
@@ -319,6 +336,128 @@ describe("POST /api/aimer/phase2/policy-run/build-envelope", () => {
     expect(await res.json()).toEqual({
       error: "duplicate_batch_for_send_action",
     });
+  });
+
+  it("rejects a first-batch build with a non-null cursor (skipped-first-cursor)", async () => {
+    // Fresh send_action_id (priorRows empty). A buggy or tampered
+    // client supplies after_event_key = "999" trying to skip earlier
+    // events and mint a tail-only batch. The chain check rejects
+    // before any slice is built or signed.
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        after_event_key: "999",
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "cursor_chain_mismatch" });
+    expect(mockBuildSlice).not.toHaveBeenCalled();
+    expect(mockInsertInflight).not.toHaveBeenCalled();
+  });
+
+  it("rejects a subsequent batch with the wrong cursor (wrong-next-cursor)", async () => {
+    // Prior inflight: batch 0, last_event_key "5", non-terminal. The
+    // chain requires the next call to use after_event_key = "5", but
+    // the caller supplies "10" — chain check rejects.
+    mockClientQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          batch_index: 0,
+          is_terminal: false,
+          last_event_key: "5",
+          actor_account_id: "11111111-1111-1111-1111-111111111111",
+          run_id: "1",
+        },
+      ],
+    });
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        after_event_key: "10",
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "cursor_chain_mismatch" });
+    expect(mockBuildSlice).not.toHaveBeenCalled();
+    expect(mockInsertInflight).not.toHaveBeenCalled();
+  });
+
+  it("rejects a build after the terminal batch has been minted (build-after-terminal)", async () => {
+    // Prior inflight: batch 0 (non-terminal, last_event_key "5") +
+    // batch 1 (terminal, last_event_key "9"). The Send is fully
+    // minted and waiting on finalize; any further build is rejected
+    // even if the cursor would have chained correctly.
+    mockClientQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          batch_index: 0,
+          is_terminal: false,
+          last_event_key: "5",
+          actor_account_id: "11111111-1111-1111-1111-111111111111",
+          run_id: "1",
+        },
+        {
+          batch_index: 1,
+          is_terminal: true,
+          last_event_key: "9",
+          actor_account_id: "11111111-1111-1111-1111-111111111111",
+          run_id: "1",
+        },
+      ],
+    });
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        after_event_key: "9",
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "send_already_terminal" });
+    expect(mockBuildSlice).not.toHaveBeenCalled();
+    expect(mockInsertInflight).not.toHaveBeenCalled();
+  });
+
+  it("rejects a build for a send_action_id owned by a different actor (actor_mismatch)", async () => {
+    // Prior inflight rows are owned by a different account_id. A
+    // session that guesses the send_action_id is rejected before any
+    // batch is minted.
+    mockClientQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          batch_index: 0,
+          is_terminal: false,
+          last_event_key: "5",
+          actor_account_id: "99999999-9999-9999-9999-999999999999",
+          run_id: "1",
+        },
+      ],
+    });
+    const { POST } = await importRoute();
+    const res = await POST(
+      makeRequest({
+        customer_id: 42,
+        run_id: "1",
+        send_action_id: VALID_SEND_ACTION,
+        after_event_key: "5",
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "actor_mismatch" });
+    expect(mockBuildSlice).not.toHaveBeenCalled();
+    expect(mockInsertInflight).not.toHaveBeenCalled();
   });
 
   it("rejects malformed after_event_key", async () => {
@@ -357,8 +496,27 @@ describe("POST /api/aimer/phase2/policy-run/build-envelope", () => {
     });
   });
 
-  it("increments batch_index based on prior inflight count", async () => {
-    mockClientQuery.mockResolvedValueOnce({ rows: [{ count: "2" }] });
+  it("derives batch_index from the chain — last prior batch_index + 1", async () => {
+    // Two prior batches; the next batch should be batch_index 2 and
+    // its cursor must equal the latest batch's last_event_key ("6").
+    mockClientQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          batch_index: 0,
+          is_terminal: false,
+          last_event_key: "3",
+          actor_account_id: "11111111-1111-1111-1111-111111111111",
+          run_id: "1",
+        },
+        {
+          batch_index: 1,
+          is_terminal: false,
+          last_event_key: "6",
+          actor_account_id: "11111111-1111-1111-1111-111111111111",
+          run_id: "1",
+        },
+      ],
+    });
     mockBuildSlice.mockResolvedValueOnce({
       payload: { run: RUN_BODY, events: [{ event_key: "7" }] },
       lastEventKey: "7",

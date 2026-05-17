@@ -41,19 +41,36 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
  *      last_event_key, actor_account_id)`.
  *   6. Return the multipart components + full aimer endpoint URL.
  *
- * Duplicate calls are caught at two layers in the DB schema:
+ * Cursor-chain enforcement: the server — not the browser — is the
+ * authority on which slice each batch covers. A Send always starts at
+ * the beginning of the run (first batch must use `after_event_key:
+ * null`); each subsequent batch must use the previous batch's
+ * `last_event_key`. A buggy or tampered client cannot skip events by
+ * supplying an arbitrary cursor and then declaring the Send finalized:
+ *
+ *   - First batch (no prior inflight rows for `send_action_id`):
+ *     `after_event_key` must be null, else `409 cursor_chain_mismatch`.
+ *   - Subsequent batch: `after_event_key` must equal the max-
+ *     `batch_index` prior row's `last_event_key`, else
+ *     `409 cursor_chain_mismatch`.
+ *   - Build-after-terminal: once a row with `is_terminal = true` exists
+ *     for this `send_action_id`, no further batches are accepted —
+ *     `409 send_already_terminal`. Finalize is the next step.
+ *   - Actor / run cross-check: the inflight rows of this Send action
+ *     must all belong to the calling session and the supplied `run_id`,
+ *     else `403 actor_mismatch`.
+ *
+ * Duplicate calls are still caught at two layers in the DB schema as a
+ * belt-and-braces backstop for the chain validation above:
  *
  *   - `UNIQUE (send_action_id, batch_index)` — racing concurrent calls
- *     that both observe the same prior batch count.
+ *     that both pass the chain check at the same prior state.
  *   - Partial unique indexes on `(send_action_id, after_event_key)` —
- *     a *sequential* retry of the same request body (e.g., browser
- *     retry after the first call already committed) which would
- *     otherwise be assigned the next `batch_index` and silently mint a
- *     duplicate slice with a fresh JTI.
+ *     a *sequential* retry of the same request body that races with
+ *     the read-then-insert window of the chain check.
  *
  * Both raise SQLSTATE 23505, which this route translates to
- * `409 duplicate_batch_for_send_action`. The browser is expected to
- * resume from the prior response's `last_event_key_in_batch`.
+ * `409 duplicate_batch_for_send_action`.
  */
 
 const POLICY_RUN_SCHEMA_VERSION = "phase2.policy_run.v1" as const;
@@ -191,20 +208,67 @@ export const POST = withAuth(
         throw err;
       }
 
-      // ── Build the slice ─────────────────────────────────────
-      slice = await buildPolicyRunSlice(client, runBody, afterEventKey);
-
-      // Derive batch_index from the count of already-minted batches for
-      // this send_action_id. Read-then-write is racy across concurrent
-      // duplicate calls, but the UNIQUE (send_action_id, batch_index)
-      // constraint serializes them at INSERT time below.
-      const { rows: priorRows } = await client.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
+      // ── Chain enforcement: load prior batches for this Send ──
+      //
+      // Fetched before the slice build so a chain-violation reject
+      // doesn't waste a SQL scan on `policy_triaged_event`.
+      const { rows: priorRows } = await client.query<{
+        batch_index: number;
+        is_terminal: boolean;
+        last_event_key: string | null;
+        actor_account_id: string;
+        run_id: string;
+      }>(
+        `SELECT batch_index,
+                is_terminal,
+                last_event_key::text   AS last_event_key,
+                actor_account_id::text AS actor_account_id,
+                run_id::text           AS run_id
            FROM aimer_policy_run_send_inflight
-          WHERE send_action_id = $1::uuid`,
+          WHERE send_action_id = $1::uuid
+          ORDER BY batch_index ASC`,
         [sendActionId],
       );
-      batchIndex = Number(priorRows[0]?.count ?? "0");
+
+      if (priorRows.length === 0) {
+        // First batch of this Send: cursor must be null. The Send
+        // always starts at the beginning of the run; a non-null
+        // cursor on the first batch would skip earlier events.
+        if (afterEventKey !== null) {
+          return jsonError("cursor_chain_mismatch", 409);
+        }
+        batchIndex = 0;
+      } else {
+        // Actor + run cross-check: an existing send_action_id is
+        // owned by one (actor, run) pair. A second caller cannot
+        // mint additional batches for it even if they guess the
+        // send_action_id — finalize also re-checks the actor, but
+        // we fail fast here so a tampered build is rejected before
+        // a slice is minted and signed.
+        const owner = priorRows[0];
+        if (
+          owner.actor_account_id !== session.accountId ||
+          owner.run_id !== runId
+        ) {
+          return jsonError("actor_mismatch", 403);
+        }
+        // Build-after-terminal: once the terminal batch has been
+        // minted, the next step is finalize, not another build.
+        if (priorRows.some((r) => r.is_terminal)) {
+          return jsonError("send_already_terminal", 409);
+        }
+        // Cursor chain: this batch's `after_event_key` must equal
+        // the previous batch's `last_event_key`. NUMERIC text from
+        // pg compares exactly, so a string equality check is safe.
+        const prior = priorRows[priorRows.length - 1];
+        if (afterEventKey !== prior.last_event_key) {
+          return jsonError("cursor_chain_mismatch", 409);
+        }
+        batchIndex = prior.batch_index + 1;
+      }
+
+      // ── Build the slice ─────────────────────────────────────
+      slice = await buildPolicyRunSlice(client, runBody, afterEventKey);
     } finally {
       client.release();
     }
