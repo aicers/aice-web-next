@@ -1106,6 +1106,105 @@ async function enrichRefreshPayloadWithClient<
   return { ...payload, events } as P;
 }
 
+// ── Single-event manual Send (Detection menu Phase 2 path) ───────────
+
+/**
+ * Decimal i128 pattern matching `cursorToEventKey` in the cadence pager.
+ * Used to reject obviously malformed inputs before issuing the SQL
+ * lookup — the customer DB column is `NUMERIC(39,0)` and a non-numeric
+ * value would error out at parameter binding anyway.
+ */
+const EVENT_KEY_PATTERN = /^[0-9]{1,39}$/;
+
+/**
+ * Load exactly one `baseline_triaged_event` row by `event_key` and run
+ * the same per-event enrichment the streaming slice loader runs
+ * internally (rank snapshot + window signals + peer summary +
+ * scoring-weights snapshot), returning the wire-ready
+ * {@link BaselineStreamingEvent} shape used by `events[]` in a
+ * `phase2.baseline.v1` payload.
+ *
+ * Powers the Detection menu Send button's Phase 2 path (sub-issue
+ * #621): when an event is baseline-passing, the operator's Send click
+ * builds a single-event `phase2.baseline.v1` payload via
+ * {@link buildPhase2Push}. The drain's cursor-based
+ * {@link loadBaselineStreamingSlice} cannot serve "exactly this one
+ * `event_key`" — it pages forward past a cursor — so this helper
+ * exists as the manual-Send entry point that produces a row in the
+ * identical enriched shape without duplicating the enrichment
+ * internals.
+ *
+ * Returns `null` when the row does not exist in this tenant's
+ * `baseline_triaged_event` — the caller maps that to the Phase 1 path
+ * (existing bridge handoff) per RFC 0002 §8 Storage routing.
+ *
+ * Cohort window matches the streaming-slice loader: the Triage menu's
+ * default rendering window anchored at `now`. The §6 fields the menu
+ * surfaces today read the same window, so the pushed values stay
+ * consistent with what an analyst sees in the Triage tab when the
+ * Send click fires.
+ *
+ * Cursor advancement is the caller's responsibility — the Detection
+ * menu's Phase 2 path explicitly does NOT advance the cursor on
+ * single-event push (RFC 0002 §8 "Race vs cursor"). This helper
+ * issues no writes against `aimer_push_state`.
+ */
+export async function loadSingleBaselineEventWireItem(input: {
+  customerId: number;
+  eventKey: string;
+  /** Override for tests; defaults to the wall-clock `now`. */
+  now?: Date;
+}): Promise<BaselineStreamingEvent | null> {
+  if (!EVENT_KEY_PATTERN.test(input.eventKey)) return null;
+  const pool = await getCustomerPool(input.customerId);
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query<BaselineCursorRowSql>(
+      `SELECT event_key::text                  AS event_key,
+              event_time,
+              to_char(event_time AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS event_time_iso,
+              kind,
+              sensor,
+              host(orig_addr)::text            AS orig_addr,
+              orig_port,
+              host(resp_addr)::text            AS resp_addr,
+              resp_port,
+              proto,
+              host,
+              dns_query,
+              uri,
+              category,
+              baseline_version,
+              exclusions_fp,
+              raw_score,
+              selector_tags
+         FROM baseline_triaged_event
+        WHERE event_key = $1::numeric
+        LIMIT 1`,
+      [input.eventKey],
+    );
+    if (rows.length === 0) return null;
+    const row = rows[0];
+
+    const now = input.now ?? new Date();
+    const cohortFrom = new Date(now.getTime() - TRIAGE_DEFAULT_DURATION_MS);
+    const cohortFromIso = cohortFrom.toISOString();
+    const cohortToIso = now.toISOString();
+
+    const enriched = await enrichEvents(client, {
+      rows: [row],
+      cohortFromIso,
+      cohortToIso,
+      baselineVersion: row.baseline_version,
+      now,
+    });
+    return enriched[0] ?? null;
+  } finally {
+    client.release();
+  }
+}
+
 export const _testing = {
   trimToBudget,
   truncateAtVersionBoundary,

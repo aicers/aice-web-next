@@ -20,6 +20,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { AimerCustomerCandidate } from "@/lib/aimer/candidate-customers";
+import { postPhase2Multipart } from "@/lib/aimer/phase2/transport.client";
 import type {
   AimerIntegrationMissingReason,
   AimerIntegrationSetupStatus,
@@ -39,6 +40,26 @@ interface ContextTokenResponse {
 interface ContextTokenErrorBody {
   error?: string;
 }
+
+/**
+ * Response shape from `POST /api/aimer/detection-send` — the
+ * server-side baseline-passing probe that routes the operator's click
+ * between Phase 1 (existing bridge handoff to `detection_events`) and
+ * Phase 2 (single-event baseline batch direct to aimer-web). See
+ * `src/app/api/aimer/detection-send/route.ts` for the routing rule.
+ */
+type DetectionSendResponse =
+  | { route: "phase1" }
+  | {
+      route: "phase2";
+      context_token: string;
+      events_envelope: string;
+      events_data: string;
+      context_jti: string;
+      aimer_endpoint_path: "/api/phase2/baseline/batch";
+      aimer_endpoint_url: string;
+      schema_version: "phase2.baseline.v1";
+    };
 
 interface Props {
   locator: EventLocator;
@@ -117,6 +138,15 @@ export function AimerBanner({
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Phase 2 single-event sends stay on the page (no top-level
+   * navigation), so we surface a post-send disclosure locally. Per
+   * #621 we only render the disclosure on the Phase 2 path: Phase 1
+   * still page-navigates and the disclosure folds into the destination
+   * view (option 2 of the pre-implementation UX decision — smaller
+   * change, keeps the Phase 1 bridge handoff untouched).
+   */
+  const [phase2Sent, setPhase2Sent] = useState(false);
   // Single-customer events auto-select to keep the flow one-click; the
   // multi-customer modal must force an explicit operator choice per the
   // issue's "selection is required" requirement, so start with no
@@ -136,6 +166,7 @@ export function AimerBanner({
     setSelectedId(candidates.length === 1 ? (eligibleIds[0] ?? null) : null);
     setError(null);
     setSubmitting(false);
+    setPhase2Sent(false);
     setModalOpen(true);
   }, [candidates.length, eligibleIds]);
 
@@ -146,16 +177,127 @@ export function AimerBanner({
     setError(null);
   }, []);
 
+  /**
+   * Phase 1 bridge handoff (unchanged from #441): fetch a context token
+   * + envelope, build the hidden multipart form, and `form.submit()`
+   * to top-level-navigate to the bridge. Kept verbatim in this branch
+   * because option 2 of the §621 UX decision deliberately preserves
+   * the existing page-navigation flow.
+   */
+  const sendPhase1 = useCallback(
+    async (customerId: number, requestId: number): Promise<void> => {
+      let form: HTMLFormElement | null = null;
+      try {
+        const res = await mutatingFetch("/api/aimer/context-token", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ locator, customerId }),
+        });
+        if (requestId !== requestIdRef.current) return;
+        if (!res.ok) {
+          const message = await translateErrorBody(t, res);
+          setError(message);
+          setSubmitting(false);
+          return;
+        }
+        const payload = (await res.json()) as ContextTokenResponse;
+        if (requestId !== requestIdRef.current) return;
+
+        form = buildAimerHiddenForm(payload, document);
+        document.body.appendChild(form);
+        form.submit();
+        // Successful submit → top-level navigation in flight.  Do NOT
+        // remove the form here; some browsers treat detaching the form
+        // synchronously after submit() as cancelling the request.  The
+        // page is unloading anyway so the DOM will be discarded.
+        form = null;
+      } catch (err) {
+        if (requestId !== requestIdRef.current) return;
+        const message =
+          err instanceof Error && err.message
+            ? `${t("aimerErrorGeneric")} (${err.message})`
+            : t("aimerErrorGeneric");
+        setError(message);
+        setSubmitting(false);
+      } finally {
+        if (form !== null) {
+          // Failure path: form was appended but submit() threw.  Pull
+          // it out so the DOM does not retain orphaned hidden inputs
+          // before we render the error toast.
+          form.remove();
+        }
+      }
+    },
+    [locator, t],
+  );
+
+  /**
+   * Phase 2 single-event push (new in #621). The server has already
+   * confirmed the event is baseline-passing and minted the multipart
+   * tokens; we POST them directly to aimer-web's
+   * `/api/phase2/baseline/batch` endpoint via {@link postPhase2Multipart}
+   * (the same browser transport the opportunistic drain uses) and
+   * render the post-send disclosure in place — no top-level
+   * navigation.
+   *
+   * Cursor advancement is the server's call to make and the server has
+   * already decided not to advance it (RFC 0002 §8 "Race vs cursor"),
+   * so a re-click against the same event is idempotent on aimer-web's
+   * `(baseline_version, event_key)` check.
+   */
+  const sendPhase2 = useCallback(
+    async (
+      phase2: Extract<DetectionSendResponse, { route: "phase2" }>,
+      requestId: number,
+    ): Promise<void> => {
+      try {
+        const ack = await postPhase2Multipart(
+          phase2.aimer_endpoint_url,
+          {
+            context_token: phase2.context_token,
+            events_envelope: phase2.events_envelope,
+            events_data: phase2.events_data,
+            context_jti: phase2.context_jti,
+          },
+          phase2.schema_version,
+        );
+        if (requestId !== requestIdRef.current) return;
+        if (ack.kind !== "insert") {
+          setError(t("aimerErrorGeneric"));
+          setSubmitting(false);
+          return;
+        }
+        setSubmitting(false);
+        setPhase2Sent(true);
+      } catch (err) {
+        if (requestId !== requestIdRef.current) return;
+        const message =
+          err instanceof Error && err.message
+            ? `${t("aimerErrorGeneric")} (${err.message})`
+            : t("aimerErrorGeneric");
+        setError(message);
+        setSubmitting(false);
+      }
+    },
+    [t],
+  );
+
   const handleSend = useCallback(async () => {
     if (selectedId === null) return;
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     setSubmitting(true);
     setError(null);
+    setPhase2Sent(false);
 
-    let form: HTMLFormElement | null = null;
+    // Server-side routing decision: ask whether the event is currently
+    // baseline-passing. The route also issues the Phase 2 envelope on
+    // the spot when so, so the click→envelope round-trip stays
+    // server-authoritative — the browser does not get to decide which
+    // phase a click maps to.
+    let routing: DetectionSendResponse;
     try {
-      const res = await mutatingFetch("/api/aimer/context-token", {
+      const res = await mutatingFetch("/api/aimer/detection-send", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ locator, customerId: selectedId }),
@@ -167,17 +309,7 @@ export function AimerBanner({
         setSubmitting(false);
         return;
       }
-      const payload = (await res.json()) as ContextTokenResponse;
-      if (requestId !== requestIdRef.current) return;
-
-      form = buildAimerHiddenForm(payload, document);
-      document.body.appendChild(form);
-      form.submit();
-      // Successful submit → top-level navigation in flight.  Do NOT
-      // remove the form here; some browsers treat detaching the form
-      // synchronously after submit() as cancelling the request.  The
-      // page is unloading anyway so the DOM will be discarded.
-      form = null;
+      routing = (await res.json()) as DetectionSendResponse;
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
       const message =
@@ -186,15 +318,16 @@ export function AimerBanner({
           : t("aimerErrorGeneric");
       setError(message);
       setSubmitting(false);
-    } finally {
-      if (form !== null) {
-        // Failure path: form was appended but submit() threw.  Pull
-        // it out so the DOM does not retain orphaned hidden inputs
-        // before we render the error toast.
-        form.remove();
-      }
+      return;
     }
-  }, [locator, selectedId, t]);
+    if (requestId !== requestIdRef.current) return;
+
+    if (routing.route === "phase2") {
+      await sendPhase2(routing, requestId);
+      return;
+    }
+    await sendPhase1(selectedId, requestId);
+  }, [locator, selectedId, sendPhase1, sendPhase2, t]);
 
   const sendDisabled = submitting || selectedId === null;
 
@@ -309,29 +442,52 @@ export function AimerBanner({
             </p>
           ) : null}
 
+          {phase2Sent ? (
+            <p
+              role="status"
+              className="text-sm text-emerald-700 dark:text-emerald-400"
+              data-testid="aimer-sent-phase2"
+            >
+              {t("aimerSentPhase2")}
+            </p>
+          ) : null}
+
           <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={closeModal}
-              disabled={submitting}
-            >
-              {t("aimerModalCancel")}
-            </Button>
-            <Button
-              type="button"
-              onClick={handleSend}
-              disabled={sendDisabled}
-              data-testid="aimer-modal-send"
-            >
-              {submitting ? (
-                <Loader2
-                  className="mr-2 size-4 animate-spin"
-                  aria-hidden="true"
-                />
-              ) : null}
-              {submitting ? t("aimerSending") : t("aimerModalSend")}
-            </Button>
+            {phase2Sent ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={closeModal}
+                data-testid="aimer-sent-dismiss"
+              >
+                {t("aimerSentPhase2Dismiss")}
+              </Button>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={closeModal}
+                  disabled={submitting}
+                >
+                  {t("aimerModalCancel")}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={sendDisabled}
+                  data-testid="aimer-modal-send"
+                >
+                  {submitting ? (
+                    <Loader2
+                      className="mr-2 size-4 animate-spin"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  {submitting ? t("aimerSending") : t("aimerModalSend")}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

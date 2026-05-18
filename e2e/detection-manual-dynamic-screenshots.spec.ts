@@ -1,14 +1,24 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { encodeEventLocator } from "@/lib/events/event-locator";
 
 import { expect, test } from "./fixtures";
 import {
+  clearAimerSigningKey,
+  ensureAimerSigningKey,
+} from "./helpers/aimer-signing-key";
+import {
   resetRateLimits,
   signInAndWait,
   signInAndWaitKo,
 } from "./helpers/auth";
-import { ensureCustomerExists } from "./helpers/setup-db";
+import {
+  clearAimerSetting,
+  ensureCustomerExists,
+  setAimerSetting,
+  setCustomerExternalKey,
+} from "./helpers/setup-db";
 import { mockServerSession } from "./mock-server-admin";
 
 const VIEWPORT = { width: 1440, height: 900 } as const;
@@ -27,8 +37,47 @@ if (!INVESTIGATION_TOKEN) {
 
 test.use({ viewport: VIEWPORT });
 
+const FIXTURES_ROOT = path.resolve(
+  __dirname,
+  "..",
+  "src",
+  "__tests__",
+  "fixtures",
+);
+// The Aimer-modal capture path needs `event.manual-detail.json`'s
+// `origCustomer.id` to line up with the actual seeded customer row's
+// id (the auth_db `customers_id_seq` advances across runs, so the
+// hardcoded `"1"` no longer matches `getCustomerBridgeEligibility`).
+// We rewrite the fixture in `beforeAll` and restore the original
+// content in `afterAll`; stub registration goes through the
+// manifest-coverage check so a side-by-side dynamic fixture file is
+// not an option.
+const EVENT_FIXTURE_SOURCE = "detection/event.manual-detail.json";
+let eventFixtureOriginal: string | null = null;
+
 test.beforeAll(async () => {
-  await ensureCustomerExists("Default", "default_db");
+  const customerId = await ensureCustomerExists("Default", "default_db");
+  // Send to Aimer button is only enabled when the customer carries an
+  // `external_key` and the Aimer integration is fully configured. Seed
+  // all three SSR-side dependencies so the Overview tab renders the
+  // banner in its happy-path state for the modal captures below.
+  await setCustomerExternalKey("Default", "aimer-default-ext-key");
+  await setAimerSetting("aice_id", "default.aice.example.test");
+  await setAimerSetting(
+    "aimer_web_bridge_url",
+    "https://aimer.example.test/bridge",
+  );
+  await ensureAimerSigningKey();
+
+  const fixturePath = path.join(FIXTURES_ROOT, EVENT_FIXTURE_SOURCE);
+  eventFixtureOriginal = readFileSync(fixturePath, "utf8");
+  const patched = JSON.parse(eventFixtureOriginal) as {
+    event: { origCustomer: { id: string; name: string } | null };
+  };
+  if (patched.event.origCustomer) {
+    patched.event.origCustomer.id = String(customerId);
+  }
+  writeFileSync(fixturePath, `${JSON.stringify(patched, null, 2)}\n`, "utf8");
   await session.registerStub({
     operation: "eventList",
     response: {
@@ -41,7 +90,7 @@ test.beforeAll(async () => {
     matchVariables: { id: INVESTIGATION_EVENT_ID },
     response: {
       kind: "fixture",
-      fixture: "detection/event.manual-detail.json",
+      fixture: EVENT_FIXTURE_SOURCE,
     },
   });
   await session.registerStub({
@@ -78,6 +127,18 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await session.clear();
+  await setCustomerExternalKey("Default", null);
+  await clearAimerSetting("aice_id");
+  await clearAimerSetting("aimer_web_bridge_url");
+  clearAimerSigningKey();
+  if (eventFixtureOriginal !== null) {
+    writeFileSync(
+      path.join(FIXTURES_ROOT, EVENT_FIXTURE_SOURCE),
+      eventFixtureOriginal,
+      "utf8",
+    );
+    eventFixtureOriginal = null;
+  }
 });
 
 test.beforeEach(async ({ page }) => {
@@ -275,6 +336,8 @@ async function captureEventInvestigationSuite(
     animations: "disabled",
   });
 
+  await captureAimerSendModals(page, locale);
+
   await page
     .getByRole("tab", { name: locale === "ko" ? "엔드포인트" : "Endpoints" })
     .click();
@@ -290,6 +353,83 @@ async function captureEventInvestigationSuite(
     ),
     animations: "disabled",
   });
+}
+
+/**
+ * Capture the two Send-to-Aimer modal states the manual references:
+ * the pre-send confirmation (shared by both phases) and the Phase 2
+ * post-send disclosure. Both surfaces are deterministic client-rendered
+ * dialogs, so we drive them with Playwright route interception rather
+ * than a live aimer-web; the AUTHORING.md "captures whose shape is
+ * fully determined by client-side state" carve-out applies.
+ */
+async function captureAimerSendModals(
+  page: import("@playwright/test").Page,
+  locale: "en" | "ko",
+): Promise<void> {
+  // Open the Send to Aimer modal from the Overview tab. The button is
+  // enabled thanks to the seeded `external_key`, system settings, and
+  // signing key set up in `beforeAll`.
+  const sendButton = page.getByTestId("aimer-send-button");
+  await expect(sendButton).toBeEnabled({ timeout: 10_000 });
+  await sendButton.scrollIntoViewIfNeeded();
+  await sendButton.click();
+
+  const confirmButton = page.getByTestId("aimer-modal-send");
+  await expect(confirmButton).toBeVisible();
+  await page.screenshot({
+    path: path.join(ASSETS_DIR, `aimer-send-modal-${locale}.png`),
+    animations: "disabled",
+  });
+
+  // Stub the routing decision endpoint to return a Phase 2 envelope and
+  // the aimer-web bridge POST to ack the multipart so the modal
+  // transitions to the post-send disclosure state. These are the same
+  // hops the live flow takes; only the bytes returned are synthetic.
+  const contextJti = "screenshot-jti-1";
+  const phase2Url = "https://aimer.example.test/api/phase2/baseline/batch";
+  await page.route("**/api/aimer/detection-send", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        route: "phase2",
+        context_token: "ctx.token.placeholder",
+        events_envelope: "events.envelope.placeholder",
+        events_data: "{}",
+        context_jti: contextJti,
+        aimer_endpoint_path: "/api/phase2/baseline/batch",
+        aimer_endpoint_url: phase2Url,
+        schema_version: "phase2.baseline.v1",
+      }),
+    });
+  });
+  await page.route(phase2Url, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        accepted: 1,
+        duplicates_skipped: 0,
+        received_at: new Date().toISOString(),
+        context_jti: contextJti,
+      }),
+    });
+  });
+
+  await confirmButton.click();
+  await expect(page.getByTestId("aimer-sent-phase2")).toBeVisible();
+  await page.screenshot({
+    path: path.join(ASSETS_DIR, `aimer-send-phase2-${locale}.png`),
+    animations: "disabled",
+  });
+  await page.getByTestId("aimer-sent-dismiss").click();
+  await expect(page.getByTestId("aimer-sent-phase2")).toBeHidden();
+
+  // Tear down the route interceptors so subsequent captures (KO run, or
+  // unrelated screenshots) hit the real network again.
+  await page.unroute("**/api/aimer/detection-send");
+  await page.unroute(phase2Url);
 }
 
 async function waitForDetectionList(

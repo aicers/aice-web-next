@@ -890,3 +890,41 @@ export async function getSessionStatus(username: string): Promise<{
     browserFingerprint: result.rows[0].browser_fingerprint,
   };
 }
+
+// ── Aimer integration helpers ─────────────────────────────────────
+
+/**
+ * Stamp a customer's `external_key` so `getCustomerBridgeEligibility`
+ * returns `true` for it. Pass `null` to clear.
+ */
+export async function setCustomerExternalKey(
+  customerName: string,
+  externalKey: string | null,
+): Promise<void> {
+  await pool.query("UPDATE customers SET external_key = $2 WHERE name = $1", [
+    customerName,
+    externalKey,
+  ]);
+}
+
+/**
+ * Upsert one row in `system_settings`. The value column is `jsonb` and
+ * the application stores entries as `{ "value": <string> }`.
+ */
+export async function setAimerSetting(
+  key: "aice_id" | "aimer_web_bridge_url",
+  value: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO system_settings (key, value)
+     VALUES ($1, $2::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [key, JSON.stringify({ value })],
+  );
+}
+
+export async function clearAimerSetting(
+  key: "aice_id" | "aimer_web_bridge_url",
+): Promise<void> {
+  await pool.query("DELETE FROM system_settings WHERE key = $1", [key]);
+}

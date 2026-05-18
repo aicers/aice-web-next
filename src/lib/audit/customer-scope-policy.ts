@@ -104,6 +104,18 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   // customer existence by pasting a `requestedCustomerId` into the
   // audit row. `customer-agnostic` is the simpler and safer placement.
   "aimer_context_token.denied": "customer-agnostic",
+  // Detection menu Send routing (#621). Phase 2 issuance happens after
+  // the chosen `customerId` is resolved and verified, so `.issued`
+  // reliably carries `customerId` and is customer-scoped. `.denied`
+  // mirrors `aimer_context_token.denied`: denial happens at any of
+  // several stages, some of which run before the customer is resolved
+  // (rate-limit, integration-not-configured) or where the requested
+  // customer may not exist for the caller (cross-tenant 404). Forcing
+  // it to customer-scoped would either violate the "emitter MUST set
+  // customerId" rule or push toward leaking customer existence via the
+  // `requestedCustomerId` detail.
+  "aimer_detection_send.issued": "customer-scoped",
+  "aimer_detection_send.denied": "customer-agnostic",
   // Triage policy CRUD (#459) — TriagePolicy rows live in the
   // per-customer tenant DB, so every row is intrinsically scoped to
   // the customer the route operates on. Emitter populates `customerId`

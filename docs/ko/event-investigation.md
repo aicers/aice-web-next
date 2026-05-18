@@ -114,8 +114,12 @@ Triage와 같은 형제 메뉴도 Detection 접두사 없이 같은 페이지로
 ID와 함께)를 포함한 요약 카드를 표시합니다.
 
 이 탭에는 **Aimer로 보내기** 배너도 있습니다. 버튼을 누르면
-확인 모달이 열리고, 이어서 aimer-web의 브리지 엔드포인트로
-최상위 POST가 수행됩니다.
+확인 모달이 열리며, 이벤트가 현재 baseline 통과 상태인지에 따라
+두 가지 경로 중 하나로 전송이 진행됩니다(라우팅 판정은
+`POST /api/aimer/detection-send`가 `baseline_triaged_event`에
+대해 서버 측에서 수행합니다). 두 경로 모두 동일한
+`detection:read` 권한으로 게이트되며, 동일한 customer 선택
+모달을 사용합니다.
 
 1. 조사자는 이 이벤트를 어느 customer로 보낼지 선택합니다.
    이벤트가 단일 customer와 연결되어 있으면 모달이 그 이름을
@@ -124,13 +128,41 @@ ID와 함께)를 포함한 요약 카드를 표시합니다.
    RDP Brute Force, External DDoS처럼 응답자 또는 출발자 측이
    customer 배열을 갖는 하위 유형에서 발생) 모달이 라디오
    목록을 표시하고 조사자는 하나를 선택해야 합니다.
-2. 브라우저는 선택한 customer 범위의 짧은 수명의 서명된
-   컨텍스트 토큰을 `/api/aimer/context-token`에서 받아옵니다.
-3. 브라우저는 세 개의 텍스트 파트(`context_token`,
-   `events_envelope`, `events_data`)를 가진 숨겨진
-   HTML `<form>`을 만들고, 이를 브리지 엔드포인트에 최상위
-   multipart POST로 제출합니다. 조사자는 aimer-web에 도착하여
-   로그인하고 전송을 승인하라는 요청을 받게 됩니다.
+2. 브라우저는 locator와 customer를
+   `/api/aimer/detection-send`로 POST합니다. 서버는 선택된
+   customer의 DB에 대해
+   `SELECT 1 FROM baseline_triaged_event WHERE event_key = $1`
+   을 조회하여 어떤 경로를 사용할지 결정하며, Phase 2 경로의
+   경우 동일 응답에 multipart 토큰까지 함께 발급하여 라우팅
+   판정이 서버에서 권한 있게 결정되도록 합니다.
+
+**Phase 1 — baseline 미통과 이벤트.** 브라우저는
+`/api/aimer/context-token`에서 짧은 수명의 서명된 컨텍스트
+토큰을 받아온 뒤, 세 개의 텍스트 파트(`context_token`,
+`events_envelope`, `events_data`)를 가진 숨겨진 HTML `<form>`
+을 만들고 이를 aimer-web의 브리지 엔드포인트로 최상위
+multipart POST로 제출합니다. 조사자는 aimer-web에 도착해
+로그인 및 전송 승인을 진행하며, 이벤트는 단일 이벤트 분석을
+위해 `detection_events`에 저장됩니다. 페이지 이동 자체가
+전송 신호가 되므로 페이지 내 별도의 안내는 표시하지
+않습니다.
+
+**Phase 2 — baseline 통과 이벤트.** 서버가 라우팅 판정과 함께
+multipart 토큰을 이미 발급했으므로, 브라우저는 이벤트 상세
+페이지를 떠나지 않고 토큰을 aimer-web의
+`/api/phase2/baseline/batch` 엔드포인트로 직접 POST합니다.
+2xx 응답을 받으면 모달에 **"Phase 2(Triage 분석)로
+전송했습니다"** 안내가 표시되며, 조사자가 직접 닫을 수
+있습니다. Phase 2 전송은 opportunistic 스트리밍 커서를
+진행하지 않으므로, 이후 자동 sweep이 같은 이벤트를 지나가도
+aimer-web의 `(baseline_version, event_key)` 멱등 검증이
+이를 흡수합니다(`duplicates_skipped`). 따라서 동일 이벤트의
+재클릭도 멱등합니다.
+
+수동 전송은 항상 opportunistic 푸시의 일시 정지 토글을
+우회합니다. 전송 클릭은 의도적인 항목 단위의 운영자
+오버라이드이며, 일시 정지 토글은 자동 백그라운드 흐름만
+제어합니다.
 
 다음의 경우 버튼이 비활성화됩니다.
 
@@ -151,7 +183,9 @@ ID와 함께)를 포함한 요약 카드를 표시합니다.
 미입력)` 힌트와 함께). 조사자는 설정된 한쪽으로 계속 전송할 수
 있습니다.
 
-<!-- TODO: screenshot - aimer-bridge batch -->
+![Aimer로 보내기 확인 모달](../assets/aimer-send-modal-ko.png)
+
+![Aimer로 보내기 Phase 2 안내](../assets/aimer-send-phase2-ko.png)
 
 여기서 사용한 브라우저 기본 요소는 의도된 선택입니다. HTML form
 submit은 사용자가 실제로 aimer-web으로 이동하도록 최상위 multipart

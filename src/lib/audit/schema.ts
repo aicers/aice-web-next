@@ -129,6 +129,23 @@ type AimerContextTokenAction =
   | "aimer_context_token.denied";
 
 /**
+ * Detection menu Send button routing (#621).
+ *
+ * The route handler `POST /api/aimer/detection-send` decides whether
+ * the operator's Send click resolves to Phase 1 (existing bridge
+ * handoff via `/api/aimer/context-token`) or Phase 2 (single-event
+ * baseline batch direct to aimer-web). For Phase 1 it returns a
+ * routing hint and the downstream context-token route emits its own
+ * `aimer_context_token.issued`; for Phase 2 this route is the
+ * issuance authority itself, so `.issued` fires here. `.denied` fires
+ * on rate-limit, cross-tenant access, or orchestration failure
+ * regardless of which path the request would otherwise resolve to.
+ */
+type AimerDetectionSendAction =
+  | "aimer_detection_send.issued"
+  | "aimer_detection_send.denied";
+
+/**
  * Triage policy CRUD actions (#459).
  *
  * TriagePolicy rows live in the per-customer tenant DB; every row is
@@ -259,6 +276,7 @@ export type AuditAction =
   | AimerSigningKeyAction
   | AimerIntegrationSettingAction
   | AimerContextTokenAction
+  | AimerDetectionSendAction
   | TriagePolicyAction
   | TriageStoryAction
   | TriageExclusionAction
@@ -339,6 +357,8 @@ export const AUDIT_ACTIONS = [
   "aimer_integration_setting.changed",
   "aimer_context_token.issued",
   "aimer_context_token.denied",
+  "aimer_detection_send.issued",
+  "aimer_detection_send.denied",
   "triage.policy.create",
   "triage.policy.update",
   "triage.policy.delete",

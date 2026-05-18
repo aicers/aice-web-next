@@ -118,8 +118,13 @@ Summary card with severity, time, kind, category, confidence
 and triage scores (each score with its policy ID).
 
 The tab also includes a **Send to Aimer** banner.  Clicking
-**Send to Aimer** opens a confirmation modal, then performs a
-top-level POST to aimer-web's bridge endpoint:
+**Send to Aimer** opens a confirmation modal, then performs one
+of two flows depending on whether the event is currently
+baseline-passing (the routing decision is made server-side by
+`POST /api/aimer/detection-send` against
+`baseline_triaged_event`).  Both flows are gated by the same
+`detection:read` permission and use the same customer-selection
+modal:
 
 1. The investigator picks the customer this event should be
    sent under.  When the event is connected to a single
@@ -130,14 +135,41 @@ top-level POST to aimer-web's bridge endpoint:
    External DDoS, whose responder/originator side carries an
    array of customers) the modal renders a radio list and the
    investigator must pick one.
-2. The browser fetches a short-lived signed context token from
-   `/api/aimer/context-token`, scoped to the chosen customer.
-3. The browser builds a hidden HTML `<form>` with three text
-   parts (`context_token`, `events_envelope`, `events_data`)
-   and submits it as a top-level multipart POST to the
-   bridge endpoint.  The investigator lands on aimer-web,
-   where they will be asked to sign in and approve the
-   transfer.
+2. The browser POSTs the locator + customer to
+   `/api/aimer/detection-send`.  The server probes
+   `SELECT 1 FROM baseline_triaged_event WHERE event_key = $1`
+   under the chosen customer's DB to decide which path applies,
+   and — on the Phase 2 path — also mints the multipart tokens
+   in the same response so the routing decision is
+   server-authoritative.
+
+**Phase 1 — non-baseline-passing events.**  The browser fetches
+a short-lived signed context token from
+`/api/aimer/context-token`, builds a hidden HTML `<form>` with
+three text parts (`context_token`, `events_envelope`,
+`events_data`) and submits it as a top-level multipart POST to
+aimer-web's bridge endpoint.  The investigator lands on
+aimer-web, where they sign in, approve the transfer, and the
+event is stored in `detection_events` for single-event
+analysis.  No in-page disclosure is rendered — the navigation
+itself is the signal that the send happened.
+
+**Phase 2 — baseline-passing events.**  The server has already
+returned the multipart tokens alongside the routing decision.
+The browser POSTs them directly to aimer-web's
+`/api/phase2/baseline/batch` endpoint without leaving the
+event-detail page; on a 2xx ack the modal shows the disclosure
+**"Sent via Phase 2 (Triage analysis)"** and an investigator-
+dismissable confirmation.  Phase 2 sends do not advance the
+opportunistic streaming cursor, so a subsequent automatic sweep
+past the same event is absorbed by aimer-web's idempotent
+`(baseline_version, event_key)` check (`duplicates_skipped`).
+Re-clicking the same event therefore stays idempotent.
+
+Manual Send always bypasses the opportunistic-push pause
+toggle: a Send click is a deliberate per-item operator
+override.  The pause toggle only gates the automatic
+background flow.
 
 The button is disabled when:
 
@@ -160,7 +192,9 @@ has an `external_key`, the customer without a key is shown
 disabled (with an "(no external_key set)" hint) — the
 investigator can still send under the configured one.
 
-<!-- TODO: screenshot - aimer-bridge batch -->
+![Send to Aimer confirmation modal](../assets/aimer-send-modal-en.png)
+
+![Send to Aimer Phase 2 disclosure](../assets/aimer-send-phase2-en.png)
 
 The browser primitive used here is intentional.  An HTML form
 submit is the only standard browser API that produces a
