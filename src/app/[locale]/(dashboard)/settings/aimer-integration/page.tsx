@@ -16,10 +16,11 @@ export default async function AimerIntegrationSettingsPage() {
     redirect("/");
   }
 
-  const [setup, keyStatus, customerStats] = await Promise.all([
+  const [setup, keyStatus, customerStats, customers] = await Promise.all([
     getAimerIntegrationSetup(),
     getAimerSigningKeyStatus(),
     loadCustomerStats(),
+    loadActiveCustomers(),
   ]);
 
   return (
@@ -27,8 +28,22 @@ export default async function AimerIntegrationSettingsPage() {
       initialSetup={setup}
       initialKeyStatus={keyStatus}
       customerStats={customerStats}
+      customers={customers}
     />
   );
+}
+
+async function loadActiveCustomers(): Promise<{ id: number; name: string }[]> {
+  // System Administrator inherits `customers:access-all` so the page
+  // surfaces every active customer for the Phase 2 status / sync-now /
+  // backfill picker; the wrapper routes re-validate scope per request.
+  const { rows } = await query<{ id: number; name: string }>(
+    `SELECT id, name
+       FROM customers
+      WHERE status = 'active'
+      ORDER BY name`,
+  );
+  return rows.map((r) => ({ id: r.id, name: r.name }));
 }
 
 async function loadCustomerStats(): Promise<{

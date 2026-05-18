@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import DashboardLayoutClient from "@/components/layout/dashboard-layout";
 import { routing } from "@/i18n/routing";
+import { isSystemAdministrator } from "@/lib/aimer/role-guard";
 import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { hasPermission } from "@/lib/auth/permissions";
 import { computeScopeFingerprint } from "@/lib/auth/scope-fingerprint";
@@ -82,6 +83,12 @@ export default async function DashboardLayout({
   const hasSidebarCollapsedCookie = sidebarCookie !== undefined;
   const initialSidebarCollapsed = sidebarCookie?.value === "true";
 
+  // Gate the Phase 2 login banner on System Administrator — the
+  // status/summary route is similarly gated, so non-admin sessions
+  // would just get a 403 on the banner's fetch. Mounting the component
+  // conditionally avoids the wasted network call.
+  const isAimerSystemAdmin = isSystemAdministrator(session.roles);
+
   return (
     <DashboardLayoutClient
       username={username}
@@ -90,6 +97,7 @@ export default async function DashboardLayout({
       canManageCustomers={canManageCustomers}
       initialSidebarCollapsed={initialSidebarCollapsed}
       hasSidebarCollapsedCookie={hasSidebarCollapsedCookie}
+      isAimerSystemAdmin={isAimerSystemAdmin}
     >
       {children}
     </DashboardLayoutClient>

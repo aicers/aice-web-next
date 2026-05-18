@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { AimerPhase2Banner } from "@/components/layout/aimer-phase2-banner";
 import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { CustomerScopeIndicator } from "@/components/layout/customer-scope-indicator";
 import { MobileHeader } from "@/components/layout/mobile-header";
@@ -25,6 +26,13 @@ interface DashboardLayoutProps {
   canManageCustomers: boolean;
   initialSidebarCollapsed?: boolean;
   hasSidebarCollapsedCookie?: boolean;
+  /**
+   * When `true`, mount the Phase 2 sync banner (#620). The banner is
+   * gated on System Administrator because the underlying
+   * `/api/aimer/phase2/status/summary` route uses the same gate; a
+   * non-admin session would only see a 403 on the banner's fetch.
+   */
+  isAimerSystemAdmin?: boolean;
 }
 
 export default function DashboardLayout({
@@ -35,6 +43,7 @@ export default function DashboardLayout({
   canManageCustomers,
   initialSidebarCollapsed = false,
   hasSidebarCollapsedCookie = false,
+  isAimerSystemAdmin = false,
 }: Readonly<DashboardLayoutProps>) {
   const { collapsed, toggle } = useSidebar({
     initialCollapsed: initialSidebarCollapsed,
@@ -46,6 +55,8 @@ export default function DashboardLayout({
     <ScopeFingerprintProvider fingerprint={scopeFingerprint}>
       <TimezoneProvider>
         <div className="flex h-screen flex-col">
+          {isAimerSystemAdmin && <AimerPhase2Banner />}
+
           {/* Mobile header — visible only below desktop breakpoint */}
           <MobileHeader
             open={mobileOpen}

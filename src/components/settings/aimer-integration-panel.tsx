@@ -13,6 +13,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
+import { AimerPhase2Block } from "@/components/settings/aimer-phase2-block";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -80,12 +81,20 @@ interface AimerIntegrationPanelProps {
   initialSetup: AimerIntegrationSetup;
   initialKeyStatus: AimerSigningKeyStatus;
   customerStats: { total: number; configured: number };
+  /**
+   * Active customer list used by the Phase 2 status block (#620) for
+   * the per-customer status fetcher / pause toggle / sync-now /
+   * backfill form. The page passes this in already filtered to
+   * `status = 'active'` and gated on `isSystemAdministrator`.
+   */
+  customers: { id: number; name: string }[];
 }
 
 export function AimerIntegrationPanel({
   initialSetup,
   initialKeyStatus,
   customerStats,
+  customers,
 }: AimerIntegrationPanelProps) {
   const t = useTranslations("aimerIntegration");
   const tc = useTranslations("common");
@@ -242,6 +251,8 @@ export function AimerIntegrationPanel({
         configured={customerStats.configured}
         t={t}
       />
+
+      <AimerPhase2Block customers={customers} />
     </div>
   );
 }

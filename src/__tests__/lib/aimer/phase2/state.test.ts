@@ -993,6 +993,49 @@ describe("Phase 2 state helpers (state.ts)", () => {
     expect(est.bucket).toBe("paused");
   });
 
+  it("estimateBacklog reports real lag / approximate_count when paused so the operator can see how far behind a paused stream is", async () => {
+    const seventyMinutesAgo = new Date(Date.now() - 70 * 60 * 1000);
+    fake.setResponse((sql) => {
+      if (sql.includes("FROM aimer_push_queue")) {
+        return { rows: [{ count: "3" }], rowCount: 1 };
+      }
+      if (sql.includes("FROM aimer_push_state")) {
+        return {
+          rows: [
+            {
+              kind: "baseline_event",
+              last_pushed_event_time: seventyMinutesAgo,
+              last_pushed_event_key: "100",
+              last_synced_at: null,
+              last_error: null,
+              opportunistic_enabled: false,
+              paused_at: new Date(),
+              paused_by: "acct-1",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM baseline_triaged_event")) {
+        return {
+          rows: [
+            {
+              count: "40",
+              newest_unsent_event_time: seventyMinutesAgo.toISOString(),
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const est = await state.estimateBacklog(1, "baseline_event");
+    expect(est.bucket).toBe("paused");
+    expect(est.cursor_lag_seconds).not.toBeNull();
+    expect(est.cursor_lag_seconds ?? 0).toBeGreaterThanOrEqual(60 * 60);
+    expect(est.approximate_count).toBe(40);
+  });
+
   it("estimateBacklog returns 'way_behind' once cursor lag crosses the 1-hour threshold", async () => {
     const seventyMinutesAgo = new Date(Date.now() - 70 * 60 * 1000);
     fake.setResponse((sql) => {

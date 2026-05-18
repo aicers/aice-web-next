@@ -8,7 +8,20 @@
     "delete": "Delete",
     "confirm": "Confirm",
     "loading": "Loading...",
-    "error": "An error occurred"
+    "error": "An error occurred",
+    "duration": {
+      "seconds": "{n}s",
+      "minutes": "{n}m",
+      "hours": "{n}h",
+      "days": "{n}d"
+    },
+    "relativeTime": {
+      "justNow": "just now",
+      "seconds": "{n}s ago",
+      "minutes": "{n}m ago",
+      "hours": "{n}h ago",
+      "days": "{n}d ago"
+    }
   },
   "notFound": {
     "title": "404 — Page not found",
@@ -193,6 +206,109 @@
       "switch": "Switched to the new kid. Aimer-web should already accept the new kid before Switch.",
       "deactivate": "Previous kid deactivated.",
       "settingSaved": "Setting saved. Re-register this environment on aimer-web."
+    },
+    "phase2": {
+      "title": "Phase 2 sync status",
+      "description": "Per-customer view of opportunistic baseline-event / story pushes, manual policy-run sends, and the withdraw-policy-event notice queue.",
+      "customerLabel": "Customer",
+      "customerPlaceholder": "Select a customer",
+      "noCustomerSelected": "Pick a customer to see Phase 2 sync status.",
+      "loading": "Loading status…",
+      "refresh": "Refresh",
+      "kindLabel": {
+        "baseline_event": "Baseline events",
+        "story": "Stories",
+        "policy_run": "Policy runs (manual)",
+        "policy_event": "Policy event withdrawals"
+      },
+      "bucket": {
+        "synced": "Caught up",
+        "behind": "Behind",
+        "way_behind": "Way behind",
+        "paused": "Paused"
+      },
+      "lastSynced": "Last synced {time}",
+      "lastSyncedNever": "Never synced",
+      "approxBacklog": "~{count} events, ~{lag} behind",
+      "approxBacklogLagOnly": "~{lag} behind",
+      "approxBacklogCaughtUp": "Caught up",
+      "approxBacklogUnavailable": "Backlog unavailable",
+      "pendingNotices": "{count} pending notice(s)",
+      "pendingOldest": "(oldest {duration} old)",
+      "pendingBadge": {
+        "withdraw": "withdraw × {count}",
+        "refresh": "refresh × {count}",
+        "backfill": "backfill × {count}"
+      },
+      "lastError": "Last error: {message}",
+      "pausedBadge": "Paused {duration} ago by {actor}",
+      "pausedBadgeUnknownActor": "Paused {duration} ago",
+      "pause": "Pause",
+      "resume": "Resume",
+      "pauseConfirm": {
+        "title": "Pause opportunistic push for {kind}?",
+        "body": "New events will accumulate in the push queue until you resume. Manual Send and admin Backfill still work.",
+        "confirm": "Pause"
+      },
+      "resumeConfirm": {
+        "title": "Resume opportunistic push for {kind}?",
+        "body": "The next periodic drain (or tab activation) will catch up the backlog.",
+        "confirm": "Resume"
+      },
+      "policyRun": {
+        "lastSentRun": "Last sent run: #{runId} at {time}",
+        "lastSentRunNever": "No runs have been sent yet.",
+        "totalRunsSent": "Total runs sent: {count}"
+      },
+      "policyEvent": {
+        "pending": "Pending withdrawals: {count}",
+        "noPending": "No pending withdrawals."
+      },
+      "syncNow": {
+        "button": "Sync now",
+        "running": "Syncing…",
+        "progress": "Syncing {kind}… batch {batch} of ~{total}",
+        "summary": "Synced: {baseline} baseline events, {story} stories, {policy} notices drained, {errors} errors",
+        "auditNote": "Audit row recorded — drain runs in this browser."
+      },
+      "backfill": {
+        "title": "Backfill historical window",
+        "description": "Queue a backfill for an existing baseline / story window. The window must lie within the {retention}-day retention horizon.",
+        "kindLabel": "Kind",
+        "fromLabel": "From",
+        "toLabel": "To (exclusive)",
+        "submit": "Backfill",
+        "submitting": "Submitting…",
+        "confirm": {
+          "title": "Backfill {kind} from {from} to {to}?",
+          "body": "Large historical windows can take a long time to deliver. The request is enqueued as a notice and drained in the background.",
+          "confirm": "Backfill"
+        },
+        "success": "Enqueued {count} notice(s).",
+        "errorWindow": "Pick a window within the last {retention} days that does not extend into the future."
+      },
+      "errors": {
+        "loadFailed": "Could not load Phase 2 status.",
+        "actionFailed": "Operation failed; please retry."
+      }
+    }
+  },
+  "loginBanner": {
+    "phase2Sync": {
+      "summary": "Aimer sync {worst} on {count, plural, one {# customer} other {# customers}} ({kinds}).",
+      "worstLabel": {
+        "behind": "is behind",
+        "way_behind": "is way behind",
+        "paused": "is paused"
+      },
+      "kinds": {
+        "baseline_event": "baseline events",
+        "story": "stories",
+        "policy_event": "policy event withdrawals",
+        "paused": "paused kinds"
+      },
+      "openSettings": "Open Settings → Aimer integration",
+      "dismiss": "Dismiss"
     }
   },
   "auditLogs": {
@@ -295,7 +411,11 @@
       "triage_exclusion_global_recover": "Triage exclusion recover (global)",
       "triage_exclusion_customer_recover": "Triage exclusion recover (customer)",
       "triage_baseline_rebuild": "Triage baseline rebuild",
-      "triage_policy_run_send_to_aimer": "Send policy run to aimer-web"
+      "triage_policy_run_send_to_aimer": "Send policy run to aimer-web",
+      "aimer_phase2_sync_now": "Aimer Phase 2 sync now",
+      "aimer_phase2_backfill": "Aimer Phase 2 backfill",
+      "aimer_phase2_opportunistic_paused": "Aimer Phase 2 push paused",
+      "aimer_phase2_opportunistic_resumed": "Aimer Phase 2 push resumed"
     },
     "targetTypes": {
       "account": "Account",

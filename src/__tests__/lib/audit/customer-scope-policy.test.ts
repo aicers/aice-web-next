@@ -51,7 +51,7 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
     expect(bad).toEqual([]);
   });
 
-  it("flags customer.* / node.* / service.* / aimer_context_token.issued / triage.policy.* / triage.story.{create,send} / triage_exclusion.{customer_*,fanout_failed,customer_recover} as customer-scoped", () => {
+  it("flags customer.* / node.* / service.* / aimer_context_token.issued / triage.policy.* / triage.story.{create,send} / triage_exclusion.{customer_*,fanout_failed,customer_recover} / aimer_phase2.* as customer-scoped", () => {
     const expectedScoped: AuditAction[] = [
       "customer.create",
       "customer.update",
@@ -79,6 +79,10 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
       "triage_exclusion.customer_recover",
       "triage_baseline.rebuild",
       "triage.policy_run.send_to_aimer",
+      "aimer_phase2.sync_now",
+      "aimer_phase2.backfill",
+      "aimer_phase2.opportunistic_paused",
+      "aimer_phase2.opportunistic_resumed",
     ];
     for (const action of expectedScoped) {
       expect(customerScopeForAction(action)).toBe("customer-scoped");
@@ -113,6 +117,10 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
       "triage_exclusion.customer_recover",
       "triage_baseline.rebuild",
       "triage.policy_run.send_to_aimer",
+      "aimer_phase2.sync_now",
+      "aimer_phase2.backfill",
+      "aimer_phase2.opportunistic_paused",
+      "aimer_phase2.opportunistic_resumed",
     ]);
     for (const action of listAllAuditActions()) {
       if (!scopedActions.has(action)) {

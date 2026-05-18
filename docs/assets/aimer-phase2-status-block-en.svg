@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 520" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Phase 2 sync status block on the Aimer integration settings page (wireframe)</title>
+  <desc id="desc">Wireframe of the Phase 2 sync status block. A customer picker sits in the header next to a Refresh button. Three rows below render the three tracks: baseline events and stories (streaming) each show a colored bucket dot, last-synced time, approximate backlog, pending notice count with oldest age, per-subkind badges (withdraw / refresh / backfill), and a Pause/Resume button; policy runs shows last-sent run + total runs sent; policy event withdrawals shows pending count with a withdraw badge. Below the rows are a Sync now panel and a Backfill historical window form.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .panel-dashed { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; stroke-dasharray: 4 3; }
+    .text-title { font-size: 16px; fill: #18181b; font-weight: 700; }
+    .text-section { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-meta { font-size: 11px; fill: #52525b; }
+    .text-error { font-size: 11px; fill: #b91c1c; }
+    .badge { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 8; ry: 8; }
+    .badge-amber { fill: #fef3c7; stroke: #fcd34d; }
+    .badge-sky { fill: #e0f2fe; stroke: #bae6fd; }
+    .badge-slate { fill: #f1f5f9; stroke: #cbd5e1; }
+    .badge-text { font-size: 10px; font-weight: 600; fill: #18181b; }
+    .btn { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-primary { fill: #18181b; stroke: #18181b; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-primary-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .btn-text { fill: #18181b; font-size: 11px; font-weight: 600; }
+    .dot-green { fill: #22c55e; }
+    .dot-yellow { fill: #eab308; }
+    .dot-red { fill: #ef4444; }
+    .dot-muted { fill: #a1a1aa; }
+  </style>
+
+  <rect class="bg" width="760" height="520"/>
+
+  <!-- Outer block -->
+  <rect class="panel" x="16" y="16" width="728" height="488" rx="6"/>
+
+  <!-- Header -->
+  <text x="32" y="42" class="text-title">Phase 2 sync status</text>
+  <text x="32" y="60" class="text-meta">Per-customer view of opportunistic baseline / story pushes, manual policy-run sends, and the policy-event notice queue.</text>
+
+  <!-- Customer picker + Refresh -->
+  <rect class="btn" x="480" y="28" width="180" height="28"/>
+  <text x="492" y="46" class="btn-text">Acme Corp ▾</text>
+  <rect class="btn" x="668" y="28" width="64" height="28"/>
+  <text x="685" y="46" class="btn-text">Refresh</text>
+
+  <!-- baseline_event row -->
+  <rect class="panel" x="32" y="80" width="696" height="86" rx="4"/>
+  <text x="44" y="100" class="text-section">Baseline events</text>
+  <circle class="dot-yellow" cx="44" cy="118" r="4"/>
+  <text x="56" y="122" class="text-meta">Behind · Last synced 3m ago · ~12k events, ~12m behind</text>
+  <text x="44" y="138" class="text-meta">4 pending notice(s)  (oldest 6m old)</text>
+  <rect class="badge badge-amber" x="44" y="146" width="86" height="16"/>
+  <text x="56" y="158" class="badge-text">withdraw × 2</text>
+  <rect class="badge badge-sky" x="136" y="146" width="76" height="16"/>
+  <text x="148" y="158" class="badge-text">refresh × 1</text>
+  <rect class="badge badge-slate" x="218" y="146" width="78" height="16"/>
+  <text x="230" y="158" class="badge-text">backfill × 1</text>
+  <rect class="btn" x="640" y="100" width="76" height="26"/>
+  <text x="660" y="117" class="btn-text">Pause</text>
+
+  <!-- story row -->
+  <rect class="panel" x="32" y="174" width="696" height="56" rx="4"/>
+  <text x="44" y="194" class="text-section">Stories</text>
+  <circle class="dot-green" cx="44" cy="212" r="4"/>
+  <text x="56" y="216" class="text-meta">Caught up · Last synced 12s ago · Caught up</text>
+  <rect class="btn" x="640" y="190" width="76" height="26"/>
+  <text x="660" y="207" class="btn-text">Pause</text>
+
+  <!-- policy_run row -->
+  <rect class="panel" x="32" y="238" width="696" height="56" rx="4"/>
+  <text x="44" y="258" class="text-section">Policy runs (manual)</text>
+  <text x="44" y="276" class="text-meta">Last sent run: #run-abc at 2h ago</text>
+  <text x="44" y="290" class="text-meta">Total runs sent: 47</text>
+
+  <!-- policy_event row -->
+  <rect class="panel" x="32" y="302" width="696" height="58" rx="4"/>
+  <text x="44" y="322" class="text-section">Policy event withdrawals</text>
+  <text x="44" y="340" class="text-meta">Pending withdrawals: 3  (oldest 1m old)</text>
+  <rect class="badge badge-amber" x="44" y="346" width="86" height="14"/>
+  <text x="56" y="357" class="badge-text">withdraw × 3</text>
+
+  <!-- Sync now -->
+  <rect class="panel-dashed" x="32" y="372" width="696" height="58" rx="4"/>
+  <text x="44" y="394" class="text-section">Sync now</text>
+  <text x="44" y="412" class="text-meta">Audit row recorded — drain runs in this browser.</text>
+  <rect class="btn-primary" x="640" y="386" width="76" height="28"/>
+  <text x="656" y="404" class="btn-primary-text">Sync now</text>
+
+  <!-- Backfill form (compressed) -->
+  <rect class="panel-dashed" x="32" y="440" width="696" height="50" rx="4"/>
+  <text x="44" y="460" class="text-section">Backfill historical window</text>
+  <text x="44" y="478" class="text-meta">Kind ▾ · From … · To (exclusive) … · Backfill</text>
+</svg>
