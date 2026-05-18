@@ -1743,6 +1743,8 @@
       "aimerErrorNotConfigured": "Aimer integration is not configured. Ask a System Administrator.",
       "aimerErrorExternalKeyMissing": "This customer has no external_key. Set it on the Customers page.",
       "aimerErrorEventNotFound": "This event is no longer accessible under the selected customer.",
+      "aimerSentPhase2": "Sent via Phase 2 (Triage analysis)",
+      "aimerSentPhase2Dismiss": "Dismiss",
       "pivotsTitle": "Pivot shortcuts",
       "pivotSameSource": "Same Source IP · last 24h",
       "pivotSameDestination": "Same Destination IP · last 24h",
