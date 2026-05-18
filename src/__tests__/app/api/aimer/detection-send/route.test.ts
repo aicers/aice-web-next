@@ -71,6 +71,19 @@ vi.mock("@/lib/audit/logger", () => ({
   auditLog: { record: mockAuditRecord },
 }));
 
+const mockGraphqlRequest = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/graphql/client", () => ({
+  graphqlRequest: mockGraphqlRequest,
+}));
+
+// `withManagerErrorMapping` is a thin wrapper that rethrows `Review*`
+// errors in their typed form; for routing-decision tests we pass the
+// promise through untouched and rely on the `graphqlRequest` mock to
+// either resolve a hit / null or throw a `ReviewForbiddenError`.
+vi.mock("@/lib/node/error-mapping", () => ({
+  withManagerErrorMapping: <T>(p: Promise<T>) => p,
+}));
+
 vi.mock("@/lib/auth/ip", () => ({
   extractClientIp: () => "127.0.0.1",
 }));
@@ -171,6 +184,21 @@ describe("POST /api/aimer/detection-send", () => {
     });
     mockCheckRateLimit.mockReset().mockResolvedValue({ limited: false });
     mockAuditRecord.mockReset().mockResolvedValue(undefined);
+    // Default REview event-resolution gate response: a non-null event
+    // means the session can read it. Individual tests override this to
+    // exercise the null / ReviewForbiddenError branches.
+    mockGraphqlRequest.mockReset().mockResolvedValue({
+      event: {
+        __typename: "HttpThreat",
+        id: "100",
+        time: "2026-01-15T00:00:00Z",
+        sensor: "s1",
+        confidence: 0,
+        category: "RECONNAISSANCE",
+        level: "HIGH",
+        triageScores: [],
+      },
+    });
   });
 
   it("routes to Phase 1 when the event is not baseline-passing", async () => {
@@ -320,6 +348,87 @@ describe("POST /api/aimer/detection-send", () => {
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid_customer_id" });
+  });
+
+  it("masks a REview event-resolution miss as 404 event_not_found_for_customer — corpus presence is never leaked", async () => {
+    // The central security property shared with the Phase 1 context-
+    // token route (#439): a `detection:read` caller for tenant A must
+    // not be able to mint a Phase 2 envelope for an event the session
+    // cannot currently read in REview, even if that event happens to
+    // exist in tenant A's `baseline_triaged_event` corpus. Returning
+    // `{ route: "phase1" }` here would leak corpus presence to a
+    // session that has no readability claim, so the route masks both
+    // misses (the row is genuinely not in the corpus from REview's
+    // perspective) and forbidden (the row exists but the session is
+    // out of scope) as the same 404 shape — matching the Phase 1
+    // route's masked-existence policy.
+    mockGraphqlRequest.mockResolvedValue({ event: null });
+    // Even if a baseline row is present, the gate must short-circuit
+    // before the corpus probe so response timing cannot distinguish
+    // "row absent" from "row present, session unauthorized".
+    mockLoadSingle.mockResolvedValue(makeWireItem());
+    const { POST } = await import("@/app/api/aimer/detection-send/route");
+    const res = await POST(
+      makeRequest({ locator: { id: "100" }, customerId: 42 }),
+      ctx,
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: "event_not_found_for_customer",
+    });
+    // Loader and orchestrator are never consulted — the gate runs
+    // before either, so the corpus is not probed for an out-of-scope
+    // event.
+    expect(mockLoadSingle).not.toHaveBeenCalled();
+    expect(mockBuildPush).not.toHaveBeenCalled();
+    expect(mockAuditRecord).toHaveBeenCalledTimes(1);
+    expect(mockAuditRecord.mock.calls[0][0].action).toBe(
+      "aimer_detection_send.denied",
+    );
+    expect(mockAuditRecord.mock.calls[0][0].details.reason).toBe(
+      "event_not_found_for_customer",
+    );
+  });
+
+  it("masks a REview ForbiddenError as 404 event_not_found_for_customer", async () => {
+    // REview signals "session has no scope for this event" with a
+    // `ReviewForbiddenError`. We collapse it to the same masked 404
+    // so existence is not leaked through a divergent status code.
+    const { ReviewForbiddenError } = await import("@/lib/review/errors");
+    mockGraphqlRequest.mockRejectedValue(new ReviewForbiddenError("forbidden"));
+    mockLoadSingle.mockResolvedValue(makeWireItem());
+    const { POST } = await import("@/app/api/aimer/detection-send/route");
+    const res = await POST(
+      makeRequest({ locator: { id: "100" }, customerId: 42 }),
+      ctx,
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: "event_not_found_for_customer",
+    });
+    expect(mockLoadSingle).not.toHaveBeenCalled();
+    expect(mockBuildPush).not.toHaveBeenCalled();
+  });
+
+  it("dispatches the REview event(id:) lookup with a single-customer scope", async () => {
+    // Regression guard for the #621 security property: the dispatch
+    // context must carry exactly `[customerId]`, regardless of the
+    // caller's full effective scope. A multi-customer user whose Send
+    // click targets customer 42 must not have their dispatch widened
+    // to `[42, 99, ...]` — that would let an event resolvable only
+    // under customer 99 satisfy the gate while the envelope is
+    // bound to customer 42.
+    mockResolveScope.mockResolvedValue([42, 99]);
+    mockLoadSingle.mockResolvedValue(makeWireItem());
+    const { POST } = await import("@/app/api/aimer/detection-send/route");
+    await POST(makeRequest({ locator: { id: "100" }, customerId: 42 }), ctx);
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(1);
+    const [, vars, dispatchCtx] = mockGraphqlRequest.mock.calls[0];
+    expect(vars).toEqual({ id: "100" });
+    expect(dispatchCtx).toEqual({
+      role: "Tenant Administrator",
+      customerIds: [42],
+    });
   });
 
   it("re-clicking the same baseline-passing event mints a fresh envelope and never advances the cursor", async () => {

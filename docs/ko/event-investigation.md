@@ -183,9 +183,13 @@ aimer-web의 `(baseline_version, event_key)` 멱등 검증이
 미입력)` 힌트와 함께). 조사자는 설정된 한쪽으로 계속 전송할 수
 있습니다.
 
-<!-- TODO: screenshot - aimer-bridge batch -->
-<!-- TODO: screenshot - Phase 2 페이지 내 "Phase 2(Triage 분석)로
-     전송했습니다" 안내 및 닫기 버튼 -->
+<!-- Send to Aimer 모달(Phase 1 전송 전 확인 + Phase 2 전송 후 안내 및
+     닫기 버튼) 스크린샷 부채는 이슈 #624에서 추적합니다. 안내
+     화면 자체는 결정론적 클라이언트 렌더 모달이지만, 캡처하려면
+     e2e/detection-manual-dynamic-screenshots.spec.ts 에 BFF 및
+     aimer-web 라우트 인터셉트를 추가해야 하므로 해당 후속 작업의
+     집중 범위로 분리했습니다. Phase 1 / Phase 2 분기 자체는 위
+     본문에 충분히 설명되어 있습니다. -->
 
 여기서 사용한 브라우저 기본 요소는 의도된 선택입니다. HTML form
 submit은 사용자가 실제로 aimer-web으로 이동하도록 최상위 multipart

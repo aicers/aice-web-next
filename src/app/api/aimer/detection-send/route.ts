@@ -15,11 +15,16 @@ import { withAuth } from "@/lib/auth/guard";
 import { extractClientIp } from "@/lib/auth/ip";
 import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
+import { EVENT_BY_ID_QUERY } from "@/lib/detection/queries";
+import type { EventDetailResult } from "@/lib/detection/types";
 import {
   decodeEventLocator,
   type EventLocator,
 } from "@/lib/events/event-locator";
+import { graphqlRequest } from "@/lib/graphql/client";
+import { withManagerErrorMapping } from "@/lib/node/error-mapping";
 import { checkAimerContextTokenRateLimit } from "@/lib/rate-limit/limiter";
+import { ReviewForbiddenError } from "@/lib/review/errors";
 
 /**
  * `POST /api/aimer/detection-send`
@@ -36,12 +41,20 @@ import { checkAimerContextTokenRateLimit } from "@/lib/rate-limit/limiter";
  *   1. Tenant scope check on `customerId` (same gate as the Phase 1
  *      context-token route — `detection:read` users for tenant A must
  *      not be able to mint envelopes for tenant B).
- *   2. Existence probe: `SELECT 1 FROM baseline_triaged_event WHERE
+ *   2. REview event-resolution gate: `event(id:)` under
+ *      `{ role, customerIds: [customerId] }`. This mirrors the Phase 1
+ *      context-token route's central security property (#439) — proving
+ *      the caller's session can currently *read* the event in REview
+ *      before any envelope can be minted. A `null` result or a
+ *      `ReviewForbiddenError` masks as the same 404
+ *      `event_not_found_for_customer` shape the Phase 1 route returns,
+ *      so corpus / scope misses are indistinguishable on the wire.
+ *   3. Existence probe: `SELECT 1 FROM baseline_triaged_event WHERE
  *      event_key = $1 LIMIT 1` against the customer DB.
- *   3a. Row not found → `{ route: "phase1" }`. The client falls back
+ *   4a. Row not found → `{ route: "phase1" }`. The client falls back
  *       to the existing `POST /api/aimer/context-token` + multipart
  *       form-navigation flow per #441.
- *   3b. Row found → load the single event via
+ *   4b. Row found → load the single event via
  *       {@link loadSingleBaselineEventWireItem}, build the
  *       `phase2.baseline.v1` envelope via {@link buildPhase2Push},
  *       return `{ route: "phase2", ...tokens, aimer_endpoint_url }`.
@@ -144,10 +157,15 @@ function jsonError(error: string, status: number): NextResponse {
 type DenialReason =
   | "rate_limited"
   | "not_found"
+  | "event_not_found_for_customer"
   | "invalid_locator"
   | "aimer_integration_not_configured"
   | "customer_external_key_missing"
   | "customer_not_found";
+
+interface EventByIdVariables extends Record<string, unknown> {
+  id: string;
+}
 
 async function recordDenial(params: {
   session: AuthSession;
@@ -240,6 +258,61 @@ export const POST = withAuth(
         requestedCustomerId: customerId,
       });
       return jsonError("invalid_locator", 400);
+    }
+
+    // REview event-resolution gate (the central security property
+    // shared with the Phase 1 context-token route, #439). Dispatch
+    // with `customerIds: [customerId]` regardless of the caller's full
+    // effective scope so a multi-customer user cannot mint a Phase 2
+    // envelope bound to customer A for an event that lives under
+    // customer B. Without this check, a `detection:read` caller for
+    // tenant A could pick any numeric `locator.id` that happens to
+    // exist in tenant A's `baseline_triaged_event` corpus and receive
+    // Phase 2 tokens — bypassing the per-session readability gate that
+    // the Phase 1 path enforces via the same query.
+    //
+    // Runs BEFORE the corpus probe so a baseline-passing row that the
+    // session has no readability claim to does not leak through
+    // response timing (`event_not_found_for_customer` is the same
+    // 404 shape whether the row exists in the corpus or not).
+    //
+    // Error policy mirrors the Phase 1 route:
+    //   - `ReviewForbiddenError` → mask as 404 so existence is not
+    //     leaked through a divergent status code.
+    //   - `event === null` → same 404.
+    //   - Other failures (transport drops, missing endpoint, mTLS
+    //     handshake, `ReviewInvalidArgumentError`,
+    //     `ReviewUnknownGraphQLError`, …) propagate as a real 5xx.
+    let eventDetail: EventDetailResult;
+    try {
+      // biome-ignore format: keep the override on the helper-name line so
+      // scripts/check-dispatch-context.mjs sees `// scope-allowlist:` within
+      // the call expression range (helper-name → opening paren).
+      eventDetail = (await withManagerErrorMapping(graphqlRequest( // scope-allowlist: #621 single-customer event-resolution gate
+        EVENT_BY_ID_QUERY,
+        { id: locator.id } as EventByIdVariables,
+        { role: session.roles[0] ?? "", customerIds: [customerId] },
+      ))) as EventDetailResult;
+    } catch (err) {
+      if (err instanceof ReviewForbiddenError) {
+        await recordDenial({
+          session,
+          ip,
+          reason: "event_not_found_for_customer",
+          requestedCustomerId: customerId,
+        });
+        return jsonError("event_not_found_for_customer", 404);
+      }
+      throw err;
+    }
+    if (eventDetail.event === null) {
+      await recordDenial({
+        session,
+        ip,
+        reason: "event_not_found_for_customer",
+        requestedCustomerId: customerId,
+      });
+      return jsonError("event_not_found_for_customer", 404);
     }
 
     // REview's `Event.id` is documented as opaque, but in practice it
