@@ -192,14 +192,9 @@ has an `external_key`, the customer without a key is shown
 disabled (with an "(no external_key set)" hint) — the
 investigator can still send under the configured one.
 
-<!-- Screenshot debt for the Send to Aimer modal (Phase 1 pre-send
-     confirmation + Phase 2 post-send disclosure with Dismiss button)
-     is tracked in issue #624. The disclosure surface itself is a
-     deterministic client-rendered modal; capturing it requires
-     extending e2e/detection-manual-dynamic-screenshots.spec.ts with
-     BFF + aimer-web route interception, which is the focused scope
-     of that follow-up. The Phase 1 / Phase 2 split is fully
-     documented in prose above. -->
+![Send to Aimer confirmation modal](../assets/aimer-send-modal-en.png)
+
+![Send to Aimer Phase 2 disclosure](../assets/aimer-send-phase2-en.png)
 
 The browser primitive used here is intentional.  An HTML form
 submit is the only standard browser API that produces a
