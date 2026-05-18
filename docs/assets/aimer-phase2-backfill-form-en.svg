@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 220" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Backfill historical window form on the Phase 2 status block (wireframe)</title>
+  <desc id="desc">Wireframe of the Backfill historical window form. The dashed panel shows a title, a one-line description that mentions the 180-day retention horizon, a Kind dropdown (Baseline events / Stories), a From datetime-local input, a To (exclusive) datetime-local input, and a Backfill submit button on the right. Submitting opens a confirmation dialog before the wrapper route is called.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel-dashed { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; stroke-dasharray: 4 3; }
+    .text-section { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-meta { font-size: 11px; fill: #52525b; }
+    .input { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .btn { fill: #18181b; stroke: #18181b; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .label { font-size: 10px; fill: #52525b; }
+  </style>
+
+  <rect class="bg" width="760" height="220"/>
+
+  <rect class="panel-dashed" x="16" y="16" width="728" height="188" rx="6"/>
+
+  <text x="32" y="40" class="text-section">Backfill historical window</text>
+  <text x="32" y="58" class="text-meta">Queue a backfill for an existing baseline / story window. The window must lie within the 180-day retention horizon.</text>
+
+  <text x="32" y="92" class="label">Kind</text>
+  <rect class="input" x="32" y="98" width="200" height="30"/>
+  <text x="44" y="118" class="text-meta">Baseline events ▾</text>
+
+  <text x="252" y="92" class="label">From</text>
+  <rect class="input" x="252" y="98" width="200" height="30"/>
+  <text x="264" y="118" class="text-meta">2026-05-15 09:00</text>
+
+  <text x="472" y="92" class="label">To (exclusive)</text>
+  <rect class="input" x="472" y="98" width="200" height="30"/>
+  <text x="484" y="118" class="text-meta">2026-05-15 12:00</text>
+
+  <rect class="btn" x="640" y="148" width="92" height="32"/>
+  <text x="666" y="168" class="btn-text">Backfill</text>
+</svg>

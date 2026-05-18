@@ -261,6 +261,32 @@ type TriageBaselineAction = "triage_baseline.rebuild";
  */
 type TriagePolicyRunAction = "triage.policy_run.send_to_aimer";
 
+/**
+ * Phase 2 operator actions on the `/settings/aimer-integration` surface
+ * (#620). All four are intrinsically customer-scoped — the operator
+ * picks a customer before any of these actions can be invoked, and the
+ * route persists / reads per-tenant DB rows for that customer.
+ *
+ *   - `aimer_phase2.sync_now` — recorded server-side at click time on
+ *     the thin wrapper route. Fields: `triggeredKinds` (the static list
+ *     of drain kinds the button dispatches; per-kind completion counts
+ *     are NOT server-authoritative because the actual drain happens in
+ *     the browser via `drainOpportunisticPushQueue`).
+ *   - `aimer_phase2.backfill` — recorded server-side on the
+ *     session-authenticated wrapper that forwards to the internal-token
+ *     backfill route. Fields: `kind`, `from`, `to`,
+ *     `enqueuedNoticeCount`.
+ *   - `aimer_phase2.opportunistic_paused` — recorded when the operator
+ *     flips a streaming kind's pause toggle off. Fields: `kind`.
+ *   - `aimer_phase2.opportunistic_resumed` — recorded when the operator
+ *     flips it back on. Fields: `kind`, `pausedDurationSeconds`.
+ */
+type AimerPhase2Action =
+  | "aimer_phase2.sync_now"
+  | "aimer_phase2.backfill"
+  | "aimer_phase2.opportunistic_paused"
+  | "aimer_phase2.opportunistic_resumed";
+
 /** All audit event actions. */
 export type AuditAction =
   | AuthAction
@@ -281,7 +307,8 @@ export type AuditAction =
   | TriageStoryAction
   | TriageExclusionAction
   | TriageBaselineAction
-  | TriagePolicyRunAction;
+  | TriagePolicyRunAction
+  | AimerPhase2Action;
 
 /** Target entity types for audit events. */
 export type AuditTargetType =
@@ -373,6 +400,10 @@ export const AUDIT_ACTIONS = [
   "triage_exclusion.customer_recover",
   "triage_baseline.rebuild",
   "triage.policy_run.send_to_aimer",
+  "aimer_phase2.sync_now",
+  "aimer_phase2.backfill",
+  "aimer_phase2.opportunistic_paused",
+  "aimer_phase2.opportunistic_resumed",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */

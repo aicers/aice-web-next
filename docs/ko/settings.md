@@ -926,3 +926,228 @@ Send to Aimer 흐름은 브라우저가 백그라운드에서 호출하는
 서명 키페어 파일(`data/keys/aimer-context-signing.json`)은 JWT
 서명 키와 함께 디스크 백업 대상에 포함됩니다. 자세한 백업 범위는
 `decisions/backup-restore.md`를 참조하십시오.
+
+### Phase 2 동기화 상태
+
+페이지 하단의 **Phase 2 동기화 상태** 블록은 고객별로
+기회 기반 baseline_event / story 푸시(RFC 0002 §7), 수동 정책
+실행 전송, withdraw_policy_event 알림 큐를 3 트랙으로 보여줍니다.
+드롭다운에서 고객을 선택하면 해당 고객의 상태가 로드되며, 패널은
+수 초마다 자동 폴링하면서 아래의 운영자 액션을 노출합니다.
+
+![Phase 2 동기화 상태 블록 (와이어프레임)](../assets/aimer-phase2-status-block-ko.svg)
+
+> `docs/AUTHORING.md` §"Screenshot exception for
+> infrastructure-gated features"에 따른 와이어프레임 스탠드인입니다.
+> Phase 2 상태 블록은 라이브 기회 기반 푸시 배포에서만 생성되는
+> `aimer_push_state` + `aimer_push_queue` 행을 읽으며, 본 워크트리에는
+> 해당 데이터가 없습니다. 시드 푸시 상태가 있는 스테이징 테넌트가
+> 가용해지면 실제 PNG 캡처가 본 SVG를 대체합니다.
+
+#### 트랙
+
+- **스트리밍 종류** — `baseline_event`와 `story`. 각 행에는
+  색상 점(`synced` 녹색 / `behind` 노랑 / `way_behind` 빨강 /
+  `paused` 회색), 마지막 동기화 상대 시각, 근사 적체량
+  ("약 12,000건, 약 2시간 지연" 또는 정확 카운트가 비싸면
+  "약 2시간 지연"), 미확인 알림 수 + 가장 오래된 대기 알림
+  경과, 종류별 배지(`철회 N건` 호박색, `갱신 N건` 하늘색,
+  `백필 N건` 슬레이트색 — 실제 인제스트 지연이 운영자 주도
+  catch-up 작업과 시각적으로 구분됨), 마지막 `last_error`,
+  일시 정지 토글이 표시됩니다. `paused` 행도 일시 정지 시점
+  이후 누적된 커서 지연 / 근사 적체량을 그대로 보여주므로
+  운영자가 일시 정지된 스트림이 얼마나 뒤처졌는지 알 수
+  있습니다. 커서 데이터가 전혀 없는 경우(새 테넌트, 푸시
+  이력 없음)에만 "백로그 정보 없음"을 표시합니다. 일시
+  정지 배지의 운영자 이름은 `aimer_push_state.paused_by`
+  계정 UUID를 앱 DB의 `accounts.display_name`과 일괄 조회로
+  매칭한 결과입니다(예: "5분 전 alice가 일시 정지"). 계정
+  행이 사라진 경우(삭제된 운영자)에만 UUID로 폴백합니다.
+- **정책 실행 (수동)** — "마지막 전송 실행: #N, *시각*"과 "총
+  전송된 실행 수: M"을 `policy_triage_run` β 컬럼
+  (`last_sent_at`, `last_sent_by`, `send_count`)에서 산출합니다.
+  총합은 `COUNT(*) WHERE last_sent_at IS NOT NULL`이며
+  `SUM(send_count)`이 아니므로 동일 실행의 재전송이 중복 카운트
+  되지 않습니다.
+- **정책 이벤트 철회** — 큐 전용, 커서 / 일시 정지 없음.
+  미확인 `withdraw_policy_event` 수, 가장 오래된 대기 알림
+  경과, `철회 N건` 배지, **가장 최근 미확인 큐 행의**
+  `last_error`를 있는 그대로 표시합니다. 해당 최신 행이 아직
+  실패하지 않았다면 큐 내 더 오래된 행에 오류가 남아 있어도
+  필드는 비워둡니다 — 옛 오류를 보여주면 큐의 현재 선두 상태를
+  잘못 표시하기 때문입니다.
+
+`GET /api/aimer/phase2/status` 라우트는 큐 페이로드 본문을 절대
+반환하지 않습니다 — 카운트, 오류 메시지, 버킷 라벨만 노출합니다.
+
+![Phase 2 스트리밍 종류 행 (와이어프레임)](../assets/aimer-phase2-streaming-row-ko.svg)
+
+> 와이어프레임 스탠드인 — 위 노트 참조. 스트리밍 행은 부모 블록과
+> 동일한 라이브 푸시 데이터에 의존합니다.
+
+#### 지금 동기화
+
+**지금 동기화** 버튼은 스트리밍 종류 중 하나라도 일시 정지가
+**아닐 때** 또는 미확인 `withdraw_policy_event` 알림이 있을 때
+표시됩니다. 두 스트리밍 종류 모두 일시 정지이면서 미확인 정책
+이벤트 알림이 0건일 때만 숨겨집니다.
+
+클릭 시 동작:
+
+1. 브라우저가 `/api/aimer/phase2/sync-now`에 POST합니다.
+   라우트는 `aimer_phase2.sync_now` 감사 행 하나만 기록하고
+   `204 No Content`를 반환합니다. 서버에서 드레인을 수행하지
+   않습니다.
+2. 래퍼가 ack를 반환하면 같은 브라우저 세션이
+   `drainOpportunisticPushQueue`를 `baseline_event`, `story`,
+   `policy_event` 세 종류에 대해 병렬로 호출합니다.
+3. 드레인 동안 라이브 진행(`"baseline 이벤트 동기화 중… 배치 N
+   / 약 M"`)이 표시됩니다.
+4. 완료 시 한 줄 요약(`"동기화 결과: baseline 42건, story 3건,
+   알림 7건, 오류 0건"`)이 표시됩니다. "알림" 카운트는 성공적으로
+   철회된 행과 성공적으로 ack된 `not_found` no-op을 모두 포함합니다
+   — 어느 쪽이든 큐 행은 제거되므로, 철회된 행만 세면 모든 항목이
+   `not_found`로 성공 처리된 드레인이 "알림 0건"으로 표시되는 오해를
+   일으킵니다. 완료 카운트는 **클라이언트 측 정보성 상태**이며 감사
+   소스가 아닙니다 — 감사 행은 운영자 클릭만 기록합니다.
+
+#### 일시 정지 / 재개
+
+각 스트리밍 행 옆의 토글은 해당 종류의 `opportunistic_enabled`를
+뒤집습니다. 변경 전 확인 다이얼로그가 표시되며, 확인 시 래퍼
+라우트 `POST /api/aimer/phase2/pause-toggle`가
+`setOpportunisticEnabled`를 호출하고
+`aimer_phase2.opportunistic_paused` (또는 반대 방향에는
+`pausedDurationSeconds`를 포함한
+`aimer_phase2.opportunistic_resumed`)를 발행합니다. 일시 정지
+중에도 수동 Send와 관리자 백필은 그대로 동작합니다.
+
+`policy_run`과 `policy_event`에는 일시 정지 토글이 없습니다 —
+전자는 운영자가 실행별로 보내고, 후자는 기회 기반 백그라운드
+드레인이 없기 때문입니다.
+
+#### 백필
+
+트랙 아래의 **과거 윈도우 백필** 폼은 기존 baseline / story
+윈도우에 대한 백필을 큐에 등록합니다. 종류를 선택하고
+반개구간 `[from, to)`를 입력한 뒤 다이얼로그에서 확인합니다.
+래퍼 라우트 `POST /api/aimer/phase2/backfill`는 윈도우를
+검증하고 내부 토큰 라우트와 동일한 `runPhase2Backfill` 헬퍼를
+호출한 뒤 `aimer_phase2.backfill`을 발행하고 큐에 등록된 알림
+ID 목록을 반환합니다. Settings 패널은 토스트에 등록 개수를
+표시합니다.
+
+윈도우 제약 (UI와 라우트 모두 적용):
+
+- `from`은 `to`보다 엄격히 이전이어야 합니다.
+- `to`는 미래로 확장될 수 없습니다 (60초 보정 허용).
+- `from`은 180일(`baseline_triaged_event` 보존 기간)보다 더
+  과거일 수 없습니다.
+- 두 개 이상의 `baseline_version`에 걸친 윈도우는
+  `400 multi_version`으로 거절됩니다 — 모든 행이 한 버전을
+  공유하도록 윈도우를 좁히십시오.
+
+![Phase 2 과거 윈도우 백필 폼 (와이어프레임)](../assets/aimer-phase2-backfill-form-ko.svg)
+
+> 와이어프레임 스탠드인 — 위 노트 참조. 폼 자체는 완전히 클라이언트
+> 주도이지만, 의미 있는 스크린샷에는 주변 상태 블록이 채워져 있어야
+> 하며 이는 라이브 푸시 데이터가 게이트합니다.
+
+#### 감사 액션
+
+Phase 2 블록은 다음 액션을 기록합니다:
+
+- `aimer_phase2.sync_now` — 클릭 시점 래퍼 라우트에서 발행.
+  `details.triggeredKinds`는 정적 리스트
+  `["baseline_event", "story", "policy_event"]`. 종류별 전달
+  카운트는 클라이언트 상태에만 존재합니다.
+- `aimer_phase2.backfill` — `details: { kind, from, to,
+  enqueuedNoticeCount }`.
+- `aimer_phase2.opportunistic_paused` — `details: { kind }`.
+- `aimer_phase2.opportunistic_resumed` — `details: { kind,
+  pausedDurationSeconds }`.
+
+네 액션 모두 customer-scoped이므로, 테넌트 운영자의 유효 고객
+범위에서 감사 로그 뷰어가 자동으로 표시합니다.
+
+### 로그인 배너
+
+추적 중인 종류 중 어느 고객이라도 `behind` / `way_behind` /
+`paused` 버킷에 있으면, 대시보드는 앱 셸 상단에 한 줄 배너를
+렌더링하여 상황을 요약하고 **Settings → Aimer 연동**으로
+연결합니다. 배너는 첫 페인트 후 클라이언트 측에서
+`GET /api/aimer/phase2/status/summary`로 가져와 SSR이나 초기
+문서 렌더링을 막지 않습니다. 요약 라우트는 고객별 동시성 제한,
+짧은 서버 측 TTL 캐시를 적용하며, 배너에 필요한 것은 버킷
+라벨뿐이므로 비싼 적체 카운트 fast path를 건너뜁니다.
+
+배너는 페이지별로 닫을 수 있으며, 새로 고침이나 이동 시 다시
+조회하여 조건이 유지되면 다시 표시됩니다. 시스템 관리자 역할로
+게이트되며, 이는 요약 라우트의 게이트와 동일합니다.
+
+배너 문구는 플래그된 고객들의 최악 버킷, 고객 수, 기여 종류의
+합집합을 나열합니다. **어느 고객이라도** 일시 정지된 스트리밍
+종류가 하나라도 있으면 "일시 정지된 종류" 표시가 추가됩니다 —
+해당 고객의 최악 버킷이 `behind` / `way_behind`여도 마찬가지
+입니다 (예: 동일 테넌트에서 baseline은 일시 정지, policy_event
+는 심각한 지연). 그러지 않으면 `worst_bucket` 심각도에서 일시
+정지가 지연보다 낮게 랭크되므로 혼합 상태 고객의 일시 정지
+신호가 조용히 사라집니다.
+
+서머리 라우트는 고객 집합을 활성 테넌트
+(`customers.status = 'active'`)로 제한합니다. 운영자가 실제로
+조치 가능한 고객만 경고하기 위함입니다 — **Settings → Aimer
+integration**의 Phase 2 고객 선택기 자체가 활성 고객으로
+필터링되어 있으므로, 정지/삭제된 테넌트를 경고하면 운영자가
+선택할 수 없는 고객에 대한 페이지로 링크되는 문제가 생깁니다.
+
+### 내부 토큰 백필 라우트
+
+Settings UI 백필 폼은
+`POST /api/internal/aimer/phase2/backfill`을 감싸는 세션 인증
+래퍼입니다. 배포 스케줄러나 운영 런북은 Settings UI를 사용할 수
+없을 때 내부 라우트를 직접 호출할 수 있습니다.
+
+- **환경 변수** — `AIMER_PHASE2_BACKFILL_INTERNAL_TOKEN`.
+  배포에 환경 변수가 설정되지 않으면 (유효해 보이는 Bearer
+  헤더를 포함해) 모든 요청을 거절합니다.
+- **인증** — `Authorization: Bearer <token>`, 상수 시간 비교.
+- **요청 본문 스키마** —
+
+  ```json
+  {
+    "customer_id": <양의 정수>,
+    "kind": "baseline_event" | "story",
+    "from": "<ISO-8601 타임스탬프>",
+    "to":   "<ISO-8601 타임스탬프>"
+  }
+  ```
+
+  윈도우는 반개구간 `[from, to)`입니다.
+- **응답 코드** —
+  - `200 OK` — `{ "enqueued_notice_ids": ["<id>", ...] }`.
+  - `400 Bad Request` — 잘못된 본문, 알 수 없는 kind, 역전된
+    윈도우, 미래 `to`, 보존 기간보다 오래된 `from`, 또는
+    `baseline_version`이 여러 개에 걸친 윈도우.
+  - `401 Unauthorized` — 누락 / 잘못된 / 미설정 Bearer 토큰.
+  - `404 Not Found` — 알 수 없는 customer id.
+  - `500 Internal Server Error` — 페이로드 구성 또는 큐 등록
+    중 DB 오류.
+- **윈도우 제약** — `to`는 미래일 수 없습니다 (60초 보정).
+  `from`은 `BASELINE_TRIAGED_EVENT_RETENTION_DAYS` (180일)
+  보다 더 과거일 수 없습니다. 더 오래된 윈도우는 로컬 행이
+  이미 정리되었으므로 빈/부분 페이로드를 만듭니다.
+
+예시 호출:
+
+```sh
+curl -sS -X POST "https://aice.example.com/api/internal/aimer/phase2/backfill" \
+  -H "Authorization: Bearer ${AIMER_PHASE2_BACKFILL_INTERNAL_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "customer_id": 42,
+    "kind": "baseline_event",
+    "from": "2026-04-01T00:00:00Z",
+    "to":   "2026-04-02T00:00:00Z"
+  }'
+```

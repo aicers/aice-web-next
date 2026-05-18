@@ -8,7 +8,20 @@
     "delete": "삭제",
     "confirm": "확인",
     "loading": "로딩 중...",
-    "error": "오류가 발생했습니다"
+    "error": "오류가 발생했습니다",
+    "duration": {
+      "seconds": "{n}초",
+      "minutes": "{n}분",
+      "hours": "{n}시간",
+      "days": "{n}일"
+    },
+    "relativeTime": {
+      "justNow": "방금 전",
+      "seconds": "{n}초 전",
+      "minutes": "{n}분 전",
+      "hours": "{n}시간 전",
+      "days": "{n}일 전"
+    }
   },
   "notFound": {
     "title": "404 — 페이지를 찾을 수 없습니다",
@@ -193,6 +206,109 @@
       "switch": "새 kid로 전환했습니다. aimer-web에 새 kid가 미리 등록되어 있어야 합니다.",
       "deactivate": "이전 kid를 비활성화했습니다.",
       "settingSaved": "설정을 저장했습니다. aimer-web에 본 환경을 재등록하십시오."
+    },
+    "phase2": {
+      "title": "Phase 2 동기화 상태",
+      "description": "기회 기반 baseline_event / story 푸시, 수동 정책 실행 전송, withdraw_policy_event 알림 큐를 고객별로 확인합니다.",
+      "customerLabel": "고객",
+      "customerPlaceholder": "고객을 선택하십시오",
+      "noCustomerSelected": "Phase 2 동기화 상태를 보려면 고객을 선택하십시오.",
+      "loading": "상태 불러오는 중…",
+      "refresh": "새로 고침",
+      "kindLabel": {
+        "baseline_event": "Baseline 이벤트",
+        "story": "스토리",
+        "policy_run": "정책 실행 (수동)",
+        "policy_event": "정책 이벤트 철회"
+      },
+      "bucket": {
+        "synced": "최신",
+        "behind": "지연",
+        "way_behind": "심각한 지연",
+        "paused": "일시 정지"
+      },
+      "lastSynced": "마지막 동기화 {time}",
+      "lastSyncedNever": "동기화 이력 없음",
+      "approxBacklog": "약 {count}건, 약 {lag} 지연",
+      "approxBacklogLagOnly": "약 {lag} 지연",
+      "approxBacklogCaughtUp": "최신 상태",
+      "approxBacklogUnavailable": "백로그 정보 없음",
+      "pendingNotices": "대기 알림 {count}건",
+      "pendingOldest": "(가장 오래된 {duration} 경과)",
+      "pendingBadge": {
+        "withdraw": "철회 {count}건",
+        "refresh": "갱신 {count}건",
+        "backfill": "백필 {count}건"
+      },
+      "lastError": "마지막 오류: {message}",
+      "pausedBadge": "{actor}님이 {duration} 전 일시 정지함",
+      "pausedBadgeUnknownActor": "{duration} 전 일시 정지됨",
+      "pause": "일시 정지",
+      "resume": "재개",
+      "pauseConfirm": {
+        "title": "{kind}의 기회 기반 푸시를 일시 정지할까요?",
+        "body": "재개할 때까지 새 이벤트는 푸시 큐에 누적됩니다. 수동 Send 및 관리자 백필은 그대로 동작합니다.",
+        "confirm": "일시 정지"
+      },
+      "resumeConfirm": {
+        "title": "{kind}의 기회 기반 푸시를 재개할까요?",
+        "body": "다음 주기 드레인(또는 탭 활성화) 시 누적분을 따라잡습니다.",
+        "confirm": "재개"
+      },
+      "policyRun": {
+        "lastSentRun": "마지막 전송 실행: #{runId}, {time}",
+        "lastSentRunNever": "전송된 실행이 없습니다.",
+        "totalRunsSent": "총 전송된 실행 수: {count}"
+      },
+      "policyEvent": {
+        "pending": "대기 중인 철회: {count}건",
+        "noPending": "대기 중인 철회가 없습니다."
+      },
+      "syncNow": {
+        "button": "지금 동기화",
+        "running": "동기화 중…",
+        "progress": "{kind} 동기화 중… 배치 {batch} / 약 {total}",
+        "summary": "동기화 결과: baseline {baseline}건, story {story}건, 알림 {policy}건, 오류 {errors}건",
+        "auditNote": "감사 로그가 기록되었습니다 — 드레인은 이 브라우저에서 실행됩니다."
+      },
+      "backfill": {
+        "title": "과거 윈도우 백필",
+        "description": "이미 존재하는 baseline / story 윈도우에 대해 백필을 큐에 등록합니다. 윈도우는 {retention}일 보존 기간 내에 있어야 합니다.",
+        "kindLabel": "종류",
+        "fromLabel": "시작",
+        "toLabel": "끝 (미포함)",
+        "submit": "백필",
+        "submitting": "제출 중…",
+        "confirm": {
+          "title": "{kind}을(를) {from} ~ {to} 백필할까요?",
+          "body": "큰 과거 윈도우는 전송에 시간이 오래 걸릴 수 있습니다. 요청은 알림으로 큐에 등록되어 백그라운드로 드레인됩니다.",
+          "confirm": "백필"
+        },
+        "success": "{count}건의 알림을 큐에 등록했습니다.",
+        "errorWindow": "최근 {retention}일 이내이며 미래로 넘어가지 않는 윈도우를 선택하십시오."
+      },
+      "errors": {
+        "loadFailed": "Phase 2 상태를 불러오지 못했습니다.",
+        "actionFailed": "작업이 실패했습니다. 다시 시도하십시오."
+      }
+    }
+  },
+  "loginBanner": {
+    "phase2Sync": {
+      "summary": "Aimer 동기화 {worst}: {count}개 고객 ({kinds}).",
+      "worstLabel": {
+        "behind": "지연",
+        "way_behind": "심각한 지연",
+        "paused": "일시 정지"
+      },
+      "kinds": {
+        "baseline_event": "baseline 이벤트",
+        "story": "스토리",
+        "policy_event": "정책 이벤트 철회",
+        "paused": "일시 정지된 종류"
+      },
+      "openSettings": "Settings → Aimer 연동 열기",
+      "dismiss": "닫기"
     }
   },
   "auditLogs": {
@@ -295,7 +411,11 @@
       "triage_exclusion_global_recover": "Triage 제외 복구 (전역)",
       "triage_exclusion_customer_recover": "Triage 제외 복구 (고객)",
       "triage_baseline_rebuild": "Triage 기준선 재구축",
-      "triage_policy_run_send_to_aimer": "정책 실행을 aimer-web로 전송"
+      "triage_policy_run_send_to_aimer": "정책 실행을 aimer-web로 전송",
+      "aimer_phase2_sync_now": "Aimer Phase 2 지금 동기화",
+      "aimer_phase2_backfill": "Aimer Phase 2 백필",
+      "aimer_phase2_opportunistic_paused": "Aimer Phase 2 푸시 일시 정지",
+      "aimer_phase2_opportunistic_resumed": "Aimer Phase 2 푸시 재개"
     },
     "targetTypes": {
       "account": "계정",

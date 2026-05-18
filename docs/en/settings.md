@@ -959,3 +959,247 @@ audit log viewer surfaces them automatically.
 The signing keypair file (`data/keys/aimer-context-signing.json`)
 is included in the on-disk backup target alongside the JWT signing
 key. See `decisions/backup-restore.md` for the full backup scope.
+
+### Phase 2 sync status
+
+The **Phase 2 sync status** block at the bottom of the page surfaces a
+per-customer, three-track view of opportunistic baseline-event /
+story pushes (RFC 0002 §7), manual policy-run sends, and the
+withdraw-policy-event notice queue. Pick a customer from the dropdown
+to load that customer's status; the panel auto-polls every few
+seconds and exposes the operator actions described below.
+
+![Phase 2 sync status block (wireframe)](../assets/aimer-phase2-status-block-en.svg)
+
+> Wireframe stand-in per `docs/AUTHORING.md` §"Screenshot exception
+> for infrastructure-gated features". The Phase 2 status block reads
+> `aimer_push_state` + `aimer_push_queue` rows that only exist once
+> a live opportunistic-push deployment writes them; this worktree
+> has no such data. A real PNG capture will replace this SVG once a
+> staging tenant with seeded push state is available.
+
+#### Tracks
+
+- **Streaming kinds** — `baseline_event` and `story`. Each row
+  shows a colored bucket dot (`synced` green / `behind` yellow /
+  `way_behind` red / `paused` gray), the last-synced relative
+  time, an approximate backlog ("~12,000 events, ~2 hours behind"
+  or "~2 hours behind" when the count is too expensive to
+  materialise), the pending unack'd notice count + oldest pending
+  age, per-notice-kind badges (`withdraw × N` in amber,
+  `refresh × N` in sky, `backfill × N` in slate so a real ingest
+  gap stands out from operator-driven catch-up work), the most
+  recent `last_error` (if any), and the pause toggle. A `paused`
+  row keeps reporting its real cursor lag / approximate count so
+  an operator can see how far behind the stream has fallen since
+  it was paused — "Backlog unavailable" is only shown when no
+  cursor data exists at all (fresh tenant, no pushes ever). The
+  pause-badge actor (e.g. "Paused 5 min ago by alice") is the
+  `accounts.display_name` resolved from the
+  `aimer_push_state.paused_by` account UUID in one batched
+  app-DB lookup; the raw UUID is only used as a fallback when
+  the account row has been deleted.
+- **Policy runs (manual)** — surfaces "Last sent run: #N at
+  *time*" plus "Total runs sent: M", sourced from
+  `policy_triage_run` β columns (`last_sent_at`, `last_sent_by`,
+  `send_count`). The total is `COUNT(*) WHERE last_sent_at IS
+  NOT NULL`, not `SUM(send_count)`, so re-sends of the same run
+  do not double-count.
+- **Policy event withdrawals** — queue-only kind, no cursor / no
+  pause. Shows the unack'd `withdraw_policy_event` count, the
+  oldest pending age, a `withdraw × N` badge, and the newest
+  unack'd queue row's `last_error` as-is. If that newest row
+  has not failed yet the field is empty even when older rows in
+  the queue carry stale errors — surfacing an older error would
+  misrepresent the current head of the queue.
+
+Queue payload bodies are never returned by the underlying
+`GET /api/aimer/phase2/status` route — only counts, errors, and
+bucket labels.
+
+![Phase 2 streaming-kind row (wireframe)](../assets/aimer-phase2-streaming-row-en.svg)
+
+> Wireframe stand-in — see note above. The streaming row depends
+> on the same live push data as the parent block.
+
+#### Sync now
+
+A **Sync now** button appears under the tracks when at least one
+streaming kind is **not** paused, or when there are pending
+unack'd `withdraw_policy_event` notices. The button is hidden
+when both streaming kinds are paused AND there are zero pending
+policy-event notices.
+
+Click sequence:
+
+1. The browser POSTs to `/api/aimer/phase2/sync-now`. The route
+   records one `aimer_phase2.sync_now` audit row (with the static
+   `triggeredKinds` list and the targeted `customerId`) and
+   returns `204 No Content`. The server never performs the
+   drain.
+2. After the wrapper acks, the same browser session invokes
+   `drainOpportunisticPushQueue` for `baseline_event`, `story`,
+   and `policy_event` in parallel.
+3. Live progress (`"Syncing baseline events… batch N of ~M"`) is
+   shown while drains run.
+4. On completion the panel shows a single-line summary
+   (`"Synced: 42 baseline events, 3 stories, 7 notices drained,
+   0 errors"`). The "notices drained" count covers both
+   successfully withdrawn rows and successfully ack'd
+   `not_found` no-ops, because either way the queue row is
+   removed; reporting only the withdrawn count would render
+   "0 notices drained" for a successful all-not-found drain.
+   The completion counts are **client-side informational
+   state**, not an audit source of truth — the audit row only
+   records the operator click.
+
+#### Pause / Resume
+
+The pause toggle next to each streaming row flips
+`opportunistic_enabled` for that kind. A confirmation dialog
+appears before the change is committed; on confirm the wrapper
+route `POST /api/aimer/phase2/pause-toggle` calls
+`setOpportunisticEnabled` and emits
+`aimer_phase2.opportunistic_paused` (or
+`aimer_phase2.opportunistic_resumed` on the reverse direction,
+with `pausedDurationSeconds`). Manual Send and admin Backfill
+keep working while a kind is paused.
+
+`policy_run` and `policy_event` have no pause toggle by design:
+the first is operator-driven per-run, the second has no
+opportunistic background drain.
+
+#### Backfill
+
+The **Backfill historical window** form below the tracks queues
+a backfill for an existing baseline / story window. Pick the
+kind, supply a half-open `[from, to)` window, confirm in the
+dialog, and submit. The wrapper route
+`POST /api/aimer/phase2/backfill` validates the window, calls
+the same `runPhase2Backfill` helper as the internal-token route,
+emits `aimer_phase2.backfill`, and returns the list of enqueued
+notice ids. The Settings panel surfaces the count in a toast.
+
+Window bounds (enforced by both the UI and the underlying route):
+
+- `from` must be strictly before `to`.
+- `to` must not extend into the future (60 s skew slack).
+- `from` may not be older than 180 days, the
+  `baseline_triaged_event` retention horizon.
+- A window that spans more than one `baseline_version` is
+  rejected with a `400 multi_version` error — narrow the window
+  so all rows share one version.
+
+![Phase 2 backfill historical window form (wireframe)](../assets/aimer-phase2-backfill-form-en.svg)
+
+> Wireframe stand-in — see note above. The form itself is fully
+> client-driven, but a meaningful screenshot needs the surrounding
+> status block populated, which is what the live push data gates.
+
+#### Audit actions
+
+The Phase 2 block records:
+
+- `aimer_phase2.sync_now` — emitted by the wrapper route at
+  click time. `details.triggeredKinds` is the static list
+  `["baseline_event", "story", "policy_event"]`. Per-kind
+  delivery counts live in client-side state only.
+- `aimer_phase2.backfill` — `details: { kind, from, to,
+  enqueuedNoticeCount }`.
+- `aimer_phase2.opportunistic_paused` — `details: { kind }`.
+- `aimer_phase2.opportunistic_resumed` — `details: { kind,
+  pausedDurationSeconds }`.
+
+All four are customer-scoped, so the audit-log viewer surfaces
+them under the tenant operator's effective customer scope.
+
+### Login banner
+
+If any customer is in the `behind` / `way_behind` / `paused`
+bucket for a tracked kind, the dashboard renders a one-line
+banner at the top of the app shell summarizing the situation and
+linking to **Settings → Aimer integration**. The banner is
+fetched client-side after first paint via
+`GET /api/aimer/phase2/status/summary` so it never blocks SSR or
+initial document render; the summary route applies bounded
+per-customer concurrency, a short server-side TTL cache, and
+skips the expensive backlog-count fast path because the banner
+only needs the bucket label.
+
+The banner is dismissible per page; a reload or navigation
+re-fetches and shows it again if the condition still holds. It
+is gated on the System Administrator role, same as the
+underlying summary route.
+
+The banner copy lists the worst bucket across all flagged
+customers, the customer count, and the union of contributing
+kinds. A "paused kinds" marker is appended whenever **any**
+customer has at least one paused streaming kind — even when
+that customer's worst bucket is `behind` or `way_behind` (for
+example, baseline paused AND policy_event way behind on the
+same tenant). Otherwise a mixed-state customer would silently
+drop the pause signal because pause ranks below behind /
+way_behind in `worst_bucket` severity.
+
+The summary route restricts the customer set to active tenants
+(`customers.status = 'active'`) so the banner only warns about
+customers an operator can actually act on — the Phase 2
+customer picker on **Settings → Aimer integration** is itself
+filtered to active customers, and warning about a suspended /
+deleted tenant the operator cannot select would link to a page
+where that customer is absent.
+
+### Internal-token backfill route
+
+The Settings UI Backfill form is a session-authenticated wrapper
+around `POST /api/internal/aimer/phase2/backfill`. Deployment
+schedulers and ops runbooks may invoke the internal route
+directly before the Settings UI is available.
+
+- **Env var** — `AIMER_PHASE2_BACKFILL_INTERNAL_TOKEN`. The
+  route refuses every request (including ones with a valid-
+  looking Bearer header) if the env var is unset on the
+  deployment.
+- **Auth** — `Authorization: Bearer <token>`, constant-time
+  compared.
+- **Body schema** —
+
+  ```json
+  {
+    "customer_id": <positive integer>,
+    "kind": "baseline_event" | "story",
+    "from": "<ISO-8601 timestamp>",
+    "to":   "<ISO-8601 timestamp>"
+  }
+  ```
+
+  Window is half-open `[from, to)`.
+- **Response codes** —
+  - `200 OK` with `{ "enqueued_notice_ids": ["<id>", ...] }`.
+  - `400 Bad Request` — malformed body, unknown kind, inverted
+    window, future `to`, `from` older than the retention
+    horizon, or a window that spans more than one
+    `baseline_version`.
+  - `401 Unauthorized` — missing / wrong / unset Bearer token.
+  - `404 Not Found` — unknown customer id.
+  - `500 Internal Server Error` — DB error during payload
+    construction or enqueue.
+- **Window bounds** — `to` may not be in the future (60 s
+  skew slack); `from` may not be older than
+  `BASELINE_TRIAGED_EVENT_RETENTION_DAYS` (180 days). Older
+  windows would yield empty / partial payloads because the
+  local rows have been swept.
+
+Example invocation:
+
+```sh
+curl -sS -X POST "https://aice.example.com/api/internal/aimer/phase2/backfill" \
+  -H "Authorization: Bearer ${AIMER_PHASE2_BACKFILL_INTERNAL_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "customer_id": 42,
+    "kind": "baseline_event",
+    "from": "2026-04-01T00:00:00Z",
+    "to":   "2026-04-02T00:00:00Z"
+  }'
+```

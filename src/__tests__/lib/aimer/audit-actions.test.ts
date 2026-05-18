@@ -13,6 +13,10 @@ describe("aimer audit actions are registered in the closed union", () => {
     "aimer_context_token.denied",
     "aimer_detection_send.issued",
     "aimer_detection_send.denied",
+    "aimer_phase2.sync_now",
+    "aimer_phase2.backfill",
+    "aimer_phase2.opportunistic_paused",
+    "aimer_phase2.opportunistic_resumed",
   ] as const;
 
   it.each(expected)("includes %s", (action) => {

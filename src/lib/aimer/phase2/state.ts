@@ -974,16 +974,6 @@ export async function estimateBacklog(
   }
 
   const state = await getAimerPushState(customerId, kind);
-  if (state && !state.opportunistic_enabled) {
-    return {
-      bucket: "paused",
-      approximate_count: null,
-      cursor_lag_seconds: null,
-      newest_unsent_event_time: null,
-      pending_notice_count: pendingNoticeCount,
-    };
-  }
-
   const lagSeconds = computeCursorLag(state?.last_pushed_event_time ?? null);
 
   let approximateCount: number | null = null;
@@ -998,11 +988,15 @@ export async function estimateBacklog(
     newestUnsentEventTime = fastPath.newestUnsentEventTime;
   }
 
-  const bucket = bucketForBacklog(
-    lagSeconds,
-    pendingNoticeCount,
-    approximateCount,
-  );
+  // When paused, the bucket label is `paused`, but we still surface the
+  // real lag/approximate-count so the Settings status block can tell an
+  // operator how far behind a paused stream is. Returning nulls here
+  // would let the UI render "Paused, Caught up" for a stream that has
+  // accumulated hours of unsent events.
+  const bucket =
+    state && !state.opportunistic_enabled
+      ? "paused"
+      : bucketForBacklog(lagSeconds, pendingNoticeCount, approximateCount);
 
   return {
     bucket,

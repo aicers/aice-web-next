@@ -167,6 +167,15 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   // is unique only inside a customer DB, so the audit row is intrinsically
   // scoped to the customer the finalize route operated on.
   "triage.policy_run.send_to_aimer": "customer-scoped",
+  // Phase 2 Settings operator actions (#620). Each action targets a
+  // single customer chosen on the Settings page; the wrapper routes
+  // resolve `customerId` from the request body and the audit row
+  // carries it so tenant operators see the rows under their effective
+  // customer scope.
+  "aimer_phase2.sync_now": "customer-scoped",
+  "aimer_phase2.backfill": "customer-scoped",
+  "aimer_phase2.opportunistic_paused": "customer-scoped",
+  "aimer_phase2.opportunistic_resumed": "customer-scoped",
 };
 
 /**

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 200" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Streaming kind row of the Phase 2 status block (wireframe)</title>
+  <desc id="desc">Wireframe of a single streaming-kind row. Left side stacks the kind name (Baseline events), a colored bucket dot with bucket label (Behind), last synced time, approximate backlog text, pending notice count with oldest pending age, three per-subkind notice badges (withdraw / refresh / backfill) so withdraw is visually distinguished from refresh and backfill, a paused-by badge when applicable, and a last-error line in red when set. Right side shows the Pause / Resume button.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-section { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-meta { font-size: 11px; fill: #52525b; }
+    .text-error { font-size: 11px; fill: #b91c1c; }
+    .badge { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; rx: 8; ry: 8; }
+    .badge-amber { fill: #fef3c7; stroke: #fcd34d; }
+    .badge-sky { fill: #e0f2fe; stroke: #bae6fd; }
+    .badge-slate { fill: #f1f5f9; stroke: #cbd5e1; }
+    .badge-text { font-size: 10px; font-weight: 600; fill: #18181b; }
+    .btn { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-text { fill: #18181b; font-size: 11px; font-weight: 600; }
+    .dot-yellow { fill: #eab308; }
+  </style>
+
+  <rect class="bg" width="760" height="200"/>
+
+  <rect class="panel" x="16" y="16" width="728" height="168" rx="6"/>
+
+  <text x="32" y="40" class="text-section">Baseline events</text>
+  <circle class="dot-yellow" cx="32" cy="60" r="4"/>
+  <text x="44" y="64" class="text-meta">Behind  ·  Last synced 3m ago  ·  ~12k events, ~12m behind</text>
+
+  <text x="32" y="86" class="text-meta">4 pending notice(s)  (oldest 6m old)</text>
+
+  <rect class="badge badge-amber" x="32" y="94" width="86" height="16"/>
+  <text x="44" y="106" class="badge-text">withdraw × 2</text>
+  <rect class="badge badge-sky" x="124" y="94" width="76" height="16"/>
+  <text x="136" y="106" class="badge-text">refresh × 1</text>
+  <rect class="badge badge-slate" x="206" y="94" width="78" height="16"/>
+  <text x="218" y="106" class="badge-text">backfill × 1</text>
+
+  <text x="32" y="132" class="text-error">Last error: ECONNRESET to aimer-web (1 attempt ago)</text>
+
+  <rect class="btn" x="640" y="32" width="92" height="28"/>
+  <text x="664" y="50" class="btn-text">Pause</text>
+</svg>

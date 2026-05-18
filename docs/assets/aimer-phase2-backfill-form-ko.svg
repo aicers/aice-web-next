@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 220" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Phase 2 상태 블록의 과거 윈도우 백필 폼 (와이어프레임)</title>
+  <desc id="desc">과거 윈도우 백필 폼 와이어프레임. 점선 패널 안에 제목, 180일 보존 기간을 설명하는 한 줄 설명, 종류 드롭다운(Baseline 이벤트 / 스토리), 시작 datetime-local 입력, 끝(미포함) datetime-local 입력, 오른쪽에 백필 제출 버튼이 있습니다. 제출 시 확인 대화상자가 열린 후 래퍼 라우트가 호출됩니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel-dashed { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; stroke-dasharray: 4 3; }
+    .text-section { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-meta { font-size: 11px; fill: #52525b; }
+    .input { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; rx: 4; ry: 4; }
+    .btn { fill: #18181b; stroke: #18181b; stroke-width: 1; rx: 4; ry: 4; }
+    .btn-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .label { font-size: 10px; fill: #52525b; }
+  </style>
+
+  <rect class="bg" width="760" height="220"/>
+
+  <rect class="panel-dashed" x="16" y="16" width="728" height="188" rx="6"/>
+
+  <text x="32" y="40" class="text-section">과거 윈도우 백필</text>
+  <text x="32" y="58" class="text-meta">기존 baseline / story 윈도우의 백필을 큐에 등록합니다. 윈도우는 180일 보존 기간 내여야 합니다.</text>
+
+  <text x="32" y="92" class="label">종류</text>
+  <rect class="input" x="32" y="98" width="200" height="30"/>
+  <text x="44" y="118" class="text-meta">Baseline 이벤트 ▾</text>
+
+  <text x="252" y="92" class="label">시작</text>
+  <rect class="input" x="252" y="98" width="200" height="30"/>
+  <text x="264" y="118" class="text-meta">2026-05-15 09:00</text>
+
+  <text x="472" y="92" class="label">끝 (미포함)</text>
+  <rect class="input" x="472" y="98" width="200" height="30"/>
+  <text x="484" y="118" class="text-meta">2026-05-15 12:00</text>
+
+  <rect class="btn" x="640" y="148" width="92" height="32"/>
+  <text x="666" y="168" class="btn-text">백필</text>
+</svg>

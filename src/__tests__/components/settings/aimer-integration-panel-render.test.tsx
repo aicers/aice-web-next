@@ -98,6 +98,7 @@ function renderPanel(overrides?: {
         initialSetup={setup}
         initialKeyStatus={overrides?.keyStatus ?? EMPTY_KEY_STATUS}
         customerStats={overrides?.customerStats ?? { total: 3, configured: 0 }}
+        customers={[]}
       />
     </NextIntlClientProvider>,
   );
