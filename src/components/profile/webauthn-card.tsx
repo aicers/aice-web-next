@@ -231,7 +231,7 @@ function CredentialList({
   }
 
   return (
-    <ul className="divide-border divide-y" data-testid="credential-list">
+    <ul className="divide-y divide-border/30" data-testid="credential-list">
       {credentials.map((cred) => (
         <li key={cred.id} className="flex items-center gap-3 py-3">
           <div className="min-w-0 flex-1">

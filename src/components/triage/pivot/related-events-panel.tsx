@@ -190,7 +190,7 @@ export function TriagePivotPanel({
       aria-labelledby="triage-pivot-heading"
       className="rounded-md border bg-card shadow-xs"
     >
-      <header className="flex flex-col gap-1 border-b px-4 py-3">
+      <header className="flex flex-col gap-1 border-b border-border/30 px-4 py-3">
         <h2
           id="triage-pivot-heading"
           className="text-sm font-semibold text-muted-foreground"
@@ -227,7 +227,7 @@ export function TriagePivotPanel({
           {labels.empty}
         </p>
       ) : (
-        <ul className="divide-y">
+        <ul className="divide-y divide-border/30">
           {hasFocus
             ? sections.map((section) => (
                 <PivotSection
@@ -494,7 +494,7 @@ function PivotSection({
       </div>
       <table className="w-full text-sm">
         <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-          <tr className="border-b">
+          <tr className="border-b border-border/30">
             <th scope="col" className="py-1.5 pr-2 text-left font-medium">
               {labels.timeColumn}
             </th>
@@ -574,7 +574,12 @@ function PivotRow({
         })
       : null;
   return (
-    <tr className={cn("border-b last:border-0", weak && WEAK_SIGNAL_ROW_CLASS)}>
+    <tr
+      className={cn(
+        "border-b border-border/30 last:border-0",
+        weak && WEAK_SIGNAL_ROW_CLASS,
+      )}
+    >
       <td className="py-1.5 pr-2 font-mono text-xs">
         {marker}
         {formatDateTime(event.time, timezone)}

@@ -46,7 +46,7 @@ import { closeAdminAgent, mockServerSession } from "../mock-server-admin";
 const VIEWPORT = { width: 1440, height: 900 } as const;
 const ASSETS_DIR = path.resolve(__dirname, "..", "..", "docs", "assets");
 
-test.use({ viewport: VIEWPORT });
+test.use({ viewport: VIEWPORT, deviceScaleFactor: 0.75 });
 
 test.beforeEach(async () => {
   await resetRateLimits();

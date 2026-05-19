@@ -147,7 +147,7 @@ export function RelatedTab({ event, labels, customers }: Props) {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-muted-foreground text-xs">{labels.note}</p>
-      <ul className="border-border bg-card divide-y divide-[var(--border)] rounded-md border">
+      <ul className="border-border bg-card divide-y divide-border/30 rounded-md border">
         {pivots.map((pivot) => {
           const summary = summaries?.[pivot.id];
           return (
