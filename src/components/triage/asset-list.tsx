@@ -73,7 +73,7 @@ export function TriageAssetListView({
       aria-labelledby="triage-asset-list-heading"
       className="rounded-md border bg-card shadow-xs"
     >
-      <header className="border-b px-4 py-3">
+      <header className="border-b border-border/30 px-4 py-3">
         <h2
           id="triage-asset-list-heading"
           className="text-sm font-semibold text-muted-foreground"
@@ -81,7 +81,7 @@ export function TriageAssetListView({
           {labels.title}
         </h2>
       </header>
-      <ul className="divide-y" aria-label={labels.title}>
+      <ul className="divide-y divide-border/30" aria-label={labels.title}>
         {assets.map((asset) => {
           const active =
             selected !== null &&

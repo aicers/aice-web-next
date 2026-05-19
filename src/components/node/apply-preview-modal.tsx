@@ -440,7 +440,7 @@ function ApplyPreviewBody({
           {t("rebuildToRecover")}
         </p>
       )}
-      <ul className="divide-y rounded-md border">
+      <ul className="divide-y divide-border/30 rounded-md border">
         {phase.dispatches.map((dispatch) => (
           <DispatchRow
             key={dispatch.dispatchId}

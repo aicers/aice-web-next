@@ -158,7 +158,7 @@ export function TriageEventTable({
   return (
     <table className="w-full text-sm">
       <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-        <tr className="border-b">
+        <tr className="border-b border-border/30">
           <th scope="col" className="py-2 pr-2 text-left font-medium">
             {labels.timeColumn}
           </th>
@@ -231,7 +231,10 @@ function TriageEventTableRow({
       ? renderProtectedByStoryMarker(row.protectedByStory)
       : null;
   return (
-    <tr className="border-b last:border-0" data-testid="triage-event-row">
+    <tr
+      className="border-b border-border/30 last:border-0"
+      data-testid="triage-event-row"
+    >
       <td
         className="py-1.5 pr-2 font-mono text-xs"
         data-testid="triage-event-row-time"
