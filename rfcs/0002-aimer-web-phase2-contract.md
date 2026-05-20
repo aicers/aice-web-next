@@ -4,11 +4,11 @@
 - Authors: @sehkone
 - Tracks: [#491](https://github.com/aicers/aice-web-next/issues/491)
 - Related: [#437](https://github.com/aicers/aice-web-next/issues/437), [#438](https://github.com/aicers/aice-web-next/issues/438), [#441](https://github.com/aicers/aice-web-next/issues/441), [#461](https://github.com/aicers/aice-web-next/issues/461), [#462](https://github.com/aicers/aice-web-next/issues/462), [#471](https://github.com/aicers/aice-web-next/issues/471), [#473](https://github.com/aicers/aice-web-next/issues/473), [#489](https://github.com/aicers/aice-web-next/issues/489), [#492](https://github.com/aicers/aice-web-next/issues/492), [#493](https://github.com/aicers/aice-web-next/issues/493), [#494](https://github.com/aicers/aice-web-next/issues/494), [#495](https://github.com/aicers/aice-web-next/issues/495), [#565](https://github.com/aicers/aice-web-next/issues/565)
-- Paired aimer-web umbrella: TBD (filed alongside this RFC)
+- Paired aimer-web umbrella: [aimer-web#44](https://github.com/aicers/aimer-web/issues/44) (Phase 7 umbrella)
 
 ## Summary
 
-Phase 2 sends Triage Baseline events, Stories, and Policy runs from aice-web-next to aimer-web so the latter can produce LLM-driven analyses and reports. Communication is one-way (aice-web-next → aimer-web, browser-mediated to respect aice-web-next's air-gapped deployment), incremental for streaming data (Baseline, Story), and on-demand for batched user-curated work (Policy run). aimer-web stores ingested data in a new query-friendly schema separate from the Phase 1 `detection_events` blob sink, which continues to serve the orthogonal use case of ad-hoc single-event sends from the Detection menu. Cross-customer Story analysis is explicitly deferred to a Phase 3 RFC; the identifier policy in this RFC keeps that path forward-compatible.
+Phase 2 sends Triage Baseline events, Stories, and Policy runs from aice-web-next to aimer-web so the latter can produce LLM-driven analyses and reports. Communication is one-way (aice-web-next → aimer-web, browser-mediated to respect aice-web-next's air-gapped deployment), incremental for streaming data (Baseline, Story), and on-demand for batched user-curated work (Policy run). aimer-web stores ingested data in a new query-friendly schema separate from the Phase 1 `detection_events` per-event redacted store, which continues to serve the orthogonal use case of ad-hoc single-event sends from the Detection menu. The Phase 1 store itself was refactored by [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md) from a multi-event encrypted batch row into per-event rows with redacted JSONB + a shared `event_redaction_map`; see §"Existing: `detection_events`" below for the new shape. Cross-customer Story analysis is explicitly deferred to a Phase 3 RFC; the identifier policy in this RFC keeps that path forward-compatible.
 
 ## Motivation
 
@@ -42,8 +42,7 @@ Phase 1 already handles the orthogonal use case of "send this single Detection e
 - **Cross-customer Story analysis** — deferred to Phase 3 RFC (see §10)
 - **LLM prompt design, model selection, narrative storage, prompt/model versioning** — owned by aimer-web team
 - **Specific report menus and analytics surfaces in aimer-web** — owned by aimer-web team; this RFC defines the data substrate they query
-- **Privacy-related field redaction** — separate topic; this RFC permits a future redaction hook in the push pipeline but does not specify it
-- **Encryption-at-rest details for new Phase 2 tables** — aimer-web team's choice within the constraints of this RFC's identifier policy
+- **Encryption-at-rest details for new Phase 2 tables** — partially decided by [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md): canonical-content columns are redacted plaintext + envelope-encrypted `event_redaction_map`; per-event support JSONB and aggregate JSONB remain plaintext-with-TDE (see §"New: Phase 2 tables" below). Remaining aimer-web latitude is limited to indexes and runtime role grants.
 - **Detection-menu adjacent multi-window context packaging** — already tracked as [#495](https://github.com/aicers/aice-web-next/issues/495)
 - **Approval workflow before Send** — already tracked as [#494](https://github.com/aicers/aice-web-next/issues/494)
 - **System Administrator cross-customer surfaces** — Phase 3
@@ -77,25 +76,49 @@ The current [#492](https://github.com/aicers/aice-web-next/issues/492) issue bod
 
 ### Existing: `detection_events` (Phase 1)
 
-Kept as-is. Continues to serve ad-hoc single-event sends from the Detection menu when the event is **not** baseline-passing. KEK rotation, encryption-at-rest, staged-event approval workflow all remain operational.
+Continues to serve ad-hoc single-event sends from the Detection menu when the event is **not** baseline-passing. Refactored by [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md) from a multi-event encrypted batch row into **per-event redacted rows**:
+
+- Row semantics: one row = one event (a batch is split into N rows at ingest).
+- New columns: `event_key NUMERIC(39, 0) NOT NULL` (indexed), `redacted_event JSONB NOT NULL`, `redaction_policy_version TEXT NOT NULL`.
+- Dropped columns: `payload BYTEA`, `wrapped_dek TEXT`, `event_count` — the encrypted artifact moved to `event_redaction_map.wrapped_dek` (see §"New: Phase 2 tables").
+- `UNIQUE (aice_id, event_key)` is enforced.
+
+Server-side redaction (regex-based v1 policy + per-customer public IP ranges) runs at ingest. Staged-event approval workflow remains operational for the per-event sends. See aimer-web RFC 0001 as the canonical spec for column types, indexes, and the encryption envelope.
 
 ### New: Phase 2 tables
 
-The following tables live in aimer-web's per-customer DBs (`migrations/customer/`). Exact column types, indexes, encryption strategy, and runtime role grants are aimer-web team's choice; this RFC fixes only the identifying columns and the relationship shape.
+The following tables live in aimer-web's per-customer DBs (`migrations/customer/`). This RFC fixes the identifying columns, the relationship shape, and (per [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md) v1) the redaction-vs-TDE column split. Indexes and runtime role grants remain aimer-web team's choice; the canonical-content columns and `event_redaction_map` are contract per RFC 0001, while the per-event support JSONB and aggregate JSONB columns are explicitly carved out of v1 redaction and remain plaintext-with-TDE.
 
-All Phase 2 tables live in aimer-web's per-customer DBs, so `customer_id` is implicit (the database is the customer scope) and is omitted from PKs.
+All Phase 2 tables live in aimer-web's per-customer DBs, so `customer_id` is implicit (the database is the customer scope) and is omitted from PKs. The customer scope of `event_redaction_map` is similarly implicit in the DB choice.
+
+**v1 column treatment summary** (per RFC 0001):
+
+| Treatment | Columns |
+|---|---|
+| Redacted JSONB/TEXT, tokens resolve via `event_redaction_map` | `baseline_event.raw_event`; `story_member.event`; `policy_event` event-identity columns (`orig_addr`, `resp_addr`, `dns_query`, `uri`, `host`) and `policy_event.policy_triage_snapshot` |
+| Plaintext-with-TDE (carved out of v1 redaction) | per-event support JSONB: `baseline_event.score_window_context`, `window_signals`, `asset_context`, `scoring_weights_snapshot`; aggregate JSONB: `story.summary_payload`, `policy_run.summary_stats` |
+
+RFC 0001 carves the support columns out because they are per-version snapshots whose map-keys are not stable across runs, and the aggregate columns out because no LLM exposure is planned for them in v1. The "Implementation notes" / TDE assumption in this RFC remains load-bearing for both groups.
+
+A new `redaction_policy_version TEXT NOT NULL` column is added to `baseline_event`, `story_member`, and `policy_event`. It is **not** added to `story` or `policy_run` — those tables hold only aggregate JSONB and contain nothing redacted in v1.
+
+`policy_event.orig_addr` and `policy_event.resp_addr` are stored as `TEXT` (not `INET`), so they can hold redaction tokens like `<<REDACTED_IP_001>>`.
 
 ```
 baseline_event
   PK (baseline_version, event_key)
   + indexed: event_time, kind, category, primary_asset, raw_score
-  + payload: full event row from REview (packet bytes excluded), selector_tags,
+  + redacted payload (tokens resolve via event_redaction_map):
+             raw_event (full REview row, packet bytes excluded)
+  + plaintext-with-TDE payload:
+             selector_tags,
              raw_score (within-kind weighted sum, persisted at INSERT per RFC 0001),
              score_window_context (snapshot of the cohort window + size +
                                    baseline_rank_snapshot — see §6),
-             window-level signal snapshot (S1 percentile rank, S3 recurring count,
+             window_signals (S1 percentile rank, S3 recurring count,
              S4 correlated count + correlated event_keys),
-             asset short context, scoring weights snapshot
+             asset_context, scoring_weights_snapshot
+  + redaction_policy_version TEXT NOT NULL
   + meta: received_at, source_aice_id
 
   NOTE: baseline_score (kind-normalized percentile) is NOT stored as a separate
@@ -106,7 +129,8 @@ baseline_event
 story
   PK (story_id, story_version)
   + indexed: time_window_start, time_window_end, primary_asset, score
-  + payload: kind ('auto_correlated' | 'analyst_curated'), correlation_rule_id,
+  + plaintext-with-TDE payload (aggregate, no LLM exposure in v1):
+             kind ('auto_correlated' | 'analyst_curated'), correlation_rule_id,
              score, summary_payload (mirrors aice-web-next's Story card JSONB)
   + meta: received_at, source_aice_id
 
@@ -114,22 +138,28 @@ story_member
   PK (story_id, story_version, member_event_key)
   FK (story_id, story_version) → story
   + member_event_key (NUMERIC string), role ('primary' | 'context')
-  + payload: full event row inline (self-contained payload rule)
+  + redacted payload (tokens resolve via event_redaction_map):
+             event (full event row inline, self-contained payload rule)
+  + redaction_policy_version TEXT NOT NULL
 
 policy_run
   PK (run_id)
   + indexed: created_at, finalized_at, baseline_version
-  + payload: policies_fingerprint, exclusions_fingerprint, baseline_version,
-             status snapshot at send time, summary stats
+  + plaintext-with-TDE payload (aggregate, no LLM exposure in v1):
+             policies_fingerprint, exclusions_fingerprint, baseline_version,
+             status snapshot at send time, summary_stats
   + meta: received_at, source_aice_id
 
 policy_event
   PK (run_id, event_key)
   + indexed: event_time, kind, category
-  + payload: identity columns mirroring policy_triaged_event
-             (event_time, kind, sensor, orig_addr, orig_port, resp_addr,
-              resp_port, proto, host, dns_query, uri, category) +
+  + redacted payload (tokens resolve via event_redaction_map):
+             orig_addr TEXT, resp_addr TEXT, dns_query, uri, host  -- INET→TEXT
+                                                                   -- so tokens fit
              policy_triage_snapshot (JSONB list of { policyId, score })
+  + plaintext-with-TDE payload:
+             event_time, kind, sensor, orig_port, resp_port, proto, category
+  + redaction_policy_version TEXT NOT NULL
   + NOT included: raw_score, selector_tags, window_signals,
                   score_window_context — corpus B is policy-mode only and
                   does not carry the baseline-centric snapshot
@@ -137,19 +167,33 @@ policy_event
                   aimer-web can join against its own baseline_event by
                   event_key when corpus-A enrichment is desired.
 
-analysis_narrative
-  PK (content_hash)
-  + content_hash := hash(target_kind, target_keys, summary_payload, signals,
-                         prompt_version, model_version)
-  + payload: LLM output narrative, prompt_version, model_version, analyzed_at
-  + indexed: target_kind ('baseline_event' | 'story' | 'policy_run'), generated_at
-  + foreign references: target rows by tuple key (not strict FK, since narrative
-                        outlives target retention)
+event_redaction_map  -- canonical encrypted artifact, per RFC 0001
+  PK (aice_id, event_key)
+  + ciphertext BYTEA NOT NULL           -- envelope-encrypted token→cleartext map
+  + wrapped_dek TEXT NOT NULL           -- per-row DEK wrapped by current KEK
+  + lives in customer_db (customer scope implicit in the DB choice)
+  + referenced by analyzeEvent result and by every redacted column above
+    via the same (aice_id, event_key) key
+
+event_analysis_result  -- AI analysis cache, per RFC 0001 v1 (analyzeEvent only)
+  PK (aice_id, event_key, lang, model_name, model)
+  + threat_score
+  + analysis_text                       -- redacted plaintext; tokens resolve only
+                                        --   via event_redaction_map row at the
+                                        --   same (aice_id, event_key)
+  + model_actual_version
+  + prompt_version
+  + redaction_policy_version
+  + requested_by, requested_at
+  + no FK to event_redaction_map        -- intentional: analysis must outlive
+                                        --   source events across retention sweeps
 ```
+
+**`event_analysis_result` differs from prior `analysis_narrative` framing.** RFC 0001's v1 scope is `analyzeEvent` only, so the cache is event-scoped and keyed by `(aice_id, event_key, lang, model_name, model)` — not by a content hash across target kinds, and not target-kind-agnostic. Story-level and policy-run-level caches are intentionally out of v1 because `analyzeStory` / `analyzePolicy` do not yet exist; see Open Questions item 2. `analysis_text` is **redacted plaintext** whose tokens resolve only via the corresponding `event_redaction_map` row, not an opaque payload. The intentional absence of a FK from `event_analysis_result` → `event_redaction_map` means the **map-cascade preservation rule** (see §"`POST /api/phase2/withdraw`" below) is contract-level, not DB-enforced: a map row may be reaped only when both its source event row and every referencing analysis result are gone.
 
 ### Why not extend `detection_events`?
 
-`detection_events` is a query-opaque encrypted blob with KEK rotation and staged-approval workflow built around the assumption "store this opaque thing securely for later one-shot retrieval." Phase 2 needs query-friendly indexed columns, frequent reads, joins, and incremental sync semantics. Bolting both onto one table forces unhappy compromises on both axes. Keeping the two separate lets each optimize for its own access pattern and keeps Phase 1's security model intact.
+Phase 1's `detection_events`, as refactored by [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md), is now per-event redacted JSONB — so the "query-opaque encrypted blob" half of the original argument no longer applies. Phase 2 still uses separate tables for the remaining reasons: a different access pattern (frequent indexed reads, joins, incremental sync state) and a different consent model (one-time opportunistic-push consent vs. per-event staged approval on the Detection bridge). Keeping the two separate lets each optimize for its own access pattern and keeps Phase 1's per-event approval workflow intact.
 
 ## Wire contract
 
@@ -351,7 +395,7 @@ Push a batch of Stories. Used by opportunistic push and by per-Story manual Send
 
 Response: same shape as baseline batch.
 
-`force_refresh` (per-Story bool, optional) inside an item bypasses aimer-web's `analysis_narrative` cache and triggers a fresh LLM pass — used by the Send button when the user explicitly wants re-analysis (e.g., after a Story Force Rebuild [#565](https://github.com/aicers/aice-web-next/issues/565) for the same natural key).
+`force_refresh` (per-Story bool, optional) inside an item signals the user's intent to re-analyze a Story (e.g., after a Story Force Rebuild [#565](https://github.com/aicers/aice-web-next/issues/565) for the same natural key). **Cache semantics for this flag are out of v1 scope.** [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md) ships only `analyzeEvent`; story-level (and policy-run-level) re-analysis caching is deferred to the future `analyzeStory` / `analyzePolicy` resolver work. v1's only analysis cache is **event-level `event_analysis_result`**, accessed via `analyzeEvent`; event-level force re-analysis is a separate flow whose `force=true` upserts on the event-level PK and is not driven by Phase 2 batch flags.
 
 #### `POST /api/phase2/policy-run`
 
@@ -426,7 +470,9 @@ Tell aimer-web that specific rows are no longer current truth. Used when aice-we
 
 `baseline_version` is required for `baseline_event` withdrawals (a key alone is ambiguous across versions). `story_version` is required for `story` withdrawals. `policy_run` withdrawal is permitted but **not** the default reaction to supersede — supersede produces a new `run_id` alongside the old; only an explicit cleanup decision (e.g., operator action or aimer-web-side retention via aice-web-next signal) results in a `policy_run` withdraw notice. When a `policy_run` is withdrawn, aimer-web cascades the delete to its `policy_event` rows.
 
-aimer-web deletes matching rows from the Phase 2 tables. Cached `analysis_narrative` rows whose target was withdrawn are not automatically deleted; they age out via aimer-web retention.
+aimer-web deletes matching rows from the Phase 2 tables. Cached `event_analysis_result` rows whose target was withdrawn are not automatically deleted; they age out via aimer-web retention.
+
+**Map-cascade preservation rule.** `event_redaction_map` rows must be preserved while any referencing `event_analysis_result` row still exists, even after the source event row (e.g., the `detection_events` per-event row or its Phase 2 counterpart) has been withdrawn or aged out. Per [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md), `event_analysis_result.analysis_text` is redacted plaintext whose tokens resolve only via the map, and there is intentionally **no FK** from result → map so analysis can outlive source across retention sweeps. The invariant is therefore contract-level, not DB-enforced: a map row ages out only when both the source event row and **all** referencing analysis results are gone.
 
 Response:
 
@@ -632,16 +678,12 @@ This guarantees a baseline-passing event is **never** stored in `detection_event
 
 ### Read-side lookup (aimer-web)
 
-**v1 scope: Phase 2 lookup only.** When the analysis surface is asked to display analysis for a specific `(external_key, event_key)`:
+Per [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md), the analysis cache is **decoupled from the event row** and keyed by `(aice_id, event_key, lang, model_name, model)`. When the analysis surface is asked to display analysis for a specific `(external_key, event_key)`:
 
-1. Look up `baseline_event` (Phase 2) — if present, use this row's data and `analysis_narrative`. Returns rich window-level signals + asset context + Phase 2 LLM analysis.
-2. Else return "no analysis available".
+1. Look up `event_analysis_result` for the requested `(aice_id, event_key, lang, model_name, model)`. If present, render the cached analysis. If absent, the UI knows analysis has not yet been requested for that combination.
+2. **Event content** for the result view page (raw event JSON, identity columns, etc.) is fetched separately from `detection_events` (Phase 1 per-event redacted rows), `baseline_event`, `story_member`, or `policy_event` as appropriate — these all key by `(aice_id, event_key)` (or its Phase 2 tuple equivalent) and can be joined to the same `event_redaction_map` row for token resolution.
 
-**Phase 1 `detection_events` is NOT searchable by `event_key` in v1.** The Phase 1 row's payload is an encrypted BYTEA blob and aimer-web does not maintain a plaintext `event_key` index on it. Looking up by event_key would require per-row decryption, which is not viable at query time. Phase 1 rows are reachable only through Phase 1-native surfaces (the Detection bridge audit log, or a future Phase 1-specific list page) by their internal `detection_events.id`, not by `event_key`.
-
-**Pre-existing `detection_events` rows for events that later become baseline-passing** stay in `detection_events` as historical record but are invisible to the by-event_key lookup. When the Phase 2 row arrives via re-classification + opportunistic push, it becomes the canonical analysis view; the Phase 1 row is harmless dark storage.
-
-If a future need arises to surface Phase 1 rows by `event_key`, the path is to add a plaintext `event_key` index column to `detection_events` (or a sibling index table) and extend the lookup — additive RFC change, out of v1 scope. Tracked as a known limitation, not a bug. (See [aicers/aimer-web#220](https://github.com/aicers/aimer-web/issues/220) for the v1 implementation.)
+**Phase 1 `detection_events` is searchable by `event_key`.** Per RFC 0001, the refactored Phase 1 rows carry a plaintext, indexed `event_key` column expressly so that cache and event lookups can find them. The earlier "Phase 1 is not searchable by `event_key`" caveat no longer applies. (See [aicers/aimer-web#220](https://github.com/aicers/aimer-web/issues/220) for the v1 implementation.)
 
 ## Trigger UX & consent model
 
@@ -713,9 +755,9 @@ The three items previously listed as "Must resolve before Accepted" are now reso
 
 These can be decided by either team during PR work without changing the wire contract or the other side's implementation.
 
-1. **Encryption-at-rest for new Phase 2 tables.** aimer-web's existing pattern (BYTEA + wrapped DEK + Transit envelope) is robust but query-hostile. Options: (a) full encryption like `detection_events` (forces narrow indexed columns to be plaintext duplicates); (b) selective encryption of sensitive payload fields only; (c) plaintext with DB-level encryption (TDE / disk-level). Affects index design and query patterns but not the wire contract.
+1. **(Resolved) Encryption-at-rest for new Phase 2 tables.** Decided by [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md): canonical-content columns are stored as **redacted plaintext** with tokens resolving via a row in `event_redaction_map` (envelope encryption: per-row DEK wrapped by current KEK + ciphertext BYTEA); per-event support JSONB and aggregate JSONB columns remain **plaintext-with-TDE**. See §"New: Phase 2 tables" above for the column-by-column split. The remaining aimer-web latitude is index design and runtime role grants.
 
-2. **`analysis_narrative` cache scope.** Per-event narratives, per-Story narratives, per-policy-run narratives, per-report narratives — do they share one `analysis_narrative` table keyed by `content_hash`, or are they separated by `target_kind`? Affects aimer-web cache invalidation logic when underlying data changes; aice-web-next is unaware.
+2. **(Partially resolved) Analysis cache scope.** Resolved at the event level by [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md): the event cache is `event_analysis_result` keyed by `(aice_id, event_key, lang, model_name, model)`, with `analysis_text` stored as redacted plaintext that resolves via `event_redaction_map`. Story-level, policy-run-level, and report-level cache scope remain undecided because v1 ships only `analyzeEvent`; cache shapes for the future `analyzeStory` / `analyzePolicy` resolvers are an aimer-web design decision that does not affect this RFC's wire contract.
 
 3. **aimer-web side retention.** Does aimer-web mirror aice-web-next's retention windows (Baseline 30d / 180d, Story TBD per [#461](https://github.com/aicers/aice-web-next/issues/461)) or hold longer for historical analysis? Withdraw notices apply either way; this only affects how long aimer-web keeps analyses past the source's retention.
 
@@ -723,7 +765,7 @@ These can be decided by either team during PR work without changing the wire con
 
 5. **Window-signal computation cost on aice-web-next side.** Whether to cache stats in a new `aimer_push_stats_cache` table is an aice-web-next implementation question. Affects push cadence density but not the wire contract.
 
-6. **Send button race during baseline re-classification.** When a `baseline_version` bump re-classifies a previously baseline-failing event as baseline-passing, the existing Phase 1 `detection_events` row stays. The lookup precedence handles display correctly. Whether to also emit an explicit "demote Phase 1 row" notice for storage cleanup is an optimization that can be added later.
+6. **Send button race during baseline re-classification.** When a `baseline_version` bump re-classifies a previously baseline-failing event as baseline-passing, the existing Phase 1 per-event redacted row in `detection_events` stays as-is. The Phase 2 row arriving via opportunistic push becomes the canonical analysis target, while the Phase 1 row remains a valid per-event redacted record (and is itself searchable by `event_key` per RFC 0001 — see §"Read-side lookup"). Whether to also emit an explicit "drop Phase 1 row" notice for storage cleanup is an optimization that can be added later; the behaviour does not change with the RFC 0001 refactor.
 
 7. **Sibling system setting for Phase 2 base URL.** §6.1 defaults to reusing `aimer_web_bridge_url`. If Phase 2 ever needs a separate base URL, the resolution is to add a sibling system setting in [#437](https://github.com/aicers/aice-web-next/issues/437) UI. This is a [#437](https://github.com/aicers/aice-web-next/issues/437) UI extension that can be made when the need actually appears, not now.
 
@@ -735,7 +777,6 @@ These can be decided by either team during PR work without changing the wire con
 - Cross-customer Story analysis (Phase 3 — see §10).
 - Multi-window LLM packaging ([#495](https://github.com/aicers/aice-web-next/issues/495)).
 - Approval workflow before Send ([#494](https://github.com/aicers/aice-web-next/issues/494)).
-- Privacy-related field redaction.
 
 ## References
 
@@ -749,3 +790,7 @@ These can be decided by either team during PR work without changing the wire con
 - aimer-web integration settings: [#437](https://github.com/aicers/aice-web-next/issues/437)
 - Customer external_key: [#438](https://github.com/aicers/aice-web-next/issues/438)
 - aimer-web bridge handoff hardening: [aimer-web#197](https://github.com/aicers/aimer-web/issues/197)
+- aimer-web RFC 0001 (AI analysis storage + redaction): `rfcs/0001-ai-analysis-storage.md` in [aicers/aimer-web](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md)
+- aimer-web RFC 0001 design issue: [aimer-web#247](https://github.com/aicers/aimer-web/issues/247); merging PR: [aimer-web#248](https://github.com/aicers/aimer-web/pull/248)
+- Cross-system docs update — aimer-web side coordination: [aimer-web#249](https://github.com/aicers/aimer-web/issues/249)
+- This doc-sync record: [aice-web-next#628](https://github.com/aicers/aice-web-next/issues/628)
