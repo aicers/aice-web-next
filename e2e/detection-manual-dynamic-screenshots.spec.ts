@@ -67,6 +67,8 @@ test.beforeAll(async () => {
     "aimer_web_bridge_url",
     "https://aimer.example.test/bridge",
   );
+  await setAimerSetting("aimer_default_model_name", "default-model");
+  await setAimerSetting("aimer_default_model", "default-model-version");
   await ensureAimerSigningKey();
 
   const fixturePath = path.join(FIXTURES_ROOT, EVENT_FIXTURE_SOURCE);
@@ -130,6 +132,8 @@ test.afterAll(async () => {
   await setCustomerExternalKey("Default", null);
   await clearAimerSetting("aice_id");
   await clearAimerSetting("aimer_web_bridge_url");
+  await clearAimerSetting("aimer_default_model_name");
+  await clearAimerSetting("aimer_default_model");
   clearAimerSigningKey();
   if (eventFixtureOriginal !== null) {
     writeFileSync(
