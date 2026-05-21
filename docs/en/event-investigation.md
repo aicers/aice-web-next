@@ -143,7 +143,10 @@ navigation, the click handler synchronously reserves a target
 tab via `window.open("about:blank", "aimer-analyze-bridge-<id>")`
 *before* awaiting the mint request — the new tab is created
 under the still-fresh transient activation from the user's
-click.  The browser then builds a hidden HTML `<form>` with
+click.  The `<id>` is a fresh per-click UUID (browser-named
+windows are global to the opener, so a fixed or per-mount
+suffix would clobber a previously opened Aimer result tab
+with the same name).  The browser then builds a hidden HTML `<form>` with
 `method="POST"`, `enctype="multipart/form-data"`, and `action`
 pointing at aimer-web's `/api/analysis/analyze-bridge` endpoint,
 sets the form's `target` to the reserved window's name, and

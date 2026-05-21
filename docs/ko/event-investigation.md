@@ -136,7 +136,10 @@ Force, External DDoS처럼 응답자 또는 출발자 측이 customer
 `window.open("about:blank", "aimer-analyze-bridge-<id>")`를
 호출해 대상 탭을 동기적으로 예약합니다. 새 탭은 사용자
 클릭에서 발생한 transient activation이 아직 유효한 상태에서
-열립니다. 이어서 브라우저는 `method="POST"`,
+열립니다. `<id>`는 클릭마다 새로 생성되는 UUID입니다
+(브라우저의 named window는 opener 단위로 전역이므로,
+고정값이나 마운트 단위 카운터를 쓰면 같은 이름으로 이미
+열려 있던 Aimer 결과 탭을 덮어쓰게 됩니다). 이어서 브라우저는 `method="POST"`,
 `enctype="multipart/form-data"`, `action`이 aimer-web의
 `/api/analysis/analyze-bridge`를 가리키는 숨겨진 HTML `<form>`을
 만들고, 폼의 `target`을 예약된 창의 이름으로 설정한 뒤

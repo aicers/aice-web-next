@@ -24,6 +24,7 @@ vi.mock("@/i18n/navigation", () => ({
 import {
   AimerBanner,
   buildAnalyzeBridgeForm,
+  buildAnalyzeBridgeTargetName,
 } from "@/components/events/aimer-banner";
 import enMessages from "@/i18n/messages/en.json";
 import type { AimerCustomerCandidate } from "@/lib/aimer/candidate-customers";
@@ -265,6 +266,51 @@ describe("AimerBanner – analyze-bridge submit contract", () => {
     // The pre-opened tab is closed so the user is not left staring at
     // a stale `about:blank` page after a mint failure.
     expect(openedWindowClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a globally unique target name per click so two fresh banner mounts never collide", async () => {
+    // Browser named windows are global to the opener, so reusing a
+    // target name across mounts (or across two banners on the same
+    // page) would navigate an existing Aimer result tab instead of
+    // opening a fresh one. The target name must be globally unique
+    // per click (#629 reviewer round 7).
+    const fetchSpy = stubAnalyzeEnvelopeFetch();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const first = renderBanner({
+      candidates: [{ id: 7, name: "Acme" }],
+      customerBridgeEligible: { 7: true },
+    });
+    fireEvent.click(screen.getByTestId("aimer-send-button"));
+    fireEvent.click(screen.getByTestId("aimer-modal-send"));
+    await waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(1));
+    const firstTarget = openSpy.mock.calls[0][1] as string;
+    first.unmount();
+
+    renderBanner({
+      candidates: [{ id: 7, name: "Acme" }],
+      customerBridgeEligible: { 7: true },
+    });
+    fireEvent.click(screen.getByTestId("aimer-send-button"));
+    fireEvent.click(screen.getByTestId("aimer-modal-send"));
+    await waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(2));
+    const secondTarget = openSpy.mock.calls[1][1] as string;
+
+    expect(firstTarget).toMatch(/^aimer-analyze-bridge-/);
+    expect(secondTarget).toMatch(/^aimer-analyze-bridge-/);
+    expect(firstTarget).not.toBe(secondTarget);
+  });
+});
+
+describe("buildAnalyzeBridgeTargetName", () => {
+  it("returns a fresh globally unique name on each call (#629 reviewer round 7)", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 128; i += 1) {
+      const name = buildAnalyzeBridgeTargetName();
+      expect(name).toMatch(/^aimer-analyze-bridge-/);
+      seen.add(name);
+    }
+    expect(seen.size).toBe(128);
   });
 });
 

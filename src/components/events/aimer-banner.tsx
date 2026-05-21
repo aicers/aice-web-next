@@ -99,6 +99,29 @@ function localeToLang(locale: string): "KOREAN" | "ENGLISH" {
   return locale.toLowerCase() === "ko" ? "KOREAN" : "ENGLISH";
 }
 
+/**
+ * Build the named-window target for `window.open` / `form.target`.
+ * Browser window names are global to the opener, so reusing a name
+ * across clicks would navigate an already-open Aimer result tab
+ * instead of opening a fresh one. The name must therefore be
+ * globally unique per click — both across mounts of this component
+ * (a navigation back to the event list resets the component-local
+ * counter) and across concurrent banners on the same page.
+ * Uses `crypto.randomUUID()` when available (browsers + Node 19+)
+ * and falls back to timestamp + random for environments that lack
+ * it (#629 reviewer round 7).
+ */
+export function buildAnalyzeBridgeTargetName(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return `aimer-analyze-bridge-${crypto.randomUUID()}`;
+  }
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `aimer-analyze-bridge-${Date.now().toString(36)}-${rand}`;
+}
+
 // ── Component ───────────────────────────────────────────────────
 
 export function AimerBanner({
@@ -294,7 +317,10 @@ export function AimerBanner({
     // Without this, slow networks or stricter browser policies could
     // let the activation lapse before `form.submit()` runs and turn
     // the button into a silent no-op (#629 reviewer round 2).
-    const targetName = `aimer-analyze-bridge-${requestId}`;
+    // The target name is globally unique per click — see
+    // `buildAnalyzeBridgeTargetName` for why a component-local
+    // counter is not safe here (#629 reviewer round 7).
+    const targetName = buildAnalyzeBridgeTargetName();
     const reservedTab =
       typeof window !== "undefined"
         ? window.open("about:blank", targetName)
