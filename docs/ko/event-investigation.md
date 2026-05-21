@@ -113,66 +113,70 @@ Triage와 같은 형제 메뉴도 Detection 접두사 없이 같은 페이지로
 심각도, 시간, 종류, 분류, 신뢰도, 트리아지 점수(각 점수는 정책
 ID와 함께)를 포함한 요약 카드를 표시합니다.
 
-이 탭에는 **Aimer로 보내기** 배너도 있습니다. 버튼을 누르면
-확인 모달이 열리며, 이벤트가 현재 baseline 통과 상태인지에 따라
-두 가지 경로 중 하나로 전송이 진행됩니다(라우팅 판정은
-`POST /api/aimer/detection-send`가 `baseline_triaged_event`에
-대해 서버 측에서 수행합니다). 두 경로 모두 동일한
-`detection:read` 권한으로 게이트되며, 동일한 customer 선택
-모달을 사용합니다.
+이 탭에는 **Aimer로 분석** 배너도 있습니다. 버튼을 누르면
+간단한 확인 모달이 열립니다. 조사자는 이 이벤트를 어느
+customer로 분석할지 선택한 뒤 확인합니다. 이벤트가 단일
+customer와 연결되어 있으면 모달이 그 이름을 보여주고
+조사자는 확인만 하면 됩니다. 이벤트가 둘 이상의 customer와
+연결되어 있으면(오늘날 Multi-Host Port Scan, RDP Brute
+Force, External DDoS처럼 응답자 또는 출발자 측이 customer
+배열을 갖는 하위 유형에서 발생) 모달이 라디오 목록을
+표시하고 조사자는 하나를 선택해야 합니다.
 
-1. 조사자는 이 이벤트를 어느 customer로 보낼지 선택합니다.
-   이벤트가 단일 customer와 연결되어 있으면 모달이 그 이름을
-   보여주고 조사자는 확인만 하면 됩니다. 이벤트가 둘 이상의
-   customer와 연결되어 있으면(오늘날 Multi-Host Port Scan,
-   RDP Brute Force, External DDoS처럼 응답자 또는 출발자 측이
-   customer 배열을 갖는 하위 유형에서 발생) 모달이 라디오
-   목록을 표시하고 조사자는 하나를 선택해야 합니다.
-2. 브라우저는 locator와 customer를
-   `/api/aimer/detection-send`로 POST합니다. 서버는 선택된
-   customer의 DB에 대해
-   `SELECT 1 FROM baseline_triaged_event WHERE event_key = $1`
-   을 조회하여 어떤 경로를 사용할지 결정하며, Phase 2 경로의
-   경우 동일 응답에 multipart 토큰까지 함께 발급하여 라우팅
-   판정이 서버에서 권한 있게 결정되도록 합니다.
+확인 이후 브라우저는 `POST /api/aimer/analyze-envelope`를
+호출해 네 개의 서명된 multipart 필드(`context_token`,
+`events_envelope`, `events_data`, `analyze_params_token`)를
+발급받습니다. 네 필드는 모두 **설정 → Aimer 연동**에서
+구성한 Aimer 서명 키로 서명되며, `analyze_params_token`은
+나머지 세 필드를 교차 바인딩해 발급과 제출 사이에 envelope이
+교체되지 않도록 보장합니다.
 
-**Phase 1 — baseline 미통과 이벤트.** 브라우저는
-`/api/aimer/context-token`에서 짧은 수명의 서명된 컨텍스트
-토큰을 받아온 뒤, 세 개의 텍스트 파트(`context_token`,
-`events_envelope`, `events_data`)를 가진 숨겨진 HTML `<form>`
-을 만들고 이를 aimer-web의 브리지 엔드포인트로 최상위
-multipart POST로 제출합니다. 조사자는 aimer-web에 도착해
-로그인 및 전송 승인을 진행하며, 이벤트는 단일 이벤트 분석을
-위해 `detection_events`에 저장됩니다. 페이지 이동 자체가
-전송 신호가 되므로 페이지 내 별도의 안내는 표시하지
+팝업 차단기가 cross-origin 내비게이션을 가로채지 못하도록,
+클릭 핸들러는 mint 요청을 await하기 *전에*
+`window.open("about:blank", "aimer-analyze-bridge-<id>")`를
+호출해 대상 탭을 동기적으로 예약합니다. 새 탭은 사용자
+클릭에서 발생한 transient activation이 아직 유효한 상태에서
+열립니다. `<id>`는 클릭마다 새로 생성되는 UUID입니다
+(브라우저의 named window는 opener 단위로 전역이므로,
+고정값이나 마운트 단위 카운터를 쓰면 같은 이름으로 이미
+열려 있던 Aimer 결과 탭을 덮어쓰게 됩니다). 이어서 브라우저는 `method="POST"`,
+`enctype="multipart/form-data"`, `action`이 aimer-web의
+`/api/analysis/analyze-bridge`를 가리키는 숨겨진 HTML `<form>`을
+만들고, 폼의 `target`을 예약된 창의 이름으로 설정한 뒤
+`form.submit()`을 호출해 multipart POST가 사전 예약된 탭으로
+내비게이션되도록 합니다. `window.open`이 `null`을 반환하면(팝업
+차단됨) 폼은 `target="_blank"`로 폴백합니다. mint 실패, 사용자
+취소, 도중의 로케일 변경 시에는 예약된 탭이 닫힙니다. 원래의
+aice-web-next 탭은 그대로 유지되고, **분석 결과 페이지는 예약된
+탭에서 aimer-web으로 열립니다.** 처음
+방문 시에는 aimer-web이 새 탭 안에서 OIDC 로그인을
+안내하며, 이후 방문에서는 기존 Keycloak SSO 세션으로
+결과 페이지가 바로 열립니다. 분석 실패(잘못된 envelope,
+지원하지 않는 언어, aimer 서비스 불가 등)는 같은 새 탭에서
+스타일링된 오류 페이지로 표시되며, 원래의 aice-web-next
+탭은 별도의 프로그램적 응답을 받지 않습니다.
+
+aimer-web 결과 페이지의 **재분석** 동작은 aice-web-next로
+`?aimerForce=1` 쿼리와 함께 라운드트립하여 돌아옵니다. 이
+파라미터를 가진 상태로 이벤트 상세 페이지에 도착하면 다음
+**Aimer로 분석** 클릭이 일회용으로 `force=true`로
+무장(arm)됩니다. 클릭 전에 새로고침해도 무장이 유지되도록
+URL에서는 의도적으로 파라미터를 그대로 두며, 클릭이
+플래그를 소비한 직후에만 파라미터가 제거됩니다. 따라서
+강제 분석 클릭 *이후*의 새로고침은 다시 강제 분석되지
 않습니다.
-
-**Phase 2 — baseline 통과 이벤트.** 서버가 라우팅 판정과 함께
-multipart 토큰을 이미 발급했으므로, 브라우저는 이벤트 상세
-페이지를 떠나지 않고 토큰을 aimer-web의
-`/api/phase2/baseline/batch` 엔드포인트로 직접 POST합니다.
-2xx 응답을 받으면 모달에 **"Phase 2(Triage 분석)로
-전송했습니다"** 안내가 표시되며, 조사자가 직접 닫을 수
-있습니다. Phase 2 전송은 opportunistic 스트리밍 커서를
-진행하지 않으므로, 이후 자동 sweep이 같은 이벤트를 지나가도
-aimer-web의 `(baseline_version, event_key)` 멱등 검증이
-이를 흡수합니다(`duplicates_skipped`). 따라서 동일 이벤트의
-재클릭도 멱등합니다.
-
-수동 전송은 항상 opportunistic 푸시의 일시 정지 토글을
-우회합니다. 전송 클릭은 의도적인 항목 단위의 운영자
-오버라이드이며, 일시 정지 토글은 자동 백그라운드 흐름만
-제어합니다.
 
 다음의 경우 버튼이 비활성화됩니다.
 
-- 이벤트가 어떤 customer와도 연결되어 있지 않은 경우(전송을
+- 이벤트가 어떤 customer와도 연결되어 있지 않은 경우(분석을
   매칭할 Aimer customer가 없음).
 - 연결된 모든 customer가 aimer-web에서 자신을 식별하기 위한
   `external_key`를 갖고 있지 않은 경우. Customers 권한을 가진
   운영자가 **Customers** 페이지에서 키를 입력할 수 있습니다.
 - Aimer integration이 시스템 관리자에 의해 설정되지 않은
-  경우(AICE ID, 브리지 URL, 또는 활성 서명 키가 없음).
+  경우. 다섯 가지 사전 조건이 모두 갖춰져야 합니다 — AICE ID,
+  브리지 URL, 분석 파라미터에 사용되는 기본 model_name /
+  model 식별자, 그리고 활성 서명 키.
 
 비활성 버튼의 툴팁은 차단 사유를 구체적으로 명시하므로
 조사자는 해당 권한을 가진 동료 또는 관리자에게 누구에게 요청해야
@@ -183,17 +187,27 @@ aimer-web의 `(baseline_version, event_key)` 멱등 검증이
 미입력)` 힌트와 함께). 조사자는 설정된 한쪽으로 계속 전송할 수
 있습니다.
 
-![Aimer로 보내기 확인 모달](../assets/aimer-send-modal-ko.png)
+![Aimer로 분석 확인 모달](../assets/aimer-send-modal-ko.png)
+*스크린샷 업데이트 예정 — #624에서 추적합니다.*
 
-![Aimer로 보내기 Phase 2 안내](../assets/aimer-send-phase2-ko.png)
+![Send to Aimer Phase 2 disclosure](../assets/aimer-send-phase2-ko.png)
+*스크린샷 업데이트 예정 — analyze-bridge 플로우에서는 Phase 2
+디스클로저 모달이 제거되며, aimer-web의 새 탭이 결과 페이지를
+바로 보여줍니다. #624에서 추적합니다.*
 
-여기서 사용한 브라우저 기본 요소는 의도된 선택입니다. HTML form
-submit은 사용자가 실제로 aimer-web으로 이동하도록 최상위 multipart
-POST를 만드는 유일한 표준 브라우저 API입니다. `fetch`에
-`FormData`를 실어 보내는 방식은 페이지 이동을 일으키지
-않습니다. HTML form 파트는 텍스트만 담을 수 있으므로, 이벤트
-페이로드는 `Blob`이 아닌 텍스트 파트로 전송됩니다. 바이너리
-업로드가 필요한 페이로드는 이번 릴리스의 범위에서 제외됩니다.
+여기서 사용한 브라우저 기본 요소는 의도된 선택입니다.
+HTML form submit은 새 탭에서 최상위 multipart POST를 만드는
+표준 브라우저 API입니다. `fetch`에 `FormData`를 실어 보내는
+방식은 페이지 이동을 일으키지 않으며, 같은 탭에서 submit하면
+이벤트 상세 뷰가 교체됩니다. form의 `target`은 클릭 핸들러가
+`window.open("about:blank", <name>)`로 동기적으로 예약해 둔
+탭의 이름이므로, 팝업 차단기는 활성화가 아직 유효한 시점에서
+창이 열리는 것을 보게 됩니다. 이후 form submit이 같은 이름의
+창으로 다시 전송됩니다. `_blank`는 `window.open`이 `null`을
+반환할 때(form을 만들기 전에 팝업이 차단된 경우)에만
+폴백으로 사용됩니다. HTML form 파트는 텍스트만 담을 수
+있으므로, JSON 페이로드를 포함한 모든 필드는 `Blob`이 아닌
+텍스트 파트로 전송됩니다.
 
 Aimer 배너 아래의 **바로가기**에는 관련 활동으로 사전 필터링된
 탐지 페이지를 여는 링크가 나열됩니다. 최근 24시간 같은 출발지

@@ -911,8 +911,14 @@ export async function setCustomerExternalKey(
  * Upsert one row in `system_settings`. The value column is `jsonb` and
  * the application stores entries as `{ "value": <string> }`.
  */
+type AimerSettingKey =
+  | "aice_id"
+  | "aimer_web_bridge_url"
+  | "aimer_default_model_name"
+  | "aimer_default_model";
+
 export async function setAimerSetting(
-  key: "aice_id" | "aimer_web_bridge_url",
+  key: AimerSettingKey,
   value: string,
 ): Promise<void> {
   await pool.query(
@@ -923,8 +929,6 @@ export async function setAimerSetting(
   );
 }
 
-export async function clearAimerSetting(
-  key: "aice_id" | "aimer_web_bridge_url",
-): Promise<void> {
+export async function clearAimerSetting(key: AimerSettingKey): Promise<void> {
   await pool.query("DELETE FROM system_settings WHERE key = $1", [key]);
 }

@@ -108,19 +108,21 @@
   },
   "aimerIntegration": {
     "title": "Aimer 연동",
-    "description": "Send to Aimer 동작에 필요한 시스템 전역 사전 조건(배포 식별자 aice_id, aimer-web 브리지 URL, 컨텍스트 토큰 전용 서명 키페어)을 설정합니다.",
+    "description": "Aimer로 분석 동작에 필요한 시스템 전역 사전 조건(배포 식별자 aice_id, aimer-web 브리지 URL, 기본 분석 모델 식별자 aimer_default_model_name 및 aimer_default_model, 컨텍스트 토큰 전용 서명 키페어)을 설정합니다.",
     "permissionAlert": {
       "title": "Aimer 서명 키 파일의 권한이 잘못되었습니다",
       "body": "디스크 파일({path})의 모드가 0600이 아닌 {observed}로 확인되었습니다. 계속 진행하기 전에 chmod 0600으로 권한을 복구하십시오. 권한이 더 느슨한 키는 쓰기가 거부되며, 읽기만 가능합니다."
     },
     "setupStatus": {
       "title": "설정 상태",
-      "description": "Aimer 연동은 시스템 전역 기능입니다. 세 가지 사전 조건이 모두 설정되어야 Send to Aimer 버튼이 활성화됩니다.",
+      "description": "Aimer 연동은 시스템 전역 기능입니다. 다섯 가지 사전 조건이 모두 설정되어야 Aimer로 분석 버튼이 활성화됩니다.",
       "configured": "설정됨 (시스템 전역)",
       "notConfigured": "설정되지 않음",
       "missing": {
         "aiceId": "aice_id가 설정되어 있지 않습니다.",
         "bridgeUrl": "aimer_web_bridge_url이 설정되어 있지 않습니다.",
+        "defaultModelName": "aimer_default_model_name이 설정되어 있지 않습니다.",
+        "defaultModel": "aimer_default_model이 설정되어 있지 않습니다.",
         "signingKey": "컨텍스트 토큰 서명 키페어가 생성되어 있지 않습니다."
       }
     },
@@ -182,9 +184,17 @@
       "aiceIdHelper": "배포 호스트네임(RFC 1123). JWT iss 클레임과 aimer-web으로 전달되는 aice_id 클레임에 사용됩니다. aimer-web의 trust_registry 조회 키이므로 등록된 값과 일치해야 합니다.",
       "bridgeUrlLabel": "aimer_web_bridge_url",
       "bridgeUrlPlaceholder": "https://aimer.example.com",
-      "bridgeUrlHelper": "/api/auth/bridge로 multipart POST를 받을 aimer-web 인스턴스의 베이스 URL. HTTPS 전용. 경로는 정규화 형식(끝 슬래시 없음)으로 저장됩니다.",
+      "bridgeUrlHelper": "/api/analysis/analyze-bridge로 multipart POST를 받을 aimer-web 인스턴스의 베이스 URL. HTTPS 전용. 경로는 정규화 형식(끝 슬래시 없음)으로 저장됩니다.",
+      "defaultModelNameLabel": "aimer_default_model_name",
+      "defaultModelNamePlaceholder": "anthropic",
+      "defaultModelNameHelper": "aimer-web으로 전송되는 analyze_params_token JWS 클레임에 들어가는 기본 LLM 공급자/모델 패밀리 식별자입니다. 허용되는 카탈로그는 aimer 측 설정에서 관리합니다.",
+      "defaultModelLabel": "aimer_default_model",
+      "defaultModelPlaceholder": "claude-sonnet-4-6",
+      "defaultModelHelper": "analyze_params_token JWS 클레임에 들어가는 기본 LLM 모델 식별자입니다. 허용되는 카탈로그는 aimer 측 설정에서 관리합니다.",
       "saveAiceId": "aice_id 저장",
       "saveBridgeUrl": "브리지 URL 저장",
+      "saveDefaultModelName": "기본 model_name 저장",
+      "saveDefaultModel": "기본 model 저장",
       "saving": "저장 중…",
       "effectWarning": {
         "title": "변경 후 환경 재등록 필요",
@@ -195,7 +205,7 @@
     "customerExternalKey": {
       "line": "고객 external_key 설정: {configured} / {total} 고객.",
       "linkLabel": "고객 관리 →",
-      "note": "external_key는 고객별 설정으로 시스템 전역 설정 상태에 영향을 주지 않습니다. 각 고객의 external_key가 채워질 때까지 Send to Aimer 버튼은 고객별로 독립적으로 비활성화됩니다."
+      "note": "external_key는 고객별 설정으로 시스템 전역 설정 상태에 영향을 주지 않습니다. 각 고객의 external_key가 채워질 때까지 Aimer로 분석 버튼은 고객별로 독립적으로 비활성화됩니다."
     },
     "errors": {
       "actionFailed": "작업이 실패했습니다. 오류 상세를 확인한 뒤 다시 시도하십시오."
@@ -403,6 +413,8 @@
       "triage_story_send": "스토리를 aimer-web로 전송",
       "aimer_detection_send_issued": "탐지 이벤트를 aimer-web로 전송",
       "aimer_detection_send_denied": "탐지 이벤트 전송 거부",
+      "aimer_analyze_envelope_issued": "aimer-web 분석용 envelope 발급",
+      "aimer_analyze_envelope_denied": "분석용 envelope 발급 거부",
       "triage_exclusion_global_add": "Triage 제외 추가 (전역)",
       "triage_exclusion_global_remove": "Triage 제외 삭제 (전역)",
       "triage_exclusion_customer_add": "Triage 제외 추가 (고객)",
@@ -926,7 +938,7 @@
     "externalKeyChangeTitle": "external_key 변경 확인",
     "externalKeyChangeBody": "external_key는 aimer-web과의 고객 매핑 식별자입니다. 이 변경 후에는 매핑을 유지하기 위해 aimer-web 측의 일치하는 고객 정보도 함께 업데이트해야 합니다. 직후에 bridge 테스트를 권장합니다. 계속하시겠습니까?",
     "externalKeyClearTitle": "external_key 해제 확인",
-    "externalKeyClearBody": "이 고객의 external_key를 해제하면 다시 설정할 때까지 이 고객에 대한 Send to Aimer가 비활성화되며, aimer-web 측의 일치하는 고객과의 기존 매핑도 이 측에서는 더 이상 도달할 수 없습니다. 계속하시겠습니까?"
+    "externalKeyClearBody": "이 고객의 external_key를 해제하면 다시 설정할 때까지 이 고객에 대한 Aimer로 분석이 비활성화되며, aimer-web 측의 일치하는 고객과의 기존 매핑도 이 측에서는 더 이상 도달할 수 없습니다. 계속하시겠습니까?"
   },
   "multitenancy": {
     "scope": {
@@ -1843,31 +1855,31 @@
       "confidence": "신뢰도",
       "triageScores": "트리아지 점수",
       "noTriage": "트리아지 점수 없음",
-      "aimerTitle": "Aimer로 보내기",
-      "aimerBody": "이 이벤트를 Aimer에 보내 AI 분석을 요청합니다. aimer-web에 로그인하고 데이터 전송을 승인한 뒤 결과를 그곳에서 확인하게 됩니다.",
-      "aimerCta": "Aimer로 보내기 →",
-      "aimerSending": "전송 중…",
-      "aimerNoCustomerTooltip": "이 이벤트는 connect된 customer가 없어 Aimer로 보낼 수 없습니다.",
+      "aimerTitle": "Aimer로 분석",
+      "aimerBody": "이 이벤트의 AI 분석을 aimer-web에서 새 탭으로 엽니다. 처음 방문 시 aimer-web에 로그인이 요구되며, 결과 페이지는 그 즉시 열립니다.",
+      "aimerCta": "Aimer로 분석 →",
+      "aimerSending": "분석 여는 중…",
+      "aimerNoCustomerTooltip": "이 이벤트는 connect된 customer가 없어 Aimer로 분석할 수 없습니다.",
       "aimerCustomerIneligibleTooltip": "이 customer의 external_key가 입력되어 있지 않습니다. Customers 화면에서 입력하세요.",
       "aimerSetupTooltip": "Aimer integration이 System Administrator에 의해 설정되어야 합니다.",
       "aimerSetupTooltipMissing": "{reasons} 누락",
       "aimerMissingReasonAiceId": "aiceId",
       "aimerMissingReasonBridgeUrl": "bridgeUrl",
+      "aimerMissingReasonDefaultModelName": "defaultModelName",
+      "aimerMissingReasonDefaultModel": "defaultModel",
       "aimerMissingReasonSigningKey": "signingKey",
-      "aimerModalTitle": "Aimer로 보내기",
-      "aimerModalBodySingle": "이 이벤트(customer {name})를 Aimer로 보냅니다. Aimer-web에서도 동일 customer 권한이 필요합니다.",
-      "aimerModalBodyMulti": "이 이벤트를 보낼 customer를 선택하세요. Aimer-web에서도 동일 customer 권한이 필요합니다.",
+      "aimerModalTitle": "Aimer로 분석",
+      "aimerModalBodySingle": "이 이벤트(customer {name})의 Aimer 분석을 엽니다. Aimer-web에서도 동일 customer 권한이 필요합니다.",
+      "aimerModalBodyMulti": "이 이벤트를 분석할 customer를 선택하세요. Aimer-web에서도 동일 customer 권한이 필요합니다.",
       "aimerModalIneligibleHint": "(external_key 미입력)",
       "aimerModalCancel": "취소",
-      "aimerModalSend": "보내기",
-      "aimerErrorTitle": "Aimer로 보내지 못했습니다",
+      "aimerModalSend": "분석",
+      "aimerErrorTitle": "분석을 열 수 없습니다",
       "aimerErrorGeneric": "오류가 발생했습니다. 다시 시도해 주세요.",
-      "aimerErrorRateLimited": "Aimer 전송 요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
+      "aimerErrorRateLimited": "분석 요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
       "aimerErrorNotConfigured": "Aimer integration이 설정되어 있지 않습니다. 시스템 관리자에게 문의하세요.",
       "aimerErrorExternalKeyMissing": "이 customer의 external_key가 입력되어 있지 않습니다. Customers 화면에서 입력하세요.",
       "aimerErrorEventNotFound": "선택한 customer에서 이 이벤트에 접근할 수 없습니다.",
-      "aimerSentPhase2": "Phase 2(Triage 분석)로 전송했습니다",
-      "aimerSentPhase2Dismiss": "닫기",
       "pivotsTitle": "바로가기",
       "pivotSameSource": "같은 출발지 IP · 최근 24시간",
       "pivotSameDestination": "같은 목적지 IP · 최근 24시간",

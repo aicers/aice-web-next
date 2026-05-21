@@ -5,19 +5,25 @@ import { createHash } from "node:crypto";
 import { importJWK, SignJWT } from "jose";
 
 import type { Phase2SchemaVersion } from "./phase2/wire-types";
-import { loadActiveSigningKeyMaterial } from "./signing-key";
+import {
+  type AimerSigningKeyMaterial,
+  loadActiveSigningKeyMaterial,
+} from "./signing-key";
 
 /**
  * `schema_version` claim accepted by {@link signEventsEnvelope}.
  *
- * - `"0.0-stub"` — the first-cycle Phase 1 stub envelope used by the
- *   Send to Aimer button (#439 / #440).
+ * - `"analyze-bridge.v1"` — the events_data shape carried by the
+ *   `POST /api/analysis/analyze-bridge` flow (#629). One event per
+ *   submission, snake_case canonical fields.
  * - {@link Phase2SchemaVersion} — RFC 0002 §6 Phase 2 wire schemas
  *   (baseline / story / policy_run / withdraw / refresh_window /
  *   backfill). Selected by the matching schema in the Phase 2 schema
  *   registry before the orchestration helper signs.
  */
-export type EventsEnvelopeSchemaVersion = "0.0-stub" | Phase2SchemaVersion;
+export type EventsEnvelopeSchemaVersion =
+  | "analyze-bridge.v1"
+  | Phase2SchemaVersion;
 
 /**
  * Caller-supplied input for {@link signEventsEnvelope}.
@@ -38,18 +44,6 @@ export interface EventsEnvelopeInput {
 }
 
 /**
- * Stub `events_data` payload for the first cycle of the Send to
- * Aimer flow.  Carries no real detection data — just enough to
- * exercise the multipart / signing pipeline end-to-end while the
- * production schema is being decided in a follow-up.
- */
-export function buildStubEventsData(): Uint8Array {
-  return new TextEncoder().encode(
-    '{"hello":"world","schema_version":"0.0-stub","event_count":1}',
-  );
-}
-
-/**
  * Sign an events envelope using the active Aimer signing key.
  *
  * The JWS payload is the {@link EventsEnvelopeInput} fields plus the
@@ -60,8 +54,19 @@ export function buildStubEventsData(): Uint8Array {
 export async function signEventsEnvelope(
   input: EventsEnvelopeInput,
   eventsData: Uint8Array,
+  options: {
+    /**
+     * Pre-loaded signing key material. When omitted the helper loads
+     * the active key itself — kept so Phase 2 orchestration callers
+     * and tests stay terse. The analyze-envelope route in
+     * `/api/aimer/analyze-envelope` always passes this so its three
+     * sibling JWSes share one `kid` even across a mid-mint key
+     * rotation.
+     */
+    keyMaterial?: AimerSigningKeyMaterial;
+  } = {},
 ): Promise<string> {
-  const keyMaterial = loadActiveSigningKeyMaterial();
+  const keyMaterial = options.keyMaterial ?? loadActiveSigningKeyMaterial();
   if (!keyMaterial) {
     throw new Error(
       "No active Aimer signing key. Verify integration setup before signing.",

@@ -8,12 +8,16 @@ import { hasActiveAimerSigningKey } from "./signing-key";
 export interface AimerIntegrationSetup {
   aiceId: string | null;
   bridgeUrl: string | null;
+  defaultModelName: string | null;
+  defaultModel: string | null;
   hasActiveSigningKey: boolean;
 }
 
 export type AimerIntegrationMissingReason =
   | "aiceId"
   | "bridgeUrl"
+  | "defaultModelName"
+  | "defaultModel"
   | "signingKey";
 
 export interface AimerIntegrationSetupStatus {
@@ -29,6 +33,8 @@ function deriveMissing(
   const missing: AimerIntegrationMissingReason[] = [];
   if (!setup.aiceId) missing.push("aiceId");
   if (!setup.bridgeUrl) missing.push("bridgeUrl");
+  if (!setup.defaultModelName) missing.push("defaultModelName");
+  if (!setup.defaultModel) missing.push("defaultModel");
   if (!setup.hasActiveSigningKey) missing.push("signingKey");
   return missing;
 }
@@ -42,11 +48,20 @@ function deriveMissing(
  * key-rotation lifecycle.  Never exposes the private signing key.
  */
 export async function getAimerIntegrationSetup(): Promise<AimerIntegrationSetup> {
-  const [{ aiceId, bridgeUrl }, hasActiveSigningKey] = await Promise.all([
+  const [
+    { aiceId, bridgeUrl, defaultModelName, defaultModel },
+    hasActiveSigningKey,
+  ] = await Promise.all([
     getAimerIntegrationSettings(),
     Promise.resolve(hasActiveAimerSigningKey()),
   ]);
-  return { aiceId, bridgeUrl, hasActiveSigningKey };
+  return {
+    aiceId,
+    bridgeUrl,
+    defaultModelName,
+    defaultModel,
+    hasActiveSigningKey,
+  };
 }
 
 /**

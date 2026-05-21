@@ -2,45 +2,51 @@ import { describe, expect, it } from "vitest";
 
 import { deriveAimerIntegrationSetupStatus } from "@/lib/aimer/setup-status";
 
+const FULLY_CONFIGURED = {
+  aiceId: "aice.example.com",
+  bridgeUrl: "https://aimer.example.com",
+  defaultModelName: "anthropic",
+  defaultModel: "claude-sonnet-4-6",
+  hasActiveSigningKey: true,
+};
+
 describe("deriveAimerIntegrationSetupStatus", () => {
-  it("reports configured when all three prerequisites are present", () => {
-    expect(
-      deriveAimerIntegrationSetupStatus({
-        aiceId: "aice.example.com",
-        bridgeUrl: "https://aimer.example.com",
-        hasActiveSigningKey: true,
-      }),
-    ).toEqual({ configured: true });
+  it("reports configured when all five prerequisites are present", () => {
+    expect(deriveAimerIntegrationSetupStatus(FULLY_CONFIGURED)).toEqual({
+      configured: true,
+    });
   });
 
-  it("flags every missing prerequisite (aiceId, bridgeUrl, signingKey)", () => {
+  it("flags every missing prerequisite", () => {
     const status = deriveAimerIntegrationSetupStatus({
       aiceId: null,
       bridgeUrl: null,
+      defaultModelName: null,
+      defaultModel: null,
       hasActiveSigningKey: false,
     });
     expect(status.configured).toBe(false);
     expect(status.missingReasons).toEqual([
       "aiceId",
       "bridgeUrl",
+      "defaultModelName",
+      "defaultModel",
       "signingKey",
     ]);
   });
 
-  it("flags only aiceId when bridgeUrl and signingKey are present", () => {
+  it("flags only aiceId when the other prerequisites are present", () => {
     const status = deriveAimerIntegrationSetupStatus({
+      ...FULLY_CONFIGURED,
       aiceId: null,
-      bridgeUrl: "https://aimer.example.com",
-      hasActiveSigningKey: true,
     });
     expect(status).toEqual({ configured: false, missingReasons: ["aiceId"] });
   });
 
-  it("flags only bridgeUrl when aiceId and signingKey are present", () => {
+  it("flags only bridgeUrl when the other prerequisites are present", () => {
     const status = deriveAimerIntegrationSetupStatus({
-      aiceId: "aice.example.com",
+      ...FULLY_CONFIGURED,
       bridgeUrl: null,
-      hasActiveSigningKey: true,
     });
     expect(status).toEqual({
       configured: false,
@@ -48,10 +54,31 @@ describe("deriveAimerIntegrationSetupStatus", () => {
     });
   });
 
-  it("flags only signingKey when both settings are present", () => {
+  it("flags only defaultModelName when the other prerequisites are present", () => {
     const status = deriveAimerIntegrationSetupStatus({
-      aiceId: "aice.example.com",
-      bridgeUrl: "https://aimer.example.com",
+      ...FULLY_CONFIGURED,
+      defaultModelName: null,
+    });
+    expect(status).toEqual({
+      configured: false,
+      missingReasons: ["defaultModelName"],
+    });
+  });
+
+  it("flags only defaultModel when the other prerequisites are present", () => {
+    const status = deriveAimerIntegrationSetupStatus({
+      ...FULLY_CONFIGURED,
+      defaultModel: null,
+    });
+    expect(status).toEqual({
+      configured: false,
+      missingReasons: ["defaultModel"],
+    });
+  });
+
+  it("flags only signingKey when the other prerequisites are present", () => {
+    const status = deriveAimerIntegrationSetupStatus({
+      ...FULLY_CONFIGURED,
       hasActiveSigningKey: false,
     });
     expect(status).toEqual({
@@ -61,16 +88,7 @@ describe("deriveAimerIntegrationSetupStatus", () => {
   });
 
   it("does not include customer external_key in the derivation", () => {
-    // Sanity guard: the helper takes only the three system-wide
-    // prerequisites; per-customer external_key is intentionally
-    // outside its surface so that an issue #440 callsite cannot
-    // accidentally leak per-customer state into the system-wide
-    // configured/not-configured signal.
-    const status = deriveAimerIntegrationSetupStatus({
-      aiceId: "aice.example.com",
-      bridgeUrl: "https://aimer.example.com",
-      hasActiveSigningKey: true,
-    });
+    const status = deriveAimerIntegrationSetupStatus(FULLY_CONFIGURED);
     expect(status.configured).toBe(true);
     expect(status.missingReasons).toBeUndefined();
   });

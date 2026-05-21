@@ -1,8 +1,15 @@
 "use client";
 
 import { Loader2, Send } from "lucide-react";
-import { useTranslations } from "next-intl";
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +27,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { AimerCustomerCandidate } from "@/lib/aimer/candidate-customers";
-import { postPhase2Multipart } from "@/lib/aimer/phase2/transport.client";
 import type {
   AimerIntegrationMissingReason,
   AimerIntegrationSetupStatus,
@@ -30,36 +36,17 @@ import type { EventLocator } from "@/lib/events/event-locator";
 
 // ── Types ───────────────────────────────────────────────────────
 
-interface ContextTokenResponse {
-  contextTokenJws: string;
-  eventsEnvelopeJws: string;
-  eventsDataJson: string;
+interface AnalyzeEnvelopeResponse {
+  contextToken: string;
+  eventsEnvelope: string;
+  eventsData: string;
+  analyzeParamsToken: string;
   targetUrl: string;
 }
 
-interface ContextTokenErrorBody {
+interface AnalyzeEnvelopeErrorBody {
   error?: string;
 }
-
-/**
- * Response shape from `POST /api/aimer/detection-send` — the
- * server-side baseline-passing probe that routes the operator's click
- * between Phase 1 (existing bridge handoff to `detection_events`) and
- * Phase 2 (single-event baseline batch direct to aimer-web). See
- * `src/app/api/aimer/detection-send/route.ts` for the routing rule.
- */
-type DetectionSendResponse =
-  | { route: "phase1" }
-  | {
-      route: "phase2";
-      context_token: string;
-      events_envelope: string;
-      events_data: string;
-      context_jti: string;
-      aimer_endpoint_path: "/api/phase2/baseline/batch";
-      aimer_endpoint_url: string;
-      schema_version: "phase2.baseline.v1";
-    };
 
 interface Props {
   locator: EventLocator;
@@ -68,22 +55,35 @@ interface Props {
   aimerSetup: AimerIntegrationSetupStatus;
 }
 
+const FORCE_QUERY_PARAM = "aimerForce";
+
 // ── Helpers ─────────────────────────────────────────────────────
 
-/** Build the hidden form per Sub-7.2.E §"Click flow" step 3. */
-export function buildAimerHiddenForm(
-  res: ContextTokenResponse,
+/**
+ * Build the hidden multipart form that the analyze-bridge flow
+ * submits as a top-level navigation to aimer-web (#629). The form
+ * carries the four signed fields produced by
+ * `POST /api/aimer/analyze-envelope` and submits into `target` — a
+ * named window the click handler pre-opened synchronously so the
+ * navigation runs under the still-fresh transient user activation.
+ * Defaults to `_blank` for direct callers (e.g. unit tests).
+ */
+export function buildAnalyzeBridgeForm(
+  res: AnalyzeEnvelopeResponse,
   doc: Document,
+  target: string = "_blank",
 ): HTMLFormElement {
   const form = doc.createElement("form");
   form.action = res.targetUrl;
   form.method = "POST";
   form.enctype = "multipart/form-data";
+  form.target = target;
   form.hidden = true;
   const fields: ReadonlyArray<readonly [string, string]> = [
-    ["context_token", res.contextTokenJws],
-    ["events_envelope", res.eventsEnvelopeJws],
-    ["events_data", res.eventsDataJson],
+    ["context_token", res.contextToken],
+    ["events_envelope", res.eventsEnvelope],
+    ["events_data", res.eventsData],
+    ["analyze_params_token", res.analyzeParamsToken],
   ];
   for (const [name, value] of fields) {
     const input = doc.createElement("input");
@@ -95,6 +95,33 @@ export function buildAimerHiddenForm(
   return form;
 }
 
+function localeToLang(locale: string): "KOREAN" | "ENGLISH" {
+  return locale.toLowerCase() === "ko" ? "KOREAN" : "ENGLISH";
+}
+
+/**
+ * Build the named-window target for `window.open` / `form.target`.
+ * Browser window names are global to the opener, so reusing a name
+ * across clicks would navigate an already-open Aimer result tab
+ * instead of opening a fresh one. The name must therefore be
+ * globally unique per click — both across mounts of this component
+ * (a navigation back to the event list resets the component-local
+ * counter) and across concurrent banners on the same page.
+ * Uses `crypto.randomUUID()` when available (browsers + Node 19+)
+ * and falls back to timestamp + random for environments that lack
+ * it (#629 reviewer round 7).
+ */
+export function buildAnalyzeBridgeTargetName(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return `aimer-analyze-bridge-${crypto.randomUUID()}`;
+  }
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `aimer-analyze-bridge-${Date.now().toString(36)}-${rand}`;
+}
+
 // ── Component ───────────────────────────────────────────────────
 
 export function AimerBanner({
@@ -104,6 +131,7 @@ export function AimerBanner({
   aimerSetup,
 }: Props) {
   const t = useTranslations("events.overview");
+  const locale = useLocale();
 
   const eligibleIds = useMemo(
     () =>
@@ -116,10 +144,6 @@ export function AimerBanner({
   const setupNotConfigured = !aimerSetup.configured;
   const disabled = noCandidates || allIneligible || setupNotConfigured;
 
-  // Compose the disabled-state tooltip.  Order matters — the spec
-  // gives the per-customer messages priority over the system-wide one
-  // when both apply, so the operator sees the single concrete fix
-  // first.
   let disabledTooltip: string | null = null;
   if (noCandidates) {
     disabledTooltip = t("aimerNoCustomerTooltip");
@@ -138,19 +162,7 @@ export function AimerBanner({
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /**
-   * Phase 2 single-event sends stay on the page (no top-level
-   * navigation), so we surface a post-send disclosure locally. Per
-   * #621 we only render the disclosure on the Phase 2 path: Phase 1
-   * still page-navigates and the disclosure folds into the destination
-   * view (option 2 of the pre-implementation UX decision — smaller
-   * change, keeps the Phase 1 bridge handoff untouched).
-   */
-  const [phase2Sent, setPhase2Sent] = useState(false);
-  // Single-customer events auto-select to keep the flow one-click; the
-  // multi-customer modal must force an explicit operator choice per the
-  // issue's "selection is required" requirement, so start with no
-  // selection.
+
   const initialSelectedId =
     candidates.length === 1 ? (eligibleIds[0] ?? null) : null;
   const [selectedId, setSelectedId] = useState<number | null>(
@@ -158,15 +170,36 @@ export function AimerBanner({
   );
   const radioGroupId = useId();
 
-  // Track the in-flight fetch so we can ignore a stale response that
-  // races a modal close (the user cancels mid-flight).
+  // One-shot force flag, armed by reading `?aimerForce=1` from the
+  // URL on mount. The URL param is kept until the click consumes the
+  // force flag (see `submitAnalyzeBridge`), so a user who refreshes
+  // the event detail page before clicking still re-arms force=true
+  // on the next mount. The param is stripped only after the click
+  // fires, so a post-click refresh does not re-force.
+  const forceArmedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get(FORCE_QUERY_PARAM) === "1") {
+      forceArmedRef.current = true;
+    }
+  }, []);
+
+  const stripForceParam = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get(FORCE_QUERY_PARAM) === null) return;
+    url.searchParams.delete(FORCE_QUERY_PARAM);
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(window.history.state, "", next);
+  }, []);
+
   const requestIdRef = useRef(0);
 
   const openModal = useCallback(() => {
     setSelectedId(candidates.length === 1 ? (eligibleIds[0] ?? null) : null);
     setError(null);
     setSubmitting(false);
-    setPhase2Sent(false);
     setModalOpen(true);
   }, [candidates.length, eligibleIds]);
 
@@ -177,157 +210,123 @@ export function AimerBanner({
     setError(null);
   }, []);
 
-  /**
-   * Phase 1 bridge handoff (unchanged from #441): fetch a context token
-   * + envelope, build the hidden multipart form, and `form.submit()`
-   * to top-level-navigate to the bridge. Kept verbatim in this branch
-   * because option 2 of the §621 UX decision deliberately preserves
-   * the existing page-navigation flow.
-   */
-  const sendPhase1 = useCallback(
-    async (customerId: number, requestId: number): Promise<void> => {
+  const submitAnalyzeBridge = useCallback(
+    async (
+      customerId: number,
+      requestId: number,
+      targetWindow: Window | null,
+      targetName: string,
+    ): Promise<void> => {
+      // Consume the force flag before the fetch — the browser-side
+      // arm is one-shot and must not survive a fetch failure (the
+      // user can retry the click; the next click should not be
+      // forced unless they re-arrive via the round-trip URL).
+      // Also strip `?aimerForce=1` from the URL once the click has
+      // consumed it, so a post-click refresh does not re-force.
+      const force = forceArmedRef.current;
+      forceArmedRef.current = false;
+      if (force) stripForceParam();
+
+      const closeReservedTab = () => {
+        if (targetWindow && !targetWindow.closed) targetWindow.close();
+      };
+
       let form: HTMLFormElement | null = null;
       try {
-        const res = await mutatingFetch("/api/aimer/context-token", {
+        const res = await mutatingFetch("/api/aimer/analyze-envelope", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ locator, customerId }),
+          body: JSON.stringify({
+            locator,
+            customerId,
+            lang: localeToLang(locale),
+            force,
+          }),
         });
-        if (requestId !== requestIdRef.current) return;
+        if (requestId !== requestIdRef.current) {
+          closeReservedTab();
+          return;
+        }
         if (!res.ok) {
           const message = await translateErrorBody(t, res);
           setError(message);
           setSubmitting(false);
+          closeReservedTab();
           return;
         }
-        const payload = (await res.json()) as ContextTokenResponse;
-        if (requestId !== requestIdRef.current) return;
+        const payload = (await res.json()) as AnalyzeEnvelopeResponse;
+        if (requestId !== requestIdRef.current) {
+          closeReservedTab();
+          return;
+        }
 
-        form = buildAimerHiddenForm(payload, document);
+        // Submit into the window we pre-opened from the click handler.
+        // If the browser blocked or could not open the popup, fall
+        // back to `_blank` — the post-await submit may still ride the
+        // transient activation on lenient browsers, but the pre-open
+        // is the supported path.
+        const submitTarget =
+          targetWindow !== null && !targetWindow.closed ? targetName : "_blank";
+        form = buildAnalyzeBridgeForm(payload, document, submitTarget);
         document.body.appendChild(form);
         form.submit();
-        // Successful submit → top-level navigation in flight.  Do NOT
-        // remove the form here; some browsers treat detaching the form
-        // synchronously after submit() as cancelling the request.  The
-        // page is unloading anyway so the DOM will be discarded.
+        // Deferred cleanup: the analyze-bridge submit navigates the
+        // pre-opened tab (`target=<name>`) and the original tab does
+        // NOT unload. Removing the form synchronously after
+        // `submit()` can cancel the new tab's request on some
+        // browsers (per the comment on the prior Phase 1 helper);
+        // yield a full event-loop task so the navigation dispatches
+        // before the node leaves the DOM.
+        const submitted = form;
+        setTimeout(() => {
+          submitted.parentNode?.removeChild(submitted);
+        }, 0);
         form = null;
-      } catch (err) {
-        if (requestId !== requestIdRef.current) return;
-        const message =
-          err instanceof Error && err.message
-            ? `${t("aimerErrorGeneric")} (${err.message})`
-            : t("aimerErrorGeneric");
-        setError(message);
+        // Close the modal — the analysis tab has been opened.
         setSubmitting(false);
-      } finally {
-        if (form !== null) {
-          // Failure path: form was appended but submit() threw.  Pull
-          // it out so the DOM does not retain orphaned hidden inputs
-          // before we render the error toast.
-          form.remove();
-        }
-      }
-    },
-    [locator, t],
-  );
-
-  /**
-   * Phase 2 single-event push (new in #621). The server has already
-   * confirmed the event is baseline-passing and minted the multipart
-   * tokens; we POST them directly to aimer-web's
-   * `/api/phase2/baseline/batch` endpoint via {@link postPhase2Multipart}
-   * (the same browser transport the opportunistic drain uses) and
-   * render the post-send disclosure in place — no top-level
-   * navigation.
-   *
-   * Cursor advancement is the server's call to make and the server has
-   * already decided not to advance it (RFC 0002 §8 "Race vs cursor"),
-   * so a re-click against the same event is idempotent on aimer-web's
-   * `(baseline_version, event_key)` check.
-   */
-  const sendPhase2 = useCallback(
-    async (
-      phase2: Extract<DetectionSendResponse, { route: "phase2" }>,
-      requestId: number,
-    ): Promise<void> => {
-      try {
-        const ack = await postPhase2Multipart(
-          phase2.aimer_endpoint_url,
-          {
-            context_token: phase2.context_token,
-            events_envelope: phase2.events_envelope,
-            events_data: phase2.events_data,
-            context_jti: phase2.context_jti,
-          },
-          phase2.schema_version,
-        );
-        if (requestId !== requestIdRef.current) return;
-        if (ack.kind !== "insert") {
-          setError(t("aimerErrorGeneric"));
-          setSubmitting(false);
+        setModalOpen(false);
+      } catch (err) {
+        if (requestId !== requestIdRef.current) {
+          closeReservedTab();
           return;
         }
-        setSubmitting(false);
-        setPhase2Sent(true);
-      } catch (err) {
-        if (requestId !== requestIdRef.current) return;
         const message =
           err instanceof Error && err.message
             ? `${t("aimerErrorGeneric")} (${err.message})`
             : t("aimerErrorGeneric");
         setError(message);
         setSubmitting(false);
+        closeReservedTab();
+      } finally {
+        if (form !== null) form.remove();
       }
     },
-    [t],
+    [locale, locator, stripForceParam, t],
   );
 
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(() => {
     if (selectedId === null) return;
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     setSubmitting(true);
     setError(null);
-    setPhase2Sent(false);
-
-    // Server-side routing decision: ask whether the event is currently
-    // baseline-passing. The route also issues the Phase 2 envelope on
-    // the spot when so, so the click→envelope round-trip stays
-    // server-authoritative — the browser does not get to decide which
-    // phase a click maps to.
-    let routing: DetectionSendResponse;
-    try {
-      const res = await mutatingFetch("/api/aimer/detection-send", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ locator, customerId: selectedId }),
-      });
-      if (requestId !== requestIdRef.current) return;
-      if (!res.ok) {
-        const message = await translateErrorBody(t, res);
-        setError(message);
-        setSubmitting(false);
-        return;
-      }
-      routing = (await res.json()) as DetectionSendResponse;
-    } catch (err) {
-      if (requestId !== requestIdRef.current) return;
-      const message =
-        err instanceof Error && err.message
-          ? `${t("aimerErrorGeneric")} (${err.message})`
-          : t("aimerErrorGeneric");
-      setError(message);
-      setSubmitting(false);
-      return;
-    }
-    if (requestId !== requestIdRef.current) return;
-
-    if (routing.route === "phase2") {
-      await sendPhase2(routing, requestId);
-      return;
-    }
-    await sendPhase1(selectedId, requestId);
-  }, [locator, selectedId, sendPhase1, sendPhase2, t]);
+    // Reserve the target tab *synchronously* on the user's click so
+    // popup blockers see the open under the still-fresh transient
+    // activation. The mint fetch is awaited only after the window
+    // exists; the form is then submitted into this window by name.
+    // Without this, slow networks or stricter browser policies could
+    // let the activation lapse before `form.submit()` runs and turn
+    // the button into a silent no-op (#629 reviewer round 2).
+    // The target name is globally unique per click — see
+    // `buildAnalyzeBridgeTargetName` for why a component-local
+    // counter is not safe here (#629 reviewer round 7).
+    const targetName = buildAnalyzeBridgeTargetName();
+    const reservedTab =
+      typeof window !== "undefined"
+        ? window.open("about:blank", targetName)
+        : null;
+    void submitAnalyzeBridge(selectedId, requestId, reservedTab, targetName);
+  }, [selectedId, submitAnalyzeBridge]);
 
   const sendDisabled = submitting || selectedId === null;
 
@@ -361,11 +360,6 @@ export function AimerBanner({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                {/*
-                 * Disabled <button> swallows pointer events in some
-                 * browsers, so wrap in a span so the tooltip still
-                 * reacts on hover.
-                 */}
                 <span>{button}</span>
               </TooltipTrigger>
               <TooltipContent>{disabledTooltip}</TooltipContent>
@@ -442,52 +436,29 @@ export function AimerBanner({
             </p>
           ) : null}
 
-          {phase2Sent ? (
-            <p
-              role="status"
-              className="text-sm text-emerald-700 dark:text-emerald-400"
-              data-testid="aimer-sent-phase2"
-            >
-              {t("aimerSentPhase2")}
-            </p>
-          ) : null}
-
           <DialogFooter>
-            {phase2Sent ? (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={closeModal}
-                data-testid="aimer-sent-dismiss"
-              >
-                {t("aimerSentPhase2Dismiss")}
-              </Button>
-            ) : (
-              <>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={closeModal}
-                  disabled={submitting}
-                >
-                  {t("aimerModalCancel")}
-                </Button>
-                <Button
-                  type="button"
-                  onClick={handleSend}
-                  disabled={sendDisabled}
-                  data-testid="aimer-modal-send"
-                >
-                  {submitting ? (
-                    <Loader2
-                      className="mr-2 size-4 animate-spin"
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                  {submitting ? t("aimerSending") : t("aimerModalSend")}
-                </Button>
-              </>
-            )}
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={closeModal}
+              disabled={submitting}
+            >
+              {t("aimerModalCancel")}
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSend}
+              disabled={sendDisabled}
+              data-testid="aimer-modal-send"
+            >
+              {submitting ? (
+                <Loader2
+                  className="mr-2 size-4 animate-spin"
+                  aria-hidden="true"
+                />
+              ) : null}
+              {submitting ? t("aimerSending") : t("aimerModalSend")}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -508,6 +479,10 @@ function formatMissingReason(
       return t("aimerMissingReasonAiceId");
     case "bridgeUrl":
       return t("aimerMissingReasonBridgeUrl");
+    case "defaultModelName":
+      return t("aimerMissingReasonDefaultModelName");
+    case "defaultModel":
+      return t("aimerMissingReasonDefaultModel");
     case "signingKey":
       return t("aimerMissingReasonSigningKey");
   }
@@ -517,9 +492,9 @@ async function translateErrorBody(
   t: Translator,
   res: Response,
 ): Promise<string> {
-  let body: ContextTokenErrorBody | null = null;
+  let body: AnalyzeEnvelopeErrorBody | null = null;
   try {
-    body = (await res.json()) as ContextTokenErrorBody;
+    body = (await res.json()) as AnalyzeEnvelopeErrorBody;
   } catch {
     body = null;
   }

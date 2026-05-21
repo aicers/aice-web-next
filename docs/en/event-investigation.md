@@ -117,59 +117,63 @@ switching away and back does not re-issue the lookup.
 Summary card with severity, time, kind, category, confidence
 and triage scores (each score with its policy ID).
 
-The tab also includes a **Send to Aimer** banner.  Clicking
-**Send to Aimer** opens a confirmation modal, then performs one
-of two flows depending on whether the event is currently
-baseline-passing (the routing decision is made server-side by
-`POST /api/aimer/detection-send` against
-`baseline_triaged_event`).  Both flows are gated by the same
-`detection:read` permission and use the same customer-selection
-modal:
+The tab also includes an **Analyze with Aimer** banner.
+Clicking **Analyze with Aimer** opens a small confirmation
+modal — the investigator picks the customer this event should
+be analyzed under, then confirms.  When the event is connected
+to a single customer the modal shows that customer's name and
+the investigator only has to confirm.  When the event is
+connected to two or more customers (today this happens for
+subtypes such as Multi-Host Port Scan, RDP Brute Force, and
+External DDoS, whose responder/originator side carries an
+array of customers) the modal renders a radio list and the
+investigator must pick one.
 
-1. The investigator picks the customer this event should be
-   sent under.  When the event is connected to a single
-   customer the modal shows that customer's name and the
-   investigator only has to confirm.  When the event is
-   connected to two or more customers (today this happens for
-   subtypes such as Multi-Host Port Scan, RDP Brute Force, and
-   External DDoS, whose responder/originator side carries an
-   array of customers) the modal renders a radio list and the
-   investigator must pick one.
-2. The browser POSTs the locator + customer to
-   `/api/aimer/detection-send`.  The server probes
-   `SELECT 1 FROM baseline_triaged_event WHERE event_key = $1`
-   under the chosen customer's DB to decide which path applies,
-   and — on the Phase 2 path — also mints the multipart tokens
-   in the same response so the routing decision is
-   server-authoritative.
+After confirmation the browser asks
+`POST /api/aimer/analyze-envelope` to mint a four-field
+signed-multipart envelope (`context_token`, `events_envelope`,
+`events_data`, `analyze_params_token`).  All four fields are
+signed by the same Aimer signing key configured under
+**Settings → Aimer Integration**, and the
+`analyze_params_token` cross-binds the other three so an
+envelope cannot be swapped between mint and submit.
 
-**Phase 1 — non-baseline-passing events.**  The browser fetches
-a short-lived signed context token from
-`/api/aimer/context-token`, builds a hidden HTML `<form>` with
-three text parts (`context_token`, `events_envelope`,
-`events_data`) and submits it as a top-level multipart POST to
-aimer-web's bridge endpoint.  The investigator lands on
-aimer-web, where they sign in, approve the transfer, and the
-event is stored in `detection_events` for single-event
-analysis.  No in-page disclosure is rendered — the navigation
-itself is the signal that the send happened.
+To keep popup blockers from intercepting the cross-origin
+navigation, the click handler synchronously reserves a target
+tab via `window.open("about:blank", "aimer-analyze-bridge-<id>")`
+*before* awaiting the mint request — the new tab is created
+under the still-fresh transient activation from the user's
+click.  The `<id>` is a fresh per-click UUID (browser-named
+windows are global to the opener, so a fixed or per-mount
+suffix would clobber a previously opened Aimer result tab
+with the same name).  The browser then builds a hidden HTML `<form>` with
+`method="POST"`, `enctype="multipart/form-data"`, and `action`
+pointing at aimer-web's `/api/analysis/analyze-bridge` endpoint,
+sets the form's `target` to the reserved window's name, and
+calls `form.submit()` so the multipart POST navigates the
+pre-opened tab.  If `window.open` returns `null` (popup
+blocked), the form falls back to `target="_blank"`.  The
+reserved tab is closed if the mint fails, the user cancels, or
+the locale changes mid-flight.  The original aice-web-next tab
+stays open; the **analysis result page opens in the reserved
+tab** on aimer-web.
+On first visit aimer-web walks the investigator through OIDC
+sign-in inline; on subsequent visits the result page opens
+directly via the existing Keycloak SSO session.  Result-page
+errors (invalid envelope, unsupported language, aimer
+unavailable, …) render as styled error pages in the same new
+tab — the original aice-web-next tab does not receive a
+programmatic error response.
 
-**Phase 2 — baseline-passing events.**  The server has already
-returned the multipart tokens alongside the routing decision.
-The browser POSTs them directly to aimer-web's
-`/api/phase2/baseline/batch` endpoint without leaving the
-event-detail page; on a 2xx ack the modal shows the disclosure
-**"Sent via Phase 2 (Triage analysis)"** and an investigator-
-dismissable confirmation.  Phase 2 sends do not advance the
-opportunistic streaming cursor, so a subsequent automatic sweep
-past the same event is absorbed by aimer-web's idempotent
-`(baseline_version, event_key)` check (`duplicates_skipped`).
-Re-clicking the same event therefore stays idempotent.
-
-Manual Send always bypasses the opportunistic-push pause
-toggle: a Send click is a deliberate per-item operator
-override.  The pause toggle only gates the automatic
-background flow.
+When the result page on aimer-web offers a **Re-analyze**
+action, it round-trips back to aice-web-next with
+`?aimerForce=1`.  Arriving at the event detail page with that
+query parameter arms the next **Analyze with Aimer** click as
+`force=true`.  The parameter intentionally stays on the URL
+across a refresh-before-click so the force arm survives a
+reload; it is stripped only after the click consumes the flag,
+so a refresh *after* the forced click does not silently
+re-force.
 
 The button is disabled when:
 
@@ -180,8 +184,10 @@ The button is disabled when:
   Customers permission can populate that key on the **Customers**
   page.
 - The Aimer integration is not configured by a System
-  Administrator (the AICE ID, bridge URL, or active signing
-  key is missing).
+  Administrator.  All five prerequisites must be present: the
+  AICE ID, the bridge URL, the default model-name / model
+  identifiers used in the analyze parameters, and an active
+  signing key.
 
 The tooltip on the disabled button names the specific reason so
 the investigator knows whether to ask their administrator or
@@ -192,17 +198,27 @@ has an `external_key`, the customer without a key is shown
 disabled (with an "(no external_key set)" hint) — the
 investigator can still send under the configured one.
 
-![Send to Aimer confirmation modal](../assets/aimer-send-modal-en.png)
+![Analyze with Aimer confirmation modal](../assets/aimer-send-modal-en.png)
+*Screenshot pending update — tracked at #624.*
 
 ![Send to Aimer Phase 2 disclosure](../assets/aimer-send-phase2-en.png)
+*Screenshot pending update — the Phase 2 disclosure modal is
+removed in the analyze-bridge flow; the new tab on aimer-web
+shows the result page directly.  Tracked at #624.*
 
 The browser primitive used here is intentional.  An HTML form
-submit is the only standard browser API that produces a
-top-level multipart POST so the user actually navigates to
-aimer-web — `fetch` with a `FormData` body would not navigate.
-Because HTML form parts can only be text, the events payload is
-sent as a text part rather than a `Blob`.  Payloads that need a
-binary upload remain out of scope for this release.
+submit is the standard browser API that produces a top-level
+multipart POST in a new tab — `fetch` with a `FormData` body
+would not navigate, and a same-tab submit would replace the
+event-detail view.  The form's `target` is the name of the tab
+that the click handler reserved synchronously via
+`window.open("about:blank", <name>)`, so popup blockers see the
+window open under the still-fresh transient activation; the
+form submit then retargets into that named window.  `_blank` is
+used only as a fallback when `window.open` returns `null` (the
+popup was blocked before the form was built).  Because HTML
+form parts can only be text, every field including the JSON
+payload is sent as a text part rather than a `Blob`.
 
 Below the Aimer banner, **Pivot shortcuts** lists links that
 open the Detection page pre-filtered to related activity:
