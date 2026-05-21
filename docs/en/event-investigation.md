@@ -138,12 +138,22 @@ signed by the same Aimer signing key configured under
 `analyze_params_token` cross-binds the other three so an
 envelope cannot be swapped between mint and submit.
 
-The browser then builds a hidden HTML `<form>` with
-`method="POST"`, `enctype="multipart/form-data"`,
-`target="_blank"`, and `action` pointing at aimer-web's
-`/api/analysis/analyze-bridge` endpoint, and calls
-`form.submit()`.  The original aice-web-next tab stays open;
-the **analysis result page opens in a new tab** on aimer-web.
+To keep popup blockers from intercepting the cross-origin
+navigation, the click handler synchronously reserves a target
+tab via `window.open("about:blank", "aimer-analyze-bridge-<id>")`
+*before* awaiting the mint request — the new tab is created
+under the still-fresh transient activation from the user's
+click.  The browser then builds a hidden HTML `<form>` with
+`method="POST"`, `enctype="multipart/form-data"`, and `action`
+pointing at aimer-web's `/api/analysis/analyze-bridge` endpoint,
+sets the form's `target` to the reserved window's name, and
+calls `form.submit()` so the multipart POST navigates the
+pre-opened tab.  If `window.open` returns `null` (popup
+blocked), the form falls back to `target="_blank"`.  The
+reserved tab is closed if the mint fails, the user cancels, or
+the locale changes mid-flight.  The original aice-web-next tab
+stays open; the **analysis result page opens in the reserved
+tab** on aimer-web.
 On first visit aimer-web walks the investigator through OIDC
 sign-in inline; on subsequent visits the result page opens
 directly via the existing Keycloak SSO session.  Result-page

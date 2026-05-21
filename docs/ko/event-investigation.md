@@ -131,12 +131,21 @@ Force, External DDoS처럼 응답자 또는 출발자 측이 customer
 나머지 세 필드를 교차 바인딩해 발급과 제출 사이에 envelope이
 교체되지 않도록 보장합니다.
 
-이어서 브라우저는 `method="POST"`,
-`enctype="multipart/form-data"`, `target="_blank"`,
-`action`이 aimer-web의 `/api/analysis/analyze-bridge`를
-가리키는 숨겨진 HTML `<form>`을 만들고 `form.submit()`을
-호출합니다. 원래의 aice-web-next 탭은 그대로 유지되고,
-**분석 결과 페이지는 aimer-web 새 탭에서 열립니다.** 처음
+팝업 차단기가 cross-origin 내비게이션을 가로채지 못하도록,
+클릭 핸들러는 mint 요청을 await하기 *전에*
+`window.open("about:blank", "aimer-analyze-bridge-<id>")`를
+호출해 대상 탭을 동기적으로 예약합니다. 새 탭은 사용자
+클릭에서 발생한 transient activation이 아직 유효한 상태에서
+열립니다. 이어서 브라우저는 `method="POST"`,
+`enctype="multipart/form-data"`, `action`이 aimer-web의
+`/api/analysis/analyze-bridge`를 가리키는 숨겨진 HTML `<form>`을
+만들고, 폼의 `target`을 예약된 창의 이름으로 설정한 뒤
+`form.submit()`을 호출해 multipart POST가 사전 예약된 탭으로
+내비게이션되도록 합니다. `window.open`이 `null`을 반환하면(팝업
+차단됨) 폼은 `target="_blank"`로 폴백합니다. mint 실패, 사용자
+취소, 도중의 로케일 변경 시에는 예약된 탭이 닫힙니다. 원래의
+aice-web-next 탭은 그대로 유지되고, **분석 결과 페이지는 예약된
+탭에서 aimer-web으로 열립니다.** 처음
 방문 시에는 aimer-web이 새 탭 안에서 OIDC 로그인을
 안내하며, 이후 방문에서는 기존 Keycloak SSO 세션으로
 결과 페이지가 바로 열립니다. 분석 실패(잘못된 envelope,
