@@ -174,8 +174,12 @@ aimer-web 결과 페이지의 **재분석** 동작은 aice-web-next로
 있습니다.
 
 ![Aimer로 분석 확인 모달](../assets/aimer-send-modal-ko.png)
-*스크린샷 업데이트 예정 — EN/KO 매뉴얼 스크린샷 일괄 갱신
-배치에서 추적합니다.*
+*스크린샷 업데이트 예정 — #624에서 추적합니다.*
+
+![Send to Aimer Phase 2 disclosure](../assets/aimer-send-phase2-ko.png)
+*스크린샷 업데이트 예정 — analyze-bridge 플로우에서는 Phase 2
+디스클로저 모달이 제거되며, aimer-web의 새 탭이 결과 페이지를
+바로 보여줍니다. #624에서 추적합니다.*
 
 여기서 사용한 브라우저 기본 요소는 의도된 선택입니다.
 `target="_blank"`를 가진 HTML form submit은 새 탭에서 열리는

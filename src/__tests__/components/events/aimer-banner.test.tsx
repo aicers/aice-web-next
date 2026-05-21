@@ -121,11 +121,33 @@ describe("AimerBanner – modal radio gating", () => {
 describe("AimerBanner – analyze-bridge submit contract", () => {
   let appendSpy: ReturnType<typeof vi.spyOn>;
   let submitSpy: ReturnType<typeof vi.fn>;
+  let openSpy: ReturnType<typeof vi.fn>;
+  let openedWindowClose: ReturnType<typeof vi.fn> & (() => void);
+  let openedWindows: Array<{
+    name: string;
+    closed: boolean;
+    close: () => void;
+  }>;
   let createdForm: HTMLFormElement | null = null;
 
   beforeEach(() => {
     createdForm = null;
     submitSpy = vi.fn();
+    openedWindowClose = vi.fn() as typeof openedWindowClose;
+    openedWindows = [];
+    openSpy = vi.fn((_url: string, target: string) => {
+      const w = {
+        name: target,
+        closed: false,
+        close: () => {
+          w.closed = true;
+          openedWindowClose();
+        },
+      };
+      openedWindows.push(w);
+      return w as unknown as Window;
+    });
+    vi.stubGlobal("open", openSpy);
     const originalAppendChild = document.body.appendChild.bind(document.body);
     appendSpy = vi.spyOn(document.body, "appendChild").mockImplementation(((
       node: Node,
@@ -139,6 +161,7 @@ describe("AimerBanner – analyze-bridge submit contract", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -162,7 +185,47 @@ describe("AimerBanner – analyze-bridge submit contract", () => {
     );
   }
 
-  it("calls /api/aimer/analyze-envelope then submits a target=_blank form to aimer-web", async () => {
+  it("reserves the target window synchronously on click, then submits the form into it after mint", async () => {
+    const fetchSpy = stubAnalyzeEnvelopeFetch();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    renderBanner({
+      candidates: [{ id: 7, name: "Acme" }],
+      customerBridgeEligible: { 7: true },
+    });
+    fireEvent.click(screen.getByTestId("aimer-send-button"));
+    fireEvent.click(screen.getByTestId("aimer-modal-send"));
+
+    // The pre-open must happen synchronously on the click — before
+    // any await — so popup blockers see it under the still-fresh
+    // transient activation (#629 reviewer round 2).
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    const [openedUrl, openedTarget] = openSpy.mock.calls[0];
+    expect(openedUrl).toBe("about:blank");
+    expect(openedTarget).toMatch(/^aimer-analyze-bridge-/);
+
+    await waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(1));
+    expect(createdForm).toBeTruthy();
+    expect(createdForm?.action).toBe(
+      "https://aimer.example.com/api/analysis/analyze-bridge",
+    );
+    expect(createdForm?.method).toBe("post");
+    expect(createdForm?.enctype).toBe("multipart/form-data");
+    // Form retargets into the pre-opened window by name, not `_blank`.
+    expect(createdForm?.target).toBe(openedTarget);
+    // The reserved tab is not closed on the happy path — the submit
+    // navigates it.
+    expect(openedWindowClose).not.toHaveBeenCalled();
+
+    const mintCall = fetchSpy.mock.calls.find(([url]) => {
+      const u = typeof url === "string" ? url : (url as URL).toString();
+      return u.includes("/api/aimer/analyze-envelope");
+    });
+    expect(mintCall).toBeDefined();
+  });
+
+  it("falls back to target=_blank when window.open returns null (blocked popup)", async () => {
+    openSpy.mockReturnValue(null as unknown as Window);
     const fetchSpy = stubAnalyzeEnvelopeFetch();
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -174,22 +237,10 @@ describe("AimerBanner – analyze-bridge submit contract", () => {
     fireEvent.click(screen.getByTestId("aimer-modal-send"));
 
     await waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(1));
-    expect(createdForm).toBeTruthy();
-    expect(createdForm?.action).toBe(
-      "https://aimer.example.com/api/analysis/analyze-bridge",
-    );
-    expect(createdForm?.method).toBe("post");
-    expect(createdForm?.enctype).toBe("multipart/form-data");
     expect(createdForm?.target).toBe("_blank");
-    // Backend was hit exactly once on the envelope-mint endpoint.
-    const mintCall = fetchSpy.mock.calls.find(([url]) => {
-      const u = typeof url === "string" ? url : (url as URL).toString();
-      return u.includes("/api/aimer/analyze-envelope");
-    });
-    expect(mintCall).toBeDefined();
   });
 
-  it("surfaces an error if the envelope-mint endpoint fails", async () => {
+  it("closes the reserved tab and surfaces an error when the envelope-mint endpoint fails", async () => {
     vi.stubGlobal(
       "fetch",
       stubAnalyzeEnvelopeFetch({
@@ -211,6 +262,9 @@ describe("AimerBanner – analyze-bridge submit contract", () => {
       ([n]: [Node]) => n instanceof HTMLFormElement,
     );
     expect(formCalls).toHaveLength(0);
+    // The pre-opened tab is closed so the user is not left staring at
+    // a stale `about:blank` page after a mint failure.
+    expect(openedWindowClose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -220,6 +274,7 @@ describe("AimerBanner – force-flow arming via ?aimerForce=1", () => {
 
   beforeEach(() => {
     submitSpy = vi.fn();
+    vi.stubGlobal("open", () => ({ name: "", closed: false, close: () => {} }));
     const originalAppendChild = document.body.appendChild.bind(document.body);
     vi.spyOn(document.body, "appendChild").mockImplementation(((node: Node) => {
       if (node instanceof HTMLFormElement) {
@@ -231,6 +286,7 @@ describe("AimerBanner – force-flow arming via ?aimerForce=1", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     window.history.replaceState = originalReplaceState;
     // Reset URL to a clean slate so tests don't leak state.

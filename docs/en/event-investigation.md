@@ -183,8 +183,12 @@ disabled (with an "(no external_key set)" hint) — the
 investigator can still send under the configured one.
 
 ![Analyze with Aimer confirmation modal](../assets/aimer-send-modal-en.png)
-*Screenshot pending update — tracked under the EN/KO manual
-screenshot batch.*
+*Screenshot pending update — tracked at #624.*
+
+![Send to Aimer Phase 2 disclosure](../assets/aimer-send-phase2-en.png)
+*Screenshot pending update — the Phase 2 disclosure modal is
+removed in the analyze-bridge flow; the new tab on aimer-web
+shows the result page directly.  Tracked at #624.*
 
 The browser primitive used here is intentional.  An HTML form
 submit with `target="_blank"` is the standard browser API that

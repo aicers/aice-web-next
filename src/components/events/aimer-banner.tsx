@@ -63,18 +63,21 @@ const FORCE_QUERY_PARAM = "aimerForce";
  * Build the hidden multipart form that the analyze-bridge flow
  * submits as a top-level navigation to aimer-web (#629). The form
  * carries the four signed fields produced by
- * `POST /api/aimer/analyze-envelope` and opens the result page in
- * a new tab — the original aice-web-next tab is preserved.
+ * `POST /api/aimer/analyze-envelope` and submits into `target` — a
+ * named window the click handler pre-opened synchronously so the
+ * navigation runs under the still-fresh transient user activation.
+ * Defaults to `_blank` for direct callers (e.g. unit tests).
  */
 export function buildAnalyzeBridgeForm(
   res: AnalyzeEnvelopeResponse,
   doc: Document,
+  target: string = "_blank",
 ): HTMLFormElement {
   const form = doc.createElement("form");
   form.action = res.targetUrl;
   form.method = "POST";
   form.enctype = "multipart/form-data";
-  form.target = "_blank";
+  form.target = target;
   form.hidden = true;
   const fields: ReadonlyArray<readonly [string, string]> = [
     ["context_token", res.contextToken],
@@ -177,13 +180,22 @@ export function AimerBanner({
   }, []);
 
   const submitAnalyzeBridge = useCallback(
-    async (customerId: number, requestId: number): Promise<void> => {
+    async (
+      customerId: number,
+      requestId: number,
+      targetWindow: Window | null,
+      targetName: string,
+    ): Promise<void> => {
       // Consume the force flag before the fetch — the browser-side
       // arm is one-shot and must not survive a fetch failure (the
       // user can retry the click; the next click should not be
       // forced unless they re-arrive via the round-trip URL).
       const force = forceArmedRef.current;
       forceArmedRef.current = false;
+
+      const closeReservedTab = () => {
+        if (targetWindow && !targetWindow.closed) targetWindow.close();
+      };
 
       let form: HTMLFormElement | null = null;
       try {
@@ -197,23 +209,37 @@ export function AimerBanner({
             force,
           }),
         });
-        if (requestId !== requestIdRef.current) return;
+        if (requestId !== requestIdRef.current) {
+          closeReservedTab();
+          return;
+        }
         if (!res.ok) {
           const message = await translateErrorBody(t, res);
           setError(message);
           setSubmitting(false);
+          closeReservedTab();
           return;
         }
         const payload = (await res.json()) as AnalyzeEnvelopeResponse;
-        if (requestId !== requestIdRef.current) return;
+        if (requestId !== requestIdRef.current) {
+          closeReservedTab();
+          return;
+        }
 
-        form = buildAnalyzeBridgeForm(payload, document);
+        // Submit into the window we pre-opened from the click handler.
+        // If the browser blocked or could not open the popup, fall
+        // back to `_blank` — the post-await submit may still ride the
+        // transient activation on lenient browsers, but the pre-open
+        // is the supported path.
+        const submitTarget =
+          targetWindow !== null && !targetWindow.closed ? targetName : "_blank";
+        form = buildAnalyzeBridgeForm(payload, document, submitTarget);
         document.body.appendChild(form);
         form.submit();
-        // Deferred cleanup: the analyze-bridge flow opens the result
-        // page in a new tab (`target="_blank"`) and the original
-        // tab does NOT unload. Removing the form synchronously
-        // after `submit()` can cancel the new tab's request on some
+        // Deferred cleanup: the analyze-bridge submit navigates the
+        // pre-opened tab (`target=<name>`) and the original tab does
+        // NOT unload. Removing the form synchronously after
+        // `submit()` can cancel the new tab's request on some
         // browsers (per the comment on the prior Phase 1 helper);
         // yield a full event-loop task so the navigation dispatches
         // before the node leaves the DOM.
@@ -226,13 +252,17 @@ export function AimerBanner({
         setSubmitting(false);
         setModalOpen(false);
       } catch (err) {
-        if (requestId !== requestIdRef.current) return;
+        if (requestId !== requestIdRef.current) {
+          closeReservedTab();
+          return;
+        }
         const message =
           err instanceof Error && err.message
             ? `${t("aimerErrorGeneric")} (${err.message})`
             : t("aimerErrorGeneric");
         setError(message);
         setSubmitting(false);
+        closeReservedTab();
       } finally {
         if (form !== null) form.remove();
       }
@@ -240,13 +270,25 @@ export function AimerBanner({
     [locale, locator, t],
   );
 
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(() => {
     if (selectedId === null) return;
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     setSubmitting(true);
     setError(null);
-    await submitAnalyzeBridge(selectedId, requestId);
+    // Reserve the target tab *synchronously* on the user's click so
+    // popup blockers see the open under the still-fresh transient
+    // activation. The mint fetch is awaited only after the window
+    // exists; the form is then submitted into this window by name.
+    // Without this, slow networks or stricter browser policies could
+    // let the activation lapse before `form.submit()` runs and turn
+    // the button into a silent no-op (#629 reviewer round 2).
+    const targetName = `aimer-analyze-bridge-${requestId}`;
+    const reservedTab =
+      typeof window !== "undefined"
+        ? window.open("about:blank", targetName)
+        : null;
+    void submitAnalyzeBridge(selectedId, requestId, reservedTab, targetName);
   }, [selectedId, submitAnalyzeBridge]);
 
   const sendDisabled = submitting || selectedId === null;
