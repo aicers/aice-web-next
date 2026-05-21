@@ -4,8 +4,23 @@ import { query } from "@/lib/db/client";
 
 // ── Keys ────────────────────────────────────────────────────────
 
-export const AIMER_SETTING_KEYS = ["aice_id", "aimer_web_bridge_url"] as const;
+export const AIMER_SETTING_KEYS = [
+  "aice_id",
+  "aimer_web_bridge_url",
+  "aimer_default_model_name",
+  "aimer_default_model",
+] as const;
 export type AimerSettingKey = (typeof AIMER_SETTING_KEYS)[number];
+
+/**
+ * Hard cap on `aimer_default_model_name` / `aimer_default_model`
+ * string length. The underlying LLM catalog is owned by aimer-side
+ * configuration, so any non-empty string is structurally valid; we
+ * cap the bytes here so a tampered settings row cannot push the
+ * `analyze_params_token` JWS past aimer-web's `BRIDGE_MAX_PAYLOAD_BYTES`
+ * ceiling.
+ */
+const MODEL_FIELD_MAX_LENGTH = 256;
 
 // Stored as JSONB in `system_settings`.  `null` is the unconfigured
 // state; the row exists from the migration so updates always hit an
@@ -115,6 +130,8 @@ export function normalizeAimerWebBridgeUrl(input: string):
 export async function getAimerIntegrationSettings(): Promise<{
   aiceId: string | null;
   bridgeUrl: string | null;
+  defaultModelName: string | null;
+  defaultModel: string | null;
 }> {
   const { rows } = await query<{ key: string; value: StoredValue }>(
     "SELECT key, value FROM system_settings WHERE key = ANY($1::text[])",
@@ -126,7 +143,27 @@ export async function getAimerIntegrationSettings(): Promise<{
   return {
     aiceId: map.get("aice_id")?.value ?? null,
     bridgeUrl: map.get("aimer_web_bridge_url")?.value ?? null,
+    defaultModelName: map.get("aimer_default_model_name")?.value ?? null,
+    defaultModel: map.get("aimer_default_model")?.value ?? null,
   };
+}
+
+function validateModelField(value: string): {
+  valid: boolean;
+  error?: string;
+  normalized?: string;
+} {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return { valid: false, error: "value must be a non-empty string" };
+  }
+  if (trimmed.length > MODEL_FIELD_MAX_LENGTH) {
+    return {
+      valid: false,
+      error: `value must be ${MODEL_FIELD_MAX_LENGTH} characters or fewer`,
+    };
+  }
+  return { valid: true, normalized: trimmed };
 }
 
 /**
@@ -150,9 +187,15 @@ export async function updateAimerIntegrationSetting(
       return { valid: false, error: validation.error };
     }
     normalized = rawValue;
-  } else {
+  } else if (key === "aimer_web_bridge_url") {
     const result = normalizeAimerWebBridgeUrl(rawValue);
     if (!result.ok) {
+      return { valid: false, error: result.error };
+    }
+    normalized = result.normalized;
+  } else {
+    const result = validateModelField(rawValue);
+    if (!result.valid || !result.normalized) {
       return { valid: false, error: result.error };
     }
     normalized = result.normalized;

@@ -148,7 +148,11 @@ export function AimerIntegrationPanel({
   }
 
   async function saveSetting(
-    key: "aice_id" | "aimer_web_bridge_url",
+    key:
+      | "aice_id"
+      | "aimer_web_bridge_url"
+      | "aimer_default_model_name"
+      | "aimer_default_model",
     value: string,
   ): Promise<string | null> {
     setBusy(key);
@@ -174,11 +178,18 @@ export function AimerIntegrationPanel({
       const body = (await res.json()) as {
         data: { key: string; value: string };
       };
-      setSetup((prev) =>
-        key === "aice_id"
-          ? { ...prev, aiceId: body.data.value }
-          : { ...prev, bridgeUrl: body.data.value },
-      );
+      setSetup((prev) => {
+        switch (key) {
+          case "aice_id":
+            return { ...prev, aiceId: body.data.value };
+          case "aimer_web_bridge_url":
+            return { ...prev, bridgeUrl: body.data.value };
+          case "aimer_default_model_name":
+            return { ...prev, defaultModelName: body.data.value };
+          case "aimer_default_model":
+            return { ...prev, defaultModel: body.data.value };
+        }
+      });
       setMessage({ type: "success", text: t("success.settingSaved") });
       return body.data.value;
     } catch {
@@ -241,6 +252,8 @@ export function AimerIntegrationPanel({
       <SettingsBlock
         aiceId={setup.aiceId}
         bridgeUrl={setup.bridgeUrl}
+        defaultModelName={setup.defaultModelName}
+        defaultModel={setup.defaultModel}
         busyKey={busy}
         onSave={saveSetting}
         t={t}
@@ -271,6 +284,8 @@ function deriveSetupStatusUI(
   const missing: AimerIntegrationMissingReason[] = [];
   if (!setup.aiceId) missing.push("aiceId");
   if (!setup.bridgeUrl) missing.push("bridgeUrl");
+  if (!setup.defaultModelName) missing.push("defaultModelName");
+  if (!setup.defaultModel) missing.push("defaultModel");
   // Live status preferred over the snapshot so the badge transitions
   // synchronously after Generate/Switch without a refetch.
   if (!keyStatus.active) missing.push("signingKey");
@@ -636,27 +651,43 @@ function CopyableField({
 function SettingsBlock({
   aiceId,
   bridgeUrl,
+  defaultModelName,
+  defaultModel,
   busyKey,
   onSave,
   t,
 }: {
   aiceId: string | null;
   bridgeUrl: string | null;
+  defaultModelName: string | null;
+  defaultModel: string | null;
   busyKey: string | null;
   onSave: (
-    key: "aice_id" | "aimer_web_bridge_url",
+    key:
+      | "aice_id"
+      | "aimer_web_bridge_url"
+      | "aimer_default_model_name"
+      | "aimer_default_model",
     value: string,
   ) => Promise<string | null>;
   t: ReturnType<typeof useTranslations<"aimerIntegration">>;
 }) {
   const [aiceIdDraft, setAiceIdDraft] = useState(aiceId ?? "");
   const [bridgeUrlDraft, setBridgeUrlDraft] = useState(bridgeUrl ?? "");
+  const [modelNameDraft, setModelNameDraft] = useState(defaultModelName ?? "");
+  const [modelDraft, setModelDraft] = useState(defaultModel ?? "");
   const [pendingSave, setPendingSave] = useState<
-    null | "aice_id" | "aimer_web_bridge_url"
+    | null
+    | "aice_id"
+    | "aimer_web_bridge_url"
+    | "aimer_default_model_name"
+    | "aimer_default_model"
   >(null);
 
   const aiceDirty = aiceIdDraft.trim() !== (aiceId ?? "");
   const bridgeDirty = bridgeUrlDraft.trim() !== (bridgeUrl ?? "");
+  const modelNameDirty = modelNameDraft.trim() !== (defaultModelName ?? "");
+  const modelDirty = modelDraft.trim() !== (defaultModel ?? "");
 
   return (
     <section className="rounded-md border p-5">
@@ -717,6 +748,60 @@ function SettingsBlock({
               : t("settings.saveBridgeUrl")}
           </Button>
         </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="aimer-default-model-name">
+            {t("settings.defaultModelNameLabel")}
+          </Label>
+          <Input
+            id="aimer-default-model-name"
+            data-testid="aimer-default-model-name"
+            value={modelNameDraft}
+            onChange={(e) => setModelNameDraft(e.target.value)}
+            placeholder={t("settings.defaultModelNamePlaceholder")}
+            className="max-w-md"
+          />
+          <p className="text-xs text-muted-foreground">
+            {t("settings.defaultModelNameHelper")}
+          </p>
+          <Button
+            type="button"
+            data-testid="aimer-default-model-name-save"
+            disabled={!modelNameDirty || busyKey === "aimer_default_model_name"}
+            onClick={() => setPendingSave("aimer_default_model_name")}
+          >
+            {busyKey === "aimer_default_model_name"
+              ? t("settings.saving")
+              : t("settings.saveDefaultModelName")}
+          </Button>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="aimer-default-model">
+            {t("settings.defaultModelLabel")}
+          </Label>
+          <Input
+            id="aimer-default-model"
+            data-testid="aimer-default-model"
+            value={modelDraft}
+            onChange={(e) => setModelDraft(e.target.value)}
+            placeholder={t("settings.defaultModelPlaceholder")}
+            className="max-w-md"
+          />
+          <p className="text-xs text-muted-foreground">
+            {t("settings.defaultModelHelper")}
+          </p>
+          <Button
+            type="button"
+            data-testid="aimer-default-model-save"
+            disabled={!modelDirty || busyKey === "aimer_default_model"}
+            onClick={() => setPendingSave("aimer_default_model")}
+          >
+            {busyKey === "aimer_default_model"
+              ? t("settings.saving")
+              : t("settings.saveDefaultModel")}
+          </Button>
+        </div>
       </div>
 
       <ConfirmDialog
@@ -729,8 +814,15 @@ function SettingsBlock({
           const key = pendingSave;
           setPendingSave(null);
           if (!key) return;
-          const value =
-            key === "aice_id" ? aiceIdDraft.trim() : bridgeUrlDraft.trim();
+          const draft =
+            key === "aice_id"
+              ? aiceIdDraft
+              : key === "aimer_web_bridge_url"
+                ? bridgeUrlDraft
+                : key === "aimer_default_model_name"
+                  ? modelNameDraft
+                  : modelDraft;
+          const value = draft.trim();
           // Reset the local draft to the canonical (server-normalized)
           // value so non-canonical inputs (e.g. a bridge URL with a
           // trailing slash) are reflected in the UI.  Done in this
@@ -740,10 +832,19 @@ function SettingsBlock({
           // a prop-watching effect.
           const canonical = await onSave(key, value);
           if (canonical !== null) {
-            if (key === "aice_id") {
-              setAiceIdDraft(canonical);
-            } else {
-              setBridgeUrlDraft(canonical);
+            switch (key) {
+              case "aice_id":
+                setAiceIdDraft(canonical);
+                break;
+              case "aimer_web_bridge_url":
+                setBridgeUrlDraft(canonical);
+                break;
+              case "aimer_default_model_name":
+                setModelNameDraft(canonical);
+                break;
+              case "aimer_default_model":
+                setModelDraft(canonical);
+                break;
             }
           }
         }}

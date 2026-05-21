@@ -116,6 +116,14 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   // `requestedCustomerId` detail.
   "aimer_detection_send.issued": "customer-scoped",
   "aimer_detection_send.denied": "customer-agnostic",
+  // Analyze-envelope mint (#629). The mint route resolves the
+  // `customerId` before it can sign — `.issued` always carries the
+  // resolved customer. `.denied` happens at any pre-resolve guard
+  // (rate-limit, integration-not-configured, cross-tenant 404), so
+  // it stays customer-agnostic to avoid leaking existence through
+  // `requestedCustomerId` exposure on the audit row.
+  "aimer_analyze_envelope.issued": "customer-scoped",
+  "aimer_analyze_envelope.denied": "customer-agnostic",
   // Triage policy CRUD (#459) — TriagePolicy rows live in the
   // per-customer tenant DB, so every row is intrinsically scoped to
   // the customer the route operates on. Emitter populates `customerId`

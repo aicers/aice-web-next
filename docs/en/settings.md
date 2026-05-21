@@ -800,19 +800,27 @@ grants.
 
 ### Setup status
 
-Send to Aimer requires three system-wide prerequisites:
+Analyze with Aimer requires five system-wide prerequisites:
 
 1. **`aice_id`** — the deployment hostname. Used as the JWT
    `iss` claim and as the `aice_id` claim sent to aimer-web.
    aimer-web's `trust_registry` joins on this value, so it must
    match the entry registered there.
 2. **`aimer_web_bridge_url`** — the base URL of the aimer-web
-   instance whose `/api/auth/bridge` endpoint receives the
-   multipart POST. HTTPS only.
-3. **Context-token signing keypair** — a dedicated ES256 keypair
+   instance whose `/api/analysis/analyze-bridge` endpoint
+   receives the top-level multipart POST. HTTPS only.
+3. **`aimer_default_model_name`** — the default LLM vendor /
+   model-family identifier embedded as the `model_name` claim
+   in the `analyze_params_token` JWS. The accepted catalog is
+   owned by aimer-side configuration; any non-empty string is
+   structurally valid here.
+4. **`aimer_default_model`** — the default LLM model identifier
+   embedded as the `model` claim. Same shape rules as
+   `aimer_default_model_name`.
+5. **Context-token signing keypair** — a dedicated ES256 keypair
    stored under `data/keys/aimer-context-signing.json`.
 
-When all three are set the page shows **Configured (system-wide)**.
+When all five are set the page shows **Configured (system-wide)**.
 Any missing prerequisite turns the badge red and lists what is
 missing. Customer-level `external_key` is a per-customer setting
 and is intentionally **not** part of system-wide setup status; the
@@ -907,10 +915,29 @@ query strings, and fragments are rejected.
 
 Example: `https://aimer.example.com`.
 
+### `aimer_default_model_name`
+
+Default LLM vendor / model-family identifier sent as the
+`model_name` claim of the `analyze_params_token` JWS. Any
+non-empty string up to 256 characters is structurally valid;
+the accepted catalog is owned by aimer-side configuration.
+
+Example: `anthropic`.
+
+### `aimer_default_model`
+
+Default LLM model identifier sent as the `model` claim of the
+`analyze_params_token` JWS. Any non-empty string up to 256
+characters is structurally valid; the accepted catalog is
+owned by aimer-side configuration.
+
+Example: `claude-sonnet-4-6`.
+
 ### Effect-warning modal
 
-Editing `aice_id` or `aimer_web_bridge_url` triggers a
-non-dismissable modal that warns:
+Editing any of `aice_id`, `aimer_web_bridge_url`,
+`aimer_default_model_name`, or `aimer_default_model` triggers
+a non-dismissable modal that warns:
 
 > After this change, the operator must re-register this
 > environment on aimer-web. Existing registrations are
@@ -927,21 +954,26 @@ The Aimer integration page records:
 
 - `aimer_signing_key.generated`, `.rotated`, `.switched`,
   `.deactivated` — keypair lifecycle events.
-- `aimer_integration_setting.changed` — `aice_id` or
-  `aimer_web_bridge_url` change with the `{key, old, new}`
+- `aimer_integration_setting.changed` — any of `aice_id`,
+  `aimer_web_bridge_url`, `aimer_default_model_name`, or
+  `aimer_default_model` changed, with the `{key, old, new}`
   triple.
 
-The Send to Aimer flow records, on every browser-initiated
-context-token request (issued by the `POST /api/aimer/context-token`
-endpoint that the Send to Aimer button calls in the background):
+The Analyze with Aimer flow records, on every browser-initiated
+envelope mint (issued by the `POST /api/aimer/analyze-envelope`
+endpoint that the **Analyze with Aimer** button calls in the
+background):
 
-- `aimer_context_token.issued` — success. The audit row is bound
-  to the resolved customer and carries the issued `jti` and the
-  active signing-key `kid` so a forensic analyst can correlate
-  the token with the matching record on `aimer-web`.
-- `aimer_context_token.denied` — failure. Carries a `reason`
+- `aimer_analyze_envelope.issued` — success. The audit row is
+  bound to the resolved customer and carries the issued `jti`,
+  the active signing-key `kid`, the locator's `event_key`, the
+  resolved `lang`, the `force` flag, and whether the
+  `event_data` source was the baseline corpus or the REview
+  fallback, so a forensic analyst can correlate the envelope
+  with the matching record on `aimer-web`.
+- `aimer_analyze_envelope.denied` — failure. Carries a `reason`
   detail enumerating the gate that rejected the request:
-  `aimer_integration_not_configured` (one of the three
+  `aimer_integration_not_configured` (one of the five
   prerequisites in the [Setup status](#setup-status) section is
   missing), `customer_external_key_missing` (the resolved
   customer has no `external_key`), `event_not_found_for_customer`

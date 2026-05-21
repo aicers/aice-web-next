@@ -356,20 +356,20 @@ async function captureEventInvestigationSuite(
 }
 
 /**
- * Capture the two Send-to-Aimer modal states the manual references:
- * the pre-send confirmation (shared by both phases) and the Phase 2
- * post-send disclosure. Both surfaces are deterministic client-rendered
- * dialogs, so we drive them with Playwright route interception rather
- * than a live aimer-web; the AUTHORING.md "captures whose shape is
- * fully determined by client-side state" carve-out applies.
+ * Capture the Analyze-with-Aimer pre-send confirmation modal. The
+ * surface is a deterministic client-rendered dialog, so it can be
+ * captured without speaking to a live aimer-web (AUTHORING.md's
+ * "captures whose shape is fully determined by client-side state"
+ * carve-out applies).
+ *
+ * The post-confirm screen is intentionally NOT captured: the
+ * analyze-bridge flow opens the result on aimer-web in a new tab, so
+ * there is no aice-web-next-side post-send disclosure to screenshot.
  */
 async function captureAimerSendModals(
   page: import("@playwright/test").Page,
   locale: "en" | "ko",
 ): Promise<void> {
-  // Open the Send to Aimer modal from the Overview tab. The button is
-  // enabled thanks to the seeded `external_key`, system settings, and
-  // signing key set up in `beforeAll`.
   const sendButton = page.getByTestId("aimer-send-button");
   await expect(sendButton).toBeEnabled({ timeout: 10_000 });
   await sendButton.scrollIntoViewIfNeeded();
@@ -381,55 +381,6 @@ async function captureAimerSendModals(
     path: path.join(ASSETS_DIR, `aimer-send-modal-${locale}.png`),
     animations: "disabled",
   });
-
-  // Stub the routing decision endpoint to return a Phase 2 envelope and
-  // the aimer-web bridge POST to ack the multipart so the modal
-  // transitions to the post-send disclosure state. These are the same
-  // hops the live flow takes; only the bytes returned are synthetic.
-  const contextJti = "screenshot-jti-1";
-  const phase2Url = "https://aimer.example.test/api/phase2/baseline/batch";
-  await page.route("**/api/aimer/detection-send", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        route: "phase2",
-        context_token: "ctx.token.placeholder",
-        events_envelope: "events.envelope.placeholder",
-        events_data: "{}",
-        context_jti: contextJti,
-        aimer_endpoint_path: "/api/phase2/baseline/batch",
-        aimer_endpoint_url: phase2Url,
-        schema_version: "phase2.baseline.v1",
-      }),
-    });
-  });
-  await page.route(phase2Url, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        accepted: 1,
-        duplicates_skipped: 0,
-        received_at: new Date().toISOString(),
-        context_jti: contextJti,
-      }),
-    });
-  });
-
-  await confirmButton.click();
-  await expect(page.getByTestId("aimer-sent-phase2")).toBeVisible();
-  await page.screenshot({
-    path: path.join(ASSETS_DIR, `aimer-send-phase2-${locale}.png`),
-    animations: "disabled",
-  });
-  await page.getByTestId("aimer-sent-dismiss").click();
-  await expect(page.getByTestId("aimer-sent-phase2")).toBeHidden();
-
-  // Tear down the route interceptors so subsequent captures (KO run, or
-  // unrelated screenshots) hit the real network again.
-  await page.unroute("**/api/aimer/detection-send");
-  await page.unroute(phase2Url);
 }
 
 async function waitForDetectionList(

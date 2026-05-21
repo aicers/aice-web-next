@@ -43,7 +43,7 @@ describe("aimer events-envelope signing", () => {
       iss: "aice.example.com",
       aice_id: "aice.example.com",
       customer_ids: ["acmecorp.com"],
-      schema_version: "0.0-stub" as const,
+      schema_version: "analyze-bridge.v1" as const,
       event_count: 1,
       iat,
       exp: iat + 60,
@@ -51,16 +51,9 @@ describe("aimer events-envelope signing", () => {
     };
   }
 
-  it("buildStubEventsData encodes the documented stub JSON", () => {
-    const bytes = mod.buildStubEventsData();
-    expect(new TextDecoder().decode(bytes)).toBe(
-      '{"hello":"world","schema_version":"0.0-stub","event_count":1}',
-    );
-  });
-
   it("signs a JWS that round-trips through jose with the active kid", async () => {
     const input = baseInput();
-    const eventsData = mod.buildStubEventsData();
+    const eventsData = new TextEncoder().encode('{"event_key":"1"}');
     const jws = await mod.signEventsEnvelope(input, eventsData);
 
     const status = await signingKey.getAimerSigningKeyStatus();
@@ -121,7 +114,10 @@ describe("aimer events-envelope signing", () => {
   it("throws when no active signing key is on disk", async () => {
     signingKey.deleteAimerSigningKeyFile();
     await expect(
-      mod.signEventsEnvelope(baseInput(), mod.buildStubEventsData()),
+      mod.signEventsEnvelope(
+        baseInput(),
+        new TextEncoder().encode('{"event_key":"1"}'),
+      ),
     ).rejects.toThrow(/No active Aimer signing key/);
   });
 });

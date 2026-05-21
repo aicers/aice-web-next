@@ -112,17 +112,14 @@ type AimerIntegrationSettingAction = "aimer_integration_setting.changed";
 /**
  * Aimer context-token issuance actions (#439).
  *
- * The route handler `POST /api/aimer/context-token` issues a
- * short-lived ES256-signed context token (plus a stub events
- * envelope) on demand for the Send to Aimer button.  The success
- * path emits `.issued`; every guard / setup / scope failure emits
- * `.denied` with a `reason` detail.
+ * Historically emitted by `POST /api/aimer/context-token` for the
+ * Phase 1 Send-to-Aimer bridge handoff.
  *
- * The target type is `customer` because the success path is bound to
- * a single resolved customer via the chosen `customerId`.  The denial
- * path may be customer-agnostic (see `customer-scope-policy.ts`),
- * but reusing the `customer` target keeps both rows under the same
- * audit-target taxonomy.
+ * @deprecated stopped emitting in #629 (analyze-bridge rewire); kept
+ * in the enum so historical rows remain queryable through the audit
+ * filter UI / API allowlist. No production source path emits these
+ * actions after the rewire — the analyze-envelope mint emits
+ * `aimer_analyze_envelope.*` instead.
  */
 type AimerContextTokenAction =
   | "aimer_context_token.issued"
@@ -131,19 +128,39 @@ type AimerContextTokenAction =
 /**
  * Detection menu Send button routing (#621).
  *
- * The route handler `POST /api/aimer/detection-send` decides whether
- * the operator's Send click resolves to Phase 1 (existing bridge
- * handoff via `/api/aimer/context-token`) or Phase 2 (single-event
- * baseline batch direct to aimer-web). For Phase 1 it returns a
- * routing hint and the downstream context-token route emits its own
- * `aimer_context_token.issued`; for Phase 2 this route is the
- * issuance authority itself, so `.issued` fires here. `.denied` fires
- * on rate-limit, cross-tenant access, or orchestration failure
- * regardless of which path the request would otherwise resolve to.
+ * Historically emitted by `POST /api/aimer/detection-send`, which
+ * routed an operator's Send click between Phase 1 (existing bridge
+ * handoff via `/api/aimer/context-token`) and Phase 2 (single-event
+ * baseline batch direct to aimer-web).
+ *
+ * @deprecated stopped emitting in #629 (analyze-bridge rewire); kept
+ * in the enum so historical rows remain queryable through the audit
+ * filter UI / API allowlist. No production source path emits these
+ * actions after the rewire.
  */
 type AimerDetectionSendAction =
   | "aimer_detection_send.issued"
   | "aimer_detection_send.denied";
+
+/**
+ * Analyze-envelope mint actions (#629).
+ *
+ * Emitted by `POST /api/aimer/analyze-envelope`, which mints the
+ * 4-field signed-multipart envelope (`context_token`,
+ * `events_envelope`, `events_data`, `analyze_params_token`) that the
+ * Detection menu's Send button submits as a top-level form POST to
+ * aimer-web's `/api/analysis/analyze-bridge` endpoint.
+ *
+ * `.issued` fires once the four fields are signed and the audit row
+ * carries the resolved `customerId`. `.denied` fires at any pre-mint
+ * guard (rate-limit, integration-not-configured, cross-tenant 404,
+ * locator validation, REview scope check) — denial may run before
+ * the `customerId` is resolved, so this action is customer-agnostic
+ * to avoid leaking existence through the audit row.
+ */
+type AimerAnalyzeEnvelopeAction =
+  | "aimer_analyze_envelope.issued"
+  | "aimer_analyze_envelope.denied";
 
 /**
  * Triage policy CRUD actions (#459).
@@ -303,6 +320,7 @@ export type AuditAction =
   | AimerIntegrationSettingAction
   | AimerContextTokenAction
   | AimerDetectionSendAction
+  | AimerAnalyzeEnvelopeAction
   | TriagePolicyAction
   | TriageStoryAction
   | TriageExclusionAction
@@ -386,6 +404,8 @@ export const AUDIT_ACTIONS = [
   "aimer_context_token.denied",
   "aimer_detection_send.issued",
   "aimer_detection_send.denied",
+  "aimer_analyze_envelope.issued",
+  "aimer_analyze_envelope.denied",
   "triage.policy.create",
   "triage.policy.update",
   "triage.policy.delete",

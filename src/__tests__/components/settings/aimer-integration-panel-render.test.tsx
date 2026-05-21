@@ -89,6 +89,8 @@ function renderPanel(overrides?: {
   const setup: AimerIntegrationSetup = {
     aiceId: "aice.example.com",
     bridgeUrl: "https://aimer.example.com",
+    defaultModelName: "anthropic",
+    defaultModel: "claude-sonnet-4-6",
     hasActiveSigningKey: false,
     ...(overrides?.setup ?? {}),
   };

@@ -10,14 +10,17 @@ import { loadActiveSigningKeyMaterial } from "./signing-key";
 /**
  * `schema_version` claim accepted by {@link signEventsEnvelope}.
  *
- * - `"0.0-stub"` — the first-cycle Phase 1 stub envelope used by the
- *   Send to Aimer button (#439 / #440).
+ * - `"analyze-bridge.v1"` — the events_data shape carried by the
+ *   `POST /api/analysis/analyze-bridge` flow (#629). One event per
+ *   submission, snake_case canonical fields.
  * - {@link Phase2SchemaVersion} — RFC 0002 §6 Phase 2 wire schemas
  *   (baseline / story / policy_run / withdraw / refresh_window /
  *   backfill). Selected by the matching schema in the Phase 2 schema
  *   registry before the orchestration helper signs.
  */
-export type EventsEnvelopeSchemaVersion = "0.0-stub" | Phase2SchemaVersion;
+export type EventsEnvelopeSchemaVersion =
+  | "analyze-bridge.v1"
+  | Phase2SchemaVersion;
 
 /**
  * Caller-supplied input for {@link signEventsEnvelope}.
@@ -35,18 +38,6 @@ export interface EventsEnvelopeInput {
   iat: number;
   exp: number;
   context_jti: string;
-}
-
-/**
- * Stub `events_data` payload for the first cycle of the Send to
- * Aimer flow.  Carries no real detection data — just enough to
- * exercise the multipart / signing pipeline end-to-end while the
- * production schema is being decided in a follow-up.
- */
-export function buildStubEventsData(): Uint8Array {
-  return new TextEncoder().encode(
-    '{"hello":"world","schema_version":"0.0-stub","event_count":1}',
-  );
 }
 
 /**
