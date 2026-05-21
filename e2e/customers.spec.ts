@@ -170,7 +170,9 @@ test.describe("Customer management — UI", () => {
 
     const warning = page.getByRole("alertdialog");
     await expect(warning).toBeVisible();
-    await expect(warning.getByText(/disables Send to Aimer/i)).toBeVisible();
+    await expect(
+      warning.getByText(/disables Analyze with Aimer/i),
+    ).toBeVisible();
     await warning.getByRole("button", { name: "Continue" }).click();
 
     // Row persists; the external_key cell renders the empty placeholder.
