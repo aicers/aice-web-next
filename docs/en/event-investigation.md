@@ -166,8 +166,11 @@ When the result page on aimer-web offers a **Re-analyze**
 action, it round-trips back to aice-web-next with
 `?aimerForce=1`.  Arriving at the event detail page with that
 query parameter arms the next **Analyze with Aimer** click as
-`force=true`; the parameter is stripped from the URL on arrival
-so a manual refresh does not silently re-force.
+`force=true`.  The parameter intentionally stays on the URL
+across a refresh-before-click so the force arm survives a
+reload; it is stripped only after the click consumes the flag,
+so a refresh *after* the forced click does not silently
+re-force.
 
 The button is disabled when:
 
