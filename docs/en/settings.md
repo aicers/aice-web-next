@@ -203,7 +203,7 @@ Fields:
 - **Description** — optional description.
 - **External Key** — optional cross-system bridge identifier paired
   with the matching customer on aimer-web. Globally unique. Leave
-  blank if the customer is not yet onboarded for *Send to Aimer*.
+  blank if the customer is not yet onboarded for *Analyze with Aimer*.
   See [External Key](#external-key) below for the agreement and
   validation rules.
 
@@ -244,11 +244,11 @@ audit and event traffic back to a single business entity.
   aimer-web must be updated to keep the mapping intact, and a single
   bridge test is recommended right after.
 - **Effect of clearing.** Clearing the external key disables
-  *Send to Aimer* for the customer until a value is set again. Any
+  *Analyze with Aimer* for the customer until a value is set again. Any
   existing mapping with the aimer-web side is no longer reachable
   from this side.
 - **Customers without an external key.** Edits and queries continue
-  to work normally; only the *Send to Aimer* button is disabled per
+  to work normally; only the *Analyze with Aimer* button is disabled per
   customer until a value is populated.
 
 For the full operator playbook (agreement workflow, recovery from
@@ -789,7 +789,7 @@ Displays mTLS certificate status with severity indicators:
 ## Aimer Integration
 
 Navigate to **Settings → Aimer Integration** to configure the
-system-wide prerequisites for the Send to Aimer flow. This
+system-wide prerequisites for the Analyze with Aimer flow. This
 section is reserved for the **System Administrator** role —
 Tenant Administrator and Security Monitor are denied access at
 the page route, the public-JWK / thumbprint read endpoint, and

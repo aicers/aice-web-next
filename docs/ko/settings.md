@@ -200,7 +200,7 @@ Administrator 역할은 기본적으로 MFA가 필수입니다.
 - **설명** — 선택적 설명.
 - **External Key** — aimer-web의 일치하는 고객과 페어링하는
   교차 시스템 브리지 식별자(선택). 전 시스템에서 globally unique
-  합니다. 해당 고객이 *Send to Aimer*에 아직 온보딩되지 않은 경우
+  합니다. 해당 고객이 *Aimer로 분석*에 아직 온보딩되지 않은 경우
   비워둡니다. 합의 및 검증 규칙은 아래
   [External Key](#external-key) 섹션을 참고하세요.
 
@@ -240,10 +240,10 @@ External key는 AICE 고객과 aimer-web 측의 일치하는 고객을
   고객 정보도 함께 업데이트해야 하며, 직후에 단일 bridge 테스트로
   매핑을 검증하는 것을 권장합니다.
 - **해제의 영향.** External key를 해제하면 다시 설정할 때까지
-  해당 고객의 *Send to Aimer*가 비활성화됩니다. aimer-web 측과의
+  해당 고객의 *Aimer로 분석*가 비활성화됩니다. aimer-web 측과의
   기존 매핑은 이 측에서는 더 이상 도달할 수 없습니다.
 - **External key가 없는 고객.** 일반적인 편집 및 조회는 그대로
-  동작하며, 고객별로 *Send to Aimer* 버튼만 값이 채워질 때까지
+  동작하며, 고객별로 *Aimer로 분석* 버튼만 값이 채워질 때까지
   비활성화됩니다.
 
 전체 운영자 플레이북(합의 절차, 불일치 복구, 감사 포렌식)은
@@ -765,7 +765,7 @@ mTLS 인증서 상태를 심각도 표시기와 함께 표시합니다:
 
 ## Aimer 연동
 
-**설정 → Aimer 연동**으로 이동하여 Send to Aimer 흐름에 필요한
+**설정 → Aimer 연동**으로 이동하여 Aimer로 분석 흐름에 필요한
 시스템 전역 사전 조건을 설정합니다. 이 화면은 **System
 Administrator** 역할 전용입니다 — 사용자 정의 권한이 어떻게 부여
 되어 있더라도 Tenant Administrator와 Security Monitor는 페이지

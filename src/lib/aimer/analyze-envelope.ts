@@ -4,7 +4,10 @@ import { createHash } from "node:crypto";
 
 import { importJWK, SignJWT } from "jose";
 
-import { loadActiveSigningKeyMaterial } from "./signing-key";
+import {
+  type AimerSigningKeyMaterial,
+  loadActiveSigningKeyMaterial,
+} from "./signing-key";
 
 /**
  * Allowed values for the `lang` claim in {@link AnalyzeParamsTokenClaims}.
@@ -59,9 +62,21 @@ export interface AnalyzeParamsTokenClaims {
  */
 export async function signAnalyzeParamsToken(
   claims: AnalyzeParamsTokenClaims,
-  options: { iss: string; iat: number; exp: number },
+  options: {
+    iss: string;
+    iat: number;
+    exp: number;
+    /**
+     * Pre-loaded signing key material. When omitted the helper loads
+     * the active key itself — kept for backward compatibility and for
+     * test callers that do not need cross-token kid pinning. The
+     * envelope-mint route in `/api/aimer/analyze-envelope` always
+     * passes this so its three sibling JWSes share one `kid`.
+     */
+    keyMaterial?: AimerSigningKeyMaterial;
+  },
 ): Promise<string> {
-  const keyMaterial = loadActiveSigningKeyMaterial();
+  const keyMaterial = options.keyMaterial ?? loadActiveSigningKeyMaterial();
   if (!keyMaterial) {
     throw new Error(
       "No active Aimer signing key. Verify integration setup before signing.",
@@ -116,21 +131,84 @@ function base64UrlEncode(bytes: Buffer): string {
 export const ANALYZE_EVENT_KEY_PATTERN = /^[0-9]{1,39}$/;
 
 /**
- * Map a `Record<string, unknown>` produced by REview's GraphQL
- * client into the snake-case canonical shape consumed by
- * aimer-web's analyze-bridge endpoint.
+ * Top-level REview event fields the analyze-bridge `event_data`
+ * canon explicitly does NOT carry. These are present on the REview
+ * GraphQL selection set because the Detection UI renders them
+ * (chips, badges, sort affordances), but aimer-web's `event_data`
+ * contract is dispatched on `kind` plus the snake_case
+ * baseline-column set — UI metadata leaks would only widen the
+ * cross-origin payload surface without benefit.
  *
- * - `__typename` (camelCase) is mapped to top-level `kind` (snake).
- * - Nested objects are recursed.
- * - Arrays are mapped element-wise.
+ * Keys are compared in snake_case form (post-{@link camelToSnake}).
  *
- * The mapper is intentionally generic across the curated event
- * union: aimer-web treats `event_data` as `jsonb` and dispatches on
- * `kind`, so passing the full snake-cased selection-set is safe and
- * keeps the wire shape consistent across subtypes.
+ * Kept separate from the alias table so renames and strips remain
+ * easy to audit independently.
  */
-export function eventToSnakeCase(
+const REVIEW_UI_ONLY_FIELDS: ReadonlySet<string> = new Set([
+  // Common Event interface — UI-only fields.
+  "id",
+  "confidence",
+  "level",
+  "triage_scores",
+  // Customer / network / country metadata — rendered as Detection
+  // chips, never consumed by aimer-web.
+  "orig_customer",
+  "orig_customers",
+  "resp_customer",
+  "resp_customers",
+  "orig_network",
+  "resp_network",
+  "orig_country",
+  "orig_countries",
+  "resp_country",
+  "resp_countries",
+]);
+
+/**
+ * Contract-specific renames applied at the top level of a REview
+ * event row before it lands in the analyze-bridge `event_data`
+ * canon. Compared in snake_case form (post-{@link camelToSnake}) so
+ * the table reads as the on-wire mapping.
+ *
+ * - `time` → `event_time`: baseline rows expose `event_time`; REview
+ *   exposes `time`. aimer-web's verifier reads `event_time`.
+ * - `query` → `dns_query`: DNS subtypes (`BlocklistDns`,
+ *   `DnsCovertChannel`) expose `query`; the baseline column is
+ *   `dns_query` and aimer-web's verifier reads the same name.
+ */
+const REVIEW_KEY_ALIASES: Readonly<Record<string, string>> = {
+  time: "event_time",
+  query: "dns_query",
+};
+
+/**
+ * Convert a single REview event payload (camelCase, with
+ * `__typename` and UI affordances) into the snake-case canon
+ * `event_data` shape the analyze-bridge endpoint consumes.
+ *
+ * Behaviour:
+ *
+ * - Drops the keys in {@link REVIEW_UI_ONLY_FIELDS} (UI / query-only
+ *   affordances, plus nested customer / network metadata).
+ * - Applies the renames in {@link REVIEW_KEY_ALIASES}
+ *   (`time` → `event_time`, `query` → `dns_query`).
+ * - Maps `__typename` to a top-level `kind` (snake) and drops the
+ *   original camel key.
+ * - Snake-cases every remaining key.
+ * - Forces `event_key` to the caller-supplied locator value so
+ *   `event_data.event_key` cannot drift from the
+ *   `analyze_params_token.event_key` claim (aimer-web's
+ *   `event_key_mismatch` guard).
+ *
+ * The output mirrors the baseline path's top-level field set as far
+ * as REview exposes those fields: `event_key`, `event_time`, `kind`,
+ * `sensor`, `orig_addr`, `orig_port`, `resp_addr`, `resp_port`,
+ * `proto`, `host`, `dns_query`, `uri`, `category`. Per-subtype
+ * fields beyond that set pass through snake-cased.
+ */
+export function eventToAnalyzeBridgeCanon(
   source: Record<string, unknown>,
+  eventKey: string,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {
@@ -138,18 +216,32 @@ export function eventToSnakeCase(
       if (typeof value === "string") out.kind = value;
       continue;
     }
-    out[camelToSnake(key)] = mapValue(value);
+    const snake = camelToSnake(key);
+    if (REVIEW_UI_ONLY_FIELDS.has(snake)) continue;
+    const target = REVIEW_KEY_ALIASES[snake] ?? snake;
+    out[target] = mapNestedValue(value);
   }
+  out.event_key = eventKey;
   return out;
 }
 
-function mapValue(value: unknown): unknown {
+function mapNestedValue(value: unknown): unknown {
   if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(mapValue);
+  if (Array.isArray(value)) return value.map(mapNestedValue);
   if (typeof value === "object") {
-    return eventToSnakeCase(value as Record<string, unknown>);
+    return mapNestedObject(value as Record<string, unknown>);
   }
   return value;
+}
+
+function mapNestedObject(
+  source: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    out[camelToSnake(key)] = mapNestedValue(value);
+  }
+  return out;
 }
 
 function camelToSnake(key: string): string {

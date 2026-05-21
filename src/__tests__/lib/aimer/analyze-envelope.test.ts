@@ -92,44 +92,183 @@ describe("analyze-envelope helpers (#629)", () => {
     });
   });
 
-  describe("eventToSnakeCase", () => {
-    it("maps __typename to top-level kind and strips the original key", () => {
-      const out = mod.eventToSnakeCase({
-        __typename: "HttpThreat",
-        time: "2026-05-21T00:00:00Z",
-      });
+  describe("eventToAnalyzeBridgeCanon", () => {
+    it("maps __typename to top-level kind, drops the original key, and forces event_key", () => {
+      const out = mod.eventToAnalyzeBridgeCanon(
+        {
+          __typename: "HttpThreat",
+          time: "2026-05-21T00:00:00Z",
+        },
+        "42",
+      );
       expect(out.kind).toBe("HttpThreat");
       expect(out.__typename).toBeUndefined();
-      expect(out.time).toBe("2026-05-21T00:00:00Z");
+      expect(out.event_time).toBe("2026-05-21T00:00:00Z");
+      expect(out.time).toBeUndefined();
+      expect(out.event_key).toBe("42");
     });
 
-    it("converts camelCase keys to snake_case", () => {
-      const out = mod.eventToSnakeCase({
-        origAddr: "10.0.0.1",
-        respPort: 443,
-        dnsQueryName: "example.com",
-      });
-      expect(out).toEqual({
+    it("applies the contract aliases time → event_time and query → dns_query", () => {
+      const out = mod.eventToAnalyzeBridgeCanon(
+        {
+          __typename: "DnsCovertChannel",
+          time: "2026-05-21T00:00:00Z",
+          query: "evil.example.com",
+        },
+        "99",
+      );
+      expect(out.event_time).toBe("2026-05-21T00:00:00Z");
+      expect(out.dns_query).toBe("evil.example.com");
+      expect(out.query).toBeUndefined();
+    });
+
+    it("strips UI-only common-interface fields (id, confidence, level, triageScores)", () => {
+      const out = mod.eventToAnalyzeBridgeCanon(
+        {
+          __typename: "HttpThreat",
+          id: "42",
+          confidence: 0.9,
+          level: "MEDIUM",
+          triageScores: [{ policyId: 1, score: 0.5 }],
+          sensor: "sensor-1",
+        },
+        "42",
+      );
+      expect(out.id).toBeUndefined();
+      expect(out.confidence).toBeUndefined();
+      expect(out.level).toBeUndefined();
+      expect(out.triage_scores).toBeUndefined();
+      expect(out.sensor).toBe("sensor-1");
+    });
+
+    it("strips nested customer / network / country metadata", () => {
+      const out = mod.eventToAnalyzeBridgeCanon(
+        {
+          __typename: "HttpThreat",
+          origCustomer: { id: 1, name: "Acme" },
+          respCustomer: { id: 2, name: "BizCo" },
+          origCustomers: [{ id: 1, name: "Acme" }],
+          respCustomers: [{ id: 2, name: "BizCo" }],
+          origNetwork: { id: 3, name: "Office" },
+          respNetwork: { id: 4, name: "DMZ" },
+          origCountry: "US",
+          respCountry: "KR",
+          origCountries: ["US"],
+          respCountries: ["KR"],
+        },
+        "42",
+      );
+      expect(out.orig_customer).toBeUndefined();
+      expect(out.resp_customer).toBeUndefined();
+      expect(out.orig_customers).toBeUndefined();
+      expect(out.resp_customers).toBeUndefined();
+      expect(out.orig_network).toBeUndefined();
+      expect(out.resp_network).toBeUndefined();
+      expect(out.orig_country).toBeUndefined();
+      expect(out.resp_country).toBeUndefined();
+      expect(out.orig_countries).toBeUndefined();
+      expect(out.resp_countries).toBeUndefined();
+    });
+
+    it("snake-cases addressing fields the analyze-bridge canon keeps", () => {
+      const out = mod.eventToAnalyzeBridgeCanon(
+        {
+          __typename: "HttpThreat",
+          origAddr: "10.0.0.1",
+          origPort: 1234,
+          respAddr: "203.0.113.5",
+          respPort: 443,
+          proto: 6,
+          host: "example.com",
+          uri: "/login",
+          category: "Webshell",
+        },
+        "42",
+      );
+      expect(out).toMatchObject({
+        kind: "HttpThreat",
+        event_key: "42",
         orig_addr: "10.0.0.1",
+        orig_port: 1234,
+        resp_addr: "203.0.113.5",
         resp_port: 443,
-        dns_query_name: "example.com",
+        proto: 6,
+        host: "example.com",
+        uri: "/login",
+        category: "Webshell",
       });
     });
 
-    it("recurses into nested objects and arrays", () => {
-      const out = mod.eventToSnakeCase({
-        nestedField: { innerKey: 1, deeperObject: { evenDeeper: "x" } },
-        arrayField: [{ itemKey: "a" }, { itemKey: "b" }],
-      });
-      expect(out).toEqual({
-        nested_field: { inner_key: 1, deeper_object: { even_deeper: "x" } },
-        array_field: [{ item_key: "a" }, { item_key: "b" }],
-      });
+    it("snake-cases nested arrays of plain values (e.g. FtpPlainText.commands)", () => {
+      const out = mod.eventToAnalyzeBridgeCanon(
+        {
+          __typename: "FtpPlainText",
+          commands: [
+            { command: "USER", replyCode: 331, replyMsg: "Password required" },
+            { command: "PASS", replyCode: 230, replyMsg: "Login OK" },
+          ],
+        },
+        "42",
+      );
+      expect(out.commands).toEqual([
+        { command: "USER", reply_code: 331, reply_msg: "Password required" },
+        { command: "PASS", reply_code: 230, reply_msg: "Login OK" },
+      ]);
     });
 
-    it("preserves null and undefined values", () => {
-      const out = mod.eventToSnakeCase({ origAddr: null, respPort: undefined });
-      expect(out).toEqual({ orig_addr: null, resp_port: undefined });
+    it("preserves null values on retained fields", () => {
+      const out = mod.eventToAnalyzeBridgeCanon(
+        {
+          __typename: "HttpThreat",
+          origAddr: null,
+          respPort: null,
+        },
+        "42",
+      );
+      expect(out.orig_addr).toBeNull();
+      expect(out.resp_port).toBeNull();
+    });
+
+    it("produces the same top-level addressing keys as the baseline canon", () => {
+      // Baseline rows emit these keys at the top level (see
+      // `loadSingleBaselineEventWireItem` in baseline-push.ts). The
+      // non-baseline path must produce the same set so aimer-web's
+      // verifier sees one canonical shape regardless of source.
+      const baselineTopLevel = [
+        "event_key",
+        "event_time",
+        "kind",
+        "sensor",
+        "orig_addr",
+        "orig_port",
+        "resp_addr",
+        "resp_port",
+        "proto",
+        "host",
+        "dns_query",
+        "uri",
+        "category",
+      ];
+      const out = mod.eventToAnalyzeBridgeCanon(
+        {
+          __typename: "DnsCovertChannel",
+          time: "2026-05-21T00:00:00Z",
+          sensor: "sensor-1",
+          origAddr: "10.0.0.1",
+          origPort: 53,
+          respAddr: "8.8.8.8",
+          respPort: 53,
+          proto: 17,
+          host: null,
+          query: "covert.example.com",
+          uri: null,
+          category: "DNS",
+        },
+        "42",
+      );
+      for (const key of baselineTopLevel) {
+        expect(out).toHaveProperty(key);
+      }
     });
   });
 
@@ -211,6 +350,33 @@ describe("analyze-envelope helpers (#629)", () => {
           exp: iat + 60,
         }),
       ).rejects.toThrow(/No active Aimer signing key/);
+    });
+
+    it("honours an explicit keyMaterial pin instead of re-reading the file", async () => {
+      // Snapshot the active key, replace the on-disk file with a
+      // freshly generated one (which the implicit loader would now
+      // return), and confirm the explicit pin still signs with the
+      // original kid. Catches the kid-drift race the envelope-mint
+      // route prevents by loading once and threading.
+      const pinned = signingKey.loadActiveSigningKeyMaterial();
+      if (!pinned) throw new Error("expected active key");
+
+      signingKey.deleteAimerSigningKeyFile();
+      await signingKey.generateAimerSigningKey();
+      const replaced = signingKey.loadActiveSigningKeyMaterial();
+      if (!replaced) throw new Error("expected replacement key");
+      expect(replaced.kid).not.toBe(pinned.kid);
+
+      const iat = Math.floor(Date.now() / 1000);
+      const jws = await mod.signAnalyzeParamsToken(baseClaims(), {
+        iss: "aice.example.com",
+        iat,
+        exp: iat + 60,
+        keyMaterial: pinned,
+      });
+      const header = decodeProtectedHeader(jws);
+      expect(header.kid).toBe(pinned.kid);
+      expect(header.kid).not.toBe(replaced.kid);
     });
   });
 });

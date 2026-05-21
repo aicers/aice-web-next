@@ -6,7 +6,7 @@ import {
   ANALYZE_EVENT_KEY_PATTERN,
   type AnalyzeLang,
   eventsEnvelopeHash,
-  eventToSnakeCase,
+  eventToAnalyzeBridgeCanon,
   sha256Base64Url,
   signAnalyzeParamsToken,
 } from "@/lib/aimer/analyze-envelope";
@@ -352,19 +352,30 @@ export const POST = withAuth(
       for (const k of PHASE2_ENRICHMENT_KEYS) delete stripped[k];
       eventData = stripped;
     } else {
-      eventData = eventToSnakeCase(
+      // Contract-specific REview → analyze-bridge canon. Strips UI /
+      // query-only fields (id, confidence, level, triage_scores,
+      // customer/network/country metadata), applies the
+      // time→event_time / query→dns_query aliases, snake-cases what
+      // remains, and pins `event_key` to the locator so aimer-web's
+      // `event_key_mismatch` guard cannot fire in normal flow.
+      eventData = eventToAnalyzeBridgeCanon(
         eventDetail.event as unknown as Record<string, unknown>,
+        locator.id,
       );
-      // Anchor `event_key` to the locator so the top-level claim and
-      // the embedded value agree — aimer-web's `event_key_mismatch`
-      // guard rejects any drift.
-      eventData.event_key = locator.id;
     }
 
     // Serialize and hash event_data → multipart bytes.
     const eventsDataJson = JSON.stringify(eventData);
     const eventsData = new TextEncoder().encode(eventsDataJson);
 
+    // Pin the active signing key once per mint and thread the same
+    // material through all three sibling helpers. analyze-bridge
+    // requires `analyze_params_token` to be signed with the same
+    // trust-registry key (kid / alg) as `events_envelope`; if the
+    // operator runs `Switch` while the request is in flight, the
+    // helpers' own internal `loadActiveSigningKeyMaterial()` calls
+    // would race and could emit JWSes with different `kid`s — also
+    // misaligning the audit-row `kid` from the actual signing keys.
     const keyMaterial = loadActiveSigningKeyMaterial();
     if (!keyMaterial) {
       await recordDenial({
@@ -381,16 +392,19 @@ export const POST = withAuth(
     const jti = generateContextTokenJti();
     const customerIds = [externalKey];
 
-    const contextTokenJws = await signContextToken({
-      iss: setup.aiceId,
-      aud: AIMER_CONTEXT_TOKEN_AUDIENCE,
-      sub: session.accountId,
-      aice_id: setup.aiceId,
-      customer_ids: customerIds,
-      iat,
-      exp,
-      jti,
-    });
+    const contextTokenJws = await signContextToken(
+      {
+        iss: setup.aiceId,
+        aud: AIMER_CONTEXT_TOKEN_AUDIENCE,
+        sub: session.accountId,
+        aice_id: setup.aiceId,
+        customer_ids: customerIds,
+        iat,
+        exp,
+        jti,
+      },
+      { keyMaterial },
+    );
 
     const eventsEnvelopeJws = await signEventsEnvelope(
       {
@@ -404,6 +418,7 @@ export const POST = withAuth(
         context_jti: jti,
       },
       eventsData,
+      { keyMaterial },
     );
 
     const payloadHash = sha256Base64Url(eventsData);
@@ -421,7 +436,7 @@ export const POST = withAuth(
         force,
         external_key: externalKey,
       },
-      { iss: setup.aiceId, iat, exp },
+      { iss: setup.aiceId, iat, exp, keyMaterial },
     );
 
     await auditLog.record({

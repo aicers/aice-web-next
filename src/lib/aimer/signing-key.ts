@@ -359,15 +359,25 @@ export async function getAimerVerificationKey(
 }
 
 /**
+ * Snapshot of the active Aimer signing key returned by
+ * {@link loadActiveSigningKeyMaterial}. The envelope-mint route in
+ * `/api/aimer/analyze-envelope` reads this once per call and passes
+ * the same material into every sibling signing helper so the three
+ * JWSes share one `kid` even if the operator rotates / switches the
+ * key mid-mint.
+ */
+export interface AimerSigningKeyMaterial {
+  kid: string;
+  algorithm: string;
+  privateJwk: JWK;
+}
+
+/**
  * Internal: load the active private key (for context-token signing
  * by Sub-7.2.D).  Server-side only — callers must never expose the
  * returned JWK over HTTP.
  */
-export function loadActiveSigningKeyMaterial(): {
-  kid: string;
-  algorithm: string;
-  privateJwk: JWK;
-} | null {
+export function loadActiveSigningKeyMaterial(): AimerSigningKeyMaterial | null {
   const file = readKeyFile();
   if (!file) return null;
   return {

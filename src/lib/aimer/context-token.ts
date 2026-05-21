@@ -4,7 +4,10 @@ import { randomUUID } from "node:crypto";
 
 import { importJWK, SignJWT } from "jose";
 
-import { loadActiveSigningKeyMaterial } from "./signing-key";
+import {
+  type AimerSigningKeyMaterial,
+  loadActiveSigningKeyMaterial,
+} from "./signing-key";
 
 /**
  * Audience claim that aimer-web's `verifyContextToken` requires.
@@ -55,8 +58,19 @@ export function generateContextTokenJti(): string {
  */
 export async function signContextToken(
   payload: ContextTokenPayload,
+  options: {
+    /**
+     * Pre-loaded signing key material. When omitted the helper loads
+     * the active key itself — kept so legacy single-token callers and
+     * tests stay terse. The analyze-envelope route in
+     * `/api/aimer/analyze-envelope` always passes this so its three
+     * sibling JWSes share one `kid` even across a mid-mint key
+     * rotation.
+     */
+    keyMaterial?: AimerSigningKeyMaterial;
+  } = {},
 ): Promise<string> {
-  const keyMaterial = loadActiveSigningKeyMaterial();
+  const keyMaterial = options.keyMaterial ?? loadActiveSigningKeyMaterial();
   if (!keyMaterial) {
     throw new Error(
       "No active Aimer signing key. Verify integration setup before signing.",

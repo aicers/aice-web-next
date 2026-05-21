@@ -108,14 +108,14 @@
   },
   "aimerIntegration": {
     "title": "Aimer Integration",
-    "description": "Configure the system-wide prerequisites for the Send to Aimer flow: the deployment identifier (aice_id), the aimer-web bridge URL, and the dedicated context-token signing keypair.",
+    "description": "Configure the system-wide prerequisites for the Analyze with Aimer flow: the deployment identifier (aice_id), the aimer-web bridge URL, the default analyze model identifiers (aimer_default_model_name, aimer_default_model), and the dedicated context-token signing keypair.",
     "permissionAlert": {
       "title": "Aimer signing key file has unexpected permissions",
       "body": "The on-disk file ({path}) was observed with mode {observed} instead of 0600. Restore the correct mode (chmod 0600) before continuing — the application refuses to write a key with looser permissions, but reading remains possible."
     },
     "setupStatus": {
       "title": "Setup status",
-      "description": "Aimer integration is system-wide. All three prerequisites must be configured before the Send to Aimer button becomes operational.",
+      "description": "Aimer integration is system-wide. All five prerequisites must be configured before the Analyze with Aimer button becomes operational.",
       "configured": "Configured (system-wide)",
       "notConfigured": "Not configured",
       "missing": {
@@ -205,7 +205,7 @@
     "customerExternalKey": {
       "line": "Customer external_key configured: {configured} / {total} customers.",
       "linkLabel": "Manage customers →",
-      "note": "external_key is a per-customer setting and does not affect system-wide setup status. The Send to Aimer button is independently disabled per customer until each customer's external_key is populated."
+      "note": "external_key is a per-customer setting and does not affect system-wide setup status. The Analyze with Aimer button is independently disabled per customer until each customer's external_key is populated."
     },
     "errors": {
       "actionFailed": "Operation failed. See the error toast for details and retry."
@@ -938,7 +938,7 @@
     "externalKeyChangeTitle": "Confirm external_key change",
     "externalKeyChangeBody": "external_key is the customer mapping identifier with aimer-web. After this change, aimer-web's matching customer must also be updated to keep the mapping intact. A bridge test is recommended right after. Continue?",
     "externalKeyClearTitle": "Confirm external_key clear",
-    "externalKeyClearBody": "Clearing this customer's external_key disables Send to Aimer for this customer until it is set again, and any existing mapping with aimer-web's matching customer is no longer reachable from this side. Continue?"
+    "externalKeyClearBody": "Clearing this customer's external_key disables Analyze with Aimer for this customer until it is set again, and any existing mapping with aimer-web's matching customer is no longer reachable from this side. Continue?"
   },
   "multitenancy": {
     "scope": {
