@@ -191,13 +191,18 @@ aimer-web 결과 페이지의 **재분석** 동작은 aice-web-next로
 바로 보여줍니다. #624에서 추적합니다.*
 
 여기서 사용한 브라우저 기본 요소는 의도된 선택입니다.
-`target="_blank"`를 가진 HTML form submit은 새 탭에서 열리는
-최상위 multipart POST를 만드는 표준 브라우저 API입니다.
-`fetch`에 `FormData`를 실어 보내는 방식은 페이지 이동을
-일으키지 않으며, 같은 탭에서 submit하면 이벤트 상세 뷰가
-교체됩니다. HTML form 파트는 텍스트만 담을 수 있으므로,
-JSON 페이로드를 포함한 모든 필드는 `Blob`이 아닌 텍스트
-파트로 전송됩니다.
+HTML form submit은 새 탭에서 최상위 multipart POST를 만드는
+표준 브라우저 API입니다. `fetch`에 `FormData`를 실어 보내는
+방식은 페이지 이동을 일으키지 않으며, 같은 탭에서 submit하면
+이벤트 상세 뷰가 교체됩니다. form의 `target`은 클릭 핸들러가
+`window.open("about:blank", <name>)`로 동기적으로 예약해 둔
+탭의 이름이므로, 팝업 차단기는 활성화가 아직 유효한 시점에서
+창이 열리는 것을 보게 됩니다. 이후 form submit이 같은 이름의
+창으로 다시 전송됩니다. `_blank`는 `window.open`이 `null`을
+반환할 때(form을 만들기 전에 팝업이 차단된 경우)에만
+폴백으로 사용됩니다. HTML form 파트는 텍스트만 담을 수
+있으므로, JSON 페이로드를 포함한 모든 필드는 `Blob`이 아닌
+텍스트 파트로 전송됩니다.
 
 Aimer 배너 아래의 **바로가기**에는 관련 활동으로 사전 필터링된
 탐지 페이지를 여는 링크가 나열됩니다. 최근 24시간 같은 출발지

@@ -322,7 +322,7 @@ describe("AimerBanner – force-flow arming via ?aimerForce=1", () => {
     return JSON.parse(String(init.body)) as Record<string, unknown>;
   }
 
-  it("arms force=true when the URL carries ?aimerForce=1 and strips the param via replaceState", async () => {
+  it("arms force=true when the URL carries ?aimerForce=1 and strips the param via replaceState once the click consumes it", async () => {
     window.history.replaceState(
       window.history.state,
       "",
@@ -337,10 +337,10 @@ describe("AimerBanner – force-flow arming via ?aimerForce=1", () => {
       customerBridgeEligible: { 7: true },
     });
 
-    // The mount effect strips the param synchronously.
-    expect(window.location.search).not.toContain("aimerForce=1");
+    // Mount arms the flag but keeps the URL param so a refresh before
+    // the click re-arms force on the next mount.
+    expect(window.location.search).toContain("aimerForce=1");
     expect(window.location.search).toContain("keep=me");
-    expect(replaceSpy).toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("aimer-send-button"));
     fireEvent.click(screen.getByTestId("aimer-modal-send"));
@@ -348,6 +348,43 @@ describe("AimerBanner – force-flow arming via ?aimerForce=1", () => {
 
     const body = lastMintCallBody(fetchSpy);
     expect(body?.force).toBe(true);
+
+    // The click consumed the arm; the param is now stripped.
+    expect(window.location.search).not.toContain("aimerForce=1");
+    expect(window.location.search).toContain("keep=me");
+    expect(replaceSpy).toHaveBeenCalled();
+  });
+
+  it("preserves the ?aimerForce=1 arm across a refresh before the click", async () => {
+    window.history.replaceState(
+      window.history.state,
+      "",
+      "/events/12345?aimerForce=1",
+    );
+    const fetchSpy = stubAnalyzeEnvelopeFetch();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    // First mount: arm without consuming. Simulate refresh by
+    // unmounting and rendering again — the URL still carries the
+    // param, so the next mount re-arms force=true.
+    const { unmount } = renderBanner({
+      candidates: [{ id: 7, name: "Acme" }],
+      customerBridgeEligible: { 7: true },
+    });
+    expect(window.location.search).toContain("aimerForce=1");
+    unmount();
+
+    renderBanner({
+      candidates: [{ id: 7, name: "Acme" }],
+      customerBridgeEligible: { 7: true },
+    });
+    fireEvent.click(screen.getByTestId("aimer-send-button"));
+    fireEvent.click(screen.getByTestId("aimer-modal-send"));
+    await waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(1));
+
+    const body = lastMintCallBody(fetchSpy);
+    expect(body?.force).toBe(true);
+    expect(window.location.search).not.toContain("aimerForce=1");
   });
 
   it("defaults force=false when the URL does NOT carry ?aimerForce=1", async () => {

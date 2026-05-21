@@ -148,19 +148,27 @@ export function AimerBanner({
   const radioGroupId = useId();
 
   // One-shot force flag, armed by reading `?aimerForce=1` from the
-  // URL on mount. Cleared after the next click consumes it (or after
-  // the URL is rewritten, whichever happens first), so a manual
-  // refresh of the event detail page does not silently re-force.
+  // URL on mount. The URL param is kept until the click consumes the
+  // force flag (see `submitAnalyzeBridge`), so a user who refreshes
+  // the event detail page before clicking still re-arms force=true
+  // on the next mount. The param is stripped only after the click
+  // fires, so a post-click refresh does not re-force.
   const forceArmedRef = useRef(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     if (url.searchParams.get(FORCE_QUERY_PARAM) === "1") {
       forceArmedRef.current = true;
-      url.searchParams.delete(FORCE_QUERY_PARAM);
-      const next = `${url.pathname}${url.search}${url.hash}`;
-      window.history.replaceState(window.history.state, "", next);
     }
+  }, []);
+
+  const stripForceParam = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get(FORCE_QUERY_PARAM) === null) return;
+    url.searchParams.delete(FORCE_QUERY_PARAM);
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(window.history.state, "", next);
   }, []);
 
   const requestIdRef = useRef(0);
@@ -190,8 +198,11 @@ export function AimerBanner({
       // arm is one-shot and must not survive a fetch failure (the
       // user can retry the click; the next click should not be
       // forced unless they re-arrive via the round-trip URL).
+      // Also strip `?aimerForce=1` from the URL once the click has
+      // consumed it, so a post-click refresh does not re-force.
       const force = forceArmedRef.current;
       forceArmedRef.current = false;
+      if (force) stripForceParam();
 
       const closeReservedTab = () => {
         if (targetWindow && !targetWindow.closed) targetWindow.close();
@@ -267,7 +278,7 @@ export function AimerBanner({
         if (form !== null) form.remove();
       }
     },
-    [locale, locator, t],
+    [locale, locator, stripForceParam, t],
   );
 
   const handleSend = useCallback(() => {

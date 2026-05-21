@@ -201,10 +201,16 @@ removed in the analyze-bridge flow; the new tab on aimer-web
 shows the result page directly.  Tracked at #624.*
 
 The browser primitive used here is intentional.  An HTML form
-submit with `target="_blank"` is the standard browser API that
-produces a top-level multipart POST opening in a new tab —
-`fetch` with a `FormData` body would not navigate, and a same-
-tab submit would replace the event-detail view.  Because HTML
+submit is the standard browser API that produces a top-level
+multipart POST in a new tab — `fetch` with a `FormData` body
+would not navigate, and a same-tab submit would replace the
+event-detail view.  The form's `target` is the name of the tab
+that the click handler reserved synchronously via
+`window.open("about:blank", <name>)`, so popup blockers see the
+window open under the still-fresh transient activation; the
+form submit then retargets into that named window.  `_blank` is
+used only as a fallback when `window.open` returns `null` (the
+popup was blocked before the form was built).  Because HTML
 form parts can only be text, every field including the JSON
 payload is sent as a text part rather than a `Blob`.
 
