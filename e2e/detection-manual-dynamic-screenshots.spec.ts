@@ -385,6 +385,8 @@ async function captureAimerSendModals(
     path: path.join(ASSETS_DIR, `aimer-send-modal-${locale}.png`),
     animations: "disabled",
   });
+  await page.keyboard.press("Escape");
+  await expect(confirmButton).toBeHidden();
 }
 
 async function waitForDetectionList(
