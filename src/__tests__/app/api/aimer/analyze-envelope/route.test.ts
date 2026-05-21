@@ -148,9 +148,12 @@ function reviewEvent(overrides: Record<string, unknown> = {}) {
 }
 
 function baselineWireItem(): Record<string, unknown> {
-  // Mirrors the fields `loadSingleBaselineEventWireItem` emits, plus
-  // the four Phase 2 enrichment fields the route must strip on the
-  // baseline branch.
+  // Mirrors every field `loadSingleBaselineEventWireItem` actually
+  // emits (see `buildStreamingEvent` in baseline-push.ts): canonical
+  // event columns + `raw_event`, plus the corpus/baseline metadata
+  // (`baseline_version`, `exclusions_fp`, `raw_score`,
+  // `selector_tags`) and the four Phase 2 enrichment fields — all of
+  // which the route's analyze-bridge projection must strip.
   return {
     event_key: "12345",
     event_time: "2026-05-21T00:00:00Z",
@@ -161,8 +164,29 @@ function baselineWireItem(): Record<string, unknown> {
     resp_addr: "8.8.8.8",
     resp_port: 53,
     proto: 17,
+    host: null,
     dns_query: "covert.example.com",
+    uri: null,
     category: "DNS",
+    baseline_version: "2026-05-01",
+    exclusions_fp: "fp-abc",
+    raw_score: 0.91,
+    selector_tags: ["selector:a", "selector:b"],
+    raw_event: {
+      event_key: "12345",
+      event_time: "2026-05-21T00:00:00Z",
+      kind: "DnsCovertChannel",
+      sensor: "sensor-1",
+      orig_addr: "10.0.0.1",
+      orig_port: 53,
+      resp_addr: "8.8.8.8",
+      resp_port: 53,
+      proto: 17,
+      host: null,
+      dns_query: "covert.example.com",
+      uri: null,
+      category: "DNS",
+    },
     window_signals: { s1_percentile_rank: 0.42 },
     score_window_context: { kind_cohort_size: 100 },
     asset_context: { primary_asset: "asset-A" },
@@ -390,7 +414,7 @@ describe("POST /api/aimer/analyze-envelope", () => {
 
   // ── Baseline-vs-REview source branching ──────────────────
 
-  it("uses the baseline wire item and strips the four Phase 2 enrichment fields when the event passes baseline", async () => {
+  it("projects the baseline wire item to the analyze-bridge canon (canonical columns + raw_event) when the event passes baseline", async () => {
     mockLoadSingleBaseline.mockResolvedValue(baselineWireItem());
     const { POST } = await import("@/app/api/aimer/analyze-envelope/route");
     const res = await POST(
@@ -408,9 +432,37 @@ describe("POST /api/aimer/analyze-envelope", () => {
     expect(eventData).not.toHaveProperty("score_window_context");
     expect(eventData).not.toHaveProperty("asset_context");
     expect(eventData).not.toHaveProperty("scoring_weights_snapshot");
+    // The corpus/baseline metadata the helper also emits must
+    // not leak into the signed bridge payload.
+    expect(eventData).not.toHaveProperty("baseline_version");
+    expect(eventData).not.toHaveProperty("exclusions_fp");
+    expect(eventData).not.toHaveProperty("raw_score");
+    expect(eventData).not.toHaveProperty("selector_tags");
+    // The projection is an exact allowlist — no surprise keys.
+    expect(Object.keys(eventData).sort()).toEqual(
+      [
+        "category",
+        "dns_query",
+        "event_key",
+        "event_time",
+        "host",
+        "kind",
+        "orig_addr",
+        "orig_port",
+        "proto",
+        "raw_event",
+        "resp_addr",
+        "resp_port",
+        "sensor",
+        "uri",
+      ].sort(),
+    );
     // Baseline-source columns are preserved.
     expect(eventData.event_key).toBe("12345");
     expect(eventData.kind).toBe("DnsCovertChannel");
+    expect((eventData.raw_event as Record<string, unknown>).event_key).toBe(
+      "12345",
+    );
 
     expect(mockAuditRecord).toHaveBeenCalledWith(
       expect.objectContaining({

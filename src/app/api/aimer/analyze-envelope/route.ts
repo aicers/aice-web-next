@@ -71,10 +71,14 @@ import { ReviewForbiddenError } from "@/lib/review/errors";
  *      Phase 1 / Phase 2 routes.
  *   5. Decide `event_data` source:
  *        - Baseline-passing row → reuse
- *          {@link loadSingleBaselineEventWireItem} and strip the
- *          four Phase 2 enrichment fields (`window_signals`,
+ *          {@link loadSingleBaselineEventWireItem} and project to
+ *          the analyze-bridge canon allowlist (canonical event
+ *          columns + `raw_event`). This drops both the four Phase 2
+ *          enrichment fields (`window_signals`,
  *          `score_window_context`, `asset_context`,
- *          `scoring_weights_snapshot`).
+ *          `scoring_weights_snapshot`) and the corpus/baseline
+ *          metadata the helper also emits (`baseline_version`,
+ *          `exclusions_fp`, `raw_score`, `selector_tags`).
  *        - Otherwise → use the REview event payload converted to
  *          snake_case canonical form (with `__typename` mapped to
  *          `kind`).
@@ -100,11 +104,28 @@ const ANALYZE_BRIDGE_PATH = "/api/analysis/analyze-bridge";
 const ANALYZE_BRIDGE_SCHEMA_VERSION = "analyze-bridge.v1" as const;
 const CONTEXT_TOKEN_TTL_SECONDS = 60;
 
-const PHASE2_ENRICHMENT_KEYS = [
-  "window_signals",
-  "score_window_context",
-  "asset_context",
-  "scoring_weights_snapshot",
+// Allowlist of analyze-bridge canonical event-data keys for the
+// baseline branch. We project the reused
+// `loadSingleBaselineEventWireItem` output down to this set rather
+// than denylisting Phase 2 enrichment, so corpus/baseline metadata
+// the helper also adds (`baseline_version`, `exclusions_fp`,
+// `raw_score`, `selector_tags`) cannot leak into the signed
+// `events_data` payload aimer-web consumes.
+const BASELINE_ANALYZE_BRIDGE_KEYS = [
+  "event_key",
+  "event_time",
+  "kind",
+  "sensor",
+  "orig_addr",
+  "orig_port",
+  "resp_addr",
+  "resp_port",
+  "proto",
+  "host",
+  "dns_query",
+  "uri",
+  "category",
+  "raw_event",
 ] as const;
 
 interface RequestBody {
@@ -348,9 +369,18 @@ export const POST = withAuth(
     });
     let eventData: Record<string, unknown>;
     if (baselineWireItem !== null) {
-      const stripped: Record<string, unknown> = { ...baselineWireItem };
-      for (const k of PHASE2_ENRICHMENT_KEYS) delete stripped[k];
-      eventData = stripped;
+      // Project to the analyze-bridge canon (canonical event columns
+      // + `raw_event`). The reused Phase 2 helper also emits
+      // `baseline_version` / `exclusions_fp` / `raw_score` /
+      // `selector_tags` (corpus/baseline metadata) and the four
+      // Phase 2 enrichment fields — none of which belong in the
+      // bridge `events_data` aimer-web verifies.
+      const wire = baselineWireItem as unknown as Record<string, unknown>;
+      const projected: Record<string, unknown> = {};
+      for (const k of BASELINE_ANALYZE_BRIDGE_KEYS) {
+        if (k in wire) projected[k] = wire[k];
+      }
+      eventData = projected;
     } else {
       // Contract-specific REview → analyze-bridge canon. Strips UI /
       // query-only fields (id, confidence, level, triage_scores,
