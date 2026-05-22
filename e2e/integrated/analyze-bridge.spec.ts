@@ -41,33 +41,31 @@ test.describe("analyze-bridge integrated e2e", () => {
   // green runs; lift the skip locally to inspect event-list + banner
   // state during fixme implementation. Removed once the scenarios are
   // green and the seeding helpers are documented.
-  test.skip("debug: detection events list + first event detail", async ({
+  test.skip("debug: navigate to a Send-eligible event detail", async ({
     page,
   }) => {
-    // Reference walk-through for the operator iterating the fixme
-    // scenarios. Lift the skip locally to inspect candidate /
-    // banner state. The reference manager dump
-    // (`dump/manager_20260312151343.tgz`) carries events with no
-    // origCustomer / respCustomer fields populated — the happy-path
-    // scenarios need an event whose detail page shows the Send
-    // button enabled with a candidate selected. That in turn needs
-    // (a) an event injected into REview that carries an
-    // origCustomer/respCustomer reference, and (b) a matching
-    // customer provisioned in aice-web-next's auth_db with
-    // `external_key` set (via `POST /api/admin/customers`, NOT raw
-    // SQL — see PR #636 commit message for the FATAL trap there).
+    // Reference walk-through that lands on an event whose detail page
+    // shows the AimerBanner Send button ENABLED — useful while
+    // iterating the fixme scenarios. Pre-requisite: both seed scripts
+    // under `seed/` have been run on the multi-host stack (see
+    // README.md §"Seed scripts").
     await page.goto("/detection");
     await page.waitForLoadState("domcontentloaded");
     await page.getByRole("button", { name: /^Presets$/ }).click();
     await page.getByText("3 years", { exact: true }).click();
     await page.locator("text=Detected events").waitFor();
     await page.waitForTimeout(2000);
-    // Row chevron triggers handleRowInvestigate → router.push to
-    // /events/<token>. Title text on the same row only adds a kind
-    // filter; the chevron is the correct affordance for navigation.
-    await page
+    // The Send-button enablement requires the event's GraphQL
+    // fragment to include `origCustomer { id name }`. Some event
+    // types omit it (DomainGenerationAlgorithm, NonBrowser — see
+    // src/lib/detection/queries.ts:289), so pick a type that does
+    // (e.g. BlocklistConn, DnsCovertChannel).
+    const blocklistRow = page
+      .locator("li")
+      .filter({ hasText: /Blocklist Connection/i })
+      .first();
+    await blocklistRow
       .getByRole("button", { name: /investigation|investigate/i })
-      .first()
       .click();
     await page.waitForURL(/\/events\//, { timeout: 15_000 });
     await page.waitForTimeout(3000);

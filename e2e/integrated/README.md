@@ -40,9 +40,22 @@ The harness assumes the operator's compose / multi-host setup provides:
 - aimer integration configured: `aice_id`, `aimer_web_bridge_url`,
   `aimer_default_model_name`, `aimer_default_model`, and an active
   signing keypair (see `/api/aimer-integration/keypair/actions`).
-- At least one customer row in the auth DB with `external_key` set.
+- At least one customer row in the auth DB with `external_key` set —
+  provisioned via the admin `POST /api/customers` route (the route
+  creates the per-customer DB in the same transaction; raw SQL inserts
+  skip provisioning and crash `runStartupMigrations()` on the next
+  boot). See `seed/seed-aice-customer.sh`.
+- The customer's `id` must match the id REview returns for the same
+  customer name via `event.origCustomer`. On a fresh aice-web-next +
+  the reference dump (`Customer A` at REview id=1), reset the
+  customers sequence to 1 before running the seed script.
 - At least one REview event whose detail page surfaces an `<AimerBanner>`
-  with that customer in `candidates` and `customerBridgeEligible[id]=true`.
+  with that customer in `candidates`. Pick an event whose
+  `src/lib/detection/queries.ts` GraphQL fragment requests
+  `origCustomer { id name }` (e.g. `BlocklistConn`,
+  `DnsCovertChannel`) — some event types like
+  `DomainGenerationAlgorithm` omit it, so their banner stays
+  `noCandidates`.
 
 ### aimer-web
 - Production build behind HTTPS on `${AIMER_WEB_URL}`. `EXPECTED_ORIGIN`
@@ -70,6 +83,13 @@ The harness assumes the operator's compose / multi-host setup provides:
 - The mint endpoint reads one event via REview's GraphQL `event(id:)`
   query under `customerIds: [customerId]`. The reference setup uses a
   real REview restored from a fixtures dump (`/dump/manager`).
+- A `Customer` registered with networks covering the dump's address
+  space — REview's `event.origCustomer` resolver matches the event's
+  `origAddr` against each customer's `networks` (CIDRs) at query time,
+  so retroactive provisioning is enough. See
+  `seed/seed-review-customer.mjs`. The seeded REview customer name +
+  id must align with the aice-web-next customer row (so the same id
+  flows through `extractAimerCustomerCandidates`).
 
 ## DNS
 
@@ -83,13 +103,36 @@ at the M1 / M3 OrbStack VM IPs. See the resume guide §"Hostname
 
 | Scenario | Status | Tracking |
 | --- | --- | --- |
-| harness smoke (admin sign-in) | implemented | — |
-| cold OIDC happy path | `test.fixme` | needs event + Keycloak user seeding |
+| harness smoke (storageState reach) | implemented | — |
+| cold OIDC happy path | `test.fixme` | needs Keycloak test user; banner enablement verified manually on Blocklist events after running both seed scripts |
 | cached SSO happy path | `test.fixme` | needs the cold scenario green first |
-| cross-binding tamper × 3 | `test.fixme` | needs the network interceptor helper |
+| cross-binding tamper × 3 | `test.fixme` | needs the network interceptor helper that mutates the multipart body before it leaves the page |
 
 Each `test.fixme` carries an inline TODO with the exact missing seed.
 Lift the marker when the dependency lands.
+
+## Seed scripts
+
+The two scripts under `seed/` cover the customer-side prerequisites:
+
+```bash
+# 1. Reset the aice-web-next customer sequence so the next insert lands at id=1
+orb -m m1 docker exec aice-web-next-postgres-1 \
+  psql -U postgres -d auth_db -c "SELECT setval('customers_id_seq', 1, false)"
+
+# 2. Register a customer in REview with networks covering the dump's CIDRs
+orb -m m1 docker cp e2e/integrated/seed/seed-review-customer.mjs \
+  aice-web-next-next-app-1:/tmp/seed.mjs
+orb -m m1 docker exec aice-web-next-next-app-1 node /tmp/seed.mjs
+
+# 3. Provision the matching aice-web-next customer (admin API → per-customer DB)
+e2e/integrated/seed/seed-aice-customer.sh
+```
+
+The reference manager dump carries `Customer A` at REview id=1, so the
+default values in both scripts line up out of the box. Override via
+`SEED_CUSTOMER_NAME` / `SEED_CUSTOMER_EXTERNAL_KEY` when running
+against a non-default dump.
 
 ## Out of scope
 
