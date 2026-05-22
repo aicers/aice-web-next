@@ -18,6 +18,23 @@ export const KEYCLOAK_PASSWORD =
   process.env.KEYCLOAK_TEST_PASSWORD ?? "Tester1234!";
 
 /**
+ * Drives the Keycloak interactive sign-in form when the analyze-bridge
+ * cold path lands the new tab there. On the reference multi-host stack
+ * Keycloak is reverse-proxied at `${AIMER_WEB_URL}/auth/...`, so the
+ * browser never crosses to a separate origin — the URL pattern check
+ * is therefore loose (`/auth/realms/<realm>`) rather than hostname-
+ * based. The realm name defaults to `aimer` per the reference seed.
+ */
+export async function completeKeycloakSignIn(page: Page): Promise<void> {
+  await page.waitForURL(/\/auth\/realms\/[^/]+\/protocol\/openid-connect/, {
+    timeout: 30_000,
+  });
+  await page.locator("input[name='username']").fill(KEYCLOAK_USERNAME);
+  await page.locator("input[name='password']").fill(KEYCLOAK_PASSWORD);
+  await page.locator("input[name='login'], button[name='login']").click();
+}
+
+/**
  * Sign in to aice-web-next via the production sign-in surface (no
  * dev-only `/api/e2e/*` endpoints — this harness targets the prod build
  * running behind nginx). Mirrors `e2e/helpers/auth.ts` but skips the

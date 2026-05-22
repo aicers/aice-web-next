@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import {
   AIMER_WEB_URL,
+  completeKeycloakSignIn,
   loadSigningKey,
   navigateToBlocklistConnEventDetail,
 } from "./helpers";
@@ -83,23 +84,77 @@ test.describe("analyze-bridge integrated e2e", () => {
   test.fixme("cold OIDC happy path: first-visit interactive Keycloak sign-in", async ({
     page,
     context,
+    browserName,
   }) => {
     // Sub-task 2 scenario 1.
-    // 1. Fresh context — no Keycloak session cookie.
-    // 2. Sign in to aice-web-next as admin.
-    // 3. Navigate to a seeded event detail page; assert AimerBanner is
-    //    rendered with the seeded customer selected.
-    // 4. Click [data-testid="aimer-send-button"] → modal opens →
-    //    click [data-testid="aimer-modal-send"].
-    // 5. Wait for context.waitForEvent("page") to capture the new tab.
-    // 6. Assert the new tab navigates through Keycloak interactive
-    //    sign-in (form submit → callback → analyze-bridge/continue →
-    //    result page). PAR row transitions pending → consumed.
-    // 7. Assert original tab is still on the event detail page and
-    //    interactive (click somewhere benign, expect no nav).
-    void page;
-    void context;
-    void AIMER_WEB_URL;
+    //
+    // The body below runs end-to-end on the reference multi-host
+    // stack as far as the analyze-bridge `/continue` step —
+    // Keycloak interactive login, OIDC callback, bridge session
+    // creation all succeed. The remaining failure is
+    // `authorization_failed` from `authorize(...)` inside
+    // `runAnalyzeFlow`'s pre-flight check, plus storage / aimer
+    // calls downstream. The contract that must hold on the
+    // operator's stack before this fixme can be lifted is itself
+    // out of scope for this PR (it is aimer-web operational
+    // setup, not aice-web-next code under test) — checklist:
+    //
+    //   1. Keycloak realm `aimer` carries built-in `profile` /
+    //      `email` client scopes with an OIDC user-property
+    //      mapper producing `preferred_username`.
+    //   2. `aimer-web` Keycloak client default scopes include
+    //      `profile` and `email`.
+    //   3. Keycloak `KC_HTTP_RELATIVE_PATH=/auth` + nginx
+    //      `proxy_pass http://keycloak-prod:8080;` (no trailing
+    //      slash) so `/auth/realms/...` reaches Keycloak instead
+    //      of bouncing to `/auth/admin/`.
+    //   4. aimer-web `KEYCLOAK_URL` includes the `/auth` suffix.
+    //   5. aimer-web `AIMER_GRAPHQL_ENDPOINT` points at the
+    //      aimer LLM backend.
+    //   6. aimer-web JWT signing keys pre-generated at
+    //      `${DATA_DIR}/keys/ec-{private,public}.pem`.
+    //   7. aimer-web auth_db rows: Keycloak test user matching
+    //      `KEYCLOAK_TEST_USERNAME`, a `customers` row with the
+    //      same `external_key` as the aice-web-next side and
+    //      `database_status=active`, an
+    //      `aice_environment_customers` link, and an
+    //      `account_customer_memberships` row with a
+    //      `general`-context role carrying `analyses:create`.
+    //   8. Per-customer database created with all
+    //      `migrations/customer/*.sql` applied.
+    //   9. OpenBao Transit key `customer-<uuid>` (aes256-gcm96).
+    //
+    // The body itself is left as a runnable reference — flip
+    // `test.fixme` to `test` once the contract holds. The
+    // per-engine sign-in gate (firefox / webkit) ties into the
+    // same follow-up.
+    test.skip(
+      browserName !== "chromium",
+      "per-engine sign-in not yet wired (see global-setup.ts)",
+    );
+
+    await navigateToBlocklistConnEventDetail(page);
+
+    const [bridgeTab] = await Promise.all([
+      context.waitForEvent("page", { timeout: 30_000 }),
+      (async () => {
+        await page.getByTestId("aimer-send-button").click();
+        await page.getByTestId("aimer-modal-send").click();
+      })(),
+    ]);
+
+    await completeKeycloakSignIn(bridgeTab);
+
+    // After Keycloak callback the flow chains aimer-web's
+    // /api/auth/callback → /api/analysis/analyze-bridge/continue?id=<par_id>
+    // → 302 to the result `viewUrl` shaped `/analysis?<params>`.
+    await bridgeTab.waitForURL(/\/analysis(\?|$)/, { timeout: 60_000 });
+    expect(bridgeTab.url()).toContain(new URL(AIMER_WEB_URL).hostname);
+
+    // The original tab should still be on the event detail page
+    // and not have lost interactivity.
+    expect(page.url()).toMatch(/\/events\//);
+    await expect(page.getByTestId("aimer-send-button")).toBeVisible();
   });
 
   test.fixme("cached SSO happy path: subsequent-visit silent Keycloak SSO", async ({
