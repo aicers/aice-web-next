@@ -44,21 +44,37 @@ test.describe("analyze-bridge integrated e2e", () => {
   test.skip("debug: detection events list + first event detail", async ({
     page,
   }) => {
+    // Reference walk-through for the operator iterating the fixme
+    // scenarios. Lift the skip locally to inspect candidate /
+    // banner state. The reference manager dump
+    // (`dump/manager_20260312151343.tgz`) carries events with no
+    // origCustomer / respCustomer fields populated — the happy-path
+    // scenarios need an event whose detail page shows the Send
+    // button enabled with a candidate selected. That in turn needs
+    // (a) an event injected into REview that carries an
+    // origCustomer/respCustomer reference, and (b) a matching
+    // customer provisioned in aice-web-next's auth_db with
+    // `external_key` set (via `POST /api/admin/customers`, NOT raw
+    // SQL — see PR #636 commit message for the FATAL trap there).
     await page.goto("/detection");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
+    await page.getByRole("button", { name: /^Presets$/ }).click();
+    await page.getByText("3 years", { exact: true }).click();
+    await page.locator("text=Detected events").waitFor();
+    await page.waitForTimeout(2000);
+    // Row chevron triggers handleRowInvestigate → router.push to
+    // /events/<token>. Title text on the same row only adds a kind
+    // filter; the chevron is the correct affordance for navigation.
+    await page
+      .getByRole("button", { name: /investigation|investigate/i })
+      .first()
+      .click();
+    await page.waitForURL(/\/events\//, { timeout: 15_000 });
+    await page.waitForTimeout(3000);
     await page.screenshot({
-      path: "test-results/debug-detection-list.png",
+      path: "test-results/debug-event-detail.png",
       fullPage: true,
     });
-    const firstRow = page.locator("a[href*='/events/']").first();
-    if (await firstRow.isVisible()) {
-      await firstRow.click();
-      await page.waitForLoadState("networkidle");
-      await page.screenshot({
-        path: "test-results/debug-event-detail.png",
-        fullPage: true,
-      });
-    }
   });
 
   test.fixme("cold OIDC happy path: first-visit interactive Keycloak sign-in", async ({
