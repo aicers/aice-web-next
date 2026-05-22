@@ -121,8 +121,24 @@ test.describe("analyze-bridge integrated e2e", () => {
     //      `account_customer_memberships` row with a
     //      `general`-context role carrying `analyses:create`.
     //   8. Per-customer database created with all
-    //      `migrations/customer/*.sql` applied.
+    //      `migrations/customer/*.sql` applied AND
+    //      `GRANT ALL ON SCHEMA public TO aimer_customer` (the
+    //      compose runs per-customer migrations as
+    //      `aimer_customer`, which by default lacks `CREATE` on
+    //      `public`. The migration silently fails and the
+    //      customer flips to `database_status=failed`, which then
+    //      fails the `customers.status` check inside
+    //      `authorize()`).
     //   9. OpenBao Transit key `customer-<uuid>` (aes256-gcm96).
+    //  10. The aimer LLM backend's GraphQL schema matches what
+    //      `runAnalyzeFlow` sends. The reference stack ships a
+    //      mismatched aimer — aimer-web sends
+    //      `analyzeEvent(eventData: JSON!, name, model, lang)`
+    //      but the running aimer binary advertises the older
+    //      `analyzeEvent(event, timestamp)` signature (and lacks
+    //      `JSON` / `Language` scalar registrations). The aimer
+    //      service must be rebuilt against the aimer-web contract
+    //      before this fixme can land.
     //
     // The body itself is left as a runnable reference — flip
     // `test.fixme` to `test` once the contract holds. The
