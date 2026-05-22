@@ -25,20 +25,40 @@ import { AIMER_WEB_URL } from "./helpers";
  */
 
 test.describe("analyze-bridge integrated e2e", () => {
-  test("harness smoke: sign-in page renders on the configured origin", async ({
+  test("harness smoke: storageState reaches an authenticated route", async ({
     page,
   }) => {
-    // Smoke test for the integrated harness itself. Proves the operator's
-    // multi-host stack is reachable, DNS resolves, TLS trust is configured,
-    // and aice-web-next is serving requests. Does NOT exercise sign-in
-    // (the prod build's rate-limit window has no test-only reset and the
-    // shared admin account would be exhausted across the three-engine
-    // matrix). The real scenarios below sign in once per engine.
-    const response = await page.goto("/sign-in");
-    expect(response?.ok()).toBe(true);
-    await expect(
-      page.getByRole("heading", { name: /sign into your account/i }),
-    ).toBeVisible();
+    // Smoke test for the integrated harness itself. The global setup
+    // signed in once via the JSON API; this proves the resulting
+    // storageState carries through to all engine contexts (DNS, TLS,
+    // cookie domain attrs, baseURL all line up). Failure here means
+    // the harness is wrong, not the analyze-bridge code under test.
+    await page.goto("/");
+    await expect(page).not.toHaveURL(/\/sign-in/);
+  });
+
+  // Debug-only navigator used while seeding the scenarios. Skipped on
+  // green runs; lift the skip locally to inspect event-list + banner
+  // state during fixme implementation. Removed once the scenarios are
+  // green and the seeding helpers are documented.
+  test.skip("debug: detection events list + first event detail", async ({
+    page,
+  }) => {
+    await page.goto("/detection");
+    await page.waitForLoadState("networkidle");
+    await page.screenshot({
+      path: "test-results/debug-detection-list.png",
+      fullPage: true,
+    });
+    const firstRow = page.locator("a[href*='/events/']").first();
+    if (await firstRow.isVisible()) {
+      await firstRow.click();
+      await page.waitForLoadState("networkidle");
+      await page.screenshot({
+        path: "test-results/debug-event-detail.png",
+        fullPage: true,
+      });
+    }
   });
 
   test.fixme("cold OIDC happy path: first-visit interactive Keycloak sign-in", async ({

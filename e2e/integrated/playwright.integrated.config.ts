@@ -28,8 +28,15 @@ const AIMER_WEB_URL =
 process.env.AICE_WEB_NEXT_URL = AICE_WEB_NEXT_URL;
 process.env.AIMER_WEB_URL = AIMER_WEB_URL;
 
+import { STORAGE_STATE_PATH } from "./global-setup";
+
 export default defineConfig({
   testDir: ".",
+  // Auth via API once per run; specs reuse storageState. The prod
+  // build under test has no `/api/e2e/reset-rate-limits` endpoint, so
+  // hammering the password-flow across three engines × multiple specs
+  // would exhaust the shared admin's rate-limit window.
+  globalSetup: "./global-setup.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -41,6 +48,7 @@ export default defineConfig({
     : [["html", { open: "on-failure" }], ["list"]],
   use: {
     baseURL: AICE_WEB_NEXT_URL,
+    storageState: STORAGE_STATE_PATH,
     // The integrated stack uses internal-CA TLS for both aice-web-next
     // and aimer-web origins. Playwright cannot install the CA into its
     // bundled browsers without per-engine workarounds, so trust the
