@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-import { AIMER_WEB_URL } from "./helpers";
+import {
+  AIMER_WEB_URL,
+  loadSigningKey,
+  navigateToBlocklistConnEventDetail,
+} from "./helpers";
+import { type CrossBindingClaim, tamperAnalyzeParamsToken } from "./lib/tamper";
 
 /**
  * Integrated e2e coverage for the analyze-bridge Send flow (#635).
@@ -118,35 +123,96 @@ test.describe("analyze-bridge integrated e2e", () => {
     void context;
   });
 
-  test.fixme("tamper context_jti → invalid_analyze_params_token", async ({
-    page,
-  }) => {
-    // Sub-task 3 scenario 1.
-    // Use page.route() to intercept the multipart POST to
-    // <aimer-web>/api/analysis/analyze-bridge and re-sign the
-    // analyze_params_token claim `context_jti` with a non-matching
-    // value (or substitute a deliberately broken token from a test
-    // mint helper). Assert the new tab lands on aimer-web's styled
-    // error page with body containing the code
-    // "invalid_analyze_params_token".
-    void page;
-  });
+  // Sub-task 3 §3 cross-binding tamper coverage. One parametrized
+  // test per claim — JWS is re-signed with the same key so the
+  // signature still verifies; only the cross-binding match fails,
+  // which is the contract under test (aimer-web#274 §10 error code
+  // `invalid_analyze_params_token`).
+  for (const claim of [
+    "context_jti",
+    "payload_hash",
+    "envelope_hash",
+  ] as const) {
+    test(`tamper ${claim} → invalid_analyze_params_token`, async ({
+      page,
+      context,
+      browserName,
+    }) => {
+      // The harness's shared storageState is created under chromium
+      // (see global-setup.ts) so its session-bound UA fingerprint
+      // only matches the chromium engine. firefox/webkit attaching
+      // the same state trip `assessIpUaRisk` in
+      // src/lib/auth/guard.ts and the first mutating API call
+      // returns 401 REAUTH_REQUIRED. Per-engine sign-in is a
+      // follow-up (will be done alongside the cold OIDC happy path,
+      // which also needs a fresh-context sign-in surface).
+      test.skip(
+        browserName !== "chromium",
+        "per-engine sign-in not yet wired (see global-setup.ts)",
+      );
+      const signingKey = loadSigningKey();
+      test.skip(
+        signingKey === null,
+        "signing key not provisioned — see global-setup.ts SIGNING_KEY_FETCH_COMMAND",
+      );
 
-  test.fixme("tamper payload_hash → invalid_analyze_params_token", async ({
-    page,
-  }) => {
-    // Sub-task 3 scenario 2.
-    // Same as above but the tampered token carries a payload_hash
-    // that does not match sha256(events_data).
-    void page;
-  });
+      // Intercept the BFF's mint response and tamper the named
+      // cross-binding claim before the browser ever builds the form.
+      await page.route("**/api/aimer/analyze-envelope", async (route) => {
+        const response = await route.fetch();
+        if (!response.ok()) {
+          // Bubble the BFF's own error response back unchanged — the
+          // assertion further down will surface the mismatch with a
+          // clearer message than a malformed-token rejection from
+          // aimer-web would.
+          await route.fulfill({ response });
+          return;
+        }
+        const body = (await response.json()) as {
+          analyzeParamsToken: string;
+          [k: string]: unknown;
+        };
+        body.analyzeParamsToken = tamperAnalyzeParamsToken(
+          body.analyzeParamsToken,
+          claim as CrossBindingClaim,
+          signingKey as NonNullable<typeof signingKey>,
+        );
+        await route.fulfill({
+          status: response.status(),
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      });
 
-  test.fixme("tamper envelope_hash → invalid_analyze_params_token", async ({
-    page,
-  }) => {
-    // Sub-task 3 scenario 3.
-    // Same as above but the tampered token carries an envelope_hash
-    // that does not match sha256(events_envelope JWS bytes).
-    void page;
-  });
+      await navigateToBlocklistConnEventDetail(page);
+
+      // Send → modal-confirm. The modal click (a) reserves a named
+      // tab via window.open and (b) submits the hidden form into
+      // that tab. The new page is what aimer-web's error response
+      // renders; assert against its body.
+      const [newPage] = await Promise.all([
+        context.waitForEvent("page", { timeout: 30_000 }),
+        (async () => {
+          await page.getByTestId("aimer-send-button").click();
+          await page.getByTestId("aimer-modal-send").click();
+        })(),
+      ]);
+      // The named tab opens at `about:blank` and only navigates once
+      // the hidden form's submit dispatches into it. Wait for the
+      // URL to reach aimer-web's origin before asserting on body.
+      await newPage.waitForURL(
+        (url) => url.hostname === new URL(AIMER_WEB_URL).hostname,
+        { timeout: 30_000 },
+      );
+      await newPage.waitForLoadState("domcontentloaded");
+      // Sanity check: the new tab actually navigated to aimer-web's
+      // origin (so the tampered token did reach the wire and the
+      // assertion below is not just matching same-origin error text).
+      expect(newPage.url()).toContain(new URL(AIMER_WEB_URL).hostname);
+      await expect(newPage.locator("body")).toContainText(
+        "invalid_analyze_params_token",
+        { timeout: 15_000 },
+      );
+    });
+  }
 });
