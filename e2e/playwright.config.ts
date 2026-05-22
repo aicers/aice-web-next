@@ -164,6 +164,12 @@ export default defineConfig({
         {
           name: "parallel",
           testIgnore: [
+            // The integrated harness (#635) targets an externally
+            // provisioned multi-service stack and ships its own
+            // Playwright config; it must not run under the default
+            // single-engine chain that depends on `next dev` + the
+            // in-process mock servers.
+            "integrated/**",
             "mfa-enforcement.spec.ts",
             "mfa-sign-in.spec.ts",
             "rate-limit.spec.ts",
