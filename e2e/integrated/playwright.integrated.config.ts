@@ -28,14 +28,15 @@ const AIMER_WEB_URL =
 process.env.AICE_WEB_NEXT_URL = AICE_WEB_NEXT_URL;
 process.env.AIMER_WEB_URL = AIMER_WEB_URL;
 
-import { STORAGE_STATE_PATH } from "./global-setup";
+import { storageStatePath } from "./global-setup";
 
 export default defineConfig({
   testDir: ".",
-  // Auth via API once per run; specs reuse storageState. The prod
-  // build under test has no `/api/e2e/reset-rate-limits` endpoint, so
-  // hammering the password-flow across three engines × multiple specs
-  // would exhaust the shared admin's rate-limit window.
+  // globalSetup only fetches the BFF's aimer-context signing key (for
+  // the tamper specs) into the shared `.auth/` cache. The actual
+  // sign-in is per-engine via the `setup-{engine}` projects below —
+  // see `setup-auth.spec.ts` for the rationale (UA-fingerprint
+  // binding in `src/lib/auth/guard.ts`).
   globalSetup: "./global-setup.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
@@ -48,7 +49,6 @@ export default defineConfig({
     : [["html", { open: "on-failure" }], ["list"]],
   use: {
     baseURL: AICE_WEB_NEXT_URL,
-    storageState: STORAGE_STATE_PATH,
     // The integrated stack uses internal-CA TLS for both aice-web-next
     // and aimer-web origins. Playwright cannot install the CA into its
     // bundled browsers without per-engine workarounds, so trust the
@@ -62,26 +62,56 @@ export default defineConfig({
   // The three engine projects run sequentially via `dependencies` to
   // avoid hammering the shared admin account's sign-in rate-limit window
   // (no test-only reset endpoint exists on the prod build under test).
-  // Each engine still gets full coverage; CI runtime grows linearly with
-  // engine count, which is acceptable for the bounded analyze-bridge
-  // scope (5 scenarios × 3 engines).
+  // Each engine pairs a `setup-{engine}` project (signs in via the
+  // engine's own browser, writes a per-engine storageState) with a
+  // matching main project that consumes that state. Without per-
+  // engine sign-in, firefox / webkit attach a storageState whose
+  // session was bound to chromium's UA fingerprint, which trips
+  // `assessIpUaRisk` and locks out the first mutating call.
   projects: [
     {
-      name: "analyze-bridge-chromium",
-      testMatch: ["analyze-bridge.spec.ts"],
+      name: "setup-chromium",
+      testMatch: ["setup-auth.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },
     {
-      name: "analyze-bridge-firefox",
+      name: "analyze-bridge-chromium",
       testMatch: ["analyze-bridge.spec.ts"],
+      dependencies: ["setup-chromium"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: storageStatePath("chromium"),
+      },
+    },
+    {
+      name: "setup-firefox",
+      testMatch: ["setup-auth.spec.ts"],
       dependencies: ["analyze-bridge-chromium"],
       use: { ...devices["Desktop Firefox"] },
     },
     {
-      name: "analyze-bridge-webkit",
+      name: "analyze-bridge-firefox",
       testMatch: ["analyze-bridge.spec.ts"],
+      dependencies: ["setup-firefox"],
+      use: {
+        ...devices["Desktop Firefox"],
+        storageState: storageStatePath("firefox"),
+      },
+    },
+    {
+      name: "setup-webkit",
+      testMatch: ["setup-auth.spec.ts"],
       dependencies: ["analyze-bridge-firefox"],
       use: { ...devices["Desktop Safari"] },
+    },
+    {
+      name: "analyze-bridge-webkit",
+      testMatch: ["analyze-bridge.spec.ts"],
+      dependencies: ["setup-webkit"],
+      use: {
+        ...devices["Desktop Safari"],
+        storageState: storageStatePath("webkit"),
+      },
     },
   ],
 });

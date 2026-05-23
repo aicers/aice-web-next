@@ -1,22 +1,28 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import { chromium } from "@playwright/test";
-
-import { ADMIN_PASSWORD, ADMIN_USERNAME, AICE_WEB_NEXT_URL } from "./helpers";
+/**
+ * Directory holding per-engine storage states and the cached aimer-
+ * context signing key. Specs and the config-level sign-in setup
+ * project derive concrete paths from {@link storageStatePath} so the
+ * three engines stay isolated (each browser's session is bound to
+ * its own UA fingerprint via `assessIpUaRisk` on the BFF — see
+ * `src/lib/auth/guard.ts`).
+ */
+export const AUTH_DIR = resolve(__dirname, ".auth");
 
 /**
- * One-shot sign-in that persists the resulting cookies to `auth.json`
- * so all engine projects in the integrated config reuse the same
- * authenticated context. The prod build under test has no test-only
- * `/api/e2e/reset-rate-limits` endpoint, so repeating the password-flow
- * across 3 engines × N specs is not viable.
+ * Per-engine storageState path. The setup spec writes one of these
+ * per `browserName`, and each main project's `use.storageState` reads
+ * the matching one back. Keeping engines isolated lets firefox /
+ * webkit pass the same authenticated scenarios as chromium without
+ * the shared-state UA-fingerprint mismatch that previously forced
+ * `test.skip(browserName !== "chromium")` gates throughout the spec.
  */
-export const STORAGE_STATE_PATH = resolve(
-  __dirname,
-  ".auth/admin-storage-state.json",
-);
+export function storageStatePath(browserName: string): string {
+  return resolve(AUTH_DIR, `admin-storage-state-${browserName}.json`);
+}
 
 /**
  * Path to the aice-web-next aimer-context signing key (JWK) used by
@@ -26,10 +32,7 @@ export const STORAGE_STATE_PATH = resolve(
  * signature check on aimer-web instead of the `verifyAnalyzeParamsToken`
  * cross-binding check we want to exercise.
  */
-export const SIGNING_KEY_PATH = resolve(
-  __dirname,
-  ".auth/aimer-context-signing.json",
-);
+export const SIGNING_KEY_PATH = resolve(AUTH_DIR, "aimer-context-signing.json");
 
 /**
  * Command that prints the JSON contents of the signing key file from
@@ -41,59 +44,8 @@ const SIGNING_KEY_FETCH_COMMAND =
   process.env.SIGNING_KEY_FETCH_COMMAND ??
   "orb -m m1 docker exec aice-web-next-next-app-1 cat /app/data/keys/aimer-context-signing.json";
 
-/**
- * Reuse an existing storageState file if it is younger than the JWT
- * expiration window — the prod build's sign-in endpoint is rate-
- * limited (no test-only reset) and the integrated harness re-runs at
- * a faster cadence than that window during iteration. The ceiling
- * must stay under `JWT_EXPIRATION_MINUTES` (default 15m, hard-coded
- * in the BFF for the reference stack) or the cached cookie is stale
- * and the first mutating call lands on a 401. Default to 10m to
- * leave headroom.
- */
-const STORAGE_STATE_TTL_MS = Number(
-  process.env.STORAGE_STATE_TTL_MS ?? 10 * 60 * 1000,
-);
-
-function isStorageStateFresh(): boolean {
-  if (!existsSync(STORAGE_STATE_PATH)) return false;
-  const age = Date.now() - statSync(STORAGE_STATE_PATH).mtimeMs;
-  return age < STORAGE_STATE_TTL_MS;
-}
-
 export default async function globalSetup(): Promise<void> {
-  mkdirSync(dirname(STORAGE_STATE_PATH), { recursive: true });
-
-  if (!isStorageStateFresh()) {
-    // Sign in through a real chromium browser so the session's
-    // stored browser-fingerprint (UA-derived) matches what the spec
-    // contexts present. A Playwright `request` context uses Node's
-    // default UA; when the spec attaches storageState to a chromium
-    // browser the UA mismatch trips `assessIpUaRisk()` in
-    // src/lib/auth/guard.ts and flips `session.needs_reauth = true`,
-    // which makes the first mutating API call (e.g.
-    // /api/aimer/analyze-envelope) return 401 REAUTH_REQUIRED.
-    // Using chromium here keeps the fingerprint stable for the
-    // chromium engine project; firefox/webkit are currently still
-    // served by this same state file — per-engine sign-in is a
-    // follow-up for the #635 PR if the matrix needs to cover
-    // authenticated flows on all three engines.
-    const browser = await chromium.launch();
-    const ctx = await browser.newContext({
-      baseURL: AICE_WEB_NEXT_URL,
-      ignoreHTTPSErrors: true,
-    });
-    const page = await ctx.newPage();
-    await page.goto("/sign-in");
-    await page.getByLabel("Account ID").fill(ADMIN_USERNAME);
-    await page.locator("input[name='password']").fill(ADMIN_PASSWORD);
-    await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL((url) => !url.pathname.endsWith("/sign-in"), {
-      timeout: 30_000,
-    });
-    await ctx.storageState({ path: STORAGE_STATE_PATH });
-    await browser.close();
-  }
+  mkdirSync(AUTH_DIR, { recursive: true });
 
   // Pull the active signing key out of the BFF container so the
   // tamper specs can re-sign `analyze_params_token` after mutating

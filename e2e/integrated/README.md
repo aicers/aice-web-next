@@ -101,15 +101,17 @@ at the M1 / M3 OrbStack VM IPs. See the resume guide §"Hostname
 
 ## Scenario status
 
-| Scenario | Status | Tracking |
+| Scenario | Status | Notes |
 | --- | --- | --- |
-| harness smoke (storageState reach) | implemented | — |
-| cold OIDC happy path | `test.fixme` | needs Keycloak test user; banner enablement verified manually on Blocklist events after running both seed scripts |
-| cached SSO happy path | `test.fixme` | needs the cold scenario green first |
-| cross-binding tamper × 3 | `test.fixme` | needs the network interceptor helper that mutates the multipart body before it leaves the page |
+| harness smoke (storageState reach) | implemented | all 3 engines |
+| cold OIDC happy path | implemented | all 3 engines; interactive Keycloak round-trip + OpenAI call (~10-20 s) |
+| cached SSO happy path | implemented | chromium / firefox; webkit skipped (ITP partitions aimer-web's cross-site session cookie between popups) |
+| cross-binding tamper × 3 | implemented | all 3 engines |
 
-Each `test.fixme` carries an inline TODO with the exact missing seed.
-Lift the marker when the dependency lands.
+Sign-in is per-engine (see `setup-auth.spec.ts` and the `setup-{engine}`
+projects in `playwright.integrated.config.ts`) — each engine signs in
+through its own browser so the BFF session's stored UA fingerprint
+aligns with the engine that later attaches the cookie.
 
 ## Seed scripts
 
