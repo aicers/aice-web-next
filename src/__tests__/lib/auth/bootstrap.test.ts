@@ -221,21 +221,23 @@ describe("bootstrap", () => {
       expect(insertCall?.[1]?.[0]).toBe("file-admin");
     });
 
-    it("skips when consumed marker exists", async () => {
+    it("aborts when consumed marker exists and no env credentials", async () => {
       writeSecret("init_admin_username", "file-admin");
       writeSecret("init_admin_password", "file-pass123");
 
-      // Write consumed marker
+      // Write consumed marker — secret files become unreadable.
       mkdirSync(dataDir, { recursive: true });
       writeFileSync(path.join(dataDir, ".init_admin_consumed"), "consumed");
 
-      // No env vars set → no credentials available
+      // No env vars set → no credentials available with zero accounts.
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ count: "0" }],
         rowCount: 1,
       });
 
-      await bootstrap.bootstrapAdminAccount();
+      await expect(bootstrap.bootstrapAdminAccount()).rejects.toThrow(
+        /First-boot admin bootstrap aborted/,
+      );
 
       // No INSERT should have been attempted
       const insertCalls = mockPoolQuery.mock.calls.filter(
@@ -246,15 +248,44 @@ describe("bootstrap", () => {
       expect(insertCalls).toHaveLength(0);
     });
 
-    it("returns early when no credentials are available", async () => {
+    it("throws when accounts table is empty and no credentials are available", async () => {
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ count: "0" }],
         rowCount: 1,
       });
 
-      await bootstrap.bootstrapAdminAccount();
+      await expect(bootstrap.bootstrapAdminAccount()).rejects.toThrow(
+        /First-boot admin bootstrap aborted/,
+      );
 
       // Only the COUNT query should have been made
+      expect(mockPoolQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws when env credentials are blank strings", async () => {
+      process.env.INIT_ADMIN_USERNAME = "   ";
+      process.env.INIT_ADMIN_PASSWORD = "   ";
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ count: "0" }],
+        rowCount: 1,
+      });
+
+      await expect(bootstrap.bootstrapAdminAccount()).rejects.toThrow(
+        /First-boot admin bootstrap aborted/,
+      );
+    });
+
+    it("does not throw when accounts already exist and no credentials are set", async () => {
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ count: "1" }],
+        rowCount: 1,
+      });
+
+      // With non-zero accounts, missing credentials is not an error —
+      // it means the operator simply did not provide a way to mint a
+      // first admin because one already exists.
+      await bootstrap.bootstrapAdminAccount();
       expect(mockPoolQuery).toHaveBeenCalledTimes(1);
     });
   });

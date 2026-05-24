@@ -38,6 +38,15 @@ services:
       - "3000"
     env_file:
       - .env
+    # Marker keyed by the boot-time env validator
+    # (`src/lib/instrumentation/env-validate.ts`) to enable
+    # prod-compose-specific guards (localhost DSN rejection,
+    # required EXPECTED_ORIGIN). Set here so the check fires for
+    # every prod compose deployment without operators having to
+    # remember the flag in `.env`. Other production paths (K8s,
+    # local image smoke-tests) intentionally do not set it.
+    environment:
+      AICE_ENV_PROFILE: prod-compose
     # Persist <DATA_DIR> across container restarts so first-boot JWT
     # autogen (JWT_SIGNING_KEY_AUTOGEN=1) does not regenerate the key
     # — and therefore invalidate every issued session — on every boot.

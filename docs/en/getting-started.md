@@ -84,6 +84,11 @@ consumed marker is written to `DATA_DIR` if deletion is not
 possible). The bootstrap process does not run again once any
 account exists.
 
+If the `accounts` table is empty and neither source provides a
+usable credential pair, the app aborts startup with an explicit
+error instead of silently booting without an administrator. Set
+both env vars (or mount the secret files) and retry.
+
 ## First Launch
 
 Start the development server:

@@ -408,26 +408,45 @@ audit table.
 
 #### First-boot deployment checklist
 
-1. Populate `.env` (the prod compose profile reads `.env`, not
-   `.env.local`). The prod compose passes `.env` *directly into the
-   `next-app` container*, so the database URLs must use the
-   compose-network address `postgres:5432`, not the host-side
-   `localhost:${AICE_POSTGRES_HOST_PORT:-5434}` that the shipped
-   `.env.example` ships with for `pnpm dev`. Concretely, override the
-   three DSNs to:
+1. Populate `.env` **starting from `.env.example.prod`** (the prod
+   compose profile reads `.env`, not `.env.local`). The prod compose
+   passes `.env` *directly into the `next-app` container*, so the
+   database URLs must use the compose-network address `postgres:5432`,
+   not the host-side `localhost:${AICE_POSTGRES_HOST_PORT:-5434}` that
+   the dev-oriented `.env.example` ships with for `pnpm dev`.
+   `.env.example.prod` already has the compose-network DSNs and leaves
+   every required first-boot value as a visible blank with a comment,
+   so the next-app container fails fast on missing values instead of
+   silently booting without (e.g.) an initial administrator.
 
-   ```env
-   DATABASE_URL=postgres://postgres:postgres@postgres:5432/auth_db
-   DATABASE_ADMIN_URL=postgres://postgres:postgres@postgres:5432/postgres
-   AUDIT_DATABASE_URL=postgres://audit_writer:changeme@postgres:5432/audit_db
+   ```bash
+   cp .env.example.prod .env
    ```
 
+   The boot-time env validator
+   (`src/lib/instrumentation/env-validate.ts`) fires whenever
+   `AICE_ENV_PROFILE=prod-compose` (the prod compose `next-app`
+   service sets this for you) and rejects:
+   - any of `DATABASE_URL`, `DATABASE_ADMIN_URL`,
+     `AUDIT_DATABASE_URL` pointing at `localhost`, `127.0.0.1`, or
+     `::1`. The error names the env var and points at
+     `postgres:5432` — the symptom is otherwise a confusing
+     connection-refused after migrations start.
+   - `EXPECTED_ORIGIN` missing, or set to anything that is not an
+     exact origin (scheme + host + optional port; no path / query
+     / fragment). Without this, post-login mutating requests fail
+     Origin validation in `withAuth` because the upstream sees
+     `http://...` while the browser sent `https://...:9443`.
+
    Host tooling (`psql`, the Vitest integration suite, DBeaver, etc.)
-   continues to use the `.env.example` defaults at
+   continues to use `.env.example` defaults at
    `localhost:${AICE_POSTGRES_HOST_PORT:-5434}` — a separate file
    (e.g. `.env.local`) is the natural place to keep them.
 
-   At minimum also set `CSRF_SECRET`, the GraphQL endpoints, and:
+   At minimum also set `CSRF_SECRET`, the GraphQL endpoints, the
+   initial admin credentials (the bootstrap aborts on first boot if
+   both `INIT_ADMIN_USERNAME` and `INIT_ADMIN_PASSWORD` are blank and
+   no Docker secret files are mounted), and:
    - `EXPECTED_ORIGIN=https://your.public.host:9443` so the
      CSRF/Origin guard accepts mutation requests through the HTTPS
      proxy. The `:9443` suffix matches the default `nginx-prod`

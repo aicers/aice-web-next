@@ -1,5 +1,8 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { validateProdComposeEnv } = await import(
+      "@/lib/instrumentation/env-validate"
+    );
     const { runStartupMigrations } = await import("@/lib/db/migrate");
     const { bootstrapAdminAccount } = await import("@/lib/auth/bootstrap");
     const {
@@ -17,6 +20,12 @@ export async function register() {
     const { installMtlsSighupHandler } = await import(
       "@/lib/instrumentation/mtls-sighup"
     );
+
+    // Fail fast on prod compose misconfiguration (localhost DSNs,
+    // missing/invalid EXPECTED_ORIGIN) before any DB or auth code
+    // runs — operators get one aggregated error instead of a
+    // late-stage connection refused or post-login Origin mismatch.
+    validateProdComposeEnv();
 
     await runStartupMigrations();
     await bootstrapAdminAccount();
