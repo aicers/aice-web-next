@@ -327,6 +327,15 @@ describe("CSRF", () => {
     it("rejects opaque schemes (file://)", () => {
       expect(parseExpectedOrigin("file:///tmp/foo")).toBeNull();
     });
+
+    it("rejects non-HTTP(S) hierarchical schemes", () => {
+      // These parse to a non-null origin and would otherwise slip past
+      // the path/query/fragment/userinfo checks, but the mutation guard
+      // compares browser `Origin` headers, which are always HTTP(S).
+      expect(parseExpectedOrigin("ftp://host")).toBeNull();
+      expect(parseExpectedOrigin("ws://host")).toBeNull();
+      expect(parseExpectedOrigin("wss://host:9443")).toBeNull();
+    });
   });
 
   // ── checkOrigin() ───────────────────────────────────────────

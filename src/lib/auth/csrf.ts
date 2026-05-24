@@ -128,10 +128,11 @@ export function canonicalizeOrigin(value: string): string | null {
 /**
  * Strictly parse an `EXPECTED_ORIGIN`-shaped value.
  *
- * Accepts: scheme + host + optional port only.  A trailing slash
- * is tolerated (and stripped) for ergonomic copy-paste from a
- * browser URL bar; anything else — a path segment, query, fragment,
- * userinfo, or unparseable input — returns `null`.
+ * Accepts: `http:` or `https:` scheme + host + optional port only.
+ * A trailing slash is tolerated (and stripped) for ergonomic
+ * copy-paste from a browser URL bar; anything else — a non-HTTP(S)
+ * scheme, path segment, query, fragment, userinfo, or unparseable
+ * input — returns `null`.
  *
  * This is stricter than {@link canonicalizeOrigin}, which silently
  * drops a path because it is also used to extract the origin from
@@ -151,6 +152,8 @@ export function parseExpectedOrigin(value: string): string | null {
   }
 
   if (!url.origin || url.origin === "null") return null;
+  // Only HTTP(S) is a valid browser-comparable origin for the mutation guard.
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
   if (url.username !== "" || url.password !== "") return null;
   if (url.search !== "" || url.hash !== "") return null;
   // Tolerate a bare trailing slash; reject any real path segment.

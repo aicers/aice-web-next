@@ -433,8 +433,9 @@ audit table.
      `postgres:5432` — the symptom is otherwise a confusing
      connection-refused after migrations start.
    - `EXPECTED_ORIGIN` missing, or set to anything that is not an
-     exact origin (scheme + host + optional port; no path / query
-     / fragment). Without this, post-login mutating requests fail
+     exact HTTP(S) origin (`http://` or `https://` scheme + host +
+     optional port; no path / query / fragment). Without this,
+     post-login mutating requests fail
      Origin validation in `withAuth` because the upstream sees
      `http://...` while the browser sent `https://...:9443`.
 

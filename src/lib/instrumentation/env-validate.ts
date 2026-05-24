@@ -112,8 +112,9 @@ export function validateProdComposeEnv(
   } else if (parseExpectedOrigin(rawOrigin) === null) {
     problems.push(
       `EXPECTED_ORIGIN=${JSON.stringify(rawOrigin)} is not a valid origin. ` +
-        "It must be an exact origin: scheme + host + optional port only, " +
-        "with no path, query, or fragment (e.g. `https://your.public.host:9443`).",
+        "It must be an exact HTTP(S) origin: `http://` or `https://` " +
+        "scheme + host + optional port only, with no path, query, or " +
+        "fragment (e.g. `https://your.public.host:9443`).",
     );
   }
 

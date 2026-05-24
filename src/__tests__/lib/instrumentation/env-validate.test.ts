@@ -123,6 +123,15 @@ describe("validateProdComposeEnv", () => {
     });
 
     it.each([
+      ["ftp://host"],
+      ["ws://host"],
+      ["wss://host:9443"],
+    ])("throws when value has a non-HTTP(S) scheme (%s)", (value) => {
+      process.env.EXPECTED_ORIGIN = value;
+      expect(() => validateProdComposeEnv()).toThrow(/is not a valid origin/);
+    });
+
+    it.each([
       ["https://host", "https://host"],
       ["https://host:9443", "https://host:9443"],
       ["HTTPS://Host.Example.com/", "HTTPS://Host.Example.com/"],
