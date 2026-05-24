@@ -8,6 +8,7 @@ import {
   generateCsrfToken,
   getConfiguredExpectedOrigin,
   isMutationMethod,
+  parseExpectedOrigin,
   validateCsrfToken,
   validateOrigin,
 } from "@/lib/auth/csrf";
@@ -264,6 +265,76 @@ describe("CSRF", () => {
     it("returns null for a malformed value", () => {
       process.env.EXPECTED_ORIGIN = "not-an-origin";
       expect(getConfiguredExpectedOrigin()).toBeNull();
+    });
+
+    it("returns null when value has a path", () => {
+      process.env.EXPECTED_ORIGIN = "https://example.com/app";
+      expect(getConfiguredExpectedOrigin()).toBeNull();
+    });
+
+    it("returns null when value has a query string", () => {
+      process.env.EXPECTED_ORIGIN = "https://example.com?foo=bar";
+      expect(getConfiguredExpectedOrigin()).toBeNull();
+    });
+
+    it("returns null when value has a fragment", () => {
+      process.env.EXPECTED_ORIGIN = "https://example.com#frag";
+      expect(getConfiguredExpectedOrigin()).toBeNull();
+    });
+  });
+
+  // ── parseExpectedOrigin() ────────────────────────────────────
+
+  describe("parseExpectedOrigin()", () => {
+    it("accepts https://host", () => {
+      expect(parseExpectedOrigin("https://host")).toBe("https://host");
+    });
+
+    it("accepts https://host:9443", () => {
+      expect(parseExpectedOrigin("https://host:9443")).toBe(
+        "https://host:9443",
+      );
+    });
+
+    it("canonicalizes scheme/host case and strips a trailing slash", () => {
+      expect(parseExpectedOrigin("HTTPS://Example.COM/")).toBe(
+        "https://example.com",
+      );
+    });
+
+    it("rejects a value with a path segment", () => {
+      expect(parseExpectedOrigin("https://host/app")).toBeNull();
+      expect(parseExpectedOrigin("https://host/app/")).toBeNull();
+    });
+
+    it("rejects a value with a query string", () => {
+      expect(parseExpectedOrigin("https://host?a=b")).toBeNull();
+    });
+
+    it("rejects a value with a fragment", () => {
+      expect(parseExpectedOrigin("https://host#x")).toBeNull();
+    });
+
+    it("rejects a value with userinfo", () => {
+      expect(parseExpectedOrigin("https://user:pass@host")).toBeNull();
+    });
+
+    it("rejects unparseable input", () => {
+      expect(parseExpectedOrigin("not-a-url")).toBeNull();
+      expect(parseExpectedOrigin("")).toBeNull();
+    });
+
+    it("rejects opaque schemes (file://)", () => {
+      expect(parseExpectedOrigin("file:///tmp/foo")).toBeNull();
+    });
+
+    it("rejects non-HTTP(S) hierarchical schemes", () => {
+      // These parse to a non-null origin and would otherwise slip past
+      // the path/query/fragment/userinfo checks, but the mutation guard
+      // compares browser `Origin` headers, which are always HTTP(S).
+      expect(parseExpectedOrigin("ftp://host")).toBeNull();
+      expect(parseExpectedOrigin("ws://host")).toBeNull();
+      expect(parseExpectedOrigin("wss://host:9443")).toBeNull();
     });
   });
 

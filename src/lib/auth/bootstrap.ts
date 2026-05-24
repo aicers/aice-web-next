@@ -163,10 +163,22 @@ export async function bootstrapAdminAccount(): Promise<void> {
     return;
   }
 
-  // Step 2: Resolve credentials
+  // Step 2: Resolve credentials. With zero accounts in the table
+  // there is no other way for an operator to sign in, so a missing
+  // / blank credential pair is a hard configuration error rather
+  // than a silent skip — otherwise the app would happily start
+  // without any administrator at all.
   const credentials = resolveCredentials();
   if (!credentials) {
-    return;
+    throw new Error(
+      "First-boot admin bootstrap aborted: the `accounts` table is empty " +
+        "and no usable INIT_ADMIN_USERNAME / INIT_ADMIN_PASSWORD pair was " +
+        "found (env vars are unset/blank and the Docker secret files at " +
+        "/run/secrets/init_admin_username and /run/secrets/init_admin_password " +
+        "were not present or were already consumed). Set both env vars (or " +
+        "provide the secret files) and restart, or restore the prior " +
+        "DATA_DIR if you intended to keep an existing deployment's admin.",
+    );
   }
 
   const { username, password, source } = credentials;

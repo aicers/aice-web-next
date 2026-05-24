@@ -126,19 +126,60 @@ export function canonicalizeOrigin(value: string): string | null {
 }
 
 /**
+ * Strictly parse an `EXPECTED_ORIGIN`-shaped value.
+ *
+ * Accepts: `http:` or `https:` scheme + host + optional port only.
+ * A trailing slash is tolerated (and stripped) for ergonomic
+ * copy-paste from a browser URL bar; anything else — a non-HTTP(S)
+ * scheme, path segment, query, fragment, userinfo, or unparseable
+ * input — returns `null`.
+ *
+ * This is stricter than {@link canonicalizeOrigin}, which silently
+ * drops a path because it is also used to extract the origin from
+ * a `Referer` header (where a path is expected and meaningful).
+ * The mutation guard's *configured* expected origin, on the other
+ * hand, must not silently accept `https://host/path` and lose the
+ * `/path` portion — that would mask an operator misconfiguration
+ * where the value was meant to be the deployment URL, not just an
+ * origin.
+ */
+export function parseExpectedOrigin(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+
+  if (!url.origin || url.origin === "null") return null;
+  // Only HTTP(S) is a valid browser-comparable origin for the mutation guard.
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username !== "" || url.password !== "") return null;
+  if (url.search !== "" || url.hash !== "") return null;
+  // Tolerate a bare trailing slash; reject any real path segment.
+  if (url.pathname !== "" && url.pathname !== "/") return null;
+
+  return url.origin;
+}
+
+/**
  * Resolve the configured `EXPECTED_ORIGIN`, canonicalized.
  *
- * Returns `null` when the env var is unset or not a parseable origin.
- * A malformed value is treated as unset rather than crashing the
- * mutation guard — the caller falls back to `request.nextUrl.origin`,
- * preserving today's behavior.
+ * Returns `null` when the env var is unset, blank, or not a strict
+ * origin (scheme + host + optional port; no path / query / fragment).
+ * A malformed value is treated as unset by the runtime mutation
+ * guard so the caller falls back to `request.nextUrl.origin`; the
+ * boot-time env validator (see `lib/instrumentation/env-validate.ts`)
+ * uses {@link parseExpectedOrigin} directly to fail-fast on prod
+ * compose deployments where the value is required and a silent
+ * fallback would mask the misconfiguration.
  */
 export function getConfiguredExpectedOrigin(): string | null {
   const raw = process.env.EXPECTED_ORIGIN;
   if (!raw) return null;
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
-  return canonicalizeOrigin(trimmed);
+  return parseExpectedOrigin(trimmed);
 }
 
 /**
