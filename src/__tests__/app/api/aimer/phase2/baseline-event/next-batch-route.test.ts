@@ -789,6 +789,95 @@ describe("POST /api/aimer/phase2/baseline-event/next-batch", () => {
     });
   });
 
+  // ── Phase 0.5 watermark (#644) ──────────────────────────────
+
+  it("attaches cursor_event_time + cursor_quality=strict on the streaming envelope", async () => {
+    mockState.getAimerPushState.mockResolvedValue({
+      kind: "baseline_event",
+      last_pushed_event_time: new Date("2025-12-01T00:00:00.000Z"),
+      last_pushed_event_key: "50",
+      last_synced_at: null,
+      last_error: null,
+      opportunistic_enabled: true,
+      paused_at: null,
+      paused_by: null,
+    });
+    mockLoadSlice.mockResolvedValue({
+      events: [makeStreamingEvent({ event_key: "100" })],
+      lastEventTime: new Date("2026-01-01T00:00:00.000Z"),
+      lastEventKey: "100",
+      hasMore: false,
+      baselineVersion: "phase1b-four-selector",
+    });
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/baseline-event/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+    const args = mockBuildPush.mock.calls[0][0];
+    expect(args.cursorWatermark).toEqual({
+      eventTime: new Date("2025-12-01T00:00:00.000Z"),
+      quality: "strict",
+    });
+  });
+
+  it("omits cursorWatermark on the streaming branch when last_pushed_event_time is NULL", async () => {
+    // Default mock: cursor NULL. Slice has rows so we hit the streaming
+    // branch.
+    mockLoadSlice.mockResolvedValue({
+      events: [makeStreamingEvent({ event_key: "100" })],
+      lastEventTime: new Date("2026-01-01T00:00:00.000Z"),
+      lastEventKey: "100",
+      hasMore: false,
+      baselineVersion: "phase1b-four-selector",
+    });
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/baseline-event/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+    const args = mockBuildPush.mock.calls[0][0];
+    expect(args.cursorWatermark).toBeUndefined();
+  });
+
+  it("omits cursorWatermark on the queue-notice branch", async () => {
+    mockState.getAimerPushState.mockResolvedValue({
+      kind: "baseline_event",
+      last_pushed_event_time: new Date("2025-12-01T00:00:00.000Z"),
+      last_pushed_event_key: "50",
+      last_synced_at: null,
+      last_error: null,
+      opportunistic_enabled: true,
+      paused_at: null,
+      paused_by: null,
+    });
+    mockState.claimPendingNotices.mockResolvedValue([
+      {
+        id: "5",
+        enqueued_at: new Date(),
+        kind: "refresh_baseline_window",
+        payload: {
+          window: {
+            kind: "baseline_event",
+            from: "2026-01-01",
+            to: "2026-02-01",
+          },
+          baseline_version: "phase1b-four-selector",
+          events: [],
+        },
+        attempts: 0,
+        last_attempt_at: null,
+        last_error: null,
+        acked_at: null,
+        acked_context_jti: null,
+      },
+    ]);
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/baseline-event/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+    const args = mockBuildPush.mock.calls[0][0];
+    expect(args.cursorWatermark).toBeUndefined();
+  });
+
   it("threads cursor state into loadBaselineStreamingSlice", async () => {
     mockState.getAimerPushState.mockResolvedValue({
       kind: "baseline_event",

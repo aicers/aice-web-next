@@ -41,6 +41,31 @@ export interface EventsEnvelopeInput {
   iat: number;
   exp: number;
   context_jti: string;
+  /**
+   * RFC 0002 Phase 0.5 delivery watermark — ISO 8601 UTC timestamp of
+   * the `aimer_push_state` cursor at the time this envelope was minted.
+   * Pre-batch value: the rows in `events_data` may sit AFTER this
+   * timestamp, but everything at-or-below it has already been
+   * delivered. Allows aimer-web to shorten its DAILY settle delay.
+   *
+   * Paired with {@link cursor_quality} — both fields are included on
+   * the wire only when both are supplied. `signEventsEnvelope` will
+   * not emit one without the other (a half-claim is uninterpretable on
+   * the verify side).
+   */
+  cursor_event_time?: string;
+  /**
+   * RFC 0002 Phase 0.5 delivery-watermark quality:
+   *
+   *  - `"strict"` — every row at-or-below `cursor_event_time` has been
+   *    delivered. Set on the baseline streaming branch where the
+   *    cursor is the authoritative high-water mark.
+   *  - `"soft"` — late-commit stragglers may still arrive AT OR BEFORE
+   *    `cursor_event_time` (see the story forward-streaming branch).
+   *    Verifiers should treat the watermark as a best-effort lower
+   *    bound on settle delay rather than a hard guarantee.
+   */
+  cursor_quality?: "strict" | "soft";
 }
 
 /**
@@ -79,14 +104,25 @@ export async function signEventsEnvelope(
 
   const payloadHash = sha256Base64Url(eventsData);
 
-  return new SignJWT({
+  const claims: Record<string, unknown> = {
     aice_id: input.aice_id,
     customer_ids: input.customer_ids,
     schema_version: input.schema_version,
     event_count: input.event_count,
     context_jti: input.context_jti,
     payload_hash: payloadHash,
-  })
+  };
+  // Phase 0.5 watermark is emitted only when BOTH fields are supplied
+  // (a half-claim is uninterpretable on the verify side).
+  if (
+    input.cursor_event_time !== undefined &&
+    input.cursor_quality !== undefined
+  ) {
+    claims.cursor_event_time = input.cursor_event_time;
+    claims.cursor_quality = input.cursor_quality;
+  }
+
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: keyMaterial.algorithm, kid: keyMaterial.kid })
     .setIssuer(input.iss)
     .setIssuedAt(input.iat)

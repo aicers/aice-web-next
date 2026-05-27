@@ -93,6 +93,27 @@ export interface BuildPhase2PushInput {
    * the context token / envelope claims.
    */
   payload: unknown;
+  /**
+   * RFC 0002 Phase 0.5 delivery watermark (issue #644). When supplied,
+   * the envelope carries `cursor_event_time` (mint-time / pre-batch
+   * value of `aimer_push_state.last_pushed_event_time`, serialized via
+   * `.toISOString()`) and `cursor_quality`. Omitted on queue notices
+   * (refresh / backfill / withdraw / policy_run), manual sends, and
+   * story straggler batches — these do not advance the forward cursor.
+   *
+   * `eventTime` and `quality` travel as one object so callers cannot
+   * mint a half-claim by accident (only one of the two fields set);
+   * the wire-level fields remain independently optional per
+   * `EventsEnvelopeInput`.
+   *
+   * The orchestrator is schema-agnostic — the §1 schema_version gate
+   * (`phase2.baseline.v1` / `phase2.story.v1` only) is the caller's
+   * responsibility.
+   */
+  cursorWatermark?: {
+    eventTime: Date;
+    quality: "strict" | "soft";
+  };
 }
 
 /**
@@ -108,7 +129,8 @@ export interface BuildPhase2PushInput {
 export async function buildPhase2Push(
   input: BuildPhase2PushInput,
 ): Promise<Phase2PushTokens> {
-  const { schemaVersion, customerId, accountId, payload } = input;
+  const { schemaVersion, customerId, accountId, payload, cursorWatermark } =
+    input;
 
   // ── Aimer integration setup ──────────────────────────────────
   const setup = await getAimerIntegrationSetup();
@@ -178,6 +200,12 @@ export async function buildPhase2Push(
         iat,
         exp,
         context_jti: jti,
+        ...(cursorWatermark
+          ? {
+              cursor_event_time: cursorWatermark.eventTime.toISOString(),
+              cursor_quality: cursorWatermark.quality,
+            }
+          : {}),
       },
       eventsDataBytes,
     ),

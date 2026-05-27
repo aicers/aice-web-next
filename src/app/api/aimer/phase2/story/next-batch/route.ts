@@ -345,6 +345,17 @@ export const POST = withAuth(
           // stragglers (or new-row work) past this batch. The drain
           // loop iterates until next-batch returns has_more=false.
           hasMoreOverride: true,
+          // Pass the pre-batch cursor as the candidate watermark.
+          // `emitStreamingBatch` drops it when
+          // `cursorAdvanceToEventTime === null` (this straggler
+          // branch), so the wire-level fields are omitted — matching
+          // §2's "straggler batches omit the watermark" rule via the
+          // helper-level invariant (forward-cursor advance implies
+          // watermark attached).
+          cursorWatermark: {
+            eventTime: state.last_pushed_event_time,
+            quality: "soft",
+          },
         });
       }
     }
@@ -373,6 +384,14 @@ export const POST = withAuth(
       cursorAdvanceToEventTime: slice.lastEventTime,
       cursorAdvanceToEventKey: slice.lastEventKey,
       hasMoreOverride: slice.hasMore,
+      // Phase 0.5 (issue #644) — forward streaming carries the
+      // pre-batch cursor as a `soft` watermark. Soft because the
+      // straggler scan can deliver late-commit rows AT OR BEHIND
+      // this timestamp on a subsequent iteration.
+      cursorWatermark: {
+        eventTime: state.last_pushed_event_time,
+        quality: "soft",
+      },
     });
   },
   {
@@ -482,6 +501,23 @@ interface EmitStreamingBatchInput {
   cursorAdvanceToEventKey: string | null;
   /** Response `has_more` value. */
   hasMoreOverride: boolean;
+  /**
+   * RFC 0002 Phase 0.5 watermark candidate (#644). The helper attaches
+   * it to the envelope only when `cursorAdvanceToEventTime !== null`
+   * (forward streaming). Callers on the straggler path may still pass
+   * the pre-batch cursor here — the helper drops it. This collapses
+   * "forward-cursor advance implies watermark attached" to one
+   * invariant rather than relying on every call site to remember it.
+   *
+   * Note: the gate variable (`cursorAdvanceToEventTime`) and the
+   * watermark value (`eventTime`) are distinct — `eventTime` MUST be
+   * `state.last_pushed_event_time` (pre-batch cursor), NOT
+   * `cursorAdvanceToEventTime` (post-batch target).
+   */
+  cursorWatermark?: {
+    eventTime: Date;
+    quality: "strict" | "soft";
+  };
 }
 
 /**
@@ -500,6 +536,13 @@ interface EmitStreamingBatchInput {
 async function emitStreamingBatch(
   input: EmitStreamingBatchInput,
 ): Promise<NextResponse> {
+  // Phase 0.5 watermark (issue #644): gate per §2 — only forward
+  // streaming (cursor advances on ack) attaches the watermark.
+  // Straggler batches advance no cursor, so even when the caller
+  // passes a `cursorWatermark`, drop it here.
+  const watermarkToAttach =
+    input.cursorAdvanceToEventTime !== null ? input.cursorWatermark : undefined;
+
   let tokens: Awaited<ReturnType<typeof buildPhase2Push>>;
   try {
     tokens = await buildPhase2Push({
@@ -511,6 +554,7 @@ async function emitStreamingBatch(
         source_aice_id: "_",
         stories: input.stories,
       },
+      cursorWatermark: watermarkToAttach,
     });
   } catch (err) {
     if (

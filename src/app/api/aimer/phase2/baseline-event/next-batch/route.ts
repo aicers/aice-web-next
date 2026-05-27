@@ -286,6 +286,19 @@ export const POST = withAuth(
       return NextResponse.json(EMPTY_BODY);
     }
 
+    // Phase 0.5 watermark (issue #644): the streaming branch advances
+    // the forward cursor, so the envelope carries the pre-batch cursor
+    // value as a `strict` watermark. NULL cursor (freshly activated
+    // tenant) → omit both fields. Queue notices (the other branch
+    // below) never advance the cursor, so they pass no watermark.
+    const cursorWatermark =
+      state?.last_pushed_event_time != null
+        ? ({
+            eventTime: state.last_pushed_event_time,
+            quality: "strict",
+          } as const)
+        : undefined;
+
     const tokens = await buildPhase2Push({
       schemaVersion: STREAMING_SCHEMA_VERSION,
       customerId,
@@ -299,6 +312,7 @@ export const POST = withAuth(
         baseline_version: slice.baselineVersion,
         events: slice.events,
       },
+      cursorWatermark,
     });
 
     await insertInflight(customerId, {

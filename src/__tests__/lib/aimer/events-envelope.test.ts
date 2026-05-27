@@ -111,6 +111,70 @@ describe("aimer events-envelope signing", () => {
     expect(pa.payload_hash).not.toBe(pb.payload_hash);
   });
 
+  it("includes cursor_event_time + cursor_quality on the JWT payload when supplied (Phase 0.5 watermark, #644)", async () => {
+    const input = {
+      ...baseInput(),
+      schema_version: "phase2.baseline.v1" as const,
+      cursor_event_time: "2026-05-25T12:34:56.789Z",
+      cursor_quality: "strict" as const,
+    };
+    const eventsData = new TextEncoder().encode('{"events":[]}');
+    const jws = await mod.signEventsEnvelope(input, eventsData);
+
+    const status = await signingKey.getAimerSigningKeyStatus();
+    if (!status.active) throw new Error("expected active key");
+    const verifyKey = await importJWK(
+      status.active.publicJwk,
+      status.active.algorithm,
+    );
+    const { payload } = await jwtVerify(jws, verifyKey, { issuer: input.iss });
+    expect(payload.cursor_event_time).toBe("2026-05-25T12:34:56.789Z");
+    expect(payload.cursor_quality).toBe("strict");
+  });
+
+  it("omits cursor_event_time + cursor_quality when neither is supplied", async () => {
+    const input = baseInput();
+    const eventsData = new TextEncoder().encode('{"event_key":"1"}');
+    const jws = await mod.signEventsEnvelope(input, eventsData);
+
+    const status = await signingKey.getAimerSigningKeyStatus();
+    if (!status.active) throw new Error("expected active key");
+    const verifyKey = await importJWK(
+      status.active.publicJwk,
+      status.active.algorithm,
+    );
+    const { payload } = await jwtVerify(jws, verifyKey, { issuer: input.iss });
+    expect(payload).not.toHaveProperty("cursor_event_time");
+    expect(payload).not.toHaveProperty("cursor_quality");
+  });
+
+  it("omits both watermark fields when only one is supplied (half-claim guard)", async () => {
+    // A bare `cursor_event_time` with no `cursor_quality` (or vice
+    // versa) is uninterpretable on the verify side. The signer must
+    // emit both or neither.
+    const halfA = {
+      ...baseInput(),
+      cursor_event_time: "2026-05-25T12:34:56.789Z",
+    };
+    const halfB = {
+      ...baseInput(),
+      cursor_quality: "soft" as const,
+    };
+    const eventsData = new TextEncoder().encode('{"event_key":"1"}');
+    const status = await signingKey.getAimerSigningKeyStatus();
+    if (!status.active) throw new Error("expected active key");
+    const verifyKey = await importJWK(
+      status.active.publicJwk,
+      status.active.algorithm,
+    );
+    for (const half of [halfA, halfB]) {
+      const jws = await mod.signEventsEnvelope(half, eventsData);
+      const { payload } = await jwtVerify(jws, verifyKey, { issuer: half.iss });
+      expect(payload).not.toHaveProperty("cursor_event_time");
+      expect(payload).not.toHaveProperty("cursor_quality");
+    }
+  });
+
   it("throws when no active signing key is on disk", async () => {
     signingKey.deleteAimerSigningKeyFile();
     await expect(
