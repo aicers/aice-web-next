@@ -431,6 +431,85 @@ describe("POST /api/aimer/phase2/story/next-batch", () => {
     expect(mockLoadSlice).toHaveBeenCalled();
   });
 
+  // ── Phase 0.5 watermark (#644) ──────────────────────────────
+
+  it("attaches cursor_event_time + cursor_quality=soft on the forward streaming envelope", async () => {
+    mockLoadSlice.mockResolvedValue({
+      stories: [
+        {
+          story_id: "1001",
+          story_version: "v1",
+          kind: "auto_correlated",
+          time_window: { start: "a", end: "b" },
+          members: [],
+        },
+      ],
+      lastEventTime: new Date("2026-01-02T00:00:00Z"),
+      lastEventKey: "1001",
+      hasMore: false,
+    });
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/story/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+    const args = mockBuildPush.mock.calls[0][0];
+    expect(args.cursorWatermark).toEqual({
+      eventTime: new Date("2026-01-01T00:00:00Z"),
+      quality: "soft",
+    });
+  });
+
+  it("drops the cursorWatermark on the straggler branch via the helper-level gate", async () => {
+    // The route passes a candidate watermark on the straggler path
+    // too (`state.last_pushed_event_time` is non-null here), but
+    // `emitStreamingBatch` gates on `cursorAdvanceToEventTime !== null`
+    // — null on the straggler branch — so the orchestrator must see
+    // `cursorWatermark: undefined`. This pins §2's helper-level
+    // invariant: forward-cursor advance implies watermark attached.
+    mockLoadStraggler.mockResolvedValueOnce({
+      stories: [
+        {
+          story_id: "777",
+          story_version: "v1",
+          kind: "auto_correlated",
+          time_window: { start: "a", end: "b" },
+          members: [],
+        },
+      ],
+      hasMore: false,
+    });
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/story/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+    const args = mockBuildPush.mock.calls[0][0];
+    expect(args.cursorWatermark).toBeUndefined();
+    // Sanity: this was the straggler path (no forward-slice load).
+    expect(mockLoadSlice).not.toHaveBeenCalled();
+  });
+
+  it("omits cursorWatermark on the queue-notice branch", async () => {
+    mockState.claimPendingNotices.mockImplementationOnce(async () => [
+      {
+        id: "1",
+        enqueued_at: new Date(),
+        kind: "withdraw_story",
+        payload: { kind: "story", story_id: "1001", story_version: "v1" },
+        attempts: 0,
+        last_attempt_at: null,
+        last_error: null,
+        acked_at: null,
+        acked_context_jti: null,
+      },
+    ]);
+    const { POST } = await import(
+      "@/app/api/aimer/phase2/story/next-batch/route"
+    );
+    await POST(makeRequest({ customerId: 42 }), ctx);
+    const args = mockBuildPush.mock.calls[0][0];
+    expect(args.cursorWatermark).toBeUndefined();
+  });
+
   it("emits one triage.story.send audit per Story acked on prior batch", async () => {
     mockState.commitOnAck.mockResolvedValueOnce({
       storyBetaRows: [

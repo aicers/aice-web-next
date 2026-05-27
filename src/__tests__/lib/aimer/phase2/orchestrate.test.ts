@@ -237,6 +237,48 @@ describe("buildPhase2Push (Phase 2 orchestration helper)", () => {
     expect(payload.event_count).toBe(6);
   });
 
+  // ── Phase 0.5 watermark (issue #644) ─────────────────────────
+
+  it("threads cursorWatermark through to the envelope as cursor_event_time + cursor_quality", async () => {
+    const result = await mod.buildPhase2Push({
+      schemaVersion: "phase2.baseline.v1",
+      customerId: 42,
+      accountId: "account-1",
+      payload: baselinePayload(),
+      cursorWatermark: {
+        eventTime: new Date("2026-05-25T12:34:56.789Z"),
+        quality: "strict",
+      },
+    });
+    const status = await signingKey.getAimerSigningKeyStatus();
+    if (!status.active) throw new Error("expected active key");
+    const verifyKey = await importJWK(
+      status.active.publicJwk,
+      status.active.algorithm,
+    );
+    const { payload } = await jwtVerify(result.events_envelope, verifyKey);
+    expect(payload.cursor_event_time).toBe("2026-05-25T12:34:56.789Z");
+    expect(payload.cursor_quality).toBe("strict");
+  });
+
+  it("omits cursor_event_time + cursor_quality when cursorWatermark is not supplied", async () => {
+    const result = await mod.buildPhase2Push({
+      schemaVersion: "phase2.baseline.v1",
+      customerId: 42,
+      accountId: "account-1",
+      payload: baselinePayload(),
+    });
+    const status = await signingKey.getAimerSigningKeyStatus();
+    if (!status.active) throw new Error("expected active key");
+    const verifyKey = await importJWK(
+      status.active.publicJwk,
+      status.active.algorithm,
+    );
+    const { payload } = await jwtVerify(result.events_envelope, verifyKey);
+    expect(payload).not.toHaveProperty("cursor_event_time");
+    expect(payload).not.toHaveProperty("cursor_quality");
+  });
+
   // ── Schema-invalid payload is rejected before signing ────────
 
   it("rejects schema-invalid payloads before minting tokens", async () => {
