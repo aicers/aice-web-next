@@ -1,6 +1,11 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
+import { resolveCustomerExternalKey } from "@/lib/aimer/analysis/customer-external-key";
+import {
+  buildReadAuthTokenPayload,
+  signReadAuthToken,
+} from "@/lib/aimer/analysis/read-auth-token";
 import { getAimerIntegrationSettings } from "@/lib/aimer/settings";
 import { hasActiveAimerSigningKey } from "@/lib/aimer/signing-key";
 import { resolveEffectiveCustomerIds } from "@/lib/auth/customer-scope";
@@ -27,11 +32,12 @@ import { hasPermission } from "@/lib/auth/permissions";
  *   sees `bridgeUrl` as a separate value.
  * - `204 No Content` for every other "render nothing" case:
  *   integration unconfigured (bridge URL / `aice_id` / signing key
- *   missing), upstream `404`, `exists: false`, tier `LOW` / `MEDIUM`,
- *   malformed / non-relative `link`, or upstream fetch error.
- *   Malformed-upstream and fetch-error cases log server-side at
- *   `warn` so operators can debug; the wire response stays `204` to
- *   keep the client policy trivial.
+ *   missing, or the customer has no `external_key`), upstream `404`,
+ *   `exists: false`, tier `LOW` / `MEDIUM`, malformed / non-relative
+ *   `link`, or upstream fetch error. Malformed-upstream and
+ *   fetch-error cases log server-side at `warn` so operators can
+ *   debug; the wire response stays `204` to keep the client policy
+ *   trivial.
  * - `401` (no session — emitted by `withAuth`).
  * - `404 not_found` for cross-tenant `customerId` (concealment —
  *   matches the build-envelope route at
@@ -39,8 +45,18 @@ import { hasPermission } from "@/lib/auth/permissions";
  *
  * Upstream contract (aicers/aimer-web#296, landed): the read-side
  * endpoint is customer-scoped — `GET /api/customers/{customer_id}
- * /analysis/story/{story_id}/summary`. The customer scope is
- * required because `story_id` is not globally unique across tenants.
+ * /analysis/story/{story_id}/summary` — where `{customer_id}` is the
+ * resolved `customers.external_key` (the cross-system bridge
+ * identifier paired with aimer-web), not the internal numeric id.
+ * `story_id` is not globally unique across tenants so the customer
+ * scope is required.
+ *
+ * Read-side auth: every upstream request carries an
+ * `Authorization: Bearer <jws>` header signed with the active Aimer
+ * signing key. The payload mirrors the Phase 2 context-token shape
+ * (`iss`, `aud`, `aice_id`, `customer_ids: [external_key]`, `iat`,
+ * `exp`, `jti`) so aimer-web verifies push and read paths through a
+ * single JWS-validation path keyed on the active `kid`.
  */
 
 const UPSTREAM_PATH_PREFIX = "/api/customers" as const;
@@ -136,16 +152,16 @@ function composeHref(bridgeUrl: string, link: string): string {
 
 function composeUpstreamUrl(
   bridgeUrl: string,
-  customerId: number,
+  externalKey: string,
   storyId: string,
 ): string {
   const trimmed = bridgeUrl.replace(/\/+$/, "");
-  return `${trimmed}${UPSTREAM_PATH_PREFIX}/${encodeURIComponent(String(customerId))}${UPSTREAM_STORY_INFIX}/${encodeURIComponent(storyId)}${UPSTREAM_PATH_SUFFIX}`;
+  return `${trimmed}${UPSTREAM_PATH_PREFIX}/${encodeURIComponent(externalKey)}${UPSTREAM_STORY_INFIX}/${encodeURIComponent(storyId)}${UPSTREAM_PATH_SUFFIX}`;
 }
 
 async function fetchUpstreamSummary(
   upstreamUrl: string,
-  aiceId: string,
+  bearerToken: string,
 ): Promise<UpstreamSummary | null | "fetch_error" | "upstream_missing"> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
@@ -155,12 +171,12 @@ async function fetchUpstreamSummary(
       method: "GET",
       headers: {
         accept: "application/json",
-        // Placeholder request-identification header. The real
-        // read-side auth artifact lands with aicers/aimer-web#296;
-        // until then the upstream stub interprets the header as the
-        // tenant `iss` claim it would later read from the signed
-        // request.
-        "x-aice-id": aiceId,
+        // Read-side auth artifact finalized in aicers/aimer-web#296.
+        // The JWS is signed with the active Aimer signing key and
+        // carries `aice_id` + `customer_ids: [external_key]` so
+        // aimer-web can verify push and read paths through the same
+        // JWS-validation path keyed on `kid`.
+        authorization: `Bearer ${bearerToken}`,
       },
       signal: controller.signal,
       cache: "no-store",
@@ -216,23 +232,49 @@ export const GET = withAuth(
 
     // Read-side setup check. The Send-to-aimer-web flow needs
     // `defaultModelName` + `defaultModel` too, but the read-side
-    // summary fetch only needs the bridge URL, the `aice_id` (used
-    // as the tenant identifier on the upstream request), and the
-    // read-side auth artifact — today the active signing key, which
-    // aicers/aimer-web#296 will finalize as the read-side signing
-    // material.
+    // summary fetch only needs the bridge URL, the `aice_id` (the
+    // `iss` claim on the signed read token), and the active Aimer
+    // signing key (used to sign the read-side auth token finalized
+    // in aicers/aimer-web#296).
     const settings = await getAimerIntegrationSettings();
     const hasSigningKey = hasActiveAimerSigningKey();
     if (!settings.bridgeUrl || !settings.aiceId || !hasSigningKey) {
       return noContent();
     }
 
+    // Resolve the customer's `external_key` — that is the identifier
+    // aimer-web knows the customer by, and it is the value embedded
+    // in both the upstream URL path and the signed token's
+    // `customer_ids` claim. If the customer has no `external_key`
+    // configured, no upstream call is possible — collapse to 204.
+    const externalKey = await resolveCustomerExternalKey(customerId);
+    if (!externalKey) {
+      return noContent();
+    }
+
+    const tokenPayload = buildReadAuthTokenPayload(
+      settings.aiceId,
+      externalKey,
+    );
+    let bearerToken: string;
+    try {
+      bearerToken = await signReadAuthToken(tokenPayload);
+    } catch (err) {
+      console.warn(
+        "[aimer.analysis.summary] read-auth token signing failed: customerId=%d storyId=%s err=%s",
+        customerId,
+        storyId,
+        err instanceof Error ? err.message : String(err),
+      );
+      return noContent();
+    }
+
     const upstreamUrl = composeUpstreamUrl(
       settings.bridgeUrl,
-      customerId,
+      externalKey,
       storyId,
     );
-    const upstream = await fetchUpstreamSummary(upstreamUrl, settings.aiceId);
+    const upstream = await fetchUpstreamSummary(upstreamUrl, bearerToken);
     if (upstream === "upstream_missing") {
       return noContent();
     }

@@ -35,6 +35,30 @@ vi.mock("@/lib/aimer/signing-key", () => ({
   hasActiveAimerSigningKey: mockHasSigningKey,
 }));
 
+const mockResolveExternalKey = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/aimer/analysis/customer-external-key", () => ({
+  resolveCustomerExternalKey: mockResolveExternalKey,
+}));
+
+const mockSignReadAuthToken = vi.hoisted(() => vi.fn());
+const mockBuildReadAuthTokenPayload = vi.hoisted(() =>
+  vi.fn((aiceId: string, externalKey: string) => ({
+    iss: aiceId,
+    aud: "aimer-web",
+    aice_id: aiceId,
+    customer_ids: [externalKey],
+    iat: 1_700_000_000,
+    exp: 1_700_000_060,
+    jti: "test-jti",
+  })),
+);
+vi.mock("@/lib/aimer/analysis/read-auth-token", () => ({
+  AIMER_READ_AUTH_AUDIENCE: "aimer-web",
+  AIMER_READ_AUTH_TOKEN_TTL_SECONDS: 60,
+  buildReadAuthTokenPayload: mockBuildReadAuthTokenPayload,
+  signReadAuthToken: mockSignReadAuthToken,
+}));
+
 function makeSession(): AuthSession {
   const now = Math.floor(Date.now() / 1000);
   return {
@@ -88,6 +112,9 @@ beforeEach(() => {
     defaultModel: "anthropic:claude-3",
   });
   mockHasSigningKey.mockReset().mockReturnValue(true);
+  mockResolveExternalKey.mockReset().mockResolvedValue("acme-bridge-uuid");
+  mockSignReadAuthToken.mockReset().mockResolvedValue("eyTEST.eyTOKEN.eySIG");
+  mockBuildReadAuthTokenPayload.mockClear();
   warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
   fetchSpy = vi.spyOn(global, "fetch");
 });
@@ -295,6 +322,30 @@ describe("GET /api/aimer/analysis/story/[customerId]/[storyId]/summary", () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  it("returns 204 when the customer has no external_key configured", async () => {
+    mockResolveExternalKey.mockResolvedValue(null);
+    const { GET } = await import(
+      "@/app/api/aimer/analysis/story/[customerId]/[storyId]/summary/route"
+    );
+    const res = await GET(makeRequest(42, "1001"), ctxFor(42, "1001"));
+    expect(res.status).toBe(204);
+    // No upstream call should be attempted when the bridge identity
+    // is unresolvable — there is no value to put in `/api/customers/
+    // {customer_id}/...` or in `customer_ids` on the signed token.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns 204 + warn log when read-auth signing fails", async () => {
+    mockSignReadAuthToken.mockRejectedValueOnce(new Error("key missing"));
+    const { GET } = await import(
+      "@/app/api/aimer/analysis/story/[customerId]/[storyId]/summary/route"
+    );
+    const res = await GET(makeRequest(42, "1001"), ctxFor(42, "1001"));
+    expect(res.status).toBe(204);
+    expect(warnSpy).toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("returns 200 with composed absolute href for a valid CRITICAL summary", async () => {
     mockUpstream({
       exists: true,
@@ -323,15 +374,53 @@ describe("GET /api/aimer/analysis/story/[customerId]/[storyId]/summary", () => {
     });
     // Upstream URL is the customer-scoped contract finalized in
     // aicers/aimer-web#296: /api/customers/{customer_id}/analysis/
-    // story/{story_id}/summary. `story_id` is not globally unique,
-    // so the customer scope is required.
+    // story/{story_id}/summary. `{customer_id}` is the resolved
+    // `customers.external_key` (cross-system bridge identifier),
+    // **not** the internal numeric id — `story_id` is not globally
+    // unique so the customer scope is required, and aimer-web only
+    // knows the customer by `external_key`.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0];
     expect(url).toBe(
-      "https://aimer.example.com/api/customers/42/analysis/story/1001/summary",
+      "https://aimer.example.com/api/customers/acme-bridge-uuid/analysis/story/1001/summary",
     );
     const headers = (init as RequestInit).headers as Record<string, string>;
-    expect(headers["x-aice-id"]).toBe("aice.example.com");
+    // Read-side auth is a JWS signed with the active Aimer signing
+    // key (finalized in aicers/aimer-web#296), transmitted as
+    // `Authorization: Bearer <jws>`. The internal numeric id never
+    // appears on the wire.
+    expect(headers.authorization).toBe("Bearer eyTEST.eyTOKEN.eySIG");
+    expect(headers["x-aice-id"]).toBeUndefined();
+    expect(mockBuildReadAuthTokenPayload).toHaveBeenCalledWith(
+      "aice.example.com",
+      "acme-bridge-uuid",
+    );
+    expect(mockSignReadAuthToken).toHaveBeenCalledTimes(1);
+    expect(mockResolveExternalKey).toHaveBeenCalledWith(42);
+  });
+
+  it("URL-encodes external_key on the upstream path", async () => {
+    // External keys are operator-supplied strings; if a tenant uses a
+    // value with reserved characters, the bridge URL must still
+    // produce a single well-formed path segment.
+    mockResolveExternalKey.mockResolvedValue("acme/dept space");
+    mockUpstream({
+      exists: true,
+      priority_tier: "HIGH",
+      severity_score: 0.6,
+      likelihood_score: 0.5,
+      score_kind: "leaf",
+      link: "/analysis/story/77",
+    });
+    const { GET } = await import(
+      "@/app/api/aimer/analysis/story/[customerId]/[storyId]/summary/route"
+    );
+    const res = await GET(makeRequest(42, "1001"), ctxFor(42, "1001"));
+    expect(res.status).toBe(200);
+    const [url] = fetchSpy.mock.calls[0];
+    expect(url).toBe(
+      "https://aimer.example.com/api/customers/acme%2Fdept%20space/analysis/story/1001/summary",
+    );
   });
 
   it("admin (customers:access-all) skips the tenant-scope query and is served upstream", async () => {

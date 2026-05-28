@@ -411,10 +411,21 @@ export function TriageStoriesView({
   //
   // `aiSummaries` is read through `aiSummariesRef`, not the dep
   // array: including the state in the deps would re-run the effect
-  // on every successful resolution and the cleanup's
-  // `controller.abort()` would then cancel all remaining in-flight
-  // fetches and force them to re-issue — turning a planned O(N)
-  // fan-out into O(N²) request amplification.
+  // on every successful resolution and the cleanup would race with
+  // each pending fetch — turning a planned O(N) fan-out into O(N²)
+  // request amplification.
+  //
+  // In-flight fetches are intentionally **not** aborted when the
+  // effect re-runs (sort / filter / unsent-only toggle). The
+  // (customerId, storyId) cache key is stable across rotations, so a
+  // result already on the wire is still useful and storing it in
+  // `aiSummariesRef` prevents the next effect run from re-queuing
+  // the same key. Aborting active requests and only releasing queued
+  // reservations would leave the active keys stuck in `aiInFlightRef`
+  // past the next effect setup (which skips reserved keys) and only
+  // released them on the aborted `.finally` — by which point no
+  // effect run would re-queue them, so still-visible Stories could
+  // silently lose their badge.
   const [aiSummaries, setAiSummaries] = useState<
     Record<string, AiAnalysisStorySummary>
   >({});
@@ -423,7 +434,7 @@ export function TriageStoriesView({
   aiSummariesRef.current = aiSummaries;
   useEffect(() => {
     if (!loadAiAnalysis) return;
-    const controller = new AbortController();
+    let cancelled = false;
     const queue: TriageStory[] = [];
     for (const story of effectiveStories) {
       const key = `${story.customerId}/${story.storyId}`;
@@ -436,7 +447,7 @@ export function TriageStoriesView({
     }
     let active = 0;
     const startNext = () => {
-      if (controller.signal.aborted) return;
+      if (cancelled) return;
       while (active < AI_ANALYSIS_MAX_IN_FLIGHT && queue.length > 0) {
         const story = queue.shift();
         if (!story) break;
@@ -445,12 +456,12 @@ export function TriageStoriesView({
         void loadAiAnalysis({
           customerId: story.customerId,
           storyId: story.storyId,
-          signal: controller.signal,
         })
           .then((summary) => {
-            if (controller.signal.aborted) return;
             if (summary === null) return;
-            setAiSummaries((prev) => ({ ...prev, [key]: summary }));
+            setAiSummaries((prev) =>
+              Object.hasOwn(prev, key) ? prev : { ...prev, [key]: summary },
+            );
           })
           .catch(() => {
             // fetchAiAnalysisStorySummary already normalizes errors
@@ -467,10 +478,11 @@ export function TriageStoriesView({
     };
     startNext();
     return () => {
-      controller.abort();
-      // Anything left in the queue never started — release its
-      // reservation so a re-mount can re-queue it. In-flight requests
-      // release their own keys in the `finally` block above.
+      // Stop the queue from spawning new requests; let already
+      // in-flight fetches complete and populate the (customerId,
+      // storyId)-keyed cache as normal. Anything still queued is
+      // released so the next effect run re-queues it.
+      cancelled = true;
       for (const story of queue) {
         aiInFlightRef.current.delete(`${story.customerId}/${story.storyId}`);
       }

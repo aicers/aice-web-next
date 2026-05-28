@@ -1554,4 +1554,98 @@ describe("TriageStoriesView — AI-analysis fan-out is bounded (#645)", () => {
     expect(AI_ANALYSIS_MAX_IN_FLIGHT).toBeGreaterThanOrEqual(6);
     expect(AI_ANALYSIS_MAX_IN_FLIGHT).toBeLessThanOrEqual(8);
   });
+
+  /**
+   * Regression for [Reviewer Round 2] item 2: when the Stories list
+   * rotates (sort / filter / unsent-only) while the first batch of
+   * AI-analysis lookups is in flight, those lookups must still
+   * complete and populate the badge cache. A bounded queue that
+   * aborts active fetches on rotation but only releases queued
+   * reservations leaves the still-visible Stories stuck without a
+   * badge until some unrelated later list change.
+   */
+  it("still resolves in-flight stories after the list rotates", async () => {
+    const a = makeStory({ customerId: 7, storyId: "10" });
+    const b = makeStory({ customerId: 7, storyId: "20" });
+    const c = makeStory({ customerId: 7, storyId: "30" });
+
+    const resolversByStoryId = new Map<string, () => void>();
+    const loadAiAnalysis = vi.fn(async (args: { storyId: string }) => {
+      await new Promise<void>((resolve) => {
+        resolversByStoryId.set(args.storyId, () => resolve());
+      });
+      return {
+        tier: "HIGH" as const,
+        href: `https://aimer.example.com/analysis/story/${args.storyId}`,
+        severityScore: 0.6,
+        likelihoodScore: 0.5,
+        scoreKind: "leaf" as const,
+      };
+    });
+
+    const { rerender } = render(
+      <TriageStoriesView
+        stories={[a, b, c]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(3);
+    });
+
+    // Rotate the list while the three lookups are still in flight.
+    // A reverse-sort rotation keeps the same composite keys visible,
+    // which is exactly the scenario where the previous abort-and-
+    // release-only-queued behaviour would orphan reservations.
+    rerender(
+      <TriageStoriesView
+        stories={[c, b, a]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    // The rotation must not have triggered a second call for any of
+    // the already-in-flight Stories — they are still reserved in
+    // `aiInFlightRef` and the queue must skip them.
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(3);
+
+    // Resolve the original in-flight fetches and assert that every
+    // Story ends up with a badge rendered.
+    await act(async () => {
+      for (const storyId of ["10", "20", "30"]) {
+        const resolve = resolversByStoryId.get(storyId);
+        resolve?.();
+      }
+      // Yield once for the promise chains to settle.
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const badges = screen.getAllByTestId("triage-story-ai-analysis-badge");
+      expect(badges).toHaveLength(3);
+    });
+
+    // Cache hit on a subsequent identical rotation — no extra
+    // fetcher invocations.
+    rerender(
+      <TriageStoriesView
+        stories={[a, b, c]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(3);
+  });
 });
