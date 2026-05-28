@@ -407,6 +407,16 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
               "stories.card.duration.hoursMinutesTemplate",
             ) as string,
           },
+          aiAnalysisBadge: {
+            tierCritical: t("stories.card.aiAnalysisBadge.tierCritical"),
+            tierHigh: t("stories.card.aiAnalysisBadge.tierHigh"),
+            tooltipTemplate: t.raw(
+              "stories.card.aiAnalysisBadge.tooltipTemplate",
+            ) as string,
+            linkAriaLabel: t.raw(
+              "stories.card.aiAnalysisBadge.linkAriaLabel",
+            ) as string,
+          },
         },
         detail: {
           heading: t("stories.detail.heading"),

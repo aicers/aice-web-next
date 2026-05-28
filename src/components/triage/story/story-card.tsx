@@ -16,7 +16,12 @@
 
 import { useState } from "react";
 
+import type { AiAnalysisStorySummary } from "@/lib/aimer/analysis/summary-types";
 import type { TriageStory } from "@/lib/triage/story/types";
+import {
+  type AiAnalysisBadgeLabels,
+  renderAiAnalysisBadge,
+} from "./ai-analysis-badge";
 import {
   renderStoryTitle,
   type StoryDurationLabels,
@@ -80,6 +85,13 @@ export interface TriageStoryCardLabels {
   sendSuccessToast: string;
   /** Prefix used for the error toast. The error reason is appended. */
   sendErrorPrefix: string;
+  /**
+   * Labels for the AI narrative analysis badge (#645). Required so the
+   * badge renders with localized tier text + tooltip whenever the
+   * route handler returns a summary; the card itself does not gate on
+   * tier (the route handler already collapses LOW / MEDIUM to 204).
+   */
+  aiAnalysisBadge: AiAnalysisBadgeLabels;
 }
 
 interface StoryCardProps {
@@ -101,6 +113,13 @@ interface StoryCardProps {
    * stays disabled with an explanatory tooltip.
    */
   sendDisabled?: boolean;
+  /**
+   * AI narrative analysis summary resolved by the internal route
+   * handler (#645). When `null` / `undefined` the badge collapses
+   * out — every "render nothing" upstream surface is normalized to
+   * `null` on the client side, so the card has no policy of its own.
+   */
+  aiAnalysis?: AiAnalysisStorySummary | null;
   labels: TriageStoryCardLabels;
 }
 
@@ -115,6 +134,7 @@ export function TriageStoryCard({
   onOpen,
   onSend,
   sendDisabled,
+  aiAnalysis,
   labels,
 }: StoryCardProps) {
   const title = renderStoryTitle(
@@ -154,6 +174,7 @@ export function TriageStoryCard({
           <span className="rounded-sm border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
             {ruleBadge}
           </span>
+          {renderAiAnalysisBadge(aiAnalysis, labels.aiAnalysisBadge)}
           {story.score !== null ? (
             <span className="text-xs text-muted-foreground">
               {labels.scoreLabel}{" "}

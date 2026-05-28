@@ -14,6 +14,7 @@ import {
   refreshTriageStories,
   submitSaveAnalystCuratedStory,
 } from "@/app/[locale]/(dashboard)/triage/story-actions";
+import { fetchAiAnalysisStorySummary } from "@/lib/aimer/analysis/story-summary.client";
 import {
   createPeriodicDrain,
   type PeriodicDrainController,
@@ -2212,6 +2213,7 @@ export function TriageBaselineContent({
             )
           }
           refreshStories={(options) => refreshTriageStories(period, options)}
+          loadAiAnalysis={fetchAiAnalysisStorySummary}
           onPivotFromStory={onPivotFromStory}
           labels={labels.stories}
         />

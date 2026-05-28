@@ -23,6 +23,8 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
+import type { AiAnalysisStorySummaryFetcher } from "@/lib/aimer/analysis/story-summary.client";
+import type { AiAnalysisStorySummary } from "@/lib/aimer/analysis/summary-types";
 import {
   ManualSendError,
   manualSendToAimerWeb,
@@ -50,10 +52,23 @@ import {
   TriageEventTable,
   type TriageEventTableLabels,
 } from "../event-row/triage-event-table";
+import { renderAiAnalysisBadge } from "./ai-analysis-badge";
 import { TriageStoryCard, type TriageStoryCardLabels } from "./story-card";
 import { renderStoryTitle } from "./story-title";
 
 export type { StoriesSortOrder };
+
+/**
+ * Maximum in-flight AI-analysis summary requests dispatched from
+ * the Stories view (#645). The Stories page caps at 200 rows; a
+ * naive per-card fetch can therefore fan out 200 simultaneous
+ * internal requests (and 200 onward requests against aimer-web).
+ * The cap is set conservatively in the 6–8 range called out by
+ * the issue's "Fetch fan-out and concurrency" section.
+ *
+ * Exported for tests that need to assert the limit is respected.
+ */
+export const AI_ANALYSIS_MAX_IN_FLIGHT = 6;
 
 /**
  * Server-action seam for refetching the Stories list with new sort /
@@ -213,6 +228,19 @@ interface TriageStoriesViewProps {
    * (so the caller can build the pivot index over the Story's events
    * as documented in #553 §"Pivot corpus shape from a Story").
    */
+  /**
+   * AI narrative analysis summary fetcher (#645). When supplied, the
+   * view fetches one summary per visible Story on mount / list
+   * rotation and forwards it to both the card header and the detail
+   * panel. Absent fetcher = no badge anywhere; the seam keeps the
+   * component unit-testable without standing up the internal route.
+   *
+   * Fan-out is one request per visible row (the page caps at 200);
+   * a bounded-concurrency / lazy-viewport / batch-endpoint
+   * optimization is documented as the next step before the #646
+   * dashboard surface reuses the badge.
+   */
+  loadAiAnalysis?: AiAnalysisStorySummaryFetcher;
   onPivotFromStory?: (args: {
     story: TriageStory;
     members: readonly TriageStoryMemberDetail[];
@@ -241,6 +269,7 @@ export function TriageStoriesView({
   period,
   loadDetail,
   refreshStories,
+  loadAiAnalysis,
   onPivotFromStory,
   labels,
 }: TriageStoriesViewProps) {
@@ -365,6 +394,125 @@ export function TriageStoriesView({
       sendCount: override.sendCount,
     };
   };
+
+  // AI narrative analysis summaries per Story (#645). Keyed by
+  // `"{customerId}/{storyId}"`. Absent entry = not yet resolved or
+  // resolved to "no badge" — both render the same way (no badge), so
+  // the map only needs to remember positive hits.
+  //
+  // Fetches go through a bounded-concurrency queue
+  // (`AI_ANALYSIS_MAX_IN_FLIGHT`) so the 200-row Stories cap cannot
+  // fan out into 200 simultaneous internal requests (and 200 onward
+  // requests against aimer-web). A previously-resolved
+  // (customerId, storyId) is not re-queued on rotation — the
+  // upstream summary is keyed on the same pair so the cached value
+  // is still authoritative. A sort/filter rotation that brings the
+  // same Story back into view therefore stays free.
+  //
+  // The active-count and "current scheduler" pointers live in refs
+  // that **persist across effect generations**, not in the closure of
+  // any single effect run. If they were closure-local, a list
+  // rotation to a different visible set could stack a second batch
+  // of `AI_ANALYSIS_MAX_IN_FLIGHT` requests on top of the old
+  // effect's still-running requests, because the new effect's local
+  // `active` would start at `0` and the new keys would not appear
+  // in `aiInFlightRef`. The shared `aiActiveCountRef` ensures every
+  // generation observes the same global cap; `aiSchedulerRef` lets
+  // a stale generation's `.finally` hook drain the **current**
+  // generation's queue as each slot frees up.
+  //
+  // `aiSummaries` is read through `aiSummariesRef`, not the dep
+  // array: including the state in the deps would re-run the effect
+  // on every successful resolution and the cleanup would race with
+  // each pending fetch — turning a planned O(N) fan-out into O(N²)
+  // request amplification.
+  //
+  // In-flight fetches are intentionally **not** aborted when the
+  // effect re-runs (sort / filter / unsent-only toggle). The
+  // (customerId, storyId) cache key is stable across rotations, so a
+  // result already on the wire is still useful and storing it in
+  // `aiSummariesRef` prevents the next effect run from re-queuing
+  // the same key. Aborting active requests and only releasing queued
+  // reservations would leave the active keys stuck in `aiInFlightRef`
+  // past the next effect setup (which skips reserved keys) and only
+  // released them on the aborted `.finally` — by which point no
+  // effect run would re-queue them, so still-visible Stories could
+  // silently lose their badge.
+  const [aiSummaries, setAiSummaries] = useState<
+    Record<string, AiAnalysisStorySummary>
+  >({});
+  const aiInFlightRef = useRef<Set<string>>(new Set());
+  const aiActiveCountRef = useRef(0);
+  const aiSchedulerRef = useRef<(() => void) | null>(null);
+  const aiSummariesRef = useRef(aiSummaries);
+  aiSummariesRef.current = aiSummaries;
+  useEffect(() => {
+    if (!loadAiAnalysis) return;
+    let cancelled = false;
+    const queue: TriageStory[] = [];
+    for (const story of effectiveStories) {
+      const key = `${story.customerId}/${story.storyId}`;
+      if (aiInFlightRef.current.has(key)) continue;
+      if (Object.hasOwn(aiSummariesRef.current, key)) continue;
+      // Reserve the key up-front so a concurrent effect run on a
+      // sort/filter rotation does not enqueue the same Story twice.
+      aiInFlightRef.current.add(key);
+      queue.push(story);
+    }
+    const startNext = () => {
+      if (cancelled) return;
+      while (
+        aiActiveCountRef.current < AI_ANALYSIS_MAX_IN_FLIGHT &&
+        queue.length > 0
+      ) {
+        const story = queue.shift();
+        if (!story) break;
+        const key = `${story.customerId}/${story.storyId}`;
+        aiActiveCountRef.current += 1;
+        void loadAiAnalysis({
+          customerId: story.customerId,
+          storyId: story.storyId,
+        })
+          .then((summary) => {
+            if (summary === null) return;
+            setAiSummaries((prev) =>
+              Object.hasOwn(prev, key) ? prev : { ...prev, [key]: summary },
+            );
+          })
+          .catch(() => {
+            // fetchAiAnalysisStorySummary already normalizes errors
+            // to null — a thrown error here only happens on a
+            // synchronous bug in the caller-supplied fetcher and
+            // should not be surfaced to the operator.
+          })
+          .finally(() => {
+            aiInFlightRef.current.delete(key);
+            aiActiveCountRef.current -= 1;
+            // Kick the **current** scheduler, not necessarily ours.
+            // A stale generation whose effect has already been
+            // cancelled must still hand the freed slot to whichever
+            // effect generation is now live, so its queue can drain
+            // up to the global cap.
+            aiSchedulerRef.current?.();
+          });
+      }
+    };
+    aiSchedulerRef.current = startNext;
+    startNext();
+    return () => {
+      // Stop the queue from spawning new requests; let already
+      // in-flight fetches complete and populate the (customerId,
+      // storyId)-keyed cache as normal. Anything still queued is
+      // released so the next effect run re-queues it. We do not
+      // clear `aiSchedulerRef` — the next effect overwrites it, and
+      // if the component is unmounting the `cancelled` guard keeps
+      // any late `.finally` callback inert.
+      cancelled = true;
+      for (const story of queue) {
+        aiInFlightRef.current.delete(`${story.customerId}/${story.storyId}`);
+      }
+    };
+  }, [effectiveStories, loadAiAnalysis]);
 
   // Toast state for the "Sent to aimer-web" / error notifications.
   const [toast, setToast] = useState<{
@@ -541,17 +689,21 @@ export function TriageStoriesView({
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
-          {filtered.map((story) => (
-            <li key={`${story.customerId}/${story.storyId}`}>
-              <TriageStoryCard
-                story={overrideStory(story)}
-                onOpen={(s) => onFocus(s)}
-                onSend={handleSend}
-                sendDisabled={!aimerIntegrationConfigured}
-                labels={labels.card}
-              />
-            </li>
-          ))}
+          {filtered.map((story) => {
+            const key = `${story.customerId}/${story.storyId}`;
+            return (
+              <li key={key}>
+                <TriageStoryCard
+                  story={overrideStory(story)}
+                  onOpen={(s) => onFocus(s)}
+                  onSend={handleSend}
+                  sendDisabled={!aimerIntegrationConfigured}
+                  aiAnalysis={aiSummaries[key] ?? null}
+                  labels={labels.card}
+                />
+              </li>
+            );
+          })}
         </ul>
       )}
       {toast ? (
@@ -576,6 +728,9 @@ export function TriageStoriesView({
           story={focused}
           period={period}
           loadDetail={loadDetail}
+          aiAnalysis={
+            aiSummaries[`${focused.customerId}/${focused.storyId}`] ?? null
+          }
           onClose={() => onFocus(null)}
           onPivot={
             onPivotFromStory
@@ -601,6 +756,13 @@ interface StoryDetailProps {
   story: TriageStory;
   period: TriagePeriod | undefined;
   loadDetail: StoryDetailLoader | undefined;
+  /**
+   * Resolved AI narrative analysis summary for the focused Story
+   * (#645). `null` collapses the badge out of the detail header
+   * (no badge for LOW / MEDIUM, missing report, or unconfigured
+   * integration).
+   */
+  aiAnalysis: AiAnalysisStorySummary | null;
   onClose: () => void;
   /**
    * Pivot-from-Story (#553) callback. When defined the member table
@@ -675,6 +837,7 @@ function TriageStoryDetail({
   story,
   period,
   loadDetail,
+  aiAnalysis,
   onClose,
   onPivot,
   labels,
@@ -872,6 +1035,7 @@ function TriageStoryDetail({
             <span className="rounded-sm border border-border bg-muted px-2 py-0.5 font-medium text-muted-foreground">
               {ruleBadge}
             </span>
+            {renderAiAnalysisBadge(aiAnalysis, cardLabels.aiAnalysisBadge)}
             {story.score !== null ? (
               <span>
                 <span className="font-medium">{labels.scoreLabel}:</span>{" "}

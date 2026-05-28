@@ -39,6 +39,7 @@ vi.mock("@/lib/aimer/phase2/transport.client", () => ({
 }));
 
 import {
+  AI_ANALYSIS_MAX_IN_FLIGHT,
   TriageStoriesView,
   type TriageStoriesViewLabels,
 } from "@/components/triage/story/stories-view";
@@ -93,6 +94,13 @@ const LABELS: TriageStoriesViewLabels = {
       minutesTemplate: "{n} min",
       hoursTemplate: "{n} h",
       hoursMinutesTemplate: "{h} h {m} min",
+    },
+    aiAnalysisBadge: {
+      tierCritical: "AI · CRITICAL",
+      tierHigh: "AI · HIGH",
+      tooltipTemplate:
+        "AI analysis ({tier}) · severity {severity} · likelihood {likelihood}",
+      linkAriaLabel: "Open AI analysis ({tier})",
     },
   },
   detail: {
@@ -1474,5 +1482,287 @@ describe("TriageStoryDetail — header identity", () => {
     expect(title.textContent).toBe("Phishing campaign on 10.0.0.5");
     const detail = screen.getByTestId("triage-story-detail");
     expect(detail.textContent).toContain(LABELS.card.ruleBadgeAnalyst);
+  });
+});
+
+/**
+ * Bounded-concurrency contract for the AI-analysis summary fan-out
+ * (#645 "Fetch fan-out and concurrency"). The Stories page caps at
+ * 200 rows; a naive per-card fetch would issue 200 simultaneous
+ * internal requests and 200 onward requests against aimer-web. The
+ * stories-view container must cap in-flight requests at
+ * `AI_ANALYSIS_MAX_IN_FLIGHT`.
+ */
+describe("TriageStoriesView — AI-analysis fan-out is bounded (#645)", () => {
+  it("never exceeds AI_ANALYSIS_MAX_IN_FLIGHT simultaneous loadAiAnalysis calls", async () => {
+    const STORY_COUNT = 30;
+    const stories: TriageStory[] = Array.from({ length: STORY_COUNT }, (_, i) =>
+      makeStory({ customerId: 7, storyId: String(i + 1) }),
+    );
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const resolvers: Array<() => void> = [];
+    const loadAiAnalysis = vi.fn(async () => {
+      inFlight += 1;
+      if (inFlight > maxInFlight) maxInFlight = inFlight;
+      await new Promise<void>((resolve) => {
+        resolvers.push(() => {
+          inFlight -= 1;
+          resolve();
+        });
+      });
+      return null;
+    });
+
+    await act(async () => {
+      render(
+        <TriageStoriesView
+          stories={stories}
+          truncated={false}
+          focused={null}
+          onFocus={() => {}}
+          loadAiAnalysis={loadAiAnalysis}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    // After mount, only the bounded slice has started.
+    await waitFor(() => {
+      expect(resolvers.length).toBe(AI_ANALYSIS_MAX_IN_FLIGHT);
+    });
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(AI_ANALYSIS_MAX_IN_FLIGHT);
+
+    // Drain the queue in waves. Each resolve must allow exactly one
+    // more queued request to start, never more — that is the only
+    // behavior that distinguishes a bounded queue from a naive
+    // unbounded fan-out.
+    while (resolvers.length > 0) {
+      const resolve = resolvers.shift();
+      if (!resolve) break;
+      await act(async () => {
+        resolve();
+      });
+    }
+
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(STORY_COUNT);
+    expect(maxInFlight).toBeLessThanOrEqual(AI_ANALYSIS_MAX_IN_FLIGHT);
+    // Sanity: the constant itself must be in the documented 6–8
+    // range — guard against an accidental bump that would defeat
+    // the cap.
+    expect(AI_ANALYSIS_MAX_IN_FLIGHT).toBeGreaterThanOrEqual(6);
+    expect(AI_ANALYSIS_MAX_IN_FLIGHT).toBeLessThanOrEqual(8);
+  });
+
+  /**
+   * Regression for [Reviewer Round 2] item 2: when the Stories list
+   * rotates (sort / filter / unsent-only) while the first batch of
+   * AI-analysis lookups is in flight, those lookups must still
+   * complete and populate the badge cache. A bounded queue that
+   * aborts active fetches on rotation but only releases queued
+   * reservations leaves the still-visible Stories stuck without a
+   * badge until some unrelated later list change.
+   */
+  it("still resolves in-flight stories after the list rotates", async () => {
+    const a = makeStory({ customerId: 7, storyId: "10" });
+    const b = makeStory({ customerId: 7, storyId: "20" });
+    const c = makeStory({ customerId: 7, storyId: "30" });
+
+    const resolversByStoryId = new Map<string, () => void>();
+    const loadAiAnalysis = vi.fn(async (args: { storyId: string }) => {
+      await new Promise<void>((resolve) => {
+        resolversByStoryId.set(args.storyId, () => resolve());
+      });
+      return {
+        tier: "HIGH" as const,
+        href: `https://aimer.example.com/analysis/story/${args.storyId}`,
+        severityScore: 0.6,
+        likelihoodScore: 0.5,
+        scoreKind: "leaf" as const,
+      };
+    });
+
+    const { rerender } = render(
+      <TriageStoriesView
+        stories={[a, b, c]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(3);
+    });
+
+    // Rotate the list while the three lookups are still in flight.
+    // A reverse-sort rotation keeps the same composite keys visible,
+    // which is exactly the scenario where the previous abort-and-
+    // release-only-queued behaviour would orphan reservations.
+    rerender(
+      <TriageStoriesView
+        stories={[c, b, a]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    // The rotation must not have triggered a second call for any of
+    // the already-in-flight Stories — they are still reserved in
+    // `aiInFlightRef` and the queue must skip them.
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(3);
+
+    // Resolve the original in-flight fetches and assert that every
+    // Story ends up with a badge rendered.
+    await act(async () => {
+      for (const storyId of ["10", "20", "30"]) {
+        const resolve = resolversByStoryId.get(storyId);
+        resolve?.();
+      }
+      // Yield once for the promise chains to settle.
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const badges = screen.getAllByTestId("triage-story-ai-analysis-badge");
+      expect(badges).toHaveLength(3);
+    });
+
+    // Cache hit on a subsequent identical rotation — no extra
+    // fetcher invocations.
+    rerender(
+      <TriageStoriesView
+        stories={[a, b, c]}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(3);
+  });
+
+  /**
+   * Regression for [Reviewer Round 3]: the concurrency cap must be
+   * global, not per effect generation. A list rotation that brings
+   * a **disjoint** visible set into view while the first batch of
+   * AI-analysis lookups is still in flight must not stack a second
+   * batch of `AI_ANALYSIS_MAX_IN_FLIGHT` on top of the first — that
+   * is the failure mode where `active` was a closure-local variable
+   * in each effect run, so the new effect started counting from 0
+   * and the new keys were not in `aiInFlightRef` to be skipped.
+   */
+  it("caps concurrent loadAiAnalysis calls across list rotations to a disjoint set", async () => {
+    // First batch: keys 1..AI_ANALYSIS_MAX_IN_FLIGHT.
+    const firstBatch: TriageStory[] = Array.from(
+      { length: AI_ANALYSIS_MAX_IN_FLIGHT },
+      (_, i) => makeStory({ customerId: 7, storyId: `first-${i + 1}` }),
+    );
+    // Second batch: a completely disjoint set of composite keys.
+    // The customerId differs so even a "same storyId" coincidence
+    // can't masquerade as a cache hit.
+    const secondBatch: TriageStory[] = Array.from(
+      { length: AI_ANALYSIS_MAX_IN_FLIGHT },
+      (_, i) => makeStory({ customerId: 9, storyId: `second-${i + 1}` }),
+    );
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const resolversByKey = new Map<string, () => void>();
+    const loadAiAnalysis = vi.fn(
+      async (args: { customerId: number; storyId: string }) => {
+        inFlight += 1;
+        if (inFlight > maxInFlight) maxInFlight = inFlight;
+        const key = `${args.customerId}/${args.storyId}`;
+        await new Promise<void>((resolve) => {
+          resolversByKey.set(key, () => {
+            inFlight -= 1;
+            resolve();
+          });
+        });
+        return null;
+      },
+    );
+
+    const { rerender } = render(
+      <TriageStoriesView
+        stories={firstBatch}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    // Wait for the first effect to dispatch its full slot quota.
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(AI_ANALYSIS_MAX_IN_FLIGHT);
+    });
+
+    // Rotate to a disjoint visible set while the first batch is
+    // still in flight. Pre-fix, this would have spawned a second
+    // batch of AI_ANALYSIS_MAX_IN_FLIGHT in parallel because the
+    // new effect's local `active` started at 0.
+    rerender(
+      <TriageStoriesView
+        stories={secondBatch}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    // Give the new effect a chance to (incorrectly) burst.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The new effect must not have dispatched anything yet — every
+    // slot is still held by the first batch.
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(AI_ANALYSIS_MAX_IN_FLIGHT);
+    expect(inFlight).toBe(AI_ANALYSIS_MAX_IN_FLIGHT);
+    expect(maxInFlight).toBeLessThanOrEqual(AI_ANALYSIS_MAX_IN_FLIGHT);
+
+    // Drain the first batch one at a time. Each release must allow
+    // exactly one second-batch request to start, never more, so the
+    // global in-flight count stays at the cap until the second batch
+    // tails off.
+    for (let i = 0; i < AI_ANALYSIS_MAX_IN_FLIGHT; i += 1) {
+      const key = `7/first-${i + 1}`;
+      const resolve = resolversByKey.get(key);
+      await act(async () => {
+        resolve?.();
+        await Promise.resolve();
+      });
+      expect(maxInFlight).toBeLessThanOrEqual(AI_ANALYSIS_MAX_IN_FLIGHT);
+    }
+
+    // By now every second-batch entry must be in flight (queue
+    // drained, all slots still saturated by the second batch).
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(2 * AI_ANALYSIS_MAX_IN_FLIGHT);
+    expect(inFlight).toBe(AI_ANALYSIS_MAX_IN_FLIGHT);
+
+    // Drain the second batch and assert the cap held throughout.
+    for (let i = 0; i < AI_ANALYSIS_MAX_IN_FLIGHT; i += 1) {
+      const key = `9/second-${i + 1}`;
+      const resolve = resolversByKey.get(key);
+      await act(async () => {
+        resolve?.();
+        await Promise.resolve();
+      });
+    }
+    expect(maxInFlight).toBeLessThanOrEqual(AI_ANALYSIS_MAX_IN_FLIGHT);
+    expect(inFlight).toBe(0);
   });
 });
