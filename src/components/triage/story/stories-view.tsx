@@ -409,6 +409,18 @@ export function TriageStoriesView({
   // is still authoritative. A sort/filter rotation that brings the
   // same Story back into view therefore stays free.
   //
+  // The active-count and "current scheduler" pointers live in refs
+  // that **persist across effect generations**, not in the closure of
+  // any single effect run. If they were closure-local, a list
+  // rotation to a different visible set could stack a second batch
+  // of `AI_ANALYSIS_MAX_IN_FLIGHT` requests on top of the old
+  // effect's still-running requests, because the new effect's local
+  // `active` would start at `0` and the new keys would not appear
+  // in `aiInFlightRef`. The shared `aiActiveCountRef` ensures every
+  // generation observes the same global cap; `aiSchedulerRef` lets
+  // a stale generation's `.finally` hook drain the **current**
+  // generation's queue as each slot frees up.
+  //
   // `aiSummaries` is read through `aiSummariesRef`, not the dep
   // array: including the state in the deps would re-run the effect
   // on every successful resolution and the cleanup would race with
@@ -430,6 +442,8 @@ export function TriageStoriesView({
     Record<string, AiAnalysisStorySummary>
   >({});
   const aiInFlightRef = useRef<Set<string>>(new Set());
+  const aiActiveCountRef = useRef(0);
+  const aiSchedulerRef = useRef<(() => void) | null>(null);
   const aiSummariesRef = useRef(aiSummaries);
   aiSummariesRef.current = aiSummaries;
   useEffect(() => {
@@ -445,14 +459,16 @@ export function TriageStoriesView({
       aiInFlightRef.current.add(key);
       queue.push(story);
     }
-    let active = 0;
     const startNext = () => {
       if (cancelled) return;
-      while (active < AI_ANALYSIS_MAX_IN_FLIGHT && queue.length > 0) {
+      while (
+        aiActiveCountRef.current < AI_ANALYSIS_MAX_IN_FLIGHT &&
+        queue.length > 0
+      ) {
         const story = queue.shift();
         if (!story) break;
         const key = `${story.customerId}/${story.storyId}`;
-        active += 1;
+        aiActiveCountRef.current += 1;
         void loadAiAnalysis({
           customerId: story.customerId,
           storyId: story.storyId,
@@ -471,17 +487,26 @@ export function TriageStoriesView({
           })
           .finally(() => {
             aiInFlightRef.current.delete(key);
-            active -= 1;
-            startNext();
+            aiActiveCountRef.current -= 1;
+            // Kick the **current** scheduler, not necessarily ours.
+            // A stale generation whose effect has already been
+            // cancelled must still hand the freed slot to whichever
+            // effect generation is now live, so its queue can drain
+            // up to the global cap.
+            aiSchedulerRef.current?.();
           });
       }
     };
+    aiSchedulerRef.current = startNext;
     startNext();
     return () => {
       // Stop the queue from spawning new requests; let already
       // in-flight fetches complete and populate the (customerId,
       // storyId)-keyed cache as normal. Anything still queued is
-      // released so the next effect run re-queues it.
+      // released so the next effect run re-queues it. We do not
+      // clear `aiSchedulerRef` — the next effect overwrites it, and
+      // if the component is unmounting the `cancelled` guard keeps
+      // any late `.finally` callback inert.
       cancelled = true;
       for (const story of queue) {
         aiInFlightRef.current.delete(`${story.customerId}/${story.storyId}`);

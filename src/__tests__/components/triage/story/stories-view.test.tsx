@@ -1648,4 +1648,121 @@ describe("TriageStoriesView — AI-analysis fan-out is bounded (#645)", () => {
     );
     expect(loadAiAnalysis).toHaveBeenCalledTimes(3);
   });
+
+  /**
+   * Regression for [Reviewer Round 3]: the concurrency cap must be
+   * global, not per effect generation. A list rotation that brings
+   * a **disjoint** visible set into view while the first batch of
+   * AI-analysis lookups is still in flight must not stack a second
+   * batch of `AI_ANALYSIS_MAX_IN_FLIGHT` on top of the first — that
+   * is the failure mode where `active` was a closure-local variable
+   * in each effect run, so the new effect started counting from 0
+   * and the new keys were not in `aiInFlightRef` to be skipped.
+   */
+  it("caps concurrent loadAiAnalysis calls across list rotations to a disjoint set", async () => {
+    // First batch: keys 1..AI_ANALYSIS_MAX_IN_FLIGHT.
+    const firstBatch: TriageStory[] = Array.from(
+      { length: AI_ANALYSIS_MAX_IN_FLIGHT },
+      (_, i) => makeStory({ customerId: 7, storyId: `first-${i + 1}` }),
+    );
+    // Second batch: a completely disjoint set of composite keys.
+    // The customerId differs so even a "same storyId" coincidence
+    // can't masquerade as a cache hit.
+    const secondBatch: TriageStory[] = Array.from(
+      { length: AI_ANALYSIS_MAX_IN_FLIGHT },
+      (_, i) => makeStory({ customerId: 9, storyId: `second-${i + 1}` }),
+    );
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const resolversByKey = new Map<string, () => void>();
+    const loadAiAnalysis = vi.fn(
+      async (args: { customerId: number; storyId: string }) => {
+        inFlight += 1;
+        if (inFlight > maxInFlight) maxInFlight = inFlight;
+        const key = `${args.customerId}/${args.storyId}`;
+        await new Promise<void>((resolve) => {
+          resolversByKey.set(key, () => {
+            inFlight -= 1;
+            resolve();
+          });
+        });
+        return null;
+      },
+    );
+
+    const { rerender } = render(
+      <TriageStoriesView
+        stories={firstBatch}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    // Wait for the first effect to dispatch its full slot quota.
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(AI_ANALYSIS_MAX_IN_FLIGHT);
+    });
+
+    // Rotate to a disjoint visible set while the first batch is
+    // still in flight. Pre-fix, this would have spawned a second
+    // batch of AI_ANALYSIS_MAX_IN_FLIGHT in parallel because the
+    // new effect's local `active` started at 0.
+    rerender(
+      <TriageStoriesView
+        stories={secondBatch}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    // Give the new effect a chance to (incorrectly) burst.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The new effect must not have dispatched anything yet — every
+    // slot is still held by the first batch.
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(AI_ANALYSIS_MAX_IN_FLIGHT);
+    expect(inFlight).toBe(AI_ANALYSIS_MAX_IN_FLIGHT);
+    expect(maxInFlight).toBeLessThanOrEqual(AI_ANALYSIS_MAX_IN_FLIGHT);
+
+    // Drain the first batch one at a time. Each release must allow
+    // exactly one second-batch request to start, never more, so the
+    // global in-flight count stays at the cap until the second batch
+    // tails off.
+    for (let i = 0; i < AI_ANALYSIS_MAX_IN_FLIGHT; i += 1) {
+      const key = `7/first-${i + 1}`;
+      const resolve = resolversByKey.get(key);
+      await act(async () => {
+        resolve?.();
+        await Promise.resolve();
+      });
+      expect(maxInFlight).toBeLessThanOrEqual(AI_ANALYSIS_MAX_IN_FLIGHT);
+    }
+
+    // By now every second-batch entry must be in flight (queue
+    // drained, all slots still saturated by the second batch).
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(2 * AI_ANALYSIS_MAX_IN_FLIGHT);
+    expect(inFlight).toBe(AI_ANALYSIS_MAX_IN_FLIGHT);
+
+    // Drain the second batch and assert the cap held throughout.
+    for (let i = 0; i < AI_ANALYSIS_MAX_IN_FLIGHT; i += 1) {
+      const key = `9/second-${i + 1}`;
+      const resolve = resolversByKey.get(key);
+      await act(async () => {
+        resolve?.();
+        await Promise.resolve();
+      });
+    }
+    expect(maxInFlight).toBeLessThanOrEqual(AI_ANALYSIS_MAX_IN_FLIGHT);
+    expect(inFlight).toBe(0);
+  });
 });
