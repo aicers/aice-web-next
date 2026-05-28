@@ -2369,6 +2369,12 @@
           "minutesTemplate": "{n} min",
           "hoursTemplate": "{n} h",
           "hoursMinutesTemplate": "{h} h {m} min"
+        },
+        "aiAnalysisBadge": {
+          "tierCritical": "AI · CRITICAL",
+          "tierHigh": "AI · HIGH",
+          "tooltipTemplate": "AI narrative analysis ({tier}) · severity {severity} · likelihood {likelihood}",
+          "linkAriaLabel": "Open AI narrative analysis ({tier}) in a new tab"
         }
       },
       "detail": {

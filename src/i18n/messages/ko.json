@@ -2369,6 +2369,12 @@
           "minutesTemplate": "{n}분",
           "hoursTemplate": "{n}시간",
           "hoursMinutesTemplate": "{h}시간 {m}분"
+        },
+        "aiAnalysisBadge": {
+          "tierCritical": "AI · 심각",
+          "tierHigh": "AI · 높음",
+          "tooltipTemplate": "AI 분석 ({tier}) · 심각도 {severity} · 가능성 {likelihood}",
+          "linkAriaLabel": "AI 분석({tier}) 새 탭으로 열기"
         }
       },
       "detail": {

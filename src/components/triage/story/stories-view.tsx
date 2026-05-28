@@ -23,6 +23,8 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
+import type { AiAnalysisStorySummaryFetcher } from "@/lib/aimer/analysis/story-summary.client";
+import type { AiAnalysisStorySummary } from "@/lib/aimer/analysis/summary-types";
 import {
   ManualSendError,
   manualSendToAimerWeb,
@@ -50,6 +52,7 @@ import {
   TriageEventTable,
   type TriageEventTableLabels,
 } from "../event-row/triage-event-table";
+import { renderAiAnalysisBadge } from "./ai-analysis-badge";
 import { TriageStoryCard, type TriageStoryCardLabels } from "./story-card";
 import { renderStoryTitle } from "./story-title";
 
@@ -213,6 +216,19 @@ interface TriageStoriesViewProps {
    * (so the caller can build the pivot index over the Story's events
    * as documented in #553 §"Pivot corpus shape from a Story").
    */
+  /**
+   * AI narrative analysis summary fetcher (#645). When supplied, the
+   * view fetches one summary per visible Story on mount / list
+   * rotation and forwards it to both the card header and the detail
+   * panel. Absent fetcher = no badge anywhere; the seam keeps the
+   * component unit-testable without standing up the internal route.
+   *
+   * Fan-out is one request per visible row (the page caps at 200);
+   * a bounded-concurrency / lazy-viewport / batch-endpoint
+   * optimization is documented as the next step before the #646
+   * dashboard surface reuses the badge.
+   */
+  loadAiAnalysis?: AiAnalysisStorySummaryFetcher;
   onPivotFromStory?: (args: {
     story: TriageStory;
     members: readonly TriageStoryMemberDetail[];
@@ -241,6 +257,7 @@ export function TriageStoriesView({
   period,
   loadDetail,
   refreshStories,
+  loadAiAnalysis,
   onPivotFromStory,
   labels,
 }: TriageStoriesViewProps) {
@@ -365,6 +382,63 @@ export function TriageStoriesView({
       sendCount: override.sendCount,
     };
   };
+
+  // AI narrative analysis summaries per Story (#645). Keyed by
+  // `"{customerId}/{storyId}"`. Absent entry = not yet resolved or
+  // resolved to "no badge" — both render the same way (no badge), so
+  // the map only needs to remember positive hits.
+  //
+  // The effect fans out one request per visible row on mount / list
+  // rotation. A previously-resolved (customerId, storyId) is not
+  // re-fetched on rotation — the upstream summary is keyed on the
+  // same pair so the cached value is still authoritative. A
+  // sort/filter rotation that brings the same Story back into view
+  // therefore stays free.
+  //
+  // `aiSummaries` is read through `aiSummariesRef`, not the dep
+  // array: including the state in the deps would re-run the effect
+  // on every successful resolution and the cleanup's
+  // `controller.abort()` would then cancel all remaining in-flight
+  // fetches and force them to re-issue — turning a planned O(N)
+  // fan-out into O(N²) request amplification.
+  const [aiSummaries, setAiSummaries] = useState<
+    Record<string, AiAnalysisStorySummary>
+  >({});
+  const aiInFlightRef = useRef<Set<string>>(new Set());
+  const aiSummariesRef = useRef(aiSummaries);
+  aiSummariesRef.current = aiSummaries;
+  useEffect(() => {
+    if (!loadAiAnalysis) return;
+    const controller = new AbortController();
+    for (const story of effectiveStories) {
+      const key = `${story.customerId}/${story.storyId}`;
+      if (aiInFlightRef.current.has(key)) continue;
+      if (Object.hasOwn(aiSummariesRef.current, key)) continue;
+      aiInFlightRef.current.add(key);
+      void loadAiAnalysis({
+        customerId: story.customerId,
+        storyId: story.storyId,
+        signal: controller.signal,
+      })
+        .then((summary) => {
+          if (controller.signal.aborted) return;
+          if (summary === null) return;
+          setAiSummaries((prev) => ({ ...prev, [key]: summary }));
+        })
+        .catch(() => {
+          // fetchAiAnalysisStorySummary already normalizes errors to
+          // null — a thrown error here only happens on a synchronous
+          // bug in the caller-supplied fetcher and should not be
+          // surfaced to the operator.
+        })
+        .finally(() => {
+          aiInFlightRef.current.delete(key);
+        });
+    }
+    return () => {
+      controller.abort();
+    };
+  }, [effectiveStories, loadAiAnalysis]);
 
   // Toast state for the "Sent to aimer-web" / error notifications.
   const [toast, setToast] = useState<{
@@ -541,17 +615,21 @@ export function TriageStoriesView({
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
-          {filtered.map((story) => (
-            <li key={`${story.customerId}/${story.storyId}`}>
-              <TriageStoryCard
-                story={overrideStory(story)}
-                onOpen={(s) => onFocus(s)}
-                onSend={handleSend}
-                sendDisabled={!aimerIntegrationConfigured}
-                labels={labels.card}
-              />
-            </li>
-          ))}
+          {filtered.map((story) => {
+            const key = `${story.customerId}/${story.storyId}`;
+            return (
+              <li key={key}>
+                <TriageStoryCard
+                  story={overrideStory(story)}
+                  onOpen={(s) => onFocus(s)}
+                  onSend={handleSend}
+                  sendDisabled={!aimerIntegrationConfigured}
+                  aiAnalysis={aiSummaries[key] ?? null}
+                  labels={labels.card}
+                />
+              </li>
+            );
+          })}
         </ul>
       )}
       {toast ? (
@@ -576,6 +654,9 @@ export function TriageStoriesView({
           story={focused}
           period={period}
           loadDetail={loadDetail}
+          aiAnalysis={
+            aiSummaries[`${focused.customerId}/${focused.storyId}`] ?? null
+          }
           onClose={() => onFocus(null)}
           onPivot={
             onPivotFromStory
@@ -601,6 +682,13 @@ interface StoryDetailProps {
   story: TriageStory;
   period: TriagePeriod | undefined;
   loadDetail: StoryDetailLoader | undefined;
+  /**
+   * Resolved AI narrative analysis summary for the focused Story
+   * (#645). `null` collapses the badge out of the detail header
+   * (no badge for LOW / MEDIUM, missing report, or unconfigured
+   * integration).
+   */
+  aiAnalysis: AiAnalysisStorySummary | null;
   onClose: () => void;
   /**
    * Pivot-from-Story (#553) callback. When defined the member table
@@ -675,6 +763,7 @@ function TriageStoryDetail({
   story,
   period,
   loadDetail,
+  aiAnalysis,
   onClose,
   onPivot,
   labels,
@@ -872,6 +961,7 @@ function TriageStoryDetail({
             <span className="rounded-sm border border-border bg-muted px-2 py-0.5 font-medium text-muted-foreground">
               {ruleBadge}
             </span>
+            {renderAiAnalysisBadge(aiAnalysis, cardLabels.aiAnalysisBadge)}
             {story.score !== null ? (
               <span>
                 <span className="font-medium">{labels.scoreLabel}:</span>{" "}

@@ -363,6 +363,13 @@ const LABELS: TriageShellLabels = {
           hoursTemplate: "{n} h",
           hoursMinutesTemplate: "{h} h {m} min",
         },
+        aiAnalysisBadge: {
+          tierCritical: "AI · CRITICAL",
+          tierHigh: "AI · HIGH",
+          tooltipTemplate:
+            "AI analysis ({tier}) · severity {severity} · likelihood {likelihood}",
+          linkAriaLabel: "Open AI analysis ({tier})",
+        },
       },
       detail: {
         heading: "Detail",
