@@ -39,11 +39,16 @@ export async function fetchAiAnalysisStorySummary(args: {
   }
   if (!body || typeof body !== "object") return null;
   const candidate = body as Record<string, unknown>;
-  const tier = candidate.tier;
-  const href = candidate.href;
-  const severityScore = candidate.severityScore;
-  const likelihoodScore = candidate.likelihoodScore;
-  const scoreKind = candidate.scoreKind;
+  // Wire shape matches the issue's "Internal route response contract"
+  // (#645): `{ exists, priority_tier, severity_score,
+  // likelihood_score, score_kind, link }`. The badge component prop
+  // shape uses camelCase, so we remap once here.
+  if (candidate.exists !== true) return null;
+  const tier = candidate.priority_tier;
+  const href = candidate.link;
+  const severityScore = candidate.severity_score;
+  const likelihoodScore = candidate.likelihood_score;
+  const scoreKind = candidate.score_kind;
   if (tier !== "CRITICAL" && tier !== "HIGH") return null;
   if (typeof href !== "string" || href.length === 0) return null;
   if (typeof severityScore !== "number" || !Number.isFinite(severityScore)) {

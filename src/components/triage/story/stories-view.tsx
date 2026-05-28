@@ -59,6 +59,18 @@ import { renderStoryTitle } from "./story-title";
 export type { StoriesSortOrder };
 
 /**
+ * Maximum in-flight AI-analysis summary requests dispatched from
+ * the Stories view (#645). The Stories page caps at 200 rows; a
+ * naive per-card fetch can therefore fan out 200 simultaneous
+ * internal requests (and 200 onward requests against aimer-web).
+ * The cap is set conservatively in the 6–8 range called out by
+ * the issue's "Fetch fan-out and concurrency" section.
+ *
+ * Exported for tests that need to assert the limit is respected.
+ */
+export const AI_ANALYSIS_MAX_IN_FLIGHT = 6;
+
+/**
  * Server-action seam for refetching the Stories list with new sort /
  * filter options. Returns `null` on session lapse / unexpected error
  * — the view keeps the previously-rendered slice in that case.
@@ -388,12 +400,14 @@ export function TriageStoriesView({
   // resolved to "no badge" — both render the same way (no badge), so
   // the map only needs to remember positive hits.
   //
-  // The effect fans out one request per visible row on mount / list
-  // rotation. A previously-resolved (customerId, storyId) is not
-  // re-fetched on rotation — the upstream summary is keyed on the
-  // same pair so the cached value is still authoritative. A
-  // sort/filter rotation that brings the same Story back into view
-  // therefore stays free.
+  // Fetches go through a bounded-concurrency queue
+  // (`AI_ANALYSIS_MAX_IN_FLIGHT`) so the 200-row Stories cap cannot
+  // fan out into 200 simultaneous internal requests (and 200 onward
+  // requests against aimer-web). A previously-resolved
+  // (customerId, storyId) is not re-queued on rotation — the
+  // upstream summary is keyed on the same pair so the cached value
+  // is still authoritative. A sort/filter rotation that brings the
+  // same Story back into view therefore stays free.
   //
   // `aiSummaries` is read through `aiSummariesRef`, not the dep
   // array: including the state in the deps would re-run the effect
@@ -410,33 +424,56 @@ export function TriageStoriesView({
   useEffect(() => {
     if (!loadAiAnalysis) return;
     const controller = new AbortController();
+    const queue: TriageStory[] = [];
     for (const story of effectiveStories) {
       const key = `${story.customerId}/${story.storyId}`;
       if (aiInFlightRef.current.has(key)) continue;
       if (Object.hasOwn(aiSummariesRef.current, key)) continue;
+      // Reserve the key up-front so a concurrent effect run on a
+      // sort/filter rotation does not enqueue the same Story twice.
       aiInFlightRef.current.add(key);
-      void loadAiAnalysis({
-        customerId: story.customerId,
-        storyId: story.storyId,
-        signal: controller.signal,
-      })
-        .then((summary) => {
-          if (controller.signal.aborted) return;
-          if (summary === null) return;
-          setAiSummaries((prev) => ({ ...prev, [key]: summary }));
-        })
-        .catch(() => {
-          // fetchAiAnalysisStorySummary already normalizes errors to
-          // null — a thrown error here only happens on a synchronous
-          // bug in the caller-supplied fetcher and should not be
-          // surfaced to the operator.
-        })
-        .finally(() => {
-          aiInFlightRef.current.delete(key);
-        });
+      queue.push(story);
     }
+    let active = 0;
+    const startNext = () => {
+      if (controller.signal.aborted) return;
+      while (active < AI_ANALYSIS_MAX_IN_FLIGHT && queue.length > 0) {
+        const story = queue.shift();
+        if (!story) break;
+        const key = `${story.customerId}/${story.storyId}`;
+        active += 1;
+        void loadAiAnalysis({
+          customerId: story.customerId,
+          storyId: story.storyId,
+          signal: controller.signal,
+        })
+          .then((summary) => {
+            if (controller.signal.aborted) return;
+            if (summary === null) return;
+            setAiSummaries((prev) => ({ ...prev, [key]: summary }));
+          })
+          .catch(() => {
+            // fetchAiAnalysisStorySummary already normalizes errors
+            // to null — a thrown error here only happens on a
+            // synchronous bug in the caller-supplied fetcher and
+            // should not be surfaced to the operator.
+          })
+          .finally(() => {
+            aiInFlightRef.current.delete(key);
+            active -= 1;
+            startNext();
+          });
+      }
+    };
+    startNext();
     return () => {
       controller.abort();
+      // Anything left in the queue never started — release its
+      // reservation so a re-mount can re-queue it. In-flight requests
+      // release their own keys in the `finally` block above.
+      for (const story of queue) {
+        aiInFlightRef.current.delete(`${story.customerId}/${story.storyId}`);
+      }
     };
   }, [effectiveStories, loadAiAnalysis]);
 

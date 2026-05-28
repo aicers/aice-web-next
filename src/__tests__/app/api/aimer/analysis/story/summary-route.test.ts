@@ -245,6 +245,29 @@ describe("GET /api/aimer/analysis/story/[customerId]/[storyId]/summary", () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  it.each([
+    ["/analysis/%2e%2e/admin"],
+    ["/analysis/%2E%2E/admin"],
+    ["/analysis/%2e./admin"],
+    ["/analysis/.%2e/admin"],
+    ["/analysis/%2e/admin"],
+  ])("returns 204 + warn log when upstream link contains percent-encoded traversal (%s)", async (link) => {
+    mockUpstream({
+      exists: true,
+      priority_tier: "HIGH",
+      severity_score: 0.7,
+      likelihood_score: 0.6,
+      score_kind: "leaf",
+      link,
+    });
+    const { GET } = await import(
+      "@/app/api/aimer/analysis/story/[customerId]/[storyId]/summary/route"
+    );
+    const res = await GET(makeRequest(42, "1001"), ctxFor(42, "1001"));
+    expect(res.status).toBe(204);
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
   it("returns 204 + warn log when upstream link is protocol-relative", async () => {
     mockUpstream({
       exists: true,
@@ -287,18 +310,25 @@ describe("GET /api/aimer/analysis/story/[customerId]/[storyId]/summary", () => {
     const res = await GET(makeRequest(42, "1001"), ctxFor(42, "1001"));
     expect(res.status).toBe(200);
     const body = await res.json();
+    // Wire shape matches the issue's "Internal route response
+    // contract" (#645) — snake_case with `exists: true` and `link`
+    // carrying the validated absolute aimer-web URL.
     expect(body).toEqual({
-      tier: "CRITICAL",
-      href: "https://aimer.example.com/analysis/story/123",
-      severityScore: 0.92,
-      likelihoodScore: 0.88,
-      scoreKind: "leaf",
+      exists: true,
+      priority_tier: "CRITICAL",
+      severity_score: 0.92,
+      likelihood_score: 0.88,
+      score_kind: "leaf",
+      link: "https://aimer.example.com/analysis/story/123",
     });
-    // Upstream URL was composed from bridgeUrl + path-encoded storyId.
+    // Upstream URL is the customer-scoped contract finalized in
+    // aicers/aimer-web#296: /api/customers/{customer_id}/analysis/
+    // story/{story_id}/summary. `story_id` is not globally unique,
+    // so the customer scope is required.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0];
     expect(url).toBe(
-      "https://aimer.example.com/api/analysis/story/1001/summary",
+      "https://aimer.example.com/api/customers/42/analysis/story/1001/summary",
     );
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers["x-aice-id"]).toBe("aice.example.com");

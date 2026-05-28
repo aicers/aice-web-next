@@ -17,11 +17,14 @@ import { hasPermission } from "@/lib/auth/permissions";
  * "no badge".
  *
  * Surfaces:
- * - `200 OK` with `{ tier, href, severityScore, likelihoodScore,
- *   scoreKind }` when the upstream report exists, the priority tier
- *   is `CRITICAL` or `HIGH`, and the upstream `link` validated as a
- *   relative path. `href` is the absolute aimer-web URL composed
- *   server-side from `bridgeUrl + link`.
+ * - `200 OK` with `{ exists: true, priority_tier, severity_score,
+ *   likelihood_score, score_kind, link }` (matches the contract
+ *   defined in #645 "Internal route response contract") when the
+ *   upstream report exists, the priority tier is `CRITICAL` or
+ *   `HIGH`, and the upstream `link` validated as a relative path.
+ *   `link` on the wire is the absolute aimer-web URL composed
+ *   server-side from `bridgeUrl + upstream.link`; the client never
+ *   sees `bridgeUrl` as a separate value.
  * - `204 No Content` for every other "render nothing" case:
  *   integration unconfigured (bridge URL / `aice_id` / signing key
  *   missing), upstream `404`, `exists: false`, tier `LOW` / `MEDIUM`,
@@ -34,14 +37,15 @@ import { hasPermission } from "@/lib/auth/permissions";
  *   matches the build-envelope route at
  *   `src/app/api/aimer/phase2/story/build-envelope/route.ts:105`).
  *
- * The bridge call itself is blocked on aicers/aimer-web#296
- * finalizing the read-side auth contract. Until that lands the
- * upstream fetch uses placeholder request shape that #296 will
- * replace; the surface contract above is stable independently.
+ * Upstream contract (aicers/aimer-web#296, landed): the read-side
+ * endpoint is customer-scoped — `GET /api/customers/{customer_id}
+ * /analysis/story/{story_id}/summary`. The customer scope is
+ * required because `story_id` is not globally unique across tenants.
  */
 
-const AIMER_PATH_PREFIX = "/api/analysis/story" as const;
-const AIMER_PATH_SUFFIX = "/summary" as const;
+const UPSTREAM_PATH_PREFIX = "/api/customers" as const;
+const UPSTREAM_STORY_INFIX = "/analysis/story" as const;
+const UPSTREAM_PATH_SUFFIX = "/summary" as const;
 const UPSTREAM_TIMEOUT_MS = 5_000;
 
 type SurfaceTier = "CRITICAL" | "HIGH";
@@ -88,6 +92,11 @@ function isScoreKind(value: unknown): value is "leaf" | "aggregate" {
  * authority, a `..` traversal, or a `\` smuggled separator is treated
  * as malformed — the badge composes the absolute href from the
  * trusted server-side `bridgeUrl`, never from the remote value.
+ *
+ * Percent-encoded dot segments (`%2e%2e`, `%2E%2e.`, `.%2e`, …)
+ * are also rejected: the browser normalizes them back to `..`
+ * during URL parsing, so a literal-only check would still let
+ * `/analysis/%2e%2e/admin` escape the `/analysis/` namespace.
  */
 function isSafeRelativePath(value: unknown): value is string {
   if (typeof value !== "string" || value.length === 0) return false;
@@ -95,9 +104,29 @@ function isSafeRelativePath(value: unknown): value is string {
   if (value.startsWith("//")) return false;
   if (value.includes("\\")) return false;
   for (const segment of value.split("/")) {
-    if (segment === "..") return false;
+    if (containsDotSegment(segment)) return false;
   }
   return true;
+}
+
+/**
+ * `true` when the URL-decoded segment is `.` or `..`. Mixed-case
+ * percent encodings (`%2E`, `%2e`) and partially-encoded forms
+ * (`.%2e`, `%2e.`) all collapse to dots after decoding and must
+ * therefore be rejected together with the literal `..` form.
+ */
+function containsDotSegment(segment: string): boolean {
+  if (segment === "." || segment === "..") return true;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    // A malformed percent escape is itself untrusted input — treat
+    // it as a traversal attempt rather than letting the raw segment
+    // ride through.
+    return true;
+  }
+  return decoded === "." || decoded === "..";
 }
 
 function composeHref(bridgeUrl: string, link: string): string {
@@ -105,9 +134,13 @@ function composeHref(bridgeUrl: string, link: string): string {
   return `${trimmed}${link}`;
 }
 
-function composeUpstreamUrl(bridgeUrl: string, storyId: string): string {
+function composeUpstreamUrl(
+  bridgeUrl: string,
+  customerId: number,
+  storyId: string,
+): string {
   const trimmed = bridgeUrl.replace(/\/+$/, "");
-  return `${trimmed}${AIMER_PATH_PREFIX}/${encodeURIComponent(storyId)}${AIMER_PATH_SUFFIX}`;
+  return `${trimmed}${UPSTREAM_PATH_PREFIX}/${encodeURIComponent(String(customerId))}${UPSTREAM_STORY_INFIX}/${encodeURIComponent(storyId)}${UPSTREAM_PATH_SUFFIX}`;
 }
 
 async function fetchUpstreamSummary(
@@ -194,7 +227,11 @@ export const GET = withAuth(
       return noContent();
     }
 
-    const upstreamUrl = composeUpstreamUrl(settings.bridgeUrl, storyId);
+    const upstreamUrl = composeUpstreamUrl(
+      settings.bridgeUrl,
+      customerId,
+      storyId,
+    );
     const upstream = await fetchUpstreamSummary(upstreamUrl, settings.aiceId);
     if (upstream === "upstream_missing") {
       return noContent();
@@ -246,14 +283,15 @@ export const GET = withAuth(
       return noContent();
     }
 
-    const href = composeHref(settings.bridgeUrl, upstream.link);
+    const link = composeHref(settings.bridgeUrl, upstream.link);
     return NextResponse.json(
       {
-        tier: upstream.priority_tier,
-        href,
-        severityScore: upstream.severity_score,
-        likelihoodScore: upstream.likelihood_score,
-        scoreKind: upstream.score_kind,
+        exists: true,
+        priority_tier: upstream.priority_tier,
+        severity_score: upstream.severity_score,
+        likelihood_score: upstream.likelihood_score,
+        score_kind: upstream.score_kind,
+        link,
       },
       {
         headers: {

@@ -39,6 +39,7 @@ vi.mock("@/lib/aimer/phase2/transport.client", () => ({
 }));
 
 import {
+  AI_ANALYSIS_MAX_IN_FLIGHT,
   TriageStoriesView,
   type TriageStoriesViewLabels,
 } from "@/components/triage/story/stories-view";
@@ -1481,5 +1482,76 @@ describe("TriageStoryDetail — header identity", () => {
     expect(title.textContent).toBe("Phishing campaign on 10.0.0.5");
     const detail = screen.getByTestId("triage-story-detail");
     expect(detail.textContent).toContain(LABELS.card.ruleBadgeAnalyst);
+  });
+});
+
+/**
+ * Bounded-concurrency contract for the AI-analysis summary fan-out
+ * (#645 "Fetch fan-out and concurrency"). The Stories page caps at
+ * 200 rows; a naive per-card fetch would issue 200 simultaneous
+ * internal requests and 200 onward requests against aimer-web. The
+ * stories-view container must cap in-flight requests at
+ * `AI_ANALYSIS_MAX_IN_FLIGHT`.
+ */
+describe("TriageStoriesView — AI-analysis fan-out is bounded (#645)", () => {
+  it("never exceeds AI_ANALYSIS_MAX_IN_FLIGHT simultaneous loadAiAnalysis calls", async () => {
+    const STORY_COUNT = 30;
+    const stories: TriageStory[] = Array.from({ length: STORY_COUNT }, (_, i) =>
+      makeStory({ customerId: 7, storyId: String(i + 1) }),
+    );
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const resolvers: Array<() => void> = [];
+    const loadAiAnalysis = vi.fn(async () => {
+      inFlight += 1;
+      if (inFlight > maxInFlight) maxInFlight = inFlight;
+      await new Promise<void>((resolve) => {
+        resolvers.push(() => {
+          inFlight -= 1;
+          resolve();
+        });
+      });
+      return null;
+    });
+
+    await act(async () => {
+      render(
+        <TriageStoriesView
+          stories={stories}
+          truncated={false}
+          focused={null}
+          onFocus={() => {}}
+          loadAiAnalysis={loadAiAnalysis}
+          labels={LABELS}
+        />,
+      );
+    });
+
+    // After mount, only the bounded slice has started.
+    await waitFor(() => {
+      expect(resolvers.length).toBe(AI_ANALYSIS_MAX_IN_FLIGHT);
+    });
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(AI_ANALYSIS_MAX_IN_FLIGHT);
+
+    // Drain the queue in waves. Each resolve must allow exactly one
+    // more queued request to start, never more — that is the only
+    // behavior that distinguishes a bounded queue from a naive
+    // unbounded fan-out.
+    while (resolvers.length > 0) {
+      const resolve = resolvers.shift();
+      if (!resolve) break;
+      await act(async () => {
+        resolve();
+      });
+    }
+
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(STORY_COUNT);
+    expect(maxInFlight).toBeLessThanOrEqual(AI_ANALYSIS_MAX_IN_FLIGHT);
+    // Sanity: the constant itself must be in the documented 6–8
+    // range — guard against an accidental bump that would defeat
+    // the cap.
+    expect(AI_ANALYSIS_MAX_IN_FLIGHT).toBeGreaterThanOrEqual(6);
+    expect(AI_ANALYSIS_MAX_IN_FLIGHT).toBeLessThanOrEqual(8);
   });
 });
