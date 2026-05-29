@@ -40,6 +40,7 @@ vi.mock("@/lib/aimer/phase2/transport.client", () => ({
 
 import {
   AI_ANALYSIS_MAX_IN_FLIGHT,
+  AI_ANALYSIS_NEGATIVE_TTL_MS,
   TriageStoriesView,
   type TriageStoriesViewLabels,
 } from "@/components/triage/story/stories-view";
@@ -1774,17 +1775,20 @@ describe("TriageStoriesView — AI-analysis fan-out is bounded (#645)", () => {
  * cache, only positive summaries were stored — a `null` resolution was
  * dropped, leaving the composite key absent from `aiSummariesRef` and so
  * re-fetched on every rotation (the queue builder skips keys only via
- * `Object.hasOwn`). This test mounts a list whose every Story resolves
- * to `null`, lets the initial fan-out settle, toggles the unsent-only
- * filter (a rotation), and asserts the fetcher was called exactly once
- * per Story — once per unique customerId/storyId.
+ * the cached-resolution check).
+ *
+ * The fan-out effect depends on `effectiveStories` (and `loadAiAnalysis`),
+ * so a meaningful rotation must change that array's identity while
+ * preserving the same composite keys. A new array with the same Stories
+ * — the shape a sort re-order or a `refreshStories` resolution produces —
+ * re-runs the effect; only the negative-result cache then stops a
+ * re-fetch. This would have failed before the cache landed (each Story
+ * re-queued, doubling the call count) and passes now.
  */
 describe("TriageStoriesView — negative AI-analysis results are cached (#653)", () => {
-  it("does not re-queue null-resolving Stories across an unsent-only rotation", async () => {
-    // All Stories are unsent so toggling the unsent-only filter keeps
-    // the same composite keys visible — the only thing that can stop a
-    // re-fetch is the negative-result cache. Keep the count at the
-    // in-flight cap so the whole list fans out in a single wave.
+  it("does not re-queue null-resolving Stories across a list rotation", async () => {
+    // Keep the count at the in-flight cap so the whole list fans out in
+    // a single wave.
     const stories: TriageStory[] = Array.from(
       { length: AI_ANALYSIS_MAX_IN_FLIGHT },
       (_, i) =>
@@ -1801,28 +1805,31 @@ describe("TriageStoriesView — negative AI-analysis results are cached (#653)",
       async (_args: { customerId: number; storyId: string }) => null,
     );
 
-    render(
+    const view = (rows: TriageStory[]) => (
       <TriageStoriesView
-        stories={stories}
+        stories={rows}
         truncated={false}
         focused={null}
         onFocus={() => {}}
         loadAiAnalysis={loadAiAnalysis}
         labels={LABELS}
-      />,
+      />
     );
+
+    const { rerender } = render(view(stories));
 
     // Initial fan-out: exactly one call per Story.
     await waitFor(() => {
       expect(loadAiAnalysis).toHaveBeenCalledTimes(stories.length);
     });
 
-    // Toggle "Show only unsent" — a client-side rotation that
-    // re-derives the visible set (unchanged here) and re-runs the
-    // fan-out effect. Negatives are now cached, so nothing re-queues.
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("triage-stories-unsent-only"));
-    });
+    // Rotate the list: a new array reference carrying the same Stories
+    // (in a different order, as a sort toggle / refresh would). This
+    // re-runs the fan-out effect because `effectiveStories` identity
+    // changed; the negative-result cache is the only thing that keeps it
+    // from re-queuing every key.
+    const rotated = [...stories].reverse();
+    rerender(view(rotated));
     // Let any (erroneously) re-queued fetch chains settle.
     await act(async () => {
       await Promise.resolve();
@@ -1840,5 +1847,123 @@ describe("TriageStoriesView — negative AI-analysis results are cached (#653)",
     expect(calledKeys.sort()).toEqual(
       stories.map((s) => `${s.customerId}/${s.storyId}`).sort(),
     );
+  });
+
+  // The `null` channel also absorbs transient failures (network error,
+  // session lapse, upstream outage all surface as `null`). Caching those
+  // forever would hide a badge for the rest of the view, so a negative
+  // resolution expires after `AI_ANALYSIS_NEGATIVE_TTL_MS` and the next
+  // rotation re-fetches it. Drive `Date.now` past the TTL and assert the
+  // rotation re-queues every stale negative.
+  it("re-queues cached negatives once the TTL lapses", async () => {
+    const base = 1_700_000_000_000;
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(base);
+
+    const stories: TriageStory[] = Array.from(
+      { length: AI_ANALYSIS_MAX_IN_FLIGHT },
+      (_, i) =>
+        makeStory({
+          customerId: 7,
+          storyId: `t-${i + 1}`,
+          lastSentAtIso: null,
+          sendCount: 0,
+        }),
+    );
+    const loadAiAnalysis = vi.fn(
+      async (_args: { customerId: number; storyId: string }) => null,
+    );
+    const view = (rows: TriageStory[]) => (
+      <TriageStoriesView
+        stories={rows}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />
+    );
+
+    const { rerender } = render(view(stories));
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(stories.length);
+    });
+
+    // Advance the clock past the negative-cache TTL, then rotate.
+    nowSpy.mockReturnValue(base + AI_ANALYSIS_NEGATIVE_TTL_MS + 1);
+    rerender(view([...stories].reverse()));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Every stale negative is re-queued exactly once more.
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(2 * stories.length);
+    nowSpy.mockRestore();
+  });
+
+  // A successful Send-to-aimer-web can produce a fresh analysis upstream.
+  // The Story must be re-fetched eagerly so a newly available badge is
+  // not held back by the cached negative until the next rotation / TTL
+  // (#653 item 1, force-refresh invalidation seam).
+  it("re-fetches a Story's summary after a successful send", async () => {
+    manualSendToAimerWebMock.mockResolvedValue({
+      lastSentAtIso: "2026-05-17T12:00:00.000Z",
+      sendCount: 1,
+      duplicatesSkipped: 0,
+    });
+
+    const story = makeStory({
+      customerId: 7,
+      storyId: "1",
+      lastSentAtIso: null,
+      sendCount: 0,
+    });
+    // First lookup (initial fan-out) resolves to no badge; the second
+    // (post-send re-fetch) returns a positive summary.
+    let call = 0;
+    const loadAiAnalysis = vi.fn(
+      async (_args: { customerId: number; storyId: string }) => {
+        call += 1;
+        if (call === 1) return null;
+        return {
+          tier: "HIGH" as const,
+          href: "https://aimer.example.com/analysis/story/1",
+          severityScore: 0.6,
+          likelihoodScore: 0.5,
+          scoreKind: "leaf" as const,
+        };
+      },
+    );
+
+    render(
+      <TriageStoriesView
+        stories={[story]}
+        truncated={false}
+        aimerIntegrationConfigured={true}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    // Initial fan-out: one negative resolution, no badge.
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId("triage-story-ai-analysis-badge")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-story-send"));
+    });
+
+    // The send triggers a re-fetch that now resolves positive; the badge
+    // appears without any list rotation.
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("triage-story-ai-analysis-badge")).toBeTruthy();
+    });
   });
 });

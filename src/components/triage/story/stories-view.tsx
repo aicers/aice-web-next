@@ -71,6 +71,38 @@ export type { StoriesSortOrder };
 export const AI_ANALYSIS_MAX_IN_FLIGHT = 6;
 
 /**
+ * Time-to-live for a cached *negative* AI-analysis resolution (#653
+ * item 1). A Story whose lookup resolves to "no badge" is cached so
+ * sort/filter rotations do not re-queue it — the dominant ~195-of-200
+ * case the negative cache exists to eliminate.
+ *
+ * But the `null` channel is broader than the stable "no badge" outcomes
+ * (LOW/MEDIUM, `exists:false`): a network failure, an aborted request, a
+ * session lapse, or a transient aimer-web outage all surface as `null`
+ * too. The internal route deliberately maps upstream fetch errors to
+ * `204`, and the client maps every non-`200` / network error to `null`,
+ * so the browser cannot tell a stable miss from a transient one. Caching
+ * a transient miss forever would hide a badge for the rest of the view
+ * with no retry path. Negatives therefore expire after this window and
+ * the next rotation re-fetches them — the "pair the client sentinel with
+ * a TTL" lever the issue called out.
+ *
+ * Positive summaries are cached without expiry: a stale badge is the
+ * safe direction, a stale *missing* badge is not.
+ */
+export const AI_ANALYSIS_NEGATIVE_TTL_MS = 2 * 60 * 1000;
+
+/**
+ * A resolved AI-analysis lookup for one Story: the `summary` (a positive
+ * hit, or `null` for "no badge") plus the epoch-ms `resolvedAt` stamp
+ * used to expire cached negatives (see {@link AI_ANALYSIS_NEGATIVE_TTL_MS}).
+ */
+interface AiSummaryResolution {
+  summary: AiAnalysisSummary | null;
+  resolvedAt: number;
+}
+
+/**
  * Server-action seam for refetching the Stories list with new sort /
  * filter options. Returns `null` on session lapse / unexpected error
  * — the view keeps the previously-rendered slice in that case.
@@ -397,14 +429,18 @@ export function TriageStoriesView({
 
   // AI narrative analysis summaries per Story (#645, #653). Keyed by
   // `"{customerId}/{storyId}"`. The stored value is the *resolution*: a
-  // positive summary, or `null` for "no badge" (LOW/MEDIUM,
-  // exists:false, unconfigured bridge, malformed link, fetch error).
-  // An absent entry and a `null` entry render identically (no badge),
-  // but they are NOT equivalent for queueing: a present `null` is a
-  // resolved negative that must stay cached so the queue-build loop's
-  // `Object.hasOwn` skip covers it. Without caching negatives, the
-  // ~195-of-200 rows that resolve to `null` would be re-queued on every
-  // sort / filter / unsent-only rotation (#653 item 1).
+  // positive `summary`, or `summary: null` for "no badge" (LOW/MEDIUM,
+  // exists:false, unconfigured bridge, malformed link, fetch error),
+  // alongside the `resolvedAt` stamp. An absent entry and a `null`
+  // resolution render identically (no badge), but they are NOT
+  // equivalent for queueing: a present negative resolution stays cached
+  // (until its TTL lapses) so the queue-build loop skips it. Without
+  // caching negatives, the ~195-of-200 rows that resolve to `null` would
+  // be re-queued on every sort / filter / unsent-only rotation (#653
+  // item 1). Negatives carry a TTL (AI_ANALYSIS_NEGATIVE_TTL_MS) so a
+  // transient failure does not hide a badge for the rest of the view;
+  // a successful Send-to-aimer-web also re-fetches its Story eagerly
+  // (see `refreshAiSummary`) rather than waiting out the TTL.
   //
   // Fetches go through a bounded-concurrency queue
   // (`AI_ANALYSIS_MAX_IN_FLIGHT`) so the 200-row Stories cap cannot
@@ -445,7 +481,7 @@ export function TriageStoriesView({
   // effect run would re-queue them, so still-visible Stories could
   // silently lose their badge.
   const [aiSummaries, setAiSummaries] = useState<
-    Record<string, AiAnalysisSummary | null>
+    Record<string, AiSummaryResolution>
   >({});
   const aiInFlightRef = useRef<Set<string>>(new Set());
   const aiActiveCountRef = useRef(0);
@@ -455,11 +491,20 @@ export function TriageStoriesView({
   useEffect(() => {
     if (!loadAiAnalysis) return;
     let cancelled = false;
+    const now = Date.now();
     const queue: TriageStory[] = [];
     for (const story of effectiveStories) {
       const key = `${story.customerId}/${story.storyId}`;
       if (aiInFlightRef.current.has(key)) continue;
-      if (Object.hasOwn(aiSummariesRef.current, key)) continue;
+      const cached = aiSummariesRef.current[key];
+      if (cached) {
+        // Positive resolutions are authoritative and cached without
+        // expiry. Negatives are skipped only while fresh; once the TTL
+        // lapses they fall through and re-queue so a transient miss
+        // (network error, session lapse, upstream outage) gets a retry.
+        if (cached.summary !== null) continue;
+        if (now - cached.resolvedAt < AI_ANALYSIS_NEGATIVE_TTL_MS) continue;
+      }
       // Reserve the key up-front so a concurrent effect run on a
       // sort/filter rotation does not enqueue the same Story twice.
       aiInFlightRef.current.add(key);
@@ -480,15 +525,18 @@ export function TriageStoriesView({
           storyId: story.storyId,
         })
           .then((summary) => {
-            // Cache the resolution — positive *or* `null` — so the key
-            // is present in `aiSummaries` and the next effect run's
-            // `Object.hasOwn` skip covers resolved negatives too. This
-            // is the negative-result cache that stops LOW/MEDIUM /
-            // exists:false rows from being re-queued on every rotation
-            // (#653 item 1).
-            setAiSummaries((prev) =>
-              Object.hasOwn(prev, key) ? prev : { ...prev, [key]: summary },
-            );
+            // Cache the resolution — positive *or* `null` — stamped with
+            // the resolve time so the next effect run skips it (and, for
+            // negatives, re-fetches once the TTL lapses). This is the
+            // negative-result cache that stops LOW/MEDIUM / exists:false
+            // rows from being re-queued on every rotation (#653 item 1).
+            // Newest-wins is safe: `aiInFlightRef` guarantees a single
+            // outstanding fetch per key, so a re-fetched stale negative
+            // can only overwrite the very entry that triggered it.
+            setAiSummaries((prev) => ({
+              ...prev,
+              [key]: { summary, resolvedAt: Date.now() },
+            }));
           })
           .catch(() => {
             // fetchAiAnalysisStorySummary already normalizes errors
@@ -571,6 +619,36 @@ export function TriageStoriesView({
     };
   }, [inScopeKey]);
 
+  // Eagerly re-fetch a single Story's AI-analysis summary, overwriting
+  // any cached resolution. A successful Send-to-aimer-web — especially a
+  // force refresh — can produce a fresh upstream analysis, so a
+  // previously cached negative must not keep a newly produced
+  // CRITICAL/HIGH badge hidden until the next list rotation or the
+  // negative-cache TTL (#653 item 1). Reuses `aiInFlightRef` so it never
+  // races a fan-out fetch already on the wire for the same key; it does
+  // not touch `aiActiveCountRef`, since one user-initiated refresh on top
+  // of the bounded fan-out is well within the intended cap.
+  const refreshAiSummary = (story: TriageStory) => {
+    if (!loadAiAnalysis) return;
+    const key = `${story.customerId}/${story.storyId}`;
+    if (aiInFlightRef.current.has(key)) return;
+    aiInFlightRef.current.add(key);
+    void loadAiAnalysis({
+      customerId: story.customerId,
+      storyId: story.storyId,
+    })
+      .then((summary) => {
+        setAiSummaries((prev) => ({
+          ...prev,
+          [key]: { summary, resolvedAt: Date.now() },
+        }));
+      })
+      .catch(() => {})
+      .finally(() => {
+        aiInFlightRef.current.delete(key);
+      });
+  };
+
   const handleSend = async ({
     story,
     forceRefresh,
@@ -595,6 +673,10 @@ export function TriageStoriesView({
         kind: "success",
         message: labels.card.sendSuccessToast,
       });
+      // A successful send may have produced a new analysis upstream;
+      // re-fetch so a freshly available badge appears immediately rather
+      // than staying hidden behind a cached negative (#653 item 1).
+      refreshAiSummary(story);
     } catch (err) {
       const reason =
         err instanceof ManualSendError
@@ -709,7 +791,7 @@ export function TriageStoriesView({
                   onOpen={(s) => onFocus(s)}
                   onSend={handleSend}
                   sendDisabled={!aimerIntegrationConfigured}
-                  aiAnalysis={aiSummaries[key] ?? null}
+                  aiAnalysis={aiSummaries[key]?.summary ?? null}
                   labels={labels.card}
                 />
               </li>
@@ -740,7 +822,8 @@ export function TriageStoriesView({
           period={period}
           loadDetail={loadDetail}
           aiAnalysis={
-            aiSummaries[`${focused.customerId}/${focused.storyId}`] ?? null
+            aiSummaries[`${focused.customerId}/${focused.storyId}`]?.summary ??
+            null
           }
           onClose={() => onFocus(null)}
           onPivot={
