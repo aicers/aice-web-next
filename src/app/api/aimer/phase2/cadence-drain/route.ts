@@ -17,13 +17,14 @@ import { extractClientIp } from "@/lib/auth/ip";
  * records the `aimer_phase2.cadence_drain` audit row when a cadence tick
  * has actually changed server state.
  *
- * "Changed server state" is the caller's condition
- * `totalDelivered + totalNoOp > 0` from the {@link DrainResult} — a
+ * "Changed server state" is the condition `delivered + no_op > 0` — a
  * successful non-empty batch, which includes withdraw no-op acks
  * (`not_found`) that still remove the queue row. The browser only POSTs
- * when that holds, so a bare `exhausted` / `no_more` no-op tick records
- * nothing — keeping a 5-minute cadence from flooding the audit log with
- * ~288 rows/customer/day of noise.
+ * when that holds, but the route owns the audit policy and enforces it
+ * regardless of caller: a request with `delivered + no_op === 0` returns
+ * `204` without recording, so a bare `exhausted` / `no_more` no-op tick
+ * never reaches the log — keeping a 5-minute cadence from flooding it
+ * with ~288 rows/customer/day of noise.
  *
  * The split mirrors `sync-now`: the server owns the audit identity
  * (operator + customer + timestamp) while the byte-moving drain stays in
@@ -31,8 +32,10 @@ import { extractClientIp } from "@/lib/auth/ip";
  * informational, not server-authoritative.
  *
  * Body: `{ "customer_id": <positive integer>, "kind": "baseline_event" |
- * "story", "delivered": <int ≥0>, "no_op": <int ≥0> }`.
- * Response: `204 No Content` on success.
+ * "story", "delivered": <int ≥0>, "no_op": <int ≥0> }`. Non-integer or
+ * negative counts are rejected with `400`.
+ * Response: `204 No Content` whether or not a row was recorded (an audit
+ * row is written only when `delivered + no_op > 0`).
  * Gated by {@link isSystemAdministrator}.
  */
 
@@ -53,10 +56,10 @@ function isCadenceKind(value: unknown): value is CadenceKind {
   );
 }
 
-function asNonNegativeInt(value: unknown): number {
+function asNonNegativeInt(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0
     ? value
-    : 0;
+    : null;
 }
 
 export const POST = withAuth(async (request, _context, session) => {
@@ -87,6 +90,14 @@ export const POST = withAuth(async (request, _context, session) => {
     );
   }
   const customerId = body.customer_id;
+  const delivered = asNonNegativeInt(body.delivered);
+  const noOp = asNonNegativeInt(body.no_op);
+  if (delivered === null || noOp === null) {
+    return NextResponse.json(
+      { error: "delivered and no_op must be non-negative integers" },
+      { status: 400 },
+    );
+  }
 
   const ids = await resolveEffectiveCustomerIds(
     session.accountId,
@@ -94,6 +105,15 @@ export const POST = withAuth(async (request, _context, session) => {
   );
   if (!ids.includes(customerId)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // State-change-only audit (#651): a tick that acked nothing
+  // (`delivered + no_op === 0`) records no row, so a 5-minute cadence
+  // cannot flood the log with ~288 no-op entries/customer/day. The browser
+  // already skips these posts, but the route owns the audit policy and
+  // enforces it regardless of caller.
+  if (delivered + noOp <= 0) {
+    return new NextResponse(null, { status: 204 });
   }
 
   await auditLog.record({
@@ -106,8 +126,8 @@ export const POST = withAuth(async (request, _context, session) => {
     customerId,
     details: {
       kind: body.kind,
-      delivered: asNonNegativeInt(body.delivered),
-      noOp: asNonNegativeInt(body.no_op),
+      delivered,
+      noOp,
     },
   });
 

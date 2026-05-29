@@ -133,17 +133,48 @@ describe("POST /api/aimer/phase2/cadence-drain", () => {
     );
   });
 
-  it("coerces missing / negative counts to zero", async () => {
+  it("returns 400 on negative or non-integer counts without recording", async () => {
+    const { POST } = await import("@/app/api/aimer/phase2/cadence-drain/route");
+    const negative = await POST(
+      makeReq({ customer_id: 42, kind: "story", delivered: -5, no_op: 0 }),
+      ctx,
+    );
+    expect(negative.status).toBe(400);
+    const nonInteger = await POST(
+      makeReq({ customer_id: 42, kind: "story", delivered: 1.5, no_op: 0 }),
+      ctx,
+    );
+    expect(nonInteger.status).toBe(400);
+    const missing = await POST(
+      makeReq({ customer_id: 42, kind: "story", delivered: 1 }),
+      ctx,
+    );
+    expect(missing.status).toBe(400);
+    expect(mockAuditRecord).not.toHaveBeenCalled();
+  });
+
+  it("returns 204 without recording on a no-op tick (delivered=0, no_op=0)", async () => {
     const { POST } = await import("@/app/api/aimer/phase2/cadence-drain/route");
     const res = await POST(
-      makeReq({ customer_id: 42, kind: "story", delivered: -5 }),
+      makeReq({ customer_id: 42, kind: "story", delivered: 0, no_op: 0 }),
       ctx,
     );
     expect(res.status).toBe(204);
-    expect(mockAuditRecord.mock.calls[0][0].details).toEqual({
-      kind: "story",
-      delivered: 0,
-      noOp: 0,
-    });
+    expect(mockAuditRecord).not.toHaveBeenCalled();
+  });
+
+  it("records a successful no-op ack (delivered=0, no_op>0)", async () => {
+    const { POST } = await import("@/app/api/aimer/phase2/cadence-drain/route");
+    const res = await POST(
+      makeReq({ customer_id: 42, kind: "story", delivered: 0, no_op: 4 }),
+      ctx,
+    );
+    expect(res.status).toBe(204);
+    expect(mockAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "aimer_phase2.cadence_drain",
+        details: { kind: "story", delivered: 0, noOp: 4 },
+      }),
+    );
   });
 });

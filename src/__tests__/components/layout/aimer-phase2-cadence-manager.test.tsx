@@ -174,6 +174,30 @@ describe("AimerPhase2CadenceManager (#651)", () => {
     );
   });
 
+  it("opt-out fails closed: stops the customer's controllers even when the config refetch fails", async () => {
+    stubConfig(42);
+    render(<AimerPhase2CadenceManager customerIds={[42]} />);
+    await waitFor(() => expect(controllersFor(42).length).toBe(2));
+    const before = controllersFor(42);
+
+    // The toggle persisted enabled=false, but the manager's config refetch
+    // fails. The fail-closed event detail must still stop the controllers.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("network down"),
+    );
+    window.dispatchEvent(
+      new CustomEvent(CADENCE_CHANGED_EVENT, {
+        detail: { customerId: 42, enabled: false },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        before.every((c) => c.controller.stop.mock.calls.length === 1),
+      ).toBe(true),
+    );
+  });
+
   it("reconciles on CADENCE_CHANGED_EVENT: starts a controller when a customer opts in", async () => {
     stubConfig(); // initially nobody enabled
     render(<AimerPhase2CadenceManager customerIds={[7]} />);

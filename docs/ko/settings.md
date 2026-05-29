@@ -1071,7 +1071,9 @@ Aimer로 분석 흐름은 브라우저가 백그라운드에서 호출하는
 이는 두 스트리밍 종류 `aimer_push_state` 행의 `cadence_enabled`를 한
 문장으로 설정합니다(고객별 단일 논리 토글). 앱 셸 cadence 매니저는
 `GET /api/aimer/phase2/cadence-config`를 읽어 어떤 고객이 옵트인했는지
-파악하므로, 변경은 새로고침 없이 현재 탭에 즉시 반영됩니다. 서버
+파악하므로, 변경은 새로고침 없이 현재 탭에 즉시 반영됩니다. 옵트아웃은
+**실패 시 닫힘(fail-closed)**입니다: 매니저의 구성 재조회가 실패하더라도
+해당 고객의 전달은 현재 탭에서 즉시 중지됩니다. 서버
 상태를 실제로 바꾼 cadence 틱(비어 있지 않은 배치 —
 `delivered + no_op > 0`)마다 얇은 래퍼 라우트를 통해
 `aimer_phase2.cadence_drain` 감사 행 하나가 기록됩니다. 빈 no-op

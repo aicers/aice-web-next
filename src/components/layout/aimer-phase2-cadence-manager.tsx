@@ -27,7 +27,10 @@ import { mutatingFetch } from "@/lib/csrf-client";
  * set is fetched from `GET /api/aimer/phase2/cadence-config` on mount
  * and re-fetched whenever the Settings toggle dispatches
  * {@link CADENCE_CHANGED_EVENT}, so flipping the toggle takes effect
- * without a reload.
+ * without a reload. Consent is **fail-closed**: an opt-out event stops
+ * that customer's controllers in this tab immediately, before (and
+ * regardless of) the authoritative config refetch, so withdrawn consent
+ * never keeps auto-forwarding just because the refetch failed.
  *
  *   - `policy_event` is excluded — it is queue-only with no
  *     `aimer_push_state` cursor for a cadence to advance. Manual "Sync
@@ -56,8 +59,19 @@ const CADENCE_INTERVAL_MS = 5 * 60 * 1000;
  * Window event the Settings cadence toggle dispatches after a successful
  * flip so this manager re-reads `cadence-config` and reconciles its
  * controllers in the same tab without waiting for a reload.
+ *
+ * Dispatched as a {@link CustomEvent} carrying {@link CadenceChangedDetail}
+ * so an opt-out can be honored fail-closed even if the config refetch
+ * fails. A plain `Event` (no detail) still triggers a refetch-driven
+ * reconcile.
  */
 export const CADENCE_CHANGED_EVENT = "aimer-phase2-cadence-changed";
+
+/** `detail` payload carried by {@link CADENCE_CHANGED_EVENT}. */
+export interface CadenceChangedDetail {
+  customerId: number;
+  enabled: boolean;
+}
 
 interface CadenceConfigEntry {
   customer_id: number;
@@ -130,6 +144,19 @@ export function AimerPhase2CadenceManager({ customerIds }: Props) {
     const controllers = controllersRef.current;
     let cancelled = false;
 
+    // Stop and forget every controller for one customer. Used to honor an
+    // opt-out fail-closed without waiting on the config refetch.
+    const stopCustomer = (customerId: number): void => {
+      for (const kind of CADENCE_KINDS) {
+        const key = `${kind}:${customerId}`;
+        const controller = controllers.get(key);
+        if (controller) {
+          controller.stop();
+          controllers.delete(key);
+        }
+      }
+    };
+
     const reconcile = (enabledIds: Set<number>): void => {
       const desired = new Set<string>();
       for (const customerId of enabledIds) {
@@ -183,7 +210,15 @@ export function AimerPhase2CadenceManager({ customerIds }: Props) {
     };
 
     void fetchAndReconcile();
-    const onChanged = (): void => {
+    const onChanged = (event: Event): void => {
+      const detail = (event as CustomEvent<Partial<CadenceChangedDetail>>)
+        .detail;
+      // Fail closed: an explicit opt-out stops this customer's controllers
+      // right away, so consent withdrawal halts auto-forwarding even if the
+      // config refetch below returns non-OK or throws.
+      if (detail?.enabled === false && typeof detail.customerId === "number") {
+        stopCustomer(detail.customerId);
+      }
       void fetchAndReconcile();
     };
     window.addEventListener(CADENCE_CHANGED_EVENT, onChanged);

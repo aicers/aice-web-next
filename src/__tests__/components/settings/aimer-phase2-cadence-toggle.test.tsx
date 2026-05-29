@@ -131,6 +131,10 @@ describe("AimerPhase2Block — cadence toggle (#651)", () => {
         );
       });
       await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+      // The event carries { customerId, enabled } so the app-shell manager
+      // can honor an opt-out fail-closed even if its config refetch fails.
+      const event = onChanged.mock.calls[0][0] as CustomEvent;
+      expect(event.detail).toEqual({ customerId: 42, enabled: true });
     } finally {
       window.removeEventListener(CADENCE_CHANGED_EVENT, onChanged);
     }

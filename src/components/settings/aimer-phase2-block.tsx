@@ -220,8 +220,13 @@ export function AimerPhase2Block({ customers }: Phase2BlockProps) {
         }
         // Tell the app-shell cadence manager (mounted in the dashboard
         // shell) to re-read its config and start/stop the controller in
-        // this tab without a reload.
-        window.dispatchEvent(new Event(CADENCE_CHANGED_EVENT));
+        // this tab without a reload. The detail lets the manager honor an
+        // opt-out fail-closed even if its config refetch fails.
+        window.dispatchEvent(
+          new CustomEvent(CADENCE_CHANGED_EVENT, {
+            detail: { customerId, enabled },
+          }),
+        );
         await fetchStatus();
       } finally {
         setBusy(null);

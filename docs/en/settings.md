@@ -1117,7 +1117,10 @@ on both streaming-kind `aimer_push_state` rows in one statement
 (one logical per-customer toggle). The app-shell cadence manager
 reads `GET /api/aimer/phase2/cadence-config` to learn which
 customers are opted in, so the change takes effect in the current
-tab without a reload. Each cadence tick that actually changes
+tab without a reload. Opting out is **fail-closed**: forwarding for
+that customer stops in the current tab immediately, even if the
+manager's config re-read fails. Each cadence tick that actually
+changes
 server state (a non-empty batch — `delivered + no_op > 0`)
 records one `aimer_phase2.cadence_drain` audit row via a thin
 wrapper route; bare no-op ticks record nothing, so a 5-minute
