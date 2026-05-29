@@ -1,77 +1,27 @@
-import type { AiAnalysisStorySummary } from "./summary-types";
+import { fetchAiAnalysisSummary } from "./summary-client";
+import type { AiAnalysisSummary } from "./summary-types";
 
 /**
- * Browser-side helper for the AI-analysis summary route
- * (#645). Returns `null` for every "render nothing" case so the
- * caller can drop the result straight into the badge prop without
- * extra branching:
+ * Story-surface wrapper around the generic {@link fetchAiAnalysisSummary}
+ * (#645, #653). Builds the story-scoped internal route path and delegates
+ * the fetch + wire-shape parse to the generic client so the wire shape
+ * lives in exactly one place. The Phase 2 report cards (#646) add their
+ * own equally-thin wrappers over the same generic client.
  *
- * - `204 No Content` from the internal route — integration
- *   unconfigured, upstream missing / `exists: false`, tier `LOW` /
- *   `MEDIUM`, malformed `link`, upstream fetch error.
- * - `401` (session lapsed) or any other non-`200` status.
- * - Network failure / abort.
- * - Malformed `200` body (defensive — the server validates already).
+ * Returns `null` for every "render nothing" case (204, non-200, network
+ * failure, malformed body) — see {@link fetchAiAnalysisSummary}.
  */
 export async function fetchAiAnalysisStorySummary(args: {
   customerId: number;
   storyId: string;
   signal?: AbortSignal;
-}): Promise<AiAnalysisStorySummary | null> {
-  const url = `/api/aimer/analysis/story/${args.customerId}/${encodeURIComponent(args.storyId)}/summary`;
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "GET",
-      headers: { accept: "application/json" },
-      credentials: "same-origin",
-      signal: args.signal,
-    });
-  } catch {
-    return null;
-  }
-  if (response.status !== 200) return null;
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    return null;
-  }
-  if (!body || typeof body !== "object") return null;
-  const candidate = body as Record<string, unknown>;
-  // Wire shape matches the issue's "Internal route response contract"
-  // (#645): `{ exists, priority_tier, severity_score,
-  // likelihood_score, score_kind, link }`. The badge component prop
-  // shape uses camelCase, so we remap once here.
-  if (candidate.exists !== true) return null;
-  const tier = candidate.priority_tier;
-  const href = candidate.link;
-  const severityScore = candidate.severity_score;
-  const likelihoodScore = candidate.likelihood_score;
-  const scoreKind = candidate.score_kind;
-  if (tier !== "CRITICAL" && tier !== "HIGH") return null;
-  if (typeof href !== "string" || href.length === 0) return null;
-  if (typeof severityScore !== "number" || !Number.isFinite(severityScore)) {
-    return null;
-  }
-  if (
-    typeof likelihoodScore !== "number" ||
-    !Number.isFinite(likelihoodScore)
-  ) {
-    return null;
-  }
-  if (scoreKind !== "leaf" && scoreKind !== "aggregate") return null;
-  return {
-    tier,
-    href,
-    severityScore,
-    likelihoodScore,
-    scoreKind,
-  };
+}): Promise<AiAnalysisSummary | null> {
+  const path = `/api/aimer/analysis/story/${args.customerId}/${encodeURIComponent(args.storyId)}/summary`;
+  return fetchAiAnalysisSummary({ path, signal: args.signal });
 }
 
 export type AiAnalysisStorySummaryFetcher = (args: {
   customerId: number;
   storyId: string;
   signal?: AbortSignal;
-}) => Promise<AiAnalysisStorySummary | null>;
+}) => Promise<AiAnalysisSummary | null>;

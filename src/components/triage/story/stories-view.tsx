@@ -24,7 +24,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import type { AiAnalysisStorySummaryFetcher } from "@/lib/aimer/analysis/story-summary.client";
-import type { AiAnalysisStorySummary } from "@/lib/aimer/analysis/summary-types";
+import type { AiAnalysisSummary } from "@/lib/aimer/analysis/summary-types";
 import {
   ManualSendError,
   manualSendToAimerWeb,
@@ -395,19 +395,25 @@ export function TriageStoriesView({
     };
   };
 
-  // AI narrative analysis summaries per Story (#645). Keyed by
-  // `"{customerId}/{storyId}"`. Absent entry = not yet resolved or
-  // resolved to "no badge" — both render the same way (no badge), so
-  // the map only needs to remember positive hits.
+  // AI narrative analysis summaries per Story (#645, #653). Keyed by
+  // `"{customerId}/{storyId}"`. The stored value is the *resolution*: a
+  // positive summary, or `null` for "no badge" (LOW/MEDIUM,
+  // exists:false, unconfigured bridge, malformed link, fetch error).
+  // An absent entry and a `null` entry render identically (no badge),
+  // but they are NOT equivalent for queueing: a present `null` is a
+  // resolved negative that must stay cached so the queue-build loop's
+  // `Object.hasOwn` skip covers it. Without caching negatives, the
+  // ~195-of-200 rows that resolve to `null` would be re-queued on every
+  // sort / filter / unsent-only rotation (#653 item 1).
   //
   // Fetches go through a bounded-concurrency queue
   // (`AI_ANALYSIS_MAX_IN_FLIGHT`) so the 200-row Stories cap cannot
   // fan out into 200 simultaneous internal requests (and 200 onward
   // requests against aimer-web). A previously-resolved
-  // (customerId, storyId) is not re-queued on rotation — the
-  // upstream summary is keyed on the same pair so the cached value
-  // is still authoritative. A sort/filter rotation that brings the
-  // same Story back into view therefore stays free.
+  // (customerId, storyId) — positive or negative — is not re-queued on
+  // rotation: the upstream summary is keyed on the same pair so the
+  // cached value is still authoritative. A sort/filter rotation that
+  // brings the same Story back into view therefore stays free.
   //
   // The active-count and "current scheduler" pointers live in refs
   // that **persist across effect generations**, not in the closure of
@@ -439,7 +445,7 @@ export function TriageStoriesView({
   // effect run would re-queue them, so still-visible Stories could
   // silently lose their badge.
   const [aiSummaries, setAiSummaries] = useState<
-    Record<string, AiAnalysisStorySummary>
+    Record<string, AiAnalysisSummary | null>
   >({});
   const aiInFlightRef = useRef<Set<string>>(new Set());
   const aiActiveCountRef = useRef(0);
@@ -474,7 +480,12 @@ export function TriageStoriesView({
           storyId: story.storyId,
         })
           .then((summary) => {
-            if (summary === null) return;
+            // Cache the resolution — positive *or* `null` — so the key
+            // is present in `aiSummaries` and the next effect run's
+            // `Object.hasOwn` skip covers resolved negatives too. This
+            // is the negative-result cache that stops LOW/MEDIUM /
+            // exists:false rows from being re-queued on every rotation
+            // (#653 item 1).
             setAiSummaries((prev) =>
               Object.hasOwn(prev, key) ? prev : { ...prev, [key]: summary },
             );
@@ -762,7 +773,7 @@ interface StoryDetailProps {
    * (no badge for LOW / MEDIUM, missing report, or unconfigured
    * integration).
    */
-  aiAnalysis: AiAnalysisStorySummary | null;
+  aiAnalysis: AiAnalysisSummary | null;
   onClose: () => void;
   /**
    * Pivot-from-Story (#553) callback. When defined the member table

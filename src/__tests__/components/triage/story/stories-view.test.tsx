@@ -1766,3 +1766,79 @@ describe("TriageStoriesView — AI-analysis fan-out is bounded (#645)", () => {
     expect(inFlight).toBe(0);
   });
 });
+
+/**
+ * #653 item 1 acceptance: a Story whose AI-analysis lookup resolves to a
+ * negative result (no badge) must be cached as such so a later
+ * sort/filter rotation does NOT re-queue it. Before the negative-result
+ * cache, only positive summaries were stored — a `null` resolution was
+ * dropped, leaving the composite key absent from `aiSummariesRef` and so
+ * re-fetched on every rotation (the queue builder skips keys only via
+ * `Object.hasOwn`). This test mounts a list whose every Story resolves
+ * to `null`, lets the initial fan-out settle, toggles the unsent-only
+ * filter (a rotation), and asserts the fetcher was called exactly once
+ * per Story — once per unique customerId/storyId.
+ */
+describe("TriageStoriesView — negative AI-analysis results are cached (#653)", () => {
+  it("does not re-queue null-resolving Stories across an unsent-only rotation", async () => {
+    // All Stories are unsent so toggling the unsent-only filter keeps
+    // the same composite keys visible — the only thing that can stop a
+    // re-fetch is the negative-result cache. Keep the count at the
+    // in-flight cap so the whole list fans out in a single wave.
+    const stories: TriageStory[] = Array.from(
+      { length: AI_ANALYSIS_MAX_IN_FLIGHT },
+      (_, i) =>
+        makeStory({
+          customerId: 7,
+          storyId: `n-${i + 1}`,
+          lastSentAtIso: null,
+          sendCount: 0,
+        }),
+    );
+
+    // Every lookup resolves to a negative result (no badge).
+    const loadAiAnalysis = vi.fn(
+      async (_args: { customerId: number; storyId: string }) => null,
+    );
+
+    render(
+      <TriageStoriesView
+        stories={stories}
+        truncated={false}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    // Initial fan-out: exactly one call per Story.
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(stories.length);
+    });
+
+    // Toggle "Show only unsent" — a client-side rotation that
+    // re-derives the visible set (unchanged here) and re-runs the
+    // fan-out effect. Negatives are now cached, so nothing re-queues.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-stories-unsent-only"));
+    });
+    // Let any (erroneously) re-queued fetch chains settle.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The fetcher must still have been called exactly once per Story —
+    // no rotation-driven re-fetch of the cached negatives.
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(stories.length);
+    const calledKeys = loadAiAnalysis.mock.calls.map(
+      (c) => `${c[0].customerId}/${c[0].storyId}`,
+    );
+    // Once per unique composite key — no duplicates.
+    expect(new Set(calledKeys).size).toBe(stories.length);
+    expect(calledKeys.sort()).toEqual(
+      stories.map((s) => `${s.customerId}/${s.storyId}`).sort(),
+    );
+  });
+});
