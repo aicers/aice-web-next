@@ -488,6 +488,22 @@ export function TriageStoriesView({
   const aiSchedulerRef = useRef<(() => void) | null>(null);
   const aiSummariesRef = useRef(aiSummaries);
   aiSummariesRef.current = aiSummaries;
+  // Stories whose in-flight summary read must be re-fetched the instant it
+  // settles. A Send can land while the initial fan-out read for the card is
+  // still on the wire; that older read was issued before the send produced
+  // its analysis, so letting it be the last word would stamp a stale
+  // negative and hide a freshly produced badge until the next rotation or
+  // the TTL. We record the Story here instead of dropping the forced
+  // refresh, and drain it from the settling read's `.finally` (#653 item 1).
+  const aiPendingRefreshRef = useRef<Map<string, TriageStory>>(new Map());
+  // `refreshAiSummary` is defined below the fan-out effect, but the effect's
+  // `.finally` must be able to re-arm it. Route through a ref — like
+  // `aiSchedulerRef` — so even a stale effect generation always reaches the
+  // live implementation without making the function an effect dependency
+  // (which would re-run the effect every render and amplify the fan-out).
+  const refreshAiSummaryRef = useRef<((story: TriageStory) => void) | null>(
+    null,
+  );
   useEffect(() => {
     if (!loadAiAnalysis) return;
     let cancelled = false;
@@ -553,6 +569,16 @@ export function TriageStoriesView({
             // effect generation is now live, so its queue can drain
             // up to the global cap.
             aiSchedulerRef.current?.();
+            // If a Send forced a refresh for this key while the read was
+            // on the wire, run it now that the key is free — otherwise the
+            // pre-send fan-out result above is the last write and a newly
+            // produced badge stays hidden (#653 item 1). Driven through
+            // refs only, so this stays out of the effect's dependency array.
+            const pending = aiPendingRefreshRef.current.get(key);
+            if (pending) {
+              aiPendingRefreshRef.current.delete(key);
+              refreshAiSummaryRef.current?.(pending);
+            }
           });
       }
     };
@@ -625,13 +651,24 @@ export function TriageStoriesView({
   // previously cached negative must not keep a newly produced
   // CRITICAL/HIGH badge hidden until the next list rotation or the
   // negative-cache TTL (#653 item 1). Reuses `aiInFlightRef` so it never
-  // races a fan-out fetch already on the wire for the same key; it does
-  // not touch `aiActiveCountRef`, since one user-initiated refresh on top
-  // of the bounded fan-out is well within the intended cap.
+  // races a fan-out fetch already on the wire for the same key: if one is,
+  // the refresh is deferred (not dropped) and re-armed from that read's
+  // `.finally`, so a pre-send fan-out read that resolves to a stale
+  // negative cannot have the last word. It does not touch
+  // `aiActiveCountRef`, since one user-initiated refresh on top of the
+  // bounded fan-out is well within the intended cap.
   const refreshAiSummary = (story: TriageStory) => {
     if (!loadAiAnalysis) return;
     const key = `${story.customerId}/${story.storyId}`;
-    if (aiInFlightRef.current.has(key)) return;
+    if (aiInFlightRef.current.has(key)) {
+      // A fan-out (or earlier refresh) read is already on the wire for
+      // this key. It may have been issued before the send produced its
+      // analysis, so its result could be a stale negative. Defer the
+      // forced refresh to that read's `.finally` (via drainPendingRefresh)
+      // instead of dropping it, so the post-send read still happens.
+      aiPendingRefreshRef.current.set(key, story);
+      return;
+    }
     aiInFlightRef.current.add(key);
     void loadAiAnalysis({
       customerId: story.customerId,
@@ -646,8 +683,15 @@ export function TriageStoriesView({
       .catch(() => {})
       .finally(() => {
         aiInFlightRef.current.delete(key);
+        // Drain a refresh queued (deferred) while this one was on the wire.
+        const pending = aiPendingRefreshRef.current.get(key);
+        if (pending) {
+          aiPendingRefreshRef.current.delete(key);
+          refreshAiSummaryRef.current?.(pending);
+        }
       });
   };
+  refreshAiSummaryRef.current = refreshAiSummary;
 
   const handleSend = async ({
     story,

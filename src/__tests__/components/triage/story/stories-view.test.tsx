@@ -1966,4 +1966,91 @@ describe("TriageStoriesView — negative AI-analysis results are cached (#653)",
       expect(screen.getByTestId("triage-story-ai-analysis-badge")).toBeTruthy();
     });
   });
+
+  // Regression for [Reviewer Round 2]: the post-send re-fetch must survive
+  // the in-flight window. If the operator clicks Send while the initial
+  // fan-out read for the card is still on the wire, the forced refresh used
+  // to be skipped (key already reserved in `aiInFlightRef`), letting the
+  // pre-send read — issued before the send produced its analysis — resolve
+  // to a stale negative and hide a freshly produced badge until the next
+  // rotation / TTL. The refresh is now deferred behind the in-flight read
+  // and re-armed from its `.finally`, so the post-send read still happens.
+  it("re-fetches after a send issued while the initial read is in flight", async () => {
+    manualSendToAimerWebMock.mockResolvedValue({
+      lastSentAtIso: "2026-05-17T12:00:00.000Z",
+      sendCount: 1,
+      duplicatesSkipped: 0,
+    });
+
+    const story = makeStory({
+      customerId: 7,
+      storyId: "1",
+      lastSentAtIso: null,
+      sendCount: 0,
+    });
+
+    const positive = {
+      tier: "HIGH" as const,
+      href: "https://aimer.example.com/analysis/story/1",
+      severityScore: 0.6,
+      likelihoodScore: 0.5,
+      scoreKind: "leaf" as const,
+    };
+    // The first (initial fan-out) read is held open so we can click Send
+    // while it is still in flight; it later resolves to a stale negative.
+    // The second (deferred post-send refresh) read resolves positive.
+    let call = 0;
+    let resolveFirst: ((value: typeof positive | null) => void) | undefined;
+    const loadAiAnalysis = vi.fn(
+      async (_args: { customerId: number; storyId: string }) => {
+        call += 1;
+        if (call === 1) {
+          return await new Promise<typeof positive | null>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return positive;
+      },
+    );
+
+    render(
+      <TriageStoriesView
+        stories={[story]}
+        truncated={false}
+        aimerIntegrationConfigured={true}
+        focused={null}
+        onFocus={() => {}}
+        loadAiAnalysis={loadAiAnalysis}
+        labels={LABELS}
+      />,
+    );
+
+    // The initial read is on the wire (held), so no badge yet.
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId("triage-story-ai-analysis-badge")).toBeNull();
+
+    // Click Send while that read is still unresolved. The post-send refresh
+    // must be deferred (not dropped) behind the in-flight key, so no second
+    // read fires yet.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("triage-story-send"));
+    });
+    expect(loadAiAnalysis).toHaveBeenCalledTimes(1);
+
+    // Let the pre-send read resolve to a stale negative. Its `.finally`
+    // re-arms the deferred refresh, which fires the second read.
+    await act(async () => {
+      resolveFirst?.(null);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("triage-story-ai-analysis-badge")).toBeTruthy();
+    });
+  });
 });
