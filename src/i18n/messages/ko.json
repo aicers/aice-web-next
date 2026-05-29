@@ -274,6 +274,10 @@
         "pending": "대기 중인 철회: {count}건",
         "noPending": "대기 중인 철회가 없습니다."
       },
+      "cadence": {
+        "label": "aimer-web로 자동 전달 (로그인 중 5분마다)",
+        "description": "켜면 운영자가 로그인되어 있는 동안 이 고객의 baseline 이벤트와 story가 5분마다 aimer-web로 전송됩니다. 탭이 숨겨지면 일시 정지되고 로그아웃하면 중지됩니다. 기본값은 꺼짐이며, 지금 동기화는 이 설정과 무관하게 동작합니다."
+      },
       "syncNow": {
         "button": "지금 동기화",
         "running": "동기화 중…",
@@ -427,7 +431,8 @@
       "aimer_phase2_sync_now": "Aimer Phase 2 지금 동기화",
       "aimer_phase2_backfill": "Aimer Phase 2 백필",
       "aimer_phase2_opportunistic_paused": "Aimer Phase 2 푸시 일시 정지",
-      "aimer_phase2_opportunistic_resumed": "Aimer Phase 2 푸시 재개"
+      "aimer_phase2_opportunistic_resumed": "Aimer Phase 2 푸시 재개",
+      "aimer_phase2_cadence_drain": "Aimer Phase 2 자동 전달"
     },
     "targetTypes": {
       "account": "계정",

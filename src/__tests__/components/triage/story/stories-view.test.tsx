@@ -7,11 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const {
-  manualSendToAimerWebMock,
-  createPeriodicDrainMock,
-  ManualSendErrorStub,
-} = vi.hoisted(() => {
+const { manualSendToAimerWebMock, ManualSendErrorStub } = vi.hoisted(() => {
   class ManualSendErrorStub extends Error {
     readonly stage: string;
     readonly code?: string;
@@ -24,7 +20,6 @@ const {
   }
   return {
     manualSendToAimerWebMock: vi.fn(),
-    createPeriodicDrainMock: vi.fn(),
     ManualSendErrorStub,
   };
 });
@@ -32,10 +27,6 @@ const {
 vi.mock("@/lib/aimer/phase2/manual-send.client", () => ({
   manualSendToAimerWeb: manualSendToAimerWebMock,
   ManualSendError: ManualSendErrorStub,
-}));
-
-vi.mock("@/lib/aimer/phase2/transport.client", () => ({
-  createPeriodicDrain: createPeriodicDrainMock,
 }));
 
 import {
@@ -330,17 +321,13 @@ describe("Send-to-aimer-web button — wired in #493", () => {
  *  - Errors surface the structured code via the error-toast path.
  *  - Force-refresh requires confirming a dialog, then forwards
  *    `forceRefresh: true`.
- *  - Per-customer periodic drain controllers are mounted from
- *    `inScopeCustomerIds` (NOT from `stories[]`) and stopped on
- *    unmount.
+ *
+ * The per-customer periodic drain is no longer mounted here (#651) — it
+ * moved to the app-shell `AimerPhase2CadenceManager`.
  */
 describe("TriageStoriesView — manual Send wiring (#493)", () => {
   beforeEach(() => {
     manualSendToAimerWebMock.mockReset();
-    createPeriodicDrainMock.mockReset().mockImplementation(() => ({
-      start: vi.fn(),
-      stop: vi.fn(),
-    }));
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -453,58 +440,6 @@ describe("TriageStoriesView — manual Send wiring (#493)", () => {
       storyId: "1",
       forceRefresh: true,
     });
-  });
-
-  it("mounts one createPeriodicDrain per in-scope customer (NOT from stories[])", () => {
-    const a = makeStory({ customerId: 7, storyId: "1" });
-    const { unmount } = render(
-      <TriageStoriesView
-        stories={[a]}
-        truncated={false}
-        // A customer with NO visible stories must still get a drain
-        // controller so its withdraw/refresh/backfill queues are
-        // drained. The set is server-supplied, not derived from
-        // `stories[]`.
-        inScopeCustomerIds={[7, 9]}
-        focused={null}
-        onFocus={() => {}}
-        labels={LABELS}
-      />,
-    );
-
-    expect(createPeriodicDrainMock).toHaveBeenCalledTimes(2);
-    const customerIds = createPeriodicDrainMock.mock.calls
-      .map((c) => c[1] as number)
-      .sort((a, b) => a - b);
-    expect(customerIds).toEqual([7, 9]);
-    // All controllers must be `start()`ed.
-    for (const ret of createPeriodicDrainMock.mock.results) {
-      expect(
-        (ret.value as { start: ReturnType<typeof vi.fn> }).start,
-      ).toHaveBeenCalledTimes(1);
-    }
-
-    // Unmount stops every controller in the map.
-    const stops = createPeriodicDrainMock.mock.results.map(
-      (r) => (r.value as { stop: ReturnType<typeof vi.fn> }).stop,
-    );
-    unmount();
-    for (const stop of stops) {
-      expect(stop).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  it("does not mount any drain when inScopeCustomerIds is empty", () => {
-    render(
-      <TriageStoriesView
-        stories={[makeStory()]}
-        truncated={false}
-        focused={null}
-        onFocus={() => {}}
-        labels={LABELS}
-      />,
-    );
-    expect(createPeriodicDrainMock).not.toHaveBeenCalled();
   });
 });
 

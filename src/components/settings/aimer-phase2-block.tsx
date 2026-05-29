@@ -3,7 +3,7 @@
 import { AlertCircle, Loader2, PauseCircle, PlayCircle } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
+import { CADENCE_CHANGED_EVENT } from "@/components/layout/aimer-phase2-cadence-manager";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,10 +24,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  type DrainResult,
-  drainOpportunisticPushQueue,
-} from "@/lib/aimer/phase2/transport.client";
+import { Switch } from "@/components/ui/switch";
+import { coordinatedDrain } from "@/lib/aimer/phase2/drain-coordinator.client";
+import type { DrainResult } from "@/lib/aimer/phase2/transport.client";
 import { mutatingFetch } from "@/lib/csrf-client";
 
 const STREAMING_KINDS = ["baseline_event", "story"] as const;
@@ -58,6 +57,7 @@ interface StreamingTrack {
   opportunistic_enabled: boolean;
   paused_at: string | null;
   paused_by: string | null;
+  cadence_enabled: boolean;
 }
 
 interface PolicyRunTrack {
@@ -195,6 +195,41 @@ export function AimerPhase2Block({ customers }: Phase2BlockProps) {
     }
   }, [pendingToggle, customerId, fetchStatus, t]);
 
+  // Single logical per-customer cadence toggle (#651). The flag lives on
+  // both streaming-kind rows (the route writes them together), so either
+  // row reflects the customer's consent state.
+  const cadenceEnabled = useMemo(
+    () => status?.streaming.some((s) => s.cadence_enabled) ?? false,
+    [status],
+  );
+
+  const onToggleCadence = useCallback(
+    async (enabled: boolean) => {
+      if (customerId === null) return;
+      setBusy("cadence");
+      setMessage(null);
+      try {
+        const res = await mutatingFetch("/api/aimer/phase2/cadence-toggle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer_id: customerId, enabled }),
+        });
+        if (!res.ok) {
+          setMessage({ kind: "error", text: t("errors.actionFailed") });
+          return;
+        }
+        // Tell the app-shell cadence manager (mounted in the dashboard
+        // shell) to re-read its config and start/stop the controller in
+        // this tab without a reload.
+        window.dispatchEvent(new Event(CADENCE_CHANGED_EVENT));
+        await fetchStatus();
+      } finally {
+        setBusy(null);
+      }
+    },
+    [customerId, fetchStatus, t],
+  );
+
   const visibleSyncNow = useMemo(() => {
     if (!status) return false;
     const baseline = status.streaming.find((s) => s.kind === "baseline_event");
@@ -238,11 +273,16 @@ export function AimerPhase2Block({ customers }: Phase2BlockProps) {
       const baselineApprox = approxBatches(baselineState);
       const storyApprox = approxBatches(storyState);
 
+      // Route through the in-tab coordinator (#651) so a Sync now click
+      // and a concurrent app-shell cadence tick for the same
+      // `(kind, customer)` share one drain instead of racing. A joined
+      // caller does not receive per-batch progress, so the spinner may
+      // skip ahead when a cadence drain is already in flight — harmless.
       const runOne = (
         kind: DrainKind,
         approxBatchesTotal: number | null,
       ): Promise<DrainResult> =>
-        drainOpportunisticPushQueue(kind, customerId, {
+        coordinatedDrain(kind, customerId, {
           onProgress: (p) => {
             setSyncProgress({
               kind,
@@ -384,6 +424,31 @@ export function AimerPhase2Block({ customers }: Phase2BlockProps) {
           ))}
           <PolicyRunTrackRow track={status.policy_run} />
           <PolicyEventTrackRow track={status.policy_event} />
+        </div>
+      )}
+
+      {status && customerId !== null && (
+        <div className="mt-5 rounded-md border border-dashed p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <Label
+                htmlFor="aimer-phase2-cadence"
+                className="text-sm font-medium"
+              >
+                {t("cadence.label")}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t("cadence.description")}
+              </p>
+            </div>
+            <Switch
+              id="aimer-phase2-cadence"
+              data-testid="aimer-phase2-cadence-toggle"
+              checked={cadenceEnabled}
+              disabled={busy === "cadence"}
+              onCheckedChange={(v) => void onToggleCadence(v)}
+            />
+          </div>
         </div>
       )}
 

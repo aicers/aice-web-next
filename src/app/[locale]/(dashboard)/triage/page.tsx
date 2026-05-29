@@ -533,7 +533,6 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         customerScope={cacheKeyForCustomerScope(scope)}
         initialStories={stories}
         initialStoriesTruncated={storiesTruncated}
-        inScopeCustomerIds={scope.customers.map((c) => c.id)}
         aimerIntegrationConfigured={aimerSetupStatus.configured}
         rebuild={rebuildProps}
         labels={labels}

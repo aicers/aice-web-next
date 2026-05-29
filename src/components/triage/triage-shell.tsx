@@ -141,14 +141,6 @@ interface TriageShellProps {
   /** True whenever any per-tenant Stories page hit the page cap. */
   initialStoriesTruncated?: boolean;
   /**
-   * Authorization-derived list of `customers.id` the active session
-   * may see on the Stories tab (#493). Used to mount one
-   * `createPeriodicDrain("story", customerId, …)` controller per
-   * customer in scope, independent of which Stories happen to be
-   * visible after period overlap / sort filters.
-   */
-  inScopeCustomerIds?: readonly number[];
-  /**
    * Server-resolved `{ configured }` flag from
    * {@link getAimerIntegrationSetupStatus}. Threaded down to the
    * Stories tab so the per-Story Send button can grey out (with an
@@ -183,7 +175,6 @@ export function TriageShell({
   customerScope,
   initialStories = [],
   initialStoriesTruncated = false,
-  inScopeCustomerIds = [],
   aimerIntegrationConfigured = false,
   rebuild,
   labels,
@@ -504,7 +495,6 @@ export function TriageShell({
               mode={mode}
               stories={initialStories}
               storiesTruncated={initialStoriesTruncated}
-              inScopeCustomerIds={inScopeCustomerIds}
               aimerIntegrationConfigured={aimerIntegrationConfigured}
               labels={labels.baseline}
             />

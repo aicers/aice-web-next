@@ -90,6 +90,7 @@ function stateRow(
     paused_at: null,
     paused_by: null,
     streaming_activated_at: null,
+    cadence_enabled: false,
     ...overrides,
   };
 }

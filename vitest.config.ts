@@ -89,6 +89,15 @@ export default defineConfig({
             // external_key info line must degrade to a total-only
             // form when the per-customer column has not yet shipped.
             "src/__tests__/components/settings/aimer-integration-panel-render.test.tsx",
+            // Issue #651: the per-customer Phase 2 cadence consent
+            // toggle reflects the status DTO and, on flip, POSTs the
+            // toggle route and dispatches the in-tab change event.
+            "src/__tests__/components/settings/aimer-phase2-cadence-toggle.test.tsx",
+            // Issue #651: the app-shell cadence manager reconciles
+            // per-(customer,kind) controllers against the cadence-config
+            // fetch and the in-tab change event. Renders a real React
+            // tree (effects + window event listener) so it runs jsdom.
+            "src/__tests__/components/layout/aimer-phase2-cadence-manager.test.tsx",
             // Issue #440: Send to Aimer modal + hidden-form submit
             // contract (DOM-level acceptance criteria — successful
             // submit leaves the form attached, failure paths tear it
@@ -197,6 +206,8 @@ export default defineConfig({
             "src/__tests__/components/detection/detection-shell-save-current-filter.test.tsx",
             "src/__tests__/components/detection/result-list-stale-focus.test.tsx",
             "src/__tests__/components/settings/aimer-integration-panel-render.test.tsx",
+            "src/__tests__/components/settings/aimer-phase2-cadence-toggle.test.tsx",
+            "src/__tests__/components/layout/aimer-phase2-cadence-manager.test.tsx",
             "src/__tests__/components/events/aimer-banner.test.tsx",
             "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
             "src/__tests__/components/triage/triage-shell.test.tsx",

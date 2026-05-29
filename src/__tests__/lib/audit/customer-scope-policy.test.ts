@@ -84,6 +84,7 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
       "aimer_phase2.backfill",
       "aimer_phase2.opportunistic_paused",
       "aimer_phase2.opportunistic_resumed",
+      "aimer_phase2.cadence_drain",
     ];
     for (const action of expectedScoped) {
       expect(customerScopeForAction(action)).toBe("customer-scoped");
@@ -123,6 +124,7 @@ describe("AUDIT_ACTION_CUSTOMER_SCOPE — exhaustive coverage", () => {
       "aimer_phase2.backfill",
       "aimer_phase2.opportunistic_paused",
       "aimer_phase2.opportunistic_resumed",
+      "aimer_phase2.cadence_drain",
     ]);
     for (const action of listAllAuditActions()) {
       if (!scopedActions.has(action)) {

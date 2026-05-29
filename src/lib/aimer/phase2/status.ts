@@ -35,6 +35,7 @@ import {
   type BacklogEstimate,
   estimateBacklog,
   getAimerPushState,
+  getCadenceEnabled,
   type Phase2StreamingKind,
 } from "@/lib/aimer/phase2/state";
 import { query } from "@/lib/db/client";
@@ -77,6 +78,14 @@ export interface Phase2StreamingTrackDto {
    * row is gone (deleted operator). `null` when the kind is unpaused.
    */
   paused_by: string | null;
+  /**
+   * Per-customer cadence consent (#651). Both streaming rows carry the
+   * same value (the Settings toggle writes them together), so the
+   * Settings UI renders one toggle reflecting either row. `true` means
+   * the app-shell cadence manager auto-forwards this customer every
+   * 5 minutes while an operator is signed in.
+   */
+  cadence_enabled: boolean;
 }
 
 export interface Phase2PolicyRunTrackDto {
@@ -232,6 +241,7 @@ function toStreamingTrackDto(
     opportunistic_enabled: state?.opportunistic_enabled ?? true,
     paused_at: state?.paused_at?.toISOString() ?? null,
     paused_by: pausedByLabel,
+    cadence_enabled: state?.cadence_enabled ?? false,
   };
 }
 
@@ -675,6 +685,52 @@ function bucketForPolicyEventFast(pending: number): Phase2SummaryBucket | null {
   if (pending >= WAY_BEHIND_PENDING) return "way_behind";
   if (pending >= BEHIND_PENDING) return "behind";
   return null;
+}
+
+// ── Cadence config (app-shell manager) ────────────────────────────
+
+export interface Phase2CadenceConfigEntry {
+  customer_id: number;
+  cadence_enabled: boolean;
+}
+
+export interface Phase2CadenceConfigDto {
+  customers: readonly Phase2CadenceConfigEntry[];
+}
+
+/**
+ * Per-customer cadence-consent map for the app-shell cadence manager
+ * (#651). The manager fetches this once on mount (and again when the
+ * Settings toggle dispatches its change event) to decide which
+ * customers to start a {@link createPeriodicDrain} for.
+ *
+ * Only customers whose cadence is enabled are returned — the manager
+ * needs no row for an opted-out customer. Per-customer reads are bounded
+ * by {@link SUMMARY_PER_CUSTOMER_CONCURRENCY} (shared with the summary
+ * fan-out) and fail soft: a tenant whose pool hiccups is simply omitted
+ * (treated as opted-out) rather than 500-ing the whole config.
+ */
+export async function buildPhase2CadenceConfig(
+  customerIds: readonly number[],
+): Promise<Phase2CadenceConfigDto> {
+  if (customerIds.length === 0) return { customers: [] };
+  const sortedIds = [...customerIds].sort((a, b) => a - b);
+  const entries = await mapWithConcurrency(
+    sortedIds,
+    SUMMARY_PER_CUSTOMER_CONCURRENCY,
+    async (customerId): Promise<Phase2CadenceConfigEntry | null> => {
+      try {
+        return (await getCadenceEnabled(customerId))
+          ? { customer_id: customerId, cadence_enabled: true }
+          : null;
+      } catch {
+        return null;
+      }
+    },
+  );
+  return {
+    customers: entries.filter((e): e is Phase2CadenceConfigEntry => e !== null),
+  };
 }
 
 async function mapWithConcurrency<T, R>(

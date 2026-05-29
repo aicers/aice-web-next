@@ -1085,6 +1085,50 @@ Click sequence:
    state**, not an audit source of truth — the audit row only
    records the operator click.
 
+#### Auto-forward (cadence)
+
+The **Auto-forward to aimer-web (every 5 min while signed in)**
+toggle below the tracks turns on an automatic, browser-side push
+cadence for the selected customer. It is **off by default** —
+forwarding only starts after an operator opts the customer in.
+
+When enabled:
+
+- A 5-minute periodic drain runs for the `baseline_event` and
+  `story` kinds for that customer, mounted once at the dashboard
+  app shell — so it keeps forwarding **while you are signed in**,
+  not only while a Triage screen is open.
+- The drain **pauses automatically when the browser tab is
+  hidden** and resumes when it is visible again. It **stops when
+  you sign out or close the tab** — there is no server-side cron
+  and no background/ServiceWorker sync.
+- `policy_event` is excluded: it is queue-only with no push
+  cursor for a cadence to advance. Use **Sync now** to drain it.
+
+The toggle is independent of **Pause / Resume**: the cadence flag
+only controls whether the automatic timer starts, while
+`opportunistic_enabled` remains the drain-ability gate. **Sync
+now works regardless of the cadence state** — you can always
+flush immediately.
+
+Mechanics: flipping the toggle POSTs to
+`/api/aimer/phase2/cadence-toggle`, which sets `cadence_enabled`
+on both streaming-kind `aimer_push_state` rows in one statement
+(one logical per-customer toggle). The app-shell cadence manager
+reads `GET /api/aimer/phase2/cadence-config` to learn which
+customers are opted in, so the change takes effect in the current
+tab without a reload. Each cadence tick that actually changes
+server state (a non-empty batch — `delivered + no_op > 0`)
+records one `aimer_phase2.cadence_drain` audit row via a thin
+wrapper route; bare no-op ticks record nothing, so a 5-minute
+cadence does not flood the audit log.
+
+![Phase 2 auto-forward cadence toggle (wireframe)](../assets/aimer-phase2-cadence-toggle-en.svg)
+
+> Wireframe stand-in — see note above. A meaningful screenshot
+> needs the surrounding status block populated, which the live
+> push data gates.
+
 #### Pause / Resume
 
 The pause toggle next to each streaming row flips
@@ -1141,9 +1185,15 @@ The Phase 2 block records:
 - `aimer_phase2.opportunistic_paused` — `details: { kind }`.
 - `aimer_phase2.opportunistic_resumed` — `details: { kind,
   pausedDurationSeconds }`.
+- `aimer_phase2.cadence_drain` — emitted by the cadence wrapper
+  route only on a state-changing tick. `details: { kind,
+  delivered, noOp }`. The counts are browser-reported and
+  informational (the drain runs in the browser, like
+  `sync_now`); the audit row records the operator + customer +
+  timestamp identity.
 
-All four are customer-scoped, so the audit-log viewer surfaces
-them under the tenant operator's effective customer scope.
+All are customer-scoped, so the audit-log viewer surfaces them
+under the tenant operator's effective customer scope.
 
 ### Login banner
 

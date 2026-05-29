@@ -274,6 +274,10 @@
         "pending": "Pending withdrawals: {count}",
         "noPending": "No pending withdrawals."
       },
+      "cadence": {
+        "label": "Auto-forward to aimer-web (every 5 min while signed in)",
+        "description": "When on, baseline events and stories for this customer are pushed to aimer-web every 5 minutes while an operator is signed in. Pauses when the tab is hidden and stops when you sign out. Off by default; Sync now works regardless."
+      },
       "syncNow": {
         "button": "Sync now",
         "running": "Syncing…",
@@ -427,7 +431,8 @@
       "aimer_phase2_sync_now": "Aimer Phase 2 sync now",
       "aimer_phase2_backfill": "Aimer Phase 2 backfill",
       "aimer_phase2_opportunistic_paused": "Aimer Phase 2 push paused",
-      "aimer_phase2_opportunistic_resumed": "Aimer Phase 2 push resumed"
+      "aimer_phase2_opportunistic_resumed": "Aimer Phase 2 push resumed",
+      "aimer_phase2_cadence_drain": "Aimer Phase 2 cadence drain"
     },
     "targetTypes": {
       "account": "Account",

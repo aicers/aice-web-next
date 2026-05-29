@@ -29,10 +29,6 @@ import {
   ManualSendError,
   manualSendToAimerWeb,
 } from "@/lib/aimer/phase2/manual-send.client";
-import {
-  createPeriodicDrain,
-  type PeriodicDrainController,
-} from "@/lib/aimer/phase2/transport.client";
 import type { TriagePeriod } from "@/lib/triage";
 import type { PivotDimensionId, PivotValue } from "@/lib/triage/pivot";
 import { getPivotDimension } from "@/lib/triage/pivot";
@@ -169,16 +165,6 @@ interface TriageStoriesViewProps {
   stories: ReadonlyArray<TriageStory>;
   truncated: boolean;
   /**
-   * Authorization-derived in-scope customer ids (#493). One
-   * `createPeriodicDrain("story", customerId, …)` controller is
-   * mounted per customer in this list. The set MUST be derived
-   * server-side from `resolveEffectiveCustomerIds(...)` (not from
-   * `stories[]`) so a customer whose Stories are filtered out of
-   * the visible page still has its `withdraw_story` /
-   * `refresh_story_window` / `backfill_story_window` queue drained.
-   */
-  inScopeCustomerIds?: readonly number[];
-  /**
    * Server-resolved `{ configured }` flag from
    * {@link getAimerIntegrationSetupStatus}. When `false`, every Story
    * card's Send button (and the kebab "Send (force refresh)" menu)
@@ -261,7 +247,6 @@ interface TriageStoriesViewProps {
 export function TriageStoriesView({
   stories,
   truncated,
-  inScopeCustomerIds = [],
   aimerIntegrationConfigured = false,
   focused,
   onFocus,
@@ -525,40 +510,12 @@ export function TriageStoriesView({
     return () => clearTimeout(id);
   }, [toast]);
 
-  // Per-customer periodic drain mount (#493). One controller per
-  // customer in `inScopeCustomerIds` — independent of which stories
-  // are visible. The drain auto-pauses on `visibilitychange` →
-  // hidden via the Foundation controller.
-  //
-  // `inScopeCustomerIds` is sorted + serialized into a stable key
-  // first so the effect does not re-mount on array-reference
-  // rotation alone (the customer set rarely changes; the array
-  // reference does on every parent re-render). The customer list
-  // is reconstructed from the key inside the effect to keep React's
-  // dependency-array contract simple and avoid stale closures.
-  const inScopeKey = inScopeCustomerIds
-    .slice()
-    .sort((a, b) => a - b)
-    .join(",");
-  useEffect(() => {
-    if (inScopeKey === "") return;
-    const customerIds = inScopeKey
-      .split(",")
-      .map((s) => Number.parseInt(s, 10));
-    const controllers = new Map<number, PeriodicDrainController>();
-    for (const customerId of customerIds) {
-      const controller = createPeriodicDrain("story", customerId, {
-        intervalMs: 5 * 60 * 1000,
-      });
-      controllers.set(customerId, controller);
-      controller.start();
-    }
-    return () => {
-      for (const controller of controllers.values()) {
-        controller.stop();
-      }
-    };
-  }, [inScopeKey]);
+  // The Phase 2 story push cadence is no longer mounted per Triage
+  // screen (#651). A single app-shell cadence manager
+  // (`AimerPhase2CadenceManager`) now owns the per-customer
+  // `createPeriodicDrain` so forwarding runs "while signed in" and is
+  // gated by per-customer consent, instead of being tied to which
+  // Triage screen is mounted.
 
   const handleSend = async ({
     story,
