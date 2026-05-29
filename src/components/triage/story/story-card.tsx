@@ -16,7 +16,7 @@
 
 import { useState } from "react";
 
-import type { AiAnalysisStorySummary } from "@/lib/aimer/analysis/summary-types";
+import type { AiAnalysisSummary } from "@/lib/aimer/analysis/summary-types";
 import type { TriageStory } from "@/lib/triage/story/types";
 import {
   type AiAnalysisBadgeLabels,
@@ -119,7 +119,7 @@ interface StoryCardProps {
    * out — every "render nothing" upstream surface is normalized to
    * `null` on the client side, so the card has no policy of its own.
    */
-  aiAnalysis?: AiAnalysisStorySummary | null;
+  aiAnalysis?: AiAnalysisSummary | null;
   labels: TriageStoryCardLabels;
 }
 

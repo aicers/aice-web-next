@@ -1,6 +1,6 @@
 "use client";
 
-import type { AiAnalysisStorySummary } from "@/lib/aimer/analysis/summary-types";
+import type { AiAnalysisSummary } from "@/lib/aimer/analysis/summary-types";
 
 export interface AiAnalysisBadgeLabels {
   /** Localized tier text shown for `priority_tier === "CRITICAL"`. */
@@ -113,7 +113,7 @@ export function AiAnalysisBadge({
  * the surface-threshold guard at each call site.
  */
 export function renderAiAnalysisBadge(
-  summary: AiAnalysisStorySummary | null | undefined,
+  summary: AiAnalysisSummary | null | undefined,
   labels: AiAnalysisBadgeLabels,
 ) {
   if (!summary) return null;
