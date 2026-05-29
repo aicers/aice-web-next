@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { AimerPhase2Banner } from "@/components/layout/aimer-phase2-banner";
+import { AimerPhase2CadenceManager } from "@/components/layout/aimer-phase2-cadence-manager";
 import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { CustomerScopeIndicator } from "@/components/layout/customer-scope-indicator";
 import { MobileHeader } from "@/components/layout/mobile-header";
@@ -56,6 +57,17 @@ export default function DashboardLayout({
       <TimezoneProvider>
         <div className="flex h-screen flex-col">
           {isAimerSystemAdmin && <AimerPhase2Banner />}
+          {/*
+           * App-shell Phase 2 push cadence (#651). Mounted once, here, so
+           * the per-customer opportunistic drain runs "while signed in"
+           * rather than only while a Triage screen is open. Renders
+           * nothing; gated to System Administrators like the banner.
+           */}
+          {isAimerSystemAdmin && (
+            <AimerPhase2CadenceManager
+              customerIds={scope.customers.map((c) => c.id)}
+            />
+          )}
 
           {/* Mobile header — visible only below desktop breakpoint */}
           <MobileHeader

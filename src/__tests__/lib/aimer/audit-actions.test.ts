@@ -22,6 +22,7 @@ describe("aimer audit actions are registered in the closed union", () => {
     "aimer_phase2.backfill",
     "aimer_phase2.opportunistic_paused",
     "aimer_phase2.opportunistic_resumed",
+    "aimer_phase2.cadence_drain",
   ] as const;
 
   it.each(expected)("includes %s", (action) => {

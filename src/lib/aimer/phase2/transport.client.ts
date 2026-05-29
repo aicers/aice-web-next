@@ -774,6 +774,20 @@ export interface CreatePeriodicDrainOptions {
   intervalMs?: number;
   onProgress?: DrainOptions["onProgress"];
   onIdle?: () => void;
+  /**
+   * Drain implementation. Defaults to {@link drainOpportunisticPushQueue}.
+   * Injectable so the app-shell cadence manager (#651) can route every
+   * tick through an in-tab coordinator (shared per-(kind,customerId)
+   * lock that also serializes against the Settings "Sync now" button)
+   * and record the `aimer_phase2.cadence_drain` audit on a
+   * state-changing tick. The signature matches
+   * {@link drainOpportunisticPushQueue} exactly.
+   */
+  drain?: (
+    kind: Phase2DrainKind,
+    customerId: number,
+    options: DrainOptions,
+  ) => Promise<DrainResult>;
 }
 
 /**
@@ -795,6 +809,7 @@ export function createPeriodicDrain(
   options: CreatePeriodicDrainOptions = {},
 ): PeriodicDrainController {
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const drain = options.drain ?? drainOpportunisticPushQueue;
   const drainOptions: DrainOptions = {};
   if (options.onProgress) drainOptions.onProgress = options.onProgress;
 
@@ -826,7 +841,7 @@ export function createPeriodicDrain(
       ...drainOptions,
       signal: abortController.signal,
     };
-    inFlight = drainOpportunisticPushQueue(kind, customerId, localOptions)
+    inFlight = drain(kind, customerId, localOptions)
       .then((result) => {
         if (
           result.stoppedReason === "exhausted" ||

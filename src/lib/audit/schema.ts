@@ -297,12 +297,20 @@ type TriagePolicyRunAction = "triage.policy_run.send_to_aimer";
  *     flips a streaming kind's pause toggle off. Fields: `kind`.
  *   - `aimer_phase2.opportunistic_resumed` — recorded when the operator
  *     flips it back on. Fields: `kind`, `pausedDurationSeconds`.
+ *   - `aimer_phase2.cadence_drain` — recorded server-side by the
+ *     app-shell cadence manager's thin wrapper, but only for a tick
+ *     that actually changed server state (the browser POSTs only when
+ *     `totalDelivered + totalNoOp > 0`), so bare no-op ticks do not
+ *     flood the log. Fields: `kind` (`baseline_event` | `story`),
+ *     `delivered`, `noOp` (browser-reported, informational — the drain
+ *     itself runs in the browser, same split as `sync_now`).
  */
 type AimerPhase2Action =
   | "aimer_phase2.sync_now"
   | "aimer_phase2.backfill"
   | "aimer_phase2.opportunistic_paused"
-  | "aimer_phase2.opportunistic_resumed";
+  | "aimer_phase2.opportunistic_resumed"
+  | "aimer_phase2.cadence_drain";
 
 /** All audit event actions. */
 export type AuditAction =
@@ -424,6 +432,7 @@ export const AUDIT_ACTIONS = [
   "aimer_phase2.backfill",
   "aimer_phase2.opportunistic_paused",
   "aimer_phase2.opportunistic_resumed",
+  "aimer_phase2.cadence_drain",
 ] as const satisfies readonly AuditAction[];
 
 /** Canonical runtime list of supported audit target types. */

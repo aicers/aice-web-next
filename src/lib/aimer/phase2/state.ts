@@ -136,6 +136,19 @@ export interface AimerPushStateRow {
    * the baseline drain ignores this column.
    */
   streaming_activated_at: Date | null;
+  /**
+   * Opt-in consent for the browser-side opportunistic-push cadence
+   * (#651). When `true`, the app-shell cadence manager starts a 5-minute
+   * {@link createPeriodicDrain} for this kind while the operator is
+   * signed in. Default `false` (opt-in). Orthogonal to
+   * `opportunistic_enabled`: this flag only governs whether the client
+   * auto-timer starts; `opportunistic_enabled` remains the route-level
+   * drain-ability gate, so manual "Sync now" works regardless of this
+   * flag. The single per-customer Settings toggle updates both the
+   * `baseline_event` and `story` rows together (see
+   * {@link setCadenceEnabled}).
+   */
+  cadence_enabled: boolean;
 }
 
 export interface AimerPushQueueRow {
@@ -195,7 +208,8 @@ export async function getAimerPushState(
             opportunistic_enabled,
             paused_at,
             paused_by,
-            streaming_activated_at
+            streaming_activated_at,
+            cadence_enabled
        FROM aimer_push_state
       WHERE kind = $1`,
     [kind],
@@ -338,6 +352,47 @@ export async function isOpportunisticEnabled(
     [kind],
   );
   return rows[0]?.opportunistic_enabled ?? true;
+}
+
+// ── Cadence consent helpers (#651) ─────────────────────────────────
+
+/**
+ * Set the per-customer cadence consent flag. There is one logical
+ * toggle per customer; it is stored on both streaming-kind rows
+ * (`baseline_event`, `story`) and this helper updates both in a single
+ * statement (atomic — a bare `UPDATE` with no `WHERE` over the two-row
+ * table is one transaction). `policy_event` has no `aimer_push_state`
+ * row, so it is unaffected.
+ *
+ * Orthogonal to {@link setOpportunisticEnabled}: flipping cadence does
+ * not touch `opportunistic_enabled`, `paused_at`, or `paused_by`.
+ */
+export async function setCadenceEnabled(
+  customerId: number,
+  enabled: boolean,
+): Promise<void> {
+  const pool = await getCustomerPool(customerId);
+  await pool.query(
+    `UPDATE aimer_push_state
+        SET cadence_enabled = $1`,
+    [enabled],
+  );
+}
+
+/**
+ * Whether the per-customer cadence is enabled. True when either
+ * streaming-kind row has `cadence_enabled = TRUE` — the rows are always
+ * written together by {@link setCadenceEnabled}, so `bool_or` collapses
+ * them into the single logical toggle. Defaults to `false` when no rows
+ * exist (matches the migration default; opt-in).
+ */
+export async function getCadenceEnabled(customerId: number): Promise<boolean> {
+  const pool = await getCustomerPool(customerId);
+  const { rows } = await pool.query<{ enabled: boolean | null }>(
+    `SELECT bool_or(cadence_enabled) AS enabled
+       FROM aimer_push_state`,
+  );
+  return rows[0]?.enabled ?? false;
 }
 
 // ── Queue helpers ──────────────────────────────────────────────────

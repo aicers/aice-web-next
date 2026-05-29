@@ -184,6 +184,10 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   "aimer_phase2.backfill": "customer-scoped",
   "aimer_phase2.opportunistic_paused": "customer-scoped",
   "aimer_phase2.opportunistic_resumed": "customer-scoped",
+  // App-shell cadence manager drain tick (#651). The cadence is driven
+  // per customer and the wrapper resolves `customerId` from the request
+  // body, so the audit row is intrinsically customer-scoped.
+  "aimer_phase2.cadence_drain": "customer-scoped",
 };
 
 /**

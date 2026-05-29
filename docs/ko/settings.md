@@ -1042,6 +1042,50 @@ Aimer로 분석 흐름은 브라우저가 백그라운드에서 호출하는
    일으킵니다. 완료 카운트는 **클라이언트 측 정보성 상태**이며 감사
    소스가 아닙니다 — 감사 행은 운영자 클릭만 기록합니다.
 
+#### 자동 전달 (cadence)
+
+트랙 아래의 **aimer-web로 자동 전달 (로그인 중 5분마다)** 토글은
+선택한 고객에 대해 브라우저 측 자동 푸시 cadence를 켭니다. **기본값은
+꺼짐**이며 — 운영자가 해당 고객을 명시적으로 옵트인한 뒤에만 전달이
+시작됩니다.
+
+켜진 경우:
+
+- 해당 고객의 `baseline_event`와 `story` 종류에 대해 5분 주기
+  드레인이 실행되며, 대시보드 앱 셸에 한 번만 마운트됩니다 — 따라서
+  Triage 화면이 열려 있는 동안만이 아니라 **로그인되어 있는 동안**
+  계속 전달합니다.
+- 브라우저 탭이 숨겨지면 드레인이 **자동으로 일시 정지**되고 다시
+  보이면 재개됩니다. **로그아웃하거나 탭을 닫으면 중지**됩니다 —
+  서버 측 cron이나 백그라운드/ServiceWorker 동기화는 없습니다.
+- `policy_event`는 제외됩니다: 큐 전용이며 cadence가 전진시킬 푸시
+  커서가 없기 때문입니다. 이를 드레인하려면 **지금 동기화**를
+  사용하십시오.
+
+이 토글은 **일시 정지 / 재개**와 독립적입니다: cadence 플래그는
+자동 타이머의 시작 여부만 제어하며, `opportunistic_enabled`는
+드레인 가능 여부 게이트로 남습니다. **지금 동기화는 cadence 상태와
+무관하게 동작**하므로 언제든 즉시 플러시할 수 있습니다.
+
+동작: 토글을 뒤집으면 `/api/aimer/phase2/cadence-toggle`에 POST하며,
+이는 두 스트리밍 종류 `aimer_push_state` 행의 `cadence_enabled`를 한
+문장으로 설정합니다(고객별 단일 논리 토글). 앱 셸 cadence 매니저는
+`GET /api/aimer/phase2/cadence-config`를 읽어 어떤 고객이 옵트인했는지
+파악하므로, 변경은 새로고침 없이 현재 탭에 즉시 반영됩니다. 옵트아웃은
+**실패 시 닫힘(fail-closed)**입니다: 매니저의 구성 재조회가 실패하더라도
+해당 고객의 전달은 현재 탭에서 즉시 중지됩니다. 서버
+상태를 실제로 바꾼 cadence 틱(비어 있지 않은 배치 —
+`delivered + no_op > 0`)마다 얇은 래퍼 라우트를 통해
+`aimer_phase2.cadence_drain` 감사 행 하나가 기록됩니다. 빈 no-op
+틱은 아무것도 기록하지 않으므로 5분 cadence가 감사 로그를 넘치게
+하지 않습니다.
+
+![Phase 2 자동 전달 cadence 토글 (와이어프레임)](../assets/aimer-phase2-cadence-toggle-ko.svg)
+
+> 와이어프레임 스탠드인 — 위 노트 참조. 의미 있는 스크린샷에는 주변
+> 상태 블록이 채워져 있어야 하며 이는 라이브 푸시 데이터가
+> 게이트합니다.
+
 #### 일시 정지 / 재개
 
 각 스트리밍 행 옆의 토글은 해당 종류의 `opportunistic_enabled`를
@@ -1097,8 +1141,13 @@ Phase 2 블록은 다음 액션을 기록합니다:
 - `aimer_phase2.opportunistic_paused` — `details: { kind }`.
 - `aimer_phase2.opportunistic_resumed` — `details: { kind,
   pausedDurationSeconds }`.
+- `aimer_phase2.cadence_drain` — cadence 래퍼 라우트가 상태를 바꾼
+  틱에서만 발행. `details: { kind, delivered, noOp }`. 카운트는
+  브라우저가 보고하는 정보성 값이며(`sync_now`와 마찬가지로 드레인은
+  브라우저에서 실행), 감사 행은 운영자 + 고객 + 타임스탬프 신원을
+  기록합니다.
 
-네 액션 모두 customer-scoped이므로, 테넌트 운영자의 유효 고객
+위 액션 모두 customer-scoped이므로, 테넌트 운영자의 유효 고객
 범위에서 감사 로그 뷰어가 자동으로 표시합니다.
 
 ### 로그인 배너
