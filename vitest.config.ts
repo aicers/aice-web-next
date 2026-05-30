@@ -146,6 +146,11 @@ export default defineConfig({
             // anchor (`target="_blank"` + `rel="noopener"`) and
             // tooltip rendering must be asserted against the real DOM.
             "src/__tests__/components/triage/story/ai-analysis-badge.test.tsx",
+            // Issue #646: dashboard LIVE + DAILY report cards — the
+            // collapse rules, per-customer fan-out, timezone-derived
+            // DAILY date, and bounded-concurrency pump run real React
+            // effects and assert against the rendered DOM.
+            "src/__tests__/components/dashboard/ai-analysis-cards.test.tsx",
             // Issue #554: shared event-row module reused by the Asset
             // detail panel and the Story detail member table. Renders
             // a real `<table>` so the cell-layout / optional-column /
@@ -215,6 +220,7 @@ export default defineConfig({
             "src/__tests__/components/triage/related-events-panel.test.tsx",
             "src/__tests__/components/triage/story/stories-view.test.tsx",
             "src/__tests__/components/triage/story/ai-analysis-badge.test.tsx",
+            "src/__tests__/components/dashboard/ai-analysis-cards.test.tsx",
             "src/__tests__/components/triage/rebuild-button.test.tsx",
             "src/__tests__/components/triage/event-row/triage-event-table.test.tsx",
             "src/__tests__/components/triage/pivot/pivot-breadcrumb.test.tsx",

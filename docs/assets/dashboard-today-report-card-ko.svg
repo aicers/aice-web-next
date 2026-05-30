@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">대시보드 "오늘의 보고서"(DAILY) 보고서 카드 (와이어프레임)</title>
+  <desc id="desc">고객별 "AI 분석" 대시보드 섹션 와이어프레임. 고객명 "Acme Corp" 아래 "오늘의 보고서" 카드가 DAILY 보고서 등급 배지 "AI · 높음"을 표시하며, 배지는 사용자의 로컬 달력 날짜에 해당하는 aimer-web DAILY 보고서 페이지로 연결됩니다. 카드는 DAILY 요약이 CRITICAL 또는 HIGH 등급으로 확인될 때만 표시됩니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-section { font-size: 15px; fill: #18181b; font-weight: 700; }
+    .text-customer { font-size: 12px; fill: #52525b; font-weight: 600; }
+    .text-card-title { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .badge-high { fill: #fffbeb; stroke: #fcd34d; stroke-width: 1; }
+    .badge-high-text { fill: #78350f; font-size: 10px; font-weight: 700; }
+  </style>
+
+  <rect class="bg" width="720" height="200"/>
+  <text x="24" y="36" class="text-section">AI 분석</text>
+  <text x="24" y="62" class="text-customer">Acme Corp</text>
+
+  <!-- 오늘의 보고서 카드 -->
+  <rect class="panel" x="24" y="74" width="330" height="64" rx="6" ry="6"/>
+  <text x="42" y="111" class="text-card-title">오늘의 보고서</text>
+  <rect class="badge-high" x="278" y="98" width="60" height="20" rx="3" ry="3"/>
+  <text x="286" y="112" class="badge-high-text">AI · 높음</text>
+
+  <text x="24" y="168" class="text-muted">DAILY 날짜는 사용자의 시간대를 따르며, 배지는 해당 날짜의 aimer-web 보고서로 연결됩니다.</text>
+</svg>

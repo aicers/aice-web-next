@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Dashboard "Today's report" (DAILY) report card (wireframe)</title>
+  <desc id="desc">Wireframe of the per-customer "AI analyses" dashboard section. Under the customer name "Acme Corp" the "Today's report" card shows the DAILY report tier badge "AI · HIGH"; the badge links to the aimer-web DAILY report page for the viewer's local calendar day. The card renders only when the DAILY summary resolves to a CRITICAL or HIGH tier.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-section { font-size: 15px; fill: #18181b; font-weight: 700; }
+    .text-customer { font-size: 12px; fill: #52525b; font-weight: 600; }
+    .text-card-title { font-size: 13px; fill: #18181b; font-weight: 600; }
+    .text-muted { font-size: 11px; fill: #a1a1aa; }
+    .badge-high { fill: #fffbeb; stroke: #fcd34d; stroke-width: 1; }
+    .badge-high-text { fill: #78350f; font-size: 10px; font-weight: 700; }
+  </style>
+
+  <rect class="bg" width="720" height="200"/>
+  <text x="24" y="36" class="text-section">AI analyses</text>
+  <text x="24" y="62" class="text-customer">Acme Corp</text>
+
+  <!-- Today's report card -->
+  <rect class="panel" x="24" y="74" width="330" height="64" rx="6" ry="6"/>
+  <text x="42" y="111" class="text-card-title">Today's report</text>
+  <rect class="badge-high" x="270" y="98" width="68" height="20" rx="3" ry="3"/>
+  <text x="278" y="112" class="badge-high-text">AI · HIGH</text>
+
+  <text x="24" y="168" class="text-muted">The DAILY date follows the viewer's timezone; the badge links to that day's aimer-web report.</text>
+</svg>

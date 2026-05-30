@@ -11,6 +11,7 @@ import {
   Server,
   Settings,
   Shield,
+  Sparkles,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
@@ -48,6 +49,12 @@ interface MobileHeaderProps {
   username?: string;
   scope: EffectiveCustomerScope;
   canManageCustomers: boolean;
+  /**
+   * Absolute aimer-web `/analysis` URL composed server-side, or `null`
+   * when the integration is unconfigured. The "Open AI analyses" link
+   * is hidden when absent (#646).
+   */
+  aimerAnalysisHref?: string | null;
 }
 
 export function MobileHeader({
@@ -56,6 +63,7 @@ export function MobileHeader({
   username,
   scope,
   canManageCustomers,
+  aimerAnalysisHref,
 }: MobileHeaderProps) {
   const t = useTranslations("nav");
   const pathname = usePathname();
@@ -110,6 +118,14 @@ export function MobileHeader({
                   active={pathname.startsWith(item.href)}
                 />
               ))}
+              {aimerAnalysisHref ? (
+                <SidebarItem
+                  href={aimerAnalysisHref}
+                  icon={Sparkles}
+                  label={t("openAiAnalyses")}
+                  external
+                />
+              ) : null}
             </nav>
             <div className="space-y-4 p-4">
               <div className="px-0">

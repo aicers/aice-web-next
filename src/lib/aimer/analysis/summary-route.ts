@@ -37,6 +37,78 @@ const UPSTREAM_TIMEOUT_MS = 5_000;
 
 type SurfaceTier = "CRITICAL" | "HIGH";
 
+/**
+ * Which analysis surface a resolution belongs to. Carried into the
+ * structured log line so an external collector can break the
+ * outcome / reason counters down by surface (#646 "Structured
+ * observability"). `story` is the #645 Stories badge; `live` / `daily`
+ * are the Phase 2 dashboard report cards.
+ */
+export type AnalysisSurface = "story" | "live" | "daily";
+
+/**
+ * Outcome of a resolution — `200` (positive summary body) or `204`
+ * (render nothing). Stringified so the log line reads as a stable
+ * label rather than a number.
+ */
+type ResolutionOutcome = "200" | "204";
+
+/**
+ * Why a resolution landed where it did. Mirrors the categories called
+ * out in #646 so the structured log doubles as the data source for the
+ * deferred Prometheus counters:
+ * - `ok` — positive `200` summary emitted.
+ * - `unconfigured` — bridge URL / `aice_id` / signing key / `external_key`
+ *   missing; no upstream call possible.
+ * - `signing_error` — read-auth token signing failed.
+ * - `upstream_missing` — upstream `404` or `exists: false`.
+ * - `tier_below_threshold` — tier `LOW` / `MEDIUM`.
+ * - `malformed_upstream` — malformed field or non-relative `link`.
+ * - `fetch_error` — upstream fetch failed / timed out / unparseable.
+ */
+type ResolutionReason =
+  | "ok"
+  | "unconfigured"
+  | "signing_error"
+  | "upstream_missing"
+  | "tier_below_threshold"
+  | "malformed_upstream"
+  | "fetch_error";
+
+/**
+ * Reasons that indicate a genuine fault (vs. an expected "render
+ * nothing") and are therefore emitted at `warn` level so they surface
+ * in alerting; the benign 204 cases and the positive 200 path log at
+ * `info`. This keeps the single-line-per-resolution contract while
+ * preserving the warn signal the existing tests assert on.
+ */
+const WARN_REASONS: ReadonlySet<ResolutionReason> = new Set<ResolutionReason>([
+  "signing_error",
+  "malformed_upstream",
+  "fetch_error",
+]);
+
+/**
+ * Emit the single structured resolution line (#646). Carries `surface`
+ * / `outcome` / `reason` as parseable `key=value` fields plus the
+ * caller's `logContext` so an external collector can derive per-surface
+ * 200/204 and 204-reason counters without a metrics surface in the
+ * repo yet.
+ */
+function logResolution(
+  surface: AnalysisSurface,
+  outcome: ResolutionOutcome,
+  reason: ResolutionReason,
+  logContext: string,
+): void {
+  const fields = `surface=${surface} outcome=${outcome} reason=${reason} ${logContext}`;
+  if (WARN_REASONS.has(reason)) {
+    console.warn("[aimer.analysis.summary] %s", fields);
+  } else {
+    console.info("[aimer.analysis.summary] %s", fields);
+  }
+}
+
 interface UpstreamSummary {
   exists?: unknown;
   priority_tier?: unknown;
@@ -122,7 +194,7 @@ function composeHref(bridgeUrl: string, link: string): string {
  * `/analysis/story/{story_id}/summary`). The caller supplies an
  * already-encoded `resourcePath`; `externalKey` is encoded here.
  */
-function composeUpstreamUrl(
+export function composeUpstreamUrl(
   bridgeUrl: string,
   externalKey: string,
   resourcePath: string,
@@ -175,6 +247,12 @@ export interface AnalysisSummaryResolution {
    */
   customerId: number;
   /**
+   * Which surface is resolving — `story` / `live` / `daily`. Carried
+   * into the structured log line so the per-surface outcome / reason
+   * counters can be derived downstream (#646).
+   */
+  surface: AnalysisSurface;
+  /**
    * Builds the surface-specific upstream resource path that follows
    * `/api/customers/{external_key}` — e.g.
    * `/analysis/story/${encodeURIComponent(storyId)}/summary`. Returns an
@@ -207,9 +285,19 @@ export interface AnalysisSummaryResolution {
  */
 export async function resolveAnalysisSummaryResponse({
   customerId,
+  surface,
   buildResourcePath,
   logContext,
 }: AnalysisSummaryResolution): Promise<Response> {
+  // Emit the single structured resolution line and return the
+  // corresponding 204. Centralizing the negative return keeps the
+  // "one log line per resolution" contract: every render-nothing path
+  // routes through here with its own `reason`.
+  const resolveNegative = (reason: ResolutionReason): Response => {
+    logResolution(surface, "204", reason, logContext);
+    return noContent();
+  };
+
   // Read-side setup check. The Send-to-aimer-web flow needs
   // `defaultModelName` + `defaultModel` too, but the read-side summary
   // fetch only needs the bridge URL, the `aice_id` (the `iss` claim on
@@ -217,7 +305,7 @@ export async function resolveAnalysisSummaryResponse({
   const settings = await getAimerIntegrationSettings();
   const hasSigningKey = hasActiveAimerSigningKey();
   if (!settings.bridgeUrl || !settings.aiceId || !hasSigningKey) {
-    return noContent();
+    return resolveNegative("unconfigured");
   }
 
   // Resolve the customer's `external_key` — the identifier aimer-web
@@ -226,20 +314,15 @@ export async function resolveAnalysisSummaryResponse({
   // upstream call possible ⇒ 204.
   const externalKey = await resolveCustomerExternalKey(customerId);
   if (!externalKey) {
-    return noContent();
+    return resolveNegative("unconfigured");
   }
 
   const tokenPayload = buildReadAuthTokenPayload(settings.aiceId, externalKey);
   let bearerToken: string;
   try {
     bearerToken = await signReadAuthToken(tokenPayload);
-  } catch (err) {
-    console.warn(
-      "[aimer.analysis.summary] read-auth token signing failed: %s err=%s",
-      logContext,
-      err instanceof Error ? err.message : String(err),
-    );
-    return noContent();
+  } catch {
+    return resolveNegative("signing_error");
   }
 
   const upstreamUrl = composeUpstreamUrl(
@@ -249,51 +332,33 @@ export async function resolveAnalysisSummaryResponse({
   );
   const upstream = await fetchUpstreamSummary(upstreamUrl, bearerToken);
   if (upstream === "upstream_missing") {
-    return noContent();
+    return resolveNegative("upstream_missing");
   }
   if (upstream === "fetch_error") {
-    console.warn(
-      "[aimer.analysis.summary] upstream fetch error: %s url=%s",
-      logContext,
-      upstreamUrl,
-    );
-    return noContent();
+    return resolveNegative("fetch_error");
   }
-  if (upstream === null) return noContent();
+  if (upstream === null) return resolveNegative("fetch_error");
 
-  if (upstream.exists !== true) return noContent();
+  if (upstream.exists !== true) return resolveNegative("upstream_missing");
 
-  if (!isSurfaceTier(upstream.priority_tier)) return noContent();
+  if (!isSurfaceTier(upstream.priority_tier)) {
+    return resolveNegative("tier_below_threshold");
+  }
   if (!isNumberInUnitRange(upstream.severity_score)) {
-    console.warn(
-      "[aimer.analysis.summary] malformed severity_score: %s",
-      logContext,
-    );
-    return noContent();
+    return resolveNegative("malformed_upstream");
   }
   if (!isNumberInUnitRange(upstream.likelihood_score)) {
-    console.warn(
-      "[aimer.analysis.summary] malformed likelihood_score: %s",
-      logContext,
-    );
-    return noContent();
+    return resolveNegative("malformed_upstream");
   }
   if (!isScoreKind(upstream.score_kind)) {
-    console.warn(
-      "[aimer.analysis.summary] malformed score_kind: %s",
-      logContext,
-    );
-    return noContent();
+    return resolveNegative("malformed_upstream");
   }
   if (!isSafeRelativePath(upstream.link)) {
-    console.warn(
-      "[aimer.analysis.summary] malformed link rejected: %s",
-      logContext,
-    );
-    return noContent();
+    return resolveNegative("malformed_upstream");
   }
 
   const link = composeHref(settings.bridgeUrl, upstream.link);
+  logResolution(surface, "200", "ok", logContext);
   return NextResponse.json(
     {
       exists: true,

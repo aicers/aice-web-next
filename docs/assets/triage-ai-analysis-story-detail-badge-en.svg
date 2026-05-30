@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 170" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">AI narrative analysis badge in the Story detail panel header (wireframe)</title>
+  <desc id="desc">Wireframe of the Story detail panel header. The metadata row carries the rule badge, the AI narrative analysis badge reading "AI · HIGH", the score, member count, and customer name. The same shared badge component used on the card header is reused here; it surfaces only the tier plus scores in the tooltip, never the analysis text.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-eyebrow { font-size: 11px; fill: #71717a; letter-spacing: 0.05em; }
+    .text-title { font-size: 15px; fill: #18181b; font-weight: 700; }
+    .text-meta { font-size: 11px; fill: #52525b; }
+    .text-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #18181b; }
+    .badge { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; }
+    .badge-text { fill: #18181b; font-size: 10px; font-weight: 600; }
+    .badge-high { fill: #fffbeb; stroke: #fcd34d; stroke-width: 1; }
+    .badge-high-text { fill: #78350f; font-size: 10px; font-weight: 700; }
+  </style>
+
+  <rect class="bg" width="720" height="170"/>
+  <rect class="panel" x="24" y="20" width="672" height="130" rx="6" ry="6"/>
+  <text x="40" y="44" class="text-eyebrow">STORY DETAIL</text>
+  <text x="40" y="66" class="text-title">10.0.0.5 · 5 min · IMPACT, EXFILTRATION</text>
+
+  <!-- metadata row -->
+  <rect class="badge" x="40" y="80" width="32" height="18" rx="3" ry="3"/>
+  <text x="48" y="93" class="badge-text">R1</text>
+
+  <rect class="badge-high" x="84" y="80" width="68" height="18" rx="3" ry="3"/>
+  <text x="92" y="93" class="badge-high-text">AI · HIGH</text>
+
+  <text x="166" y="93" class="text-meta">Score: 3.00</text>
+  <text x="246" y="93" class="text-meta">3 events</text>
+  <text x="320" y="93" class="text-meta">Customer: Acme Corp</text>
+  <text x="40" y="120" class="text-mono">2026-05-09 13:20 ~ 13:25</text>
+</svg>

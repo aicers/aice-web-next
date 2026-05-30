@@ -1090,6 +1090,86 @@ rest of the Triage menu. The Save-as-Story action requires no
 additional permission because the saved row is scoped to a
 single tenant that the caller can already read.
 
+## AI narrative analysis
+
+Selected entities can carry a deep link into the matching LLM analysis
+in aimer-web. AICE Web never fetches or renders the analysis text
+itself — each surface shows only a compact **tier badge** (the
+`CRITICAL` / `HIGH` priority tier, with the severity and likelihood
+scores in the badge tooltip) that links out to aimer-web in a new tab.
+Lower tiers (`LOW` / `MEDIUM`), a missing analysis, or an unconfigured
+aimer-web integration all render **nothing** — no badge, no card, no
+placeholder.
+
+The badge appears only for viewers who hold `triage:read`; the link
+target and the score thresholds are validated server-side, so the
+badge cannot point anywhere other than the analysis page aimer-web
+returned.
+
+### Story badge (Stories tab)
+
+On the **Stories** tab, a Story whose latest analysis is `CRITICAL` or
+`HIGH` shows the badge twice: once in the card header next to the rule
+badge, and again in the detail panel header when the Story is opened.
+Both use the same badge component, so the tier color and the
+tooltip scores match across the two surfaces.
+
+![Stories card AI analysis badge](../assets/triage-ai-analysis-story-card-badge-en.svg)
+
+![Story detail AI analysis badge](../assets/triage-ai-analysis-story-detail-badge-en.svg)
+
+A successful **Send to aimer-web** may produce a fresh analysis; the
+badge re-fetches eagerly after a send so a newly available
+`CRITICAL` / `HIGH` badge appears without waiting for a list refresh.
+
+### Dashboard report cards (LIVE + Today)
+
+The **Dashboard** surfaces two per-customer report cards under an
+**AI analyses** section:
+
+- **Latest digest** — the LIVE (rolling, minute-cadence) report
+  summary. Its badge links to the aimer-web LIVE report page.
+- **Today's report** — the DAILY report summary for the viewer's
+  current calendar day. The day is derived from the viewer's timezone,
+  so a tab in a different timezone fetches that tab's local day, not
+  the server's. Its badge links to that day's aimer-web report. If you
+  leave the dashboard open past your local midnight, the card rolls
+  over to the new day on its own — it drops the previous day's report
+  and fetches the new day's, so it never keeps showing yesterday's
+  report as "today's".
+
+![Dashboard "Latest digest" card](../assets/dashboard-latest-digest-card-en.svg)
+
+![Dashboard "Today's report" card](../assets/dashboard-today-report-card-en.svg)
+
+Both cards are per-customer and follow the same hide-on-negative rule
+as the Story badge: only a card backed by a `CRITICAL` / `HIGH`
+summary renders. A customer whose LIVE *and* DAILY summaries are both
+negative produces no output at all — no per-customer header and no
+empty section. On an admin's all-customer dashboard this keeps the
+section to just the customers that actually have something to show.
+
+A card that is currently hidden is re-checked in the background while
+the dashboard stays open — about once a minute for **Latest digest**
+(LIVE) and on a coarser cadence for **Today's report** (DAILY),
+matching how often each report is produced upstream — so a report that
+becomes available after you opened the page appears without a manual
+reload. A card that is already showing is not re-fetched.
+
+A global-nav **Open AI analyses →** link opens the full aimer-web
+analysis surface; it is hidden when the aimer-web integration is
+unconfigured.
+
+> **Wireframe stand-ins.** The four figures above are SVG wireframe
+> stand-ins, not real screenshots: the analysis surfaces only render
+> for live `CRITICAL` / `HIGH` data, which depends on the aimer-web
+> report summary endpoint
+> ([aicers/aimer-web#297](https://github.com/aicers/aimer-web/issues/297))
+> and the Phase 2 worker producing results. They are replaced with real
+> PNG captures once that infrastructure is live, per
+> `docs/AUTHORING.md` §"Screenshot exception for infrastructure-gated
+> features".
+
 ## Related events panel and pivot
 
 When an asset is selected, the page also renders a **Related events**
