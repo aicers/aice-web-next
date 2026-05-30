@@ -32,7 +32,10 @@
  * DAILY date handling: the `{date}` is the viewer's current calendar
  * day derived from {@link useTimezone}, so a tab whose timezone
  * resolves to a different day fetches that day's report, not the
- * server's.
+ * server's. The date also rolls over at the viewer's next local
+ * midnight while the dashboard stays open — the component drops the
+ * previous day's DAILY summaries and re-fetches the new day's, so a
+ * long-lived tab never keeps showing yesterday's report as "Today's".
  *
  * Negative-retry window (#646 "Negative-cache TTL configurable per
  * surface"): a card is not a one-shot. When a surface resolves negative
@@ -49,14 +52,17 @@
  * surface's negative-only TTL.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTimezone } from "@/components/providers/timezone-provider";
 import {
   type AiAnalysisBadgeLabels,
   renderAiAnalysisBadge,
 } from "@/components/triage/story/ai-analysis-badge";
-import { todayInTimezone } from "@/lib/aimer/analysis/report-date";
+import {
+  msUntilNextDayInTimezone,
+  todayInTimezone,
+} from "@/lib/aimer/analysis/report-date";
 import {
   type AiAnalysisDailySummaryFetcher,
   type AiAnalysisLiveSummaryFetcher,
@@ -145,13 +151,64 @@ export function DashboardAiAnalysisCards({
   dailyNegativeTtlMs = DAILY_NEGATIVE_TTL_MS,
 }: DashboardAiAnalysisCardsProps) {
   const timezone = useTimezone();
-  // The viewer's current calendar day in their timezone. Recomputed
-  // when the timezone provider settles the persisted preference, which
-  // re-runs the fetch effect below so a viewer past midnight in their
-  // own zone fetches that day's report.
-  const dailyDate = useMemo(() => todayInTimezone(timezone), [timezone]);
+  // The viewer's current calendar day in their timezone. Held in state
+  // (not a memo) so it can roll over at the viewer's next local midnight
+  // while the dashboard stays open — a memo keyed on `timezone` alone
+  // would pin a long-lived tab to the day it was opened. Changing this
+  // re-runs the fetch effect below, so the DAILY card always tracks the
+  // viewer's calendar day (#646 "Date handling").
+  const [dailyDate, setDailyDate] = useState(() => todayInTimezone(timezone));
+  const dailyDateRef = useRef(dailyDate);
 
   const [reports, setReports] = useState<Record<number, CustomerReports>>({});
+
+  // Keep `dailyDate` aligned with the viewer's local calendar day:
+  // reconcile immediately whenever the timezone settles, then wake at the
+  // next local midnight to roll the date forward and reschedule. The
+  // wake-up time is advisory (DST days are not exactly 24 h), so on fire
+  // we recompute the actual day and only advance when it has changed.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    // Advance to the current local day if it has changed, dropping the
+    // previous day's resolved DAILY summaries so a stale "Today's report"
+    // card stops showing under that title until the new day's fetch
+    // resolves. The `dailyDateRef` guard makes a same-day wake-up (or the
+    // mount-time reconcile) a no-op so we never clear without cause.
+    const reconcileDate = () => {
+      const today = todayInTimezone(timezone);
+      if (today === dailyDateRef.current) return;
+      dailyDateRef.current = today;
+      setDailyDate(today);
+      setReports((prev) => {
+        const next: Record<number, CustomerReports> = {};
+        for (const [id, customerReports] of Object.entries(prev)) {
+          next[Number(id)] = { ...customerReports, daily: undefined };
+        }
+        return next;
+      });
+    };
+
+    reconcileDate();
+
+    const schedule = () => {
+      // 1 s past midnight so a wake-up that fires a hair early still lands
+      // on the new calendar day rather than re-reading the old one.
+      const delay = msUntilNextDayInTimezone(timezone) + 1000;
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        reconcileDate();
+        schedule();
+      }, delay);
+    };
+    schedule();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [timezone]);
 
   useEffect(() => {
     let cancelled = false;

@@ -85,3 +85,44 @@ export function todayInTimezone(
     parts.find((part) => part.type === type)?.value ?? "";
   return `${lookup("year")}-${lookup("month")}-${lookup("day")}`;
 }
+
+/**
+ * Milliseconds from `now` until the next calendar midnight in `timezone`.
+ *
+ * The DAILY dashboard card derives its `{date}` from the viewer's
+ * timezone calendar day, so a dashboard left open across the viewer's
+ * local midnight must roll the date over (and re-fetch) rather than
+ * keep displaying yesterday's report (#646 "Date handling"). The card
+ * uses this to schedule that rollover.
+ *
+ * Computed from the wall-clock time-of-day in `timezone` (so it tracks
+ * the viewer's zone, not UTC). A whole-day length is assumed, so on a
+ * DST-transition day the result can be off by up to an hour; the caller
+ * treats the wake-up as advisory — it recomputes {@link todayInTimezone}
+ * on fire and only rolls the date when it has actually changed — so an
+ * early or late wake-up self-corrects on the next schedule. The returned
+ * value is always at least 1 ms so a caller scheduling on it cannot spin.
+ */
+export function msUntilNextDayInTimezone(
+  timezone: string,
+  now: Date = new Date(),
+): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const lookup = (type: "hour" | "minute" | "second") =>
+    Number(parts.find((part) => part.type === type)?.value ?? "0");
+  // `en-GB` with `hour12: false` reports midnight as `24` in some
+  // runtimes; normalize it to `0` so the elapsed-since-midnight math is
+  // correct.
+  const hour = lookup("hour") % 24;
+  const minute = lookup("minute");
+  const second = lookup("second");
+  const elapsedMs = ((hour * 60 + minute) * 60 + second) * 1000;
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Math.max(1, dayMs - elapsedMs);
+}

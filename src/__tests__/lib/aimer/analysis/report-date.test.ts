@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   isValidReportDate,
   LIVE_BUCKET_DATE,
+  msUntilNextDayInTimezone,
   todayInTimezone,
 } from "@/lib/aimer/analysis/report-date";
 
@@ -83,5 +84,39 @@ describe("todayInTimezone", () => {
     const today = todayInTimezone("UTC", instant);
     expect(today).toBe("2026-02-28");
     expect(isValidReportDate(today)).toBe(true);
+  });
+});
+
+describe("msUntilNextDayInTimezone", () => {
+  const HOUR = 60 * 60 * 1000;
+  const MINUTE = 60 * 1000;
+
+  it("measures time to midnight in the target zone, not UTC", () => {
+    // 22:00 UTC is 23:00 in Berlin (UTC+1, CET) and 17:00 in New York
+    // (UTC-5, EST in January).
+    const instant = new Date("2026-01-15T22:00:00Z");
+    expect(msUntilNextDayInTimezone("Europe/Berlin", instant)).toBe(1 * HOUR);
+    expect(msUntilNextDayInTimezone("America/New_York", instant)).toBe(
+      7 * HOUR,
+    );
+    expect(msUntilNextDayInTimezone("UTC", instant)).toBe(2 * HOUR);
+  });
+
+  it("counts down toward the next local midnight as the day advances", () => {
+    expect(
+      msUntilNextDayInTimezone("UTC", new Date("2026-05-30T23:30:00Z")),
+    ).toBe(30 * MINUTE);
+    expect(
+      msUntilNextDayInTimezone("UTC", new Date("2026-05-30T23:59:30Z")),
+    ).toBe(30 * 1000);
+  });
+
+  it("returns a full day just after midnight and never a non-positive value", () => {
+    expect(
+      msUntilNextDayInTimezone("UTC", new Date("2026-05-30T00:00:00Z")),
+    ).toBe(24 * HOUR);
+    expect(
+      msUntilNextDayInTimezone("UTC", new Date("2026-05-30T00:00:01Z")),
+    ).toBeGreaterThan(0);
   });
 });

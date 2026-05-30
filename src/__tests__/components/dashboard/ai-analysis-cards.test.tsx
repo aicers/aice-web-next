@@ -10,7 +10,7 @@
  * standing up the internal routes.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mockUseTimezone = vi.hoisted(() => vi.fn(() => "UTC"));
@@ -173,6 +173,82 @@ describe("DashboardAiAnalysisCards", () => {
     expect(loadDaily).toHaveBeenCalledWith(
       expect.objectContaining({ customerId: 1, date: "2026-05-31" }),
     );
+  });
+
+  it("rolls the DAILY date over at the viewer's local midnight, dropping the stale report and re-fetching the new day", async () => {
+    // Open the dashboard at 23:30 UTC, just before local midnight.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-30T23:30:00Z"));
+    mockUseTimezone.mockReturnValue("UTC");
+
+    let releaseNewDaily: ((value: AiAnalysisSummary | null) => void) | null =
+      null;
+    // LIVE stays positive throughout; DAILY is positive for 2026-05-30 but
+    // its 2026-05-31 fetch is held open so we can observe the stale-card
+    // gap before the new day resolves.
+    const loadLive = vi.fn().mockResolvedValue(summary({ tier: "CRITICAL" }));
+    const loadDaily = vi.fn(({ date }: { date: string }) =>
+      date === "2026-05-30"
+        ? Promise.resolve(summary({ tier: "HIGH" }))
+        : new Promise<AiAnalysisSummary | null>((resolve) => {
+            releaseNewDaily = resolve;
+          }),
+    );
+
+    try {
+      render(
+        <DashboardAiAnalysisCards
+          customers={[{ id: 1, name: "Acme" }]}
+          labels={LABELS}
+          loadLive={loadLive}
+          loadDaily={loadDaily}
+          liveNegativeTtlMs={0}
+          dailyNegativeTtlMs={0}
+        />,
+      );
+
+      // Day 1: the DAILY card renders for 2026-05-30.
+      await vi.waitFor(() =>
+        expect(
+          screen.queryByTestId("dashboard-ai-analysis-daily-card"),
+        ).toBeTruthy(),
+      );
+      expect(loadDaily).toHaveBeenLastCalledWith(
+        expect.objectContaining({ customerId: 1, date: "2026-05-30" }),
+      );
+
+      // Cross local midnight (→ 2026-05-31T00:01Z).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
+      });
+
+      // The new calendar day is fetched, and the stale "Today's report"
+      // card is dropped while that fetch is still pending.
+      await vi.waitFor(() =>
+        expect(loadDaily).toHaveBeenLastCalledWith(
+          expect.objectContaining({ customerId: 1, date: "2026-05-31" }),
+        ),
+      );
+      expect(
+        screen.queryByTestId("dashboard-ai-analysis-daily-card"),
+      ).toBeNull();
+      // The LIVE card is unaffected by the DAILY rollover.
+      expect(
+        screen.queryByTestId("dashboard-ai-analysis-live-card"),
+      ).toBeTruthy();
+
+      // Once the new day resolves positive, the card returns for it.
+      await act(async () => {
+        releaseNewDaily?.(summary({ tier: "HIGH" }));
+      });
+      await vi.waitFor(() =>
+        expect(
+          screen.queryByTestId("dashboard-ai-analysis-daily-card"),
+        ).toBeTruthy(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("never exceeds the in-flight concurrency cap across the fan-out", async () => {

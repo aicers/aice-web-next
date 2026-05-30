@@ -1132,7 +1132,11 @@ The **Dashboard** surfaces two per-customer report cards under an
 - **Today's report** — the DAILY report summary for the viewer's
   current calendar day. The day is derived from the viewer's timezone,
   so a tab in a different timezone fetches that tab's local day, not
-  the server's. Its badge links to that day's aimer-web report.
+  the server's. Its badge links to that day's aimer-web report. If you
+  leave the dashboard open past your local midnight, the card rolls
+  over to the new day on its own — it drops the previous day's report
+  and fetches the new day's, so it never keeps showing yesterday's
+  report as "today's".
 
 ![Dashboard "Latest digest" card](../assets/dashboard-latest-digest-card-en.svg)
 
