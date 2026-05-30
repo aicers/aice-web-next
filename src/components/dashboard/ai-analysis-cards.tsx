@@ -32,10 +32,14 @@
  * DAILY date handling: the `{date}` is the viewer's current calendar
  * day derived from {@link useTimezone}, so a tab whose timezone
  * resolves to a different day fetches that day's report, not the
- * server's. The date also rolls over at the viewer's next local
- * midnight while the dashboard stays open — the component drops the
- * previous day's DAILY summaries and re-fetches the new day's, so a
- * long-lived tab never keeps showing yesterday's report as "Today's".
+ * server's. The effective DAILY date can change two ways while the
+ * dashboard stays open, and both are handled DAILY-only (LIVE has no
+ * date dependency and is never re-fetched): the viewer's next local
+ * midnight rolls it over, and the {@link useTimezone} provider settling
+ * from the browser default to the saved preference can move it. On
+ * either change the component drops the previous day's DAILY summaries
+ * and re-fetches the new day's, so a long-lived tab never keeps showing
+ * yesterday's (or the wrong zone's) report as "Today's".
  *
  * Negative-retry window (#646 "Negative-cache TTL configurable per
  * surface"): a card is not a one-shot. When a surface resolves negative
@@ -52,7 +56,7 @@
  * surface's negative-only TTL.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTimezone } from "@/components/providers/timezone-provider";
 import {
@@ -153,24 +157,38 @@ export function DashboardAiAnalysisCards({
   const timezone = useTimezone();
   const [reports, setReports] = useState<Record<number, CustomerReports>>({});
 
+  // The latest timezone, held in a ref so the read-lifecycle effect can
+  // read it without depending on `timezone`. Depending on it would tear
+  // the effect down and re-fan-out LIVE on the routine browser-default →
+  // saved-preference settle (see the effect comment below). The ref is
+  // kept fresh by the timezone effect; the main effect's later reads (the
+  // rollover timer) always see the current zone.
+  const timezoneRef = useRef(timezone);
+  // Set by the read-lifecycle effect to its current DAILY-refresh handler
+  // so the timezone effect can trigger a DAILY-only re-fan-out without the
+  // main effect having to depend on `timezone`. Null while unmounted.
+  const onTimezoneChangeRef = useRef<(() => void) | null>(null);
+
   // One effect owns the whole read lifecycle — the initial LIVE+DAILY
   // fan-out, the per-surface negative-retry loops, and the DAILY date
-  // rollover at the viewer's local midnight. Keeping it in a single
-  // effect (rather than splitting the rollover out and re-keying the
-  // fetch on `dailyDate`) is what lets the rollover re-fetch *only* DAILY:
-  // a `dailyDate`-keyed effect would tear down and rebuild every task,
-  // re-polling LIVE and letting a transient post-midnight LIVE `null`
-  // overwrite an already-positive "Latest digest" card. Here the LIVE
-  // tasks are enqueued once and only ever re-run via their own
-  // negative-retry loop; the midnight rollover touches DAILY alone.
+  // refresh (the viewer's local-midnight rollover *and* a timezone-provider
+  // settle). It is deliberately NOT keyed on `timezone`: re-keying on it
+  // would tear down and rebuild every task whenever the provider settles
+  // from the browser default to the saved preference, re-polling LIVE — and
+  // a transient post-settle LIVE `null` would overwrite an already-positive
+  // "Latest digest" card. Instead LIVE is enqueued once and only ever
+  // re-run via its own negative-retry loop, while the effective DAILY date
+  // is recomputed through `timezoneRef`; the midnight timer and the
+  // timezone effect below both funnel through `refreshDailyDate`, which
+  // touches DAILY alone.
   useEffect(() => {
     let cancelled = false;
 
     // The viewer's current local calendar day. A local variable (not
     // React state) because nothing renders the date directly — only the
     // DAILY summaries it produces — and keeping it out of the dep list is
-    // what stops the rollover from re-running the LIVE fan-out.
-    let dailyDate = todayInTimezone(timezone);
+    // what stops a date refresh from re-running the LIVE fan-out.
+    let dailyDate = todayInTimezone(timezoneRef.current);
     // Bumped on every rollover so that DAILY tasks (and their scheduled
     // retries) belonging to a previous day no-op instead of writing a
     // stale date's result or running a second retry loop alongside the
@@ -261,29 +279,37 @@ export function DashboardAiAnalysisCards({
     }
     pump();
 
+    // Recompute the effective DAILY date and, on an actual change, drop
+    // the previous day's DAILY summaries (so a stale "Today's report" card
+    // stops showing under that title until the new day resolves), bump the
+    // epoch to retire the old day's tasks, and re-fan-out DAILY only. LIVE
+    // is never touched. Shared by the midnight rollover and the
+    // timezone-settle path so neither can re-poll LIVE. A no-op when the
+    // date is unchanged, so an early wake-up or a same-day timezone settle
+    // costs nothing.
+    const refreshDailyDate = () => {
+      if (cancelled) return;
+      const today = todayInTimezone(timezoneRef.current);
+      if (today === dailyDate) return;
+      dailyDate = today;
+      dailyEpoch += 1;
+      setReports((prev) => {
+        const next: Record<number, CustomerReports> = {};
+        for (const [id, customerReports] of Object.entries(prev)) {
+          next[Number(id)] = { ...customerReports, daily: undefined };
+        }
+        return next;
+      });
+      for (const customer of customers) enqueueDaily(customer.id);
+      pump();
+    };
+
     // Roll the DAILY date over at the viewer's next local midnight. The
-    // wake-up instant is exact (DST-aware), but we still recompute the day
-    // on fire and only advance when it has actually changed, so an early
-    // wake-up is a harmless no-op. On a real change we drop the previous
-    // day's DAILY summaries (so a stale "Today's report" card stops
-    // showing under that title until the new day resolves), bump the epoch
-    // to retire the old day's tasks, and re-fan-out DAILY only.
+    // wake-up instant is exact (DST-aware), but the day is still recomputed
+    // on fire so an early wake-up is a harmless no-op.
     const rollover = () => {
       if (cancelled) return;
-      const today = todayInTimezone(timezone);
-      if (today !== dailyDate) {
-        dailyDate = today;
-        dailyEpoch += 1;
-        setReports((prev) => {
-          const next: Record<number, CustomerReports> = {};
-          for (const [id, customerReports] of Object.entries(prev)) {
-            next[Number(id)] = { ...customerReports, daily: undefined };
-          }
-          return next;
-        });
-        for (const customer of customers) enqueueDaily(customer.id);
-        pump();
-      }
+      refreshDailyDate();
       scheduleRollover();
     };
 
@@ -291,25 +317,46 @@ export function DashboardAiAnalysisCards({
       if (cancelled) return;
       // 1 s past midnight so a wake-up that fires a hair early still lands
       // on the new calendar day rather than re-reading the old one.
-      const delay = msUntilNextDayInTimezone(timezone) + 1000;
+      const delay = msUntilNextDayInTimezone(timezoneRef.current) + 1000;
       rolloverTimer = setTimeout(rollover, delay);
     };
     scheduleRollover();
 
+    // The timezone provider starts with the browser zone and then settles
+    // to the saved preference, which can move the effective DAILY date
+    // mid-session. Treat that settle exactly like a midnight rollover —
+    // refresh DAILY and re-arm the midnight timer for the new zone — while
+    // leaving already-positive LIVE state untouched. The timezone effect
+    // below invokes this through the ref so the main effect need not depend
+    // on `timezone`.
+    onTimezoneChangeRef.current = () => {
+      if (cancelled) return;
+      refreshDailyDate();
+      if (rolloverTimer) clearTimeout(rolloverTimer);
+      scheduleRollover();
+    };
+
     return () => {
       cancelled = true;
+      onTimezoneChangeRef.current = null;
       for (const timer of retryTimers) clearTimeout(timer);
       retryTimers.clear();
       if (rolloverTimer) clearTimeout(rolloverTimer);
     };
-  }, [
-    customers,
-    timezone,
-    loadLive,
-    loadDaily,
-    liveNegativeTtlMs,
-    dailyNegativeTtlMs,
-  ]);
+  }, [customers, loadLive, loadDaily, liveNegativeTtlMs, dailyNegativeTtlMs]);
+
+  // React to a timezone change DAILY-only. The ref is refreshed first so
+  // the handler (and any later rollover) reads the new zone; the handler
+  // then recomputes the effective date and re-fans-out DAILY (clearing the
+  // stale day first) but never re-fetches LIVE, so the provider settling
+  // from the browser default to the saved preference can no longer flash an
+  // already-positive Latest digest back to nothing. It no-ops when the date
+  // is unchanged, so the initial-mount run (and a settle that keeps the
+  // same calendar day) costs nothing.
+  useEffect(() => {
+    timezoneRef.current = timezone;
+    onTimezoneChangeRef.current?.();
+  }, [timezone]);
 
   // Keep only customers with at least one positive card, preserving the
   // scope order. A customer whose LIVE and DAILY both resolved negative

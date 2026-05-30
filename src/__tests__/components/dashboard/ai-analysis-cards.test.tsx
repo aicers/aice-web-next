@@ -309,6 +309,114 @@ describe("DashboardAiAnalysisCards", () => {
     }
   });
 
+  it("re-fetches DAILY only (not LIVE) when the timezone provider settles to a new day", async () => {
+    // Regression for Round 6: `TimezoneProvider` starts with the browser
+    // zone and then settles to the saved preference. When that settle
+    // moves the effective calendar day, the dashboard must re-fan-out
+    // DAILY for the new date — clearing the stale day's card while the new
+    // fetch is pending — but must NOT re-poll LIVE, which has no date
+    // dependency. Here `loadLive` resolves positive on its first (and only
+    // expected) call but would resolve `null` if called again; a re-poll
+    // would flash the already-positive "Latest digest" back to nothing.
+    //
+    // 2026-05-30T22:00:00Z is still 2026-05-30 in UTC but already
+    // 2026-05-31 in Asia/Seoul (UTC+9), so the settle moves the day.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-30T22:00:00Z"));
+    mockUseTimezone.mockReturnValue("UTC");
+
+    let releaseSeoulDaily: ((value: AiAnalysisSummary | null) => void) | null =
+      null;
+    const loadLive = vi
+      .fn()
+      .mockResolvedValueOnce(summary({ tier: "CRITICAL" }))
+      .mockResolvedValue(null);
+    const loadDaily = vi.fn(({ date }: { date: string }) =>
+      date === "2026-05-30"
+        ? Promise.resolve(summary({ tier: "HIGH" }))
+        : new Promise<AiAnalysisSummary | null>((resolve) => {
+            releaseSeoulDaily = resolve;
+          }),
+    );
+
+    // Stable reference: a context-driven timezone settle re-renders the
+    // component with the same `customers` prop, so only the timezone effect
+    // reacts — the main read-lifecycle effect (keyed on `customers`) must
+    // not tear down and re-poll LIVE.
+    const customers = [{ id: 1, name: "Acme" }];
+
+    try {
+      const { rerender } = render(
+        <DashboardAiAnalysisCards
+          customers={customers}
+          labels={LABELS}
+          loadLive={loadLive}
+          loadDaily={loadDaily}
+          liveNegativeTtlMs={0}
+          dailyNegativeTtlMs={0}
+        />,
+      );
+
+      // Browser-zone (UTC) load: both cards render for 2026-05-30.
+      await vi.waitFor(() => {
+        expect(
+          screen.queryByTestId("dashboard-ai-analysis-live-card"),
+        ).toBeTruthy();
+        expect(
+          screen.queryByTestId("dashboard-ai-analysis-daily-card"),
+        ).toBeTruthy();
+      });
+      expect(loadDaily).toHaveBeenLastCalledWith(
+        expect.objectContaining({ customerId: 1, date: "2026-05-30" }),
+      );
+
+      // The provider settles to the saved preference (Asia/Seoul), which
+      // is already the next calendar day.
+      mockUseTimezone.mockReturnValue("Asia/Seoul");
+      await act(async () => {
+        rerender(
+          <DashboardAiAnalysisCards
+            customers={customers}
+            labels={LABELS}
+            loadLive={loadLive}
+            loadDaily={loadDaily}
+            liveNegativeTtlMs={0}
+            dailyNegativeTtlMs={0}
+          />,
+        );
+      });
+
+      // DAILY re-fetches for the new (Seoul) day, and the stale card is
+      // dropped while that fetch is still pending.
+      await vi.waitFor(() =>
+        expect(loadDaily).toHaveBeenLastCalledWith(
+          expect.objectContaining({ customerId: 1, date: "2026-05-31" }),
+        ),
+      );
+      expect(
+        screen.queryByTestId("dashboard-ai-analysis-daily-card"),
+      ).toBeNull();
+      // LIVE was never re-fetched, so its positive card survives the
+      // settle untouched.
+      expect(loadLive).toHaveBeenCalledTimes(1);
+      expect(
+        screen.queryByTestId("dashboard-ai-analysis-live-card"),
+      ).toBeTruthy();
+
+      // The new day's DAILY resolves positive and the card returns for it.
+      await act(async () => {
+        releaseSeoulDaily?.(summary({ tier: "HIGH" }));
+      });
+      await vi.waitFor(() =>
+        expect(
+          screen.queryByTestId("dashboard-ai-analysis-daily-card"),
+        ).toBeTruthy(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never exceeds the in-flight concurrency cap across the fan-out", async () => {
     const customers = Array.from({ length: 10 }, (_, i) => ({
       id: i + 1,
