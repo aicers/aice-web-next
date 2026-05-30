@@ -380,6 +380,7 @@ Push a batch of Stories. Used by opportunistic push and by per-Story manual Send
       "time_window": { "start": "2026-05-10T00:00:00Z", "end": "2026-05-10T00:12:00Z" },
       "score": 4.2,
       "summary_payload": { /* JSONB rendered on Story cards in aice-web-next */ },
+      "known_ioc_hit": false,                // priority-tiering floor signal, always emitted (defaults false)
       "members": [
         {
           "event_key": "12345678901234567890",
@@ -395,6 +396,8 @@ Push a batch of Stories. Used by opportunistic push and by per-Story manual Send
 ```
 
 Response: same shape as baseline batch.
+
+`known_ioc_hit` (per-Story bool) is RFC 0002's priority-tiering "known IOC hit" floor signal; the consumer wiring landed in [aimer-web#330](https://github.com/aicers/aimer-web/pull/330), which floors effective likelihood to `0.95` at matrix-lookup time when the flag is true (the stored raw `likelihood_score` is untouched; only the derived `priority_tier` shifts). aice-web-next always emits the field on every story item, defaulting a missing loader value to `false`, so aimer-web sees an explicit boolean rather than relying on its own missing-field default. No aice-web-next loader can supply a real (non-`false`) value yet — the upstream producer that computes the per-story IOC-match boolean does not exist in this repo, so every emitted value is currently `false`; the meaningful-value flip is gated on that producer follow-up.
 
 `force_refresh` (per-Story bool, optional) inside an item signals the user's intent to re-analyze a Story (e.g., after a Story Force Rebuild [#565](https://github.com/aicers/aice-web-next/issues/565) for the same natural key). **Cache semantics for this flag are out of v1 scope.** [aimer-web RFC 0001](https://github.com/aicers/aimer-web/blob/main/rfcs/0001-ai-analysis-storage.md) ships only `analyzeEvent`; story-level (and policy-run-level) re-analysis caching is deferred to the future `analyzeStory` / `analyzePolicy` resolver work. v1's only analysis cache is **event-level `event_analysis_result`**, accessed via `analyzeEvent`; event-level force re-analysis is a separate flow whose `force=true` upserts on the event-level PK and is not driven by Phase 2 batch flags.
 
