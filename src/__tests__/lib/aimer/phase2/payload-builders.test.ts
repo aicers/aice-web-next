@@ -7,6 +7,7 @@ import {
   PHASE2_REFRESH_EXTERNAL_KEY_RESERVE_BYTES,
   PHASE2_REFRESH_PAYLOAD_MAX_BYTES,
   type StoryRefreshItem,
+  toWireStoryItem,
 } from "@/lib/aimer/phase2/payload-builders";
 
 function makeBaselineEvent(
@@ -271,6 +272,24 @@ describe("phase2 payload builders", () => {
       expect(sameEnd).toHaveLength(2);
     });
 
+    it("defaults known_ioc_hit to false on every wire story when the loader omits it", () => {
+      const { payloads } = buildStoryRefreshPayloads({
+        window: {
+          from: "2026-01-01T00:00:00.000Z",
+          to: "2026-01-02T00:00:00.000Z",
+        },
+        stories: [
+          makeStory(1, "2026-01-01T00:10:00.000Z"),
+          makeStory(2, "2026-01-01T00:20:00.000Z"),
+        ],
+      });
+      const wire = payloads.flatMap((p) => p.stories);
+      expect(wire).toHaveLength(2);
+      for (const story of wire) {
+        expect(story.known_ioc_hit).toBe(false);
+      }
+    });
+
     it("nests time_window and strips flat slicer-internal fields from wire payload", () => {
       const { payloads } = buildStoryRefreshPayloads({
         window: {
@@ -291,6 +310,29 @@ describe("phase2 payload builders", () => {
       expect(
         (story as Record<string, unknown>).time_window_start,
       ).toBeUndefined();
+    });
+  });
+
+  describe("toWireStoryItem known_ioc_hit", () => {
+    it("defaults a missing known_ioc_hit to false", () => {
+      const wire = toWireStoryItem(makeStory(1, "2026-01-01T00:00:00.000Z"));
+      expect(wire.known_ioc_hit).toBe(false);
+    });
+
+    it("preserves an explicit known_ioc_hit: true through to the wire shape", () => {
+      const wire = toWireStoryItem({
+        ...makeStory(1, "2026-01-01T00:00:00.000Z"),
+        known_ioc_hit: true,
+      });
+      expect(wire.known_ioc_hit).toBe(true);
+    });
+
+    it("preserves an explicit known_ioc_hit: false", () => {
+      const wire = toWireStoryItem({
+        ...makeStory(1, "2026-01-01T00:00:00.000Z"),
+        known_ioc_hit: false,
+      });
+      expect(wire.known_ioc_hit).toBe(false);
     });
   });
 

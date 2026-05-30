@@ -173,6 +173,17 @@ describe("Phase 2 schema registry", () => {
         Phase2PayloadValidationError,
       );
     });
+
+    it("accepts an optional known_ioc_hit: true via storyItem passthrough", () => {
+      const p = storyPayload() as { stories: Array<Record<string, unknown>> };
+      p.stories[0].known_ioc_hit = true;
+      const parsed = validatePhase2Payload("phase2.story.v1", p) as {
+        stories: Array<Record<string, unknown>>;
+      };
+      // `.passthrough()` keeps the field intact for aimer-web to read;
+      // the sender-side schema does not strip or default it.
+      expect(parsed.stories[0].known_ioc_hit).toBe(true);
+    });
   });
 
   describe("phase2.policy_run.v1", () => {
