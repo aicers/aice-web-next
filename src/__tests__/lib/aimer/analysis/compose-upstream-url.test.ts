@@ -74,6 +74,19 @@ describe("composeUpstreamUrl", () => {
     );
   });
 
+  it("emits an empty customer segment for a blank external_key", () => {
+    // `composeUpstreamUrl` is pure: it never sees a blank key at
+    // runtime because `resolveCustomerExternalKey` collapses blank
+    // stored values to `null` and `resolveAnalysisSummaryResponse`
+    // short-circuits to `204` before composition (proven in
+    // `customer-external-key.test.ts`). This pins the degenerate shape
+    // so a future caller that skips that guard fails visibly rather
+    // than silently scoping to the customers collection.
+    expect(composeUpstreamUrl("https://aimer.example.com", "", RESOURCE)).toBe(
+      "https://aimer.example.com/api/customers//analysis/report/LIVE/1970-01-01/summary",
+    );
+  });
+
   it("preserves a path-bearing bridge URL prefix", () => {
     expect(
       composeUpstreamUrl("https://gw.example.com/aimer", "acme", RESOURCE),
