@@ -88,7 +88,8 @@
     "report": "Report",
     "nodes": "Nodes",
     "settings": "Settings",
-    "audit-logs": "Audit Logs"
+    "audit-logs": "Audit Logs",
+    "openAiAnalyses": "Open AI analyses →"
   },
   "settings": {
     "accounts": "Accounts",
@@ -1250,6 +1251,17 @@
     "title": "Dashboard",
     "placeholder": "Detection events will be displayed here.",
     "noPermission": "You do not have permission to view the dashboard.",
+    "aiAnalysis": {
+      "sectionHeading": "AI analyses",
+      "latestDigestTitle": "Latest digest",
+      "todayReportTitle": "Today's report",
+      "badge": {
+        "tierCritical": "AI · CRITICAL",
+        "tierHigh": "AI · HIGH",
+        "tooltipTemplate": "AI narrative analysis ({tier}) · severity {severity} · likelihood {likelihood}",
+        "linkAriaLabel": "Open AI narrative analysis ({tier}) in a new tab"
+      }
+    },
     "activeSessions": {
       "title": "Active Sessions",
       "description": "Currently active user sessions",

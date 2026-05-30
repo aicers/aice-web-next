@@ -67,10 +67,10 @@ export type { StoriesSortOrder };
 export const AI_ANALYSIS_MAX_IN_FLIGHT = 6;
 
 /**
- * Time-to-live for a cached *negative* AI-analysis resolution (#653
- * item 1). A Story whose lookup resolves to "no badge" is cached so
- * sort/filter rotations do not re-queue it — the dominant ~195-of-200
- * case the negative cache exists to eliminate.
+ * Default time-to-live for a cached *negative* AI-analysis resolution
+ * (#653 item 1). A Story whose lookup resolves to "no badge" is cached
+ * so sort/filter rotations do not re-queue it — the dominant
+ * ~195-of-200 case the negative cache exists to eliminate.
  *
  * But the `null` channel is broader than the stable "no badge" outcomes
  * (LOW/MEDIUM, `exists:false`): a network failure, an aborted request, a
@@ -85,6 +85,12 @@ export const AI_ANALYSIS_MAX_IN_FLIGHT = 6;
  *
  * Positive summaries are cached without expiry: a stale badge is the
  * safe direction, a stale *missing* badge is not.
+ *
+ * The TTL is parameterized per surface via the {@link TriageStoriesViewProps.negativeTtlMs}
+ * prop (#646 item: "TTL parameterization") so the Phase 2 dashboard
+ * cards can choose cadence-appropriate windows — LIVE (minute cadence)
+ * and DAILY (day cadence) want different TTLs than Stories. The Stories
+ * surface keeps this 2-minute default so its behavior is unchanged.
  */
 export const AI_ANALYSIS_NEGATIVE_TTL_MS = 2 * 60 * 1000;
 
@@ -259,6 +265,15 @@ interface TriageStoriesViewProps {
    * dashboard surface reuses the badge.
    */
   loadAiAnalysis?: AiAnalysisStorySummaryFetcher;
+  /**
+   * Per-surface negative-cache TTL in ms (#646 "TTL parameterization").
+   * A negative ("no badge") resolution is re-queued once it ages past
+   * this window so a transient miss eventually retries. Defaults to
+   * {@link AI_ANALYSIS_NEGATIVE_TTL_MS} (2 min) — the Stories surface
+   * leaves it unset so nothing changes there; the constant was promoted
+   * to a prop so cadence-different surfaces can override it.
+   */
+  negativeTtlMs?: number;
   onPivotFromStory?: (args: {
     story: TriageStory;
     members: readonly TriageStoryMemberDetail[];
@@ -287,6 +302,7 @@ export function TriageStoriesView({
   loadDetail,
   refreshStories,
   loadAiAnalysis,
+  negativeTtlMs = AI_ANALYSIS_NEGATIVE_TTL_MS,
   onPivotFromStory,
   labels,
 }: TriageStoriesViewProps) {
@@ -504,7 +520,7 @@ export function TriageStoriesView({
         // lapses they fall through and re-queue so a transient miss
         // (network error, session lapse, upstream outage) gets a retry.
         if (cached.summary !== null) continue;
-        if (now - cached.resolvedAt < AI_ANALYSIS_NEGATIVE_TTL_MS) continue;
+        if (now - cached.resolvedAt < negativeTtlMs) continue;
       }
       // Reserve the key up-front so a concurrent effect run on a
       // sort/filter rotation does not enqueue the same Story twice.
@@ -582,7 +598,7 @@ export function TriageStoriesView({
         aiInFlightRef.current.delete(`${story.customerId}/${story.storyId}`);
       }
     };
-  }, [effectiveStories, loadAiAnalysis]);
+  }, [effectiveStories, loadAiAnalysis, negativeTtlMs]);
 
   // Toast state for the "Sent to aimer-web" / error notifications.
   const [toast, setToast] = useState<{

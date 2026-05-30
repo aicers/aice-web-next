@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 170" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">스토리 상세 패널 헤더의 AI 서술 분석 배지 (와이어프레임)</title>
+  <desc id="desc">스토리 상세 패널 헤더 와이어프레임. 메타데이터 행에는 규칙 배지, "AI · 높음"이라고 표시된 AI 서술 분석 배지, 점수, 멤버 수, 고객명이 들어 있습니다. 카드 헤더와 동일한 공유 배지 컴포넌트를 재사용하며, 등급과 툴팁의 점수만 노출하고 분석 본문은 절대 표시하지 않습니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .text-eyebrow { font-size: 11px; fill: #71717a; letter-spacing: 0.05em; }
+    .text-title { font-size: 15px; fill: #18181b; font-weight: 700; }
+    .text-meta { font-size: 11px; fill: #52525b; }
+    .text-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #18181b; }
+    .badge { fill: #f4f4f5; stroke: #d4d4d8; stroke-width: 1; }
+    .badge-text { fill: #18181b; font-size: 10px; font-weight: 600; }
+    .badge-high { fill: #fffbeb; stroke: #fcd34d; stroke-width: 1; }
+    .badge-high-text { fill: #78350f; font-size: 10px; font-weight: 700; }
+  </style>
+
+  <rect class="bg" width="720" height="170"/>
+  <rect class="panel" x="24" y="20" width="672" height="130" rx="6" ry="6"/>
+  <text x="40" y="44" class="text-eyebrow">스토리 상세</text>
+  <text x="40" y="66" class="text-title">10.0.0.5 · 5분 · IMPACT, EXFILTRATION</text>
+
+  <!-- 메타데이터 행 -->
+  <rect class="badge" x="40" y="80" width="32" height="18" rx="3" ry="3"/>
+  <text x="48" y="93" class="badge-text">R1</text>
+
+  <rect class="badge-high" x="84" y="80" width="68" height="18" rx="3" ry="3"/>
+  <text x="92" y="93" class="badge-high-text">AI · 높음</text>
+
+  <text x="166" y="93" class="text-meta">점수: 3.00</text>
+  <text x="232" y="93" class="text-meta">이벤트 3건</text>
+  <text x="316" y="93" class="text-meta">고객: Acme Corp</text>
+  <text x="40" y="120" class="text-mono">2026-05-09 13:20 ~ 13:25</text>
+</svg>

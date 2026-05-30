@@ -88,7 +88,8 @@
     "report": "보고서",
     "nodes": "노드",
     "settings": "설정",
-    "audit-logs": "감사 로그"
+    "audit-logs": "감사 로그",
+    "openAiAnalyses": "AI 분석 열기 →"
   },
   "settings": {
     "accounts": "계정",
@@ -1250,6 +1251,17 @@
     "title": "대시보드",
     "placeholder": "탐지 이벤트가 여기에 표시됩니다.",
     "noPermission": "대시보드를 볼 수 있는 권한이 없습니다.",
+    "aiAnalysis": {
+      "sectionHeading": "AI 분석",
+      "latestDigestTitle": "최신 다이제스트",
+      "todayReportTitle": "오늘의 보고서",
+      "badge": {
+        "tierCritical": "AI · 심각",
+        "tierHigh": "AI · 높음",
+        "tooltipTemplate": "AI 분석 ({tier}) · 심각도 {severity} · 가능성 {likelihood}",
+        "linkAriaLabel": "AI 분석({tier}) 새 탭으로 열기"
+      }
+    },
     "activeSessions": {
       "title": "활성 세션",
       "description": "현재 활성 상태인 사용자 세션",

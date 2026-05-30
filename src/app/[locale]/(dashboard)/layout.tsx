@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import DashboardLayoutClient from "@/components/layout/dashboard-layout";
 import { routing } from "@/i18n/routing";
 import { isSystemAdministrator } from "@/lib/aimer/role-guard";
+import { getAimerIntegrationSettings } from "@/lib/aimer/settings";
 import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { hasPermission } from "@/lib/auth/permissions";
 import { computeScopeFingerprint } from "@/lib/auth/scope-fingerprint";
@@ -89,6 +90,22 @@ export default async function DashboardLayout({
   // conditionally avoids the wasted network call.
   const isAimerSystemAdmin = isSystemAdministrator(session.roles);
 
+  // Compose the aimer-web "Open AI analyses" deep link from the
+  // integration bridge URL (server-side settings). When the integration
+  // is unconfigured (no bridge URL) the link stays hidden — the nav
+  // never points at a non-existent surface (#646). Settings read
+  // failures degrade to "unconfigured" so a transient DB hiccup hides
+  // the link rather than breaking the whole shell.
+  let aimerAnalysisHref: string | null = null;
+  try {
+    const { bridgeUrl } = await getAimerIntegrationSettings();
+    if (bridgeUrl) {
+      aimerAnalysisHref = `${bridgeUrl.replace(/\/+$/, "")}/analysis`;
+    }
+  } catch {
+    aimerAnalysisHref = null;
+  }
+
   return (
     <DashboardLayoutClient
       username={username}
@@ -98,6 +115,7 @@ export default async function DashboardLayout({
       initialSidebarCollapsed={initialSidebarCollapsed}
       hasSidebarCollapsedCookie={hasSidebarCollapsedCookie}
       isAimerSystemAdmin={isAimerSystemAdmin}
+      aimerAnalysisHref={aimerAnalysisHref}
     >
       {children}
     </DashboardLayoutClient>

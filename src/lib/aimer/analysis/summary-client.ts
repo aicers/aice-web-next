@@ -5,11 +5,12 @@ import type { AiAnalysisSummary } from "./summary-types";
  *
  * Generic over the internal endpoint `path` so every analysis summary
  * surface — the Stories deep-link badge and the Phase 2 dashboard cards
- * (#646: `/api/analysis/reports/live/summary`,
- * `/api/analysis/reports/daily/{date}/summary`) — shares a single
- * wire-shape parser. This module is the *only* place that knows the
- * wire shape; surface-specific clients (e.g. `story-summary.client.ts`)
- * are thin wrappers that build the path and delegate here.
+ * (#646: `/api/aimer/analysis/reports/live/{customerId}/summary`,
+ * `/api/aimer/analysis/reports/daily/{customerId}/{date}/summary`) —
+ * shares a single wire-shape parser. This module is the *only* place
+ * that knows the wire shape; surface-specific clients (e.g.
+ * `story-summary.client.ts`) are thin wrappers that build the path and
+ * delegate here.
  *
  * Returns `null` for every "render nothing" case so the caller can drop
  * the result straight into the badge prop without extra branching:

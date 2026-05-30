@@ -79,6 +79,7 @@ export const GET = withAuth(
 
     return resolveAnalysisSummaryResponse({
       customerId,
+      surface: "story",
       buildResourcePath: () =>
         `/analysis/story/${encodeURIComponent(storyId)}/summary`,
       logContext: `customerId=${customerId} storyId=${storyId}`,

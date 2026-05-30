@@ -34,6 +34,13 @@ interface DashboardLayoutProps {
    * non-admin session would only see a 403 on the banner's fetch.
    */
   isAimerSystemAdmin?: boolean;
+  /**
+   * Absolute aimer-web `/analysis` URL composed server-side from the
+   * integration bridge URL, or `null` when the integration is
+   * unconfigured. Threaded to the nav so the "Open AI analyses" link is
+   * fed from the server and hidden when there is no bridge URL (#646).
+   */
+  aimerAnalysisHref?: string | null;
 }
 
 export default function DashboardLayout({
@@ -45,6 +52,7 @@ export default function DashboardLayout({
   initialSidebarCollapsed = false,
   hasSidebarCollapsedCookie = false,
   isAimerSystemAdmin = false,
+  aimerAnalysisHref = null,
 }: Readonly<DashboardLayoutProps>) {
   const { collapsed, toggle } = useSidebar({
     initialCollapsed: initialSidebarCollapsed,
@@ -76,6 +84,7 @@ export default function DashboardLayout({
             username={username}
             scope={scope}
             canManageCustomers={canManageCustomers}
+            aimerAnalysisHref={aimerAnalysisHref}
           />
 
           <div className="flex flex-1 overflow-hidden">
@@ -85,6 +94,7 @@ export default function DashboardLayout({
                 collapsed={collapsed}
                 onToggle={toggle}
                 username={username}
+                aimerAnalysisHref={aimerAnalysisHref}
               />
             </div>
 

@@ -12,6 +12,7 @@ import {
   Server,
   Settings,
   Shield,
+  Sparkles,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
@@ -27,6 +28,13 @@ interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
   username?: string;
+  /**
+   * Absolute aimer-web `/analysis` URL, composed server-side from the
+   * integration's bridge URL. `null` / undefined when the aimer-web
+   * integration is unconfigured (no bridge URL), in which case the
+   * "Open AI analyses" link is hidden entirely (#646).
+   */
+  aimerAnalysisHref?: string | null;
 }
 
 const NAV_ITEMS = [
@@ -41,7 +49,12 @@ const NAV_ITEMS = [
   { key: "settings", href: "/settings", icon: Settings },
 ] as const;
 
-export function Sidebar({ collapsed, onToggle, username }: SidebarProps) {
+export function Sidebar({
+  collapsed,
+  onToggle,
+  username,
+  aimerAnalysisHref,
+}: SidebarProps) {
   const t = useTranslations("nav");
   const pathname = usePathname();
 
@@ -80,6 +93,21 @@ export function Sidebar({ collapsed, onToggle, username }: SidebarProps) {
               collapsed={collapsed}
             />
           ))}
+          {/*
+           * Cross-repo deep link into aimer-web's AI analyses surface.
+           * Hidden when the integration is unconfigured (no bridge URL
+           * resolved server-side). External anchor — the target is an
+           * absolute aimer-web URL, not an in-app route.
+           */}
+          {aimerAnalysisHref ? (
+            <SidebarItem
+              href={aimerAnalysisHref}
+              icon={Sparkles}
+              label={t("openAiAnalyses")}
+              collapsed={collapsed}
+              external
+            />
+          ) : null}
         </nav>
 
         {/* Bottom section */}
