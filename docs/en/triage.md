@@ -1145,6 +1145,13 @@ negative produces no output at all — no per-customer header and no
 empty section. On an admin's all-customer dashboard this keeps the
 section to just the customers that actually have something to show.
 
+A card that is currently hidden is re-checked in the background while
+the dashboard stays open — about once a minute for **Latest digest**
+(LIVE) and on a coarser cadence for **Today's report** (DAILY),
+matching how often each report is produced upstream — so a report that
+becomes available after you opened the page appears without a manual
+reload. A card that is already showing is not re-fetched.
+
 A global-nav **Open AI analyses →** link opens the full aimer-web
 analysis surface; it is hidden when the aimer-web integration is
 unconfigured.
