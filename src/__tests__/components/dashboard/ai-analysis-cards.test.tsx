@@ -230,6 +230,82 @@ describe("DashboardAiAnalysisCards", () => {
     expect(peak).toBeLessThanOrEqual(DASHBOARD_AI_ANALYSIS_MAX_IN_FLIGHT);
   });
 
+  it("retries a negative card after the surface TTL and surfaces it once it turns positive", async () => {
+    // A LIVE report that is missing on first load but lands shortly
+    // after. The one-shot pre-#646-review behavior would leave the card
+    // hidden forever; the negative-retry window must re-fetch it.
+    const loadLive = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(summary({ tier: "HIGH" }));
+    const loadDaily = vi.fn().mockResolvedValue(null);
+
+    render(
+      <DashboardAiAnalysisCards
+        customers={[{ id: 1, name: "Acme" }]}
+        labels={LABELS}
+        loadLive={loadLive}
+        loadDaily={loadDaily}
+        liveNegativeTtlMs={10}
+        dailyNegativeTtlMs={0}
+      />,
+    );
+
+    // First resolution is negative: no card yet.
+    await waitFor(() => expect(loadLive).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("dashboard-ai-analysis-live-card")).toBeNull();
+
+    // After the negative TTL the card re-fetches and now resolves
+    // positive, so it surfaces without a reload.
+    expect(
+      await screen.findByTestId("dashboard-ai-analysis-live-card"),
+    ).toBeTruthy();
+    expect(loadLive.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stops retrying once a card resolves positive", async () => {
+    const loadLive = vi.fn().mockResolvedValue(summary());
+    const loadDaily = vi.fn().mockResolvedValue(null);
+
+    render(
+      <DashboardAiAnalysisCards
+        customers={[{ id: 1, name: "Acme" }]}
+        labels={LABELS}
+        loadLive={loadLive}
+        loadDaily={loadDaily}
+        liveNegativeTtlMs={10}
+        dailyNegativeTtlMs={0}
+      />,
+    );
+
+    await screen.findByTestId("dashboard-ai-analysis-live-card");
+    // A positive result is never re-polled: give the (disabled) retry
+    // window several multiples of time and confirm no further fetch.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(loadLive).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry when the negative TTL is 0 (one-shot opt-out)", async () => {
+    const loadLive = vi.fn().mockResolvedValue(null);
+    const loadDaily = vi.fn().mockResolvedValue(null);
+
+    render(
+      <DashboardAiAnalysisCards
+        customers={[{ id: 1, name: "Acme" }]}
+        labels={LABELS}
+        loadLive={loadLive}
+        loadDaily={loadDaily}
+        liveNegativeTtlMs={0}
+        dailyNegativeTtlMs={0}
+      />,
+    );
+
+    await waitFor(() => expect(loadLive).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(loadLive).toHaveBeenCalledTimes(1);
+    expect(loadDaily).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the badge with the summary's tier and links to its href", async () => {
     const loadLive = vi.fn().mockResolvedValue(
       summary({

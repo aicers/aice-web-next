@@ -33,6 +33,20 @@
  * day derived from {@link useTimezone}, so a tab whose timezone
  * resolves to a different day fetches that day's report, not the
  * server's.
+ *
+ * Negative-retry window (#646 "Negative-cache TTL configurable per
+ * surface"): a card is not a one-shot. When a surface resolves negative
+ * (`null` from a 204 / non-200 / transient fetch failure / a
+ * still-settling upstream), the component schedules a re-fetch for that
+ * one customer/surface after the surface's TTL, and keeps doing so until
+ * it resolves positive — so a report that becomes available *after* the
+ * dashboard opened (e.g. a DAILY report that lands mid-day, or a LIVE
+ * digest that crosses threshold) eventually surfaces without a reload.
+ * LIVE polls on a minute cadence and DAILY on a much longer cadence,
+ * matching their upstream production rates; both windows are
+ * configurable per surface. A positive result stops the retry loop for
+ * that card — positives are not re-polled, mirroring the Stories
+ * surface's negative-only TTL.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -57,6 +71,22 @@ import type { AiAnalysisSummary } from "@/lib/aimer/analysis/summary-types";
  * so the queue caps concurrency the same way the Stories surface does.
  */
 export const DASHBOARD_AI_ANALYSIS_MAX_IN_FLIGHT = 6;
+
+/**
+ * Default negative-retry window for the LIVE card: 1 minute. LIVE is a
+ * rolling, minute-cadence digest, so a card that is currently negative
+ * is re-checked about once a minute until it resolves positive.
+ */
+export const LIVE_NEGATIVE_TTL_MS = 60 * 1000;
+
+/**
+ * Default negative-retry window for the DAILY card: 30 minutes. The
+ * DAILY report is produced once per calendar day but may land any time
+ * during that day, so a negative card is re-checked on a coarse cadence
+ * — often enough to surface the report once it is published, without the
+ * minute-rate churn LIVE needs.
+ */
+export const DAILY_NEGATIVE_TTL_MS = 30 * 60 * 1000;
 
 export interface DashboardCustomer {
   id: number;
@@ -84,6 +114,16 @@ interface DashboardAiAnalysisCardsProps {
    */
   loadLive?: AiAnalysisLiveSummaryFetcher;
   loadDaily?: AiAnalysisDailySummaryFetcher;
+  /**
+   * Negative-retry windows in ms. A card that resolves negative is
+   * re-fetched after its surface's window and keeps retrying until it
+   * resolves positive. Defaulted to {@link LIVE_NEGATIVE_TTL_MS} /
+   * {@link DAILY_NEGATIVE_TTL_MS}; pass `0` to disable retries (used by
+   * tests that assert the one-shot path). Injectable so tests can drive
+   * the retry loop with a short window.
+   */
+  liveNegativeTtlMs?: number;
+  dailyNegativeTtlMs?: number;
 }
 
 /**
@@ -101,6 +141,8 @@ export function DashboardAiAnalysisCards({
   labels,
   loadLive = fetchAiAnalysisLiveSummary,
   loadDaily = fetchAiAnalysisDailySummary,
+  liveNegativeTtlMs = LIVE_NEGATIVE_TTL_MS,
+  dailyNegativeTtlMs = DAILY_NEGATIVE_TTL_MS,
 }: DashboardAiAnalysisCardsProps) {
   const timezone = useTimezone();
   // The viewer's current calendar day in their timezone. Recomputed
@@ -114,39 +156,21 @@ export function DashboardAiAnalysisCards({
   useEffect(() => {
     let cancelled = false;
 
-    // Build the flat task list: one LIVE + one DAILY read per customer.
-    const tasks: Array<() => Promise<void>> = [];
-    for (const customer of customers) {
-      const customerId = customer.id;
-      tasks.push(async () => {
-        const summary = await loadLive({ customerId });
-        if (cancelled) return;
-        setReports((prev) => ({
-          ...prev,
-          [customerId]: { ...prev[customerId], live: summary },
-        }));
-      });
-      tasks.push(async () => {
-        const summary = await loadDaily({ customerId, date: dailyDate });
-        if (cancelled) return;
-        setReports((prev) => ({
-          ...prev,
-          [customerId]: { ...prev[customerId], daily: summary },
-        }));
-      });
-    }
-
-    // Bounded-concurrency pump: keep up to MAX_IN_FLIGHT tasks running,
-    // draining the queue as each settles.
-    let next = 0;
+    // A growable work queue (initial fan-out plus retries that fire
+    // later) drained by a bounded-concurrency pump, and the set of
+    // pending retry timers so they can be cleared on cleanup.
+    const queue: Array<() => Promise<void>> = [];
+    const retryTimers = new Set<ReturnType<typeof setTimeout>>();
     let active = 0;
+
     const pump = () => {
       while (
         !cancelled &&
         active < DASHBOARD_AI_ANALYSIS_MAX_IN_FLIGHT &&
-        next < tasks.length
+        queue.length > 0
       ) {
-        const task = tasks[next++];
+        const task = queue.shift();
+        if (!task) break;
         active += 1;
         task()
           // The report clients already normalize errors to null; a throw
@@ -158,12 +182,65 @@ export function DashboardAiAnalysisCards({
           });
       }
     };
+
+    // Re-enqueue `task` after `ttlMs`. A non-positive TTL disables the
+    // retry (one-shot), so a card stays as last resolved.
+    const scheduleRetry = (ttlMs: number, task: () => Promise<void>) => {
+      if (cancelled || ttlMs <= 0) return;
+      const timer = setTimeout(() => {
+        retryTimers.delete(timer);
+        if (cancelled) return;
+        queue.push(task);
+        pump();
+      }, ttlMs);
+      retryTimers.add(timer);
+    };
+
+    // One self-rescheduling task per customer/surface. On a negative
+    // resolution it schedules its own re-fetch after the surface TTL and
+    // keeps retrying until it resolves positive; a positive result ends
+    // the loop (positives are not re-polled).
+    for (const customer of customers) {
+      const customerId = customer.id;
+
+      const liveTask = async () => {
+        const summary = await loadLive({ customerId });
+        if (cancelled) return;
+        setReports((prev) => ({
+          ...prev,
+          [customerId]: { ...prev[customerId], live: summary },
+        }));
+        if (summary === null) scheduleRetry(liveNegativeTtlMs, liveTask);
+      };
+
+      const dailyTask = async () => {
+        const summary = await loadDaily({ customerId, date: dailyDate });
+        if (cancelled) return;
+        setReports((prev) => ({
+          ...prev,
+          [customerId]: { ...prev[customerId], daily: summary },
+        }));
+        if (summary === null) scheduleRetry(dailyNegativeTtlMs, dailyTask);
+      };
+
+      queue.push(liveTask, dailyTask);
+    }
+
     pump();
 
     return () => {
       cancelled = true;
+      for (const timer of retryTimers) clearTimeout(timer);
+      retryTimers.clear();
     };
-  }, [customers, dailyDate, loadLive, loadDaily]);
+  }, [
+    customers,
+    dailyDate,
+    loadLive,
+    loadDaily,
+    liveNegativeTtlMs,
+    dailyNegativeTtlMs,
+  ]);
 
   // Keep only customers with at least one positive card, preserving the
   // scope order. A customer whose LIVE and DAILY both resolved negative
