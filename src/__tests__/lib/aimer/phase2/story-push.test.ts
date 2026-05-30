@@ -196,3 +196,82 @@ describe("loadStoryStreamingSlice cursor SQL", () => {
     expect(slice.lastEventTime).not.toEqual(timeWindowEnd);
   });
 });
+
+describe("known_ioc_hit emission across story-push paths", () => {
+  let storyPush: typeof import("@/lib/aimer/phase2/story-push");
+
+  function singleStoryResponse(sql: string) {
+    if (sql.includes("FROM event_group_member")) {
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.includes("FROM event_group")) {
+      return {
+        rows: [
+          {
+            story_id: "777",
+            story_version: "v1",
+            kind: "auto_correlated",
+            correlation_rule_id: null,
+            primary_asset: null,
+            time_window_start: "2026-01-01T00:00:00.000Z",
+            time_window_end: "2026-01-05T00:00:00.000Z",
+            time_window_end_date: new Date("2026-01-05T00:00:00Z"),
+            score: null,
+            summary_payload: {},
+            created_at: "2026-02-15T10:00:00.000Z",
+            created_at_date: new Date("2026-02-15T10:00:00Z"),
+            last_sent_at: null,
+            last_sent_by: null,
+            send_count: 0,
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    return { rows: [], rowCount: 0 };
+  }
+
+  beforeEach(async () => {
+    storyPush = await import("@/lib/aimer/phase2/story-push");
+    fake.calls.length = 0;
+    fake.client.query.mockClear();
+    fake.pool.query.mockClear();
+    fake.pool.connect.mockClear();
+    fake.client.release.mockClear();
+    fake.setResponse(singleStoryResponse);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("streaming slice emits known_ioc_hit: false when the loader has no signal", async () => {
+    const slice = await storyPush.loadStoryStreamingSlice({
+      customerId: 42,
+      cursorEventTime: null,
+      cursorEventKey: null,
+    });
+    expect(slice.stories).toHaveLength(1);
+    expect(slice.stories[0].known_ioc_hit).toBe(false);
+  });
+
+  it("straggler slice emits known_ioc_hit: false when the loader has no signal", async () => {
+    const slice = await storyPush.loadStoryStragglerSlice({
+      customerId: 42,
+      cursorEventTime: new Date("2026-05-15T00:00:00Z"),
+      cursorEventKey: "5000",
+      activatedAt: new Date("2026-04-01T00:00:00Z"),
+    });
+    expect(slice.stories).toHaveLength(1);
+    expect(slice.stories[0].known_ioc_hit).toBe(false);
+  });
+
+  it("manual send emits known_ioc_hit: false when the loader has no signal", async () => {
+    const wire = await storyPush.loadSingleStoryWireItem({
+      customerId: 42,
+      storyId: "777",
+    });
+    expect(wire).not.toBeNull();
+    expect(wire?.known_ioc_hit).toBe(false);
+  });
+});

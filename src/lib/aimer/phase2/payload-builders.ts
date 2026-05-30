@@ -155,6 +155,18 @@ export interface StoryRefreshItem {
   }>;
   time_window_start: string;
   time_window_end: string;
+  /**
+   * Priority-tiering "known IOC hit" floor signal (RFC 0002 §"Priority
+   * tiering — likelihood floors"; consumer wiring landed in
+   * aimer-web#330). Optional on the loader shape because no
+   * aice-web-next loader can populate a real value yet — the upstream
+   * producer that computes the per-story IOC-match boolean does not
+   * exist in this repo. {@link toWireStoryItem} defaults a missing
+   * value to `false` so every emitted wire item carries the field
+   * explicitly; once a producer lands, a loader SELECT supplies the
+   * real value here and it flows through unchanged.
+   */
+  known_ioc_hit?: boolean;
   [extra: string]: unknown;
 }
 
@@ -175,6 +187,14 @@ export interface StoryWireItem {
     role: string;
     event?: BaselineRefreshEvent;
   }>;
+  /**
+   * Priority-tiering "known IOC hit" floor signal. Always present on
+   * the wire shape — {@link toWireStoryItem} defaults a missing loader
+   * value to `false` so aimer-web's `applyLikelihoodFloors` sees an
+   * explicit boolean on every story rather than relying on its own
+   * missing-field default.
+   */
+  known_ioc_hit: boolean;
   [extra: string]: unknown;
 }
 
@@ -468,6 +488,14 @@ export function buildStoryRefreshPayloads(
  * `time_window_start` / `time_window_end` fields are dropped so the
  * outbound payload matches the schema's `storyItem` shape exactly
  * and the receiver does not see slicer-internal columns.
+ *
+ * `known_ioc_hit` is normalized to an explicit boolean here so every
+ * story-payload origination point (streaming, straggler, manual send,
+ * refresh, backfill) emits the field consistently — a missing loader
+ * value becomes `false`. This is the single seam where the
+ * priority-tiering floor signal is guaranteed present; once an upstream
+ * producer supplies a real per-story IOC-match boolean, the loaders
+ * carry it through and only the value (not the presence) changes.
  */
 export function toWireStoryItem(row: StoryRefreshItem): StoryWireItem {
   const {
@@ -477,6 +505,7 @@ export function toWireStoryItem(row: StoryRefreshItem): StoryWireItem {
     members,
     time_window_start,
     time_window_end,
+    known_ioc_hit,
     ...rest
   } = row;
   return {
@@ -485,6 +514,7 @@ export function toWireStoryItem(row: StoryRefreshItem): StoryWireItem {
     kind,
     time_window: { start: time_window_start, end: time_window_end },
     members,
+    known_ioc_hit: known_ioc_hit ?? false,
     ...rest,
   };
 }
