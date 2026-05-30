@@ -119,4 +119,26 @@ describe("msUntilNextDayInTimezone", () => {
       msUntilNextDayInTimezone("UTC", new Date("2026-05-30T00:00:01Z")),
     ).toBeGreaterThan(0);
   });
+
+  it("accounts for a 23-hour spring-forward day", () => {
+    // Europe/Berlin springs forward 02:00→03:00 local on 2026-03-29, so
+    // that calendar day is only 23 h long. At 00:30 local (the instant
+    // below, 23:30Z on the 28th in CET) the next local midnight is the
+    // start of 2026-03-30, which is 22.5 *real* hours away — not the 23.5
+    // a fixed 24-hour subtraction would report.
+    const instant = new Date("2026-03-28T23:30:00Z");
+    expect(msUntilNextDayInTimezone("Europe/Berlin", instant)).toBe(
+      22.5 * HOUR,
+    );
+  });
+
+  it("accounts for a 25-hour fall-back day", () => {
+    // Europe/Berlin falls back 03:00→02:00 local on 2026-10-25, so that
+    // day is 25 h long. At 00:30 local (22:30Z on the 24th in CEST) the
+    // next local midnight is 24.5 real hours away.
+    const instant = new Date("2026-10-24T22:30:00Z");
+    expect(msUntilNextDayInTimezone("Europe/Berlin", instant)).toBe(
+      24.5 * HOUR,
+    );
+  });
 });

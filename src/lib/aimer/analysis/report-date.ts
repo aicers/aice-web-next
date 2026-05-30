@@ -87,6 +87,41 @@ export function todayInTimezone(
 }
 
 /**
+ * The UTC-vs-local offset, in ms, that `timezone` is at the instant
+ * `epochMs`. Positive east of UTC (e.g. `+7_200_000` for CEST).
+ *
+ * Derived by formatting the instant's wall-clock fields in `timezone`,
+ * reinterpreting those fields as if they were UTC, and subtracting the
+ * real instant. This is the standard way to recover a zone's offset at a
+ * point in time without a tz database, and — unlike a fixed 24-hour
+ * assumption — it changes across a DST boundary, which is what makes the
+ * next-midnight computation below correct on transition days.
+ */
+function timezoneOffsetMs(timezone: string, epochMs: number): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(epochMs));
+  const lookup = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value ?? "0");
+  const asUtc = Date.UTC(
+    lookup("year"),
+    lookup("month") - 1,
+    lookup("day"),
+    lookup("hour"),
+    lookup("minute"),
+    lookup("second"),
+  );
+  return asUtc - epochMs;
+}
+
+/**
  * Milliseconds from `now` until the next calendar midnight in `timezone`.
  *
  * The DAILY dashboard card derives its `{date}` from the viewer's
@@ -95,34 +130,35 @@ export function todayInTimezone(
  * keep displaying yesterday's report (#646 "Date handling"). The card
  * uses this to schedule that rollover.
  *
- * Computed from the wall-clock time-of-day in `timezone` (so it tracks
- * the viewer's zone, not UTC). A whole-day length is assumed, so on a
- * DST-transition day the result can be off by up to an hour; the caller
- * treats the wake-up as advisory — it recomputes {@link todayInTimezone}
- * on fire and only rolls the date when it has actually changed — so an
- * early or late wake-up self-corrects on the next schedule. The returned
- * value is always at least 1 ms so a caller scheduling on it cannot spin.
+ * The actual instant of the next local midnight is computed (not a fixed
+ * 24-hour subtraction), so the result is correct on DST-transition days:
+ * a spring-forward day is 23 h and a fall-back day 25 h long, and a fixed
+ * day length would wake the card up to an hour late — keeping yesterday's
+ * report under "Today's report" for that extra hour, which the advisory
+ * recompute on fire cannot fix until *after* the stale data has shown.
+ * The midnight wall-clock is resolved to UTC via {@link timezoneOffsetMs}
+ * with a second pass so a guess that straddles the DST change still lands
+ * on the true offset. The returned value is always at least 1 ms so a
+ * caller scheduling on it cannot spin.
  */
 export function msUntilNextDayInTimezone(
   timezone: string,
   now: Date = new Date(),
 ): number {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const lookup = (type: "hour" | "minute" | "second") =>
-    Number(parts.find((part) => part.type === type)?.value ?? "0");
-  // `en-GB` with `hour12: false` reports midnight as `24` in some
-  // runtimes; normalize it to `0` so the elapsed-since-midnight math is
-  // correct.
-  const hour = lookup("hour") % 24;
-  const minute = lookup("minute");
-  const second = lookup("second");
-  const elapsedMs = ((hour * 60 + minute) * 60 + second) * 1000;
-  const dayMs = 24 * 60 * 60 * 1000;
-  return Math.max(1, dayMs - elapsedMs);
+  const today = todayInTimezone(timezone, now);
+  const [year, month, day] = today.split("-").map(Number);
+  // Midnight at the start of the *next* local day, as if the wall-clock
+  // fields were UTC. `Date.UTC` normalizes month/day overflow, so the
+  // last day of a month rolls into the first of the next correctly.
+  const nextMidnightAsUtc = Date.UTC(year, month - 1, day + 1, 0, 0, 0);
+  // Convert that wall-clock to a real instant by removing the zone offset.
+  // The offset can differ between the guess and the resolved instant when
+  // the guess lands on the far side of a DST change, so resolve twice.
+  const firstOffset = timezoneOffsetMs(timezone, nextMidnightAsUtc);
+  let midnight = nextMidnightAsUtc - firstOffset;
+  const secondOffset = timezoneOffsetMs(timezone, midnight);
+  if (secondOffset !== firstOffset) {
+    midnight = nextMidnightAsUtc - secondOffset;
+  }
+  return Math.max(1, midnight - now.getTime());
 }

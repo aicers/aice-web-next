@@ -251,6 +251,64 @@ describe("DashboardAiAnalysisCards", () => {
     }
   });
 
+  it("leaves an already-positive LIVE card untouched when the DAILY date rolls over", async () => {
+    // Regression for Round 5: the DAILY midnight rollover must not
+    // re-fetch LIVE. `loadLive` resolves positive on its first (and only)
+    // call but would resolve `null` if called again — if the rollover
+    // re-polled LIVE, that transient `null` would hide an already-positive
+    // "Latest digest" card. LIVE must be fetched exactly once.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-30T23:30:00Z"));
+    mockUseTimezone.mockReturnValue("UTC");
+
+    const loadLive = vi
+      .fn()
+      .mockResolvedValueOnce(summary({ tier: "CRITICAL" }))
+      .mockResolvedValue(null);
+    const loadDaily = vi.fn(({ date }: { date: string }) =>
+      Promise.resolve(date === "2026-05-30" ? summary({ tier: "HIGH" }) : null),
+    );
+
+    try {
+      render(
+        <DashboardAiAnalysisCards
+          customers={[{ id: 1, name: "Acme" }]}
+          labels={LABELS}
+          loadLive={loadLive}
+          loadDaily={loadDaily}
+          liveNegativeTtlMs={0}
+          dailyNegativeTtlMs={0}
+        />,
+      );
+
+      // The LIVE card renders positive before midnight.
+      await vi.waitFor(() =>
+        expect(
+          screen.queryByTestId("dashboard-ai-analysis-live-card"),
+        ).toBeTruthy(),
+      );
+
+      // Cross local midnight, triggering the DAILY rollover.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
+      });
+
+      // The new day's DAILY was fetched (proving the rollover ran)...
+      await vi.waitFor(() =>
+        expect(loadDaily).toHaveBeenLastCalledWith(
+          expect.objectContaining({ customerId: 1, date: "2026-05-31" }),
+        ),
+      );
+      // ...but LIVE was never re-fetched, so its positive card survives.
+      expect(loadLive).toHaveBeenCalledTimes(1);
+      expect(
+        screen.queryByTestId("dashboard-ai-analysis-live-card"),
+      ).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never exceeds the in-flight concurrency cap across the fan-out", async () => {
     const customers = Array.from({ length: 10 }, (_, i) => ({
       id: i + 1,

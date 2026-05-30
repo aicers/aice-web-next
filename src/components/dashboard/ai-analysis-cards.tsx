@@ -52,7 +52,7 @@
  * surface's negative-only TTL.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useTimezone } from "@/components/providers/timezone-provider";
 import {
@@ -151,73 +151,38 @@ export function DashboardAiAnalysisCards({
   dailyNegativeTtlMs = DAILY_NEGATIVE_TTL_MS,
 }: DashboardAiAnalysisCardsProps) {
   const timezone = useTimezone();
-  // The viewer's current calendar day in their timezone. Held in state
-  // (not a memo) so it can roll over at the viewer's next local midnight
-  // while the dashboard stays open — a memo keyed on `timezone` alone
-  // would pin a long-lived tab to the day it was opened. Changing this
-  // re-runs the fetch effect below, so the DAILY card always tracks the
-  // viewer's calendar day (#646 "Date handling").
-  const [dailyDate, setDailyDate] = useState(() => todayInTimezone(timezone));
-  const dailyDateRef = useRef(dailyDate);
-
   const [reports, setReports] = useState<Record<number, CustomerReports>>({});
 
-  // Keep `dailyDate` aligned with the viewer's local calendar day:
-  // reconcile immediately whenever the timezone settles, then wake at the
-  // next local midnight to roll the date forward and reschedule. The
-  // wake-up time is advisory (DST days are not exactly 24 h), so on fire
-  // we recompute the actual day and only advance when it has changed.
+  // One effect owns the whole read lifecycle — the initial LIVE+DAILY
+  // fan-out, the per-surface negative-retry loops, and the DAILY date
+  // rollover at the viewer's local midnight. Keeping it in a single
+  // effect (rather than splitting the rollover out and re-keying the
+  // fetch on `dailyDate`) is what lets the rollover re-fetch *only* DAILY:
+  // a `dailyDate`-keyed effect would tear down and rebuild every task,
+  // re-polling LIVE and letting a transient post-midnight LIVE `null`
+  // overwrite an already-positive "Latest digest" card. Here the LIVE
+  // tasks are enqueued once and only ever re-run via their own
+  // negative-retry loop; the midnight rollover touches DAILY alone.
   useEffect(() => {
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
 
-    // Advance to the current local day if it has changed, dropping the
-    // previous day's resolved DAILY summaries so a stale "Today's report"
-    // card stops showing under that title until the new day's fetch
-    // resolves. The `dailyDateRef` guard makes a same-day wake-up (or the
-    // mount-time reconcile) a no-op so we never clear without cause.
-    const reconcileDate = () => {
-      const today = todayInTimezone(timezone);
-      if (today === dailyDateRef.current) return;
-      dailyDateRef.current = today;
-      setDailyDate(today);
-      setReports((prev) => {
-        const next: Record<number, CustomerReports> = {};
-        for (const [id, customerReports] of Object.entries(prev)) {
-          next[Number(id)] = { ...customerReports, daily: undefined };
-        }
-        return next;
-      });
-    };
-
-    reconcileDate();
-
-    const schedule = () => {
-      // 1 s past midnight so a wake-up that fires a hair early still lands
-      // on the new calendar day rather than re-reading the old one.
-      const delay = msUntilNextDayInTimezone(timezone) + 1000;
-      timer = setTimeout(() => {
-        if (cancelled) return;
-        reconcileDate();
-        schedule();
-      }, delay);
-    };
-    schedule();
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [timezone]);
-
-  useEffect(() => {
-    let cancelled = false;
+    // The viewer's current local calendar day. A local variable (not
+    // React state) because nothing renders the date directly — only the
+    // DAILY summaries it produces — and keeping it out of the dep list is
+    // what stops the rollover from re-running the LIVE fan-out.
+    let dailyDate = todayInTimezone(timezone);
+    // Bumped on every rollover so that DAILY tasks (and their scheduled
+    // retries) belonging to a previous day no-op instead of writing a
+    // stale date's result or running a second retry loop alongside the
+    // new day's.
+    let dailyEpoch = 0;
 
     // A growable work queue (initial fan-out plus retries that fire
     // later) drained by a bounded-concurrency pump, and the set of
     // pending retry timers so they can be cleared on cleanup.
     const queue: Array<() => Promise<void>> = [];
     const retryTimers = new Set<ReturnType<typeof setTimeout>>();
+    let rolloverTimer: ReturnType<typeof setTimeout> | undefined;
     let active = 0;
 
     const pump = () => {
@@ -253,13 +218,11 @@ export function DashboardAiAnalysisCards({
       retryTimers.add(timer);
     };
 
-    // One self-rescheduling task per customer/surface. On a negative
-    // resolution it schedules its own re-fetch after the surface TTL and
-    // keeps retrying until it resolves positive; a positive result ends
-    // the loop (positives are not re-polled).
-    for (const customer of customers) {
-      const customerId = customer.id;
-
+    // LIVE: one self-rescheduling task per customer. Enqueued once and
+    // re-run only by its own negative-retry loop — never re-fetched by the
+    // DAILY rollover, so an already-positive "Latest digest" card cannot
+    // flash back to nothing when the day turns over.
+    const enqueueLive = (customerId: number) => {
       const liveTask = async () => {
         const summary = await loadLive({ customerId });
         if (cancelled) return;
@@ -269,30 +232,79 @@ export function DashboardAiAnalysisCards({
         }));
         if (summary === null) scheduleRetry(liveNegativeTtlMs, liveTask);
       };
+      queue.push(liveTask);
+    };
 
+    // DAILY: one self-rescheduling task per customer, tagged with the date
+    // epoch it was created in. If a rollover bumps the epoch while the
+    // task is in flight or waiting on a retry, the task no-ops — the new
+    // day's task is the only one that writes state or keeps retrying.
+    const enqueueDaily = (customerId: number) => {
+      const epoch = dailyEpoch;
+      const date = dailyDate;
       const dailyTask = async () => {
-        const summary = await loadDaily({ customerId, date: dailyDate });
-        if (cancelled) return;
+        if (cancelled || epoch !== dailyEpoch) return;
+        const summary = await loadDaily({ customerId, date });
+        if (cancelled || epoch !== dailyEpoch) return;
         setReports((prev) => ({
           ...prev,
           [customerId]: { ...prev[customerId], daily: summary },
         }));
         if (summary === null) scheduleRetry(dailyNegativeTtlMs, dailyTask);
       };
+      queue.push(dailyTask);
+    };
 
-      queue.push(liveTask, dailyTask);
+    for (const customer of customers) {
+      enqueueLive(customer.id);
+      enqueueDaily(customer.id);
     }
-
     pump();
+
+    // Roll the DAILY date over at the viewer's next local midnight. The
+    // wake-up instant is exact (DST-aware), but we still recompute the day
+    // on fire and only advance when it has actually changed, so an early
+    // wake-up is a harmless no-op. On a real change we drop the previous
+    // day's DAILY summaries (so a stale "Today's report" card stops
+    // showing under that title until the new day resolves), bump the epoch
+    // to retire the old day's tasks, and re-fan-out DAILY only.
+    const rollover = () => {
+      if (cancelled) return;
+      const today = todayInTimezone(timezone);
+      if (today !== dailyDate) {
+        dailyDate = today;
+        dailyEpoch += 1;
+        setReports((prev) => {
+          const next: Record<number, CustomerReports> = {};
+          for (const [id, customerReports] of Object.entries(prev)) {
+            next[Number(id)] = { ...customerReports, daily: undefined };
+          }
+          return next;
+        });
+        for (const customer of customers) enqueueDaily(customer.id);
+        pump();
+      }
+      scheduleRollover();
+    };
+
+    const scheduleRollover = () => {
+      if (cancelled) return;
+      // 1 s past midnight so a wake-up that fires a hair early still lands
+      // on the new calendar day rather than re-reading the old one.
+      const delay = msUntilNextDayInTimezone(timezone) + 1000;
+      rolloverTimer = setTimeout(rollover, delay);
+    };
+    scheduleRollover();
 
     return () => {
       cancelled = true;
       for (const timer of retryTimers) clearTimeout(timer);
       retryTimers.clear();
+      if (rolloverTimer) clearTimeout(rolloverTimer);
     };
   }, [
     customers,
-    dailyDate,
+    timezone,
     loadLive,
     loadDaily,
     liveNegativeTtlMs,
