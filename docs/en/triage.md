@@ -680,6 +680,14 @@ under **Settings**).
 
 ![Asset-detail event rows with the per-row Investigate deep link (wireframe)](../assets/triage-asset-detail-investigate-en.svg)
 
+> **Wireframe stand-in.** Populating the asset-detail event table
+> needs a live REview event store with real events scored into the
+> baseline cohort, which the authoring worktree does not provide —
+> its mock harness only renders the empty asset-list shell. The same
+> staging tenant used to refresh the rest of the Triage PNGs in #455
+> is the canonical capture environment; the wireframe will be
+> replaced with a real PNG capture alongside that staging refresh.
+
 Each event row deep-links to the same **Event Investigation** view
 the Detection menu's "Open full investigation" action opens, so a
 suspicious row can be promoted to a full investigation without
