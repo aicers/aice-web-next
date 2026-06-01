@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 540" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Noto Sans KR', sans-serif" role="img" aria-labelledby="title desc">
-  <title id="title">Triage 기간 재빌드 확인 모달 (와이어프레임)</title>
+  <title id="title">선별 기간 재빌드 확인 모달 (와이어프레임)</title>
   <desc id="desc">관리자 전용 "이 기간 다시 빌드" 확인 모달의 와이어프레임. 모달은 해석된 단일 고객, 분석 기간, 동작 설명, /api/triage/baseline/rebuild/estimate에서 읽은 행 수 추정값, 탐지 저장소 보존 경고, 탭 종료 안내, 취소 / 확인 버튼을 표시합니다.</desc>
 
   <style>
