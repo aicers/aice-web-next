@@ -1,6 +1,8 @@
 "use client";
 
+import { panelSurface } from "@/components/ui/panel-surface";
 import type { TriageFunnel } from "@/lib/triage";
+import { cn } from "@/lib/utils";
 
 export interface TriageFunnelLabels {
   title: string;
@@ -35,7 +37,7 @@ export function TriageFunnelView({ funnel, labels }: TriageFunnelViewProps) {
   return (
     <section
       aria-labelledby="triage-funnel-heading"
-      className="rounded-md bg-card p-4"
+      className={cn(panelSurface, "p-4")}
     >
       <h2
         id="triage-funnel-heading"

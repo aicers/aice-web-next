@@ -1,8 +1,10 @@
 "use client";
 
 import { useTimezone } from "@/components/providers/timezone-provider";
+import { panelSurface } from "@/components/ui/panel-surface";
 import { formatDateTime } from "@/lib/format-date";
 import type { TriageAsset } from "@/lib/triage";
+import { cn } from "@/lib/utils";
 import {
   type ProtectedByStoryMarkerLabels,
   renderProtectedByStoryMarker,
@@ -89,7 +91,7 @@ export function TriageAssetDetailView({
 
   if (!asset) {
     return (
-      <section className="rounded-md bg-card p-4">
+      <section className={cn(panelSurface, "p-4")}>
         <h2 className="text-sm font-semibold text-muted-foreground">
           {headerTitle}
         </h2>
@@ -103,7 +105,7 @@ export function TriageAssetDetailView({
   return (
     <section
       aria-label={headerTitle}
-      className="flex flex-col gap-4 rounded-md bg-card p-4"
+      className={cn("flex flex-col gap-4", panelSurface, "p-4")}
     >
       <header className="flex flex-col gap-1">
         <h2 className="text-sm font-semibold text-muted-foreground">

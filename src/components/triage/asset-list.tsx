@@ -1,5 +1,6 @@
 "use client";
 
+import { panelSurface } from "@/components/ui/panel-surface";
 import type { TriageAsset } from "@/lib/triage";
 import { cn } from "@/lib/utils";
 
@@ -55,7 +56,7 @@ export function TriageAssetListView({
     return (
       <section
         aria-labelledby="triage-asset-list-heading"
-        className="rounded-md bg-card p-4"
+        className={cn(panelSurface, "p-4")}
       >
         <h2
           id="triage-asset-list-heading"
@@ -71,7 +72,7 @@ export function TriageAssetListView({
   return (
     <section
       aria-labelledby="triage-asset-list-heading"
-      className="rounded-md bg-card"
+      className={panelSurface}
     >
       <header className="border-b border-border/30 px-4 py-3">
         <h2
