@@ -35,7 +35,7 @@ export function TriageFunnelView({ funnel, labels }: TriageFunnelViewProps) {
   return (
     <section
       aria-labelledby="triage-funnel-heading"
-      className="rounded-md border bg-card p-4 shadow-xs"
+      className="rounded-md bg-card p-4"
     >
       <h2
         id="triage-funnel-heading"

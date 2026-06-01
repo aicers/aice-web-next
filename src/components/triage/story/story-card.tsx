@@ -166,7 +166,7 @@ export function TriageStoryCard({
     <article
       data-testid="triage-story-card"
       data-story-id={`${story.customerId}/${story.storyId}`}
-      className="flex flex-col gap-3 rounded-md border bg-card p-4 shadow-xs"
+      className="flex flex-col gap-3 rounded-md bg-card p-4"
     >
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-base font-semibold text-foreground">{title}</h3>

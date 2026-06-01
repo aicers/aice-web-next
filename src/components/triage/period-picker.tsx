@@ -112,7 +112,7 @@ export function TriagePeriodPicker({
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex flex-wrap items-end gap-3 rounded-md border bg-card p-3 shadow-xs"
+      className="flex flex-wrap items-end gap-3 rounded-md bg-card p-3"
       aria-label={labels.legend}
     >
       <div className="flex flex-col gap-1">

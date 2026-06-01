@@ -188,7 +188,7 @@ export function TriagePivotPanel({
   return (
     <section
       aria-labelledby="triage-pivot-heading"
-      className="rounded-md border bg-card shadow-xs"
+      className="rounded-md bg-card"
     >
       <header className="flex flex-col gap-1 border-b border-border/30 px-4 py-3">
         <h2

@@ -55,7 +55,7 @@ export function TriageAssetListView({
     return (
       <section
         aria-labelledby="triage-asset-list-heading"
-        className="rounded-md border bg-card p-4 shadow-xs"
+        className="rounded-md bg-card p-4"
       >
         <h2
           id="triage-asset-list-heading"
@@ -71,7 +71,7 @@ export function TriageAssetListView({
   return (
     <section
       aria-labelledby="triage-asset-list-heading"
-      className="rounded-md border bg-card shadow-xs"
+      className="rounded-md bg-card"
     >
       <header className="border-b border-border/30 px-4 py-3">
         <h2

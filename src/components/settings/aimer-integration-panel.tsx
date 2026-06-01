@@ -300,7 +300,7 @@ function SetupStatusBlock({
   t: ReturnType<typeof useTranslations<"aimerIntegration">>;
 }) {
   return (
-    <section className="rounded-md border p-5">
+    <section className="rounded-md bg-card p-5">
       <h2 className="text-lg font-medium">{t("setupStatus.title")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         {t("setupStatus.description")}
@@ -362,7 +362,7 @@ function SigningKeyBlock({
   const banner = rotationBannerLevel(active);
 
   return (
-    <section className="rounded-md border p-5">
+    <section className="rounded-md bg-card p-5">
       <h2 className="text-lg font-medium">{t("signingKey.title")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         {t("signingKey.description")}
@@ -454,7 +454,7 @@ function SigningKeyBlock({
         )}
 
         {state === "active_and_pending" && pending && (
-          <div className="space-y-3 rounded-md border border-dashed p-4">
+          <div className="space-y-3 rounded-md bg-card p-4">
             <p className="text-sm font-medium">
               {t("signingKey.switch.guidanceTitle")}
             </p>
@@ -559,7 +559,7 @@ function KeyEntryCard({
   t: ReturnType<typeof useTranslations<"aimerIntegration">>;
 }) {
   return (
-    <div className="space-y-3 rounded-md border p-4">
+    <div className="space-y-3 rounded-md bg-card p-4">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {label}
@@ -690,7 +690,7 @@ function SettingsBlock({
   const modelDirty = modelDraft.trim() !== (defaultModel ?? "");
 
   return (
-    <section className="rounded-md border p-5">
+    <section className="rounded-md bg-card p-5">
       <h2 className="text-lg font-medium">{t("settings.title")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         {t("settings.description")}
@@ -865,7 +865,7 @@ function CustomerExternalKeyBlock({
   t: ReturnType<typeof useTranslations<"aimerIntegration">>;
 }) {
   return (
-    <section className="rounded-md border border-dashed p-5">
+    <section className="rounded-md bg-card p-5">
       <div className="flex items-start gap-2">
         <Info className="size-4 shrink-0 text-muted-foreground" />
         <div className="text-sm">

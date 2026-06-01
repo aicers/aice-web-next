@@ -89,7 +89,7 @@ export function TriageAssetDetailView({
 
   if (!asset) {
     return (
-      <section className="rounded-md border bg-card p-4 shadow-xs">
+      <section className="rounded-md bg-card p-4">
         <h2 className="text-sm font-semibold text-muted-foreground">
           {headerTitle}
         </h2>
@@ -103,7 +103,7 @@ export function TriageAssetDetailView({
   return (
     <section
       aria-label={headerTitle}
-      className="flex flex-col gap-4 rounded-md border bg-card p-4 shadow-xs"
+      className="flex flex-col gap-4 rounded-md bg-card p-4"
     >
       <header className="flex flex-col gap-1">
         <h2 className="text-sm font-semibold text-muted-foreground">
