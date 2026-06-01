@@ -335,7 +335,7 @@ export function AimerPhase2Block({ customers }: Phase2BlockProps) {
 
   if (customers.length === 0) {
     return (
-      <section className="rounded-md border p-5">
+      <section className="rounded-md bg-card p-5">
         <h2 className="text-lg font-medium">{t("title")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
         <p className="mt-4 text-sm text-muted-foreground">
@@ -346,7 +346,10 @@ export function AimerPhase2Block({ customers }: Phase2BlockProps) {
   }
 
   return (
-    <section className="rounded-md border p-5" data-testid="aimer-phase2-block">
+    <section
+      className="rounded-md bg-card p-5"
+      data-testid="aimer-phase2-block"
+    >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h2 className="text-lg font-medium">{t("title")}</h2>
@@ -433,7 +436,7 @@ export function AimerPhase2Block({ customers }: Phase2BlockProps) {
       )}
 
       {status && customerId !== null && (
-        <div className="mt-5 rounded-md border border-dashed p-4">
+        <div className="mt-5 rounded-md bg-card p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-1">
               <Label
@@ -458,7 +461,7 @@ export function AimerPhase2Block({ customers }: Phase2BlockProps) {
       )}
 
       {visibleSyncNow && (
-        <div className="mt-5 space-y-2 rounded-md border border-dashed p-4">
+        <div className="mt-5 space-y-2 rounded-md bg-card p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium">{t("syncNow.button")}</p>
@@ -589,7 +592,7 @@ function StreamingTrackRow({
   const tCommon = useTranslations("common");
   return (
     <div
-      className="rounded-md border p-3"
+      className="rounded-md bg-card p-3"
       data-testid={`aimer-phase2-track-${track.kind}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -712,7 +715,7 @@ function PolicyRunTrackRow({ track }: { track: PolicyRunTrack }) {
   const tCommon = useTranslations("common");
   return (
     <div
-      className="rounded-md border p-3"
+      className="rounded-md bg-card p-3"
       data-testid="aimer-phase2-track-policy_run"
     >
       <p className="text-sm font-medium">{t("kindLabel.policy_run")}</p>
@@ -736,7 +739,7 @@ function PolicyEventTrackRow({ track }: { track: PolicyEventTrack }) {
   const tCommon = useTranslations("common");
   return (
     <div
-      className="rounded-md border p-3"
+      className="rounded-md bg-card p-3"
       data-testid="aimer-phase2-track-policy_event"
     >
       <p className="text-sm font-medium">{t("kindLabel.policy_event")}</p>
@@ -839,7 +842,7 @@ function BackfillForm({
   };
 
   return (
-    <div className="mt-5 rounded-md border border-dashed p-4">
+    <div className="mt-5 rounded-md bg-card p-4">
       <p className="text-sm font-medium">{t("backfill.title")}</p>
       <p className="mt-1 text-xs text-muted-foreground">
         {t("backfill.description", { retention: BASELINE_RETENTION_DAYS })}

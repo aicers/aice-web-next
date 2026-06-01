@@ -1129,7 +1129,7 @@ function TriageStoryDetail({
       data-testid="triage-story-detail"
       data-story-id={`${story.customerId}/${story.storyId}`}
       aria-label={labels.heading}
-      className="rounded-md border bg-card p-4 shadow-xs"
+      className="rounded-md bg-card p-4"
     >
       <header className="mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
