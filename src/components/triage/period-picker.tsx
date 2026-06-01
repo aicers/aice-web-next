@@ -3,11 +3,13 @@
 import { useEffect, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { panelSurface } from "@/components/ui/panel-surface";
 import {
   TRIAGE_MAX_DURATION_MS,
   TRIAGE_MAX_LOOKBACK_MS,
   type TriagePeriod,
 } from "@/lib/triage";
+import { cn } from "@/lib/utils";
 
 export interface TriagePeriodPickerLabels {
   legend: string;
@@ -112,7 +114,7 @@ export function TriagePeriodPicker({
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex flex-wrap items-end gap-3 rounded-md bg-card p-3"
+      className={cn("flex flex-wrap items-end gap-3", panelSurface, "p-3")}
       aria-label={labels.legend}
     >
       <div className="flex flex-col gap-1">

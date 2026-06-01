@@ -23,6 +23,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
+import { panelSurface } from "@/components/ui/panel-surface";
 import type { AiAnalysisStorySummaryFetcher } from "@/lib/aimer/analysis/story-summary.client";
 import type { AiAnalysisSummary } from "@/lib/aimer/analysis/summary-types";
 import {
@@ -38,6 +39,7 @@ import type {
   TriageStory,
   TriageStoryMemberDetail,
 } from "@/lib/triage/story/types";
+import { cn } from "@/lib/utils";
 
 import {
   type ProtectedByStoryMarkerLabels,
@@ -1129,7 +1131,7 @@ function TriageStoryDetail({
       data-testid="triage-story-detail"
       data-story-id={`${story.customerId}/${story.storyId}`}
       aria-label={labels.heading}
-      className="rounded-md bg-card p-4"
+      className={cn(panelSurface, "p-4")}
     >
       <header className="mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">

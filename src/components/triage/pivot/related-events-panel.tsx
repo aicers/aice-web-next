@@ -12,6 +12,7 @@
 import { useMemo, useState } from "react";
 
 import { useTimezone } from "@/components/providers/timezone-provider";
+import { panelSurface } from "@/components/ui/panel-surface";
 import { formatDateTime } from "@/lib/format-date";
 import type { ScoredTriageEvent } from "@/lib/triage";
 import {
@@ -186,10 +187,7 @@ export function TriagePivotPanel({
     labels.keywords !== undefined &&
     onSubmitKeyword !== undefined;
   return (
-    <section
-      aria-labelledby="triage-pivot-heading"
-      className="rounded-md bg-card"
-    >
+    <section aria-labelledby="triage-pivot-heading" className={panelSurface}>
       <header className="flex flex-col gap-1 border-b border-border/30 px-4 py-3">
         <h2
           id="triage-pivot-heading"
