@@ -157,6 +157,12 @@ export default defineConfig({
             // protectedByStory-slot contracts can be asserted against
             // the DOM.
             "src/__tests__/components/triage/event-row/triage-event-table.test.tsx",
+            // Issue #666: asset-detail deep-link wiring — the panel
+            // threads each event's `id` into a `/events/<token>` link
+            // and the row + action anchor open it in a new tab. Real
+            // DOM is required for the click/keyboard navigation and the
+            // anchor `stopPropagation` contract.
+            "src/__tests__/components/triage/asset-detail.test.tsx",
             // Issue #553: Pivot-from-Story breadcrumb segment — real-
             // render coverage for the Story-origin chip's interactive
             // / current-page branches and the click-to-restore wiring.
@@ -228,6 +234,7 @@ export default defineConfig({
             "src/__tests__/components/dashboard/ai-analysis-cards.test.tsx",
             "src/__tests__/components/triage/rebuild-button.test.tsx",
             "src/__tests__/components/triage/event-row/triage-event-table.test.tsx",
+            "src/__tests__/components/triage/asset-detail.test.tsx",
             "src/__tests__/components/triage/pivot/pivot-breadcrumb.test.tsx",
             "src/__tests__/components/triage/strictness-slider.test.tsx",
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",

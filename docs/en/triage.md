@@ -676,6 +676,41 @@ The detail panel for the selected asset shows:
 Times are formatted in the session's preferred timezone (set
 under **Settings**).
 
+### Open the full investigation from a row
+
+![Asset-detail event rows with the per-row Investigate deep link (wireframe)](../assets/triage-asset-detail-investigate-en.svg)
+
+> **Wireframe stand-in.** Populating the asset-detail event table
+> needs a live REview event store with real events scored into the
+> baseline cohort, which the authoring worktree does not provide —
+> its mock harness only renders the empty asset-list shell. The same
+> staging tenant used to refresh the rest of the Triage PNGs in #455
+> is the canonical capture environment; the wireframe will be
+> replaced with a real PNG capture alongside that staging refresh.
+
+Each event row deep-links to the same **Event Investigation** view
+the Detection menu's "Open full investigation" action opens, so a
+suspicious row can be promoted to a full investigation without
+re-finding the event by hand. There are two affordances for the
+same destination:
+
+- **Whole-row link.** Clicking anywhere on a row — or focusing it
+  with the keyboard and pressing **Enter** or **Space** — opens the
+  event's investigation view.
+- **Per-row action button.** A trailing **Investigate** column
+  renders an external-link button on every row, mirroring the
+  Detection inspector's explicit action.
+
+Both open the view **in a new browser tab**, so the triage page —
+your current asset selection, pivot trail, and period — stays
+intact in the original tab. The link target is
+`/events/<token>`, where the token is derived from the event's
+stable identifier; no triage filter state is encoded into it.
+
+The deep link is offered on the **asset detail** event rows only.
+The Story detail member table keeps its existing pivot affordances
+and does not turn its rows into investigation links.
+
 ### Field availability in Baseline mode
 
 The Baseline-mode detail panel reads from `baseline_triaged_event`

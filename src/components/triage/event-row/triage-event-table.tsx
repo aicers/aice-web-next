@@ -1,6 +1,8 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
+
+import { cn } from "@/lib/utils";
 
 /**
  * Shared row/cell renderer for the Triage event table (#554).
@@ -66,6 +68,16 @@ export interface TriageEventRow {
    * {@link origAddr}.
    */
   respAddr?: string | null;
+  /**
+   * Deep link to the full Event Investigation view for this row's
+   * event (`/events/<token>`, already locale-resolved). Set only by
+   * the asset-detail surface (#666); the Story member surface leaves
+   * it undefined. Drives both the whole-row link affordance (when the
+   * table opts in via {@link TriageEventTableProps.rowLinkLabel}) and
+   * the trailing actions-column anchor the surface renders through
+   * {@link TriageEventTableProps.renderRowActions}.
+   */
+  investigateHref?: string;
   /**
    * Reserved per-row marker slot for #471. When present the table's
    * `renderProtectedByStoryMarker` callback is invoked with the
@@ -140,6 +152,15 @@ export interface TriageEventTableProps {
    * both undefined and the column collapses out.
    */
   renderRowActions?: (row: TriageEventRow) => ReactNode;
+  /**
+   * Asset-detail opt-in (#666). When supplied, rows carrying
+   * {@link TriageEventRow.investigateHref} become keyboard-operable
+   * links (`role="link"`, `tabIndex=0`, Enter/Space) that open the
+   * full Event Investigation view in a new tab; the string is the
+   * accessible name announced for the row-as-link. The Story member
+   * surface leaves this undefined and rows stay read-only.
+   */
+  rowLinkLabel?: string;
 }
 
 export function TriageEventTable({
@@ -147,6 +168,7 @@ export function TriageEventTable({
   labels,
   renderProtectedByStoryMarker,
   renderRowActions,
+  rowLinkLabel,
 }: TriageEventTableProps) {
   const showOrig = labels.origAddrColumn !== undefined;
   const showResp = labels.respAddrColumn !== undefined;
@@ -196,6 +218,7 @@ export function TriageEventTable({
             showOrig={showOrig}
             showResp={showResp}
             showActions={showActions}
+            rowLinkLabel={rowLinkLabel}
             renderProtectedByStoryMarker={renderProtectedByStoryMarker}
             renderRowActions={renderRowActions}
           />
@@ -210,6 +233,7 @@ interface TriageEventTableRowProps {
   showOrig: boolean;
   showResp: boolean;
   showActions: boolean;
+  rowLinkLabel?: string;
   renderProtectedByStoryMarker?: (props: { score: number }) => ReactNode;
   renderRowActions?: (row: TriageEventRow) => ReactNode;
 }
@@ -219,6 +243,7 @@ function TriageEventTableRow({
   showOrig,
   showResp,
   showActions,
+  rowLinkLabel,
   renderProtectedByStoryMarker,
   renderRowActions,
 }: TriageEventTableRowProps) {
@@ -230,10 +255,43 @@ function TriageEventTableRow({
     row.protectedByStory !== undefined && renderProtectedByStoryMarker
       ? renderProtectedByStoryMarker(row.protectedByStory)
       : null;
+  // Row-as-link (#666) is enabled only when the surface opted in AND
+  // this row carries a destination. The Story member surface passes
+  // no `rowLinkLabel`, so its rows keep their read-only `<tr>` exactly
+  // as before. A new browser tab is opened so the operator's triage
+  // state stays intact in the original tab.
+  const investigateHref = row.investigateHref;
+  const rowIsLink = rowLinkLabel !== undefined && investigateHref !== undefined;
+  const openInvestigation = () => {
+    if (typeof window !== "undefined" && investigateHref) {
+      window.open(investigateHref, "_blank", "noopener,noreferrer");
+    }
+  };
+  const linkProps = rowIsLink
+    ? {
+        role: "link",
+        tabIndex: 0,
+        "aria-label": rowLinkLabel,
+        onClick: openInvestigation,
+        onKeyDown: (event: KeyboardEvent<HTMLTableRowElement>) => {
+          // Activate on Enter/Space like a native link; `preventDefault`
+          // on Space stops the page from scrolling.
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openInvestigation();
+          }
+        },
+      }
+    : {};
   return (
     <tr
-      className="border-b border-border/30 last:border-0"
+      className={cn(
+        "border-b border-border/30 last:border-0",
+        rowIsLink &&
+          "cursor-pointer transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
+      )}
       data-testid="triage-event-row"
+      {...linkProps}
     >
       <td
         className="py-1.5 pr-2 font-mono text-xs"

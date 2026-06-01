@@ -20,6 +20,19 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// The asset-detail panel (#666) reads the active locale and resolves
+// `/events/<token>` deep links through next-intl. Mock both so the
+// triage tree renders without a real `NextIntlClientProvider` and the
+// next-intl client-navigation module (which trips vitest's ESM
+// resolver) never loads.
+vi.mock("next-intl", () => ({
+  useLocale: () => "en",
+  useTranslations: () => (key: string) => key,
+}));
+vi.mock("@/i18n/navigation", () => ({
+  getPathname: ({ href }: { href: string }) => href,
+}));
+
 const storyActionsMocks = vi.hoisted(() => ({
   fetchStoryDetail: vi.fn(),
   refreshTriageStories: vi.fn(),
@@ -107,6 +120,10 @@ const LABELS: TriageBaselineLabels = {
     kindColumn: "Kind",
     categoryColumn: "Category",
     scoreColumn: "Score",
+    investigateColumn: "Investigate",
+    investigateAction: "Open full investigation",
+    investigateTooltip: "Open the full investigation view in a new tab.",
+    rowInvestigateAriaLabel: "Open full investigation in a new tab",
     protectedByStoryMarker: {
       template: "Kept because of Story membership (score: {score})",
     },

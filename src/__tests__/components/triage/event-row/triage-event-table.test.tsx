@@ -12,8 +12,8 @@
  * here so future surfaces have a regression net.
  */
 
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   formatBaselineScore,
@@ -164,6 +164,144 @@ describe("TriageEventTable — story-member-shaped rows", () => {
     expect(dataRow.getByTestId("triage-event-row-resp-addr").textContent).toBe(
       "—",
     );
+  });
+});
+
+describe("TriageEventTable — investigate row link (#666)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function investigateRow(): TriageEventRow {
+    return {
+      key: "evt-1",
+      time: "2026-05-09 12:10:00",
+      kind: "HttpThreat",
+      category: "IMPACT",
+      baselineScore: 0.92,
+      investigateHref: "/events/abc123",
+    };
+  }
+
+  const ACTIONS_LABELS: TriageEventTableLabels = {
+    ...ASSET_LABELS,
+    actionsColumn: "Investigate",
+  };
+
+  function renderInvestigateAnchor(row: TriageEventRow) {
+    return row.investigateHref ? (
+      <a
+        href={row.investigateHref}
+        target="_blank"
+        rel="noreferrer"
+        aria-label="Open full investigation"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        data-testid="investigate-anchor"
+      >
+        open
+      </a>
+    ) : null;
+  }
+
+  it("makes the row a keyboard-operable link that opens a new tab on click", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(
+      <TriageEventTable
+        rows={[investigateRow()]}
+        labels={ASSET_LABELS}
+        rowLinkLabel="Open full investigation in a new tab"
+      />,
+    );
+
+    const row = screen.getByTestId("triage-event-row");
+    expect(row.getAttribute("role")).toBe("link");
+    expect(row.getAttribute("tabindex")).toBe("0");
+    expect(row.getAttribute("aria-label")).toBe(
+      "Open full investigation in a new tab",
+    );
+
+    fireEvent.click(row);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(
+      "/events/abc123",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("activates the row link on Enter and Space", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(
+      <TriageEventTable
+        rows={[investigateRow()]}
+        labels={ASSET_LABELS}
+        rowLinkLabel="Open full investigation in a new tab"
+      />,
+    );
+
+    const row = screen.getByTestId("triage-event-row");
+    fireEvent.keyDown(row, { key: "Enter" });
+    fireEvent.keyDown(row, { key: " " });
+    expect(open).toHaveBeenCalledTimes(2);
+
+    // An unrelated key must not navigate.
+    fireEvent.keyDown(row, { key: "a" });
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not open twice when the actions anchor is clicked (stopPropagation)", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(
+      <TriageEventTable
+        rows={[investigateRow()]}
+        labels={ACTIONS_LABELS}
+        rowLinkLabel="Open full investigation in a new tab"
+        renderRowActions={renderInvestigateAnchor}
+      />,
+    );
+
+    // The anchor is a real <a target="_blank"> — jsdom does not perform
+    // its navigation, but its click must not bubble to the row handler
+    // (which would window.open a second tab).
+    fireEvent.click(screen.getByTestId("investigate-anchor"));
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("leaves rows read-only when rowLinkLabel is absent (Story member surface)", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(
+      <TriageEventTable rows={[investigateRow()]} labels={ASSET_LABELS} />,
+    );
+
+    const row = screen.getByTestId("triage-event-row");
+    expect(row.hasAttribute("role")).toBe(false);
+    expect(row.hasAttribute("tabindex")).toBe(false);
+    fireEvent.click(row);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("leaves a row read-only when it carries no investigateHref", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const row: TriageEventRow = {
+      key: "evt-no-href",
+      time: "2026-05-09 12:10:00",
+      kind: "HttpThreat",
+      category: "IMPACT",
+      baselineScore: 0.92,
+    };
+    render(
+      <TriageEventTable
+        rows={[row]}
+        labels={ASSET_LABELS}
+        rowLinkLabel="Open full investigation in a new tab"
+      />,
+    );
+
+    const renderedRow = screen.getByTestId("triage-event-row");
+    expect(renderedRow.hasAttribute("role")).toBe(false);
+    fireEvent.click(renderedRow);
+    expect(open).not.toHaveBeenCalled();
   });
 });
 

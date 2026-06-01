@@ -27,6 +27,19 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// The asset-detail panel (#666) reads the active locale and resolves
+// `/events/<token>` deep links through next-intl. Mock both so the
+// triage tree renders without a real `NextIntlClientProvider` and the
+// next-intl client-navigation module (which trips vitest's ESM
+// resolver) never loads.
+vi.mock("next-intl", () => ({
+  useLocale: () => "en",
+  useTranslations: () => (key: string) => key,
+}));
+vi.mock("@/i18n/navigation", () => ({
+  getPathname: ({ href }: { href: string }) => href,
+}));
+
 // Tier 2 fetches go through a "use server" action that crosses to the
 // BFF. The component-level tests mock the boundary so the assertions
 // can pin the call shape and the cache write without standing up a
@@ -232,6 +245,10 @@ const LABELS: TriageShellLabels = {
       kindColumn: "Kind",
       categoryColumn: "Category",
       scoreColumn: "Score",
+      investigateColumn: "Investigate",
+      investigateAction: "Open full investigation",
+      investigateTooltip: "Open the full investigation view in a new tab.",
+      rowInvestigateAriaLabel: "Open full investigation in a new tab",
       protectedByStoryMarker: {
         template: "Kept because of Story membership (score: {score})",
       },
@@ -2086,9 +2103,10 @@ describe("TriageShell — Tier 2 only Learning method static section (#498)", ()
     ).toBeTruthy();
     // The focus events come from the fetch result, not the corpus —
     // exactly one event was returned, so the events table has one row.
-    const focusRows = within(pivotFocus)
-      .getAllByRole("row")
-      .filter((row) => row.querySelector("td") !== null);
+    // The asset-detail surface opts each row into the #666 row-as-link
+    // affordance (`role="link"`), so the row no longer carries the
+    // implicit table `row` role — query by the stable per-row testid.
+    const focusRows = within(pivotFocus).getAllByTestId("triage-event-row");
     expect(focusRows).toHaveLength(1);
   });
 

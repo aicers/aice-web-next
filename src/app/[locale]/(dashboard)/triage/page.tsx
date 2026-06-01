@@ -220,6 +220,10 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         kindColumn: t("assetDetail.kindColumn"),
         categoryColumn: t("assetDetail.categoryColumn"),
         scoreColumn: t("assetDetail.scoreColumn"),
+        investigateColumn: t("assetDetail.investigateColumn"),
+        investigateAction: t("assetDetail.investigateAction"),
+        investigateTooltip: t("assetDetail.investigateTooltip"),
+        rowInvestigateAriaLabel: t("assetDetail.rowInvestigateAriaLabel"),
         protectedByStoryMarker: {
           template: t.raw(
             "assetDetail.protectedByStoryMarkerTemplate",
