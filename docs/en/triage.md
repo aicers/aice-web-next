@@ -16,7 +16,6 @@ built-in roles Security Monitor, Tenant Administrator, and System
 Administrator receive this permission by default. Custom roles
 that grant `triage:read` also qualify.
 
-<!-- TODO(#667): re-capture in dark mode after #197 de-border (cards now flat, no border) -->
 ![Triage page](../assets/triage-overview-en.png)
 
 ## Layout
@@ -1179,7 +1178,6 @@ loaded corpus by pivot dimension so the operator can see what else
 the focused asset has in common with the rest of the slice — without
 issuing any additional network requests.
 
-<!-- TODO(#667): re-capture in dark mode after #197 de-border (panel now flat, no border) -->
 ![Pivot panel](../assets/triage-pivot-en.png)
 
 ### Pivot dimensions
