@@ -96,6 +96,7 @@ import {
   type EncodedTabFilter,
   type PivotExtras,
 } from "@/lib/detection/filter-url";
+import { writeLastDetectionUrl } from "@/lib/detection/last-detection-url";
 import {
   DEFAULT_PAGE_SIZE,
   type PaginationState,
@@ -947,7 +948,15 @@ export function DetectionTabsShell({
     const hash = window.location.hash;
     const url = qs ? `${pathname}?${qs}${hash}` : `${pathname}${hash}`;
     window.history.replaceState(window.history.state, "", url);
-  }, [activeTabId, tabs, pathname]);
+    // Issue #668: mirror the active tab's query string into a scope-
+    // isolated sessionStorage slot so the sidebar Detection link can
+    // reconstruct `/detection?<qs>` on an SPA return — hitting the same
+    // SSR restore path F5 already uses. The hash (`?event=` rides in
+    // `qs`, the Quick peek hash does not) is intentionally dropped: a
+    // return restores the active tab + results, not the inspector
+    // scroll anchor. `null` fingerprint → no-op (scope isolation).
+    writeLastDetectionUrl(qs, scopeFingerprint);
+  }, [activeTabId, tabs, pathname, scopeFingerprint]);
 
   const canAdd = canAddTabFn(tabs);
 

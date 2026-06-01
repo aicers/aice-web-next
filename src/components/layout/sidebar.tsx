@@ -17,6 +17,7 @@ import {
 import { useTranslations } from "next-intl";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useDetectionReturnNav } from "@/hooks/use-detection-return-nav";
 import { usePathname } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "../theme-toggle";
@@ -57,6 +58,7 @@ export function Sidebar({
 }: SidebarProps) {
   const t = useTranslations("nav");
   const pathname = usePathname();
+  const handleDetectionNav = useDetectionReturnNav();
 
   return (
     <TooltipProvider>
@@ -91,6 +93,9 @@ export function Sidebar({
               label={t(item.key)}
               active={pathname.startsWith(item.href)}
               collapsed={collapsed}
+              onClick={
+                item.key === "detection" ? handleDetectionNav : undefined
+              }
             />
           ))}
           {/*

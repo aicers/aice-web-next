@@ -23,6 +23,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useDetectionReturnNav } from "@/hooks/use-detection-return-nav";
 import { usePathname } from "@/i18n/navigation";
 import type { EffectiveCustomerScope } from "@/lib/auth/customer-scope";
 import { ThemeToggle } from "../theme-toggle";
@@ -67,6 +68,7 @@ export function MobileHeader({
 }: MobileHeaderProps) {
   const t = useTranslations("nav");
   const pathname = usePathname();
+  const handleDetectionNav = useDetectionReturnNav();
 
   return (
     <>
@@ -116,6 +118,9 @@ export function MobileHeader({
                   icon={item.icon}
                   label={t(item.key)}
                   active={pathname.startsWith(item.href)}
+                  onClick={
+                    item.key === "detection" ? handleDetectionNav : undefined
+                  }
                 />
               ))}
               {aimerAnalysisHref ? (

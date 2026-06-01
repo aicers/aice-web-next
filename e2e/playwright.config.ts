@@ -191,6 +191,12 @@ export default defineConfig({
             // cannot leak into unrelated specs on other workers.
             "detection-screenshots.spec.ts",
             "detection-manual-dynamic-screenshots.spec.ts",
+            // The return-nav suite (#668) registers a populated `eventList`
+            // stub keyed on the default `first: 50` page size, the same key
+            // `detection.spec.ts` registers an empty stub on. Under the
+            // parallel pool the two clobber each other (last-registered-wins),
+            // so run it in its own chained project below.
+            "detection-return-nav.spec.ts",
             // Node specs share `nodeStatusList` catch-all stubs against the
             // global mock-server registry; running them in parallel across
             // workers lets one spec's catch-all hijack another spec's
@@ -340,6 +346,15 @@ export default defineConfig({
           name: "detection-screenshots-dynamic",
           testMatch: ["detection-manual-dynamic-screenshots.spec.ts"],
           dependencies: ["detection-screenshots-static"],
+          use: { ...devices["Desktop Chrome"] },
+        },
+        // #668 SPA return-nav regression. Chained last so its populated
+        // `first: 50` `eventList` stub never overlaps `detection.spec.ts`'s
+        // empty stub on the same key in the parallel pool.
+        {
+          name: "detection-return-nav",
+          testMatch: ["detection-return-nav.spec.ts"],
+          dependencies: ["detection-screenshots-dynamic"],
           use: { ...devices["Desktop Chrome"] },
         },
       ],
