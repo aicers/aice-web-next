@@ -184,6 +184,14 @@ const LABELS: TriageShellLabels = {
     invalidRange: "Invalid range",
     durationCapHint: "Too long",
     lookbackHint: "Too far back",
+    presetsLegend: "Quick ranges",
+    presets: {
+      "1d": "Last 1 day",
+      "3d": "Last 3 days",
+      "1w": "Last 1 week",
+      "2w": "Last 2 weeks",
+      "1m": "Last 1 month",
+    },
   },
   modeToggle: {
     legend: "Mode",
@@ -613,6 +621,78 @@ describe("TriageShell — period-change confirmation", () => {
     expect(replaceMock).toHaveBeenCalledTimes(1);
     expect(replaceMock.mock.calls[0][0]).toContain("start=");
     expect(replaceMock.mock.calls[0][0]).toContain("end=");
+  });
+});
+
+describe("TriageShell — period quick-range presets", () => {
+  it("commits the preset window immediately when the trail has no dimension steps", () => {
+    renderShell();
+    // "Last 1 day" is the first quick-range chip. Clicking it applies a
+    // 24-hour window ending at the frozen `now` without a manual submit.
+    fireEvent.click(screen.getByRole("button", { name: "Last 1 day" }));
+    expect(
+      screen.queryByRole("alertdialog", { name: "Discard pivot trail?" }),
+    ).toBeNull();
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    const url = replaceMock.mock.calls[0][0] as string;
+    const params = new URLSearchParams(url.slice(url.indexOf("?")));
+    expect(params.get("end")).toBe(FROZEN_NOW.toISOString());
+    expect(params.get("start")).toBe(
+      new Date(FROZEN_NOW.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+    );
+  });
+
+  it("fills the start/end inputs to match the picked preset window", () => {
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "Last 1 week" }));
+    // The 1-week chip ends at the frozen now and starts 7 days back; the
+    // datetime-local inputs are rendered in local time, so compare
+    // against the same `isoToLocalInput` mapping the picker uses.
+    const expectedEnd = FROZEN_NOW;
+    const expectedStart = new Date(
+      FROZEN_NOW.getTime() - 7 * 24 * 60 * 60 * 1000,
+    );
+    const toLocal = (d: Date) => {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return (
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+        `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+      );
+    };
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe(
+      toLocal(expectedStart),
+    );
+    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe(
+      toLocal(expectedEnd),
+    );
+  });
+
+  it("routes through the period-change confirmation modal when a pivot trail exists", () => {
+    renderShell();
+    pivotByHost();
+    fireEvent.click(screen.getByRole("button", { name: "Last 1 month" }));
+    // A dimension step is on the trail, so the preset must NOT commit
+    // directly — it surfaces the same discard confirmation a manual
+    // submit would.
+    expect(
+      screen.getByRole("alertdialog", { name: "Discard pivot trail?" }),
+    ).toBeTruthy();
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("renders preset buttons as type=button so they do not submit the picker form", () => {
+    renderShell();
+    for (const label of [
+      "Last 1 day",
+      "Last 3 days",
+      "Last 1 week",
+      "Last 2 weeks",
+      "Last 1 month",
+    ]) {
+      expect(
+        screen.getByRole("button", { name: label }).getAttribute("type"),
+      ).toBe("button");
+    }
   });
 });
 

@@ -2103,7 +2103,15 @@
       "apply": "Apply",
       "invalidRange": "End must be after start.",
       "durationCapHint": "Period cannot exceed 30 days.",
-      "lookbackHint": "Start cannot be earlier than 180 days ago."
+      "lookbackHint": "Start cannot be earlier than 180 days ago.",
+      "presetsLegend": "Quick ranges",
+      "presets": {
+        "1d": "Last 1 day",
+        "3d": "Last 3 days",
+        "1w": "Last 1 week",
+        "2w": "Last 2 weeks",
+        "1m": "Last 1 month"
+      }
     },
     "modeToggle": {
       "legend": "Triage mode",

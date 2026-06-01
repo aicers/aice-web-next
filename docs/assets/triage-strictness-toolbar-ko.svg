@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif, AppleSDGothicNeo, NotoSansKR" role="img" aria-labelledby="title desc">
-  <title id="title">엄격도 슬라이더가 포함된 트리아지 툴바 (와이어프레임)</title>
-  <desc id="desc">트리아지 툴바 와이어프레임. 기간 선택기, 모드 토글, 범위 토글, 그리고 새로 추가된 엄격도 슬라이더를 보여 줍니다. 슬라이더는 느슨함에서 엄격함 순서로 다섯 개의 칩(전체, 상위 80%, 상위 50% (기본 선택), 상위 20%, 상위 5%)으로 구성된 라디오그룹이며, 각 칩에는 composeMenu 적용 전 후보 수를 알리는 "약 N" 미리보기가 함께 표시됩니다.</desc>
+  <title id="title">엄격도 슬라이더가 포함된 선별 툴바 (와이어프레임)</title>
+  <desc id="desc">선별 툴바 와이어프레임. 기간 선택기, 모드 토글, 범위 토글, 그리고 새로 추가된 엄격도 슬라이더를 보여 줍니다. 슬라이더는 느슨함에서 엄격함 순서로 다섯 개의 칩(전체, 상위 80%, 상위 50% (기본 선택), 상위 20%, 상위 5%)으로 구성된 라디오그룹이며, 각 칩에는 composeMenu 적용 전 후보 수를 알리는 "약 N" 미리보기가 함께 표시됩니다.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -23,7 +23,7 @@
   <rect class="bg" width="720" height="220"/>
 
   <!-- Header -->
-  <text x="24" y="28" class="text-title">트리아지</text>
+  <text x="24" y="28" class="text-title">선별</text>
   <text x="24" y="46" class="text-hint">기간 2026-05-08 00:00 → 2026-05-09 00:00 · 고객 1명 · 마지막 갱신 6분 전</text>
 
   <!-- Period picker -->
@@ -46,7 +46,7 @@
   <text x="556" y="78" class="text-legend">범위</text>
   <rect class="chip-bar" x="556" y="86" width="140" height="28" rx="4" ry="4"/>
   <rect class="chip-active" x="560" y="90" width="78" height="20" rx="3" ry="3"/>
-  <text x="568" y="104" class="text-chip-active">트리아지만</text>
+  <text x="568" y="104" class="text-chip-active">선별만</text>
   <text x="644" y="104" class="text-chip-inactive">전체</text>
 
   <!-- Strictness slider -->

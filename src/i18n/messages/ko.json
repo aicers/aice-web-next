@@ -84,7 +84,7 @@
     "event": "이벤트",
     "events": "이벤트",
     "detection": "탐지",
-    "triage": "분류",
+    "triage": "선별",
     "report": "보고서",
     "nodes": "노드",
     "settings": "설정",
@@ -97,8 +97,8 @@
     "profile": "프로필",
     "customers": "고객",
     "policies": "정책",
-    "triageExclusions": "트리아지 예외",
-    "triageExclusionsGlobal": "트리아지 예외 (전역)",
+    "triageExclusions": "선별 예외",
+    "triageExclusionsGlobal": "선별 예외 (전역)",
     "accountStatus": "계정 현황",
     "aimerIntegration": "Aimer 연동"
   },
@@ -1217,7 +1217,7 @@
       "nodes": "노드",
       "services": "서비스",
       "system-settings": "시스템 설정",
-      "triage": "분류"
+      "triage": "선별"
     },
     "permissionLabels": {
       "accounts:read": "읽기",
@@ -1674,7 +1674,7 @@
         "attackKind": "공격 유형",
         "category": "카테고리",
         "confidence": "신뢰도",
-        "triage": "분류",
+        "triage": "선별",
         "source": "출발지",
         "destination": "목적지",
         "sensor": "센서",
@@ -1870,8 +1870,8 @@
       "category": "분류",
       "level": "수준",
       "confidence": "신뢰도",
-      "triageScores": "트리아지 점수",
-      "noTriage": "트리아지 점수 없음",
+      "triageScores": "선별 점수",
+      "noTriage": "선별 점수 없음",
       "aimerTitle": "Aimer로 분석",
       "aimerBody": "이 이벤트의 AI 분석을 aimer-web에서 새 탭으로 엽니다. 처음 방문 시 aimer-web에 로그인이 요구되며, 결과 페이지는 그 즉시 열립니다.",
       "aimerCta": "Aimer로 분석 →",
@@ -2071,10 +2071,10 @@
     }
   },
   "triage": {
-    "title": "트리아지",
+    "title": "선별",
     "intro": "선택한 기간의 이벤트에 대한 기준 점수입니다. 고객별 베이스라인 코퍼스(180일 보존)에서 읽으며, 30일의 기간 상한은 코퍼스 속성이 아닌 작업 창 선택입니다.",
     "errorBanner": "이 기간의 이벤트를 불러오지 못했습니다. 다른 기간을 시도해 주세요.",
-    "forbiddenBanner": "트리아지 결과를 볼 권한이 없습니다.",
+    "forbiddenBanner": "선별 결과를 볼 권한이 없습니다.",
     "forbiddenScopeBanner": "할당된 고객이 없습니다. 관리자에게 문의하세요.",
     "truncatedBannerTemplate": "일부만 표시: 기간의 {loaded}건 표시 ({cap}건에서 잘림).",
     "storyProtectedTruncatedBannerTemplate": "스토리 멤버 {dropped}건이 잘렸습니다 — 보호된 스토리 이벤트가 화면 표시 한도를 초과했습니다.",
@@ -2103,18 +2103,26 @@
       "apply": "적용",
       "invalidRange": "종료는 시작보다 뒤여야 합니다.",
       "durationCapHint": "기간은 30일을 넘을 수 없습니다.",
-      "lookbackHint": "시작은 180일 이전보다 빠를 수 없습니다."
+      "lookbackHint": "시작은 180일 이전보다 빠를 수 없습니다.",
+      "presetsLegend": "빠른 선택",
+      "presets": {
+        "1d": "최근 1일",
+        "3d": "최근 3일",
+        "1w": "최근 1주",
+        "2w": "최근 2주",
+        "1m": "최근 1개월"
+      }
     },
     "modeToggle": {
-      "legend": "트리아지 모드",
+      "legend": "선별 모드",
       "baseline": "기준",
       "policies": "내 정책 적용",
-      "policiesUnavailable": "트리아지 정책 출시 후 사용할 수 있습니다."
+      "policiesUnavailable": "선별 정책 출시 후 사용할 수 있습니다."
     },
     "funnel": {
       "title": "퍼널",
       "detected": "탐지",
-      "triaged": "트리아지",
+      "triaged": "선별",
       "triagedHint": "케이던스 및 제외 규칙을 통과한 행. 슬라이더와 무관합니다.",
       "shown": "표시",
       "shownHint": "슬라이더의 할당량과 병합 캡을 거쳐 실제로 화면에 노출되는 행. 슬라이더에 따라 변합니다.",
@@ -2126,19 +2134,19 @@
       "empty": "이 기간 동안 기준 규칙에 일치하는 자산이 없습니다.",
       "addressColumn": "출발지",
       "scoreColumn": "점수",
-      "triagedColumn": "트리아지",
+      "triagedColumn": "선별",
       "detectedColumn": "탐지",
       "detectedOver30dHint": "(최근 30일 기준)",
-      "rowDetailsTemplate": "{address} — 점수 {score}, {detected}건 중 {triaged}건 트리아지"
+      "rowDetailsTemplate": "{address} — 점수 {score}, {detected}건 중 {triaged}건 선별"
     },
     "assetDetail": {
       "title": "자산 상세",
       "pivotFocusTitle": "피벗 포커스",
       "customerLabel": "고객사",
       "emptySelection": "이벤트를 보려면 자산을 선택하세요.",
-      "emptyEvents": "표시할 트리아지 이벤트가 없습니다.",
+      "emptyEvents": "표시할 선별 이벤트가 없습니다.",
       "scoreLabel": "점수",
-      "triagedLabel": "트리아지",
+      "triagedLabel": "선별",
       "detectedLabel": "탐지",
       "eventsHeading": "이벤트",
       "timeColumn": "시각",
@@ -2299,7 +2307,7 @@
     },
     "scopeToggle": {
       "legend": "피벗 범위",
-      "tier1": "트리아지된 이벤트만",
+      "tier1": "선별된 이벤트만",
       "tier2": "모든 탐지 이벤트",
       "tier1Hint": "기준 규칙을 통과한 이벤트(적재된 코퍼스)만 대상으로 피벗합니다.",
       "tier2Hint": "서버 필터 차원을 클릭하면 새 조회가 발생합니다. 큰 결과는 사전 확인을 요청합니다."
@@ -2460,7 +2468,7 @@
     }
   },
   "triagePolicies": {
-    "title": "트리아지 정책",
+    "title": "선별 정책",
     "subtitle": "고객별로 적용되는 사용자 정의 매칭 규칙입니다.",
     "customer": "고객",
     "selectCustomer": "고객을 선택하세요",
@@ -2471,7 +2479,7 @@
     "cancel": "취소",
     "loading": "불러오는 중…",
     "error": "오류가 발생했습니다. 다시 시도해 주세요.",
-    "noResults": "이 고객에 등록된 트리아지 정책이 없습니다.",
+    "noResults": "이 고객에 등록된 선별 정책이 없습니다.",
     "name": "이름",
     "ruleCounts": "규칙",
     "ruleCountsValue": "{packetAttr} attr · {confidence} confidence · {response} response",
@@ -2480,14 +2488,14 @@
     "packetAttrHelp": "packet_attr 규칙 JSON 배열입니다. IP 리터럴만 허용됩니다(value_kind=ipaddr); CIDR은 허용되지 않습니다. 범위 cmp_kind(open_range / close_range / left_open_range / right_open_range 및 not_* 변형)는 서버에서 검증됩니다.",
     "confidence": "신뢰도 규칙",
     "response": "응답 규칙",
-    "deleteConfirm": "트리아지 정책 '{name}'을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+    "deleteConfirm": "선별 정책 '{name}'을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
     "invalidJson": "{field}: 올바른 JSON이 아닙니다",
     "notAnArray": "{field}: JSON 배열이어야 합니다"
   },
   "triageExclusions": {
-    "globalTitle": "전역 트리아지 예외",
+    "globalTitle": "전역 선별 예외",
     "globalSubtitle": "모든 활성 고객에 적용됩니다. 향후 카덴스 틱에서 즉시 반영되며, 전역 추가 시 고객별 팬아웃이 완료되면 과거 코퍼스 행도 소급하여 삭제됩니다.",
-    "customerTitle": "트리아지 예외",
+    "customerTitle": "선별 예외",
     "customerSubtitle": "고객별 예외 규칙입니다. 새 규칙은 즉시 적용되며 카덴스 어드바이저리 락 보호 아래 일치하는 코퍼스 행을 제거합니다.",
     "customer": "고객",
     "selectCustomer": "고객을 선택하세요",
@@ -2503,7 +2511,7 @@
     "save": "저장",
     "loading": "불러오는 중…",
     "error": "오류가 발생했습니다. 다시 시도해 주세요.",
-    "noResults": "등록된 트리아지 예외가 없습니다.",
+    "noResults": "등록된 선별 예외가 없습니다.",
     "kindIpAddress": "IP 주소",
     "kindHostname": "호스트명",
     "kindUri": "URI",

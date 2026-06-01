@@ -78,6 +78,14 @@ notices that the rendered window differs from what was requested.
 The page defaults to a 24-hour window ending at the current time
 when no `start` / `end` is supplied.
 
+Instead of setting start/end by hand, **Quick ranges** chips apply a
+common window in one click — **Last 1 day / 3 days / 1 week /
+2 weeks / 1 month**. Picking a chip sets the end to now and the start
+that far back, applies immediately, and fills the start/end inputs to
+match. Every preset stays within the 30-day duration cap; **Last 1
+month** is exactly 30 days (the cap itself) — which is why no longer
+chip such as "3 months" is offered.
+
 ### Detected denominator and the 30-day retention floor
 
 The funnel's **Detected** number is read from `observed_event_meta`,
