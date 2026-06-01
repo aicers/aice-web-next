@@ -1,7 +1,12 @@
 "use client";
 
+import { ExternalLink } from "lucide-react";
+import { useLocale } from "next-intl";
+
 import { useTimezone } from "@/components/providers/timezone-provider";
 import { panelSurface } from "@/components/ui/panel-surface";
+import { getPathname } from "@/i18n/navigation";
+import { encodeEventLocator } from "@/lib/events/event-locator";
 import { formatDateTime } from "@/lib/format-date";
 import type { TriageAsset } from "@/lib/triage";
 import { cn } from "@/lib/utils";
@@ -41,6 +46,25 @@ export interface TriageAssetDetailLabels {
   categoryColumn: string;
   scoreColumn: string;
   /**
+   * Trailing actions-column header for the per-row investigate
+   * affordance (#666).
+   */
+  investigateColumn: string;
+  /**
+   * Accessible name / tooltip for the per-row investigate action
+   * button. New asset-detail copy — distinct from the Detection
+   * inspector's "open in this tab" wording because this surface opens
+   * a new tab.
+   */
+  investigateAction: string;
+  /** Hover/focus tooltip for the per-row investigate action button. */
+  investigateTooltip: string;
+  /**
+   * Accessible name announced for the whole row when it behaves as a
+   * link into the full Event Investigation view.
+   */
+  rowInvestigateAriaLabel: string;
+  /**
    * Story-protected row marker copy (#471 §3). Parameterized by
    * `{score}`; rendered as both `aria-label` and hover tooltip.
    */
@@ -70,12 +94,14 @@ export function TriageAssetDetailView({
   labels,
 }: TriageAssetDetailViewProps) {
   const timezone = useTimezone();
+  const locale = useLocale();
   const headerTitle = isPivotFocus ? labels.pivotFocusTitle : labels.title;
   const tableLabels: TriageEventTableLabels = {
     timeColumn: labels.timeColumn,
     kindColumn: labels.kindColumn,
     categoryColumn: labels.categoryColumn,
     scoreColumn: labels.scoreColumn,
+    actionsColumn: labels.investigateColumn,
   };
   const rows: ReadonlyArray<TriageEventRow> = asset
     ? asset.events.map((event) => ({
@@ -84,6 +110,7 @@ export function TriageAssetDetailView({
         kind: event.__typename,
         category: event.category ?? null,
         baselineScore: event.score,
+        investigateHref: buildInvestigateHref(event.id, locale),
         protectedByStory:
           event.protectedByStory === true ? { score: event.score } : undefined,
       }))
@@ -149,6 +176,26 @@ export function TriageAssetDetailView({
           <TriageEventTable
             rows={rows}
             labels={tableLabels}
+            rowLinkLabel={labels.rowInvestigateAriaLabel}
+            renderRowActions={(row) =>
+              row.investigateHref ? (
+                <a
+                  href={row.investigateHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={labels.investigateAction}
+                  title={labels.investigateTooltip}
+                  // The row itself is a link (opens a new tab); stop the
+                  // button's own activation from bubbling to the row
+                  // handler so a click/Enter here opens exactly one tab.
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex size-7 items-center justify-center rounded-sm focus-visible:ring-2 focus-visible:outline-none"
+                >
+                  <ExternalLink className="size-3.5" aria-hidden="true" />
+                </a>
+              ) : null
+            }
             renderProtectedByStoryMarker={renderProtectedByStoryMarker(
               labels.protectedByStoryMarker,
             )}
@@ -157,6 +204,28 @@ export function TriageAssetDetailView({
       </div>
     </section>
   );
+}
+
+/**
+ * Build the locale-resolved `/events/<token>` deep link for a triage
+ * event so the row-as-link and the actions-column anchor both target
+ * the same full Event Investigation surface the Detection menu opens
+ * (#666). Returns `undefined` only on the defensive path where the
+ * event has no encodable `id` (every curated `Event` subtype carries
+ * one in practice), in which case the affordance is omitted for that
+ * row rather than rendered as a dead link.
+ *
+ * Unlike the Detection inspector, no `returnTo` is threaded — the link
+ * opens in a new tab, so triage state stays intact in the original tab
+ * and there is nothing to return to.
+ */
+function buildInvestigateHref(id: string, locale: string): string | undefined {
+  const token = encodeEventLocator({ id });
+  if (!token) return undefined;
+  return getPathname({
+    href: `/events/${encodeURIComponent(token)}`,
+    locale,
+  });
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

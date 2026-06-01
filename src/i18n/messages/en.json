@@ -2145,6 +2145,10 @@
       "kindColumn": "Kind",
       "categoryColumn": "Category",
       "scoreColumn": "Score",
+      "investigateColumn": "Investigate",
+      "investigateAction": "Open full investigation",
+      "investigateTooltip": "Open the full investigation view for this event in a new tab.",
+      "rowInvestigateAriaLabel": "Open full investigation for this event in a new tab",
       "protectedByStoryMarkerTemplate": "Kept because of Story membership (score: {score})"
     },
     "pivotPanel": {

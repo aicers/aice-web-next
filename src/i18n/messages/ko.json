@@ -2145,6 +2145,10 @@
       "kindColumn": "종류",
       "categoryColumn": "카테고리",
       "scoreColumn": "점수",
+      "investigateColumn": "조사",
+      "investigateAction": "전체 조사 열기",
+      "investigateTooltip": "이 이벤트의 전체 조사 화면을 새 탭에서 엽니다.",
+      "rowInvestigateAriaLabel": "이 이벤트의 전체 조사를 새 탭에서 엽니다",
       "protectedByStoryMarkerTemplate": "스토리 멤버십으로 유지된 이벤트 (점수: {score})"
     },
     "pivotPanel": {
