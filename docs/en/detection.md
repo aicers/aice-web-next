@@ -324,6 +324,18 @@ navigation does not lose your work:
   Refresh stays disabled for a tab in the pre-query empty
   state (matching the `+`-affordance "no auto-run" rule), so
   the first query after rehydrate always goes through Apply.
+- **In-app return** — leaving Detection for another top-level
+  menu (Dashboard, Event, …) and clicking **Detection** again
+  in the sidebar restores the active tab's filter and results,
+  the same as a browser reload. The bare `/detection` link
+  drops the active tab's `?f=…&tab=…`, so the sidebar
+  reconstructs the last Detection URL it observed for your
+  scope and routes there — re-running the active tab's query
+  on return instead of opening a fresh default tab. This
+  last-URL hint lives in `sessionStorage` under the same
+  `(account, customer)` scope as the tab list, so it never
+  carries one scope's filter into another, and a Cmd/Ctrl- or
+  middle-click still opens the bare route in a new tab.
 
 Because shareable URL state is narrower than private session
 state, the split is documented in the persistence module so

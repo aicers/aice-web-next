@@ -177,6 +177,11 @@ export default defineConfig({
             // flow — the CSRF-header regression guard reads
             // `document.cookie` to seed the Double-Submit fixture.
             "src/__tests__/lib/aimer/phase2/manual-send-client.test.ts",
+            // Issue #668: sidebar Detection-link return interception —
+            // a plain left-click routes to the scope-stored last
+            // Detection URL while modifier-clicks fall through. Needs a
+            // real DOM because it renders an anchor and fires clicks.
+            "src/__tests__/hooks/use-detection-return-nav.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -228,6 +233,7 @@ export default defineConfig({
             "src/__tests__/lib/triage/use-tier2-pivot.test.ts",
             "src/__tests__/lib/aimer/phase2/transport-client.test.ts",
             "src/__tests__/lib/aimer/phase2/manual-send-client.test.ts",
+            "src/__tests__/hooks/use-detection-return-nav.test.tsx",
           ],
         },
       },

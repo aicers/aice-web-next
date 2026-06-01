@@ -21,6 +21,14 @@ interface SidebarItemProps {
    * whose target is an absolute bridge URL, not an internal route.
    */
   external?: boolean;
+  /**
+   * Optional click handler for the in-app `Link` (ignored when
+   * `external`). The Detection item uses this to intercept a plain
+   * left-click and reconstruct the last Detection URL on an SPA return
+   * (#668); calling `preventDefault()` lets it route elsewhere while
+   * leaving modifier-clicks (open-in-new-tab) on the bare `href`.
+   */
+  onClick?: React.MouseEventHandler<HTMLAnchorElement>;
 }
 
 export function SidebarItem({
@@ -30,6 +38,7 @@ export function SidebarItem({
   active = false,
   collapsed = false,
   external = false,
+  onClick,
 }: SidebarItemProps) {
   const className = cn(
     "group relative flex h-12 items-center gap-3 px-4 text-base font-medium transition-colors",
@@ -70,7 +79,7 @@ export function SidebarItem({
       {inner}
     </a>
   ) : (
-    <Link href={href} className={className}>
+    <Link href={href} className={className} onClick={onClick}>
       {inner}
     </Link>
   );
