@@ -156,7 +156,7 @@ describe("QuickPeekInspector", () => {
         event={httpThreat()}
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc123"
+        investigateHref="/detection/events/abc123"
         onClose={() => {}}
       />,
     );
@@ -185,7 +185,7 @@ describe("QuickPeekInspector", () => {
         event={httpThreat()}
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc123?returnTo=%2Fdetection"
+        investigateHref="/detection/events/abc123?returnTo=%2Fdetection"
         onClose={() => {}}
       />,
     );
@@ -193,7 +193,7 @@ describe("QuickPeekInspector", () => {
     // The action must render as an <a href="...">, not a <button>
     // — so Cmd+click and middle-click open a new browser tab per
     // the acceptance requirements.
-    expect(html).toMatch(/<a[^>]+href="\/events\/abc123/);
+    expect(html).toMatch(/<a[^>]+href="\/detection\/events\/abc123/);
     expect(html).toContain("Open full investigation");
   });
 
@@ -229,7 +229,7 @@ describe("QuickPeekInspector", () => {
         event={httpThreat()}
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc123"
+        investigateHref="/detection/events/abc123"
         onClose={() => {}}
       />,
     );
@@ -249,7 +249,7 @@ describe("QuickPeekInspector", () => {
         event={httpThreat({ method: "", uri: "" })}
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc123"
+        investigateHref="/detection/events/abc123"
         onClose={() => {}}
       />,
     );
@@ -292,7 +292,7 @@ describe("QuickPeekInspector", () => {
         }
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc123"
+        investigateHref="/detection/events/abc123"
         onClose={() => {}}
       />,
     );
@@ -338,7 +338,7 @@ describe("QuickPeekInspector", () => {
         }
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc123"
+        investigateHref="/detection/events/abc123"
         onClose={() => {}}
       />,
     );
@@ -511,7 +511,7 @@ describe("QuickPeekInspector", () => {
           event={event}
           labels={labels()}
           locale="en"
-          investigateHref="/events/token"
+          investigateHref="/detection/events/token"
           onClose={() => {}}
         />,
       );
@@ -525,7 +525,7 @@ describe("QuickPeekInspector", () => {
         event={httpThreat()}
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc"
+        investigateHref="/detection/events/abc"
         onClose={() => {}}
       />,
     );
@@ -548,7 +548,7 @@ describe("QuickPeekInspector", () => {
         event={httpThreat()}
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc"
+        investigateHref="/detection/events/abc"
         onClose={() => {}}
       />,
     );
@@ -592,7 +592,7 @@ describe("QuickPeekInspector", () => {
         }
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc"
+        investigateHref="/detection/events/abc"
         onClose={() => {}}
       />,
     );
@@ -633,7 +633,7 @@ describe("QuickPeekInspector", () => {
         }
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc123"
+        investigateHref="/detection/events/abc123"
         onClose={() => {}}
       />,
     );
@@ -657,7 +657,7 @@ describe("QuickPeekInspector", () => {
         event={httpThreat()}
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc"
+        investigateHref="/detection/events/abc"
         onClose={() => {}}
       />,
     );
@@ -700,7 +700,7 @@ describe("QuickPeekInspector", () => {
         }
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc123"
+        investigateHref="/detection/events/abc123"
         onClose={() => {}}
       />,
     );

@@ -88,7 +88,7 @@ describe("EventInvestigationPage", () => {
   it("returns null when no session is present", async () => {
     mockGetCurrentSession.mockResolvedValue(null);
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     const result = await Page({
@@ -115,7 +115,7 @@ describe("EventInvestigationPage", () => {
       },
     });
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     await Page({
@@ -133,7 +133,7 @@ describe("EventInvestigationPage", () => {
     mockGetCurrentSession.mockResolvedValue(validSession);
     mockRequirePermission.mockResolvedValue(undefined);
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     const result = await Page({
@@ -148,7 +148,7 @@ describe("EventInvestigationPage", () => {
     mockGetCurrentSession.mockResolvedValue(validSession);
     mockRequirePermission.mockResolvedValue(undefined);
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     // Payloads that pass JSON validation but violate the
@@ -177,7 +177,7 @@ describe("EventInvestigationPage", () => {
     mockRequirePermission.mockResolvedValue(undefined);
     mockFetchEventByLocator.mockResolvedValue({ status: "zero" });
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     const result = await Page({
@@ -192,7 +192,7 @@ describe("EventInvestigationPage", () => {
     mockRequirePermission.mockResolvedValue(undefined);
     mockFetchEventByLocator.mockRejectedValue(new Error("boom"));
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     const result = await Page({
@@ -219,7 +219,7 @@ describe("EventInvestigationPage", () => {
       },
     });
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     const result = await Page({
@@ -246,7 +246,7 @@ describe("EventInvestigationPage", () => {
       },
     });
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     const result = await Page({
@@ -273,7 +273,7 @@ describe("EventInvestigationPage", () => {
       },
     });
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     const result = await Page({
@@ -304,7 +304,7 @@ describe("EventInvestigationPage", () => {
       },
     });
     const Page = (
-      await import("@/app/[locale]/(dashboard)/events/[token]/page")
+      await import("@/app/[locale]/(dashboard)/detection/events/[token]/page")
     ).default;
 
     const result = await Page({

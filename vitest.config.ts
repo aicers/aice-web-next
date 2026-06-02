@@ -158,7 +158,7 @@ export default defineConfig({
             // the DOM.
             "src/__tests__/components/triage/event-row/triage-event-table.test.tsx",
             // Issue #666: asset-detail deep-link wiring — the panel
-            // threads each event's `id` into a `/events/<token>` link
+            // threads each event's `id` into a `/detection/events/<token>` link
             // and the row + action anchor open it in a new tab. Real
             // DOM is required for the click/keyboard navigation and the
             // anchor `stopPropagation` contract.

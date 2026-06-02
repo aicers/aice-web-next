@@ -2,7 +2,7 @@
  * Asset-detail deep-link wiring (#666).
  *
  * The asset-detail panel threads each event's stable `id` into a
- * `/events/<token>` deep link so an operator can jump from a triage
+ * `/detection/events/<token>` deep link so an operator can jump from a triage
  * row straight into the full Event Investigation view — both by
  * clicking the row (opens a new tab) and via the explicit per-row
  * action button. These tests pin (a) the token is built from
@@ -23,7 +23,7 @@ import type { TriageAsset } from "@/lib/triage";
 
 // `getPathname` is locale-prefixing; the asset panel only needs a
 // deterministic, passthrough resolution here so the assertion can
-// compare against the raw `/events/<token>` href.
+// compare against the raw `/detection/events/<token>` href.
 vi.mock("next-intl", () => ({
   useLocale: () => "en",
 }));
@@ -85,7 +85,7 @@ describe("TriageAssetDetailView — investigate deep link (#666)", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the actions column and an anchor to the encoded /events token", () => {
+  it("renders the actions column and an anchor to the encoded /detection/events token", () => {
     render(<TriageAssetDetailView asset={asset()} labels={LABELS} />);
 
     const headers = screen
@@ -98,7 +98,7 @@ describe("TriageAssetDetailView — investigate deep link (#666)", () => {
       screen.getByTestId("triage-event-row-actions"),
     ).getByRole("link", { name: "Open full investigation" });
     expect(anchor.getAttribute("href")).toBe(
-      `/events/${encodeURIComponent(token as string)}`,
+      `/detection/events/${encodeURIComponent(token as string)}`,
     );
     expect(anchor.getAttribute("target")).toBe("_blank");
     expect(anchor.getAttribute("rel")).toBe("noreferrer");
@@ -111,7 +111,7 @@ describe("TriageAssetDetailView — investigate deep link (#666)", () => {
     const token = encodeEventLocator({ id: "event-id-1" });
     fireEvent.click(screen.getByTestId("triage-event-row"));
     expect(open).toHaveBeenCalledWith(
-      `/events/${encodeURIComponent(token as string)}`,
+      `/detection/events/${encodeURIComponent(token as string)}`,
       "_blank",
       "noopener,noreferrer",
     );

@@ -372,7 +372,7 @@ describe("AimerBanner – force-flow arming via ?aimerForce=1", () => {
     window.history.replaceState(
       window.history.state,
       "",
-      "/events/12345?aimerForce=1&keep=me",
+      "/detection/events/12345?aimerForce=1&keep=me",
     );
     const replaceSpy = vi.spyOn(window.history, "replaceState");
     const fetchSpy = stubAnalyzeEnvelopeFetch();
@@ -405,7 +405,7 @@ describe("AimerBanner – force-flow arming via ?aimerForce=1", () => {
     window.history.replaceState(
       window.history.state,
       "",
-      "/events/12345?aimerForce=1",
+      "/detection/events/12345?aimerForce=1",
     );
     const fetchSpy = stubAnalyzeEnvelopeFetch();
     vi.stubGlobal("fetch", fetchSpy);
@@ -434,7 +434,11 @@ describe("AimerBanner – force-flow arming via ?aimerForce=1", () => {
   });
 
   it("defaults force=false when the URL does NOT carry ?aimerForce=1", async () => {
-    window.history.replaceState(window.history.state, "", "/events/12345");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      "/detection/events/12345",
+    );
     const fetchSpy = stubAnalyzeEnvelopeFetch();
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -454,7 +458,7 @@ describe("AimerBanner – force-flow arming via ?aimerForce=1", () => {
     window.history.replaceState(
       window.history.state,
       "",
-      "/events/12345?aimerForce=1",
+      "/detection/events/12345?aimerForce=1",
     );
     const fetchSpy = stubAnalyzeEnvelopeFetch();
     vi.stubGlobal("fetch", fetchSpy);

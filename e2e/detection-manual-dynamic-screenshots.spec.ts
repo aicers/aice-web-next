@@ -327,8 +327,8 @@ async function captureEventInvestigationSuite(
 ) {
   const basePath =
     locale === "ko"
-      ? `/ko/events/${INVESTIGATION_TOKEN}`
-      : `/events/${INVESTIGATION_TOKEN}`;
+      ? `/ko/detection/events/${INVESTIGATION_TOKEN}`
+      : `/detection/events/${INVESTIGATION_TOKEN}`;
   await page.goto(
     `${basePath}?returnTo=${encodeURIComponent(locale === "ko" ? "/ko/detection" : "/detection")}`,
   );

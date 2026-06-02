@@ -704,7 +704,7 @@ same destination:
 Both open the view **in a new browser tab**, so the triage page —
 your current asset selection, pivot trail, and period — stays
 intact in the original tab. The link target is
-`/events/<token>`, where the token is derived from the event's
+`/detection/events/<token>`, where the token is derived from the event's
 stable identifier; no triage filter state is encoded into it.
 
 The deep link is offered on the **asset detail** event rows only.

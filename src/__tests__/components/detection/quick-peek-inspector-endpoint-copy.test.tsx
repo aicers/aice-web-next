@@ -166,7 +166,7 @@ describe("QuickPeekInspector — endpoint overflow Copy wiring", () => {
         }
         labels={labels()}
         locale="en"
-        investigateHref="/events/abc"
+        investigateHref="/detection/events/abc"
         onClose={() => {}}
       />,
     );

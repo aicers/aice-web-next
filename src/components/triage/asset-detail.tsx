@@ -207,7 +207,7 @@ export function TriageAssetDetailView({
 }
 
 /**
- * Build the locale-resolved `/events/<token>` deep link for a triage
+ * Build the locale-resolved `/detection/events/<token>` deep link for a triage
  * event so the row-as-link and the actions-column anchor both target
  * the same full Event Investigation surface the Detection menu opens
  * (#666). Returns `undefined` only on the defensive path where the
@@ -223,7 +223,7 @@ function buildInvestigateHref(id: string, locale: string): string | undefined {
   const token = encodeEventLocator({ id });
   if (!token) return undefined;
   return getPathname({
-    href: `/events/${encodeURIComponent(token)}`,
+    href: `/detection/events/${encodeURIComponent(token)}`,
     locale,
   });
 }

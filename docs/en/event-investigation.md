@@ -22,10 +22,15 @@ valid event link.
 
 ## URL shape
 
-The page is served at `/events/<eventToken>`. The route is
-menu-neutral (not nested under `/detection/`) so that sibling
-menus such as Triage can link to the same page without a
-Detection prefix.
+The page is served at `/detection/events/<eventToken>`. A detection
+event belongs to the Detection (탐지) domain — it is the subset of
+source events that detection flagged, stored in REview and read with
+the `detection:read` permission — so the route is nested under
+`/detection/`. This keeps URL, concept, and menu aligned: the
+**탐지** sidebar menu stays highlighted while the page is open,
+regardless of whether the operator arrived from the Detection list
+or a Triage deep link. Sibling menus such as Triage link to this
+same Detection-owned path.
 
 `eventToken` is an opaque, URL-safe string that wraps the
 event's stable `id`. The detection service issues that `id` on
@@ -33,6 +38,14 @@ every event and its single-event resolver (`event(id:)`) accepts
 it back as the lookup key, so the link loads exactly the
 intended event for as long as the event is retained under the
 current storage key format.
+
+The page previously lived at `/events/<eventToken>`. Because the
+token is stable, links to that older path may still exist in
+bookmarks, shared messages, or open tabs; they are redirected to the
+current `/detection/events/<eventToken>` path with their query string
+(`returnTo`, `customers`, `aimerForce`) preserved, and the **탐지**
+menu stays highlighted because the redirect resolves before any
+dashboard content renders.
 
 ## Header
 

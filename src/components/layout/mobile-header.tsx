@@ -26,6 +26,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useDetectionReturnNav } from "@/hooks/use-detection-return-nav";
 import { usePathname } from "@/i18n/navigation";
 import type { EffectiveCustomerScope } from "@/lib/auth/customer-scope";
+import { isNavItemActive } from "@/lib/nav/active-path";
 import { ThemeToggle } from "../theme-toggle";
 import { CustomerScopeIndicator } from "./customer-scope-indicator";
 import { Logo } from "./logo";
@@ -117,7 +118,7 @@ export function MobileHeader({
                   href={item.href}
                   icon={item.icon}
                   label={t(item.key)}
-                  active={pathname.startsWith(item.href)}
+                  active={isNavItemActive(pathname, item.href)}
                   onClick={
                     item.key === "detection" ? handleDetectionNav : undefined
                   }
