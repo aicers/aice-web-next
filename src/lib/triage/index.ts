@@ -7,10 +7,13 @@ export { TriageForbiddenError, TriageUnauthorizedError } from "./errors";
 export {
   defaultTriagePeriod,
   parseTriagePeriod,
+  presetTriagePeriod,
   TRIAGE_DEFAULT_DURATION_MS,
   TRIAGE_MAX_DURATION_MS,
   TRIAGE_MAX_LOOKBACK_MS,
+  TRIAGE_PERIOD_PRESETS,
   type TriagePeriod,
+  type TriagePeriodPreset,
 } from "./period";
 export {
   baselineScore,

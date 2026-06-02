@@ -56,12 +56,12 @@ plugins:
             Getting Started: 시작하기
             Detection: 탐지
             Event Investigation: 이벤트 조사
-            Triage: 트리아지
+            Triage: 선별
             Operations: 운영
             Node management: 노드 관리
             mTLS certificate rotation: mTLS 인증서 교체
-            Triage baseline cadence: 트리아지 베이스라인 케이던스
-            Triage Story rebuild: 트리아지 Story 재빌드
+            Triage baseline cadence: 선별 베이스라인 케이던스
+            Triage Story rebuild: 선별 Story 재빌드
             Settings: 설정
             Customer Scope: 고객사 범위
 

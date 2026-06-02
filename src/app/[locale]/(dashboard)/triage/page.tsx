@@ -156,6 +156,8 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
       invalidRange: t("periodPicker.invalidRange"),
       durationCapHint: t("periodPicker.durationCapHint"),
       lookbackHint: t("periodPicker.lookbackHint"),
+      presetsLegend: t("periodPicker.presetsLegend"),
+      presets: t.raw("periodPicker.presets") as Record<string, string>,
     },
     modeToggle: {
       legend: t("modeToggle.legend"),

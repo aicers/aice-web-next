@@ -149,7 +149,7 @@ rm "$DATA_DIR/.emergency_mfa_reset_consumed_<username>"
 |------|------|
 | 대시보드 | `dashboard:read`, `dashboard:write` |
 | 탐지 | `detection:read` |
-| 분류 | `triage:read`, `triage:policy:write`, `triage:exclusion:write`, `triage:exclusion:global:write` |
+| 선별 | `triage:read`, `triage:policy:write`, `triage:exclusion:write`, `triage:exclusion:global:write` |
 | 계정 | `accounts:read`, `accounts:write`, `accounts:delete` |
 | 역할 | `roles:read`, `roles:write`, `roles:delete` |
 | 고객 | `customers:read`, `customers:write`, `customers:delete`, `customers:access-all` |
@@ -327,17 +327,17 @@ Administrator 전용). 해당 고객에 할당된 계정이 없어야 합니다.
 
 모든 정책 설정 변경 사항은 감사 로그에 기록됩니다.
 
-## 트리아지 제외 항목
+## 선별 제외 항목
 
-트리아지 제외 항목은 트리아지 코퍼스에서 원치 않는 출발지 주소,
+선별 제외 항목은 선별 코퍼스에서 원치 않는 출발지 주소,
 호스트명, URI 또는 도메인 패턴을 제거하여 점수 산정과 자산 목록
 표시 모두에서 배제합니다. 두 가지 범위가 제공됩니다:
 
-- **전역 제외 항목** — 고객별 페이지 옆에 있는 **설정 → 트리아지
+- **전역 제외 항목** — 고객별 페이지 옆에 있는 **설정 → 선별
   예외 (전역)** 탭에서 관리합니다. 모든 활성 고객에게 적용되며,
   편집에는 `triage:exclusion:global:write` 권한이 필요합니다.
   탭 자체는 `triage:read` 권한이 있는 모든 사용자에게 표시됩니다.
-- **고객별 제외 항목** — **설정 → 트리아지 제외 항목**에서
+- **고객별 제외 항목** — **설정 → 선별 제외 항목**에서
   관리합니다. 한 고객의 테넌트 데이터베이스에만 적용됩니다.
   페이지는 `customer_id` 쿼리 파라미터를 받아
   (`/settings/triage-exclusions?customer_id=42`) 딥 링크로 특정
@@ -347,17 +347,17 @@ Administrator 전용). 해당 고객에 할당된 계정이 없어야 합니다.
   해당 고객이 호출자의 유효 범위에 포함될 것을 요구합니다.
 
 두 범위는 컬럼 구조와 소급 적용 동작을 공유합니다. 제외 항목
-ADD는 고객의 케이던스 자문 잠금 아래에서 트리아지 베이스라인
+ADD는 고객의 케이던스 자문 잠금 아래에서 선별 베이스라인
 코퍼스 테이블의 일치 행을 삭제하므로, 케이던스 경로와 소급
 경로가 항상 동일한 최종 코퍼스에 합의합니다.
 
-![트리아지 제외 항목 목록 (와이어프레임)](../assets/triage-exclusions-list-ko.svg)
+![선별 제외 항목 목록 (와이어프레임)](../assets/triage-exclusions-list-ko.svg)
 
-![트리아지 제외 항목 (전역) 페이지 (와이어프레임)](../assets/triage-exclusions-global-ko.svg)
+![선별 제외 항목 (전역) 페이지 (와이어프레임)](../assets/triage-exclusions-global-ko.svg)
 
 > **와이어프레임 임시 도해.** 위 그림과 아래의 추가 다이얼로그
 > 그림은 [인프라 의존 기능에 대한 작성 가이드 예외](../AUTHORING.md#screenshot-exception-for-infrastructure-gated-features)에
-> 따른 SVG 와이어프레임입니다. 트리아지 제외 항목 UI는
+> 따른 SVG 와이어프레임입니다. 선별 제외 항목 UI는
 > 워크트리에서 단독으로 구성할 수 없는 `global_triage_exclusion`
 > / 테넌트별 `triage_exclusion` 코퍼스에 의존하며, 이는
 > aicers/review-web#842와 함께 도입되는 케이던스 페이저가
@@ -1053,7 +1053,7 @@ Aimer로 분석 흐름은 브라우저가 백그라운드에서 호출하는
 
 - 해당 고객의 `baseline_event`와 `story` 종류에 대해 5분 주기
   드레인이 실행되며, 대시보드 앱 셸에 한 번만 마운트됩니다 — 따라서
-  Triage 화면이 열려 있는 동안만이 아니라 **로그인되어 있는 동안**
+  선별 화면이 열려 있는 동안만이 아니라 **로그인되어 있는 동안**
   계속 전달합니다.
 - 브라우저 탭이 숨겨지면 드레인이 **자동으로 일시 정지**되고 다시
   보이면 재개됩니다. **로그아웃하거나 탭을 닫으면 중지**됩니다 —

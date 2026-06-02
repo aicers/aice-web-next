@@ -5,8 +5,10 @@ import { useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { panelSurface } from "@/components/ui/panel-surface";
 import {
+  presetTriagePeriod,
   TRIAGE_MAX_DURATION_MS,
   TRIAGE_MAX_LOOKBACK_MS,
+  TRIAGE_PERIOD_PRESETS,
   type TriagePeriod,
 } from "@/lib/triage";
 import { cn } from "@/lib/utils";
@@ -19,6 +21,10 @@ export interface TriagePeriodPickerLabels {
   invalidRange: string;
   durationCapHint: string;
   lookbackHint: string;
+  /** Legend for the quick-range chip group. */
+  presetsLegend: string;
+  /** Per-preset chip labels, keyed by {@link TRIAGE_PERIOD_PRESETS} key. */
+  presets: Record<string, string>;
 }
 
 interface TriagePeriodPickerProps {
@@ -111,6 +117,19 @@ export function TriagePeriodPicker({
     onApply({ startIso, endIso });
   }
 
+  // Quick-range chip: fill the start/end drafts so the visible inputs
+  // stay in sync, then apply immediately. `onApply` routes through the
+  // parent's pivot-confirm modal / clamp / `draftResetSignal` flow just
+  // like a manual submit, so no separate validation is needed here —
+  // every preset is bounded by `TRIAGE_MAX_DURATION_MS` by construction.
+  function handlePreset(durationMs: number) {
+    const period = presetTriagePeriod(durationMs);
+    setStartLocal(isoToLocalInput(period.startIso));
+    setEndLocal(isoToLocalInput(period.endIso));
+    setError(null);
+    onApply(period);
+  }
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -150,6 +169,23 @@ export function TriagePeriodPicker({
       <Button type="submit" size="sm" disabled={pending}>
         {labels.apply}
       </Button>
+      <fieldset className="flex basis-full flex-wrap items-center gap-2">
+        <legend className="mb-1 text-xs font-medium text-muted-foreground">
+          {labels.presetsLegend}
+        </legend>
+        {TRIAGE_PERIOD_PRESETS.map((preset) => (
+          <Button
+            key={preset.key}
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={pending}
+            onClick={() => handlePreset(preset.durationMs)}
+          >
+            {labels.presets[preset.key]}
+          </Button>
+        ))}
+      </fieldset>
       {error ? (
         <p
           role="alert"

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
-  <title id="title">Triage 메뉴의 스토리 탭 (와이어프레임)</title>
+  <title id="title">선별 메뉴의 스토리 탭 (와이어프레임)</title>
   <desc id="desc">기준(Baseline) 모드의 스토리 탭 와이어프레임입니다. 탭 스트립에는 자산 목록, 스토리, 피벗의 세 가지 동등한 보기가 있으며, 스토리 화면에는 제목, 규칙 배지, 점수, 구성원 수, 시간 창, 상위 3개 미리보기, 열기 및 aimer-web 전송 액션을 표시하는 스토리 카드가 나열됩니다. aimer-web 전송 버튼은 #493에서 연결되며, Aimer 통합이 구성된 경우 활성 상태로 표시되고 옆의 케밥 토글로 "전송 (강제 새로고침)" 메뉴를 엽니다.</desc>
   <style>
     .bg { fill: #fafafa; }

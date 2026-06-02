@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   defaultTriagePeriod,
   parseTriagePeriod,
+  presetTriagePeriod,
   TRIAGE_DEFAULT_DURATION_MS,
   TRIAGE_MAX_DURATION_MS,
   TRIAGE_MAX_LOOKBACK_MS,
+  TRIAGE_PERIOD_PRESETS,
 } from "@/lib/triage";
 
 const NOW = new Date("2026-05-09T12:00:00.000Z");
@@ -116,5 +118,53 @@ describe("parseTriagePeriod", () => {
     const result = parseTriagePeriod("not-a-date", "also-not", NOW);
     expect(result.clamped).toBe(false);
     expect(result.period).toEqual(defaultTriagePeriod(NOW));
+  });
+});
+
+describe("presetTriagePeriod", () => {
+  it("produces a window of exactly durationMs ending at now", () => {
+    const period = presetTriagePeriod(7 * 24 * 60 * 60 * 1000, NOW);
+    expect(period.endIso).toBe(NOW.toISOString());
+    expect(Date.parse(period.endIso) - Date.parse(period.startIso)).toBe(
+      7 * 24 * 60 * 60 * 1000,
+    );
+  });
+});
+
+describe("TRIAGE_PERIOD_PRESETS", () => {
+  it("exposes the 1d / 3d / 1w / 2w / 1m presets in order", () => {
+    expect(TRIAGE_PERIOD_PRESETS.map((p) => p.key)).toEqual([
+      "1d",
+      "3d",
+      "1w",
+      "2w",
+      "1m",
+    ]);
+  });
+
+  it("keeps every preset within the 30-day duration cap", () => {
+    for (const preset of TRIAGE_PERIOD_PRESETS) {
+      expect(preset.durationMs).toBeLessThanOrEqual(TRIAGE_MAX_DURATION_MS);
+    }
+  });
+
+  it("makes the longest preset exactly the duration cap", () => {
+    const longest = Math.max(...TRIAGE_PERIOD_PRESETS.map((p) => p.durationMs));
+    expect(longest).toBe(TRIAGE_MAX_DURATION_MS);
+    // The last preset (1 month) is the one that hits the cap.
+    expect(TRIAGE_PERIOD_PRESETS.at(-1)?.durationMs).toBe(
+      TRIAGE_MAX_DURATION_MS,
+    );
+  });
+
+  it("applied at NOW, no preset trips the duration cap or lookback floor", () => {
+    for (const preset of TRIAGE_PERIOD_PRESETS) {
+      const period = presetTriagePeriod(preset.durationMs, NOW);
+      const duration = Date.parse(period.endIso) - Date.parse(period.startIso);
+      expect(duration).toBeLessThanOrEqual(TRIAGE_MAX_DURATION_MS);
+      expect(NOW.getTime() - Date.parse(period.startIso)).toBeLessThanOrEqual(
+        TRIAGE_MAX_LOOKBACK_MS,
+      );
+    }
   });
 });

@@ -44,7 +44,7 @@
   <!-- Stats -->
   <text x="40" y="146" class="text-stat-label">점수</text>
   <text x="40" y="168" class="text-stat-value">4.27</text>
-  <text x="180" y="146" class="text-stat-label">트리아지</text>
+  <text x="180" y="146" class="text-stat-label">선별</text>
   <text x="180" y="168" class="text-stat-value">3</text>
   <text x="320" y="146" class="text-stat-label">탐지</text>
   <text x="320" y="168" class="text-stat-value">28</text>

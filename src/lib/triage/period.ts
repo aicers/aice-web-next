@@ -51,6 +51,40 @@ export function defaultTriagePeriod(now: Date = new Date()): TriagePeriod {
   return { startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
+/** A quick-range chip: a key for the i18n label plus a fixed window length. */
+export interface TriagePeriodPreset {
+  key: string;
+  durationMs: number;
+}
+
+/**
+ * Quick-range presets for the period picker — 최근 1일 / 3일 / 1주 / 2주 /
+ * 1개월. Durations are fixed millisecond counts (not calendar months) so
+ * a 31-day month can never overflow {@link TRIAGE_MAX_DURATION_MS}; the
+ * longest preset (`1m`) is exactly the 30-day cap. A "3 months" chip was
+ * intentionally dropped because 90 days exceeds the cap.
+ */
+export const TRIAGE_PERIOD_PRESETS: readonly TriagePeriodPreset[] = [
+  { key: "1d", durationMs: DAY_MS },
+  { key: "3d", durationMs: 3 * DAY_MS },
+  { key: "1w", durationMs: 7 * DAY_MS },
+  { key: "2w", durationMs: 14 * DAY_MS },
+  { key: "1m", durationMs: TRIAGE_MAX_DURATION_MS },
+];
+
+/**
+ * Build the window for a quick-range preset: it ends at `now` and starts
+ * `durationMs` earlier.
+ */
+export function presetTriagePeriod(
+  durationMs: number,
+  now: Date = new Date(),
+): TriagePeriod {
+  const end = new Date(now.getTime());
+  const start = new Date(end.getTime() - durationMs);
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
 function isFiniteIso(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const ms = Date.parse(value);

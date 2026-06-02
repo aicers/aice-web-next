@@ -120,7 +120,7 @@ test("Korean locale: triage shell renders localized title", async ({
   await page.goto("/ko/triage");
 
   await expect(
-    page.getByRole("heading", { level: 1, name: "트리아지" }),
+    page.getByRole("heading", { level: 1, name: "선별" }),
   ).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("tab", { name: "기준" })).toHaveAttribute(
     "aria-selected",

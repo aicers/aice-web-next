@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
-  <title id="title">설정 → 트리아지 예외 (전역) 와이어프레임</title>
-  <desc id="desc">전역 트리아지 예외 페이지 와이어프레임: 좌측 사이드바에 트리아지 예외(전역) 항목이 강조됨; 메인 패널에 모든 활성 고객에 적용되는 전역 예외 목록과 추가 시 고객별 팬아웃 작업이 비동기로 실행된다는 안내 콜아웃이 표시됩니다.</desc>
+  <title id="title">설정 → 선별 예외 (전역) 와이어프레임</title>
+  <desc id="desc">전역 선별 예외 페이지 와이어프레임: 좌측 사이드바에 선별 예외(전역) 항목이 강조됨; 메인 패널에 모든 활성 고객에 적용되는 전역 예외 목록과 추가 시 고객별 팬아웃 작업이 비동기로 실행된다는 안내 콜아웃이 표시됩니다.</desc>
 
   <style>
     .bg { fill: #fafafa; }
@@ -32,15 +32,15 @@
     <text class="nav-text" x="16" y="64">계정</text>
     <text class="nav-text" x="16" y="92">역할</text>
     <text class="nav-text" x="16" y="120">고객</text>
-    <text class="nav-text" x="16" y="148">트리아지 정책</text>
-    <text class="nav-text" x="16" y="176">트리아지 예외</text>
+    <text class="nav-text" x="16" y="148">선별 정책</text>
+    <text class="nav-text" x="16" y="176">선별 예외</text>
     <rect class="nav-active" x="8" y="188" width="200" height="28"/>
-    <text class="nav-active-text" x="16" y="206">트리아지 예외 (전역)</text>
+    <text class="nav-active-text" x="16" y="206">선별 예외 (전역)</text>
     <text class="nav-text" x="16" y="236">시스템 설정</text>
   </g>
 
   <g transform="translate(248, 16)">
-    <text class="text-title" x="0" y="24">트리아지 예외 (전역)</text>
+    <text class="text-title" x="0" y="24">선별 예외 (전역)</text>
     <text class="text-intro" x="0" y="46">운영자가 관리하며 모든 활성 고객에 적용되는 예외 목록입니다.</text>
 
     <rect class="callout" x="0" y="64" width="688" height="44"/>
