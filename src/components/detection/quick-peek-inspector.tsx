@@ -71,7 +71,7 @@ export interface QuickPeekInspectorProps {
   locale: string;
   /**
    * Full href for the "Open full investigation" anchor. Must be
-   * absolute-from-root (`/events/<token>?returnTo=...`) so middle-
+   * absolute-from-root (`/detection/events/<token>?returnTo=...`) so middle-
    * click / Cmd+click opens in a new tab. When null the event is
    * not addressable and the action is omitted rather than disabled.
    */

@@ -3460,8 +3460,8 @@ export function DetectionShell({
   ]);
 
   /**
-   * Build the `/events/<token>?returnTo=...` href for an event so
-   * the Quick peek "Open full investigation" action can render as a
+   * Build the `/detection/events/<token>?returnTo=...` href for an
+   * event so the Quick peek "Open full investigation" action can render as a
    * real anchor tag — middle-click and Cmd+click open a new browser
    * tab rather than routing programmatically. Returns `null` only on
    * the defensive path where the event has no `id` (every curated
@@ -3488,7 +3488,7 @@ export function DetectionShell({
       if (committedCustomers && committedCustomers.length > 0) {
         params.set("customers", committedCustomers.join(","));
       }
-      return `/events/${encodeURIComponent(token)}?${params.toString()}`;
+      return `/detection/events/${encodeURIComponent(token)}?${params.toString()}`;
     },
     [pathname, committedCustomers],
   );

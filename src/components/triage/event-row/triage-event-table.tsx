@@ -70,7 +70,7 @@ export interface TriageEventRow {
   respAddr?: string | null;
   /**
    * Deep link to the full Event Investigation view for this row's
-   * event (`/events/<token>`, already locale-resolved). Set only by
+   * event (`/detection/events/<token>`, already locale-resolved). Set only by
    * the asset-detail surface (#666); the Story member surface leaves
    * it undefined. Drives both the whole-row link affordance (when the
    * table opts in via {@link TriageEventTableProps.rowLinkLabel}) and

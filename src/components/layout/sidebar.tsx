@@ -19,6 +19,7 @@ import { useTranslations } from "next-intl";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useDetectionReturnNav } from "@/hooks/use-detection-return-nav";
 import { usePathname } from "@/i18n/navigation";
+import { isNavItemActive } from "@/lib/nav/active-path";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "../theme-toggle";
 import { Logo } from "./logo";
@@ -91,7 +92,7 @@ export function Sidebar({
               href={item.href}
               icon={item.icon}
               label={t(item.key)}
-              active={pathname.startsWith(item.href)}
+              active={isNavItemActive(pathname, item.href)}
               collapsed={collapsed}
               onClick={
                 item.key === "detection" ? handleDetectionNav : undefined

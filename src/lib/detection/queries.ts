@@ -490,7 +490,7 @@ export const EVENT_LIST_QUERY = parse(`
 
 // ── Event detail (investigation view) ──────────────────────────
 //
-// The investigation page at `/events/<token>` decodes a locator
+// The investigation page at `/detection/events/<token>` decodes a locator
 // (see `@/lib/events/event-locator`) into an opaque REview event
 // `id` and looks up the single event via `event(id:)`. The
 // selection set below is a superset of the list-view selection —

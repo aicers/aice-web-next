@@ -673,7 +673,7 @@ rows rather than a column of dashes.
   clipboard.
 - **Actions**:
   - **Open full investigation** jumps into the Investigation
-    view at `/events/<eventToken>`. It is a real anchor tag,
+    view at `/detection/events/<eventToken>`. It is a real anchor tag,
     so **middle-click** or **Cmd/Ctrl-click** opens the full
     page in a new browser tab while leaving the current
     Detection tab's filter and peek state intact. The action

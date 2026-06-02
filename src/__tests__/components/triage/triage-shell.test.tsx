@@ -28,7 +28,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 // The asset-detail panel (#666) reads the active locale and resolves
-// `/events/<token>` deep links through next-intl. Mock both so the
+// `/detection/events/<token>` deep links through next-intl. Mock both so the
 // triage tree renders without a real `NextIntlClientProvider` and the
 // next-intl client-navigation module (which trips vitest's ESM
 // resolver) never loads.

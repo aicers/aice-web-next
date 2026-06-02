@@ -179,7 +179,7 @@ describe("TriageEventTable — investigate row link (#666)", () => {
       kind: "HttpThreat",
       category: "IMPACT",
       baselineScore: 0.92,
-      investigateHref: "/events/abc123",
+      investigateHref: "/detection/events/abc123",
     };
   }
 
@@ -224,7 +224,7 @@ describe("TriageEventTable — investigate row link (#666)", () => {
     fireEvent.click(row);
     expect(open).toHaveBeenCalledTimes(1);
     expect(open).toHaveBeenCalledWith(
-      "/events/abc123",
+      "/detection/events/abc123",
       "_blank",
       "noopener,noreferrer",
     );

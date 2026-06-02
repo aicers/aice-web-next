@@ -4,7 +4,7 @@
  * REview's `Event` interface exposes a stable, opaque `id: ID!` that
  * uniquely addresses an event under the current storage key format
  * (review-web#841). The locator wraps that identifier in a URL-safe
- * token so the in-app `/events/<token>` route and other deep-link
+ * token so the in-app `/detection/events/<token>` route and other deep-link
  * surfaces can address a single event without composing a filter.
  *
  * This module lives under `src/lib/events/` rather than
