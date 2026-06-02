@@ -1826,13 +1826,14 @@ describe("TriageStoriesView — negative AI-analysis results are cached (#653)",
     // Advance the clock past the negative-cache TTL, then rotate.
     nowSpy.mockReturnValue(base + AI_ANALYSIS_NEGATIVE_TTL_MS + 1);
     rerender(view([...stories].reverse()));
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
 
-    // Every stale negative is re-queued exactly once more.
-    expect(loadAiAnalysis).toHaveBeenCalledTimes(2 * stories.length);
+    // Every stale negative is re-queued exactly once more. The re-queued
+    // fetches drain through the in-flight cap over several microtask turns,
+    // so poll until the full wave settles rather than flushing a fixed
+    // number of ticks (which races the cap under load).
+    await waitFor(() => {
+      expect(loadAiAnalysis).toHaveBeenCalledTimes(2 * stories.length);
+    });
     nowSpy.mockRestore();
   });
 
