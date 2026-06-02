@@ -39,6 +39,14 @@ it back as the lookup key, so the link loads exactly the
 intended event for as long as the event is retained under the
 current storage key format.
 
+The page previously lived at `/events/<eventToken>`. Because the
+token is stable, links to that older path may still exist in
+bookmarks, shared messages, or open tabs; they are redirected to the
+current `/detection/events/<eventToken>` path with their query string
+(`returnTo`, `customers`, `aimerForce`) preserved, and the **탐지**
+menu stays highlighted because the redirect resolves before any
+dashboard content renders.
+
 ## Header
 
 The page header shows:
