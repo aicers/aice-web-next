@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 150" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">스토리 카드 헤더의 AI 서술 분석 배지 (와이어프레임)</title>
-  <desc id="desc">규칙 배지 다음에 "AI · 심각"이라고 표시된 AI 서술 분석 딥링크 배지를 보여주는 스토리 카드 헤더 와이어프레임. 배지는 새 탭으로 aimer-web을 열며, 툴팁에 심각도와 가능성 점수를 담습니다. 배지는 CRITICAL 또는 HIGH 등급에서만 표시되고, LOW/MEDIUM 및 분석 없음은 배지를 표시하지 않습니다.</desc>
+  <desc id="desc">규칙 배지 다음에 "AI · 심각"이라고 표시된 AI 서술 분석 딥링크 배지를 보여주는 스토리 카드 헤더 와이어프레임. 배지는 새 탭으로 Clumit Insight를 열며, 툴팁에 심각도와 가능성 점수를 담습니다. 배지는 CRITICAL 또는 HIGH 등급에서만 표시되고, LOW/MEDIUM 및 분석 없음은 배지를 표시하지 않습니다.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -29,5 +29,5 @@
   <text x="176" y="77" class="text-meta">점수 4.25</text>
   <text x="256" y="77" class="text-meta">이벤트 12건</text>
   <text x="40" y="104" class="text-muted">2026-05-09 12:00 ~ 12:12</text>
-  <text x="40" y="124" class="text-muted">AI 배지에 마우스를 올리면 심각도/가능성이 표시되고, 클릭하면 aimer-web 분석이 새 탭으로 열립니다.</text>
+  <text x="40" y="124" class="text-muted">AI 배지에 마우스를 올리면 심각도/가능성이 표시되고, 클릭하면 Clumit Insight 분석이 새 탭으로 열립니다.</text>
 </svg>

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">선별 메뉴의 스토리 탭 (와이어프레임)</title>
-  <desc id="desc">기준(Baseline) 모드의 스토리 탭 와이어프레임입니다. 탭 스트립에는 자산 목록, 스토리, 피벗의 세 가지 동등한 보기가 있으며, 스토리 화면에는 제목, 규칙 배지, 점수, 구성원 수, 시간 창, 상위 3개 미리보기, 열기 및 aimer-web 전송 액션을 표시하는 스토리 카드가 나열됩니다. aimer-web 전송 버튼은 #493에서 연결되며, Aimer 통합이 구성된 경우 활성 상태로 표시되고 옆의 케밥 토글로 "전송 (강제 새로고침)" 메뉴를 엽니다.</desc>
+  <desc id="desc">기준(Baseline) 모드의 스토리 탭 와이어프레임입니다. 탭 스트립에는 자산 목록, 스토리, 피벗의 세 가지 동등한 보기가 있으며, 스토리 화면에는 제목, 규칙 배지, 점수, 구성원 수, 시간 창, 상위 3개 미리보기, 열기 및 Insight 전송 액션을 표시하는 스토리 카드가 나열됩니다. Insight 전송 버튼은 #493에서 연결되며, Clumit Insight 통합이 구성된 경우 활성 상태로 표시되고 옆의 케밥 토글로 "전송 (강제 새로고침)" 메뉴를 엽니다.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -67,7 +67,7 @@
   <text x="488" y="275" class="badge-text">analyst-curated</text>
   <text x="566" y="276" class="text-meta">점수 3.00</text>
   <text x="640" y="276" class="text-meta">3 이벤트</text>
-  <text x="40" y="296" class="text-muted">2026-05-09 13:20 ~ 13:25 · aimer-web 전송됨 · 7분 전</text>
+  <text x="40" y="296" class="text-muted">2026-05-09 13:20 ~ 13:25 · Insight 전송됨 · 7분 전</text>
   <text x="40" y="318" class="text-section">주요 이벤트</text>
   <line x1="40" y1="326" x2="680" y2="326" class="row-divider"/>
   <text x="40" y="344" class="text-mono">2026-05-09 13:24:00</text>
@@ -85,5 +85,5 @@
   <text x="667" y="376" class="btn-primary-text">▾</text>
 
   <!-- 안내 -->
-  <text x="24" y="436" class="text-muted">전송 버튼을 누르면 LLM 분석을 위해 스토리가 aimer-web으로 전송됩니다(#493). 케밥은 "전송 (강제 새로고침)"을 엽니다.</text>
+  <text x="24" y="436" class="text-muted">전송 버튼을 누르면 LLM 분석을 위해 스토리가 Clumit Insight로 전송됩니다(#493). 케밥은 "전송 (강제 새로고침)"을 엽니다.</text>
 </svg>

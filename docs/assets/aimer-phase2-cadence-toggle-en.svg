@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 120" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">Phase 2 auto-forward cadence toggle (wireframe)</title>
-  <desc id="desc">Wireframe of the per-customer auto-forward toggle below the status tracks. Left side stacks the label "Auto-forward to aimer-web (every 5 min while signed in)" and a one-line description of the browser-bound, tab-visibility-paused cadence. Right side shows an on/off switch, drawn here in the off (default) position.</desc>
+  <desc id="desc">Wireframe of the per-customer auto-forward toggle below the status tracks. Left side stacks the label "Auto-forward to Clumit Insight (every 5 min while signed in)" and a one-line description of the browser-bound, tab-visibility-paused cadence. Right side shows an on/off switch, drawn here in the off (default) position.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; stroke-dasharray: 4 3; }
@@ -15,7 +15,7 @@
 
   <rect class="panel" x="16" y="16" width="728" height="88" rx="6"/>
 
-  <text x="32" y="48" class="text-section">Auto-forward to aimer-web (every 5 min while signed in)</text>
+  <text x="32" y="48" class="text-section">Auto-forward to Clumit Insight (every 5 min while signed in)</text>
   <text x="32" y="72" class="text-meta">Off by default. Pushes baseline events and stories every 5 min while signed in;</text>
   <text x="32" y="88" class="text-meta">pauses on hidden tab, stops on sign-out. Sync now works regardless.</text>
 

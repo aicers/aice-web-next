@@ -35,7 +35,7 @@
   <rect class="badge badge-slate" x="206" y="94" width="78" height="16"/>
   <text x="218" y="106" class="badge-text">backfill × 1</text>
 
-  <text x="32" y="132" class="text-error">Last error: ECONNRESET to aimer-web (1 attempt ago)</text>
+  <text x="32" y="132" class="text-error">Last error: ECONNRESET to Clumit Insight (1 attempt ago)</text>
 
   <rect class="btn" x="640" y="32" width="92" height="28"/>
   <text x="664" y="50" class="btn-text">Pause</text>

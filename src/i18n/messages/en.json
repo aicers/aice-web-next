@@ -100,7 +100,7 @@
     "triageExclusions": "Triage exclusions",
     "triageExclusionsGlobal": "Triage exclusions (global)",
     "accountStatus": "Account Status",
-    "aimerIntegration": "Aimer Integration"
+    "aimerIntegration": "Clumit Insight Integration"
   },
   "validation": {
     "required": "{field} is required",
@@ -108,15 +108,15 @@
     "passwordMismatch": "Passwords do not match"
   },
   "aimerIntegration": {
-    "title": "Aimer Integration",
-    "description": "Configure the system-wide prerequisites for the Analyze with Aimer flow: the deployment identifier (aice_id), the aimer-web bridge URL, the default analyze model identifiers (aimer_default_model_name, aimer_default_model), and the dedicated context-token signing keypair.",
+    "title": "Clumit Insight Integration",
+    "description": "Configure the system-wide prerequisites for the Analyze with Insight flow: the deployment identifier (aice_id), the Clumit Insight bridge URL, the default analyze model identifiers (aimer_default_model_name, aimer_default_model), and the dedicated context-token signing keypair.",
     "permissionAlert": {
-      "title": "Aimer signing key file has unexpected permissions",
+      "title": "Clumit Insight signing key file has unexpected permissions",
       "body": "The on-disk file ({path}) was observed with mode {observed} instead of 0600. Restore the correct mode (chmod 0600) before continuing — the application refuses to write a key with looser permissions, but reading remains possible."
     },
     "setupStatus": {
       "title": "Setup status",
-      "description": "Aimer integration is system-wide. All five prerequisites must be configured before the Analyze with Aimer button becomes operational.",
+      "description": "Clumit Insight integration is system-wide. All five prerequisites must be configured before the Analyze with Insight button becomes operational.",
       "configured": "Configured (system-wide)",
       "notConfigured": "Not configured",
       "missing": {
@@ -129,7 +129,7 @@
     },
     "signingKey": {
       "title": "Context-token signing keypair",
-      "description": "ES256 keypair used to sign Aimer context tokens. Separate from the JWT and mTLS keys so trust domains stay independent. Compare the thumbprint shown here with the value displayed on aimer-web's environment registration screen before approving the registration.",
+      "description": "ES256 keypair used to sign Clumit Insight context tokens. Separate from the JWT and mTLS keys so trust domains stay independent. Compare the thumbprint shown here with the value displayed on Clumit Insight's environment registration screen before approving the registration.",
       "emptyDescription": "No keypair has been generated yet. Generate one to start the trust-establishment flow.",
       "slots": {
         "active": "Active",
@@ -138,7 +138,7 @@
       },
       "fields": {
         "thumbprintBase64Url": "Thumbprint (RFC 7638 SHA-256, base64url) — canonical",
-        "thumbprintBase64UrlHelper": "43 characters, no padding. Use this value when comparing against aimer-web — it is the canonical form.",
+        "thumbprintBase64UrlHelper": "43 characters, no padding. Use this value when comparing against Clumit Insight — it is the canonical form.",
         "thumbprintHexColons": "Thumbprint (hex with colons)",
         "thumbprintHexColonsHelper": "Same SHA-256 rendered as 64 hex characters in 4-byte blocks. Visual aid for verbal/mental comparison.",
         "publicJwk": "Public JWK (RFC 7517)",
@@ -148,7 +148,7 @@
         "yellowTitle": "Rotation recommended within 30 days",
         "redTitle": "Rotation recommended within 7 days",
         "overdueTitle": "Rotation overdue",
-        "body": "Recommended rotation date: {date}. Use Rotate to mint a new pending kid, then Switch once aimer-web's trust registry has been updated."
+        "body": "Recommended rotation date: {date}. Use Rotate to mint a new pending kid, then Switch once Clumit Insight's trust registry has been updated."
       },
       "actions": {
         "generate": "Generate",
@@ -158,8 +158,8 @@
       },
       "switch": {
         "guidanceTitle": "Pending kid awaiting Switch",
-        "guidanceBody": "Before switching, transmit the new kid's thumbprint out-of-band and register it on aimer-web's trust registry. Switching before registration causes context tokens signed by the new kid to be rejected.",
-        "confirmCheckbox": "I confirmed the new kid has been registered on aimer-web's trust registry."
+        "guidanceBody": "Before switching, transmit the new kid's thumbprint out-of-band and register it on Clumit Insight's trust registry. Switching before registration causes context tokens signed by the new kid to be rejected.",
+        "confirmCheckbox": "I confirmed the new kid has been registered on Clumit Insight's trust registry."
       },
       "rotateConfirm": {
         "title": "Mint a new pending kid?",
@@ -167,11 +167,11 @@
       },
       "switchConfirm": {
         "title": "Switch to the new kid?",
-        "body": "The pending kid will become active and the previous kid will be retained briefly for in-flight context-token verification on aimer-web. This action takes effect immediately."
+        "body": "The pending kid will become active and the previous kid will be retained briefly for in-flight context-token verification on Clumit Insight. This action takes effect immediately."
       },
       "deactivateConfirm": {
         "title": "Deactivate previous kid?",
-        "body": "The previous kid's private key will be removed from disk. aimer-web continues to verify pre-switch tokens against its own trust registry independently."
+        "body": "The previous kid's private key will be removed from disk. Clumit Insight continues to verify pre-switch tokens against its own trust registry independently."
       },
       "deactivate": {
         "windowEnds": "Auto-eligible from {date}"
@@ -179,19 +179,19 @@
     },
     "settings": {
       "title": "System settings",
-      "description": "These settings identify this AICE instance to aimer-web and tell it where to deliver context tokens.",
+      "description": "These settings identify this AICE instance to Clumit Insight and tell it where to deliver context tokens.",
       "aiceIdLabel": "aice_id",
       "aiceIdPlaceholder": "acme.example.com",
-      "aiceIdHelper": "Deployment hostname (RFC 1123). Used as the JWT iss claim and as the aice_id claim sent to aimer-web. Aimer-web's trust_registry uses this as the lookup key, so it must match the value registered there.",
+      "aiceIdHelper": "Deployment hostname (RFC 1123). Used as the JWT iss claim and as the aice_id claim sent to Clumit Insight. Clumit Insight's trust_registry uses this as the lookup key, so it must match the value registered there.",
       "bridgeUrlLabel": "aimer_web_bridge_url",
-      "bridgeUrlPlaceholder": "https://aimer.example.com",
-      "bridgeUrlHelper": "Base URL of the aimer-web instance that receives the multipart POST to /api/analysis/analyze-bridge. HTTPS only. The path is normalized to a canonical form (no trailing slash).",
+      "bridgeUrlPlaceholder": "https://insight.example.com",
+      "bridgeUrlHelper": "Base URL of the Clumit Insight instance that receives the multipart POST to /api/analysis/analyze-bridge. HTTPS only. The path is normalized to a canonical form (no trailing slash).",
       "defaultModelNameLabel": "aimer_default_model_name",
       "defaultModelNamePlaceholder": "anthropic",
-      "defaultModelNameHelper": "Default LLM vendor / model-family identifier embedded in the analyze_params_token JWS claims sent to aimer-web. The accepted catalog is owned by aimer-side configuration.",
+      "defaultModelNameHelper": "Default LLM vendor / model-family identifier embedded in the analyze_params_token JWS claims sent to Clumit Insight. The accepted catalog is owned by Clumit Insight-side configuration.",
       "defaultModelLabel": "aimer_default_model",
       "defaultModelPlaceholder": "claude-sonnet-4-6",
-      "defaultModelHelper": "Default LLM model identifier embedded in the analyze_params_token JWS claims. The accepted catalog is owned by aimer-side configuration.",
+      "defaultModelHelper": "Default LLM model identifier embedded in the analyze_params_token JWS claims. The accepted catalog is owned by Clumit Insight-side configuration.",
       "saveAiceId": "Save aice_id",
       "saveBridgeUrl": "Save bridge URL",
       "saveDefaultModelName": "Save default model name",
@@ -199,24 +199,24 @@
       "saving": "Saving…",
       "effectWarning": {
         "title": "Re-registration required after this change",
-        "body": "After this change, the operator must re-register this environment on aimer-web. Existing registrations are invalidated and any context tokens issued in the interim will be rejected.\n\nContinue?",
+        "body": "After this change, the operator must re-register this environment on Clumit Insight. Existing registrations are invalidated and any context tokens issued in the interim will be rejected.\n\nContinue?",
         "confirm": "Save and continue"
       }
     },
     "customerExternalKey": {
       "line": "Customer external_key configured: {configured} / {total} customers.",
       "linkLabel": "Manage customers →",
-      "note": "external_key is a per-customer setting and does not affect system-wide setup status. The Analyze with Aimer button is independently disabled per customer until each customer's external_key is populated."
+      "note": "external_key is a per-customer setting and does not affect system-wide setup status. The Analyze with Insight button is independently disabled per customer until each customer's external_key is populated."
     },
     "errors": {
       "actionFailed": "Operation failed. See the error toast for details and retry."
     },
     "success": {
       "generate": "Signing keypair generated.",
-      "rotate": "Pending kid generated. Register it on aimer-web's trust registry, then Switch.",
-      "switch": "Switched to the new kid. Aimer-web should already accept the new kid before Switch.",
+      "rotate": "Pending kid generated. Register it on Clumit Insight's trust registry, then Switch.",
+      "switch": "Switched to the new kid. Clumit Insight should already accept the new kid before Switch.",
       "deactivate": "Previous kid deactivated.",
-      "settingSaved": "Setting saved. Re-register this environment on aimer-web."
+      "settingSaved": "Setting saved. Re-register this environment on Clumit Insight."
     },
     "phase2": {
       "title": "Phase 2 sync status",
@@ -276,8 +276,8 @@
         "noPending": "No pending withdrawals."
       },
       "cadence": {
-        "label": "Auto-forward to aimer-web (every 5 min while signed in)",
-        "description": "When on, baseline events and stories for this customer are pushed to aimer-web every 5 minutes while an operator is signed in. Pauses when the tab is hidden and stops when you sign out. Off by default; Sync now works regardless."
+        "label": "Auto-forward to Clumit Insight (every 5 min while signed in)",
+        "description": "When on, baseline events and stories for this customer are pushed to Clumit Insight every 5 minutes while an operator is signed in. Pauses when the tab is hidden and stops when you sign out. Off by default; Sync now works regardless."
       },
       "syncNow": {
         "button": "Sync now",
@@ -310,7 +310,7 @@
   },
   "loginBanner": {
     "phase2Sync": {
-      "summary": "Aimer sync {worst} on {count, plural, one {# customer} other {# customers}} ({kinds}).",
+      "summary": "Insight sync {worst} on {count, plural, one {# customer} other {# customers}} ({kinds}).",
       "worstLabel": {
         "behind": "is behind",
         "way_behind": "is way behind",
@@ -322,7 +322,7 @@
         "policy_event": "policy event withdrawals",
         "paused": "paused kinds"
       },
-      "openSettings": "Open Settings → Aimer integration",
+      "openSettings": "Open Settings → Clumit Insight integration",
       "dismiss": "Dismiss"
     }
   },
@@ -404,21 +404,21 @@
       "node_apply": "Node apply",
       "service_draft_save": "Service draft save",
       "service_set_mode": "Service mode change",
-      "aimer_signing_key_generated": "Aimer signing key generated",
-      "aimer_signing_key_rotated": "Aimer signing key rotated",
-      "aimer_signing_key_switched": "Aimer signing key switched",
-      "aimer_signing_key_deactivated": "Aimer signing key deactivated",
-      "aimer_integration_setting_changed": "Aimer integration setting changed",
-      "aimer_context_token_issued": "Aimer context token issued",
-      "aimer_context_token_denied": "Aimer context token denied",
+      "aimer_signing_key_generated": "Clumit Insight signing key generated",
+      "aimer_signing_key_rotated": "Clumit Insight signing key rotated",
+      "aimer_signing_key_switched": "Clumit Insight signing key switched",
+      "aimer_signing_key_deactivated": "Clumit Insight signing key deactivated",
+      "aimer_integration_setting_changed": "Clumit Insight integration setting changed",
+      "aimer_context_token_issued": "Clumit Insight context token issued",
+      "aimer_context_token_denied": "Clumit Insight context token denied",
       "triage_policy_create": "Triage policy create",
       "triage_policy_update": "Triage policy update",
       "triage_policy_delete": "Triage policy delete",
       "triage_story_create": "Triage story save",
-      "triage_story_send": "Send story to aimer-web",
-      "aimer_detection_send_issued": "Detection event send to aimer-web",
+      "triage_story_send": "Send story to Clumit Insight",
+      "aimer_detection_send_issued": "Detection event send to Clumit Insight",
       "aimer_detection_send_denied": "Detection event send denied",
-      "aimer_analyze_envelope_issued": "Analyze envelope minted for aimer-web",
+      "aimer_analyze_envelope_issued": "Analyze envelope minted for Clumit Insight",
       "aimer_analyze_envelope_denied": "Analyze envelope mint denied",
       "triage_exclusion_global_add": "Triage exclusion add (global)",
       "triage_exclusion_global_remove": "Triage exclusion remove (global)",
@@ -428,12 +428,12 @@
       "triage_exclusion_global_recover": "Triage exclusion recover (global)",
       "triage_exclusion_customer_recover": "Triage exclusion recover (customer)",
       "triage_baseline_rebuild": "Triage baseline rebuild",
-      "triage_policy_run_send_to_aimer": "Send policy run to aimer-web",
-      "aimer_phase2_sync_now": "Aimer Phase 2 sync now",
-      "aimer_phase2_backfill": "Aimer Phase 2 backfill",
-      "aimer_phase2_opportunistic_paused": "Aimer Phase 2 push paused",
-      "aimer_phase2_opportunistic_resumed": "Aimer Phase 2 push resumed",
-      "aimer_phase2_cadence_drain": "Aimer Phase 2 cadence drain"
+      "triage_policy_run_send_to_aimer": "Send policy run to Clumit Insight",
+      "aimer_phase2_sync_now": "Clumit Insight Phase 2 sync now",
+      "aimer_phase2_backfill": "Clumit Insight Phase 2 backfill",
+      "aimer_phase2_opportunistic_paused": "Clumit Insight Phase 2 push paused",
+      "aimer_phase2_opportunistic_resumed": "Clumit Insight Phase 2 push resumed",
+      "aimer_phase2_cadence_drain": "Clumit Insight Phase 2 cadence drain"
     },
     "targetTypes": {
       "account": "Account",
@@ -920,7 +920,7 @@
     "databaseName": "Database Name",
     "externalKey": "External Key",
     "externalKeyPlaceholder": "e.g. acmecorp.com",
-    "externalKeyHelp": "Enter a globally unique business identifier pre-agreed with the aimer-web System Administrator. Recommended: a domain (e.g. acmecorp.com), business registration number, or contract code. The agreement must be made over an out-of-band secure channel (in-house SSO messenger, in person, etc.). An incorrect value will be rejected on the first bridge attempt with bridge_customer_mismatch. After entering, ask the operator to run a single bridge test to verify the mapping. Read more:",
+    "externalKeyHelp": "Enter a globally unique business identifier pre-agreed with the Clumit Insight System Administrator. Recommended: a domain (e.g. acmecorp.com), business registration number, or contract code. The agreement must be made over an out-of-band secure channel (in-house SSO messenger, in person, etc.). An incorrect value will be rejected on the first bridge attempt with bridge_customer_mismatch. After entering, ask the operator to run a single bridge test to verify the mapping. Read more:",
     "externalKeyHelpLink": "Operations guide",
     "externalKeyHelpLinkUrl": "https://github.com/aicers/aimer-web/blob/main/docs/operations/cross-system-customer-identification.md",
     "status": "Status",
@@ -942,9 +942,9 @@
     "deleted": "Customer deleted successfully",
     "externalKeyConflict": "external_key is already in use by another customer.",
     "externalKeyChangeTitle": "Confirm external_key change",
-    "externalKeyChangeBody": "external_key is the customer mapping identifier with aimer-web. After this change, aimer-web's matching customer must also be updated to keep the mapping intact. A bridge test is recommended right after. Continue?",
+    "externalKeyChangeBody": "external_key is the customer mapping identifier with Clumit Insight. After this change, Clumit Insight's matching customer must also be updated to keep the mapping intact. A bridge test is recommended right after. Continue?",
     "externalKeyClearTitle": "Confirm external_key clear",
-    "externalKeyClearBody": "Clearing this customer's external_key disables Analyze with Aimer for this customer until it is set again, and any existing mapping with aimer-web's matching customer is no longer reachable from this side. Continue?"
+    "externalKeyClearBody": "Clearing this customer's external_key disables Analyze with Insight for this customer until it is set again, and any existing mapping with Clumit Insight's matching customer is no longer reachable from this side. Continue?"
   },
   "multitenancy": {
     "scope": {
@@ -1872,29 +1872,29 @@
       "confidence": "Confidence",
       "triageScores": "Triage Scores",
       "noTriage": "No triage scores",
-      "aimerTitle": "Analyze with Aimer",
-      "aimerBody": "Open this event's AI analysis on aimer-web in a new tab. You'll be asked to sign in at aimer-web on first visit; the result page opens directly after.",
-      "aimerCta": "Analyze with Aimer →",
+      "aimerTitle": "Analyze with Insight",
+      "aimerBody": "Open this event's AI analysis on Clumit Insight in a new tab. You'll be asked to sign in at Insight on first visit; the result page opens directly after.",
+      "aimerCta": "Analyze with Insight →",
       "aimerSending": "Opening analysis…",
-      "aimerNoCustomerTooltip": "This event has no connected customer; it cannot be analyzed by Aimer.",
+      "aimerNoCustomerTooltip": "This event has no connected customer; it cannot be analyzed by Insight.",
       "aimerCustomerIneligibleTooltip": "This customer has no external_key. Set it on the Customers page.",
-      "aimerSetupTooltip": "Aimer integration must be configured by a System Administrator.",
+      "aimerSetupTooltip": "Clumit Insight integration must be configured by a System Administrator.",
       "aimerSetupTooltipMissing": "Missing: {reasons}",
       "aimerMissingReasonAiceId": "aiceId",
       "aimerMissingReasonBridgeUrl": "bridgeUrl",
       "aimerMissingReasonDefaultModelName": "defaultModelName",
       "aimerMissingReasonDefaultModel": "defaultModel",
       "aimerMissingReasonSigningKey": "signingKey",
-      "aimerModalTitle": "Analyze with Aimer",
-      "aimerModalBodySingle": "Open the Aimer analysis for this event (customer {name}). The same customer permission is required at aimer-web.",
-      "aimerModalBodyMulti": "Pick the customer to analyze this event under. The same customer permission is required at aimer-web.",
+      "aimerModalTitle": "Analyze with Insight",
+      "aimerModalBodySingle": "Open the Clumit Insight analysis for this event (customer {name}). The same customer permission is required at Clumit Insight.",
+      "aimerModalBodyMulti": "Pick the customer to analyze this event under. The same customer permission is required at Clumit Insight.",
       "aimerModalIneligibleHint": "(no external_key set)",
       "aimerModalCancel": "Cancel",
       "aimerModalSend": "Analyze",
       "aimerErrorTitle": "Could not open analysis",
       "aimerErrorGeneric": "Something went wrong. Please try again.",
       "aimerErrorRateLimited": "Too many analysis requests. Please retry shortly.",
-      "aimerErrorNotConfigured": "Aimer integration is not configured. Ask a System Administrator.",
+      "aimerErrorNotConfigured": "Clumit Insight integration is not configured. Ask a System Administrator.",
       "aimerErrorExternalKeyMissing": "This customer has no external_key. Set it on the Customers page.",
       "aimerErrorEventNotFound": "This event is no longer accessible under the selected customer.",
       "pivotsTitle": "Pivot shortcuts",
@@ -2369,19 +2369,19 @@
         "scoreLabel": "Score",
         "memberCountTemplate": "{count} events",
         "open": "Open",
-        "sendToAimerWeb": "Send to aimer-web",
-        "sendToAimerWebTooltip": "Send Story to aimer-web for LLM analysis",
-        "sendToAimerWebDisabledTooltip": "Aimer integration is not configured. Ask an administrator to set the aice_id, aimer-web bridge URL, and active signing key in Settings → Aimer integration.",
-        "sentIndicatorTemplate": "Sent to aimer-web · {relative}",
+        "sendToAimerWeb": "Send to Insight",
+        "sendToAimerWebTooltip": "Send Story to Insight for LLM analysis",
+        "sendToAimerWebDisabledTooltip": "Clumit Insight integration is not configured. Ask an administrator to set the aice_id, Clumit Insight bridge URL, and active signing key in Settings → Clumit Insight integration.",
+        "sentIndicatorTemplate": "Sent to Insight · {relative}",
         "sentMultiTemplate": "{count}×",
         "sendMoreMenuLabel": "More send options",
         "sendForceRefresh": "Send (force refresh)",
-        "forceRefreshConfirmMessage": "Bypass aimer-web's cache and run the LLM fresh on this Story?",
+        "forceRefreshConfirmMessage": "Bypass Clumit Insight's cache and run the LLM fresh on this Story?",
         "forceRefreshConfirmButton": "Send",
         "forceRefreshCancelButton": "Cancel",
         "sendInFlight": "Sending…",
-        "sendSuccessToast": "Sent to aimer-web",
-        "sendErrorPrefix": "Could not send to aimer-web:",
+        "sendSuccessToast": "Sent to Insight",
+        "sendErrorPrefix": "Could not send to Insight:",
         "timeColumn": "Time",
         "kindColumn": "Kind",
         "categoryColumn": "Category",

@@ -136,7 +136,7 @@ old row. Stories with no natural-key match get the column DEFAULTs
 This matches the most common rebuild trigger — "rules changed,
 recompute" — where, within the same window, asset, and rule, the
 new Story represents the same analytical unit and the operator's
-"already analyzed" awareness should persist. The aimer-web intake
+"already analyzed" awareness should persist. The Clumit Insight intake
 contract (#492) already exposes `force_refresh: true` as the
 explicit escape hatch for operators who want to re-analyze when
 content has materially changed.
@@ -189,11 +189,11 @@ touches the watermark column.
   internal-token route family (cleanup, cadence, dispatch, fanout)
   which run as system actors. When the follow-up admin-UI surface
   is added, that follow-up owns the audit-action addition.
-- **aimer-web push side effects.** A Story rebuild does not notify
-  aimer-web that a previously-sent Story has been replaced; that
-  policy is part of the broader Triage/Story aimer-web push design
-  (umbrella #491) and considered uniformly across Triage and
-  Story.
+- **Clumit Insight push side effects.** A Story rebuild does not
+  notify Clumit Insight that a previously-sent Story has been
+  replaced; that policy is part of the broader Triage/Story Clumit
+  Insight push design (umbrella #491) and considered uniformly across
+  Triage and Story.
 - **Curated Story regeneration / editing.** Curated Stories are
   explicit human input and stay untouched.
 - **Admin UI surface.** This issue ships the internal-token route

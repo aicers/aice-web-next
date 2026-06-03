@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 150" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">AI narrative analysis badge on a Story card header (wireframe)</title>
-  <desc id="desc">Wireframe of a Story card header showing the rule badge followed by the AI narrative analysis deep-link badge reading "AI · CRITICAL". The badge links into aimer-web in a new tab; its tooltip carries the severity and likelihood scores. The badge renders only for CRITICAL or HIGH tiers; LOW/MEDIUM and missing analyses show no badge.</desc>
+  <desc id="desc">Wireframe of a Story card header showing the rule badge followed by the AI narrative analysis deep-link badge reading "AI · CRITICAL". The badge links into Clumit Insight in a new tab; its tooltip carries the severity and likelihood scores. The badge renders only for CRITICAL or HIGH tiers; LOW/MEDIUM and missing analyses show no badge.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -29,5 +29,5 @@
   <text x="190" y="77" class="text-meta">Score 4.25</text>
   <text x="270" y="77" class="text-meta">12 events</text>
   <text x="40" y="104" class="text-muted">2026-05-09 12:00 ~ 12:12</text>
-  <text x="40" y="124" class="text-muted">Hover the AI badge for severity / likelihood; click opens the analysis in aimer-web (new tab).</text>
+  <text x="40" y="124" class="text-muted">Hover the AI badge for severity / likelihood; click opens the analysis in Clumit Insight (new tab).</text>
 </svg>

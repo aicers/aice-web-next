@@ -35,7 +35,7 @@
   <rect class="badge badge-slate" x="200" y="94" width="78" height="16"/>
   <text x="212" y="106" class="badge-text">백필 1건</text>
 
-  <text x="32" y="132" class="text-error">마지막 오류: ECONNRESET to aimer-web (1회 전)</text>
+  <text x="32" y="132" class="text-error">마지막 오류: ECONNRESET to Clumit Insight (1회 전)</text>
 
   <rect class="btn" x="640" y="32" width="92" height="28"/>
   <text x="654" y="50" class="btn-text">일시 정지</text>

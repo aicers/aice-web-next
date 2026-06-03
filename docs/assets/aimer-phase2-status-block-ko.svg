@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 520" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
-  <title id="title">Aimer 연동 설정 페이지의 Phase 2 동기화 상태 블록 (와이어프레임)</title>
+  <title id="title">Clumit Insight 연동 설정 페이지의 Phase 2 동기화 상태 블록 (와이어프레임)</title>
   <desc id="desc">Phase 2 동기화 상태 블록 와이어프레임. 헤더에 고객 선택기와 새로 고침 버튼이 있고, 아래에 세 트랙(스트리밍 baseline/스토리, 수동 정책 실행, 정책 이벤트 큐)이 배치됩니다. 스트리밍 행은 버킷 점, 마지막 동기화 시간, 대략적인 백로그, 대기 알림 수, 가장 오래된 알림 경과, 종류별 배지(철회/갱신/백필), 일시정지/재개 버튼을 표시합니다.</desc>
   <style>
     .bg { fill: #fafafa; }

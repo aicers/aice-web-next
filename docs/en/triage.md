@@ -862,46 +862,46 @@ Each Story renders as one card with:
   silently absent. The list query computes the whole page's
   previews in a single CTE rather than issuing N small joins.
 - **β submission indicator** — when `last_sent_at` is not null,
-  a small muted line `"Sent to aimer-web · <time-ago>"` plus an
+  a small muted line `"Sent to Insight · <time-ago>"` plus an
   optional `<send_count>×` suffix. Re-clicking the send button
   is allowed; the indicator is awareness-only.
 
-### Send to aimer-web
+### Send to Insight
 
-Each Story card carries a **Send to aimer-web** button and an
+Each Story card carries a **Send to Insight** button and an
 adjacent kebab menu. Clicking the primary button sends the
-focused Story through the Phase 2 contract to aimer-web for
+focused Story through the Phase 2 contract to Clumit Insight for
 LLM analysis. The flow makes three calls in sequence:
 
 1. The browser asks aice-web-next to mint a Phase 2 envelope
    for the focused Story.
 2. The browser POSTs the multipart envelope (two ES256-signed
-   JWSes + the JSON payload) to the configured aimer-web bridge
+   JWSes + the JSON payload) to the configured Clumit Insight bridge
    URL.
-3. On 2xx from aimer-web, the browser asks aice-web-next to
+3. On 2xx from Clumit Insight, the browser asks aice-web-next to
    commit the β-tracking update (`last_sent_at`, `last_sent_by`,
    `send_count`) and emit a `triage.story.send` audit row.
 
-A "Sent to aimer-web" toast confirms success and the card
+A "Sent to Insight" toast confirms success and the card
 re-renders its β indicator immediately, without a full menu
 refresh. Failed sends surface an error toast carrying the
 structured failure code; β columns are left untouched so the
-next click re-attempts cleanly (aimer-web de-duplicates on its
+next click re-attempts cleanly (Clumit Insight de-duplicates on its
 side if the row eventually lands).
 
 The kebab menu next to the Send button offers **Send (force
 refresh)**. Selecting it prompts the analyst to confirm
-("Bypass aimer-web's cache and run the LLM fresh on this
+("Bypass Clumit Insight's cache and run the LLM fresh on this
 Story?") before sending; on confirm the same three-call flow
-runs with a `force_refresh: true` flag so aimer-web re-runs
+runs with a `force_refresh: true` flag so Clumit Insight re-runs
 the LLM rather than serving its cached narrative. Force-refresh
 applies to manual Send only; the opportunistic background push
 never force-refreshes.
 
-The Send button is disabled when the Aimer integration is not
-configured (no active signing key, no `aice_id`, or no
+The Send button is disabled when the Clumit Insight integration is
+not configured (no active signing key, no `aice_id`, or no
 `aimer_web_bridge_url`). Configure the integration on the
-Settings → Aimer integration page first.
+Settings → Clumit Insight integration page first.
 
 ### Opportunistic background push
 
@@ -921,7 +921,7 @@ opportunistically pushed. Manual Send remains available for
 both kinds.
 
 The push respects a per-customer pause toggle owned by
-operators (Settings → Aimer integration); when paused, manual
+operators (Settings → Clumit Insight integration); when paused, manual
 Send is unaffected.
 
 The card carries a stable HTML identity attribute
@@ -1128,17 +1128,17 @@ single tenant that the caller can already read.
 ## AI narrative analysis
 
 Selected entities can carry a deep link into the matching LLM analysis
-in aimer-web. AICE Web never fetches or renders the analysis text
-itself — each surface shows only a compact **tier badge** (the
+in Clumit Insight. AICE Web never fetches or renders the analysis
+text itself — each surface shows only a compact **tier badge** (the
 `CRITICAL` / `HIGH` priority tier, with the severity and likelihood
-scores in the badge tooltip) that links out to aimer-web in a new tab.
-Lower tiers (`LOW` / `MEDIUM`), a missing analysis, or an unconfigured
-aimer-web integration all render **nothing** — no badge, no card, no
-placeholder.
+scores in the badge tooltip) that links out to Clumit Insight in a new
+tab. Lower tiers (`LOW` / `MEDIUM`), a missing analysis, or an
+unconfigured Clumit Insight integration all render **nothing** — no
+badge, no card, no placeholder.
 
 The badge appears only for viewers who hold `triage:read`; the link
 target and the score thresholds are validated server-side, so the
-badge cannot point anywhere other than the analysis page aimer-web
+badge cannot point anywhere other than the analysis page Clumit Insight
 returned.
 
 ### Story badge (Stories tab)
@@ -1153,7 +1153,7 @@ tooltip scores match across the two surfaces.
 
 ![Story detail AI analysis badge](../assets/triage-ai-analysis-story-detail-badge-en.svg)
 
-A successful **Send to aimer-web** may produce a fresh analysis; the
+A successful **Send to Insight** may produce a fresh analysis; the
 badge re-fetches eagerly after a send so a newly available
 `CRITICAL` / `HIGH` badge appears without waiting for a list refresh.
 
@@ -1163,12 +1163,12 @@ The **Dashboard** surfaces two per-customer report cards under an
 **AI analyses** section:
 
 - **Latest digest** — the LIVE (rolling, minute-cadence) report
-  summary. Its badge links to the aimer-web LIVE report page.
+  summary. Its badge links to the Clumit Insight LIVE report page.
 - **Today's report** — the DAILY report summary for the viewer's
   current calendar day. The day is derived from the viewer's timezone,
   so a tab in a different timezone fetches that tab's local day, not
-  the server's. Its badge links to that day's aimer-web report. If you
-  leave the dashboard open past your local midnight, the card rolls
+  the server's. Its badge links to that day's Clumit Insight report. If
+  you leave the dashboard open past your local midnight, the card rolls
   over to the new day on its own — it drops the previous day's report
   and fetches the new day's, so it never keeps showing yesterday's
   report as "today's".
@@ -1191,14 +1191,14 @@ matching how often each report is produced upstream — so a report that
 becomes available after you opened the page appears without a manual
 reload. A card that is already showing is not re-fetched.
 
-A global-nav **Open AI analyses →** link opens the full aimer-web
-analysis surface; it is hidden when the aimer-web integration is
+A global-nav **Open AI analyses →** link opens the full Clumit Insight
+analysis surface; it is hidden when the Clumit Insight integration is
 unconfigured.
 
 > **Wireframe stand-ins.** The four figures above are SVG wireframe
 > stand-ins, not real screenshots: the analysis surfaces only render
-> for live `CRITICAL` / `HIGH` data, which depends on the aimer-web
-> report summary endpoint
+> for live `CRITICAL` / `HIGH` data, which depends on the Clumit
+> Insight report summary endpoint
 > ([aicers/aimer-web#297](https://github.com/aicers/aimer-web/issues/297))
 > and the Phase 2 worker producing results. They are replaced with real
 > PNG captures once that infrastructure is live, per

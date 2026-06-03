@@ -100,7 +100,7 @@
     "triageExclusions": "선별 예외",
     "triageExclusionsGlobal": "선별 예외 (전역)",
     "accountStatus": "계정 현황",
-    "aimerIntegration": "Aimer 연동"
+    "aimerIntegration": "Clumit Insight 연동"
   },
   "validation": {
     "required": "{field}은(는) 필수입니다",
@@ -108,15 +108,15 @@
     "passwordMismatch": "비밀번호가 일치하지 않습니다"
   },
   "aimerIntegration": {
-    "title": "Aimer 연동",
-    "description": "Aimer로 분석 동작에 필요한 시스템 전역 사전 조건(배포 식별자 aice_id, aimer-web 브리지 URL, 기본 분석 모델 식별자 aimer_default_model_name 및 aimer_default_model, 컨텍스트 토큰 전용 서명 키페어)을 설정합니다.",
+    "title": "Clumit Insight 연동",
+    "description": "Insight로 분석 동작에 필요한 시스템 전역 사전 조건(배포 식별자 aice_id, Clumit Insight 브리지 URL, 기본 분석 모델 식별자 aimer_default_model_name 및 aimer_default_model, 컨텍스트 토큰 전용 서명 키페어)을 설정합니다.",
     "permissionAlert": {
-      "title": "Aimer 서명 키 파일의 권한이 잘못되었습니다",
+      "title": "Clumit Insight 서명 키 파일의 권한이 잘못되었습니다",
       "body": "디스크 파일({path})의 모드가 0600이 아닌 {observed}로 확인되었습니다. 계속 진행하기 전에 chmod 0600으로 권한을 복구하십시오. 권한이 더 느슨한 키는 쓰기가 거부되며, 읽기만 가능합니다."
     },
     "setupStatus": {
       "title": "설정 상태",
-      "description": "Aimer 연동은 시스템 전역 기능입니다. 다섯 가지 사전 조건이 모두 설정되어야 Aimer로 분석 버튼이 활성화됩니다.",
+      "description": "Clumit Insight 연동은 시스템 전역 기능입니다. 다섯 가지 사전 조건이 모두 설정되어야 Insight로 분석 버튼이 활성화됩니다.",
       "configured": "설정됨 (시스템 전역)",
       "notConfigured": "설정되지 않음",
       "missing": {
@@ -129,7 +129,7 @@
     },
     "signingKey": {
       "title": "컨텍스트 토큰 서명 키페어",
-      "description": "Aimer 컨텍스트 토큰 서명에 사용되는 ES256 키페어입니다. 신뢰 도메인 분리를 위해 JWT 서명 키 및 mTLS 키와 분리되어 있습니다. 등록을 승인하기 전에 이 화면의 Thumbprint를 aimer-web의 환경 등록 화면 값과 비교하십시오.",
+      "description": "Clumit Insight 컨텍스트 토큰 서명에 사용되는 ES256 키페어입니다. 신뢰 도메인 분리를 위해 JWT 서명 키 및 mTLS 키와 분리되어 있습니다. 등록을 승인하기 전에 이 화면의 Thumbprint를 Clumit Insight의 환경 등록 화면 값과 비교하십시오.",
       "emptyDescription": "아직 키페어가 생성되지 않았습니다. 신뢰 설정 흐름을 시작하려면 생성하십시오.",
       "slots": {
         "active": "활성",
@@ -138,7 +138,7 @@
       },
       "fields": {
         "thumbprintBase64Url": "Thumbprint (RFC 7638 SHA-256, base64url) — 표준",
-        "thumbprintBase64UrlHelper": "43자, 패딩 없음. aimer-web과 비교할 때 이 값을 사용하십시오. 표준 형식입니다.",
+        "thumbprintBase64UrlHelper": "43자, 패딩 없음. Clumit Insight와 비교할 때 이 값을 사용하십시오. 표준 형식입니다.",
         "thumbprintHexColons": "Thumbprint (콜론 구분 16진수)",
         "thumbprintHexColonsHelper": "같은 SHA-256을 4바이트 단위 64자 16진수로 표시한 값입니다. 음성/암기 비교용 보조 표현입니다.",
         "publicJwk": "공개 JWK (RFC 7517)",
@@ -148,7 +148,7 @@
         "yellowTitle": "30일 이내 회전 권장",
         "redTitle": "7일 이내 회전 권장",
         "overdueTitle": "회전 권장 기한 초과",
-        "body": "권장 회전 일자: {date}. Rotate로 새로운 대기 kid를 생성한 뒤 aimer-web 신뢰 레지스트리 업데이트가 끝나면 Switch하십시오."
+        "body": "권장 회전 일자: {date}. Rotate로 새로운 대기 kid를 생성한 뒤 Clumit Insight 신뢰 레지스트리 업데이트가 끝나면 Switch하십시오."
       },
       "actions": {
         "generate": "생성",
@@ -158,8 +158,8 @@
       },
       "switch": {
         "guidanceTitle": "Switch 대기 중",
-        "guidanceBody": "전환 전에 새 kid의 Thumbprint를 별도 채널로 전달해 aimer-web 신뢰 레지스트리에 등록하십시오. 등록 전에 전환하면 새 kid로 서명된 토큰이 거부됩니다.",
-        "confirmCheckbox": "새 kid가 aimer-web의 신뢰 레지스트리에 등록되었음을 확인했습니다."
+        "guidanceBody": "전환 전에 새 kid의 Thumbprint를 별도 채널로 전달해 Clumit Insight 신뢰 레지스트리에 등록하십시오. 등록 전에 전환하면 새 kid로 서명된 토큰이 거부됩니다.",
+        "confirmCheckbox": "새 kid가 Clumit Insight의 신뢰 레지스트리에 등록되었음을 확인했습니다."
       },
       "rotateConfirm": {
         "title": "새 대기 kid를 생성하시겠습니까?",
@@ -167,11 +167,11 @@
       },
       "switchConfirm": {
         "title": "새 kid로 전환하시겠습니까?",
-        "body": "대기 kid가 활성으로 승격되고, 이전 kid는 aimer-web의 in-flight 컨텍스트 토큰 검증을 위해 잠시 보존됩니다. 즉시 적용됩니다."
+        "body": "대기 kid가 활성으로 승격되고, 이전 kid는 Clumit Insight의 in-flight 컨텍스트 토큰 검증을 위해 잠시 보존됩니다. 즉시 적용됩니다."
       },
       "deactivateConfirm": {
         "title": "이전 kid를 비활성화하시겠습니까?",
-        "body": "이전 kid의 비공개 키가 디스크에서 제거됩니다. aimer-web은 자체 신뢰 레지스트리로 전환 이전 토큰을 독립적으로 계속 검증합니다."
+        "body": "이전 kid의 비공개 키가 디스크에서 제거됩니다. Clumit Insight는 자체 신뢰 레지스트리로 전환 이전 토큰을 독립적으로 계속 검증합니다."
       },
       "deactivate": {
         "windowEnds": "{date} 이후 자동 비활성화 가능"
@@ -179,19 +179,19 @@
     },
     "settings": {
       "title": "시스템 설정",
-      "description": "이 AICE 인스턴스를 aimer-web에 식별시키고 컨텍스트 토큰 전송 위치를 알려주는 설정입니다.",
+      "description": "이 AICE 인스턴스를 Clumit Insight에 식별시키고 컨텍스트 토큰 전송 위치를 알려주는 설정입니다.",
       "aiceIdLabel": "aice_id",
       "aiceIdPlaceholder": "acme.example.com",
-      "aiceIdHelper": "배포 호스트네임(RFC 1123). JWT iss 클레임과 aimer-web으로 전달되는 aice_id 클레임에 사용됩니다. aimer-web의 trust_registry 조회 키이므로 등록된 값과 일치해야 합니다.",
+      "aiceIdHelper": "배포 호스트네임(RFC 1123). JWT iss 클레임과 Clumit Insight로 전달되는 aice_id 클레임에 사용됩니다. Clumit Insight의 trust_registry 조회 키이므로 등록된 값과 일치해야 합니다.",
       "bridgeUrlLabel": "aimer_web_bridge_url",
-      "bridgeUrlPlaceholder": "https://aimer.example.com",
-      "bridgeUrlHelper": "/api/analysis/analyze-bridge로 multipart POST를 받을 aimer-web 인스턴스의 베이스 URL. HTTPS 전용. 경로는 정규화 형식(끝 슬래시 없음)으로 저장됩니다.",
+      "bridgeUrlPlaceholder": "https://insight.example.com",
+      "bridgeUrlHelper": "/api/analysis/analyze-bridge로 multipart POST를 받을 Clumit Insight 인스턴스의 베이스 URL. HTTPS 전용. 경로는 정규화 형식(끝 슬래시 없음)으로 저장됩니다.",
       "defaultModelNameLabel": "aimer_default_model_name",
       "defaultModelNamePlaceholder": "anthropic",
-      "defaultModelNameHelper": "aimer-web으로 전송되는 analyze_params_token JWS 클레임에 들어가는 기본 LLM 공급자/모델 패밀리 식별자입니다. 허용되는 카탈로그는 aimer 측 설정에서 관리합니다.",
+      "defaultModelNameHelper": "Clumit Insight로 전송되는 analyze_params_token JWS 클레임에 들어가는 기본 LLM 공급자/모델 패밀리 식별자입니다. 허용되는 카탈로그는 Clumit Insight 측 설정에서 관리합니다.",
       "defaultModelLabel": "aimer_default_model",
       "defaultModelPlaceholder": "claude-sonnet-4-6",
-      "defaultModelHelper": "analyze_params_token JWS 클레임에 들어가는 기본 LLM 모델 식별자입니다. 허용되는 카탈로그는 aimer 측 설정에서 관리합니다.",
+      "defaultModelHelper": "analyze_params_token JWS 클레임에 들어가는 기본 LLM 모델 식별자입니다. 허용되는 카탈로그는 Clumit Insight 측 설정에서 관리합니다.",
       "saveAiceId": "aice_id 저장",
       "saveBridgeUrl": "브리지 URL 저장",
       "saveDefaultModelName": "기본 model_name 저장",
@@ -199,24 +199,24 @@
       "saving": "저장 중…",
       "effectWarning": {
         "title": "변경 후 환경 재등록 필요",
-        "body": "이 변경 이후 aimer-web에 본 환경을 재등록해야 합니다. 기존 등록은 무효화되며, 그 사이에 발급된 컨텍스트 토큰은 거부됩니다.\n\n계속하시겠습니까?",
+        "body": "이 변경 이후 Clumit Insight에 본 환경을 재등록해야 합니다. 기존 등록은 무효화되며, 그 사이에 발급된 컨텍스트 토큰은 거부됩니다.\n\n계속하시겠습니까?",
         "confirm": "저장하고 계속"
       }
     },
     "customerExternalKey": {
       "line": "고객 external_key 설정: {configured} / {total} 고객.",
       "linkLabel": "고객 관리 →",
-      "note": "external_key는 고객별 설정으로 시스템 전역 설정 상태에 영향을 주지 않습니다. 각 고객의 external_key가 채워질 때까지 Aimer로 분석 버튼은 고객별로 독립적으로 비활성화됩니다."
+      "note": "external_key는 고객별 설정으로 시스템 전역 설정 상태에 영향을 주지 않습니다. 각 고객의 external_key가 채워질 때까지 Insight로 분석 버튼은 고객별로 독립적으로 비활성화됩니다."
     },
     "errors": {
       "actionFailed": "작업이 실패했습니다. 오류 상세를 확인한 뒤 다시 시도하십시오."
     },
     "success": {
       "generate": "서명 키페어를 생성했습니다.",
-      "rotate": "대기 kid를 생성했습니다. aimer-web 신뢰 레지스트리에 등록한 뒤 Switch하십시오.",
-      "switch": "새 kid로 전환했습니다. aimer-web에 새 kid가 미리 등록되어 있어야 합니다.",
+      "rotate": "대기 kid를 생성했습니다. Clumit Insight 신뢰 레지스트리에 등록한 뒤 Switch하십시오.",
+      "switch": "새 kid로 전환했습니다. Clumit Insight에 새 kid가 미리 등록되어 있어야 합니다.",
       "deactivate": "이전 kid를 비활성화했습니다.",
-      "settingSaved": "설정을 저장했습니다. aimer-web에 본 환경을 재등록하십시오."
+      "settingSaved": "설정을 저장했습니다. Clumit Insight에 본 환경을 재등록하십시오."
     },
     "phase2": {
       "title": "Phase 2 동기화 상태",
@@ -276,8 +276,8 @@
         "noPending": "대기 중인 철회가 없습니다."
       },
       "cadence": {
-        "label": "aimer-web로 자동 전달 (로그인 중 5분마다)",
-        "description": "켜면 운영자가 로그인되어 있는 동안 이 고객의 baseline 이벤트와 story가 5분마다 aimer-web로 전송됩니다. 탭이 숨겨지면 일시 정지되고 로그아웃하면 중지됩니다. 기본값은 꺼짐이며, 지금 동기화는 이 설정과 무관하게 동작합니다."
+        "label": "Clumit Insight로 자동 전달 (로그인 중 5분마다)",
+        "description": "켜면 운영자가 로그인되어 있는 동안 이 고객의 baseline 이벤트와 story가 5분마다 Clumit Insight로 전송됩니다. 탭이 숨겨지면 일시 정지되고 로그아웃하면 중지됩니다. 기본값은 꺼짐이며, 지금 동기화는 이 설정과 무관하게 동작합니다."
       },
       "syncNow": {
         "button": "지금 동기화",
@@ -310,7 +310,7 @@
   },
   "loginBanner": {
     "phase2Sync": {
-      "summary": "Aimer 동기화 {worst}: {count}개 고객 ({kinds}).",
+      "summary": "Insight 동기화 {worst}: {count}개 고객 ({kinds}).",
       "worstLabel": {
         "behind": "지연",
         "way_behind": "심각한 지연",
@@ -322,7 +322,7 @@
         "policy_event": "정책 이벤트 철회",
         "paused": "일시 정지된 종류"
       },
-      "openSettings": "Settings → Aimer 연동 열기",
+      "openSettings": "Settings → Clumit Insight 연동 열기",
       "dismiss": "닫기"
     }
   },
@@ -404,21 +404,21 @@
       "node_apply": "노드 적용",
       "service_draft_save": "서비스 초안 저장",
       "service_set_mode": "서비스 모드 변경",
-      "aimer_signing_key_generated": "Aimer 서명 키 생성",
-      "aimer_signing_key_rotated": "Aimer 서명 키 회전",
-      "aimer_signing_key_switched": "Aimer 서명 키 전환",
-      "aimer_signing_key_deactivated": "Aimer 서명 키 비활성화",
-      "aimer_integration_setting_changed": "Aimer 연동 설정 변경",
-      "aimer_context_token_issued": "Aimer 컨텍스트 토큰 발급",
-      "aimer_context_token_denied": "Aimer 컨텍스트 토큰 거부",
+      "aimer_signing_key_generated": "Clumit Insight 서명 키 생성",
+      "aimer_signing_key_rotated": "Clumit Insight 서명 키 회전",
+      "aimer_signing_key_switched": "Clumit Insight 서명 키 전환",
+      "aimer_signing_key_deactivated": "Clumit Insight 서명 키 비활성화",
+      "aimer_integration_setting_changed": "Clumit Insight 연동 설정 변경",
+      "aimer_context_token_issued": "Clumit Insight 컨텍스트 토큰 발급",
+      "aimer_context_token_denied": "Clumit Insight 컨텍스트 토큰 거부",
       "triage_policy_create": "선별 정책 생성",
       "triage_policy_update": "선별 정책 수정",
       "triage_policy_delete": "선별 정책 삭제",
       "triage_story_create": "선별 스토리 저장",
-      "triage_story_send": "스토리를 aimer-web로 전송",
-      "aimer_detection_send_issued": "탐지 이벤트를 aimer-web로 전송",
+      "triage_story_send": "스토리를 Clumit Insight로 전송",
+      "aimer_detection_send_issued": "탐지 이벤트를 Clumit Insight로 전송",
       "aimer_detection_send_denied": "탐지 이벤트 전송 거부",
-      "aimer_analyze_envelope_issued": "aimer-web 분석용 envelope 발급",
+      "aimer_analyze_envelope_issued": "Clumit Insight 분석용 envelope 발급",
       "aimer_analyze_envelope_denied": "분석용 envelope 발급 거부",
       "triage_exclusion_global_add": "선별 제외 추가 (전역)",
       "triage_exclusion_global_remove": "선별 제외 삭제 (전역)",
@@ -428,12 +428,12 @@
       "triage_exclusion_global_recover": "선별 제외 복구 (전역)",
       "triage_exclusion_customer_recover": "선별 제외 복구 (고객)",
       "triage_baseline_rebuild": "선별 기준선 재구축",
-      "triage_policy_run_send_to_aimer": "정책 실행을 aimer-web로 전송",
-      "aimer_phase2_sync_now": "Aimer Phase 2 지금 동기화",
-      "aimer_phase2_backfill": "Aimer Phase 2 백필",
-      "aimer_phase2_opportunistic_paused": "Aimer Phase 2 푸시 일시 정지",
-      "aimer_phase2_opportunistic_resumed": "Aimer Phase 2 푸시 재개",
-      "aimer_phase2_cadence_drain": "Aimer Phase 2 자동 전달"
+      "triage_policy_run_send_to_aimer": "정책 실행을 Clumit Insight로 전송",
+      "aimer_phase2_sync_now": "Clumit Insight Phase 2 지금 동기화",
+      "aimer_phase2_backfill": "Clumit Insight Phase 2 백필",
+      "aimer_phase2_opportunistic_paused": "Clumit Insight Phase 2 푸시 일시 정지",
+      "aimer_phase2_opportunistic_resumed": "Clumit Insight Phase 2 푸시 재개",
+      "aimer_phase2_cadence_drain": "Clumit Insight Phase 2 자동 전달"
     },
     "targetTypes": {
       "account": "계정",
@@ -920,7 +920,7 @@
     "databaseName": "데이터베이스 이름",
     "externalKey": "외부 키",
     "externalKeyPlaceholder": "예: acmecorp.com",
-    "externalKeyHelp": "Aimer-web System Administrator와 사전 합의된 globally unique한 비즈니스 식별자를 입력하세요. 권장: 도메인(acmecorp.com), 사업자등록번호, 또는 계약 코드. 합의는 out-of-band secure channel(사내 SSO 메신저, 직접 대면 등)로 이루어져야 합니다. 잘못된 값은 첫 bridge 시도에서 bridge_customer_mismatch로 거부됩니다. 입력 후 운영자에게 한 번 bridge 테스트로 매핑 검증을 권장합니다. 자세한 내용:",
+    "externalKeyHelp": "Clumit Insight System Administrator와 사전 합의된 globally unique한 비즈니스 식별자를 입력하세요. 권장: 도메인(acmecorp.com), 사업자등록번호, 또는 계약 코드. 합의는 out-of-band secure channel(사내 SSO 메신저, 직접 대면 등)로 이루어져야 합니다. 잘못된 값은 첫 bridge 시도에서 bridge_customer_mismatch로 거부됩니다. 입력 후 운영자에게 한 번 bridge 테스트로 매핑 검증을 권장합니다. 자세한 내용:",
     "externalKeyHelpLink": "운영 가이드",
     "externalKeyHelpLinkUrl": "https://github.com/aicers/aimer-web/blob/main/docs/operations/cross-system-customer-identification.md",
     "status": "상태",
@@ -942,9 +942,9 @@
     "deleted": "고객이 삭제되었습니다",
     "externalKeyConflict": "external_key가 다른 고객에 의해 이미 사용 중입니다.",
     "externalKeyChangeTitle": "external_key 변경 확인",
-    "externalKeyChangeBody": "external_key는 aimer-web과의 고객 매핑 식별자입니다. 이 변경 후에는 매핑을 유지하기 위해 aimer-web 측의 일치하는 고객 정보도 함께 업데이트해야 합니다. 직후에 bridge 테스트를 권장합니다. 계속하시겠습니까?",
+    "externalKeyChangeBody": "external_key는 Clumit Insight와의 고객 매핑 식별자입니다. 이 변경 후에는 매핑을 유지하기 위해 Clumit Insight 측의 일치하는 고객 정보도 함께 업데이트해야 합니다. 직후에 bridge 테스트를 권장합니다. 계속하시겠습니까?",
     "externalKeyClearTitle": "external_key 해제 확인",
-    "externalKeyClearBody": "이 고객의 external_key를 해제하면 다시 설정할 때까지 이 고객에 대한 Aimer로 분석이 비활성화되며, aimer-web 측의 일치하는 고객과의 기존 매핑도 이 측에서는 더 이상 도달할 수 없습니다. 계속하시겠습니까?"
+    "externalKeyClearBody": "이 고객의 external_key를 해제하면 다시 설정할 때까지 이 고객에 대한 Insight로 분석이 비활성화되며, Clumit Insight 측의 일치하는 고객과의 기존 매핑도 이 측에서는 더 이상 도달할 수 없습니다. 계속하시겠습니까?"
   },
   "multitenancy": {
     "scope": {
@@ -1872,29 +1872,29 @@
       "confidence": "신뢰도",
       "triageScores": "선별 점수",
       "noTriage": "선별 점수 없음",
-      "aimerTitle": "Aimer로 분석",
-      "aimerBody": "이 이벤트의 AI 분석을 aimer-web에서 새 탭으로 엽니다. 처음 방문 시 aimer-web에 로그인이 요구되며, 결과 페이지는 그 즉시 열립니다.",
-      "aimerCta": "Aimer로 분석 →",
+      "aimerTitle": "Insight로 분석",
+      "aimerBody": "이 이벤트의 AI 분석을 Clumit Insight에서 새 탭으로 엽니다. 처음 방문 시 Insight에 로그인이 요구되며, 결과 페이지는 그 즉시 열립니다.",
+      "aimerCta": "Insight로 분석 →",
       "aimerSending": "분석 여는 중…",
-      "aimerNoCustomerTooltip": "이 이벤트는 connect된 customer가 없어 Aimer로 분석할 수 없습니다.",
+      "aimerNoCustomerTooltip": "이 이벤트는 connect된 customer가 없어 Insight로 분석할 수 없습니다.",
       "aimerCustomerIneligibleTooltip": "이 customer의 external_key가 입력되어 있지 않습니다. Customers 화면에서 입력하세요.",
-      "aimerSetupTooltip": "Aimer integration이 System Administrator에 의해 설정되어야 합니다.",
+      "aimerSetupTooltip": "Clumit Insight integration이 System Administrator에 의해 설정되어야 합니다.",
       "aimerSetupTooltipMissing": "{reasons} 누락",
       "aimerMissingReasonAiceId": "aiceId",
       "aimerMissingReasonBridgeUrl": "bridgeUrl",
       "aimerMissingReasonDefaultModelName": "defaultModelName",
       "aimerMissingReasonDefaultModel": "defaultModel",
       "aimerMissingReasonSigningKey": "signingKey",
-      "aimerModalTitle": "Aimer로 분석",
-      "aimerModalBodySingle": "이 이벤트(customer {name})의 Aimer 분석을 엽니다. Aimer-web에서도 동일 customer 권한이 필요합니다.",
-      "aimerModalBodyMulti": "이 이벤트를 분석할 customer를 선택하세요. Aimer-web에서도 동일 customer 권한이 필요합니다.",
+      "aimerModalTitle": "Insight로 분석",
+      "aimerModalBodySingle": "이 이벤트(customer {name})의 Clumit Insight 분석을 엽니다. Clumit Insight에서도 동일 customer 권한이 필요합니다.",
+      "aimerModalBodyMulti": "이 이벤트를 분석할 customer를 선택하세요. Clumit Insight에서도 동일 customer 권한이 필요합니다.",
       "aimerModalIneligibleHint": "(external_key 미입력)",
       "aimerModalCancel": "취소",
       "aimerModalSend": "분석",
       "aimerErrorTitle": "분석을 열 수 없습니다",
       "aimerErrorGeneric": "오류가 발생했습니다. 다시 시도해 주세요.",
       "aimerErrorRateLimited": "분석 요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
-      "aimerErrorNotConfigured": "Aimer integration이 설정되어 있지 않습니다. 시스템 관리자에게 문의하세요.",
+      "aimerErrorNotConfigured": "Clumit Insight integration이 설정되어 있지 않습니다. 시스템 관리자에게 문의하세요.",
       "aimerErrorExternalKeyMissing": "이 customer의 external_key가 입력되어 있지 않습니다. Customers 화면에서 입력하세요.",
       "aimerErrorEventNotFound": "선택한 customer에서 이 이벤트에 접근할 수 없습니다.",
       "pivotsTitle": "바로가기",
@@ -2369,19 +2369,19 @@
         "scoreLabel": "점수",
         "memberCountTemplate": "{count} 이벤트",
         "open": "열기",
-        "sendToAimerWeb": "aimer-web로 전송",
-        "sendToAimerWebTooltip": "Story를 aimer-web으로 보내 LLM 분석을 요청합니다",
-        "sendToAimerWebDisabledTooltip": "Aimer 연동이 설정되어 있지 않습니다. 관리자에게 설정 → Aimer 연동 화면에서 aice_id, aimer-web 브리지 URL, 활성 서명 키를 등록해 달라고 요청하세요.",
-        "sentIndicatorTemplate": "aimer-web 전송됨 · {relative}",
+        "sendToAimerWeb": "Insight로 전송",
+        "sendToAimerWebTooltip": "Story를 Insight로 보내 LLM 분석을 요청합니다",
+        "sendToAimerWebDisabledTooltip": "Clumit Insight 연동이 설정되어 있지 않습니다. 관리자에게 설정 → Clumit Insight 연동 화면에서 aice_id, Clumit Insight 브리지 URL, 활성 서명 키를 등록해 달라고 요청하세요.",
+        "sentIndicatorTemplate": "Insight 전송됨 · {relative}",
         "sentMultiTemplate": "{count}회",
         "sendMoreMenuLabel": "추가 전송 옵션",
         "sendForceRefresh": "전송 (강제 새로고침)",
-        "forceRefreshConfirmMessage": "aimer-web의 캐시를 우회하고 이 Story로 LLM을 새로 실행하시겠습니까?",
+        "forceRefreshConfirmMessage": "Clumit Insight의 캐시를 우회하고 이 Story로 LLM을 새로 실행하시겠습니까?",
         "forceRefreshConfirmButton": "전송",
         "forceRefreshCancelButton": "취소",
         "sendInFlight": "전송 중…",
-        "sendSuccessToast": "aimer-web으로 전송되었습니다",
-        "sendErrorPrefix": "aimer-web 전송 실패:",
+        "sendSuccessToast": "Insight로 전송되었습니다",
+        "sendErrorPrefix": "Insight 전송 실패:",
         "timeColumn": "시간",
         "kindColumn": "종류",
         "categoryColumn": "카테고리",
