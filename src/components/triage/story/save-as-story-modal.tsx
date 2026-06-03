@@ -14,6 +14,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 
+import { useTimezone } from "@/components/providers/timezone-provider";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { formatDateTime } from "@/lib/format-date";
 import type { ScoredTriageEvent, TriagePeriod } from "@/lib/triage";
 import type {
   SaveCuratedStoryError,
@@ -147,6 +149,7 @@ export function TriageSaveAsStoryModal({
   submit,
   labels,
 }: TriageSaveAsStoryModalProps) {
+  const timezone = useTimezone();
   const customerId = useMemo(
     () => resolveSingleCustomer(focusEvents),
     [focusEvents],
@@ -261,7 +264,9 @@ export function TriageSaveAsStoryModal({
                   onChange={() => toggleKey(ev.id)}
                   data-testid={`triage-save-as-story-member-${ev.id}`}
                 />
-                <span className="font-mono">{ev.time}</span>
+                <span className="font-mono">
+                  {formatDateTime(ev.time, timezone)}
+                </span>
                 <span className="text-muted-foreground">{ev.__typename}</span>
                 <span className="ml-auto text-muted-foreground">
                   {ev.origAddr ?? "—"}

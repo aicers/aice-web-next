@@ -3,7 +3,9 @@
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useState } from "react";
 
+import { useTimezone } from "@/components/providers/timezone-provider";
 import type { NodeStatusSample } from "@/hooks/use-node-status-polling";
+import { formatDateTime } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
 
 export type ResourceMetric = "cpu" | "memory" | "disk";
@@ -132,6 +134,7 @@ export function ResourceSparkline({
     return t("samplesLabel", { samples: samples.length, minutes });
   }, [samples, pollIntervalMs, t]);
 
+  const timezone = useTimezone();
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     setHydrated(true);
@@ -142,7 +145,7 @@ export function ResourceSparkline({
   // client paint agree on the markup.
   const staleStamp =
     hydrated && isStale && lastSampleAt !== null
-      ? lastSampleAt.toLocaleTimeString()
+      ? formatDateTime(lastSampleAt, timezone)
       : null;
 
   const latestSample = samples.length > 0 ? samples[samples.length - 1] : null;

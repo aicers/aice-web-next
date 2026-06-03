@@ -4,6 +4,7 @@ import { CirclePlus, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useTimezone } from "@/components/providers/timezone-provider";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,6 +39,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { readCsrfToken } from "@/lib/csrf-client";
+import { formatDateTime } from "@/lib/format-date";
 import type { TriagePolicyRow } from "@/lib/triage/policy/types";
 
 import { TriagePolicyFormDialog } from "./triage-policy-form-dialog";
@@ -70,6 +72,7 @@ export function TriagePolicyManager({
   canWritePolicy,
 }: TriagePolicyManagerProps) {
   const t = useTranslations("triagePolicies");
+  const timezone = useTimezone();
 
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(
     customers[0]?.id ?? null,
@@ -262,7 +265,7 @@ export function TriagePolicyManager({
                         })}
                       </TableCell>
                       <TableCell className="text-muted-foreground font-mono text-xs">
-                        {p.created_at}
+                        {formatDateTime(p.created_at, timezone)}
                       </TableCell>
                       <TableCell>
                         {canWritePolicy && (

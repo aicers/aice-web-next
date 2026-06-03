@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
 import { ResourceSparkline } from "@/components/node/resource-sparkline";
+import { useTimezone } from "@/components/providers/timezone-provider";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
 import {
   AlertDialog,
@@ -26,6 +27,7 @@ import {
   useNodeStatusPolling,
 } from "@/hooks/use-node-status-polling";
 import { useRouter } from "@/i18n/navigation";
+import { formatDateTime } from "@/lib/format-date";
 import {
   type ExternalConfigSnapshot,
   nodePendingState,
@@ -565,6 +567,7 @@ function PingBadge({
   // hydration the effect swaps in the operator's locale-formatted
   // clock time. The two paints agree on the same `iso` initial value,
   // so there is no hydration mismatch.
+  const timezone = useTimezone();
   const [timeLabel, setTimeLabel] = useState<string | null>(iso);
   useEffect(() => {
     if (iso === null) {
@@ -573,9 +576,9 @@ function PingBadge({
     }
     const parsed = new Date(iso);
     setTimeLabel(
-      Number.isNaN(parsed.getTime()) ? iso : parsed.toLocaleTimeString(),
+      Number.isNaN(parsed.getTime()) ? iso : formatDateTime(parsed, timezone),
     );
-  }, [iso]);
+  }, [iso, timezone]);
   if (alive) {
     return (
       <span
@@ -634,6 +637,7 @@ function LastAppliedField({ lastAppliedAt }: { lastAppliedAt: string | null }) {
   // hydration the effect swaps in the operator's locale-formatted
   // version. Server and client agree on the same initial state, so
   // there is no hydration mismatch.
+  const timezone = useTimezone();
   const [value, setValue] = useState<string>(() =>
     lastAppliedAt === null
       ? t("neverApplied")
@@ -647,9 +651,9 @@ function LastAppliedField({ lastAppliedAt }: { lastAppliedAt: string | null }) {
     const parsed = new Date(lastAppliedAt);
     const localized = Number.isNaN(parsed.getTime())
       ? lastAppliedAt
-      : parsed.toLocaleString();
+      : formatDateTime(parsed, timezone);
     setValue(t("lastAppliedAt", { time: localized }));
-  }, [lastAppliedAt, t]);
+  }, [lastAppliedAt, t, timezone]);
   return (
     <div className="space-y-1">
       <dt className="text-muted-foreground text-xs">{t("lastApplied")}</dt>

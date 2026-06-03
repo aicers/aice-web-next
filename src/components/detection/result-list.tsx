@@ -17,6 +17,7 @@ import {
   readEventAddressing,
   readEventIdentity,
 } from "@/components/events/event-display-helpers";
+import { useTimezone } from "@/components/providers/timezone-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatEventTime } from "@/lib/detection/event-time";
@@ -769,6 +770,7 @@ function EventRow({
   onRowInvestigate?: (event: Event) => void;
   onPivot?: (patch: PivotPatch) => void;
 }) {
+  const timezone = useTimezone();
   const addressing = readEventAddressing(event);
   const identity = readEventIdentity(event);
   const kindLabel =
@@ -866,7 +868,12 @@ function EventRow({
               </Badge>
             </PivotCell>
             <span className="text-muted-foreground text-xs tabular-nums">
-              {formatEventTime(event.time, locale, labels.unknownTime)}
+              {formatEventTime(
+                event.time,
+                locale,
+                labels.unknownTime,
+                timezone,
+              )}
             </span>
             <PivotCell
               patch={kindPatch}
