@@ -19,223 +19,85 @@ AI agent alike — must follow these rules.
 
 ## Content requirements
 
-### UI screenshots are mandatory
+### UI screenshots
 
-Every feature description must include actual UI screenshots. Text
-alone is not sufficient. Screenshots help readers who are not yet
-familiar with the interface.
+Feature descriptions should include UI screenshots. Text alone is
+usually not sufficient — screenshots help readers who are not yet
+familiar with the interface. How to source a figure depends on whether
+the feature shows real data received from REview:
 
-- Place screenshots in `docs/assets/`.
-- Use PNG for screenshots, SVG for diagrams.
+- **No REview data needed**: capture a real screenshot. Surfaces whose
+  appearance is fully determined by client-side state — an empty filter
+  drawer, a confirmation dialog, a settings form, a customer picker —
+  are reproducible from the authoring worktree, so a real PNG is always
+  expected.
+- **Shows real data received from REview**: record a placeholder
+  instead of a screenshot. Do not fabricate or hand-process the data,
+  and do not stand up a one-off live REview just to capture a figure no
+  one else can reproduce. A clearly labeled placeholder is more honest
+  than a doctored or unreproducible capture. See
+  [Screenshot exception for infrastructure-gated features](#screenshot-exception-for-infrastructure-gated-features)
+  for how to ship one.
+
+- Place figures in `docs/assets/`.
+- Use PNG for real screenshots, SVG for diagrams and placeholders.
 - Use relative paths from the Markdown file
   (e.g., `![dialog](../assets/account-create.png)`).
-- Update screenshots whenever the UI changes.
+- Update figures whenever the UI changes.
 
 ### Screenshot exception for infrastructure-gated features
 
-A narrow exception applies when a feature's UI cannot be rendered
-in the authoring worktree because it depends on external
-infrastructure the worktree has no access to (for example, a
-back-end service that is not open-sourced yet, or a live event
-store with real data). In that case the feature page may ship
-an SVG wireframe stand-in instead of a PNG capture, provided
-that:
+A feature page ships an **SVG wireframe stand-in** instead of a PNG
+capture whenever its UI cannot be rendered against reproducible data
+in the authoring worktree — most commonly because it shows real data
+received from REview, but also when it depends on a back-end service
+that is not open-sourced yet or a live event store the worktree has no
+access to. A stand-in must satisfy:
 
-- The wireframe is placed in `docs/assets/` alongside the
-  would-be PNG, using the matching filename with an `.svg`
-  suffix (e.g., `feature-state-en.svg`).
-- EN and KO pages each carry their own localized wireframe so
-  language parity is preserved.
-- The page body explicitly tags the figure as a wireframe
-  stand-in and points to the follow-up that will replace it
-  with a real capture once staging is available.
-- The PR description's "Not addressed" or equivalent section
-  records the screenshot debt so the follow-up is not lost.
+- The wireframe is placed in `docs/assets/` alongside the would-be PNG,
+  using the matching filename with an `.svg` suffix
+  (e.g., `feature-state-en.svg`).
+- EN and KO pages each carry their own localized wireframe so language
+  parity is preserved.
+- The page body explicitly tags the figure as a wireframe stand-in so
+  readers know it is not a real capture.
 
-This exception is intended for phase PRs that land before
-their depended-on infrastructure. It is not a general waiver:
-once staging is available, the wireframe must be replaced with
-an actual screenshot as a follow-up.
+For figures that show **real data received from REview**, the
+placeholder is the standing form — not a temporary debt. There is no
+"capture it for real later" step, because real REview data is
+deliberately kept out of the manual: a live REview build is not
+reproducible across contributors, and a screenshot taken against
+fabricated or hand-processed data is misleading. Do not stand up a
+live REview to replace these wireframes.
 
-#### Detection: exception ended
+For figures gated only on infrastructure that will become available
+later (for example a back-end service not yet open-sourced), the
+wireframe is temporary instead: record the screenshot debt in the PR
+description's "Not addressed" or equivalent section, and replace the
+wireframe with a real capture once that infrastructure is available.
 
-The Detection feature no longer qualifies for this exception.
-A reproducible local-REview setup is documented under
-[Live REview screenshot procedure](#live-review-screenshot-procedure)
-below, so every Detection PR — including new feature work and
-follow-ups to existing pages — must ship real PNG captures from
-the start. The lone remaining wireframes under
-`docs/assets/detection-tab-bar-{en,ko}.svg` belong to the multi-
-tab feature whose successor PR has not yet landed; once it does,
-those wireframes must be replaced as part of the same PR rather
-than punted to a follow-up.
+## Capturing screenshots
 
-##### Issue #428: Presets dropdown screenshot debt
+The conventions below apply to the **real screenshots** in the first
+tier above — client-side surfaces that do not depend on REview data
+(an empty filter drawer, a confirmation dialog, a settings form, a
+customer picker, and the like). They were piloted on Detection
+(issue #335) and apply to any feature page.
 
-The implementation PR for issue #428 (the Saved / Recommended rail
-moves into an on-demand Presets dropdown) introduces two new
-screenshots — `detection-presets-dropdown-{en,ko}.png` — and stops
-referencing the now-deleted rail captures
-(`detection-saved-filters-rail-{en,ko}.png`,
-`detection-recommended-filters-rail-{en,ko}.png`). The existing
-detection-screenshots.spec.ts captures the new dropdown PNGs from
-the live local-REview procedure; contributors who land follow-up
-work touching the Detection toolbar must re-capture those PNGs in
-the same PR rather than punt to a follow-up. This is a re-statement
-of the standing rule above, not a fresh exception — the issue
-intentionally rejected silently shipping without screenshots.
-
-## Live REview screenshot procedure
-
-**When to use this procedure.** Follow it only when a capture
-needs **large-volume REview data** that a hand-rolled mock cannot
-plausibly stand in for — for example, the Detection result list
-with thousands of events powering the paginator's `Page X of Y`
-totals, the Quick peek inspector populated from real subtype
-fields, or the CSV-export large-row guardrail. Captures whose
-shape is fully determined by client-side state (an empty filter
-drawer, a confirmation dialog, a settings form) do **not**
-require a live REview — point the BFF at a mocked GraphQL
-endpoint instead and capture from there.
-
-The following steps are the minimum needed to render a page
-against representative live data so a contributor can produce
-parity-compliant EN / KO captures without staging access. The
-procedure was piloted on Detection (issue #335); the same
-sequence applies to any feature page that surfaces large-volume
-REview data.
-
-> **Always start a fresh REview for the capture session.** Do
-> **not** point the BFF at a REview that is already running for
-> some other purpose (a teammate's debugging instance, an
-> always-on developer service, the previous capture run). Reusing
-> a live instance risks polluting its state with the screenshot
-> session — and, conversely, leaves your captures at the mercy of
-> whatever filter / data the other process is mutating in the
-> background. Spin up a dedicated `review` process pinned to the
-> worktree's `data/review/` and `data/review.toml`, take the
-> captures, and shut it down when done.
-
-> **Dataset location is not assumed.** This guide does **not**
-> name a canonical path for the large-volume REview test dataset
-> — its location is a per-contributor / per-environment detail
-> that the issue or PR briefing must communicate explicitly to
-> whoever is running the capture (e.g. "copy the dataset from
-> `~/projects/test-clumit/data/review` into the worktree's
-> `data/review/`"). When you open an issue that requires this
-> procedure, include the dataset path; when you pick up an issue
-> that requires it, ask for the path before you start.
-
-### Local REview setup
-
-1. Stand up a local REview build (auth-mtls feature) somewhere on
-   your machine. The procedure that follows assumes you have a
-   working `review` binary and a dataset directory with
-   `VERSION`, `classifiers/`, `pretrained/`, and `states.db`
-   files (the "REview test dataset"). The dataset's source path
-   is supplied out-of-band — see the note above; copy it into the
-   worktree (next step) rather than running REview directly out
-   of the source location, so the capture session never mutates
-   the upstream copy.
-2. Generate a development CA and two leaf certs in the worktree:
-   - `data/dev-tls/ca-cert.pem` + `data/dev-tls/ca-key.pem`
-     (signing CA, valid for at least 30 days).
-   - `data/dev-tls/review-cert.pem` + `data/dev-tls/review-key.pem`
-     for REview's TLS listener; sign with the dev CA, set CN to
-     `localhost`, and include
-     `subjectAltName=DNS:localhost,IP:127.0.0.1,IP:0:0:0:0:0:0:0:1`
-     plus `extendedKeyUsage=serverAuth,clientAuth`.
-   - `data/dev-tls/aice-web-next-cert.pem` +
-     `data/dev-tls/aice-web-next-key.pem` for the BFF; sign with
-     the dev CA, set CN to `aice-web-next`, and include
-     `subjectAltName=DNS:001.aice-web-next.<host>.<domain>`
-     (REview's `validate_client_cert` requires four-part DNS SAN
-     with `aice-web-next` as the second part) plus
-     `extendedKeyUsage=clientAuth,serverAuth`.
-
-   > **Don't reuse production-style certs whose server SAN is
-   > only the four-part DNS** (e.g. `001.review.review-host.test.local`
-   > with no `localhost` SAN). The BFF connects to
-   > `https://localhost:8443/graphql` per the `.env.local` template
-   > below, so the TLS handshake checks `localhost` against the
-   > server cert's SAN — a four-part-DNS-only cert will fail
-   > hostname verification. If you must reuse such certs (e.g.
-   > a shared Bootroot test bundle), regenerate the server leaf
-   > with a `DNS:localhost` SAN added, or add the four-part DNS
-   > to `/etc/hosts` (`127.0.0.1 001.review.review-host.test.local`)
-   > and point `REVIEW_GRAPHQL_ENDPOINT` at the four-part name.
-   > The fresh `data/dev-tls/review-cert.pem` recipe above sidesteps
-   > the issue entirely.
-3. Copy the REview dataset into `data/review/` so the database
-   files live under the worktree, and create a `data/review.toml`
-   that pins:
-
-    ```toml
-    data_dir = "data/review"
-    backup_dir = "data/review-backup"
-    htdocs_dir = "data/review-htdocs"
-    graphql_srv_addr = "127.0.0.1:8443"
-    rpc_srv_addr = "127.0.0.1:38390"
-    hostname = "localhost"
-    cert = "data/dev-tls/review-cert.pem"
-    key = "data/dev-tls/review-key.pem"
-    ca_certs = ["data/dev-tls/ca-cert.pem"]
-    syslog_tx = false
-    pen = 0
-    ```
-
-4. Start REview with the local-auth bypass disabled so it
-   validates the BFF's mTLS + JWT auth chain even from
-   `127.0.0.1`:
-
-    ```bash
-    REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPASS=1 \
-      <path-to>/review data/review.toml
-    ```
-
-5. Confirm REview is up by hitting its GraphQL with the dev
-   client cert (Bearer header omitted is OK for the introspection
-   ping; production queries require a JWT). The endpoint should
-   answer `{"data":{"__typename":"Query"}}`.
-
-### Next.js manual-author environment
-
-1. In `.env.local`, point the BFF at the local REview and the
-   dev cert pair:
-
-    ```text
-    REVIEW_GRAPHQL_ENDPOINT=https://localhost:8443/graphql
-    MTLS_CERT_PATH=<absolute>/data/dev-tls/aice-web-next-cert.pem
-    MTLS_KEY_PATH=<absolute>/data/dev-tls/aice-web-next-key.pem
-    MTLS_CA_PATH=<absolute>/data/dev-tls/ca-cert.pem
-    ```
-
-2. Make sure the local Postgres has `auth_db`, `audit_db`, and
-   the customer database referenced by your seeded customer
-   (`default_db` is the convention used during the issue #335
-   pilot). At least one row in `customers` is required —
-   `resolveEffectiveCustomerIds` rejects empty scopes — and the
-   `admin` account must be exempt from MFA enrollment for an
-   uninterrupted screenshot flow:
-
-    ```sql
-    INSERT INTO customers (name, description, database_name, status)
-      VALUES ('Default', 'Local dev tenant', 'default_db', 'active');
-    UPDATE accounts SET mfa_override = 'exempt'
-      WHERE username = 'admin';
-    ```
-
-3. Run `pnpm dev` and sign in as the admin you provisioned via
-   `INIT_ADMIN_USERNAME` / `INIT_ADMIN_PASSWORD`.
+Because figures that show real data received from REview are
+placeholders by policy (see [UI screenshots](#ui-screenshots)), no
+live REview build, dataset, or mTLS setup is needed to author the
+manual. When a surface needs *some* response to render at all, point
+the BFF at a mocked GraphQL endpoint and capture the deterministic,
+client-side chrome from there.
 
 ### Locale switching
 
 The manual is bilingual, so EN and KO captures must match. With
 `localePrefix: "as-needed"`, EN renders at `/detection` and KO at
 `/ko/detection`. Render each variant in the same browser session
-(viewport, theme, drawer state, and selected event identical
-across both) and capture pairs back-to-back so any drift in the
-underlying data is shared between the two figures.
+(viewport, theme, and drawer state identical across both) and
+capture pairs back-to-back so the two figures stay consistent.
 
 ### Viewport and theme
 
@@ -254,33 +116,31 @@ not ready to merge until the figure is re-captured in dark mode.
 
 ### Filename convention
 
-`<feature>-<section>-<locale>.png`. For Detection that yields
-stems like `detection-pagination-en.png`,
-`detection-quick-peek-ko.png`, etc. The same convention applies
-to other features that pass through this procedure — pick a
-short, stable feature slug and reuse it across every section
-capture for that page.
+`<feature>-<section>-<locale>` — `.png` for real screenshots and
+`.svg` for placeholder wireframes. For Detection that yields stems
+like `detection-drawer-en.png` (a real client-side capture) or
+`detection-analytics-en.svg` (a REview-backed placeholder). The same
+convention applies to other features — pick a short, stable feature
+slug and reuse it across every section figure for that page.
 
 ### Caption guidelines
 
 Use a short, neutral caption matching the figure
-(`![Detection page](../assets/detection-en.png)`). Do **not**
-flag a real capture as a wireframe stand-in or reference the
-infrastructure-gated exception above; that note belongs only to
-figures that genuinely lack a captureable backend.
+(`![Detection drawer](../assets/detection-drawer-en.png)`). Do **not**
+flag a real client-side capture as a wireframe stand-in or reference
+the infrastructure-gated exception above; that note belongs only to
+placeholders for figures that show real data received from REview (or
+otherwise lack a captureable backend).
 
 ### Verification checklist
 
-Before opening a Detection PR with new screenshots:
+Before opening a PR with new or changed figures:
 
-- [ ] EN and KO PNGs exist for every figure the page references,
-      with matching filenames and equivalent captured state.
-- [ ] Each PNG was captured at 1440×900 in dark theme. REview-backed
-      list / analytics / investigation figures must come either from
-      the local-REview procedure above or from the maintained
-      Playwright fixture flow that reproduces those populated states;
-      deterministic client-side figures may be captured from the
-      local mocked flow.
+- [ ] EN and KO files exist for every figure the page references, with
+      matching filenames and equivalent captured / illustrated state.
+- [ ] Real screenshots were captured at 1440×900 in dark theme from
+      the local mocked flow; figures that show real data received from
+      REview use SVG placeholders instead (see [UI screenshots](#ui-screenshots)).
 - [ ] No personally identifiable information, no developer
       machine artefacts (open IDE windows in the background,
       personal browser bookmarks, etc.) appear in any frame.
@@ -289,35 +149,27 @@ Before opening a Detection PR with new screenshots:
 
 ### Automation reference
 
-The maintained Detection capture flow lives in the Playwright
-specs:
-
-- `e2e/detection-screenshots.spec.ts` for deterministic,
-  client-rendered surfaces (drawer, customer picker, save dialog,
-  and both rails).
-- `e2e/detection-manual-dynamic-screenshots.spec.ts` for the
-  REview-backed list, analytics, Quick peek, CSV export, pivot,
-  and Event Investigation captures. It replays fixed fixture data
-  so the populated states are reproducible on any machine after the
-  fixture set has been refreshed from the local REview dataset.
-
-Run them with:
+The maintained Detection capture flow for deterministic,
+client-rendered surfaces (drawer, customer picker, save dialog, and
+the like) lives in `e2e/detection-screenshots.spec.ts`. Run it with:
 
 ```sh
 DETECTION_MANUAL_CAPTURE_ONLY=1 \
 pnpm exec playwright test --config=e2e/playwright.config.ts \
-  e2e/detection-screenshots.spec.ts \
-  e2e/detection-manual-dynamic-screenshots.spec.ts
+  e2e/detection-screenshots.spec.ts
 ```
 
 That environment flag swaps Playwright into a dedicated capture-only
 project graph so the command above does not fan out into the rest of
 the E2E matrix.
 
+REview-backed surfaces (the list, analytics, Quick peek, CSV export,
+pivot, and Event Investigation figures) are placeholders by policy, so
+there is no real-data capture spec to run for them.
+
 The older one-off scripts under `docs/scripts/` remain as
 historical references, but they are no longer the canonical
-capture path and do not cover the full Detection inventory on
-their own.
+capture path.
 
 ### Language parity
 
@@ -776,4 +628,6 @@ Before submitting a docs PR, verify:
 - [ ] EN/KR pages are in sync (same structure, same filenames)
 - [ ] New pages are listed in `mkdocs.yml` nav for both languages
 - [ ] No broken links or missing images
-- [ ] UI screenshots are included for new or changed features
+- [ ] UI figures are included for new or changed features — a real
+      screenshot when the feature needs no REview data, a placeholder
+      when it shows real data received from REview

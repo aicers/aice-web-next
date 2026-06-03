@@ -41,6 +41,11 @@
 - Do not write docs for features still under active development.
 - Keep the manual in sync with code — update docs whenever user-facing
   behavior changes.
-- Every feature description must include UI screenshots.
+- Feature descriptions should include UI screenshots, per these rules:
+    - If the feature does not depend on data from REview, capture a real
+      screenshot.
+    - If the feature shows real data received from REview, record a
+      placeholder in the manual instead of a fabricated, hand-processed,
+      or one-off real-data capture.
 - EN/KR pages must stay in sync (same structure, same filenames).
 - See `docs/AUTHORING.md` for the full authoring guide.
