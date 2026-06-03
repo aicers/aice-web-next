@@ -938,7 +938,7 @@ Insight로 분석 흐름은 브라우저가 백그라운드에서 호출하는
   결합되며, 발행된 `jti`, 활성 서명 키의 `kid`, 로케이터의
   `event_key`, 해석된 `lang`, `force` 플래그, 그리고 `event_data`
   출처가 baseline 코퍼스인지 REview 대체 경로인지가 함께 기록되어
-  포렌식 분석가가 `aimer-web` 측 대응 기록과 상호 연관시킬 수
+  포렌식 분석가가 Clumit Insight 측 대응 기록과 상호 연관시킬 수
   있습니다.
 - `aimer_analyze_envelope.denied` — 실패. 거절을 일으킨 게이트를
   나타내는 `reason` 상세값을 포함합니다:

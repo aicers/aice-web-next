@@ -970,7 +970,7 @@ background):
   resolved `lang`, the `force` flag, and whether the
   `event_data` source was the baseline corpus or the REview
   fallback, so a forensic analyst can correlate the envelope
-  with the matching record on `aimer-web`.
+  with the matching record on Clumit Insight.
 - `aimer_analyze_envelope.denied` — failure. Carries a `reason`
   detail enumerating the gate that rejected the request:
   `aimer_integration_not_configured` (one of the five
