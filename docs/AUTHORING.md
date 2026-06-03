@@ -23,21 +23,22 @@ AI agent alike — must follow these rules.
 
 Feature descriptions should include UI screenshots. Text alone is
 usually not sufficient — screenshots help readers who are not yet
-familiar with the interface. How to source a figure depends on whether
-the feature shows real data received from REview:
+familiar with the interface. How to source a screenshot depends on
+whether the feature relies on data from REview:
 
-- **No REview data needed**: capture a real screenshot. Surfaces whose
-  appearance is fully determined by client-side state — an empty filter
-  drawer, a confirmation dialog, a settings form, a customer picker —
-  are reproducible from the authoring worktree, so a real PNG is always
-  expected.
-- **Shows real data received from REview**: record a placeholder for
-  now, and open a **separate issue** to capture the real screenshot on
-  a real data stack — the placeholder is replaced once that capture
-  lands. Do not fabricate or hand-process the data to dodge the
-  placeholder, and do not capture from a one-off local REview. See
+- **No REview data needed**: capture a real screenshot of the feature.
+  Surfaces whose appearance is fully determined by client-side state
+  (an empty filter drawer, a confirmation dialog, a settings form, a
+  customer picker) are reproducible from the authoring worktree.
+- **Shows data received from REview**: capture the screenshot from a
+  stack that has real data loaded, rather than fabricating or
+  hand-processing the data. A capture of realistic, genuinely loaded
+  data is far more useful than a doctored one.
+- **Real-data capture not available**: leave a placeholder instead of
+  a fabricated screenshot, and replace it once a real-data capture can
+  be taken. See
   [Screenshot exception for infrastructure-gated features](#screenshot-exception-for-infrastructure-gated-features)
-  for how to ship the interim placeholder.
+  for how to ship the interim placeholder and track its replacement.
 
 - Place figures in `docs/assets/`.
 - Use PNG for real screenshots, SVG for diagrams and placeholders.
@@ -62,14 +63,14 @@ access to. A stand-in must satisfy:
 - The page body explicitly tags the figure as a wireframe stand-in so
   readers know it is not a real capture.
 
-For figures that show **real data received from REview**, the
-placeholder is interim, not the final form. A screenshot taken against
-fabricated or hand-processed data is misleading, so the feature PR
-ships the wireframe and a **separate issue** is opened to capture the
-real screenshot on a real data stack; that capture replaces the
-placeholder when it lands. Do not fabricate or hand-process data to
-avoid the placeholder, and do not capture from a one-off local REview
-build — the real-data-stack capture is tracked and produced separately.
+For figures that show **data received from REview**, the real capture
+comes from a stack with real data loaded. When that capture is not yet
+available, ship the wireframe as an interim stand-in and open a
+**separate issue** to take the real screenshot on a real data stack;
+that capture replaces the placeholder once it lands. Do not fabricate
+or hand-process data to avoid the placeholder, and do not capture from
+a one-off local REview build — the real-data-stack capture is tracked
+and produced separately.
 
 For figures gated only on infrastructure that will become available
 later (for example a back-end service not yet open-sourced), the
@@ -79,19 +80,18 @@ wireframe with a real capture once that infrastructure is available.
 
 ## Capturing screenshots
 
-The conventions below apply to the **real screenshots** in the first
-tier above — client-side surfaces that do not depend on REview data
-(an empty filter drawer, a confirmation dialog, a settings form, a
-customer picker, and the like). They were piloted on Detection
-(issue #335) and apply to any feature page.
+The conventions below (viewport, theme, locale, filenames) apply to
+**real screenshots** of either kind — both client-side captures and
+captures taken from a stack with real data loaded. They were piloted
+on Detection (issue #335) and apply to any feature page.
 
 Authoring a feature's manual page needs no local REview build,
-dataset, or mTLS setup: REview-backed figures ship as placeholders
-(see [UI screenshots](#ui-screenshots)), and their real captures are
-taken separately on a real data stack under their own tracking issue.
-When a surface needs *some* response just to render its client-side
-chrome, point the BFF at a mocked GraphQL endpoint and capture from
-there.
+dataset, or mTLS setup: a figure that shows data received from REview
+is captured from a stack with real data loaded separately, under its
+own issue, and ships as an interim placeholder until that capture
+lands (see [UI screenshots](#ui-screenshots)). When a surface needs
+*some* response just to render its client-side chrome, point the BFF
+at a mocked GraphQL endpoint and capture from there.
 
 ### Locale switching
 
@@ -140,10 +140,11 @@ Before opening a PR with new or changed figures:
 
 - [ ] EN and KO files exist for every figure the page references, with
       matching filenames and equivalent captured / illustrated state.
-- [ ] Real screenshots were captured at 1440×900 in dark theme from
-      the local mocked flow; figures that show real data received from
-      REview ship as SVG placeholders, with a separate issue tracking
-      the real-data-stack capture (see [UI screenshots](#ui-screenshots)).
+- [ ] Real screenshots were captured at 1440×900 in dark theme; figures
+      that show data received from REview were captured from a stack
+      with real data loaded, or — when no real-data capture is available
+      — ship as an SVG placeholder with a separate issue tracking the
+      real-data-stack capture (see [UI screenshots](#ui-screenshots)).
 - [ ] No personally identifiable information, no developer
       machine artefacts (open IDE windows in the background,
       personal browser bookmarks, etc.) appear in any frame.
@@ -632,6 +633,7 @@ Before submitting a docs PR, verify:
 - [ ] EN/KR pages are in sync (same structure, same filenames)
 - [ ] New pages are listed in `mkdocs.yml` nav for both languages
 - [ ] No broken links or missing images
-- [ ] UI figures are included for new or changed features — a real
-      screenshot when the feature needs no REview data, a placeholder
-      when it shows real data received from REview
+- [ ] UI screenshots are included for new or changed features (real
+      data captured from a loaded stack when the feature shows REview
+      data; placeholder, tracked by a separate capture issue, when no
+      real-data capture is available)

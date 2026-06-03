@@ -44,9 +44,11 @@
 - Feature descriptions should include UI screenshots, per these rules:
     - If the feature does not depend on data from REview, capture a real
       screenshot.
-    - If the feature shows real data received from REview, record a
-      placeholder for now (do not fabricate or hand-process the data),
-      and open a separate issue to capture the real screenshot on a real
-      data stack — that capture replaces the placeholder.
+    - If the feature shows data received from REview, capture it from a
+      stack with real data loaded rather than fabricated or
+      hand-processed data.
+    - If a real-data capture is not available, leave a placeholder
+      instead of a fabricated screenshot (track the replacement capture
+      in a separate issue).
 - EN/KR pages must stay in sync (same structure, same filenames).
 - See `docs/AUTHORING.md` for the full authoring guide.
